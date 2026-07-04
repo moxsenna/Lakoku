@@ -1,7 +1,7 @@
 # Lakoku — Progress Checklist (Task Tracker) v1.0
 
 **Status:** Living document — dicentang seiring pekerjaan berjalan
-**Last updated:** 5 Juli 2026 (T6W.3 & T6W.4 ditutup: progress lokal monotonic + guard anti double-advance)
+**Last updated:** 5 Juli 2026 (ESLint flat config disiapkan; Exit Criteria M6-WEB jalur UX TUNTAS — lint+tsc hijau)
 **Turunan dari:** `docs/IMPLEMENTATION_PLAN.md` (runbook v1.0) — jika runbook berubah, sinkronkan checklist ini di PR yang sama (anti-drift, runbook §5)
 **Cara pakai:** Setiap task = satu checkbox. Centang HANYA bila Definition of Done (DoD) task terpenuhi. Milestone dianggap selesai hanya bila blok Sign-off-nya lengkap (lihat runbook §4).
 
@@ -21,7 +21,7 @@
 | M3 — Memory hierarchy + Layer A + alias | `[ ]` | Belum ada `packages/narrative-core` |
 | M4 — Template + provider gateway | `[ ]` | Belum ada `packages/ai-gateway` |
 | M5 — Reconciliation + thread + Layer B | `[ ]` | Gate 50 bab; belum dimulai |
-| **M6-WEB — Web reader mobile-first** | `[~]` | **Jalur UX (fixtures) hampir tuntas** — T6W.2/3/5 ✔, tersisa lint gate (butuh M0); jalur cerita nyata menunggu M5 |
+| **M6-WEB — Web reader mobile-first** | `[~]` | **Jalur UX (fixtures) TUNTAS** — Exit Criteria jalur UX ✔ (lint+tsc hijau); jalur cerita nyata menunggu M5 |
 | M6 — Android reader beta | `[ ]` | Client kedua; belum dimulai |
 | M7 — Story Foundation + opening + reports | `[ ]` | Belum dimulai |
 | M8 — Observability + alert + entitlement | `[ ]` | Belum dimulai |
@@ -32,11 +32,14 @@
 ## M0 — Repo, Tooling, CI Skeleton
 
 - [ ] **T0.1 Monorepo scaffold** — struktur `apps/`, `packages/`, `infra/`, `fixtures/`, `docs/` (ARCH §5); pnpm workspaces; tiap paket punya `package.json` + `tsconfig` extend base.
-- [ ] **T0.2 Tooling dasar** — TS strict, ESLint, Prettier, Vitest; `pnpm lint && pnpm typecheck && pnpm test` hijau di repo kosong.
+- [~] **T0.2 Tooling dasar** — TS strict, ESLint, Prettier, Vitest; `pnpm lint && pnpm typecheck && pnpm test` hijau di repo kosong.
   - [x] `AGENT_RULES.md` (ringkasan ARCH §23) — sudah dibuat di root repo.
+  - [x] ESLint 9 flat config (`eslint.config.mjs`) — `eslint-config-next/core-web-vitals` + `/typescript`, prefix `_` dihormati. `pnpm lint` (eslint .) & `tsc --noEmit` hijau.
+  - [x] TS strict aktif (`tsconfig.json`).
+  - [ ] Prettier & Vitest belum disiapkan; `pnpm typecheck`/`pnpm test` script belum ada (menunggu monorepo T0.1).
 - [ ] **T0.3 CI skeleton** — `.github/workflows/ci.yml` (lint + typecheck + test + migration check placeholder); CI hijau di PR pertama.
 - [ ] **Exit Criteria M0** — pipeline CI hijau; batas kepemilikan paket terdokumentasi.
-- **Catatan:** Repo sekarang adalah satu app Next.js di root (`app/`, `components/`, `lib/`), belum monorepo ARCH §5. `docs/` sudah ada. `AGENT_RULES.md` sudah ada meski tooling/CI belum.
+- **Catatan:** Repo sekarang adalah satu app Next.js di root (`app/`, `components/`, `lib/`), belum monorepo ARCH §5. `docs/` sudah ada. `AGENT_RULES.md` + ESLint flat config + TS strict sudah ada; Prettier/Vitest/CI belum. Saat T0.1 (monorepo) dibuat, `eslint.config.mjs` root ini dipindah/di-extend ke konfig workspace.
 
 ## M1 — Contracts + DB Baseline + RLS
 
@@ -92,8 +95,7 @@
   - [x] Anti double-advance (client): guard `submittingRef` di `reader-view.tsx` — tap ganda tidak mengirim `submitChoice` lebih dari sekali. Happy-path pilihan → konsekuensi → lanjut terverifikasi di browser.
   - [ ] Pending-choice recovery yang otoritatif (resume setelah app mati saat generasi berjalan) — bergantung server nyata + generation lease (M2/T2.1); belum bisa diuji tanpa backend.
 - [x] **T6W.5 Verifikasi browser mobile** — alur beranda → baca → pilih → konsekuensi → lanjut lolos; type-check hijau (agent-browser, viewport mobile).
-- [~] **Exit Criteria M6-WEB (jalur UX)** — reader web E2E lolos dengan fixtures; seam terpasang tanpa kebocoran; brand guard lolos; progress monotonic persist ✔; `tsc --noEmit` hijau ✔.
-  - Tersisa: **lint gate** belum bisa dijalankan — `next lint` dihapus di Next.js 16 & belum ada `eslint.config.js` (bagian M0/T0.2). Setup ESLint flat config ditunda ke M0; setelah itu jalankan lint dan tutup baris ini.
+- [x] **Exit Criteria M6-WEB (jalur UX)** — reader web E2E lolos dengan fixtures ✔; seam terpasang tanpa kebocoran ✔; brand guard lolos ✔; progress monotonic persist ✔; `tsc --noEmit` hijau ✔; **lint gate hijau** (`eslint .`, 0 error/0 warning) ✔.
 - [ ] **Exit Criteria M6-WEB (jalur cerita nyata)** — `client.ts` menunjuk Reader API nyata DAN M5 hijau. (terkunci M5)
 
 ## M6 — Android Reader Beta (client kedua)

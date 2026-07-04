@@ -227,7 +227,11 @@ export function ReaderView({ story, chapter }: { story: StoryDetail; chapter: Ch
               Akhir Bab {chapter.number}. Pilihanmu telah mengubah hubungan ini.
             </p>
             <Link
-              href={isEnding ? `/akhir/${story.id}` : `/cerita/${story.id}`}
+              href={
+                isEnding
+                  ? `/akhir/${story.id}`
+                  : `/baca/${story.id}?bab=${nextChapterNumber ?? chapter.number + 1}`
+              }
               className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
             >
               {isEnding

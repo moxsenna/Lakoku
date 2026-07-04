@@ -1,7 +1,7 @@
 # Lakoku — Progress Checklist (Task Tracker) v1.0
 
 **Status:** Living document — dicentang seiring pekerjaan berjalan
-**Last updated:** 5 Juli 2026 (ESLint flat config disiapkan; Exit Criteria M6-WEB jalur UX TUNTAS — lint+tsc hijau)
+**Last updated:** 5 Juli 2026 (baca berkelanjutan bab-ke-bab + konten demo "Di Balik Kaca" Bab 1→3; reader mengalir di dalam reader dengan fallback anggun)
 **Turunan dari:** `docs/IMPLEMENTATION_PLAN.md` (runbook v1.0) — jika runbook berubah, sinkronkan checklist ini di PR yang sama (anti-drift, runbook §5)
 **Cara pakai:** Setiap task = satu checkbox. Centang HANYA bila Definition of Done (DoD) task terpenuhi. Milestone dianggap selesai hanya bila blok Sign-off-nya lengkap (lihat runbook §4).
 
@@ -90,6 +90,8 @@
 - [x] **T6W.3 Reader + progress** — reader menampilkan bab sesuai cerita (bukan sample statis); loading state pakai bahasa naratif; progress monotonic yang persist lintas sesi.
   - Progress lokal: `lib/api/progress.ts` (cache client, monotonic, aman SSR) + `components/resume-chapter.tsx` (`useSyncExternalStore`, surface di beranda hero & CTA detail). Reader mencatat bab saat dibuka & saat maju.
   - Verifikasi browser (iPhone 14): pilih di `pesan-terakhir` bab 12 → `localStorage lakoku:progress:v1 = {"pesan-terakhir":13,...}`; beranda hero berubah "BAB 12 → BAB 13 DARI 50". Monotonic (hanya maju).
+  - Baca berkelanjutan bab-ke-bab: tombol "Lanjut" memuat bab berikutnya di dalam reader via `/baca/[id]?bab=N` (bukan balik ke detail); reader di-`key` per bab agar remount bersih. Bab yang belum ada di fixtures dialihkan anggun ke `/cerita/[id]` (bukan 404).
+  - Konten demo: "Di Balik Kaca" kini punya Bab 1→2→3 penuh (bounded branching konvergen) untuk pengalaman baca dari awal. Verifikasi browser: 1→2→3 mengalir, progress `di-balik-kaca:3`; minta `pesan-terakhir?bab=13` (belum ada) → redirect ke detail.
   - Catatan: cache lokal ini BUKAN sumber kebenaran; saat Reader API nyata siap, progres server direkonsiliasi (ambil terjauh) — ARCH §7.1.
 - [~] **T6W.4 Choice submission + recovery + generation status** — via `submitChoice`; konsekuensi & bab berikutnya dari outcome seam.
   - [x] Anti double-advance (client): guard `submittingRef` di `reader-view.tsx` — tap ganda tidak mengirim `submitChoice` lebih dari sekali. Happy-path pilihan → konsekuensi → lanjut terverifikasi di browser.

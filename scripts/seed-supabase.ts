@@ -27,18 +27,16 @@ async function main() {
   const storyRows = stories.map((s) => ({
     id: s.id,
     title: s.title,
+    cover: s.cover,
     tagline: s.tagline,
-    synopsis: s.synopsis,
-    genre: s.genre,
-    mood: s.mood,
     role: s.role,
+    tropes: s.tropes,
     total_chapters: s.totalChapters,
-    gradient: s.gradient,
-    accent: s.accent,
+    synopsis: s.synopsis,
     status: s.status,
     current_chapter: s.currentChapter,
     jejak: s.jejak,
-    ending: s.ending ?? null,
+    ending_name: s.endingName ?? null,
   }))
   const { error: e1 } = await supabase.from('stories').upsert(storyRows)
   if (e1) throw new Error(`stories: ${e1.message}`)

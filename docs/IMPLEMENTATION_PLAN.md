@@ -18,7 +18,8 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
 3. Setiap task yang menutup gap konsistensi **wajib mencantumkan ID baris NTM** (mis. `G2-LOADBEAR`) di PR, dan baris itu baru boleh jadi `DONE` bila kelima bukti di NTM §4 lengkap.
 4. Patuhi **23 Non-Negotiable Engineering Rules** (ARCH §23) tanpa pengecualian. Jika sebuah langkah tampak melanggar salah satunya, berhenti dan minta keputusan produk.
 5. Semua pekerjaan di satu monorepo (ARCH §5). Batas kepemilikan paket (ARCH §5.1) adalah aturan keras, bukan saran.
-6. Jangan panggil provider AI dari Android; jangan commit state dari prosa tanpa validasi server + publish atomik; jangan pakai vector search sebagai sumber kebenaran canon.
+6. Jangan panggil provider AI dari client mana pun (web reader maupun Android); jangan commit state dari prosa tanpa validasi server + publish atomik; jangan pakai vector search sebagai sumber kebenaran canon.
+7. **Client sequencing (AMENDMENTS v0.4, LD-CLIENT-SEQ):** web reader mobile-first adalah client produksi pertama (M6-WEB); Android native menyusul (M6) setelah metrik web terbukti. Semua client wajib mengakses data hanya lewat seam client-data async (`lib/api/`); komponen UI tidak boleh bergantung langsung pada sumber data. Brand guard (ARCH §16.3) berlaku identik untuk web dan Android.
 
 **Definition of Done global (berlaku tiap task):** kode + test unit hijau + (bila menyentuh skema) migration test + (bila menyentuh gap) fixture di CI + (bila menyentuh metrik) muncul di dashboard, bukan sekadar log.
 
@@ -34,7 +35,8 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
 | M3 | Memory hierarchy + Layer A validator + alias | Phase B | G2, G3-LAYERA, G5-ALIAS | Simulasi deterministik ke Bab 50 (fixture) |
 | M4 | Template `lakoku_drama_bangkit_v1` + provider gateway | Phase B | G3-LAYERB (awal) | Provider live, plan/prosa schema-valid |
 | M5 | Reconciliation + thread lifecycle + Layer B penuh | Phase B/C | G1, G3-LAYERB, G4 | Soak 50 bab 3 jalur = NCS §8 hijau |
-| M6 | Android reader beta (shell → reader → choice) | Phase C | — | Reader E2E di device nyata |
+| M6-WEB | Web reader mobile-first (shell → reader → choice → koleksi/profil) sampai produksi ⭐ client pertama | Phase C | — | Reader E2E di browser mobile, seam `lib/api` terpasang, brand guard lolos |
+| M6 | Android reader beta (shell → reader → choice) — client kedua, setelah metrik web terbukti | Phase C | — | Reader E2E di device nyata |
 | M7 | Story Foundation, proposal, opening package, reports | Phase C | G5-VOICE | Onboarding → Bab 1 utuh |
 | M8 | Observability, alert, entitlement/checkout webhook | Phase C | G3-METRICS | Dashboard + alert + webhook aman |
 | M9 | Hardening + release gate + beta cut | Phase C | semua `DONE` | ARCH §18.3 + NTM §2 hijau |

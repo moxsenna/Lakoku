@@ -3,9 +3,10 @@
 **Version:** 1.1  
 **Status:** Build-ready technical baseline  
 **Last updated:** 5 July 2026  
-**Amendments applied:** AMENDMENTS v0.3 (§B) — see `docs/AMENDMENTS_v0.3.md`  
-**Primary release:** Private Beta Android-first  
-**Primary app stack:** Kotlin + Jetpack Compose  
+**Amendments applied:** AMENDMENTS v0.3 (§B), AMENDMENTS v0.4 (§B) — see `docs/AMENDMENTS_v0.3.md`, `docs/AMENDMENTS_v0.4.md`  
+**Primary release:** Private Beta — web reader mobile-first first, Android (Kotlin) second  
+**Client sequencing:** Web reader (Next.js) is the first production client; Android native follows once web retention/monetization is proven — see AMENDMENTS v0.4 §0 (LD-CLIENT-SEQ)  
+**Primary app stack:** Web reader — Next.js (App Router); Android — Kotlin + Jetpack Compose (second client)  
 **Backend stack:** TypeScript + Hono on Cloudflare Workers, Cloudflare Queues/Workflows, Supabase PostgreSQL  
 **Canonical product documents:** `docs/PRD_Lakoku_Interactive_v0.3.md`, `LAKOKU_BRAND_GUIDELINES_v1.1.md`  
 **Normative narrative-consistency spec:** `docs/NARRATIVE_CONSISTENCY_SPEC.md` (NCS v1.0). For long-form 50-chapter consistency, NCS governs; this document must not contradict it. See also `docs/NARRATIVE_TRACEABILITY_MATRIX.md`.
@@ -31,7 +32,7 @@ This is an **architecture document**, not a screen specification or complete dat
 ### 1.1 Architecture principles
 
 1. **Reader-first, not AI-first.** The app renders a premium reading experience. AI generation is server-side infrastructure and never appears as a consumer-facing concept.
-2. **Android-native first.** Kotlin and Jetpack Compose optimize the first release for Android reading, caching, accessibility, motion, and push behavior.
+2. **Mobile-first, web client first.** The reading experience is optimized for vertical touch screens. The **web reader (Next.js) is the first production client**; Android native (Kotlin/Jetpack Compose) follows as a second client once web metrics are proven. See AMENDMENTS v0.4 (LD-CLIENT-SEQ). Both clients obey the same brand and boundary rules.
 3. **Canonical state beats generated prose.** PostgreSQL records—not LLM output, chat history, or semantic search—are the source of truth for facts, choices, timelines, secrets, relationships, and ending gates.
 4. **Bounded branching.** The story spine is controlled; choices change state, scenes, routes, and endings without creating unbounded parallel novels.
 5. **Durable asynchronous generation.** A reader request must never hold open while a model writes a chapter. Generation uses queue-driven, resumable workflows with idempotency and retry control.
@@ -62,8 +63,8 @@ This is an **architecture document**, not a screen specification or complete dat
 
 ### 2.1 Explicitly not selected for v1
 
-- React Native: not needed for the Android-first release and adds a JavaScript/native integration boundary without solving a current product problem.
-- Flutter: viable later if iOS becomes a near-term commercial requirement; not selected while Android-only speed and native reader quality matter more.
+- React Native: not selected — the cross-platform native wrapper adds a JavaScript/native integration boundary without solving a current product problem. This does **not** apply to the web reader (Next.js), which is the first production client per AMENDMENTS v0.4.
+- Flutter: viable later if iOS becomes a near-term commercial requirement; not selected while web-first validation and (later) native Android reader quality matter more.
 - Direct Android-to-LLM calls: forbidden.
 - Direct Android access to narrative tables: forbidden.
 - Kubernetes, multi-region microservices, Kafka, or event-sourcing infrastructure: premature for private beta.
@@ -104,7 +105,8 @@ flowchart LR
 
 | Boundary | Responsibility | Must not do |
 |---|---|---|
-| Android app | Render UI, cache published reader data, collect choices, persist local progress, call the Reader API | Call AI providers, mutate canon directly, determine entitlement, expose secrets. |
+| Web reader app (first client) | Render UI, cache published reader data, collect choices, persist local progress, call the Reader API — via a single async client-data seam (`lib/api/`) | Call AI providers, mutate canon directly, determine entitlement, expose secrets, or let UI components depend on the data source directly. |
+| Android app (second client) | Render UI, cache published reader data, collect choices, persist local progress, call the Reader API | Call AI providers, mutate canon directly, determine entitlement, expose secrets. |
 | Reader API / BFF | Authenticate, authorize, validate input, shape app responses, invoke transactional runtime commands | Generate a chapter synchronously inside the HTTP request. |
 | Interactive Runtime | Story lifecycle, choice acceptance, entitlement checks, outbox creation, status transitions, atomic publish commands | Let generated text commit canon directly. |
 | Internal Narrative Core | Context compilation, planner/writer contracts, canon/reveal checks, validation and repair logic | Become a reader-facing brand or UI concept. |
@@ -333,7 +335,7 @@ Do not create a Gradle module for every isolated component. A new module require
 
 ### 7.1 API role
 
-The Reader API is the only public application backend surface for the Android app. It is responsible for:
+The Reader API is the only public application backend surface, and it is **client-agnostic**: the web reader (first client) and the Android app (second client) consume the exact same contract. On each client, a single async client-data seam represents this contract — in the web app that seam is `lib/api/` (see AMENDMENTS v0.4, LD-CONTRACT-SEAM). It is responsible for:
 
 - verifying user identity and session;
 - enforcing ownership and entitlement;
@@ -344,7 +346,7 @@ The Reader API is the only public application backend surface for the Android ap
 - handling safe status polling and error translation;
 - forwarding privacy-filtered telemetry.
 
-The Android app does not query narrative tables, invoke RPCs, call AI providers, or send model-related parameters.
+No client (web reader or Android app) queries narrative tables, invokes RPCs, calls AI providers, or sends model-related parameters.
 
 ### 7.2 API layers
 

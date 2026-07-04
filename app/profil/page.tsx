@@ -10,7 +10,7 @@ import {
   Trophy,
 } from 'lucide-react'
 import { AppShell } from '@/components/app-shell'
-import { stories } from '@/lib/stories'
+import { listStories, getStory } from '@/lib/api'
 
 const settings = [
   { icon: Palette, label: 'Tema dan Ukuran Teks', desc: 'Atur kenyamanan membacamu' },
@@ -19,10 +19,12 @@ const settings = [
   { icon: KeyRound, label: 'Akun dan Privasi', desc: 'Email, kata sandi, dan datamu' },
 ]
 
-export default function ProfilPage() {
+export default async function ProfilPage() {
+  const stories = await listStories()
+  const details = await Promise.all(stories.map((s) => getStory(s.id)))
   const totalBerjalan = stories.filter((s) => s.status === 'BERJALAN').length
   const totalSelesai = stories.filter((s) => s.status === 'SELESAI').length
-  const totalPilihan = stories.reduce((n, s) => n + s.jejak.length, 0)
+  const totalPilihan = details.reduce((n, s) => n + (s?.jejak.length ?? 0), 0)
 
   return (
     <AppShell>

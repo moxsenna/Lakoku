@@ -1,8 +1,9 @@
 import { AppShell } from '@/components/app-shell'
 import { StoryCard } from '@/components/story-card'
-import { stories } from '@/lib/stories'
+import { listStories } from '@/lib/api'
 
-export default function KoleksikuPage() {
+export default async function KoleksikuPage() {
+  const stories = await listStories()
   const berjalan = stories.filter((s) => s.status !== 'SELESAI')
   const selesai = stories.filter((s) => s.status === 'SELESAI')
 

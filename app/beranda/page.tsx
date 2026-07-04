@@ -2,10 +2,11 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { AppShell } from '@/components/app-shell'
 import { StoryCard } from '@/components/story-card'
-import { stories } from '@/lib/stories'
+import { listStories } from '@/lib/api'
 import { Play } from 'lucide-react'
 
-export default function BerandaPage() {
+export default async function BerandaPage() {
+  const stories = await listStories()
   const berjalan = stories.find((s) => s.status === 'BERJALAN')
   const lainnya = stories.filter((s) => s.id !== berjalan?.id)
 

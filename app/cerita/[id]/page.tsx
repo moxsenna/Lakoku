@@ -3,9 +3,10 @@ import Image from 'next/image'
 import { notFound } from 'next/navigation'
 import { ArrowLeft, Footprints } from 'lucide-react'
 import { AppShell } from '@/components/app-shell'
-import { getStory, stories } from '@/lib/stories'
+import { getStory, listStories } from '@/lib/api'
 
-export function generateStaticParams() {
+export async function generateStaticParams() {
+  const stories = await listStories()
   return stories.map((s) => ({ id: s.id }))
 }
 
@@ -15,7 +16,7 @@ export default async function CeritaDetailPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  const story = getStory(id)
+  const story = await getStory(id)
   if (!story) notFound()
 
   return (

@@ -1,8 +1,9 @@
 import { notFound } from 'next/navigation'
-import { getStory, stories } from '@/lib/stories'
+import { getStory, getChapter, listStories } from '@/lib/api'
 import { ReaderView } from '@/components/reader-view'
 
-export function generateStaticParams() {
+export async function generateStaticParams() {
+  const stories = await listStories()
   return stories.map((s) => ({ id: s.id }))
 }
 
@@ -12,8 +13,11 @@ export default async function BacaPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  const story = getStory(id)
+  const story = await getStory(id)
   if (!story) notFound()
 
-  return <ReaderView story={story} />
+  const chapter = await getChapter(story.id)
+  if (!chapter) notFound()
+
+  return <ReaderView story={story} chapter={chapter} />
 }

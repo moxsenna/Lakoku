@@ -1,8 +1,8 @@
 import Link from 'next/link'
 import Image from 'next/image'
-import type { Story } from '@/lib/stories'
+import type { StorySummary } from '@/lib/api'
 
-export function StoryCard({ story }: { story: Story }) {
+export function StoryCard({ story }: { story: StorySummary }) {
   const progress = Math.round((story.currentChapter / story.totalChapters) * 100)
 
   return (

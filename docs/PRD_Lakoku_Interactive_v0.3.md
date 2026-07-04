@@ -6,9 +6,9 @@
 **Arsitektur brand:** Produk hiburan B2C mandiri; terpisah secara publik dari Narraza.  
 **Status dokumen:** Build-ready product specification — brand-aligned revision  
 **Versi:** 0.3  
-**Amandemen diterapkan:** AMENDMENTS v0.3 (§A) — lihat `docs/AMENDMENTS_v0.3.md`  
+**Amandemen diterapkan:** AMENDMENTS v0.3 (§A), AMENDMENTS v0.4 (§A) — lihat `docs/AMENDMENTS_v0.3.md`, `docs/AMENDMENTS_v0.4.md`  
 **Dokumen normatif terkait:** `docs/NARRATIVE_CONSISTENCY_SPEC.md` (NCS v1.0) untuk kontrak konsistensi 50 bab; `docs/NARRATIVE_TRACEABILITY_MATRIX.md` untuk penelusuran gap → gate  
-**Platform rilis pertama:** Android-first  
+**Platform rilis pertama:** Web reader mobile-first (client produksi pertama); aplikasi Android native (Kotlin) menyusul sebagai client kedua di atas kontrak API yang sama — lihat AMENDMENTS v0.4 (LD-CLIENT-SEQ)  
 **Bahasa antarmuka dan prosa awal:** Bahasa Indonesia  
 **Target pasar awal:** Pembaca dewasa Indonesia, mobile-first, terutama usia 18–34, yang menyukai drama emosional, romance, rahasia, pengkhianatan, kebangkitan diri, dan pilihan bermakna. Produk tidak mengklaim afiliasi dengan KBM atau platform novel lain.  
 **Runtime backend:** Lakoku Interactive Runtime. Runtime ini memakai kapabilitas reusable dari Narraza Narrative Core secara internal, tetapi Narraza tidak tampil pada pengalaman pembaca, pemasaran, maupun komunikasi produk.  
@@ -223,7 +223,7 @@ Keputusan di bawah dianggap sebagai **product contract**. Agen coding, desainer,
 | Nama produk publik | **Lakoku** |
 | Definisi brand | Platform novel interaktif tempat pembaca menjadi tokoh utama |
 | Peran Narraza | Internal Narrative Core / sister creator system; tidak muncul dalam experience pembaca |
-| Platform awal | Android-first; backend API-first agar web reader dapat dibuat nanti |
+| Platform awal | Web reader mobile-first sebagai client produksi pertama; backend API-first (client-agnostic) sehingga aplikasi Android native (Kotlin) menyusul sebagai client kedua — lihat AMENDMENTS v0.4 (LD-CLIENT-SEQ) |
 | Bahasa awal | Bahasa Indonesia untuk UI dan prosa; copy berpusat pada “kamu”, “peranmu”, “pilihanmu”, dan “akibatnya” |
 | Target pasar | Pembaca dewasa Indonesia, mobile-first, terutama usia 18–34 |
 | Bentuk cerita | Personalized interactive novel dengan peran fiktif, bukan chatbot roleplay bebas |

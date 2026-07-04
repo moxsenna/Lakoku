@@ -4,25 +4,32 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Settings2, Flag, Minus, Plus, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { sampleChapter, consequenceByChoice, type Story } from '@/lib/stories'
+import { submitChoice, type StoryDetail, type Chapter } from '@/lib/api'
 
 type ReaderTheme = 'ink' | 'cream'
 type Phase = 'reading' | 'processing' | 'consequence'
 
-export function ReaderView({ story }: { story: Story }) {
-  const chapter = sampleChapter
+export function ReaderView({ story, chapter }: { story: StoryDetail; chapter: Chapter }) {
   const [theme, setTheme] = useState<ReaderTheme>('ink')
   const [fontSize, setFontSize] = useState(17)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [phase, setPhase] = useState<Phase>('reading')
-  const [chosenId, setChosenId] = useState<string | null>(null)
+  const [consequence, setConsequence] = useState<string[]>([])
+  const [nextChapterNumber, setNextChapterNumber] = useState<number | null>(null)
+  const [isEnding, setIsEnding] = useState(false)
 
   const isCream = theme === 'cream'
 
-  function chooseOption(id: string) {
-    setChosenId(id)
+  async function chooseOption(id: string) {
     setPhase('processing')
-    setTimeout(() => setPhase('consequence'), 2800)
+    const outcome = await submitChoice(story.id, chapter.number, id)
+    // Beri jeda naratif singkat sebelum menampilkan konsekuensi.
+    setTimeout(() => {
+      setConsequence(outcome.consequence)
+      setNextChapterNumber(outcome.nextChapterNumber)
+      setIsEnding(outcome.isEnding)
+      setPhase('consequence')
+    }, 2800)
   }
 
   if (phase === 'processing') {
@@ -163,9 +170,9 @@ export function ReaderView({ story }: { story: Story }) {
             </p>
           ))}
 
-          {phase === 'consequence' && chosenId && (
+          {phase === 'consequence' && consequence.length > 0 && (
             <div className="lk-fade-up flex flex-col gap-5 border-l-2 border-primary/50 pl-4">
-              {consequenceByChoice[chosenId].map((p, i) => (
+              {consequence.map((p, i) => (
                 <p key={i} className="text-pretty">
                   {p}
                 </p>
@@ -206,10 +213,12 @@ export function ReaderView({ story }: { story: Story }) {
               Akhir Bab {chapter.number}. Pilihanmu telah mengubah hubungan ini.
             </p>
             <Link
-              href={story.status === 'SELESAI' ? `/akhir/${story.id}` : `/cerita/${story.id}`}
+              href={isEnding ? `/akhir/${story.id}` : `/cerita/${story.id}`}
               className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
             >
-              Lanjut ke Bab {chapter.number + 1}
+              {isEnding
+                ? 'Lihat Akhir Cerita'
+                : `Lanjut ke Bab ${nextChapterNumber ?? chapter.number + 1}`}
             </Link>
             <Link
               href="/beranda"

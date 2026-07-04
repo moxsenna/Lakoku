@@ -1168,9 +1168,12 @@ These are deliberately deferred because they do not block private beta:
 
 ## 25. Reference Material
 
+- [Agent Rules (pintu masuk repo)](../AGENT_RULES.md)
+- [Client Sequencing v1.0](./CLIENT_SEQUENCING.md)
 - [Lakoku Brand Guidelines v1.1](./LAKOKU_BRAND_GUIDELINES_v1.1.md)
 - [Lakoku PRD v0.3](./PRD_Lakoku_Interactive_v0.3.md)
 - [Narrative Consistency Spec v1.0](./NARRATIVE_CONSISTENCY_SPEC.md)
+- [Amendments v0.4](./AMENDMENTS_v0.4.md)
 - [Amendments v0.3](./AMENDMENTS_v0.3.md)
 - [Narrative Traceability Matrix](./NARRATIVE_TRACEABILITY_MATRIX.md)
 - [Android architecture recommendations](https://developer.android.com/topic/architecture/recommendations)

@@ -59,6 +59,7 @@ Semua ini berlaku identik untuk client mana pun:
 |---|---|
 | `docs/CLIENT_SEQUENCING.md` | Kenapa web-first, invariant reuse Kotlin, dua-jalur |
 | `docs/IMPLEMENTATION_PLAN.md` | Runbook milestone M0–M9 (M6-WEB = web reader) |
+| `docs/PROGRESS_CHECKLIST.md` | **Status task M0–M9 (centang di sini).** Cek dulu sebelum mulai kerja — biar task terlewat ketahuan |
 | `docs/ARCHITECTURE_v1.1.md` | Baseline teknis; §23 = 17 aturan non-negosiabel |
 | `docs/PRD_Lakoku_Interactive_v0.3.md` | Spesifikasi produk, brand contract |
 | `docs/NARRATIVE_CONSISTENCY_SPEC.md` | Kontrak konsistensi naratif 50 bab (NCS) |

@@ -265,6 +265,10 @@ M0 → M1 → M2 → M3 → M4 → M5 ─────────────→
 
 ## 4. Checklist Sign-off per Milestone (untuk agen)
 
+> **Tracker task hidup:** status per-task M0–M9 dicentang di `docs/PROGRESS_CHECKLIST.md`.
+> Agen wajib memeriksa tracker itu sebelum mulai bekerja agar task yang terlewat ketahuan,
+> dan memperbaruinya di PR yang sama saat sebuah task selesai.
+
 Untuk setiap milestone, agen menandai selesai hanya bila:
 
 - [ ] Semua task DoD terpenuhi (kode + unit test + migration/fixture/metrik sesuai lingkup).

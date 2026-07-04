@@ -2,7 +2,7 @@
 
 Status: APPLIED — §A diterapkan ke `docs/PRD_Lakoku_Interactive_v0.3.md`, §B diterapkan ke `docs/ARCHITECTURE_v1.1.md`, §C diterapkan ke `docs/IMPLEMENTATION_PLAN.md` (5 Juli 2026).
 Dokumen sumber: PRD v0.3, ARCHITECTURE v1.1, IMPLEMENTATION_PLAN v1.0, AMENDMENTS v0.3 (tetap berlaku).
-Dokumen baru terkait: — (tidak ada spesifikasi naratif baru; NCS v1.0 & NTM v1.0 tidak berubah).
+Dokumen baru terkait: `docs/CLIENT_SEQUENCING.md` v1.0 (orientasi sequencing client — normatif, tidak menambah requirement). Tidak ada spesifikasi naratif baru; NCS v1.0 & NTM v1.0 tidak berubah.
 
 Amandemen ini mencatat **keputusan sequencing client** dan **seam kontrak data client** yang disepakati produk. Ia **tidak** mengubah satu pun aturan naratif (NCS/NTM), model data canon, atau prinsip runtime backend. Brand Guidelines tidak berubah dan tetap berlaku penuh untuk client web maupun Kotlin.
 

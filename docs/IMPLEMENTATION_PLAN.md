@@ -168,7 +168,32 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
   - Deliverable: soak 3 jalur (high-trust, low-trust, mixed) di staging.
   - Ref: ARCH §18.2 (B7), NCS §7/§8, NTM §2.
   - DoD (mengikat): 0 kontradiksi CRITICAL; semua ending reachable tiap checkpoint; biaya/bab dalam guardrail (ARCH §20.2).
-- **Exit Criteria M5:** NCS §8 Definition of Success hijau di soak test; NTM G1/G3-LAYERB/G4 = `DONE`. **Gate wajib sebelum reader beta dibuka** (NTM §3).
+- **Exit Criteria M5:** NCS §8 Definition of Success hijau di soak test; NTM G1/G3-LAYERB/G4 = `DONE`. **Gate wajib sebelum cerita AI nyata disajikan ke pembaca** (NTM §3) — berlaku untuk web reader (M6-WEB jalur cerita nyata) maupun Android (M6). Catatan: membangun UI/UX reader di atas *fixtures* (M6-WEB jalur UX) **tidak** dikunci gate ini.
+
+---
+
+### M6-WEB — Web Reader Mobile-First (Phase C) ⭐ client produksi pertama
+
+**Tujuan:** membangun pengalaman baca web mobile-first (client produksi pertama, lihat AMENDMENTS v0.4 / `docs/CLIENT_SEQUENCING.md`) sampai siap produksi, di atas seam data client-agnostic `lib/api/`.
+
+> **Dua-jalur (WAJIB dipahami agen):** M6-WEB punya dua jalur yang berbeda gate-nya.
+> - **Jalur UX (fixtures)** — membangun & memvalidasi UI/UX reader web di atas data fixture deterministik. **Tidak** dikunci di belakang M3/M5; boleh dikerjakan lebih awal (repo saat ini sudah pada jalur ini). Syaratnya: tidak ada logika naratif di client dan tidak ada panggilan AI dari client.
+> - **Jalur cerita nyata (AI ke pembaca)** — menyajikan bab hasil generasi AI kepada pembaca sungguhan. Ini **tetap** terkunci di belakang M5 hijau (NTM §3), sama seperti M6 Android. M6-WEB "siap produksi" hanya boleh diumumkan ke pengguna setelah gate ini lolos.
+
+- **T6W.1 Design system + app shell** — `apps/web` (Next.js App Router, mobile-first), sesuai Brand Guidelines v1.1.
+  - DoD: layout mobile-first (`max-w-md`, bottom nav), token tema Midnight Drama + Paper Cream, aksesibilitas (aria, `prefers-reduced-motion`); tidak ada string "Narraza"/framing "AI generator" (brand guard ARCH §16.3).
+- **T6W.2 Client-data seam `lib/api/`** — kontrak async client-agnostic (LD-CONTRACT-SEAM).
+  - Deliverable: `types.ts` (kontrak domain), `client.ts` (`listStories`/`getStory`/`getChapter`/`submitChoice`), fixtures internal terpisah dari UI.
+  - DoD: tidak ada komponen UI yang mengimpor sumber data langsung; mengganti implementasi `client.ts` ke Reader API nyata tidak menyentuh komponen; bentuk tipe konsisten dengan `packages/contracts` (ARCH §11.1).
+- **T6W.3 Reader + progress** — beranda, detail cerita, reader per-bab, jejak pilihan.
+  - DoD: reader menampilkan bab sesuai cerita (bukan sample statis); progress monotonic; loading state pakai bahasa naratif, bukan "AI sedang generate".
+- **T6W.4 Choice submission + pending-choice recovery + generation status** — via `submitChoice`, selaras ARCH §10 & §23 rule #5.
+  - DoD: repeat tap tidak double-advance; status reader-safe tanpa metadata model; konsekuensi & bab berikutnya berasal dari outcome server/seam.
+- **T6W.5 Verifikasi browser mobile** — agent-browser (viewport mobile).
+  - DoD: alur beranda → baca → pilih → konsekuensi → lanjut lolos; type-check & lint hijau.
+- **Exit Criteria M6-WEB:**
+  - *Jalur UX:* reader web mobile-first E2E lolos di browser dengan fixtures; seam `lib/api` terpasang tanpa kebocoran sumber data ke UI; brand guard lolos.
+  - *Jalur cerita nyata:* pengumuman "produksi ke pengguna" hanya setelah `client.ts` menunjuk Reader API nyata **dan** M5 hijau (NTM §3).
 
 ---
 
@@ -217,7 +242,7 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
 ### M9 — Hardening + Release Gate + Beta Cut
 
 - **T9.1 Isi seluruh baris NTM ke `DONE`** — verifikasi kelima bukti per baris (NTM §4).
-- **T9.2 Release gate** — ARCH §18.3 (B8) + NTM §2: build ditolak bila ada baris in-scope belum `DONE`, jargon Narraza/AI bocor, soak 50 bab gagal NCS §8, atau Android build/API contract gagal.
+- **T9.2 Release gate** — ARCH §18.3 (B8) + NTM §2: build ditolak bila ada baris in-scope belum `DONE`, jargon Narraza/AI bocor di client mana pun (web/Android), soak 50 bab gagal NCS §8, atau web build / Android build / API contract gagal.
 - **T9.3 Staging QA end-to-end** di device nyata + privacy review data.
 - **Exit Criteria M9 (beta-ready):** ARCH §18.3 + NTM §2 hijau; soak 50 bab 3 jalur bersih; semua ending reachable; biaya/bab dalam guardrail.
 
@@ -226,12 +251,14 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
 ## 3. Dependency Graph (ringkas)
 
 ```
-M0 → M1 → M2 → M3 → M4 → M5 → M9
-                     └→ M6 → M7 → M8 → M9
+M0 → M1 → M2 → M3 → M4 → M5 ─────────────→ M9
+     │               └→ M6 → M7 → M8 → M9
+     └→ M6-WEB (jalur UX, fixtures) ┄┄┄ menyajikan cerita AI ke pembaca menunggu M5
 ```
 
 - M3 adalah **prasyarat keras** untuk semua generasi panjang (NTM §3).
-- M5 adalah **prasyarat keras** untuk membuka reader beta ke pengguna (NTM §3).
+- M5 adalah **prasyarat keras** untuk menyajikan cerita AI nyata ke pengguna — baik lewat web reader (M6-WEB jalur cerita nyata) maupun Android (M6) (NTM §3).
+- **M6-WEB jalur UX (fixtures)** hanya bergantung pada kontrak di M1 dan boleh dimulai lebih awal, paralel dengan M2–M5. Yang dikunci di belakang M5 adalah *menyajikan bab AI ke pembaca*, bukan membangun UI/UX di atas fixtures.
 - M6–M8 boleh berjalan paralel dengan penyelesaian M5 **hanya** untuk pekerjaan UI yang tidak bergantung pada output naratif final; integrasi penuh menunggu M5 hijau.
 
 ---

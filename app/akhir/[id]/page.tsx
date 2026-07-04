@@ -2,7 +2,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { notFound } from 'next/navigation'
 import { ArrowLeft, Footprints, Lock, RotateCcw, Share2 } from 'lucide-react'
-import { getStory, listStories } from '@/lib/api'
+import { getStory, listStories } from '@/lib/api/server'
 
 export async function generateStaticParams() {
   const stories = await listStories()

@@ -7,7 +7,7 @@
  * Saat migrasi ke Cloudflare Workers, file ini pindah ke Workers dan
  * client.ts cukup menunjuk base URL baru — UI tidak berubah.
  */
-import { createClient } from '@/lib/supabase/server'
+import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import type {
   StorySummary,
   StoryDetail,
@@ -50,6 +50,20 @@ type OutcomeRow = {
   is_ending: boolean
 }
 
+/**
+ * Konten published bersifat publik (RLS read-only anon) dan tidak butuh sesi
+ * pengguna, jadi kita pakai client anon tanpa cookies. Ini juga membuat query
+ * aman dipanggil dari generateStaticParams (build time, tanpa HTTP request).
+ * Saat reader-state per-user hadir (auth), query state akan pakai client
+ * ber-cookies terpisah.
+ */
+function createClient() {
+  return createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  )
+}
+
 function toDetail(r: StoryRow): StoryDetail {
   return {
     id: r.id,
@@ -68,7 +82,7 @@ function toDetail(r: StoryRow): StoryDetail {
 }
 
 export async function queryStories(): Promise<StorySummary[]> {
-  const supabase = await createClient()
+  const supabase = createClient()
   const { data, error } = await supabase
     .from('stories')
     .select('*')
@@ -78,7 +92,7 @@ export async function queryStories(): Promise<StorySummary[]> {
 }
 
 export async function queryStory(id: string): Promise<StoryDetail | null> {
-  const supabase = await createClient()
+  const supabase = createClient()
   const { data, error } = await supabase
     .from('stories')
     .select('*')
@@ -92,7 +106,7 @@ export async function queryChapter(
   storyId: string,
   number: number,
 ): Promise<Chapter | null> {
-  const supabase = await createClient()
+  const supabase = createClient()
   const { data, error } = await supabase
     .from('chapters')
     .select('*')
@@ -117,7 +131,7 @@ export async function queryChoiceOutcome(
   chapterNumber: number,
   choiceId: string,
 ): Promise<ChoiceOutcome | null> {
-  const supabase = await createClient()
+  const supabase = createClient()
   const { data, error } = await supabase
     .from('choice_outcomes')
     .select('*')

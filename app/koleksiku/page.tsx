@@ -1,6 +1,6 @@
 import { AppShell } from '@/components/app-shell'
 import { StoryCard } from '@/components/story-card'
-import { listStories } from '@/lib/api'
+import { listStories } from '@/lib/api/server'
 
 export default async function KoleksikuPage() {
   const stories = await listStories()

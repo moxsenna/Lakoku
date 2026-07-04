@@ -3,7 +3,7 @@ import Image from 'next/image'
 import { AppShell } from '@/components/app-shell'
 import { StoryCard } from '@/components/story-card'
 import { ResumeChapter } from '@/components/resume-chapter'
-import { listStories } from '@/lib/api'
+import { listStories } from '@/lib/api/server'
 import { Play } from 'lucide-react'
 
 export default async function BerandaPage() {

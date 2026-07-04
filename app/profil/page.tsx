@@ -10,7 +10,7 @@ import {
   Trophy,
 } from 'lucide-react'
 import { AppShell } from '@/components/app-shell'
-import { listStories, getStory } from '@/lib/api'
+import { listStories, getStory } from '@/lib/api/server'
 
 const settings = [
   { icon: Palette, label: 'Tema dan Ukuran Teks', desc: 'Atur kenyamanan membacamu' },

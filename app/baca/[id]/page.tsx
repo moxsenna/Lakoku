@@ -1,5 +1,5 @@
 import { notFound, redirect } from 'next/navigation'
-import { getStory, getChapter, listStories } from '@/lib/api'
+import { getStory, getChapter, listStories } from '@/lib/api/server'
 import { ReaderView } from '@/components/reader-view'
 
 export async function generateStaticParams() {

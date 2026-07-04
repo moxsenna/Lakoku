@@ -1,6 +1,11 @@
 /**
- * Titik masuk tunggal lapisan data Lakoku.
- * UI mengimpor dari '@/lib/api' — bukan dari fixtures atau types langsung.
+ * Titik masuk tunggal lapisan data Lakoku (LD-CONTRACT-SEAM).
+ *
+ * - Komponen CLIENT ("use client") mengimpor dari sini: fungsi di `client.ts`
+ *   memanggil Reader API (route handlers) via fetch.
+ * - Halaman SERVER (RSC) mengimpor dari '@/lib/api/server' yang membaca
+ *   Supabase langsung (tanpa lompatan HTTP ekstra).
+ * - Kontrak tipe tunggal di `types.ts` dipakai keduanya.
  */
 export * from './types'
 export {

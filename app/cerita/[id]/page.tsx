@@ -4,7 +4,7 @@ import { notFound } from 'next/navigation'
 import { ArrowLeft, Footprints } from 'lucide-react'
 import { AppShell } from '@/components/app-shell'
 import { ResumeChapter } from '@/components/resume-chapter'
-import { getStory, listStories } from '@/lib/api'
+import { getStory, listStories } from '@/lib/api/server'
 
 export async function generateStaticParams() {
   const stories = await listStories()

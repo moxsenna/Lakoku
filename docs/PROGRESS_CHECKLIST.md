@@ -1,7 +1,7 @@
 # Lakoku — Progress Checklist (Task Tracker) v1.0
 
 **Status:** Living document — dicentang seiring pekerjaan berjalan
-**Last updated:** 5 Juli 2026 (baca berkelanjutan bab-ke-bab + konten demo "Di Balik Kaca" Bab 1→3; reader mengalir di dalam reader dengan fallback anggun)
+**Last updated:** 5 Juli 2026 (Supabase = sumber kebenaran konten; Reader API interim di Next.js route handlers hidup; seam client menunjuk API nyata — fixtures kini hanya seed)
 **Turunan dari:** `docs/IMPLEMENTATION_PLAN.md` (runbook v1.0) — jika runbook berubah, sinkronkan checklist ini di PR yang sama (anti-drift, runbook §5)
 **Cara pakai:** Setiap task = satu checkbox. Centang HANYA bila Definition of Done (DoD) task terpenuhi. Milestone dianggap selesai hanya bila blok Sign-off-nya lengkap (lihat runbook §4).
 
@@ -16,7 +16,7 @@
 | Milestone | Status | Catatan singkat |
 |---|---|---|
 | M0 — Repo, tooling, CI skeleton | `[ ]` | Belum monorepo ARCH §5; repo saat ini single Next.js app |
-| M1 — Contracts + DB + RLS | `[ ]` | Belum ada `packages/contracts` / `packages/db` / RLS |
+| M1 — Contracts + DB + RLS | `[~]` | Supabase terhubung; skema reader-path (stories/chapters/choice_outcomes) + RLS read publik + seed hidup. `packages/contracts`/`db` & domain naratif ARCH §13.1 belum |
 | M2 — Runtime lifecycle + fake gen E2E | `[ ]` | Belum ada `packages/runtime` |
 | M3 — Memory hierarchy + Layer A + alias | `[ ]` | Belum ada `packages/narrative-core` |
 | M4 — Template + provider gateway | `[ ]` | Belum ada `packages/ai-gateway` |
@@ -44,8 +44,13 @@
 ## M1 — Contracts + DB Baseline + RLS
 
 - [ ] **T1.1 `packages/contracts`** — Zod + JSON Schema + tipe ter-generate untuk endpoint ARCH §11.1; larangan duplikasi tipe ditegakkan.
-- [ ] **T1.2 Skema kanonik baseline** (`packages/db` + `infra/supabase`) — migrasi domain ARCH §13.1 termasuk `character_aliases`, `character_voice_sheets`, `act_rollups`, `facts_ledger.salience/.load_bearing`, `story_threads.status/.payoff_window`, `chapter_blueprints.version/.reconciled_from_version/.reconciliation_reason`, event `BLUEPRINT_RECONCILED`; migration test naik-turun lulus.
-- [ ] **T1.3 RLS + ownership harness** — RLS tiap tabel reader-private + test cross-user (story A tak terbaca user B).
+- [~] **T1.2 Skema kanonik baseline** (`packages/db` + `infra/supabase`) — migrasi domain ARCH §13.1 termasuk `character_aliases`, `character_voice_sheets`, `act_rollups`, `facts_ledger.salience/.load_bearing`, `story_threads.status/.payoff_window`, `chapter_blueprints.version/.reconciled_from_version/.reconciliation_reason`, event `BLUEPRINT_RECONCILED`; migration test naik-turun lulus.
+  - [x] **Reader-path baseline (subset)**: Supabase terhubung; migrasi `reader_path_baseline` + `align_schema_to_contract` membuat `stories`, `chapters`, `choice_outcomes` (selaras 1:1 dengan `lib/api/types.ts`); seed dari fixtures via `scripts/seed-supabase.ts` (idempotent upsert). Fixtures kini HANYA seed/fallback — sumber kebenaran konten adalah Supabase.
+  - [ ] Domain naratif ARCH §13.1 (facts_ledger, story_threads, blueprints, aliases, voice sheets, dst.) belum — menunggu M3–M5.
+  - Catatan: kolom `status`/`current_chapter`/`jejak` di `stories` adalah DEMO reader-state global; pindah ke tabel per-user saat auth hadir.
+- [~] **T1.3 RLS + ownership harness** — RLS tiap tabel reader-private + test cross-user (story A tak terbaca user B).
+  - [x] RLS aktif di 3 tabel konten published: read publik (anon), tulis hanya service role. Sesuai model "published content is public".
+  - [ ] Tabel reader-private per-user + ownership test cross-user — menunggu auth (belum ada tabel per-user).
 - [ ] **Exit Criteria M1** — migrasi + RLS + ownership test lulus di CI; `packages/contracts` jadi acuan tunggal.
 - **Catatan:** `lib/api/types.ts` saat ini adalah kontrak client sementara yang HARUS dijaga konsisten dengan `packages/contracts` begitu M1 dibuat (lihat T6W.2).
 
@@ -86,6 +91,8 @@
 - [~] **T6W.1 Design system + app shell** — mobile-first (`max-w-md`, bottom nav), token Midnight Drama + Paper Cream, aksesibilitas (aria, `prefers-reduced-motion`); brand guard (tanpa "Narraza"/"AI generator").
   - Catatan: sudah ada di root (`app/`, `components/app-shell.tsx`), belum dipindah ke `apps/web` sesuai ARCH §5. Deviasi struktur monorepo (lihat M0/M1).
 - [x] **T6W.2 Client-data seam `lib/api/`** — `types.ts`, `client.ts` (`listStories`/`getStory`/`getChapter`/`submitChoice`), fixtures internal terpisah dari UI; tak ada komponen yang impor sumber data langsung; ganti `client.ts` → Reader API tak sentuh komponen.
+  - **TERBUKTI**: `client.ts` kini menunjuk Reader API interim (`/api/*` route handlers → Supabase) — komponen UI tidak berubah sama sekali saat penggantian. Halaman RSC pakai `lib/api/server.ts` (baca Supabase langsung, tanpa lompatan HTTP); komponen client tetap fetch via `/api/*`.
+  - Reader API interim (AMENDMENTS v0.4 jalur "Next.js dulu, Workers nanti"): `GET /api/stories`, `GET /api/stories/[id]`, `GET /api/stories/[id]/chapters/[number]`, `POST /api/stories/[id]/choices`. Query Supabase pakai client anon TANPA cookies (aman untuk `generateStaticParams`; konten published memang publik by RLS).
   - Catatan: konsistensi tipe dengan `packages/contracts` (ARCH §11.1) belum bisa diverifikasi karena `packages/contracts` belum ada (M1). Verifikasi ulang saat M1 selesai.
 - [x] **T6W.3 Reader + progress** — reader menampilkan bab sesuai cerita (bukan sample statis); loading state pakai bahasa naratif; progress monotonic yang persist lintas sesi.
   - Progress lokal: `lib/api/progress.ts` (cache client, monotonic, aman SSR) + `components/resume-chapter.tsx` (`useSyncExternalStore`, surface di beranda hero & CTA detail). Reader mencatat bab saat dibuka & saat maju.
@@ -98,7 +105,9 @@
   - [ ] Pending-choice recovery yang otoritatif (resume setelah app mati saat generasi berjalan) — bergantung server nyata + generation lease (M2/T2.1); belum bisa diuji tanpa backend.
 - [x] **T6W.5 Verifikasi browser mobile** — alur beranda → baca → pilih → konsekuensi → lanjut lolos; type-check hijau (agent-browser, viewport mobile).
 - [x] **Exit Criteria M6-WEB (jalur UX)** — reader web E2E lolos dengan fixtures ✔; seam terpasang tanpa kebocoran ✔; brand guard lolos ✔; progress monotonic persist ✔; `tsc --noEmit` hijau ✔; **lint gate hijau** (`eslint .`, 0 error/0 warning) ✔.
-- [ ] **Exit Criteria M6-WEB (jalur cerita nyata)** — `client.ts` menunjuk Reader API nyata DAN M5 hijau. (terkunci M5)
+- [~] **Exit Criteria M6-WEB (jalur cerita nyata)** — `client.ts` menunjuk Reader API nyata DAN M5 hijau.
+  - [x] `client.ts` menunjuk Reader API nyata (route handlers → Supabase). Verifikasi browser: beranda + reader + pilihan→konsekuensi semuanya dari database.
+  - [ ] M5 hijau (validator konsistensi + soak 50 bab) — konten AI belum boleh disajikan; konten sekarang tetap kuratif/fixture-seeded.
 
 ## M6 — Android Reader Beta (client kedua)
 

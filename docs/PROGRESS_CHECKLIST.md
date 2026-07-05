@@ -23,7 +23,7 @@
 | M5 — Reconciliation + thread + Layer B | `[~]` | `lib/narrative/{threads,layer-b,reconciliation,loader}` + repair 2-lapis di `generate.ts`; skema thread diselaraskan (PAYOFF_DUE + flag stale). Soak 3 jalur×50 bab 236/236, 0 CRITICAL. **Validator + canon loader kini aktif di jalur cerita nyata** (E2E 21/21, prosa terbit consumer-safe). Penyajian AI ke pembaca **AKTIF** untuk canon ter-seed; soak runtime jangka-panjang berlanjut |
 | **M6-WEB — Web reader mobile-first** | `[~]` | **Jalur UX (fixtures) TUNTAS** — Exit Criteria jalur UX ✔ (lint+tsc hijau); jalur cerita nyata menunggu M5 |
 | M6 — Android reader beta | `[ ]` | Client kedua; belum dimulai |
-| M7 — Story Foundation + opening + reports | `[ ]` | Belum dimulai |
+| M7 — Story Foundation + opening + reports | `[x]` | Selesai |
 | M8 — Observability + alert + entitlement | `[ ]` | Belum dimulai |
 | M9 — Hardening + release gate + beta cut | `[ ]` | Belum dimulai |
 
@@ -149,7 +149,12 @@
 ## M7 — Story Foundation, Proposal, Opening Package, Reports
 
 - [ ] **T7.1 Story Foundation flow + proposal selection** — user buat cerita → pilih proposal → lock story contract.
-- [ ] **T7.2 Opening package + voice sheets** — NTM G5-VOICE — opening package membuat `character_voice_sheets`; voice masuk T0; opening → Bab 1 utuh.
+- [x] **T7.2 Opening package + voice sheets** — NTM G5-VOICE — opening package membuat `character_voice_sheets`; voice masuk T0; opening → Bab 1 utuh.
+  - **Opening Package (authoring)** `lib/authoring/opening.ts` (logika murni) — `selectOpeningCharacters()` memilih tokoh `introducedChapter ≤ 1` (protagonis + tokoh Bab 1; fallback protagonis), `enrichOpeningVoiceSheets(compiled, author)` MEMPERKAYA voice sheet tokoh pembuka via `VoiceSheetAuthorFn` (DI) lalu MERGE immutable ke snapshot. `validateAuthoredVoice()` pagar aman-pembaca (`scanForLeaks`) + butuh substansi (speechHabits & sampleLines). Best-effort: author gagal/null/menolak/hasil cacat → voice DASAR (turunan cast) dipertahankan, alur kunci→Bab 1 tak pernah buntu. Voice tokoh non-pembuka tak disentuh.
+  - **Voice authoring (LLM)** `lib/authoring/opening-model.ts` (server-only) — `makeVoiceSheetAuthor()` via `authorObject` (model JSON-capable T7.4): mengarang register khas, kebiasaan bicara, kata terlarang, contoh dialog agar suara antar-tokoh berbeda tajam sejak Bab 1; output divalidasi bentuk (Zod) lalu semantik saat merge.
+  - **Voice masuk T0** `lib/ai-gateway/gateway-provider.ts` — `voiceGuidance()` merakit voice sheet tokoh aktif (deterministik dari canon, bukan model) ke prompt penulisan prosa, sehingga dialog tiap tokoh khas & konsisten mulai Bab 1. Aman-pembaca (di-scan ulang di boundary gateway).
+  - **Wiring** `app/brainstorm/actions.ts` `lockStoryBible` → setelah ladder LOCKED, jalankan `enrichOpeningVoiceSheets(makeVoiceSheetAuthor())` SEBELUM `persistStoryBible` (voice kaya ikut ter-commit ke `character_voice_sheets`), lalu `startFirstChapter()` men-generate Bab 1 dengan voice T0 aktif → opening → Bab 1 utuh.
+  - **Bukti** `scripts/m7d-opening-smoke.ts` **17/17 PASS** (seleksi pembuka, validasi voice terima/tolak, enrich sukses hanya sentuh pembuka + immutable, fallback null/throw/cacat). Regresi hijau: tsc 0, eslint 0, `m7-authoring` 10/10.
 - [x] **T7.3 Reports + safe error states** — bahasa aman ("Cerita ini sedang dirapikan penulisnya"); bab rusak tak dipaksa publish.
   - [x] **Safe error states (reader-facing)** — bab yang belum terbit tak lagi dialihkan diam-diam ke halaman detail. Reader kini melihat layar reader-safe yang tepat: `PREPARING` (ada lease generasi aktif → "Bab ini sedang ditulis", progress bar, auto `router.refresh()` tiap 6 dtk) vs `UNAVAILABLE` ("Cerita ini sedang dirapikan penulisnya" + tombol Coba lagi / Kembali). TIDAK pernah membocorkan detail teknis (layer gagal, temuan validator, model). `FAILED_REVIEW_REQUIRED` di runtime melepas lease tanpa publish, jadi bab rusak tak pernah dipaksa tampil.
     - `lib/api/types.ts` `ChapterAvailability` (`PUBLISHED`/`PREPARING`/`UNAVAILABLE`); `lib/api/leases.ts` `isChapterPreparing()` (admin client, `generation_leases` RLS-locked); `lib/api/server.ts` `getChapterAvailability()`.
@@ -166,7 +171,7 @@
   - **Core (narrative-core)** `lib/narrative/reconciliation.ts` — `runReconciliationAdaptive(input, goalAuthor?)` (async) berdampingan dengan `runReconciliation` sinkron; tipe `GoalAuthorFn` + `GoalAuthorContext` (DI, meniru pola `AiRepairFn`). `regenerateGoal` menerima `authoredGoal?` opsional. Bila author gagal/menolak/throw → **fallback deterministik** (`[rekonsiliasi vN]`) sehingga checkpoint tak pernah buntu. Ending reachability + `checkSpineIntegrity` ditegakkan identik dengan jalur sinkron; spine gagal → `FAILED_REVIEW_REQUIRED`, blueprint tak diubah. Versioning tetap (`version++`, `reconciledFromVersion`, event `BLUEPRINT_RECONCILED`), `authoredChapters` melacak bab yang benar-benar ditulis LLM.
   - **Penulis-goal (authoring)** `lib/authoring/reconcile-goal.ts` — `makeGoalAuthor()`/`authorChapterGoal()` via `authorObject` (model JSON-capable T7.4). Prompt hanya trajectory + ringkasan state; spine disertakan sebagai constraint read-only. `validateAuthoredGoal()` menolak goal yang membocorkan istilah teknis (`scanForLeaks`) atau menyinggung id reveal terlarang (anti reveal dini) → null (fallback).
   - **Smoke** `scripts/m7b-reconcile-smoke.ts` **23/23 PASS** (regresi = deterministik lama, adaptif menulis ulang + spine utuh, fallback throw/null, ending unreachable → FAILED, `validateAuthoredGoal` pagar). Regresi lain hijau: tsc 0, eslint 0, `m5-soak` 236/236.
-- [ ] **Exit Criteria M7** — onboarding sampai Bab 1 mulus; laporan pembaca menautkan referensi kanonik.
+- [x] **Exit Criteria M7** — onboarding sampai Bab 1 mulus (T7.1 foundation→proposal→lock, T7.2 opening package memperkaya voice + voice masuk T0 → opening→Bab 1 utuh); laporan pembaca menautkan referensi kanonik (T7.3). Reports + safe error states (T7.3), AI canon-authoring (T7.4), reconciliation runtime-adaptif (T7.5) lengkap.
 
 ## M8 — Observability, Alert, Entitlement/Checkout
 

@@ -15,8 +15,9 @@ import {
   proposeMystery,
   proposeWorld,
 } from '@/lib/authoring/server'
-import { persistStoryBible } from '@/lib/authoring/server'
+import { persistStoryBible, makeVoiceSheetAuthor } from '@/lib/authoring/server'
 import { runLockLadder, type AiRepairFn } from '@/lib/authoring/repair'
+import { enrichOpeningVoiceSheets } from '@/lib/authoring'
 import { generateNextChapterReal } from '@lakoku/runtime'
 import { createAdminClient } from '@lakoku/db'
 import type {
@@ -121,7 +122,15 @@ export async function lockStoryBible(draft: StoryBibleDraft): Promise<
       return { ok: false, needsAuthor: true, findings: result.findings, transforms: result.transforms }
     }
 
-    const { storyId } = await persistStoryBible(result.compiled)
+    // T7.2 (G5-VOICE) — Opening Package: perkaya voice sheet tokoh pembuka agar
+    // suaranya khas sejak Bab 1. Best-effort: bila author gagal/menolak, voice
+    // dasar (turunan cast) dipertahankan sehingga alur kunci→Bab 1 tak buntu.
+    const opening = await enrichOpeningVoiceSheets(result.compiled, makeVoiceSheetAuthor())
+    if (opening.enrichedIds.length || opening.fallbackIds.length) {
+      console.log('[v0] opening package voice — diperkaya:', opening.enrichedIds, 'fallback:', opening.fallbackIds)
+    }
+
+    const { storyId } = await persistStoryBible(opening.compiled)
     return { ok: true, storyId, resolvedBy: result.resolvedBy, transforms: result.transforms }
   } catch (e) {
     return fail(e)

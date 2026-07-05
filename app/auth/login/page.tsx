@@ -6,6 +6,14 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { ArrowLeft } from 'lucide-react'
 
+/** Ambil ?next= dan hanya izinkan path internal (cegah open-redirect). */
+function safeNext(): string {
+  if (typeof window === 'undefined') return '/beranda'
+  const next = new URLSearchParams(window.location.search).get('next')
+  if (next && next.startsWith('/') && !next.startsWith('//')) return next
+  return '/beranda'
+}
+
 export default function LoginPage() {
   const router = useRouter()
   const [email, setEmail] = useState('')
@@ -25,7 +33,7 @@ export default function LoginPage() {
       setLoading(false)
       return
     }
-    router.push('/beranda')
+    router.push(safeNext())
     router.refresh()
   }
 

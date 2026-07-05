@@ -41,14 +41,20 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  if (
-    // if the user is not logged in and the app path, in this case, /protected, is accessed, redirect to the login page
-    request.nextUrl.pathname.startsWith('/protected') &&
-    !user
-  ) {
-    // no user, potentially respond by redirecting the user to the login page
+  // Rute yang memerlukan sesi (pengalaman baca personal & koleksi).
+  // Jelajah (/beranda, /cerita) dan /profil (punya CTA masuk) tetap publik.
+  const PROTECTED_PREFIXES = ['/baca', '/akhir', '/koleksiku']
+  const pathname = request.nextUrl.pathname
+  const needsAuth = PROTECTED_PREFIXES.some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`),
+  )
+
+  if (needsAuth && !user) {
+    // Tamu diarahkan ke login, membawa tujuan asal agar bisa kembali.
     const url = request.nextUrl.clone()
     url.pathname = '/auth/login'
+    url.search = ''
+    url.searchParams.set('next', pathname + request.nextUrl.search)
     return NextResponse.redirect(url)
   }
 

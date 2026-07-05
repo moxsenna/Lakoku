@@ -27,6 +27,20 @@ type ReaderStateRow = {
   ending_name: string | null
 }
 
+/** Urutan status untuk aturan monotonic: tak boleh mundur. */
+const STATUS_RANK: Record<ReaderState['status'], number> = {
+  BARU: 0,
+  BERJALAN: 1,
+  SELESAI: 2,
+}
+
+function maxStatus(
+  a: ReaderState['status'],
+  b: ReaderState['status'],
+): ReaderState['status'] {
+  return STATUS_RANK[a] >= STATUS_RANK[b] ? a : b
+}
+
 function toState(r: ReaderStateRow): ReaderState {
   return {
     storyId: r.story_id,
@@ -100,35 +114,48 @@ export async function applyChoiceToUserState(
   if (!user) return
 
   const existing = await getReaderState(storyId)
-  const prevJejak = existing?.jejak ?? []
-  const alreadyRecorded = prevJejak.some((j) => j.chapter === chapterNumber)
 
-  const jejak: JejakItem[] = alreadyRecorded
-    ? prevJejak
-    : [
-        ...prevJejak,
-        {
-          chapter: chapterNumber,
-          decision,
-          consequence: outcome.consequence[0] ?? '',
-        },
-      ]
+  // --- Rekonsiliasi jejak: gabung per-bab, keputusan terbaru menang, urut naik.
+  // Aman untuk tulisan lintas-perangkat yang tiba tak berurutan.
+  const byChapter = new Map<number, JejakItem>()
+  for (const j of existing?.jejak ?? []) byChapter.set(j.chapter, j)
+  byChapter.set(chapterNumber, {
+    chapter: chapterNumber,
+    decision,
+    consequence: outcome.consequence[0] ?? '',
+  })
+  const jejak: JejakItem[] = [...byChapter.values()].sort(
+    (a, b) => a.chapter - b.chapter,
+  )
 
-  const nextChapter = outcome.isEnding
-    ? (existing?.currentChapter ?? chapterNumber)
-    : Math.max(
-        existing?.currentChapter ?? 1,
-        outcome.nextChapterNumber ?? chapterNumber + 1,
-      )
+  // --- Progres MONOTONIC: current_chapter tak pernah mundur.
+  const advanceTo = outcome.isEnding
+    ? chapterNumber
+    : (outcome.nextChapterNumber ?? chapterNumber + 1)
+  const nextChapter = Math.max(existing?.currentChapter ?? 1, advanceTo)
+
+  // --- Status MONOTONIC: tak boleh turun dari SELESAI ke BERJALAN.
+  const incomingStatus: ReaderState['status'] = outcome.isEnding
+    ? 'SELESAI'
+    : 'BERJALAN'
+  const status = maxStatus(existing?.status ?? 'BARU', incomingStatus)
+
+  // --- Ending name: pertahankan bila cerita sudah/menjadi SELESAI.
+  const endingName =
+    status === 'SELESAI'
+      ? (outcome.isEnding
+          ? (outcome.consequence[0] ?? existing?.endingName ?? null)
+          : (existing?.endingName ?? null))
+      : null
 
   const { error } = await supabase.from('reader_states').upsert(
     {
       user_id: user.id,
       story_id: storyId,
-      status: outcome.isEnding ? 'SELESAI' : 'BERJALAN',
+      status,
       current_chapter: nextChapter,
       jejak,
-      ending_name: outcome.isEnding ? (outcome.consequence[0] ?? null) : null,
+      ending_name: endingName,
       updated_at: new Date().toISOString(),
     },
     { onConflict: 'user_id,story_id' },

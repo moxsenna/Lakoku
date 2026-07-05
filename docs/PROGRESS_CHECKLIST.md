@@ -1,7 +1,7 @@
 # Lakoku — Progress Checklist (Task Tracker) v1.0
 
 **Status:** Living document — dicentang seiring pekerjaan berjalan
-**Last updated:** 5 Juli 2026 (Auth Supabase + reader-state per-user hidup: tabel `reader_states` RLS pemilik-saja, login/daftar/callback, seam server overlay state per-user, jejak/progres tercatat per-akun — terverifikasi E2E)
+**Last updated:** 5 Juli 2026 (Proteksi rute middleware — tamu diarahkan ke `/auth/login?next=` untuk `/baca`,`/akhir`,`/koleksiku`; rekonsiliasi progres MONOTONIC lintas-perangkat: status/current_chapter tak pernah mundur, jejak digabung per-bab — terverifikasi E2E)
 **Turunan dari:** `docs/IMPLEMENTATION_PLAN.md` (runbook v1.0) — jika runbook berubah, sinkronkan checklist ini di PR yang sama (anti-drift, runbook §5)
 **Cara pakai:** Setiap task = satu checkbox. Centang HANYA bila Definition of Done (DoD) task terpenuhi. Milestone dianggap selesai hanya bila blok Sign-off-nya lengkap (lihat runbook §4).
 
@@ -52,6 +52,8 @@
   - [x] RLS aktif di 3 tabel konten published: read publik (anon), tulis hanya service role. Sesuai model "published content is public".
   - [x] `reader_states` RLS pemilik-saja (`auth.uid() = user_id` untuk select/insert/update/delete) — reader-private ditegakkan di DB. Terverifikasi: baris tercatat terikat `user_id` saat user uji memilih.
   - [ ] Ownership test cross-user formal (user B tak bisa baca baris user A) sebagai test otomatis di CI — menunggu M0 harness test.
+  - [x] **Proteksi rute** (`lib/supabase/proxy.ts`): tamu yang membuka `/baca`,`/akhir`,`/koleksiku` diarahkan ke `/auth/login?next=<asal>` (sanitasi path internal, anti open-redirect). Jelajah `/beranda`,`/cerita` & `/profil` (punya CTA masuk) tetap publik. Terverifikasi E2E.
+  - [x] **Rekonsiliasi progres MONOTONIC lintas-perangkat** (`applyChoiceToUserState`): `current_chapter` via `Math.max`, `status` via rank `BARU<BERJALAN<SELESAI` (tak pernah turun), `ending_name` dipertahankan saat SELESAI, jejak digabung per-bab lalu diurutkan. Terverifikasi: pilihan bab-1 yang datang setelah watermark SELESAI/bab-5 TIDAK menurunkan progres.
 - [ ] **Exit Criteria M1** — migrasi + RLS + ownership test lulus di CI; `packages/contracts` jadi acuan tunggal.
 - **Catatan:** `lib/api/types.ts` saat ini adalah kontrak client sementara yang HARUS dijaga konsisten dengan `packages/contracts` begitu M1 dibuat (lihat T6W.2).
 

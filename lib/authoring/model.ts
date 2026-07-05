@@ -37,6 +37,11 @@ export function resolveAuthoringModel(): AuthoringModel {
       name: 'openrouter-authoring',
       baseURL: 'https://openrouter.ai/api/v1',
       apiKey,
+      // WAJIB: tanpa ini provider hanya kirim `json_object` tanpa schema,
+      // sehingga generateObject sering gagal ("did not match schema").
+      // Dengan flag ini, JSON Schema penuh dikirim & OpenRouter menegakkannya
+      // (hanya untuk model JSON-capable seperti deepseek/gemini).
+      supportsStructuredOutputs: true,
       transformRequestBody: (args) => ({ ...args, models }),
     })
     return { model: openrouter(models[0]), label: `openrouter:${models.join('|')}` }

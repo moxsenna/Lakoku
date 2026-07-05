@@ -1,8 +1,8 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "main": ".open-next/worker.js",
-  "name": "lakoku",
-  "compatibility_date": "2026-07-06",
+  "name": "lakoku-v2",
+  "compatibility_date": "2025-06-01",
   "compatibility_flags": [
     "nodejs_compat",
     "global_fetch_strictly_public"

@@ -8,3 +8,4 @@
 export * from './schema'
 export * from './compile'
 export * from './validate'
+export * from './repair'

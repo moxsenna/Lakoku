@@ -32,7 +32,7 @@ export async function processCheckoutWebhook(
   signatureHeader: string | null | undefined,
   deps: ProcessDeps,
 ): Promise<ProcessOutcome> {
-  const verified = verifyCheckoutWebhook(rawBody, signatureHeader, deps.verify!)
+  const verified = await verifyCheckoutWebhook(rawBody, signatureHeader, deps.verify!)
   if (!verified.ok) {
     return { status: 'rejected', reason: verified.reason }
   }

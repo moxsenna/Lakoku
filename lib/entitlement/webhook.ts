@@ -16,7 +16,15 @@
  * `t=<unix>,v1=<hex-hmac>` (kompatibel Stripe) di atas payload
  * `"{t}.{rawBody}"`. Rahasia disuntik dari luar (env di lapisan server).
  */
-import crypto from 'node:crypto'
+async function importKey(secret: string) {
+  return crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+}
 
 export type EntitlementAction = 'grant' | 'revoke'
 
@@ -92,30 +100,27 @@ function parseSignatureHeader(
 }
 
 /** Hitung HMAC-SHA256 hex atas `"{t}.{rawBody}"`. */
-export function computeSignature(
+export async function computeSignature(
   rawBody: string,
   timestamp: number,
   secret: string,
-): string {
-  return crypto
-    .createHmac('sha256', secret)
-    .update(`${timestamp}.${rawBody}`)
-    .digest('hex')
+): Promise<string> {
+  const key = await importKey(secret)
+  const data = new TextEncoder().encode(`${timestamp}.${rawBody}`)
+  const signature = await crypto.subtle.sign('HMAC', key, data)
+  return Array.from(new Uint8Array(signature))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
 }
 
 /** Bandingkan dua hex secara timing-safe; false bila panjang beda / non-hex. */
 function timingSafeEqualHex(a: string, b: string): boolean {
   if (a.length !== b.length || a.length === 0) return false
-  let bufA: Buffer
-  let bufB: Buffer
-  try {
-    bufA = Buffer.from(a, 'hex')
-    bufB = Buffer.from(b, 'hex')
-  } catch {
-    return false
+  let result = 0
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i)
   }
-  if (bufA.length !== bufB.length || bufA.length === 0) return false
-  return crypto.timingSafeEqual(bufA, bufB)
+  return result === 0
 }
 
 function parseEventPayload(rawBody: string): Omit<CheckoutEvent, 'action' | 'signedAt'> | null {
@@ -147,18 +152,18 @@ function parseEventPayload(rawBody: string): Omit<CheckoutEvent, 'action' | 'sig
  * Verifikasi tanda tangan + stempel waktu + skema payload, lalu petakan ke
  * event entitlement tervalidasi. Fail-closed di setiap cabang.
  */
-export function verifyCheckoutWebhook(
+export async function verifyCheckoutWebhook(
   rawBody: string,
   signatureHeader: string | null | undefined,
   opts: VerifyOptions,
-): VerifyResult {
+): Promise<VerifyResult> {
   if (!signatureHeader || signatureHeader.trim() === '') {
     return { ok: false, reason: 'MISSING_SIGNATURE' }
   }
   const parsed = parseSignatureHeader(signatureHeader)
   if (!parsed) return { ok: false, reason: 'MALFORMED_SIGNATURE' }
 
-  const expected = computeSignature(rawBody, parsed.t, opts.secret)
+  const expected = await computeSignature(rawBody, parsed.t, opts.secret)
   if (!timingSafeEqualHex(expected, parsed.v1)) {
     return { ok: false, reason: 'BAD_SIGNATURE' }
   }

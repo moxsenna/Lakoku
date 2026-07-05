@@ -52,9 +52,11 @@ export function compileStoryBible(draft: StoryBibleDraft, storyIdInput?: string)
   const idByName = new Map<string, string>()
   const usedIds = new Set<string>()
   const characters: Character[] = cast.characters.map((c) => {
-    let id = slugify(c.canonicalName)
+    // Id di-scope per-story: pkey global tabel canon, cegah tabrakan lintas cerita.
+    const slug = slugify(c.canonicalName)
+    let id = `${storyId}:char:${slug}`
     let n = 2
-    while (usedIds.has(id)) id = `${slugify(c.canonicalName)}-${n++}`
+    while (usedIds.has(id)) id = `${storyId}:char:${slug}-${n++}`
     usedIds.add(id)
     idByName.set(c.canonicalName, id)
     return {
@@ -86,7 +88,7 @@ export function compileStoryBible(draft: StoryBibleDraft, storyIdInput?: string)
 
   // --- Fakta + knowledge scope (subjek tahu faktanya sejak established). ---
   const facts: Fact[] = world.facts.map((f, i) => ({
-    id: `fact-${i + 1}`,
+    id: `${storyId}:fact-${i + 1}`,
     storyId,
     statement: f.statement,
     subjectCharacterId: f.subjectName ? idByName.get(f.subjectName) ?? null : null,
@@ -106,7 +108,7 @@ export function compileStoryBible(draft: StoryBibleDraft, storyIdInput?: string)
 
   // --- Rahasia terjadwal (gate dari AI, sudah divalidasi ⊆ template gates). ---
   const secrets: SecretReveal[] = mystery.secrets.map((s, i) => ({
-    id: `secret-${i + 1}`,
+    id: `${storyId}:secret-${i + 1}`,
     description: s.description,
     revealGateChapter: s.revealGateChapter,
     revealed: false,
@@ -115,7 +117,7 @@ export function compileStoryBible(draft: StoryBibleDraft, storyIdInput?: string)
   // --- Threads: misteri utama + thread tambahan. ---
   const threads: StoryThread[] = [
     {
-      id: 'thread-main',
+      id: `${storyId}:thread-main`,
       title: mystery.mainMystery.title,
       status: 'OPEN',
       openedChapter: 1,
@@ -126,7 +128,7 @@ export function compileStoryBible(draft: StoryBibleDraft, storyIdInput?: string)
       staleSinceChapter: null,
     },
     ...world.threads.map((t, i) => ({
-      id: `thread-${i + 1}`,
+      id: `${storyId}:thread-${i + 1}`,
       title: t.title,
       status: 'OPEN' as const,
       openedChapter: t.openedChapter,

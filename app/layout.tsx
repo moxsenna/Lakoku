@@ -27,6 +27,8 @@ export const viewport: Viewport = {
   themeColor: '#191319',
 }
 
+export const runtime = 'edge'
+
 export default function RootLayout({
   children,
 }: Readonly<{

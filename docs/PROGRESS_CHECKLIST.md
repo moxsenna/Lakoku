@@ -1,7 +1,7 @@
 # Lakoku — Progress Checklist (Task Tracker) v1.0
 
 **Status:** Living document — dicentang seiring pekerjaan berjalan
-**Last updated:** 5 Juli 2026 (Proteksi rute middleware — tamu diarahkan ke `/auth/login?next=` untuk `/baca`,`/akhir`,`/koleksiku`; rekonsiliasi progres MONOTONIC lintas-perangkat: status/current_chapter tak pernah mundur, jejak digabung per-bab — terverifikasi E2E)
+**Last updated:** 5 Juli 2026 (M2 Runtime Lifecycle interim: RPC atomik `publish_chapter`/`acquire_generation_lease`, event log append-only, idempotency keys, generation lease, fake generation workflow deterministik, ETag+304 di endpoint bab — harness invariant 9/9 hijau, verifikasi HTTP lulus)
 **Turunan dari:** `docs/IMPLEMENTATION_PLAN.md` (runbook v1.0) — jika runbook berubah, sinkronkan checklist ini di PR yang sama (anti-drift, runbook §5)
 **Cara pakai:** Setiap task = satu checkbox. Centang HANYA bila Definition of Done (DoD) task terpenuhi. Milestone dianggap selesai hanya bila blok Sign-off-nya lengkap (lihat runbook §4).
 
@@ -17,7 +17,7 @@
 |---|---|---|
 | M0 — Repo, tooling, CI skeleton | `[ ]` | Belum monorepo ARCH §5; repo saat ini single Next.js app |
 | M1 — Contracts + DB + RLS | `[~]` | Supabase terhubung; skema reader-path + RLS read publik + seed; **auth + `reader_states` per-user RLS pemilik-saja hidup**. `packages/contracts`/`db` & domain naratif ARCH §13.1 belum |
-| M2 — Runtime lifecycle + fake gen E2E | `[ ]` | Belum ada `packages/runtime` |
+| M2 — Runtime lifecycle + fake gen E2E | `[~]` | Runtime interim di app Next.js (`lib/runtime/`) + RPC atomik Postgres: event log, idempotency, lease, publish_chapter, fake gen E2E, ETag. Harness invariant hijau. Struktur `packages/runtime` (monorepo) belum |
 | M3 — Memory hierarchy + Layer A + alias | `[ ]` | Belum ada `packages/narrative-core` |
 | M4 — Template + provider gateway | `[ ]` | Belum ada `packages/ai-gateway` |
 | M5 — Reconciliation + thread + Layer B | `[ ]` | Gate 50 bab; belum dimulai |
@@ -59,10 +59,18 @@
 
 ## M2 — Runtime Lifecycle + Fake Generation E2E
 
-- [ ] **T2.1 `packages/runtime` story commands** — Story Contract lock, canonical bootstrap, `story_events`, idempotency keys, outbox, generation lease; unit test idempotensi (repeat tap, duplicate queue, resume tidak double-advance).
-- [ ] **T2.2 Fake generation workflow** — workflow E2E publish chapter fixture deterministik via publish transaksional atomik; retry tak menduplikasi; gagal tak tinggalkan state parsial.
-- [ ] **T2.3 API contract + ownership tests** — contract test semua endpoint reader; ETag reader endpoint berfungsi.
-- [ ] **Exit Criteria M2** — end-to-end fake publish jalan; invariant idempotensi & atomicity terbukti.
+- [~] **T2.1 `packages/runtime` story commands** — Story Contract lock, canonical bootstrap, `story_events`, idempotency keys, outbox, generation lease; unit test idempotensi (repeat tap, duplicate queue, resume tidak double-advance).
+  - [x] Skema runtime (`runtime_lifecycle_baseline`): `story_events` (append-only, seq monotonic per story, unique (story,seq)), `idempotency_keys` (dedup perintah tulis), `generation_leases` (unique partial index = maks 1 ACTIVE/story, TTL expiry), `outbox` (efek samping transaksional). RLS deny-default (hanya service role / RPC SECURITY DEFINER).
+  - [x] RPC atomik: `acquire_generation_lease` (idempoten, tolak bila lease held) & `publish_chapter` (tulis chapter+outcomes+event+release lease+outbox dalam 1 transaksi). Wrapper tipe-aman di `lib/runtime/lifecycle.ts`; client service-role `lib/supabase/admin.ts`.
+  - [x] Invariant idempotensi & no-double-advance terbukti via harness `scripts/runtime-invariants.ts` (9/9 PASS).
+  - [ ] Story Contract lock & canonical bootstrap (butuh domain naratif M3) belum; outbox processor terpisah belum.
+- [x] **T2.2 Fake generation workflow** — `lib/runtime/fake-generation.ts`: bab fixture DETERMINISTIK di-publish via jalur atomik (lease→tulis→publish transaksional→release). Retry (idempotency key stabil per story/chapter) tidak menduplikasi; gagal tak tinggalkan state parsial (all-or-nothing RPC). Endpoint operasional `POST /api/stories/[id]/generate` (dijaga `RUNTIME_ADMIN_TOKEN` bila diset). Terverifikasi HTTP: 201 lalu retry idempoten (seq sama).
+- [~] **T2.3 API contract + ownership tests** — contract test semua endpoint reader; ETag reader endpoint berfungsi.
+  - [x] **ETag** di `GET /api/stories/[id]/chapters/[number]` (`lib/api/etag.ts`): ETag kuat berbasis hash konten + dukungan `If-None-Match` → 304. Terverifikasi (200 lalu 304).
+  - [ ] Contract test formal (Zod/JSON Schema semua endpoint) + ownership test otomatis — menunggu `packages/contracts` (T1.1) & harness test (M0).
+- [~] **Exit Criteria M2** — end-to-end fake publish jalan; invariant idempotensi & atomicity terbukti.
+  - [x] Fake publish E2E jalan (harness + HTTP); idempotensi & atomicity terbukti.
+  - [ ] Contract/ownership test suite formal di CI — menunggu M0/T1.1.
 
 ## M3 — Memory Hierarchy + Layer A Validator + Alias ⭐ fondasi konsistensi
 

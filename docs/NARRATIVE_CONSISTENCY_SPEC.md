@@ -51,6 +51,13 @@ Langkah checkpoint (step baru di GenerateChapterWorkflow, berjalan sebelum step 
 - Reconciliation tidak boleh menghapus mandatory reveal, memindah reveal gate lebih awal, atau menutup semua ending.
 - **Ending reachability check** wajib lulus pada setiap checkpoint: minimal 2 ending utama + jalur menuju secret ending harus tetap reachable dari state saat ini. Gagal = review manusia.
 
+### 1.5 Status implementasi (T5.1 + T7.5)
+
+- Logika inti di `lib/narrative/reconciliation.ts`: `runReconciliation()` (sinkron, deterministik) + `runReconciliationAdaptive(input, goalAuthor?)` (T7.5).
+- **Regenerasi goal (step 3) kini adaptif LLM-authored:** `goalAuthor` (`lib/authoring/reconcile-goal.ts` — `makeGoalAuthor`/`authorChapterGoal`) menulis ulang chapter goal drift ≥ 2 dengan spine + forbidden reveals sebagai constraint read-only. `validateAuthoredGoal()` menolak goal yang membocorkan istilah teknis (`scanForLeaks`) atau menyinggung reveal terlarang. Bila author gagal/menolak/throw → **fallback deterministik** (`[rekonsiliasi vN]`) sehingga checkpoint tak pernah buntu.
+- Spine layer (mandatory beats, forbidden reveals, reveal gate, ending reachability) ditegakkan identik pada kedua jalur; pelanggaran → `FAILED_REVIEW_REQUIRED`. Versioning + event `BLUEPRINT_RECONCILED` tetap; `authoredChapters` melacak bab yang benar-benar ditulis LLM.
+- Bukti: `scripts/m7b-reconcile-smoke.ts` 23/23, regresi `scripts/m5-soak.ts` hijau. Wiring ke WF step R runtime nyata menyusul di M6.
+
 ---
 
 ## 2. G2 — Memory Compaction & Context Budget Policy

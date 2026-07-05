@@ -156,6 +156,7 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
   - Deliverable: langkah R di akhir act (5/12/20/32/40/45/48) + on-demand dari step 3 saat drift ≥ 2; blueprint versioned; cek reachability semua ending; hard rule tak boleh langgar spine/reveal gate/ending.
   - Ref: ARCH §11.2 step R (B2), §23 rule #17, NCS §1.
   - DoD: drift fixture (state dibengkokkan di Bab 20) direkonsiliasi tanpa melanggar spine; ending tetap reachable.
+  - **Status:** logika inti SELESAI di `lib/narrative/reconciliation.ts` (versioned regen, ending reachability, spine integrity); terbukti di `m5-soak`. Regenerasi goal ditingkatkan menjadi adaptif LLM-authored di **T7.5** (lihat M7). Wiring WF step R ke runtime nyata menyusul di M6.
 - **T5.2 Layer B model validator** — **NTM G3-LAYERB**
   - Deliverable: cek kontradiksi lunak, voice, emosi vs relationship, memakai `character_voice_sheets`.
   - Ref: ARCH §11.2 step 6 (Layer B), NCS §3.
@@ -221,6 +222,13 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
   - DoD: voice fixture; opening → Bab 1 utuh.
 - **T7.3 Reports + safe error states** — ARCH §7.9 (`FAILED_REVIEW_REQUIRED`), PRD §7.9.
   - DoD: bahasa aman ("Cerita ini sedang dirapikan penulisnya"); bab rusak tak pernah dipaksa publish.
+- **T7.4 AI canon-authoring (brainstorm wizard)** — ✅ SELESAI.
+  - Deliverable: modul `lib/authoring/` (schema draft zod, `model.ts` proposer via `generateObject`, `validate.ts`+`compile.ts` draft→`CanonSnapshot`/blueprint, `repair.ts` tangga kegagalan validate→AI repair→transform→escalate, `persist.ts` commit ke Supabase). Wizard 6-tahap `components/brainstorm/` + `app/brainstorm/` (idea→premis→cast→misteri→dunia→kunci). Entry point beranda/landing/bottom-nav → `/brainstorm`. Lock sukses → `startFirstChapter()` memicu `generateNextChapterReal(storyId,1)`, majukan `stories.status=BERJALAN`/`current_chapter=1`, redirect `/baca/{id}?bab=1`.
+  - DoD: smoke `m7-authoring-smoke` 13/13 + roundtrip DB; alur end-to-end terverifikasi browser. Spine tak pernah diubah authoring.
+- **T7.5 Reconciliation runtime-adaptif (regenerateGoal LLM-authored)** — ✅ SELESAI.
+  - Deliverable: `runReconciliationAdaptive(input, goalAuthor?)` di `lib/narrative/reconciliation.ts` (DI `GoalAuthorFn`/`GoalAuthorContext`, meniru `AiRepairFn`); `lib/authoring/reconcile-goal.ts` (`makeGoalAuthor`/`authorChapterGoal` + `validateAuthoredGoal` anti-leak & anti reveal dini). Goal drift ≥ 2 ditulis ulang LLM dalam pagar spine; gagal/menolak → fallback deterministik (tak pernah buntu).
+  - Ref: NCS §1.2 (step 3), §1.4.
+  - DoD: smoke `m7b-reconcile-smoke` 23/23 (regresi deterministik, adaptif+spine utuh, fallback, ending unreachable→FAILED); regresi `m5-soak` 236 hijau.
 - **Exit Criteria M7:** onboarding sampai Bab 1 mulus; laporan pembaca menautkan referensi kanonik.
 
 ---

@@ -16,6 +16,7 @@ Referensi: ARCHITECTURE_v1.1.md §5 (struktur repo & aturan kepemilikan §5.1).
 | `@lakoku/ai-gateway`       | `lib/ai-gateway/`    | schemas, provider (deterministik), gateway (consumer-safe), generate |
 | `@lakoku/ai-gateway/server`| `lib/ai-gateway/server.ts` | seam pemilih provider (`selectProvider`) — `server-only`         |
 | `@lakoku/runtime`          | `lib/runtime/`       | lifecycle (RPC atomik), fake-generation, story-generation (jalur nyata) |
+| `@lakoku/authoring/server` | `lib/authoring/`     | alat OFFLINE canon-authoring: schema draft, proposer (brainstorm), validate/compile, repair, persist, `reconcile-goal` (goalAuthor adaptif T7.5) — `server-only` |
 | `@lakoku/db`               | `lib/supabase/`      | `createAdminClient` (service-role). Seam framework di file lain  |
 | `@lakoku/api`              | `lib/api/`           | kontrak & query reader client-safe                               |
 
@@ -39,6 +40,7 @@ Aturan konkret yang ditegakkan ESLint (`no-restricted-imports`, lihat
 - `narrative-core` TIDAK boleh impor `ai-gateway`, `runtime`, atau `api`.
 - `ai-gateway` boleh impor `narrative-core`; TIDAK boleh impor `runtime`/`api`.
 - `runtime` boleh impor `narrative-core`, `ai-gateway`, `db`; TIDAK boleh impor `api`.
+- `authoring` (alat offline) boleh impor `narrative-core`, `ai-gateway`, `db`; dikonsumsi oleh app routes (mis. `app/brainstorm/`). `narrative-core` tetap TIDAK boleh impor `authoring` — jalur adaptif memakai dependency injection (`GoalAuthorFn` diinjeksi ke `runReconciliationAdaptive`), bukan impor langsung.
 - Konsumen lintas-paket WAJIB lewat barrel `@lakoku/*` (atau `/server`), bukan
   deep-import ke file internal paket lain (mis. `@/lib/narrative/threads`).
 - Impor INTERNAL dalam satu paket tetap pakai path relatif (`./threads`).

@@ -1,6 +1,7 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { DM_Serif_Display, Plus_Jakarta_Sans } from 'next/font/google'
+import { Toaster } from '@/components/ui/sonner'
 import './globals.css'
 
 const jakarta = Plus_Jakarta_Sans({
@@ -34,6 +35,7 @@ export default function RootLayout({
     <html lang="id" className={`bg-background ${jakarta.variable} ${dmSerif.variable}`}>
       <body className="font-sans antialiased">
         {children}
+        <Toaster position="top-center" />
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>

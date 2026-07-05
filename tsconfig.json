@@ -44,6 +44,12 @@
       "@lakoku/db": [
         "./lib/supabase/index.ts"
       ],
+      "@lakoku/authoring": [
+        "./lib/authoring/index.ts"
+      ],
+      "@lakoku/authoring/server": [
+        "./lib/authoring/server.ts"
+      ],
       "@lakoku/api": [
         "./lib/api/index.ts"
       ]

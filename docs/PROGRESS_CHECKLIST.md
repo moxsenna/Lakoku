@@ -1,7 +1,7 @@
 # Lakoku — Progress Checklist (Task Tracker) v1.0
 
 **Status:** Living document — dicentang seiring pekerjaan berjalan
-**Last updated:** 5 Juli 2026 (Supabase = sumber kebenaran konten; Reader API interim di Next.js route handlers hidup; seam client menunjuk API nyata — fixtures kini hanya seed)
+**Last updated:** 5 Juli 2026 (Auth Supabase + reader-state per-user hidup: tabel `reader_states` RLS pemilik-saja, login/daftar/callback, seam server overlay state per-user, jejak/progres tercatat per-akun — terverifikasi E2E)
 **Turunan dari:** `docs/IMPLEMENTATION_PLAN.md` (runbook v1.0) — jika runbook berubah, sinkronkan checklist ini di PR yang sama (anti-drift, runbook §5)
 **Cara pakai:** Setiap task = satu checkbox. Centang HANYA bila Definition of Done (DoD) task terpenuhi. Milestone dianggap selesai hanya bila blok Sign-off-nya lengkap (lihat runbook §4).
 
@@ -16,7 +16,7 @@
 | Milestone | Status | Catatan singkat |
 |---|---|---|
 | M0 — Repo, tooling, CI skeleton | `[ ]` | Belum monorepo ARCH §5; repo saat ini single Next.js app |
-| M1 — Contracts + DB + RLS | `[~]` | Supabase terhubung; skema reader-path (stories/chapters/choice_outcomes) + RLS read publik + seed hidup. `packages/contracts`/`db` & domain naratif ARCH §13.1 belum |
+| M1 — Contracts + DB + RLS | `[~]` | Supabase terhubung; skema reader-path + RLS read publik + seed; **auth + `reader_states` per-user RLS pemilik-saja hidup**. `packages/contracts`/`db` & domain naratif ARCH §13.1 belum |
 | M2 — Runtime lifecycle + fake gen E2E | `[ ]` | Belum ada `packages/runtime` |
 | M3 — Memory hierarchy + Layer A + alias | `[ ]` | Belum ada `packages/narrative-core` |
 | M4 — Template + provider gateway | `[ ]` | Belum ada `packages/ai-gateway` |
@@ -46,11 +46,12 @@
 - [ ] **T1.1 `packages/contracts`** — Zod + JSON Schema + tipe ter-generate untuk endpoint ARCH §11.1; larangan duplikasi tipe ditegakkan.
 - [~] **T1.2 Skema kanonik baseline** (`packages/db` + `infra/supabase`) — migrasi domain ARCH §13.1 termasuk `character_aliases`, `character_voice_sheets`, `act_rollups`, `facts_ledger.salience/.load_bearing`, `story_threads.status/.payoff_window`, `chapter_blueprints.version/.reconciled_from_version/.reconciliation_reason`, event `BLUEPRINT_RECONCILED`; migration test naik-turun lulus.
   - [x] **Reader-path baseline (subset)**: Supabase terhubung; migrasi `reader_path_baseline` + `align_schema_to_contract` membuat `stories`, `chapters`, `choice_outcomes` (selaras 1:1 dengan `lib/api/types.ts`); seed dari fixtures via `scripts/seed-supabase.ts` (idempotent upsert). Fixtures kini HANYA seed/fallback — sumber kebenaran konten adalah Supabase.
+  - [x] **Reader-state per-user**: migrasi `reader_states_per_user` (PK `(user_id, story_id)`; status/current_chapter/jejak/ending_name) menggantikan kolom DEMO global di `stories` untuk pengguna login. Kolom demo di `stories` kini hanya fallback tamu.
   - [ ] Domain naratif ARCH §13.1 (facts_ledger, story_threads, blueprints, aliases, voice sheets, dst.) belum — menunggu M3–M5.
-  - Catatan: kolom `status`/`current_chapter`/`jejak` di `stories` adalah DEMO reader-state global; pindah ke tabel per-user saat auth hadir.
 - [~] **T1.3 RLS + ownership harness** — RLS tiap tabel reader-private + test cross-user (story A tak terbaca user B).
   - [x] RLS aktif di 3 tabel konten published: read publik (anon), tulis hanya service role. Sesuai model "published content is public".
-  - [ ] Tabel reader-private per-user + ownership test cross-user — menunggu auth (belum ada tabel per-user).
+  - [x] `reader_states` RLS pemilik-saja (`auth.uid() = user_id` untuk select/insert/update/delete) — reader-private ditegakkan di DB. Terverifikasi: baris tercatat terikat `user_id` saat user uji memilih.
+  - [ ] Ownership test cross-user formal (user B tak bisa baca baris user A) sebagai test otomatis di CI — menunggu M0 harness test.
 - [ ] **Exit Criteria M1** — migrasi + RLS + ownership test lulus di CI; `packages/contracts` jadi acuan tunggal.
 - **Catatan:** `lib/api/types.ts` saat ini adalah kontrak client sementara yang HARUS dijaga konsisten dengan `packages/contracts` begitu M1 dibuat (lihat T6W.2).
 

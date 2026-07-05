@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { ArrowLeft, Settings2, Flag, Minus, Plus, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { submitChoice, recordChapterReached, type StoryDetail, type Chapter } from '@/lib/api'
+import { ReportSheet } from '@/components/report-sheet'
 
 type ReaderTheme = 'ink' | 'cream'
 type Phase = 'reading' | 'processing' | 'consequence'
@@ -13,6 +14,7 @@ export function ReaderView({ story, chapter }: { story: StoryDetail; chapter: Ch
   const [theme, setTheme] = useState<ReaderTheme>('ink')
   const [fontSize, setFontSize] = useState(17)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [reportOpen, setReportOpen] = useState(false)
   const [phase, setPhase] = useState<Phase>('reading')
   const [consequence, setConsequence] = useState<string[]>([])
   const [nextChapterNumber, setNextChapterNumber] = useState<number | null>(null)
@@ -161,6 +163,10 @@ export function ReaderView({ story, chapter }: { story: StoryDetail; chapter: Ch
           </div>
           <button
             type="button"
+            onClick={() => {
+              setSettingsOpen(false)
+              setReportOpen(true)
+            }}
             className="mt-3 flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"
           >
             <Flag className="size-3.5" aria-hidden="true" />
@@ -248,6 +254,13 @@ export function ReaderView({ story, chapter }: { story: StoryDetail; chapter: Ch
           </div>
         )}
       </article>
+
+      <ReportSheet
+        storyId={story.id}
+        chapterNumber={chapter.number}
+        open={reportOpen}
+        onClose={() => setReportOpen(false)}
+      />
     </main>
   )
 }

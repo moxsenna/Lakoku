@@ -2,6 +2,7 @@ import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { DM_Serif_Display, Plus_Jakarta_Sans } from 'next/font/google'
 import { Toaster } from '@/components/ui/sonner'
+import { ThemeProvider } from '@/components/theme-provider'
 import './globals.css'
 
 const jakarta = Plus_Jakarta_Sans({
@@ -32,10 +33,16 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="id" className={`bg-background ${jakarta.variable} ${dmSerif.variable}`}>
+    <html
+      lang="id"
+      className={`bg-background ${jakarta.variable} ${dmSerif.variable}`}
+      suppressHydrationWarning
+    >
       <body className="font-sans antialiased">
-        {children}
-        <Toaster position="top-center" />
+        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+          {children}
+          <Toaster position="top-center" />
+        </ThemeProvider>
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>

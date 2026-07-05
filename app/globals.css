@@ -45,18 +45,48 @@
 }
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
   /* Lakoku core palette */
   --ink: #191319;
   --plum: #3d1f3d;
   --rose: #c94967;
-  --gold: #d5a45c;
+  --gold: #a87933;
   --cream: #fff7ee;
+  --mauve: #7a5a7a;
+  --lavender: #6f6274;
+
+  /* Semantic tokens — Paper Cream (light) */
+  --background: #fff7ee;
+  --foreground: #2b2130;
+  --card: #fdf1e3;
+  --card-foreground: #2b2130;
+  --popover: #fdf1e3;
+  --popover-foreground: #2b2130;
+  --primary: #c94967;
+  --primary-foreground: #fff7ee;
+  --secondary: #f0e2f0;
+  --secondary-foreground: #3d1f3d;
+  --muted: #f3e8da;
+  --muted-foreground: #7d6f80;
+  --accent: #a87933;
+  --accent-foreground: #fff7ee;
+  --destructive: #c94949;
+  --border: rgba(61, 31, 61, 0.14);
+  --input: rgba(61, 31, 61, 0.18);
+  --ring: #c94967;
+  --radius: 1rem;
+}
+
+.dark {
+  color-scheme: dark;
+
+  /* Lakoku core palette */
+  --gold: #d5a45c;
   --mauve: #e8dce8;
   --lavender: #96899a;
 
-  /* Semantic tokens — Midnight Drama (dark-first) */
+  /* Semantic tokens — Midnight Drama (dark) */
   --background: #191319;
   --foreground: #fff7ee;
   --card: #241a26;
@@ -75,7 +105,6 @@
   --border: rgba(232, 220, 232, 0.12);
   --input: rgba(232, 220, 232, 0.16);
   --ring: #c94967;
-  --radius: 1rem;
 }
 
 @layer base {

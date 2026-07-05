@@ -162,6 +162,34 @@ function activeCharacterNames(snapshot: CanonSnapshot, chapter: number): string[
     .map((c) => c.canonicalName)
 }
 
+/**
+ * Panduan suara (T0/G5-VOICE): rakit voice sheet tokoh aktif menjadi instruksi
+ * ringkas untuk penulis prosa, sehingga dialog tiap tokoh KHAS & konsisten sejak
+ * Bab 1. Voice diturunkan deterministik dari canon (opening package), bukan model.
+ * Aman-pembaca: hanya bahasa cerita (tak ada metadata internal).
+ */
+function voiceGuidance(snapshot: CanonSnapshot, chapter: number): string {
+  const nameById = new Map(snapshot.characters.map((c) => [c.id, c.canonicalName]))
+  const activeIds = new Set(
+    snapshot.characters
+      .filter((c) => c.status !== 'DEAD' && c.introducedChapter <= chapter)
+      .map((c) => c.id),
+  )
+  const lines = snapshot.voiceSheets
+    .filter((v) => activeIds.has(v.characterId))
+    .sort((a, b) => a.characterId.localeCompare(b.characterId))
+    .map((v) => {
+      const name = nameById.get(v.characterId) ?? 'Tokoh'
+      const parts = [`- ${name}: bicara ${v.register}`]
+      if (v.speechHabits.length) parts.push(`kebiasaan: ${v.speechHabits.join('; ')}`)
+      if (v.forbiddenWords.length) parts.push(`hindari kata: ${v.forbiddenWords.join(', ')}`)
+      if (v.sampleLines.length) parts.push(`contoh nada: "${v.sampleLines[0]}"`)
+      return parts.join(' — ')
+    })
+  if (!lines.length) return ''
+  return ['Jaga suara tiap tokoh agar khas & konsisten:', ...lines].join('\n')
+}
+
 /** Ringkas findings jadi instruksi perbaikan singkat (repair pass). */
 function repairHints(findings: Finding[] | undefined): string {
   if (!findings?.length) return ''
@@ -185,6 +213,7 @@ function buildPrompt(args: {
   const { snapshot, plan } = args
   const chapter = Number(plan.chapterNumber)
   const names = activeCharacterNames(snapshot, chapter)
+  const voices = voiceGuidance(snapshot, chapter)
   const beats = Array.isArray(plan.plannedBeats) ? (plan.plannedBeats as string[]) : []
   const goal = String(plan.chapterGoal ?? '')
   const phase = String(plan.phase ?? '')
@@ -203,6 +232,7 @@ function buildPrompt(args: {
     phase ? `Fase cerita: ${phase}.` : '',
     goal ? `Tujuan bab ini: ${goal}` : '',
     names.length ? `Tokoh yang boleh tampil (gunakan nama persis ini): ${names.join(', ')}.` : '',
+    voices,
     beats.length
       ? `Alurkan beat wajib berikut secara natural dan berurutan:\n${beats.map((b) => `- ${b}`).join('\n')}`
       : '',

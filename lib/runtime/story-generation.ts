@@ -23,6 +23,7 @@ import {
   type ChapterDraftParsed,
 } from '@lakoku/ai-gateway'
 import { selectProvider } from '@lakoku/ai-gateway/server'
+import { recordGenerationAttempt } from '@/lib/observability/server'
 
 /**
  * Workflow generasi bab NYATA (M2→M5 disatukan) — "jalur cerita AI end-to-end".
@@ -167,6 +168,14 @@ export async function generateNextChapterReal(
 
     if (result.status !== 'PUBLISHED' || !result.draft) {
       await releaseGenerationLease({ storyId, leaseId: lease.lease_id })
+      // Telemetri konsistensi (T8.1) — attempt gagal review. Non-kritis.
+      await recordGenerationAttempt({
+        storyId,
+        chapter: chapterNumber,
+        outcome: 'REVIEW_REQUIRED',
+        repairAttempts: result.attempts,
+        findings: result.findings,
+      })
       return {
         ok: false,
         reason: 'FAILED_REVIEW_REQUIRED',
@@ -211,6 +220,17 @@ export async function generateNextChapterReal(
     })
 
     if (!published.ok) return { ok: false, reason: published.reason }
+
+    // Telemetri konsistensi (T8.1) — attempt sukses. Dipancarkan SETELAH publish
+    // (yang menulis CHAPTER_PUBLISHED) agar tak berlomba seq. Non-kritis.
+    await recordGenerationAttempt({
+      storyId,
+      chapter: chapterNumber,
+      outcome: 'PUBLISHED',
+      repairAttempts: result.attempts,
+      findings: result.findings,
+    })
+
     return {
       ok: true,
       chapterNumber: published.chapter_number,

@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
-import { generateNextChapter } from '@/lib/runtime/fake-generation'
-import { generateNextChapterReal } from '@/lib/runtime/story-generation'
+import { generateNextChapter, generateNextChapterReal } from '@lakoku/runtime'
 
 /**
  * Endpoint runtime: memicu workflow generasi satu bab.

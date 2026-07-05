@@ -12,18 +12,17 @@
  *   - Lapis B (model): kontradiksi lunak, voice, emosi vs relationship.
  */
 
-import type {
-  CanonSnapshot,
-  ChapterBlueprint,
-  Finding,
-  StoryThread,
-} from '../narrative/types'
-import { validateLayerA } from '../narrative/layer-a'
-import { validateLayerB, type LayerBContext } from '../narrative/layer-b'
 import {
+  type CanonSnapshot,
+  type ChapterBlueprint,
+  type Finding,
+  type StoryThread,
+  type LayerBContext,
+  validateLayerA,
+  validateLayerB,
   validateThreadLifecycle,
   checkChapter48Block,
-} from '../narrative/threads'
+} from '@lakoku/narrative-core'
 import { generatePlan, writeChapter, type GatewayDeps } from './gateway'
 import type { ChapterDraftParsed } from './schemas'
 import type { DraftDefect } from './provider'

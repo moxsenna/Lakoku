@@ -10,7 +10,7 @@
  * yang menyentuh pembaca. Boundary consumer-safe ditegakkan di gateway.ts.
  */
 
-import type { CanonSnapshot, ChapterBlueprint, Finding } from '../narrative/types'
+import type { CanonSnapshot, ChapterBlueprint, Finding } from '@lakoku/narrative-core'
 
 export interface PlanInput {
   snapshot: CanonSnapshot

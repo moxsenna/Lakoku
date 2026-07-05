@@ -6,13 +6,16 @@
  *   NODE_OPTIONS='--conditions=react-server' npx tsx scripts/narrative-layer-a.ts
  */
 
-import { validateLayerA } from '@/lib/narrative/layer-a'
-import { compileContext } from '@/lib/narrative/compiler'
+import {
+  validateLayerA,
+  compileContext,
+  type ChapterDraft,
+  type Finding,
+} from '@lakoku/narrative-core'
 import {
   buildFixtureSnapshot,
   buildValidDraft,
 } from '@/fixtures/narrative/fixture-50'
-import type { ChapterDraft, Finding } from '@/lib/narrative/types'
 
 let pass = 0
 let fail = 0

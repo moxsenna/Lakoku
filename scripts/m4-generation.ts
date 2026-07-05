@@ -10,23 +10,24 @@
  */
 
 import { buildFixtureSnapshot } from '../fixtures/narrative/fixture-50'
-import { createDeterministicProvider, type GenerationProvider } from '../lib/ai-gateway/provider'
-import { generateChapter } from '../lib/ai-gateway/generate'
 import {
+  createDeterministicProvider,
+  generateChapter,
   toReaderSafe,
   assertConsumerSafe,
   scanForLeaks,
   GatewayError,
+  type GenerationProvider,
   type GatewayDeps,
-} from '../lib/ai-gateway/gateway'
+} from '@lakoku/ai-gateway'
 import {
   buildBlueprints,
   ACT_GATES,
   REVEAL_GATE_CHAPTERS,
   TOTAL_CHAPTERS,
   type StorySpine,
-} from '../lib/narrative/template'
-import type { ChapterBlueprint } from '../lib/narrative/types'
+  type ChapterBlueprint,
+} from '@lakoku/narrative-core'
 
 let pass = 0
 let fail = 0

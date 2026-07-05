@@ -6,14 +6,23 @@ import {
   type PublishOutcome,
   type PublishResult,
 } from './lifecycle'
-import { loadCanonSnapshot, persistRetrievalLog } from '@/lib/narrative/loader'
-import { compileContext } from '@/lib/narrative/compiler'
-import { generateChapter, type ThreadContext } from '@/lib/ai-gateway/generate'
-import { toReaderSafe, assertConsumerSafe, scanForLeaks } from '@/lib/ai-gateway/gateway'
-import { selectProvider } from '@/lib/ai-gateway/select-provider'
-import { buildBlueprints, TOTAL_CHAPTERS } from '@/lib/narrative/template'
-import type { CanonSnapshot, ChapterBlueprint } from '@/lib/narrative/types'
-import type { ChapterDraftParsed } from '@/lib/ai-gateway/schemas'
+import {
+  compileContext,
+  buildBlueprints,
+  TOTAL_CHAPTERS,
+  type CanonSnapshot,
+  type ChapterBlueprint,
+} from '@lakoku/narrative-core'
+import { loadCanonSnapshot, persistRetrievalLog } from '@lakoku/narrative-core/server'
+import {
+  generateChapter,
+  toReaderSafe,
+  assertConsumerSafe,
+  scanForLeaks,
+  selectProvider,
+  type ThreadContext,
+  type ChapterDraftParsed,
+} from '@lakoku/ai-gateway'
 
 /**
  * Workflow generasi bab NYATA (M2→M5 disatukan) — "jalur cerita AI end-to-end".

@@ -8,7 +8,7 @@
  *   3. menegakkan boundary consumer-safe (tak ada kebocoran model/prompt/token).
  */
 
-import type { CanonSnapshot, ChapterBlueprint, Finding } from '../narrative/types'
+import type { CanonSnapshot, ChapterBlueprint, Finding } from '@lakoku/narrative-core'
 import {
   parsePlan,
   parseDraft,

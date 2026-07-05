@@ -25,6 +25,24 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@lakoku/narrative-core": [
+        "./lib/narrative/index.ts"
+      ],
+      "@lakoku/narrative-core/server": [
+        "./lib/narrative/server.ts"
+      ],
+      "@lakoku/ai-gateway": [
+        "./lib/ai-gateway/index.ts"
+      ],
+      "@lakoku/runtime": [
+        "./lib/runtime/index.ts"
+      ],
+      "@lakoku/db": [
+        "./lib/supabase/index.ts"
+      ],
+      "@lakoku/api": [
+        "./lib/api/index.ts"
       ]
     }
   },

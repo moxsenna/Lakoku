@@ -12,38 +12,37 @@
  */
 
 import { buildFixtureSnapshot } from '@/fixtures/narrative/fixture-50'
-import type {
-  CanonSnapshot,
-  Finding,
-  StoryThread,
-} from '@/lib/narrative/types'
 import {
-  createDeterministicProvider,
-  type GenerationProvider,
-  type PlanInput,
-  type WriteInput,
-} from '@/lib/ai-gateway/provider'
-import { generateChapter, type ThreadContext } from '@/lib/ai-gateway/generate'
-import type { LayerBContext, RelationshipScores } from '@/lib/narrative/layer-b'
-import { relationshipKey, validateLayerB } from '@/lib/narrative/layer-b'
-import {
+  relationshipKey,
+  validateLayerB,
   transitionThread,
   touchThread,
   refreshStaleness,
   validateThreadLifecycle,
   checkChapter48Block,
   canOpenNewThread,
-} from '@/lib/narrative/threads'
-import {
   runReconciliation,
   computeDriftScore,
   checkEndingReachability,
   checkSpineIntegrity,
+  ACT_GATES,
+  type CanonSnapshot,
+  type Finding,
+  type StoryThread,
+  type LayerBContext,
+  type RelationshipScores,
   type EndingDef,
   type ActualState,
   type TrajectoryRequirement,
-} from '@/lib/narrative/reconciliation'
-import { ACT_GATES } from '@/lib/narrative/template'
+} from '@lakoku/narrative-core'
+import {
+  createDeterministicProvider,
+  generateChapter,
+  type GenerationProvider,
+  type PlanInput,
+  type WriteInput,
+  type ThreadContext,
+} from '@lakoku/ai-gateway'
 
 // ---------- Test harness ----------
 let passed = 0

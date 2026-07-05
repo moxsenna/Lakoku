@@ -1,5 +1,5 @@
 import 'server-only'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient } from '@lakoku/db'
 
 /**
  * Runtime lifecycle (M2/T2.1) — pembungkus tipe-aman untuk RPC atomik.

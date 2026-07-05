@@ -11,8 +11,8 @@
  *           && npx tsx scripts/e2e-real-generation.ts
  */
 import { createClient } from '@supabase/supabase-js'
-import { generateNextChapterReal } from '@/lib/runtime/story-generation'
-import { scanForLeaks } from '@/lib/ai-gateway/gateway'
+import { generateNextChapterReal } from '@lakoku/runtime'
+import { scanForLeaks } from '@lakoku/ai-gateway'
 
 const STORY = 'fixture:warisan-terkubur'
 

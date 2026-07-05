@@ -175,7 +175,12 @@
 
 ## M8 — Observability, Alert, Entitlement/Checkout
 
-- [ ] **T8.1 Dashboard konsistensi** — NTM G3-METRICS — `continuity_critical_rate` per bab, `repair_success_rate`, `review_required_rate`, thread staleness, `reader_inconsistency_report_rate`; tampil di dashboard.
+- [x] **T8.1 Dashboard konsistensi** — NTM G3-METRICS — `continuity_critical_rate` per bab, `repair_success_rate`, `review_required_rate`, thread staleness, `reader_inconsistency_report_rate`; tampil di dashboard.
+  - **Engine metrik (murni)** `lib/observability/metrics.ts` — `aggregateConsistencyMetrics()` deterministik & bebas efek samping: `continuity_critical_rate` (total + PER BAB via `continuityCriticalByChapter`), `repair_success_rate` (hanya attempt ber-repair), `review_required_rate`, `thread_staleness` (thread aktif non-RESOLVED yang `stale`), `reader_inconsistency_report_rate` (laporan/bab published). Plus `criticalTrend` (deteksi naik-monoton + longest-increasing-run) sebagai fondasi alert T8.2. Guard pembagian nol di semua rate.
+  - **Telemetri (server)** `lib/observability/telemetry.ts` — `recordGenerationAttempt()` memancarkan event `GENERATION_ATTEMPT` ke `story_events` (append ber-seq via service-role, NON-KRITIS/try-catch — tak pernah menggagalkan generasi); `loadConsistencyInputs()`/`loadConsistencyMetrics()` memuat attempts + `story_threads` (kolom `stale`/`stale_since_chapter`/`is_main_mystery`) + event `REPORT_FILED` & `CHAPTER_PUBLISHED`, lalu agregasi. Barrel `index.ts` (murni, aman client) + `server.ts` (server-only).
+  - **Wiring runtime** `lib/runtime/story-generation.ts` — emit attempt di boundary: `PUBLISHED` (setelah publish, hindari lomba seq) & `REVIEW_REQUIRED` (setelah lease-release), membawa `repairAttempts` + findings tersisa per severity.
+  - **Dashboard** `app/admin/consistency/page.tsx` (server component, `force-dynamic`, safe error state ala T7.3) + komponen `components/dashboard/{metric-card,critical-rate-chart,stale-threads-list}.tsx`. API `app/api/admin/metrics/route.ts` (`?storyId=` opsional) untuk konsumen alert T8.2.
+  - **Bukti** `scripts/m8-metrics-smoke.ts` **29/29 PASS** (rate, guard nol, per-bab, tren naik & non-naik, staleness RESOLVED-excluded, reader rate). Regresi hijau: tsc 0, eslint 0. Verifikasi browser `/admin/consistency` render live terhadap data Supabase nyata (4 bab, 9 thread aktif).
 - [ ] **T8.2 Alert** — alert saat `continuity_critical_rate` naik monoton terhadap nomor bab; ter-trigger di fixture regresi kompaksi.
 - [ ] **T8.3 Entitlement + checkout webhook** — hanya webhook server terverifikasi memberi akses; tak ada entitlement otoritatif dari klien.
 - [ ] **Exit Criteria M8** — observability + alert + pembayaran aman-server berjalan.

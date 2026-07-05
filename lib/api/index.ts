@@ -13,6 +13,7 @@ export {
   getStory,
   getChapter,
   submitChoice,
+  submitReport,
 } from './client'
 export {
   getLocalProgress,

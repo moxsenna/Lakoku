@@ -16,6 +16,8 @@ import type {
   StoryDetail,
   Chapter,
   ChoiceOutcome,
+  ReportCategory,
+  ReportResult,
 } from './types'
 
 const API_BASE = '/api'
@@ -85,5 +87,32 @@ export async function submitChoice(
     ],
     nextChapterNumber: chapterNumber + 1,
     isEnding: false,
+  }
+}
+
+/**
+ * Kirim laporan masalah cerita untuk sebuah bab. Server yang menautkan
+ * referensi kanonik bab (bukan pembaca). Respons reader-safe.
+ */
+export async function submitReport(
+  storyId: string,
+  chapterNumber: number,
+  category: ReportCategory,
+  note?: string,
+): Promise<ReportResult> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/stories/${encodeURIComponent(storyId)}/report`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chapterNumber, category, note }),
+      },
+    )
+    if (!res.ok) return { ok: false }
+    const data = (await res.json()) as { ok: boolean; reportId?: string }
+    return { ok: Boolean(data.ok), reportId: data.reportId }
+  } catch {
+    return { ok: false }
   }
 }

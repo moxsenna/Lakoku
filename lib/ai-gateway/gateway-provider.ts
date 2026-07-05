@@ -1,5 +1,6 @@
 import 'server-only'
-import { generateObject } from 'ai'
+import { generateObject, type LanguageModel } from 'ai'
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { z } from 'zod'
 import type { CanonSnapshot, Finding } from '@lakoku/narrative-core'
 import {
@@ -30,6 +31,36 @@ import { scanForLeaks } from './gateway'
 const DEFAULT_MODEL = 'openai/gpt-4.1-mini'
 const TARGET_WORD_LOW = 560
 const TARGET_WORD_HIGH = 760
+
+/**
+ * Tentukan "otak" model. Dua mode (dipilih via env):
+ *
+ *  1) Endpoint OpenAI-compatible KUSTOM — bila `CUSTOM_LLM_BASE_URL` diset.
+ *     Kredensial: `CUSTOM_LLM_API_KEY` (opsional bila server tak butuh),
+ *     model: `NARRATIVE_MODEL` (default 'gpt-4o-mini' untuk endpoint kustom).
+ *     Cocok untuk proxy/tunnel pribadi.
+ *
+ *  2) Vercel AI Gateway (default) — model string 'provider/model' langsung
+ *     ke AI SDK; butuh AI_GATEWAY_API_KEY.
+ *
+ * Mengembalikan pasangan {model, label} agar `name` provider informatif.
+ */
+function resolveModel(optModel?: string): { model: LanguageModel; label: string } {
+  const baseURL = process.env.CUSTOM_LLM_BASE_URL?.trim()
+
+  if (baseURL) {
+    const modelId = optModel ?? process.env.NARRATIVE_MODEL ?? 'gpt-4o-mini'
+    const custom = createOpenAICompatible({
+      name: 'custom',
+      baseURL,
+      apiKey: process.env.CUSTOM_LLM_API_KEY,
+    })
+    return { model: custom(modelId), label: `custom:${modelId}` }
+  }
+
+  const modelId = optModel ?? process.env.NARRATIVE_MODEL ?? DEFAULT_MODEL
+  return { model: modelId, label: `gateway:${modelId}` }
+}
 
 /** Skema prosa yang diminta dari model — hanya konten naratif untuk pembaca. */
 const ProseSchema = z.object({
@@ -121,7 +152,7 @@ function buildPrompt(args: {
  * (fallback aman ditangani pemanggil bila perlu).
  */
 async function generateProse(args: {
-  model: string
+  model: LanguageModel
   snapshot: CanonSnapshot
   plan: Record<string, unknown>
   repairFindings?: Finding[]
@@ -152,10 +183,10 @@ async function generateProse(args: {
  */
 export function createGatewayProvider(opts: ProseModel = {}): GenerationProvider {
   const base = createDeterministicProvider()
-  const model = opts.model ?? process.env.NARRATIVE_MODEL ?? DEFAULT_MODEL
+  const { model, label } = resolveModel(opts.model)
 
   return {
-    name: `gateway:${model}`,
+    name: label,
 
     // Plan tetap canon-derived (aman); model tidak menyentuh logika reveal/state.
     generatePlan(input: PlanInput): Promise<unknown> {

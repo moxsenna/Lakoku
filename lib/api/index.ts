@@ -20,3 +20,8 @@ export {
   getResumeChapter,
   subscribeProgress,
 } from './progress'
+export {
+  submitContentReport,
+  REPORT_REASONS,
+  type ReportReason,
+} from './reports'

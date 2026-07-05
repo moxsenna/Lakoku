@@ -16,3 +16,6 @@ export async function GET(
     return NextResponse.json({ error: 'Gagal memuat cerita.' }, { status: 500 })
   }
 }
+
+
+export const runtime = 'edge';

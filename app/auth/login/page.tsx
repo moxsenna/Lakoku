@@ -104,3 +104,6 @@ export default function LoginPage() {
     </main>
   )
 }
+
+
+export const runtime = 'edge';

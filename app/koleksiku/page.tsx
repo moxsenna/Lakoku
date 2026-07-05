@@ -54,3 +54,6 @@ export default async function KoleksikuPage() {
     </AppShell>
   )
 }
+
+
+export const runtime = 'edge';

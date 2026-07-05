@@ -112,3 +112,6 @@ export default async function CeritaDetailPage({
     </AppShell>
   )
 }
+
+
+export const runtime = 'edge';

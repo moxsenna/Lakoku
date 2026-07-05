@@ -110,3 +110,6 @@ export default function SignUpPage() {
     </main>
   )
 }
+
+
+export const runtime = 'edge';

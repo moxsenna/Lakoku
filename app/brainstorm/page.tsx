@@ -9,3 +9,6 @@ export const metadata: Metadata = {
 export default function BrainstormPage() {
   return <BrainstormWizard />
 }
+
+
+export const runtime = 'edge';

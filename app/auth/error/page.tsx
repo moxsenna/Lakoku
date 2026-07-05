@@ -23,3 +23,6 @@ export default async function AuthErrorPage({
     </main>
   )
 }
+
+
+export const runtime = 'edge';

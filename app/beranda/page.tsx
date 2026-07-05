@@ -95,3 +95,6 @@ export default async function BerandaPage() {
     </AppShell>
   )
 }
+
+
+export const runtime = 'edge';

@@ -105,3 +105,6 @@ export default async function AkhirCeritaPage({
     </main>
   )
 }
+
+
+export const runtime = 'edge';

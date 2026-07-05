@@ -46,3 +46,6 @@ export async function POST(
     return NextResponse.json({ error: 'Gagal memproses pilihan.' }, { status: 500 })
   }
 }
+
+
+export const runtime = 'edge';

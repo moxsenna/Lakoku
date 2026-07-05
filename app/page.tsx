@@ -80,3 +80,6 @@ export default function OnboardingPage() {
     </main>
   )
 }
+
+
+export const runtime = 'edge';

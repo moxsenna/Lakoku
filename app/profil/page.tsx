@@ -123,3 +123,6 @@ export default async function ProfilPage() {
     </AppShell>
   )
 }
+
+
+export const runtime = 'edge';

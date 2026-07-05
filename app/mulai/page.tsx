@@ -10,3 +10,6 @@ export const metadata: Metadata = {
 export default function MulaiPage() {
   return <OnboardingFlow />
 }
+
+
+export const runtime = 'edge';

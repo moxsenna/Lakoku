@@ -43,3 +43,6 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: 'processing_error' }, { status: 500 })
   }
 }
+
+
+export const runtime = 'edge';

@@ -16,3 +16,6 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.redirect(`${origin}/auth/error`)
 }
+
+
+export const runtime = 'edge';

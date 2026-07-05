@@ -41,3 +41,6 @@ export default async function BacaPage({
 
   return <ReaderView key={chapter.number} story={story} chapter={chapter} />
 }
+
+
+export const runtime = 'edge';

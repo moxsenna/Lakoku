@@ -132,3 +132,6 @@ export default async function ConsistencyDashboardPage() {
     </main>
   )
 }
+
+
+export const runtime = 'edge';

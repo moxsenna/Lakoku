@@ -23,3 +23,6 @@ export default function SignUpSuccessPage() {
     </main>
   )
 }
+
+
+export const runtime = 'edge';

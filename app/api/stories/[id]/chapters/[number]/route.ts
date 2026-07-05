@@ -22,3 +22,6 @@ export async function GET(
     return NextResponse.json({ error: 'Gagal memuat bab.' }, { status: 500 })
   }
 }
+
+
+export const runtime = 'edge';

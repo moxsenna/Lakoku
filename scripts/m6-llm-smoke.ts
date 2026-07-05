@@ -44,16 +44,22 @@ function blueprintFor(bps: ChapterBlueprint[], n: number): ChapterBlueprint {
 }
 
 async function main() {
-  if (!process.env.AI_GATEWAY_API_KEY) {
-    console.error('AI_GATEWAY_API_KEY tak diset — lewati smoke test LLM.')
+  // Butuh minimal satu sumber model: tunnel kustom, OpenRouter, atau AI Gateway.
+  if (
+    !process.env.CUSTOM_LLM_BASE_URL &&
+    !process.env.OPENROUTER_API_KEY &&
+    !process.env.AI_GATEWAY_API_KEY
+  ) {
+    console.error('Tak ada provider LLM (CUSTOM_LLM_BASE_URL / OPENROUTER_API_KEY / AI_GATEWAY_API_KEY) — lewati smoke test.')
     process.exit(2)
   }
 
   const snapshot = buildFixtureSnapshot()
-  const model = process.env.NARRATIVE_MODEL ?? 'openai/gpt-4.1-mini'
-  console.log(`Model: ${model}\n`)
+  // Biarkan rantai provider (tunnel → OpenRouter → gateway) ditentukan env.
+  const provider = createGatewayProvider()
+  console.log(`Rantai model: ${provider.name}\n`)
 
-  const llm: GatewayDeps = { provider: createGatewayProvider({ model }) }
+  const llm: GatewayDeps = { provider }
   const det: GatewayDeps = { provider: createDeterministicProvider() }
 
   for (const n of [6, 12]) {

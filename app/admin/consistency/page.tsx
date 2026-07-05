@@ -1,9 +1,11 @@
 import type { Metadata } from 'next'
 import { loadConsistencyMetrics } from '@/lib/observability/server'
+import { evaluateCriticalRateAlert, type ConsistencyAlert } from '@/lib/observability'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { MetricCard, type MetricTone } from '@/components/dashboard/metric-card'
 import { CriticalRateChart } from '@/components/dashboard/critical-rate-chart'
 import { StaleThreadsList } from '@/components/dashboard/stale-threads-list'
+import { AlertBanner } from '@/components/dashboard/alert-banner'
 
 export const metadata: Metadata = {
   title: 'Konsistensi — Dashboard Ops',
@@ -34,9 +36,11 @@ function goodWhenHigh(rate: number, warn = 0.75, bad = 0.5): MetricTone {
 
 export default async function ConsistencyDashboardPage() {
   let metrics: Awaited<ReturnType<typeof loadConsistencyMetrics>> | null = null
+  let alert: ConsistencyAlert | null = null
   let loadError = false
   try {
     metrics = await loadConsistencyMetrics()
+    alert = evaluateCriticalRateAlert(metrics)
   } catch (err) {
     console.log('[v0] dashboard konsistensi gagal memuat:', (err as Error)?.message)
     loadError = true
@@ -66,6 +70,7 @@ export default async function ConsistencyDashboardPage() {
         </Card>
       ) : (
         <>
+          <AlertBanner alert={alert} />
           <section
             aria-label="Ringkasan metrik"
             className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"

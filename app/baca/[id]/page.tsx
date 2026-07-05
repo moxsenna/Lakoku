@@ -1,12 +1,7 @@
 import { notFound } from 'next/navigation'
-import { getStory, getChapter, getChapterAvailability, listStoryIds } from '@/lib/api/server'
+import { getStory, getChapter, getChapterAvailability } from '@/lib/api/server'
 import { ReaderView } from '@/components/reader-view'
 import { ChapterUnavailable } from '@/components/chapter-unavailable'
-
-export async function generateStaticParams() {
-  const ids = await listStoryIds()
-  return ids.map((id) => ({ id }))
-}
 
 export default async function BacaPage({
   params,

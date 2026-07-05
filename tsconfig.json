@@ -35,6 +35,9 @@
       "@lakoku/ai-gateway": [
         "./lib/ai-gateway/index.ts"
       ],
+      "@lakoku/ai-gateway/server": [
+        "./lib/ai-gateway/server.ts"
+      ],
       "@lakoku/runtime": [
         "./lib/runtime/index.ts"
       ],

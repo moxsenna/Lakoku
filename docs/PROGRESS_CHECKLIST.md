@@ -1,7 +1,7 @@
 # Lakoku — Progress Checklist (Task Tracker) v1.0
 
 **Status:** Living document — dicentang seiring pekerjaan berjalan
-**Last updated:** 5 Juli 2026 (JALUR CERITA AI END-TO-END MENYALA: `lib/runtime/story-generation.ts` menyatukan M2–M5 — canon loader Supabase→snapshot, compileContext + `retrieval_logs`, generateChapter (plan→write→Layer A→Layer B→repair 2-lapis), boundary consumer-safe, publish atomik. RPC `release_generation_lease` untuk jalur gagal. Endpoint `/generate` mode `real`(default)/`fake`. E2E di DB nyata `scripts/e2e-real-generation.ts` 21/21 PASS (seed canon → generate Bab 1–3 → baca via reader → retrieval_logs/events → idempotensi → 0 lease menggantung); invariant M2 fake tetap hijau; tsc & lint hijau)
+**Last updated:** 5 Juli 2026 (M0 BATAS PAKET LOGIS §5.1: alias `@lakoku/{narrative-core,ai-gateway,runtime,db,api}` + entry `/server` untuk seam `server-only` (loader, selectProvider) + barrel `index.ts` tiap paket + aturan boundary ESLint `no-restricted-imports` (arah `db→narrative-core→ai-gateway→runtime`, `api→db`); probe pelanggaran terbukti tertangkap; `docs/PACKAGE_BOUNDARIES.md`. Impor lintas-paket dimigrasi ke barrel; seam framework Next.js sengaja tetap deep-import. Semua gate hijau tanpa regresi: tsc, eslint, m4 27/27, m5 236/236, invariants, e2e 21/21. Folder fisik `packages/*`/`apps/*` + CI ditunda. — Sebelumnya: JALUR CERITA AI END-TO-END MENYALA via `lib/runtime/story-generation.ts`)
 **Turunan dari:** `docs/IMPLEMENTATION_PLAN.md` (runbook v1.0) — jika runbook berubah, sinkronkan checklist ini di PR yang sama (anti-drift, runbook §5)
 **Cara pakai:** Setiap task = satu checkbox. Centang HANYA bila Definition of Done (DoD) task terpenuhi. Milestone dianggap selesai hanya bila blok Sign-off-nya lengkap (lihat runbook §4).
 
@@ -15,7 +15,7 @@
 
 | Milestone | Status | Catatan singkat |
 |---|---|---|
-| M0 — Repo, tooling, CI skeleton | `[ ]` | Belum monorepo ARCH §5; repo saat ini single Next.js app |
+| M0 — Repo, tooling, CI skeleton | `[~]` | **Batas paket LOGIS §5.1 ditegakkan** via alias `@lakoku/{narrative-core,ai-gateway,runtime,db,api}` (+ entry `/server` untuk seam `server-only`) + barrel `index.ts` tiap paket + aturan boundary ESLint (`no-restricted-imports`, arah dependensi `db→narrative-core→ai-gateway→runtime`, `api→db`). Probe pelanggaran terbukti tertangkap. Doc `PACKAGE_BOUNDARIES.md`. Semua gate hijau tanpa regresi (tsc, eslint, m4 27/27, m5 236/236, invariants, e2e 21/21). Folder fisik `packages/*`/`apps/*` + CI belum (ditunda sampai butuh build/publish terpisah atau Android) |
 | M1 — Contracts + DB + RLS | `[~]` | Supabase terhubung; skema reader-path + RLS read publik + seed; **auth + `reader_states` per-user RLS pemilik-saja hidup**. `packages/contracts`/`db` & domain naratif ARCH §13.1 belum |
 | M2 — Runtime lifecycle + fake gen E2E | `[~]` | Runtime interim di app Next.js (`lib/runtime/`) + RPC atomik Postgres: event log, idempotency, lease, publish_chapter, **release_generation_lease**, fake gen E2E, ETag. **Jalur generasi NYATA (`story-generation.ts`) juga menyala** — E2E 21/21 di DB nyata. Harness invariant hijau. Struktur `packages/runtime` (monorepo) belum |
 | M3 — Memory hierarchy + Layer A + alias | `[~]` | narrative-core interim di `lib/narrative/` + 12 tabel canon (RLS deny-default): alias resolver, context compiler T0–T3 + budget + load-bearing protection, Layer A (8 cek). Simulasi 50 bab + 8 cek negatif hijau (13/13). Struktur `packages/narrative-core` (monorepo) belum |

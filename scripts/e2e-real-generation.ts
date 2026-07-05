@@ -45,6 +45,10 @@ async function main() {
   await db.from('story_events').delete().eq('story_id', STORY)
   await db.from('retrieval_logs').delete().eq('story_id', STORY)
   await db.from('generation_leases').delete().eq('story_id', STORY)
+  // Penting: sapu juga ledger idempotensi. Tanpa ini, publish_chapter akan
+  // mengembalikan hasil cache (ok=true) TANPA menulis ulang bab, sehingga test
+  // ulang tampak "terbit" padahal DB kosong.
+  await db.from('idempotency_keys').delete().eq('story_id', STORY)
 
   // 1) Generate Bab 1..3 lewat jalur nyata.
   console.log('\n[e2e] generasi nyata Bab 1..3')

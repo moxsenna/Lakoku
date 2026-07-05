@@ -19,10 +19,10 @@ import {
   toReaderSafe,
   assertConsumerSafe,
   scanForLeaks,
-  selectProvider,
   type ThreadContext,
   type ChapterDraftParsed,
 } from '@lakoku/ai-gateway'
+import { selectProvider } from '@lakoku/ai-gateway/server'
 
 /**
  * Workflow generasi bab NYATA (M2→M5 disatukan) — "jalur cerita AI end-to-end".

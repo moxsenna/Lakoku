@@ -1,5 +1,5 @@
 import 'server-only'
-import { generateText, type LanguageModel } from 'ai'
+import { streamText, type LanguageModel } from 'ai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import type { CanonSnapshot, Finding } from '@lakoku/narrative-core'
 import {
@@ -197,7 +197,11 @@ async function generateProse(args: {
   const { system, prompt } = buildPrompt(args)
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    const { text } = await generateText({
+    // Pakai streamText (bukan generateText): banyak endpoint OpenAI-compatible
+    // (termasuk proxy/tunnel) SELALU membalas SSE streaming meski diminta
+    // non-stream, sehingga parser non-stream gagal. streamText mem-parse SSE;
+    // kita cukup menunggu `text` (agregat penuh) rampung.
+    const result = streamText({
       model: args.model,
       system,
       prompt:
@@ -205,6 +209,7 @@ async function generateProse(args: {
           ? prompt
           : `${prompt}\n\nCATATAN: revisi sebelumnya memuat istilah teknis terlarang. Tulis ulang murni sebagai narasi cerita.`,
     })
+    const text = await result.text
     const { title, paragraphs } = parseProse(text)
     const blob = [title, ...paragraphs].join('\n')
     if (scanForLeaks(blob).length === 0) {

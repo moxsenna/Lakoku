@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils'
 const items = [
   { href: '/beranda', label: 'Beranda', icon: Home },
   { href: '/koleksiku', label: 'Koleksiku', icon: LibraryBig },
-  { href: '/brainstorm', label: 'Mulai Cerita', icon: CirclePlus },
+  { href: '/mulai', label: 'Mulai Cerita', icon: CirclePlus },
   { href: '/profil', label: 'Profil', icon: User },
 ]
 

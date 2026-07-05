@@ -64,7 +64,7 @@ export default function OnboardingPage() {
 
         <div className="mt-auto flex flex-col gap-3">
           <Link
-            href="/brainstorm"
+            href="/mulai"
             className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
           >
             Masuk ke Cerita Pertamaku

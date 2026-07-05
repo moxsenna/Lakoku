@@ -85,7 +85,7 @@ export default async function BerandaPage() {
             oleh pilihanmu sendiri.
           </p>
           <Link
-            href="/brainstorm"
+            href="/mulai"
             className="mt-1 flex min-h-12 items-center rounded-2xl bg-primary px-5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
           >
             Mulai Cerita Baru

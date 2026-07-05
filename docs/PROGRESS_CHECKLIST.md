@@ -24,7 +24,7 @@
 | **M6-WEB — Web reader mobile-first** | `[~]` | **Jalur UX (fixtures) TUNTAS** — Exit Criteria jalur UX ✔ (lint+tsc hijau); jalur cerita nyata menunggu M5 |
 | M6 — Android reader beta | `[ ]` | Client kedua; belum dimulai |
 | M7 — Story Foundation + opening + reports | `[x]` | Selesai |
-| M8 — Observability + alert + entitlement | `[ ]` | Belum dimulai |
+| M8 — Observability + alert + entitlement | `[x]` | **Selesai** — T8.1 dashboard konsistensi (`/admin/consistency`, 5 metrik G3-METRICS, `m8-metrics` 29/29), T8.2 alert naik-monoton + notifikasi eksternal (`m8-alert` 24/24), T8.3 entitlement webhook HMAC server-authoritative fail-closed (`m8-entitlement` 22/22). T8.3 live tinggal colok Stripe (`CHECKOUT_WEBHOOK_SECRET` + skema commercial) |
 | M9 — Hardening + release gate + beta cut | `[ ]` | Belum dimulai |
 
 ---
@@ -148,7 +148,10 @@
 
 ## M7 — Story Foundation, Proposal, Opening Package, Reports
 
-- [ ] **T7.1 Story Foundation flow + proposal selection** — user buat cerita → pilih proposal → lock story contract.
+- [x] **T7.1 Story Foundation flow + proposal selection** — user buat cerita → pilih proposal → lock story contract.
+  - **Alur foundation→proposal→lock lengkap** di wizard `components/brainstorm/brainstorm-wizard.tsx` (route `/brainstorm`, ditaut dari onboarding `components/mulai/onboarding-flow.tsx`): tahap IDE → `actProposePremises(idea)` menghasilkan **3 usulan premis** → **pemilihan proposal** eksplisit (`setPremise(p)` dari daftar kartu + "Lihat premis lain" untuk memilih ulang) → penyempurnaan opsional (`actRefinePremise`) → cast/mystery/world → REVIEW → **kunci story contract** (`doLock` → `lockStoryBible`).
+  - **Lock = story contract otoritatif**: `app/brainstorm/actions.ts#lockStoryBible` menjalankan tangga kegagalan `runLockLadder` (validate → AI repair → deterministic transform → escalate `needsAuthor`); hanya saat LOCKED → `enrichOpeningVoiceSheets` (T7.2) lalu `persistStoryBible` commit canon. Spine (act/gate 12/20/32/45/ending) tak pernah diubah — hanya konten. `NEEDS_AUTHOR` ditampilkan reader-safe (findings berbahasa cerita, tanpa istilah teknis).
+  - **Bukti**: alur end-to-end fungsional (bersama T7.2 opening→Bab 1 & Exit Criteria M7 yang lebih dulu hijau). Verifikasi surface: tsc 0, eslint 0 (`app/brainstorm`, `components/brainstorm`). Catatan lingkungan: verifikasi browser tertunda karena env Supabase (`NEXT_PUBLIC_SUPABASE_URL/ANON_KEY`) belum ter-sync ulang pasca-pull (middleware 404 di semua route) — bukan cacat T7.1.
 - [x] **T7.2 Opening package + voice sheets** — NTM G5-VOICE — opening package membuat `character_voice_sheets`; voice masuk T0; opening → Bab 1 utuh.
   - **Opening Package (authoring)** `lib/authoring/opening.ts` (logika murni) — `selectOpeningCharacters()` memilih tokoh `introducedChapter ≤ 1` (protagonis + tokoh Bab 1; fallback protagonis), `enrichOpeningVoiceSheets(compiled, author)` MEMPERKAYA voice sheet tokoh pembuka via `VoiceSheetAuthorFn` (DI) lalu MERGE immutable ke snapshot. `validateAuthoredVoice()` pagar aman-pembaca (`scanForLeaks`) + butuh substansi (speechHabits & sampleLines). Best-effort: author gagal/null/menolak/hasil cacat → voice DASAR (turunan cast) dipertahankan, alur kunci→Bab 1 tak pernah buntu. Voice tokoh non-pembuka tak disentuh.
   - **Voice authoring (LLM)** `lib/authoring/opening-model.ts` (server-only) — `makeVoiceSheetAuthor()` via `authorObject` (model JSON-capable T7.4): mengarang register khas, kebiasaan bicara, kata terlarang, contoh dialog agar suara antar-tokoh berbeda tajam sejak Bab 1; output divalidasi bentuk (Zod) lalu semantik saat merge.

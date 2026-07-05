@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { AppShell } from '@/components/app-shell'
 import { LogoutButton } from '@/components/logout-button'
+import { ThemeToggle } from '@/components/theme-toggle'
 import { listStories, getStory } from '@/lib/api/server'
 import { getSessionUser } from '@/lib/api/user-state'
 
@@ -41,7 +42,7 @@ export default async function ProfilPage() {
           >
             {initial}
           </span>
-          <div className="flex flex-col">
+          <div className="flex min-w-0 flex-1 flex-col">
             <h1 className="font-serif text-2xl text-foreground">{displayName}</h1>
             <p className="text-xs text-muted-foreground">
               {user
@@ -49,6 +50,7 @@ export default async function ProfilPage() {
                 : 'Mode tamu — masuk agar jejakmu tersimpan'}
             </p>
           </div>
+          <ThemeToggle />
         </header>
 
         <section aria-label="Perjalananmu" className="grid grid-cols-3 gap-3">

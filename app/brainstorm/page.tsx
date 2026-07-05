@@ -10,5 +10,4 @@ export default function BrainstormPage() {
   return <BrainstormWizard />
 }
 
-
-export const runtime = 'edge';
+export const dynamic = 'force-dynamic';

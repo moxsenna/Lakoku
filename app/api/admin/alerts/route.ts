@@ -41,6 +41,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: 'Gagal mengirim alert.' }, { status: 500 })
   }
 }
-
-
-export const runtime = 'edge';

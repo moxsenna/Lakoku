@@ -38,4 +38,5 @@ export default async function BacaPage({
 }
 
 
-export const runtime = 'edge';
+
+export const dynamic = 'force-dynamic';

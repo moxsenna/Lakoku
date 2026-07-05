@@ -96,5 +96,4 @@ export default async function BerandaPage() {
   )
 }
 
-
-export const runtime = 'edge';
+export const dynamic = 'force-dynamic';

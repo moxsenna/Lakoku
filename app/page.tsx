@@ -81,5 +81,4 @@ export default function OnboardingPage() {
   )
 }
 
-
-export const runtime = 'edge';
+export const dynamic = 'force-dynamic';

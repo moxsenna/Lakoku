@@ -44,5 +44,4 @@ export async function POST(request: Request): Promise<Response> {
   }
 }
 
-
-export const runtime = 'edge';
+export const dynamic = 'force-dynamic';

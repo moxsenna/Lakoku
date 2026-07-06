@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { queryChoiceOutcome, queryChapter } from '@/lib/api/queries'
 import { applyChoiceToUserState } from '@/lib/api/user-state'
+import { SubmitChoiceRequestSchema } from '@lakoku/contracts'
 
 /**
  * POST /api/stories/[id]/choices
@@ -16,16 +17,13 @@ export async function POST(
 ) {
   try {
     const { id } = await params
-    const body = (await req.json().catch(() => null)) as {
-      chapterNumber?: unknown
-      choiceId?: unknown
-    } | null
+    const body = await req.json().catch(() => null)
 
-    const chapterNumber = Number(body?.chapterNumber)
-    const choiceId = typeof body?.choiceId === 'string' ? body.choiceId : ''
-    if (!Number.isFinite(chapterNumber) || chapterNumber < 1 || !choiceId) {
+    const parsed = SubmitChoiceRequestSchema.safeParse(body)
+    if (!parsed.success) {
       return NextResponse.json({ error: 'Permintaan tidak valid.' }, { status: 400 })
     }
+    const { chapterNumber, choiceId } = parsed.data
 
     const outcome = await queryChoiceOutcome(id, chapterNumber, choiceId)
     if (!outcome) {

@@ -34,13 +34,13 @@ const SECRET = 'whsec_test_secret_lakoku'
 const NOW = 1_800_000_000 // unix detik tetap → deterministik
 
 /** Bangun body + header tanda tangan valid untuk sebuah event. */
-function signed(
+async function signed(
   event: Record<string, unknown>,
   opts: { secret?: string; t?: number } = {},
-): { body: string; header: string } {
+): Promise<{ body: string; header: string }> {
   const body = JSON.stringify(event)
   const t = opts.t ?? NOW
-  const v1 = computeSignature(body, t, opts.secret ?? SECRET)
+  const v1 = await computeSignature(body, t, opts.secret ?? SECRET)
   return { body, header: `t=${t},v1=${v1}` }
 }
 
@@ -58,7 +58,7 @@ async function run() {
   // 1) Tanda tangan valid & segar → grant diterapkan.
   {
     const store = new InMemoryEntitlementStore()
-    const { body, header } = signed(grantEvent('evt_1'))
+    const { body, header } = await signed(grantEvent('evt_1'))
     const out = await processCheckoutWebhook(body, header, { store, verify })
     check('valid → applied grant', out.status === 'applied' && out.action === 'grant')
     check('valid → entitlement aktif', store.hasEntitlement('user-1', 'story_create'))
@@ -68,7 +68,7 @@ async function run() {
   // 2) Tanda tangan hilang → ditolak, tak ada akses.
   {
     const store = new InMemoryEntitlementStore()
-    const { body } = signed(grantEvent('evt_2'))
+    const { body } = await signed(grantEvent('evt_2'))
     const out = await processCheckoutWebhook(body, null, { store, verify })
     check('no signature → rejected', out.status === 'rejected' && out.reason === 'MISSING_SIGNATURE')
     check('no signature → tak ada apply', store.applyCount === 0)
@@ -77,7 +77,7 @@ async function run() {
   // 3) Header rusak → ditolak.
   {
     const store = new InMemoryEntitlementStore()
-    const { body } = signed(grantEvent('evt_3'))
+    const { body } = await signed(grantEvent('evt_3'))
     const out = await processCheckoutWebhook(body, 'garbage', { store, verify })
     check('malformed header → rejected', out.status === 'rejected' && out.reason === 'MALFORMED_SIGNATURE')
   }
@@ -85,7 +85,7 @@ async function run() {
   // 4) Tanda tangan salah (rahasia beda) → ditolak.
   {
     const store = new InMemoryEntitlementStore()
-    const { body, header } = signed(grantEvent('evt_4'), { secret: 'rahasia-penyerang' })
+    const { body, header } = await signed(grantEvent('evt_4'), { secret: 'rahasia-penyerang' })
     const out = await processCheckoutWebhook(body, header, { store, verify })
     check('wrong secret → rejected (BAD_SIGNATURE)', out.status === 'rejected' && out.reason === 'BAD_SIGNATURE')
     check('wrong secret → tak ada akses', store.applyCount === 0)
@@ -94,7 +94,7 @@ async function run() {
   // 5) Body di-tamper setelah ditandatangani → ditolak.
   {
     const store = new InMemoryEntitlementStore()
-    const { header } = signed(grantEvent('evt_5', 'user-1', 'story_create'))
+    const { header } = await signed(grantEvent('evt_5', 'user-1', 'story_create'))
     // Penyerang menaikkan hak ke paket lebih mahal setelah tanda tangan dibuat.
     const tampered = JSON.stringify(grantEvent('evt_5', 'user-1', 'premium_unlimited'))
     const out = await processCheckoutWebhook(tampered, header, { store, verify })
@@ -105,7 +105,7 @@ async function run() {
   // 6) Stempel waktu kedaluwarsa (di luar toleransi) → ditolak.
   {
     const store = new InMemoryEntitlementStore()
-    const stale = signed(grantEvent('evt_6'), { t: NOW - 3600 }) // 1 jam lalu
+    const stale = await signed(grantEvent('evt_6'), { t: NOW - 3600 }) // 1 jam lalu
     const out = await processCheckoutWebhook(stale.body, stale.header, { store, verify })
     check('stale timestamp → rejected', out.status === 'rejected' && out.reason === 'STALE_TIMESTAMP')
     check('stale timestamp → tak ada akses', store.applyCount === 0)
@@ -114,7 +114,7 @@ async function run() {
   // 7) Replay event yang sama → idempoten, tanpa grant ganda.
   {
     const store = new InMemoryEntitlementStore()
-    const { body, header } = signed(grantEvent('evt_7'))
+    const { body, header } = await signed(grantEvent('evt_7'))
     const first = await processCheckoutWebhook(body, header, { store, verify })
     const second = await processCheckoutWebhook(body, header, { store, verify })
     check('replay → pertama applied', first.status === 'applied')
@@ -135,9 +135,9 @@ async function run() {
   // 9) Event revoke mencabut entitlement yang aktif.
   {
     const store = new InMemoryEntitlementStore()
-    const g = signed(grantEvent('evt_9a'))
+    const g = await signed(grantEvent('evt_9a'))
     await processCheckoutWebhook(g.body, g.header, { store, verify })
-    const r = signed({
+    const r = await signed({
       id: 'evt_9b',
       type: 'charge.refunded',
       data: { user_id: 'user-1', entitlement_code: 'story_create' },
@@ -150,7 +150,7 @@ async function run() {
   // 10) Jenis event tak dikenal → ditolak (tak fail-open).
   {
     const store = new InMemoryEntitlementStore()
-    const u = signed({
+    const u = await signed({
       id: 'evt_10',
       type: 'invoice.weird_unknown',
       data: { user_id: 'user-1', entitlement_code: 'story_create' },
@@ -162,7 +162,7 @@ async function run() {
   // 11) Payload tak lengkap (tanpa user_id) → ditolak sebagai MALFORMED_PAYLOAD.
   {
     const store = new InMemoryEntitlementStore()
-    const m = signed({ id: 'evt_11', type: 'checkout.completed', data: { entitlement_code: 'story_create' } })
+    const m = await signed({ id: 'evt_11', type: 'checkout.completed', data: { entitlement_code: 'story_create' } })
     const out = await processCheckoutWebhook(m.body, m.header, { store, verify })
     check('missing user_id → rejected (MALFORMED_PAYLOAD)', out.status === 'rejected' && out.reason === 'MALFORMED_PAYLOAD')
   }
@@ -170,7 +170,7 @@ async function run() {
   // 12) Tanda tangan tepat di batas toleransi (300s) → diterima.
   {
     const store = new InMemoryEntitlementStore()
-    const edge = signed(grantEvent('evt_12'), { t: NOW - 300 })
+    const edge = await signed(grantEvent('evt_12'), { t: NOW - 300 })
     const out = await processCheckoutWebhook(edge.body, edge.header, { store, verify })
     check('edge tolerance (=300s) → applied', out.status === 'applied')
   }

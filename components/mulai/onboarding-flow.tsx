@@ -308,7 +308,6 @@ export function OnboardingFlow() {
 
   // ---------- Layar utama: kuis / proposal / ringkasan ----------
   const showQuiz = phase === 'quiz'
-  const showProposals = phase === 'proposals' && !selected
   const progressFilled = showQuiz ? step : totalQuestions
 
   return (

@@ -43,7 +43,7 @@ M6-WEB punya dua jalur dengan gate berbeda. Ini titik yang paling sering disalah
 | Jalur | Isi | Gate |
 | --- | --- | --- |
 | **UX (fixtures)** | Bangun/validasi UI/UX reader web di atas data fixture deterministik | **Tidak** dikunci di belakang M3/M5. Boleh sekarang. Repo saat ini ada di jalur ini. |
-| **Cerita nyata (AI ke pembaca)** | Menyajikan bab hasil generasi AI ke pembaca sungguhan | **Terkunci** di belakang M5 hijau (NTM §3), sama seperti Android. |
+| **Cerita nyata (AI ke pembaca)** | Menyajikan bab hasil generasi AI ke pembaca sungguhan | **Terkunci** di belakang M5 NTM sign-off penuh (NTM §3), sama seperti Android. |
 
 **Implikasi praktis:** membangun tampilan reader web di atas fixtures **bukan** pelanggaran gate. Yang dikunci M5 adalah *menyajikan cerita AI ke pembaca* — baik lewat web maupun Android.
 
@@ -51,10 +51,12 @@ M6-WEB punya dua jalur dengan gate berbeda. Ini titik yang paling sering disalah
 
 ## 5. Status saat ini
 
-- Web reader mobile-first prototype **sudah ada** dan on-brand (Next.js App Router, Tailwind v4).
+- Web reader mobile-first **jalur UX sudah tuntas** dan on-brand (Next.js App Router, Tailwind v4).
 - Seam `lib/api/` **sudah terpasang** (`types.ts`, `client.ts`, fixtures internal); komponen UI tidak lagi mengimpor sumber data langsung.
+- `client.ts` sudah menunjuk Reader API interim (route handlers → Supabase), sehingga UI tidak bergantung langsung pada fixtures.
 - Reader menampilkan bab **sesuai cerita** (bug "sample statis" telah diperbaiki).
-- Posisi: **M6-WEB jalur UX** sedang berjalan; jalur cerita nyata menunggu backend (M1–M5).
+- M5 core/smoke sudah hijau (soak 3 jalur×50 bab), tetapi NTM belum seluruhnya `DONE`: G1 step R runtime dan sebagian side-effect G4 masih `IN_PROGRESS`, serta global release gate M9 belum ada.
+- Posisi: **M6-WEB jalur UX selesai; jalur cerita nyata terkendali untuk canon ter-seed hidup; publikasi AI luas menunggu M5 NTM sign-off + M9 release gate.**
 
 ---
 
@@ -62,6 +64,6 @@ M6-WEB punya dua jalur dengan gate berbeda. Ini titik yang paling sering disalah
 
 Android native dimulai (M6) setelah:
 - metrik retensi bab-per-bab & konversi per-cerita di web terbukti cukup, **dan**
-- Reader API nyata + M5 (gate konsistensi 50 bab) hijau.
+- Reader API nyata + M5 NTM sign-off penuh (gate konsistensi 50 bab) hijau.
 
 Saat itu, Android cukup membangun **UI baru** di atas kontrak yang sama — tanpa memindahkan logika naratif apa pun.

@@ -2,12 +2,28 @@
   "name": "my-project",
   "version": "0.1.0",
   "private": true,
-  "packageManager": "pnpm@10.11.1",
+  "packageManager": "pnpm@11.7.0",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit --incremental false",
+    "test": "pnpm run typecheck && pnpm run smoke",
+    "smoke": "pnpm run smoke:contracts && pnpm run smoke:m4 && pnpm run smoke:m5 && pnpm run smoke:m7-authoring && pnpm run smoke:m7-reconcile && pnpm run smoke:m7-opening && pnpm run smoke:m8-metrics && pnpm run smoke:m8-alert && pnpm run smoke:m8-entitlement",
+    "smoke:contracts": "node scripts/run-smoke.cjs scripts/contracts-smoke.ts",
+    "smoke:m4": "node scripts/run-smoke.cjs scripts/m4-generation.ts",
+    "smoke:m5": "node scripts/run-smoke.cjs scripts/m5-soak.ts",
+    "smoke:m6-llm": "node scripts/run-smoke.cjs scripts/m6-llm-smoke.ts",
+    "smoke:m7-authoring": "node scripts/run-smoke.cjs scripts/m7-authoring-smoke.ts",
+    "smoke:m7-reconcile": "node scripts/run-smoke.cjs scripts/m7b-reconcile-smoke.ts",
+    "smoke:m7-report": "node scripts/run-smoke.cjs scripts/m7c-report-smoke.ts",
+    "smoke:m7-opening": "node scripts/run-smoke.cjs scripts/m7d-opening-smoke.ts",
+    "smoke:m8-metrics": "node scripts/run-smoke.cjs scripts/m8-metrics-smoke.ts",
+    "smoke:m8-alert": "node scripts/run-smoke.cjs scripts/m8-alert-smoke.ts",
+    "smoke:m8-entitlement": "node scripts/run-smoke.cjs scripts/m8-entitlement-smoke.ts",
+    "smoke:runtime": "node scripts/run-smoke.cjs scripts/runtime-invariants.ts",
+    "smoke:e2e-real": "node scripts/run-smoke.cjs scripts/e2e-real-generation.ts",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
@@ -47,10 +63,5 @@
     "tailwindcss": "^4.2.0",
     "typescript": "5.7.3",
     "wrangler": "^4.107.0"
-  },
-  "pnpm": {
-    "overrides": {
-      "hono": "4.12.25"
-    }
   }
 }

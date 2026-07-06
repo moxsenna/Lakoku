@@ -52,6 +52,9 @@
       ],
       "@lakoku/api": [
         "./lib/api/index.ts"
+      ],
+      "@lakoku/contracts": [
+        "./packages/contracts/src/index.ts"
       ]
     }
   },

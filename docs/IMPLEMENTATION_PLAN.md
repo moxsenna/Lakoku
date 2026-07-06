@@ -58,7 +58,7 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
   - Deliverable: TypeScript strict, ESLint, Prettier, Vitest, `AGENT_RULES.md` (ringkasan ARCH §23).
   - DoD: `pnpm lint && pnpm typecheck && pnpm test` hijau di repo kosong.
 - **T0.3 CI skeleton**
-  - Deliverable: `.github/workflows/ci.yml` menjalankan lint + typecheck + test + migration check (placeholder).
+  - Deliverable: `.github/workflows/ci.yml` menjalankan install, lint, typecheck, build, smoke deterministik; migration check menjadi tambahan saat harness DB formal siap.
   - Ref: ARCH §18, `infra/ci/`.
   - DoD: CI hijau di PR pertama.
 - **Exit Criteria M0:** pipeline CI hijau; batas kepemilikan paket terdokumentasi; tidak ada kode produk lagi diperlukan untuk lolos.
@@ -70,7 +70,7 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
 **Tujuan:** satu sumber kontrak API dan skema kanonik + isolasi antar-reader terbukti.
 
 - **T1.1 `packages/contracts`**
-  - Deliverable: Zod + JSON Schema + tipe ter-generate untuk endpoint ARCH §11.1 (`/v1/bootstrap`, `/v1/stories`, reader, choice, status, progress, catalog, report, assets).
+  - Deliverable: Zod + JSON Schema/OpenAPI + tipe `z.infer` untuk endpoint ARCH §11.1 (`/v1/bootstrap`, `/v1/stories`, reader, choice, status, progress, catalog, report, assets). Implementasi saat ini sudah menutup reader API aktif (`stories`, `story`, `chapter`, `choices`, `report`) di `packages/contracts`; endpoint yang belum aktif tetap backlog.
   - Ref: ARCH §11.1, §5.1 (contracts = satu-satunya definisi bersama).
   - DoD: tipe ter-generate; larangan duplikasi tipe request/response ditegakkan lewat lint rule/review.
 - **T1.2 Skema kanonik baseline (`packages/db` + `infra/supabase`)**
@@ -124,7 +124,7 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
   - Deliverable: WF step 5 me-resolve setiap mention ke `character_id`; unresolved = MAJOR (bukan karakter baru).
   - Ref: NCS §5.1.
   - DoD: alias fixture (3 sebutan, 1 bab) tidak memunculkan entitas ganda.
-- **Exit Criteria M3:** simulasi deterministik ke Bab 50 (data fixture, belum AI) lolos Layer A; NTM G2-*, G3-LAYERA, G5-ALIAS = `DONE`. **Ini gate wajib sebelum Phase B lanjut** (NTM §3).
+- **Exit Criteria M3:** simulasi deterministik ke Bab 50 (data fixture, belum AI) lolos Layer A; NTM sign-off penuh untuk G2-*, G3-LAYERA, dan G5-ALIAS. **Ini gate wajib sebelum Phase B lanjut** (NTM §3).
 
 ---
 
@@ -169,7 +169,7 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
   - Deliverable: soak 3 jalur (high-trust, low-trust, mixed) di staging.
   - Ref: ARCH §18.2 (B7), NCS §7/§8, NTM §2.
   - DoD (mengikat): 0 kontradiksi CRITICAL; semua ending reachable tiap checkpoint; biaya/bab dalam guardrail (ARCH §20.2).
-- **Exit Criteria M5:** NCS §8 Definition of Success hijau di soak test; NTM G1/G3-LAYERB/G4 = `DONE`. **Gate wajib sebelum cerita AI nyata disajikan ke pembaca** (NTM §3) — berlaku untuk web reader (M6-WEB jalur cerita nyata) maupun Android (M6). Catatan: membangun UI/UX reader di atas *fixtures* (M6-WEB jalur UX) **tidak** dikunci gate ini.
+- **Exit Criteria M5:** NCS §8 Definition of Success hijau di soak test; NTM sign-off penuh untuk G1, G3-LAYERB, dan G4. **Gate wajib sebelum cerita AI nyata disajikan ke pembaca** (NTM §3) — berlaku untuk web reader (M6-WEB jalur cerita nyata) maupun Android (M6). Catatan: membangun UI/UX reader di atas *fixtures* (M6-WEB jalur UX) **tidak** dikunci gate ini.
 
 ---
 
@@ -179,12 +179,12 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
 
 > **Dua-jalur (WAJIB dipahami agen):** M6-WEB punya dua jalur yang berbeda gate-nya.
 > - **Jalur UX (fixtures)** — membangun & memvalidasi UI/UX reader web di atas data fixture deterministik. **Tidak** dikunci di belakang M3/M5; boleh dikerjakan lebih awal (repo saat ini sudah pada jalur ini). Syaratnya: tidak ada logika naratif di client dan tidak ada panggilan AI dari client.
-> - **Jalur cerita nyata (AI ke pembaca)** — menyajikan bab hasil generasi AI kepada pembaca sungguhan. Ini **tetap** terkunci di belakang M5 hijau (NTM §3), sama seperti M6 Android. M6-WEB "siap produksi" hanya boleh diumumkan ke pengguna setelah gate ini lolos.
+> - **Jalur cerita nyata (AI ke pembaca)** — menyajikan bab hasil generasi AI kepada pembaca sungguhan. Ini **tetap** terkunci di belakang M5 NTM sign-off penuh (NTM §3), sama seperti M6 Android. M6-WEB "siap produksi" hanya boleh diumumkan ke pengguna setelah gate ini lolos.
 
 - **T6W.1 Design system + app shell** — `apps/web` (Next.js App Router, mobile-first), sesuai Brand Guidelines v1.1.
   - DoD: layout mobile-first (`max-w-md`, bottom nav), token tema Midnight Drama + Paper Cream, aksesibilitas (aria, `prefers-reduced-motion`); tidak ada string "Narraza"/framing "AI generator" (brand guard ARCH §16.3).
 - **T6W.2 Client-data seam `lib/api/`** — kontrak async client-agnostic (LD-CONTRACT-SEAM).
-  - Deliverable: `types.ts` (kontrak domain), `client.ts` (`listStories`/`getStory`/`getChapter`/`submitChoice`), fixtures internal terpisah dari UI.
+  - Deliverable: `packages/contracts` sebagai kontrak domain; `lib/api/types.ts` hanya compatibility re-export; `client.ts` (`listStories`/`getStory`/`getChapter`/`submitChoice`/`submitReport`), fixtures internal terpisah dari UI.
   - DoD: tidak ada komponen UI yang mengimpor sumber data langsung; mengganti implementasi `client.ts` ke Reader API nyata tidak menyentuh komponen; bentuk tipe konsisten dengan `packages/contracts` (ARCH §11.1).
 - **T6W.3 Reader + progress** — beranda, detail cerita, reader per-bab, jejak pilihan.
   - DoD: reader menampilkan bab sesuai cerita (bukan sample statis); progress monotonic; loading state pakai bahasa naratif, bukan "AI sedang generate".
@@ -194,7 +194,7 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
   - DoD: alur beranda → baca → pilih → konsekuensi → lanjut lolos; type-check & lint hijau.
 - **Exit Criteria M6-WEB:**
   - *Jalur UX:* reader web mobile-first E2E lolos di browser dengan fixtures; seam `lib/api` terpasang tanpa kebocoran sumber data ke UI; brand guard lolos.
-  - *Jalur cerita nyata:* pengumuman "produksi ke pengguna" hanya setelah `client.ts` menunjuk Reader API nyata **dan** M5 hijau (NTM §3).
+  - *Jalur cerita nyata:* pengumuman "produksi ke pengguna" hanya setelah `client.ts` menunjuk Reader API nyata **dan** M5 NTM sign-off penuh (NTM §3).
 
 ---
 
@@ -221,8 +221,8 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
   - Ref: NCS §5.3.
   - DoD: voice fixture; opening → Bab 1 utuh.
 - **T7.3 Reports + safe error states** — ARCH §7.9 (`FAILED_REVIEW_REQUIRED`), PRD §7.9. — ✅ SELESAI.
-  - ✅ **Safe error states (reader-facing):** `ChapterAvailability` (`lib/api/types.ts`), `isChapterPreparing()` (`lib/api/leases.ts`, admin client karena `generation_leases` RLS-locked), `getChapterAvailability()` (`lib/api/server.ts`); layar `components/chapter-unavailable.tsx` (PREPARING dgn progress bar + auto `router.refresh()` vs UNAVAILABLE dgn tombol coba lagi). `app/baca/[id]/page.tsx` tak lagi `redirect()` diam-diam. Verifikasi browser dua state lolos (viewport mobile). Tanpa kebocoran metadata teknis; bab rusak (`FAILED_REVIEW_REQUIRED` melepas lease tanpa publish) tak pernah dipaksa tampil.
-  - ✅ **Reports (laporan pembaca + referensi kanonik):** migrasi `content_reports` (RLS deny-default) + RPC `record_content_report_v1` (atomik: laporan + `story_events(REPORT_FILED)`). `lib/api/reports.ts` `buildCanonicalRefs()` (jangkar kanon bab dari `CanonSnapshot`, hormati batas bab, best-effort) + `submitContentReport()` (service-role). `canonical_refs` ops-facing, tak pernah dikembalikan ke pembaca. UI: `ReportCategory`/`REPORT_CATEGORIES` (`lib/api/types.ts`), `components/report-dialog.tsx` di-wire ke tombol di `reader-view.tsx`, `app/api/stories/[id]/report/route.ts` (validasi + `reporter_id` dari sesi), client `submitReport()`. Bukti: smoke `m7c-report-smoke` 17/17 + verifikasi browser end-to-end (toast sukses, baris DB, event tercatat).
+  - ✅ **Safe error states (reader-facing):** `ChapterAvailability` (`@lakoku/contracts`, diekspor ulang via `lib/api/types.ts`), `isChapterPreparing()` (`lib/api/leases.ts`, admin client karena `generation_leases` RLS-locked), `getChapterAvailability()` (`lib/api/server.ts`); layar `components/chapter-unavailable.tsx` (PREPARING dgn progress bar + auto `router.refresh()` vs UNAVAILABLE dgn tombol coba lagi). `app/baca/[id]/page.tsx` tak lagi `redirect()` diam-diam. Verifikasi browser dua state lolos (viewport mobile). Tanpa kebocoran metadata teknis; bab rusak (`FAILED_REVIEW_REQUIRED` melepas lease tanpa publish) tak pernah dipaksa tampil.
+  - ✅ **Reports (laporan pembaca + referensi kanonik):** migrasi `content_reports` (RLS deny-default) + RPC `record_content_report_v1` (atomik: laporan + `story_events(REPORT_FILED)`). `lib/api/reports.ts` `buildCanonicalRefs()` (jangkar kanon bab dari `CanonSnapshot`, hormati batas bab, best-effort) + `submitContentReport()` (service-role). `canonical_refs` ops-facing, tak pernah dikembalikan ke pembaca. UI: `ReportCategory`/`REPORT_CATEGORIES` (`@lakoku/contracts`, diekspor ulang via `lib/api/types.ts`), `components/report-dialog.tsx` di-wire ke tombol di `reader-view.tsx`, `app/api/stories/[id]/report/route.ts` (validasi body via `SubmitReportRequestSchema` + `reporter_id` dari sesi), client `submitReport()`. Bukti: smoke `m7c-report-smoke` 17/17 + verifikasi browser end-to-end (toast sukses, baris DB, event tercatat).
   - DoD: bahasa aman ("Cerita ini sedang dirapikan penulisnya"); bab rusak tak pernah dipaksa publish. Laporan menautkan referensi kanonik, bukan screenshot pembaca.
 - **T7.4 AI canon-authoring (brainstorm wizard)** — ✅ SELESAI.
   - Deliverable: modul `lib/authoring/` (schema draft zod, `model.ts` proposer via `generateObject`, `validate.ts`+`compile.ts` draft→`CanonSnapshot`/blueprint, `repair.ts` tangga kegagalan validate→AI repair→transform→escalate, `persist.ts` commit ke Supabase). Wizard 6-tahap `components/brainstorm/` + `app/brainstorm/` (idea→premis→cast→misteri→dunia→kunci). Entry point beranda/landing/bottom-nav → `/brainstorm`. Lock sukses → `startFirstChapter()` memicu `generateNextChapterReal(storyId,1)`, majukan `stories.status=BERJALAN`/`current_chapter=1`, redirect `/baca/{id}?bab=1`.
@@ -263,13 +263,13 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
 ```
 M0 → M1 → M2 → M3 → M4 → M5 ─────────────→ M9
      │               └→ M6 → M7 → M8 → M9
-     └→ M6-WEB (jalur UX, fixtures) ┄┄┄ menyajikan cerita AI ke pembaca menunggu M5
+     └→ M6-WEB (jalur UX, fixtures) ┄┄┄ menyajikan cerita AI ke pembaca menunggu M5 NTM sign-off
 ```
 
 - M3 adalah **prasyarat keras** untuk semua generasi panjang (NTM §3).
-- M5 adalah **prasyarat keras** untuk menyajikan cerita AI nyata ke pengguna — baik lewat web reader (M6-WEB jalur cerita nyata) maupun Android (M6) (NTM §3).
+- M5 NTM sign-off penuh adalah **prasyarat keras** untuk menyajikan cerita AI nyata ke pengguna — baik lewat web reader (M6-WEB jalur cerita nyata) maupun Android (M6) (NTM §3).
 - **M6-WEB jalur UX (fixtures)** hanya bergantung pada kontrak di M1 dan boleh dimulai lebih awal, paralel dengan M2–M5. Yang dikunci di belakang M5 adalah *menyajikan bab AI ke pembaca*, bukan membangun UI/UX di atas fixtures.
-- M6–M8 boleh berjalan paralel dengan penyelesaian M5 **hanya** untuk pekerjaan UI yang tidak bergantung pada output naratif final; integrasi penuh menunggu M5 hijau.
+- M6–M8 boleh berjalan paralel dengan penyelesaian M5 **hanya** untuk pekerjaan UI yang tidak bergantung pada output naratif final; integrasi penuh menunggu M5 NTM sign-off penuh.
 
 ---
 

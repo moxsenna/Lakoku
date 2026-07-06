@@ -66,19 +66,19 @@ Tambah: guardrail ARCH §23 berlaku untuk client web sama seperti Android (tanpa
 
 ---
 
-## D. Status Implementasi Web (per 5 Juli 2026)
+## D. Status Implementasi Web (diperbarui 7 Juli 2026)
 
 Langkah pertama LD-CONTRACT-SEAM sudah dikerjakan di prototype web:
 
 | Item | Lokasi | Status |
 |---|---|---|
-| Kontrak tipe domain client | `lib/api/types.ts` | DONE |
-| Client data async (seam) | `lib/api/client.ts` (`listStories`, `getStory`, `getChapter`, `submitChoice`) | DONE |
+| Kontrak tipe domain client | `packages/contracts` (Zod/JSON Schema/OpenAPI), diekspor ulang via `lib/api/types.ts` | DONE untuk reader API aktif |
+| Client data async (seam) | `lib/api/client.ts` (`listStories`, `getStory`, `getChapter`, `submitChoice`, `submitReport`) | DONE |
 | Fixture lokal (internal, non-UI) | `lib/api/fixtures.ts` | DONE |
 | UI beralih ke seam (beranda, cerita, baca, akhir, koleksiku, profil) | `app/**`, `components/**` | DONE |
 | Reader menampilkan bab per-cerita (bukan sample statis) | `components/reader-view.tsx` | DONE |
 
-**Belum dikerjakan (langkah berikut):** mengganti isi `lib/api/client.ts` dari fixture ke `fetch()` Reader API nyata; menurunkan OpenAPI/JSON-Schema dari `lib/api/types.ts`; paywall per-cerita sesuai model monetisasi PRD.
+**Belum dikerjakan (langkah berikut):** memperluas kontrak ke endpoint ARCH §11.1 yang belum aktif (`bootstrap`, `status`, `progress`, `catalog`, `assets`), contract HTTP/ownership test formal, dan paywall per-cerita sesuai model monetisasi PRD.
 
 ---
 

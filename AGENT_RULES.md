@@ -18,9 +18,12 @@ produk. Nama produk konsumen: **Lakoku**.
 ## 2. Status repo saat ini
 
 - Repo ini adalah **web reader (Next.js App Router)** — **client produksi pertama**.
-- Berjalan di **jalur UX (fixtures)**: UI/UX dibangun di atas data fixture
-  deterministik lewat seam `lib/api/`. Ini **bukan** pelanggaran gate — lihat
-  IMPLEMENTATION_PLAN M6-WEB (dua-jalur) dan `docs/CLIENT_SEQUENCING.md`.
+- **Jalur UX sudah tuntas**; UI/UX berjalan lewat seam `lib/api/`, dan `client.ts`
+  sudah menunjuk Reader API interim (route handlers → Supabase). Ini **bukan**
+  pelanggaran gate — lihat IMPLEMENTATION_PLAN M6-WEB (dua-jalur) dan
+  `docs/CLIENT_SEQUENCING.md`.
+- Jalur cerita nyata terkendali untuk canon ter-seed sudah hidup, tetapi publikasi
+  AI luas masih menunggu M5 NTM sign-off penuh + release gate M9.
 - Aplikasi **Android native (Kotlin)** menyusul sebagai **client kedua** di atas
   kontrak API yang sama, setelah metrik retensi/monetisasi web terbukti.
 
@@ -50,8 +53,9 @@ Semua ini berlaku identik untuk client mana pun:
 - Membangun UI/UX reader **di atas fixtures** → **tidak** dikunci gate M5. Boleh
   dikerjakan sekarang.
 - **Menyajikan bab AI nyata ke pembaca** (web maupun Android) → **terkunci** di belakang
-  **M5 hijau** (soak 50 bab, NCS §8; NTM §3). "Produksi ke pengguna" hanya boleh
-  diumumkan setelah `client.ts` menunjuk Reader API nyata **dan** M5 lolos.
+  **M5 NTM sign-off penuh** (soak 50 bab, NCS §8; NTM §3). "Produksi ke pengguna"
+  hanya boleh diumumkan setelah `client.ts` menunjuk Reader API nyata **dan** M5
+  lolos sebagai status NTM, bukan hanya smoke lokal.
 
 ## 5. Peta dokumen
 

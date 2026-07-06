@@ -1,7 +1,7 @@
 # Lakoku — Narrative Traceability Matrix (NTM) v1.0
 
 **Status:** Build-governance document
-**Last updated:** 5 July 2026
+**Last updated:** 7 July 2026
 **Owner:** Project lead / Narrative Operations
 **Governs:** `PRD_Lakoku_Interactive_v0.3.md`, `ARCHITECTURE_v1.1.md`, `NARRATIVE_CONSISTENCY_SPEC.md` (NCS v1.0)
 
@@ -18,6 +18,8 @@ NTM adalah satu tabel penelusuran *end-to-end* untuk setiap gap konsistensi. Seb
 - Release template diblokir bila ada baris berstatus selain `DONE` untuk gap yang masuk scope release itu (selaras ARCHITECTURE §18.3 + NCS §8).
 - Bila NCS berubah, NTM diperbarui di PR yang sama. NTM tidak boleh melenceng dari NCS.
 
+**Audit status 7 July 2026:** status `DONE` di tabel ini hanya diberikan bila bukti row-level sudah ada di repo (runtime/validator, fixture/smoke, dan bila relevan dashboard). Baris yang baru punya core logic + smoke tetapi belum di-wire ke workflow runtime produksi tetap `IN_PROGRESS`. Global build/release gate lintas-baris tetap pekerjaan M9/T9.2.
+
 ---
 
 ## 1. Matriks Penelusuran Gap → Gate
@@ -28,44 +30,44 @@ Kolom: **Gap** (NCS) · **Requirement** · **Skema DB** · **Runtime/Validator**
 
 | ID | Requirement | Skema DB | Runtime/Validator | Fixture | Metrik | Release gate | Status |
 |---|---|---|---|---|---|---|---|
-| G1-VERSION | Blueprint versioned, bukan overwrite | `chapter_blueprints.version`, `.reconciled_from_version`, `.reconciliation_reason`; event `BLUEPRINT_RECONCILED` | Reconciliation step (WF step R) | drift fixture (Bab 20) | — | ARCH §18.3 soak | IN_PROGRESS (`lib/narrative/reconciliation.ts`: regen → version++ + reconciledFromVersion/Reason + event `BLUEPRINT_RECONCILED`; kolom `chapter_blueprints` ada. Terbukti di soak `m5-soak.ts`. Soak runtime nyata nunggu M6) |
-| G1-DRIFT | Drift score goal-vs-state; ≥2 → regenerate goal | — | WF step 3 (validate plan) | drift fixture | `review_required_rate` | soak | IN_PROGRESS (`computeDriftScore()` 0–3 atas ActualState; ≥2 → regen goal versi baru. **T7.5:** `runReconciliationAdaptive()` menulis ulang goal via LLM (`lib/authoring/reconcile-goal.ts` `authorChapterGoal` + `validateAuthoredGoal` anti-leak/anti reveal dini), fallback deterministik bila gagal/menolak; `authoredChapters` melacak bab LLM. Terbukti di `m7b-reconcile-smoke.ts` 23/23 + `m5-soak`. Metrik `review_required_rate` runtime nunggu M6) |
-| G1-REACH | Ending reachability check tiap checkpoint | `ending_rules` | Reconciliation step | soak 3 jalur | "semua ending reachable" (NCS §8.3) | soak | IN_PROGRESS (`checkEndingReachability()` di tiap act gate; unreachable → FAILED_REVIEW_REQUIRED. Soak 3 jalur×50 bab semua reachable) |
-| G1-SPINE | Reconciliation tak boleh langgar spine/reveal gate/ending | spine layer immutable | WF step R hard rule; ARCH rule #17 | drift fixture | 0 pelanggaran spine | soak | IN_PROGRESS (`checkSpineIntegrity()` tolak hapus mandatory reveal / majukan reveal gate → 0 pelanggaran di soak. Integrasi WF step R runtime nunggu M6) |
+| G1-VERSION | Blueprint versioned, bukan overwrite | `chapter_blueprints.version`, `.reconciled_from_version`, `.reconciliation_reason`; event `BLUEPRINT_RECONCILED` | Reconciliation step (WF step R) | drift fixture (Bab 20) | — | ARCH §18.3 soak | IN_PROGRESS (`runReconciliation*` sudah menghasilkan version++ + `reconciledFromVersion` + event `BLUEPRINT_RECONCILED`; terbukti di `m5-soak.ts` dan `m7b-reconcile-smoke.ts`. Belum `DONE` karena `generateNextChapterReal()` belum menjalankan/persist step R act-end ke DB runtime.) |
+| G1-DRIFT | Drift score goal-vs-state; ≥2 → regenerate goal | — | WF step 3 (validate plan) | drift fixture | `review_required_rate` | soak | IN_PROGRESS (`computeDriftScore()` 0–3 + `runReconciliationAdaptive()` LLM-authored/fallback deterministik sudah terbukti; `review_required_rate` sudah ada di M8. Belum `DONE` sampai drift checkpoint runtime memanggil step R dan release gate M9 menolak regresi.) |
+| G1-REACH | Ending reachability check tiap checkpoint | `ending_rules` | Reconciliation step | soak 3 jalur | "semua ending reachable" (NCS §8.3) | soak | IN_PROGRESS (`checkEndingReachability()` dan soak 3 jalur×50 bab hijau; belum `DONE` karena checkpoint reachability belum menjadi step runtime produksi.) |
+| G1-SPINE | Reconciliation tak boleh langgar spine/reveal gate/ending | spine layer immutable | WF step R hard rule; ARCH rule #17 | drift fixture | 0 pelanggaran spine | soak | IN_PROGRESS (`checkSpineIntegrity()` menolak hapus mandatory reveal/majukan reveal gate; 0 pelanggaran di soak. Belum `DONE` sampai step R runtime dipersist dan digate di M9.) |
 
 ### G2 — Memory Compaction & Context Budget (NCS §2)
 
 | ID | Requirement | Skema DB | Runtime/Validator | Fixture | Metrik | Release gate | Status |
 |---|---|---|---|---|---|---|---|
-| G2-TIERS | Hierarki T0–T3; T1 rollup otomatis saat act selesai | `act_rollups` (T1), `chapter_summaries` (T2) | WF step 1 & step 9 | soak (context di Bab 45 = T0+rollup+±8 summary) | cost/bab dalam guardrail (NCS §8.4) | soak | IN_PROGRESS (compiler `lib/narrative/compiler.ts` masukkan T1 rollups ke packet; tabel `act_rollups` ada. T1 auto-rollup WF step 9 & soak nunggu M4/M5) |
-| G2-BUDGET | Alokasi budget packet + aturan overflow | — | Context compiler; `context_budget_report{}` | load-bearing fixture | — | soak | IN_PROGRESS (budget policy §2.2 + `context_budget_report` di compiler; fixture `fixture-50` lulus; soak nunggu M5) |
-| G2-LOADBEAR | `LOAD_BEARING` tak pernah dipangkas sebelum dibayar; exclusion di-log | `facts_ledger.load_bearing`, `.salience`; `retrieval_logs` | Context compiler; ARCH rule #16 | load-bearing fixture (fakta Bab 3 muncul benar Bab 47) | — | soak | IN_PROGRESS (load-bearing tak terpangkas terbukti di harness budget-ketat; `facts_ledger.load_bearing/.salience` + `retrieval_logs` ada; penulisan log runtime nunggu M4) |
+| G2-TIERS | Hierarki T0–T3; T1 rollup otomatis saat act selesai | `act_rollups` (T1), `chapter_summaries` (T2) | WF step 1 & step 9 | soak (context di Bab 45 = T0+rollup+±8 summary) | cost/bab dalam guardrail (NCS §8.4) | soak | IN_PROGRESS (`compileContext()` + `loadCanonSnapshot()` membaca T0/T1/T2/T3 dan runtime sudah memanggil compiler. Belum `DONE` karena T1 auto-rollup WF step 9 belum menjadi side-effect runtime.) |
+| G2-BUDGET | Alokasi budget packet + aturan overflow | — | Context compiler; `context_budget_report{}` | load-bearing fixture | — | soak | IN_PROGRESS (budget policy + `context_budget_report` aktif dan `m5-soak` biaya/bab hijau; belum `DONE` sampai guardrail biaya menjadi release gate M9.) |
+| G2-LOADBEAR | `LOAD_BEARING` tak pernah dipangkas sebelum dibayar; exclusion di-log | `facts_ledger.load_bearing`, `.salience`; `retrieval_logs` | Context compiler; ARCH rule #16 | load-bearing fixture (fakta Bab 3 muncul benar Bab 47) | — | soak | IN_PROGRESS (load-bearing tak terpangkas terbukti, `persistRetrievalLog()` sudah dipanggil runtime; masih menunggu release gate M9 untuk status final `DONE`.) |
 
 ### G3 — Continuity Validator (NCS §3)
 
 | ID | Requirement | Skema DB | Runtime/Validator | Fixture | Metrik | Release gate | Status |
 |---|---|---|---|---|---|---|---|
-| G3-LAYERA | Cek deterministik (tanpa LLM): karakter hidup/terdaftar, no reveal pre-gate, knowledge scope, state delta ⊆ allowed, timeline, struktur bab, alias, karakter baru >Bab30 | `characters`, `character_states`, `secrets_reveals`, `knowledge_scopes`, `timeline_events`, `character_aliases` | WF step 6 Layer A | seeded contradiction, prohibited early reveal | `continuity_critical_rate` per bab | ARCH §18.3 | IN_PROGRESS (`lib/narrative/layer-a.ts` 8 cek lengkap; skema canon ada; harness `narrative-layer-a.ts` 13/13 hijau termasuk seeded contradiction & early reveal. Integrasi WF step 6 & metrik dashboard nunggu M4/M5) |
-| G3-LAYERB | Cek berbasis model: kontradiksi lunak, voice, emosi vs relationship | `character_voice_sheets` | WF step 6 Layer B | voice fixture | `continuity_critical_rate` | soak | IN_PROGRESS (`lib/narrative/layer-b.ts`: VOICE_FORBIDDEN_WORD / SOFT_CONTRADICTION / EMOTION_RELATIONSHIP_MISMATCH, pakai `character_voice_sheets` + relationship score. Terbukti di soak + uji negatif. Validator model NYATA (LLM) nunggu M6) |
-| G3-REPAIR | Maks 2 repair/lapis → `FAILED_REVIEW_REQUIRED`; repair tak hapus canon | — | WF step 8 | retry fixture | `repair_success_rate` | soak | TODO |
-| G3-METRICS | Dashboard + alert monotonic | — | Observability (ARCH §17.3/§17.4) | — | `continuity_critical_rate`, `reader_inconsistency_report_rate` | beta gate (PRD §5.3) | IN_PROGRESS (sumber data `reader_inconsistency_report_rate` sudah ada via **T7.3 Reports**: tabel `content_reports` + event `REPORT_FILED`, tiap laporan menautkan `canonical_refs` bab, bukan screenshot pembaca. Dashboard/alert agregasi + `continuity_critical_rate` runtime nunggu observability M-lanjut) |
+| G3-LAYERA | Cek deterministik (tanpa LLM): karakter hidup/terdaftar, no reveal pre-gate, knowledge scope, state delta ⊆ allowed, timeline, struktur bab, alias, karakter baru >Bab30 | `characters`, `character_states`, `secrets_reveals`, `knowledge_scopes`, `timeline_events`, `character_aliases` | WF step 6 Layer A | seeded contradiction, prohibited early reveal | `continuity_critical_rate` per bab | ARCH §18.3 | DONE (`validateLayerA()` 8 cek lengkap; dipanggil oleh `generateChapter()` dan runtime nyata via `generateNextChapterReal()`. Bukti: `narrative-layer-a` 13/13, `m4`, `m5-soak`, dashboard M8 memuat `continuity_critical_rate`.) |
+| G3-LAYERB | Cek berbasis model: kontradiksi lunak, voice, emosi vs relationship | `character_voice_sheets` | WF step 6 Layer B | voice fixture | `continuity_critical_rate` | soak | DONE (`validateLayerB()` validator terpisah dari writer; dipanggil oleh `generateChapter()`. Bukti: `m5-soak` targeted Layer B + 3 jalur×50 bab; metrik G3-METRICS aktif di M8.) |
+| G3-REPAIR | Maks 2 repair/lapis → `FAILED_REVIEW_REQUIRED`; repair tak hapus canon | — | WF step 8 | retry fixture | `repair_success_rate` | soak | DONE (`lib/ai-gateway/generate.ts` menerapkan maks 2 repair per lapis, `FAILED_REVIEW_REQUIRED`, dan fingerprint canon read-only. Bukti: `m4-generation` + `m5-soak`; `repair_success_rate` tampil di dashboard M8.) |
+| G3-METRICS | Dashboard + alert monotonic | — | Observability (ARCH §17.3/§17.4) | `m8-metrics`, `m8-alert` | `continuity_critical_rate`, `repair_success_rate`, `review_required_rate`, thread staleness, `reader_inconsistency_report_rate` | beta gate (PRD §5.3) | DONE (`lib/observability/*`, runtime `recordGenerationAttempt()`, `/admin/consistency`, `/api/admin/metrics`, `/api/admin/alerts`, alert monotonic + dispatcher. Bukti: `m8-metrics` 29/29, `m8-alert` 24/24.) |
 
 ### G4 — Story Thread Lifecycle (NCS §4)
 
 | ID | Requirement | Skema DB | Runtime/Validator | Fixture | Metrik | Release gate | Status |
 |---|---|---|---|---|---|---|---|
-| G4-STATUS | `OPEN→DEVELOPING→PAYOFF_DUE→RESOLVED\|ABANDONED_APPROVED` | `story_threads.status`, `.payoff_window` | WF step 2 & step 9 | thread fixture | thread staleness | soak | IN_PROGRESS (`lib/narrative/threads.ts` `transitionThread` tolak transisi ilegal; skema `story_threads.status` diselaraskan (migrasi `thread_lifecycle_align_m5`). Terbukti di soak. Wiring WF step 2/9 runtime nunggu M6) |
-| G4-BUDGET | Maks 7 thread aktif; no new thread ≥ Bab 41 | — | WF step 2 (plan) | thread fixture | — | soak | IN_PROGRESS (`THREAD_BUDGET_EXCEEDED` maks 7 + `THREAD_NEW_FORBIDDEN` ≥ Bab 41. Terbukti di soak + uji negatif) |
-| G4-STALE | Stale 6 bab → wajib callback ≤ 3 bab | — | Validator/planner | thread fixture | thread staleness | soak | IN_PROGRESS (`refreshStaleness` flag stale (kolom `stale`/`stale_since_chapter`) + `THREAD_STALE_UNADDRESSED` callback ≤ 3 bab. Terbukti di soak) |
-| G4-BLOCK48 | Publish Bab 48 diblokir bila mystery utama non-RESOLVED | `story_threads.status` | Deterministic check (Layer A) | Bab 48 unresolved fixture | — | soak | IN_PROGRESS (`MAIN_MYSTERY_UNRESOLVED_AT_48` CRITICAL memblokir. Terbukti di soak + uji negatif. Wiring publish runtime nunggu M6) |
+| G4-STATUS | `OPEN→DEVELOPING→PAYOFF_DUE→RESOLVED\|ABANDONED_APPROVED` | `story_threads.status`, `.payoff_window` | WF step 2 & step 9 | thread fixture | thread staleness | soak | IN_PROGRESS (`transitionThread()` + skema status DB sudah selaras dan terbukti di `m5-soak`; belum `DONE` karena status transition/ABANDONED audit belum menjadi side-effect runtime produksi.) |
+| G4-BUDGET | Maks 7 thread aktif; no new thread ≥ Bab 41 | — | WF step 2 (plan) | thread fixture | — | soak | DONE (`canOpenNewThread()`/`validateThreadLifecycle()` + schema plan `opensThreadId` menolak Bab ≥41; dipanggil dari `generateChapter()`. Bukti: `m5-soak` targeted + 3 jalur.) |
+| G4-STALE | Stale 6 bab → wajib callback ≤ 3 bab | `story_threads.stale`, `.stale_since_chapter` | Validator/planner | thread fixture | thread staleness | soak | IN_PROGRESS (`refreshStaleness()` + `THREAD_STALE_UNADDRESSED` dan metrik thread staleness ada; belum `DONE` karena refresh/touch stale masih disimulasikan di soak, belum side-effect runtime produksi.) |
+| G4-BLOCK48 | Publish Bab 48 diblokir bila mystery utama non-RESOLVED | `story_threads.status` | Deterministic check (Layer A) | Bab 48 unresolved fixture | — | soak | DONE (`checkChapter48Block()` dipanggil oleh `generateChapter()`; `MAIN_MYSTERY_UNRESOLVED_AT_48` CRITICAL memblokir. Bukti: `m5-soak` targeted + runtime validator.) |
 
 ### G5 — Entity Canonicalization & Voice (NCS §5)
 
 | ID | Requirement | Skema DB | Runtime/Validator | Fixture | Metrik | Release gate | Status |
 |---|---|---|---|---|---|---|---|
-| G5-ALIAS | Setiap mention di-resolve ke `character_id`; unresolved = MAJOR, bukan karakter baru | `character_aliases (character_id, alias, alias_type)` | WF step 5 (extract) | alias fixture (3 sebutan, 1 bab) | — | soak | IN_PROGRESS (`lib/narrative/alias.ts` resolver + `character_aliases` (alias_type NAME/NICKNAME/RELATION/TITLE); unresolved=MAJOR terbukti; alias relasi "ibu mertua"→Ratna resolve. Integrasi WF step 5 extractor nunggu M4) |
+| G5-ALIAS | Setiap mention di-resolve ke `character_id`; unresolved = MAJOR, bukan karakter baru | `character_aliases (character_id, alias, alias_type)` | WF step 5 (extract) | alias fixture (3 sebutan, 1 bab) | — | soak | DONE (`buildAliasResolver()`/`resolveMentions()` dipakai di Layer A runtime; `character_aliases` dimuat loader. Bukti: `narrative-layer-a` alias relasi + `m5-soak`.) |
 | G5-NOCONFLICT | Fakta baru konflik utk entitas sama = CRITICAL, no last-write-wins | `facts_ledger` | WF step 6 Layer A | seeded contradiction | `continuity_critical_rate` | soak | TODO |
-| G5-VOICE | Voice sheet dibuat saat opening package; masuk T0 utk karakter tampil; dicek Layer B | `character_voice_sheets` | Opening package WF; WF step 6 Layer B | voice fixture | — | soak | TODO |
+| G5-VOICE | Voice sheet dibuat saat opening package; masuk T0 utk karakter tampil; dicek Layer B | `character_voice_sheets` | Opening package WF; WF step 6 Layer B | voice fixture | — | soak | DONE (`enrichOpeningVoiceSheets()` + `makeVoiceSheetAuthor()` + `voiceGuidance()` masuk prompt T0; Layer B memeriksa voice sheet. Bukti: `m7d-opening-smoke` 17/17 + `m5-soak` Layer B.) |
 
 ---
 
@@ -93,12 +95,12 @@ Keempat butir ini identik dengan NCS §8 dan PRD §5.3; NTM hanya memastikan tia
 
 ## 4. Cara Menutup Sebuah Baris (Definition of Done per baris)
 
-Sebuah baris berpindah ke `DONE` hanya bila semuanya benar:
+Sebuah baris berpindah ke `DONE` hanya bila bukti row-level berikut benar:
 
-1. Migrasi skema ada di `packages/db` dan lulus migration test.
-2. Perilaku runtime/validator ada di `packages/narrative-core` dan punya unit test.
-3. Fixture terkait ada di `fixtures/narrative/` dan lulus di CI.
+1. Skema ada di DB/repo dan punya bukti migrasi atau seed/admin path yang jelas.
+2. Perilaku runtime/validator ada di owner module yang benar (`lib/*` sementara repo belum monorepo `packages/*`) dan punya test/smoke.
+3. Fixture/smoke terkait ada dan lulus lewat gate lokal (`pnpm test` atau script smoke yang dirujuk).
 4. Metrik muncul di dashboard yang benar (bukan hanya di-log).
-5. Release gate menolak build bila baris ini gagal (bukti: test negatif yang sengaja gagal).
+5. Ada gate lokal/test negatif yang gagal bila baris ini regresi. Global build/release gate lintas-baris tetap pekerjaan M9/T9.2 dan dibutuhkan sebelum beta release, tetapi bukan alasan untuk menahan status row-level `DONE` yang sudah terbukti.
 
 Baris tanpa bukti kolom lengkap tetap `TODO`/`IN_PROGRESS`, apa pun klaim PR-nya.

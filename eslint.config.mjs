@@ -10,7 +10,14 @@ const eslintConfig = [
   ...next,
   ...nextTs,
   {
-    ignores: ['.next/**', 'node_modules/**', 'next-env.d.ts'],
+    ignores: [
+      '.next/**',
+      '.open-next/**',
+      '.wrangler/**',
+      'node_modules/**',
+      'next-env.d.ts',
+      'tsconfig.tsbuildinfo',
+    ],
   },
   {
     // Hormati konvensi prefix underscore untuk variabel/argumen yang sengaja diabaikan
@@ -25,6 +32,12 @@ const eslintConfig = [
           ignoreRestSiblings: true,
         },
       ],
+    },
+  },
+  {
+    files: ['scripts/**/*.cjs'],
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
     },
   },
 

@@ -1,15 +1,7 @@
 import { NextResponse } from 'next/server'
 import { submitContentReport } from '@/lib/api/reports'
 import { createClient } from '@/lib/supabase/server'
-import type { ReportCategory } from '@/lib/api/types'
-
-const VALID_CATEGORIES: ReportCategory[] = [
-  'TOKOH_TIDAK_KONSISTEN',
-  'DETAIL_BERTENTANGAN',
-  'ALUR_MEMBINGUNGKAN',
-  'BOCORAN_TERLALU_DINI',
-  'LAINNYA',
-]
+import { SubmitReportRequestSchema } from '@lakoku/contracts'
 
 /**
  * POST /api/stories/[id]/report  (ARCH §11.1 `/v1/stories/:id/report`)
@@ -25,22 +17,14 @@ export async function POST(
 ) {
   try {
     const { id } = await params
-    const body = (await req.json().catch(() => null)) as {
-      chapterNumber?: unknown
-      category?: unknown
-      note?: unknown
-    } | null
+    const body = await req.json().catch(() => null)
 
-    const chapterNumber = Number(body?.chapterNumber)
-    const category = body?.category as ReportCategory
-    const note = typeof body?.note === 'string' ? body.note : null
-
-    if (!Number.isFinite(chapterNumber) || chapterNumber < 1) {
-      return NextResponse.json({ error: 'Permintaan tidak valid.' }, { status: 400 })
-    }
-    if (!VALID_CATEGORIES.includes(category)) {
+    const parsed = SubmitReportRequestSchema.safeParse(body)
+    if (!parsed.success) {
       return NextResponse.json({ error: 'Kategori tidak dikenali.' }, { status: 400 })
     }
+    const { chapterNumber, category } = parsed.data
+    const note = parsed.data.note ?? null
 
     // Reporter opsional: laporan tamu tetap diterima (reporter_id null).
     let reporterId: string | null = null

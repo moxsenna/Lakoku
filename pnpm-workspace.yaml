@@ -6,8 +6,8 @@ overrides:
   hono: 4.12.25
 
 allowBuilds:
-  - esbuild
-  - msw
-  - sharp
-  - unrs-resolver
-  - workerd
+  esbuild: true
+  msw: true
+  sharp: true
+  unrs-resolver: true
+  workerd: true

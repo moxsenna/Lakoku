@@ -4,3 +4,10 @@ packages:
 
 overrides:
   hono: 4.12.25
+
+allowBuilds:
+  - esbuild
+  - msw
+  - sharp
+  - unrs-resolver
+  - workerd

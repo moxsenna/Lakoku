@@ -17,6 +17,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, Check, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Shimmer } from '@/components/ai-elements/shimmer'
 import {
   actProposePremises,
   actProposeCast,
@@ -259,7 +260,18 @@ export function OnboardingFlow() {
                     <span className="text-[11px] font-semibold">{i + 1}</span>
                   )}
                 </span>
-                <span className="font-medium">{s.label}</span>
+                {active ? (
+                  <Shimmer
+                    as="span"
+                    duration={1.4}
+                    spread={3}
+                    className="font-medium [--color-background:var(--cream)] [--color-muted-foreground:var(--foreground)]"
+                  >
+                    {s.label}
+                  </Shimmer>
+                ) : (
+                  <span className="font-medium">{s.label}</span>
+                )}
               </li>
             )
           })}

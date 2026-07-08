@@ -51,6 +51,7 @@ export interface CreateCreditOrderResult {
 export type CreateOrderError =
   | { ok: false; reason: 'not_configured' }
   | { ok: false; reason: 'unknown_product' }
+  | { ok: false; reason: 'missing_customer_email' }
   | { ok: false; reason: 'paycore_error'; status: number; detail: string }
 
 export type CreateOrderOutcome =
@@ -70,15 +71,23 @@ export async function createCreditOrder(
   const product = await getCreditProduct(input.productKey)
   if (!product) return { ok: false, reason: 'unknown_product' }
 
+  // PayCore mewajibkan customer.name + email valid (src/schemas/order.ts).
+  const email = input.customer?.email?.trim()
+  if (!email) return { ok: false, reason: 'missing_customer_email' }
+  const name = input.customer?.name?.trim() || email.split('@')[0] || 'Pembaca Lakoku'
+  const phone = input.customer?.phone?.trim()
+
   const externalOrderId = input.externalOrderId ?? `lakoku-${crypto.randomUUID()}`
+  // merchant_profile_id sengaja TAK dikirim: PayCore memakai default app
+  // (order-service memvalidasi id eksplisit = default_merchant_profile_id/PK,
+  // sehingga mengirim profile_key malah 403).
   const body = {
     external_order_id: externalOrderId,
-    merchant_profile_id: 'appvibe_default',
     product_key: product.productKey,
     description: `${product.name} — ${product.credits} kredit`,
     amount: product.priceIdr,
     currency: 'IDR',
-    customer: input.customer ?? {},
+    customer: { name, email, ...(phone ? { phone } : {}) },
     return_url: config.returnUrl,
     fulfillment_data: {
       user_id: input.userId,

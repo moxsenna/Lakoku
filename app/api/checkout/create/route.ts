@@ -45,6 +45,9 @@ export async function POST(request: Request): Promise<Response> {
       if (outcome.reason === 'unknown_product') {
         return NextResponse.json({ error: 'Produk tidak ditemukan.' }, { status: 404 })
       }
+      if (outcome.reason === 'missing_customer_email') {
+        return NextResponse.json({ error: 'Email pembeli wajib.' }, { status: 400 })
+      }
       // paycore_error → hulu bermasalah; minta klien coba lagi.
       console.log('[v0] paycore create order gagal:', outcome.status, outcome.detail)
       return NextResponse.json({ error: 'payment_gateway_error' }, { status: 502 })

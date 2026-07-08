@@ -15,7 +15,6 @@
  */
 import { hmacSha256Hex, parseSha256Header, timingSafeEqualHex } from '../paycore/crypto'
 import type { EntitlementStore } from './store'
-import type { CheckoutEvent } from './webhook'
 
 const PAYMENT_SUCCEEDED = 'payment.succeeded'
 const DEFAULT_TOLERANCE_MS = 5 * 60_000
@@ -146,10 +145,14 @@ export interface PayCoreProcessDeps {
 
 /**
  * Proses satu event PayCore mentah:
- *   verify → rekam event idempoten (event_id) → grant kredit idempoten (ref order).
+ *   verify → grant kredit idempoten (ref `paycore:{order_id}`).
  *  - rejected  → tanda tangan/payload tak valid: JANGAN pernah grant.
- *  - duplicate → replay event yang sudah diproses: no-op.
- *  - applied   → event baru terverifikasi: kredit di-grant sekali.
+ *  - duplicate → order sudah pernah di-grant (ledger `ref` unik): no-op.
+ *  - applied   → order baru terverifikasi: kredit di-grant sekali.
+ *
+ * Idempotensi dijamin sepenuhnya oleh keunikan `credit_ledger.ref` — tak perlu
+ * tabel event terpisah (PayCore memakai ulang event_id + order_id yang stabil
+ * pada retry, jadi dedup per-order sudah cukup).
  */
 export async function processPayCoreWebhook(
   rawBody: string,
@@ -164,23 +167,12 @@ export async function processPayCoreWebhook(
   if (!verified.ok) return { status: 'rejected', reason: verified.reason }
 
   const { event } = verified
-  const signedAt = Math.floor(Date.parse(event.timestamp) / 1000)
-  const recordEvent: CheckoutEvent = {
-    eventId: event.eventId,
-    type: event.eventType,
-    action: 'grant',
-    userId: event.userId,
-    entitlementCode: event.productKey ?? 'credits',
-    signedAt,
-  }
-  const record = await deps.store.recordPaymentEvent(recordEvent)
-  if (!record.firstSeen) return { status: 'duplicate', eventId: event.eventId }
-
-  await deps.store.grantCredits(
+  const result = await deps.store.grantCredits(
     event.userId,
     `paycore:${event.orderId}`,
     event.credits,
     event.productKey ?? 'credits',
   )
+  if (!result.granted) return { status: 'duplicate', eventId: event.eventId }
   return { status: 'applied', eventId: event.eventId, orderId: event.orderId, credits: event.credits }
 }

@@ -27,13 +27,18 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: 'productKey wajib.' }, { status: 400 })
   }
 
+  const metaName =
+    typeof auth.user.user_metadata?.full_name === 'string'
+      ? auth.user.user_metadata.full_name
+      : undefined
+
   try {
     const outcome = await createCreditOrder({
       userId: auth.user.id,
       productKey: body.productKey,
       customer: {
         email: body.customer?.email ?? auth.user.email ?? undefined,
-        name: body.customer?.name,
+        name: body.customer?.name ?? metaName,
         phone: body.customer?.phone,
       },
     })

@@ -13,6 +13,7 @@ export function SignUpForm({
   supabaseConfig: SupabasePublicConfig
 }) {
   const router = useRouter()
+  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -31,6 +32,7 @@ export function SignUpForm({
         password,
         options: {
           emailRedirectTo: getEmailRedirectTo(window.location.origin),
+          data: { full_name: name.trim() },
         },
       })
       if (error) {
@@ -68,6 +70,17 @@ export function SignUpForm({
         </p>
 
         <form onSubmit={handleSubmit} className="mt-8 flex flex-col gap-4">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-semibold tracking-wide text-muted-foreground">NAMA</span>
+            <input
+              type="text"
+              required
+              autoComplete="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="min-h-13 rounded-2xl border border-border bg-card px-4 text-sm text-foreground outline-none transition-colors focus:border-primary"
+            />
+          </label>
           <label className="flex flex-col gap-1.5">
             <span className="text-xs font-semibold tracking-wide text-muted-foreground">EMAIL</span>
             <input

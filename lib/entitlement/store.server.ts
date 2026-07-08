@@ -17,7 +17,7 @@
 import 'server-only'
 import { createAdminClient } from '@lakoku/db'
 import type { EntitlementAction, CheckoutEvent } from './webhook'
-import type { EntitlementStore, RecordEventResult } from './store'
+import type { EntitlementStore, RecordEventResult, GrantCreditsResult } from './store'
 
 const UNIQUE_VIOLATION = '23505'
 
@@ -51,5 +51,22 @@ export class SupabaseEntitlementStore implements EntitlementStore {
       p_action: action,
     })
     if (error) throw new Error(`applyEntitlement: ${error.message}`)
+  }
+
+  async grantCredits(
+    userId: string,
+    ref: string,
+    credits: number,
+    reason: string,
+  ): Promise<GrantCreditsResult> {
+    const supabase = createAdminClient()
+    const { data, error } = await supabase.rpc('grant_credits_v1', {
+      p_user_id: userId,
+      p_ref: ref,
+      p_credits: credits,
+      p_reason: reason,
+    })
+    if (error) throw new Error(`grantCredits: ${error.message}`)
+    return { granted: data === true }
   }
 }

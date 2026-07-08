@@ -19,6 +19,11 @@ export interface RecordEventResult {
   firstSeen: boolean
 }
 
+export interface GrantCreditsResult {
+  /** true bila baris ledger baru ditulis; false bila `ref` sudah pernah di-grant. */
+  granted: boolean
+}
+
 export interface EntitlementStore {
   /** Catat event provider secara idempoten berdasarkan `eventId`. */
   recordPaymentEvent(event: CheckoutEvent): Promise<RecordEventResult>
@@ -28,6 +33,16 @@ export interface EntitlementStore {
     entitlementCode: string,
     action: EntitlementAction,
   ): Promise<void>
+  /**
+   * Tambah kredit ke ledger user secara idempoten berdasarkan `ref`
+   * (mis. `paycore:{order_id}`). Dipanggil sekali per event pembayaran baru.
+   */
+  grantCredits(
+    userId: string,
+    ref: string,
+    credits: number,
+    reason: string,
+  ): Promise<GrantCreditsResult>
 }
 
 /** Snapshot entitlement aktif (untuk assert di fixture). */
@@ -37,8 +52,12 @@ export type EntitlementKey = `${string}::${string}`
 export class InMemoryEntitlementStore implements EntitlementStore {
   private readonly seenEvents = new Set<string>()
   private readonly active = new Set<EntitlementKey>()
+  private readonly seenRefs = new Set<string>()
+  private readonly balances = new Map<string, number>()
   /** Jumlah panggilan applyEntitlement (untuk assert "tak ada grant ganda"). */
   public applyCount = 0
+  /** Jumlah panggilan grantCredits yang benar-benar menulis (untuk assert idempoten). */
+  public grantCreditsCount = 0
 
   async recordPaymentEvent(event: CheckoutEvent): Promise<RecordEventResult> {
     if (this.seenEvents.has(event.eventId)) return { firstSeen: false }
@@ -57,8 +76,26 @@ export class InMemoryEntitlementStore implements EntitlementStore {
     else this.active.delete(key)
   }
 
+  async grantCredits(
+    userId: string,
+    ref: string,
+    credits: number,
+    _reason: string,
+  ): Promise<GrantCreditsResult> {
+    if (this.seenRefs.has(ref)) return { granted: false }
+    this.seenRefs.add(ref)
+    this.grantCreditsCount += 1
+    this.balances.set(userId, (this.balances.get(userId) ?? 0) + credits)
+    return { granted: true }
+  }
+
   /** Helper uji: apakah entitlement aktif. */
   hasEntitlement(userId: string, entitlementCode: string): boolean {
     return this.active.has(`${userId}::${entitlementCode}`)
+  }
+
+  /** Helper uji: saldo kredit user. */
+  creditBalance(userId: string): number {
+    return this.balances.get(userId) ?? 0
   }
 }

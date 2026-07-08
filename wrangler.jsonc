@@ -2,7 +2,9 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "main": ".open-next/worker.js",
   "name": "lakoku-v2",
-  "compatibility_date": "2025-06-01",
+  // 2025-11-01: di atas min OpenNext (2024-12-30) + FinalizationRegistry fix
+  // (2025-05-05), dan aman di masa lalu relatif runtime wrangler v4.
+  "compatibility_date": "2025-11-01",
   "compatibility_flags": [
     "nodejs_compat",
     "global_fetch_strictly_public"
@@ -10,5 +12,41 @@
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
+  },
+  // Aktifkan Workers Logs supaya request/error runtime bisa ditelusuri di prod
+  // (menutup gap request-log correlation di STAGING_QA_WEB_RELEASE.md).
+  "observability": {
+    "enabled": true
+  },
+  // `vars` non-inheritable: harus diulang di tiap named env di bawah.
+  "vars": {
+    "NARRATIVE_PROVIDER": "gateway"
+  },
+  // ── Named environments ──────────────────────────────────────────────────
+  // Deploy: `opennextjs-cloudflare deploy -- --env staging|production`.
+  // main/assets/compatibility_*/observability DIWARISKAN dari atas.
+  //
+  // SECRETS WAJIB per environment (set via `wrangler secret put <NAME> --env <env>`;
+  // BUKAN field schema, jadi didaftar di sini sebagai kontrak rilis):
+  //   - SUPABASE_SERVICE_ROLE_KEY   (service-role server-only)
+  //   - RUNTIME_ADMIN_TOKEN         (WAJIB — endpoint generate/admin fail-closed 503 tanpa ini)
+  //   - CHECKOUT_WEBHOOK_SECRET     (WAJIB untuk monetisasi; webhook 503 tanpa ini)
+  //   - AI_GATEWAY_API_KEY          (LLM nyata; NARRATIVE_PROVIDER=gateway di atas)
+  //   - CONSISTENCY_ALERT_WEBHOOK_URL (opsional; sink alert observability)
+  // Vars publik (NEXT_PUBLIC_SUPABASE_URL/ANON_KEY, NARRATIVE_MODEL) di-set via
+  // `wrangler versions secret`/dashboard atau build-time env.
+  "env": {
+    "staging": {
+      "name": "lakoku-v2-staging",
+      "vars": {
+        "NARRATIVE_PROVIDER": "gateway"
+      }
+    },
+    "production": {
+      "name": "lakoku-v2-production",
+      "vars": {
+        "NARRATIVE_PROVIDER": "gateway"
+      }
+    }
   }
 }

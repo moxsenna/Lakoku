@@ -41,3 +41,6 @@ jobs:
 
       - name: Smoke
         run: pnpm smoke
+
+      - name: Release Gate M9
+        run: pnpm release:m9

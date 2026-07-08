@@ -1,0 +1,1701 @@
+[
+  {
+    "id": "TC001",
+    "title": "Continue a chapter by making a branching choice",
+    "description": "This verifies that a reader can submit a branching choice and proceed to the next chapter.",
+    "category": "Chapter Reader",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the current story entry from the home feed"
+      },
+      {
+        "type": "action",
+        "description": "Click the resume reading entry"
+      },
+      {
+        "type": "action",
+        "description": "Select one of the available branching choices"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the next chapter is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the previous choice is reflected in the reader state"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC002",
+    "title": "Continue a branching story from a chapter and reach the next chapter",
+    "description": "A returning reader can open a chapter, make a branching choice, and arrive at the next chapter in the reading loop.",
+    "category": "Core Reading Loop",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the current story from the home feed"
+      },
+      {
+        "type": "action",
+        "description": "Continue reading from the story detail page"
+      },
+      {
+        "type": "action",
+        "description": "Select a branching choice in the chapter"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the next chapter is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify branching choices are available"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC003",
+    "title": "Resume a story from the chapter reader and advance the narrative",
+    "description": "This verifies a returning reader can open a story, resume the current chapter, make a branching choice, and continue to the next chapter.",
+    "category": "Chapter Reader with Branching Choices",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /beranda"
+      },
+      {
+        "type": "action",
+        "description": "Open the current story from the home feed"
+      },
+      {
+        "type": "action",
+        "description": "Continue reading from the story detail page"
+      },
+      {
+        "type": "action",
+        "description": "Select one of the available branching choices"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the next chapter is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the story continues after the choice is accepted"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC004",
+    "title": "Read a chapter and continue through a branching choice",
+    "description": "An authenticated reader can open a chapter, make a branching choice, and continue to the next chapter.",
+    "category": "Brainstorm Story Bible Wizard",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open a story detail page"
+      },
+      {
+        "type": "action",
+        "description": "Resume reading a chapter"
+      },
+      {
+        "type": "action",
+        "description": "Select a branching choice"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the next chapter is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the chosen path is reflected in the reading flow"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC005",
+    "title": "Start the onboarding journey from the landing page",
+    "description": "This verifies that a new reader can begin onboarding from the landing experience and reach the onboarding flow.",
+    "category": "Landing and Onboarding",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Click the primary call to continue into onboarding"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the onboarding flow is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the user can start answering onboarding questions"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC006",
+    "title": "Complete onboarding and enter the story selection experience",
+    "description": "A new reader can finish onboarding at the landing flow, choose a recommended story, and reach the authenticated home experience.",
+    "category": "Brainstorm Story Bible Wizard",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Continue into the onboarding flow"
+      },
+      {
+        "type": "action",
+        "description": "Complete the onboarding selections"
+      },
+      {
+        "type": "action",
+        "description": "Choose a recommended story"
+      },
+      {
+        "type": "action",
+        "description": "Proceed into the reading experience"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the authenticated home experience is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a selected story is shown"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC007",
+    "title": "Complete onboarding and enter the recommended story experience",
+    "description": "This verifies that a new reader can finish onboarding, choose a recommended story, and arrive at the authenticated home experience.",
+    "category": "Landing and Onboarding",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Click the primary call to continue into onboarding"
+      },
+      {
+        "type": "action",
+        "description": "Answer the onboarding questions with a valid set of responses"
+      },
+      {
+        "type": "action",
+        "description": "Select one of the recommended stories"
+      },
+      {
+        "type": "action",
+        "description": "Continue into the story experience"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the home experience is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a current story entry is available"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC008",
+    "title": "Complete onboarding and enter the home experience",
+    "description": "A new reader can finish the quiz, choose a recommended story, and arrive in the authenticated home experience.",
+    "category": "Onboarding Role Quiz",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /mulai"
+      },
+      {
+        "type": "action",
+        "description": "Select an option for the first quiz question"
+      },
+      {
+        "type": "action",
+        "description": "Continue to the next quiz step"
+      },
+      {
+        "type": "action",
+        "description": "Select a recommended story to begin"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the home experience is displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC009",
+    "title": "Resume reading from the home feed",
+    "description": "A returning reader can log in, open the home feed, and resume their current story from the story detail page.",
+    "category": "Brainstorm Story Bible Wizard",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the home feed"
+      },
+      {
+        "type": "action",
+        "description": "Open the current story detail"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the story detail page is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a resume or continue reading entry is available"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC010",
+    "title": "Handle a chapter that is still loading or unavailable",
+    "description": "An authenticated reader can open a chapter and see a pending or unavailable placeholder when the chapter is not yet ready.",
+    "category": "Brainstorm Story Bible Wizard",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open a story detail page"
+      },
+      {
+        "type": "action",
+        "description": "Resume reading a chapter that is not ready"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a pending or unavailable chapter placeholder is displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC011",
+    "title": "Log in to reach the home feed",
+    "description": "This verifies that a returning reader can sign in with email and password and land in the authenticated home experience.",
+    "category": "User Login",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the authenticated home experience is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a current story entry is available"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC012",
+    "title": "Log in and open the current story from the home feed",
+    "description": "A returning reader can sign in, reach the home feed, open the current story, and resume reading.",
+    "category": "Home Feed",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the current story from the home feed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a story detail page is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a continue reading entry point is visible"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC013",
+    "title": "Handle a pending choice while reading a chapter",
+    "description": "This verifies a reader can make a branching choice, see that the next chapter is still being prepared, and then proceed when it becomes available.",
+    "category": "Chapter Reader with Branching Choices",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /baca/1"
+      },
+      {
+        "type": "action",
+        "description": "Read the chapter content"
+      },
+      {
+        "type": "action",
+        "description": "Select a branching choice"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a waiting state for the next chapter is displayed"
+      },
+      {
+        "type": "action",
+        "description": "Wait for the next chapter to become available"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the story can continue after the waiting state"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC014",
+    "title": "Show the reader when a chapter is not available",
+    "description": "This verifies that the chapter reader shows a placeholder when the requested chapter cannot be rendered.",
+    "category": "Chapter Reader",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the current story entry from the home feed"
+      },
+      {
+        "type": "action",
+        "description": "Click the resume reading entry"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a chapter-unavailable placeholder is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify no branching choices are available"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC015",
+    "title": "See the waiting placeholder for an unavailable chapter",
+    "description": "This verifies a reader sees a placeholder when the next chapter is not yet available.",
+    "category": "Chapter Reader with Branching Choices",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /baca/1"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a chapter unavailable placeholder is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the reader can wait for the chapter to be prepared"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC016",
+    "title": "Resume reading from a story detail page",
+    "description": "This verifies that a reader can open a story detail page and continue into the current chapter reader.",
+    "category": "Story Detail",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the current story entry from the home feed"
+      },
+      {
+        "type": "action",
+        "description": "Click the resume reading entry"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the chapter reader is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a chapter and branching choices are available"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC017",
+    "title": "Retry a pending choice and continue the story",
+    "description": "This verifies a reader can retry the same choice after an initial submission does not complete and still advance once accepted.",
+    "category": "Chapter Reader with Branching Choices",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /baca/1"
+      },
+      {
+        "type": "action",
+        "description": "Select a branching choice"
+      },
+      {
+        "type": "action",
+        "description": "Retry the same choice from the chapter view"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the story continues after the choice is accepted"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the next chapter is displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC018",
+    "title": "Open a story from the home feed and continue into reading",
+    "description": "A reader can browse available stories in the home feed, open one, and continue into the chapter view.",
+    "category": "Home Feed",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open an available story from the home feed"
+      },
+      {
+        "type": "action",
+        "description": "Continue reading from the story detail page"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the reader view is displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC019",
+    "title": "Open a story detail and continue reading",
+    "description": "This verifies a reader can review a story detail page and continue into the current chapter.",
+    "category": "Story Detail",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /beranda"
+      },
+      {
+        "type": "action",
+        "description": "Open a story from the home feed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the story cover and synopsis are displayed"
+      },
+      {
+        "type": "action",
+        "description": "Continue reading from the story detail page"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the chapter reader is displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC020",
+    "title": "Browse ongoing and completed stories in the library",
+    "description": "A reader can open their library, switch between ongoing stories and completed endings, and open a finished story's ending screen.",
+    "category": "Brainstorm Story Bible Wizard",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the library"
+      },
+      {
+        "type": "action",
+        "description": "Switch to a completed story"
+      },
+      {
+        "type": "action",
+        "description": "Open the finished story ending"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the ending screen is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify completed story content is visible"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC021",
+    "title": "Review ongoing and completed stories in the library",
+    "description": "This verifies that a reader can browse the library and distinguish ongoing stories from completed endings.",
+    "category": "My Collection",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the library navigation entry"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the library page is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify ongoing and completed story sections are visible"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC022",
+    "title": "Change an onboarding answer before starting a story",
+    "description": "A reader can go back, change a quiz answer, and still complete onboarding with a story selection.",
+    "category": "Onboarding Role Quiz",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /mulai"
+      },
+      {
+        "type": "action",
+        "description": "Select an option for the first quiz question"
+      },
+      {
+        "type": "action",
+        "description": "Continue to the next quiz step"
+      },
+      {
+        "type": "action",
+        "description": "Go back to the previous question"
+      },
+      {
+        "type": "action",
+        "description": "Select a different answer"
+      },
+      {
+        "type": "action",
+        "description": "Continue through the quiz"
+      },
+      {
+        "type": "action",
+        "description": "Select a recommended story to begin"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the home experience is displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC023",
+    "title": "Resume a story from my collection",
+    "description": "A logged-in reader can open an ongoing story from their collection and continue reading from the story detail page.",
+    "category": "My Collection",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the library page"
+      },
+      {
+        "type": "action",
+        "description": "Open an ongoing story from the collection"
+      },
+      {
+        "type": "action",
+        "description": "Continue reading from the story detail page"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the reader view is displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC024",
+    "title": "Open a finished story ending from the library",
+    "description": "This verifies that a reader can open a completed story from the library and view its ending screen.",
+    "category": "My Collection",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the library navigation entry"
+      },
+      {
+        "type": "action",
+        "description": "Click a completed story entry"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the ending screen is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the completed story status is visible"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC025",
+    "title": "Return from story detail to the home experience",
+    "description": "This verifies a reader can open a story detail page and return to the home experience without losing navigation context.",
+    "category": "Story Detail",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /beranda"
+      },
+      {
+        "type": "action",
+        "description": "Open a story from the home feed"
+      },
+      {
+        "type": "action",
+        "description": "Return to the home experience from the story detail page"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the home experience is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the story feed remains available"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC026",
+    "title": "Switch from an ongoing story to a completed ending in my collection",
+    "description": "A logged-in reader can browse their collection, open a completed story, and view its ending history.",
+    "category": "My Collection",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the library page"
+      },
+      {
+        "type": "action",
+        "description": "Open a completed story from the collection"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify an ending screen is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify ending history is visible"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC027",
+    "title": "Open a completed story ending from the library",
+    "description": "This verifies a reader can switch to completed stories in the library and open a finished story’s ending screen.",
+    "category": "Story Ending",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /koleksiku"
+      },
+      {
+        "type": "action",
+        "description": "Open a completed story from the library"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the ending screen is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the achieved ending is visible"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC028",
+    "title": "View profile stats and settings",
+    "description": "This verifies that an authenticated member can open their profile and review reading stats and settings.",
+    "category": "Profile",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the profile navigation entry"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the profile page is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify reading stats and settings are visible"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC029",
+    "title": "Restart onboarding and choose a different story",
+    "description": "A reader can restart the quiz and start over with new answers before choosing a story.",
+    "category": "Onboarding Role Quiz",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /mulai"
+      },
+      {
+        "type": "action",
+        "description": "Select an option for the first quiz question"
+      },
+      {
+        "type": "action",
+        "description": "Restart the quiz"
+      },
+      {
+        "type": "action",
+        "description": "Select a different option for the first quiz question"
+      },
+      {
+        "type": "action",
+        "description": "Continue through the quiz"
+      },
+      {
+        "type": "action",
+        "description": "Select a recommended story to begin"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the home experience is displayed"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC030",
+    "title": "View profile stats and change appearance settings",
+    "description": "An authenticated member can view reading stats on their profile and change the theme from the same page.",
+    "category": "Brainstorm Story Bible Wizard",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the profile page"
+      },
+      {
+        "type": "action",
+        "description": "Toggle the theme setting"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify reading stats are displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the theme setting changes successfully"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC031",
+    "title": "Create an account and see the sign-up confirmation",
+    "description": "This verifies that a new user can register with matching credentials and reach the sign-up success confirmation.",
+    "category": "User Sign Up",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/sign-up"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with a new email address"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with a valid password"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the confirm password field with the same valid password"
+      },
+      {
+        "type": "action",
+        "description": "Submit the account creation form"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the sign-up success confirmation is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the email verification prompt is visible"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC032",
+    "title": "Review profile stats and settings",
+    "description": "This verifies an authenticated reader can open the profile page and view reading stats and settings.",
+    "category": "Story Detail",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /profil"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify reading stats are displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify profile settings are available"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC033",
+    "title": "Progress through the story bible wizard and lock it to canon",
+    "description": "An authorized user can generate or select a premise, advance through all wizard stages, review the story bible, and lock it to canon.",
+    "category": "Brainstorm Story Bible Wizard",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the brainstorm wizard"
+      },
+      {
+        "type": "action",
+        "description": "Request generated premises"
+      },
+      {
+        "type": "action",
+        "description": "Select a premise"
+      },
+      {
+        "type": "action",
+        "description": "Advance through the wizard stages"
+      },
+      {
+        "type": "action",
+        "description": "Lock the story bible to canon"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the story bible review is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the canon lock state is visible"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC034",
+    "title": "Complete the brainstorm wizard and lock the story bible",
+    "description": "This verifies that an authorized user can progress through the brainstorm stages and lock the story bible to canon.",
+    "category": "Brainstorm Story Bible Wizard",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the brainstorm navigation entry"
+      },
+      {
+        "type": "action",
+        "description": "Generate or select a premise"
+      },
+      {
+        "type": "action",
+        "description": "Advance through the cast, mystery, and world stages"
+      },
+      {
+        "type": "action",
+        "description": "Lock the story bible to canon"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the story bible is locked to canon"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the completed wizard state is visible"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC035",
+    "title": "View profile stats and return to reading",
+    "description": "An authenticated reader can open their profile, review reading stats, and navigate back into the reading experience.",
+    "category": "Profile",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the profile page"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify reading stats are displayed"
+      },
+      {
+        "type": "action",
+        "description": "Open a story from the profile experience"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the reader or story detail experience is displayed"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC036",
+    "title": "Use the story bible wizard to lock canon",
+    "description": "This verifies an authorized user can step through the brainstorm wizard and lock the story bible to canon.",
+    "category": "Story Detail",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /brainstorm"
+      },
+      {
+        "type": "action",
+        "description": "Generate or select a premise"
+      },
+      {
+        "type": "action",
+        "description": "Advance through the cast, mystery, and world stages"
+      },
+      {
+        "type": "action",
+        "description": "Lock the story bible to canon"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the story bible is locked to canon"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the completed wizard state is displayed"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC037",
+    "title": "Review consistency dashboard metrics and alerts",
+    "description": "This verifies that an authorized ops user can open the consistency dashboard and inspect metrics, chart data, stale threads, and alert status.",
+    "category": "Admin Consistency Dashboard",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Click the admin consistency navigation entry"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify consistency metric cards are displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the critical-rate chart, stale threads, and alert banner status are visible"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC038",
+    "title": "Regenerate premises and revise an earlier wizard stage",
+    "description": "An authorized user can regenerate premise suggestions, choose a different premise, go back to an earlier stage, and update the story bible before locking it.",
+    "category": "Brainstorm Story Bible Wizard",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the brainstorm wizard"
+      },
+      {
+        "type": "action",
+        "description": "Request generated premises"
+      },
+      {
+        "type": "action",
+        "description": "Regenerate the premise suggestions"
+      },
+      {
+        "type": "action",
+        "description": "Select a different premise"
+      },
+      {
+        "type": "action",
+        "description": "Go back to the previous wizard stage"
+      },
+      {
+        "type": "action",
+        "description": "Update the story bible details"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the updated story bible content is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the wizard can still be locked to canon"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC039",
+    "title": "Review admin consistency metrics and alerts",
+    "description": "This verifies an authorized ops user can open the consistency dashboard and review its metrics and alerts.",
+    "category": "Story Detail",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /admin/consistency"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify metric cards are displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify consistency alerts or stale threads are displayed"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC040",
+    "title": "Show invalid login feedback for incorrect credentials",
+    "description": "This verifies that a returning reader sees validation feedback when signing in with incorrect credentials.",
+    "category": "User Login",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with invalid@example.com"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with invalid-password"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify an invalid credentials message is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the authenticated home experience is not displayed"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC041",
+    "title": "Sign in and review admin consistency monitoring",
+    "description": "An authorized ops user can open the consistency dashboard and review the narrative monitoring panels.",
+    "category": "Admin Consistency",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the consistency dashboard"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify metric cards are displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify alert and thread monitoring content is displayed"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC042",
+    "title": "Show validation feedback for mismatched sign-up passwords",
+    "description": "This verifies that account creation is blocked when the password confirmation does not match.",
+    "category": "User Sign Up",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/sign-up"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with a new email address"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with a valid password"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the confirm password field with a different password"
+      },
+      {
+        "type": "action",
+        "description": "Submit the account creation form"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a password validation error is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the sign-up success confirmation is not displayed"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC043",
+    "title": "Open the sign-up page from login",
+    "description": "This verifies that a visitor can navigate from login to the account creation page.",
+    "category": "User Login",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Click the link to create a new account"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the account creation page is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the sign-up form is available"
+      }
+    ],
+    "priority": "Low"
+  }
+]

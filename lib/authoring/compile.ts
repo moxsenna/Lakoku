@@ -46,7 +46,11 @@ export interface CompileResult {
 
 export function compileStoryBible(draft: StoryBibleDraft, storyIdInput?: string): CompileResult {
   const { premise, cast, mystery, world } = draft
-  const storyId = storyIdInput?.trim() || slugify(premise.title)
+  // Guard: storyId TAMPIL di URL reader (/baca/[id], /cerita/[id], /akhir/[id]).
+  // Karakter ':' (dan simbol non-slug lain) memecah navigasi client-side Next.js
+  // → 404. Karena itu id SELALU dilewatkan slugify, termasuk saat diberikan
+  // eksplisit lewat storyIdInput — slugify idempoten untuk slug yang sudah bersih.
+  const storyId = slugify(storyIdInput?.trim() || premise.title)
 
   // --- Karakter + id stabil (dedup slug). ---
   const idByName = new Map<string, string>()

@@ -2,13 +2,24 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Settings2, Flag, Minus, Plus, X } from 'lucide-react'
+import { ArrowLeft, Settings2, Flag, Minus, Plus, RefreshCw, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { submitChoice, recordChapterReached, type StoryDetail, type Chapter } from '@/lib/api'
+import {
+  clearPendingChoice,
+  getPendingChoice,
+  recordChapterReached,
+  recordPendingChoice,
+  retryPendingChoice,
+  submitChoice,
+  type Chapter,
+  type ChoiceOutcome,
+  type PendingChoice,
+  type StoryDetail,
+} from '@/lib/api'
 import { ReportDialog } from '@/components/report-dialog'
 
 type ReaderTheme = 'ink' | 'cream'
-type Phase = 'reading' | 'processing' | 'consequence'
+type Phase = 'reading' | 'processing' | 'pending' | 'consequence'
 
 export function ReaderView({ story, chapter }: { story: StoryDetail; chapter: Chapter }) {
   const [theme, setTheme] = useState<ReaderTheme>('ink')
@@ -19,6 +30,7 @@ export function ReaderView({ story, chapter }: { story: StoryDetail; chapter: Ch
   const [consequence, setConsequence] = useState<string[]>([])
   const [nextChapterNumber, setNextChapterNumber] = useState<number | null>(null)
   const [isEnding, setIsEnding] = useState(false)
+  const [pendingChoice, setPendingChoice] = useState<PendingChoice | null>(null)
   // Guard anti double-advance: cegah pilihan terkirim lebih dari sekali
   // (mis. tap ganda) sebelum state processing sempat merender ulang.
   const submittingRef = useRef(false)
@@ -28,13 +40,19 @@ export function ReaderView({ story, chapter }: { story: StoryDetail; chapter: Ch
   // Catat bahwa bab ini telah dibuka (progres lokal, monotonic).
   useEffect(() => {
     recordChapterReached(story.id, chapter.number)
+    const pending = getPendingChoice()
+    if (pending?.storyId === story.id && pending.chapterNumber === chapter.number) {
+      const timer = window.setTimeout(() => {
+        setPendingChoice(pending)
+        setPhase('pending')
+      }, 0)
+      return () => window.clearTimeout(timer)
+    }
   }, [story.id, chapter.number])
 
-  async function chooseOption(id: string) {
-    if (submittingRef.current) return
-    submittingRef.current = true
-    setPhase('processing')
-    const outcome = await submitChoice(story.id, chapter.number, id)
+  function showOutcome(outcome: ChoiceOutcome) {
+    clearPendingChoice()
+    setPendingChoice(null)
     // Bila cerita berlanjut, tandai bab berikutnya sudah terbuka (monotonic).
     if (!outcome.isEnding && outcome.nextChapterNumber != null) {
       recordChapterReached(story.id, outcome.nextChapterNumber)
@@ -46,6 +64,45 @@ export function ReaderView({ story, chapter }: { story: StoryDetail; chapter: Ch
       setIsEnding(outcome.isEnding)
       setPhase('consequence')
     }, 2800)
+  }
+
+  async function chooseOption(id: string) {
+    if (submittingRef.current) return
+    submittingRef.current = true
+    setPhase('processing')
+    try {
+      const outcome = await submitChoice(story.id, chapter.number, id)
+      showOutcome(outcome)
+    } catch {
+      const pending = recordPendingChoice({
+        storyId: story.id,
+        chapterNumber: chapter.number,
+        choiceId: id,
+      })
+      setPendingChoice(pending)
+      submittingRef.current = false
+      setPhase('pending')
+    }
+  }
+
+  async function retryChoice() {
+    if (submittingRef.current) return
+    submittingRef.current = true
+    setPhase('processing')
+    try {
+      const outcome = await retryPendingChoice()
+      if (!outcome) {
+        setPendingChoice(null)
+        submittingRef.current = false
+        setPhase('reading')
+        return
+      }
+      showOutcome(outcome)
+    } catch {
+      setPendingChoice(getPendingChoice())
+      submittingRef.current = false
+      setPhase('pending')
+    }
   }
 
   if (phase === 'processing') {
@@ -62,6 +119,44 @@ export function ReaderView({ story, chapter }: { story: StoryDetail; chapter: Ch
         </div>
         <div className="h-1 w-48 overflow-hidden rounded-full bg-muted">
           <div className="lk-pulse-soft h-full w-1/2 bg-primary" />
+        </div>
+      </main>
+    )
+  }
+
+  if (phase === 'pending') {
+    return (
+      <main className="mx-auto flex min-h-svh w-full max-w-md flex-col items-center justify-center gap-6 bg-background px-8 text-center">
+        <span className="lk-pulse-soft font-serif text-2xl text-foreground">lakoku</span>
+        <div className="flex flex-col gap-2">
+          <h1 className="font-serif text-2xl leading-snug text-foreground text-balance">
+            Pilihanmu belum terkirim.
+          </h1>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            Simpan halaman ini. Saat koneksi siap, kirim lagi pilihan yang sama.
+          </p>
+          {pendingChoice && (
+            <p className="text-xs text-muted-foreground">
+              Bab {pendingChoice.chapterNumber}
+            </p>
+          )}
+        </div>
+        <div className="flex w-full flex-col gap-3">
+          <button
+            type="button"
+            onClick={retryChoice}
+            className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+          >
+            <RefreshCw className="mr-2 size-4" aria-hidden="true" />
+            Coba kirim lagi
+          </button>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="flex min-h-13 items-center justify-center rounded-2xl border border-border px-6 text-sm font-semibold text-foreground transition-colors hover:bg-card"
+          >
+            Muat ulang bab
+          </button>
         </div>
       </main>
     )

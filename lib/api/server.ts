@@ -18,7 +18,12 @@ import type {
   Chapter,
   ChapterAvailability,
 } from './types'
-import { queryStories, queryStory, queryChapter } from './queries'
+import {
+  queryStories,
+  queryStory,
+  queryChapter,
+  queryLatestAvailableChapter,
+} from './queries'
 import { getReaderStates, getReaderState, type ReaderState } from './user-state'
 import { isChapterPreparing } from './leases'
 
@@ -68,7 +73,18 @@ export async function getChapter(
     if (!story) return null
     target = story.currentChapter
   }
-  return queryChapter(storyId, target)
+
+  const chapter = await queryChapter(storyId, target)
+  if (chapter) return chapter
+
+  // Bab yang diminta belum ada isinya. Bila bab itu SEDANG ditulis (ada lease
+  // generasi aktif), biarkan null agar reader menampilkan layar PREPARING yang
+  // tepat. Bila tidak sedang ditulis, pembaca kemungkinan terlanjur maju
+  // melewati konten yang tersedia — jatuhkan ke bab terakhir yang bisa dibaca
+  // (<= target) alih-alih menahan mereka di layar kosong permanen.
+  const preparing = await isChapterPreparing(storyId, target)
+  if (preparing) return null
+  return queryLatestAvailableChapter(storyId, target)
 }
 
 /**

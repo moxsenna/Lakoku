@@ -55,7 +55,7 @@ M6-WEB punya dua jalur dengan gate berbeda. Ini titik yang paling sering disalah
 - Seam `lib/api/` **sudah terpasang** (`types.ts`, `client.ts`, fixtures internal); komponen UI tidak lagi mengimpor sumber data langsung.
 - `client.ts` sudah menunjuk Reader API interim (route handlers → Supabase), sehingga UI tidak bergantung langsung pada fixtures.
 - Reader menampilkan bab **sesuai cerita** (bug "sample statis" telah diperbaiki).
-- M5 core/smoke sudah hijau (soak 3 jalur×50 bab), tetapi NTM belum seluruhnya `DONE`: G1 step R runtime dan sebagian side-effect G4 masih `IN_PROGRESS`, serta global release gate M9 belum ada.
+- M5 core/smoke sudah hijau (soak 3 jalur×50 bab), tetapi NTM belum seluruhnya `DONE`: G1 step R runtime dan sebagian side-effect G4 masih `IN_PROGRESS`. Gate M9 otomatis untuk web release sudah ada; gate global beta penuh tetap menunggu sign-off NTM/staging.
 - Posisi: **M6-WEB jalur UX selesai; jalur cerita nyata terkendali untuk canon ter-seed hidup; publikasi AI luas menunggu M5 NTM sign-off + M9 release gate.**
 
 ---

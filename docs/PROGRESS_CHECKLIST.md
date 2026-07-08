@@ -1,7 +1,7 @@
 # Lakoku — Progress Checklist (Task Tracker) v1.0
 
 **Status:** Living document — dicentang seiring pekerjaan berjalan
-**Last updated:** 7 Juli 2026 (gate minimal hijau: `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm smoke`; CI minimal ditambahkan; `packages/contracts` reader API dibuat sebagai sumber tunggal Zod/JSON Schema/OpenAPI. Audit NTM tetap: M5 core/smoke hijau, tetapi G1/G4 belum `DONE` penuh karena step R/status side-effect runtime dan release gate M9 belum selesai; M8/G3-METRICS sudah `DONE`.)
+**Last updated:** 7 Juli 2026 (gate minimal hijau sebelumnya; web-release hardening ditambahkan: no synthetic choice fallback, pending-choice recovery smoke, staging QA checklist, dan `scripts/m9-release-gate.ts` di CI. Audit NTM tetap: M5 core/smoke hijau, tetapi G1/G4 belum `DONE` penuh karena step R/status side-effect runtime; M8/G3-METRICS sudah `DONE`.)
 **Turunan dari:** `docs/IMPLEMENTATION_PLAN.md` (runbook v1.0) — jika runbook berubah, sinkronkan checklist ini di PR yang sama (anti-drift, runbook §5)
 **Cara pakai:** Setiap task = satu checkbox. Centang HANYA bila Definition of Done (DoD) task terpenuhi. Milestone dianggap selesai hanya bila blok Sign-off-nya lengkap (lihat runbook §4).
 
@@ -25,7 +25,7 @@
 | M6 — Android reader beta | `[ ]` | Client kedua; belum dimulai |
 | M7 — Story Foundation + opening + reports | `[x]` | Selesai |
 | M8 — Observability + alert + entitlement | `[x]` | **Selesai** — T8.1 dashboard konsistensi (`/admin/consistency`, 5 metrik G3-METRICS, `m8-metrics` 29/29), T8.2 alert naik-monoton + notifikasi eksternal (`m8-alert` 24/24), T8.3 entitlement webhook HMAC server-authoritative fail-closed (`m8-entitlement` 22/22). T8.3 live tinggal colok Stripe (`CHECKOUT_WEBHOOK_SECRET` + skema commercial) |
-| M9 — Hardening + release gate + beta cut | `[ ]` | Belum dimulai |
+| M9 — Hardening + release gate + beta cut | `[~]` | Release gate otomatis web (`scripts/m9-release-gate.ts`) + staging QA checklist sudah ada dan masuk CI. Beta-ready global belum: NTM G1/G4 dan QA staging manual masih perlu sign-off. |
 
 ---
 
@@ -142,12 +142,14 @@
   - Catatan: cache lokal ini BUKAN sumber kebenaran; saat Reader API nyata siap, progres server direkonsiliasi (ambil terjauh) — ARCH §7.1.
 - [~] **T6W.4 Choice submission + recovery + generation status** — via `submitChoice`; konsekuensi & bab berikutnya dari outcome seam.
   - [x] Anti double-advance (client): guard `submittingRef` di `reader-view.tsx` — tap ganda tidak mengirim `submitChoice` lebih dari sekali. Happy-path pilihan → konsekuensi → lanjut terverifikasi di browser.
-  - [ ] Pending-choice recovery yang otoritatif (resume setelah app mati saat generasi berjalan) — bergantung server nyata + generation lease (M2/T2.1); belum bisa diuji tanpa backend.
+  - [x] Synthetic choice fallback dihapus: `submitChoice()` menolak response gagal dan tidak lagi membuat konsekuensi/bab berikutnya di client.
+  - [x] Pending-choice recovery web: `lib/api/pending-choice.ts` menyimpan choice gagal dengan idempotency key stabil, reader masuk phase pending setelah reload, retry memakai choice yang sama, pending hanya hilang setelah server menerima. Bukti: `scripts/web-release-smoke.ts` 9/9 PASS.
+  - [~] Generation status server-authoritative tetap menunggu endpoint status/generation queue final; recovery web sudah tidak silent-advance.
 - [x] **T6W.5 Verifikasi browser mobile** — alur beranda → baca → pilih → konsekuensi → lanjut lolos; type-check hijau (agent-browser, viewport mobile).
 - [x] **Exit Criteria M6-WEB (jalur UX)** — reader web E2E lolos dengan fixtures ✔; seam terpasang tanpa kebocoran ✔; brand guard lolos ✔; progress monotonic persist ✔; `tsc --noEmit` hijau ✔; **lint gate hijau** (`eslint .`, 0 error/0 warning) ✔.
 - [~] **Exit Criteria M6-WEB (jalur cerita nyata)** — `client.ts` menunjuk Reader API nyata DAN M5 NTM sign-off penuh.
   - [x] `client.ts` menunjuk Reader API nyata (route handlers → Supabase). Verifikasi browser: beranda + reader + pilihan→konsekuensi semuanya dari database.
-  - [~] M5 core hijau (validator + soak 50 bab), tetapi NTM sign-off penuh belum: G1/G4 masih `IN_PROGRESS` dan global release gate M9 belum ada. Konten pembaca saat ini tetap kuratif/fixture-seeded atau canon ter-seed terkendali; publikasi AI luas belum boleh diklaim.
+  - [~] M5 core hijau (validator + soak 50 bab), tetapi NTM sign-off penuh belum: G1/G4 masih `IN_PROGRESS`. Gate M9 otomatis sudah ada untuk web release, tetapi publikasi AI luas tetap menunggu sign-off NTM/staging.
 
 ## M6 — Android Reader Beta (client kedua)
 
@@ -209,8 +211,12 @@
 ## M9 — Hardening + Release Gate + Beta Cut
 
 - [ ] **T9.1 Isi seluruh baris NTM ke `DONE`** — verifikasi kelima bukti per baris (NTM §4).
-- [ ] **T9.2 Release gate** — build ditolak bila ada baris in-scope belum `DONE`, jargon Narraza/AI bocor di client mana pun, soak 50 bab gagal NCS §8, atau web build / Android build / API contract gagal.
-- [ ] **T9.3 Staging QA end-to-end** di device nyata + privacy review data.
+- [~] **T9.2 Release gate** — build ditolak bila ada baris in-scope belum `DONE`, jargon Narraza/AI bocor di client mana pun, soak 50 bab gagal NCS §8, atau web build / Android build / API contract gagal.
+  - [x] Gate otomatis web: `scripts/m9-release-gate.ts` dicek di CI setelah smoke; memblokir synthetic choice fallback, hilangnya pending recovery smoke, brand leak publik web, dan staging QA artifact yang hilang.
+  - [ ] Gate global penuh untuk seluruh NTM/Android/release beta belum final.
+- [~] **T9.3 Staging QA end-to-end** di device nyata + privacy review data.
+  - [x] Checklist staging dibuat di `docs/STAGING_QA_WEB_RELEASE.md`.
+  - [ ] Eksekusi QA staging nyata + bukti commit/SHA belum diisi.
 - [ ] **Exit Criteria M9 (beta-ready)** — ARCH §18.3 + NTM §2 hijau; soak 50 bab 3 jalur bersih; semua ending reachable; biaya/bab dalam guardrail.
 
 ---

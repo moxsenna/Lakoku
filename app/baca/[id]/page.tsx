@@ -1,7 +1,11 @@
 import { notFound } from 'next/navigation'
 import { getStory, getChapter, getChapterAvailability } from '@/lib/api/server'
+import { getSessionUser } from '@/lib/api/user-state'
+import { getReadingPolicy, getCreditBalance, isChapterUnlocked } from '@/lib/credits/server'
+import { chapterCost } from '@/lib/credits/policy'
 import { ReaderView } from '@/components/reader-view'
 import { ChapterUnavailable } from '@/components/chapter-unavailable'
+import { ChapterLocked } from '@/components/chapter-locked'
 
 export default async function BacaPage({
   params,
@@ -30,6 +34,21 @@ export default async function BacaPage({
         story={story}
         chapterNumber={targetNumber}
         state={availability === 'PREPARING' ? 'PREPARING' : 'UNAVAILABLE'}
+      />
+    )
+  }
+
+  // Gerbang berbayar: bab di luar kuota gratis harus sudah dibuka dengan kredit.
+  const [user, policy] = await Promise.all([getSessionUser(), getReadingPolicy()])
+  const unlocked = await isChapterUnlocked(user?.id ?? null, story.id, chapter.number, policy)
+  if (!unlocked) {
+    const balance = user ? await getCreditBalance(user.id) : 0
+    return (
+      <ChapterLocked
+        story={story}
+        chapterNumber={chapter.number}
+        cost={chapterCost(chapter.number, policy)}
+        balance={balance}
       />
     )
   }

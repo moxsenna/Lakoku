@@ -18,35 +18,16 @@
   "observability": {
     "enabled": true
   },
-  // `vars` non-inheritable: harus diulang di tiap named env di bawah.
+  // Menyalakan jalur LLM nyata (lib/ai-gateway/select-provider.ts). Tanpa ini
+  // runtime fallback ke provider deterministik.
   "vars": {
     "NARRATIVE_PROVIDER": "gateway"
-  },
-  // ── Named environments ──────────────────────────────────────────────────
-  // Deploy: `opennextjs-cloudflare deploy -- --env staging|production`.
-  // main/assets/compatibility_*/observability DIWARISKAN dari atas.
-  //
-  // SECRETS WAJIB per environment (set via `wrangler secret put <NAME> --env <env>`;
-  // BUKAN field schema, jadi didaftar di sini sebagai kontrak rilis):
-  //   - SUPABASE_SERVICE_ROLE_KEY   (service-role server-only)
-  //   - RUNTIME_ADMIN_TOKEN         (WAJIB — endpoint generate/admin fail-closed 503 tanpa ini)
-  //   - CHECKOUT_WEBHOOK_SECRET     (WAJIB untuk monetisasi; webhook 503 tanpa ini)
-  //   - AI_GATEWAY_API_KEY          (LLM nyata; NARRATIVE_PROVIDER=gateway di atas)
-  //   - CONSISTENCY_ALERT_WEBHOOK_URL (opsional; sink alert observability)
-  // Vars publik (NEXT_PUBLIC_SUPABASE_URL/ANON_KEY, NARRATIVE_MODEL) di-set via
-  // `wrangler versions secret`/dashboard atau build-time env.
-  "env": {
-    "staging": {
-      "name": "lakoku-v2-staging",
-      "vars": {
-        "NARRATIVE_PROVIDER": "gateway"
-      }
-    },
-    "production": {
-      "name": "lakoku-v2-production",
-      "vars": {
-        "NARRATIVE_PROVIDER": "gateway"
-      }
-    }
   }
+  // SECRETS WAJIB di worker `lakoku-v2` (set via `wrangler secret put <NAME>`):
+  //   - SUPABASE_SERVICE_ROLE_KEY   ✅ sudah terpasang
+  //   - AI_GATEWAY_API_KEY          ✅ sudah terpasang
+  //   - RUNTIME_ADMIN_TOKEN         → endpoint generate/admin fail-closed 503 tanpa ini
+  //   - CHECKOUT_WEBHOOK_SECRET     → webhook checkout 503 tanpa ini (monetisasi)
+  // Env staging/production terpisah bisa ditambahkan lewat blok "env": {...}
+  // bila nanti butuh isolasi (menuntut penyalinan ulang semua secret per env).
 }

@@ -5,13 +5,12 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient, type SupabasePublicConfig } from '@/lib/supabase/client'
 import { ArrowLeft } from 'lucide-react'
+import { getEmailRedirectTo } from './redirect'
 
 export function SignUpForm({
   supabaseConfig,
-  redirectTo,
 }: {
   supabaseConfig: SupabasePublicConfig
-  redirectTo?: string
 }) {
   const router = useRouter()
   const [email, setEmail] = useState('')
@@ -31,7 +30,7 @@ export function SignUpForm({
         email,
         password,
         options: {
-          emailRedirectTo: redirectTo ?? `${window.location.origin}/auth/callback`,
+          emailRedirectTo: getEmailRedirectTo(window.location.origin),
         },
       })
       if (error) {

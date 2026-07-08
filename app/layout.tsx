@@ -17,15 +17,22 @@ const dmSerif = DM_Serif_Display({
 })
 
 export const metadata: Metadata = {
-  title: 'Lakoku — Novel Interaktif',
+  title: 'Lakoku - Novel Interaktif',
   description:
     'Kamu bukan sekadar pembaca. Kamu adalah tokoh utamanya. Masuk ke cerita, ambil keputusan, dan lihat hidup tokohmu berubah karena pilihanmu.',
   generator: 'v0.app',
+  icons: {
+    icon: '/icon.svg',
+    apple: '/apple-icon.png',
+  },
 }
 
 export const viewport: Viewport = {
   themeColor: '#191319',
 }
+
+const themeInlineHelper = 'self.__name=self.__name||function(target){return target}'
+const enableVercelAnalytics = process.env.VERCEL === '1'
 
 export default function RootLayout({
   children,
@@ -38,12 +45,18 @@ export default function RootLayout({
       className={`bg-background ${jakarta.variable} ${dmSerif.variable}`}
       suppressHydrationWarning
     >
+      <head>
+        <script
+          dangerouslySetInnerHTML={{ __html: themeInlineHelper }}
+          suppressHydrationWarning
+        />
+      </head>
       <body className="font-sans antialiased">
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
           {children}
           <Toaster position="top-center" />
         </ThemeProvider>
-        {process.env.NODE_ENV === 'production' && <Analytics />}
+        {enableVercelAnalytics && <Analytics />}
       </body>
     </html>
   )

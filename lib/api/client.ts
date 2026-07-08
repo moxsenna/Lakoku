@@ -19,6 +19,7 @@ import type {
   ReportCategory,
   ReportResult,
 } from './types'
+import { buildChoiceIdempotencyKey } from './choice-idempotency'
 
 const API_BASE = '/api'
 
@@ -66,28 +67,19 @@ export async function submitChoice(
     `${API_BASE}/stories/${encodeURIComponent(storyId)}/choices`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': buildChoiceIdempotencyKey(storyId, chapterNumber, choiceId),
+      },
       body: JSON.stringify({ chapterNumber, choiceId }),
     },
   )
 
-  if (res.ok) {
-    const data = (await res.json()) as { outcome: ChoiceOutcome }
-    return data.outcome
-  }
+  if (!res.ok) throw new Error('Pilihan belum berhasil dikirim.')
 
-  // Fallback aman bila kombinasi belum tersedia (konten demo terbatas):
-  // cerita tetap bergerak tanpa menampilkan error teknis ke pembaca.
-  return {
-    storyId,
-    chapterNumber,
-    choiceId,
-    consequence: [
-      'Pilihanmu telah dicatat, dan cerita bergerak ke arah yang baru.',
-    ],
-    nextChapterNumber: chapterNumber + 1,
-    isEnding: false,
-  }
+  const data = (await res.json()) as { outcome?: ChoiceOutcome }
+  if (!data.outcome) throw new Error('Pilihan belum berhasil dikirim.')
+  return data.outcome
 }
 
 /**

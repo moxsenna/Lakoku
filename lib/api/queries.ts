@@ -126,6 +126,39 @@ export async function queryChapter(
   }
 }
 
+/**
+ * Bab terakhir yang SUDAH ADA isinya untuk sebuah cerita, dengan nomor <= atMost.
+ * Dipakai sebagai fallback reader-safe: bila bab yang diminta belum tersedia
+ * (mis. reader-state terlanjur maju melewati konten yang ada), pembaca dijatuhkan
+ * ke bab terakhir yang benar-benar bisa dibaca, bukan layar kosong permanen.
+ * Mengembalikan null bila tak ada bab <= atMost.
+ */
+export async function queryLatestAvailableChapter(
+  storyId: string,
+  atMost: number,
+): Promise<Chapter | null> {
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from('chapters')
+    .select('*')
+    .eq('story_id', storyId)
+    .lte('number', atMost)
+    .order('number', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw new Error(`queryLatestAvailableChapter: ${error.message}`)
+  if (!data) return null
+  const r = data as ChapterRow
+  return {
+    storyId: r.story_id,
+    number: r.number,
+    title: r.title,
+    paragraphs: r.paragraphs,
+    choicePrompt: r.choice_prompt ?? '',
+    choices: r.choices ?? [],
+  }
+}
+
 export async function queryChoiceOutcome(
   storyId: string,
   chapterNumber: number,

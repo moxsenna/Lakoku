@@ -18,7 +18,7 @@ NTM adalah satu tabel penelusuran *end-to-end* untuk setiap gap konsistensi. Seb
 - Release template diblokir bila ada baris berstatus selain `DONE` untuk gap yang masuk scope release itu (selaras ARCHITECTURE §18.3 + NCS §8).
 - Bila NCS berubah, NTM diperbarui di PR yang sama. NTM tidak boleh melenceng dari NCS.
 
-**Audit status 7 July 2026:** status `DONE` di tabel ini hanya diberikan bila bukti row-level sudah ada di repo (runtime/validator, fixture/smoke, dan bila relevan dashboard). Baris yang baru punya core logic + smoke tetapi belum di-wire ke workflow runtime produksi tetap `IN_PROGRESS`. Global build/release gate lintas-baris tetap pekerjaan M9/T9.2.
+**Audit status 7 July 2026:** status `DONE` di tabel ini hanya diberikan bila bukti row-level sudah ada di repo (runtime/validator, fixture/smoke, dan bila relevan dashboard). Baris yang baru punya core logic + smoke tetapi belum di-wire ke workflow runtime produksi tetap `IN_PROGRESS`. Gate otomatis web release sudah ada di M9/T9.2; gate global beta penuh tetap menunggu seluruh baris in-scope dan staging sign-off.
 
 ---
 
@@ -101,6 +101,6 @@ Sebuah baris berpindah ke `DONE` hanya bila bukti row-level berikut benar:
 2. Perilaku runtime/validator ada di owner module yang benar (`lib/*` sementara repo belum monorepo `packages/*`) dan punya test/smoke.
 3. Fixture/smoke terkait ada dan lulus lewat gate lokal (`pnpm test` atau script smoke yang dirujuk).
 4. Metrik muncul di dashboard yang benar (bukan hanya di-log).
-5. Ada gate lokal/test negatif yang gagal bila baris ini regresi. Global build/release gate lintas-baris tetap pekerjaan M9/T9.2 dan dibutuhkan sebelum beta release, tetapi bukan alasan untuk menahan status row-level `DONE` yang sudah terbukti.
+5. Ada gate lokal/test negatif yang gagal bila baris ini regresi. Gate M9/T9.2 dibutuhkan sebelum beta release; gate web otomatis sudah ada, sedangkan gate global penuh tetap harus menutup seluruh baris in-scope sebelum release beta.
 
 Baris tanpa bukti kolom lengkap tetap `TODO`/`IN_PROGRESS`, apa pun klaim PR-nya.

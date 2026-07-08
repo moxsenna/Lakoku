@@ -21,3 +21,11 @@ export {
   getResumeChapter,
   subscribeProgress,
 } from './progress'
+export {
+  clearPendingChoice,
+  createPendingChoice,
+  getPendingChoice,
+  recordPendingChoice,
+  retryPendingChoice,
+} from './pending-choice'
+export type { PendingChoice, PendingChoiceInput, SubmitChoiceFn } from './pending-choice'

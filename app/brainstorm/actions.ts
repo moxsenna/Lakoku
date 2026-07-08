@@ -15,7 +15,11 @@ import {
   proposeMystery,
   proposeWorld,
 } from '@/lib/authoring/server'
-import { persistStoryBible, makeVoiceSheetAuthor } from '@/lib/authoring/server'
+import {
+  persistStoryBible,
+  makeVoiceSheetAuthor,
+  publicAuthoringErrorMessage,
+} from '@/lib/authoring/server'
 import { runLockLadder, type AiRepairFn } from '@/lib/authoring/repair'
 import { enrichOpeningVoiceSheets } from '@/lib/authoring'
 import { generateNextChapterReal } from '@lakoku/runtime'
@@ -37,8 +41,9 @@ export type ActionResult<T> = ({ ok: true } & T) | ActionError
 
 function fail(err: unknown): ActionError {
   const message = err instanceof Error ? err.message : 'Terjadi kesalahan tak terduga.'
-  console.log('[v0] brainstorm action error:', message)
-  return { ok: false, error: message }
+  const publicMessage = publicAuthoringErrorMessage(err)
+  console.log('[v0] brainstorm action error:', message, { publicMessage })
+  return { ok: false, error: publicMessage }
 }
 
 export async function actProposePremises(idea: string): Promise<ActionResult<{ proposals: PremiseDraft[] }>> {

@@ -189,7 +189,7 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
 - **T6W.3 Reader + progress** — beranda, detail cerita, reader per-bab, jejak pilihan.
   - DoD: reader menampilkan bab sesuai cerita (bukan sample statis); progress monotonic; loading state pakai bahasa naratif, bukan "AI sedang generate".
 - **T6W.4 Choice submission + pending-choice recovery + generation status** — via `submitChoice`, selaras ARCH §10 & §23 rule #5.
-  - DoD: repeat tap tidak double-advance; status reader-safe tanpa metadata model; konsekuensi & bab berikutnya berasal dari outcome server/seam.
+  - DoD: repeat tap tidak double-advance; response gagal tidak membuat synthetic choice; pending choice disimpan dengan idempotency key stabil dan bisa retry setelah reload; status reader-safe tanpa metadata model; konsekuensi & bab berikutnya berasal dari outcome server/seam.
 - **T6W.5 Verifikasi browser mobile** — agent-browser (viewport mobile).
   - DoD: alur beranda → baca → pilih → konsekuensi → lanjut lolos; type-check & lint hijau.
 - **Exit Criteria M6-WEB:**
@@ -252,8 +252,8 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
 ### M9 — Hardening + Release Gate + Beta Cut
 
 - **T9.1 Isi seluruh baris NTM ke `DONE`** — verifikasi kelima bukti per baris (NTM §4).
-- **T9.2 Release gate** — ARCH §18.3 (B8) + NTM §2: build ditolak bila ada baris in-scope belum `DONE`, jargon Narraza/AI bocor di client mana pun (web/Android), soak 50 bab gagal NCS §8, atau web build / Android build / API contract gagal.
-- **T9.3 Staging QA end-to-end** di device nyata + privacy review data.
+- **T9.2 Release gate** — ARCH §18.3 (B8) + NTM §2: build ditolak bila ada baris in-scope belum `DONE`, jargon Narraza/AI bocor di client mana pun (web/Android), soak 50 bab gagal NCS §8, atau web build / Android build / API contract gagal. Web gate otomatis saat ini: `scripts/m9-release-gate.ts` setelah `pnpm smoke` di CI.
+- **T9.3 Staging QA end-to-end** di device nyata + privacy review data. Checklist staging web: `docs/STAGING_QA_WEB_RELEASE.md`.
 - **Exit Criteria M9 (beta-ready):** ARCH §18.3 + NTM §2 hijau; soak 50 bab 3 jalur bersih; semua ending reachable; biaya/bab dalam guardrail.
 
 ---

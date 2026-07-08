@@ -20,3 +20,6 @@ node_modules
 # Cloudflare / OpenNext
 .open-next/
 .wrangler/
+
+# TestSprite intermediate artifacts (logs, raw results, config)
+testsprite_tests/tmp/

@@ -40,6 +40,9 @@ export async function proposePremises(idea: string): Promise<{ proposals: Premis
       `Ide awal dari pengguna: "${idea || 'bebas — usulkan drama kebangkitan yang kuat'}".`,
       'Usulkan TEPAT 3 konsep premis yang berbeda arah (bukan variasi tipis).',
       'Tiap premis harus punya luka tokoh yang jelas dan taruhan yang meningkat.',
+      'Keluaran wajib objek JSON dengan field proposals berisi tepat 3 item.',
+      'Setiap item wajib punya title, tagline, role, synopsis, dan tropes.',
+      'Synopsis 3-5 kalimat pendek; tropes 2-5 string pendek.',
     ].join('\n'),
   })
   return { proposals: object.proposals, usedModel }

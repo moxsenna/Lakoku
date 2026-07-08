@@ -2,6 +2,7 @@ import Link from 'next/link'
 import {
   BookOpenText,
   ChevronRight,
+  Coins,
   Footprints,
   KeyRound,
   Palette,
@@ -14,6 +15,7 @@ import { LogoutButton } from '@/components/logout-button'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { listStories, getStory } from '@/lib/api/server'
 import { getSessionUser } from '@/lib/api/user-state'
+import { getCreditBalance } from '@/lib/credits/server'
 
 const settings = [
   { icon: Palette, label: 'Tema dan Ukuran Teks', desc: 'Atur kenyamanan membacamu' },
@@ -28,6 +30,7 @@ export default async function ProfilPage() {
   const initial = displayName.charAt(0).toUpperCase()
   const stories = await listStories()
   const details = await Promise.all(stories.map((s) => getStory(s.id)))
+  const creditBalance = user ? await getCreditBalance(user.id) : 0
   const totalBerjalan = stories.filter((s) => s.status === 'BERJALAN').length
   const totalSelesai = stories.filter((s) => s.status === 'SELESAI').length
   const totalPilihan = details.reduce((n, s) => n + (s?.jejak.length ?? 0), 0)
@@ -70,6 +73,24 @@ export default async function ProfilPage() {
             <span className="text-[11px] text-muted-foreground">Pilihan Penting</span>
           </div>
         </section>
+
+        {user && (
+          <Link
+            href="/kredit"
+            className="flex items-center gap-4 rounded-2xl bg-card p-4 transition-colors hover:bg-secondary/50"
+          >
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-gold">
+              <Coins className="size-5" aria-hidden="true" />
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="text-sm font-medium text-foreground">Kredit</span>
+              <span className="text-xs text-muted-foreground">
+                Saldo {creditBalance} · beli paket untuk buka bab
+              </span>
+            </span>
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          </Link>
+        )}
 
         <section aria-labelledby="pengaturan-heading" className="flex flex-col gap-3">
           <h2 id="pengaturan-heading" className="text-sm font-semibold tracking-wide text-lavender">

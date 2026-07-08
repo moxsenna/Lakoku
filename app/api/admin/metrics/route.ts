@@ -1,14 +1,19 @@
 import { NextResponse } from 'next/server'
 import { loadConsistencyMetrics } from '@/lib/observability/server'
+import { guardAdminToken } from '@/lib/auth/admin-guard'
 
 /**
  * Metrik konsistensi (T8.1 / G3-METRICS) untuk dashboard & konsumen alert (T8.2).
+ * Permukaan ops internal: dijaga RUNTIME_ADMIN_TOKEN (fail-closed).
  * Selalu dinamis: membaca event log & thread live via service-role (server-only).
  * `?storyId=` mempersempit ke satu story; tanpa itu → agregat global ops.
  */
 export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
+  const denied = guardAdminToken(request)
+  if (denied) return denied
+
   const { searchParams } = new URL(request.url)
   const storyId = searchParams.get('storyId') ?? undefined
   try {

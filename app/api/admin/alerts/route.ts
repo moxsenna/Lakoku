@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { loadConsistencyMetrics, dispatchConsistencyAlert } from '@/lib/observability/server'
+import { guardAdminToken } from '@/lib/auth/admin-guard'
 
 /**
  * Alert konsistensi (T8.2 / NCS §3.3, ARCH §17.4).
@@ -15,6 +16,9 @@ import { loadConsistencyMetrics, dispatchConsistencyAlert } from '@/lib/observab
 export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
+  const denied = guardAdminToken(request)
+  if (denied) return denied
+
   const { searchParams } = new URL(request.url)
   const storyId = searchParams.get('storyId') ?? undefined
   try {
@@ -29,6 +33,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const denied = guardAdminToken(request)
+  if (denied) return denied
+
   const { searchParams } = new URL(request.url)
   const storyId = searchParams.get('storyId') ?? undefined
   try {

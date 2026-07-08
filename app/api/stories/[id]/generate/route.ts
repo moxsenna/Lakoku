@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server'
 import { generateNextChapter, generateNextChapterReal } from '@lakoku/runtime'
+import { guardAdminToken } from '@/lib/auth/admin-guard'
 
 /**
  * Endpoint runtime: memicu workflow generasi satu bab.
  * Permukaan INTERNAL/operasional (bukan endpoint pembaca). Dijaga token
- * internal (RUNTIME_ADMIN_TOKEN) bila diset; tanpa token, ditolak di produksi.
+ * internal (RUNTIME_ADMIN_TOKEN) — fail-closed: tanpa token diset, ditolak 503;
+ * token salah/absen, ditolak 401.
  *
  * Body:
  *   - chapterNumber: number (wajib, >= 1)
@@ -18,13 +20,8 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const adminToken = process.env.RUNTIME_ADMIN_TOKEN
-  if (adminToken) {
-    const provided = req.headers.get('x-runtime-token')
-    if (provided !== adminToken) {
-      return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 401 })
-    }
-  }
+  const denied = guardAdminToken(req)
+  if (denied) return denied
 
   try {
     const { id } = await params

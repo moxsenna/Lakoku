@@ -10,8 +10,8 @@ import {
 } from './provider'
 import { scanForLeaks } from './gateway'
 import {
-  PROSE_WORD_MAX,
-  PROSE_WORD_MIN,
+  HARD_WORD_MAX,
+  HARD_WORD_MIN,
   mobileDramaOutputFormat,
   mobileDramaSystemPrompt,
 } from '@/lib/prose/mobile-drama-style'
@@ -36,8 +36,8 @@ import {
  */
 
 const DEFAULT_MODEL = 'openai/gpt-4.1-mini'
-const TARGET_WORD_LOW = PROSE_WORD_MIN
-const TARGET_WORD_HIGH = PROSE_WORD_MAX
+const TARGET_WORD_LOW = HARD_WORD_MIN
+const TARGET_WORD_HIGH = HARD_WORD_MAX
 
 /** Satu kandidat "otak" dalam rantai fallback. */
 type ModelCandidate = { model: LanguageModel; label: string }

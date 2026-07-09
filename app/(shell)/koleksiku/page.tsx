@@ -2,6 +2,8 @@ import Link from 'next/link'
 import { StoryCard } from '@/components/story-card'
 import { listStories } from '@/lib/api/server'
 
+export const dynamic = 'force-dynamic'
+
 export default async function KoleksikuPage() {
   const stories = await listStories()
   const berjalan = stories.filter((s) => s.status !== 'SELESAI')

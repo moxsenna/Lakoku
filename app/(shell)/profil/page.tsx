@@ -1,4 +1,4 @@
-import dynamic from 'next/dynamic'
+import nextDynamic from 'next/dynamic'
 import Link from 'next/link'
 import {
   BookOpenText,
@@ -11,13 +11,15 @@ import { listStories } from '@/lib/api/server'
 import { getReaderStates, getSessionUser } from '@/lib/api/user-state'
 import { getCreditBalance, getReadingPolicy } from '@/lib/credits/server'
 
-const ThemeToggle = dynamic(
+export const dynamic = 'force-dynamic'
+
+const ThemeToggle = nextDynamic(
   () => import('@/components/theme-toggle').then((mod) => mod.ThemeToggle),
 )
-const ProfileSettings = dynamic(
+const ProfileSettings = nextDynamic(
   () => import('@/components/profile-settings').then((mod) => mod.ProfileSettings),
 )
-const LogoutButton = dynamic(
+const LogoutButton = nextDynamic(
   () => import('@/components/logout-button').then((mod) => mod.LogoutButton),
 )
 

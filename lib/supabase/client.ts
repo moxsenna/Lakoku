@@ -1,4 +1,5 @@
 import { createBrowserClient } from '@supabase/ssr'
+import { getSupabaseAnonKey, getSupabaseUrl } from '@/lib/supabase/env'
 
 export interface SupabasePublicConfig {
   url: string
@@ -6,8 +7,8 @@ export interface SupabasePublicConfig {
 }
 
 export function createClient(config?: SupabasePublicConfig) {
-  const url = config?.url ?? process.env.NEXT_PUBLIC_SUPABASE_URL
-  const anonKey = config?.anonKey ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  const url = config?.url ?? getSupabaseUrl()
+  const anonKey = config?.anonKey ?? getSupabaseAnonKey()
 
   return createBrowserClient(
     url!,

@@ -5,6 +5,8 @@ import { ArrowLeft, Footprints } from 'lucide-react'
 import { ResumeChapter } from '@/components/resume-chapter'
 import { getStory } from '@/lib/api/server'
 
+export const dynamic = 'force-dynamic'
+
 export default async function CeritaDetailPage({
   params,
 }: {

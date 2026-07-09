@@ -9,6 +9,7 @@
  */
 import { cache } from 'react'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
+import { requireSupabaseAnonKey, requireSupabaseUrl } from '@/lib/supabase/env'
 import type {
   StorySummary,
   StoryDetail,
@@ -59,10 +60,7 @@ type OutcomeRow = {
  * ber-cookies terpisah.
  */
 function createClient() {
-  return createSupabaseClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
+  return createSupabaseClient(requireSupabaseUrl(), requireSupabaseAnonKey())
 }
 
 function toDetail(r: StoryRow): StoryDetail {

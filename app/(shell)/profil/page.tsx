@@ -1,3 +1,4 @@
+import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import {
   BookOpenText,
@@ -6,12 +7,19 @@ import {
   Footprints,
   Trophy,
 } from 'lucide-react'
-import { LogoutButton } from '@/components/logout-button'
-import { ThemeToggle } from '@/components/theme-toggle'
-import { ProfileSettings } from '@/components/profile-settings'
 import { listStories } from '@/lib/api/server'
 import { getReaderStates, getSessionUser } from '@/lib/api/user-state'
 import { getCreditBalance, getReadingPolicy } from '@/lib/credits/server'
+
+const ThemeToggle = dynamic(
+  () => import('@/components/theme-toggle').then((mod) => mod.ThemeToggle),
+)
+const ProfileSettings = dynamic(
+  () => import('@/components/profile-settings').then((mod) => mod.ProfileSettings),
+)
+const LogoutButton = dynamic(
+  () => import('@/components/logout-button').then((mod) => mod.LogoutButton),
+)
 
 export default async function ProfilPage() {
   const user = await getSessionUser()

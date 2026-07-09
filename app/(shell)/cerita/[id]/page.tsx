@@ -21,7 +21,6 @@ export default async function CeritaDetailPage({
             src={story.cover || '/placeholder.svg'}
             alt={`Sampul cerita ${story.title}`}
             fill
-            priority
             sizes="448px"
             className="object-cover"
           />

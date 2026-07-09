@@ -1,6 +1,9 @@
 import Link from 'next/link'
 import { CheckCircle2 } from 'lucide-react'
 import { AppShell } from '@/components/app-shell'
+import { CreditPoller } from '@/components/credit-poller'
+import { getSessionUser } from '@/lib/api/user-state'
+import { getCreditBalance } from '@/lib/credits/server'
 
 /**
  * Halaman balik setelah pembayaran (return_url PayCore). TIDAK menerbitkan
@@ -13,6 +16,8 @@ export default async function PaymentReturnPage({
   searchParams: Promise<{ order_id?: string }>
 }) {
   const { order_id } = await searchParams
+  const user = await getSessionUser()
+  const initialBalance = user ? await getCreditBalance(user.id) : null
 
   return (
     <AppShell>
@@ -29,7 +34,9 @@ export default async function PaymentReturnPage({
           {order_id && (
             <p className="text-[11px] text-muted-foreground">No. pesanan: {order_id}</p>
           )}
+          <p className="text-[11px] font-medium text-foreground">Biasanya kurang dari 30 detik.</p>
         </div>
+        <CreditPoller initialBalance={initialBalance} />
         <div className="flex w-full max-w-xs flex-col gap-3">
           <Link
             href="/kredit"

@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { AppShell } from '@/components/app-shell'
 import { StoryCard } from '@/components/story-card'
 import { listStories } from '@/lib/api/server'
@@ -30,6 +31,12 @@ export default async function KoleksikuPage() {
           ) : (
             <div className="flex flex-col items-start gap-3 rounded-2xl bg-card p-6">
               <p className="text-sm text-muted-foreground">Belum ada cerita yang menunggumu.</p>
+              <Link
+                href="/mulai"
+                className="inline-flex min-h-10 items-center justify-center rounded-xl bg-primary px-4 text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+              >
+                Mulai Cerita Baru
+              </Link>
             </div>
           )}
         </section>
@@ -47,6 +54,12 @@ export default async function KoleksikuPage() {
           ) : (
             <div className="flex flex-col items-start gap-3 rounded-2xl bg-card p-6">
               <p className="text-sm text-muted-foreground">Akhir ceritamu akan muncul di sini.</p>
+              <Link
+                href="/mulai"
+                className="inline-flex min-h-10 items-center justify-center rounded-xl bg-primary px-4 text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+              >
+                Mulai Cerita Baru
+              </Link>
             </div>
           )}
         </section>

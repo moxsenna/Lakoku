@@ -15,7 +15,7 @@ import { LogoutButton } from '@/components/logout-button'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { listStories, getStory } from '@/lib/api/server'
 import { getSessionUser } from '@/lib/api/user-state'
-import { getCreditBalance } from '@/lib/credits/server'
+import { getCreditBalance, getReadingPolicy } from '@/lib/credits/server'
 
 const settings = [
   { icon: Palette, label: 'Tema dan Ukuran Teks', desc: 'Atur kenyamanan membacamu' },
@@ -30,10 +30,28 @@ export default async function ProfilPage() {
   const initial = displayName.charAt(0).toUpperCase()
   const stories = await listStories()
   const details = await Promise.all(stories.map((s) => getStory(s.id)))
-  const creditBalance = user ? await getCreditBalance(user.id) : 0
+  const [creditBalance, policy] = await Promise.all([
+    user ? getCreditBalance(user.id) : Promise.resolve(0),
+    getReadingPolicy(),
+  ])
   const totalBerjalan = stories.filter((s) => s.status === 'BERJALAN').length
   const totalSelesai = stories.filter((s) => s.status === 'SELESAI').length
   const totalPilihan = details.reduce((n, s) => n + (s?.jejak.length ?? 0), 0)
+  const hour = new Date().getHours()
+  const greeting = hour < 11
+    ? 'Selamat pagi'
+    : hour < 15
+      ? 'Selamat siang'
+      : hour < 18
+        ? 'Selamat sore'
+        : 'Selamat malam'
+  const activeStory = stories.find((s) => s.status === 'BERJALAN')
+  const freeLeft = activeStory
+    ? Math.max(0, policy.freeChapters - activeStory.currentChapter)
+    : policy.freeChapters
+  const freeChapterText = activeStory
+    ? `${freeLeft} dari ${policy.freeChapters} bab gratis tersisa di ${activeStory.title}`
+    : `${policy.freeChapters} bab pertama gratis di setiap cerita`
 
   return (
     <AppShell>
@@ -46,7 +64,7 @@ export default async function ProfilPage() {
             {initial}
           </span>
           <div className="flex min-w-0 flex-1 flex-col">
-            <h1 className="font-serif text-2xl text-foreground">{displayName}</h1>
+            <h1 className="font-serif text-2xl text-foreground">{greeting}, {displayName}</h1>
             <p className="text-xs text-muted-foreground">
               {user
                 ? 'Tokoh utama — jejakmu tersimpan di akun ini'
@@ -84,6 +102,7 @@ export default async function ProfilPage() {
             </span>
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="text-sm font-medium text-foreground">Kredit</span>
+              <span className="text-xs text-muted-foreground">{freeChapterText}</span>
               <span className="text-xs text-muted-foreground">
                 Saldo {creditBalance} · beli paket untuk buka bab
               </span>

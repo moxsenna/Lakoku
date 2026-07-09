@@ -47,7 +47,7 @@ export function StoryCard({ story }: { story: StorySummary }) {
             />
           </div>
           <span className="text-[11px] text-muted-foreground">
-            Bab {story.currentChapter}/{story.totalChapters}
+            {progress}% - Bab {story.currentChapter}/{story.totalChapters}
           </span>
         </div>
       </div>

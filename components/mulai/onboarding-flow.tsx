@@ -34,8 +34,11 @@ interface Question {
   helper?: string
   /** Prefiks yang membingkai jawaban saat dirakit jadi ide untuk AI. */
   frame: (answer: string) => string
+  defaultAnswer: string
   options: string[]
 }
+
+const SMART_DEFAULT_LABEL = 'Pilihkan untukku'
 
 const questions: Question[] = [
   {
@@ -43,6 +46,7 @@ const questions: Question[] = [
     prompt: 'Drama seperti apa yang ingin kamu jalani?',
     helper: 'Pilih konflik utama untuk peranmu.',
     frame: (a) => `Konflik utama cerita: ${a.toLowerCase()}.`,
+    defaultAnswer: 'Pasangan yang berkhianat',
     options: [
       'Pasangan yang berkhianat',
       'Pernikahan kontrak yang berubah arah',
@@ -56,6 +60,7 @@ const questions: Question[] = [
     prompt: 'Bagaimana tokohmu biasanya menghadapi konflik?',
     helper: 'Ini menentukan pilihan yang akan sering muncul.',
     frame: (a) => `Tokoh utama cenderung ${a.toLowerCase()}.`,
+    defaultAnswer: 'Tenang dan menyusun rencana',
     options: [
       'Tenang dan menyusun rencana',
       'Langsung menghadapi, apa pun risikonya',
@@ -67,6 +72,7 @@ const questions: Question[] = [
     prompt: 'Hubungan seperti apa yang ingin kamu bentuk?',
     helper: 'Satu love interest utama akan hadir dalam ceritamu.',
     frame: (a) => `Hubungan yang diinginkan: ${a.toLowerCase()}.`,
+    defaultAnswer: 'Cinta yang harus diperjuangkan lagi',
     options: [
       'Cinta yang harus diperjuangkan lagi',
       'Sekutu yang perlahan menjadi lebih',
@@ -78,6 +84,7 @@ const questions: Question[] = [
     prompt: 'Akhir seperti apa yang paling ingin kamu kejar?',
     helper: 'Cerita tetap bisa berubah karena pilihanmu.',
     frame: (a) => `Akhir yang dikejar: ${a.toLowerCase()}.`,
+    defaultAnswer: 'Keadilan - semua rahasia terbuka',
     options: [
       'Keadilan — semua rahasia terbuka',
       'Kedamaian — melepaskan dan melangkah',
@@ -125,7 +132,11 @@ export function OnboardingFlow() {
 
   // --- Kuis ---
   function pickAnswer(key: string, value: string) {
-    const next = { ...answers, [key]: value }
+    const currentQuestion = questions.find((q) => q.key === key)
+    const resolved = value === SMART_DEFAULT_LABEL && currentQuestion
+      ? currentQuestion.defaultAnswer
+      : value
+    const next = { ...answers, [key]: resolved }
     setAnswers(next)
     if (step < totalQuestions - 1) {
       setTimeout(() => setStep((s) => s + 1), 220)
@@ -227,6 +238,7 @@ export function OnboardingFlow() {
               {selected.title} — {selected.role}
             </p>
           )}
+          <p className="text-xs text-muted-foreground">Biasanya 30-60 detik.</p>
         </div>
 
         <ol className="flex w-full flex-col gap-3 text-left" aria-live="polite">
@@ -379,7 +391,7 @@ export function OnboardingFlow() {
             {question.helper && <p className="text-sm text-muted-foreground">{question.helper}</p>}
           </div>
           <div className="flex flex-col gap-3" role="group" aria-label={question.prompt}>
-            {question.options.map((opt) => {
+            {[...question.options, SMART_DEFAULT_LABEL].map((opt) => {
               const isSelected = answers[question.key] === opt
               return (
                 <button

@@ -1,5 +1,4 @@
 import Link from 'next/link'
-import { redirect } from 'next/navigation'
 import { ArrowLeft, Coins } from 'lucide-react'
 import { AppShell } from '@/components/app-shell'
 import { BuyCreditButton } from '@/components/kredit/buy-credit-button'
@@ -11,13 +10,15 @@ const idr = (n: number) => `Rp${new Intl.NumberFormat('id-ID').format(n)}`
 
 export default async function KreditPage() {
   const user = await getSessionUser()
-  if (!user) redirect('/auth/login?next=%2Fkredit')
 
   const [balance, products, policy] = await Promise.all([
-    getCreditBalance(user.id),
+    user ? getCreditBalance(user.id) : Promise.resolve(0),
     listCreditProducts(),
     getReadingPolicy(),
   ])
+  const bestPricePerCredit = products.length
+    ? Math.min(...products.map((p) => p.priceIdr / Math.max(p.credits, 1)))
+    : null
 
   return (
     <AppShell>
@@ -38,8 +39,10 @@ export default async function KreditPage() {
             <Coins className="size-6" aria-hidden="true" />
           </span>
           <div className="flex flex-col">
-            <span className="text-xs text-muted-foreground">Saldo kreditmu</span>
-            <span className="font-serif text-3xl text-foreground">{balance}</span>
+            <span className="text-xs text-muted-foreground">
+              {user ? 'Saldo kreditmu' : 'Harga kredit'}
+            </span>
+            <span className="font-serif text-3xl text-foreground">{user ? balance : 'Publik'}</span>
           </div>
         </section>
 
@@ -56,21 +59,34 @@ export default async function KreditPage() {
             </p>
           ) : (
             <ul className="flex flex-col gap-3">
-              {products.map((p) => (
+              {products.map((p) => {
+                const pricePerCredit = p.priceIdr / Math.max(p.credits, 1)
+                const isBestValue = bestPricePerCredit != null && pricePerCredit === bestPricePerCredit
+                const perChapter = Math.round(pricePerCredit * policy.creditsPerChapter)
+                return (
                 <li
                   key={p.productKey}
-                  className="flex items-center justify-between gap-4 rounded-2xl bg-card p-4"
+                  className="relative flex items-center justify-between gap-4 rounded-2xl bg-card p-4"
                 >
+                  {isBestValue && (
+                    <span className="absolute -top-2 left-4 rounded-full bg-gold px-2 py-0.5 text-[10px] font-semibold tracking-wide text-ink">
+                      Paling Hemat
+                    </span>
+                  )}
                   <div className="flex min-w-0 flex-col">
                     <span className="text-sm font-semibold text-foreground">{p.name}</span>
                     <span className="text-xs text-muted-foreground">
                       {p.credits} kredit · ≈ {Math.floor(p.credits / Math.max(policy.creditsPerChapter, 1))} bab
                     </span>
+                    <span className="text-xs text-muted-foreground">
+                      {idr(perChapter)} per bab setelah gratis
+                    </span>
                     <span className="mt-1 text-sm font-medium text-foreground">{idr(p.priceIdr)}</span>
                   </div>
                   <BuyCreditButton productKey={p.productKey} />
                 </li>
-              ))}
+                )
+              })}
             </ul>
           )}
         </section>

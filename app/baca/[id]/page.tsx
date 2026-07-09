@@ -53,7 +53,15 @@ export default async function BacaPage({
     )
   }
 
-  return <ReaderView key={chapter.number} story={story} chapter={chapter} />
+  const fallbackFromChapter = target && chapter.number !== target ? target : undefined
+  return (
+    <ReaderView
+      key={chapter.number}
+      story={story}
+      chapter={chapter}
+      fallbackFromChapter={fallbackFromChapter}
+    />
+  )
 }
 
 

@@ -17,11 +17,26 @@ import {
   type StoryDetail,
 } from '@/lib/api'
 import { ReportDialog } from '@/components/report-dialog'
+import { ChapterUnavailableBanner } from '@/components/chapter-unavailable-banner'
 
 type ReaderTheme = 'ink' | 'cream'
 type Phase = 'reading' | 'processing' | 'pending' | 'consequence'
+const SELECTED_FEEDBACK_MS = 180
+const MIN_PROCESSING_MS = 1200
 
-export function ReaderView({ story, chapter }: { story: StoryDetail; chapter: Chapter }) {
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+export function ReaderView({
+  story,
+  chapter,
+  fallbackFromChapter,
+}: {
+  story: StoryDetail
+  chapter: Chapter
+  fallbackFromChapter?: number
+}) {
   const [theme, setTheme] = useState<ReaderTheme>('ink')
   const [fontSize, setFontSize] = useState(17)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -31,6 +46,7 @@ export function ReaderView({ story, chapter }: { story: StoryDetail; chapter: Ch
   const [nextChapterNumber, setNextChapterNumber] = useState<number | null>(null)
   const [isEnding, setIsEnding] = useState(false)
   const [pendingChoice, setPendingChoice] = useState<PendingChoice | null>(null)
+  const [selectedChoiceId, setSelectedChoiceId] = useState<string | null>(null)
   // Guard anti double-advance: cegah pilihan terkirim lebih dari sekali
   // (mis. tap ganda) sebelum state processing sempat merender ulang.
   const submittingRef = useRef(false)
@@ -57,22 +73,28 @@ export function ReaderView({ story, chapter }: { story: StoryDetail; chapter: Ch
     if (!outcome.isEnding && outcome.nextChapterNumber != null) {
       recordChapterReached(story.id, outcome.nextChapterNumber)
     }
-    // Beri jeda naratif singkat sebelum menampilkan konsekuensi.
-    setTimeout(() => {
-      setConsequence(outcome.consequence)
-      setNextChapterNumber(outcome.nextChapterNumber)
-      setIsEnding(outcome.isEnding)
-      setPhase('consequence')
-    }, 2800)
+    setConsequence(outcome.consequence)
+    setNextChapterNumber(outcome.nextChapterNumber)
+    setIsEnding(outcome.isEnding)
+    setSelectedChoiceId(null)
+    submittingRef.current = false
+    setPhase('consequence')
   }
 
   async function chooseOption(id: string) {
     if (submittingRef.current) return
     submittingRef.current = true
-    setPhase('processing')
+    setSelectedChoiceId(id)
+    const outcomePromise = submitChoice(story.id, chapter.number, id).then(
+      (outcome) => ({ ok: true as const, outcome }),
+      (error) => ({ ok: false as const, error }),
+    )
     try {
-      const outcome = await submitChoice(story.id, chapter.number, id)
-      showOutcome(outcome)
+      await wait(SELECTED_FEEDBACK_MS)
+      setPhase('processing')
+      const [result] = await Promise.all([outcomePromise, wait(MIN_PROCESSING_MS)])
+      if (!result.ok) throw result.error
+      showOutcome(result.outcome)
     } catch {
       const pending = recordPendingChoice({
         storyId: story.id,
@@ -80,6 +102,7 @@ export function ReaderView({ story, chapter }: { story: StoryDetail; chapter: Ch
         choiceId: id,
       })
       setPendingChoice(pending)
+      setSelectedChoiceId(null)
       submittingRef.current = false
       setPhase('pending')
     }
@@ -90,7 +113,7 @@ export function ReaderView({ story, chapter }: { story: StoryDetail; chapter: Ch
     submittingRef.current = true
     setPhase('processing')
     try {
-      const outcome = await retryPendingChoice()
+      const [outcome] = await Promise.all([retryPendingChoice(), wait(MIN_PROCESSING_MS)])
       if (!outcome) {
         setPendingChoice(null)
         submittingRef.current = false
@@ -206,6 +229,13 @@ export function ReaderView({ story, chapter }: { story: StoryDetail; chapter: Ch
         />
       </div>
 
+      {fallbackFromChapter && fallbackFromChapter !== chapter.number && (
+        <ChapterUnavailableBanner
+          requestedChapter={fallbackFromChapter}
+          currentChapter={chapter.number}
+        />
+      )}
+
       {settingsOpen && (
         <div className="lk-fade-up border-b border-border px-5 py-4">
           <div className="flex items-center justify-between gap-4">
@@ -214,7 +244,7 @@ export function ReaderView({ story, chapter }: { story: StoryDetail; chapter: Ch
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setFontSize((s) => Math.max(15, s - 1))}
+                  onClick={() => setFontSize((s) => Math.max(16, s - 1))}
                   aria-label="Perkecil teks"
                   className="flex size-9 items-center justify-center rounded-full bg-muted text-foreground"
                 >
@@ -307,17 +337,23 @@ export function ReaderView({ story, chapter }: { story: StoryDetail; chapter: Ch
               </h2>
             </div>
             <div className="flex flex-col gap-3">
-              {chapter.choices.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => chooseOption(c.id)}
-                  className="flex min-h-14 flex-col gap-1 rounded-2xl border border-border bg-card px-5 py-4 text-left transition-colors hover:border-primary/60"
-                >
-                  <span className="text-sm font-semibold text-foreground">{c.label}</span>
-                  {c.hint && <span className="text-xs text-muted-foreground">{c.hint}</span>}
-                </button>
-              ))}
+              {chapter.choices.map((c) => {
+                const selected = selectedChoiceId === c.id
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => chooseOption(c.id)}
+                    className={cn(
+                      'flex min-h-14 flex-col gap-1 rounded-2xl border px-5 py-4 text-left transition-colors hover:border-primary/60',
+                      selected ? 'border-primary bg-primary/10' : 'border-border bg-card',
+                    )}
+                  >
+                    <span className="text-sm font-semibold text-foreground">{c.label}</span>
+                    {c.hint && <span className="text-xs text-muted-foreground">{c.hint}</span>}
+                  </button>
+                )
+              })}
             </div>
           </section>
         )}

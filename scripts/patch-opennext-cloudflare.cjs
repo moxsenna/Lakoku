@@ -52,6 +52,10 @@ function patchDeps() {
   replaceOnce(file, from, to, 'symlinkSync(target, to, "junction")')
 }
 
+/**
+ * OpenNext/Next minify output can differ by platform.
+ * Prefer a resilient patch for middleware manifest loading.
+ */
 function patchWorker() {
   const file = path.join(
     process.cwd(),
@@ -60,11 +64,50 @@ function patchWorker() {
     'default',
     'handler.mjs',
   )
-  const from =
-    'getMiddlewareManifest(){return this.minimalMode?null:require(this.middlewareManifestPath)}'
-  const to = 'getMiddlewareManifest(){return this.minimalMode?null:MiddlewareManifest}'
 
-  replaceOnce(file, from, to, to)
+  if (!fs.existsSync(file)) {
+    throw new Error(`Worker handler not found: ${file}`)
+  }
+
+  const text = fs.readFileSync(file, 'utf8')
+  const desired =
+    'getMiddlewareManifest(){return this.minimalMode?null:MiddlewareManifest}'
+
+  // Already in the desired form.
+  if (text.includes(desired)) {
+    console.log(`patch-opennext-cloudflare: already patched ${file}`)
+    return
+  }
+
+  // Exact historical target (Windows OpenNext output).
+  const exactFrom =
+    'getMiddlewareManifest(){return this.minimalMode?null:require(this.middlewareManifestPath)}'
+  if (text.includes(exactFrom)) {
+    fs.writeFileSync(file, text.replace(exactFrom, desired))
+    console.log(`patch-opennext-cloudflare: patched ${file} (exact)`)
+    return
+  }
+
+  // Flexible target across minify variants.
+  const flexible =
+    /getMiddlewareManifest\(\)\s*\{\s*return\s+this\.minimalMode\s*\?\s*null\s*:\s*require\(\s*this\.middlewareManifestPath\s*\)\s*\}/
+  if (flexible.test(text)) {
+    fs.writeFileSync(file, text.replace(flexible, desired))
+    console.log(`patch-opennext-cloudflare: patched ${file} (flexible)`)
+    return
+  }
+
+  // If require(middlewareManifestPath) is gone entirely, nothing left to patch.
+  if (!text.includes('require(this.middlewareManifestPath)')) {
+    console.log(
+      `patch-opennext-cloudflare: no middlewareManifestPath require found in ${file}; skipping`,
+    )
+    return
+  }
+
+  throw new Error(
+    `Patch target not found in ${file}. Handler still requires this.middlewareManifestPath but form is unknown.`,
+  )
 }
 
 if (mode === 'deps') {

@@ -24,6 +24,17 @@ assert.ok(rows.chapters.every((chapter) => chapter.story_id === DEMO_STORY_ID))
 assert.ok(rows.chapters.every((chapter) => chapter.paragraphs.length >= 1))
 assert.ok(rows.chapters.every((chapter) => chapter.choice_prompt.length > 0))
 assert.ok(rows.chapters.every((chapter) => chapter.choices.length === 2))
+// Prosa demo harus natural — bukan filler "kata kata kata".
+assert.ok(
+  rows.chapters.every(
+    (chapter) =>
+      !chapter.paragraphs.some((p) => (p.match(/\bkata\b/gi) ?? []).length > 20),
+  ),
+  'paragraphs still look like filler "kata"',
+)
+assert.ok(rows.chapters[0]?.paragraphs[0]?.includes('Rani'))
+assert.ok(rows.chapters[0]?.title.includes('Bab 1'))
+assert.equal(rows.stories[0]?.visibility, 'public')
 
 assert.equal(rows.choiceOutcomes.length, 100)
 assert.ok(rows.choiceOutcomes.every((outcome) => outcome.story_id === DEMO_STORY_ID))

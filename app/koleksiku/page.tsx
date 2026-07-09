@@ -68,4 +68,3 @@ export default async function KoleksikuPage() {
   )
 }
 
-export const dynamic = 'force-dynamic';

@@ -130,4 +130,3 @@ export default async function ProfilPage() {
   )
 }
 
-export const dynamic = 'force-dynamic';

@@ -1,0 +1,67 @@
+name: Deploy Cloudflare Workers
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-cloudflare-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      # Public build-time values. Runtime secrets stay in Wrangler/Workers secrets.
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify Cloudflare credentials
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "Missing CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID secrets."
+            exit 1
+          fi
+          if [ -z "$NEXT_PUBLIC_SUPABASE_URL" ] || [ -z "$NEXT_PUBLIC_SUPABASE_ANON_KEY" ]; then
+            echo "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY secrets."
+            exit 1
+          fi
+
+      - name: Build and deploy Workers
+        run: pnpm run deploy
+
+      - name: Smoke live worker
+        run: |
+          set -euo pipefail
+          BASE_URL="${{ secrets.CLOUDFLARE_WORKER_URL }}"
+          if [ -z "$BASE_URL" ]; then
+            BASE_URL="https://lakoku-v2.moxsenna.workers.dev"
+          fi
+          for path in / /beranda /mulai /profil; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL$path")
+            echo "$path -> $code"
+            test "$code" = "200"
+          done
+          code=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/koleksiku")
+          echo "/koleksiku -> $code"
+          test "$code" = "307" -o "$code" = "302" -o "$code" = "200"

@@ -26,10 +26,11 @@ export function estimateSentenceCount(paragraph: string): number {
     .replace(/\.{2,}/g, '…')
     .trim()
   if (!cleaned) return 0
-  const parts = cleaned
-    .split(/(?<=[.!?…])\s+/)
-    .filter((p) => p.trim().length > 0)
-  return Math.max(1, parts.length)
+  // Count terminal punctuation. Short mobile-drama lines often omit "." —
+  // treat those as a single sentence (not 4+).
+  const terminals = cleaned.match(/[.!?…]+/g)
+  if (!terminals || terminals.length === 0) return 1
+  return terminals.length
 }
 
 export function evaluateProseDraft(input: EvaluateProseInput): PromptEvalReport {

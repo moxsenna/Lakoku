@@ -16,6 +16,7 @@ import {
   demoOutcomesForSeed,
   getDemoBeat,
 } from './demo-prose/chapter-beats'
+import { buildHandcraftChapter } from './demo-prose/handcraft/build-handcraft'
 
 export const DEMO_STORY_ID = 'demo:selasa-akhir'
 const TOTAL_CHAPTERS = DEMO_TOTAL_CHAPTERS
@@ -426,6 +427,16 @@ export function buildDemoChapterProse(chapterNumber: number): {
   paragraphs: string[]
   choice_prompt: string
 } {
+  // Bab 1–3: handcraft premium (step 4).
+  if (chapterNumber >= 1 && chapterNumber <= 3) {
+    const hc = buildHandcraftChapter(chapterNumber as 1 | 2 | 3)
+    return {
+      title: hc.title,
+      paragraphs: hc.paragraphs,
+      choice_prompt: hc.choice_prompt,
+    }
+  }
+
   const beat = getDemoBeat(chapterNumber)
   const titleCore =
     beat.title || CHAPTER_TITLES[(chapterNumber - 1) % CHAPTER_TITLES.length]!

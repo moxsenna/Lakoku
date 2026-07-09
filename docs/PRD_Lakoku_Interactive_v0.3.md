@@ -6,7 +6,7 @@
 **Arsitektur brand:** Produk hiburan B2C mandiri; terpisah secara publik dari Narraza.  
 **Status dokumen:** Build-ready product specification — brand-aligned revision  
 **Versi:** 0.3  
-**Amandemen diterapkan:** AMENDMENTS v0.3 (§A), AMENDMENTS v0.4 (§A), AMENDMENTS v0.5 (§A) — lihat `docs/AMENDMENTS_v0.3.md`, `docs/AMENDMENTS_v0.4.md`, `docs/AMENDMENTS_v0.5.md`  
+**Amandemen diterapkan:** AMENDMENTS v0.3 (§A), AMENDMENTS v0.4 (§A), AMENDMENTS v0.5 (§A), AMENDMENTS v0.6 (§A) — lihat `docs/AMENDMENTS_v0.3.md` … `docs/AMENDMENTS_v0.6.md`  
 **Dokumen normatif terkait:** `docs/NARRATIVE_CONSISTENCY_SPEC.md` (NCS v1.0) untuk kontrak konsistensi 50 bab; `docs/NARRATIVE_TRACEABILITY_MATRIX.md` untuk penelusuran gap → gate  
 **Platform rilis pertama:** Web reader mobile-first (client produksi pertama); aplikasi Android native (Kotlin) menyusul sebagai client kedua di atas kontrak API yang sama — lihat AMENDMENTS v0.4 (LD-CLIENT-SEQ)  
 **Bahasa antarmuka dan prosa awal:** Bahasa Indonesia  
@@ -228,8 +228,8 @@ Keputusan di bawah dianggap sebagai **product contract**. Agen coding, desainer,
 | Target pasar | Pembaca dewasa Indonesia, mobile-first, terutama usia 18–34 |
 | Bentuk cerita | Personalized interactive novel dengan peran fiktif, bukan chatbot roleplay bebas |
 | Panjang cerita | Tepat 50 bab untuk setiap main story instance |
-| Panjang bab | 500–800 kata prosa bersih, tidak termasuk judul dan label pilihan |
-| Struktur bab | 18–32 paragraf pendek; mayoritas 1–3 kalimat per paragraf |
+| Panjang bab | **800–1000** kata prosa bersih (soft target **850–950**), tidak termasuk judul dan label pilihan — AMENDMENTS v0.6 |
+| Struktur bab | **35–50** paragraf pendek (soft **38–48**); mayoritas **1** kalimat, maks **2**; dialog 1 baris = 1 paragraf |
 | Genre MVP | Drama emosional / romance / pengkhianatan / rahasia keluarga / kebangkitan tokoh utama |
 | Interaksi | Pilihan tombol; custom input bebas hanya di momen terbatas dan bukan jalur utama MVP |
 | Branching | Bounded branching: state, scene, route, dan ending berubah; story spine tetap terkendali |
@@ -360,7 +360,7 @@ Untuk menjaga koherensi:
 > **Reconciliation Checkpoint (NCS §1).** Pada akhir setiap act (setelah publish Bab 5, 12, 20, 32, 40, 45, 48), sistem menjalankan Reconciliation Checkpoint yang menyelaraskan rencana act berikutnya dengan konsekuensi pilihan pembaca, **tanpa mengubah spine, reveal gate, atau ending rules**. Tabel act di atas adalah *trajectory layer* yang dapat direkonsiliasi; batas act, mandatory reveal, reveal gate, dan ending rules adalah *spine layer* yang immutable setelah lock (NCS §1.1).
 
 - **Story:** satu novel lengkap dengan 50 bab.
-- **Chapter:** satu episode bacaan 500–800 kata dengan satu perubahan keadaan yang jelas.
+- **Chapter:** satu episode bacaan **800–1000** kata (soft **850–950**) dengan satu perubahan keadaan yang jelas.
 - **Scene:** satu unit adegan kecil dalam chapter, biasanya 120–300 kata.
 - **Beat:** tindakan, dialog, reaksi, clue, atau perubahan emosi yang kecil tetapi spesifik.
 
@@ -858,11 +858,14 @@ Prosa harus terasa seperti serial drama mobile Indonesia yang mudah dibaca, emos
 
 | Aturan | Requirement |
 |---|---|
-| Jumlah kata | 500–800 kata bersih |
-| Jumlah paragraf | 18–32 paragraf |
-| Panjang paragraf | Mayoritas 1–3 kalimat |
+| Jumlah kata | **Hard 800–1000**; soft target **850–950** kata bersih |
+| Jumlah paragraf | **Hard 35–50**; soft **38–48** paragraf |
+| Panjang paragraf | Mayoritas **1** kalimat (15–25 kata); sesekali **2** kalimat (30–40 kata) untuk emosi penting |
 | Paragraf panjang | Maksimal 2 paragraf >45 kata; tidak boleh berturut-turut |
-| Dialog density | Target 35–55% dari scene aktif; jangan dipaksakan pada scene investigasi/refleksi |
+| Dialog | **1 baris ucapan = 1 paragraf**; selalu pisah per pembicara |
+| Dialog density | Target 35–55% di **scene aktif**; soft di bab investigation/reflection (bukan hard rule seluruh bab) |
+| Struktur ritme | Hook 3–5 · konflik 8–10 · dialog/konfrontasi 15–20 · reveal/emosi 6–8 · cliff 3–5 paragraf |
+| Implementasi | `lib/prose/mobile-drama-style.ts` (`MOBILE_DRAMA_RHYTHM`) + `lib/prose/prompt-engine/` |
 | Kalimat | Langsung, natural, emosional, mudah dibaca di ponsel |
 | Deskripsi | Hanya bila menggerakkan emosi, konflik, setting, atau clue |
 | Pembuka | Hook/continuation dalam ±100 kata pertama |
@@ -873,7 +876,8 @@ Prosa harus terasa seperti serial drama mobile Indonesia yang mudah dibaca, emos
 
 Wajib:
 
-- banyak dialog yang punya tujuan;
+- ritme mobile drama: banyak paragraf pendek, mudah discroll;
+- banyak dialog yang punya tujuan (1 baris = 1 paragraf);
 - satu beat utama per paragraf;
 - reaksi emosional konkret;
 - detail sensorik seperlunya;
@@ -932,9 +936,9 @@ Setiap Story Contract harus memuat objek berikut:
 {
   "style_profile": "lakoku_mobile_drama_v1",
   "language": "id-ID",
-  "word_count_target": {"min": 500, "max": 800},
-  "paragraph_target": {"min": 18, "max": 32},
-  "paragraph_sentence_target": {"min": 1, "max": 3},
+  "word_count_target": {"hard_min": 800, "hard_max": 1000, "soft_min": 850, "soft_max": 950},
+  "paragraph_target": {"hard_min": 35, "hard_max": 50, "soft_min": 38, "soft_max": 48},
+  "paragraph_sentence_target": {"min": 1, "max": 2},
   "long_paragraph_limit": 2,
   "dialogue_density_target": "35-55%",
   "opening_rule": "conflict_or_continuation_within_first_100_words",
@@ -2412,10 +2416,10 @@ Jangan membuka genre baru sebelum Narrative Test Lab dan safety rules untuk genr
 
 ## 23.3 Style Acceptance
 
-- 500–800 kata per chapter.
-- 18–32 paragraf per chapter.
-- Mayoritas paragraf 1–3 kalimat.
-- Tidak ada dinding teks.
+- 800–1000 kata per chapter (soft 850–950).
+- 35–50 paragraf per chapter (soft 38–48).
+- Mayoritas paragraf 1 kalimat; maksimal 2; dialog 1 baris = 1 paragraf.
+- Tidak ada dinding teks / paragraf 4–6 kalimat.
 - Chapter end memiliki pull, kecuali Chapter 50.
 - Bahasa Indonesia natural dan tidak dipenuhi jargon AI.
 - Dialog terasa membedakan karakter utama.

@@ -1,7 +1,7 @@
 # Lakoku — Progress Checklist (Task Tracker) v1.0
 
 **Status:** Living document — dicentang seiring pekerjaan berjalan
-**Last updated:** 10 Juli 2026 (AMENDMENTS v0.5 ownership + Share Ending Card MVP dikunci di docs. Diagnosis: tamu/login bisa melihat banyak “Cerita Berjalan” karena `listStories`/`queryStories` + stats profil menghitung katalog global `stories`, bukan library personal — koreksi lewat T-OWN/T-SHARE. UX Polish Batch A/B/C, Poetry Lottie, CF Worker hardening tetap. Audit NTM: M5 core/smoke hijau; G1/G4 belum `DONE` penuh; M8/G3-METRICS `DONE`.)
+**Last updated:** 10 Juli 2026 (AMENDMENTS v0.5 ownership + Share Ending Card MVP dikunci di docs. Diagnosis: tamu/login bisa melihat banyak “Cerita Berjalan” karena `listStories`/`queryStories` + stats profil menghitung katalog global `stories`, bukan library personal — koreksi lewat T-OWN/T-SHARE. UX Polish Batch A/B/C, Poetry Lottie, CF Worker hardening tetap. Audit NTM: M5 core/smoke hijau; G1/G4 belum `DONE` penuh; M8/G3-METRICS `DONE`.) + AMENDMENTS v0.6 prose rhythm (800–1000 kata / 35–50 paragraf; prompt-engine; demo handcraft 1–3 + generator 4–50).
 **Turunan dari:** `docs/IMPLEMENTATION_PLAN.md` (runbook v1.0) — jika runbook berubah, sinkronkan checklist ini di PR yang sama (anti-drift, runbook §5)
 **Cara pakai:** Setiap task = satu checkbox. Centang HANYA bila Definition of Done (DoD) task terpenuhi. Milestone dianggap selesai hanya bila blok Sign-off-nya lengkap (lihat runbook §4).
 
@@ -181,6 +181,17 @@
 - [ ] **Exit Criteria M6** �� alur baca + pilih + recovery lolos di device Android nyata.
 
 ---
+
+
+
+## Prose rhythm (AMENDMENTS v0.6)
+
+- [x] `MOBILE_DRAMA_RHYTHM` + `lib/prose/prompt-engine` + fixtures/smoke
+- [x] Demo beat table 50 + beat-fit
+- [x] Handcraft demo bab 1–3 + generator 4–50 + demo-local-smoke
+- [x] LLM writer wired to `buildWriterPrompt`
+- [ ] Reseed remote `demo:selasa-akhir` setelah docs
+- [x] PRD §4/§6.3/§9/§23.3 (v0.6) + `docs/AMENDMENTS_v0.6.md`
 
 ## M6-WEB+ — Ownership per-user + Share Ending Card (AMENDMENTS v0.5)
 

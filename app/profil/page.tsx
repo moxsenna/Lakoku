@@ -4,25 +4,15 @@ import {
   ChevronRight,
   Coins,
   Footprints,
-  KeyRound,
-  Palette,
-  ShieldCheck,
-  Ticket,
   Trophy,
 } from 'lucide-react'
 import { AppShell } from '@/components/app-shell'
 import { LogoutButton } from '@/components/logout-button'
 import { ThemeToggle } from '@/components/theme-toggle'
+import { ProfileSettings } from '@/components/profile-settings'
 import { listStories, getStory } from '@/lib/api/server'
 import { getSessionUser } from '@/lib/api/user-state'
-import { getCreditBalance } from '@/lib/credits/server'
-
-const settings = [
-  { icon: Palette, label: 'Tema dan Ukuran Teks', desc: 'Atur kenyamanan membacamu' },
-  { icon: Ticket, label: 'Akses Cerita', desc: 'Kelola akses ceritamu' },
-  { icon: ShieldCheck, label: 'Batas Konten', desc: 'Tentukan batas cerita yang nyaman untukmu' },
-  { icon: KeyRound, label: 'Akun dan Privasi', desc: 'Email, kata sandi, dan datamu' },
-]
+import { getCreditBalance, getReadingPolicy } from '@/lib/credits/server'
 
 export default async function ProfilPage() {
   const user = await getSessionUser()
@@ -30,10 +20,28 @@ export default async function ProfilPage() {
   const initial = displayName.charAt(0).toUpperCase()
   const stories = await listStories()
   const details = await Promise.all(stories.map((s) => getStory(s.id)))
-  const creditBalance = user ? await getCreditBalance(user.id) : 0
+  const [creditBalance, policy] = await Promise.all([
+    user ? getCreditBalance(user.id) : Promise.resolve(0),
+    getReadingPolicy(),
+  ])
   const totalBerjalan = stories.filter((s) => s.status === 'BERJALAN').length
   const totalSelesai = stories.filter((s) => s.status === 'SELESAI').length
   const totalPilihan = details.reduce((n, s) => n + (s?.jejak.length ?? 0), 0)
+  const hour = new Date().getHours()
+  const greeting = hour < 11
+    ? 'Selamat pagi'
+    : hour < 15
+      ? 'Selamat siang'
+      : hour < 18
+        ? 'Selamat sore'
+        : 'Selamat malam'
+  const activeStory = stories.find((s) => s.status === 'BERJALAN')
+  const freeLeft = activeStory
+    ? Math.max(0, policy.freeChapters - activeStory.currentChapter)
+    : policy.freeChapters
+  const freeChapterText = activeStory
+    ? `${freeLeft} dari ${policy.freeChapters} bab gratis tersisa di ${activeStory.title}`
+    : `${policy.freeChapters} bab pertama gratis di setiap cerita`
 
   return (
     <AppShell>
@@ -46,7 +54,7 @@ export default async function ProfilPage() {
             {initial}
           </span>
           <div className="flex min-w-0 flex-1 flex-col">
-            <h1 className="font-serif text-2xl text-foreground">{displayName}</h1>
+            <h1 className="font-serif text-2xl text-foreground">{greeting}, {displayName}</h1>
             <p className="text-xs text-muted-foreground">
               {user
                 ? 'Tokoh utama — jejakmu tersimpan di akun ini'
@@ -84,6 +92,7 @@ export default async function ProfilPage() {
             </span>
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="text-sm font-medium text-foreground">Kredit</span>
+              <span className="text-xs text-muted-foreground">{freeChapterText}</span>
               <span className="text-xs text-muted-foreground">
                 Saldo {creditBalance} · beli paket untuk buka bab
               </span>
@@ -92,30 +101,7 @@ export default async function ProfilPage() {
           </Link>
         )}
 
-        <section aria-labelledby="pengaturan-heading" className="flex flex-col gap-3">
-          <h2 id="pengaturan-heading" className="text-sm font-semibold tracking-wide text-lavender">
-            PENGATURAN
-          </h2>
-          <ul className="flex flex-col overflow-hidden rounded-2xl bg-card">
-            {settings.map(({ icon: Icon, label, desc }, i) => (
-              <li key={label} className={i > 0 ? 'border-t border-border' : ''}>
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-secondary/50"
-                >
-                  <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary">
-                    <Icon className="size-5" aria-hidden="true" />
-                  </span>
-                  <span className="flex min-w-0 flex-1 flex-col">
-                    <span className="text-sm font-medium text-foreground">{label}</span>
-                    <span className="truncate text-xs text-muted-foreground">{desc}</span>
-                  </span>
-                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
+        <ProfileSettings />
 
         <section className="mb-4 flex flex-col gap-3">
           {user ? (

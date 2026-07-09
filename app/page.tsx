@@ -40,6 +40,9 @@ export default function OnboardingPage() {
 
       <section className="lk-fade-up -mt-10 flex flex-1 flex-col gap-8 px-6 pb-10">
         <div className="flex flex-col gap-3">
+          <span className="w-fit rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-[11px] font-semibold tracking-wide text-primary">
+            3 bab gratis - tanpa kartu
+          </span>
           <h1 className="font-serif text-4xl leading-tight text-foreground text-balance">
             Kamu bukan sekadar pembaca. Kamu adalah tokoh utamanya.
           </h1>

@@ -1,8 +1,17 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import { notFound } from 'next/navigation'
-import { ArrowLeft, Footprints, Lock, RotateCcw, Share2 } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, Footprints, Lock, RotateCcw } from 'lucide-react'
 import { getStory } from '@/lib/api/server'
+import { ShareButton } from '@/components/share-button'
+
+const endingNames = [
+  'Kebebasan',
+  'Rekonsiliasi Bersyarat',
+  'Cinta Baru',
+  'Kemenangan Pahit',
+  'Akhir Rahasia',
+]
 
 export default async function AkhirCeritaPage({
   params,
@@ -72,22 +81,42 @@ export default async function AkhirCeritaPage({
           </p>
         </div>
 
+        <section className="flex flex-col gap-3 rounded-2xl bg-card p-5">
+          <h2 className="text-sm font-semibold text-foreground">Akhir Cerita Lain</h2>
+          <ul className="flex flex-col gap-2">
+            {endingNames.map((name) => {
+              const reached = name === story.endingName
+              return (
+                <li key={name} className="flex items-center gap-3 text-sm">
+                  {reached ? (
+                    <CheckCircle2 className="size-4 shrink-0 text-gold" aria-hidden="true" />
+                  ) : (
+                    <Lock className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  )}
+                  <span className={reached ? 'text-foreground' : 'text-muted-foreground'}>
+                    {name}
+                  </span>
+                  <span className="ml-auto text-[11px] text-muted-foreground">
+                    {reached ? 'Dicapai' : 'Belum'}
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+        </section>
+
         <div className="mt-auto flex flex-col gap-3">
           <button
             type="button"
-            className="flex min-h-13 items-center justify-center gap-2 rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+            disabled
+            title="Segera hadir"
+            className="flex min-h-13 items-center justify-center gap-2 rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground opacity-50"
           >
             <RotateCcw className="size-4" aria-hidden="true" />
             Temukan Akhir Lain
           </button>
           <div className="flex gap-3">
-            <button
-              type="button"
-              className="flex min-h-13 flex-1 items-center justify-center gap-2 rounded-2xl border border-border px-4 text-sm font-semibold text-foreground transition-colors hover:bg-card"
-            >
-              <Share2 className="size-4" aria-hidden="true" />
-              Bagikan
-            </button>
+            <ShareButton title={story.title} endingName={story.endingName} />
             <Link
               href="/koleksiku"
               className="flex min-h-13 flex-1 items-center justify-center rounded-2xl border border-border px-4 text-sm font-semibold text-foreground transition-colors hover:bg-card"

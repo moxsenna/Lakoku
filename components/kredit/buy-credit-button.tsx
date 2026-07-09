@@ -26,6 +26,10 @@ export function BuyCreditButton({ productKey }: { productKey: string }) {
         window.location.href = data.checkout_url
         return
       }
+      if (res.status === 401) {
+        window.location.href = '/auth/login?next=%2Fkredit'
+        return
+      }
       setError(
         res.status === 503
           ? 'Pembayaran belum aktif. Coba lagi nanti.'

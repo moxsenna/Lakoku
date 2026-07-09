@@ -9,12 +9,7 @@ import {
   type WriteInput,
 } from './provider'
 import { scanForLeaks } from './gateway'
-import {
-  HARD_WORD_MAX,
-  HARD_WORD_MIN,
-  mobileDramaOutputFormat,
-  mobileDramaSystemPrompt,
-} from '@/lib/prose/mobile-drama-style'
+import { buildWriterPrompt } from '@/lib/prose/prompt-engine'
 
 /**
  * Provider LLM NYATA via Vercel AI Gateway.
@@ -36,8 +31,6 @@ import {
  */
 
 const DEFAULT_MODEL = 'openai/gpt-4.1-mini'
-const TARGET_WORD_LOW = HARD_WORD_MIN
-const TARGET_WORD_HIGH = HARD_WORD_MAX
 
 /** Satu kandidat "otak" dalam rantai fallback. */
 type ModelCandidate = { model: LanguageModel; label: string }
@@ -198,21 +191,10 @@ function voiceGuidance(snapshot: CanonSnapshot, chapter: number): string {
   return ['Jaga suara tiap tokoh agar khas & konsisten:', ...lines].join('\n')
 }
 
-/** Ringkas findings jadi instruksi perbaikan singkat (repair pass). */
-function repairHints(findings: Finding[] | undefined): string {
-  if (!findings?.length) return ''
-  const lines = findings
-    .filter((f) => f.severity === 'CRITICAL' || f.severity === 'MAJOR')
-    .map((f) => `- ${f.message}`)
-  if (!lines.length) return ''
-  return [
-    '',
-    'PERBAIKAN WAJIB (revisi sebelumnya bermasalah, perbaiki hal berikut):',
-    ...lines,
-  ].join('\n')
-}
-
-/** Bangun prompt penulisan bab dari plan + konteks canon (Bahasa Indonesia). */
+/**
+ * Bangun prompt penulisan bab lewat prose prompt-engine (single source of rhythm).
+ * Repair findings diteruskan ke buildWriterPrompt untuk instruksi perbaikan.
+ */
 function buildPrompt(args: {
   snapshot: CanonSnapshot
   plan: Record<string, unknown>
@@ -227,31 +209,21 @@ function buildPrompt(args: {
   const phase = String(plan.phase ?? '')
   const scenes = Number(plan.targetSceneCount ?? 3)
 
-  const system = mobileDramaSystemPrompt()
+  const parts = buildWriterPrompt({
+    chapterNumber: chapter,
+    phase: phase || undefined,
+    goal: goal || undefined,
+    characterNames: names,
+    voiceGuidance: voices || undefined,
+    plannedBeats: beats,
+    sceneCount: scenes,
+    repairFindings: args.repairFindings?.map((f) => ({
+      severity: f.severity,
+      message: f.message,
+    })),
+  })
 
-  const prompt = [
-    `Tulis Bab ${chapter} drama interaktif berbahasa Indonesia.`,
-    'POV: orang pertama "aku" sebagai tokoh utama di daftar nama (bila ada protagonis, pakai dia).',
-    phase ? `Fase cerita: ${phase}.` : '',
-    goal ? `Tujuan bab (jalankan lewat aksi & dialog, jangan dieksposisi mentah): ${goal}` : '',
-    names.length ? `Tokoh yang boleh tampil (nama persis): ${names.join(', ')}.` : '',
-    voices,
-    beats.length
-      ? `Beat wajib — tunjukkan lewat adegan, bukan ringkasan:\n${beats.map((b) => `- ${b}`).join('\n')}`
-      : '',
-    `Bentuk ${Math.min(Math.max(scenes, 2), 4)} adegan yang mengalir di lokasi konkret.`,
-    `Panjang total ${TARGET_WORD_LOW}–${TARGET_WORD_HIGH} kata.`,
-    'Buka dengan konflik/lanjutan dalam ±100 kata pertama.',
-    'Tutup dengan cliffhanger, konfrontasi, ancaman, atau reveal kecil (kecuali bab akhir).',
-    'Jangan memperkenalkan tokoh bernama baru di luar daftar.',
-    'Jangan membocorkan rahasia yang belum waktunya.',
-    repairHints(args.repairFindings),
-    mobileDramaOutputFormat(),
-  ]
-    .filter(Boolean)
-    .join('\n\n')
-
-  return { system, prompt }
+  return { system: parts.system, prompt: parts.user }
 }
 
 /**

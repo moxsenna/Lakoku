@@ -6,7 +6,6 @@ import {
   Footprints,
   Trophy,
 } from 'lucide-react'
-import { AppShell } from '@/components/app-shell'
 import { LogoutButton } from '@/components/logout-button'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { ProfileSettings } from '@/components/profile-settings'
@@ -43,8 +42,7 @@ export default async function ProfilPage() {
     : `${policy.freeChapters} bab pertama gratis di setiap cerita`
 
   return (
-    <AppShell>
-      <main className="flex flex-col gap-8 px-5 pt-8">
+    <main className="flex flex-col gap-8 px-5 pt-8">
         <header className="flex items-center gap-4">
           <span
             aria-hidden="true"
@@ -125,8 +123,7 @@ export default async function ProfilPage() {
             lakoku — Novel Interaktif · Versi 0.2 (Prototype)
           </p>
         </section>
-      </main>
-    </AppShell>
+    </main>
   )
 }
 

@@ -2,7 +2,6 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { notFound } from 'next/navigation'
 import { ArrowLeft, Footprints } from 'lucide-react'
-import { AppShell } from '@/components/app-shell'
 import { ResumeChapter } from '@/components/resume-chapter'
 import { getStory } from '@/lib/api/server'
 
@@ -16,8 +15,7 @@ export default async function CeritaDetailPage({
   if (!story) notFound()
 
   return (
-    <AppShell>
-      <main className="flex flex-col">
+    <main className="flex flex-col">
         <div className="relative h-[52svh] w-full overflow-hidden">
           <Image
             src={story.cover || '/placeholder.svg'}
@@ -103,8 +101,7 @@ export default async function CeritaDetailPage({
             </Link>
           )}
         </section>
-      </main>
-    </AppShell>
+    </main>
   )
 }
 

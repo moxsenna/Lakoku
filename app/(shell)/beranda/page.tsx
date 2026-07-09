@@ -1,6 +1,5 @@
 import Link from 'next/link'
 import Image from 'next/image'
-import { AppShell } from '@/components/app-shell'
 import { StoryCard } from '@/components/story-card'
 import { ResumeChapter } from '@/components/resume-chapter'
 import { listStories } from '@/lib/api/server'
@@ -12,8 +11,7 @@ export default async function BerandaPage() {
   const lainnya = stories.filter((s) => s.id !== berjalan?.id)
 
   return (
-    <AppShell>
-      <main className="flex flex-col gap-8 px-5 pt-8">
+    <main className="flex flex-col gap-8 px-5 pt-8">
         <header className="flex items-center justify-between">
           <div className="flex flex-col">
             <span className="font-serif text-2xl tracking-tight text-foreground">lakoku</span>
@@ -91,8 +89,7 @@ export default async function BerandaPage() {
             Mulai Cerita Baru
           </Link>
         </section>
-      </main>
-    </AppShell>
+    </main>
   )
 }
 

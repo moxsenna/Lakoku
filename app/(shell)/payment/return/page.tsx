@@ -1,6 +1,5 @@
 import Link from 'next/link'
 import { CheckCircle2 } from 'lucide-react'
-import { AppShell } from '@/components/app-shell'
 import { CreditPoller } from '@/components/credit-poller'
 import { getSessionUser } from '@/lib/api/user-state'
 import { getCreditBalance } from '@/lib/credits/server'
@@ -20,8 +19,7 @@ export default async function PaymentReturnPage({
   const initialBalance = user ? await getCreditBalance(user.id) : null
 
   return (
-    <AppShell>
-      <main className="flex min-h-[70svh] flex-col items-center justify-center gap-6 px-8 text-center">
+    <main className="flex min-h-[70svh] flex-col items-center justify-center gap-6 px-8 text-center">
         <span className="flex size-16 items-center justify-center rounded-full bg-secondary text-primary">
           <CheckCircle2 className="size-8" aria-hidden="true" />
         </span>
@@ -51,8 +49,7 @@ export default async function PaymentReturnPage({
             Kembali ke beranda
           </Link>
         </div>
-      </main>
-    </AppShell>
+    </main>
   )
 }
 

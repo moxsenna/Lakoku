@@ -1,3 +1,4 @@
+import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import {
   BookOpenText,
@@ -6,13 +7,19 @@ import {
   Footprints,
   Trophy,
 } from 'lucide-react'
-import { AppShell } from '@/components/app-shell'
-import { LogoutButton } from '@/components/logout-button'
-import { ThemeToggle } from '@/components/theme-toggle'
-import { ProfileSettings } from '@/components/profile-settings'
 import { listStories } from '@/lib/api/server'
 import { getReaderStates, getSessionUser } from '@/lib/api/user-state'
 import { getCreditBalance, getReadingPolicy } from '@/lib/credits/server'
+
+const ThemeToggle = dynamic(
+  () => import('@/components/theme-toggle').then((mod) => mod.ThemeToggle),
+)
+const ProfileSettings = dynamic(
+  () => import('@/components/profile-settings').then((mod) => mod.ProfileSettings),
+)
+const LogoutButton = dynamic(
+  () => import('@/components/logout-button').then((mod) => mod.LogoutButton),
+)
 
 export default async function ProfilPage() {
   const user = await getSessionUser()
@@ -43,8 +50,7 @@ export default async function ProfilPage() {
     : `${policy.freeChapters} bab pertama gratis di setiap cerita`
 
   return (
-    <AppShell>
-      <main className="flex flex-col gap-8 px-5 pt-8">
+    <main className="flex flex-col gap-8 px-5 pt-8">
         <header className="flex items-center gap-4">
           <span
             aria-hidden="true"
@@ -125,9 +131,7 @@ export default async function ProfilPage() {
             lakoku — Novel Interaktif · Versi 0.2 (Prototype)
           </p>
         </section>
-      </main>
-    </AppShell>
+    </main>
   )
 }
 
-export const dynamic = 'force-dynamic';

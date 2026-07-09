@@ -8,6 +8,7 @@
  * Tamu (tanpa sesi) tidak tersentuh file ini — mereka pakai state demo global.
  */
 import 'server-only'
+import { cache } from 'react'
 import { createClient } from '@/lib/supabase/server'
 import type { JejakItem, ChoiceOutcome } from './types'
 
@@ -51,21 +52,23 @@ function toState(r: ReaderStateRow): ReaderState {
   }
 }
 
-/** User dari sesi cookie saat ini, atau null untuk tamu. */
-export async function getSessionUser() {
+const getSessionContext = cache(async function getSessionContext() {
   const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
+  return { supabase, user }
+})
+
+/** User dari sesi cookie saat ini, atau null untuk tamu. */
+export const getSessionUser = cache(async function getSessionUser() {
+  const { user } = await getSessionContext()
   return user
-}
+})
 
 /** Seluruh reader-state milik user saat ini (RLS membatasi ke pemiliknya). */
-export async function getReaderStates(): Promise<Map<string, ReaderState>> {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+export const getReaderStates = cache(async function getReaderStates(): Promise<Map<string, ReaderState>> {
+  const { supabase, user } = await getSessionContext()
   if (!user) return new Map()
 
   const { data, error } = await supabase.from('reader_states').select('*')
@@ -73,16 +76,13 @@ export async function getReaderStates(): Promise<Map<string, ReaderState>> {
   return new Map(
     (data as ReaderStateRow[]).map((r) => [r.story_id, toState(r)]),
   )
-}
+})
 
 /** Reader-state user saat ini untuk satu cerita, atau null. */
-export async function getReaderState(
+export const getReaderState = cache(async function getReaderState(
   storyId: string,
 ): Promise<ReaderState | null> {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { supabase, user } = await getSessionContext()
   if (!user) return null
 
   const { data, error } = await supabase
@@ -92,7 +92,7 @@ export async function getReaderState(
     .maybeSingle()
   if (error) throw new Error(`getReaderState: ${error.message}`)
   return data ? toState(data as ReaderStateRow) : null
-}
+})
 
 /**
  * Catat hasil pilihan ke state user saat ini (jika login).

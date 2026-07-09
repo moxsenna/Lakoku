@@ -1,5 +1,4 @@
 import Link from 'next/link'
-import { AppShell } from '@/components/app-shell'
 import { StoryCard } from '@/components/story-card'
 import { listStories } from '@/lib/api/server'
 
@@ -9,8 +8,7 @@ export default async function KoleksikuPage() {
   const selesai = stories.filter((s) => s.status === 'SELESAI')
 
   return (
-    <AppShell>
-      <main className="flex flex-col gap-8 px-5 pt-8">
+    <main className="flex flex-col gap-8 px-5 pt-8">
         <header className="flex flex-col gap-1">
           <h1 className="font-serif text-3xl text-foreground">Koleksiku</h1>
           <p className="text-sm text-muted-foreground">
@@ -63,9 +61,7 @@ export default async function KoleksikuPage() {
             </div>
           )}
         </section>
-      </main>
-    </AppShell>
+    </main>
   )
 }
 
-export const dynamic = 'force-dynamic';

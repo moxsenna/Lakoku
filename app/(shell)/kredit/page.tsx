@@ -1,6 +1,5 @@
 import Link from 'next/link'
 import { ArrowLeft, Coins } from 'lucide-react'
-import { AppShell } from '@/components/app-shell'
 import { BuyCreditButton } from '@/components/kredit/buy-credit-button'
 import { getSessionUser } from '@/lib/api/user-state'
 import { listCreditProducts } from '@/lib/paycore/products'
@@ -21,8 +20,7 @@ export default async function KreditPage() {
     : null
 
   return (
-    <AppShell>
-      <main className="flex flex-col gap-6 px-5 pt-6 pb-8">
+    <main className="flex flex-col gap-6 px-5 pt-6 pb-8">
         <header className="flex items-center gap-3">
           <Link
             href="/profil"
@@ -94,9 +92,7 @@ export default async function KreditPage() {
         <p className="text-center text-[11px] text-muted-foreground">
           Pembayaran diproses aman oleh PayCore. Kredit masuk otomatis setelah pembayaran berhasil.
         </p>
-      </main>
-    </AppShell>
+    </main>
   )
 }
 
-export const dynamic = 'force-dynamic'

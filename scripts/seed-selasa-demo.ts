@@ -17,6 +17,7 @@ import {
   getDemoBeat,
 } from './demo-prose/chapter-beats'
 import { buildHandcraftChapter } from './demo-prose/handcraft/build-handcraft'
+import { generateChapterProse } from './demo-prose/generate-chapter-prose'
 
 export const DEMO_STORY_ID = 'demo:selasa-akhir'
 const TOTAL_CHAPTERS = DEMO_TOTAL_CHAPTERS
@@ -437,16 +438,8 @@ export function buildDemoChapterProse(chapterNumber: number): {
     }
   }
 
-  const beat = getDemoBeat(chapterNumber)
-  const titleCore =
-    beat.title || CHAPTER_TITLES[(chapterNumber - 1) % CHAPTER_TITLES.length]!
-  const paragraphs = buildSceneParagraphs(chapterNumber)
-
-  return {
-    title: titleCore,
-    paragraphs,
-    choice_prompt: beat.choicePrompt,
-  }
+  // Bab 4–50: beat-driven generator (step 5) — soft rhythm band.
+  return generateChapterProse(chapterNumber)
 }
 
 export function buildSelasaDemoSeedRows(): SelasaDemoSeedRows {

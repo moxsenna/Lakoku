@@ -13,6 +13,7 @@
  * Untuk merancang detail (edit tiap tahap), pembaca diarahkan ke /brainstorm.
  */
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
+import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, Check, Sparkles } from 'lucide-react'
@@ -33,6 +34,11 @@ import {
   startFirstChapter,
 } from '@/app/brainstorm/actions'
 import type { PremiseDraft, StoryBibleDraft } from '@/lib/authoring/schema'
+
+const PoetryLottie = dynamic(
+  () => import('@/components/mulai/poetry-lottie').then((m) => m.PoetryLottie),
+  { ssr: false },
+)
 
 interface Question {
   key: string
@@ -283,16 +289,11 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     const activeIndex = BUILD_STEPS.findIndex((s) => s.key === buildStage)
     return (
       <main className="mx-auto flex min-h-svh w-full max-w-md flex-col items-center justify-center gap-8 bg-background px-8 text-center">
-        <div className="flex flex-col items-center gap-2">
-          <span className="lk-pulse-soft font-serif text-3xl text-foreground">lakoku</span>
+        <div className="flex flex-col items-center gap-3">
+          <PoetryLottie className="h-40 w-52 sm:h-48 sm:w-60" />
           <h1 className="font-serif text-2xl leading-snug text-foreground text-balance">
             {buildStage === 'lock' ? 'Cerita ini siap dikunci ke akunmu.' : 'Peranmu sedang disiapkan.'}
           </h1>
-          {selected && (
-            <p className="text-sm leading-relaxed text-muted-foreground">
-              {selected.title} — {selected.role}
-            </p>
-          )}
           <p className="text-xs text-muted-foreground">Biasanya 30-60 detik.</p>
         </div>
 

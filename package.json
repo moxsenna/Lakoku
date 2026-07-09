@@ -50,6 +50,7 @@
     "ai": "^7.0.15",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "lottie-react": "^2.4.1",
     "lucide-react": "^1.16.0",
     "motion": "^12.42.2",
     "next": "16.2.6",

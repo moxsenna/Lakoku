@@ -26,6 +26,7 @@ import {
 } from './queries'
 import { getReaderStates, getReaderState, type ReaderState } from './user-state'
 import { isChapterPreparing } from './leases'
+import { normalizeStoryRouteId } from '@/lib/story-route-id'
 
 function overlay<T extends StorySummary>(story: T, state?: ReaderState | null): T {
   if (!state) return story
@@ -55,7 +56,8 @@ export async function listStories(): Promise<StorySummary[]> {
 
 /** Detail lengkap satu cerita, dengan state per-user bila login. */
 export async function getStory(id: string): Promise<StoryDetail | null> {
-  const [story, state] = await Promise.all([queryStory(id), getReaderState(id)])
+  const storyId = normalizeStoryRouteId(id)
+  const [story, state] = await Promise.all([queryStory(storyId), getReaderState(storyId)])
   return story ? overlay(story, state) : null
 }
 
@@ -67,6 +69,7 @@ export async function getChapter(
   storyId: string,
   chapterNumber?: number,
 ): Promise<Chapter | null> {
+  storyId = normalizeStoryRouteId(storyId)
   let target = chapterNumber
   if (target == null) {
     const story = await getStory(storyId)
@@ -102,6 +105,7 @@ export async function getChapterAvailability(
   storyId: string,
   chapterNumber: number,
 ): Promise<ChapterAvailability> {
+  storyId = normalizeStoryRouteId(storyId)
   const chapter = await queryChapter(storyId, chapterNumber)
   if (chapter) return 'PUBLISHED'
   const preparing = await isChapterPreparing(storyId, chapterNumber)

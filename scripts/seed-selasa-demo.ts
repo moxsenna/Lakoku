@@ -9,10 +9,17 @@
  */
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { buildFixtureSnapshot } from '../fixtures/narrative/fixture-50'
+import {
+  DEMO_ENDING_MAJU,
+  DEMO_TOTAL_CHAPTERS,
+  demoChoicesForSeed,
+  demoOutcomesForSeed,
+  getDemoBeat,
+} from './demo-prose/chapter-beats'
 
 export const DEMO_STORY_ID = 'demo:selasa-akhir'
-const TOTAL_CHAPTERS = 50
-const ENDING_NAME = 'Rekonsiliasi Bersyarat'
+const TOTAL_CHAPTERS = DEMO_TOTAL_CHAPTERS
+const ENDING_NAME = DEMO_ENDING_MAJU
 
 type StoryRow = {
   id: string
@@ -63,63 +70,11 @@ export type SelasaDemoSeedRows = {
 }
 
 function buildChoices(chapterNumber: number): ChapterRow['choices'] {
-  // Variasi label agar reader demo tidak monotoon, tetap 2 opsi stabil id.
-  if (chapterNumber >= 45) {
-    return [
-      { id: 'maju', label: 'Mengungkap kebenaran di depan keluarga' },
-      { id: 'tahan', label: 'Menahan diri demi menjaga damai palsu' },
-    ]
-  }
-  if (chapterNumber >= 30) {
-    return [
-      { id: 'maju', label: 'Mempercayai Dimas dan menuntut jawaban' },
-      { id: 'tahan', label: 'Mengamati dulu, kumpulkan bukti' },
-    ]
-  }
-  if (chapterNumber >= 12) {
-    return [
-      { id: 'maju', label: 'Membuka brankas / dokumen yang disembunyikan' },
-      { id: 'tahan', label: 'Menunggu momen yang lebih aman' },
-    ]
-  }
-  return [
-    { id: 'maju', label: 'Melangkah maju menghadapi keadaan' },
-    { id: 'tahan', label: 'Menahan diri dan mengamati' },
-  ]
+  return demoChoicesForSeed(chapterNumber)
 }
 
 function buildOutcomes(chapterNumber: number): ChoiceOutcomeRow[] {
-  const isEnding = chapterNumber >= TOTAL_CHAPTERS
-  const nextChapterNumber = isEnding ? null : chapterNumber + 1
-
-  return [
-    {
-      story_id: DEMO_STORY_ID,
-      chapter_number: chapterNumber,
-      choice_id: 'maju',
-      consequence: isEnding
-        ? [
-            ENDING_NAME,
-            'Kau memilih bicara jujur, lalu keluarga itu mulai berdamai dengan kebenaran.',
-          ]
-        : ['Kau maju; langkah itu membuka jalan ke bab berikutnya.'],
-      next_chapter_number: nextChapterNumber,
-      is_ending: isEnding,
-    },
-    {
-      story_id: DEMO_STORY_ID,
-      chapter_number: chapterNumber,
-      choice_id: 'tahan',
-      consequence: isEnding
-        ? [
-            'Kemenangan Pahit',
-            'Kau memilih menahan diri, dan kebenaran tetap menang dengan harga yang berat.',
-          ]
-        : ['Kau menahan diri; arus cerita tetap membawamu ke bab berikutnya.'],
-      next_chapter_number: nextChapterNumber,
-      is_ending: isEnding,
-    },
-  ]
+  return demoOutcomesForSeed(DEMO_STORY_ID, chapterNumber)
 }
 
 /**
@@ -471,16 +426,15 @@ export function buildDemoChapterProse(chapterNumber: number): {
   paragraphs: string[]
   choice_prompt: string
 } {
-  const titleCore = CHAPTER_TITLES[(chapterNumber - 1) % CHAPTER_TITLES.length]!
+  const beat = getDemoBeat(chapterNumber)
+  const titleCore =
+    beat.title || CHAPTER_TITLES[(chapterNumber - 1) % CHAPTER_TITLES.length]!
   const paragraphs = buildSceneParagraphs(chapterNumber)
 
   return {
     title: titleCore,
     paragraphs,
-    choice_prompt:
-      chapterNumber >= TOTAL_CHAPTERS
-        ? 'Bagaimana kau menutup Selasa ini?'
-        : 'Apa yang kaulakukan sekarang?',
+    choice_prompt: beat.choicePrompt,
   }
 }
 

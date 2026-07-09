@@ -1,15 +1,4 @@
-import type { Metadata } from 'next'
-import dynamic from 'next/dynamic'
-import { Suspense } from 'react'
-import { getSupabasePublicConfig } from '@/lib/supabase/public-config'
-
-export const metadata: Metadata = {
-  title: 'Pilih Peranmu — Lakoku',
-  description:
-    'Jawab beberapa pertanyaan singkat, pilih satu dari tiga cerita yang disiapkan untukmu, dan mulai perjalananmu sebagai tokoh utama.',
-}
-
-function MulaiSkeleton() {
+export default function Loading() {
   return (
     <main className="mx-auto flex min-h-svh w-full max-w-md flex-col bg-background px-5 pb-10 pt-6">
       <header className="flex items-center gap-3">
@@ -37,18 +26,5 @@ function MulaiSkeleton() {
         </div>
       </section>
     </main>
-  )
-}
-
-const OnboardingFlow = dynamic(
-  () => import('@/components/mulai/onboarding-flow').then((mod) => mod.OnboardingFlow),
-  { loading: () => <MulaiSkeleton /> },
-)
-
-export default function MulaiPage() {
-  return (
-    <Suspense fallback={<MulaiSkeleton />}>
-      <OnboardingFlow supabaseConfig={getSupabasePublicConfig()} />
-    </Suspense>
   )
 }

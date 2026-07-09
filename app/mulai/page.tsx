@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import dynamic from 'next/dynamic'
+import nextDynamic from 'next/dynamic'
 import { Suspense } from 'react'
 import { getSupabasePublicConfig } from '@/lib/supabase/public-config'
 
@@ -8,6 +8,9 @@ export const metadata: Metadata = {
   description:
     'Jawab beberapa pertanyaan singkat, pilih satu dari tiga cerita yang disiapkan untukmu, dan mulai perjalananmu sebagai tokoh utama.',
 }
+
+// Needs Supabase public config at request time; skip CF build-time prerender.
+export const dynamic = 'force-dynamic'
 
 function MulaiSkeleton() {
   return (
@@ -40,7 +43,7 @@ function MulaiSkeleton() {
   )
 }
 
-const OnboardingFlow = dynamic(
+const OnboardingFlow = nextDynamic(
   () => import('@/components/mulai/onboarding-flow').then((mod) => mod.OnboardingFlow),
   { loading: () => <MulaiSkeleton /> },
 )

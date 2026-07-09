@@ -2,7 +2,6 @@
 
 import { useState, useSyncExternalStore } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { createClient, type SupabasePublicConfig } from '@/lib/supabase/client'
 import { ArrowLeft } from 'lucide-react'
 
@@ -19,7 +18,6 @@ function safeNext(): string {
 }
 
 export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicConfig }) {
-  const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -38,17 +36,32 @@ export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicCo
     setError(null)
 
     try {
-      const supabase = createClient(supabaseConfig)
-      const { error } = await supabase.auth.signInWithPassword({ email, password })
-      if (error) {
-        setError('Email atau kata sandi salah. Coba lagi.')
-        setLoading(false)
+      if (!supabaseConfig?.url || !supabaseConfig?.anonKey) {
+        setError('Login belum siap. Konfigurasi Supabase belum terbaca di browser.')
         return
       }
-      router.push(safeNext())
-      router.refresh()
-    } catch {
-      setError('Login belum siap. Konfigurasi Supabase belum terbaca di browser.')
+      const supabase = createClient(supabaseConfig)
+      // Timeout agar UI tidak stuck di "Membuka pintu..." bila jaringan/Supabase hang.
+      const signIn = supabase.auth.signInWithPassword({ email, password })
+      const timeout = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('LOGIN_TIMEOUT')), 20_000)
+      })
+      const { error } = await Promise.race([signIn, timeout])
+      if (error) {
+        setError('Email atau kata sandi salah. Coba lagi.')
+        return
+      }
+      // Hard navigation: soft router.push + refresh sering macet di CF/OpenNext
+      // sebelum cookie sesi terbaca server components (loading tetap true).
+      window.location.assign(safeNext())
+    } catch (err) {
+      if (err instanceof Error && err.message === 'LOGIN_TIMEOUT') {
+        setError('Login terlalu lama. Periksa koneksi lalu coba lagi.')
+      } else {
+        setError('Login belum siap. Konfigurasi Supabase belum terbaca di browser.')
+      }
+    } finally {
+      // Jika hard nav jalan, unmount mengabaikan ini. Jika gagal, tombol bisa dipakai lagi.
       setLoading(false)
     }
   }

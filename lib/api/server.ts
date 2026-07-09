@@ -106,11 +106,11 @@ export async function listExploreStories(): Promise<StorySummary[]> {
       const state = states.get(s.id)
       if (state) return overlay(s, state)
       // Demo catalog: tampilkan sebagai BARU untuk jelajah, jangan wariskan
-      // status global BERJALAN seolah milik user.
+      // status global BERJALAN seolah milik user. Bab 1 = titik mulai baca.
       return {
         ...s,
         status: 'BARU' as const,
-        currentChapter: 0,
+        currentChapter: 1,
         jejak: [],
         endingName: undefined,
       }
@@ -124,17 +124,20 @@ export async function getStory(id: string): Promise<StoryDetail | null> {
   if (!story) return null
   if (state) return overlay(story, state)
   // Login tanpa personal state: jangan pakai demo global status sebagai milik user.
+  // currentChapter = 1 (bukan 0): reader butuh bab valid; 0 memicu "Bab 0 dirapikan".
   const user = await getSessionUser()
   if (user) {
     return {
       ...story,
       status: 'BARU',
-      currentChapter: 0,
+      currentChapter: 1,
       jejak: [],
       endingName: undefined,
     }
   }
-  return story
+  // Tamu / demo shell: pastikan posisi baca minimal bab 1.
+  const chapter = Math.max(1, story.currentChapter || 1)
+  return { ...story, currentChapter: chapter }
 }
 
 /**
@@ -152,6 +155,7 @@ export async function getChapter(
     if (!story) return null
     target = story.currentChapter
   }
+  target = Math.max(1, target)
 
   const chapter = await queryChapter(storyId, target)
   if (chapter) return chapter

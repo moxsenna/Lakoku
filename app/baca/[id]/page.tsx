@@ -21,8 +21,10 @@ export default async function BacaPage({
   if (!story) notFound()
 
   // Nomor bab dari query (mis. saat "Lanjut ke Bab N"); default = posisi terkini.
+  // Clamp >= 1: currentChapter 0 (legacy / belum mulai) tidak valid di reader.
   const requested = bab ? Number.parseInt(bab, 10) : undefined
-  const targetNumber = Number.isFinite(requested) ? Number(requested) : story.currentChapter
+  const rawTarget = Number.isFinite(requested) ? Number(requested) : story.currentChapter
+  const targetNumber = Math.max(1, Math.min(story.totalChapters || 50, rawTarget || 1))
 
   const chapter = await getChapter(story.id, targetNumber)
   // Bila bab yang diminta belum tersedia, tampilkan layar reader-safe yang tepat

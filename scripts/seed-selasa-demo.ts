@@ -122,164 +122,361 @@ function buildOutcomes(chapterNumber: number): ChoiceOutcomeRow[] {
   ]
 }
 
-/** Act 1–8 beat untuk prosa demo (bukan filler "kata"). */
-const ACT_BEATS: Array<{ from: number; to: number; beat: string; place: string }> = [
-  {
-    from: 1,
-    to: 6,
-    beat: 'kepulangan dan kecurigaan pertama di rumah kaca',
-    place: 'serambi rumah kaca yang berembun',
-  },
-  {
-    from: 7,
-    to: 12,
-    beat: 'jejak wasiat dan brankas yang tak boleh disentuh',
-    place: 'ruang kerja ayah yang berbau kertas tua',
-  },
-  {
-    from: 13,
-    to: 19,
-    beat: 'retaknya kepercayaan antar saudara',
-    place: 'dapur yang terlalu sunyi untuk keluarga besar',
-  },
-  {
-    from: 20,
-    to: 25,
-    beat: 'bayang-bayang bahwa ayah mungkin tak benar-benar pergi',
-    place: 'koridor belakang menuju rumah kaca',
-  },
-  {
-    from: 26,
-    to: 32,
-    beat: 'rahasia Dimas dan harga sebuah kepercayaan',
-    place: 'bawah pohon jambu di halaman samping',
-  },
-  {
-    from: 33,
-    to: 39,
-    beat: 'saksi masa lalu yang kembali membuka luka',
-    place: 'ruang tamu dengan foto keluarga berdebu',
-  },
-  {
-    from: 40,
-    to: 45,
-    beat: 'kebenaran kematian kakek yang bukan kecelakaan',
-    place: 'ruang kaca yang retak di sudutnya',
-  },
-  {
-    from: 46,
-    to: 50,
-    beat: 'konfrontasi terakhir dan pilihan berdamai dengan kebenaran',
-    place: 'tengah rumah kaca di bawah cahaya sore',
-  },
-]
+/**
+ * Prosa demo = gaya serial drama mobile / web novel (PRD §9).
+ * - POV "aku" (Rani)
+ * - 18–28 paragraf pendek (1–3 kalimat)
+ * - dialog padat, show-don't-tell
+ * - tanpa meta "pilihan menunggumu" / filler "kata"
+ */
+const CHAPTER_TITLES = [
+  'Hujan di Atap Kaca',
+  'Teh yang Dingin',
+  'Kunci di Laci',
+  'Cincin yang Hilang',
+  'Suara di Dapur',
+  'Bayang di Kaca',
+  'Janji yang Retak',
+  'Amplop Cokelat',
+  'Mata yang Menghindar',
+  'Laci Bawah',
+  'Foto yang Dipotong',
+  'Brankas yang Berbunyi',
+  'Meja Makan',
+  'Sepatu Basah',
+  'Telepon Tak Terjawab',
+  'Notaris itu Gemetar',
+  'Buku Harian',
+  'Tangga Belakang',
+  'Luka yang Dipoles',
+  'Pagi yang Kabur',
+  'Surat Tanpa Stempel',
+  'Pita Suara',
+  'Pintu Terkunci',
+  'Tangan Gemetar',
+  'Sudut yang Retak',
+  'Pertanyaan Dimas',
+  'Jawaban yang Menunda',
+  'Dusta Halus',
+  'Akta yang Aneh',
+  'Kata yang Tertahan',
+  'Malam di Serambi',
+  'Kepercayaan',
+  'Saksi yang Kembali',
+  'Nama Sari',
+  'Tahun Sembilan Belas',
+  'Pinggir yang Dipotong',
+  'Air Mata yang Ditahan',
+  'Peta Warisan',
+  'Kaca yang Retak',
+  'Ruang Kerja',
+  'Daftar Utang',
+  'Laporan Lama',
+  'Kebenaran Menusuk',
+  'Depan Pintu',
+  'Semua Tahu',
+  'Sore Terakhir',
+  'Mereka Berkumpul',
+  'Kalimat yang Harus Keluar',
+  'Harga Damai',
+  'Selasa Berakhir',
+] as const
 
-function actBeatFor(chapter: number) {
-  return (
-    ACT_BEATS.find((a) => chapter >= a.from && chapter <= a.to) ??
-    ACT_BEATS[ACT_BEATS.length - 1]!
-  )
+type BeatKey = 'pulang' | 'brankas' | 'retak' | 'ayah' | 'dimas' | 'sari' | 'kakek' | 'akhir'
+
+function beatKey(ch: number): BeatKey {
+  if (ch <= 6) return 'pulang'
+  if (ch <= 12) return 'brankas'
+  if (ch <= 19) return 'retak'
+  if (ch <= 25) return 'ayah'
+  if (ch <= 32) return 'dimas'
+  if (ch <= 39) return 'sari'
+  if (ch <= 45) return 'kakek'
+  return 'akhir'
 }
 
-/**
- * Prosa demo mobile-drama: 3 paragraf pendek, natural BI, tanpa filler "kata".
- * Deterministik per nomor bab — cocok seed idempotent.
- */
+/** Variasi kecil biar 50 bab tidak identik 100% (masih deterministik). */
+function linePick(ch: number, options: string[]): string {
+  return options[(ch - 1) % options.length]!
+}
+
+function buildSceneParagraphs(ch: number): string[] {
+  const key = beatKey(ch)
+  const n = ch
+
+  // Hook + tubuh + cliff — banyak baris pendek.
+  const commonOpen = [
+    linePick(n, [
+      'Embun masih menempel di atap rumah kaca.',
+      'Hujan baru berhenti. Bau tanah basah masuk lewat celah pintu.',
+      'Lampu serambi berkedip sekali, lalu stabil.',
+    ]),
+    'Aku mengusap ujung tas. Jari-jariku dingin.',
+    linePick(n, [
+      'Di dalam, piring berdenting pelan.',
+      'Di dalam, TV menyala tanpa suara.',
+      'Di dalam, ada tawa yang terasa palsu.',
+    ]),
+  ]
+
+  const byBeat: Record<BeatKey, string[]> = {
+    pulang: [
+      ...commonOpen,
+      'Ibu Ratna muncul dari dapur. Baki teh di tangannya.',
+      'Ia tidak memelukku.',
+      '“Istirahat dulu,” katanya.',
+      'Tatapannya jatuh ke resleting tasku—bukan ke mataku.',
+      '“Aku baru sampai, Bu.”',
+      '“Kamu capek. Nanti saja bicara.”',
+      'Teh tumpah sedikit di tepi cangkir. Ia tidak membersihkan.',
+      'Dimas lewat di koridor. Berhenti sejenak.',
+      '“Selamat datang, Mbak.”',
+      'Nada suaranya hati-hati. Seperti orang yang takut salah langkah.',
+      'Aku mengangguk. Tenggorokanku kering.',
+      'Di dinding, foto Ayah masih tersenyum. Bingkainya miring sedikit.',
+      'Aku meluruskannya.',
+      'Ibu Ratna menahan napas. Hampir tak kelihatan.',
+      '“Jangan sentuh barang-barang Ayah dulu.”',
+      '“Kenapa?”',
+      '“Nanti berantakan.”',
+      'Berantakan.',
+      'Aku menatap kaca rumah di halaman. Embun mengaburkan isinya.',
+      'Ada yang disembunyikan di rumah ini.',
+      'Dan mereka berharap aku terlalu lelah untuk mencari.',
+      'Aku mengepal tangan di samping tubuh.',
+      '“Besok pagi aku mau ke ruang kerja Ayah.”',
+      'Ibu Ratna tersenyum tipis.',
+      '“Besok kita bicarakan.”',
+      'Lampu serambi berkedip lagi.',
+      'Aku tidak mengalihkan pandang.',
+    ],
+    brankas: [
+      ...commonOpen,
+      'Pintu ruang kerja Ayah setengah terbuka.',
+      'Bau kertas tua dan minyak kayu.',
+      'Aku masuk tanpa mengetuk.',
+      'Laci bawah macet. Aku menarik lebih kuat.',
+      'Kunci kecil. Dingin. Berkarat di ujungnya.',
+      '“Mbak.”',
+      'Dimas di ambang pintu. Tangan di saku.',
+      '“Kalau dibuka sekarang, semuanya berubah.”',
+      'Aku memutar badan.',
+      '“Berubah untuk siapa?”',
+      'Ia terdiam. Rahangnya mengeras.',
+      '“Untuk semuanya.”',
+      'Aku mengepal kunci di telapak tangan.',
+      'Di pojok ruangan, brankas tua menempel di lantai. Debu tebal di tutupnya—kecuali satu sudut yang baru diusap.',
+      'Seseorang sudah ke sini.',
+      '“Siapa yang buka brankas ini?” tanyaku.',
+      '“Aku tidak tahu.”',
+      'Bohong itu terdengar mulus. Terlalu mulus.',
+      'Aku melangkah mendekati brankas.',
+      'Dimas mengangkat tangan, bukan menahan—hampir seperti minta waktu.',
+      '“Tunggu Ibu. Jangan sendirian.”',
+      '“Ibu yang melarangku sentuh barang Ayah.”',
+      'Diam sebentar.',
+      'Di luar, burung mengetuk kaca sekali.',
+      'Aku menelan ludah.',
+      'Kunci di tanganku berdenyut seolah panas.',
+    ],
+    retak: [
+      'Dapur terlalu sunyi untuk rumah sebesar ini.',
+      'Aku menuang air. Gelas bergetar di nampan.',
+      '“Kamu curiga terus,” kata sepupuku dari meja makan.',
+      '“Aku cuma tanya siapa yang urus wasiat.”',
+      'Ia tertawa pendek.',
+      '“Dasar anak kota. Semua mau dibawa ke notaris.”',
+      'Ibu Ratna masuk. Celemek masih basah.',
+      '“Sudah. Makan dulu.”',
+      'Aku tidak duduk.',
+      '“Pak Hendra menolak ketemu tanpa janji. Kenapa?”',
+      'Sendok jatuh. Dentingnya nyaring.',
+      'Ibu Ratna menunduk, mengambil sendok itu pelan-pelan.',
+      '“Notaris sibuk.”',
+      '“Sibuk atau disuruh diam?”',
+      'Semua orang menoleh.',
+      'Dimas berdiri di pintu dapur. Matanya memperingatkanku.',
+      'Aku tidak mundur.',
+      'Jari-jariku mengetuk tepi meja.',
+      '“Kalau kalian bersih, kenapa takut pertanyaan sederhana?”',
+      'Sepupuku bangkit.',
+      '“Kamu bikin suasana rusak.”',
+      '“Suasana sudah rusak sejak Ayah dikubur dengan cepat.”',
+      'Ibu Ratna menatapku lama.',
+      '“Cukup, Rani.”',
+      'Suara itu rendah. Bukan marah—ancaman yang dibungkus sopan.',
+      'Aku menghela napas.',
+      'Di jendela, bayanganku terlihat pucat.',
+    ],
+    ayah: [
+      'Koridor belakang lengang.',
+      'Aku memutar pita rekaman di ponsel. Suara Ayah serak, tertawa kecil.',
+      '“…jangan percaya semua yang ditulis di kertas itu—”',
+      'Pita putus. Desis.',
+      'Tangan ku gemetar.',
+      'Dimas muncul dari belokan.',
+      '“Kamu dengar apa?”',
+      '“Ayah. Sebelum… sebelum semua ini.”',
+      'Ia menggigit bibir.',
+      '“Itu bisa palsu.”',
+      '“Suara Ayah tidak bisa dipalsukan semudah itu.”',
+      'Kami diam. Hanya detak jam dinding.',
+      '“Kalau Ayah masih hidup,” bisikku, “siapa yang dikubur?”',
+      'Dimas memalingkan wajah.',
+      '“Jangan bilang itu keras-keras.”',
+      'Aku melangkah mendekat.',
+      '“Kamu tahu sesuatu.”',
+      '“Aku tahu kalau kamu terus menggali, mereka akan mengusirmu.”',
+      '“Lebih baik diusir daripada dibodohi.”',
+      'Matanya basah sepersekian detik. Lalu kering lagi.',
+      'Di ujung koridor, pintu rumah kaca terbuka sendiri. Angin.',
+      'Atau seseorang baru lewat.',
+      'Aku mengejar.',
+      'Hanya daun basah di lantai.',
+      'Tapi di kaca, ada jejak jari yang belum kering.',
+    ],
+    dimas: [
+      'Pohon jambu meneduhkan bangku tua.',
+      'Dimas menyerahkan amplop cokelat. Tidak langsung ke tanganku—ditaruh di bangku.',
+      '“Buka sendiri.”',
+      'Aku merobek. Fotokopi akta. Nama-nama. Satu baris yang membuat napasku tersangkut.',
+      '“Ini… siapa?”',
+      '“Aku,” katanya pelan. “Nama ibuku di situ. Bukan Ibu Ratna.”',
+      'Dunia sejenak mengecil.',
+      '“Kamu… saudara?”',
+      '“Setengah. Atau lebih rumit dari itu. Ayahmu menolong ibuku dulu.”',
+      'Aku menatapnya. Mencari dusta. Yang kutemukan justru lelah.',
+      '“Kenapa baru sekarang?”',
+      '“Karena Ibu bilang diam adalah cara bertahan.”',
+      '“Diam membunuh orang yang benar.”',
+      'Ia tertawa pahit.',
+      '“Aku bukan musuhmu, Mbak. Tapi aku juga bukan tamu.”',
+      'Amplop bergetar di tanganku.',
+      '“Kalau ini benar, wasiat yang mereka pamer palsu.”',
+      '“Bisa.”',
+      '“Bisa, atau ya?”',
+      'Dimas menghela napas.',
+      '“Ya. Sebagian.”',
+      'Burung di dahan terbang. Daun jatuh di antara kami.',
+      'Aku berdiri.',
+      '“Aku butuh bukti lain. Bukan hanya ini.”',
+      '“Kalau kau maju sekarang, mereka akan menyerangmu dulu.”',
+      'Aku menatap rumah kaca di kejauhan.',
+      '“Biar.”',
+    ],
+    sari: [
+      'Bel pintu berbunyi tiga kali.',
+      'Perempuan dengan tas kain berdiri di beranda. Rambut diikat asal.',
+      '“Rani?”',
+      '“Siapa?”',
+      '“Sari. Dulu… aku kerja di rumah ini.”',
+      'Ibu Ratna muncul di belakangku. Wajahnya memucat.',
+      '“Pulang. Sekarang.”',
+      'Sari tidak bergerak.',
+      '“Ibu bilang diam. Aku sudah diam terlalu lama.”',
+      'Ia mengeluarkan foto. Pinggirnya dipotong rapi.',
+      'Ayah. Seorang perempuan. Bayi.',
+      '“Ini tahun sembilan belas. Sebelum semuanya dibersihkan.”',
+      'Aku meraih foto. Jari-jariku basah keringat.',
+      '“Kenapa dipotong?”',
+      '“Supaya tidak kelihatan siapa yang digendong.”',
+      'Ibu Ratna melangkah maju.',
+      '“Cukup. Tamu tidak boleh bawa fitnah.”',
+      '“Fitnah?” Sari tertawa kecil. “Aku bawa saksi mata.”',
+      'Dimas berdiri di tangga. Tidak ikut bicara.',
+      'Aku menelan ludah.',
+      '“Masuk,” kataku pada Sari.',
+      '“Rani!” bentak Ibu.',
+      '“Ini rumah Ayah juga.”',
+      'Suaraku bergetar. Tapi kaki ku tidak mundur.',
+      'Sari melangkah masuk. Bau minyak kayu mengikutinya.',
+      'Foto di tanganku terasa lebih berat dari amplop mana pun.',
+    ],
+    kakek: [
+      'Aku membentangkan laporan lama di meja kaca.',
+      'Foto kecelakaan. Luka. Catatan polisi yang rapi—terlalu rapi.',
+      '“Kaca pecah dari dalam,” kataku.',
+      'Dimas mengernyit. “Maksudmu?”',
+      '“Angin tidak mendorong dari arah itu. Lihat serpihannya.”',
+      'Sari menunjuk sudut foto.',
+      '“Ada jejak sapuan. Orang membersihkan sebelum polisi datang.”',
+      'Ibu Ratna berdiri di pintu. Tangan di dada.',
+      '“Kalian gila. Kakek meninggal karena sial.”',
+      '“Sial yang terorganisir,” sahutku.',
+      'Ruangan diam.',
+      'Aku berdiri. Meja bergetar pelan.',
+      '“Siapa yang diuntungkan kalau Kakek pergi cepat?”',
+      'Tidak ada yang jawab.',
+      'Hanya detak jam.',
+      'Aku menatap Ibu.',
+      '“Kalau bukan kamu, kamu tahu siapa.”',
+      'Bibirnya bergetar. Bukan karena kasihan—karena terpojok.',
+      '“Aku menjaga keluarga ini.”',
+      '“Dengan mengubur orang hidup-hidup di cerita palsu?”',
+      'Dimas mengangkat tangan.',
+      '“Mbak, pelan.”',
+      'Aku menggeleng.',
+      '“Sudah cukup pelan.”',
+      'Di atap, hujan mulai lagi. Tik. Tik. Tik.',
+      'Seperti hitungan mundur.',
+    ],
+    akhir: [
+      'Sore memerah di atap rumah kaca.',
+      'Semua orang ada di sini. Tidak ada yang bisa kabur dengan alasan sibuk.',
+      'Aku meletakkan amplop, foto, laporan—di meja tengah.',
+      'Kertas-kertas itu berbunyi pelan saat bersentuhan.',
+      '“Ini bukan fitnah,” kataku. “Ini jejak.”',
+      'Ibu Ratna tertawa. Pendek. Pahit.',
+      '“Kamu mau hancurkan keluarga demi ego?”',
+      '“Aku mau nama Ayah tidak jadi alat.”',
+      'Dimas berdiri di sampingku. Tidak memegang tanganku. Cukup dekat.',
+      'Sari mengangguk pelan.',
+      'Sepupuku mengalihkan pandang ke lantai.',
+      '“Bilang saja,” desakku. “Siapa yang memalsukan wasiat. Siapa yang mengatur kematian Kakek. Siapa yang menyuruh notaris diam.”',
+      'Angin masuk lewat celah kaca. Dingin.',
+      'Ibu Ratna melangkah maju.',
+      '“Kalau kamu terus, tidak ada yang menang.”',
+      'Aku menatap matanya.',
+      '“Kalau aku diam, yang kalah cuma orang yang sudah mati.”',
+      'Jari-jariku mengepal.',
+      'Di luar, adzan jauh terdengar samar.',
+      'Selasa hampir selesai.',
+      'Tapi di dalam rumah kaca ini, semuanya baru mulai jujur—atau meledak.',
+      'Aku menarik napas dalam.',
+      '“Sekarang kalian pilih. Bicara. Atau aku bawa ini ke orang yang tidak bisa kalian bungkam.”',
+      'Tidak ada yang bergerak dulu.',
+      'Lalu, di sudut ruangan, seseorang menelan ludah terlalu keras.',
+    ],
+  }
+
+  const body = byBeat[key]
+  // Pastikan cukup paragraf (18+): ulangi variasi penutup pendek bila kurang.
+  const paragraphs = [...body]
+  while (paragraphs.length < 20) {
+    paragraphs.push(
+      linePick(ch + paragraphs.length, [
+        'Aku menghembuskan napas pelan.',
+        'Jantungku berdetak terlalu cepat.',
+        'Tidak ada yang berani memecah sunyi itu dulu.',
+        'Aku menatap lantai, lalu mengangkat dagu lagi.',
+      ]),
+    )
+  }
+  // Cap wajar untuk seed (baca nyaman); tidak usah 800 kata penuh.
+  return paragraphs.slice(0, 28)
+}
+
 export function buildDemoChapterProse(chapterNumber: number): {
   title: string
   paragraphs: string[]
   choice_prompt: string
 } {
-  const { beat, place } = actBeatFor(chapterNumber)
-  const titles = [
-    'Hujan di Atap Kaca',
-    'Surat yang Tak Pernah Dibaca',
-    'Langkah di Koridor',
-    'Cincin yang Hilang',
-    'Suara di Dapur',
-    'Bayang di Kaca',
-    'Janji yang Retak',
-    'Wasiat yang Disembunyikan',
-    'Mata yang Menghindar',
-    'Kunci di Laci Bawah',
-    'Nama di Foto Lama',
-    'Brankas yang Berbunyi',
-    'Tuduhan di Meja Makan',
-    'Jejak Sepatu Basah',
-    'Telepon yang Tak Terjawab',
-    'Laci Notaris',
-    'Rahasia di Buku Harian',
-    'Percakapan di Tangga',
-    'Luka yang Dipoles',
-    'Kabut di Pagi Selasa',
-    'Surat Tanpa Stempel',
-    'Suara Ayah di Pita',
-    'Pintu yang Dikunci Lagi',
-    'Tangan yang Gemetar',
-    'Cahaya di Sudut Kaca',
-    'Pertanyaan Dimas',
-    'Jawaban yang Menunda',
-    'Dusta yang Halus',
-    'Bukti di Amplop Cokelat',
-    'Kata-kata yang Tertahan',
-    'Malam di Serambi',
-    'Kepercayaan yang Diuji',
-    'Saksi yang Kembali',
-    'Nama Sari di Bibir Ibu',
-    'Cerita Tahun 1998',
-    'Foto yang Dipotong',
-    'Air Mata yang Ditahan',
-    'Peta Warisan',
-    'Suara Kaca Retak',
-    'Pertemuan di Ruang Kerja',
-    'Daftar Utang Keluarga',
-    'Jejak Darah di Laporan',
-    'Kebenaran yang Menusuk',
-    'Pilihan di Depan Pintu',
-    'Rahasia yang Meledak',
-    'Sore Terakhir',
-    'Semua Orang Berkumpul',
-    'Kalimat yang Harus Diucapkan',
-    'Harga Sebuah Damai',
-    'Selasa yang Berakhir',
-  ]
-  const title = titles[(chapterNumber - 1) % titles.length]!
-
-  const p1 = [
-    `Bab ${chapterNumber}. Kamu berdiri di ${place}, menghirup udara yang terasa terlalu berat untuk sebuah Selasa.`,
-    `Di luar, embun menempel di kaca seperti jejak jari orang yang sudah lama pergi.`,
-    `Di dalam, keluarga berbisik seolah rumah ini bisa dengar, dan setiap bisikan menampar ${beat}.`,
-    `Kamu—Rani—pulang bukan hanya untuk melayat, tapi untuk menagih jawaban yang ditunda bertahun-tahun.`,
-  ].join(' ')
-
-  const p2 = [
-    chapterNumber <= 6
-      ? `Ibu Ratna menyuguhkan teh tanpa menatap matamu. "Istirahat dulu," katanya, datar. Tapi tatapannya menyapu tasmu seolah mencari surat, bukan anaknya.`
-      : chapterNumber <= 12
-        ? `Di laci meja ayah, jari-jarimu menemukan kunci kecil yang dingin. Dimas berdiri di ambang pintu. "Kalau kau buka itu sekarang, semuanya berubah," bisiknya. Bukan peringatan. Semacam undangan yang berbahaya.`
-        : chapterNumber <= 20
-          ? `Notaris Hendra menolak bertemu tanpa janji. Di telepon, suaranya gemetar. "Ada yang dipalsukan, Mbak Rani. Tapi aku tak bisa bilang di sini."`
-          : chapterNumber <= 32
-            ? `Dimas menyerahkan amplop cokelat. Isinya fotokopi akta yang namanya bukan hanya milikmu. "Aku bukan musuhmu," katanya. "Tapi aku juga bukan orang asing di keluarga ini."`
-            : chapterNumber <= 39
-              ? `Sari datang dengan tas kain dan foto yang dipotong pinggirnya. "Ibumu menyuruhku diam dulu. Tapi diam itu membunuh orang yang benar."`
-              : chapterNumber <= 45
-                ? `Laporan lama tentang kecelakaan kakek tak selaras dengan luka di foto. Kaca rumah itu pernah pecah dari dalam, bukan dari angin.`
-                : `Semua orang berkumpul di rumah kaca. Sore memerah di atap. Tidak ada lagi tempat untuk dusta yang rapi.`,
-    `Kamu merasakan dada sesak—bukan karena takut kalah, tapi karena takut menang dengan cara yang merusak semua yang tersisa.`,
-  ].join(' ')
-
-  const p3 = [
-    `Di luar, seekor burung mengetuk kaca sekali, lalu pergi. Di dalam, pilihan menunggumu: maju dan bongkar yang busuk, atau menahan diri sambil mengamati celah yang lebih aman.`,
-    `Apapun yang kau pilih, Selasa ini tidak akan selesai sebagai Selasa biasa. ${beat[0]!.toUpperCase()}${beat.slice(1)} sudah terlalu jauh untuk diabaikan.`,
-    chapterNumber >= TOTAL_CHAPTERS
-      ? `Ini bab terakhir. Kebenaran sudah di meja. Yang tersisa hanya: apakah kau akan mengucapkannya dengan damai yang pahit, atau membiarkan luka itu mengering tanpa nama.`
-      : `Bab berikutnya menunggu di balik satu keputusan. Dan keputusan itu milikmu.`,
-  ].join(' ')
+  const titleCore = CHAPTER_TITLES[(chapterNumber - 1) % CHAPTER_TITLES.length]!
+  const paragraphs = buildSceneParagraphs(chapterNumber)
 
   return {
-    title: `Bab ${chapterNumber} — ${title}`,
-    paragraphs: [p1, p2, p3],
+    title: titleCore,
+    paragraphs,
     choice_prompt:
       chapterNumber >= TOTAL_CHAPTERS
         ? 'Bagaimana kau menutup Selasa ini?'

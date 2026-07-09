@@ -55,45 +55,58 @@ function activeCharacters(snapshot: CanonSnapshot, chapter: number) {
   )
 }
 
-/** Bangun prosa deterministik dengan jumlah kata mendekati target. */
+/**
+ * Prosa deterministik bergaya mobile drama: paragraf pendek (1–2 kalimat),
+ * seling dialog, show-don't-tell kasar — cukup untuk smoke/validator, bukan
+ * kualitas editorial. Seed demo reader punya generator sendiri.
+ */
 function buildParagraphs(
   beats: string[],
   names: string[],
   targetWords: number,
 ): string[] {
-  const lead = names[0] ?? 'Ia'
-  const other = names[1] ?? 'orang di hadapannya'
-  const sentences = [
-    `${lead} berdiri di ambang ruangan, menimbang setiap kemungkinan yang tersisa.`,
-    `Suara di luar meredup, menyisakan denyut keputusan yang belum ia ucapkan.`,
-    `${other} menatapnya, seolah menakar niat yang selama ini disembunyikan.`,
-    `Ada beban lama yang kembali terasa, menekan bahu ${lead} tanpa ampun.`,
-    `Namun kali ini ${lead} memilih untuk tidak mundur dari apa yang benar.`,
-    `Setiap kata yang terucap membawa risiko, tetapi diam justru lebih mahal.`,
-    `Ruangan itu menjadi saksi bagaimana sebuah hubungan diuji sampai batasnya.`,
-    `Di balik ketegangan, tumbuh benih tekad yang perlahan menguat.`,
+  const lead = names[0] ?? 'Aku'
+  const other = names[1] ?? 'dia'
+  const pool: string[] = [
+    ...beats.map((b) => {
+      const clean = b.toLowerCase().replace(/\.$/, '')
+      return `Aku menelan ludah. ${clean.charAt(0).toUpperCase()}${clean.slice(1)} tak bisa ditunda lagi.`
+    }),
+    `Aku berdiri di ambang pintu.`,
+    `Jari-jariku mengepal.`,
+    `${other} menatapku tanpa bicara.`,
+    `"Kamu yakin?" tanya ${other}.`,
+    `Aku mengangguk pelan.`,
+    `"Kalau salah, kita bayar mahal," katanya.`,
+    `Suara di luar meredup.`,
+    `Aku melangkah maju.`,
+    `Nafas ${other} terdengar pendek.`,
+    `"Bilang sekarang," desakku.`,
+    `${other} memalingkan wajah.`,
+    `Dadaku sesak, tapi aku tidak mundur.`,
+    `Lantai di bawah kakiku terasa dingin.`,
+    `"Cukup," bisikku.`,
+    `${other} menatapku lagi—kali ini lebih tajam.`,
+    `Aku menahan diri agar tidak meledak.`,
+    `Satu detik. Dua.`,
+    `Keputusan itu sudah di ujung lidah.`,
   ]
-  // Sisipkan beat sebagai kalimat naratif agar konten sinkron dengan rencana.
-  const beatSentences = beats.map(
-    (b) => `Babak ini menuntut satu hal: ${b.toLowerCase().replace(/\.$/, '')}.`,
-  )
-  const pool = [...beatSentences, ...sentences]
 
   const paragraphs: string[] = []
   let words = 0
   let idx = 0
-  let current: string[] = []
   while (words < targetWords) {
-    const s = pool[idx % pool.length]
-    current.push(s)
-    words += s.split(/\s+/).length
+    const s = pool[idx % pool.length]!
+    paragraphs.push(s)
+    words += s.split(/\s+/).filter(Boolean).length
     idx++
-    if (current.length >= 3) {
-      paragraphs.push(current.join(' '))
-      current = []
-    }
+    // Jaga minimal ~18 paragraf gaya mobile bila target penuh.
+    if (paragraphs.length >= 40 && words >= targetWords) break
   }
-  if (current.length) paragraphs.push(current.join(' '))
+  // Pastikan lead name muncul (beberapa kalimat pakai "Aku" generik).
+  if (!paragraphs.some((p) => p.includes(lead)) && lead !== 'Aku') {
+    paragraphs[0] = `${lead} berdiri di ambang pintu.`
+  }
   return paragraphs
 }
 

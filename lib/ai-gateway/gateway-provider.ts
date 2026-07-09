@@ -9,6 +9,12 @@ import {
   type WriteInput,
 } from './provider'
 import { scanForLeaks } from './gateway'
+import {
+  PROSE_WORD_MAX,
+  PROSE_WORD_MIN,
+  mobileDramaOutputFormat,
+  mobileDramaSystemPrompt,
+} from '@/lib/prose/mobile-drama-style'
 
 /**
  * Provider LLM NYATA via Vercel AI Gateway.
@@ -25,11 +31,13 @@ import { scanForLeaks } from './gateway'
  *
  * `plan` mengikuti provider deterministik (canon-derived & tervalidasi gateway),
  * jadi seluruh logika reveal/state/thread yang kritis TIDAK diserahkan ke model.
+ *
+ * Gaya prosa: PRD §9 / `lib/prose/mobile-drama-style.ts` (serial drama mobile).
  */
 
 const DEFAULT_MODEL = 'openai/gpt-4.1-mini'
-const TARGET_WORD_LOW = 560
-const TARGET_WORD_HIGH = 760
+const TARGET_WORD_LOW = PROSE_WORD_MIN
+const TARGET_WORD_HIGH = PROSE_WORD_MAX
 
 /** Satu kandidat "otak" dalam rantai fallback. */
 type ModelCandidate = { model: LanguageModel; label: string }
@@ -219,31 +227,26 @@ function buildPrompt(args: {
   const phase = String(plan.phase ?? '')
   const scenes = Number(plan.targetSceneCount ?? 3)
 
-  const system = [
-    'Anda penulis fiksi drama Bahasa Indonesia yang menulis prosa bab per bab.',
-    'Tulis HANYA narasi cerita untuk dibaca pembaca akhir.',
-    'DILARANG KERAS menyebut apa pun tentang AI, model, prompt, token, sistem,',
-    'instruksi, atau proses teknis. Jangan menyapa pembaca atau memberi meta-komentar.',
-    'Gunakan sudut pandang naratif yang konsisten, bahasa yang hidup dan menahan.',
-  ].join(' ')
+  const system = mobileDramaSystemPrompt()
 
   const prompt = [
-    `Tulis prosa untuk Bab ${chapter} sebuah drama berbahasa Indonesia.`,
+    `Tulis Bab ${chapter} drama interaktif berbahasa Indonesia.`,
+    'POV: orang pertama "aku" sebagai tokoh utama di daftar nama (bila ada protagonis, pakai dia).',
     phase ? `Fase cerita: ${phase}.` : '',
-    goal ? `Tujuan bab ini: ${goal}` : '',
-    names.length ? `Tokoh yang boleh tampil (gunakan nama persis ini): ${names.join(', ')}.` : '',
+    goal ? `Tujuan bab (jalankan lewat aksi & dialog, jangan dieksposisi mentah): ${goal}` : '',
+    names.length ? `Tokoh yang boleh tampil (nama persis): ${names.join(', ')}.` : '',
     voices,
     beats.length
-      ? `Alurkan beat wajib berikut secara natural dan berurutan:\n${beats.map((b) => `- ${b}`).join('\n')}`
+      ? `Beat wajib — tunjukkan lewat adegan, bukan ringkasan:\n${beats.map((b) => `- ${b}`).join('\n')}`
       : '',
-    `Bentuk ${Math.min(Math.max(scenes, 2), 4)} adegan yang mengalir.`,
-    `Panjang total ${TARGET_WORD_LOW}–${TARGET_WORD_HIGH} kata, dibagi ke beberapa paragraf.`,
-    'Jangan memperkenalkan tokoh bernama baru di luar daftar di atas.',
-    'Jangan membocorkan rahasia yang belum waktunya terungkap.',
+    `Bentuk ${Math.min(Math.max(scenes, 2), 4)} adegan yang mengalir di lokasi konkret.`,
+    `Panjang total ${TARGET_WORD_LOW}–${TARGET_WORD_HIGH} kata.`,
+    'Buka dengan konflik/lanjutan dalam ±100 kata pertama.',
+    'Tutup dengan cliffhanger, konfrontasi, ancaman, atau reveal kecil (kecuali bab akhir).',
+    'Jangan memperkenalkan tokoh bernama baru di luar daftar.',
+    'Jangan membocorkan rahasia yang belum waktunya.',
     repairHints(args.repairFindings),
-    'FORMAT KELUARAN (WAJIB): baris pertama tepat `JUDUL: <judul bab>` (tanpa nomor bab). ' +
-      'Setelah satu baris kosong, tulis prosa cerita. Pisahkan tiap paragraf dengan satu baris kosong. ' +
-      'Jangan tambahkan penjelasan, label, atau markdown lain di luar ketentuan ini.',
+    mobileDramaOutputFormat(),
   ]
     .filter(Boolean)
     .join('\n\n')

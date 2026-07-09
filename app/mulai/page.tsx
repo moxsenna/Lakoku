@@ -12,4 +12,3 @@ export default function MulaiPage() {
   return <OnboardingFlow supabaseConfig={getSupabasePublicConfig()} />
 }
 
-export const dynamic = 'force-dynamic';

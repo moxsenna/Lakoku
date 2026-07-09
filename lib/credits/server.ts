@@ -1,4 +1,5 @@
 import 'server-only'
+import { cache } from 'react'
 import { createAdminClient } from '@lakoku/db'
 import {
   DEFAULT_READING_POLICY,
@@ -16,7 +17,7 @@ import {
  */
 
 /** Kebijakan harga aktif dari DB; fallback ke default bila tak ada/gagal. */
-export async function getReadingPolicy(): Promise<ReadingPolicy> {
+export const getReadingPolicy = cache(async function getReadingPolicy(): Promise<ReadingPolicy> {
   try {
     const db = createAdminClient()
     const { data } = await db
@@ -34,7 +35,7 @@ export async function getReadingPolicy(): Promise<ReadingPolicy> {
     /* fallback */
   }
   return DEFAULT_READING_POLICY
-}
+})
 
 /** Saldo kredit user (0 bila belum ada / gagal). */
 export async function getCreditBalance(userId: string): Promise<number> {

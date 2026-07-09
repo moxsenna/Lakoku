@@ -7,6 +7,7 @@
  * Saat migrasi ke Cloudflare Workers, file ini pindah ke Workers dan
  * client.ts cukup menunjuk base URL baru — UI tidak berubah.
  */
+import { cache } from 'react'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import type {
   StorySummary,
@@ -81,7 +82,7 @@ function toDetail(r: StoryRow): StoryDetail {
   }
 }
 
-export async function queryStories(): Promise<StorySummary[]> {
+export const queryStories = cache(async function queryStories(): Promise<StorySummary[]> {
   const supabase = createClient()
   const { data, error } = await supabase
     .from('stories')
@@ -89,9 +90,9 @@ export async function queryStories(): Promise<StorySummary[]> {
     .order('created_at', { ascending: true })
   if (error) throw new Error(`queryStories: ${error.message}`)
   return (data as StoryRow[]).map(toDetail)
-}
+})
 
-export async function queryStory(id: string): Promise<StoryDetail | null> {
+export const queryStory = cache(async function queryStory(id: string): Promise<StoryDetail | null> {
   const supabase = createClient()
   const { data, error } = await supabase
     .from('stories')
@@ -100,9 +101,9 @@ export async function queryStory(id: string): Promise<StoryDetail | null> {
     .maybeSingle()
   if (error) throw new Error(`queryStory: ${error.message}`)
   return data ? toDetail(data as StoryRow) : null
-}
+})
 
-export async function queryChapter(
+export const queryChapter = cache(async function queryChapter(
   storyId: string,
   number: number,
 ): Promise<Chapter | null> {
@@ -124,7 +125,7 @@ export async function queryChapter(
     choicePrompt: r.choice_prompt ?? '',
     choices: r.choices ?? [],
   }
-}
+})
 
 /**
  * Bab terakhir yang SUDAH ADA isinya untuk sebuah cerita, dengan nomor <= atMost.
@@ -133,7 +134,7 @@ export async function queryChapter(
  * ke bab terakhir yang benar-benar bisa dibaca, bukan layar kosong permanen.
  * Mengembalikan null bila tak ada bab <= atMost.
  */
-export async function queryLatestAvailableChapter(
+export const queryLatestAvailableChapter = cache(async function queryLatestAvailableChapter(
   storyId: string,
   atMost: number,
 ): Promise<Chapter | null> {
@@ -157,7 +158,7 @@ export async function queryLatestAvailableChapter(
     choicePrompt: r.choice_prompt ?? '',
     choices: r.choices ?? [],
   }
-}
+})
 
 export async function queryChoiceOutcome(
   storyId: string,

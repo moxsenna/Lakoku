@@ -108,6 +108,3 @@ export default async function CeritaDetailPage({
   )
 }
 
-
-
-export const dynamic = 'force-dynamic';

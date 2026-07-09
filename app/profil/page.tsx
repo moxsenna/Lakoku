@@ -10,23 +10,22 @@ import { AppShell } from '@/components/app-shell'
 import { LogoutButton } from '@/components/logout-button'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { ProfileSettings } from '@/components/profile-settings'
-import { listStories, getStory } from '@/lib/api/server'
-import { getSessionUser } from '@/lib/api/user-state'
+import { listStories } from '@/lib/api/server'
+import { getReaderStates, getSessionUser } from '@/lib/api/user-state'
 import { getCreditBalance, getReadingPolicy } from '@/lib/credits/server'
 
 export default async function ProfilPage() {
   const user = await getSessionUser()
   const displayName = user?.email ? user.email.split('@')[0] : 'Tamu'
   const initial = displayName.charAt(0).toUpperCase()
-  const stories = await listStories()
-  const details = await Promise.all(stories.map((s) => getStory(s.id)))
+  const [stories, readerStates] = await Promise.all([listStories(), getReaderStates()])
   const [creditBalance, policy] = await Promise.all([
     user ? getCreditBalance(user.id) : Promise.resolve(0),
     getReadingPolicy(),
   ])
   const totalBerjalan = stories.filter((s) => s.status === 'BERJALAN').length
   const totalSelesai = stories.filter((s) => s.status === 'SELESAI').length
-  const totalPilihan = details.reduce((n, s) => n + (s?.jejak.length ?? 0), 0)
+  const totalPilihan = [...readerStates.values()].reduce((n, state) => n + state.jejak.length, 0)
   const hour = new Date().getHours()
   const greeting = hour < 11
     ? 'Selamat pagi'

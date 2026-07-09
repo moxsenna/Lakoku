@@ -9,7 +9,9 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit --incremental false",
-    "test": "pnpm run typecheck && pnpm run smoke",
+    "test": "pnpm run typecheck && pnpm run test:unit && pnpm run smoke",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
     "smoke": "pnpm run smoke:contracts && pnpm run smoke:web-release && pnpm run smoke:onboarding-shimmer && pnpm run smoke:auth-config && pnpm run smoke:admin-guard && pnpm run smoke:m4 && pnpm run smoke:m5 && pnpm run smoke:authoring-model && pnpm run smoke:m7-authoring && pnpm run smoke:m7-reconcile && pnpm run smoke:m7-opening && pnpm run smoke:m8-metrics && pnpm run smoke:m8-alert && pnpm run smoke:m8-entitlement && pnpm run smoke:paycore-webhook && pnpm run smoke:paycore-client && pnpm run smoke:credits-policy",
     "smoke:contracts": "node scripts/run-smoke.cjs scripts/contracts-smoke.ts",
     "smoke:web-release": "node scripts/run-smoke.cjs scripts/web-release-smoke.ts",
@@ -73,6 +75,7 @@
     "postcss": "^8.5",
     "tailwindcss": "^4.2.0",
     "typescript": "5.7.3",
+    "vitest": "^4.1.10",
     "wrangler": "^4.107.0"
   }
 }

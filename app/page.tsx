@@ -84,4 +84,3 @@ export default function OnboardingPage() {
   )
 }
 
-export const dynamic = 'force-dynamic';

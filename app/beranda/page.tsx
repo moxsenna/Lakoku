@@ -96,4 +96,3 @@ export default async function BerandaPage() {
   )
 }
 
-export const dynamic = 'force-dynamic';

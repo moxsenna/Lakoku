@@ -6,6 +6,7 @@ import { chapterCost } from '@/lib/credits/policy'
 import { ReaderView } from '@/components/reader-view'
 import { ChapterUnavailable } from '@/components/chapter-unavailable'
 import { ChapterLocked } from '@/components/chapter-locked'
+import { resolveReaderFallbackNotice } from '@/lib/reader-fallback'
 
 export default async function BacaPage({
   params,
@@ -53,7 +54,7 @@ export default async function BacaPage({
     )
   }
 
-  const fallbackFromChapter = target && chapter.number !== target ? target : undefined
+  const fallbackFromChapter = resolveReaderFallbackNotice(target, story.currentChapter, chapter.number)
   return (
     <ReaderView
       key={chapter.number}

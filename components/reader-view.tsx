@@ -18,6 +18,7 @@ import {
 } from '@/lib/api'
 import { ReportDialog } from '@/components/report-dialog'
 import { ChapterUnavailableBanner } from '@/components/chapter-unavailable-banner'
+import { useReaderFontSize } from '@/components/font-size-provider'
 
 type ReaderTheme = 'ink' | 'cream'
 type Phase = 'reading' | 'processing' | 'pending' | 'consequence'
@@ -38,7 +39,7 @@ export function ReaderView({
   fallbackFromChapter?: number
 }) {
   const [theme, setTheme] = useState<ReaderTheme>('ink')
-  const [fontSize, setFontSize] = useState(17)
+  const { fontSize, decreaseFontSize, increaseFontSize } = useReaderFontSize()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
   const [phase, setPhase] = useState<Phase>('reading')
@@ -244,7 +245,7 @@ export function ReaderView({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setFontSize((s) => Math.max(16, s - 1))}
+                  onClick={decreaseFontSize}
                   aria-label="Perkecil teks"
                   className="flex size-9 items-center justify-center rounded-full bg-muted text-foreground"
                 >
@@ -253,7 +254,7 @@ export function ReaderView({
                 <span className="w-6 text-center text-sm text-foreground">{fontSize}</span>
                 <button
                   type="button"
-                  onClick={() => setFontSize((s) => Math.min(22, s + 1))}
+                  onClick={increaseFontSize}
                   aria-label="Perbesar teks"
                   className="flex size-9 items-center justify-center rounded-full bg-muted text-foreground"
                 >

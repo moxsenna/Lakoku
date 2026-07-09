@@ -12,12 +12,18 @@
  * /brainstorm (T7.4); komponen ini hanya mengurut tahap & menyajikan progres.
  * Untuk merancang detail (edit tiap tahap), pembaca diarahkan ke /brainstorm.
  */
-import { useState, useTransition } from 'react'
+import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, Check, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Shimmer } from '@/components/ai-elements/shimmer'
+import { createClient, type SupabasePublicConfig } from '@/lib/supabase/client'
+import {
+  clearOnboardingDraftStash,
+  readOnboardingDraftStash,
+  saveOnboardingDraftStash,
+} from '@/lib/onboarding-draft'
 import {
   actProposePremises,
   actProposeCast,
@@ -26,7 +32,7 @@ import {
   lockStoryBible,
   startFirstChapter,
 } from '@/app/brainstorm/actions'
-import type { PremiseDraft } from '@/lib/authoring/schema'
+import type { PremiseDraft, StoryBibleDraft } from '@/lib/authoring/schema'
 
 interface Question {
   key: string
@@ -112,10 +118,13 @@ const BUILD_STEPS = [
   { key: 'chapter', label: 'Menulis Bab 1' },
 ] as const
 type BuildKey = (typeof BUILD_STEPS)[number]['key']
+const RESUME_LOGIN_URL = '/auth/login?next=%2Fmulai%3Fresume%3D1'
 
-export function OnboardingFlow() {
+export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePublicConfig }) {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [pending, startTransition] = useTransition()
+  const resumeAttemptedRef = useRef(false)
 
   const [phase, setPhase] = useState<Phase>('quiz')
   const [step, setStep] = useState(0)
@@ -129,6 +138,66 @@ export function OnboardingFlow() {
 
   const totalQuestions = questions.length
   const question = questions[step]
+  const resume = searchParams.get('resume')
+
+  const failBuild = useCallback((message?: string) => {
+    setErr(message ?? 'Terjadi kendala saat menyiapkan cerita.')
+    setPhase('error')
+  }, [])
+
+  const hasSession = useCallback(async () => {
+    const supabase = createClient(supabaseConfig)
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    return Boolean(user)
+  }, [supabaseConfig])
+
+  const lockAndStart = useCallback(async (draft: StoryBibleDraft) => {
+    setBuildStage('lock')
+    const lockRes = await lockStoryBible(draft)
+    if (!lockRes.ok) {
+      return failBuild(
+        'needsAuthor' in lockRes
+          ? 'Cerita ini butuh sedikit penyesuaian. Coba pilih cerita lain atau ulangi.'
+          : lockRes.error,
+      )
+    }
+
+    clearOnboardingDraftStash(window.localStorage)
+    setBuildStage('chapter')
+    const gen = await startFirstChapter(lockRes.storyId)
+    if (!gen.ok) {
+      router.push(`/cerita/${lockRes.storyId}`)
+      return
+    }
+    router.push(`/baca/${lockRes.storyId}?bab=1`)
+  }, [failBuild, router])
+
+  useEffect(() => {
+    if (resume !== '1' || resumeAttemptedRef.current) return
+    resumeAttemptedRef.current = true
+
+    queueMicrotask(() => {
+      const draft = readOnboardingDraftStash(window.localStorage)
+      if (!draft) {
+        failBuild('Rancangan ceritamu sudah kedaluwarsa. Mulai lagi agar ceritanya tetap rapi.')
+        return
+      }
+
+      setSelected(draft.premise)
+      setAnswers(draft.answers ?? {})
+      setErr(null)
+      setPhase('building')
+      startTransition(async () => {
+        if (!(await hasSession())) {
+          router.push(RESUME_LOGIN_URL)
+          return
+        }
+        await lockAndStart(draft)
+      })
+    })
+  }, [failBuild, hasSession, lockAndStart, resume, router])
 
   // --- Kuis ---
   function pickAnswer(key: string, value: string) {
@@ -182,36 +251,22 @@ export function OnboardingFlow() {
       const worldRes = await actProposeWorld(premise, castRes.cast, mysteryRes.mystery)
       if (!worldRes.ok) return failBuild(worldRes.error)
 
-      setBuildStage('lock')
-      const lockRes = await lockStoryBible({
+      const draft = {
         premise,
         cast: castRes.cast,
         mystery: mysteryRes.mystery,
         world: worldRes.world,
-      })
-      if (!lockRes.ok) {
-        // needsAuthor / gagal kunci: pembaca tak perlu detail validator.
-        return failBuild(
-          'needsAuthor' in lockRes
-            ? 'Cerita ini butuh sedikit penyesuaian. Coba pilih cerita lain atau ulangi.'
-            : lockRes.error,
-        )
       }
 
-      setBuildStage('chapter')
-      const gen = await startFirstChapter(lockRes.storyId)
-      if (!gen.ok) {
-        // Jangan buntu bila Bab 1 gagal: arahkan ke detail cerita.
-        router.push(`/cerita/${lockRes.storyId}`)
+      setBuildStage('lock')
+      if (!(await hasSession())) {
+        saveOnboardingDraftStash(window.localStorage, { ...draft, answers })
+        router.push(RESUME_LOGIN_URL)
         return
       }
-      router.push(`/baca/${lockRes.storyId}?bab=1`)
-    })
-  }
 
-  function failBuild(message?: string) {
-    setErr(message ?? 'Terjadi kendala saat menyiapkan cerita.')
-    setPhase('error')
+      await lockAndStart(draft)
+    })
   }
 
   function restart() {
@@ -231,7 +286,7 @@ export function OnboardingFlow() {
         <div className="flex flex-col items-center gap-2">
           <span className="lk-pulse-soft font-serif text-3xl text-foreground">lakoku</span>
           <h1 className="font-serif text-2xl leading-snug text-foreground text-balance">
-            Peranmu sedang disiapkan.
+            {buildStage === 'lock' ? 'Cerita ini siap dikunci ke akunmu.' : 'Peranmu sedang disiapkan.'}
           </h1>
           {selected && (
             <p className="text-sm leading-relaxed text-muted-foreground">

@@ -1,10 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient, type SupabasePublicConfig } from '@/lib/supabase/client'
 import { ArrowLeft } from 'lucide-react'
+
+const subscribeToMounted = () => () => {}
+const getMountedSnapshot = () => true
+const getServerMountedSnapshot = () => false
 
 /** Ambil ?next= dan hanya izinkan path internal (cegah open-redirect). */
 function safeNext(): string {
@@ -20,6 +24,12 @@ export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicCo
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const mounted = useSyncExternalStore(
+    subscribeToMounted,
+    getMountedSnapshot,
+    getServerMountedSnapshot,
+  )
+  const resumeOnboarding = mounted && safeNext() === '/mulai?resume=1'
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -55,10 +65,12 @@ export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicCo
 
       <div className="flex flex-1 flex-col justify-center pb-24">
         <h1 className="font-serif text-3xl font-bold text-foreground text-balance">
-          Masuk ke ceritamu
+          {resumeOnboarding ? 'Simpan ceritamu' : 'Masuk ke ceritamu'}
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          Jejak pilihan dan bab yang kamu capai akan tersimpan di akunmu.
+          {resumeOnboarding
+            ? 'Cerita ini sudah siap. Masuk agar rancanganmu terkunci ke akunmu.'
+            : 'Jejak pilihan dan bab yang kamu capai akan tersimpan di akunmu.'}
         </p>
 
         <form onSubmit={handleSubmit} className="mt-8 flex flex-col gap-4">
@@ -96,13 +108,16 @@ export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicCo
             disabled={loading}
             className="mt-2 flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
           >
-            {loading ? 'Membuka pintu...' : 'Masuk'}
+            {loading ? 'Membuka pintu...' : resumeOnboarding ? 'Simpan Ceritaku' : 'Masuk'}
           </button>
         </form>
 
         <p className="mt-6 text-center text-sm text-muted-foreground">
           Belum punya akun?{' '}
-          <Link href="/auth/sign-up" className="font-semibold text-primary">
+          <Link
+            href={resumeOnboarding ? '/auth/sign-up?next=%2Fmulai%3Fresume%3D1' : '/auth/sign-up'}
+            className="font-semibold text-primary"
+          >
             Daftar
           </Link>
         </p>

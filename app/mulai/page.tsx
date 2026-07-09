@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { OnboardingFlow } from '@/components/mulai/onboarding-flow'
+import { getSupabasePublicConfig } from '@/lib/supabase/public-config'
 
 export const metadata: Metadata = {
   title: 'Pilih Peranmu — Lakoku',
@@ -8,7 +9,7 @@ export const metadata: Metadata = {
 }
 
 export default function MulaiPage() {
-  return <OnboardingFlow />
+  return <OnboardingFlow supabaseConfig={getSupabasePublicConfig()} />
 }
 
 export const dynamic = 'force-dynamic';

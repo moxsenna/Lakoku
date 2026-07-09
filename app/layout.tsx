@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from 'next'
 import { DM_Serif_Display, Plus_Jakarta_Sans } from 'next/font/google'
 import { Toaster } from '@/components/ui/sonner'
 import { ThemeProvider } from '@/components/theme-provider'
+import { FontSizeProvider } from '@/components/font-size-provider'
 import './globals.css'
 
 const jakarta = Plus_Jakarta_Sans({
@@ -53,7 +54,7 @@ export default function RootLayout({
       </head>
       <body className="font-sans antialiased">
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
-          {children}
+          <FontSizeProvider>{children}</FontSizeProvider>
           <Toaster position="top-center" />
         </ThemeProvider>
         {enableVercelAnalytics && <Analytics />}

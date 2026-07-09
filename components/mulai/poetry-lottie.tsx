@@ -15,7 +15,11 @@ export function PoetryLottie({ className }: PoetryLottieProps) {
         animationData={poetryAnimation}
         loop
         autoplay
-        className="h-full w-full"
+        rendererSettings={{
+          preserveAspectRatio: 'xMidYMid meet',
+          clearCanvas: true,
+        }}
+        className="h-full w-full bg-transparent"
       />
     </div>
   )

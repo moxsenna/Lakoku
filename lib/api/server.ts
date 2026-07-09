@@ -4,9 +4,10 @@
  * Dipakai oleh Server Components / route handlers. Kontraknya identik dengan
  * lib/api/client.ts (sisi browser) — dua pintu, satu kontrak (lib/api/types.ts).
  *
- * Konten published: query anon ke Supabase (publik by RLS).
- * Reader-state: untuk user login, state per-user (reader_states, RLS
- * pemilik-saja) MENIMPA kolom demo global di stories. Tamu memakai state demo.
+ * AMENDMENTS v0.5:
+ * - Library personal = owned / reader_states saja (bukan dump semua `stories`).
+ * - Jelajahi = demo resmi (+ share publik nanti), bukan progress orang lain.
+ * - Login: progress dari `reader_states`. Tamu: tidak punya library server.
  *
  * Saat migrasi ke Cloudflare Workers, file ini tinggal diganti menjadi
  * fetch() ke Workers — komponen tidak berubah.
@@ -24,9 +25,21 @@ import {
   queryChapter,
   queryLatestAvailableChapter,
 } from './queries'
-import { getReaderStates, getReaderState, type ReaderState } from './user-state'
+import {
+  getReaderStates,
+  getReaderState,
+  getSessionUser,
+  type ReaderState,
+} from './user-state'
 import { isChapterPreparing } from './leases'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
+
+/** Demo/seed resmi yang boleh tampil di Jelajahi sebelum share katalog hidup. */
+const OFFICIAL_DEMO_STORY_IDS = new Set(['demo:selasa-akhir'])
+
+function isOfficialDemoStory(id: string): boolean {
+  return id.startsWith('demo:') || OFFICIAL_DEMO_STORY_IDS.has(id)
+}
 
 function overlay<T extends StorySummary>(story: T, state?: ReaderState | null): T {
   if (!state) return story
@@ -48,17 +61,80 @@ export async function listStoryIds(): Promise<string[]> {
   return stories.map((s) => s.id)
 }
 
-/** Daftar seluruh cerita (ringkasan), dengan state per-user bila login. */
+/**
+ * @deprecated Prefer `listMyLibraryStories` / `listExploreStories`.
+ * Masih overlay progress login, tetapi mengembalikan seluruh katalog shell —
+ * jangan dipakai untuk Koleksiku/stats personal.
+ */
 export async function listStories(): Promise<StorySummary[]> {
   const [stories, states] = await Promise.all([queryStories(), getReaderStates()])
   return stories.map((s) => overlay(s, states.get(s.id)))
+}
+
+/**
+ * Library personal (Koleksiku / Lanjutkan / stats).
+ * - Tamu: []
+ * - Login: hanya story yang punya `reader_states` milik user, dengan progress overlay.
+ */
+export async function listMyLibraryStories(): Promise<StorySummary[]> {
+  const user = await getSessionUser()
+  if (!user) return []
+
+  const states = await getReaderStates()
+  if (states.size === 0) return []
+
+  const stories = await queryStories()
+  const byId = new Map(stories.map((s) => [s.id, s]))
+  const mine: StorySummary[] = []
+  for (const [storyId, state] of states) {
+    const base = byId.get(storyId)
+    if (!base) continue
+    mine.push(overlay(base, state))
+  }
+  return mine
+}
+
+/**
+ * Katalog Jelajahi: demo/seed resmi saja (share publik menyusul T-SHARE).
+ * Progress personal di-overlay bila user pernah mulai demo tsb.
+ */
+export async function listExploreStories(): Promise<StorySummary[]> {
+  const [stories, states] = await Promise.all([queryStories(), getReaderStates()])
+  return stories
+    .filter((s) => isOfficialDemoStory(s.id))
+    .map((s) => {
+      const state = states.get(s.id)
+      if (state) return overlay(s, state)
+      // Demo catalog: tampilkan sebagai BARU untuk jelajah, jangan wariskan
+      // status global BERJALAN seolah milik user.
+      return {
+        ...s,
+        status: 'BARU' as const,
+        currentChapter: 0,
+        jejak: [],
+        endingName: undefined,
+      }
+    })
 }
 
 /** Detail lengkap satu cerita, dengan state per-user bila login. */
 export async function getStory(id: string): Promise<StoryDetail | null> {
   const storyId = normalizeStoryRouteId(id)
   const [story, state] = await Promise.all([queryStory(storyId), getReaderState(storyId)])
-  return story ? overlay(story, state) : null
+  if (!story) return null
+  if (state) return overlay(story, state)
+  // Login tanpa personal state: jangan pakai demo global status sebagai milik user.
+  const user = await getSessionUser()
+  if (user) {
+    return {
+      ...story,
+      status: 'BARU',
+      currentChapter: 0,
+      jejak: [],
+      endingName: undefined,
+    }
+  }
+  return story
 }
 
 /**

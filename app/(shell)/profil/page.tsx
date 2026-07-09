@@ -7,7 +7,7 @@ import {
   Footprints,
   Trophy,
 } from 'lucide-react'
-import { listStories } from '@/lib/api/server'
+import { listMyLibraryStories } from '@/lib/api/server'
 import { getReaderStates, getSessionUser } from '@/lib/api/user-state'
 import { getCreditBalance, getReadingPolicy } from '@/lib/credits/server'
 
@@ -27,14 +27,21 @@ export default async function ProfilPage() {
   const user = await getSessionUser()
   const displayName = user?.email ? user.email.split('@')[0] : 'Tamu'
   const initial = displayName.charAt(0).toUpperCase()
-  const [stories, readerStates] = await Promise.all([listStories(), getReaderStates()])
+  // Personal library only (AMENDMENTS v0.5). Guest → [].
+  const [stories, readerStates] = await Promise.all([
+    listMyLibraryStories(),
+    getReaderStates(),
+  ])
   const [creditBalance, policy] = await Promise.all([
     user ? getCreditBalance(user.id) : Promise.resolve(0),
     getReadingPolicy(),
   ])
   const totalBerjalan = stories.filter((s) => s.status === 'BERJALAN').length
   const totalSelesai = stories.filter((s) => s.status === 'SELESAI').length
-  const totalPilihan = [...readerStates.values()].reduce((n, state) => n + state.jejak.length, 0)
+  const totalPilihan = [...readerStates.values()].reduce(
+    (n, state) => n + state.jejak.length,
+    0,
+  )
   const hour = new Date().getHours()
   const greeting = hour < 11
     ? 'Selamat pagi'
@@ -136,4 +143,3 @@ export default async function ProfilPage() {
     </main>
   )
 }
-

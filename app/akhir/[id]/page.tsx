@@ -1,8 +1,9 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import { notFound } from 'next/navigation'
-import { ArrowLeft, CheckCircle2, Footprints, Lock, RotateCcw } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, Footprints, Lock, RotateCcw, Sparkles } from 'lucide-react'
 import { getStory } from '@/lib/api/server'
+import { pickBigChoices } from '@/lib/api/share'
 import { ShareButton } from '@/components/share-button'
 
 const endingNames = [
@@ -21,6 +22,9 @@ export default async function AkhirCeritaPage({
   const { id } = await params
   const story = await getStory(id)
   if (!story || story.status !== 'SELESAI') notFound()
+
+  const bigChoices = pickBigChoices(story.jejak)
+  const tropes = story.tropes ?? []
 
   return (
     <main className="mx-auto flex min-h-svh w-full max-w-md flex-col bg-background">
@@ -55,7 +59,43 @@ export default async function AkhirCeritaPage({
             Kamu telah mencapai akhir cerita <span className="text-foreground">{story.title}</span>.
             Tapi apakah ini akhir yang kamu inginkan?
           </p>
+          {tropes.length > 0 && (
+            <ul className="flex flex-wrap justify-center gap-2 pt-1">
+              {tropes.map((t) => (
+                <li
+                  key={t}
+                  className="rounded-full bg-secondary px-3 py-1 text-[11px] font-medium text-secondary-foreground"
+                >
+                  {t}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
+
+        {bigChoices.length > 0 && (
+          <div className="flex flex-col gap-3 rounded-2xl bg-card p-5">
+            <div className="flex items-center gap-2">
+              <Sparkles className="size-4 text-gold" aria-hidden="true" />
+              <h2 className="text-sm font-semibold text-foreground">
+                Pilihan Besar di Jalurmu
+              </h2>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Ringkasan non-spoiler — tanpa membocorkan seluruh cerita.
+            </p>
+            <ol className="flex flex-col gap-2">
+              {bigChoices.map((label, i) => (
+                <li
+                  key={`${i}-${label}`}
+                  className="rounded-xl border border-border/60 px-3 py-2 text-sm text-foreground"
+                >
+                  {label}
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
 
         <div className="flex flex-col gap-4 rounded-2xl bg-card p-5">
           <div className="flex items-center gap-2">
@@ -115,8 +155,20 @@ export default async function AkhirCeritaPage({
             <RotateCcw className="size-4" aria-hidden="true" />
             Temukan Akhir Lain
           </button>
+          <p className="text-center text-xs text-muted-foreground">
+            Bagikan ending card-mu. Teman bisa coba jalur mereka sendiri — bukan membaca 50 bab versi kamu.
+          </p>
           <div className="flex gap-3">
-            <ShareButton title={story.title} endingName={story.endingName} />
+            <ShareButton
+              storyId={story.id}
+              title={story.title}
+              tagline={story.tagline}
+              endingName={story.endingName}
+              tropes={tropes}
+              cover={story.cover}
+              jejak={story.jejak}
+              bigChoices={bigChoices}
+            />
             <Link
               href="/koleksiku"
               className="flex min-h-13 flex-1 items-center justify-center rounded-2xl border border-border px-4 text-sm font-semibold text-foreground transition-colors hover:bg-card"
@@ -130,4 +182,4 @@ export default async function AkhirCeritaPage({
   )
 }
 
-export const dynamic = 'force-dynamic';
+export const dynamic = 'force-dynamic'

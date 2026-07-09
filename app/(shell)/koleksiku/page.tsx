@@ -1,11 +1,14 @@
 import Link from 'next/link'
 import { StoryCard } from '@/components/story-card'
-import { listStories } from '@/lib/api/server'
+import { listMyLibraryStories } from '@/lib/api/server'
+import { getSessionUser } from '@/lib/api/user-state'
 
 export const dynamic = 'force-dynamic'
 
 export default async function KoleksikuPage() {
-  const stories = await listStories()
+  const user = await getSessionUser()
+  // Personal only (AMENDMENTS v0.5). Route is auth-gated; empty for safety if session missing.
+  const stories = user ? await listMyLibraryStories() : []
   const berjalan = stories.filter((s) => s.status !== 'SELESAI')
   const selesai = stories.filter((s) => s.status === 'SELESAI')
 
@@ -66,4 +69,3 @@ export default async function KoleksikuPage() {
     </main>
   )
 }
-

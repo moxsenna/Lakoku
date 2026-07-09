@@ -95,6 +95,37 @@ export const getReaderState = cache(async function getReaderState(
 })
 
 /**
+ * Seed / advance progress personal (login only).
+ * Monotonic: tidak menurunkan status/chapter yang sudah lebih maju.
+ * Default mulai: BERJALAN bab 1. Pakai status 'BARU' + chapter 0 saat lock bible.
+ */
+export async function ensureReaderStateStarted(
+  storyId: string,
+  chapterNumber = 1,
+  statusHint: ReaderState['status'] = 'BERJALAN',
+): Promise<void> {
+  const { supabase, user } = await getSessionContext()
+  if (!user) return
+
+  const existing = await getReaderState(storyId)
+  const status = maxStatus(existing?.status ?? 'BARU', statusHint)
+  const currentChapter = Math.max(existing?.currentChapter ?? 0, chapterNumber)
+  const { error } = await supabase.from('reader_states').upsert(
+    {
+      user_id: user.id,
+      story_id: storyId,
+      status,
+      current_chapter: currentChapter,
+      jejak: existing?.jejak ?? [],
+      ending_name: existing?.endingName ?? null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'user_id,story_id' },
+  )
+  if (error) throw new Error(`ensureReaderStateStarted: ${error.message}`)
+}
+
+/**
  * Catat hasil pilihan ke state user saat ini (jika login).
  * - current_chapter maju monotonic (tidak pernah mundur).
  * - jejak di-append hanya jika bab itu belum tercatat (anti duplikat repeat-tap).

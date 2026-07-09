@@ -2,8 +2,8 @@
 
 **Version:** 1.1  
 **Status:** Build-ready technical baseline  
-**Last updated:** 5 July 2026  
-**Amendments applied:** AMENDMENTS v0.3 (§B), AMENDMENTS v0.4 (§B) — see `docs/AMENDMENTS_v0.3.md`, `docs/AMENDMENTS_v0.4.md`  
+**Last updated:** 10 July 2026  
+**Amendments applied:** AMENDMENTS v0.3 (§B), AMENDMENTS v0.4 (§B), AMENDMENTS v0.5 (§B) — see `docs/AMENDMENTS_v0.3.md`, `docs/AMENDMENTS_v0.4.md`, `docs/AMENDMENTS_v0.5.md`  
 **Primary release:** Private Beta — web reader mobile-first first, Android (Kotlin) second  
 **Client sequencing:** Web reader (Next.js) is the first production client; Android native follows once web retention/monetization is proven — see AMENDMENTS v0.4 §0 (LD-CLIENT-SEQ)  
 **Primary app stack:** Web reader — Next.js (App Router); Android — Kotlin + Jetpack Compose (second client)  
@@ -428,7 +428,10 @@ sequenceDiagram
 
 - The API derives the authenticated `user_id` exclusively from verified server-side claims.
 - Resource IDs supplied by clients are never trusted as proof of ownership.
-- Every story query and command validates ownership through `story_instances.user_id` or a documented access relationship.
+- Every story query and command validates ownership through `story_instances.user_id` (or interim `stories.owner_user_id`) or a documented access relationship.
+- **Library / Koleksiku / profile stats / continue card** may only include instances owned by the authenticated user or progress rows (`reader_states` / `reading_progress`) belonging to that user. Guests have **no** server-side personal library; stats must show zero, not global catalog counts (AMENDMENTS v0.5 LD-STORY-OWNERSHIP).
+- **Share access relationship:** public/unlisted clients may read only an active `shared_story_links` row and its sanitized `teaser_json`. They must **not** gain read access to the source story instance, chapters, secrets, or full choice trail. Never treat `source_story_instance_id` as a public capability (LD-SHARE-PRIVACY).
+- **Jelajahi / catalog** lists official demo seeds and/or `visibility = public` share cards — not every playthrough row in the database (LD-CATALOG-SHARE).
 - Entitlements are evaluated server-side immediately before story creation, locked-content access, replay creation, or commercial commands.
 - Admin access is separate from reader access. It requires a role/permission check, audited session, and additional operational protection such as Cloudflare Access for the internal console.
 
@@ -718,6 +721,7 @@ The compiler produces a compact, versioned payload. At minimum it includes:
 | Foundation | `story_architect_sessions`, `story_architect_messages`, `story_proposals`, `story_contracts`, `story_templates` | Foundation is private; locked contract becomes canon. |
 | Story spine/canon | `story_instances`, `chapter_blueprints`, `characters`, `character_aliases`, `character_voice_sheets`, `act_rollups`, `facts_ledger`, `timeline_events`, `secrets_reveals`, `knowledge_scopes`, `story_threads`, `story_flags`, `ending_rules` | Canonical narrative source. New (NCS): `character_aliases`, `character_voice_sheets`, `act_rollups` (T1 memory); new columns `facts_ledger.salience`, `facts_ledger.load_bearing`, `story_threads.payoff_window`, `story_threads.status`, `chapter_blueprints.version` + `chapter_blueprints.reconciled_from_version` + `chapter_blueprints.reconciliation_reason`. New event: `BLUEPRINT_RECONCILED` in `story_events`. |
 | Reader content | `story_chapters`, `story_scenes`, `chapter_summaries`, `choices`, `choice_options`, `choice_responses`, `reading_progress`, `ending_results` | Published reader path and personal progress. |
+| Social / share | `shared_story_links`, `shared_story_starts`, later `story_seeds` | Sanitized teaser share + conversion audit. Public clients never read source playthrough prose (AMENDMENTS v0.5). |
 | Operations | `generation_attempts`, `generation_artifacts`, `validation_reports`, `retrieval_logs`, `content_reports`, `admin_audit_logs` | Debugging, audit, content QA. |
 | Reliability | `outbox_events`, `idempotency_records`, `generation_leases`, `notification_outbox` | Durable processing and delivery. |
 
@@ -726,6 +730,7 @@ The compiler produces a compact, versioned payload. At minimum it includes:
 - Primary IDs: UUIDv7 or equivalent sortable UUID strategy.
 - Storage time: UTC only. UI formats time locally.
 - Every reader-owned record includes `story_instance_id` where applicable and has an ownership path to `user_id`.
+- Interim web mapping: shell table `stories` may carry `owner_user_id` + `visibility` until a full rename to `story_instances` (expand → backfill → switch). Personal progress for logged-in users lives in `reader_states` / `reading_progress`; demo columns on `stories` must not be treated as personal progress for authenticated users.
 - Every state-changing record includes `created_at`, actor/source, correlation ID, and version fields where concurrency matters.
 - Published chapters are immutable by default. Corrective changes create a new chapter version and audit record; the reader sees a safe version policy.
 - Schema migrations are additive first: expand → backfill → switch code path → remove only in a later release.
@@ -735,7 +740,9 @@ The compiler produces a compact, versioned payload. At minimum it includes:
 
 | Query path | Required index direction |
 |---|---|
-| Library | `story_instances(user_id, updated_at DESC)` |
+| Library | `story_instances(user_id, updated_at DESC)` (interim: `stories(owner_user_id, updated_at/created_at DESC)`) |
+| Share by slug | unique `shared_story_links(share_slug)` + partial active (revoked_at IS NULL) |
+| Share starts | `shared_story_starts(shared_link_id, started_at DESC)` |
 | Chapter lookup | unique `(story_instance_id, chapter_no, version)` and current published partial index |
 | Choice response | unique `(choice_id)` for one primary answer per story choice |
 | Idempotency | unique `(actor_id, operation, idempotency_key)` |
@@ -1123,6 +1130,9 @@ These are deliberately deferred because they do not block private beta:
 10. Do not use consumer-facing strings that reveal Narraza, prompts, models, RAG, tokens, or generation implementation.
 11. Do not delete migrations, historical events, or audit records merely to simplify a release.
 12. Do not let one story instance read, retrieve, or influence another reader's private story instance.
+12a. Do not list the entire global `stories` table as a user's library, profile stats, or continue card. Guests must not inherit global demo status counts (AMENDMENTS v0.5 LD-STORY-OWNERSHIP).
+12b. Do not treat global demo columns (`stories.status` / `current_chapter` / `jejak`) as personal progress for logged-in users; seed and read `reader_states` (or equivalent) instead.
+12c. Do not expose `source_story_instance_id` / source story ids as a public read capability; share surfaces serve sanitized teaser payloads only (LD-SHARE-PRIVACY).
 13. Do not treat queue delivery as exactly-once; every consumer must be idempotent.
 14. Do not block reader prose on optional scene visuals, analytics, notifications, or post-publish tasks.
 15. Do not copy production reader content into staging, test fixtures, or model evaluation datasets without an approved privacy process.

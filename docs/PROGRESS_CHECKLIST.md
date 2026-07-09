@@ -1,7 +1,7 @@
 # Lakoku — Progress Checklist (Task Tracker) v1.0
 
 **Status:** Living document — dicentang seiring pekerjaan berjalan
-**Last updated:** 7 Juli 2026 (gate minimal hijau sebelumnya; web-release hardening ditambahkan: no synthetic choice fallback, pending-choice recovery smoke, staging QA checklist, dan `scripts/m9-release-gate.ts` di CI. Audit NTM tetap: M5 core/smoke hijau, tetapi G1/G4 belum `DONE` penuh karena step R/status side-effect runtime; M8/G3-METRICS sudah `DONE`.)
+**Last updated:** 10 Juli 2026 (AMENDMENTS v0.5 ownership + Share Ending Card MVP dikunci di docs. Diagnosis: tamu/login bisa melihat banyak “Cerita Berjalan” karena `listStories`/`queryStories` + stats profil menghitung katalog global `stories`, bukan library personal — koreksi lewat T-OWN/T-SHARE. UX Polish Batch A/B/C, Poetry Lottie, CF Worker hardening tetap. Audit NTM: M5 core/smoke hijau; G1/G4 belum `DONE` penuh; M8/G3-METRICS `DONE`.)
 **Turunan dari:** `docs/IMPLEMENTATION_PLAN.md` (runbook v1.0) — jika runbook berubah, sinkronkan checklist ini di PR yang sama (anti-drift, runbook §5)
 **Cara pakai:** Setiap task = satu checkbox. Centang HANYA bila Definition of Done (DoD) task terpenuhi. Milestone dianggap selesai hanya bila blok Sign-off-nya lengkap (lihat runbook §4).
 
@@ -55,9 +55,9 @@
   - [x] **Reader-state per-user**: migrasi `reader_states_per_user` (PK `(user_id, story_id)`; status/current_chapter/jejak/ending_name) menggantikan kolom DEMO global di `stories` untuk pengguna login. Kolom demo di `stories` kini hanya fallback tamu.
   - [ ] Domain naratif ARCH §13.1 (facts_ledger, story_threads, blueprints, aliases, voice sheets, dst.) belum — menunggu M3–M5.
 - [~] **T1.3 RLS + ownership harness** — RLS tiap tabel reader-private + test cross-user (story A tak terbaca user B).
-  - [x] RLS aktif di 3 tabel konten published: read publik (anon), tulis hanya service role. Sesuai model "published content is public".
+  - [~] RLS konten published: historis “read publik (anon)” untuk shell/chapters **dibatasi ulang** oleh AMENDMENTS v0.5 — playthrough user **bukan** katalog publik. Publik hanya demo resmi + teaser `shared_story_links`. Migrasi ownership + RLS filter owner = backlog T-OWN-1.
   - [x] `reader_states` RLS pemilik-saja (`auth.uid() = user_id` untuk select/insert/update/delete) — reader-private ditegakkan di DB. Terverifikasi: baris tercatat terikat `user_id` saat user uji memilih.
-  - [ ] Ownership test cross-user formal (user B tak bisa baca baris user A) sebagai test otomatis di CI — menunggu M0 harness test.
+  - [ ] Ownership test cross-user formal (user B tak bisa baca baris user A) sebagai test otomatis di CI — menunggu M0 harness test + T-OWN-1.
   - [x] **Proteksi rute** (`lib/supabase/proxy.ts`): tamu yang membuka `/baca`,`/akhir`,`/koleksiku` diarahkan ke `/auth/login?next=<asal>` (sanitasi path internal, anti open-redirect). Jelajah `/beranda`,`/cerita` & `/profil` (punya CTA masuk) tetap publik. Terverifikasi E2E.
   - [x] **Rekonsiliasi progres MONOTONIC lintas-perangkat** (`applyChoiceToUserState`): `current_chapter` via `Math.max`, `status` via rank `BARU<BERJALAN<SELESAI` (tak pernah turun), `ending_name` dipertahankan saat SELESAI, jejak digabung per-bab lalu diurutkan. Terverifikasi: pilihan bab-1 yang datang setelah watermark SELESAI/bab-5 TIDAK menurunkan progres.
 - [ ] **Exit Criteria M1** — migrasi + RLS + ownership test lulus di CI; `packages/contracts` jadi acuan tunggal.
@@ -146,7 +146,29 @@
   - [x] Pending-choice recovery web: `lib/api/pending-choice.ts` menyimpan choice gagal dengan idempotency key stabil, reader masuk phase pending setelah reload, retry memakai choice yang sama, pending hanya hilang setelah server menerima. Bukti: `scripts/web-release-smoke.ts` 9/9 PASS.
   - [~] Generation status server-authoritative tetap menunggu endpoint status/generation queue final; recovery web sudah tidak silent-advance.
 - [x] **T6W.5 Verifikasi browser mobile** — alur beranda → baca → pilih → konsekuensi → lanjut lolos; type-check hijau (agent-browser, viewport mobile).
-- [x] **Exit Criteria M6-WEB (jalur UX)** — reader web E2E lolos dengan fixtures ✔; seam terpasang tanpa kebocoran ✔; brand guard lolos ✔; progress monotonic persist ✔; `tsc --noEmit` hijau ✔; **lint gate hijau** (`eslint .`, 0 error/0 warning) ✔.
+- [x] **T6W.6 UX Polish — Batch A (Quick Polish)** — 12 deliverable client-heavy, low-risk. Commit `a30e358`.
+  - [x] A1 — Landing reciprocity badge ("3 bab gratis — tanpa kartu") di `app/page.tsx`.
+  - [x] A2 — Onboarding smart defaults (`Pilihkan untukku`), momentum framing, ETA copy ("Biasanya 30–60 detik.") di `components/mulai/onboarding-flow.tsx`.
+  - [x] A4 — Reader choice tap feedback (selected-state highlight segera) + adaptive delay (bounded, bukan fixed) di `components/reader-view.tsx`.
+  - [x] A5 — Reader font minimum dinaikkan dari 15px ke 16px di `components/reader-view.tsx`.
+  - [x] A6 — Fallback banner untuk unavailable chapter: banner eksplisit saat fallback terjadi (`components/chapter-unavailable-banner.tsx` baru).
+  - [x] A7 — Library empty-state CTA ke `/mulai` di `app/koleksiku/page.tsx`.
+  - [x] A8 — Numeric story progress (persentase) di `components/story-card.tsx`.
+  - [x] A9 — Profile greeting (time-of-day) + free-chapter framing di `app/profil/page.tsx`.
+  - [x] A10 — Credit pricing contrast + `Paling Hemat` badge + per-chapter microcopy di `app/kredit/page.tsx`.
+  - [x] A11 — Payment return ETA + bounded balance polling (5× setiap 3 detik, max 15 detik) + manual refresh fallback (`components/credit-poller.tsx` baru + `/api/credits/balance`).
+  - [x] A12 — Ending page placeholder cleanup: `Temukan Akhir Lain` disabled (coming-soon), `Bagikan` real via `navigator.share` + clipboard fallback, ending list discovered/undiscovered (`components/share-button.tsx` baru).
+  - [x] A14 — Public credit pricing view: guest bisa lihat harga tanpa login; checkout tetap gated.
+- [x] **T6W.7 UX Polish — Batch B (Flow Fixes)** — 2 deliverable. Commit `b81a9a6`.
+  - [x] B1 — Guest-to-login preservation: stash onboarding draft lokal (expiry, no token/session/PII) sebelum `lockStoryBible`; redirect login dengan resume signal; restore draft setelah login; cleanup setelah sukses. Copy: "Masuk untuk menyimpan ceritamu" / "Cerita ini siap dikunci ke akunmu".
+  - [x] B2 — Theme + text-size settings wiring: `FontSizeProvider` + shared state di reader & profile; theme via next-themes; baris lain (`Akses Cerita`, `Batas Konten`, `Akun dan Privasi`) disabled/coming-soon eksplisit.
+- [x] **T6W.8 UX Polish — Batch C (Data Fixtures + Verification)** — 2 deliverable. Commit `55a0e74`.
+  - [x] C1 — Stable completed-story seed script (`scripts/seed-selasa-demo.ts`): ID konstan `demo:selasa-akhir`, 50 bab + ending, delete-then-insert idempotent, reuse `buildFixtureSnapshot()` + `buildValidDraft()`.
+  - [x] C2 — Targeted TestSprite replay untuk kasus yang tadinya blocked/mismatched.
+- [x] **T6W.9 Poetry Lottie onboarding animation** — building screen kini menampilkan animasi Lottie quill/parchment (`components/mulai/poetry-lottie.tsx`, asset `public/lottie/poetry.json`) menggantikan brand text statis. Komponen `PoetryLottie` di-load via `next/dynamic` (ssr: false). Dependency baru: `lottie-react ^2.4.1`. Commit `814445c`.
+- [x] **T6W.10 Performance optimization** — lazy load onboarding flow (`next/dynamic` di route `/mulai`), share shell layout across app routes, reduce redundant auth/reader fetches. Commits `8a90530`, `5536105`, `10dbda8`, `8ad5793`, `301d54f`.
+- [x] **T6W.11 Cloudflare Workers hardening** — platform-safe OpenNext patch, harden Supabase env resolution untuk CF Workers Builds, force dynamic `/mulai` page untuk mencegah static generation di CF. Commits `ccf4f1c`, `5964366`, `7275abf`.
+- [x] **Exit Criteria M6-WEB (jalur UX)** — reader web E2E lolos dengan fixtures ✔; seam terpasang tanpa kebocoran ✔; brand guard lolos ✔; progress monotonic persist ✔; UX Polish Batch A/B/C tuntas ✔; guest-to-login preservation berfungsi ✔; theme + text-size settings nyata ✔; `tsc --noEmit` hijau ✔; **lint gate hijau** (`eslint .`, 0 error/0 warning) ✔.
 - [~] **Exit Criteria M6-WEB (jalur cerita nyata)** — `client.ts` menunjuk Reader API nyata DAN M5 NTM sign-off penuh.
   - [x] `client.ts` menunjuk Reader API nyata (route handlers → Supabase). Verifikasi browser: beranda + reader + pilihan→konsekuensi semuanya dari database.
   - [~] M5 core hijau (validator + soak 50 bab), tetapi NTM sign-off penuh belum: G1/G4 masih `IN_PROGRESS`. Gate M9 otomatis sudah ada untuk web release, tetapi publikasi AI luas tetap menunggu sign-off NTM/staging.
@@ -157,6 +179,24 @@
 - [ ] **T6.2 Auth + library cache + reader + progress** — reader render dari local data; progress monotonic.
 - [ ] **T6.3 Choice submission + recovery + generation status** — repeat tap tak double-advance; status reader-safe tanpa metadata model.
 - [ ] **Exit Criteria M6** �� alur baca + pilih + recovery lolos di device Android nyata.
+
+---
+
+## M6-WEB+ — Ownership per-user + Share Ending Card (AMENDMENTS v0.5)
+
+Diagnosis (sebelum fix): tamu “Tamu” bisa melihat puluhan kartu CERITA BERJALAN + stats profil dari status global `stories` karena tidak ada filter owner dan stats menghitung katalog.
+
+- [x] **T-OWN-0 Hotfix UI jujur** — profil/beranda/koleksiku pakai `listMyLibraryStories` / `listExploreStories`; tamu stats 0; Jelajahi = demo `demo:*` saja.
+- [~] **T-OWN-1 Ownership shell** — migrasi SQL + persist `owner_user_id` + storyId `slug-shortid` anti-collision di compile; belum apply remote DB / RLS list filter penuh.
+- [x] **T-OWN-2 Seed `reader_states` on start** — `ensureReaderStateStarted` di lock (BARU) + `startFirstChapter` (BERJALAN); tidak update `stories.status` global di start.
+- [x] **T-SHARE-1 Ending Card konten** — `/akhir` tropes + big choices non-spoiler + ShareButton copy “Coba jalurmu sendiri”; link stabil `/s/[slug]` masih T-SHARE-2.
+- [x] **T-SHARE-2 `shared_story_links` + `/s/[slug]`** — migrasi remote applied; landing + create share + public teaser di beranda.
+- [x] **T-SHARE-3 Start-from-share** — CTA → record `shared_story_starts` → `/mulai` playthrough baru; attach story id setelah lock (MVP foundation-copy penuh = T-SHARE-4).
+- [ ] **T-SHARE-4 (later) `story_seeds`** — foundation-copy aman.
+- [ ] **T-SHARE-5 (later) Challenge Route** — challenge ending rahasia non-spoiler.
+- [ ] **Exit Criteria M6-WEB+ MVP** — T-OWN-0..2 + T-SHARE-1..3 selesai & terverifikasi.
+- **Catatan:** Rename penuh ke `story_instances` boleh belakangan; interim `stories.owner_user_id` sah selama isolasi ditegakkan.
+
 
 ## M7 — Story Foundation, Proposal, Opening Package, Reports
 

@@ -44,13 +44,26 @@ export interface CompileResult {
   }
 }
 
+function shortId(len = 6): string {
+  // URL-safe short suffix — cegah collision antar user dengan judul AI mirip.
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
+  let out = ''
+  const bytes = new Uint8Array(len)
+  crypto.getRandomValues(bytes)
+  for (let i = 0; i < len; i++) out += alphabet[bytes[i]! % alphabet.length]
+  return out
+}
+
 export function compileStoryBible(draft: StoryBibleDraft, storyIdInput?: string): CompileResult {
   const { premise, cast, mystery, world } = draft
   // Guard: storyId TAMPIL di URL reader (/baca/[id], /cerita/[id], /akhir/[id]).
   // Karakter ':' (dan simbol non-slug lain) memecah navigasi client-side Next.js
   // → 404. Karena itu id SELALU dilewatkan slugify, termasuk saat diberikan
   // eksplisit lewat storyIdInput — slugify idempoten untuk slug yang sudah bersih.
-  const storyId = slugify(storyIdInput?.trim() || premise.title)
+  // AMENDMENTS v0.5: judul AI sering mirip → append short id agar playthrough
+  // user A tidak di-upsert menimpa shell user B.
+  const base = slugify(storyIdInput?.trim() || premise.title)
+  const storyId = storyIdInput?.trim() ? base : `${base}-${shortId()}`
 
   // --- Karakter + id stabil (dedup slug). ---
   const idByName = new Map<string, string>()

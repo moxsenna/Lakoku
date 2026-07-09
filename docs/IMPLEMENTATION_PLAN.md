@@ -1,9 +1,9 @@
 # Lakoku — Implementation Plan (Build Runbook) v1.0
 
 **Status:** Executable build runbook untuk agen/engineer
-**Last updated:** 5 Juli 2026
+**Last updated:** 10 Juli 2026 (AMENDMENTS v0.5 ownership + Share Ending Card MVP dikunci; UX Polish Batch A/B/C selesai, Poetry Lottie, CF Workers hardening)
 **Owner:** Project lead
-**Governs / mengikuti:** `PRD_Lakoku_Interactive_v0.3.md`, `ARCHITECTURE_v1.1.md`, `NARRATIVE_CONSISTENCY_SPEC.md` (NCS v1.0), `NARRATIVE_TRACEABILITY_MATRIX.md` (NTM v1.0)
+**Governs / mengikuti:** `PRD_Lakoku_Interactive_v0.3.md`, `ARCHITECTURE_v1.1.md`, `NARRATIVE_CONSISTENCY_SPEC.md` (NCS v1.0), `NARRATIVE_TRACEABILITY_MATRIX.md` (NTM v1.0), `AMENDMENTS_v0.5.md`
 
 ---
 
@@ -183,13 +183,16 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
 
 - **T6W.1 Design system + app shell** — `apps/web` (Next.js App Router, mobile-first), sesuai Brand Guidelines v1.1.
   - DoD: layout mobile-first (`max-w-md`, bottom nav), token tema Midnight Drama + Paper Cream, aksesibilitas (aria, `prefers-reduced-motion`); tidak ada string "Narraza"/framing "AI generator" (brand guard ARCH §16.3).
+  - **Status:** ✅ SELESAI. UX Polish Batch A (landing badge, onboarding defaults/ETA, reader tap feedback, font 16px, fallback banner, library empty CTA, numeric progress, profile greeting, credit pricing badge, payment polling, ending cleanup, guest pricing) menambahkan polish pada seluruh permukaan app shell. Batch B (theme + text-size settings) menjadikan pengaturan profil nyata, bukan placeholder.
 - **T6W.2 Client-data seam `lib/api/`** — kontrak async client-agnostic (LD-CONTRACT-SEAM).
   - Deliverable: `packages/contracts` sebagai kontrak domain; `lib/api/types.ts` hanya compatibility re-export; `client.ts` (`listStories`/`getStory`/`getChapter`/`submitChoice`/`submitReport`), fixtures internal terpisah dari UI.
   - DoD: tidak ada komponen UI yang mengimpor sumber data langsung; mengganti implementasi `client.ts` ke Reader API nyata tidak menyentuh komponen; bentuk tipe konsisten dengan `packages/contracts` (ARCH §11.1).
+  - **Status:** ✅ SELESAI. Onboarding building screen kini menampilkan Poetry Lottie animation (quill/parchment via `lottie-react ^2.4.1`, lazy-loaded `next/dynamic` ssr:false) menggantikan brand text statis. UX Polish Batch B (guest-to-login preservation) memastikan story tidak orphaned saat tamu melewati onboarding → login → persist.
 - **T6W.3 Reader + progress** — beranda, detail cerita, reader per-bab, jejak pilihan.
   - DoD: reader menampilkan bab sesuai cerita (bukan sample statis); progress monotonic; loading state pakai bahasa naratif, bukan "AI sedang generate".
 - **T6W.4 Choice submission + pending-choice recovery + generation status** — via `submitChoice`, selaras ARCH §10 & §23 rule #5.
   - DoD: repeat tap tidak double-advance; response gagal tidak membuat synthetic choice; pending choice disimpan dengan idempotency key stabil dan bisa retry setelah reload; status reader-safe tanpa metadata model; konsekuensi & bab berikutnya berasal dari outcome server/seam.
+  - **Status:** ✅ SELESAI. UX Polish Batch A (A4 reader tap feedback + adaptive delay, A6 fallback banner) memperkuat UX choice & recovery. Guest-to-login preservation (B1) memastikan onboarding draft stash aman (no token/session/PII) sebelum `lockStoryBible`, resume setelah login, cleanup setelah sukses.
 - **T6W.5 Verifikasi browser mobile** — agent-browser (viewport mobile).
   - DoD: alur beranda → baca → pilih → konsekuensi → lanjut lolos; type-check & lint hijau.
 - **Exit Criteria M6-WEB:**
@@ -197,6 +200,44 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
   - *Jalur cerita nyata:* pengumuman "produksi ke pengguna" hanya setelah `client.ts` menunjuk Reader API nyata **dan** M5 NTM sign-off penuh (NTM §3).
 
 ---
+
+
+---
+
+### M6-WEB+ — Ownership per-user + Share Ending Card MVP (AMENDMENTS v0.5)
+
+**Tujuan:** menutup bug katalog global (tamu/login melihat playthrough orang lain sebagai milik sendiri) dan menghadirkan share teaser yang aman.
+
+Boleh dikerjakan setelah jalur UX M6-WEB; tidak menunggu rename penuh ke `story_instances`.
+
+- **T-OWN-0 Hotfix UI jujur**
+  - Deliverable: profil/beranda/koleksiku tidak menghitung seluruh row `stories` global. Tamu: stats 0 + CTA masuk. Login: stats & Lanjutkan dari `reader_states` / owned only.
+  - Ref: AMENDMENTS v0.5 LD-STORY-OWNERSHIP; PRD §7.6, §11.5.
+  - DoD: tamu tidak melihat “14 Cerita Berjalan” dari status demo global; login tanpa `reader_states` tidak mewarisi status global sebagai personal.
+- **T-OWN-1 Ownership di shell story**
+  - Deliverable: migrasi `owner_user_id` + `visibility` pada shell (`stories` interim); `persistStoryBible` / lock set owner = auth user; list library filter owner; RLS/authorization selaras.
+  - Ref: ARCH §8.2, §13; PRD §15 mapping interim.
+  - DoD: user B tidak melihat private instance user A di Koleksiku/list personal; story id collision slug diganti UUID atau slug+shortid.
+- **T-OWN-2 Seed reader_states on start**
+  - Deliverable: `startFirstChapter` (atau ekuivalen) menulis progress personal login; berhenti mengandalkan `stories.status` global sebagai personal progress.
+  - DoD: start bab 1 oleh user A tidak menandai status personal user B / tamu.
+- **T-SHARE-1 Ending Card konten**
+  - Deliverable: `/akhir/[id]` menampilkan tropes, ending, 3–5 big choices non-spoiler, copy share.
+  - Ref: PRD §10.5, §10.8.
+  - DoD: card tidak bocor secret gate / full spoiler trail.
+- **T-SHARE-2 shared_story_links + landing**
+  - Deliverable: create/revoke share; route `/s/[slug]`; payload teaser sanitasi only.
+  - Ref: LD-SHARE-MVP, LD-SHARE-PRIVACY.
+  - DoD: landing tidak serve chapter prose sumber; source id tidak jadi public read.
+- **T-SHARE-3 Start-from-share**
+  - Deliverable: CTA “Coba jalurmu sendiri” → instance baru milik B + row `shared_story_starts`.
+  - DoD: instance B independen; audit start tercatat.
+- **T-SHARE-4 (later) story_seeds**
+  - Foundation-copy aman dari contract snapshot; bukan MVP pertama.
+- **T-SHARE-5 (later) Challenge Route**
+  - Share challenge ending rahasia non-spoiler; bukan MVP pertama.
+- **Exit Criteria M6-WEB+ MVP:** T-OWN-0..2 + T-SHARE-1..3 hijau; diagnosis tamu/katalog global tertutup; share ending card end-to-end aman.
+
 
 ### M6 — Android Reader Beta (Phase C)
 

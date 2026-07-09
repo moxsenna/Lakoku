@@ -2,16 +2,22 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { StoryCard } from '@/components/story-card'
 import { ResumeChapter } from '@/components/resume-chapter'
-import { listStories } from '@/lib/api/server'
+import { listExploreStories, listMyLibraryStories } from '@/lib/api/server'
+import { listPublicShareTeasers } from '@/lib/api/share'
 import { Play } from 'lucide-react'
 
 // Request-time data (Supabase). Avoid CF Workers Builds prerender without build env.
 export const dynamic = 'force-dynamic'
 
 export default async function BerandaPage() {
-  const stories = await listStories()
-  const berjalan = stories.find((s) => s.status === 'BERJALAN')
-  const lainnya = stories.filter((s) => s.id !== berjalan?.id)
+  const [library, explore, publicShares] = await Promise.all([
+    listMyLibraryStories(),
+    listExploreStories(),
+    listPublicShareTeasers(12).catch(() => []),
+  ])
+  const berjalan = library.find((s) => s.status === 'BERJALAN')
+  // Jelajahi: demo resmi + share publik (AMENDMENTS v0.5).
+  const jelajahi = explore.filter((s) => s.id !== berjalan?.id)
 
   return (
     <main className="flex flex-col gap-8 px-5 pt-8">
@@ -70,11 +76,47 @@ export default async function BerandaPage() {
               Lihat Koleksiku
             </Link>
           </div>
-          <div className="flex flex-col gap-3">
-            {lainnya.map((story) => (
-              <StoryCard key={story.id} story={story} />
-            ))}
-          </div>
+          {jelajahi.length > 0 || publicShares.length > 0 ? (
+            <div className="flex flex-col gap-3">
+              {publicShares.map((share) => (
+                <Link
+                  key={share.id}
+                  href={`/s/${share.shareSlug}`}
+                  className="flex flex-col gap-2 rounded-2xl bg-card p-4 transition-colors hover:bg-secondary/40"
+                >
+                  <span className="w-fit rounded-full bg-gold/15 px-2.5 py-0.5 text-[10px] font-semibold tracking-wide text-gold">
+                    DIBAGIKAN · {share.teaser.endingName ?? 'ENDING'}
+                  </span>
+                  <span className="font-serif text-lg text-foreground">
+                    {share.teaser.title}
+                  </span>
+                  {share.teaser.tagline && (
+                    <span className="text-xs leading-relaxed text-muted-foreground line-clamp-2">
+                      {share.teaser.tagline}
+                    </span>
+                  )}
+                  <span className="text-xs font-medium text-primary">
+                    {share.teaser.cta} →
+                  </span>
+                </Link>
+              ))}
+              {jelajahi.map((story) => (
+                <StoryCard key={story.id} story={story} />
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col items-start gap-3 rounded-2xl bg-card p-6">
+              <p className="text-sm text-muted-foreground">
+                Belum ada cerita yang dibagikan. Mulai ceritamu sendiri, atau coba demo resmi.
+              </p>
+              <Link
+                href="/mulai"
+                className="inline-flex min-h-10 items-center justify-center rounded-xl bg-primary px-4 text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+              >
+                Mulai Cerita Baru
+              </Link>
+            </div>
+          )}
         </section>
 
         <section className="mb-4 flex flex-col items-start gap-3 rounded-3xl bg-secondary p-6">
@@ -95,4 +137,3 @@ export default async function BerandaPage() {
     </main>
   )
 }
-

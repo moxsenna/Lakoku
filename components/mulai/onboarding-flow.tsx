@@ -171,6 +171,22 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     }
 
     clearOnboardingDraftStash(window.localStorage)
+
+    // T-SHARE-3: bila datang dari Ending Card share, tautkan story baru ke start row.
+    try {
+      const raw = sessionStorage.getItem('lakoku:share-start:v1')
+      if (raw) {
+        const parsed = JSON.parse(raw) as { startId?: string }
+        if (parsed.startId) {
+          const { actAttachShareStart } = await import('@/app/share/actions')
+          await actAttachShareStart(parsed.startId, lockRes.storyId)
+        }
+        sessionStorage.removeItem('lakoku:share-start:v1')
+      }
+    } catch {
+      // best-effort; jangan blokir alur baca
+    }
+
     setBuildStage('chapter')
     const gen = await startFirstChapter(lockRes.storyId)
     if (!gen.ok) {

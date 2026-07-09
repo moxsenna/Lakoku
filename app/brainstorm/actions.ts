@@ -23,7 +23,6 @@ import {
 import { runLockLadder, type AiRepairFn } from '@/lib/authoring/repair'
 import { enrichOpeningVoiceSheets } from '@/lib/authoring'
 import { generateNextChapterReal } from '@lakoku/runtime'
-import { createAdminClient } from '@lakoku/db'
 import type {
   PremiseDraft,
   CastDraft,
@@ -135,7 +134,19 @@ export async function lockStoryBible(draft: StoryBibleDraft): Promise<
       console.log('[v0] opening package voice — diperkaya:', opening.enrichedIds, 'fallback:', opening.fallbackIds)
     }
 
-    const { storyId } = await persistStoryBible(opening.compiled)
+    const { getSessionUser, ensureReaderStateStarted } = await import('@/lib/api/user-state')
+    const user = await getSessionUser()
+    const { storyId } = await persistStoryBible(opening.compiled, {
+      ownerUserId: user?.id ?? null,
+    })
+    // Library personal muncul sejak lock (AMENDMENTS v0.5).
+    if (user) await ensureReaderStateStarted(storyId, 0, 'BARU')
+
+    // T-SHARE-3: bila user datang dari share landing, ikat story baru ke start row.
+    // Client menyimpan startId di sessionStorage; optional header/cookie tidak dipakai.
+    // Dipanggil best-effort lewat attachShareStartIfAny di client setelah lock — server
+    // action terpisah. Di sini hanya persist story.
+
     return { ok: true, storyId, resolvedBy: result.resolvedBy, transforms: result.transforms }
   } catch (e) {
     return fail(e)
@@ -159,14 +170,10 @@ export async function startFirstChapter(
       return { ok: false, error: 'Bab pertama gagal disiapkan. Coba lagi sebentar.' }
     }
 
-    // Majukan posisi story ke bab 1 (demo/global state; reader-state per-user
-    // akan menimpanya saat pembaca login & mulai membaca).
-    const db = createAdminClient()
-    const { error } = await db
-      .from('stories')
-      .update({ status: 'BERJALAN', current_chapter: 1 })
-      .eq('id', storyId)
-    if (error) throw new Error(`update story status: ${error.message}`)
+    // Progress personal login (AMENDMENTS v0.5). Kolom demo global di `stories`
+    // tidak lagi diandalkan sebagai status personal untuk semua pengunjung.
+    const { ensureReaderStateStarted } = await import('@/lib/api/user-state')
+    await ensureReaderStateStarted(storyId, 1)
 
     return { ok: true, chapterNumber: 1 }
   } catch (e) {

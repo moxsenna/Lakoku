@@ -23,11 +23,16 @@ const CANON_TABLES = [
   'characters',
 ] as const
 
-export async function persistStoryBible(result: CompileResult): Promise<{ storyId: string }> {
+export async function persistStoryBible(
+  result: CompileResult,
+  opts?: { ownerUserId?: string | null },
+): Promise<{ storyId: string }> {
   const db = createAdminClient()
   const { storyId, snapshot, meta } = result
+  const ownerUserId = opts?.ownerUserId ?? null
 
   // 0) Shell story (FK target). Upsert idempoten.
+  // AMENDMENTS v0.5: set owner + private visibility when session known.
   const { error: eStory } = await db.from('stories').upsert({
     id: storyId,
     title: meta.title,
@@ -41,6 +46,8 @@ export async function persistStoryBible(result: CompileResult): Promise<{ storyI
     current_chapter: 0,
     jejak: [],
     ending_name: null,
+    ...(ownerUserId ? { owner_user_id: ownerUserId } : {}),
+    visibility: 'private',
   })
   if (eStory) throw new Error(`stories: ${eStory.message}`)
 

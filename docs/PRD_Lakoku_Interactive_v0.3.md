@@ -6,7 +6,7 @@
 **Arsitektur brand:** Produk hiburan B2C mandiri; terpisah secara publik dari Narraza.  
 **Status dokumen:** Build-ready product specification — brand-aligned revision  
 **Versi:** 0.3  
-**Amandemen diterapkan:** AMENDMENTS v0.3 (§A), AMENDMENTS v0.4 (§A) — lihat `docs/AMENDMENTS_v0.3.md`, `docs/AMENDMENTS_v0.4.md`  
+**Amandemen diterapkan:** AMENDMENTS v0.3 (§A), AMENDMENTS v0.4 (§A), AMENDMENTS v0.5 (§A) — lihat `docs/AMENDMENTS_v0.3.md`, `docs/AMENDMENTS_v0.4.md`, `docs/AMENDMENTS_v0.5.md`  
 **Dokumen normatif terkait:** `docs/NARRATIVE_CONSISTENCY_SPEC.md` (NCS v1.0) untuk kontrak konsistensi 50 bab; `docs/NARRATIVE_TRACEABILITY_MATRIX.md` untuk penelusuran gap → gate  
 **Platform rilis pertama:** Web reader mobile-first (client produksi pertama); aplikasi Android native (Kotlin) menyusul sebagai client kedua di atas kontrak API yang sama — lihat AMENDMENTS v0.4 (LD-CLIENT-SEQ)  
 **Bahasa antarmuka dan prosa awal:** Bahasa Indonesia  
@@ -243,6 +243,11 @@ Keputusan di bawah dianggap sebagai **product contract**. Agen coding, desainer,
 | Konten awal | Drama dewasa non-eksplisit; tidak ada pornografi eksplisit atau konten seksual dengan karakter di bawah umur |
 | Posisi AI | AI tidak disebut sebagai nilai jual utama dan tidak terlihat pada reader-facing UI |
 | Visual | Midnight Drama: dark, warm, cinematic, intimate, premium; bukan AI-startup, anime-first, atau casual-game-first |
+| Ownership playthrough | Satu story instance = satu playthrough milik **satu** user (`user_id`). Koleksiku, stats profil, dan Lanjutkan Cerita hanya untuk milik user login (AMENDMENTS v0.5 LD-STORY-OWNERSHIP) |
+| Mode tamu | Tamu **tidak** punya library personal di server. Stats tamu = 0 + CTA masuk. Persist/lock story bible wajib sesi login |
+| Jelajahi Cerita | Bukan dump seluruh playthrough di DB. Isi: demo/seed **resmi** Lakoku dan/atau kartu **share publik** (Ending Card / nanti Story Seed / Challenge) — LD-CATALOG-SHARE |
+| Share MVP | Setelah selesai: Ending Card → Bagikan → landing teaser → CTA **“Coba jalurmu sendiri”** → playthrough **baru** milik penerima. Bukan fork 50 bab prosa sumber — LD-SHARE-MVP |
+| Privasi share | Payload publik = teaser sanitasi saja. Jangan expose source story id sebagai hak baca; jangan publish full prose/jejak spoiler/contract mentah — LD-SHARE-PRIVACY |
 
 # 5. Tujuan, Metrik, dan Non-Goals
 
@@ -286,7 +291,9 @@ Target ini adalah target operasional internal, bukan klaim pasar atau jaminan ha
 
 Hal berikut tidak termasuk dalam commercial MVP:
 
-- Marketplace author/user-generated story publik.
+- Marketplace author/user-generated story publik (bukan “toko cerita” terbuka).
+- Menjadikan full playthrough 50 bab prosa user lain sebagai konten publik mentah atau fork 1:1.
+- Shared Story Seed penuh (`story_seeds` + contract snapshot aman) dan Challenge Route — **backlog pasca-MVP share** (AMENDMENTS v0.5); MVP share hanya Ending Card + CTA “Coba jalurmu sendiri”.
 - User menulis atau mengedit prosa bab sendiri seperti aplikasi authoring.
 - Chat roleplay bebas tanpa batas di setiap adegan.
 - Cerita tak berujung atau sistem yang menambah bab di atas 50 tanpa season baru.
@@ -299,6 +306,8 @@ Hal berikut tidak termasuk dalam commercial MVP:
 - Integrasi dengan platform novel eksternal.
 - Ekspor cerita untuk dipublikasikan sebagai karya author tanpa kebijakan lisensi yang terpisah.
 - Kustomisasi wajah berdasarkan foto orang nyata.
+
+**Bukan non-goal (diizinkan di MVP share):** membagikan **Ending Card / teaser non-spoiler** agar user lain memulai **playthrough baru** miliknya dari fondasi yang diizinkan — tanpa membaca jejak 50 bab sumber.
 
 ---
 
@@ -564,13 +573,19 @@ Saat user menekan `Masuk ke Cerita Ini`:
 
 ## 7.6 Koleksiku (Koleksiku)
 
-Home utama harus menjadi **Koleksiku**, bukan dashboard teknis.
+**Koleksiku** adalah library **personal** — hanya story instance yang **dimiliki** atau **dimulai** oleh user yang login. Bukan katalog global seluruh row di database (AMENDMENTS v0.5 LD-STORY-OWNERSHIP).
+
+Home/beranda memisahkan dua zona:
+- **Lanjutkan / Koleksiku** — personal.
+- **Jelajahi Cerita** — demo resmi + share publik (lihat §7.6a).
+
+Tamu tidak punya Koleksiku di server: empty state + CTA masuk; stats profil = 0.
 
 ### Isi Library
 
-- `Lanjutkan Cerita` — story terakhir, chapter terakhir, CTA utama.
-- `Cerita Aktif` — semua instance belum selesai.
-- `Cerita Selesai` — ending yang diperoleh dan status secret ending.
+- `Lanjutkan Cerita` — story terakhir milik user, chapter terakhir, CTA utama.
+- `Cerita Aktif` — instance user yang belum selesai.
+- `Cerita Selesai` — ending yang diperoleh user ini dan status secret ending.
 - `Mulai Cerita Baru` — CTA dengan guard entitlement.
 - `Rekomendasi Trope` — hanya jika sudah ada template baru yang siap.
 
@@ -585,6 +600,17 @@ Minimal menampilkan:
 - progress bar;
 - last updated/read timestamp;
 - CTA `Lanjutkan Cerita`.
+
+## 7.6a Jelajahi Cerita (katalog share / demo)
+
+**Jelajahi Cerita** menampilkan:
+
+1. seed/demo **resmi** Lakoku (bila ada), dan/atau
+2. kartu **share publik** yang pemilik pilih untuk dibagikan (`visibility = public`).
+
+Bukan daftar seluruh playthrough user lain. User B **tidak** membaca 50 bab prosa versi User A. Kartu Jelajahi menampilkan teaser (judul, tropes, ending bila share ending card, CTA), **bukan** progress bar “Bab 1/50 milik orang lain” seolah milikmu.
+
+Share unlisted hanya lewat link; tidak otomatis masuk Jelajahi.
 
 ## 7.7 Reader Experience
 
@@ -994,14 +1020,15 @@ Validator tidak boleh sekadar memberi skor. Ia harus mengembalikan structured fi
 ## 10.5 Story Completion Flow
 
 1. User menyelesaikan Chapter 50.
-2. Sistem menampilkan ending card.
+2. Sistem menampilkan **Ending Card** (cover, judul, tropes/tags, ending didapat, 3–5 pilihan besar non-spoiler, CTA “Coba jalurmu sendiri” untuk share).
 3. User melihat ringkasan pilihan penting secara non-spoiler terhadap jalur lain.
 4. User dapat:
-   - menyimpan/share ending card;
-   - kembali ke library;
+   - **Bagikan** Ending Card → membuat `shared_story_links` + teaser sanitasi (LD-SHARE-MVP);
+   - kembali ke library (Koleksiku);
    - melihat ending lain terkunci;
-   - mulai playthrough baru.
-5. Story instance menjadi `COMPLETED` dan tidak dapat maju ke Chapter 51.
+   - mulai playthrough baru milik sendiri.
+5. Story instance menjadi `COMPLETED` / `SELESAI` dan tidak dapat maju ke Chapter 51.
+6. Instance sumber tetap **private** kecuali teaser yang secara eksplisit di-share. Penerima share **tidak** mendapat akses baca 50 bab sumber.
 
 ## 10.6 Failed Generation Recovery Flow
 
@@ -1028,6 +1055,53 @@ Validator tidak boleh sekadar memberi skor. Ia harus mengembalikan structured fi
 5. Admin menerima report dan generation trace yang aman.
 
 ---
+
+
+## 10.8 Share Ending Card & Start-from-Share Flow
+
+Alur normatif MVP share (AMENDMENTS v0.5 LD-SHARE-MVP, LD-SHARE-PRIVACY):
+
+### Create share (User A, status selesai)
+
+1. User A membuka Ending Card di `/akhir/{id}` (instance milik A, selesai).
+2. User A menekan **Bagikan**.
+3. Server memverifikasi ownership + status selesai.
+4. Server membuat `shared_story_links` dengan `share_type = ending_card`, `share_slug` unik, `visibility` unlisted atau public, dan `teaser_json` sanitasi:
+   - title, tagline, tropes, cover;
+   - endingName;
+   - 3–5 bigChoices non-spoiler (tanpa spoiler fatal / secret gate);
+   - templateKey / seedVersion opsional;
+   - CTA “Coba jalurmu sendiri”.
+5. Server **tidak** memasukkan full chapter prose, full jejak spoiler, secrets, facts ledger, atau contract mentah ke payload publik.
+6. Server **tidak** mengekspos `source_story_id` ke client publik sebagai hak baca instance sumber.
+7. User A mendapat link `/s/{share_slug}` (Web Share API / salin tautan).
+
+Contoh copy share (boleh diadaptasi):
+
+> Aku menyelesaikan cerita ini dan mendapatkan **Akhir: Kebebasan**.  
+> Aku memilih diam dulu, mengumpulkan bukti, lalu meninggalkan mereka saat semua rahasia terbuka.  
+> Kamu akan memilih jalan yang sama? **Coba jalurmu sendiri.**
+
+### Open share (User B / tamu)
+
+1. User B membuka `/s/{share_slug}`.
+2. Server memuat **hanya** row share aktif (tidak revoked, tidak expired) + teaser sanitasi.
+3. Landing menampilkan teaser Ending Card + CTA **Coba jalurmu sendiri**.
+4. Landing **bukan** reader 50 bab sumber.
+
+### Start from share (User B)
+
+1. CTA mensyaratkan login (bila belum).
+2. Server membuat **story instance baru** milik User B (owner = B).
+3. MVP: fondasi awal dari metadata teaser yang diizinkan (judul/tropes/peran/template hint) — **bukan** clone 50 bab prosa A. Foundation-copy identik menyusul lewat `story_seeds` (pasca-MVP).
+4. Server mencatat `shared_story_starts` (shared_link_id, new_user_id, new_story_id).
+5. User B diarahkan ke bab 1 instance miliknya; pilihan dan ending B independen dari A.
+
+### Revoke / expire
+
+- Pemilik dapat revoke share (`revoked_at`).
+- `expires_at` opsional; link kedaluwarsa tidak dibuka.
+
 
 # 11. Screen dan UX Specification
 
@@ -1070,7 +1144,8 @@ Reader full-screen tidak menampilkan bottom navigation agar fokus.
 | Memulai Cerita | Menunggu opening package | progress naratif, cancel safe, tanpa jargon teknis |
 | Reader | Membaca dan memilih | prosa, progress, choice cards, settings |
 | Keputusan Diproses | Menunggu bab | copy naratif, retry safe |
-| Akhir Cerita | Menampilkan ending | ending card, jejak pilihan, replay CTA |
+| Akhir Cerita | Menampilkan ending | Ending Card: cover, judul, tropes, ending, 3–5 pilihan besar non-spoiler, jejak, CTA Bagikan + “Coba jalurmu sendiri”, ending lain terkunci |
+| Share Landing (`/s/[slug]`) | Teaser share publik/unlisted | teaser sanitasi saja; CTA Coba jalurmu sendiri; **bukan** reader 50 bab sumber |
 | Akses Cerita | Entitlement | value explanation, no misleading currency |
 | Settings | Preference | theme, text size, account, privacy, content boundaries |
 | Report | QA feedback | reason selector, optional note |
@@ -1093,6 +1168,8 @@ Reader full-screen tidak menampilkan bottom navigation agar fokus.
 | Kondisi | Copy | CTA |
 |---|---|---|
 | Koleksiku kosong | “Belum ada cerita yang menunggumu.” | `Masuk ke Cerita Pertama` |
+| Tamu di Profil / stats | Angka 0 / 0 / 0 + “Mode tamu — masuk agar jejakmu tersimpan” | `Masuk` |
+| Jelajahi kosong | “Belum ada cerita yang dibagikan.” | `Mulai Cerita` / tunggu share publik |
 | Tidak ada cerita selesai | “Akhir ceritamu akan muncul di sini.” | `Lanjutkan Cerita` |
 | Offline dan bab belum di-cache | “Bab baru butuh koneksi untuk disiapkan.” | `Coba Lagi` |
 | Entitlement habis | “Cerita baru siap dimulai setelah kamu membuka akses.” | `Lihat Akses Cerita` |
@@ -1648,6 +1725,18 @@ CANCELLED
 | `reading_progress` | Posisi baca | user_id, story_instance_id, chapter_no, scroll_anchor, completed_at |
 | `ending_results` | Ending yang diperoleh | story_instance_id, ending_key, achieved_at, share_card_version |
 
+### Share dan Social Teaser (AMENDMENTS v0.5)
+
+| Table | Tujuan | Field penting |
+|---|---|---|
+| `shared_story_links` | Link share Ending Card / seed / challenge | id, owner_user_id, source_story_instance_id, share_slug, share_type (`ending_card`\|`story_seed`\|`challenge`), visibility (`unlisted`\|`public`), title, teaser_json, spoiler_level, expires_at, revoked_at, created_at |
+| `story_seeds` | (Later) fondasi aman untuk playthrough baru | id, source_story_instance_id, template_key, contract_snapshot_safe_json, seed_version, safety_status, created_at |
+| `shared_story_starts` | Audit start-from-share | id, shared_link_id, new_user_id, new_story_instance_id, started_at |
+
+**Aturan privasi:** client publik hanya membaca payload share yang disanitasi. Jangan expose `source_story_instance_id` sebagai hak baca instance sumber. `teaser_json` MVP: title, tagline, tropes, cover, endingName, bigChoices[], templateKey?, seedVersion, cta.
+
+**Mapping interim implementasi web:** tabel shell `stories` + kolom `owner_user_id` / `visibility` memetakan konsep `story_instances` sampai rename skema penuh (expand → backfill → switch). Progress personal login tetap di `reader_states` / `reading_progress`.
+
 ### AI, Quality, dan Operations
 
 | Table | Tujuan | Field penting |
@@ -1667,6 +1756,10 @@ erDiagram
     users ||--o{ story_architect_sessions : starts
     users ||--o{ story_instances : owns
     users ||--o{ entitlements : has
+    users ||--o{ shared_story_links : shares
+    story_instances ||--o{ shared_story_links : source
+    shared_story_links ||--o{ shared_story_starts : converts
+    shared_story_starts }o--|| story_instances : creates
 
     story_architect_sessions ||--o{ story_architect_messages : contains
     story_architect_sessions ||--o{ story_proposals : creates

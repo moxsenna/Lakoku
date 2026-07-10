@@ -468,7 +468,7 @@ export function buildSelasaDemoSeedRows(): SelasaDemoSeedRows {
       {
         id: DEMO_STORY_ID,
         title: 'Selasa Terakhir di Rumah Kaca',
-        cover: '/placeholder.svg?height=400&width=300',
+        cover: '/covers/selasa-terakhir.webp',
         tagline: 'Satu keluarga, satu warisan, dan satu Selasa yang mengubah segalanya.',
         role: 'Rani, pewaris yang pulang terlambat',
         tropes: ['Rahasia Keluarga', 'Warisan', 'Pengkhianatan'],

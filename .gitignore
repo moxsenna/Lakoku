@@ -26,3 +26,5 @@ testsprite_tests/tmp/
 
 # Playwright MCP session artifacts
 .playwright-mcp/
+
+testsprite_tests\tmp\config.json

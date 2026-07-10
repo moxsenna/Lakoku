@@ -4,9 +4,9 @@ import { Suspense } from 'react'
 import { getSupabasePublicConfig } from '@/lib/supabase/public-config'
 
 export const metadata: Metadata = {
-  title: 'Pilih Peranmu — Lakoku',
+  title: 'Bentuk Ceritamu — Lakoku',
   description:
-    'Jawab beberapa pertanyaan singkat, pilih satu dari tiga cerita yang disiapkan untukmu, dan mulai perjalananmu sebagai tokoh utama.',
+    'Pilih cara memulai: cepat dengan pilihan arah cerita, atau tulis ide ceritamu sendiri. Lakoku menyiapkan 3 premis untuk perjalananmu sebagai tokoh utama.',
 }
 
 // Needs Supabase public config at request time; skip CF build-time prerender.

@@ -1,12 +1,14 @@
 'use client'
 
 /**
- * Onboarding pembaca (T7.1) — jalur cepat "pilih peranmu".
+ * Onboarding pembaca (T7.1) — jalur cepat "bentuk ceritamu".
  *
- * Alur: kuis ketuk (4 pertanyaan) → jawaban dirakit jadi ide → AI mengusulkan
- * 3 premis NYATA (actProposePremises) → pembaca pilih 1 → pipeline otomatis
- * (tokoh → misteri → dunia → kunci → Bab 1) dengan progres per tahap →
- * masuk reader di /baca/{storyId}?bab=1.
+ * Alur baru:
+ *   entry → quick (4 pertanyaan) | customIdea (free-text) → 3 premis AI →
+ *   pilih 1 → pipeline otomatis (tokoh → misteri → dunia → kunci → Bab 1).
+ *
+ * Setiap pertanyaan quick punya opsi "Tulis sendiri" selain opsi tetap dan
+ * "Pilihkan untukku". Custom idea bisa diketik bebas di textarea.
  *
  * Semua kerja berat memakai server action authoring yang sama dengan wizard
  * /brainstorm (T7.4); komponen ini hanya mengurut tahap & menyajikan progres.
@@ -26,96 +28,31 @@ import {
   saveOnboardingDraftStash,
 } from '@/lib/onboarding-draft'
 import {
-  actProposePremises,
   actProposeCast,
   actProposeMystery,
   actProposeWorld,
   lockStoryBible,
   startFirstChapter,
 } from '@/app/brainstorm/actions'
+import { actProposeStorySetupPremises } from '@/app/mulai/actions'
+import { actGetTasteProfile } from '@/app/onboarding/selera/actions'
+import { readGuestTasteProfile } from '@/lib/taste-profile/storage'
+import { defaultStorySetupQuestions, type SetupQuestion } from '@/lib/onboarding/question-presets'
 import type { PremiseDraft, StoryBibleDraft } from '@/lib/authoring/schema'
+import type { TasteProfile } from '@/lib/taste-profile/schema'
 
 const PoetryLottie = dynamic(
   () => import('@/components/mulai/poetry-lottie').then((m) => m.PoetryLottie),
   { ssr: false },
 )
 
-interface Question {
-  key: string
-  prompt: string
-  helper?: string
-  /** Prefiks yang membingkai jawaban saat dirakit jadi ide untuk AI. */
-  frame: (answer: string) => string
-  defaultAnswer: string
-  options: string[]
-}
-
 const SMART_DEFAULT_LABEL = 'Pilihkan untukku'
+const CUSTOM_ANSWER_LABEL = 'Tulis sendiri'
 
-const questions: Question[] = [
-  {
-    key: 'trope',
-    prompt: 'Drama seperti apa yang ingin kamu jalani?',
-    helper: 'Pilih konflik utama untuk peranmu.',
-    frame: (a) => `Konflik utama cerita: ${a.toLowerCase()}.`,
-    defaultAnswer: 'Pasangan yang berkhianat',
-    options: [
-      'Pasangan yang berkhianat',
-      'Pernikahan kontrak yang berubah arah',
-      'Rahasia keluarga dan warisan',
-      'Cinta lama yang kembali',
-      'Bangkit setelah dipermalukan',
-    ],
-  },
-  {
-    key: 'sikap',
-    prompt: 'Bagaimana tokohmu biasanya menghadapi konflik?',
-    helper: 'Ini menentukan pilihan yang akan sering muncul.',
-    frame: (a) => `Tokoh utama cenderung ${a.toLowerCase()}.`,
-    defaultAnswer: 'Tenang dan menyusun rencana',
-    options: [
-      'Tenang dan menyusun rencana',
-      'Langsung menghadapi, apa pun risikonya',
-      'Menyimpan semuanya sampai waktunya tiba',
-    ],
-  },
-  {
-    key: 'hubungan',
-    prompt: 'Hubungan seperti apa yang ingin kamu bentuk?',
-    helper: 'Satu love interest utama akan hadir dalam ceritamu.',
-    frame: (a) => `Hubungan yang diinginkan: ${a.toLowerCase()}.`,
-    defaultAnswer: 'Cinta yang harus diperjuangkan lagi',
-    options: [
-      'Cinta yang harus diperjuangkan lagi',
-      'Sekutu yang perlahan menjadi lebih',
-      'Fokus pada diriku sendiri dulu',
-    ],
-  },
-  {
-    key: 'akhir',
-    prompt: 'Akhir seperti apa yang paling ingin kamu kejar?',
-    helper: 'Cerita tetap bisa berubah karena pilihanmu.',
-    frame: (a) => `Akhir yang dikejar: ${a.toLowerCase()}.`,
-    defaultAnswer: 'Keadilan - semua rahasia terbuka',
-    options: [
-      'Keadilan — semua rahasia terbuka',
-      'Kedamaian — melepaskan dan melangkah',
-      'Kemenangan — merebut kembali posisiku',
-    ],
-  },
-]
+// ─── Phase + state ────────────────────────────────────────────────
 
-/** Rakit jawaban kuis jadi satu ide berbahasa natural untuk AI premis. */
-function buildIdea(answers: Record<string, string>): string {
-  return questions
-    .filter((q) => answers[q.key])
-    .map((q) => q.frame(answers[q.key]))
-    .join(' ')
-}
+type Phase = 'entry' | 'quiz' | 'customIdea' | 'proposals' | 'building' | 'error'
 
-type Phase = 'quiz' | 'proposals' | 'summary' | 'building' | 'error'
-
-/** Tahap pipeline pasca-pilih, untuk progres yang terlihat hidup. */
 const BUILD_STEPS = [
   { key: 'cast', label: 'Menyusun tokoh-tokohmu' },
   { key: 'mystery', label: 'Menata rahasia yang menunggu' },
@@ -124,7 +61,51 @@ const BUILD_STEPS = [
   { key: 'chapter', label: 'Menulis Bab 1' },
 ] as const
 type BuildKey = (typeof BUILD_STEPS)[number]['key']
+
 const RESUME_LOGIN_URL = '/auth/login?next=%2Fmulai%3Fresume%3D1'
+
+// ─── Progress bar helper ──────────────────────────────────────────
+
+function getProgressMeta(
+  phase: Phase,
+  entryMode: 'quick' | 'custom' | null,
+  step: number,
+  totalQuestions: number,
+): { total: number; current: number; label: string } {
+  if (phase === 'entry' || phase === 'building' || phase === 'error') {
+    return { total: 0, current: 0, label: '' }
+  }
+
+  if (entryMode === 'custom') {
+    if (phase === 'customIdea') {
+      return { total: 2, current: 1, label: 'LANGKAH 1 DARI 2' }
+    }
+    if (phase === 'proposals' || phase === 'quiz') {
+      return { total: 2, current: 2, label: 'LANGKAH 2 DARI 2' }
+    }
+  }
+
+  if (entryMode === 'quick') {
+    if (phase === 'quiz') {
+      return {
+        total: totalQuestions + 1,
+        current: step + 1,
+        label: `LANGKAH ${step + 1} DARI ${totalQuestions + 1}`,
+      }
+    }
+    if (phase === 'proposals') {
+      return {
+        total: totalQuestions + 1,
+        current: totalQuestions + 1,
+        label: `LANGKAH ${totalQuestions + 1} DARI ${totalQuestions + 1}`,
+      }
+    }
+  }
+
+  return { total: 0, current: 0, label: '' }
+}
+
+// ─── Komponen utama ───────────────────────────────────────────────
 
 export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePublicConfig }) {
   const router = useRouter()
@@ -132,9 +113,14 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
   const [pending, startTransition] = useTransition()
   const resumeAttemptedRef = useRef(false)
 
-  const [phase, setPhase] = useState<Phase>('quiz')
+  const [phase, setPhase] = useState<Phase>('entry')
+  const [entryMode, setEntryMode] = useState<'quick' | 'custom' | null>(null)
   const [step, setStep] = useState(0)
   const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [customIdea, setCustomIdea] = useState('')
+  const [tasteProfile, setTasteProfile] = useState<TasteProfile | null>(null)
+  const [customAnswerFor, setCustomAnswerFor] = useState<string | null>(null)
+  const [customAnswerText, setCustomAnswerText] = useState('')
 
   const [proposals, setProposals] = useState<PremiseDraft[]>([])
   const [selected, setSelected] = useState<PremiseDraft | null>(null)
@@ -142,9 +128,24 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
   const [buildStage, setBuildStage] = useState<BuildKey>('cast')
   const [err, setErr] = useState<string | null>(null)
 
+  const questions = defaultStorySetupQuestions
   const totalQuestions = questions.length
   const question = questions[step]
   const resume = searchParams.get('resume')
+
+  // Baca taste profile — localStorage dulu, lalu server (best-effort, jangan block UI).
+  useEffect(() => {
+    // Local first: instant, no network.
+    setTasteProfile(readGuestTasteProfile())
+
+    // Server: best-effort, fallback ke localStorage kalau gagal.
+    startTransition(async () => {
+      const result = await actGetTasteProfile()
+      if (result.ok && result.profile) {
+        setTasteProfile(result.profile)
+      }
+    })
+  }, [])
 
   const failBuild = useCallback((message?: string) => {
     setErr(message ?? 'Terjadi kendala saat menyiapkan cerita.')
@@ -153,9 +154,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
 
   const hasSession = useCallback(async () => {
     const supabase = createClient(supabaseConfig)
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
+    const { data: { user } } = await supabase.auth.getUser()
     return Boolean(user)
   }, [supabaseConfig])
 
@@ -172,7 +171,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
 
     clearOnboardingDraftStash(window.localStorage)
 
-    // T-SHARE-3: bila datang dari Ending Card share, tautkan story baru ke start row.
+    // T-SHARE-3: tautkan story baru ke share start row.
     try {
       const raw = sessionStorage.getItem('lakoku:share-start:v1')
       if (raw) {
@@ -184,7 +183,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
         sessionStorage.removeItem('lakoku:share-start:v1')
       }
     } catch {
-      // best-effort; jangan blokir alur baca
+      // best-effort
     }
 
     setBuildStage('chapter')
@@ -195,6 +194,8 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     }
     router.push(`/baca/${lockRes.storyId}?bab=1`)
   }, [failBuild, router])
+
+  // ── Resume flow ─────────────────────────────────────────────────
 
   useEffect(() => {
     if (resume !== '1' || resumeAttemptedRef.current) return
@@ -221,14 +222,18 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     })
   }, [failBuild, hasSession, lockAndStart, resume, router])
 
-  // --- Kuis ---
+  // ── Kuis ────────────────────────────────────────────────────────
+
   function pickAnswer(key: string, value: string) {
     const currentQuestion = questions.find((q) => q.key === key)
-    const resolved = value === SMART_DEFAULT_LABEL && currentQuestion
-      ? currentQuestion.defaultAnswer
-      : value
+    const resolved =
+      value === SMART_DEFAULT_LABEL && currentQuestion
+        ? currentQuestion.defaultAnswer
+        : value
     const next = { ...answers, [key]: resolved }
     setAnswers(next)
+    setCustomAnswerFor(null)
+    setCustomAnswerText('')
     if (step < totalQuestions - 1) {
       setTimeout(() => setStep((s) => s + 1), 220)
     } else {
@@ -236,16 +241,22 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     }
   }
 
-  function backFromQuiz() {
-    setStep((s) => Math.max(0, s - 1))
+  function submitCustomAnswer() {
+    if (!customAnswerFor || !customAnswerText.trim()) return
+    pickAnswer(customAnswerFor, customAnswerText.trim())
   }
 
-  // --- Premis nyata dari AI ---
+  // ── Generate premis dari AI ────────────────────────────────────
+
   function generateProposals(currentAnswers: Record<string, string>) {
     setErr(null)
     setPhase('proposals')
     startTransition(async () => {
-      const res = await actProposePremises(buildIdea(currentAnswers))
+      const res = await actProposeStorySetupPremises({
+        mode: 'quick',
+        answers: currentAnswers,
+        guestTasteProfile: tasteProfile,
+      })
       if (!res.ok) {
         setErr(res.error ?? 'Gagal menyiapkan cerita. Coba lagi.')
         setPhase('error')
@@ -255,7 +266,30 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     })
   }
 
-  // --- Pipeline otomatis dengan progres per tahap ---
+  // ── Custom idea → 3 premis ─────────────────────────────────────
+
+  function submitCustomIdea() {
+    const trimmed = customIdea.trim()
+    if (!trimmed) return
+    setErr(null)
+    setPhase('proposals')
+    startTransition(async () => {
+      const res = await actProposeStorySetupPremises({
+        mode: 'custom',
+        customIdea: trimmed,
+        guestTasteProfile: tasteProfile,
+      })
+      if (!res.ok) {
+        setErr(res.error ?? 'Gagal menyiapkan cerita. Coba lagi.')
+        setPhase('error')
+        return
+      }
+      setProposals(res.proposals)
+    })
+  }
+
+  // ── Pipeline otomatis ──────────────────────────────────────────
+
   function beginStory(premise: PremiseDraft) {
     setSelected(premise)
     setErr(null)
@@ -292,15 +326,67 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
   }
 
   function restart() {
-    setPhase('quiz')
+    setPhase('entry')
+    setEntryMode(null)
     setStep(0)
     setAnswers({})
+    setCustomIdea('')
+    setCustomAnswerFor(null)
+    setCustomAnswerText('')
     setProposals([])
     setSelected(null)
     setErr(null)
   }
 
-  // ---------- Layar: menyiapkan cerita (progres per tahap) ----------
+  // ── Back behavior ──────────────────────────────────────────────
+
+  function handleBack() {
+    if (phase === 'entry') {
+      router.back()
+      return
+    }
+    if (phase === 'customIdea') {
+      setPhase('entry')
+      return
+    }
+    if (phase === 'quiz' && step === 0) {
+      setPhase('entry')
+      return
+    }
+    if (phase === 'quiz' && step > 0) {
+      setStep((s) => s - 1)
+      return
+    }
+    if (phase === 'proposals') {
+      if (selected) {
+        setSelected(null)
+        return
+      }
+      if (entryMode === 'custom') {
+        setPhase('customIdea')
+        return
+      }
+      if (entryMode === 'quick') {
+        setPhase('quiz')
+        return
+      }
+    }
+  }
+
+  // ── Progress meta ──────────────────────────────────────────────
+
+  const progress = getProgressMeta(phase, entryMode, step, totalQuestions)
+  const progressFilled =
+    phase === 'quiz'
+      ? step
+      : phase === 'proposals' || (entryMode === 'custom' && phase !== 'entry')
+        ? progress.total
+        : 0
+
+  // ════════════════════════════════════════════════════════════════
+  // RENDER: building
+  // ════════════════════════════════════════════════════════════════
+
   if (phase === 'building') {
     const activeIndex = BUILD_STEPS.findIndex((s) => s.key === buildStage)
     return (
@@ -332,7 +418,11 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
                 <span
                   className={cn(
                     'flex size-6 shrink-0 items-center justify-center rounded-full',
-                    done ? 'bg-primary text-primary-foreground' : active ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground',
+                    done
+                      ? 'bg-primary text-primary-foreground'
+                      : active
+                        ? 'bg-primary/20 text-primary'
+                        : 'bg-muted text-muted-foreground',
                   )}
                   aria-hidden="true"
                 >
@@ -364,7 +454,10 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     )
   }
 
-  // ---------- Layar: error / needs author ----------
+  // ════════════════════════════════════════════════════════════════
+  // RENDER: error
+  // ════════════════════════════════════════════════════════════════
+
   if (phase === 'error') {
     return (
       <main className="mx-auto flex min-h-svh w-full max-w-md flex-col items-center justify-center gap-6 bg-background px-8 text-center">
@@ -377,7 +470,32 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
           </p>
         </div>
         <div className="flex w-full flex-col gap-3">
-          {proposals.length > 0 && (
+          {/* Coba lagi — kembali ke mode terakhir */}
+          {entryMode === 'quick' && (
+            <button
+              type="button"
+              onClick={() => {
+                setErr(null)
+                setPhase('quiz')
+              }}
+              className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+            >
+              Coba lagi dari pertanyaan
+            </button>
+          )}
+          {entryMode === 'custom' && (
+            <button
+              type="button"
+              onClick={() => {
+                setErr(null)
+                setPhase('customIdea')
+              }}
+              className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+            >
+              Coba lagi dari ide cerita
+            </button>
+          )}
+          {proposals.length > 0 && !entryMode && (
             <button
               type="button"
               onClick={() => {
@@ -395,81 +513,184 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
             onClick={restart}
             className="flex min-h-13 items-center justify-center rounded-2xl border border-border px-6 text-sm font-semibold text-foreground transition-colors hover:bg-card"
           >
-            Ulangi dari awal
+            Mulai dari awal lagi
           </button>
         </div>
       </main>
     )
   }
 
-  // ---------- Layar utama: kuis / proposal / ringkasan ----------
-  const showQuiz = phase === 'quiz'
-  const progressFilled = showQuiz ? step : totalQuestions
+  // ════════════════════════════════════════════════════════════════
+  // RENDER: main shell (entry / quiz / customIdea / proposals)
+  // ════════════════════════════════════════════════════════════════
+
+  const showProgress = progress.total > 0
 
   return (
     <main className="mx-auto flex min-h-svh w-full max-w-md flex-col bg-background px-5 pb-10 pt-6">
+      {/* Header: back button + progress bar */}
       <header className="flex items-center gap-3">
-        {showQuiz && step === 0 ? (
-          <Link
-            href="/beranda"
-            aria-label="Kembali ke Beranda"
-            className="flex size-10 items-center justify-center rounded-full bg-card text-foreground"
-          >
-            <ArrowLeft className="size-5" aria-hidden="true" />
-          </Link>
-        ) : (
-          <button
-            type="button"
-            onClick={() => {
-              if (selected) {
-                setSelected(null)
-                setPhase('proposals')
-              } else if (phase === 'proposals') {
-                setPhase('quiz')
-                setStep(totalQuestions - 1)
-              } else {
-                backFromQuiz()
-              }
-            }}
-            aria-label="Kembali ke langkah sebelumnya"
-            className="flex size-10 items-center justify-center rounded-full bg-card text-foreground"
-          >
-            <ArrowLeft className="size-5" aria-hidden="true" />
-          </button>
+        <button
+          type="button"
+          onClick={handleBack}
+          aria-label="Kembali ke langkah sebelumnya"
+          className="flex size-10 items-center justify-center rounded-full bg-card text-foreground"
+        >
+          <ArrowLeft className="size-5" aria-hidden="true" />
+        </button>
+        {showProgress && (
+          <div className="flex flex-1 items-center gap-1.5" aria-hidden="true">
+            {Array.from({ length: progress.total }).map((_, i) => (
+              <span
+                key={i}
+                className={cn(
+                  'h-1 flex-1 rounded-full transition-colors',
+                  i < progressFilled ? 'bg-primary' : 'bg-muted',
+                )}
+              />
+            ))}
+          </div>
         )}
-        <div className="flex flex-1 items-center gap-1.5" aria-hidden="true">
-          {Array.from({ length: totalQuestions + 1 }).map((_, i) => (
-            <span
-              key={i}
-              className={cn(
-                'h-1 flex-1 rounded-full transition-colors',
-                i <= progressFilled ? 'bg-primary' : 'bg-muted',
-              )}
-            />
-          ))}
-        </div>
       </header>
 
-      {/* KUIS */}
-      {showQuiz && question && (
+      {/* ═══ ENTRY SCREEN ═══ */}
+      {phase === 'entry' && (
+        <section className="lk-fade-up mt-10 flex flex-col gap-6">
+          <div className="flex flex-col gap-3">
+            <span className="text-[11px] font-semibold tracking-wide text-lavender">
+              MULAI CERITA
+            </span>
+            <h1 className="font-serif text-3xl leading-tight text-foreground text-balance">
+              Kamu mau mulai dari mana?
+            </h1>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            {/* Mulai cepat */}
+            <button
+              type="button"
+              onClick={() => {
+                setEntryMode('quick')
+                setPhase('quiz')
+              }}
+              className="flex flex-col gap-1 rounded-2xl border border-border bg-card p-5 text-left transition-colors hover:border-primary/60"
+            >
+              <span className="text-sm font-semibold text-foreground">Jawab pertanyaan singkat</span>
+              <span className="text-xs text-muted-foreground">
+                Pilih beberapa arah cerita, dan Lakoku menyiapkan 3 premis untukmu.
+              </span>
+            </button>
+
+            {/* Aku punya ide sendiri */}
+            <button
+              type="button"
+              onClick={() => {
+                setEntryMode('custom')
+                setPhase('customIdea')
+              }}
+              className="flex flex-col gap-1 rounded-2xl border border-border bg-card p-5 text-left transition-colors hover:border-primary/60"
+            >
+              <span className="text-sm font-semibold text-foreground">Aku sudah punya ide cerita</span>
+              <span className="text-xs text-muted-foreground">
+                Tulis benih ceritamu langsung, Lakoku mengubahnya jadi 3 premis.
+              </span>
+            </button>
+
+            {/* Mode lengkap → /brainstorm */}
+            <Link
+              href="/brainstorm"
+              className="flex flex-col gap-1 rounded-2xl border border-border bg-card p-5 text-left transition-colors hover:border-primary/60"
+            >
+              <span className="text-sm font-semibold text-foreground">Rancang perlahan, selangkah demi selangkah</span>
+              <span className="text-xs text-muted-foreground">
+                Tentukan premis, tokoh, misteri, dan dunia cerita satu per satu.
+              </span>
+            </Link>
+
+            {/* Taste profile teaser */}
+            {!tasteProfile?.completedAt && (
+              <p className="mt-1 text-center text-xs text-muted-foreground">
+                Mau cerita yang lebih pas dengan seleramu?{' '}
+                <Link
+                  href="/onboarding/selera?next=/mulai"
+                  className="underline underline-offset-4 hover:text-foreground"
+                >
+                  Atur selera cerita
+                </Link>
+                {' '}dulu.
+              </p>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* ═══ CUSTOM IDEA ═══ */}
+      {phase === 'customIdea' && (
+        <section className="lk-fade-up mt-10 flex flex-col gap-6">
+          <div className="flex flex-col gap-2">
+            <span className="text-[11px] font-semibold tracking-wide text-lavender">
+              {progress.label}
+            </span>
+            <h1 className="font-serif text-3xl leading-tight text-foreground text-balance">
+              Ceritakan idemu
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Tulis 1–3 kalimat tentang cerita yang ingin kamu jalani. Lakoku akan
+              mengubahnya menjadi 3 premis berbeda.
+            </p>
+          </div>
+
+          <textarea
+            value={customIdea}
+            onChange={(e) => setCustomIdea(e.target.value)}
+            placeholder="Contoh: seorang pewaris menemukan surat lama yang membongkar rahasia keluarganya..."
+            maxLength={2000}
+            rows={4}
+            className="w-full rounded-2xl border border-input bg-transparent px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 outline-none transition-colors resize-none field-sizing-content"
+          />
+
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>{customIdea.length} / 2000 karakter</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={submitCustomIdea}
+            disabled={!customIdea.trim() || pending}
+            className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {pending ? 'Menyiapkan...' : 'Siapkan 3 cerita'}
+          </button>
+        </section>
+      )}
+
+      {/* ═══ QUIZ ═══ */}
+      {phase === 'quiz' && question && (
         <section key={question.key} className="lk-fade-up mt-10 flex flex-col gap-6">
           <div className="flex flex-col gap-2">
             <span className="text-[11px] font-semibold tracking-wide text-lavender">
-              PILIH PERANMU — {step + 1} DARI {totalQuestions}
+              BENTUK CERITAMU — {progress.label}
             </span>
             <h1 className="font-serif text-3xl leading-tight text-foreground text-balance">
               {question.prompt}
             </h1>
             {question.helper && <p className="text-sm text-muted-foreground">{question.helper}</p>}
           </div>
+
           <div className="flex flex-col gap-3" role="group" aria-label={question.prompt}>
-            {[...question.options, SMART_DEFAULT_LABEL].map((opt) => {
+            {[...question.options, SMART_DEFAULT_LABEL, CUSTOM_ANSWER_LABEL].map((opt) => {
               const isSelected = answers[question.key] === opt
               return (
                 <button
                   key={opt}
                   type="button"
-                  onClick={() => pickAnswer(question.key, opt)}
+                  onClick={() => {
+                    if (opt === CUSTOM_ANSWER_LABEL) {
+                      setCustomAnswerFor(question.key)
+                    } else {
+                      pickAnswer(question.key, opt)
+                    }
+                  }}
                   className={cn(
                     'flex min-h-14 items-center justify-between gap-3 rounded-2xl border px-5 py-4 text-left text-sm font-medium transition-colors',
                     isSelected
@@ -477,21 +698,43 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
                       : 'border-border bg-card text-foreground hover:border-primary/50',
                   )}
                 >
-                  {opt}
+                  <span>{opt}</span>
                   {isSelected && <Check className="size-4 shrink-0 text-primary" aria-hidden="true" />}
                 </button>
               )
             })}
           </div>
+
+          {/* Custom answer input */}
+          {customAnswerFor === question.key && (
+            <div className="flex flex-col gap-3 rounded-2xl border border-primary/50 bg-card p-4">
+              <span className="text-xs font-semibold text-primary">Tulis jawabanmu</span>
+              <textarea
+                value={customAnswerText}
+                onChange={(e) => setCustomAnswerText(e.target.value)}
+                placeholder="Tulis jawabanmu sendiri..."
+                rows={2}
+                className="w-full rounded-xl border border-input bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 outline-none transition-colors resize-none"
+              />
+              <button
+                type="button"
+                onClick={submitCustomAnswer}
+                disabled={!customAnswerText.trim()}
+                className="flex min-h-10 items-center justify-center rounded-xl bg-primary px-4 text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+              >
+                Pakai jawaban ini
+              </button>
+            </div>
+          )}
         </section>
       )}
 
-      {/* PROPOSAL (dari AI) */}
+      {/* ═══ PROPOSALS ═══ */}
       {phase === 'proposals' && !selected && (
         <section className="lk-fade-up mt-10 flex flex-col gap-6">
           <div className="flex flex-col gap-2">
             <span className="text-[11px] font-semibold tracking-wide text-lavender">
-              BANDINGKAN CERITA
+              {progress.label}
             </span>
             <h1 className="font-serif text-3xl leading-tight text-foreground text-balance">
               {pending && proposals.length === 0
@@ -527,7 +770,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
                   </div>
                   <h2 className="font-serif text-xl leading-snug text-foreground">{p.title}</h2>
                   <p className="text-xs font-medium text-primary">{p.role}</p>
-                  <p className="text-sm leading-relaxed text-muted-foreground">{p.synopsis}</p>
+                  <p className="line-clamp-4 text-sm leading-relaxed text-muted-foreground">{p.synopsis}</p>
                 </button>
               ))}
             </div>
@@ -535,7 +778,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
         </section>
       )}
 
-      {/* RINGKASAN cerita terpilih */}
+      {/* ═══ SUMMARY (selected premise) ═══ */}
       {selected && (
         <section className="lk-fade-up mt-10 flex flex-1 flex-col gap-6">
           <div className="flex flex-col gap-2">

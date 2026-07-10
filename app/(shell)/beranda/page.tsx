@@ -134,6 +134,22 @@ export default async function BerandaPage() {
             Mulai Cerita Baru
           </Link>
         </section>
+
+        <section className="mb-4 flex flex-col items-start gap-3 rounded-3xl bg-secondary p-6">
+          <h2 className="font-serif text-2xl leading-snug text-secondary-foreground text-balance">
+            Sesuaikan selera ceritamu
+          </h2>
+          <p className="text-sm leading-relaxed text-secondary-foreground/70">
+            Pilih genre, gaya bahasa, dan batas cerita yang kamu suka. Lakoku akan memakai ini
+            sebagai arah awal saat membuat cerita baru.
+          </p>
+          <Link
+            href="/onboarding/selera?next=/beranda"
+            className="mt-1 flex min-h-12 items-center rounded-2xl bg-primary px-5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+          >
+            Atur selera cerita
+          </Link>
+        </section>
     </main>
   )
 }

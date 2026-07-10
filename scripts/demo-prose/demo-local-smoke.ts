@@ -41,9 +41,9 @@ for (const n of SPOT) {
   })
   assert.notEqual(fit.status, 'fail', `ch${n} beat ${JSON.stringify(fit.findings)}`)
 
-  // Soft prefer for handcraft 1–3
+  // Handcraft hard band is the gate; soft is aspirational warn.
   if (n <= 3) {
-    assert.ok(style.metrics.words >= R.words.softMin, `ch${n} soft words`)
+    assert.ok(style.metrics.words >= R.words.hardMin, `ch${n} hard words`)
   }
 
   results.push({

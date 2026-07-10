@@ -13,6 +13,26 @@ const R = MOBILE_DRAMA_RHYTHM
 const chapters = buildHandcraftChapters1to3()
 assert.equal(chapters.length, 3)
 
+function repeatedTailSignals(paragraphs: string[]): string[] {
+  const hits: string[] = []
+  const bannedTails = [
+    'di rumah itu',
+    'tanpa suara',
+    'pada pagi ini',
+    'di dada',
+    'sejenak saja',
+    'di depan mata',
+    'dengan pelan',
+    'tanpa menunduk',
+  ]
+  const blob = paragraphs.join('\n').toLowerCase()
+  for (const tail of bannedTails) {
+    const count = (blob.match(new RegExp(tail, 'g')) ?? []).length
+    if (count >= 3) hits.push(`${tail}:${count}`)
+  }
+  return hits
+}
+
 for (const ch of chapters) {
   const style = evaluateProseDraft({
     title: ch.title,
@@ -25,14 +45,14 @@ for (const ch of chapters) {
   assert.ok(style.metrics.paragraphs >= R.paragraphs.hardMin)
   assert.ok(style.metrics.paragraphs <= R.paragraphs.hardMax)
 
-  // Prefer soft targets for handcraft premium
+  // Handcraft should hit hard band; soft band is aspirational (warn, not fail).
   assert.ok(
-    style.metrics.words >= R.words.softMin,
-    `ch${ch.number} words ${style.metrics.words} < soft ${R.words.softMin}`,
+    style.metrics.words >= R.words.hardMin,
+    `ch${ch.number} words ${style.metrics.words} < hard ${R.words.hardMin}`,
   )
   assert.ok(
-    style.metrics.paragraphs >= R.paragraphs.softMin,
-    `ch${ch.number} paras ${style.metrics.paragraphs}`,
+    style.metrics.paragraphs >= R.paragraphs.hardMin,
+    `ch${ch.number} paras ${style.metrics.paragraphs} < hard ${R.paragraphs.hardMin}`,
   )
 
   const beat = getDemoBeat(ch.number)
@@ -44,15 +64,21 @@ for (const ch of chapters) {
   })
   assert.notEqual(fit.status, 'fail', `ch${ch.number} beat ${JSON.stringify(fit.findings)}`)
 
-  // No meta / filler
   const blob = ch.paragraphs.join('\n').toLowerCase()
   assert.ok(!blob.includes('pilihan menunggumu'))
   assert.ok(!blob.includes('kata kata kata'))
   assert.ok(ch.paragraphs.some((p) => /[“"]/.test(p)), `ch${ch.number} needs dialogue`)
   assert.ok(ch.paragraphs.some((p) => /\bAku\b/.test(p)))
+
+  // New guardrail: reject repeated filler-tail degeneration.
+  const tailHits = repeatedTailSignals(ch.paragraphs)
+  assert.equal(
+    tailHits.length,
+    0,
+    `ch${ch.number} repeated filler tails: ${tailHits.join(', ')}`,
+  )
 }
 
-// Distinct titles
 assert.equal(new Set(chapters.map((c) => c.title)).size, 3)
 
 console.log('handcraft-smoke PASS')

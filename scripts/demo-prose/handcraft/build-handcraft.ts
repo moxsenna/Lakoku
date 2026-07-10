@@ -1,11 +1,9 @@
 /**
  * Handcraft demo chapters 1–3 for demo:selasa-akhir.
- * Target soft band: 850–950 words, 38–48 short paragraphs, 1 line ≈ 1 sentence.
- * Core lines are editorial; pads only append (never mutate core).
+ * Full editorial prose — no padding, no generator filler, show-don't-tell.
  */
 import {
   MOBILE_DRAMA_RHYTHM,
-  countWords,
   type ChapterMode,
 } from '../../../lib/prose/mobile-drama-style'
 import { evaluateProseDraft } from '../../../lib/prose/prompt-engine'
@@ -21,231 +19,204 @@ export type HandcraftChapter = {
 
 const R = MOBILE_DRAMA_RHYTHM
 
-/** ~18–22 word single-sentence lines for padding to soft word band. */
-const PAD_POOL = [
-  'Embun menetes pelan dari atap kaca ke batu basah di halaman depan rumah kaca itu pagi ini',
-  'Aku mengencangkan tali tas di bahu kiri sampai kulit terasa perih sedikit di bawah kain',
-  'Bau teh pandan bercampur bau tanah basah masuk lewat celah pintu kayu tua di serambi',
-  'Lampu serambi bergetar pelan di tiangnya seolah takut mendengar percakapan kami yang tegang',
-  'Jari-jariku basah di resleting tas hitam yang masih dingin dari perjalanan jauh tadi pagi',
-  'Di dinding jam tua berdetak terlalu keras memotong sunyi yang tidak wajar di rumah besar',
-  'Aku menelan ludah sampai tenggorokan sakit dan dada terasa sesak di serambi yang basah',
-  'Bayanganku pucat di kaca berembun seperti orang yang belum diizinkan pulang ke rumah ayah',
-  'Sepatu basah meninggalkan jejak di ubin sebelum menghilang di ujung koridor yang gelap sekali',
-  'Aku tidak mengalihkan pandang meski lawan bicara sibuk menata cangkir di baki yang goyang',
-  'Angin basah masuk lewat celah pintu kayu membawa bau daun basah yang hampir membusuk',
-  'Dada sesak tapi kakiku tetap menolak disuruh istirahat seolah tidak terjadi apa-apa di sini',
-  'Suara di dalam rumah mati tiba-tiba seolah seseorang mencabut steker diam-diam dari dinding',
-  'Aku menghitung napas satu dua tiga agar suara tidak bergetar saat membuka mulut lagi',
-  'Teh di cangkir sudah tidak beruap lagi tapi tak ada yang membersihkan tumpahan di tepi',
-  'Debu menempel di ujung jari setelah laci bawah akhirnya terbuka dengan derit pelan di engsel',
-  'Bau minyak kayu memenuhi ruangan sampai tenggorokan terasa kering dan lidah menjadi kaku',
-  'Cahaya dari jendela memotong debu di udara seperti garis tajam yang membelah sunyi ruangan',
-  'Aku mengepal jari sampai kuku memutih dan telapak basah oleh keringat dingin di sela jari',
-  'Di luar burung mengetuk kaca sekali lalu terbang meninggalkan sunyi yang canggung di koridor',
-]
-
-function line(s: string, minWords = 20): string {
-  // One sentence; pad trailing tokens so average line hits word band at 42–48 paras.
-  let t = s.trim().replace(/[.!?…]+$/u, '')
-  const fillers = [
-    'di rumah itu',
-    'tanpa suara',
-    'pada pagi ini',
-    'di dada',
-    'sejenak saja',
-    'di depan mata',
-    'dengan pelan',
-    'tanpa menunduk',
-  ]
-  let i = 0
-  let tokens = t.split(/\s+/).filter(Boolean)
-  while (tokens.length < minWords && i < 20) {
-    tokens.push(...fillers[i % fillers.length]!.split(/\s+/))
-    i++
-  }
-  t = tokens.slice(0, Math.max(minWords, tokens.length)).join(' ')
-  // Keep single sentence
-  if (!/[.!?…]$/.test(t)) t = `${t}.`
-  return t
-}
-
-/** 42 editorial lines × ~20 words ≈ 840; pads finish soft band. */
+/** Bab 1 — arrival, cold welcome, photo frame tension. ~803 kata, 50 paragraf. */
 function coreCh1(): string[] {
   return [
-    'Embun masih menempel di atap rumah kaca setelah hujan sore yang belum benar-benar reda',
-    'Aku mengusap ujung tas hitam sampai jari-jari terasa dingin dan sedikit gemetar',
-    'Di dalam rumah piring berdenting pelan seolah seseorang pura-pura sibuk di dapur',
-    'Ibu Ratna muncul dari dapur dengan baki teh yang goyang di kedua tangannya',
-    'Ia tidak memelukku dan bahkan tidak membuka lengan untuk menyambut kepulanganku',
-    '“Istirahat dulu,” katanya datar tanpa menatap mataku lebih dari sedetik',
-    'Tatapannya jatuh ke resleting tasku seolah mencari surat bukan mencari anaknya',
-    '“Aku baru sampai Bu dan aku tidak datang hanya untuk tidur siang”',
-    '“Kamu capek dari jalan jauh nanti saja kita bicara yang berat-berat”',
-    'Teh tumpah sedikit di tepi cangkir putih tapi ia tidak membersihkan tetesan itu',
-    'Dimas lewat di koridor basah lalu berhenti sejenak di depan serambi kami',
-    '“Selamat datang Mbak Rani” ujarnya dengan nada yang terlalu hati-hati untuk keluarga',
-    'Aku mengangguk kecil sementara tenggorokan terasa kering seperti debu di bingkai foto',
-    'Di dinding foto Ayah masih tersenyum dengan bingkai yang miring sedikit ke kiri',
-    'Aku meluruskan bingkai itu pelan-pelan sampai paku di belakang berderit pelan',
-    'Ibu Ratna menahan napas hampir tak kelihatan seolah takut debu foto berpindah',
-    '“Jangan sentuh barang-barang Ayah dulu Rani biarkan semuanya tetap di tempatnya”',
-    '“Kenapa Bu apa yang bisa berantakan hanya karena aku meluruskan bingkai”',
-    '“Nanti berantakan” jawabnya singkat seperti kalimat yang sudah dipersiapkan sejak pagi',
-    'Berantakan kata itu menggantung di udara lebih keras dari denting piring di dapur',
-    'Aku menatap kaca rumah di halaman yang dikaburkan embun dan bayangan daun',
-    'Ada yang disembunyikan di rumah ini dan mereka berharap aku terlalu lelah mencari',
-    'Aku mengepal tangan di samping tubuh sampai kuku menusuk telapak yang basah',
-    '“Besok pagi aku mau ke ruang kerja Ayah meski Ibu melarangku menyentuh apa pun”',
-    'Ibu tersenyum tipis tanpa hangat seolah senyum itu hanya formalitas di serambi',
-    '“Besok kita bicarakan dulu jangan buru-buru membuat keputusan yang merusak suasana”',
-    'Lampu serambi berkedip dua kali lalu stabil kembali di atas kepala kami',
-    'Aku tidak mengalihkan pandang dari matanya meski ia sudah menunduk ke baki teh',
-    'Di luar seekor burung mengetuk kaca sekali lalu pergi meninggalkan sunyi yang canggung',
-    'Kunci di laci bawah ruang kerja masih menunggu seolah tahu namaku',
-    'Aku tahu itu ada di sana dan aku yakin mereka juga tahu',
-    'Hanya belum ada yang berani bilang lantang di depan serambi yang basah ini',
-    'Dimas menggeser sepatu di ubin seolah minta izin untuk pergi tanpa ikut campur',
-    'Aku menatap punggungnya sebentar lalu kembali menatap Ibu yang masih memegang baki',
-    'Kalau aku diam malam ini dusta mereka akan tidur nyenyak di bawah atap kaca',
-    'Kalau aku maju besok pagi ruang kerja Ayah tidak akan sama lagi',
-    'Aku menarik napas dalam-dalam sampai rusuk terasa sempit di balik baju basah',
-    'Serambi ini terlalu sempit untuk dua dusta dan satu anak yang baru pulang',
-    'Aku menaruh tas di lantai kayu yang dingin dan tidak masuk lebih dulu',
-    'Ibu melangkah mundur seolah takut tasku menyentuh kakinya yang rapi',
-    'Aku tersenyum kecil tanpa tawa karena senyum adalah senjata terakhir yang kupunya',
-    'Besok pagi aku akan berdiri di depan pintu ruang kerja dengan atau tanpa izin',
-  ].map(line)
+    // HOOK
+    'Embun masih menempel di seluruh atap rumah kaca setelah hujan sore yang baru saja reda.',
+    'Aku berdiri di serambi basah sambil memeluk tas hitamku lebih erat dari yang seharusnya.',
+    'Di dalam rumah, piring berdenting pelan—seseorang pura-pura sibuk menyambut kepulanganku.',
+    'Udara sore terlalu lembap dan menempel di kulit seperti kain basah yang lupa dijemur.',
+    'Aku menarik napas dalam, tapi paru-paruku terasa penuh bahkan sebelum sempat benar-benar mengisi. Denting piring berhenti, lalu suara langkah sandal mendekat dari arah dapur ke serambi depan.',
+    'Aku mengencangkan tali tasku dan mencoba mengingat bagaimana lantai ini dulu terasa di bawah kaki.',
+
+    // KONFLIK AWAL
+    'Ibu Ratna muncul dengan baki teh yang goyang di kedua tangannya yang mulai keriput karena usia.',
+    'Ia tidak memelukku dan bahkan tidak membuka kedua lengannya sedikit pun untuk menyambut kepulangan.',
+    'Matanya menyapu tasku dari atas ke bawah—bukan menatap wajahku yang baru tiba dari perjalanan panjang.',
+    '“Istirahat dulu Rani,” katanya datar sambil meletakkan cangkir teh panas di meja kecil serambi.',
+    'Teh tumpah sedikit ke tatakannya, tapi ia tidak membersihkan tetesan cokelat yang menggenang di kayu.',
+    '“Aku baru sampai Bu, dan aku tidak datang sejauh ini hanya untuk tidur siang di rumah keluarga.”',
+    '“Kamu capek dari perjalanan—nanti saja kita bicara yang berat, biar tenagamu benar-benar pulih dulu.”',
+    'Kata-katanya terdengar halus, tapi nadanya seperti sedang menutup pintu sebelum aku sempat masuk ke dalam.',
+    'Aku tidak duduk meskipun kursi rotan di depanku kosong dan masih menyisakan hangat dari seseorang.',
+    'Dimas melintas di koridor basah lalu berhenti tepat di ambang antara serambi dan ruang tengah yang gelap.',
+    '“Selamat datang Mbak Rani,” ujarnya dengan suara yang terlalu hati-hati untuk seorang anggota keluarga.',
+    'Seperti orang yang tahu persis di mana letak setiap retakan di lantai dan takut salah menginjak salah satunya.',
+
+    // DIALOG / KONFRONTASI
+    'Aku mengangguk kecil, tapi tenggorokanku sudah kering oleh debu perjalanan dan gugup yang tak tertahankan.',
+    '“Teh Mbak? Masih panas,” tawarnya sambil sekilas melirik cangkir yang belum kusentuh sejak tadi diletakkan.',
+    'Aku menggeleng pelan karena takut suaraku akan pecah kalau membuka mulut terlalu cepat di depan mereka.',
+    '“Dimas sudah, biar Mbak Rani istirahat dulu.” Suara Ibu memotong jauh lebih tajam dari ucapannya sendiri.',
+    'Dimas mundur selangkah, tapi kedua matanya masih tertuju padaku—seperti menyembunyikan sesuatu yang penting.',
+    'Ada kalimat yang ingin ia ucapkan dengan segera, atau kalimat yang ia takutkan akan sampai ke kedua telingaku.',
+    'Aku menoleh ke dinding serambi tempat foto Ayah masih tersenyum dari balik bingkai kayu jati yang sudah tua.',
+    'Bingkainya miring sedikit ke kiri, seolah seseorang menyenggolnya tanpa repot-repot meluruskan kembali.',
+    'Aku mengulurkan tangan untuk meluruskannya—gerakan kecil yang ribuan kali kulakukan sejak aku masih kecil.',
+    'Paku di balik bingkai kayu itu berderit pelan saat kayu yang sudah lama tidak digeser bergerak kembali ke asalnya.',
+    '“Kata Ibu jangan sentuh dulu barang-barang Ayah,” bisik Dimas dari belakang, hampir tidak terdengar.',
+    'Aku menoleh padanya sejenak—cukup lama untuk melihat bahwa ia tidak benar-benar setuju dengan larangan itu.',
+    'Tapi ia tidak berkata lebih banyak karena Ibu masih berdiri di sampingku dengan cangkir teh yang sama.',
+    '“Jangan sentuh barang-barang Ayah dulu Rani, biarkan semuanya tetap di tempatnya masing-masing saat ini.”',
+    'Suara Ibu tajam—bukan sekadar permintaan, bukan sekadar saran, melainkan perintah yang dibungkus senyum tipis.',
+    'Aku menarik tangan sebelum bingkai benar-benar lurus, lalu menoleh perlahan ke arah perempuan yang melahirkanku.',
+    '“Kenapa Bu? Aku cuma mau meluruskan foto Ayah yang sudah seminggu miring tanpa ada yang peduli sama sekali.”',
+    '“Nanti berantakan—semuanya sudah diatur rapi sejak pemakaman selesai, jangan ada satu pun yang berubah.”',
+    'Rapi—kata itu terdengar ganjil keluar dari mulut perempuan yang baru saja menguburkan suaminya minggu lalu.',
+    'Di belakang Ibu, Dimas menggigit bibir bawahnya sendiri dan menunduk dalam-dalam ke lantai ubin yang basah.',
+    'Aku tidak langsung menjawab karena sedang mencoba membaca semua yang sebenarnya mereka sembunyikan dariku.',
+    'Tatapan Ibu tidak meninggalkan wajahku, seolah sedang menunggu apakah aku akan melawan atau menyerah saja.',
+
+    // REVEAL / EMOSI
+    'Berantakan—kata itu masih menggantung di udara serambi, lebih berat dari denting piring di dapur belakang.',
+    'Aku menatap kaca rumah kaca di halaman yang dikaburkan oleh embun tebal dan bayangan daun pisang yang patah.',
+    'Kuku-kuku jariku menekan telapak tanganku sendiri, dan aku bahkan tidak sadar sejak kapan tanganku mengepal.',
+    'Dadaku sempit, tapi bukan karena capek—melainkan karena semua pertanyaan yang belum berani kutanyakan sejak tiba.',
+    'Aku menelan ludah dan merasakan detak di pelipis yang mulai berdetak lebih keras dari jam dinding di ruang tamu.',
+    'Ada sesuatu yang disembunyikan di dalam rumah ini, dan mereka semua jelas berharap aku terlalu lelah untuk mencari.',
+    'Tapi aku tidak lelah—aku hanya belum memutuskan seberapa keras aku akan mengetuk pintu mereka besok pagi, dan aku masih ingat setiap sudut koridor yang menuju ke ruang kerja Ayah.',
+
+    // CLIFFHANGER
+    '“Besok pagi aku mau ke ruang kerja Ayah—dengan atau tanpa izin dari Ibu.”',
+    'Ia tersenyum tipis tanpa kehangatan—senyum formalita yang sudah lama bukan lagi milikku di rumah ini.',
+    '“Besok kita bicarakan dulu, jangan buru-buru membuat keputusan yang bisa merusak suasana seluruh rumah.” Lampu serambi berkedip dua kali lalu stabil kembali—tapi burung di luar sudah tidak kembali mengetuk kaca.',
+  ]
 }
 
+/** Bab 2 — ruang kerja Ayah, laci, kunci, brankas, konfrontasi dengan Dimas. */
 function coreCh2(): string[] {
   return [
-    'Pintu ruang kerja Ayah setengah terbuka membiarkan bau kertas tua keluar ke koridor',
-    'Bau minyak kayu menempel di lidah begitu aku melangkah masuk tanpa mengetuk',
-    'Laci bawah macet seolah sengaja menahan siapapun yang terlalu penasaran pagi ini',
-    'Aku menarik lebih kuat sampai engsel berderit dan debu beterbangan di cahaya jendela',
-    'Kunci kecil tergeletak di antara amplop kosong terasa dingin dan berkarat di ujungnya',
-    '“Mbak” suara Dimas muncul di ambang pintu sebelum bayangannya sepenuhnya masuk',
-    'Tangan Dimas di saku celana tapi bahunya tegang seperti orang yang menjaga rahasia',
-    '“Kalau dibuka sekarang semuanya berubah dan Ibu tidak akan memaafkanmu mudah”',
-    'Aku memutar badan sambil mengepal kunci sampai kuku memutih di telapak basah',
-    '“Berubah untuk siapa Dimas untuk Ibu atau untuk orang yang sudah mengusap debu”',
-    'Ia terdiam dan rahangnya mengeras seolah kata jujur tertahan di belakang gigi',
-    '“Untuk semuanya termasuk kamu kalau terus menggali tanpa hati-hati di rumah ini”',
-    'Di pojok ruangan brankas tua menempel di lantai dengan debu tebal di tutupnya',
-    'Kecuali satu sudut yang mengkilap karena baru diusap oleh tangan yang terburu-buru',
-    'Seseorang sudah ke sini sebelum aku dan mereka tidak sempat merapikan semuanya',
-    '“Siapa yang buka brankas ini Dimas jangan bilang kamu tidak tahu sama sekali”',
-    '“Aku tidak tahu” jawabnya terlalu cepat dengan nada yang mulus dan berbahaya',
-    'Bohong itu terdengar rapi seperti kalimat yang sudah dipraktikkan di depan cermin',
-    'Aku melangkah mendekati brankas sambil merasakan detak di ujung jari yang gemetar',
-    'Dimas mengangkat tangan bukan menahan tubuhku tapi meminta sedetik waktu tambahan',
-    '“Tunggu Ibu dulu Mbak jangan sendirian kalau isinya bukan yang kamu kira”',
-    '“Ibu yang melarangku menyentuh barang Ayah sejak aku menginjakkan kaki di serambi”',
-    'Diam sebentar hanya diisi detak jam di meja dan desis hujan di kaca',
-    'Di luar burung mengetuk kaca sekali seolah mengingatkan bahwa waktu terus berjalan',
-    'Aku menelan ludah dan merasakan kunci di tangan seolah berubah panas tiba-tiba',
-    'Celan brankas menunggu dan debu di sudut mengkilap itu menatap balik seperti bukti',
-    'Dimas tidak bergerak dari ambang seolah kakinya dipaku oleh rasa bersalah',
-    'Aku menatap matanya lama sampai ia mengalihkan pandang duluan ke lantai kayu',
-    'Itu cukup bagiku untuk tahu siapa yang takut dan siapa yang sudah sempat masuk',
-    'Aku bisa memutar kunci sekarang dan melihat apa yang mereka sembunyikan dari Ayah',
-    'Atau aku bisa menyimpan kunci ini dan mencari saksi sebelum mereka menutup jejak',
-    'Jari-jariku gemetar di lutut celana meski wajah ku kususun agar tampak tenang',
-    'Ruangan itu terlalu sunyi untuk dusta yang mereka jaga sejak pemakaman selesai',
-    'Aku menghela napas pendek sampai dada naik turun di balik kemeja basah keringat',
-    'Di meja Ayah ada foto lama yang bingkainya juga miring seperti di serambi',
-    'Aku tidak meluruskannya kali ini karena tanganku masih penuh dengan kunci dingin',
-    'Dimas bergeser sedikit seolah memberi jalan tapi matanya memohon agar aku mundur',
-    'Aku tidak mundur satu langkah pun dari brankas yang menunggu di pojok ruangan',
-    'Kalau aku buka sekarang cerita keluarga ini tidak akan bisa dikembalikan ke semula',
-    'Kalau aku tunggu mereka akan sempat menghapus sudut mengkilap itu sampai bersih',
-    'Aku mengepal kunci sekali lagi sampai logam menekan tulang di tengah telapak',
-    'Keputusan itu berdiri di antara napasku dan bunyi engsel brankas yang belum terbuka',
-  ].map(line)
+    // HOOK
+    'Pintu ruang kerja Ayah sudah setengah terbuka ketika aku sampai di ujung koridor pagi itu.',
+    'Bau kertas tua dan minyak kayu keluar dari celah pintu, menempel di langit-langit mulutku.',
+    'Aku tidak mengetuk—karena Ayah sudah tidak di dalam, dan yang kutakutkan bukan mengganggu orang hidup.',
+    'Lampu meja menyala redup di atas tumpukan map cokelat yang bertebaran di seluruh permukaan kayu yang berdebu, bergetar setiap kali hujan mengetuk jendela dengan ritme yang tidak sabar menunggu seseorang membuka isinya.',
+
+    // KONFLIK AWAL
+    'Laci bawah meja kayu jati itu macet ketika aku menariknya dengan tangan kanan.',
+    'Aku mencoba lagi, kali ini lebih kuat, sampai engselnya berderit dan debu beterbangan di bawah sinar pagi.',
+    'Di antara amplop-amplop kosong dan ballpoint yang tintanya sudah mengering, jariku menyentuh sesuatu.',
+    'Sebuah kunci kecil—berkarat di ujungnya, tapi masih utuh—terselip di lipatan kertas pembungkus cokelat.',
+    'Aku mengangkat kunci kecil itu ke depan mata dan merasakan bobot yang lebih berat dari logam biasa—kunci brankas, bentuknya khas dengan segitiga di pangkal yang persis seperti yang dulu Ayah tunjukkan padaku semasa aku masih remaja dan belum pergi dari rumah ini.',
+
+    // DIALOG / KONFRONTASI
+    '“Mbak.”',
+    'Suara itu muncul sebelum bayangan—Dimas berdiri di ambang pintu, satu tangan masih di saku celana.',
+    'Ia tidak masuk penuh ke dalam ruangan, tapi cukup dekat untuk membuat jarak di antara kami terasa sempit.',
+    '“Pagi-pagi sudah ke sini,” katanya sambil menatap kunci di tanganku, bukan mataku.',
+    '“Aku tidak minta izin untuk masuk ke ruang kerja Ayah, Dimas. Ini tetap rumahku juga.”',
+    'Rahangnya mengeras sepersekian detik sebelum ia menghela napas panjang dan menyandarkan bahu di kusen.',
+    '“Kalau Mbak buka brankas itu sekarang, semuanya berubah—dan Ibu tidak akan memaafkanmu dengan mudah.”',
+    '“Berubah untuk siapa? Untuk Ibu, atau untuk orang yang sudah mengusap debu di tutup brankas?”',
+    'Dimas membuka mulut lalu menutupnya lagi, seolah menelan nama seseorang yang belum boleh disebut.',
+    '“Untuk semuanya—termasuk Mbak sendiri, kalau terus menggali tanpa hati-hati di rumah ini.”',
+    'Aku mengepal kunci di telapak tangan sampai logamnya menekan tulang dan terasa panas oleh keringat.',
+    'Aku berbalik dan melangkah ke pojok ruangan tempat brankas tua itu menempel di lantai seperti kotak buta.',
+    'Debu tebal menyelimuti hampir seluruh permukaannya—kecuali satu sudut yang bersih dan agak mengkilap.',
+    'Seseorang sudah membukanya belum lama ini, dan mereka terburu-buru sehingga tidak sempat mengotori lagi.',
+    'Aku berjongkok dan menyentuh sudut bersih itu dengan ujung jari—licin seperti baru saja dilap tadi malam oleh seseorang yang tidak ingin meninggalkan jejak.',
+    '“Siapa yang terakhir buka brankas ini, Dimas? Jangan bohong padaku pagi-pagi begini.”',
+    '“Aku tidak tahu,” jawabnya terlalu cepat—terlalu mulus untuk sebuah kebenaran yang sesungguhnya.',
+    'Bohong itu terdengar rapi, seperti kalimat yang sudah dipraktikkan di depan cermin sebelum aku tiba.',
+    'Aku berjongkok lebih rendah di depan brankas dan merasakan hawa dingin dari logam yang belum tersentuh matahari pagi, sementara jari-jariku mulai gemetar di atas lutut.',
+    'Dari sudut mata, aku melihat Dimas mengangkat tangan—bukan untuk menahanku, lebih seperti minta waktu.',
+    '“Tunggu Ibu dulu, Mbak. Jangan sendirian—kalau isinya bukan yang Mbak kira, aku tidak bisa bantu.”',
+    '“Ibu yang melarangku menyentuh barang Ayah sejak kakiku menginjak serambi. Kenapa aku harus menunggu?”',
+    'Hanya detak jam di meja dan desis hujan yang kembali menguat di kaca jendela yang mulai berembun.',
+    'Aku menelan ludah dan merasakan kunci di tanganku seolah berubah lebih panas dari sekadar logam biasa.',
+    'Celan brankas menunggu, dan Dimas masih berdiri di ambang tanpa bergerak—patung penjaga yang ragu.',
+    'Aku menatap matanya lama, sampai ia mengalihkan pandang duluan ke lantai kayu yang mulai berdebu lagi.',
+    'Jari-jariku gemetar di lutut, tapi aku memaksa wajahku tetap tenang—setenang permukaan air di gelas.',
+
+    // REVEAL / EMOSI
+    'Dimas tidak menjawab, hanya menunduk dan menggigit bibir bawahnya sendiri seperti anak kecil yang ketahuan.',
+    'Di luar jendela, seekor burung mengetuk kaca sekali—lalu terbang, meninggalkan sunyi yang canggung di antara kami.',
+    'Aku menatap celah kunci di brankas itu dan merasakan jari-jariku gemetar, bukan karena takut—tapi karena ragu.',
+    'Kalau aku memutar kunci sekarang, aku akan melihat apa yang mereka sembunyikan sejak pemakaman selesai.',
+    'Tapi aku juga akan membakar jembatan yang bahkan belum sempat kuperiksa apakah masih bisa kupercaya atau tidak.',
+    '“Dimas—kalau aku tanya sekarang, apa kamu akan jujur padaku, atau kamu akan terus jaga rahasia yang bahkan Ibu takut sebut namanya?”',
+    'Ia mengangkat wajahnya perlahan, dan untuk pertama kalinya pagi ini, ia menatap mataku tanpa mengalihkan pandangannya—bukan tatapan orang bersalah, melainkan tatapan seseorang yang takut pada sesuatu yang jauh lebih besar dari dirinya sendiri.',
+
+    // CLIFFHANGER
+    'Aku menggenggam kunci brankas lebih erat—logamnya dingin, tapi keputusan di ujung jariku terasa panas.',
+    'Dimas masih berdiri di ambang pintu, tidak masuk, tidak pergi—hanya menunggu apa yang akan kulakukan.',
+    'Aku bisa memutar kunci sekarang, mendengar bunyi klik yang tidak bisa diulang, dan tahu semuanya hari ini.',
+    'Atau aku bisa menyimpan kunci ini dan mencari saksi dulu—Pak Hendra, notaris yang suaranya gemetar di telepon.',
+    'Di luar, hujan mulai lagi, mengetuk atap kaca dengan ritme yang semakin cepat dan tidak sabar menunggu.',
+    'Aku menelan ludah dengan susah payah—pilihanku berikutnya akan disaksikan Dimas, dan dia pasti akan membawa cerita ini ke Ibu begitu aku selesai.',
+  ]
 }
 
+/** Bab 3 — dapur, meja makan, notaris ditolak, Dimas jadi celah. */
 function coreCh3(): string[] {
   return [
-    'Dapur terlalu sunyi untuk rumah sebesar ini padahal piring masih menumpuk di wastafel',
-    'Aku menuang air ke gelas dan melihat permukaan air bergetar di nampan goyang',
-    '“Kamu curiga terus” kata sepupuku dari meja makan dengan senyum yang tidak sampai mata',
-    '“Aku cuma tanya siapa yang mengurus wasiat sejak Ayah dikubur dengan tergesa-gesa”',
-    'Ia tertawa pendek lalu mengetuk meja dengan kuku seolah menandai tuduhannya padaku',
-    '“Dasar anak kota semua masalah mau dibawa ke notaris biar kelihatan hebat”',
-    'Ibu Ratna masuk dengan celemek basah dan wajah yang sudah disiapkan untuk damai palsu',
-    '“Sudah makan dulu Rani jangan bikin suasana dapur lebih berat dari masakannya”',
-    'Aku tidak duduk meski kursi di depanku kosong dan masih hangat dari seseorang',
-    '“Pak Hendra menolak ketemu tanpa janji dan suaranya gemetar saat menolak di telepon”',
-    '“Kenapa Bu notaris keluarga tiba-tiba sibuk tepat saat aku mulai bertanya”',
-    'Sendok jatuh di tepi piring dan dentingnya memotong tawa palsu di sudut dapur',
-    'Ibu menunduk mengambil sendok itu pelan-pelan seolah dunia bisa dirapikan dengan lap',
-    '“Notaris sibuk Rani orang seperti dia memang punya banyak klien di kota”',
-    '“Sibuk atau disuruh diam oleh orang di meja ini yang takut pertanyaan sederhana”',
-    'Semua orang menoleh termasuk Dimas yang berdiri di pintu tanpa berani masuk penuh',
-    'Matanya memperingatkanku agar pelan tapi aku sudah lelah menjadi anak yang patuh',
-    'Aku mengetuk tepi meja dengan jari sampai kuku berbunyi di kayu yang tergores',
-    '“Kalau kalian bersih kenapa takut pada satu pertanyaan soal wasiat dan notaris”',
-    'Sepupuku bangkit dari kursi sampai kursi bergeser kasar di ubin dapur yang licin',
-    '“Kamu bikin suasana rusak padahal Ibu sudah capek mengurus semuanya sendirian”',
-    '“Suasana sudah rusak sejak Ayah dikubur cepat dan brankasnya sudah ada yang usap”',
-    'Ibu Ratna menatapku lama dengan suara rendah yang lebih berbahaya dari teriakan',
-    '“Cukup Rani” katanya seperti menutup pintu dari dalam tanpa kunci yang kulihat',
-    'Itu bukan marah terbuka melainkan ancaman yang dibungkus sopan santun keluarga besar',
-    'Aku menghela napas dan melihat bayanganku pucat di jendela yang mulai diguyur hujan',
-    'Di saku celana nomor Hendra masih tersimpan bersama getar panggilan yang putus tadi',
-    'Aku bisa mendesak janji ketemu notaris sampai ia tidak punya alasan sibuk lagi',
-    'Atau aku bisa menggali lewat Dimas tanpa meledakkan meja makan siang ini',
-    'Hujan mengetuk kaca dengan ritme yang semakin cepat seperti hitungan yang tidak sabar',
-    'Tik tik tik seolah mengingatkan bahwa dusta tidak bisa disimpan selamanya di dapur',
-    'Aku menatap Ibu sekali lagi dan ia memalingkan wajah duluan ke wastafel basah',
-    'Dimas menggigit bibir bawah seolah menahan nama seseorang yang belum boleh disebut',
-    'Sepupuku duduk kembali dengan muka merah tapi matanya menghindari gelas di depannya',
-    'Aku tidak tersenyum karena senyum di dapur ini sudah dipakai untuk menutupi terlalu banyak',
-    'Kalau aku diam sekarang wasiat akan tetap jadi cerita versi mereka yang rapi',
-    'Kalau aku maju Hendra harus menjawab dan meja ini tidak akan sama lagi',
-    'Aku mengepal tepi meja sampai pucat agar suara tetap stabil saat berbicara lagi',
-    '“Aku minta jadwal ketemu Pak Hendra besok atau aku datang tanpa diundang”',
-    'Tidak ada yang menjawab dulu hanya denting kulkas dan hujan di kaca dapur',
-    'Ibu memeras kain di wastafel sampai air menetes seperti waktu yang dipaksa keluar',
-    'Aku menunggu jawaban mereka sambil merasakan detak di pelipis yang semakin keras',
-  ].map(line)
-}
+    // HOOK
+    'Dapur terlalu sunyi untuk rumah sebesar ini, padahal piring kotor masih menumpuk di wastafel sejak semalam.',
+    'Aku menuangkan air ke gelas dan melihat permukaannya bergetar karena tanganku belum sepenuhnya stabil pagi ini.',
+    'Dari meja makan, sepupuku menatapku dengan senyum setengah yang tidak pernah benar-benar sampai ke kedua matanya.',
+    '“Kamu masih curiga terus ya Ran—padahal Ibu sudah capek banget ngurusin semuanya sendirian dari pemakaman.”',
 
-function padToBand(core: string[]): string[] {
-  const out = [...core]
-  let i = 0
-  let w = countWords(out.join(' '))
-  // Fill to soft paragraph min first
-  while (out.length < R.paragraphs.softMin) {
-    out.push(line(PAD_POOL[i % PAD_POOL.length]!))
-    i++
-    w = countWords(out.join(' '))
-  }
-  // Grow words within soft paragraph max
-  while (w < R.words.softMin && out.length < R.paragraphs.softMax) {
-    out.push(line(PAD_POOL[i % PAD_POOL.length]!))
-    i++
-    w = countWords(out.join(' '))
-  }
-  // Hard floor if still short
-  while (w < R.words.hardMin && out.length < R.paragraphs.hardMax) {
-    out.push(line(PAD_POOL[i % PAD_POOL.length]!))
-    i++
-    w = countWords(out.join(' '))
-  }
-  return out
-}
+    // KONFLIK AWAL
+    '“Aku cuma tanya siapa yang mengurus wasiat Ayah—kenapa itu bikin semua orang di meja ini gelisah?”',
+    'Ia tertawa pendek, lalu mengetuk meja dengan kuku jari telunjuk seolah menandai setiap tuduhan yang belum diucapkan.',
+    '“Dasar anak kota—semua urusan mau dibawa ke notaris, ke dokumen, ke tanda tangan, biar kelihatan hebat.”',
+    'Aku meletakkan gelas lebih keras dari yang kumaksud, dan bunyinya memotong tawa sepupuku di tengah jalan.',
+    'Ibu masuk dari pintu belakang dengan celemek masih basah dan wajah yang sudah disiapkan untuk damai di meja.',
+    '“Sudah—makan dulu Rani. Jangan bikin suasana dapur lebih berat dari masakan Ibu yang bahkan belum matang.”',
+    'Aku tidak duduk meskipun kursi di depanku kosong dan masih menyisakan hangat dari punggung seseorang.',
+    '“Pak Hendra menolak bertemu tanpa janji Bu—suaranya gemetar di telepon seperti orang yang disuruh tutup mulut.”',
+    'Sendok jatuh dari tangan sepupuku dan mendenting nyaring di lantai ubin yang dingin karena hujan tadi malam.',
 
-function coreFor(ch: 1 | 2 | 3): string[] {
-  if (ch === 1) return coreCh1()
-  if (ch === 2) return coreCh2()
-  return coreCh3()
+    // DIALOG / KONFRONTASI
+    'Ibu menunduk pelan dan mengambil sendok itu dari lantai seperti dunia bisa dirapikan hanya dengan gerakan kecil.',
+    '“Notaris sibuk Rani—orang seperti Pak Hendra memang banyak klien di kota, bukan cuma keluarga kita yang kecil.”',
+    '“Sibuk, atau disuruh diam oleh seseorang di meja ini yang takut pada satu pertanyaan sederhana dariku?”',
+    'Semua mata menoleh—bahkan Dimas yang berdiri di ambang pintu dapur tanpa berani masuk sepenuhnya sejak tadi.',
+    '“Kamu keterlaluan,” desis sepupuku sambil bangkit dari kursi dan menggesernya kasar di atas ubin yang licin.',
+    '“Dia baru datang dua hari dan sudah berani nuduh keluarga sendiri seperti kita ini maling warisan!”',
+    '“Aku tidak bilang maling—aku hanya tanya kenapa notaris keluarga tiba-tiba tidak bisa ditemui sejak aku pulang.”',
+    'Ibu mengangkat tangan kanannya dengan pelan, dan seluruh meja kembali sunyi—hanya suara kulkas tua berdengung.',
+    'Sepupuku masih berdiri dengan napas memburu, tapi ia tidak berani melanjutkan kalimatnya di depan Ibu yang sudah mengangkat tangan.',
+    'Dimas—yang sejak tadi diam—tiba-tiba melangkah setapak ke dalam dapur dan menyentuh lenganku dengan ujung jarinya.',
+    '“Mbak,” bisiknya nyaris tanpa suara, “nanti aku cerita—tapi jangan di sini, jangan di depan Ibu.”',
+    'Aku menoleh dan menangkap tatapannya yang penuh peringatan—bukan ancaman, tapi permohonan dari seseorang yang juga terjebak.',
+    'Aku mengangguk kecil, terlalu kecil untuk dilihat Ibu, tapi cukup besar untuk membuat Dimas menarik tangannya kembali.',
+    '“Cukup kalian semua—Rani capek dari perjalanan jauh, kalian juga capek. Makan dulu baru kita bicara.”',
+    'Aku menatap piring kosong di hadapanku, lalu menatap Ibu yang tetap tidak menatapku balik sejak tadi pagi.',
+    '“Bu—aku cuma mau tahu apa isi wasiat Ayah. Itu hakku sebagai anak kandungnya, kan?”',
+    'Ibu menghela napas panjang dan meletakkan sendok kayu di atas meja dengan gerakan yang sangat pelan.',
+    '“Nanti. Bukan sekarang saat kamu masih penuh curiga seperti ini—ada waktunya untuk semua itu nanti.”',
+    '“Kalau memang tidak ada yang disembunyikan, kenapa waktunya tidak sekarang saja di meja ini?”',
+    'Ibu tidak langsung menjawab—ia menatap jendela yang mulai diguyur hujan, seolah menghitung sesuatu di kepalanya.',
+    'Aku bisa melihat kerut di dahinya semakin dalam, dan untuk pertama kalinya, aku melihat Ibu ragu di depanku.',
+    '“Kamu tidak akan mengerti sekarang, Rani—tapi semua yang Ibu lakukan selama ini, Ibu lakukan untuk keluarga ini.”',
+
+    // REVEAL / EMOSI
+    'Pertanyaan itu menggantung di atas meja lebih lama dari yang kuduga—tidak ada yang berani menjawab dulu, bahkan sepupuku yang biasanya paling cepat bicara.',
+    'Sepupuku duduk kembali dengan muka merah padam dan mata yang jelas menghindari gelas serta piring di hadapannya, seolah benda-benda dapur itu bisa menyelamatkannya dari pertanyaan-pertanyaanku.',
+    'Dimas—yang sejak tadi hanya diam di ambang pintu seperti patung kayu—menggigit bibir bawahnya sendiri dan menatapku dengan sorot mata yang seolah berteriak bahwa dia ingin mengatakan sesuatu yang sudah terlalu lama disimpan.',
+    'Tapi ia tidak bicara apapun karena Ibu masih berdiri di antara kami semua dengan celemek basah dan senyum tipis.',
+    'Aku mengepal pinggiran meja kayu sampai buku-buku jariku memutih dan rasa sakit mulai menusuk di setiap sendi, sementara aku ingat Ayah pernah bilang: kebenaran selalu punya harga, kau tinggal pilih mau bayar sekarang atau nanti, Ran.',
+
+    // CLIFFHANGER
+    'Aku menghembuskan napas pelan-pelan dan menatap jendela dapur yang mulai diguyur hujan pagi yang semakin deras.',
+    'Tik, tik, tik—seperti hitungan mundur yang tidak ada satupun dari mereka berani menyebutkan angka terakhirnya.',
+    'Aku bisa terus mendesak di meja ini, atau aku bisa menggali lewat Dimas tanpa ribut di depan semua orang.',
+    'Dimas—yang masih berdiri di ambang pintu—menangkap tatapanku, dan kali ini dia tidak menunduk lebih dulu.',
+    'Hujan semakin deras di kaca jendela, menenggelamkan suara kulkas dan denting piring yang sudah tidak ada lagi.',
+    'Aku tahu besok pagi aku harus memilih dengan jelas: Hendra dulu, atau Dimas dulu—dua jalan yang punya risiko dan harga yang sangat berbeda.',
+  ]
 }
 
 export function buildHandcraftChapter(chapterNumber: 1 | 2 | 3): HandcraftChapter {
   const beat = getDemoBeat(chapterNumber)
-  const paragraphs = padToBand(coreFor(chapterNumber))
+  const coreMap: Record<1 | 2 | 3, () => string[]> = {
+    1: coreCh1,
+    2: coreCh2,
+    3: coreCh3,
+  }
+  const paragraphs = coreMap[chapterNumber]()
 
   const report = evaluateProseDraft({
     title: beat.title,

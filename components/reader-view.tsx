@@ -2,12 +2,15 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Settings2, Flag, Minus, Plus, RefreshCw, X, List, Check } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { ArrowLeft, Settings2, Flag, Minus, Plus, RefreshCw, List, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   clearPendingChoice,
   getPendingChoice,
   recordChapterReached,
+  recordLastChoiceSummary,
+  getLastChoiceSummary,
   recordPendingChoice,
   retryPendingChoice,
   submitChoice,
@@ -23,7 +26,7 @@ import { ChapterListDialog } from '@/components/chapter-list-dialog'
 import { useReaderFontSize } from '@/components/font-size-provider'
 
 type ReaderTheme = 'ink' | 'cream'
-type Phase = 'reading' | 'processing' | 'pending' | 'consequence'
+type Phase = 'reading' | 'processing' | 'pending'
 const SELECTED_FEEDBACK_MS = 180
 const MIN_PROCESSING_MS = 1200
 
@@ -37,24 +40,26 @@ export function ReaderView({
   fallbackFromChapter,
   isReRead = false,
   previousChoice = null,
+  previousChapterJejak = null,
 }: {
   story: StoryDetail
   chapter: Chapter
   fallbackFromChapter?: number
   isReRead?: boolean
   previousChoice?: JejakItem | null
+  previousChapterJejak?: JejakItem | null
 }) {
+  const router = useRouter()
   const [theme, setTheme] = useState<ReaderTheme>('ink')
   const { fontSize, decreaseFontSize, increaseFontSize } = useReaderFontSize()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
   const [chapterListOpen, setChapterListOpen] = useState(false)
   const [phase, setPhase] = useState<Phase>('reading')
-  const [consequence, setConsequence] = useState<string[]>([])
-  const [nextChapterNumber, setNextChapterNumber] = useState<number | null>(null)
-  const [isEnding, setIsEnding] = useState(false)
   const [pendingChoice, setPendingChoice] = useState<PendingChoice | null>(null)
   const [selectedChoiceId, setSelectedChoiceId] = useState<string | null>(null)
+  // Fallback guest: ringkasan pilihan dari localStorage (dibaca setelah mount).
+  const [localPreviousChoice, setLocalPreviousChoice] = useState<JejakItem | null>(null)
   // Guard anti double-advance: cegah pilihan terkirim lebih dari sekali
   // (mis. tap ganda) sebelum state processing sempat merender ulang.
   const submittingRef = useRef(false)
@@ -74,19 +79,47 @@ export function ReaderView({
     }
   }, [story.id, chapter.number])
 
-  function showOutcome(outcome: ChoiceOutcome) {
+  // Fallback tamu: baca ringkasan pilihan dari localStorage setelah mount
+  // (hindari hydration mismatch — jangan baca localStorage langsung di render).
+  useEffect(() => {
+    if (previousChapterJejak || isReRead) return
+    setLocalPreviousChoice(getLastChoiceSummary(story.id, chapter.number))
+  }, [story.id, chapter.number, previousChapterJejak, isReRead])
+
+  // Resolve previous choice untuk card: server jejak utama, localStorage fallback.
+  const effectivePreviousChoice = previousChapterJejak ?? localPreviousChoice
+
+  function showOutcome(outcome: ChoiceOutcome, choiceId?: string) {
     clearPendingChoice()
     setPendingChoice(null)
-    // Bila cerita berlanjut, tandai bab berikutnya sudah terbuka (monotonic).
-    if (!outcome.isEnding && outcome.nextChapterNumber != null) {
-      recordChapterReached(story.id, outcome.nextChapterNumber)
+
+    // Ending: tidak perlu simpan summary — redirect langsung ke halaman akhir.
+    if (outcome.isEnding) {
+      submittingRef.current = false
+      setSelectedChoiceId(null)
+      router.push(`/akhir/${story.id}`)
+      return
     }
-    setConsequence(outcome.consequence)
-    setNextChapterNumber(outcome.nextChapterNumber)
-    setIsEnding(outcome.isEnding)
-    setSelectedChoiceId(null)
+
+    const nextBab = outcome.nextChapterNumber ?? chapter.number + 1
+    recordChapterReached(story.id, nextBab)
+
+    // Simpan ringkasan untuk fallback tamu (server jejak tidak tersedia tanpa login).
+    const chosenLabel =
+      chapter.choices?.find((c) => c.id === choiceId)?.label ?? ''
+    if (chosenLabel) {
+      recordLastChoiceSummary({
+        storyId: story.id,
+        fromChapter: chapter.number,
+        toChapter: nextBab,
+        decision: chosenLabel,
+        consequence: outcome.consequence[0] ?? '',
+      })
+    }
+
     submittingRef.current = false
-    setPhase('consequence')
+    setSelectedChoiceId(null)
+    router.push(`/baca/${story.id}?bab=${nextBab}`)
   }
 
   async function chooseOption(id: string) {
@@ -102,7 +135,7 @@ export function ReaderView({
       setPhase('processing')
       const [result] = await Promise.all([outcomePromise, wait(MIN_PROCESSING_MS)])
       if (!result.ok) throw result.error
-      showOutcome(result.outcome)
+      showOutcome(result.outcome, id)
     } catch {
       const pending = recordPendingChoice({
         storyId: story.id,
@@ -128,7 +161,7 @@ export function ReaderView({
         setPhase('reading')
         return
       }
-      showOutcome(outcome)
+      showOutcome(outcome, pendingChoice?.choiceId)
     } catch {
       setPendingChoice(getPendingChoice())
       submittingRef.current = false
@@ -142,10 +175,10 @@ export function ReaderView({
         <span className="lk-pulse-soft font-serif text-2xl text-foreground">lakoku</span>
         <div className="flex flex-col gap-2">
           <h1 className="font-serif text-2xl leading-snug text-foreground text-balance">
-            Keputusanmu sedang mengubah cerita.
+            Pilihanmu sedang mengubah jalan cerita...
           </h1>
           <p className="text-sm leading-relaxed text-muted-foreground">
-            Malam itu belum selesai. Apa yang terjadi selanjutnya sedang ditentukan oleh pilihanmu.
+            Kami sedang menulis bab berikutnya berdasarkan keputusanmu.
           </p>
         </div>
         <div className="h-1 w-48 overflow-hidden rounded-full bg-muted">
@@ -320,6 +353,21 @@ export function ReaderView({
       )}
 
       <article className="flex flex-col gap-6 px-6 pb-16 pt-8">
+        {/* Card ringkasan pilihan sebelumnya (dari server jejak atau localStorage fallback tamu). */}
+        {effectivePreviousChoice && !isReRead && (
+          <div className="lk-fade-up rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-lavender">
+              Pilihanmu sebelumnya
+            </p>
+            <p className="mt-2 text-sm font-medium text-foreground">
+              "{effectivePreviousChoice.decision}"
+            </p>
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+              {effectivePreviousChoice.consequence}
+            </p>
+          </div>
+        )}
+
         <h1 className="font-serif text-3xl leading-tight text-foreground text-balance">
           {chapter.title}
         </h1>
@@ -333,16 +381,6 @@ export function ReaderView({
               {p}
             </p>
           ))}
-
-          {phase === 'consequence' && consequence.length > 0 && (
-            <div className="lk-fade-up flex flex-col gap-5 border-l-2 border-primary/50 pl-4">
-              {consequence.map((p, i) => (
-                <p key={i} className="text-pretty">
-                  {p}
-                </p>
-              ))}
-            </div>
-          )}
         </div>
 
         {phase === 'reading' && chapter.choices && (
@@ -407,33 +445,6 @@ export function ReaderView({
               </Link>
             )}
           </section>
-        )}
-
-        {phase === 'consequence' && (
-          <div className="lk-fade-up mt-6 flex flex-col gap-3 border-t border-border pt-6">
-            <p className="text-center text-xs text-muted-foreground">
-              Akhir Bab {chapter.number}. Pilihanmu telah mengubah hubungan ini.
-            </p>
-            <Link
-              href={
-                isEnding
-                  ? `/akhir/${story.id}`
-                  : `/baca/${story.id}?bab=${nextChapterNumber ?? chapter.number + 1}`
-              }
-              className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
-            >
-              {isEnding
-                ? 'Lihat Akhir Cerita'
-                : `Lanjut ke Bab ${nextChapterNumber ?? chapter.number + 1}`}
-            </Link>
-            <Link
-              href="/beranda"
-              className="flex min-h-13 items-center justify-center rounded-2xl border border-border px-6 text-sm font-semibold text-foreground transition-colors hover:bg-card"
-            >
-              <X className="mr-2 size-4" aria-hidden="true" />
-              Kembali ke Beranda
-            </Link>
-          </div>
         )}
       </article>
 

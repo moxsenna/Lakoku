@@ -62,6 +62,9 @@ export default async function BacaPage({
   const previousChoice = story.jejak.find((j) => j.chapter === chapter.number) ?? null
   const isReRead = !!previousChoice && chapter.number < story.currentChapter
 
+  // Ringkasan pilihan dari bab sebelumnya — untuk card "Pilihanmu sebelumnya".
+  const previousChapterJejak = story.jejak.find((j) => j.chapter === chapter.number - 1) ?? null
+
   return (
     <ReaderView
       key={chapter.number}
@@ -70,6 +73,7 @@ export default async function BacaPage({
       fallbackFromChapter={fallbackFromChapter}
       isReRead={isReRead}
       previousChoice={previousChoice}
+      previousChapterJejak={previousChapterJejak}
     />
   )
 }

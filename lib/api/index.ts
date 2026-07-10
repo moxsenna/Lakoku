@@ -30,3 +30,4 @@ export {
   retryPendingChoice,
 } from './pending-choice'
 export type { PendingChoice, PendingChoiceInput, SubmitChoiceFn } from './pending-choice'
+export { recordLastChoiceSummary, getLastChoiceSummary } from './last-choice-summary'

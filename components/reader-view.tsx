@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Settings2, Flag, Minus, Plus, RefreshCw, X } from 'lucide-react'
+import { ArrowLeft, Settings2, Flag, Minus, Plus, RefreshCw, X, List, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   clearPendingChoice,
@@ -13,11 +13,13 @@ import {
   submitChoice,
   type Chapter,
   type ChoiceOutcome,
+  type JejakItem,
   type PendingChoice,
   type StoryDetail,
 } from '@/lib/api'
 import { ReportDialog } from '@/components/report-dialog'
 import { ChapterUnavailableBanner } from '@/components/chapter-unavailable-banner'
+import { ChapterListDialog } from '@/components/chapter-list-dialog'
 import { useReaderFontSize } from '@/components/font-size-provider'
 
 type ReaderTheme = 'ink' | 'cream'
@@ -33,15 +35,20 @@ export function ReaderView({
   story,
   chapter,
   fallbackFromChapter,
+  isReRead = false,
+  previousChoice = null,
 }: {
   story: StoryDetail
   chapter: Chapter
   fallbackFromChapter?: number
+  isReRead?: boolean
+  previousChoice?: JejakItem | null
 }) {
   const [theme, setTheme] = useState<ReaderTheme>('ink')
   const { fontSize, decreaseFontSize, increaseFontSize } = useReaderFontSize()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
+  const [chapterListOpen, setChapterListOpen] = useState(false)
   const [phase, setPhase] = useState<Phase>('reading')
   const [consequence, setConsequence] = useState<string[]>([])
   const [nextChapterNumber, setNextChapterNumber] = useState<number | null>(null)
@@ -291,6 +298,17 @@ export function ReaderView({
             type="button"
             onClick={() => {
               setSettingsOpen(false)
+              setChapterListOpen(true)
+            }}
+            className="mt-3 flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"
+          >
+            <List className="size-3.5" aria-hidden="true" />
+            Daftar Bab
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSettingsOpen(false)
               setReportOpen(true)
             }}
             className="mt-3 flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"
@@ -340,22 +358,54 @@ export function ReaderView({
             <div className="flex flex-col gap-3">
               {chapter.choices.map((c) => {
                 const selected = selectedChoiceId === c.id
+                // Mode baca-ulang: cocokkan pilihan lama lewat label (fallback hingga JejakItem punya choiceId).
+                const wasChosen = isReRead && previousChoice?.decision === c.label
                 return (
                   <button
                     key={c.id}
                     type="button"
                     onClick={() => chooseOption(c.id)}
+                    disabled={isReRead}
                     className={cn(
-                      'flex min-h-14 flex-col gap-1 rounded-2xl border px-5 py-4 text-left transition-colors hover:border-primary/60',
-                      selected ? 'border-primary bg-primary/10' : 'border-border bg-card',
+                      'flex min-h-14 flex-col gap-1 rounded-2xl border px-5 py-4 text-left transition-colors',
+                      isReRead
+                        ? 'cursor-default'
+                        : 'hover:border-primary/60',
+                      wasChosen
+                        ? 'border-primary bg-primary/10'
+                        : selected
+                          ? 'border-primary bg-primary/10'
+                          : 'border-border bg-card',
                     )}
                   >
-                    <span className="text-sm font-semibold text-foreground">{c.label}</span>
-                    {c.hint && <span className="text-xs text-muted-foreground">{c.hint}</span>}
+                    <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                      {c.label}
+                      {wasChosen && (
+                        <Check className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                      )}
+                    </span>
+                    {isReRead && wasChosen && (
+                      <span className="text-[11px] font-medium text-muted-foreground">
+                        Pilihanmu waktu itu
+                      </span>
+                    )}
+                    {!isReRead && c.hint && (
+                      <span className="text-xs text-muted-foreground">{c.hint}</span>
+                    )}
                   </button>
                 )
               })}
             </div>
+
+            {/* Navigasi kembali ke bab terbaru dalam mode baca-ulang */}
+            {isReRead && (
+              <Link
+                href={`/baca/${story.id}?bab=${story.currentChapter}`}
+                className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+              >
+                Kembali ke Bab Terbaru
+              </Link>
+            )}
           </section>
         )}
 
@@ -392,6 +442,14 @@ export function ReaderView({
         onClose={() => setReportOpen(false)}
         storyId={story.id}
         chapterNumber={chapter.number}
+      />
+
+      <ChapterListDialog
+        open={chapterListOpen}
+        onClose={() => setChapterListOpen(false)}
+        storyId={story.id}
+        currentChapter={chapter.number}
+        jejak={story.jejak}
       />
     </main>
   )

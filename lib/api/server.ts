@@ -24,6 +24,7 @@ import {
   queryStory,
   queryChapter,
   queryLatestAvailableChapter,
+  queryChapterMetadatas,
 } from './queries'
 import {
   getReaderStates,
@@ -190,4 +191,29 @@ export async function getChapterAvailability(
   if (chapter) return 'PUBLISHED'
   const preparing = await isChapterPreparing(storyId, chapterNumber)
   return preparing ? 'PREPARING' : 'UNAVAILABLE'
+}
+
+/**
+ * Daftar metadata bab yang sudah bisa diakses pembaca (1..maxReachedChapter).
+ *
+ * maxReachedChapter = max(currentChapter, semua jejak.chapter + 1).
+ * Ini mencegah judul bab yang belum dijangkau bocor ke pembaca (spoiler gate).
+ */
+export async function listChapterMetadatas(storyId: string): Promise<{
+  chapters: { number: number; title: string }[]
+  maxReachedChapter: number
+}> {
+  storyId = normalizeStoryRouteId(storyId)
+  const story = await getStory(storyId)
+  if (!story) return { chapters: [], maxReachedChapter: 1 }
+
+  // Hitung maxReachedChapter: nilai terjauh antara currentChapter dan bab+1 dari jejak
+  const fromJejak =
+    story.jejak.length > 0
+      ? Math.max(...story.jejak.map((j) => j.chapter + 1))
+      : 0
+  const maxReached = Math.max(story.currentChapter, fromJejak, 1)
+
+  const chapters = await queryChapterMetadatas(storyId, maxReached)
+  return { chapters, maxReachedChapter: maxReached }
 }

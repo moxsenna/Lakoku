@@ -158,6 +158,25 @@ export const queryLatestAvailableChapter = cache(async function queryLatestAvail
   }
 })
 
+/**
+ * Metadata bab (hanya number + title) untuk daftar bab, dibatasi sampai maxNumber.
+ * Tidak mengambil paragraphs/choices utk menghindari data boros di list.
+ */
+export const queryChapterMetadatas = cache(async function queryChapterMetadatas(
+  storyId: string,
+  maxNumber: number,
+): Promise<{ number: number; title: string }[]> {
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from('chapters')
+    .select('number,title')
+    .eq('story_id', storyId)
+    .lte('number', maxNumber)
+    .order('number', { ascending: true })
+  if (error) throw new Error(`queryChapterMetadatas: ${error.message}`)
+  return (data ?? []) as { number: number; title: string }[]
+})
+
 export async function queryChoiceOutcome(
   storyId: string,
   chapterNumber: number,

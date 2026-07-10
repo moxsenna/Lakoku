@@ -55,6 +55,18 @@ export const ReportResultSchema = z.object({
 })
 export type ReportResult = z.infer<typeof ReportResultSchema>
 
+export const ChapterMetadataSchema = z.object({
+  number: z.number().int().positive(),
+  title: z.string().min(1),
+})
+export type ChapterMetadata = z.infer<typeof ChapterMetadataSchema>
+
+export const ListChaptersResponseSchema = z.object({
+  chapters: z.array(ChapterMetadataSchema),
+  maxReachedChapter: z.number().int().positive(),
+})
+export type ListChaptersResponse = z.infer<typeof ListChaptersResponseSchema>
+
 export const ChoiceOptionSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
@@ -160,6 +172,8 @@ const contractSchemas = {
   ReportCategory: ReportCategorySchema,
   ReportCategoryOption: ReportCategoryOptionSchema,
   ReportResult: ReportResultSchema,
+  ChapterMetadata: ChapterMetadataSchema,
+  ListChaptersResponse: ListChaptersResponseSchema,
   ChoiceOption: ChoiceOptionSchema,
   Chapter: ChapterSchema,
   JejakItem: JejakItemSchema,

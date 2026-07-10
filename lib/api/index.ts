@@ -14,6 +14,7 @@ export {
   getChapter,
   submitChoice,
   submitReport,
+  listChapters,
 } from './client'
 export {
   getLocalProgress,

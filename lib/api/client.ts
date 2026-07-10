@@ -108,3 +108,18 @@ export async function submitReport(
     return { ok: false }
   }
 }
+
+/**
+ * Daftar metadata bab yang sudah bisa diakses pembaca.
+ * Server membatasi sampai maxReachedChapter (spoiler gate).
+ */
+export async function listChapters(storyId: string): Promise<{
+  chapters: { number: number; title: string }[]
+  maxReachedChapter: number
+}> {
+  const res = await fetch(
+    `${API_BASE}/stories/${encodeURIComponent(storyId)}/chapters`,
+  )
+  if (!res.ok) throw new Error('Gagal memuat daftar bab.')
+  return res.json()
+}

@@ -56,12 +56,20 @@ export default async function BacaPage({
   }
 
   const fallbackFromChapter = resolveReaderFallbackNotice(requested, story.currentChapter, chapter.number)
+
+  // Deteksi baca-ulang: bab sudah ada jejak + belum mencapai currentChapter.
+  // Pakai chapter.number (bukan targetNumber) karena getChapter bisa fallback.
+  const previousChoice = story.jejak.find((j) => j.chapter === chapter.number) ?? null
+  const isReRead = !!previousChoice && chapter.number < story.currentChapter
+
   return (
     <ReaderView
       key={chapter.number}
       story={story}
       chapter={chapter}
       fallbackFromChapter={fallbackFromChapter}
+      isReRead={isReRead}
+      previousChoice={previousChoice}
     />
   )
 }

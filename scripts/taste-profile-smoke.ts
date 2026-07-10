@@ -8,7 +8,13 @@ import {
   createDefaultTasteProfile,
   normalizeTasteProfile,
   mergeTasteProfiles,
+  type TasteProfile,
 } from '../lib/taste-profile/schema'
+import {
+  getStorySetupQuestions,
+  hasUsableTasteProfile,
+  defaultStorySetupQuestions,
+} from '../lib/onboarding/question-presets'
 
 let pass = 0
 let fail = 0
@@ -107,11 +113,63 @@ check('Merge: usedGuest = false jika keduanya null', !merge3.usedGuest)
 
 const minimal = TasteProfileSchema.safeParse({ version: 1 })
 check('Schema toleran: tanpa updatedAt', minimal.success)
-if (minimal.success) {
-  check('Tanpa updatedAt = undefined', minimal.data.updatedAt === undefined)
-  check('Tanpa completedAt = undefined', minimal.data.completedAt === undefined)
-  check('Tanpa skippedAt = undefined', minimal.data.skippedAt === undefined)
-}
+	if (minimal.success) {
+	  check('Tanpa updatedAt = undefined', minimal.data.updatedAt === undefined)
+	  check('Tanpa completedAt = undefined', minimal.data.completedAt === undefined)
+	  check('Tanpa skippedAt = undefined', minimal.data.skippedAt === undefined)
+	}
 
-console.log(`taste-profile-smoke: ${pass}/${pass + fail} PASS`)
+	// ── Phase 4: getStorySetupQuestions personalization ──────────────
+
+	function hasOption(options: string[], needle: string): boolean {
+	  return options.some((o) => o.toLowerCase().includes(needle.toLowerCase()))
+	}
+	function indexOfOption(options: string[], needle: string): number {
+	  return options.findIndex((o) => o.toLowerCase().includes(needle.toLowerCase()))
+	}
+
+	const qsDefault = getStorySetupQuestions(null)
+	check('getStorySetupQuestions(null) = default count', qsDefault.length === defaultStorySetupQuestions.length)
+	check('getStorySetupQuestions(null) trope intact', qsDefault[0].options.length === defaultStorySetupQuestions[0].options.length)
+
+	const skippedProfile: TasteProfile = {
+	  ...createDefaultTasteProfile(),
+	  skippedAt: new Date().toISOString(),
+	  updatedAt: new Date().toISOString(),
+	}
+	check('hasUsable: skipped-only = false', !hasUsableTasteProfile(skippedProfile))
+	check('Setup: skipped = default', getStorySetupQuestions(skippedProfile)[0].options.length === defaultStorySetupQuestions[0].options.length)
+
+	check('hasUsable: empty default = false', !hasUsableTasteProfile(createDefaultTasteProfile()))
+
+	const genreProfile: TasteProfile = {
+	  ...createDefaultTasteProfile(), completedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+	  preferredGenres: ['Misteri & rahasia'],
+	}
+	const tropeQ = getStorySetupQuestions(genreProfile).find((q) => q.key === 'trope')!
+	check('genre: inject rahasia option', tropeQ.options.some((o) => o.includes('tersimpan')))
+	check('genre: base not deleted', hasOption(tropeQ.options, 'Pasangan yang berkhianat'))
+
+	const avoidProfile: TasteProfile = {
+	  ...createDefaultTasteProfile(), completedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+	  avoidedTropes: ['Pengkhianatan pasangan'],
+	}
+	const avoidQ = getStorySetupQuestions(avoidProfile).find((q) => q.key === 'trope')!
+	check('avoid: pengkhianatan demoted', indexOfOption(avoidQ.options, 'Berkhianat') > 0)
+
+	const romanceProfile: TasteProfile = {
+	  ...createDefaultTasteProfile(), completedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+	  romanceLevel: 'utama',
+	}
+	const hubQ = getStorySetupQuestions(romanceProfile).find((q) => q.key === 'hubungan')!
+	check('romance: cinta promoted', indexOfOption(hubQ.options, 'Cinta yang') < indexOfOption(hubQ.options, 'Fokus pada'))
+
+	const endingProfile: TasteProfile = {
+	  ...createDefaultTasteProfile(), completedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+	  endingBias: 'keadilan',
+	}
+	const akhirQ = getStorySetupQuestions(endingProfile).find((q) => q.key === 'akhir')!
+	check('ending: keadilan at 0', indexOfOption(akhirQ.options, 'Keadilan') === 0)
+
+	console.log(`taste-profile-smoke: ${pass}/${pass + fail} PASS`)
 if (fail) process.exit(1)

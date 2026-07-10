@@ -37,7 +37,7 @@ import {
 import { actProposeStorySetupPremises } from '@/app/mulai/actions'
 import { actGetTasteProfile } from '@/app/onboarding/selera/actions'
 import { readGuestTasteProfile } from '@/lib/taste-profile/storage'
-import { defaultStorySetupQuestions, type SetupQuestion } from '@/lib/onboarding/question-presets'
+import { getStorySetupQuestions, type SetupQuestion } from '@/lib/onboarding/question-presets'
 import type { PremiseDraft, StoryBibleDraft } from '@/lib/authoring/schema'
 import type { TasteProfile } from '@/lib/taste-profile/schema'
 
@@ -119,6 +119,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [customIdea, setCustomIdea] = useState('')
   const [tasteProfile, setTasteProfile] = useState<TasteProfile | null>(null)
+  const [activeQuestions, setActiveQuestions] = useState<SetupQuestion[]>([])
   const [customAnswerFor, setCustomAnswerFor] = useState<string | null>(null)
   const [customAnswerText, setCustomAnswerText] = useState('')
 
@@ -128,7 +129,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
   const [buildStage, setBuildStage] = useState<BuildKey>('cast')
   const [err, setErr] = useState<string | null>(null)
 
-  const questions = defaultStorySetupQuestions
+  const questions = activeQuestions
   const totalQuestions = questions.length
   const question = questions[step]
   const resume = searchParams.get('resume')
@@ -151,6 +152,15 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     setErr(message ?? 'Terjadi kendala saat menyiapkan cerita.')
     setPhase('error')
   }, [])
+
+  // ── Quick flow start ────────────────────────────────────────────
+
+  function startQuickFlow() {
+    setEntryMode('quick')
+    setActiveQuestions(getStorySetupQuestions(tasteProfile))
+    setStep(0)
+    setPhase('quiz')
+  }
 
   const hasSession = useCallback(async () => {
     const supabase = createClient(supabaseConfig)
@@ -569,10 +579,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
             {/* Mulai cepat */}
             <button
               type="button"
-              onClick={() => {
-                setEntryMode('quick')
-                setPhase('quiz')
-              }}
+              onClick={startQuickFlow}
               className="flex flex-col gap-1 rounded-2xl border border-border bg-card p-5 text-left transition-colors hover:border-primary/60"
             >
               <span className="text-sm font-semibold text-foreground">Jawab pertanyaan singkat</span>

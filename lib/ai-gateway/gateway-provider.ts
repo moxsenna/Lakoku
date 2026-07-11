@@ -7,9 +7,12 @@ import {
   type GenerationProvider,
   type PlanInput,
   type WriteInput,
+  type GenerationRuntimePolicy,
+  DEFAULT_RUNTIME_POLICY,
 } from './provider'
 import { scanForLeaks } from './gateway'
 import { buildWriterPrompt } from '@/lib/prose/prompt-engine'
+import { getAiModelRoute, DEFAULT_AI_MODEL_ROUTE, type AiModelRoute } from '@/lib/ops/ai-model-routes'
 
 /**
  * Provider LLM NYATA via Vercel AI Gateway.
@@ -81,11 +84,9 @@ function openRouterCandidate(): ModelCandidate | null {
 
 /**
  * Bangun RANTAI model berurutan (fallback bila satu gagal). Prioritas:
- *   1) Endpoint kustom (tunnel) — bila `CUSTOM_LLM_BASE_URL` diset.
- *   2) OpenRouter — bila `OPENROUTER_API_KEY` diset (internalnya juga fallback
- *      gratis→berbayar via array `models`).
- *   3) Vercel AI Gateway (model string) sebagai jaring terakhir.
- * generateProse mencoba tiap kandidat berurutan sampai ada yang berhasil.
+ *   1) DB route (ai_model_routes) — bila `resolvedRoute` ada.
+ *   2) Env override (CUSTOM_LLM_BASE_URL / OPENROUTER_API_KEY) — backward compat.
+ *   3) Vercel AI Gateway (model string) — fallback terakhir.
  */
 function resolveModelChain(optModel?: string): ModelCandidate[] {
   const chain: ModelCandidate[] = []
@@ -277,10 +278,23 @@ async function generateProse(args: {
 /**
  * Provider LLM nyata. `generatePlan` & scaffold metadata memakai provider
  * deterministik (canon-safe); hanya prosa yang berasal dari model.
+ *
+ * @param opts.model — override model string (optional, via NARRATIVE_MODEL env).
+ * @param genPolicy — generation policy dari DB (target kata/scene).
+ * @param aiRoute — route model dari DB ai_model_routes (opsional). Bila ada,
+ *   digunakan sebagai prioritas pertama sebelum env/code fallback.
  */
-export function createGatewayProvider(opts: ProseModel = {}): GenerationProvider {
-  const base = createDeterministicProvider()
-  const chain = resolveModelChain(opts.model)
+export function createGatewayProvider(
+  opts: ProseModel = {},
+  genPolicy: GenerationRuntimePolicy = DEFAULT_RUNTIME_POLICY,
+  aiRoute?: AiModelRoute,
+): GenerationProvider {
+  const base = createDeterministicProvider(genPolicy)
+
+  // Build chain: DB route first if available, then env, then code fallback.
+  let chain = resolveModelChain(opts.model)
+  const dbModel = toModelCandidate(aiRoute)
+  if (dbModel) chain = [dbModel, ...chain]
 
   return {
     name: chain.map((c) => c.label).join(' → '),
@@ -311,4 +325,42 @@ export function createGatewayProvider(opts: ProseModel = {}): GenerationProvider
       }
     },
   }
+}
+
+/** Konversi DB route ke ModelCandidate untuk dimasukkan ke chain. */
+function toModelCandidate(route: AiModelRoute | undefined): ModelCandidate | null {
+  if (!route) return null
+
+  if (route.provider === 'custom') {
+    const baseURL = process.env.CUSTOM_LLM_BASE_URL?.trim()
+    if (!baseURL) return null
+    const custom = createOpenAICompatible({
+      name: 'custom',
+      baseURL,
+      apiKey: process.env.CUSTOM_LLM_API_KEY,
+    })
+    return { model: custom(route.modelId), label: `db:custom:${route.modelId}` }
+  }
+
+  if (route.provider === 'openrouter') {
+    const apiKey = process.env.OPENROUTER_API_KEY?.trim()
+    if (!apiKey) return null
+    const models = route.fallbackModels.length
+      ? [route.modelId, ...route.fallbackModels]
+      : [route.modelId]
+    const openrouter = createOpenAICompatible({
+      name: 'openrouter',
+      baseURL: 'https://openrouter.ai/api/v1',
+      apiKey,
+      transformRequestBody: (args) => ({ ...args, models }),
+    })
+    return { model: openrouter(models[0]), label: `db:openrouter:${models.join('|')}` }
+  }
+
+  if (route.provider === 'gateway') {
+    return { model: route.modelId, label: `db:gateway:${route.modelId}` }
+  }
+
+  // deterministic — no real model.
+  return null
 }

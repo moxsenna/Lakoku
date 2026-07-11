@@ -17,7 +17,7 @@
 import 'server-only'
 import { createAdminClient } from '@lakoku/db'
 import type { EntitlementAction, CheckoutEvent } from './webhook'
-import type { EntitlementStore, RecordEventResult, GrantCreditsResult } from './store'
+import type { EntitlementStore, RecordEventResult, GrantCreditsResult, OrderSnapshotResult } from './store'
 
 const UNIQUE_VIOLATION = '23505'
 
@@ -68,5 +68,32 @@ export class SupabaseEntitlementStore implements EntitlementStore {
     })
     if (error) throw new Error(`grantCredits: ${error.message}`)
     return { granted: data === true }
+  }
+
+  async resolveOrderSnapshot(orderId: string): Promise<OrderSnapshotResult | null> {
+    const supabase = createAdminClient()
+    const { data, error } = await supabase
+      .from('credit_orders')
+      .select('total_credits,bonus_kind,product_key,status')
+      .eq('order_id', orderId)
+      .maybeSingle()
+    if (error) throw new Error(`resolveOrderSnapshot: ${error.message}`)
+    if (!data) return null
+    return {
+      totalCredits: data.total_credits as number,
+      bonusKind: data.bonus_kind as string,
+      productKey: data.product_key as string,
+      status: data.status as string,
+    }
+  }
+
+  async markOrderPaid(orderId: string): Promise<void> {
+    const supabase = createAdminClient()
+    const { error } = await supabase
+      .from('credit_orders')
+      .update({ status: 'paid', paid_at: new Date().toISOString() })
+      .eq('order_id', orderId)
+      .in('status', ['created'])
+    if (error) throw new Error(`markOrderPaid: ${error.message}`)
   }
 }

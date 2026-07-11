@@ -1,20 +1,35 @@
 import Link from 'next/link'
-import { ArrowLeft, Coins } from 'lucide-react'
+import { ArrowLeft, Coins, Gift, Sparkles } from 'lucide-react'
 import { BuyCreditButton } from '@/components/kredit/buy-credit-button'
 import { getSessionUser } from '@/lib/api/user-state'
-import { listCreditProducts } from '@/lib/paycore/products'
+import { listCreditProducts, calculateTopupCredits } from '@/lib/paycore/products'
 import { getCreditBalance, getReadingPolicy } from '@/lib/credits/server'
+import { createAdminClient } from '@lakoku/db'
 
 const idr = (n: number) => `Rp${new Intl.NumberFormat('id-ID').format(n)}`
 
 export default async function KreditPage() {
   const user = await getSessionUser()
 
+  // Cek apakah user baru (belum pernah topup) — untuk bonus first topup.
+  let isFirstTopup = false
+  if (user) {
+    try {
+      const db = createAdminClient()
+      const { data } = await db.rpc('has_paid_topup_v1', { p_user_id: user.id })
+      isFirstTopup = data !== true
+    } catch {
+      // Fallback: jangan over-promise.
+    }
+  }
+
   const [balance, products, policy] = await Promise.all([
     user ? getCreditBalance(user.id) : Promise.resolve(0),
     listCreditProducts(),
     getReadingPolicy(),
   ])
+
+  // Best value = paket dgn harga per kredit termurah (dari base credits).
   const bestPricePerCredit = products.length
     ? Math.min(...products.map((p) => p.priceIdr / Math.max(p.credits, 1)))
     : null
@@ -44,6 +59,15 @@ export default async function KreditPage() {
           </div>
         </section>
 
+        {isFirstTopup && (
+          <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 px-4 py-3">
+            <Sparkles className="size-4 shrink-0 text-emerald-500" aria-hidden="true" />
+            <p className="text-xs text-emerald-700 dark:text-emerald-400 text-pretty">
+              Topup pertamamu dapat bonus kredit ekstra! Lihat di detail paket di bawah.
+            </p>
+          </div>
+        )}
+
         <p className="text-sm leading-relaxed text-muted-foreground text-pretty">
           {policy.freeChapters} bab pertama tiap cerita gratis. Bab berikutnya {policy.creditsPerChapter} kredit
           per bab. Kredit tak kedaluwarsa.
@@ -58,9 +82,13 @@ export default async function KreditPage() {
           ) : (
             <ul className="flex flex-col gap-3">
               {products.map((p) => {
+                const calc = calculateTopupCredits(p, isFirstTopup)
                 const pricePerCredit = p.priceIdr / Math.max(p.credits, 1)
                 const isBestValue = bestPricePerCredit != null && pricePerCredit === bestPricePerCredit
                 const perChapter = Math.round(pricePerCredit * policy.creditsPerChapter)
+                const hasBonus = calc.bonusCredits > 0
+                const showFirstTopupBonus = isFirstTopup && p.firstTopupBonusCredits > 0 && p.firstTopupBonusCredits > (p.normalBonusCredits || 0)
+
                 return (
                 <li
                   key={p.productKey}
@@ -72,13 +100,34 @@ export default async function KreditPage() {
                     </span>
                   )}
                   <div className="flex min-w-0 flex-col">
-                    <span className="text-sm font-semibold text-foreground">{p.name}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-foreground">{p.name}</span>
+                      {p.marketingBadge && (
+                        <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                          {p.marketingBadge}
+                        </span>
+                      )}
+                    </div>
                     <span className="text-xs text-muted-foreground">
-                      {p.credits} kredit · ≈ {Math.floor(p.credits / Math.max(policy.creditsPerChapter, 1))} bab
+                      {p.credits} kredit
+                      {hasBonus && (
+                        <span className="text-emerald-600 dark:text-emerald-400">
+                          {' + bonus '}{calc.bonusCredits}
+                        </span>
+                      )}
+                      {' · ≈ '}{Math.floor(calc.totalCredits / Math.max(policy.creditsPerChapter, 1))} bab
                     </span>
-                    <span className="text-xs text-muted-foreground">
-                      {idr(perChapter)} per bab setelah gratis
-                    </span>
+                    {showFirstTopupBonus && (
+                      <span className="flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+                        <Gift className="size-3" aria-hidden="true" />
+                        Bonus topup pertama: +{p.firstTopupBonusCredits} kredit
+                      </span>
+                    )}
+                    {!isFirstTopup && hasBonus && p.normalBonusCredits > 0 && (
+                      <span className="text-[11px] text-muted-foreground">
+                        Termasuk bonus +{p.normalBonusCredits} kredit
+                      </span>
+                    )}
                     <span className="mt-1 text-sm font-medium text-foreground">{idr(p.priceIdr)}</span>
                   </div>
                   <BuyCreditButton productKey={p.productKey} />
@@ -95,4 +144,3 @@ export default async function KreditPage() {
     </main>
   )
 }
-

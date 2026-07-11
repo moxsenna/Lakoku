@@ -62,7 +62,10 @@ export async function POST(request: Request): Promise<Response> {
       {
         order_id: outcome.orderId,
         checkout_url: outcome.checkoutUrl,
-        credits: outcome.credits,
+        base_credits: outcome.baseCredits,
+        bonus_credits: outcome.bonusCredits,
+        total_credits: outcome.totalCredits,
+        bonus_kind: outcome.bonusKind,
         amount_idr: outcome.amountIdr,
       },
       { status: 201 },

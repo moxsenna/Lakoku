@@ -43,10 +43,20 @@ export interface GenerationProvider {
   writeChapter(input: WriteInput): Promise<unknown>
 }
 
-// ---------- Adapter deterministik ----------
+/** Policy runtime generasi (target kata & scene). Diambil dari generation_policy DB. */
+export interface GenerationRuntimePolicy {
+  targetWordsMin: number
+  targetWordsMax: number
+  targetScenes: number
+}
 
-const TARGET_WORDS = 650
-const TARGET_SCENES = 3
+export const DEFAULT_RUNTIME_POLICY: GenerationRuntimePolicy = {
+  targetWordsMin: 800,
+  targetWordsMax: 1000,
+  targetScenes: 3,
+}
+
+// ---------- Adapter deterministik ----------
 
 /** Pilih karakter yang valid tampil di bab target (hidup & sudah diperkenalkan). */
 function activeCharacters(snapshot: CanonSnapshot, chapter: number) {
@@ -125,7 +135,12 @@ function forbiddenWordFor(snapshot: CanonSnapshot, characterId: string): string 
  * Provider fake deterministik. Menghasilkan output valid; bila `injectDefects`
  * diberikan DAN tak ada repairFindings, sisipkan cacat yang bisa diperbaiki.
  */
-export function createDeterministicProvider(): GenerationProvider {
+export function createDeterministicProvider(
+  policy: GenerationRuntimePolicy = DEFAULT_RUNTIME_POLICY,
+): GenerationProvider {
+  const targetWordCount = Math.round((policy.targetWordsMin + policy.targetWordsMax) / 2)
+  const targetScenes = policy.targetScenes
+
   return {
     name: 'deterministic-fake-v1',
 
@@ -146,8 +161,8 @@ export function createDeterministicProvider(): GenerationProvider {
         plannedBeats: blueprint.mandatoryBeats.length
           ? blueprint.mandatoryBeats
           : [`Kembangkan fase "${blueprint.phase}".`],
-        targetWordCount: TARGET_WORDS,
-        targetSceneCount: TARGET_SCENES,
+        targetWordCount,
+        targetSceneCount: targetScenes,
         opensThreadId: null,
         usesReveals: revealsNow,
         proposedStateDelta,
@@ -170,11 +185,11 @@ export function createDeterministicProvider(): GenerationProvider {
 
       // Cacat hanya pada attempt pertama (repairFindings kosong).
       const defects = repairFindings?.length ? [] : (injectDefects ?? [])
-      const targetWords = defects.includes('SHORT') ? 120 : TARGET_WORDS
-      const sceneCount = defects.includes('TOO_MANY_SCENES') ? 6 : TARGET_SCENES
+      const writeTargetWords = defects.includes('SHORT') ? 120 : targetWordCount
+      const writeSceneCount = defects.includes('TOO_MANY_SCENES') ? 6 : targetScenes
       const hasChoiceOrGate = !defects.includes('NO_CHOICE')
 
-      const paragraphs = buildParagraphs(p.plannedBeats, names, targetWords)
+      const paragraphs = buildParagraphs(p.plannedBeats, names, writeTargetWords)
 
       // Events: satu event per karakter aktif utama (maks 3), monotonic.
       const events = chars.slice(0, 3).map((c, i) => ({
@@ -242,7 +257,7 @@ export function createDeterministicProvider(): GenerationProvider {
         title: `Bab ${chapter}: ${p.phase}`,
         paragraphs,
         wordCount: countWords(paragraphs),
-        sceneCount,
+        sceneCount: writeSceneCount,
         hasChoiceOrGate,
         events,
         knowledgeAssertions,

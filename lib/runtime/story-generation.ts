@@ -162,7 +162,7 @@ export async function generateNextChapterReal(
 
     // 5) Generasi tervalidasi: plan → write → Layer A → Layer B → repair.
     const result = await generateChapter(
-      { provider: selectProvider() },
+      { provider: await selectProvider() },
       { snapshot, blueprint, chapterNumber, threadContext },
     )
 

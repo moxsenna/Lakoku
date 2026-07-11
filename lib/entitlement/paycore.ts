@@ -26,9 +26,19 @@ export interface PayCoreEvent {
   externalOrderId: string | null
   userId: string
   credits: number
+  baseCredits: number | null
+  bonusCredits: number | null
+  bonusKind: 'first_topup' | 'normal' | 'none' | null
   productKey: string | null
   /** ISO timestamp header terverifikasi. */
   timestamp: string
+}
+
+export interface OrderSnapshot {
+  totalCredits: number
+  bonusKind: string
+  productKey: string
+  status: string
 }
 
 export type PayCoreRejectReason =
@@ -79,6 +89,13 @@ function parsePayload(rawBody: string): PayCoreEvent | { badType: true } | null 
   const orderId = data.order_id
   const userId = fulfillment.user_id
   const credits = fulfillment.credits
+  const baseCredits = typeof fulfillment.base_credits === 'number' ? fulfillment.base_credits : null
+  const bonusCredits = typeof fulfillment.bonus_credits === 'number' ? fulfillment.bonus_credits : null
+  const bonusKindRaw = fulfillment.bonus_kind
+  const bonusKind: 'first_topup' | 'normal' | 'none' | null =
+    bonusKindRaw === 'first_topup' || bonusKindRaw === 'normal' || bonusKindRaw === 'none'
+      ? bonusKindRaw
+      : null
   const productKey = typeof data.product_key === 'string' ? data.product_key : null
   const externalOrderId = typeof data.external_order_id === 'string' ? data.external_order_id : null
 
@@ -93,6 +110,9 @@ function parsePayload(rawBody: string): PayCoreEvent | { badType: true } | null 
     externalOrderId,
     userId,
     credits,
+    baseCredits,
+    bonusCredits,
+    bonusKind,
     productKey,
     timestamp: '', // diisi pemanggil dgn header terverifikasi
   }
@@ -145,14 +165,15 @@ export interface PayCoreProcessDeps {
 
 /**
  * Proses satu event PayCore mentah:
- *   verify → grant kredit idempoten (ref `paycore:{order_id}`).
+ *   verify → resolve snapshot → grant kredit idempoten (ref `paycore:{order_id}`).
  *  - rejected  → tanda tangan/payload tak valid: JANGAN pernah grant.
  *  - duplicate → order sudah pernah di-grant (ledger `ref` unik): no-op.
  *  - applied   → order baru terverifikasi: kredit di-grant sekali.
  *
- * Idempotensi dijamin sepenuhnya oleh keunikan `credit_ledger.ref` — tak perlu
- * tabel event terpisah (PayCore memakai ulang event_id + order_id yang stabil
- * pada retry, jadi dedup per-order sudah cukup).
+ * Snapshot cross-check: bila `credit_orders` punya snapshot untuk `order_id`,
+ * gunakan `total_credits` dari DB (lebih aman daripada fulfillment echo).
+ * Bila tak ada snapshot, fallback ke `fulfillment_data.credits` ( masih aman
+ * karena fulfillment dibuat server-side). Tetap idempoten via ledger `ref`.
  */
 export async function processPayCoreWebhook(
   rawBody: string,
@@ -167,12 +188,35 @@ export async function processPayCoreWebhook(
   if (!verified.ok) return { status: 'rejected', reason: verified.reason }
 
   const { event } = verified
-  const result = await deps.store.grantCredits(
-    event.userId,
-    `paycore:${event.orderId}`,
-    event.credits,
-    event.productKey ?? 'credits',
-  )
+
+  // Resolve snapshot dari credit_orders (lebih aman). Fallback ke fulfillment.
+  let grantCredits = event.credits
+  let productKey = event.productKey ?? 'credits'
+  let bonusKind = event.bonusKind ?? 'none'
+
+  const snapshot = await deps.store.resolveOrderSnapshot(event.orderId)
+  if (snapshot) {
+    grantCredits = snapshot.totalCredits
+    productKey = snapshot.productKey
+    bonusKind = snapshot.bonusKind as 'first_topup' | 'normal' | 'none'
+  } else {
+    console.log(
+      `[v0] paycore webhook: no snapshot for order ${event.orderId}, using fulfillment credits`,
+    )
+  }
+
+  const ref = `paycore:${event.orderId}`
+  const reason = `topup:${productKey}:${bonusKind}`
+  const result = await deps.store.grantCredits(event.userId, ref, grantCredits, reason)
   if (!result.granted) return { status: 'duplicate', eventId: event.eventId }
-  return { status: 'applied', eventId: event.eventId, orderId: event.orderId, credits: event.credits }
+
+  // Tandai order sebagai paid (snapshot cross-check selesai).
+  try {
+    await deps.store.markOrderPaid(event.orderId)
+  } catch (err) {
+    // Non-fatal: kredit sudah di-grant. Log warning.
+    console.log('[v0] paycore webhook: markOrderPaid gagal (non-fatal):', (err as Error)?.message)
+  }
+
+  return { status: 'applied', eventId: event.eventId, orderId: event.orderId, credits: grantCredits }
 }

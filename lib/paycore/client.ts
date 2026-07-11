@@ -1,7 +1,8 @@
 import 'server-only'
 import { hmacSha256Hex, sha256Hex } from './crypto'
 import { loadPayCoreOutboundConfig, type PayCoreOutboundConfig } from './config'
-import { getCreditProduct } from './products'
+import { getCreditProduct, calculateTopupCredits, type CreditProduct, type TopupCreditCalculation } from './products'
+import { createAdminClient } from '@lakoku/db'
 
 /**
  * Client outbound PayCore (server-only): membuat order pembelian kredit dan
@@ -14,6 +15,10 @@ import { getCreditProduct } from './products'
  * Otoritas fulfillment tetap di webhook: `fulfillment_data.credits` yang kita
  * kirim di sini di-echo balik PayCore saat `payment.succeeded`, lalu itulah yang
  * di-grant. Tak ada grant dari sisi klien/return URL.
+ *
+ * Bonus topup dihitung server-side (bukan dari client): base + bonus pertama
+ * kali / normal. Snapshot disimpan di `credit_orders` agar webinar lama tetap
+ * bisa diaudit walau harga/bonus berubah kelak.
  */
 
 /** Kredensial + string canonical untuk sign request app PayCore. */
@@ -44,7 +49,10 @@ export interface CreateCreditOrderResult {
   orderId: string
   externalOrderId: string
   checkoutUrl: string
-  credits: number
+  baseCredits: number
+  bonusCredits: number
+  totalCredits: number
+  bonusKind: 'first_topup' | 'normal' | 'none'
   amountIdr: number
 }
 
@@ -58,9 +66,18 @@ export type CreateOrderOutcome =
   | ({ ok: true } & CreateCreditOrderResult)
   | CreateOrderError
 
+/** Cek apakah user sudah pernah topup berbayar (untuk bonus first topup). */
+async function hasPaidTopup(userId: string): Promise<boolean> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase.rpc('has_paid_topup_v1', { p_user_id: userId })
+  if (error) throw new Error(`hasPaidTopup: ${error.message}`)
+  return data === true
+}
+
 /**
  * Buat order kredit di PayCore dan kembalikan `checkout_url`. Harga & jumlah
  * kredit diambil dari katalog DB (bukan dari klien) → tak bisa dimanipulasi.
+ * Bonus dihitung server-side; snapshot disimpan di `credit_orders`.
  */
 export async function createCreditOrder(
   input: CreateCreditOrderInput,
@@ -77,6 +94,10 @@ export async function createCreditOrder(
   const name = input.customer?.name?.trim() || email.split('@')[0] || 'Pembaca Lakoku'
   const phone = input.customer?.phone?.trim()
 
+  // Hitung bonus server-side: first topup atau normal.
+  const firstTopup = await hasPaidTopup(input.userId)
+  const calc = calculateTopupCredits(product, firstTopup)
+
   const externalOrderId = input.externalOrderId ?? `lakoku-${crypto.randomUUID()}`
   // merchant_profile_id sengaja TAK dikirim: PayCore memakai default app
   // (order-service memvalidasi id eksplisit = default_merchant_profile_id/PK,
@@ -84,7 +105,7 @@ export async function createCreditOrder(
   const body = {
     external_order_id: externalOrderId,
     product_key: product.productKey,
-    description: `${product.name} — ${product.credits} kredit`,
+    description: `${product.name} — ${calc.totalCredits} kredit`,
     amount: product.priceIdr,
     currency: 'IDR',
     customer: { name, email, ...(phone ? { phone } : {}) },
@@ -92,20 +113,61 @@ export async function createCreditOrder(
     fulfillment_data: {
       user_id: input.userId,
       package_id: product.productKey,
-      credits: product.credits,
+      base_credits: calc.baseCredits,
+      bonus_credits: calc.bonusCredits,
+      credits: calc.totalCredits,
+      bonus_kind: calc.bonusKind,
     },
   }
   const rawBody = JSON.stringify(body)
   const result = await postOrder(config, rawBody)
   if (!result.ok) return result
 
+  // Simpan snapshot order agar webhook bisa cross-check & audit trail tetap utuh.
+  await insertCreditOrderSnapshot({
+    orderId: result.orderId,
+    userId: input.userId,
+    productKey: product.productKey,
+    priceIdr: product.priceIdr,
+    calc,
+  })
+
   return {
     ok: true,
     orderId: result.orderId,
     externalOrderId,
     checkoutUrl: result.checkoutUrl,
-    credits: product.credits,
+    baseCredits: calc.baseCredits,
+    bonusCredits: calc.bonusCredits,
+    totalCredits: calc.totalCredits,
+    bonusKind: calc.bonusKind,
     amountIdr: product.priceIdr,
+  }
+}
+
+/** Simpan snapshot order ke `credit_orders` untuk audit & webhook cross-check. */
+async function insertCreditOrderSnapshot(args: {
+  orderId: string
+  userId: string
+  productKey: string
+  priceIdr: number
+  calc: TopupCreditCalculation
+}): Promise<void> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('credit_orders').insert({
+    order_id: args.orderId,
+    user_id: args.userId,
+    product_key: args.productKey,
+    price_idr: args.priceIdr,
+    base_credits: args.calc.baseCredits,
+    bonus_credits: args.calc.bonusCredits,
+    total_credits: args.calc.totalCredits,
+    bonus_kind: args.calc.bonusKind,
+    status: 'created',
+  })
+  if (error) {
+    // Bukan fatal: order di PayCore sudah dibuat. Log warning, lanjut.
+    console.log('[v0] credit_orders insert gagal (non-fatal):', error.message)
   }
 }
 

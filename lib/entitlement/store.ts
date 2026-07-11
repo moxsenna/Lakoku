@@ -24,6 +24,13 @@ export interface GrantCreditsResult {
   granted: boolean
 }
 
+export interface OrderSnapshotResult {
+  totalCredits: number
+  bonusKind: string
+  productKey: string
+  status: string
+}
+
 export interface EntitlementStore {
   /** Catat event provider secara idempoten berdasarkan `eventId`. */
   recordPaymentEvent(event: CheckoutEvent): Promise<RecordEventResult>
@@ -43,6 +50,15 @@ export interface EntitlementStore {
     credits: number,
     reason: string,
   ): Promise<GrantCreditsResult>
+  /**
+   * Cari snapshot order di `credit_orders` berdasarkan `orderId`.
+   * Return `null` bila tak ada snapshot (fallback ke fulfillment credits).
+   */
+  resolveOrderSnapshot(orderId: string): Promise<OrderSnapshotResult | null>
+  /**
+   * Tandai order sebagai `paid` (status + paid_at). Idempoten.
+   */
+  markOrderPaid(orderId: string): Promise<void>
 }
 
 /** Snapshot entitlement aktif (untuk assert di fixture). */
@@ -54,6 +70,8 @@ export class InMemoryEntitlementStore implements EntitlementStore {
   private readonly active = new Set<EntitlementKey>()
   private readonly seenRefs = new Set<string>()
   private readonly balances = new Map<string, number>()
+  private readonly orderSnapshots = new Map<string, OrderSnapshotResult>()
+  private readonly paidOrders = new Set<string>()
   /** Jumlah panggilan applyEntitlement (untuk assert "tak ada grant ganda"). */
   public applyCount = 0
   /** Jumlah panggilan grantCredits yang benar-benar menulis (untuk assert idempoten). */
@@ -87,6 +105,21 @@ export class InMemoryEntitlementStore implements EntitlementStore {
     this.grantCreditsCount += 1
     this.balances.set(userId, (this.balances.get(userId) ?? 0) + credits)
     return { granted: true }
+  }
+
+  async resolveOrderSnapshot(orderId: string): Promise<OrderSnapshotResult | null> {
+    return this.orderSnapshots.get(orderId) ?? null
+  }
+
+  async markOrderPaid(orderId: string): Promise<void> {
+    this.paidOrders.add(orderId)
+    const snap = this.orderSnapshots.get(orderId)
+    if (snap) this.orderSnapshots.set(orderId, { ...snap, status: 'paid' })
+  }
+
+  /** Helper uji: injeksi snapshot order untuk simulasi. */
+  setOrderSnapshot(orderId: string, snapshot: OrderSnapshotResult): void {
+    this.orderSnapshots.set(orderId, snapshot)
   }
 
   /** Helper uji: apakah entitlement aktif. */

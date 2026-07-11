@@ -30,8 +30,8 @@ export interface LayerAResult {
   blocking: boolean // ada CRITICAL?
 }
 
-const WORD_MIN = 500
-const WORD_MAX = 800
+const WORD_MIN = 800
+const WORD_MAX = 1000
 const SCENE_MIN = 2
 const SCENE_MAX = 4
 const NEW_CHARACTER_GATE = 30

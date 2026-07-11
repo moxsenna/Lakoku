@@ -61,7 +61,7 @@ async function main() {
     check('status PUBLISHED', r.status === 'PUBLISHED', r)
     check('0 repair attempt', r.attempts === 0, r.attempts)
     check('tak ada CRITICAL/MAJOR', !r.findings.some((f) => f.severity !== 'MINOR'), r.findings)
-    check('wordCount 500–800', !!r.draft && r.draft.wordCount >= 500 && r.draft.wordCount <= 800, r.draft?.wordCount)
+    check('wordCount 800–1000', !!r.draft && r.draft.wordCount >= 800 && r.draft.wordCount <= 1000, r.draft?.wordCount)
   }
 
   console.log('== 2. Reveal gate (Bab 12) ==')
@@ -139,7 +139,7 @@ async function main() {
         phase: 'Krisis',
         chapterGoal: 'x',
         plannedBeats: ['a'],
-        targetWordCount: 650,
+        targetWordCount: 900,
         targetSceneCount: 3,
         opensThreadId: 'thread:baru', // dilarang ≥ Bab 41
         usesReveals: [],

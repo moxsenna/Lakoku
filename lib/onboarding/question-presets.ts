@@ -268,3 +268,109 @@ export function getStorySetupQuestions(profile?: TasteProfile | null): SetupQues
   // non-null setelah hasUsableTasteProfile.
   return defaultStorySetupQuestions.map((q) => personalizeQuestion(q, profile!))
 }
+
+// ── Contextual adaptation berdasarkan jawaban user ─────────────────
+
+/**
+ * Answer-based contextual options: ubah future questions berdasarkan jawaban user
+ * di sesi onboarding /mulai. Ini terpisah dari Taste Profile personalization.
+ *
+ * Contoh: jika jawaban trope mengandung kata "misteri"/"rahasia"/"warisan",
+ * pertanyaan sikap/hubungan/akhir disesuaikan ke konteks misteri.
+ */
+
+const MYSTERY_KEYWORDS = ['misteri', 'rahasia', 'warisan', 'tersembunyi', 'dikubur', 'terungkap', 'surat lama', 'kematian']
+const ROMANCE_KEYWORDS = ['cinta', 'pernikahan', 'pasangan', 'romansa', 'hubungan', 'sekutu jadi cinta']
+const THRILLER_KEYWORDS = ['balas dendam', 'bertahan', 'terjebak', 'dikhianati', 'berlari', 'berbahaya']
+
+const CONTEXTUAL_OPTIONS: Record<string, Record<string, string[]>> = {
+  misteri: {
+    sikap: [
+      'Mengamati detail kecil sebelum bertindak',
+      'Menyimpan bukti sampai waktunya tepat',
+      'Menghadapi orang yang menyembunyikan sesuatu',
+    ],
+    hubungan: [
+      'Sekutu yang tahu sebagian rahasia',
+      'Orang lama yang memegang kunci jawaban',
+      'Fokus menyelidiki sendiri dulu',
+    ],
+    akhir: [
+      'Kebenaran terbuka di depan semua orang',
+      'Rahasia keluarga dibongkar sepenuhnya',
+      'Kedamaian setelah masa lalu diterima',
+    ],
+  },
+  romansa: {
+    sikap: [
+      'Mengikuti perasaan meski berisiko',
+      'Tenang dan menyusun rencana',
+      'Menyimpan perasaan sampai waktunya tiba',
+    ],
+    hubungan: [
+      'Cinta yang harus diperjuangkan lagi',
+      'Sekutu yang perlahan menjadi lebih',
+      'Hubungan baru yang mengobati luka lama',
+    ],
+    akhir: [
+      'Kebersamaan — akhirnya bersatu',
+      'Kedamaian — melepaskan dan melangkah',
+      'Pengorbanan manis untuk orang yang dicintai',
+    ],
+  },
+  thriller: {
+    sikap: [
+      'Langsung menghadapi, apa pun risikonya',
+      'Menyusun strategi dalam kegelapan',
+      'Bertahan hidup dengan apa yang ada',
+    ],
+    hubungan: [
+      'Aliansi sementara dengan musuh',
+      'Orang yang tidak bisa dipercaya sepenuhnya',
+      'Fokus pada diriku sendiri dulu',
+    ],
+    akhir: [
+      'Kemenangan — merebut kembali posisiku',
+      'Keadilan — semua rahasia terbuka',
+      'Selamat, tapi dengan luka yang dalam',
+    ],
+  },
+}
+
+function detectTropeContext(tropeAnswer: string): string | null {
+  const lower = tropeAnswer.toLowerCase()
+  if (MYSTERY_KEYWORDS.some((kw) => lower.includes(kw))) return 'misteri'
+  if (THRILLER_KEYWORDS.some((kw) => lower.includes(kw))) return 'thriller'
+  if (ROMANCE_KEYWORDS.some((kw) => lower.includes(kw))) return 'romansa'
+  return null
+}
+
+/**
+ * Adaptasi pertanyaan berdasarkan jawaban user di sesi onboarding.
+ * Hanya mengubah opsi, tidak menghapus pertanyaan. Freeze async Taste Profile tetap aman.
+ */
+export function adaptStorySetupQuestionsForAnswers(
+  questions: SetupQuestion[],
+  answers: Record<string, string>,
+): SetupQuestion[] {
+  const tropeAnswer = answers.trope
+  if (!tropeAnswer) return questions
+
+  const context = detectTropeContext(tropeAnswer)
+  if (!context) return questions
+
+  const contextOptions = CONTEXTUAL_OPTIONS[context]
+  if (!contextOptions) return questions
+
+  return questions.map((q) => {
+    const newOptions = contextOptions[q.key]
+    if (!newOptions) return q
+
+    const cloned = cloneQuestion(q)
+    cloned.options = newOptions
+    if (!cloned.options.includes(cloned.defaultAnswer)) {
+      cloned.defaultAnswer = cloned.options[0]
+    }
+    return cloned
+  })
+}

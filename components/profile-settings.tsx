@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from 'react'
 import { useTheme } from 'next-themes'
+import Link from 'next/link'
 import {
   Check,
   ChevronRight,
@@ -11,6 +12,7 @@ import {
   Palette,
   Plus,
   ShieldCheck,
+  Sparkles,
   Sun,
   Ticket,
 } from 'lucide-react'
@@ -20,6 +22,15 @@ import { useReaderFontSize } from '@/components/font-size-provider'
 const subscribeToMounted = () => () => {}
 const getMountedSnapshot = () => true
 const getServerMountedSnapshot = () => false
+
+const activeSettings = [
+  {
+    icon: Sparkles,
+    label: 'Selera Cerita',
+    desc: 'Genre, gaya bahasa, dan batas cerita',
+    href: '/onboarding/selera?next=/profil',
+  },
+]
 
 const disabledSettings = [
   { icon: Ticket, label: 'Akses Cerita', desc: 'Segera hadir' },
@@ -115,6 +126,24 @@ export function ProfileSettings() {
             </div>
           </div>
         </li>
+
+        {activeSettings.map(({ icon: Icon, label, desc, href }) => (
+          <li key={label} className="border-t border-border">
+            <Link
+              href={href}
+              className="flex w-full items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-secondary/40"
+            >
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary">
+                <Icon className="size-5" aria-hidden="true" />
+              </span>
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="text-sm font-medium text-foreground">{label}</span>
+                <span className="truncate text-xs text-muted-foreground">{desc}</span>
+              </span>
+              <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            </Link>
+          </li>
+        ))}
 
         {disabledSettings.map(({ icon: Icon, label, desc }) => (
           <li key={label} className="border-t border-border">

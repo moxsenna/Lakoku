@@ -3,6 +3,8 @@
 import { useState, useSyncExternalStore } from 'react'
 import Link from 'next/link'
 import { createClient, type SupabasePublicConfig } from '@/lib/supabase/client'
+import { readGuestTasteProfile, clearGuestTasteProfile } from '@/lib/taste-profile/storage'
+import { actMergeGuestTasteProfile } from '@/app/onboarding/selera/actions'
 import { ArrowLeft } from 'lucide-react'
 
 const subscribeToMounted = () => () => {}
@@ -51,6 +53,20 @@ export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicCo
         setError('Email atau kata sandi salah. Coba lagi.')
         return
       }
+
+      // Merge guest taste profile ke server (best-effort, jangan block login).
+      try {
+        const guestProfile = readGuestTasteProfile()
+        if (guestProfile) {
+          const mergeResult = await actMergeGuestTasteProfile(guestProfile)
+          if (mergeResult.ok && mergeResult.merged) {
+            clearGuestTasteProfile()
+          }
+        }
+      } catch {
+        // Best-effort: gagal merge jangan block navigation.
+      }
+
       // Hard navigation: soft router.push + refresh sering macet di CF/OpenNext
       // sebelum cookie sesi terbaca server components (loading tetap true).
       window.location.assign(safeNext())

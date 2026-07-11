@@ -13,7 +13,6 @@ import {
   mergeTasteProfiles,
   type TasteProfile,
 } from '@/lib/taste-profile/schema'
-import { readGuestTasteProfile } from '@/lib/taste-profile/storage'
 
 type ActionOk = { ok: true }
 type ActionError = { ok: false; error: string }
@@ -97,7 +96,7 @@ export async function actSkipTasteProfile(): Promise<ActionResult> {
 // ── Merge guest profile ke server saat login ─────────────────────
 
 export async function actMergeGuestTasteProfile(
-  _guestProfile: unknown,
+  rawGuestProfile: unknown,
 ): Promise<{ ok: true; merged: boolean } | ActionError> {
   try {
     const { getSessionUser } = await import('@/lib/api/user-state')
@@ -114,8 +113,10 @@ export async function actMergeGuestTasteProfile(
       return { ok: true, merged: false }
     }
 
-    // Ambil guest profile dari localStorage.
-    const guestProfile = readGuestTasteProfile()
+    // Parse guest profile dari argumen client (bukan localStorage server).
+    const parsed = TasteProfileSchema.safeParse(rawGuestProfile)
+    const guestProfile = parsed.success ? parsed.data : null
+
     if (!guestProfile || !guestProfile.completedAt) {
       return { ok: true, merged: false }
     }

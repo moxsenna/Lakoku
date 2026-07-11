@@ -40,78 +40,238 @@ interface StepDefinition {
   field?: keyof TasteProfile
 }
 
-const STEPS: StepDefinition[] = [
-  {
-    id: 'genre',
-    eyebrow: 'LANGKAH 1 DARI 5',
-    title: 'Genre apa yang paling kamu suka?',
-    subtitle: 'Pilih satu atau beberapa.',
-    multiSelect: true,
-    field: 'preferredGenres',
-    options: [
-      { label: 'Drama keluarga', value: 'Drama keluarga' },
-      { label: 'Romansa', value: 'Romansa' },
-      { label: 'Misteri & rahasia', value: 'Misteri & rahasia' },
-      { label: 'Fantasi & kerajaan', value: 'Fantasi & kerajaan' },
-      { label: 'Slice of life', value: 'Slice of life' },
-      { label: 'Thriller & bertahan hidup', value: 'Thriller & bertahan hidup' },
-    ],
-  },
-  {
-    id: 'tropes-liked',
-    eyebrow: 'LANGKAH 2 DARI 5',
-    title: 'Konflik atau trope apa yang kamu suka?',
-    subtitle: 'Pilih satu atau beberapa.',
-    multiSelect: true,
-    field: 'likedTropes',
-    options: [
-      { label: 'Cinta lama yang kembali', value: 'Cinta lama yang kembali' },
-      { label: 'Pernikahan kontrak', value: 'Pernikahan kontrak' },
-      { label: 'Rahasia keluarga & warisan', value: 'Rahasia keluarga & warisan' },
-      { label: 'Bangkit setelah jatuh', value: 'Bangkit setelah jatuh' },
-      { label: 'Sekutu jadi cinta', value: 'Sekutu jadi cinta' },
-      { label: 'Balas dendam yang tertunda', value: 'Balas dendam yang tertunda' },
-    ],
-  },
-  {
-    id: 'avoided',
-    eyebrow: 'LANGKAH 3 DARI 5',
-    title: 'Hal yang sebaiknya dikurangi',
-    subtitle: 'Kami akan menghindari ini saat membuat cerita untukmu.',
-    multiSelect: true,
-    field: 'avoidedTropes',
-    options: [
-      { label: 'Kekerasan eksplisit', value: 'Kekerasan eksplisit' },
-      { label: 'Pengkhianatan pasangan', value: 'Pengkhianatan pasangan' },
-      { label: 'Kematian tokoh utama', value: 'Kematian tokoh utama' },
-      { label: 'Horor & jumpscare', value: 'Horor & jumpscare' },
-      { label: 'Cinta segitiga', value: 'Cinta segitiga' },
-      { label: 'Konflik perang', value: 'Konflik perang' },
-    ],
-  },
-  {
-    id: 'intensity',
-    eyebrow: 'LANGKAH 4 DARI 5',
-    title: 'Seberapa kuat kamu suka ceritanya?',
-    options: [
-      { label: 'Ringan — cukup menghibur dan menyenangkan', value: 'ringan' },
-      { label: 'Sedang — ada konflik tapi tidak terlalu berat', value: 'sedang' },
-      { label: 'Tinggi — drama penuh, emosi naik-turun', value: 'tinggi' },
-    ],
-  },
-  {
-    id: 'ending-style',
-    eyebrow: 'LANGKAH 5 DARI 5',
-    title: 'Akhir dan gaya bahasa yang kamu suka',
-    subtitle: 'Pilih yang paling menggambarkan seleramu.',
-    options: [
-      { label: 'Keadilan — semua rahasia terbuka dan yang benar menang', value: 'keadilan' },
-      { label: 'Kedamaian — melepaskan masa lalu, melangkah dengan tenang', value: 'kedamaian' },
-      { label: 'Kemenangan — merebut kembali yang hilang', value: 'kemenangan' },
-      { label: 'Tragis manis — pahit tapi berharga', value: 'tragis-manis' },
-    ],
-  },
+// ── Genre → trope/konflik mapping (dynamic step 2) ────────────────
+
+const GENRE_TROPE_OPTIONS: Record<string, string[]> = {
+  'Misteri & rahasia': [
+    'Rahasia keluarga yang dikubur lama',
+    'Surat lama yang mengubah warisan',
+    'Identitas asli yang disembunyikan',
+    'Kematian lama yang belum terjawab',
+    'Saksi yang tiba-tiba muncul',
+    'Kebenaran yang sengaja ditutup keluarga',
+  ],
+  'Romansa': [
+    'Cinta lama yang kembali',
+    'Pernikahan kontrak',
+    'Sekutu jadi cinta',
+    'Cinta yang harus diperjuangkan lagi',
+    'Hubungan pura-pura yang jadi nyata',
+    'Orang yang salah di waktu yang tepat',
+  ],
+  'Drama keluarga': [
+    'Konflik warisan yang memecah keluarga',
+    'Rahasia keluarga & warisan',
+    'Bangkit setelah jatuh',
+    'Pengorbanan demi keluarga',
+    'Anak yang kembali setelah bertahun-tahun',
+    'Pilihan antara keluarga dan cinta',
+  ],
+  'Fantasi & kerajaan': [
+    'Tahta yang diperebutkan',
+    'Takdir kerajaan yang tersembunyi',
+    'Sihir terlarang yang kembali muncul',
+    'Aliansi dua kerajaan yang rapuh',
+    'Ramalan yang mengubah segalanya',
+    'Pengkhianatan di balik takhta',
+  ],
+  'Slice of life': [
+    'Hidup baru di tempat tak terduga',
+    'Persahabatan yang mengubah hidup',
+    'Kesempatan kedua di usia dewasa',
+    'Menemukan makna di hal sederhana',
+    'Pulang ke kampung halaman',
+    'Mimpi kecil yang akhirnya tercapai',
+  ],
+  'Thriller & bertahan hidup': [
+    'Terjebak tanpa jalan keluar',
+    'Balas dendam yang tertunda',
+    'Dikhianati oleh orang terdekat',
+    'Berlari dari masa lalu',
+    'Permainan berbahaya yang tak bisa dihentikan',
+    'Satu keputusan yang mengubah segalanya',
+  ],
+}
+
+// ── Genre → avoided options mapping (dynamic step 3) ──────────────
+
+const GENRE_AVOIDED_OPTIONS: Record<string, string[]> = {
+  'Misteri & rahasia': [
+    'Twist terlalu tiba-tiba',
+    'Tokoh terlalu bodoh demi plot',
+    'Rahasia yang tidak terjawab',
+    'Horor berlebihan',
+    'Kekerasan eksplisit',
+    'Konflik perang',
+  ],
+  'Romansa': [
+    'Pengkhianatan pasangan',
+    'Cinta segitiga',
+    'Hubungan toxic yang diromantisasi',
+    'Kekerasan eksplisit',
+    'Kematian tokoh utama',
+    'Konflik perang',
+  ],
+  'Drama keluarga': [
+    'Kekerasan eksplisit',
+    'Pengkhianatan pasangan',
+    'Kematian tokoh utama',
+    'Horor & jumpscare',
+    'Cinta segitiga',
+    'Konflik perang',
+  ],
+  'Fantasi & kerajaan': [
+    'Kekerasan eksplisit',
+    'Horor & jumpscare',
+    'Romansa berlebihan',
+    'Kematian tokoh utama',
+    'Plot armor berlebihan',
+    'Konflik perang',
+  ],
+  'Slice of life': [
+    'Kekerasan eksplisit',
+    'Drama berlebihan',
+    'Kematian tokoh utama',
+    'Horor & jumpscare',
+    'Konflik perang',
+    'Pengkhianatan pasangan',
+  ],
+  'Thriller & bertahan hidup': [
+    'Horor & jumpscare',
+    'Kekerasan eksplisit',
+    'Kematian tokoh utama',
+    'Cinta segitiga',
+    'Pengkhianatan pasangan',
+    'Plot armor berlebihan',
+  ],
+}
+
+const FALLBACK_TROPE_OPTIONS: string[] = [
+  'Cinta lama yang kembali',
+  'Pernikahan kontrak',
+  'Rahasia keluarga & warisan',
+  'Bangkit setelah jatuh',
+  'Sekutu jadi cinta',
+  'Balas dendam yang tertunda',
 ]
+
+const FALLBACK_AVOIDED_OPTIONS: string[] = [
+  'Kekerasan eksplisit',
+  'Pengkhianatan pasangan',
+  'Kematian tokoh utama',
+  'Horor & jumpscare',
+  'Cinta segitiga',
+  'Konflik perang',
+]
+
+const MAX_OPTIONS = 6
+
+/** Gabungkan opsi dari genre yang dipilih, deduplicate, max 6. */
+function buildOptionsFromGenres(
+  selectedGenres: string[],
+  genreMap: Record<string, string[]>,
+  fallback: string[],
+): { label: string; value: string }[] {
+  if (!selectedGenres.length) {
+    return fallback.map((v) => ({ label: v, value: v }))
+  }
+
+  const seen = new Set<string>()
+  const result: string[] = []
+
+  for (const genre of selectedGenres) {
+    const options = genreMap[genre]
+    if (!options) continue
+    for (const opt of options) {
+      if (result.length >= MAX_OPTIONS) break
+      if (seen.has(opt)) continue
+      seen.add(opt)
+      result.push(opt)
+    }
+    if (result.length >= MAX_OPTIONS) break
+  }
+
+  if (result.length < MAX_OPTIONS) {
+    for (const opt of fallback) {
+      if (result.length >= MAX_OPTIONS) break
+      if (seen.has(opt)) continue
+      seen.add(opt)
+      result.push(opt)
+    }
+  }
+
+  return result.map((v) => ({ label: v, value: v }))
+}
+
+// ── Static steps (genre, intensity, ending-style) ─────────────────
+
+const GENRE_STEP: StepDefinition = {
+  id: 'genre',
+  eyebrow: 'LANGKAH 1 DARI 5',
+  title: 'Genre apa yang paling kamu suka?',
+  subtitle: 'Pilih satu atau beberapa.',
+  multiSelect: true,
+  field: 'preferredGenres',
+  options: [
+    { label: 'Drama keluarga', value: 'Drama keluarga' },
+    { label: 'Romansa', value: 'Romansa' },
+    { label: 'Misteri & rahasia', value: 'Misteri & rahasia' },
+    { label: 'Fantasi & kerajaan', value: 'Fantasi & kerajaan' },
+    { label: 'Slice of life', value: 'Slice of life' },
+    { label: 'Thriller & bertahan hidup', value: 'Thriller & bertahan hidup' },
+  ],
+}
+
+const INTENSITY_STEP: StepDefinition = {
+  id: 'intensity',
+  eyebrow: 'LANGKAH 4 DARI 5',
+  title: 'Seberapa kuat kamu suka ceritanya?',
+  options: [
+    { label: 'Ringan — cukup menghibur dan menyenangkan', value: 'ringan' },
+    { label: 'Sedang — ada konflik tapi tidak terlalu berat', value: 'sedang' },
+    { label: 'Tinggi — drama penuh, emosi naik-turun', value: 'tinggi' },
+  ],
+}
+
+const ENDING_STEP: StepDefinition = {
+  id: 'ending-style',
+  eyebrow: 'LANGKAH 5 DARI 5',
+  title: 'Akhir dan gaya bahasa yang kamu suka',
+  subtitle: 'Pilih yang paling menggambarkan seleramu.',
+  options: [
+    { label: 'Keadilan — semua rahasia terbuka dan yang benar menang', value: 'keadilan' },
+    { label: 'Kedamaian — melepaskan masa lalu, melangkah dengan tenang', value: 'kedamaian' },
+    { label: 'Kemenangan — merebut kembali yang hilang', value: 'kemenangan' },
+    { label: 'Tragis manis — pahit tapi berharga', value: 'tragis-manis' },
+  ],
+}
+
+/** Build dynamic steps berdasarkan genre yang dipilih. */
+function buildSteps(selectedGenres: string[]): StepDefinition[] {
+  return [
+    GENRE_STEP,
+    {
+      id: 'tropes-liked',
+      eyebrow: 'LANGKAH 2 DARI 5',
+      title: 'Konflik atau trope apa yang kamu suka?',
+      subtitle: 'Pilih satu atau beberapa.',
+      multiSelect: true,
+      field: 'likedTropes',
+      options: buildOptionsFromGenres(selectedGenres, GENRE_TROPE_OPTIONS, FALLBACK_TROPE_OPTIONS),
+    },
+    {
+      id: 'avoided',
+      eyebrow: 'LANGKAH 3 DARI 5',
+      title: 'Hal yang sebaiknya dikurangi',
+      subtitle: 'Kami akan menghindari ini saat membuat cerita untukmu.',
+      multiSelect: true,
+      field: 'avoidedTropes',
+      options: buildOptionsFromGenres(selectedGenres, GENRE_AVOIDED_OPTIONS, FALLBACK_AVOIDED_OPTIONS),
+    },
+    INTENSITY_STEP,
+    ENDING_STEP,
+  ]
+}
 
 // ─── Helper ───────────────────────────────────────────────────────
 
@@ -148,9 +308,13 @@ export function TasteProfileFlow() {
   const [stepAnswers, setStepAnswers] = useState<Partial<TasteProfile>>({})
   const [err, setErr] = useState<string | null>(null)
 
-  const currentStep = STEPS[step]
-  const isLastStep = step === STEPS.length - 1
-  const totalSteps = STEPS.length
+  // Steps dibangun ulang saat genre berubah.
+  const selectedGenres = (stepAnswers.preferredGenres as string[]) ?? []
+  const steps = buildSteps(selectedGenres)
+
+  const currentStep = steps[step]
+  const isLastStep = step === steps.length - 1
+  const totalSteps = steps.length
 
   // ── Multi-select toggle ─────────────────────────────────────────
 

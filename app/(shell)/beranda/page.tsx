@@ -2,6 +2,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { StoryCard } from '@/components/story-card'
 import { ResumeChapter } from '@/components/resume-chapter'
+import { TasteProfileFirstRunGate } from '@/components/onboarding/taste-profile-first-run-gate'
 import { listExploreStories, listMyLibraryStories } from '@/lib/api/server'
 import { listPublicShareTeasers } from '@/lib/api/share'
 import { Play } from 'lucide-react'
@@ -21,6 +22,7 @@ export default async function BerandaPage() {
 
   return (
     <main className="flex flex-col gap-8 px-5 pt-8">
+        <TasteProfileFirstRunGate next="/beranda" />
         <header className="flex items-center justify-between">
           <div className="flex flex-col">
             <span className="font-serif text-2xl tracking-tight text-foreground">lakoku</span>
@@ -135,21 +137,6 @@ export default async function BerandaPage() {
           </Link>
         </section>
 
-        <section className="mb-4 flex flex-col items-start gap-3 rounded-3xl bg-secondary p-6">
-          <h2 className="font-serif text-2xl leading-snug text-secondary-foreground text-balance">
-            Sesuaikan selera ceritamu
-          </h2>
-          <p className="text-sm leading-relaxed text-secondary-foreground/70">
-            Pilih genre, gaya bahasa, dan batas cerita yang kamu suka. Lakoku akan memakai ini
-            sebagai arah awal saat membuat cerita baru.
-          </p>
-          <Link
-            href="/onboarding/selera?next=/beranda"
-            className="mt-1 flex min-h-12 items-center rounded-2xl bg-primary px-5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
-          >
-            Atur selera cerita
-          </Link>
-        </section>
     </main>
   )
 }

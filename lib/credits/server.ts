@@ -10,31 +10,45 @@ import {
 
 /**
  * Sisi server kredit baca (server-only, service-role).
- *  - getReadingPolicy: baca kebijakan harga dari DB (editable kapan pun), fallback default.
+ *  - getReadingPolicy: baca kebijakan harga dari DB (reading_policy + feature_credit_costs), fallback default.
  *  - getCreditBalance: saldo kredit user (RPC credit_balance_v1).
  *  - isChapterUnlocked / listUnlockedChapters: status akses bab.
  *  - spendChapterUnlock: belanjakan kredit untuk buka bab (RPC spend_credits_v1, idempoten).
  */
 
-/** Kebijakan harga aktif dari DB; fallback ke default bila tak ada/gagal. */
+/** Kebijakan harga aktif dari DB; creditsPerChapter dari feature_credit_costs (chapter_unlock). */
 export const getReadingPolicy = cache(async function getReadingPolicy(): Promise<ReadingPolicy> {
+  let creditsPerChapter = DEFAULT_READING_POLICY.creditsPerChapter
+  let freeChapters = DEFAULT_READING_POLICY.freeChapters
+
   try {
     const db = createAdminClient()
-    const { data } = await db
+
+    // Baca freeChapters dari reading_policy (existing table)
+    const { data: rp } = await db
       .from('reading_policy')
       .select('free_chapters,credits_per_chapter')
       .eq('id', 1)
       .maybeSingle()
-    if (data) {
-      return {
-        freeChapters: Number(data.free_chapters),
-        creditsPerChapter: Number(data.credits_per_chapter),
-      }
+    if (rp) {
+      freeChapters = Number(rp.free_chapters)
+    }
+
+    // Baca creditsPerChapter dari feature_credit_costs (chapter_unlock)
+    const { data: fc } = await db
+      .from('feature_credit_costs')
+      .select('credits_required')
+      .eq('feature_key', 'chapter_unlock')
+      .eq('is_active', true)
+      .maybeSingle()
+    if (fc) {
+      creditsPerChapter = Number(fc.credits_required)
     }
   } catch {
     /* fallback */
   }
-  return DEFAULT_READING_POLICY
+
+  return { freeChapters, creditsPerChapter }
 })
 
 /** Saldo kredit user (0 bila belum ada / gagal). */

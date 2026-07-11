@@ -116,5 +116,69 @@ if (existsSync(clientGrant)) {
   check('grant-form: no createAdminClient (client)', !c.includes('createAdminClient'))
 }
 
+// --- Editable settings checks ---
+
+// Settings page is now editable (client component with dialogs)
+const settingsPagePath = join(root, 'app/admin/settings/page.tsx')
+if (existsSync(settingsPagePath)) {
+  const c = readFileSync(settingsPagePath, 'utf-8')
+  check('settings: has Edit buttons', c.includes('Edit'))
+}
+
+// API routes for settings
+check('api: credit-products PATCH exists', existsSync(join(root, 'app/api/admin/settings/credit-products/route.ts')))
+check('api: feature-costs PATCH exists', existsSync(join(root, 'app/api/admin/settings/feature-costs/route.ts')))
+check('api: generation-policy PATCH exists', existsSync(join(root, 'app/api/admin/settings/generation-policy/route.ts')))
+check('api: model-routes PATCH exists', existsSync(join(root, 'app/api/admin/settings/model-routes/route.ts')))
+
+// All settings routes check requireAdminUser
+for (const route of ['credit-products', 'feature-costs', 'generation-policy', 'model-routes']) {
+  const p = join(root, `app/api/admin/settings/${route}/route.ts`)
+  if (existsSync(p)) {
+    const c = readFileSync(p, 'utf-8')
+    check(`route ${route}: requires owner role`, c.includes("Forbidden") || c.includes("owner"))
+  }
+}
+
+// Zod schemas
+const schemaPath = join(root, 'lib/admin/settings-schemas.ts')
+if (existsSync(schemaPath)) {
+  const c = readFileSync(schemaPath, 'utf-8')
+  check('zod: updateCreditProductSchema exists', c.includes('updateCreditProductSchema'))
+  check('zod: updateFeatureCreditCostSchema exists', c.includes('updateFeatureCreditCostSchema'))
+  check('zod: updateGenerationPolicySchema exists', c.includes('updateGenerationPolicySchema'))
+  check('zod: updateAiModelRouteSchema exists', c.includes('updateAiModelRouteSchema'))
+}
+
+// Audit log
+const settingsLibPath = join(root, 'lib/admin/settings.ts')
+if (existsSync(settingsLibPath)) {
+  const c = readFileSync(settingsLibPath, 'utf-8')
+  check('settings lib: auditSettings function', c.includes('admin_settings_audit_logs'))
+  check('settings lib: requireOwner function', c.includes('requireOwner'))
+}
+
+// Migration
+const migPath = join(root, 'supabase/migrations/20260711030000_admin_editable_settings.sql')
+if (existsSync(migPath)) {
+  const c = readFileSync(migPath, 'utf-8')
+  check('migration: admin_settings_audit_logs table', c.includes('admin_settings_audit_logs'))
+  check('migration: chapter_unlock seed', c.includes('chapter_unlock'))
+}
+
+// Runtime: chapter_unlock from feature_credit_costs
+const creditsServerPath = join(root, 'lib/credits/server.ts')
+if (existsSync(creditsServerPath)) {
+  const c = readFileSync(creditsServerPath, 'utf-8')
+  check('runtime: unlock cost from feature_credit_costs', c.includes("feature_credit_costs") && c.includes("chapter_unlock"))
+}
+
+// AI fallback models support in settings lib
+const aiRouteLibPath = join(root, 'lib/ops/ai-model-routes.ts')
+if (existsSync(aiRouteLibPath)) {
+  const c = readFileSync(aiRouteLibPath, 'utf-8')
+  check('ai-model-routes: fallbackModels array', c.includes('fallbackModels'))
+}
+
 console.log(`\nadmin-panel-smoke: ${pass}/${pass + fail} PASS`)
 if (fail > 0) process.exit(1)

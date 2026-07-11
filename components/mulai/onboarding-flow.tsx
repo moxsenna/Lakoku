@@ -37,7 +37,7 @@ import {
 import { actProposeStorySetupPremises } from '@/app/mulai/actions'
 import { actGetTasteProfile } from '@/app/onboarding/selera/actions'
 import { readGuestTasteProfile } from '@/lib/taste-profile/storage'
-import { getStorySetupQuestions, type SetupQuestion } from '@/lib/onboarding/question-presets'
+import { getStorySetupQuestions, adaptStorySetupQuestionsForAnswers, type SetupQuestion } from '@/lib/onboarding/question-presets'
 import type { PremiseDraft, StoryBibleDraft } from '@/lib/authoring/schema'
 import type { TasteProfile } from '@/lib/taste-profile/schema'
 
@@ -244,6 +244,14 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     setAnswers(next)
     setCustomAnswerFor(null)
     setCustomAnswerText('')
+
+    // Jawaban trope mengubah future questions agar lebih relevan.
+    if (key === 'trope') {
+      setActiveQuestions((current) =>
+        adaptStorySetupQuestionsForAnswers(current, next),
+      )
+    }
+
     if (step < totalQuestions - 1) {
       setTimeout(() => setStep((s) => s + 1), 220)
     } else {

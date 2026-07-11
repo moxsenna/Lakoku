@@ -1,0 +1,120 @@
+/**
+ * Smoke test admin panel — STATIC CHECKS tanpa I/O.
+ *
+ * Checks:
+ *  - File existence untuk semua rute admin
+ *  - Guard di layout.tsx
+ *  - Middleware matcher
+ *  - Sidebar links
+ *  - Tidak ada hardcoded email/admin
+ *  - Settings tidak punya write/edit action
+ *  - Payments tidak punya reconcile/refund
+ *  - Service role tidak muncul di client components
+ */
+import { readFileSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
+
+let pass = 0
+let fail = 0
+function check(name: string, cond: boolean) {
+  if (cond) { pass++; console.log(`  PASS ${name}`) }
+  else { fail++; console.error(`  FAIL ${name}`) }
+}
+
+const root = process.cwd()
+
+const requiredFiles = [
+  'app/admin/layout.tsx',
+  'app/admin/page.tsx',
+  'app/admin/users/page.tsx',
+  'app/admin/users/[id]/page.tsx',
+  'app/admin/credits/page.tsx',
+  'app/admin/payments/page.tsx',
+  'app/admin/generation/page.tsx',
+  'app/admin/settings/page.tsx',
+  'app/admin/consistency/page.tsx',
+  'components/admin/admin-shell.tsx',
+  'components/admin/admin-sidebar.tsx',
+  'components/admin/admin-header.tsx',
+  'components/admin/admin-stat-card.tsx',
+  'components/admin/admin-section-card.tsx',
+  'components/admin/admin-empty-state.tsx',
+  'components/admin/admin-error-state.tsx',
+  'components/admin/grant-credit-form.tsx',
+  'components/admin/status-badge.tsx',
+]
+
+for (const f of requiredFiles) {
+  check(`file exists: ${f}`, existsSync(join(root, f)))
+}
+
+// Layout imports requireAdminUser
+const layoutPath = join(root, 'app/admin/layout.tsx')
+if (existsSync(layoutPath)) {
+  const c = readFileSync(layoutPath, 'utf-8')
+  check('layout.tsx imports requireAdminUser', c.includes('requireAdminUser'))
+}
+
+// Middleware matcher
+const mwPath = join(root, 'middleware.ts')
+if (existsSync(mwPath)) {
+  const c = readFileSync(mwPath, 'utf-8')
+  check("middleware.ts matcher includes '/admin/:path*'", c.includes('/admin/:path*'))
+}
+
+// Sidebar has consistency link
+const sidebarPath = join(root, 'components/admin/admin-sidebar.tsx')
+if (existsSync(sidebarPath)) {
+  const c = readFileSync(sidebarPath, 'utf-8')
+  check('sidebar has /admin/consistency link', c.includes('/admin/consistency'))
+  check('sidebar has /admin link', c.includes("'/admin'"))
+}
+
+// Grant form submits to correct endpoint
+const gfPath = join(root, 'components/admin/grant-credit-form.tsx')
+if (existsSync(gfPath)) {
+  const c = readFileSync(gfPath, 'utf-8')
+  check('grant form POST to /api/admin/credits/grant', c.includes('/api/admin/credits/grant'))
+}
+
+// No hardcoded admin emails in guard/auth
+const authPath = join(root, 'lib/admin/auth.ts')
+if (existsSync(authPath)) {
+  const c = readFileSync(authPath, 'utf-8')
+  check('no hardcoded moxsenna@gmail.com in auth', !c.includes('moxsenna@gmail.com'))
+}
+
+// Settings page no write/edit
+const settingsPath = join(root, 'app/admin/settings/page.tsx')
+if (existsSync(settingsPath)) {
+  const c = readFileSync(settingsPath, 'utf-8')
+  check('settings: no edit/write form', !c.includes('<form') && !c.includes('"use client"'))
+}
+
+// Payments page no reconcile/refund
+const payPath = join(root, 'app/admin/payments/page.tsx')
+if (existsSync(payPath)) {
+  const c = readFileSync(payPath, 'utf-8')
+  check('payments: no reconcile button', !c.includes('reconcile'))
+  check('payments: no refund button', !c.includes('refund'))
+}
+
+// Consistency page still exists
+const consPath = join(root, 'app/admin/consistency/page.tsx')
+check('consistency page still exists', existsSync(consPath))
+
+// No service role in client components
+const clientSidebar = join(root, 'components/admin/admin-sidebar.tsx')
+if (existsSync(clientSidebar)) {
+  const c = readFileSync(clientSidebar, 'utf-8')
+  check('sidebar: no createAdminClient (client)', !c.includes('createAdminClient'))
+}
+
+const clientGrant = join(root, 'components/admin/grant-credit-form.tsx')
+if (existsSync(clientGrant)) {
+  const c = readFileSync(clientGrant, 'utf-8')
+  check('grant-form: no createAdminClient (client)', !c.includes('createAdminClient'))
+}
+
+console.log(`\nadmin-panel-smoke: ${pass}/${pass + fail} PASS`)
+if (fail > 0) process.exit(1)

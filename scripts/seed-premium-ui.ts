@@ -32,7 +32,7 @@ async function main() {
   const { error: storyError } = await db.from('stories').insert({
     id: storyId,
     title: PREMIUM_ROUTE_MAP_50.title,
-    cover: '/covers/selasa-terakhir.webp', // Gunakan cover sementara
+    cover: '/covers/bilik-ketujuh.webp',
     tagline: 'Kisah misteri di balik tembok pesantren.',
     role: 'Naya',
     tropes: PREMIUM_ROUTE_MAP_50.genre,

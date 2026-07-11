@@ -36,7 +36,7 @@ import { isChapterPreparing } from './leases'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
 
 /** Demo/seed resmi yang boleh tampil di Jelajahi sebelum share katalog hidup. */
-const OFFICIAL_DEMO_STORY_IDS = new Set(['demo:selasa-akhir'])
+const OFFICIAL_DEMO_STORY_IDS = new Set(['demo:selasa-akhir', 'premium:bilik-ketujuh-50'])
 
 function isOfficialDemoStory(id: string): boolean {
   return id.startsWith('demo:') || OFFICIAL_DEMO_STORY_IDS.has(id)

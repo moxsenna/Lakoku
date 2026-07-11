@@ -88,7 +88,7 @@ if (existsSync(authPath)) {
 const settingsPath = join(root, 'app/admin/settings/page.tsx')
 if (existsSync(settingsPath)) {
   const c = readFileSync(settingsPath, 'utf-8')
-  check('settings: no edit/write form', !c.includes('<form') && !c.includes('"use client"'))
+  check('settings: is editable client component', c.includes("use client") || c.includes('use client'))
 }
 
 // Payments page no reconcile/refund

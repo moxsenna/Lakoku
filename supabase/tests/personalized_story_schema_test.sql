@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select no_plan();
+select plan(48);
 
 -- Personalized story shape.
 select has_column('public', 'stories', 'source_story_id', 'stories.source_story_id exists');
@@ -18,6 +18,15 @@ select has_column('public', 'choice_outcomes', 'choice_kind', 'choice_outcomes.c
 
 select has_table('public', 'story_generation_contracts', 'story_generation_contracts exists');
 select has_table('public', 'story_creation_requests', 'story_creation_requests reserves strong-idempotency keys');
+select has_column('public', 'story_creation_requests', 'owner_user_id', 'creation requests identify owner');
+select has_column('public', 'story_creation_requests', 'request_kind', 'creation requests identify request kind');
+select has_column('public', 'story_creation_requests', 'idempotency_key', 'creation requests store idempotency key');
+select has_column('public', 'story_creation_requests', 'request_hash', 'creation requests bind key to request hash');
+select has_column('public', 'story_creation_requests', 'story_id', 'creation requests reserve story id');
+select has_column('public', 'story_creation_requests', 'status', 'creation requests track status');
+select has_column('public', 'story_creation_requests', 'error_code', 'creation requests track failure code');
+select has_column('public', 'story_creation_requests', 'created_at', 'creation requests track creation time');
+select has_column('public', 'story_creation_requests', 'updated_at', 'creation requests track update time');
 
 select has_index('public', 'stories', 'stories_source_story_idx', 'source story lookup index exists');
 select has_index('public', 'stories', 'stories_owner_mode_idx', 'owner and story mode lookup index exists');
@@ -62,6 +71,24 @@ select ok(
       and pg_get_constraintdef(oid) like '%llm_repaired%'
   ),
   'generation contracts constrain contract_source'
+);
+select ok(
+  exists (
+    select 1 from pg_constraint
+    where conrelid = to_regclass('public.story_creation_requests')
+      and contype = 'c'
+      and pg_get_constraintdef(oid) like '%request_kind%personalized%premium_clone%'
+  ),
+  'creation request kind allows only personalized and premium_clone'
+);
+select ok(
+  exists (
+    select 1 from pg_constraint
+    where conrelid = to_regclass('public.story_creation_requests')
+      and contype = 'c'
+      and pg_get_constraintdef(oid) like '%status%RESERVED%READY%FAILED%'
+  ),
+  'creation request status allows only RESERVED, READY, and FAILED'
 );
 select ok(
   exists (
@@ -133,6 +160,30 @@ select ok(
       and qual not in ('true', '(true)')
   ),
   'outcome public policy follows parent visibility'
+);
+select policies_are(
+  'public',
+  'chapters',
+  array['chapters_owner_read', 'chapters_public_read'],
+  'chapters have exact parent-scoped SELECT policy set'
+);
+select policies_are(
+  'public',
+  'choice_outcomes',
+  array['choice_outcomes_owner_read', 'choice_outcomes_public_read'],
+  'choice_outcomes have exact parent-scoped SELECT policy set'
+);
+select policies_are(
+  'public',
+  'reader_states',
+  array['reader_states_owner'],
+  'reader_states have exact owner-only policy set'
+);
+select policies_are(
+  'public',
+  'story_generation_contracts',
+  array['sgc_owner_read'],
+  'story_generation_contracts have exact owner-only policy set'
 );
 select ok(
   not exists (

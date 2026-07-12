@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select no_plan();
+select plan(36);
 
 -- Fixed UUIDs and story IDs keep fixtures deterministic. Transaction rollback leaves no data.
 insert into auth.users (
@@ -61,6 +61,20 @@ begin
   execute format('select count(*) from %s where story_id = $1', p_table)
     into v_count using p_story_id;
   return v_count;
+exception when others then
+  return -1;
+end
+$$;
+
+create or replace function pg_temp.try_exec(p_sql text)
+returns boolean
+language plpgsql
+as $$
+begin
+  execute p_sql;
+  return true;
+exception when others then
+  return false;
 end
 $$;
 
@@ -104,6 +118,11 @@ select is(
   'anon cannot read private generation contract'
 );
 select is(
+  pg_temp.visible_story_rows(to_regclass('public.story_generation_contracts'), 'premium:test-public-template'),
+  0::bigint,
+  'anon cannot read public template internal contract'
+);
+select is(
   (select count(*) from public.reader_states where story_id = 'test:personalized-private-a'),
   0::bigint,
   'anon cannot read reader state'
@@ -120,6 +139,21 @@ select is(
   'authenticated user B cannot read A private story'
 );
 select is(
+  (select count(*) from public.stories where id = 'premium:test-public-template'),
+  1::bigint,
+  'authenticated user B can read public premium template'
+);
+select is(
+  (select count(*) from public.chapters where story_id = 'premium:test-public-template'),
+  1::bigint,
+  'authenticated user B can read public template chapter'
+);
+select is(
+  (select count(*) from public.choice_outcomes where story_id = 'premium:test-public-template'),
+  1::bigint,
+  'authenticated user B can read public template outcome'
+);
+select is(
   (select count(*) from public.chapters where story_id = 'test:personalized-private-a'),
   0::bigint,
   'authenticated user B cannot read A private chapters'
@@ -133,6 +167,11 @@ select is(
   pg_temp.visible_story_rows(to_regclass('public.story_generation_contracts'), 'test:personalized-private-a'),
   0::bigint,
   'authenticated user B cannot read A private contract'
+);
+select is(
+  pg_temp.visible_story_rows(to_regclass('public.story_generation_contracts'), 'premium:test-public-template'),
+  0::bigint,
+  'authenticated user B cannot read public template internal contract'
 );
 select is(
   (select count(*) from public.reader_states where user_id = '10000000-0000-4000-8000-000000000001'),
@@ -171,6 +210,11 @@ select is(
   'owner A can read private generation contract'
 );
 select is(
+  pg_temp.visible_story_rows(to_regclass('public.story_generation_contracts'), 'premium:test-public-template'),
+  0::bigint,
+  'owner A cannot read public template internal contract without ownership'
+);
+select is(
   (select count(*) from public.reader_states where user_id = '10000000-0000-4000-8000-000000000001'),
   1::bigint,
   'owner A can read own reader state'
@@ -204,6 +248,38 @@ select is(
   (select count(*) from public.choice_outcomes where story_id = 'test:personalized-private-a'),
   1::bigint,
   'service_role can read private outcome internals'
+);
+select is(
+  (select count(*) from public.reader_states where story_id = 'test:personalized-private-a'),
+  1::bigint,
+  'service_role can read reader state internals'
+);
+select is(
+  pg_temp.visible_story_rows(to_regclass('public.story_generation_contracts'), 'test:personalized-private-a'),
+  1::bigint,
+  'service_role can read private generation contract internals'
+);
+select ok(
+  pg_temp.try_exec($sql$
+    insert into public.story_generation_contracts (story_id, mode)
+    values ('test:service-role-write', 'personalized_ai')
+  $sql$),
+  'service_role can write generation contract internals'
+);
+select ok(
+  pg_temp.try_exec($sql$
+    insert into public.story_creation_requests
+      (owner_user_id, request_kind, idempotency_key, request_hash, story_id, status)
+    values
+      ('10000000-0000-4000-8000-000000000001', 'personalized',
+       'test-service-request', 'test-request-hash', 'test:service-role-write', 'RESERVED')
+  $sql$),
+  'service_role can write creation request internals'
+);
+select is(
+  pg_temp.visible_story_rows(to_regclass('public.story_creation_requests'), 'test:service-role-write'),
+  1::bigint,
+  'service_role can read creation request internals'
 );
 reset role;
 

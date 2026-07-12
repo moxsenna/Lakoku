@@ -1,7 +1,8 @@
 # Personalized Story Engine — Design Spec
 
 **Date:** 2026-07-12
-**Status:** Draft → Pending Approval
+**Status:** Approved (with 12 mandatory revisions integrated)
+**Revision:** v2 — 2026-07-12
 **Scope:** Dual-track story engine (Personalized AI Story + Seed Premium)
 
 ---
@@ -148,20 +149,34 @@ create index if not exists choice_outcomes_effect_idx
 
 Private personalized stories without RLS = data leak. RLS policies are **mandatory** before enabling personalized stories.
 
+**Defensive pattern:** All policy creation wrapped in DO blocks checking `pg_policies` to avoid failure if policy already exists (Dashboard-created tables may have pre-existing policies).
+
+**Testing requirement:** Before deploying to production, verify:
+- Explore can read public stories (anon + authenticated)
+- Library user can read their private owned stories
+- Server/admin (service_role) can insert/update all tables
+- Private story of user A not readable by user B
+- Private story not readable by anon
+
 #### `stories`
 
 ```sql
 alter table public.stories enable row level security;
 
--- Public can read public-visibility stories
-create policy stories_public_read on public.stories
-  for select to anon, authenticated
-  using (visibility = 'public');
+do $$
+begin
+  if not exists (select 1 from pg_policies where tablename = 'stories' and policyname = 'stories_public_read') then
+    create policy stories_public_read on public.stories
+      for select to anon, authenticated
+      using (visibility = 'public');
+  end if;
 
--- Owner can read their own stories (any visibility)
-create policy stories_owner_read on public.stories
-  for select to authenticated
-  using (owner_user_id = auth.uid());
+  if not exists (select 1 from pg_policies where tablename = 'stories' and policyname = 'stories_owner_read') then
+    create policy stories_owner_read on public.stories
+      for select to authenticated
+      using (owner_user_id = auth.uid());
+  end if;
+end $$;
 
 -- Insert/update only via service role (server-side)
 -- No direct anon/authenticated insert/update policies
@@ -172,27 +187,32 @@ create policy stories_owner_read on public.stories
 ```sql
 alter table public.chapters enable row level security;
 
--- Public can read chapters of public stories
-create policy chapters_public_read on public.chapters
-  for select to anon, authenticated
-  using (
-    exists (
-      select 1 from public.stories s
-      where s.id = chapters.story_id
-      and s.visibility = 'public'
-    )
-  );
+do $$
+begin
+  if not exists (select 1 from pg_policies where tablename = 'chapters' and policyname = 'chapters_public_read') then
+    create policy chapters_public_read on public.chapters
+      for select to anon, authenticated
+      using (
+        exists (
+          select 1 from public.stories s
+          where s.id = chapters.story_id
+          and s.visibility = 'public'
+        )
+      );
+  end if;
 
--- Owner can read chapters of their own stories
-create policy chapters_owner_read on public.chapters
-  for select to authenticated
-  using (
-    exists (
-      select 1 from public.stories s
-      where s.id = chapters.story_id
-      and s.owner_user_id = auth.uid()
-    )
-  );
+  if not exists (select 1 from pg_policies where tablename = 'chapters' and policyname = 'chapters_owner_read') then
+    create policy chapters_owner_read on public.chapters
+      for select to authenticated
+      using (
+        exists (
+          select 1 from public.stories s
+          where s.id = chapters.story_id
+          and s.owner_user_id = auth.uid()
+        )
+      );
+  end if;
+end $$;
 
 -- Insert/update only via service role
 ```
@@ -202,27 +222,32 @@ create policy chapters_owner_read on public.chapters
 ```sql
 alter table public.choice_outcomes enable row level security;
 
--- Public can read outcomes of public stories (query must NOT select effect_json)
-create policy choice_outcomes_public_read on public.choice_outcomes
-  for select to anon, authenticated
-  using (
-    exists (
-      select 1 from public.stories s
-      where s.id = choice_outcomes.story_id
-      and s.visibility = 'public'
-    )
-  );
+do $$
+begin
+  if not exists (select 1 from pg_policies where tablename = 'choice_outcomes' and policyname = 'choice_outcomes_public_read') then
+    create policy choice_outcomes_public_read on public.choice_outcomes
+      for select to anon, authenticated
+      using (
+        exists (
+          select 1 from public.stories s
+          where s.id = choice_outcomes.story_id
+          and s.visibility = 'public'
+        )
+      );
+  end if;
 
--- Owner can read outcomes of their own stories
-create policy choice_outcomes_owner_read on public.choice_outcomes
-  for select to authenticated
-  using (
-    exists (
-      select 1 from public.stories s
-      where s.id = choice_outcomes.story_id
-      and s.owner_user_id = auth.uid()
-    )
-  );
+  if not exists (select 1 from pg_policies where tablename = 'choice_outcomes' and policyname = 'choice_outcomes_owner_read') then
+    create policy choice_outcomes_owner_read on public.choice_outcomes
+      for select to authenticated
+      using (
+        exists (
+          select 1 from public.stories s
+          where s.id = choice_outcomes.story_id
+          and s.owner_user_id = auth.uid()
+        )
+      );
+  end if;
+end $$;
 
 -- Insert/update only via service role
 ```
@@ -233,11 +258,17 @@ create policy choice_outcomes_owner_read on public.choice_outcomes
 
 ```sql
 -- Already has RLS enabled via Dashboard (owner-only).
--- Verify policy exists; if not, create:
--- create policy reader_states_owner on public.reader_states
---   for all to authenticated
---   using (user_id = auth.uid())
---   with check (user_id = auth.uid());
+-- Defensive: create policy only if missing
+do $$
+begin
+  if not exists (select 1 from pg_policies where tablename = 'reader_states' and policyname = 'reader_states_owner') then
+    alter table public.reader_states enable row level security;
+    create policy reader_states_owner on public.reader_states
+      for all to authenticated
+      using (user_id = auth.uid())
+      with check (user_id = auth.uid());
+  end if;
+end $$;
 ```
 
 #### `story_generation_contracts`
@@ -245,16 +276,20 @@ create policy choice_outcomes_owner_read on public.choice_outcomes
 ```sql
 alter table public.story_generation_contracts enable row level security;
 
--- Owner can read their story's contract
-create policy sgc_owner_read on public.story_generation_contracts
-  for select to authenticated
-  using (
-    exists (
-      select 1 from public.stories s
-      where s.id = story_generation_contracts.story_id
-      and s.owner_user_id = auth.uid()
-    )
-  );
+do $$
+begin
+  if not exists (select 1 from pg_policies where tablename = 'story_generation_contracts' and policyname = 'sgc_owner_read') then
+    create policy sgc_owner_read on public.story_generation_contracts
+      for select to authenticated
+      using (
+        exists (
+          select 1 from public.stories s
+          where s.id = story_generation_contracts.story_id
+          and s.owner_user_id = auth.uid()
+        )
+      );
+  end if;
+end $$;
 
 -- Write only via service role
 ```
@@ -267,9 +302,9 @@ create or replace function public.publish_chapter_v2(
   p_chapter_number int,
   p_title text,
   p_paragraphs text[],
-  p_choice_prompt text,
-  p_choices jsonb,
-  p_outcomes jsonb,  -- now includes effect_json + choice_kind per outcome
+  p_choice_prompt text,    -- NULL for chapter 50
+  p_choices jsonb,         -- NULL or '[]' for chapter 50
+  p_outcomes jsonb,        -- '[]' for chapter 50; includes effect_json + choice_kind per outcome otherwise
   p_lease_id uuid,
   p_idempotency_key text
 )
@@ -279,10 +314,11 @@ security definer
 set search_path = public
 as $$
 -- Same logic as publish_chapter but:
--- 1. Insert choice_outcomes with effect_json and choice_kind columns
--- 2. Atomic: chapter + outcomes + event + lease release
--- 3. Idempotency via p_idempotency_key
--- 4. Returns {ok: true, chapter_number, seq} or {ok: false, reason: 'CHAPTER_EXISTS'}
+-- 1. p_choices and p_outcomes may be NULL/empty (chapter 50 final — no branching)
+-- 2. When outcomes provided, insert choice_outcomes with effect_json and choice_kind columns
+-- 3. Atomic: chapter + outcomes (if any) + event + lease release
+-- 4. Idempotency via p_idempotency_key
+-- 5. Returns {ok: true, chapter_number, seq} or {ok: false, reason: 'CHAPTER_EXISTS'}
 $$;
 
 -- Grant only to service_role, not anon
@@ -296,7 +332,7 @@ grant execute on function public.publish_chapter_v2 to service_role;
 ```sql
 create or replace function public.clone_premium_story_instance(
   p_template_story_id text,
-  p_user_id uuid,
+  p_user_id uuid,          -- MUST come from authenticated server context, never raw client input
   p_new_story_id text
 )
 returns jsonb
@@ -304,8 +340,14 @@ language plpgsql
 security definer
 set search_path = public
 as $$
--- Transactional clone:
--- 1. Copy stories row (new id, owner, private, premium_instance mode)
+-- Validation:
+-- 1. Verify p_template_story_id exists with story_mode = 'premium_template' AND visibility = 'public'
+--    If not, return {ok: false, reason: 'INVALID_TEMPLATE'}
+-- 2. Do NOT allow clone from private stories or non-template stories
+--
+-- Transactional clone (all-or-nothing):
+-- 1. Copy stories row (new id, owner = p_user_id, private, premium_instance mode)
+--    source_story_id = p_template_story_id
 -- 2. Copy story_generation_contracts
 -- 3. Copy characters, character_states, character_aliases, character_voice_sheets
 -- 4. Copy facts_ledger, knowledge_scopes, secrets_reveals
@@ -313,11 +355,12 @@ as $$
 -- 6. Copy act_rollups
 -- 7. Optionally copy curated chapter 1
 -- 8. Create reader_state
--- If ANY step fails, entire transaction rolls back.
+-- If ANY step fails, entire transaction rolls back → no CANON_MISSING partial state.
 -- Returns {ok: true, story_id: p_new_story_id} or {ok: false, reason: ...}
 $$;
 
 revoke execute on function public.clone_premium_story_instance from anon;
+revoke execute on function public.clone_premium_story_instance from authenticated;
 grant execute on function public.clone_premium_story_instance to service_role;
 ```
 
@@ -361,20 +404,51 @@ export const StoryContractSchema = z.object({
     emotionalTurn: z.string(),
     expectedThreadMovement: z.array(z.string()),
   })).length(50),
+  // Fields stored in separate DB columns but validated as part of contract
+  endingCandidates: z.array(z.object({
+    key: z.string(),
+    name: z.string(),
+    condition: z.string(),
+    requiredClosure: z.array(z.string()),
+  })).min(2),
+  plotDebts: z.array(z.object({
+    id: z.string(),
+    question: z.string(),
+    introducedAt: z.number().int().min(1).max(50),
+    mustProgressBy: z.array(z.number().int()),
+    mustCloseBy: z.number().int().min(1).max(50),
+    status: z.enum(['open', 'progressing', 'closed']),
+  })).min(1),
+  revealRunway: z.array(z.object({
+    secretId: z.string(),
+    revealGateChapter: z.number().int().min(1).max(50),
+  })),
+  closureRunway: z.object({
+    noNewMajorConflictAfter: z.literal(35),
+    noNewThreadAfter: z.literal(40),
+    endingLockChapter: z.literal(45),
+    mainMysteryResolveBy: z.literal(48),
+    emotionalResolutionChapter: z.literal(49),
+    finalEndingChapter: z.literal(50),
+  }),
 }).strict()
 ```
 
-**Contract generation (hybrid):**
+**Note:** `endingCandidates` and `plotDebts` are persisted in separate DB columns (`ending_candidates_json`, `plot_debts_json`) but validated together as part of the contract. `revealRunway` and `closureRunway` are stored inside `story_contract_json`. All fields are validated at contract creation time — no unvalidated important data.
+
+**Contract generation (hybrid, via AI gateway):**
 
 ```
 generateStoryContract(tasteJson, storyId) →
   1. Build prompt from taste_json
   2. Call AI gateway provider.generateStoryContract(input)
-     - Uses existing gateway, same model routing/logging
-  3. Parse with StoryContractSchema
-  4. If invalid → 1 repair attempt (same repair pattern as chapter generation)
-  5. If still fails → mapTasteToTemplate(tasteJson, storyId)
+     - Uses existing gateway, same model routing/logging/cost tracking
+     - Timeout: fast (30s max for LLM call)
+  3. Parse with StoryContractSchema (full validation including endingCandidates, plotDebts)
+  4. If invalid → 1 repair attempt ONLY (same repair pattern as chapter generation)
+  5. If still fails OR timeout → mapTasteToTemplate(tasteJson, storyId)
   6. Track contract_source: "llm" | "llm_repaired" | "template_fallback"
+  7. NEVER fail story creation because of contract generation failure
 ```
 
 **Template fixtures (3):**
@@ -661,10 +735,17 @@ Auth required. Idempotent via idempotency key.
 
 ### 7.2 Idempotency
 
-- Client sends `Idempotency-Key` header (or server generates from `userId + timestamp`)
+**Preferred (if time permits):**
+- Client sends `Idempotency-Key` header
+- Server stores request key in `idempotency_keys` table (or inline check)
+- If same key repeated, return existing story_id without re-creating
+- Key format: `personalized:{userId}:{clientNonce}`
+
+**MVP fallback (acceptable, noted as tech debt):**
 - Before creating: check if user has a story with `generation_status = 'creating_contract'` created within last 5 minutes
 - If found, return existing story_id
 - Prevents double-click / timeout duplicates
+- **TECH DEBT:** Replace with proper request key idempotency post-MVP
 
 ### 7.3 Flow
 
@@ -790,6 +871,14 @@ Response:
 }
 ```
 
+**Status resolution logic** (NOT just `stories.generation_status`):
+1. Check if chapter row exists in `chapters` table → `"ready"`
+2. Check if active generation lease exists for this story+chapter → `"generating"`
+3. Check if failed generation attempt exists → `"failed"`
+4. Otherwise → `"generating"` (triggered but lease not yet acquired)
+
+`stories.generation_status` is a surface-level indicator for UI convenience. Per-chapter truth comes from chapter existence + lease/attempt state.
+
 Client polls this when `nextChapterReady = false`. No long sync waits.
 
 ### 9.3 Internal Fields — NEVER Sent to Client
@@ -901,6 +990,8 @@ Static checks:
 - `story_mode = premium_template` not published as private user instance
 - `premium_instance` has `source_story_id`
 - Internal fields not in API response shapes
+- **No `select('*')` in reader-facing query code** — grep for `select('*')` in `lib/api/queries.ts`, `lib/api/server.ts`, and API route files
+- **No internal field names in response types** — grep reader contract and API route responses for: `effect_json`, `route_state`, `choice_history`, `story_contract_json`, `plot_debts_json`, `ending_candidates_json`, `ending_lock_json`
 
 Package script:
 ```json
@@ -931,7 +1022,25 @@ Final output must include:
 
 ---
 
-## 13. Explicit Prohibitions
+## 13. Implementation Phase Order
+
+**Start from DB/RLS/query ownership. Do not start from AI prompts.**
+
+| Phase | Scope | Depends On |
+|-------|-------|------------|
+| **Phase 1** | Migration additive + RLS + query ownership | — |
+| **Phase 2** | Story-engine pure modules + unit tests | — |
+| **Phase 3** | Dynamic choice generation + `publish_chapter_v2` | Phase 1, 2 |
+| **Phase 4** | Personalized story creation endpoint | Phase 1, 2, 3 |
+| **Phase 5** | Choice endpoint update + async generation/status polling | Phase 3, 4 |
+| **Phase 6** | Premium template clone | Phase 1, 4 |
+| **Phase 7** | Smoke tests + privacy tests + gate | Phase 1–6 |
+
+Phase 1 and 2 can run in parallel. Phase 3+ sequential.
+
+---
+
+## 14. Explicit Prohibitions
 
 - No full branching tree
 - No `chapter_variants`
@@ -946,3 +1055,5 @@ Final output must include:
 - No `select *` on reader-facing queries
 - No bypassing AI gateway for contract generation
 - No RPC callable by anon for publish/clone operations
+- No `ChoiceBranchSchema` validation for chapter 50 (no choices)
+- No trusting raw client `user_id` in clone RPC — always from authenticated server context

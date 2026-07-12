@@ -2,6 +2,28 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
+
+-- Refuse fixture inserts outside Supabase CLI's local Docker database.
+do $$
+begin
+  if current_database() <> 'postgres'
+    or current_setting('config_file') <> '/etc/postgresql/postgresql.conf'
+    or current_setting('data_directory') <> '/var/lib/postgresql/data'
+    or coalesce(inet_server_port(), 5432) <> 5432
+    or not (
+      inet_server_addr() is null
+      or inet_server_addr() << inet '10.0.0.0/8'
+      or inet_server_addr() << inet '172.16.0.0/12'
+      or inet_server_addr() << inet '192.168.0.0/16'
+    )
+  then
+    raise exception using
+      errcode = 'P0001',
+      message = 'personalized story pgTAP tests require local Supabase CLI database';
+  end if;
+end
+$$;
+
 select plan(36);
 
 -- Fixed UUIDs and story IDs keep fixtures deterministic. Transaction rollback leaves no data.
@@ -53,15 +75,23 @@ create or replace function pg_temp.visible_story_rows(p_table regclass, p_story_
 returns bigint
 language plpgsql
 as $$
-declare v_count bigint;
+declare
+  v_count bigint;
+  v_sqlstate text;
+  v_message text;
 begin
   if p_table is null then
+    raise notice '%', extensions.diag('SQLSTATE 42P01: required planned table does not exist');
     return -1;
   end if;
   execute format('select count(*) from %s where story_id = $1', p_table)
     into v_count using p_story_id;
   return v_count;
 exception when others then
+  get stacked diagnostics
+    v_sqlstate = returned_sqlstate,
+    v_message = message_text;
+  raise notice '%', extensions.diag(format('SQLSTATE %s: %s', v_sqlstate, v_message));
   return -1;
 end
 $$;
@@ -70,10 +100,17 @@ create or replace function pg_temp.try_exec(p_sql text)
 returns boolean
 language plpgsql
 as $$
+declare
+  v_sqlstate text;
+  v_message text;
 begin
   execute p_sql;
   return true;
 exception when others then
+  get stacked diagnostics
+    v_sqlstate = returned_sqlstate,
+    v_message = message_text;
+  raise notice '%', extensions.diag(format('SQLSTATE %s: %s', v_sqlstate, v_message));
   return false;
 end
 $$;

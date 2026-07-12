@@ -3,6 +3,27 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
+-- Refuse fixture-bearing contract tests outside Supabase CLI's local Docker database.
+do $$
+begin
+  if current_database() <> 'postgres'
+    or current_setting('config_file') <> '/etc/postgresql/postgresql.conf'
+    or current_setting('data_directory') <> '/var/lib/postgresql/data'
+    or coalesce(inet_server_port(), 5432) <> 5432
+    or not (
+      inet_server_addr() is null
+      or inet_server_addr() << inet '10.0.0.0/8'
+      or inet_server_addr() << inet '172.16.0.0/12'
+      or inet_server_addr() << inet '192.168.0.0/16'
+    )
+  then
+    raise exception using
+      errcode = 'P0001',
+      message = 'personalized story pgTAP tests require local Supabase CLI database';
+  end if;
+end
+$$;
+
 select plan(49);
 
 -- Personalized story shape.

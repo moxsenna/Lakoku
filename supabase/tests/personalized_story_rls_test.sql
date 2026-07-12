@@ -3,23 +3,14 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
--- Refuse fixture inserts outside Supabase CLI's local Docker database.
+-- Local setup only: ALTER DATABASE postgres SET lakoku.test_target = 'local-cli'; then reconnect.
+-- Never set this marker on linked, staging, or production databases.
 do $$
 begin
-  if current_database() <> 'postgres'
-    or current_setting('config_file') <> '/etc/postgresql/postgresql.conf'
-    or current_setting('data_directory') <> '/var/lib/postgresql/data'
-    or coalesce(inet_server_port(), 5432) <> 5432
-    or not (
-      inet_server_addr() is null
-      or inet_server_addr() << inet '10.0.0.0/8'
-      or inet_server_addr() << inet '172.16.0.0/12'
-      or inet_server_addr() << inet '192.168.0.0/16'
-    )
-  then
+  if current_setting('lakoku.test_target', true) is distinct from 'local-cli' then
     raise exception using
       errcode = 'P0001',
-      message = 'personalized story pgTAP tests require local Supabase CLI database';
+      message = 'personalized story pgTAP tests require explicit local test target marker';
   end if;
 end
 $$;

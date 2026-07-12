@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(48);
+select plan(49);
 
 -- Personalized story shape.
 select has_column('public', 'stories', 'source_story_id', 'stories.source_story_id exists');
@@ -160,6 +160,12 @@ select ok(
       and qual not in ('true', '(true)')
   ),
   'outcome public policy follows parent visibility'
+);
+select policies_are(
+  'public',
+  'stories',
+  array['stories_owner_read', 'stories_public_read'],
+  'stories have exact owner and public SELECT policy set'
 );
 select policies_are(
   'public',

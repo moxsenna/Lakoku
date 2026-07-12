@@ -16,6 +16,7 @@ env
 node_modules
 .next/
 .DS_Store
+.worktrees/
 
 # Cloudflare / OpenNext
 .open-next/

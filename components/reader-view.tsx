@@ -24,6 +24,7 @@ import { ReportDialog } from '@/components/report-dialog'
 import { ChapterUnavailableBanner } from '@/components/chapter-unavailable-banner'
 import { ChapterListDialog } from '@/components/chapter-list-dialog'
 import { useReaderFontSize } from '@/components/font-size-provider'
+import { PoetryLottie } from '@/components/mulai/poetry-lottie'
 
 type ReaderTheme = 'ink' | 'cream'
 type Phase = 'reading' | 'processing' | 'pending'
@@ -181,9 +182,7 @@ export function ReaderView({
             Kami sedang menulis bab berikutnya berdasarkan keputusanmu.
           </p>
         </div>
-        <div className="h-1 w-48 overflow-hidden rounded-full bg-muted">
-          <div className="lk-pulse-soft h-full w-1/2 bg-primary" />
-        </div>
+        <PoetryLottie className="h-32 w-32" />
       </main>
     )
   }

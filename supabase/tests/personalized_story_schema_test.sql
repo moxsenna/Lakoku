@@ -1,0 +1,164 @@
+begin;
+
+create extension if not exists pgtap with schema extensions;
+set local search_path = public, extensions;
+
+select no_plan();
+
+-- Personalized story shape.
+select has_column('public', 'stories', 'source_story_id', 'stories.source_story_id exists');
+select has_column('public', 'stories', 'story_mode', 'stories.story_mode exists');
+select has_column('public', 'stories', 'generation_status', 'stories.generation_status exists');
+select has_column('public', 'stories', 'story_contract_version', 'stories.story_contract_version exists');
+select has_column('public', 'reader_states', 'route_state', 'reader_states.route_state exists');
+select has_column('public', 'reader_states', 'choice_history', 'reader_states.choice_history exists');
+select has_column('public', 'reader_states', 'locked_ending_key', 'reader_states.locked_ending_key exists');
+select has_column('public', 'choice_outcomes', 'effect_json', 'choice_outcomes.effect_json exists');
+select has_column('public', 'choice_outcomes', 'choice_kind', 'choice_outcomes.choice_kind exists');
+
+select has_table('public', 'story_generation_contracts', 'story_generation_contracts exists');
+select has_table('public', 'story_creation_requests', 'story_creation_requests reserves strong-idempotency keys');
+
+select has_index('public', 'stories', 'stories_source_story_idx', 'source story lookup index exists');
+select has_index('public', 'stories', 'stories_owner_mode_idx', 'owner and story mode lookup index exists');
+select has_index('public', 'choice_outcomes', 'choice_outcomes_effect_idx', 'outcome effect lookup index exists');
+
+-- Constraints must encode contract, not rely on application validation.
+select ok(
+  exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.stories'::regclass
+      and conname = 'stories_story_mode_check'
+      and pg_get_constraintdef(oid) like '%personalized_ai%'
+      and pg_get_constraintdef(oid) like '%premium_template%'
+      and pg_get_constraintdef(oid) like '%premium_instance%'
+  ),
+  'story_mode allows only approved modes'
+);
+select ok(
+  exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.stories'::regclass
+      and conname = 'stories_generation_status_check'
+      and pg_get_constraintdef(oid) like '%creating_contract%'
+      and pg_get_constraintdef(oid) like '%generating_chapter%'
+      and pg_get_constraintdef(oid) like '%needs_review%'
+  ),
+  'generation_status allows only approved lifecycle states'
+);
+select ok(
+  exists (
+    select 1 from pg_constraint
+    where conrelid = to_regclass('public.story_generation_contracts')
+      and pg_get_constraintdef(oid) like '%total_chapters = 50%'
+  ),
+  'generation contracts require exactly 50 chapters'
+);
+select ok(
+  exists (
+    select 1 from pg_constraint
+    where conrelid = to_regclass('public.story_generation_contracts')
+      and pg_get_constraintdef(oid) like '%template_fallback%'
+      and pg_get_constraintdef(oid) like '%llm_repaired%'
+  ),
+  'generation contracts constrain contract_source'
+);
+select ok(
+  exists (
+    select 1 from pg_constraint
+    where conrelid = to_regclass('public.story_creation_requests')
+      and contype = 'p'
+      and pg_get_constraintdef(oid) like '%owner_user_id%request_kind%idempotency_key%'
+  ),
+  'creation request primary key provides owner-scoped strong idempotency'
+);
+select ok(
+  exists (
+    select 1 from pg_constraint
+    where conrelid = to_regclass('public.story_creation_requests')
+      and contype = 'u'
+      and pg_get_constraintdef(oid) like '%story_id%'
+  ),
+  'creation request story_id is unique'
+);
+
+-- RLS must cover every reader-visible or internal personalized table.
+select ok(coalesce((select relrowsecurity from pg_class where oid = to_regclass('public.stories')), false), 'stories RLS enabled');
+select ok(coalesce((select relrowsecurity from pg_class where oid = to_regclass('public.chapters')), false), 'chapters RLS enabled');
+select ok(coalesce((select relrowsecurity from pg_class where oid = to_regclass('public.choice_outcomes')), false), 'choice_outcomes RLS enabled');
+select ok(coalesce((select relrowsecurity from pg_class where oid = to_regclass('public.reader_states')), false), 'reader_states RLS enabled');
+select ok(coalesce((select relrowsecurity from pg_class where oid = to_regclass('public.story_generation_contracts')), false), 'story_generation_contracts RLS enabled');
+select ok(coalesce((select relrowsecurity from pg_class where oid = to_regclass('public.story_creation_requests')), false), 'story_creation_requests RLS enabled');
+
+-- Policy shape and grants complement behavior tests in personalized_story_rls_test.sql.
+select ok(
+  exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'stories'
+      and policyname = 'stories_public_read'
+      and cmd = 'SELECT'
+      and roles @> array['anon','authenticated']::name[]
+      and qual like '%visibility%public%'
+      and qual not in ('true', '(true)')
+  ),
+  'public story policy filters visibility instead of USING (true)'
+);
+select ok(
+  exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'stories'
+      and policyname = 'stories_owner_read'
+      and cmd = 'SELECT'
+      and roles = array['authenticated']::name[]
+      and qual like '%owner_user_id%auth.uid%'
+  ),
+  'authenticated owners can read their stories'
+);
+select ok(
+  exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'chapters'
+      and policyname = 'chapters_public_read'
+      and qual like '%stories%visibility%public%'
+      and qual not in ('true', '(true)')
+  ),
+  'chapter public policy follows parent visibility'
+);
+select ok(
+  exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'choice_outcomes'
+      and policyname = 'choice_outcomes_public_read'
+      and qual like '%stories%visibility%public%'
+      and qual not in ('true', '(true)')
+  ),
+  'outcome public policy follows parent visibility'
+);
+select ok(
+  not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename in ('stories', 'chapters', 'choice_outcomes', 'story_generation_contracts', 'story_creation_requests')
+      and cmd in ('INSERT', 'UPDATE', 'DELETE', 'ALL')
+      and (roles && array['anon','authenticated']::name[] or roles = array['public']::name[])
+  ),
+  'anon and authenticated have no personalized internal write policy'
+);
+select ok(
+  not exists (
+    select 1 from information_schema.role_table_grants
+    where table_schema = 'public' and table_name = 'story_creation_requests'
+      and grantee in ('anon', 'authenticated')
+      and privilege_type in ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+  ),
+  'creation requests expose no direct anon or authenticated table privileges'
+);
+select ok(
+  has_table_privilege('service_role', 'public.stories', 'INSERT')
+    and has_table_privilege('service_role', 'public.chapters', 'INSERT')
+    and has_table_privilege('service_role', 'public.choice_outcomes', 'INSERT'),
+  'service_role can write personalized story core tables'
+);
+
+select * from finish();
+rollback;

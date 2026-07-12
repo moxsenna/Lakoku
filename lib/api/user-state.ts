@@ -97,7 +97,7 @@ export const getReaderState = cache(async function getReaderState(
 /**
  * Seed / advance progress personal (login only).
  * Monotonic: tidak menurunkan status/chapter yang sudah lebih maju.
- * Default mulai: BERJALAN bab 1. Pakai status 'BARU' + chapter 0 saat lock bible.
+ * Default mulai: BERJALAN bab 1. Pakai status 'BARU' + chapter 1 saat lock bible.
  */
 export async function ensureReaderStateStarted(
   storyId: string,

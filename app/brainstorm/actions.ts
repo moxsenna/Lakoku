@@ -140,7 +140,7 @@ export async function lockStoryBible(draft: StoryBibleDraft): Promise<
       ownerUserId: user?.id ?? null,
     })
     // Library personal muncul sejak lock (AMENDMENTS v0.5).
-    if (user) await ensureReaderStateStarted(storyId, 0, 'BARU')
+    if (user) await ensureReaderStateStarted(storyId, 1, 'BARU')
 
     // T-SHARE-3: bila user datang dari share landing, ikat story baru ke start row.
     // Client menyimpan startId di sessionStorage; optional header/cookie tidak dipakai.

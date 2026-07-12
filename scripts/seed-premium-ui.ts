@@ -94,16 +94,15 @@ async function main() {
         }
       }
 
-      await db.from('choice_outcomes').insert({
+      const { error: outcomeError } = await db.from('choice_outcomes').insert({
         story_id: storyId,
-        chapter: draft.chapterNumber,
+        chapter_number: draft.chapterNumber,
         choice_id: choice.id,
-        resulting_chapter,
-        consequence,
-        state_delta,
+        next_chapter_number: resulting_chapter,
+        consequence: [consequence],
         is_ending: draft.chapterNumber === 50,
-        ending_name: draft.chapterNumber === 50 ? 'The End' : null,
       })
+      if (outcomeError) throw outcomeError
     }
   }
 

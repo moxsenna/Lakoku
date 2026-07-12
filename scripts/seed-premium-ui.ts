@@ -1,9 +1,9 @@
 import { createClient } from '@supabase/supabase-js'
 import {
-  PREMIUM_BILIK_KETUJUH_KBM_V2_STORY_ID,
-  PREMIUM_BILIK_KETUJUH_KBM_V2_ROUTE_MAP,
-  buildAllPremiumBilikKetujuhKbmV2Drafts
-} from '../fixtures/narrative/premium-bilik-ketujuh-kbm-v2'
+  PREMIUM_BILIK_KETUJUH_V2_STORY_ID,
+  PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP,
+  buildAllPremiumBilikKetujuhV2Drafts
+} from '../fixtures/narrative/premium-bilik-ketujuh-v2'
 
 const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -21,7 +21,7 @@ const db = createClient(url, serviceKey, {
 })
 
 async function main() {
-  const storyId = PREMIUM_BILIK_KETUJUH_KBM_V2_STORY_ID
+  const storyId = PREMIUM_BILIK_KETUJUH_V2_STORY_ID
 
   console.log(`Menghapus data lama untuk ${storyId}...`)
   await db.from('choice_outcomes').delete().eq('story_id', storyId)
@@ -36,12 +36,12 @@ async function main() {
   console.log('Menyiapkan story record...')
   const { error: storyError } = await db.from('stories').insert({
     id: storyId,
-    title: PREMIUM_BILIK_KETUJUH_KBM_V2_ROUTE_MAP.title,
+    title: PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP.title,
     cover: '/covers/bilik-ketujuh.webp',
-    tagline: PREMIUM_BILIK_KETUJUH_KBM_V2_ROUTE_MAP.subtitle,
+    tagline: PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP.subtitle,
     role: 'Naya',
-    tropes: PREMIUM_BILIK_KETUJUH_KBM_V2_ROUTE_MAP.genre,
-    total_chapters: PREMIUM_BILIK_KETUJUH_KBM_V2_ROUTE_MAP.structure.totalChapters,
+    tropes: PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP.genre,
+    total_chapters: PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP.structure.totalChapters,
     synopsis: 'Sebuah rahasia besar tersembunyi di balik bilik ketujuh...',
     status: 'SELESAI',
     current_chapter: 50,
@@ -52,11 +52,11 @@ async function main() {
 
   if (storyError) throw storyError
 
-  const drafts = buildAllPremiumBilikKetujuhKbmV2Drafts()
+  const drafts = buildAllPremiumBilikKetujuhV2Drafts()
 
   console.log('Menyiapkan chapters dan choice_outcomes...')
   for (const draft of drafts) {
-    const gate = PREMIUM_BILIK_KETUJUH_KBM_V2_ROUTE_MAP.choiceGates[draft.chapterNumber as keyof typeof PREMIUM_BILIK_KETUJUH_KBM_V2_ROUTE_MAP.choiceGates]
+    const gate = PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP.choiceGates[draft.chapterNumber as keyof typeof PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP.choiceGates]
     
     let choices
     let choice_prompt

@@ -1,8 +1,8 @@
 /**
- * Seed premium Lakoku - Bilik Ketujuh KBM V2.
+ * Seed premium Lakoku - Bilik Ketujuh V2.
  *
  * Tujuan versi ini:
- * - Mengganti draft lama yang terlalu padat/sastra menjadi rasa baca serial KBM: cepat, emosional, dialogis.
+ * - Mengganti draft lama yang terlalu padat/sastra menjadi rasa baca serial: cepat, emosional, dialogis.
  * - Menyediakan Bab 1-3 full 800-1000 kata sebagai sampel produksi.
  * - Menyediakan 50 blueprint agar arah novel tetap utuh sebelum lanjut batch bab berikutnya.
  * - Route tetap disimpan sebagai metadata; label yang tampil ke pembaca dibuat natural, bukan istilah developer.
@@ -14,12 +14,12 @@ import type {
   Character,
 } from '@/lib/narrative/types'
 
-export const PREMIUM_BILIK_KETUJUH_KBM_V2_STORY_ID = 'premium:bilik-ketujuh-kbm-v2'
+export const PREMIUM_BILIK_KETUJUH_V2_STORY_ID = 'premium:bilik-ketujuh-v2'
 
 export type PremiumBilikKetujuhRouteId = 'truth_route' | 'obedience_route' | 'escape_route'
 
-export const PREMIUM_BILIK_KETUJUH_KBM_V2_ROUTE_MAP = {
-  storyId: PREMIUM_BILIK_KETUJUH_KBM_V2_STORY_ID,
+export const PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP = {
+  storyId: PREMIUM_BILIK_KETUJUH_V2_STORY_ID,
   title: 'Bilik Ketujuh',
   subtitle: 'Rahasia ibunya dikunci di kamar yang dilarang dibuka.',
   genre: ['misteri', 'drama keluarga', 'pesantren', 'romansa tipis'],
@@ -113,7 +113,7 @@ export const PREMIUM_BILIK_KETUJUH_KBM_V2_ROUTE_MAP = {
 const characters: Character[] = [
   {
     id: 'char:naya',
-    storyId: PREMIUM_BILIK_KETUJUH_KBM_V2_STORY_ID,
+    storyId: PREMIUM_BILIK_KETUJUH_V2_STORY_ID,
     canonicalName: 'Naya',
     role: 'protagonis',
     motivation: 'Mencari alasan kematian ibunya dan membuktikan bahwa Laila bukan perempuan pembawa aib.',
@@ -122,7 +122,7 @@ const characters: Character[] = [
   },
   {
     id: 'char:laila',
-    storyId: PREMIUM_BILIK_KETUJUH_KBM_V2_STORY_ID,
+    storyId: PREMIUM_BILIK_KETUJUH_V2_STORY_ID,
     canonicalName: 'Laila',
     role: 'ibu Naya dan pusat misteri',
     motivation: 'Meninggalkan petunjuk agar Naya kelak bisa membuka kebenaran.',
@@ -131,7 +131,7 @@ const characters: Character[] = [
   },
   {
     id: 'char:ustazah-marwah',
-    storyId: PREMIUM_BILIK_KETUJUH_KBM_V2_STORY_ID,
+    storyId: PREMIUM_BILIK_KETUJUH_V2_STORY_ID,
     canonicalName: 'Marwah',
     role: 'wali asrama yang menjaga Bilik Ketujuh',
     motivation: 'Menutup rahasia lama yang bisa meruntuhkan pesantren dan dirinya sendiri.',
@@ -140,7 +140,7 @@ const characters: Character[] = [
   },
   {
     id: 'char:hafiz',
-    storyId: PREMIUM_BILIK_KETUJUH_KBM_V2_STORY_ID,
+    storyId: PREMIUM_BILIK_KETUJUH_V2_STORY_ID,
     canonicalName: 'Hafiz',
     role: 'penjaga koperasi dan saksi masa lalu',
     motivation: 'Menebus kesalahan karena dulu tidak berani menolong Laila.',
@@ -149,7 +149,7 @@ const characters: Character[] = [
   },
   {
     id: 'char:kyai-hamid',
-    storyId: PREMIUM_BILIK_KETUJUH_KBM_V2_STORY_ID,
+    storyId: PREMIUM_BILIK_KETUJUH_V2_STORY_ID,
     canonicalName: 'Kyai Hamid',
     role: 'pengasuh pesantren',
     motivation: 'Mempertahankan nama pesantren meski harus membungkam orang-orang terluka.',
@@ -158,7 +158,7 @@ const characters: Character[] = [
   },
   {
     id: 'char:salma',
-    storyId: PREMIUM_BILIK_KETUJUH_KBM_V2_STORY_ID,
+    storyId: PREMIUM_BILIK_KETUJUH_V2_STORY_ID,
     canonicalName: 'Salma',
     role: 'teman lama Naya',
     motivation: 'Melindungi Naya sambil menyembunyikan keterlibatan keluarganya.',
@@ -184,7 +184,7 @@ const voiceSheets = [
 const facts = [
   {
     id: 'fact:kunci-hitam-v2',
-    storyId: PREMIUM_BILIK_KETUJUH_KBM_V2_STORY_ID,
+    storyId: PREMIUM_BILIK_KETUJUH_V2_STORY_ID,
     statement: 'Naya menemukan kunci hitam bernomor tujuh di lipatan sajadah peninggalan Laila.',
     subjectCharacterId: 'char:naya',
     establishedChapter: 1,
@@ -194,7 +194,7 @@ const facts = [
   },
   {
     id: 'fact:bilik-ketujuh-dilarang',
-    storyId: PREMIUM_BILIK_KETUJUH_KBM_V2_STORY_ID,
+    storyId: PREMIUM_BILIK_KETUJUH_V2_STORY_ID,
     statement: 'Bilik Ketujuh dilarang dibuka sejak malam Laila dibawa keluar dari asrama.',
     subjectCharacterId: 'char:ustazah-marwah',
     establishedChapter: 1,
@@ -204,7 +204,7 @@ const facts = [
   },
   {
     id: 'fact:hafiz-kenal-laila',
-    storyId: PREMIUM_BILIK_KETUJUH_KBM_V2_STORY_ID,
+    storyId: PREMIUM_BILIK_KETUJUH_V2_STORY_ID,
     statement: 'Hafiz mengenal Laila dan tahu cara membuka pintu gudang koperasi lama.',
     subjectCharacterId: 'char:hafiz',
     establishedChapter: 2,
@@ -576,9 +576,9 @@ function buildBlueprints(): ChapterBlueprint[] {
   }))
 }
 
-export function buildPremiumBilikKetujuhKbmV2Snapshot(): CanonSnapshot {
+export function buildPremiumBilikKetujuhV2Snapshot(): CanonSnapshot {
   return {
-    storyId: PREMIUM_BILIK_KETUJUH_KBM_V2_STORY_ID,
+    storyId: PREMIUM_BILIK_KETUJUH_V2_STORY_ID,
     characters,
     aliases,
     voiceSheets,
@@ -592,13 +592,13 @@ export function buildPremiumBilikKetujuhKbmV2Snapshot(): CanonSnapshot {
   }
 }
 
-export function buildPremiumBilikKetujuhKbmV2Draft(
+export function buildPremiumBilikKetujuhV2Draft(
   snapshot: CanonSnapshot,
   chapter: number,
 ): ChapterDraft {
   const spec = fullChapterSpecs.find((item) => item.chapterNumber === chapter)
   if (!spec) {
-    throw new Error(`Chapter ${chapter} is blueprint-only in KBM V2. Full prose is currently available for chapters 1-3.`)
+    throw new Error(`Chapter ${chapter} is blueprint-only in V2. Full prose is currently available for chapters 1-3.`)
   }
 
   const paragraphs = [...spec.paragraphs]
@@ -631,18 +631,18 @@ export function buildPremiumBilikKetujuhKbmV2Draft(
   }
 }
 
-export function buildAllPremiumBilikKetujuhKbmV2Drafts(
-  snapshot = buildPremiumBilikKetujuhKbmV2Snapshot(),
+export function buildAllPremiumBilikKetujuhV2Drafts(
+  snapshot = buildPremiumBilikKetujuhV2Snapshot(),
 ): ChapterDraft[] {
-  return fullChapterSpecs.map((spec) => buildPremiumBilikKetujuhKbmV2Draft(snapshot, spec.chapterNumber))
+  return fullChapterSpecs.map((spec) => buildPremiumBilikKetujuhV2Draft(snapshot, spec.chapterNumber))
 }
 
-export const PREMIUM_BILIK_KETUJUH_KBM_V2_STATS = {
+export const PREMIUM_BILIK_KETUJUH_V2_STATS = {
   totalBlueprintChapters: blueprintSpecs.length,
   totalFullDraftChapters: fullChapterSpecs.length,
   fullDraftChapters: fullChapterSpecs.map((spec) => spec.chapterNumber),
   minWordCount: Math.min(...fullChapterSpecs.map((spec) => chapterWordCount(spec.paragraphs))),
   maxWordCount: Math.max(...fullChapterSpecs.map((spec) => chapterWordCount(spec.paragraphs))),
-  choiceChapters: Object.keys(PREMIUM_BILIK_KETUJUH_KBM_V2_ROUTE_MAP.choiceGates).map(Number),
+  choiceChapters: Object.keys(PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP.choiceGates).map(Number),
   revealChapters: secrets.map((secret) => secret.revealGateChapter),
 } as const

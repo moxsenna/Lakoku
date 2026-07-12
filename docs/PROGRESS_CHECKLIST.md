@@ -1,7 +1,7 @@
 # Lakoku — Progress Checklist (Task Tracker) v1.0
 
 **Status:** Living document — dicentang seiring pekerjaan berjalan
-**Last updated:** 10 Juli 2026 (AMENDMENTS v0.5 ownership + Share Ending Card MVP dikunci di docs. Diagnosis: tamu/login bisa melihat banyak “Cerita Berjalan” karena `listStories`/`queryStories` + stats profil menghitung katalog global `stories`, bukan library personal — koreksi lewat T-OWN/T-SHARE. UX Polish Batch A/B/C, Poetry Lottie, CF Worker hardening tetap. Audit NTM: M5 core/smoke hijau; G1/G4 belum `DONE` penuh; M8/G3-METRICS `DONE`.) + AMENDMENTS v0.6 prose rhythm (800–1000 kata / 35–50 paragraf; prompt-engine; demo handcraft 1–3 + generator 4–50).
+**Last updated:** 12 Juli 2026 — **AMENDMENTS v0.7 admin ops surface + onboarding premise-AI + bilik ketujuh** captures commit `5ac66b4` back through `da0cf49` (11 Juli 2026): admin panel MVP + editable settings + audit log + admin role system + ops-ready credit/generation/AI-model config + interactive onboarding flow (AI premise generation, session management) + chapter list dialog & re-read with locked choices + remove consequence phase (direct redirect to next chapter) + premium `bilik-ketujuh-kbm-v2` seed (50-bab handcraft + beat table) in explore UI + grant-credit-form email autocomplete + taste profile + analytics events. Prior baselines retained: AMENDMENTS v0.5 ownership/share MVP, AMENDMENTS v0.6 prose rhythm contract (800–1000 kata / 35–50 paragraf; prompt-engine; demo handcraft 1–3 + generator 4–50). Audit NTM: M5 core/smoke hijau; G1/G4 belum `DONE` penuh; M8/G3-METRICS `DONE`.
 **Turunan dari:** `docs/IMPLEMENTATION_PLAN.md` (runbook v1.0) — jika runbook berubah, sinkronkan checklist ini di PR yang sama (anti-drift, runbook §5)
 **Cara pakai:** Setiap task = satu checkbox. Centang HANYA bila Definition of Done (DoD) task terpenuhi. Milestone dianggap selesai hanya bila blok Sign-off-nya lengkap (lihat runbook §4).
 
@@ -21,11 +21,11 @@
 | M3 — Memory hierarchy + Layer A + alias | `[~]` | narrative-core interim di `lib/narrative/` + 12 tabel canon (RLS deny-default): alias resolver, context compiler T0–T3 + budget + load-bearing protection, Layer A (8 cek). Simulasi 50 bab + 8 cek negatif hijau (13/13). Struktur `packages/narrative-core` (monorepo) belum |
 | M4 — Template + provider gateway | `[~]` | `lib/ai-gateway/` (schema Zod plan/draft, provider deterministik + `selectProvider()`, gateway consumer-safe, repair loop) + template `lakoku_drama_bangkit_v1`. **Terpasang di jalur runtime nyata** (E2E 21/21). Harness 27/27 hijau. **Provider LLM NYATA `createGatewayProvider` HIDUP & TERUJI** (`NARRATIVE_PROVIDER=gateway`): arah A — LLM menulis prosa via `streamText`, metadata canon-derived → Layer A/B & consumer-safe terjaga. `resolveModelChain()` = rantai fallback: tunnel kustom → OpenRouter (array `models` gratis→berbayar: hermes-405b-free → deepseek-v3.2) → AI Gateway. **Smoke `scripts/m6-llm-smoke.ts` 20/20 PASS** di 3 skenario (tunnel-only, OpenRouter-only, rantai penuh; prosa Indonesia; events/reveals identik deterministik). Struktur `packages/ai-gateway` (monorepo) belum |
 | M5 — Reconciliation + thread + Layer B | `[~]` | Core reconciliation, Layer B, thread lifecycle, loader canon, dan soak 3 jalur×50 bab hijau (236/236, 0 CRITICAL). Jalur runtime nyata sudah memakai loader→compiler→Layer A/B→repair→publish, tetapi step R act-end (`runReconciliation*`) dan side-effect status thread penuh belum di-wire ke workflow runtime. Karena itu NTM G1/G4 masih `IN_PROGRESS`, bukan `DONE`. |
-| **M6-WEB — Web reader mobile-first** | `[~]` | **Jalur UX TUNTAS** dan `client.ts` sudah menunjuk Reader API interim (route handlers→Supabase). Jalur cerita nyata terkendali untuk canon ter-seed sudah hidup, tetapi publikasi AI luas tetap menunggu M5 NTM sign-off + release gate M9. |
+| **M6-WEB — Web reader mobile-first** | `[~]` | **Jalur UX TUNTAS** dan `client.ts` sudah menunjuk Reader API interim (route handlers→Supabase). Jalur cerita nyata terkendali untuk canon ter-seed sudah hidup, tetapi publikasi AI luas tetap menunggu M5 NTM sign-off + release gate M9. **Ekstensi M6-WEB++ (AMENDMENTS v0.7):** consequence phase dihapus, chapter list dialog + re-read, onboarding interaktif AI premise, premium seed `bilik-ketujuh-kbm-v2` di explore UI. |
 | M6 — Android reader beta | `[ ]` | Client kedua; belum dimulai |
 | M7 — Story Foundation + opening + reports | `[x]` | Selesai |
-| M8 — Observability + alert + entitlement | `[x]` | **Selesai** — T8.1 dashboard konsistensi (`/admin/consistency`, 5 metrik G3-METRICS, `m8-metrics` 29/29), T8.2 alert naik-monoton + notifikasi eksternal (`m8-alert` 24/24), T8.3 entitlement webhook HMAC server-authoritative fail-closed (`m8-entitlement` 22/22). T8.3 live tinggal colok Stripe (`CHECKOUT_WEBHOOK_SECRET` + skema commercial) |
-| M9 — Hardening + release gate + beta cut | `[~]` | Release gate otomatis web (`scripts/m9-release-gate.ts`) + staging QA checklist sudah ada dan masuk CI. Beta-ready global belum: NTM G1/G4 dan QA staging manual masih perlu sign-off. |
+| M8 — Observability + alert + entitlement | `[x]` | **Selesai** — T8.1 dashboard konsistensi (`/admin/consistency`, 5 metrik G3-METRICS, `m8-metrics` 29/29), T8.2 alert naik-monoton + notifikasi eksternal (`m8-alert` 24/24), T8.3 entitlement webhook HMAC server-authoritative fail-closed (`m8-entitlement` 22/22). T8.3 live tinggal colok Stripe (`CHECKOUT_WEBHOOK_SECRET` + skema commercial). **Permukaan admin tambahan (AMENDMENTS v0.7):** `/admin` overview + `/admin/users|credits|payments|generation|settings` + RBAC + audit log — lihat blok "Admin Ops Surface" di bawah. |
+| M9 — Hardening + release gate + beta cut | `[~]` | Release gate otomatis web (`scripts/m9-release-gate.ts`) + staging QA checklist sudah ada dan masuk CI. Beta-ready global belum: NTM G1/G4 dan QA staging manual masih perlu sign-off. Smoke `admin-panel` masuk `pnpm smoke`. |
 
 ---
 
@@ -168,6 +168,25 @@
 - [x] **T6W.9 Poetry Lottie onboarding animation** — building screen kini menampilkan animasi Lottie quill/parchment (`components/mulai/poetry-lottie.tsx`, asset `public/lottie/poetry.json`) menggantikan brand text statis. Komponen `PoetryLottie` di-load via `next/dynamic` (ssr: false). Dependency baru: `lottie-react ^2.4.1`. Commit `814445c`.
 - [x] **T6W.10 Performance optimization** — lazy load onboarding flow (`next/dynamic` di route `/mulai`), share shell layout across app routes, reduce redundant auth/reader fetches. Commits `8a90530`, `5536105`, `10dbda8`, `8ad5793`, `301d54f`.
 - [x] **T6W.11 Cloudflare Workers hardening** — platform-safe OpenNext patch, harden Supabase env resolution untuk CF Workers Builds, force dynamic `/mulai` page untuk mencegah static generation di CF. Commits `ccf4f1c`, `5964366`, `7275abf`.
+
+## M6-WEB++ — Reader UX extensions (AMENDMENTS v0.7)
+
+> Tambahan jalur reader UX pasca-M6-WEB sebelum sign-off beta penuh. Terdokumentasi penuh di `docs/AMENDMENTS_v0.7.md`. Status: terpasang & terverifikasi; tidak terkunci gate M5 NTM.
+
+- [x] **T6W.12 Hapus consequence phase + redirect langsung ke bab berikutnya** — `components/reader-view.tsx` tidak lagi menampilkan phase "konsekuensi" di halaman yang sama; `showOutcome()` sekarang `router.push()` ke bab N+1 begitu pilihan dikirim. Kartu "Pilihanmu sebelumnya" muncul DI ATAS judul bab baru (sumber: server `jejak` bila login, fallback `localStorage` bila tamu). Browser Back kembali ke bab sebelumnya (mode re-read). Commit `ac32a9f`.
+  - Helper baru `lib/api/last-choice-summary.ts` (client-safe upsert localStorage untuk guest choice summary).
+  - Copy loading bahasa naratif ("Pilihanmu sedang mengubah jalan cerita..."). Flow: Bab N → choose → loading → push Bab N+1 → kartu choice tampil.
+- [x] **T6W.13 Chapter list dialog & re-read with locked choices** — dialog scrollable daftar bab dengan checkmark (bab sudah dibaca) + loading state, ditaut dari tombol "Daftar Bab" di reader settings panel. Mode re-read dideteksi via jejak match di `app/baca/[id]/page.tsx`; pilihan yang sudah dipilih sebelumnya ditampilkan sebagai **locked** dengan label "Pilihanmu waktu itu". CTA "Kembali ke Bab Terbaru" muncul di mode re-read. Commit `12a7260`.
+  - Kontrak baru: `@lakoku/contracts` `ChapterMetadata` + `ListChaptersResponse` + endpoint `GET /api/stories/[id]/chapters` (spoiler gate: tidak bocor konten bab yang belum dibaca).
+  - Server seam `lib/api/queries.ts#queryChapterMetadatas` (lightweight metadata query, bukan full chapter body); client `listChapters`. Smoke `contracts-smoke` mencakup tipe baru.
+- [x] **T6W.14 Interactive onboarding flow + AI-driven premise generation** — onboarding pembaca (route `/mulai`) kini flow interaktif lengkap: `entry → quick (4 pertanyaan dari `lib/onboarding/question-presets.ts`) | customIdea (free-text) → 3 premis AI via `actProposeStorySetupPremises` → pilih 1 → pipeline otomatis: cast → misteri → dunia → kunci → Bab 1`. Komponen `components/mulai/onboarding-flow.tsx` menampilkan progress bar bertahap, building screen menampilkan animasi `PoetryLottie`. Session: guest draft tersimpan via `lib/onboarding-draft.ts` (`lakoku:onboarding-draft:v1`, TTL 30 menit, no PII) — restore setelah login resume. Commits `d3ad8b9`, `814445c`.
+  - Server action `app/mulai/actions.ts#actProposeStorySetupPremises` — explain `StorySetupInputSchema.discriminatedUnion('mode', [quick | custom])`; prioritas prompt: (1) content boundaries / `avoidedTropes`, (2) custom idea / quick answers, (3) taste profile, (4) default engine. Composer pure `lib/onboarding/story-setup.ts` (`buildStorySetupIdea`) — no AI/DB calls.
+  - Reuse engine `proposePremises` dari `lib/authoring/server` (sama dengan wizard `/brainstorm` T7.4); pembaca tunjuk ke `/brainstorm` bila ingin edit detail per-tahap.
+  - Binding ke `TasteProfile` (dari `/onboarding/selera`) sebagai soft bias; guest `readGuestTasteProfile` dari storage lokal.
+- [x] **T6W.15 Premium `bilik-ketujuh-kbm-v2` seed (50-bab handcraft + explore UI)** — fixture premium kedua (`fixtures/narrative/premium-bilik-ketujuh-kbm-v2.ts`, storyId `premium:bilik-ketujuh-kbm-v2`) dengan 50 bab naratif + 12 tabel canon + validation file. Cover art `public/covers/bilik-ketujuh.webp`. Ekspos di explore UI via `scripts/seed-premium-ui.ts` (delete-then-insert idempotent di `stories`, `chapters`, `choice_outcomes`) + `OFFICIAL_DEMO_STORY_IDS` di `lib/api/server.ts` menambahkan ID ini. Commits `660a67d`, `5ac66b4`, `33d2681`.
+  - Validator `scripts/validate-premium.ts` run roundtrip via `buildAllPremiumBilikKetujuhKbmV2Drafts` + `buildPremiumBilikKetujuhKbmV2Snapshot`.
+  - Bukan pengganti `demo:selasa-akhir`; dua demo resmi berjalan berdampingan (lihat AMENDMENTS v0.7 LD-DEMO-CATALOG).
+
 - [x] **Exit Criteria M6-WEB (jalur UX)** — reader web E2E lolos dengan fixtures ✔; seam terpasang tanpa kebocoran ✔; brand guard lolos ✔; progress monotonic persist ✔; UX Polish Batch A/B/C tuntas ✔; guest-to-login preservation berfungsi ✔; theme + text-size settings nyata ✔; `tsc --noEmit` hijau ✔; **lint gate hijau** (`eslint .`, 0 error/0 warning) ✔.
 - [~] **Exit Criteria M6-WEB (jalur cerita nyata)** — `client.ts` menunjuk Reader API nyata DAN M5 NTM sign-off penuh.
   - [x] `client.ts` menunjuk Reader API nyata (route handlers → Supabase). Verifikasi browser: beranda + reader + pilihan→konsekuensi semuanya dari database.
@@ -184,7 +203,47 @@
 
 
 
-## Prose rhythm (AMENDMENTS v0.6)
+## Admin Ops Surface (AMENDMENTS v0.7)
+
+> Permukaan operasional admin baru — di luar `/admin/consistency` milik M8 T8.1. Tidak menggeser M8 sign-off; permukaan ini hidup seiring kebutuhan ops pra-beta. Diturunkan dari `docs/AMENDMENTS_v0.7.md` (LD-ADMIN-RBAC, LD-OPS-CONFIG, LD-SETTINGS-AUDIT, LD-ADMIN-GRANT, LD-ADMIN-PANEL).
+
+- [x] **T-ADMIN-1 Admin role system (RBAC)** — peran admin dipindah dari hardcode email ke **DB sumber kebenaran** (tabel `admin_users`); sesi = cookie Supabase Auth; role = `owner | admin`. Migrasi `20260711020000_admin_users_role.sql`. Guard layout `app/admin/layout.tsx` memanggil `requireAdminUser()` (`lib/admin/auth.ts`): throw `Unauthenticated` / `Forbidden` bila tidak memenuhi. Middleware `middleware.ts` menambahkan matcher `/admin/:path*`. Commit `da0cf49`, `5b29c4f`.
+  - `isAdminUser()` / `getAdminRole()` / `requireAdminUser()` (`lib/admin/auth.ts`, server-only, pakai `createAdminClient`).
+  - RPC `admin_search_users_v1(p_email)` (`SECURITY DEFINER`, service-role only, max 10 hasil) untuk admin user search email (lihat T-ADMIN-GRANT).
+- [x] **T-ADMIN-2 Ops credit & generation config** — sumber kebenaran bisnis dipindah ke DB; kode hanya validasi + fallback aman. Migrasi `20260711010000_ops_credit_config.sql`. Commits `da0cf49`, `cdc9b32`.
+  - **`credit_products`** kolom baru: `normal_bonus_credits`, `first_topup_bonus_credits`, `marketing_badge`, `bonus_active`. Seed 6 SKU existing (`credits_starter` … `credits_ultra`).
+  - **`credit_orders`** (baru): snapshot harga & kredit beku saat checkout (`price_idr`, `base_credits`, `bonus_credits`, `total_credits`, `bonus_kind ∈ {none, normal, first_topup}`, `status ∈ {created, paid, duplicate, failed}`); RLS owner-only.
+  - **`has_paid_topup_v1(p_user_id)`** RPC (SECURITY DEFINER, service-role) — cek pernah topup berbayar (untuk first-topup bonus).
+  - **`admin_credit_grants`** (audit trail grant manual admin) + RPC atomik `admin_grant_credits_v1(...)`: insert grant + kredit ledger in 1 tx, idempoten via `ledger_ref` unique.
+  - **`generation_policy`**: tabel singleton (PK `id=1`) — `target_words_min/max` (default 800/1000, selaras AMENDMENTS v0.6), `target_scenes` (default 3); RLS read-public.
+  - **`ai_model_routes`**: satu route aktif per `use_case` (partial unique index `where is_active = true`); kolom `provider/model_id/fallback_models text[]/temperature/max_output_tokens/route_version/notes`. Seed default.
+  - **`feature_credit_costs`**: seed `chapter_unlock=5` versi `2026-07-default`; runtime `unlock cost` kini baca dari sini (bukan `reading_policy`).
+  - Smoke: `topup-bonus`, `admin-credit-grant`, `credits-policy`, `generation-policy`, `ai-model-routes` — semua masuk `pnpm smoke`.
+- [x] **T-ADMIN-3 Editable admin settings + audit log** — owner dapat mengedit 4 area settings via dialog UI; admin (non-owner) read-only. Migrasi `20260711030000_admin_editable_settings.sql`. Commits `7395377`, `6d1c2f0`.
+  - Tabel baru `admin_settings_audit_logs` (`admin_user_id`, `admin_email`, `setting_area`, `setting_key`, `old_value jsonb`, `new_value jsonb`, `reason text`, `created_at`); RLS deny-default; index `created_at desc` + `(setting_area, setting_key)`.
+  - Zod schemas `lib/admin/settings-schemas.ts`: `updateCreditProductSchema`, `updateFeatureCreditCostSchema`, `updateGenerationPolicySchema`, `updateAiModelRouteSchema` — masing-masing bawa `reason` wajib (5–500 chars).
+  - Server helpers `lib/admin/settings.ts` (`lib/admin/credits.ts`, `lib/ops/ai-model-routes.ts`, `lib/ops/generation-policy.ts` sebagai pembaca) — owner guard + insert audit log.
+  - 4 PATCH API routes (`/api/admin/settings/credit-products`, `feature-costs`, `generation-policy`, `model-routes`) — owner-only; Forbidden 403 bila admin mencoba write.
+  - GET `/api/admin/settings/read` mengembalikan flag `isOwner` untuk toggle UI read-only badge.
+  - UI: `app/admin/settings/page.tsx` jadi client component dengan 4 dialog Edit: `EditCreditProductDialog`, `EditFeatureCreditCostDialog`, `EditGenerationPolicyDialog`, `EditAiModelRouteDialog` (fallback list add/remove dinamis). Tabel audit "Recent settings changes" tampil. Peringatan eksplisit bila `chapter_unlock = 0`.
+- [x] **T-ADMIN-4 Admin panel MVP — full ops dashboard** — `/admin` overview + 5 sub-rute terhubung ke DB; guard layout + sidebar + header komponen. Commits `5b29c4f`, `7395377`, `33d2681`, `29b06f6`.
+  - **Routes**:
+    - `/admin` overview: 8 stat cards (total users, new today, credits circulating, used today, paid orders today, revenue today IDR, gen attempts today, gen failures today); metrik dari `lib/admin/dashboard.ts#loadAdminDashboardMetrics`.
+    - `/admin/users` + `/admin/users/[id]`: email search (`searchAdminUsers` → RPC `admin_search_users_v1`) + detail user (identity, ledger, orders, admin grants).
+    - `/admin/credits`: credit overview + latest ledger + admin grants + `GrantCreditForm` (reusable).
+    - `/admin/payments`: order monitoring dengan status filter (all / paid / created / dll) — read-only (no reconcile/refund).
+    - `/admin/generation`: generation health (attempts, success, failures, events).
+    - `/admin/settings` (T-ADMIN-3): read-only badge untuk admin; Edit dialogs untuk owner.
+    - `/admin/consistency`: tetap dari M8 T8.1.
+  - **Components**: `AdminShell`, `AdminSidebar`, `AdminHeader`, `AdminStatCard`, `AdminSectionCard`, `AdminEmptyState`, `AdminErrorState`, `StatusBadge` (map `paid/failed/active/inactive`).
+  - **GrantCreditForm** (`components/admin/grant-credit-form.tsx`): search user by email dengan debounce 300ms (min 2 chars, max 10 hasil) + dropdown picker (email + prefix user_id); fallback raw UUID bila dibuka dari user detail page. Submit mengirim `user_id` dari user terpilih. Commit `29b06f6`.
+  - **Backend helpers**: `lib/admin/dashboard.ts`, `lib/admin/users.ts` (`searchAdminUsers`, `loadAdminUserDetail`), `lib/admin/orders.ts` (`listAdminOrders`), `lib/admin/generation.ts` (`loadAdminGenerationMetrics + events`), `lib/admin/credits.ts`, `lib/admin/format.ts` (`idr`, `compactNumber`).
+  - Smoke statis: `scripts/admin-panel-smoke.ts` (file existence semua rute, guard di `layout.tsx`, middleware matcher, sidebar links, no hardcoded email/admin, settings tidak punya write action di admin role, payments tidak reconcile/refund, service role tidak muncul di client components) — masuk `pnpm smoke`.
+- [x] **T-ADMIN-5 Taste profile + analytics events** — dua fondasi data ops pra-M9 (untuk personalisasi onboarding + metrikproduk) hidup. Migrasi `20260711000000_reader_taste_profiles.sql` + `20260711000001_analytics_events.sql`. Commit `da0cf49`, `660a67d`.
+  - **Reader taste profiles**: skema `reader_taste_profiles` + flow onboarding `components/onboarding/taste-profile-flow.tsx` + first-run gate `taste-profile-first-run-gate.tsx` + settings panel `components/profile-settings.tsx`. Action `actGetTasteProfile`, `actSaveTasteProfile` di `app/onboarding/selera/actions.ts`. Smoke `taste-profile`, `taste-profile-db`.
+  - **Analytics events**: route POST `/api/analytics/track` (`lib/analytics/client.ts`, `lib/analytics/events.ts`) + migrasi `analytics_events` tabel; smoke `analytics-smoke`.
+
+
 
 - [x] `MOBILE_DRAMA_RHYTHM` + `lib/prose/prompt-engine` + fixtures/smoke
 - [x] Demo beat table 50 + beat-fit

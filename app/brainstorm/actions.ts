@@ -164,11 +164,13 @@ export async function startFirstChapter(
   storyId: string,
 ): Promise<ActionResult<{ chapterNumber: number }>> {
   try {
-    const result = await generateNextChapterReal(storyId, 1)
-    if (!result.ok && result.reason !== 'CHAPTER_EXISTS' && result.reason !== 'LEASE_HELD') {
-      console.log('[v0] startFirstChapter gagal:', result.reason, result.detail)
-      return { ok: false, error: 'Bab pertama gagal disiapkan. Coba lagi sebentar.' }
-    }
+    const { after } = await import('next/server')
+    after(async () => {
+      const result = await generateNextChapterReal(storyId, 1)
+      if (!result.ok && result.reason !== 'CHAPTER_EXISTS' && result.reason !== 'LEASE_HELD') {
+        console.log('[v0] startFirstChapter gagal:', result.reason, result.detail)
+      }
+    })
 
     // Progress personal login (AMENDMENTS v0.5). Kolom demo global di `stories`
     // tidak lagi diandalkan sebagai status personal untuk semua pengunjung.

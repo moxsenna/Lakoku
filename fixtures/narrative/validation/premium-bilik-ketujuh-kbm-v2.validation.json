@@ -1,0 +1,60 @@
+{
+  "file": "premium-bilik-ketujuh-kbm-v2.ts",
+  "storyId": "premium:bilik-ketujuh-kbm-v2",
+  "sha256": "6fbb84f96ef505446c1dce691ed10919d734edd59d7677bb3b2ee710bf62e8ed",
+  "summary": {
+    "totalFullDraftChapters": 3,
+    "fullDraftChapters": [
+      1,
+      2,
+      3
+    ],
+    "totalBlueprintChapters": 50,
+    "blueprintSequenceIs1To50": true,
+    "minWordCount": 842,
+    "maxWordCount": 867,
+    "duplicateLongParagraphs": 0,
+    "choiceChapters": [
+      1,
+      6,
+      14,
+      28,
+      45
+    ],
+    "revealChapters": [
+      10,
+      24,
+      44,
+      50
+    ]
+  },
+  "chapters": [
+    {
+      "chapter": 1,
+      "title": "Kunci di Lipatan Sajadah",
+      "paragraphCount": 57,
+      "wordCount": 842,
+      "within800To1000": true
+    },
+    {
+      "chapter": 2,
+      "title": "Nama yang Dicoret",
+      "paragraphCount": 62,
+      "wordCount": 848,
+      "within800To1000": true
+    },
+    {
+      "chapter": 3,
+      "title": "Teman yang Pura-Pura Lupa",
+      "paragraphCount": 58,
+      "wordCount": 867,
+      "within800To1000": true
+    }
+  ],
+  "duplicates": [],
+  "notes": [
+    "V2 sengaja hanya memuat Bab 1-3 full sebagai sample produksi. Bab 4-50 disediakan sebagai blueprint, bukan full prose.",
+    "Pilihan pembaca memakai label natural; route developer tetap disimpan di metadata route map.",
+    "Lulus tsc lokal dengan stub tipe yang mengikuti pola file fixture sebelumnya. Tetap jalankan pnpm typecheck di repo asli setelah integrasi."
+  ]
+}

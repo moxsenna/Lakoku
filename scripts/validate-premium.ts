@@ -1,4 +1,4 @@
-import { buildAllPremiumBilikKetujuh50Drafts, buildPremiumBilikKetujuh50Snapshot } from '../fixtures/narrative/premium-bilik-ketujuh-50'
+import { buildAllPremiumBilikKetujuhKbmV2Drafts as buildAllPremiumBilikKetujuh50Drafts, buildPremiumBilikKetujuhKbmV2Snapshot as buildPremiumBilikKetujuh50Snapshot } from '../fixtures/narrative/premium-bilik-ketujuh-kbm-v2'
 
 const drafts = buildAllPremiumBilikKetujuh50Drafts()
 const snapshot = buildPremiumBilikKetujuh50Snapshot()

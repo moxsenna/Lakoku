@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 4 / 28 tasks
-- **In progress:** Task 5 — strict story contract and complete fixtures
-- **Pending:** Task 6–28
-- **Current gate:** StoryContract schema and three validated 50-chapter fixtures
+- **Complete:** 5 / 28 tasks
+- **In progress:** Task 6 — bounded route-state engine
+- **Pending:** Task 7–28
+- **Current gate:** Route-state parsing, normalization, effect merge, and deterministic prompt summary
 
 ---
 
@@ -80,7 +80,7 @@
 
 ## Phase 2 — Pure Story Engine
 
-- [ ] **Task 5: Strict Story Contract and three complete fixtures**
+- [x] **Task 5: Strict Story Contract and three complete fixtures**
   - [ ] Implement strict `StoryContractSchema`.
   - [ ] Validate exactly 50 sequential chapter targets.
   - [ ] Validate ending candidates, plot debts, reveal runway, and closure runway.
@@ -88,7 +88,7 @@
   - [ ] Create romance/drama fixture.
   - [ ] Create fantasy/adventure fixture.
 
-- [ ] **Task 6: Route-state engine**
+- [ ] 🔄 **Task 6: Route-state engine**
   - [ ] Implement `RouteStateSchema`.
   - [ ] Normalize and clamp scores.
   - [ ] Merge choice effects immutably.

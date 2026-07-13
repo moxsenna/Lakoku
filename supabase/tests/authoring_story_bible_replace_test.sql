@@ -13,7 +13,7 @@ begin
 end
 $$;
 
-select plan(23);
+select plan(35);
 
 select has_function(
   'public',
@@ -97,7 +97,7 @@ as $fn$
     )),
     'facts_ledger', jsonb_build_array(jsonb_build_object(
       'id', p_story_id || ':fact:' || p_marker,
-      'statement', 'Fact ' || p_marker,
+      'statement', 'Canonical fact ' || p_marker,
       'subject_character_id', p_story_id || ':char:' || p_marker,
       'established_chapter', 1,
       'salience', 0.75,
@@ -111,8 +111,8 @@ as $fn$
     )),
     'secrets_reveals', jsonb_build_array(jsonb_build_object(
       'id', p_story_id || ':secret:' || p_marker,
-      'description', 'Secret ' || p_marker,
-      'reveal_gate_chapter', 10,
+      'description', 'Canonical secret ' || p_marker,
+      'reveal_gate_chapter', 12,
       'revealed', false
     )),
     'timeline_events', jsonb_build_array(jsonb_build_object(
@@ -189,10 +189,25 @@ select is(
 );
 select is(
   (
-    select row(s.owner_user_id, s.title, c.canonical_name, f.statement, te.description, st.title, ar.summary, cb.phase)::text
+    select row(
+      s.owner_user_id, s.title,
+      c.canonical_name,
+      cs.status, cs.as_of_chapter, cs.attributes,
+      ca.alias, ca.alias_type,
+      cvs.register, cvs.speech_habits, cvs.forbidden_words, cvs.sample_lines,
+      f.statement,
+      ks.character_id, ks.fact_id, ks.known_from_chapter,
+      sr.description, sr.reveal_gate_chapter, sr.revealed,
+      te.description, st.title, ar.summary, cb.phase
+    )::text
     from public.stories s
     join public.characters c on c.story_id = s.id
+    join public.character_states cs on cs.character_id = c.id
+    join public.character_aliases ca on ca.story_id = s.id
+    join public.character_voice_sheets cvs on cvs.story_id = s.id
     join public.facts_ledger f on f.story_id = s.id
+    join public.knowledge_scopes ks on ks.story_id = s.id
+    join public.secrets_reveals sr on sr.story_id = s.id
     join public.timeline_events te on te.story_id = s.id
     join public.story_threads st on st.story_id = s.id
     join public.act_rollups ar on ar.story_id = s.id
@@ -201,9 +216,17 @@ select is(
   ),
   row(
     'a1000000-0000-4000-8000-000000000011'::uuid,
-    'Snapshot A story', 'Character A', 'Fact A', 'Event A', 'Thread A', 'Rollup A', 'phase-A'
+    'Snapshot A story',
+    'Character A',
+    'ALIVE', 1, '{}'::jsonb,
+    'Alias A', 'NICKNAME',
+    'Register A', '["habit-A"]'::jsonb, '["forbidden-A"]'::jsonb, '["sample-A"]'::jsonb,
+    'Canonical fact A',
+    'test:authoring-replace:char:A', 'test:authoring-replace:fact:A', 1,
+    'Canonical secret A', 12, false,
+    'Event A', 'Thread A', 'Rollup A', 'phase-A'
   )::text,
-  'snapshot A contents and shell metadata persist together'
+  'snapshot A persists exact shell and every managed canon table content'
 );
 
 select is(
@@ -228,7 +251,7 @@ select is(
     )::text
     from public.stories s where s.id = 'test:authoring-replace'
   ),
-  row('Snapshot B story', 'Character B', 'Fact B', 'Event B', 'phase-B')::text,
+  row('Snapshot B story', 'Character B', 'Canonical fact B', 'Event B', 'phase-B')::text,
   'replacement removes all prior A rows and leaves coherent B snapshot'
 );
 
@@ -245,9 +268,9 @@ select throws_ok(
       '"test:authoring-replace:fact:missing"'::jsonb
     )::text
   ),
-  '23503',
+  '22023',
   null,
-  'malformed child FK aborts replacement statement'
+  'malformed child reference aborts replacement before writes'
 );
 select is(
   (select row(title, cover, tagline, role)::text from public.stories where id = 'test:authoring-replace'),
@@ -257,15 +280,34 @@ select is(
 select is(
   (
     select row(
-      (select string_agg(canonical_name, ',') from public.characters where story_id = s.id),
-      (select string_agg(statement, ',') from public.facts_ledger where story_id = s.id),
+      (select string_agg(c.id || ':' || c.canonical_name, ',') from public.characters c where c.story_id = s.id),
+      (select string_agg(cs.character_id || ':' || cs.status || ':' || cs.as_of_chapter, ',') from public.character_states cs join public.characters c on c.id = cs.character_id where c.story_id = s.id),
+      (select string_agg(character_id || ':' || alias || ':' || alias_type, ',') from public.character_aliases where story_id = s.id),
+      (select string_agg(character_id || ':' || register || ':' || speech_habits::text || ':' || forbidden_words::text || ':' || sample_lines::text, ',') from public.character_voice_sheets where story_id = s.id),
+      (select string_agg(id || ':' || statement || ':' || coalesce(subject_character_id, ''), ',') from public.facts_ledger where story_id = s.id),
+      (select string_agg(character_id || ':' || fact_id || ':' || known_from_chapter, ',') from public.knowledge_scopes where story_id = s.id),
+      (select string_agg(id || ':' || description || ':' || reveal_gate_chapter || ':' || revealed, ',') from public.secrets_reveals where story_id = s.id),
       (select string_agg(description, ',') from public.timeline_events where story_id = s.id),
-      (select string_agg(phase, ',') from public.chapter_blueprints where story_id = s.id)
+      (select string_agg(id || ':' || title || ':' || status, ',') from public.story_threads where story_id = s.id),
+      (select string_agg(act_number || ':' || summary, ',') from public.act_rollups where story_id = s.id),
+      (select string_agg(chapter_number || ':' || version || ':' || phase, ',') from public.chapter_blueprints where story_id = s.id)
     )::text
     from public.stories s where s.id = 'test:authoring-replace'
   ),
-  row('Character B', 'Fact B', 'Event B', 'phase-B')::text,
-  'malformed child insert rolls back all canon and preserves prior snapshot'
+  row(
+    'test:authoring-replace:char:B:Character B',
+    'test:authoring-replace:char:B:ALIVE:1',
+    'test:authoring-replace:char:B:Alias B:NICKNAME',
+    'test:authoring-replace:char:B:Register B:["habit-B"]:["forbidden-B"]:["sample-B"]',
+    'test:authoring-replace:fact:B:Canonical fact B:test:authoring-replace:char:B',
+    'test:authoring-replace:char:B:test:authoring-replace:fact:B:1',
+    'test:authoring-replace:secret:B:Canonical secret B:12:false',
+    'Event B',
+    'test:authoring-replace:thread:B:Thread B:OPEN',
+    '1:Rollup B',
+    '1:1:phase-B'
+  )::text,
+  'malformed child insert rolls back every managed canon table and preserves prior snapshot'
 );
 
 select is(
@@ -286,7 +328,7 @@ select is(
       (select string_agg(statement, ',') from public.facts_ledger where story_id = s.id)
     )::text from public.stories s where id = 'test:authoring-replace'
   ),
-  row('a1000000-0000-4000-8000-000000000011'::uuid, 'Snapshot B story', 'Character B', 'Fact B')::text,
+  row('a1000000-0000-4000-8000-000000000011'::uuid, 'Snapshot B story', 'Character B', 'Canonical fact B')::text,
   'different owner performs zero shell and canon writes'
 );
 
@@ -348,6 +390,202 @@ select is(
   (select count(*) from public.stories where id = 'test:authoring-bad-meta'),
   0::bigint,
   'invalid metadata creates no shell or canon'
+);
+
+insert into public.stories (id, title, owner_user_id, visibility)
+values ('test:authoring-foreign', 'Foreign canon owner', 'b2000000-0000-4000-8000-000000000012', 'private');
+insert into public.characters (id, story_id, canonical_name, role, motivation, introduced_chapter)
+values ('test:authoring-foreign:char:X', 'test:authoring-foreign', 'Foreign X', 'Lead', 'Remain foreign forever', 1);
+insert into public.character_states (character_id, status, as_of_chapter, attributes)
+values ('test:authoring-foreign:char:X', 'ALIVE', 1, '{}'::jsonb);
+insert into public.facts_ledger (
+  id, story_id, statement, subject_character_id, established_chapter, salience, load_bearing, paid_off
+) values (
+  'test:authoring-foreign:fact:X', 'test:authoring-foreign', 'Foreign fact X',
+  'test:authoring-foreign:char:X', 1, 0.5, false, false
+);
+insert into public.secrets_reveals (id, story_id, description, reveal_gate_chapter, revealed)
+values ('test:authoring-foreign:secret:X', 'test:authoring-foreign', 'Foreign secret X', 10, false);
+
+select throws_ok(
+  format(
+    'select public.replace_authoring_story_bible_v1(%L,%L::uuid,%L,%L,%L,%L,%L::jsonb,50,%L,%L::jsonb)',
+    'test:authoring-unknown-row-key', 'a1000000-0000-4000-8000-000000000011',
+    'Unknown row key', '/unknown.svg', 'Unknown row key tagline', 'Unknown row role',
+    '["Unknown field","Strict rows"]',
+    'Unknown row key synopsis remains valid but exact allowed keys must reject the child object.',
+    jsonb_set(
+      pg_temp.canon_payload('test:authoring-unknown-row-key', 'UNKNOWN'),
+      '{characters,0,unexpected}', 'true'::jsonb
+    )::text
+  ),
+  '22023', null,
+  'unknown child row key is rejected before writes'
+);
+select is(
+  (select count(*) from public.stories where id = 'test:authoring-unknown-row-key'),
+  0::bigint,
+  'unknown child row key performs zero shell writes'
+);
+
+select throws_ok(
+  format(
+    'select public.replace_authoring_story_bible_v1(%L,%L::uuid,%L,%L,%L,%L,%L::jsonb,50,%L,%L::jsonb)',
+    'test:authoring-invalid-row', 'a1000000-0000-4000-8000-000000000011',
+    'Invalid child row', '/invalid-row.svg', 'Invalid child row tagline', 'Invalid child role',
+    '["Invalid scalar","Strict rows"]',
+    'Invalid row synopsis remains valid but out of range chapter values must fail before writes.',
+    jsonb_set(
+      pg_temp.canon_payload('test:authoring-invalid-row', 'INVALID'),
+      '{characters,0,introduced_chapter}', '51'::jsonb
+    )::text
+  ),
+  '22023', null,
+  'invalid child scalar bounds are rejected before writes'
+);
+select is(
+  (select count(*) from public.stories where id = 'test:authoring-invalid-row'),
+  0::bigint,
+  'invalid child scalar performs zero shell writes'
+);
+
+select throws_ok(
+  format(
+    'select public.replace_authoring_story_bible_v1(%L,%L::uuid,%L,%L,%L,%L,%L::jsonb,50,%L,%L::jsonb)',
+    'test:authoring-global-collision', 'a1000000-0000-4000-8000-000000000011',
+    'Global ID collision', '/collision.svg', 'Global ID collision tagline', 'Collision role',
+    '["Global IDs","Cross story"]',
+    'Global ID collision synopsis remains valid but a foreign story character ID must be rejected early.',
+    jsonb_set(
+      pg_temp.canon_payload('test:authoring-global-collision', 'COLLISION'),
+      '{characters,0,id}', '"test:authoring-foreign:char:X"'::jsonb
+    )::text
+  ),
+  '22023', null,
+  'globally unique character ID owned by another story is rejected before writes'
+);
+
+select throws_ok(
+  format(
+    'select public.replace_authoring_story_bible_v1(%L,%L::uuid,%L,%L,%L,%L,%L::jsonb,50,%L,%L::jsonb)',
+    'test:authoring-replace', 'a1000000-0000-4000-8000-000000000011',
+    'Cross story alias', '/cross-alias.svg', 'Cross story alias tagline', 'Cross alias role',
+    '["Cross reference","Local canon"]',
+    'Cross story alias synopsis remains valid but foreign character references must never satisfy global FKs.',
+    jsonb_set(
+      pg_temp.canon_payload('test:authoring-replace', 'CROSS'),
+      '{character_aliases,0,character_id}', '"test:authoring-foreign:char:X"'::jsonb
+    )::text
+  ),
+  '22023', null,
+  'alias cannot reference character from another story'
+);
+
+select throws_ok(
+  format(
+    'select public.replace_authoring_story_bible_v1(%L,%L::uuid,%L,%L,%L,%L,%L::jsonb,50,%L,%L::jsonb)',
+    'test:authoring-replace', 'a1000000-0000-4000-8000-000000000011',
+    'Cross story knowledge', '/cross-knowledge.svg', 'Cross knowledge tagline', 'Cross knowledge role',
+    '["Cross fact","Local canon"]',
+    'Cross story knowledge synopsis remains valid but foreign facts must never satisfy global fact FKs.',
+    jsonb_set(
+      pg_temp.canon_payload('test:authoring-replace', 'CROSS'),
+      '{knowledge_scopes,0,fact_id}', '"test:authoring-foreign:fact:X"'::jsonb
+    )::text
+  ),
+  '22023', null,
+  'knowledge cannot reference fact from another story'
+);
+
+select throws_ok(
+  format(
+    'select public.replace_authoring_story_bible_v1(%L,%L::uuid,%L,%L,%L,%L,%L::jsonb,50,%L,%L::jsonb)',
+    'test:authoring-wrong-story-field', 'a1000000-0000-4000-8000-000000000011',
+    'Wrong story field', '/wrong-story.svg', 'Wrong story field tagline', 'Wrong story role',
+    '["Story locality","Strict fields"]',
+    'Wrong story field synopsis remains valid but supplied mismatched story IDs must be rejected safely.',
+    jsonb_set(
+      pg_temp.canon_payload('test:authoring-wrong-story-field', 'WRONG'),
+      '{characters,0,story_id}', '"test:authoring-foreign"'::jsonb
+    )::text
+  ),
+  '22023', null,
+  'mismatched child story_id is rejected rather than ignored'
+);
+
+select throws_ok(
+  format(
+    'select public.replace_authoring_story_bible_v1(%L,%L::uuid,%L,%L,%L,%L,%L::jsonb,50,%L,%L::jsonb)',
+    'test:authoring-replace', 'a1000000-0000-4000-8000-000000000011',
+    'Cross blueprint refs', '/cross-blueprint.svg', 'Cross blueprint tagline', 'Cross blueprint role',
+    '["Blueprint refs","Local canon"]',
+    'Cross blueprint synopsis remains valid but character and secret arrays must reference local payload IDs.',
+    jsonb_set(
+      jsonb_set(
+        pg_temp.canon_payload('test:authoring-replace', 'CROSS'),
+        '{chapter_blueprints,0,introduces_characters}', '["test:authoring-foreign:char:X"]'::jsonb
+      ),
+      '{chapter_blueprints,0,forbidden_reveals}', '["test:authoring-foreign:secret:X"]'::jsonb
+    )::text
+  ),
+  '22023', null,
+  'blueprint character and secret references must be local payload IDs'
+);
+
+select throws_ok(
+  format(
+    'select public.replace_authoring_story_bible_v1(%L,%L::uuid,%L,%L,%L,%L,%L::jsonb,50,%L,%L::jsonb)',
+    'test:authoring-duplicate-id', 'a1000000-0000-4000-8000-000000000011',
+    'Duplicate canon ID', '/duplicate.svg', 'Duplicate canon ID tagline', 'Duplicate role',
+    '["Duplicate IDs","Strict payload"]',
+    'Duplicate ID synopsis remains valid but duplicate globally unique payload IDs must fail before writes.',
+    jsonb_set(
+      pg_temp.canon_payload('test:authoring-duplicate-id', 'DUP'),
+      '{characters}',
+      (pg_temp.canon_payload('test:authoring-duplicate-id', 'DUP') -> 'characters') ||
+      (pg_temp.canon_payload('test:authoring-duplicate-id', 'DUP') -> 'characters')
+    )::text
+  ),
+  '22023', null,
+  'duplicate payload character IDs are rejected before writes'
+);
+
+select is(
+  (select row(title, cover, tagline, role)::text from public.stories where id = 'test:authoring-replace'),
+  row('Snapshot B story', '/snapshot-b.svg', 'Snapshot B tagline', 'Snapshot B role')::text,
+  'malicious payload attempts perform zero target shell mutation'
+);
+select is(
+  (
+    select row(
+      (select string_agg(c.id || ':' || c.canonical_name, ',') from public.characters c where c.story_id = s.id),
+      (select string_agg(cs.character_id || ':' || cs.status || ':' || cs.as_of_chapter, ',') from public.character_states cs join public.characters c on c.id = cs.character_id where c.story_id = s.id),
+      (select string_agg(character_id || ':' || alias, ',') from public.character_aliases where story_id = s.id),
+      (select string_agg(character_id || ':' || register, ',') from public.character_voice_sheets where story_id = s.id),
+      (select string_agg(id || ':' || statement, ',') from public.facts_ledger where story_id = s.id),
+      (select string_agg(character_id || ':' || fact_id || ':' || known_from_chapter, ',') from public.knowledge_scopes where story_id = s.id),
+      (select string_agg(id || ':' || description, ',') from public.secrets_reveals where story_id = s.id),
+      (select string_agg(description, ',') from public.timeline_events where story_id = s.id),
+      (select string_agg(id || ':' || title, ',') from public.story_threads where story_id = s.id),
+      (select string_agg(act_number || ':' || summary, ',') from public.act_rollups where story_id = s.id),
+      (select string_agg(chapter_number || ':' || version || ':' || phase, ',') from public.chapter_blueprints where story_id = s.id)
+    )::text
+    from public.stories s where s.id = 'test:authoring-replace'
+  ),
+  row(
+    'test:authoring-replace:char:B:Character B',
+    'test:authoring-replace:char:B:ALIVE:1',
+    'test:authoring-replace:char:B:Alias B',
+    'test:authoring-replace:char:B:Register B',
+    'test:authoring-replace:fact:B:Canonical fact B',
+    'test:authoring-replace:char:B:test:authoring-replace:fact:B:1',
+    'test:authoring-replace:secret:B:Canonical secret B',
+    'Event B',
+    'test:authoring-replace:thread:B:Thread B',
+    '1:Rollup B',
+    '1:1:phase-B'
+  )::text,
+  'malicious payload attempts perform zero mutation across every managed canon table'
 );
 
 select ok(

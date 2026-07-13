@@ -128,10 +128,10 @@ select 'REPLACE_RESULT|${side}|' || public.replace_authoring_story_bible_v1(
     )),
     'character_voice_sheets', jsonb_build_array(jsonb_build_object(
       'character_id', :'story_id' || ':char:${side}', 'register', 'Register ${side}',
-      'speech_habits', '["${side}"]'::jsonb, 'forbidden_words', '[]'::jsonb, 'sample_lines', '["${side}"]'::jsonb
+      'speech_habits', '["habit-${side}"]'::jsonb, 'forbidden_words', '[]'::jsonb, 'sample_lines', '["sample-${side}"]'::jsonb
     )),
     'facts_ledger', jsonb_build_array(jsonb_build_object(
-      'id', :'story_id' || ':fact:${side}', 'statement', 'Fact ${side}',
+      'id', :'story_id' || ':fact:${side}', 'statement', 'Canonical fact ${side}',
       'subject_character_id', :'story_id' || ':char:${side}', 'established_chapter', 1,
       'salience', 0.8, 'load_bearing', true, 'paid_off', false
     )),
@@ -139,7 +139,7 @@ select 'REPLACE_RESULT|${side}|' || public.replace_authoring_story_bible_v1(
       'character_id', :'story_id' || ':char:${side}', 'fact_id', :'story_id' || ':fact:${side}', 'known_from_chapter', 1
     )),
     'secrets_reveals', jsonb_build_array(jsonb_build_object(
-      'id', :'story_id' || ':secret:${side}', 'description', 'Secret ${side}', 'reveal_gate_chapter', 10, 'revealed', false
+      'id', :'story_id' || ':secret:${side}', 'description', 'Canonical secret ${side}', 'reveal_gate_chapter', 12, 'revealed', false
     )),
     'timeline_events', jsonb_build_array(jsonb_build_object(
       'chapter_number', 1, 'ordinal', 0, 'description', 'Event ${side}', 'is_flashback', false, 'occurs_at', 1
@@ -207,19 +207,38 @@ function finalSnapshot(container: string, storyId: string): string {
     container,
     `select concat_ws('|',
        s.owner_user_id::text, s.title,
-       (select string_agg(canonical_name, ',') from public.characters where story_id = s.id),
-       (select string_agg(alias, ',') from public.character_aliases where story_id = s.id),
-       (select string_agg(register, ',') from public.character_voice_sheets where story_id = s.id),
-       (select string_agg(statement, ',') from public.facts_ledger where story_id = s.id),
-       (select count(*)::text from public.knowledge_scopes where story_id = s.id),
-       (select string_agg(description, ',') from public.secrets_reveals where story_id = s.id),
-       (select string_agg(description, ',') from public.timeline_events where story_id = s.id),
-       (select string_agg(title, ',') from public.story_threads where story_id = s.id),
-       (select string_agg(summary, ',') from public.act_rollups where story_id = s.id),
-       (select string_agg(phase, ',') from public.chapter_blueprints where story_id = s.id)
+       (select string_agg(id || ':' || canonical_name || ':' || role || ':' || motivation || ':' || introduced_chapter, ',') from public.characters where story_id = s.id),
+       (select string_agg(cs.character_id || ':' || cs.status || ':' || cs.as_of_chapter || ':' || cs.attributes::text, ',') from public.character_states cs join public.characters c on c.id = cs.character_id where c.story_id = s.id),
+       (select string_agg(character_id || ':' || alias || ':' || alias_type, ',') from public.character_aliases where story_id = s.id),
+       (select string_agg(character_id || ':' || register || ':' || speech_habits::text || ':' || forbidden_words::text || ':' || sample_lines::text, ',') from public.character_voice_sheets where story_id = s.id),
+       (select string_agg(id || ':' || statement || ':' || subject_character_id || ':' || established_chapter || ':' || salience || ':' || load_bearing || ':' || paid_off, ',') from public.facts_ledger where story_id = s.id),
+       (select string_agg(character_id || ':' || fact_id || ':' || known_from_chapter, ',') from public.knowledge_scopes where story_id = s.id),
+       (select string_agg(id || ':' || description || ':' || reveal_gate_chapter || ':' || revealed, ',') from public.secrets_reveals where story_id = s.id),
+       (select string_agg(chapter_number || ':' || ordinal || ':' || description || ':' || is_flashback || ':' || occurs_at, ',') from public.timeline_events where story_id = s.id),
+       (select string_agg(id || ':' || title || ':' || status || ':' || opened_chapter || ':' || last_touched_chapter || ':' || payoff_window || ':' || is_main_mystery || ':' || stale || ':' || coalesce(stale_since_chapter::text, 'null'), ',') from public.story_threads where story_id = s.id),
+       (select string_agg(act_number || ':' || summary || ':' || state_delta::text || ':' || covers_from_chapter || ':' || covers_to_chapter, ',') from public.act_rollups where story_id = s.id),
+       (select string_agg(chapter_number || ':' || version || ':' || phase || ':' || chapter_goal || ':' || mandatory_beats::text || ':' || forbidden_reveals::text || ':' || allowed_state_delta::text || ':' || introduces_characters::text || ':' || coalesce(reconciled_from_version::text, 'null') || ':' || coalesce(reconciliation_reason, 'null'), ',') from public.chapter_blueprints where story_id = s.id)
      ) from public.stories s where s.id = :'story_id';`,
     { story_id: storyId },
   ).trim()
+}
+
+function completeSnapshot(ownerId: string, storyId: string, marker: 'A' | 'B'): string {
+  return [
+    ownerId,
+    `Race snapshot ${marker}`,
+    `${storyId}:char:${marker}:Character ${marker}:Lead:Keep ${marker} coherent:1`,
+    `${storyId}:char:${marker}:ALIVE:1:{}`,
+    `${storyId}:char:${marker}:Alias ${marker}:NICKNAME`,
+    `${storyId}:char:${marker}:Register ${marker}:["habit-${marker}"]:[]:["sample-${marker}"]`,
+    `${storyId}:fact:${marker}:Canonical fact ${marker}:${storyId}:char:${marker}:1:0.8:true:false`,
+    `${storyId}:char:${marker}:${storyId}:fact:${marker}:1`,
+    `${storyId}:secret:${marker}:Canonical secret ${marker}:12:false`,
+    `1:0:Event ${marker}:false:1`,
+    `${storyId}:thread:${marker}:Thread ${marker}:OPEN:1:1:20:true:false:null`,
+    `1:Rollup ${marker}:{"marker": "${marker}"}:1:10`,
+    `1:1:Phase ${marker}:Goal ${marker}:["${marker}"]:[]:{"marker": "${marker}"}:["${storyId}:char:${marker}"]:null:null`,
+  ].join('|')
 }
 
 async function sameOwnerRace(
@@ -240,8 +259,8 @@ async function sameOwnerRace(
   check(b.stdout.includes('"status": "REPLACED"'), 'same-owner contender B must succeed')
 
   const final = finalSnapshot(container, storyId)
-  const completeA = `${ownerId}|Race snapshot A|Character A|Alias A|Register A|Fact A|1|Secret A|Event A|Thread A|Rollup A|Phase A`
-  const completeB = `${ownerId}|Race snapshot B|Character B|Alias B|Register B|Fact B|1|Secret B|Event B|Thread B|Rollup B|Phase B`
+  const completeA = completeSnapshot(ownerId, storyId, 'A')
+  const completeB = completeSnapshot(ownerId, storyId, 'B')
   check(final === completeA || final === completeB, 'same-owner final canon must equal one complete snapshot')
 }
 
@@ -270,7 +289,7 @@ async function differentOwnerRace(
   const winner = aWon ? ownerA : ownerB
   const marker = aWon ? 'A' : 'B'
   const final = finalSnapshot(container, storyId)
-  const expected = `${winner}|Race snapshot ${marker}|Character ${marker}|Alias ${marker}|Register ${marker}|Fact ${marker}|1|Secret ${marker}|Event ${marker}|Thread ${marker}|Rollup ${marker}|Phase ${marker}`
+  const expected = completeSnapshot(winner, storyId, marker)
   check(final === expected, 'different-owner final shell and canon must equal winner snapshot')
 }
 

@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server'
 import { generateNextChapter, generateNextChapterReal } from '@lakoku/runtime'
 import { guardAdminToken } from '@/lib/auth/admin-guard'
+import { getSessionUser } from '@/lib/api/user-state'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { normalizeStoryRouteId } from '@/lib/story-route-id'
 
 /**
  * Endpoint runtime: memicu workflow generasi satu bab.
@@ -24,7 +27,24 @@ export async function POST(
   if (denied) return denied
 
   try {
-    const { id } = await params
+    const user = await getSessionUser()
+    if (!user) {
+      return NextResponse.json({ error: 'Masuk untuk membuat bab.' }, { status: 401 })
+    }
+
+    const route = await params
+    const id = normalizeStoryRouteId(route.id)
+    const admin = createAdminClient()
+    const { data: ownedStory, error: ownerError } = await admin
+      .from('stories')
+      .select('id')
+      .eq('id', id)
+      .eq('owner_user_id', user.id)
+      .maybeSingle()
+    if (ownerError || !ownedStory) {
+      return NextResponse.json({ error: 'Cerita tidak ditemukan.' }, { status: 404 })
+    }
+
     const body = (await req.json().catch(() => ({}))) as {
       chapterNumber?: number
       mode?: 'real' | 'fake'

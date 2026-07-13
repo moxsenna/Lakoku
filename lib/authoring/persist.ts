@@ -25,14 +25,24 @@ const CANON_TABLES = [
 
 export async function persistStoryBible(
   result: CompileResult,
-  opts?: { ownerUserId?: string | null },
+  ownerUserId: string,
 ): Promise<{ storyId: string }> {
+  if (!ownerUserId) throw new Error('persistStoryBible: trusted owner user required')
+
   const db = createAdminClient()
   const { storyId, snapshot, meta } = result
-  const ownerUserId = opts?.ownerUserId ?? null
+
+  const { data: existingStory, error: ownerError } = await db
+    .from('stories')
+    .select('owner_user_id')
+    .eq('id', storyId)
+    .maybeSingle()
+  if (ownerError) throw new Error(`stories owner lookup: ${ownerError.message}`)
+  if (existingStory && existingStory.owner_user_id !== ownerUserId) {
+    throw new Error('persistStoryBible: story owner mismatch')
+  }
 
   // 0) Shell story (FK target). Upsert idempoten.
-  // AMENDMENTS v0.5: set owner + private visibility when session known.
   const { error: eStory } = await db.from('stories').upsert({
     id: storyId,
     title: meta.title,
@@ -46,7 +56,7 @@ export async function persistStoryBible(
     current_chapter: 0,
     jejak: [],
     ending_name: null,
-    ...(ownerUserId ? { owner_user_id: ownerUserId } : {}),
+    owner_user_id: ownerUserId,
     visibility: 'private',
   })
   if (eStory) throw new Error(`stories: ${eStory.message}`)

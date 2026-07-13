@@ -28,9 +28,8 @@ testsprite_tests/tmp/
 # Playwright MCP session artifacts
 .playwright-mcp/
 
-# Local linked Supabase introspection and release evidence
-.local/personalized-story-introspection/
-.local/personalized-story-release/
+# Local linked Supabase introspection, status credentials, and release evidence
+.local/
 supabase/.temp/
 
 testsprite_tests\tmp\config.json

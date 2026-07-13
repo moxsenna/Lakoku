@@ -23,6 +23,8 @@ import {
 import { runLockLadder, type AiRepairFn } from '@/lib/authoring/repair'
 import { enrichOpeningVoiceSheets } from '@/lib/authoring'
 import { generateNextChapterReal } from '@lakoku/runtime'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { getSessionUser, ensureReaderStateStarted } from '@/lib/api/user-state'
 import type {
   PremiseDraft,
   CastDraft,
@@ -37,6 +39,9 @@ export interface ActionError {
   error: string
 }
 export type ActionResult<T> = ({ ok: true } & T) | ActionError
+
+const AUTH_REQUIRED_ERROR = 'Masuk untuk membuat cerita.'
+const STORY_NOT_FOUND_ERROR = 'Cerita tidak ditemukan.'
 
 function fail(err: unknown): ActionError {
   const message = err instanceof Error ? err.message : 'Terjadi kesalahan tak terduga.'
@@ -111,6 +116,9 @@ export async function lockStoryBible(draft: StoryBibleDraft): Promise<
   | ({ ok: false; needsAuthor: true; findings: Finding[]; transforms: string[] })
 > {
   try {
+    const user = await getSessionUser()
+    if (!user) return { ok: false, error: AUTH_REQUIRED_ERROR }
+
     const aiRepair: AiRepairFn = async (d, findings) => {
       const feedback = findingsToFeedback(findings)
       const [{ mystery }, worldBase] = [
@@ -134,13 +142,9 @@ export async function lockStoryBible(draft: StoryBibleDraft): Promise<
       console.log('[v0] opening package voice — diperkaya:', opening.enrichedIds, 'fallback:', opening.fallbackIds)
     }
 
-    const { getSessionUser, ensureReaderStateStarted } = await import('@/lib/api/user-state')
-    const user = await getSessionUser()
-    const { storyId } = await persistStoryBible(opening.compiled, {
-      ownerUserId: user?.id ?? null,
-    })
+    const { storyId } = await persistStoryBible(opening.compiled, user.id)
     // Library personal muncul sejak lock (AMENDMENTS v0.5).
-    if (user) await ensureReaderStateStarted(storyId, 1, 'BARU')
+    await ensureReaderStateStarted(storyId, 1, 'BARU')
 
     // T-SHARE-3: bila user datang dari share landing, ikat story baru ke start row.
     // Client menyimpan startId di sessionStorage; optional header/cookie tidak dipakai.
@@ -164,6 +168,20 @@ export async function startFirstChapter(
   storyId: string,
 ): Promise<ActionResult<{ chapterNumber: number }>> {
   try {
+    const user = await getSessionUser()
+    if (!user) return { ok: false, error: AUTH_REQUIRED_ERROR }
+
+    const admin = createAdminClient()
+    const { data: ownedStory, error: ownerError } = await admin
+      .from('stories')
+      .select('id')
+      .eq('id', storyId)
+      .eq('owner_user_id', user.id)
+      .maybeSingle()
+    if (ownerError || !ownedStory) {
+      return { ok: false, error: STORY_NOT_FOUND_ERROR }
+    }
+
     const { after } = await import('next/server')
     after(async () => {
       const result = await generateNextChapterReal(storyId, 1)
@@ -174,7 +192,6 @@ export async function startFirstChapter(
 
     // Progress personal login (AMENDMENTS v0.5). Kolom demo global di `stories`
     // tidak lagi diandalkan sebagai status personal untuk semua pengunjung.
-    const { ensureReaderStateStarted } = await import('@/lib/api/user-state')
     await ensureReaderStateStarted(storyId, 1)
 
     return { ok: true, chapterNumber: 1 }

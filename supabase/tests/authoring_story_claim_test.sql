@@ -15,7 +15,7 @@ begin
 end
 $$;
 
-select plan(41);
+select plan(50);
 
 select has_function(
   'public',
@@ -357,6 +357,73 @@ select is(
     'test:valid-bounds', 'a1000000-0000-4000-8000-000000000001',
     repeat('t', 80), repeat('c', 2048), repeat('g', 160), repeat('r', 80), jsonb_build_array('aa', repeat('x', 40)), 50, repeat('s', 700)
   ), true, 'valid payload at maximum bounds is accepted'
+);
+
+select is(
+  public.claim_authoring_story_shell_v1(
+    ' ' || repeat('i', 128), 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '/valid.svg', 'Valid tagline', 'Role', '["trope-a","trope-b"]'::jsonb, 50, repeat('s', 60)
+  ), false, 'padded story ID over raw maximum is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:padded-cover-overlimit', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', ' ' || repeat('c', 2048), 'Valid tagline', 'Role', '["trope-a","trope-b"]'::jsonb, 50, repeat('s', 60)
+  ), false, 'padded cover over raw maximum is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:padded-title-overlimit', 'a1000000-0000-4000-8000-000000000001',
+    ' ' || repeat('t', 80), '/valid.svg', 'Valid tagline', 'Role', '["trope-a","trope-b"]'::jsonb, 50, repeat('s', 60)
+  ), false, 'padded title over raw maximum is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:padded-tagline-overlimit', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '/valid.svg', ' ' || repeat('g', 160), 'Role', '["trope-a","trope-b"]'::jsonb, 50, repeat('s', 60)
+  ), false, 'padded tagline over raw maximum is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:padded-role-overlimit', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '/valid.svg', 'Valid tagline', ' ' || repeat('r', 80), '["trope-a","trope-b"]'::jsonb, 50, repeat('s', 60)
+  ), false, 'padded role over raw maximum is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:padded-synopsis-overlimit', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '/valid.svg', 'Valid tagline', 'Role', '["trope-a","trope-b"]'::jsonb, 50, ' ' || repeat('s', 700)
+  ), false, 'padded synopsis over raw maximum is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:padded-trope-overlimit', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '/valid.svg', 'Valid tagline', 'Role', jsonb_build_array('trope-a', ' ' || repeat('x', 40)), 50, repeat('s', 60)
+  ), false, 'padded trope over raw maximum is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    '  test:valid-padded-normalized  ', 'a1000000-0000-4000-8000-000000000001',
+    '  Padded title  ', '  /padded.svg  ', '  Padded tagline valid  ', '  Padded role  ', '["  Second trope  "," First trope "]'::jsonb, 50,
+    '  Synopsis padded yang cukup panjang untuk lolos batas minimum setelah trim.  '
+  ), true, 'valid padded payload within raw bounds is accepted'
+);
+select is(
+  (
+    select row(id, title, cover, tagline, role, tropes, synopsis)::text
+    from public.stories
+    where id = 'test:valid-padded-normalized'
+  ),
+  row(
+    'test:valid-padded-normalized',
+    'Padded title',
+    '/padded.svg',
+    'Padded tagline valid',
+    'Padded role',
+    '["Second trope","First trope"]'::jsonb,
+    'Synopsis padded yang cukup panjang untuk lolos batas minimum setelah trim.'
+  )::text,
+  'stored scalar values and trope order are trimmed and normalized'
 );
 
 select ok(

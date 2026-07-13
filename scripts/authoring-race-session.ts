@@ -3,6 +3,7 @@ import path from 'node:path'
 import { assertLoopbackSupabaseUrl } from './personalized-db-safety'
 
 const READY_TIMEOUT_MS = 10_000
+const RACE_PROCESS_EXIT_TIMEOUT_MS = 15_000
 const PROCESS_EXIT_TIMEOUT_MS = 750
 const BACKEND_EXIT_TIMEOUT_MS = 5_000
 const LOCAL_STATUS_TIMEOUT_MS = 15_000
@@ -224,41 +225,85 @@ export async function waitForRaceSession(
   return pid
 }
 
+async function awaitProcessExit(
+  running: RunningRacePsql,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<ProcessExit> {
+  let timeout: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      running.exit,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
 export async function waitForRaceSuccess(running: RunningRacePsql): Promise<void> {
-  const result = await running.exit
+  const result = await awaitProcessExit(
+    running,
+    RACE_PROCESS_EXIT_TIMEOUT_MS,
+    'authoring race session: local PostgreSQL process exit timed out',
+  )
   checkRace(!result.startFailed, 'authoring race session', 'cannot start local PostgreSQL session')
   checkRace(result.code === 0, 'authoring race session', 'local PostgreSQL session failed')
 }
 
 async function waitForProcessExit(running: RunningRacePsql, timeoutMs: number): Promise<boolean> {
   if (running.child.exitCode !== null) return true
-  return Promise.race([
-    running.exit.then(() => true),
-    delay(timeoutMs).then(() => false),
-  ])
+  try {
+    await awaitProcessExit(running, timeoutMs, 'local PostgreSQL process exit timed out')
+    return true
+  } catch {
+    return false
+  }
+}
+
+function backendSelector(running: RunningRacePsql): {
+  sql: string
+  variables: Record<string, string>
+} {
+  checkRace(
+    running.applicationName.startsWith('lakoku-') && running.applicationName.length <= 63,
+    'authoring race session',
+    'unsafe PostgreSQL application name',
+  )
+  if (running.backendPid === null) {
+    return {
+      sql: "application_name = :'application_name'",
+      variables: { application_name: running.applicationName },
+    }
+  }
+  return {
+    sql: "pid = :'pid'::integer and application_name = :'application_name'",
+    variables: { pid: String(running.backendPid), application_name: running.applicationName },
+  }
 }
 
 function backendExists(target: RaceTarget, running: RunningRacePsql): boolean {
-  if (running.backendPid === null) return false
+  const selector = backendSelector(running)
   const output = execLocalPsql(
     target,
-    `select count(*) from pg_stat_activity
-     where pid = :'pid'::integer and application_name = :'application_name';`,
-    { pid: String(running.backendPid), application_name: running.applicationName },
+    `select count(*) from pg_stat_activity where ${selector.sql};`,
+    selector.variables,
     CLEANUP_QUERY_TIMEOUT_MS,
   ).trim()
   return output !== '0'
 }
 
 function terminateMatchingBackend(target: RaceTarget, running: RunningRacePsql): void {
-  if (running.backendPid === null) return
+  const selector = backendSelector(running)
   execLocalPsql(
     target,
     `select coalesce((
        select pg_terminate_backend(pid)::text from pg_stat_activity
-       where pid = :'pid'::integer and application_name = :'application_name'
+       where ${selector.sql}
      ), 'absent');`,
-    { pid: String(running.backendPid), application_name: running.applicationName },
+    selector.variables,
     CLEANUP_QUERY_TIMEOUT_MS,
   )
 }
@@ -272,23 +317,51 @@ async function waitForBackendExit(target: RaceTarget, running: RunningRacePsql):
 }
 
 async function cleanupRaceSession(target: RaceTarget, running: RunningRacePsql): Promise<void> {
-  if (!running.child.stdin.destroyed && !running.child.stdin.writableEnded) running.child.stdin.end()
-  let exited = await waitForProcessExit(running, PROCESS_EXIT_TIMEOUT_MS)
-  if (!exited) {
-    running.child.kill('SIGTERM')
+  const failures: string[] = []
+  let exited = false
+  try {
+    if (!running.child.stdin.destroyed && !running.child.stdin.writableEnded) running.child.stdin.end()
     exited = await waitForProcessExit(running, PROCESS_EXIT_TIMEOUT_MS)
+    let backendPresent: boolean | undefined
+    try {
+      backendPresent = backendExists(target, running)
+    } catch {
+      failures.push('backend probe')
+    }
+    if (backendPresent !== false) {
+      try {
+        terminateMatchingBackend(target, running)
+      } catch {
+        failures.push('backend termination')
+      }
+      try {
+        await waitForBackendExit(target, running)
+      } catch {
+        failures.push('backend reap')
+      }
+    }
+  } finally {
+    if (!exited) {
+      try {
+        if (!running.child.kill('SIGTERM')) failures.push('process SIGTERM')
+      } catch {
+        failures.push('process SIGTERM')
+      }
+      exited = await waitForProcessExit(running, PROCESS_EXIT_TIMEOUT_MS)
+    }
+    if (!exited) {
+      try {
+        if (!running.child.kill('SIGKILL')) failures.push('process SIGKILL')
+      } catch {
+        failures.push('process SIGKILL')
+      }
+      exited = await waitForProcessExit(running, PROCESS_EXIT_TIMEOUT_MS)
+    }
+    if (!exited) failures.push('process reap')
   }
-
-  if (running.backendPid !== null && backendExists(target, running)) {
-    terminateMatchingBackend(target, running)
-    await waitForBackendExit(target, running)
+  if (failures.length > 0) {
+    throw new Error(`${target.context}: session cleanup failed (${failures.join(', ')})`)
   }
-
-  if (!exited) {
-    running.child.kill('SIGKILL')
-    exited = await waitForProcessExit(running, PROCESS_EXIT_TIMEOUT_MS)
-  }
-  checkRace(exited, target.context, 'local PostgreSQL process did not exit')
 }
 
 function capturedSessions(
@@ -301,13 +374,13 @@ function capturedSessions(
 
 function assertSessionActivityGone(
   target: RaceTarget,
-  session: RunningRacePsql & { backendPid: number },
+  session: RunningRacePsql,
 ): void {
+  const selector = backendSelector(session)
   const activity = execLocalPsql(
     target,
-    `select count(*) from pg_stat_activity
-     where pid = :'pid'::integer and application_name = :'application_name';`,
-    { pid: String(session.backendPid), application_name: session.applicationName },
+    `select count(*) from pg_stat_activity where ${selector.sql};`,
+    selector.variables,
     CLEANUP_QUERY_TIMEOUT_MS,
   ).trim()
   checkRace(activity === '0', target.context, 'matching PostgreSQL activity remains')
@@ -330,9 +403,8 @@ function assertAdvisoryLocksGone(
 }
 
 export function assertRaceSessionsGone(target: RaceTarget, sessions: RunningRacePsql[]): void {
-  const captured = capturedSessions(sessions)
-  for (const session of captured) assertSessionActivityGone(target, session)
-  assertAdvisoryLocksGone(target, captured)
+  for (const session of sessions) assertSessionActivityGone(target, session)
+  assertAdvisoryLocksGone(target, capturedSessions(sessions))
 }
 
 async function collectCleanupFailures(
@@ -383,7 +455,7 @@ function raceSessionVerificationSteps(
 ): CleanupStep[] {
   const captured = capturedSessions(sessions)
   return [
-    ...captured.map((session, index) => ({
+    ...sessions.map((session, index) => ({
       label: `session activity verification ${index + 1}`,
       run: () => assertSessionActivityGone(target, session),
     })),

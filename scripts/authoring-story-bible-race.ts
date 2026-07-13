@@ -87,9 +87,10 @@ async function releaseRaceBarrier(
   variablesB: Record<string, string>,
 ): Promise<[RunningPsql, RunningPsql]> {
   const barrier = variablesA.barrier
-  const holder = startRacePsql(target, 'holder', { barrier })
-  const contenders: RunningPsql[] = []
+  const sessions: RunningPsql[] = []
   try {
+    const holder = startRacePsql(target, 'holder', { barrier })
+    sessions.push(holder)
     await waitForRaceSession(holder)
     holder.child.stdin.write(
       `begin;\nselect pg_advisory_lock(:barrier);\nselect 'BARRIER_READY';\n`,
@@ -98,7 +99,7 @@ async function releaseRaceBarrier(
 
     const contenderA = startRacePsql(target, 'contender-a', variablesA)
     const contenderB = startRacePsql(target, 'contender-b', variablesB)
-    contenders.push(contenderA, contenderB)
+    sessions.push(contenderA, contenderB)
     await Promise.all([waitForRaceSession(contenderA), waitForRaceSession(contenderB)])
     contenderA.child.stdin.end(replacementSql('A'))
     contenderB.child.stdin.end(replacementSql('B'))
@@ -115,7 +116,7 @@ async function releaseRaceBarrier(
     ])
     return [contenderA, contenderB]
   } finally {
-    await cleanupRaceSessions(target, [holder, ...contenders])
+    await cleanupRaceSessions(target, sessions)
   }
 }
 
@@ -215,32 +216,38 @@ async function main() {
   const ownerA = crypto.randomUUID()
   const ownerB = crypto.randomUUID()
   const storyIds: string[] = []
-  execLocalPsql(
-    target,
-    `insert into auth.users (
-       id, aud, role, email, encrypted_password, email_confirmed_at,
-       raw_app_meta_data, raw_user_meta_data, created_at, updated_at
-     ) values
-       (:'owner_a'::uuid, 'authenticated', 'authenticated', :'email_a', '', now(),
-        '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb, now(), now()),
-       (:'owner_b'::uuid, 'authenticated', 'authenticated', :'email_b', '', now(),
-        '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb, now(), now());`,
-    {
-      owner_a: ownerA,
-      owner_b: ownerB,
-      email_a: `authoring-bible-race-a-${ownerA}@example.invalid`,
-      email_b: `authoring-bible-race-b-${ownerB}@example.invalid`,
-    },
-  )
+  const userIds: string[] = []
 
   try {
+    execLocalPsql(
+      target,
+      `insert into auth.users (
+         id, aud, role, email, encrypted_password, email_confirmed_at,
+         raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+       ) values
+         (:'owner_a'::uuid, 'authenticated', 'authenticated', :'email_a', '', now(),
+          '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb, now(), now());`,
+      { owner_a: ownerA, email_a: `authoring-bible-race-a-${ownerA}@example.invalid` },
+    )
+    userIds.push(ownerA)
+    execLocalPsql(
+      target,
+      `insert into auth.users (
+         id, aud, role, email, encrypted_password, email_confirmed_at,
+         raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+       ) values
+         (:'owner_b'::uuid, 'authenticated', 'authenticated', :'email_b', '', now(),
+          '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb, now(), now());`,
+      { owner_b: ownerB, email_b: `authoring-bible-race-b-${ownerB}@example.invalid` },
+    )
+    userIds.push(ownerB)
     for (let iteration = 1; iteration <= ITERATIONS; iteration += 1) {
       await sameOwnerRace(target, iteration, ownerA, storyIds)
       await differentOwnerRace(target, iteration, ownerA, ownerB, storyIds)
     }
     console.log(`Authoring story bible races: ${ITERATIONS} same-owner + ${ITERATIONS} different-owner PASS`)
   } finally {
-    await cleanupFixtureRows(target, storyIds, [ownerA, ownerB])
+    await cleanupFixtureRows(target, storyIds, userIds)
   }
 }
 

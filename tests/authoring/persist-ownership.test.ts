@@ -1,9 +1,13 @@
+import type { CompileResult } from '@/lib/authoring/compile'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ adminFactory: vi.fn() }))
+const mocks = vi.hoisted(() => ({ adminFactory: vi.fn(), authorObject: vi.fn() }))
 
 vi.mock('server-only', () => ({}))
 vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/ai-gateway', () => ({ scanForLeaks: () => [] }))
+vi.mock('@lakoku/narrative-core', () => ({}))
+vi.mock('@/lib/authoring/model', () => ({ authorObject: mocks.authorObject }))
 
 function compiled() {
   return {
@@ -50,7 +54,7 @@ function compiled() {
         reconciledFromVersion: null, reconciliationReason: null,
       }],
     },
-  } as never
+  } as CompileResult
 }
 
 beforeEach(() => vi.clearAllMocks())
@@ -89,6 +93,46 @@ describe('persistStoryBible transactional replacement', () => {
         chapter_blueprints: [{ chapter_number: 1, version: 1, phase: 'setup', chapter_goal: 'Find map', mandatory_beats: ['map'], forbidden_reveals: ['story-a:secret-1'], allowed_state_delta: { trust: 1 }, introduces_characters: ['story-a:char:arya'], reconciled_from_version: null, reconciliation_reason: null }],
       },
     })
+    expect(from).not.toHaveBeenCalled()
+  })
+
+  it('persists a max-bound enriched OpeningPackage voice without fallback', async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: { ok: true, status: 'REPLACED' }, error: null })
+    const from = vi.fn(() => { throw new Error('direct table writes forbidden') })
+    mocks.adminFactory.mockReturnValue({ rpc, from })
+    const { enrichOpeningVoiceSheets } = await import('@/lib/authoring/opening')
+    const { makeVoiceSheetAuthor } = await import('@/lib/authoring/opening-model')
+    const { persistStoryBible } = await import('@/lib/authoring/persist')
+    const source = compiled()
+    const characterId = source.snapshot.voiceSheets[0].characterId
+    const maxVoice = {
+      characterId,
+      register: 'r'.repeat(140),
+      speechHabits: Array.from({ length: 6 }, (_, index) => String(index).repeat(120)),
+      forbiddenWords: Array.from({ length: 10 }, (_, index) => String(index).repeat(40)),
+      sampleLines: Array.from({ length: 4 }, (_, index) => String(index).repeat(200)),
+    }
+    mocks.authorObject.mockImplementation(async ({ schema }: { schema: { parse: (input: unknown) => unknown } }) => ({
+      object: schema.parse({ voices: [maxVoice] }),
+    }))
+    const author = makeVoiceSheetAuthor()
+
+    const enriched = await enrichOpeningVoiceSheets(source, author)
+    expect(enriched.enrichedIds).toEqual([characterId])
+    expect(enriched.fallbackIds).toEqual([])
+
+    await expect(persistStoryBible(enriched.compiled, 'a1000000-0000-4000-8000-000000000001'))
+      .resolves.toEqual({ storyId: 'story-a' })
+
+    expect(mocks.authorObject).toHaveBeenCalledTimes(1)
+    expect(rpc).toHaveBeenCalledTimes(1)
+    expect(rpc.mock.calls[0]?.[1].p_canon.character_voice_sheets).toEqual([{
+      character_id: characterId,
+      register: maxVoice.register,
+      speech_habits: maxVoice.speechHabits,
+      forbidden_words: maxVoice.forbiddenWords,
+      sample_lines: maxVoice.sampleLines,
+    }])
     expect(from).not.toHaveBeenCalled()
   })
 

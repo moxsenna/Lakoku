@@ -13,7 +13,7 @@ begin
 end
 $$;
 
-select plan(35);
+select plan(44);
 
 select has_function(
   'public',
@@ -155,7 +155,138 @@ as $fn$
   );
 $fn$;
 
+create function pg_temp.max_voice_payload(p_story_id text, p_marker text)
+returns jsonb
+language sql
+immutable
+as $fn$
+  select jsonb_set(
+    pg_temp.canon_payload(p_story_id, p_marker),
+    '{character_voice_sheets,0}',
+    jsonb_build_object(
+      'character_id', p_story_id || ':char:' || p_marker,
+      'register', repeat('r', 140),
+      'speech_habits', (select jsonb_agg(to_jsonb(repeat('h', 120))) from generate_series(1, 6)),
+      'forbidden_words', (select jsonb_agg(to_jsonb(repeat('f', 40))) from generate_series(1, 10)),
+      'sample_lines', (select jsonb_agg(to_jsonb(repeat('s', 200))) from generate_series(1, 4))
+    )
+  );
+$fn$;
+
 set local role service_role;
+select is(
+  public.replace_authoring_story_bible_v1(
+    'test:authoring-max-voice', 'a1000000-0000-4000-8000-000000000011',
+    'Max voice story', '/max-voice.svg', 'Max voice tagline', 'Max voice role',
+    '["Voice bounds","Persistence"]'::jsonb, 50,
+    'Max voice synopsis remains long enough while every enriched voice field reaches its application bound.',
+    pg_temp.max_voice_payload('test:authoring-max-voice', 'MAX')
+  ),
+  '{"ok":true,"status":"REPLACED"}'::jsonb,
+  'max-bound enriched opening voice replacement succeeds'
+);
+select is(
+  (
+    select row(
+      char_length(register),
+      jsonb_array_length(speech_habits),
+      (select min(char_length(value #>> '{}')) from jsonb_array_elements(speech_habits)),
+      jsonb_array_length(forbidden_words),
+      (select min(char_length(value #>> '{}')) from jsonb_array_elements(forbidden_words)),
+      jsonb_array_length(sample_lines),
+      (select min(char_length(value #>> '{}')) from jsonb_array_elements(sample_lines))
+    )::text
+    from public.character_voice_sheets
+    where story_id = 'test:authoring-max-voice'
+  ),
+  row(140, 6, 120, 10, 40, 4, 200)::text,
+  'max-bound enriched opening voice content persists exactly'
+);
+select throws_ok(
+  format(
+    'select public.replace_authoring_story_bible_v1(%L,%L::uuid,%L,%L,%L,%L,%L::jsonb,50,%L,%L::jsonb)',
+    'test:authoring-register-over', 'a1000000-0000-4000-8000-000000000011',
+    'Register over story', '/register-over.svg', 'Register over tagline', 'Register over role',
+    '["Voice bounds","Rejection"]',
+    'Register over synopsis remains valid while only enriched voice register exceeds its application bound.',
+    jsonb_set(pg_temp.max_voice_payload('test:authoring-register-over', 'REG'), '{character_voice_sheets,0,register}', to_jsonb(repeat('r', 141)))::text
+  ),
+  '22023', null,
+  'register rejects one character over application bound'
+);
+select throws_ok(
+  format(
+    'select public.replace_authoring_story_bible_v1(%L,%L::uuid,%L,%L,%L,%L,%L::jsonb,50,%L,%L::jsonb)',
+    'test:authoring-habit-count-over', 'a1000000-0000-4000-8000-000000000011',
+    'Habit count over story', '/habit-count-over.svg', 'Habit count tagline', 'Habit count role',
+    '["Voice bounds","Rejection"]',
+    'Habit count synopsis remains valid while only enriched voice habit count exceeds its application bound.',
+    jsonb_set(pg_temp.max_voice_payload('test:authoring-habit-count-over', 'HC'), '{character_voice_sheets,0,speech_habits}', (select jsonb_agg(to_jsonb(repeat('h', 120))) from generate_series(1, 7)))::text
+  ),
+  '22023', null,
+  'speech habits reject one item over application count bound'
+);
+select throws_ok(
+  format(
+    'select public.replace_authoring_story_bible_v1(%L,%L::uuid,%L,%L,%L,%L,%L::jsonb,50,%L,%L::jsonb)',
+    'test:authoring-habit-length-over', 'a1000000-0000-4000-8000-000000000011',
+    'Habit length over story', '/habit-length-over.svg', 'Habit length tagline', 'Habit length role',
+    '["Voice bounds","Rejection"]',
+    'Habit length synopsis remains valid while only one enriched voice habit exceeds its application bound.',
+    jsonb_set(pg_temp.max_voice_payload('test:authoring-habit-length-over', 'HL'), '{character_voice_sheets,0,speech_habits,0}', to_jsonb(repeat('h', 121)))::text
+  ),
+  '22023', null,
+  'speech habit rejects one character over application element bound'
+);
+select throws_ok(
+  format(
+    'select public.replace_authoring_story_bible_v1(%L,%L::uuid,%L,%L,%L,%L,%L::jsonb,50,%L,%L::jsonb)',
+    'test:authoring-forbidden-count-over', 'a1000000-0000-4000-8000-000000000011',
+    'Forbidden count over story', '/forbidden-count-over.svg', 'Forbidden count tagline', 'Forbidden count role',
+    '["Voice bounds","Rejection"]',
+    'Forbidden count synopsis remains valid while only enriched voice forbidden count exceeds its application bound.',
+    jsonb_set(pg_temp.max_voice_payload('test:authoring-forbidden-count-over', 'FC'), '{character_voice_sheets,0,forbidden_words}', (select jsonb_agg(to_jsonb(repeat('f', 40))) from generate_series(1, 11)))::text
+  ),
+  '22023', null,
+  'forbidden words reject one item over application count bound'
+);
+select throws_ok(
+  format(
+    'select public.replace_authoring_story_bible_v1(%L,%L::uuid,%L,%L,%L,%L,%L::jsonb,50,%L,%L::jsonb)',
+    'test:authoring-forbidden-length-over', 'a1000000-0000-4000-8000-000000000011',
+    'Forbidden length over story', '/forbidden-length-over.svg', 'Forbidden length tagline', 'Forbidden length role',
+    '["Voice bounds","Rejection"]',
+    'Forbidden length synopsis remains valid while only one forbidden word exceeds its unchanged application bound.',
+    jsonb_set(pg_temp.max_voice_payload('test:authoring-forbidden-length-over', 'FL'), '{character_voice_sheets,0,forbidden_words,0}', to_jsonb(repeat('f', 41)))::text
+  ),
+  '22023', null,
+  'forbidden word rejects one character over unchanged application element bound'
+);
+select throws_ok(
+  format(
+    'select public.replace_authoring_story_bible_v1(%L,%L::uuid,%L,%L,%L,%L,%L::jsonb,50,%L,%L::jsonb)',
+    'test:authoring-sample-count-over', 'a1000000-0000-4000-8000-000000000011',
+    'Sample count over story', '/sample-count-over.svg', 'Sample count tagline', 'Sample count role',
+    '["Voice bounds","Rejection"]',
+    'Sample count synopsis remains valid while only enriched voice sample count exceeds its application bound.',
+    jsonb_set(pg_temp.max_voice_payload('test:authoring-sample-count-over', 'SC'), '{character_voice_sheets,0,sample_lines}', (select jsonb_agg(to_jsonb(repeat('s', 200))) from generate_series(1, 5)))::text
+  ),
+  '22023', null,
+  'sample lines reject one item over application count bound'
+);
+select throws_ok(
+  format(
+    'select public.replace_authoring_story_bible_v1(%L,%L::uuid,%L,%L,%L,%L,%L::jsonb,50,%L,%L::jsonb)',
+    'test:authoring-sample-length-over', 'a1000000-0000-4000-8000-000000000011',
+    'Sample length over story', '/sample-length-over.svg', 'Sample length tagline', 'Sample length role',
+    '["Voice bounds","Rejection"]',
+    'Sample length synopsis remains valid while only one enriched voice sample exceeds its application bound.',
+    jsonb_set(pg_temp.max_voice_payload('test:authoring-sample-length-over', 'SL'), '{character_voice_sheets,0,sample_lines,0}', to_jsonb(repeat('s', 201)))::text
+  ),
+  '22023', null,
+  'sample line rejects one character over application element bound'
+);
+
 select is(
   public.replace_authoring_story_bible_v1(
     'test:authoring-replace', 'a1000000-0000-4000-8000-000000000011',

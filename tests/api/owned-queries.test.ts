@@ -105,6 +105,20 @@ describe('reader-safe query projections', () => {
     expect(queries.STORY_READER_COLUMNS).not.toMatch(
       /owner_user_id|visibility|story_mode|generation_status|created_at/,
     )
+    expect(queries.STORY_READER_COLUMNS.split(',')).toEqual([
+      'id',
+      'title',
+      'cover',
+      'tagline',
+      'role',
+      'tropes',
+      'total_chapters',
+      'synopsis',
+      'status',
+      'current_chapter',
+      'jejak',
+      'ending_name',
+    ])
   })
 
   it('returns [] for empty owned IDs without touching database', async () => {
@@ -151,8 +165,9 @@ describe('reader-safe query projections', () => {
     expect(db.calls).toContainEqual({ method: 'eq', args: ['visibility', 'public'] })
     expect(db.calls).toContainEqual({
       method: 'or',
-      args: ['id.like.demo:%,story_mode.eq.premium_template'],
+      args: ['id.like.demo:%,id.like.premium:%'],
     })
+    expect(db.calls.some((call) => call.args.includes('story_mode'))).toBe(false)
   })
 
   it('returns public detail to an anonymous reader through public filter', async () => {

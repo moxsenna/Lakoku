@@ -24,6 +24,7 @@ import type {
 export const STORY_READER_COLUMNS = 'id,title,cover,tagline,role,tropes,total_chapters,synopsis,status,current_chapter,jejak,ending_name' as const
 export const CHAPTER_READER_COLUMNS = 'story_id,number,title,paragraphs,choice_prompt,choices' as const
 export const OUTCOME_READER_COLUMNS = 'story_id,chapter_number,choice_id,consequence,next_chapter_number,is_ending' as const
+export const EXPLORE_STORY_FILTER = 'id.like.demo:%,id.like.premium:%' as const
 
 type StoryRow = {
   id: string
@@ -155,7 +156,7 @@ export async function queryExploreStories(): Promise<StorySummary[]> {
     .from('stories')
     .select(STORY_READER_COLUMNS)
     .eq('visibility', 'public')
-    .or('id.like.demo:%,story_mode.eq.premium_template')
+    .or(EXPLORE_STORY_FILTER)
     .order('id', { ascending: true })
   if (error) throw new Error(`queryExploreStories: ${error.message}`)
   return (data as StoryRow[]).map(toDetail)

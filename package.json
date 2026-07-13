@@ -12,7 +12,7 @@
     "test": "pnpm run typecheck && pnpm run test:unit && pnpm run smoke",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest",
-    "test:db:personalized": "node scripts/run-smoke.cjs scripts/personalized-db-rest-integration.ts && supabase test db --local supabase/tests/personalized_story_schema_test.sql supabase/tests/personalized_story_rls_test.sql",
+    "test:db:personalized": "node scripts/run-smoke.cjs scripts/personalized-db-rest-integration.ts && supabase test db --local supabase/tests/personalized_story_schema_test.sql supabase/tests/personalized_story_rls_test.sql supabase/tests/authoring_story_claim_test.sql && node scripts/run-smoke.cjs scripts/authoring-story-claim-race.ts",
     "smoke": "pnpm run smoke:analytics && pnpm run smoke:story-setup && pnpm run smoke:taste-profile && pnpm run smoke:taste-profile-db && pnpm run smoke:contracts && pnpm run smoke:web-release && pnpm run smoke:onboarding-shimmer && pnpm run smoke:auth-config && pnpm run smoke:admin-guard && pnpm run smoke:m4 && pnpm run smoke:m5 && pnpm run smoke:authoring-model && pnpm run smoke:m7-authoring && pnpm run smoke:m7-reconcile && pnpm run smoke:m7-opening && pnpm run smoke:m8-metrics && pnpm run smoke:m8-alert && pnpm run smoke:m8-entitlement && pnpm run smoke:paycore-webhook && pnpm run smoke:paycore-client && pnpm run smoke:credits-policy && pnpm run smoke:topup-bonus && pnpm run smoke:admin-credit-grant && pnpm run smoke:generation-policy && pnpm run smoke:ai-model-routes && pnpm run smoke:admin-panel",
     "smoke:contracts": "node scripts/run-smoke.cjs scripts/contracts-smoke.ts",
     "smoke:web-release": "node scripts/run-smoke.cjs scripts/web-release-smoke.ts",

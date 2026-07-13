@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { queryStory } from '@/lib/api/queries'
+import { getStory } from '@/lib/api/server'
 
 export async function GET(
   _req: Request,
@@ -7,7 +7,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params
-    const story = await queryStory(id)
+    const story = await getStory(id)
     if (!story) {
       return NextResponse.json({ error: 'Cerita tidak ditemukan.' }, { status: 404 })
     }

@@ -15,7 +15,7 @@ begin
 end
 $$;
 
-select plan(22);
+select plan(41);
 
 select has_function(
   'public',
@@ -107,7 +107,7 @@ set local role service_role;
 select is(
   public.claim_authoring_story_shell_v1(
     'test:authoring-claim', 'a1000000-0000-4000-8000-000000000001',
-    'Owner A v1', '/a-v1.svg', 'Tagline A v1', 'Role A v1', '["trope-a-v1"]'::jsonb, 50, 'Synopsis A v1'
+    'Owner A v1', '/a-v1.svg', 'Tagline A v1', 'Role A v1', '["trope-a-v1","trope-a-v2"]'::jsonb, 50, 'Synopsis Owner A versi satu cukup panjang untuk melewati batas validasi ketat.'
   ),
   true,
   'first owner atomically inserts story shell'
@@ -125,9 +125,9 @@ select is(
     '/a-v1.svg',
     'Tagline A v1',
     'Role A v1',
-    '["trope-a-v1"]'::jsonb,
+    '["trope-a-v1","trope-a-v2"]'::jsonb,
     50,
-    'Synopsis A v1'
+    'Synopsis Owner A versi satu cukup panjang untuk melewati batas validasi ketat.'
   )::text,
   'new shell is private and owned by supplied service-side owner'
 );
@@ -139,7 +139,7 @@ where id = 'test:authoring-claim';
 select is(
   public.claim_authoring_story_shell_v1(
     'test:authoring-claim', 'a1000000-0000-4000-8000-000000000001',
-    'Owner A v2', '/a-v2.svg', 'Tagline A v2', 'Role A v2', '["trope-a-v2"]'::jsonb, 50, 'Synopsis A v2'
+    'Owner A v2', '/a-v2.svg', 'Tagline A v2', 'Role A v2', '["trope-a-v2","trope-a-v3"]'::jsonb, 50, 'Synopsis Owner A versi dua cukup panjang untuk melewati batas validasi ketat.'
   ),
   true,
   'same owner atomically updates metadata'
@@ -162,7 +162,7 @@ select is(
 select is(
   public.claim_authoring_story_shell_v1(
     'test:authoring-claim', 'b2000000-0000-4000-8000-000000000002',
-    'Owner B', '/b.svg', 'Tagline B', 'Role B', '["trope-b"]'::jsonb, 50, 'Synopsis B'
+    'Owner B', '/b.svg', 'Tagline B valid', 'Role B', '["trope-b","trope-c"]'::jsonb, 50, 'Synopsis Owner B cukup panjang untuk melewati batas validasi payload ketat.'
   ),
   false,
   'second owner loses conflicting atomic claim'
@@ -242,6 +242,121 @@ select is(
   ),
   false,
   'non-array tropes are rejected without insert'
+);
+
+select is(
+  public.claim_authoring_story_shell_v1(
+    repeat('i', 129), 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '/valid.svg', 'Valid tagline', 'Role', '["trope-a","trope-b"]'::jsonb, 50, repeat('s', 60)
+  ), false, 'story ID longer than 128 characters is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:invalid-cover-blank', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '   ', 'Valid tagline', 'Role', '["trope-a","trope-b"]'::jsonb, 50, repeat('s', 60)
+  ), false, 'blank cover is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:invalid-cover-long', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', repeat('c', 2049), 'Valid tagline', 'Role', '["trope-a","trope-b"]'::jsonb, 50, repeat('s', 60)
+  ), false, 'cover longer than 2048 characters is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:invalid-title-short', 'a1000000-0000-4000-8000-000000000001',
+    'ab', '/valid.svg', 'Valid tagline', 'Role', '["trope-a","trope-b"]'::jsonb, 50, repeat('s', 60)
+  ), false, 'title shorter than 3 characters is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:invalid-title-long', 'a1000000-0000-4000-8000-000000000001',
+    repeat('t', 81), '/valid.svg', 'Valid tagline', 'Role', '["trope-a","trope-b"]'::jsonb, 50, repeat('s', 60)
+  ), false, 'title longer than 80 characters is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:invalid-tagline-blank', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '/valid.svg', '   ', 'Role', '["trope-a","trope-b"]'::jsonb, 50, repeat('s', 60)
+  ), false, 'blank tagline is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:invalid-tagline-long', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '/valid.svg', repeat('g', 161), 'Role', '["trope-a","trope-b"]'::jsonb, 50, repeat('s', 60)
+  ), false, 'tagline longer than 160 characters is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:invalid-role-blank', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '/valid.svg', 'Valid tagline', '   ', '["trope-a","trope-b"]'::jsonb, 50, repeat('s', 60)
+  ), false, 'blank role is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:invalid-role-long', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '/valid.svg', 'Valid tagline', repeat('r', 81), '["trope-a","trope-b"]'::jsonb, 50, repeat('s', 60)
+  ), false, 'role longer than 80 characters is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:invalid-synopsis-blank', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '/valid.svg', 'Valid tagline', 'Role', '["trope-a","trope-b"]'::jsonb, 50, '   '
+  ), false, 'blank synopsis is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:invalid-synopsis-long', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '/valid.svg', 'Valid tagline', 'Role', '["trope-a","trope-b"]'::jsonb, 50, repeat('s', 701)
+  ), false, 'synopsis longer than 700 characters is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:invalid-tropes-few', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '/valid.svg', 'Valid tagline', 'Role', '["trope-a"]'::jsonb, 50, repeat('s', 60)
+  ), false, 'fewer than 2 tropes are rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:invalid-tropes-many', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '/valid.svg', 'Valid tagline', 'Role', '["aa","bb","cc","dd","ee","ff"]'::jsonb, 50, repeat('s', 60)
+  ), false, 'more than 5 tropes are rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:invalid-tropes-type', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '/valid.svg', 'Valid tagline', 'Role', '["trope-a",7]'::jsonb, 50, repeat('s', 60)
+  ), false, 'non-string trope element is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:invalid-tropes-blank', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '/valid.svg', 'Valid tagline', 'Role', '["trope-a","   "]'::jsonb, 50, repeat('s', 60)
+  ), false, 'blank trimmed trope element is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:invalid-tropes-short', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '/valid.svg', 'Valid tagline', 'Role', '["trope-a","x"]'::jsonb, 50, repeat('s', 60)
+  ), false, 'trope shorter than 2 trimmed characters is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:invalid-tropes-long', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '/valid.svg', 'Valid tagline', 'Role', jsonb_build_array('trope-a', repeat('x', 41)), 50, repeat('s', 60)
+  ), false, 'trope longer than 40 trimmed characters is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:invalid-chapter-49', 'a1000000-0000-4000-8000-000000000001',
+    'Valid title', '/valid.svg', 'Valid tagline', 'Role', '["trope-a","trope-b"]'::jsonb, 49, repeat('s', 60)
+  ), false, 'chapter count other than exactly 50 is rejected'
+);
+select is(
+  public.claim_authoring_story_shell_v1(
+    'test:valid-bounds', 'a1000000-0000-4000-8000-000000000001',
+    repeat('t', 80), repeat('c', 2048), repeat('g', 160), repeat('r', 80), jsonb_build_array('aa', repeat('x', 40)), 50, repeat('s', 700)
+  ), true, 'valid payload at maximum bounds is accepted'
 );
 
 select ok(

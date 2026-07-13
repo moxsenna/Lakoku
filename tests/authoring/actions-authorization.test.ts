@@ -29,10 +29,7 @@ vi.mock('@/lib/authoring/server', () => ({
   proposeWorld: mocks.proposeWorld,
   persistStoryBible: mocks.persistStoryBible,
   makeVoiceSheetAuthor: vi.fn(),
-  publicAuthoringErrorMessage: (error: unknown) =>
-    error instanceof Error && /stories claim|story owner mismatch/.test(error.message)
-      ? 'Cerita belum dapat disimpan. Coba ulang sebentar lagi.'
-      : error instanceof Error ? error.message : 'Terjadi kesalahan tak terduga.',
+  publicAuthoringErrorMessage: () => 'Terjadi kesalahan tak terduga.',
 }))
 vi.mock('@/lib/authoring/repair', () => ({ runLockLadder: mocks.runLockLadder }))
 vi.mock('@/lib/authoring', () => ({
@@ -45,6 +42,40 @@ vi.mock('next/server', () => ({ after: mocks.after }))
 vi.mock('@/lib/supabase/admin', () => ({
   createAdminClient: mocks.adminFactory,
 }))
+
+function validDraft() {
+  return {
+    premise: {
+      title: 'Warisan Terkubur',
+      tagline: 'Surat lama membuka luka keluarga yang belum pernah sembuh.',
+      role: 'Rani, pewaris rahasia keluarga',
+      synopsis: 'Rani pulang setelah ayahnya meninggal dan menemukan surat wasiat tersembunyi. Temuan itu memaksanya membongkar kebohongan lama. Ia harus memilih kebenaran atau kedamaian keluarganya.',
+      tropes: ['Rahasia Keluarga', 'Kebangkitan Diri'],
+    },
+    cast: {
+      characters: [
+        { canonicalName: 'Rani', role: 'protagonis', motivation: 'Membongkar kebenaran tentang warisan keluarganya.', introducedChapter: 1, aliases: [], voice: { register: 'tenang namun tajam', speechHabits: ['bicara terukur'], forbiddenWords: [], sampleLines: ['Aku akan menemukan kebenarannya.'] } },
+        { canonicalName: 'Damar', role: 'antagonis', motivation: 'Menjaga rahasia keluarga agar kuasanya tetap utuh.', introducedChapter: 3, aliases: [], voice: { register: 'licin dan berwibawa', speechHabits: ['banyak berdalih'], forbiddenWords: [], sampleLines: ['Semua ini demi keluarga.'] } },
+        { canonicalName: 'Sena', role: 'sekutu', motivation: 'Melindungi Rani dari ancaman masa lalu keluarganya.', introducedChapter: 2, aliases: [], voice: { register: 'hangat dan setia', speechHabits: ['sering menenangkan'], forbiddenWords: [], sampleLines: ['Aku tetap di sisimu.'] } },
+      ],
+    },
+    mystery: {
+      mainMystery: { title: 'Pemalsu surat wasiat keluarga', payoffWindow: 45 },
+      secrets: [
+        { description: 'Wasiat asli menetapkan Rani sebagai pewaris tunggal.', revealGateChapter: 12 },
+        { description: 'Damar memalsukan dokumen keluarga bertahun-tahun lalu.', revealGateChapter: 32 },
+      ],
+    },
+    world: {
+      threads: [{ title: 'Perseteruan warisan keluarga', openedChapter: 1, payoffWindow: 45 }],
+      facts: [
+        { statement: 'Ayah Rani menyimpan wasiat kedua secara diam-diam.', subjectName: 'Rani', establishedChapter: 1, salience: 0.9, loadBearing: true },
+        { statement: 'Damar mengelola aset keluarga sejak lama.', subjectName: 'Damar', establishedChapter: 3, salience: 0.6, loadBearing: false },
+        { statement: 'Rumah keluarga berdiri dekat pesisir kota kecil.', subjectName: null, establishedChapter: 1, salience: 0.3, loadBearing: false },
+      ],
+    },
+  }
+}
 
 function ownerQuery(owner: boolean) {
   const calls: string[] = []
@@ -106,7 +137,29 @@ describe('brainstorm action authorization', () => {
     expect(mocks.persistStoryBible).not.toHaveBeenCalled()
   })
 
-  it('passes verified session owner to persistence on lock happy path', async () => {
+  it.each([
+    ['malformed nested input', (draft: Record<string, any>) => { draft.cast.characters[0].voice = { register: 'ok', secret: 'provider-key' } }],
+    ['unknown key', (draft: Record<string, any>) => { draft.world.internalFindings = ['secret'] }],
+    ['oversized cast', (draft: Record<string, any>) => { draft.cast.characters = Array.from({ length: 9 }, () => draft.cast.characters[0]) }],
+    ['oversized tropes', (draft: Record<string, any>) => { draft.premise.tropes = ['Satu', 'Dua', 'Tiga', 'Empat', 'Lima', 'Enam'] }],
+  ])('rejects authenticated lock %s before ladder, provider, or persistence', async (_name, mutate) => {
+    mocks.getSessionUser.mockResolvedValue({ id: 'user-a' })
+    const draft = validDraft() as Record<string, any>
+    mutate(draft)
+    const actions = await import('@/app/brainstorm/actions')
+
+    const result = await actions.lockStoryBible(draft)
+
+    expect(result).toEqual({ ok: false, error: 'Terjadi kesalahan tak terduga.' })
+    expect(JSON.stringify(result)).not.toContain('provider-key')
+    expect(mocks.runLockLadder).not.toHaveBeenCalled()
+    expect(mocks.proposeMystery).not.toHaveBeenCalled()
+    expect(mocks.proposeWorld).not.toHaveBeenCalled()
+    expect(mocks.enrichOpeningVoiceSheets).not.toHaveBeenCalled()
+    expect(mocks.persistStoryBible).not.toHaveBeenCalled()
+  })
+
+  it('passes parsed verified draft and session owner on lock happy path', async () => {
     const compiled = { storyId: 'story-a' }
     mocks.getSessionUser.mockResolvedValue({ id: 'user-a' })
     mocks.runLockLadder.mockResolvedValue({
@@ -123,7 +176,8 @@ describe('brainstorm action authorization', () => {
     mocks.persistStoryBible.mockResolvedValue({ storyId: 'story-a' })
     const actions = await import('@/app/brainstorm/actions')
 
-    const result = await actions.lockStoryBible({} as never)
+    const draft = validDraft()
+    const result = await actions.lockStoryBible(draft)
 
     expect(result).toEqual({
       ok: true,
@@ -131,6 +185,7 @@ describe('brainstorm action authorization', () => {
       resolvedBy: 'DIRECT',
       transforms: [],
     })
+    expect(mocks.runLockLadder).toHaveBeenCalledWith(draft, expect.any(Object))
     expect(mocks.persistStoryBible).toHaveBeenCalledWith(compiled, 'user-a')
   })
 
@@ -153,11 +208,11 @@ describe('brainstorm action authorization', () => {
     )
     const actions = await import('@/app/brainstorm/actions')
 
-    const result = await actions.lockStoryBible({} as never)
+    const result = await actions.lockStoryBible(validDraft())
 
     expect(result).toEqual({
       ok: false,
-      error: 'Cerita belum dapat disimpan. Coba ulang sebentar lagi.',
+      error: 'Terjadi kesalahan tak terduga.',
     })
     expect(JSON.stringify(result)).not.toContain('claim_authoring_story_shell_v1')
   })

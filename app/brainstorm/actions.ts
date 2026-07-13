@@ -29,12 +29,12 @@ import {
   AUTHORING_AUTH_REQUIRED_ERROR,
   requireAuthoringSessionUser,
 } from '@/lib/authoring/action-auth'
-import type {
-  PremiseDraft,
-  CastDraft,
-  MysteryDraft,
-  WorldDraft,
-  StoryBibleDraft,
+import {
+  StoryBibleDraftSchema,
+  type PremiseDraft,
+  type CastDraft,
+  type MysteryDraft,
+  type WorldDraft,
 } from '@/lib/authoring/schema'
 import type { Finding } from '@lakoku/narrative-core'
 
@@ -121,12 +121,13 @@ function findingsToFeedback(findings: Finding[]): string {
  * Kunci story bible: jalankan tangga kegagalan, lalu persist bila LOCKED.
  * aiRepair meregenerasi tahap misteri & world dengan umpan-balik dari validator.
  */
-export async function lockStoryBible(draft: StoryBibleDraft): Promise<
+export async function lockStoryBible(rawDraft: unknown): Promise<
   ActionResult<{ storyId: string; resolvedBy: string; transforms: string[] }>
   | ({ ok: false; needsAuthor: true; findings: Finding[]; transforms: string[] })
 > {
   try {
     const user = await requireAuthoringSessionUser()
+    const draft = StoryBibleDraftSchema.parse(rawDraft)
 
     const aiRepair: AiRepairFn = async (d, findings) => {
       const feedback = findingsToFeedback(findings)

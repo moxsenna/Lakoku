@@ -71,12 +71,14 @@ export async function POST(
           : result.reason === 'CANON_MISSING'
             ? 404
             : 409
-      return NextResponse.json(result, { status })
+      return NextResponse.json({ ok: false, reason: result.reason }, { status })
     }
     return NextResponse.json(result, { status: 201 })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gagal menghasilkan bab.'
-    return NextResponse.json({ error: message }, { status: 500 })
+    console.error('[generation route] failed', {
+      errorType: err instanceof Error ? err.name : typeof err,
+    })
+    return NextResponse.json({ error: 'Gagal menghasilkan bab.' }, { status: 500 })
   }
 }
 

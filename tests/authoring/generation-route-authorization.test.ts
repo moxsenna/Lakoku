@@ -84,6 +84,47 @@ describe('generation route ownership authorization', () => {
     expect(mocks.generateNextChapterReal).not.toHaveBeenCalled()
   })
 
+  it('omits generation detail and internal findings from failed response', async () => {
+    mocks.getSessionUser.mockResolvedValue({ id: 'user-a' })
+    const fixture = makeOwnerDb(true)
+    mocks.createAdminClient.mockReturnValue(fixture.db)
+    mocks.generateNextChapterReal.mockResolvedValue({
+      ok: false,
+      reason: 'FAILED_REVIEW_REQUIRED',
+      detail: 'provider secret sk-live-do-not-leak',
+      findings: [{ message: 'internal canon finding secret' }],
+    })
+    const { POST } = await import('@/app/api/stories/[id]/generate/route')
+
+    const response = await POST(request(), {
+      params: Promise.resolve({ id: 'premium%3Astory-a' }),
+    })
+    const body = await response.json()
+
+    expect(response.status).toBe(422)
+    expect(body).toEqual({ ok: false, reason: 'FAILED_REVIEW_REQUIRED' })
+    expect(JSON.stringify(body)).not.toContain('secret')
+    expect(body).not.toHaveProperty('detail')
+    expect(body).not.toHaveProperty('findings')
+  })
+
+  it('returns fixed generic error when generation throws secret-like message', async () => {
+    mocks.getSessionUser.mockResolvedValue({ id: 'user-a' })
+    const fixture = makeOwnerDb(true)
+    mocks.createAdminClient.mockReturnValue(fixture.db)
+    mocks.generateNextChapterReal.mockRejectedValue(new Error('DATABASE_URL=postgresql://internal-secret'))
+    const { POST } = await import('@/app/api/stories/[id]/generate/route')
+
+    const response = await POST(request(), {
+      params: Promise.resolve({ id: 'premium%3Astory-a' }),
+    })
+    const body = await response.json()
+
+    expect(response.status).toBe(500)
+    expect(body).toEqual({ error: 'Gagal menghasilkan bab.' })
+    expect(JSON.stringify(body)).not.toContain('internal-secret')
+  })
+
   it('allows exact owner after admin-token guard', async () => {
     mocks.getSessionUser.mockResolvedValue({ id: 'user-a' })
     const fixture = makeOwnerDb(true)

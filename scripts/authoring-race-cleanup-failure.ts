@@ -1,10 +1,9 @@
 import {
-  assertFixtureRowsGone,
-  cleanupRaceSessions,
+  cleanupRaceResources,
   execLocalPsql,
-  runCleanupSteps,
   startRacePsql,
   verifyLocalRaceTarget,
+  verifyRaceResources,
   waitForRaceSession,
   waitForRaceToken,
 } from './authoring-race-session'
@@ -48,24 +47,32 @@ async function main() {
     }
     if (!expectedFailure) throw new Error('authoring race cleanup failure: expected barrier timeout')
   } finally {
-    await cleanupRaceSessions(target, [session])
-    await runCleanupSteps('authoring race cleanup failure', [
-      {
-        label: 'stories',
-        run: () => {
-          execLocalPsql(target, `delete from public.stories where id = :'story_id';`, { story_id: storyId })
+    const attempted: string[] = []
+    let injectedFailureObserved = false
+    try {
+      await cleanupRaceResources(target, [session], [storyId], [ownerId], {
+        beforeSessionCleanup: () => {
+          attempted.push('session cleanup')
+          throw new Error('injected session cleanup failure')
         },
-      },
-      {
-        label: 'auth users',
-        run: () => {
-          execLocalPsql(target, `delete from auth.users where id = :'owner_id'::uuid;`, { owner_id: ownerId })
-        },
-      },
-    ])
+        onStepAttempt: (label) => attempted.push(label),
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      injectedFailureObserved = message.includes('injected session cleanup')
+    }
+    if (!injectedFailureObserved) {
+      throw new Error('authoring race cleanup failure: injected cleanup failure was not aggregated')
+    }
+    if (!attempted.includes('stories') || !attempted.includes('auth users')) {
+      throw new Error('authoring race cleanup failure: fixture cleanup was not fully attempted')
+    }
+    if (!attempted.includes('session verification') || !attempted.includes('fixture verification')) {
+      throw new Error('authoring race cleanup failure: absence verification was not fully attempted')
+    }
+    await verifyRaceResources(target, [session], [storyId], [ownerId])
   }
 
-  assertFixtureRowsGone(target, [storyId], [ownerId])
   console.log('Authoring race cleanup failure path: PASS')
 }
 

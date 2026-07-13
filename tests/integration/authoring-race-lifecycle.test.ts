@@ -1,6 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import {
+  runCleanupSteps,
+  signalRaceProcess,
+  type RunningRacePsql,
+} from '../../scripts/authoring-race-session'
 
 const root = process.cwd()
 const readScript = (name: string) => fs.readFileSync(path.join(root, 'scripts', name), 'utf8')
@@ -40,5 +45,30 @@ describe('authoring race lifecycle harnesses', () => {
 
     expect(source).toContain("assertCleanupFailureLabels(error, ['injected session cleanup'])")
     expect(source).toContain("assertRejectsExtraFailureLabels()")
+  })
+
+  it('does not add a session label when the process exited before SIGTERM', async () => {
+    const child = {
+      exitCode: null as number | null,
+      kill: () => {
+        child.exitCode = 0
+        return false
+      },
+    }
+    const running = {
+      child,
+      exit: Promise.resolve({ code: 0, signal: null, startFailed: false }),
+    } as unknown as RunningRacePsql
+
+    await expect(runCleanupSteps('cleanup test', [
+      {
+        label: 'injected session cleanup',
+        run: () => { throw new Error('injected failure') },
+      },
+      {
+        label: 'session 1',
+        run: async () => { await signalRaceProcess(running, 'SIGTERM', 10) },
+      },
+    ])).rejects.toThrow(/^cleanup test: cleanup failed \(injected session cleanup\)$/)
   })
 })

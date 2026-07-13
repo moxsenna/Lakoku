@@ -263,6 +263,22 @@ async function waitForProcessExit(running: RunningRacePsql, timeoutMs: number): 
   }
 }
 
+export async function signalRaceProcess(
+  running: RunningRacePsql,
+  signal: NodeJS.Signals,
+  timeoutMs: number,
+): Promise<boolean> {
+  let signalFailed = false
+  try {
+    signalFailed = !running.child.kill(signal)
+  } catch {
+    signalFailed = true
+  }
+  const exited = await waitForProcessExit(running, timeoutMs)
+  if (signalFailed && !exited) throw new Error(`local PostgreSQL process ${signal} failed`)
+  return exited
+}
+
 function backendSelector(running: RunningRacePsql): {
   sql: string
   variables: Record<string, string>
@@ -343,19 +359,17 @@ async function cleanupRaceSession(target: RaceTarget, running: RunningRacePsql):
   } finally {
     if (!exited) {
       try {
-        if (!running.child.kill('SIGTERM')) failures.push('process SIGTERM')
+        exited = await signalRaceProcess(running, 'SIGTERM', PROCESS_EXIT_TIMEOUT_MS)
       } catch {
         failures.push('process SIGTERM')
       }
-      exited = await waitForProcessExit(running, PROCESS_EXIT_TIMEOUT_MS)
     }
     if (!exited) {
       try {
-        if (!running.child.kill('SIGKILL')) failures.push('process SIGKILL')
+        exited = await signalRaceProcess(running, 'SIGKILL', PROCESS_EXIT_TIMEOUT_MS)
       } catch {
         failures.push('process SIGKILL')
       }
-      exited = await waitForProcessExit(running, PROCESS_EXIT_TIMEOUT_MS)
     }
     if (!exited) failures.push('process reap')
   }

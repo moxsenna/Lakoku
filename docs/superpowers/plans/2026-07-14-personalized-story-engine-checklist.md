@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 5 / 28 tasks
-- **In progress:** Task 6 — bounded route-state engine
-- **Pending:** Task 7–28
-- **Current gate:** Route-state parsing, normalization, effect merge, and deterministic prompt summary
+- **Complete:** 6 / 28 tasks
+- **In progress:** Task 7 — plot-debt auditor and deterministic ending resolver
+- **Pending:** Task 8–28
+- **Current gate:** Chapter 36/41/45/48/50 debt boundaries and ending lock resolution
 
 ---
 
@@ -88,14 +88,14 @@
   - [ ] Create romance/drama fixture.
   - [ ] Create fantasy/adventure fixture.
 
-- [ ] 🔄 **Task 6: Route-state engine**
+- [x] **Task 6: Route-state engine**
   - [ ] Implement `RouteStateSchema`.
   - [ ] Normalize and clamp scores.
   - [ ] Merge choice effects immutably.
   - [ ] Deduplicate evidence.
   - [ ] Produce deterministic prompt summary.
 
-- [ ] **Task 7: Plot-debt auditor and ending resolver**
+- [ ] 🔄 **Task 7: Plot-debt auditor and ending resolver**
   - [ ] Enforce chapter 36/41/45/48/50 boundaries.
   - [ ] Lock ending deterministically at Chapter 45.
   - [ ] Preserve locked ending through Chapter 50.

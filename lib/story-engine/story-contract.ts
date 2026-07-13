@@ -26,7 +26,7 @@ export const ChapterTargetSchema = z.object({
   mustInclude: boundedStringArray(8, 400, 1),
   mustNotReveal: boundedStringArray(20, 160),
   emotionalTurn: boundedString(500),
-  expectedThreadMovement: boundedString(500),
+  expectedThreadMovement: boundedStringArray(8, 500, 1),
 }).strict()
 
 export const EndingCandidateSchema = z.object({
@@ -50,14 +50,14 @@ export const RevealRunwayEntrySchema = z.object({
   revealGateChapter: chapterReference,
 }).strict()
 
-export const ClosureRunwaySchema = z.tuple([
-  z.literal(35),
-  z.literal(40),
-  z.literal(45),
-  z.literal(48),
-  z.literal(49),
-  z.literal(50),
-])
+export const ClosureRunwaySchema = z.object({
+  noNewMajorConflictAfter: z.literal(35),
+  noNewThreadAfter: z.literal(40),
+  endingLockChapter: z.literal(45),
+  mainMysteryResolveBy: z.literal(48),
+  emotionalResolutionChapter: z.literal(49),
+  finalEndingChapter: z.literal(50),
+}).strict()
 
 export const StoryContractSchema = z.object({
   storyId: boundedString(128),

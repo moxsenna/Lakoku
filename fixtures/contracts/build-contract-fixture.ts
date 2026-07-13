@@ -96,7 +96,9 @@ export function buildContractFixture(input: BuildContractFixtureInput): StoryCon
         .filter((entry) => entry.revealGateChapter > chapterNumber)
         .map((entry) => entry.secretId),
       emotionalTurn: `${input.mainCharacter.name} bergerak dari ${emotionalTurn} karena pilihan bab ini.`,
-      expectedThreadMovement: `${threadMovement}; benang ${input.motifs.mystery} bergerak menuju pembayaran fase ${act.phase}.`,
+      expectedThreadMovement: [
+        `${threadMovement}; benang ${input.motifs.mystery} bergerak menuju pembayaran fase ${act.phase}.`,
+      ],
     }
   })
 
@@ -122,6 +124,13 @@ export function buildContractFixture(input: BuildContractFixtureInput): StoryCon
       mustProgressBy: [...debt.mustProgressBy],
     })),
     revealRunway: input.revealRunway.map((reveal) => ({ ...reveal })),
-    closureRunway: [35, 40, 45, 48, 49, 50],
+    closureRunway: {
+      noNewMajorConflictAfter: 35,
+      noNewThreadAfter: 40,
+      endingLockChapter: 45,
+      mainMysteryResolveBy: 48,
+      emotionalResolutionChapter: 49,
+      finalEndingChapter: 50,
+    },
   })
 }

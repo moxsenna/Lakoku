@@ -36,9 +36,19 @@ describe('StoryContractSchema fixtures', () => {
       expect(parsed.chapterTargets.every((target) => (
         target.goal.length > 0
         && target.emotionalTurn.length > 0
+        && Array.isArray(target.expectedThreadMovement)
         && target.expectedThreadMovement.length > 0
+        && target.expectedThreadMovement.every((movement) => movement.length > 0)
         && !target.goal.includes(`Goal chapter ${target.chapterNumber}`)
       ))).toBe(true)
+      expect(parsed.closureRunway).toEqual({
+        noNewMajorConflictAfter: 35,
+        noNewThreadAfter: 40,
+        endingLockChapter: 45,
+        mainMysteryResolveBy: 48,
+        emotionalResolutionChapter: 49,
+        finalEndingChapter: 50,
+      })
     },
   )
 
@@ -107,12 +117,21 @@ describe('StoryContractSchema fixtures', () => {
     })
 
     first.chapterTargets[0].mustInclude.push('Mutasi khusus fixture pertama.')
+    first.chapterTargets[0].expectedThreadMovement.push('Mutasi thread fixture pertama.')
     first.actPlan[0].goal = 'Mutasi act fixture pertama.'
-    first.closureRunway[0] = 40 as 35
+    first.closureRunway.noNewMajorConflictAfter = 40 as 35
 
     expect(second.chapterTargets[0].mustInclude).not.toContain('Mutasi khusus fixture pertama.')
+    expect(second.chapterTargets[0].expectedThreadMovement).not.toContain('Mutasi thread fixture pertama.')
     expect(second.actPlan[0].goal).not.toBe('Mutasi act fixture pertama.')
-    expect(second.closureRunway).toEqual([35, 40, 45, 48, 49, 50])
+    expect(second.closureRunway).toEqual({
+      noNewMajorConflictAfter: 35,
+      noNewThreadAfter: 40,
+      endingLockChapter: 45,
+      mainMysteryResolveBy: 48,
+      emotionalResolutionChapter: 49,
+      finalEndingChapter: 50,
+    })
   })
 })
 
@@ -138,9 +157,14 @@ describe('StoryContractSchema rejection', () => {
     ['progression after debt closure', (input: any) => { input.plotDebts[0].mustCloseBy = 20; input.plotDebts[0].mustProgressBy = [12, 32] }],
     ['invalid debt closure chapter', (input: any) => { input.plotDebts[0].mustCloseBy = 51 }],
     ['invalid reveal gate', (input: any) => { input.revealRunway[0].revealGateChapter = 0 }],
-    ['bad closure literals', (input: any) => { input.closureRunway = [35, 40, 45, 47, 49, 50] }],
+    ['fewer than two ending candidates', (input: any) => { input.endingCandidates = input.endingCandidates.slice(0, 1) }],
+    ['bad closure literal', (input: any) => { input.closureRunway.mainMysteryResolveBy = 47 }],
+    ['unknown closure field', (input: any) => { input.closureRunway.internal = 50 }],
+    ['scalar expected thread movement', (input: any) => { input.chapterTargets[0].expectedThreadMovement = 'scalar' }],
+    ['empty expected thread movement', (input: any) => { input.chapterTargets[0].expectedThreadMovement = [] }],
     ['oversized string', (input: any) => { input.title = 'x'.repeat(161) }],
     ['oversized array', (input: any) => { input.chapterTargets[0].mustInclude = Array.from({ length: 9 }, (_, index) => `Beat ${index}`) }],
+    ['oversized thread movement array', (input: any) => { input.chapterTargets[0].expectedThreadMovement = Array.from({ length: 9 }, (_, index) => `Movement ${index}`) }],
     ['unknown chapter target field', (input: any) => { input.chapterTargets[0].internal = true }],
     ['gapped act plan', (input: any) => { input.actPlan[1].fromChapter += 1 }],
     ['overlapping act plan', (input: any) => { input.actPlan[1].fromChapter -= 1 }],

@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 2 / 28 tasks
-- **In progress:** Task 3–4 integrated security/query milestone
-- **Pending:** Task 5–28
-- **Current gate:** Real PostgREST reader-state CRUD and hidden-column privacy verification
+- **Complete:** 4 / 28 tasks
+- **In progress:** Task 5 — strict story contract and complete fixtures
+- **Pending:** Task 6–28
+- **Current gate:** StoryContract schema and three validated 50-chapter fixtures
 
 ---
 
@@ -35,7 +35,7 @@
   - Explicit local DB marker required.
   - Expected RED established before migration.
 
-- [ ] 🔄 **Task 3: Additive schema, defensive policies, and strong idempotency**
+- [x] **Task 3: Additive schema, defensive policies, and strong idempotency**
   - [x] Add personalized story columns.
   - [x] Create `story_generation_contracts`.
   - [x] Create `story_creation_requests`.
@@ -45,9 +45,9 @@
   - [x] Protect internal columns from direct PostgREST access.
   - [x] Add safe RLS helper predicates.
   - [x] Verify migration idempotency locally.
-  - [ ] Final integrated Task 3–4 review.
+  - [x] Final integrated Task 3–4 review.
 
-- [ ] 🔄 **Task 4: Reader-safe ownership queries**
+- [x] **Task 4: Reader-safe ownership queries**
   - [x] Replace reader-facing `.select('*')` calls.
   - [x] Add explicit story/chapter/outcome/reader-state projections.
   - [x] Add owned-library query.
@@ -61,10 +61,10 @@
   - [x] Deep-validate canon payload and story-local references.
   - [x] Add real concurrent ownership/canon race tests.
   - [x] Harden PostgreSQL race-session cleanup.
-  - [ ] Complete real PostgREST reader-state CRUD test.
-  - [ ] Complete anon/User B reader-state mutation-denial test.
-  - [ ] Complete hidden-column REST denial test.
-  - [ ] Run final integrated Task 3–4 review.
+  - [x] Complete real PostgREST reader-state CRUD test.
+  - [x] Complete anon/User B reader-state mutation-denial test.
+  - [x] Complete hidden-column REST denial test.
+  - [x] Run final integrated Task 3–4 review.
 
 ### Phase 1 Exit Gate
 

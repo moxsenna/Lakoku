@@ -19,6 +19,8 @@ const AUTHORING_LAST_RESORT_JSON = 'google/gemini-2.5-flash-lite'
 const GATEWAY_FALLBACK = AUTHORING_PRIMARY_JSON
 const PUBLIC_AUTHORING_ERROR =
   'Usulan cerita belum berhasil dibentuk. Coba ulang sebentar lagi.'
+const PUBLIC_AUTHORING_PERSISTENCE_ERROR =
+  'Cerita belum dapat disimpan. Coba ulang sebentar lagi.'
 
 export interface AuthoringModel {
   model: LanguageModel
@@ -101,6 +103,12 @@ function isAuthoringSchemaError(error: unknown): boolean {
 export function publicAuthoringErrorMessage(error: unknown): string {
   if (error instanceof AuthoringGenerationError || isAuthoringSchemaError(error)) {
     return PUBLIC_AUTHORING_ERROR
+  }
+  if (
+    error instanceof Error
+    && /^(stories claim:|persistStoryBible: story owner mismatch|delete |insert |ensureReaderStateStarted:)/.test(error.message)
+  ) {
+    return PUBLIC_AUTHORING_PERSISTENCE_ERROR
   }
   if (error instanceof Error && error.message.trim()) return error.message
   return 'Terjadi kesalahan tak terduga.'

@@ -32,34 +32,22 @@ export async function persistStoryBible(
   const db = createAdminClient()
   const { storyId, snapshot, meta } = result
 
-  const { data: existingStory, error: ownerError } = await db
-    .from('stories')
-    .select('owner_user_id')
-    .eq('id', storyId)
-    .maybeSingle()
-  if (ownerError) throw new Error(`stories owner lookup: ${ownerError.message}`)
-  if (existingStory && existingStory.owner_user_id !== ownerUserId) {
-    throw new Error('persistStoryBible: story owner mismatch')
-  }
-
-  // 0) Shell story (FK target). Upsert idempoten.
-  const { error: eStory } = await db.from('stories').upsert({
-    id: storyId,
-    title: meta.title,
-    cover: '/placeholder.svg?height=400&width=300',
-    tagline: meta.tagline,
-    role: meta.role,
-    tropes: meta.tropes,
-    total_chapters: 50,
-    synopsis: meta.synopsis,
-    status: 'BARU',
-    current_chapter: 0,
-    jejak: [],
-    ending_name: null,
-    owner_user_id: ownerUserId,
-    visibility: 'private',
-  })
-  if (eStory) throw new Error(`stories: ${eStory.message}`)
+  const { data: claimed, error: claimError } = await db.rpc(
+    'claim_authoring_story_shell_v1',
+    {
+      p_story_id: storyId,
+      p_owner_user_id: ownerUserId,
+      p_title: meta.title,
+      p_cover: '/placeholder.svg?height=400&width=300',
+      p_tagline: meta.tagline,
+      p_role: meta.role,
+      p_tropes: meta.tropes,
+      p_total_chapters: 50,
+      p_synopsis: meta.synopsis,
+    },
+  )
+  if (claimError) throw new Error(`stories claim: ${claimError.message}`)
+  if (!claimed) throw new Error('persistStoryBible: story owner mismatch')
 
   // 1) Bersihkan canon lama story ini.
   for (const t of CANON_TABLES) {

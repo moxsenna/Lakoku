@@ -9,6 +9,11 @@ const mocks = vi.hoisted(() => ({
   generateNextChapterReal: vi.fn(),
   after: vi.fn(),
   adminFactory: vi.fn(),
+  proposePremises: vi.fn(),
+  refinePremise: vi.fn(),
+  proposeCast: vi.fn(),
+  proposeMystery: vi.fn(),
+  proposeWorld: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
@@ -17,15 +22,17 @@ vi.mock('@/lib/api/user-state', () => ({
   ensureReaderStateStarted: mocks.ensureReaderStateStarted,
 }))
 vi.mock('@/lib/authoring/server', () => ({
-  proposePremises: vi.fn(),
-  refinePremise: vi.fn(),
-  proposeCast: vi.fn(),
-  proposeMystery: vi.fn(),
-  proposeWorld: vi.fn(),
+  proposePremises: mocks.proposePremises,
+  refinePremise: mocks.refinePremise,
+  proposeCast: mocks.proposeCast,
+  proposeMystery: mocks.proposeMystery,
+  proposeWorld: mocks.proposeWorld,
   persistStoryBible: mocks.persistStoryBible,
   makeVoiceSheetAuthor: vi.fn(),
   publicAuthoringErrorMessage: (error: unknown) =>
-    error instanceof Error ? error.message : 'Terjadi kesalahan tak terduga.',
+    error instanceof Error && /stories claim|story owner mismatch/.test(error.message)
+      ? 'Cerita belum dapat disimpan. Coba ulang sebentar lagi.'
+      : error instanceof Error ? error.message : 'Terjadi kesalahan tak terduga.',
 }))
 vi.mock('@/lib/authoring/repair', () => ({ runLockLadder: mocks.runLockLadder }))
 vi.mock('@/lib/authoring', () => ({
@@ -57,6 +64,7 @@ function ownerQuery(owner: boolean) {
   }
   return {
     client: { from: vi.fn(() => builder) },
+    builder,
     calls,
   }
 }
@@ -69,6 +77,23 @@ beforeEach(() => {
 })
 
 describe('brainstorm action authorization', () => {
+  it.each([
+    ['actProposePremises', ['idea'], mocks.proposePremises],
+    ['actRefinePremise', [{}, 'feedback'], mocks.refinePremise],
+    ['actProposeCast', [{}], mocks.proposeCast],
+    ['actProposeMystery', [{}, {}], mocks.proposeMystery],
+    ['actProposeWorld', [{}, {}, {}], mocks.proposeWorld],
+  ] as const)('rejects anonymous %s before provider call', async (name, args, provider) => {
+    mocks.getSessionUser.mockResolvedValue(null)
+    const actions = await import('@/app/brainstorm/actions')
+
+    const invoke = actions[name] as unknown as (...input: readonly unknown[]) => Promise<unknown>
+    const result = await invoke(...args)
+
+    expect(result).toEqual({ ok: false, error: 'Masuk untuk membuat cerita.' })
+    expect(provider).not.toHaveBeenCalled()
+  })
+
   it('rejects anonymous lock before validation, enrichment, or persistence', async () => {
     mocks.getSessionUser.mockResolvedValue(null)
     const actions = await import('@/app/brainstorm/actions')
@@ -79,6 +104,62 @@ describe('brainstorm action authorization', () => {
     expect(mocks.runLockLadder).not.toHaveBeenCalled()
     expect(mocks.enrichOpeningVoiceSheets).not.toHaveBeenCalled()
     expect(mocks.persistStoryBible).not.toHaveBeenCalled()
+  })
+
+  it('passes verified session owner to persistence on lock happy path', async () => {
+    const compiled = { storyId: 'story-a' }
+    mocks.getSessionUser.mockResolvedValue({ id: 'user-a' })
+    mocks.runLockLadder.mockResolvedValue({
+      status: 'LOCKED',
+      compiled,
+      resolvedBy: 'DIRECT',
+      transforms: [],
+    })
+    mocks.enrichOpeningVoiceSheets.mockResolvedValue({
+      compiled,
+      enrichedIds: [],
+      fallbackIds: [],
+    })
+    mocks.persistStoryBible.mockResolvedValue({ storyId: 'story-a' })
+    const actions = await import('@/app/brainstorm/actions')
+
+    const result = await actions.lockStoryBible({} as never)
+
+    expect(result).toEqual({
+      ok: true,
+      storyId: 'story-a',
+      resolvedBy: 'DIRECT',
+      transforms: [],
+    })
+    expect(mocks.persistStoryBible).toHaveBeenCalledWith(compiled, 'user-a')
+  })
+
+  it('maps persistence RPC failure to a generic public error', async () => {
+    const compiled = { storyId: 'story-a' }
+    mocks.getSessionUser.mockResolvedValue({ id: 'user-a' })
+    mocks.runLockLadder.mockResolvedValue({
+      status: 'LOCKED',
+      compiled,
+      resolvedBy: 'DIRECT',
+      transforms: [],
+    })
+    mocks.enrichOpeningVoiceSheets.mockResolvedValue({
+      compiled,
+      enrichedIds: [],
+      fallbackIds: [],
+    })
+    mocks.persistStoryBible.mockRejectedValue(
+      new Error('stories claim: function public.claim_authoring_story_shell_v1 missing'),
+    )
+    const actions = await import('@/app/brainstorm/actions')
+
+    const result = await actions.lockStoryBible({} as never)
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'Cerita belum dapat disimpan. Coba ulang sebentar lagi.',
+    })
+    expect(JSON.stringify(result)).not.toContain('claim_authoring_story_shell_v1')
   })
 
   it('rejects anonymous chapter start before owner lookup or scheduling', async () => {
@@ -105,6 +186,8 @@ describe('brainstorm action authorization', () => {
 
     expect(result).toEqual({ ok: false, error: 'Cerita tidak ditemukan.' })
     expect(db.client.from).toHaveBeenCalledWith('stories')
+    expect(db.builder.eq).toHaveBeenNthCalledWith(1, 'id', 'story-a')
+    expect(db.builder.eq).toHaveBeenNthCalledWith(2, 'owner_user_id', 'user-b')
     expect(mocks.after).not.toHaveBeenCalled()
     expect(mocks.generateNextChapterReal).not.toHaveBeenCalled()
     expect(mocks.ensureReaderStateStarted).not.toHaveBeenCalled()
@@ -120,6 +203,8 @@ describe('brainstorm action authorization', () => {
 
     expect(result).toEqual({ ok: true, chapterNumber: 1 })
     expect(db.client.from).toHaveBeenCalledWith('stories')
+    expect(db.builder.eq).toHaveBeenNthCalledWith(1, 'id', 'story-a')
+    expect(db.builder.eq).toHaveBeenNthCalledWith(2, 'owner_user_id', 'user-a')
     expect(db.calls).toEqual(['select', 'eq', 'eq', 'maybeSingle'])
     expect(mocks.after).toHaveBeenCalledTimes(1)
     expect(mocks.generateNextChapterReal).toHaveBeenCalledWith('story-a', 1)

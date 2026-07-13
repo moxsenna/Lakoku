@@ -15,6 +15,10 @@ import {
   buildStorySetupIdea,
 } from '@/lib/onboarding/story-setup'
 import type { PremiseDraft } from '@/lib/authoring/schema'
+import {
+  AUTHORING_AUTH_REQUIRED_ERROR,
+  requireAuthoringSessionUser,
+} from '@/lib/authoring/action-auth'
 
 // ─── Result type (lokal, tidak import dari /brainstorm/actions) ───
 
@@ -27,6 +31,7 @@ export async function actProposeStorySetupPremises(
   rawInput: unknown,
 ): Promise<ActionResult<{ proposals: PremiseDraft[] }>> {
   try {
+    await requireAuthoringSessionUser()
     const setup = StorySetupInputSchema.parse(rawInput)
 
     const idea = buildStorySetupIdea({
@@ -40,7 +45,9 @@ export async function actProposeStorySetupPremises(
   } catch (error) {
     return {
       ok: false,
-      error: publicAuthoringErrorMessage(error),
+      error: error instanceof Error && error.message === AUTHORING_AUTH_REQUIRED_ERROR
+        ? AUTHORING_AUTH_REQUIRED_ERROR
+        : publicAuthoringErrorMessage(error),
     }
   }
 }

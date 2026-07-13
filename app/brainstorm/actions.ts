@@ -24,7 +24,11 @@ import { runLockLadder, type AiRepairFn } from '@/lib/authoring/repair'
 import { enrichOpeningVoiceSheets } from '@/lib/authoring'
 import { generateNextChapterReal } from '@lakoku/runtime'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getSessionUser, ensureReaderStateStarted } from '@/lib/api/user-state'
+import { ensureReaderStateStarted } from '@/lib/api/user-state'
+import {
+  AUTHORING_AUTH_REQUIRED_ERROR,
+  requireAuthoringSessionUser,
+} from '@/lib/authoring/action-auth'
 import type {
   PremiseDraft,
   CastDraft,
@@ -40,18 +44,20 @@ export interface ActionError {
 }
 export type ActionResult<T> = ({ ok: true } & T) | ActionError
 
-const AUTH_REQUIRED_ERROR = 'Masuk untuk membuat cerita.'
 const STORY_NOT_FOUND_ERROR = 'Cerita tidak ditemukan.'
 
 function fail(err: unknown): ActionError {
   const message = err instanceof Error ? err.message : 'Terjadi kesalahan tak terduga.'
-  const publicMessage = publicAuthoringErrorMessage(err)
+  const publicMessage = message === AUTHORING_AUTH_REQUIRED_ERROR
+    ? AUTHORING_AUTH_REQUIRED_ERROR
+    : publicAuthoringErrorMessage(err)
   console.log('[v0] brainstorm action error:', message, { publicMessage })
   return { ok: false, error: publicMessage }
 }
 
 export async function actProposePremises(idea: string): Promise<ActionResult<{ proposals: PremiseDraft[] }>> {
   try {
+    await requireAuthoringSessionUser()
     const { proposals } = await proposePremises(idea)
     return { ok: true, proposals }
   } catch (e) {
@@ -61,6 +67,7 @@ export async function actProposePremises(idea: string): Promise<ActionResult<{ p
 
 export async function actRefinePremise(current: PremiseDraft, feedback: string): Promise<ActionResult<{ premise: PremiseDraft }>> {
   try {
+    await requireAuthoringSessionUser()
     const { premise } = await refinePremise(current, feedback)
     return { ok: true, premise }
   } catch (e) {
@@ -70,6 +77,7 @@ export async function actRefinePremise(current: PremiseDraft, feedback: string):
 
 export async function actProposeCast(premise: PremiseDraft, feedback?: string, previous?: CastDraft): Promise<ActionResult<{ cast: CastDraft }>> {
   try {
+    await requireAuthoringSessionUser()
     const { cast } = await proposeCast(premise, feedback, previous)
     return { ok: true, cast }
   } catch (e) {
@@ -79,6 +87,7 @@ export async function actProposeCast(premise: PremiseDraft, feedback?: string, p
 
 export async function actProposeMystery(premise: PremiseDraft, cast: CastDraft, feedback?: string, previous?: MysteryDraft): Promise<ActionResult<{ mystery: MysteryDraft }>> {
   try {
+    await requireAuthoringSessionUser()
     const { mystery } = await proposeMystery(premise, cast, feedback, previous)
     return { ok: true, mystery }
   } catch (e) {
@@ -88,6 +97,7 @@ export async function actProposeMystery(premise: PremiseDraft, cast: CastDraft, 
 
 export async function actProposeWorld(premise: PremiseDraft, cast: CastDraft, mystery: MysteryDraft, feedback?: string, previous?: WorldDraft): Promise<ActionResult<{ world: WorldDraft }>> {
   try {
+    await requireAuthoringSessionUser()
     const { world } = await proposeWorld(premise, cast, mystery, feedback, previous)
     return { ok: true, world }
   } catch (e) {
@@ -116,8 +126,7 @@ export async function lockStoryBible(draft: StoryBibleDraft): Promise<
   | ({ ok: false; needsAuthor: true; findings: Finding[]; transforms: string[] })
 > {
   try {
-    const user = await getSessionUser()
-    if (!user) return { ok: false, error: AUTH_REQUIRED_ERROR }
+    const user = await requireAuthoringSessionUser()
 
     const aiRepair: AiRepairFn = async (d, findings) => {
       const feedback = findingsToFeedback(findings)
@@ -168,8 +177,7 @@ export async function startFirstChapter(
   storyId: string,
 ): Promise<ActionResult<{ chapterNumber: number }>> {
   try {
-    const user = await getSessionUser()
-    if (!user) return { ok: false, error: AUTH_REQUIRED_ERROR }
+    const user = await requireAuthoringSessionUser()
 
     const admin = createAdminClient()
     const { data: ownedStory, error: ownerError } = await admin

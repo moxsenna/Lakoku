@@ -149,14 +149,19 @@ async function raceOnce(
     )
     await waitForToken(holder, 'BARRIER_READY')
 
-    const common = { story_id: storyId, barrier, role: 'Race protagonist', tropes: '["race"]' }
+    const common = {
+      story_id: storyId,
+      barrier,
+      role: 'Race protagonist',
+      tropes: '["Rival authors","Atomic claim"]',
+    }
     const contenderA = startPsql(container, {
       ...common,
       owner_id: ownerA,
       title: `Race owner A ${iteration}`,
       cover: '/race-a.svg',
       tagline: 'Race tagline A',
-      synopsis: 'Race synopsis A',
+      synopsis: 'Race synopsis A keeps every payload field valid while ownership decides the only winner.',
     })
     const contenderB = startPsql(container, {
       ...common,
@@ -164,7 +169,7 @@ async function raceOnce(
       title: `Race owner B ${iteration}`,
       cover: '/race-b.svg',
       tagline: 'Race tagline B',
-      synopsis: 'Race synopsis B',
+      synopsis: 'Race synopsis B keeps every payload field valid while ownership decides the only winner.',
     })
     contenders.push(contenderA, contenderB)
     contenderA.child.stdin.end(claimSql('A'))
@@ -200,7 +205,8 @@ async function raceOnce(
       `set role service_role;
        select public.claim_authoring_story_shell_v1(
          :'story_id', :'loser_id'::uuid, 'Transfer attempt', '/transfer.svg',
-         'Transfer tagline', 'Transfer role', '["transfer"]'::jsonb, 50, 'Transfer synopsis'
+         'Transfer tagline', 'Transfer role', '["Owner transfer","Retry claim"]'::jsonb, 50,
+         'Transfer synopsis remains fully valid so ownership alone must reject this losing retry.'
        )::text;
        reset role;
        select owner_user_id::text || '|' || title from public.stories where id = :'story_id';`,

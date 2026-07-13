@@ -75,10 +75,15 @@ begin
     raise notice '%', extensions.diag('SQLSTATE 42P01: required planned table does not exist');
     return -1;
   end if;
-  execute format('select count(*) from %s where story_id = $1', p_table)
+  execute format('select count(story_id) from %s where story_id = $1', p_table)
     into v_count using p_story_id;
   return v_count;
-exception when others then
+exception when insufficient_privilege then
+  if current_user in ('anon', 'authenticated') then
+    return 0;
+  end if;
+  raise;
+when others then
   get stacked diagnostics
     v_sqlstate = returned_sqlstate,
     v_message = message_text;
@@ -111,32 +116,32 @@ set local role anon;
 select set_config('request.jwt.claim.sub', '', true);
 select set_config('request.jwt.claim.role', 'anon', true);
 select is(
-  (select count(*) from public.stories where id = 'test:personalized-private-a'),
+  (select count(id) from public.stories where id = 'test:personalized-private-a'),
   0::bigint,
   'anon cannot read private personalized story'
 );
 select is(
-  (select count(*) from public.stories where id = 'premium:test-public-template'),
+  (select count(id) from public.stories where id = 'premium:test-public-template'),
   1::bigint,
   'anon can read public premium template'
 );
 select is(
-  (select count(*) from public.chapters where story_id = 'test:personalized-private-a'),
+  (select count(story_id) from public.chapters where story_id = 'test:personalized-private-a'),
   0::bigint,
   'anon cannot read private child chapter'
 );
 select is(
-  (select count(*) from public.chapters where story_id = 'premium:test-public-template'),
+  (select count(story_id) from public.chapters where story_id = 'premium:test-public-template'),
   1::bigint,
   'anon can read public template chapter'
 );
 select is(
-  (select count(*) from public.choice_outcomes where story_id = 'test:personalized-private-a'),
+  (select count(story_id) from public.choice_outcomes where story_id = 'test:personalized-private-a'),
   0::bigint,
   'anon cannot read private child outcome'
 );
 select is(
-  (select count(*) from public.choice_outcomes where story_id = 'premium:test-public-template'),
+  (select count(story_id) from public.choice_outcomes where story_id = 'premium:test-public-template'),
   1::bigint,
   'anon can read public template outcome'
 );
@@ -151,7 +156,7 @@ select is(
   'anon cannot read public template internal contract'
 );
 select is(
-  (select count(*) from public.reader_states where story_id = 'test:personalized-private-a'),
+  (select count(story_id) from public.reader_states where story_id = 'test:personalized-private-a'),
   0::bigint,
   'anon cannot read reader state'
 );
@@ -162,32 +167,32 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '20000000-0000-4000-8000-000000000002', true);
 select set_config('request.jwt.claim.role', 'authenticated', true);
 select is(
-  (select count(*) from public.stories where id = 'test:personalized-private-a'),
+  (select count(id) from public.stories where id = 'test:personalized-private-a'),
   0::bigint,
   'authenticated user B cannot read A private story'
 );
 select is(
-  (select count(*) from public.stories where id = 'premium:test-public-template'),
+  (select count(id) from public.stories where id = 'premium:test-public-template'),
   1::bigint,
   'authenticated user B can read public premium template'
 );
 select is(
-  (select count(*) from public.chapters where story_id = 'premium:test-public-template'),
+  (select count(story_id) from public.chapters where story_id = 'premium:test-public-template'),
   1::bigint,
   'authenticated user B can read public template chapter'
 );
 select is(
-  (select count(*) from public.choice_outcomes where story_id = 'premium:test-public-template'),
+  (select count(story_id) from public.choice_outcomes where story_id = 'premium:test-public-template'),
   1::bigint,
   'authenticated user B can read public template outcome'
 );
 select is(
-  (select count(*) from public.chapters where story_id = 'test:personalized-private-a'),
+  (select count(story_id) from public.chapters where story_id = 'test:personalized-private-a'),
   0::bigint,
   'authenticated user B cannot read A private chapters'
 );
 select is(
-  (select count(*) from public.choice_outcomes where story_id = 'test:personalized-private-a'),
+  (select count(story_id) from public.choice_outcomes where story_id = 'test:personalized-private-a'),
   0::bigint,
   'authenticated user B cannot read A private outcomes'
 );
@@ -202,12 +207,12 @@ select is(
   'authenticated user B cannot read public template internal contract'
 );
 select is(
-  (select count(*) from public.reader_states where user_id = '10000000-0000-4000-8000-000000000001'),
+  (select count(story_id) from public.reader_states where user_id = '10000000-0000-4000-8000-000000000001'),
   0::bigint,
   'authenticated user B cannot read A reader state'
 );
 select is(
-  (select count(*) from public.reader_states where user_id = '20000000-0000-4000-8000-000000000002'),
+  (select count(story_id) from public.reader_states where user_id = '20000000-0000-4000-8000-000000000002'),
   1::bigint,
   'authenticated user B can read own reader state'
 );
@@ -218,24 +223,24 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
 select set_config('request.jwt.claim.role', 'authenticated', true);
 select is(
-  (select count(*) from public.stories where id = 'test:personalized-private-a'),
+  (select count(id) from public.stories where id = 'test:personalized-private-a'),
   1::bigint,
   'owner A can read private story'
 );
 select is(
-  (select count(*) from public.chapters where story_id = 'test:personalized-private-a'),
+  (select count(story_id) from public.chapters where story_id = 'test:personalized-private-a'),
   1::bigint,
   'owner A can read private child chapter'
 );
 select is(
-  (select count(*) from public.choice_outcomes where story_id = 'test:personalized-private-a'),
+  (select count(story_id) from public.choice_outcomes where story_id = 'test:personalized-private-a'),
   1::bigint,
   'owner A can read private child outcome'
 );
 select is(
   pg_temp.visible_story_rows(to_regclass('public.story_generation_contracts'), 'test:personalized-private-a'),
-  1::bigint,
-  'owner A can read private generation contract'
+  0::bigint,
+  'owner A has no direct table grant for private generation contract'
 );
 select is(
   pg_temp.visible_story_rows(to_regclass('public.story_generation_contracts'), 'premium:test-public-template'),
@@ -243,12 +248,12 @@ select is(
   'owner A cannot read public template internal contract without ownership'
 );
 select is(
-  (select count(*) from public.reader_states where user_id = '10000000-0000-4000-8000-000000000001'),
+  (select count(story_id) from public.reader_states where user_id = '10000000-0000-4000-8000-000000000001'),
   1::bigint,
   'owner A can read own reader state'
 );
 select is(
-  (select count(*) from public.reader_states where user_id = '20000000-0000-4000-8000-000000000002'),
+  (select count(story_id) from public.reader_states where user_id = '20000000-0000-4000-8000-000000000002'),
   0::bigint,
   'owner A cannot read B reader state'
 );
@@ -263,22 +268,22 @@ select lives_ok(
   'service_role can write personalized story parent'
 );
 select is(
-  (select count(*) from public.stories where id in ('test:personalized-private-a', 'test:service-role-write')),
+  (select count(id) from public.stories where id in ('test:personalized-private-a', 'test:service-role-write')),
   2::bigint,
   'service_role can read private story internals'
 );
 select is(
-  (select count(*) from public.chapters where story_id = 'test:personalized-private-a'),
+  (select count(story_id) from public.chapters where story_id = 'test:personalized-private-a'),
   1::bigint,
   'service_role can read private chapter internals'
 );
 select is(
-  (select count(*) from public.choice_outcomes where story_id = 'test:personalized-private-a'),
+  (select count(story_id) from public.choice_outcomes where story_id = 'test:personalized-private-a'),
   1::bigint,
   'service_role can read private outcome internals'
 );
 select is(
-  (select count(*) from public.reader_states where story_id = 'test:personalized-private-a'),
+  (select count(story_id) from public.reader_states where story_id = 'test:personalized-private-a'),
   1::bigint,
   'service_role can read reader state internals'
 );

@@ -89,6 +89,43 @@ alter table public.reader_states enable row level security;
 alter table public.story_generation_contracts enable row level security;
 alter table public.story_creation_requests enable row level security;
 
+-- Child-table policies cannot inspect ungranted story ownership columns as invoker.
+-- Narrow SECURITY DEFINER predicates preserve column privacy without granting those columns.
+create or replace function public.story_is_public(p_story_id text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.stories s
+    where s.id = p_story_id
+      and s.visibility = 'public'
+  );
+$$;
+
+create or replace function public.story_is_owned_by_auth(p_story_id text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.stories s
+    where s.id = p_story_id
+      and s.owner_user_id = auth.uid()
+  );
+$$;
+
+revoke all on function public.story_is_public(text) from public, anon, authenticated;
+revoke all on function public.story_is_owned_by_auth(text) from public, anon, authenticated;
+grant execute on function public.story_is_public(text) to anon, authenticated;
+grant execute on function public.story_is_owned_by_auth(text) to authenticated;
+
 -- Exact linked policies below were permissive. Replacing them is required because
 -- adding another permissive policy cannot narrow an existing USING (true) policy.
 drop policy if exists stories_public_read on public.stories;
@@ -104,47 +141,19 @@ drop policy if exists chapters_public_read on public.chapters;
 drop policy if exists chapters_owner_read on public.chapters;
 create policy chapters_public_read on public.chapters
   for select to anon, authenticated
-  using (
-    exists (
-      select 1
-      from public.stories s
-      where s.id = chapters.story_id
-        and s.visibility = 'public'
-    )
-  );
+  using (public.story_is_public(story_id));
 create policy chapters_owner_read on public.chapters
   for select to authenticated
-  using (
-    exists (
-      select 1
-      from public.stories s
-      where s.id = chapters.story_id
-        and s.owner_user_id = auth.uid()
-    )
-  );
+  using (public.story_is_owned_by_auth(story_id));
 
 drop policy if exists choice_outcomes_public_read on public.choice_outcomes;
 drop policy if exists choice_outcomes_owner_read on public.choice_outcomes;
 create policy choice_outcomes_public_read on public.choice_outcomes
   for select to anon, authenticated
-  using (
-    exists (
-      select 1
-      from public.stories s
-      where s.id = choice_outcomes.story_id
-        and s.visibility = 'public'
-    )
-  );
+  using (public.story_is_public(story_id));
 create policy choice_outcomes_owner_read on public.choice_outcomes
   for select to authenticated
-  using (
-    exists (
-      select 1
-      from public.stories s
-      where s.id = choice_outcomes.story_id
-        and s.owner_user_id = auth.uid()
-    )
-  );
+  using (public.story_is_owned_by_auth(story_id));
 
 -- Reconcile four exact linked owner policies into approved single owner policy.
 drop policy if exists reader_states_delete_own on public.reader_states;
@@ -160,32 +169,40 @@ create policy reader_states_owner on public.reader_states
 drop policy if exists sgc_owner_read on public.story_generation_contracts;
 create policy sgc_owner_read on public.story_generation_contracts
   for select to authenticated
-  using (
-    exists (
-      select 1
-      from public.stories s
-      where s.id = story_generation_contracts.story_id
-        and s.owner_user_id = auth.uid()
-    )
-  );
+  using (public.story_is_owned_by_auth(story_id));
 
--- Reader tables keep SELECT grants so RLS can filter. Engine writes stay server-only.
-revoke all on table public.stories from anon, authenticated;
-revoke all on table public.chapters from anon, authenticated;
-revoke all on table public.choice_outcomes from anon, authenticated;
-grant select on table public.stories to anon, authenticated;
-grant select on table public.chapters to anon, authenticated;
-grant select on table public.choice_outcomes to anon, authenticated;
+-- Revoke inherited/default broad grants before granting only reader-contract columns.
+-- RLS predicates may reference ungranted internal columns such as visibility and owner_user_id.
+revoke all on table public.stories from public, anon, authenticated;
+revoke all on table public.chapters from public, anon, authenticated;
+revoke all on table public.choice_outcomes from public, anon, authenticated;
+revoke all on table public.reader_states from public, anon, authenticated;
+revoke all on table public.story_generation_contracts from public, anon, authenticated;
+revoke all on table public.story_creation_requests from public, anon, authenticated;
 
-revoke all on table public.reader_states from anon;
-revoke all on table public.reader_states from authenticated;
-grant select on table public.reader_states to anon;
-grant select, insert, update, delete on table public.reader_states to authenticated;
+grant select (
+  id, title, cover, tagline, role, tropes, total_chapters, synopsis,
+  status, current_chapter, jejak, ending_name
+) on public.stories to anon, authenticated;
 
-revoke all on table public.story_generation_contracts from anon, authenticated;
-grant select on table public.story_generation_contracts to anon, authenticated;
+grant select (
+  story_id, number, title, paragraphs, choice_prompt, choices
+) on public.chapters to anon, authenticated;
 
-revoke all on table public.story_creation_requests from anon, authenticated;
+grant select (
+  story_id, chapter_number, choice_id, consequence, next_chapter_number, is_ending
+) on public.choice_outcomes to anon, authenticated;
+
+grant select (
+  user_id, story_id, status, current_chapter, jejak, ending_name, updated_at
+) on public.reader_states to anon, authenticated;
+grant insert (
+  user_id, story_id, status, current_chapter, jejak, ending_name, updated_at
+) on public.reader_states to authenticated;
+grant update (
+  user_id, story_id, status, current_chapter, jejak, ending_name, updated_at
+) on public.reader_states to authenticated;
+grant delete on table public.reader_states to authenticated;
 
 -- Explicit service-role grants support local baselines without relying on default grants.
 grant all on table public.stories to service_role;

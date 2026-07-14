@@ -59,6 +59,10 @@ export interface StoryContractInput {
   repairErrors?: string[]
 }
 
+export interface StoryContractCallOptions {
+  signal?: AbortSignal
+}
+
 export interface ChoiceProviderInput {
   storyId: string
   currentChapter: number
@@ -102,7 +106,10 @@ export interface GenerationProvider {
   generatePlan(input: PlanInput): Promise<unknown>
   writeChapter(input: WriteInput): Promise<unknown>
   generateChoices?(input: ChoiceProviderInput): Promise<unknown>
-  generateStoryContract?(input: StoryContractInput): Promise<unknown>
+  generateStoryContract?(
+    input: StoryContractInput,
+    options?: StoryContractCallOptions,
+  ): Promise<unknown>
 }
 
 /** Policy runtime generasi (target kata & scene). Diambil dari generation_policy DB. */

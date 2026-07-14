@@ -81,7 +81,23 @@ describe('generateStoryContractRaw', () => {
 
     await expect(generateStoryContractRaw({ provider }, input)).resolves.toBe(invalidRaw)
     expect(generateStoryContract).toHaveBeenCalledOnce()
-    expect(generateStoryContract).toHaveBeenCalledWith(input)
+    expect(generateStoryContract).toHaveBeenCalledWith(input, undefined)
+  })
+
+  it('passes optional call options while keeping one-argument providers compatible', async () => {
+    const legacyGenerate = vi.fn(async (input: StoryContractInput) => input.storyId)
+    const provider: GenerationProvider = {
+      ...createDeterministicProvider(),
+      generateStoryContract: legacyGenerate,
+    }
+    const controller = new AbortController()
+
+    await expect(generateStoryContractRaw(
+      { provider },
+      contractInput(),
+      { signal: controller.signal },
+    )).resolves.toBe(contractInput().storyId)
+    expect(legacyGenerate).toHaveBeenCalledWith(contractInput(), { signal: controller.signal })
   })
 })
 
@@ -207,6 +223,22 @@ describe('createGatewayProvider story-contract adapter', () => {
 
     await expect(generateStoryContractRaw({ provider }, contractInput())).resolves.toEqual(expected)
     expect(streamTextMock).toHaveBeenCalledOnce()
+  })
+
+  it('passes call AbortSignal to streamText', async () => {
+    streamTextMock.mockReturnValue({ text: Promise.resolve('{"totalChapters":49}') })
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider()
+    const controller = new AbortController()
+
+    await generateStoryContractRaw(
+      { provider },
+      contractInput(),
+      { signal: controller.signal },
+    )
+
+    expect(streamTextMock).toHaveBeenCalledOnce()
+    expect(streamTextMock.mock.calls[0][0].abortSignal).toBe(controller.signal)
   })
 
   it('rejects invalid or oversized contract input before streamText', async () => {

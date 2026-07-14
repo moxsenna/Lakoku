@@ -10,6 +10,7 @@ import {
   type WriteInput,
   type ChoiceProviderInput,
   type StoryContractInput,
+  type StoryContractCallOptions,
   type GenerationRuntimePolicy,
   DEFAULT_RUNTIME_POLICY,
 } from './provider'
@@ -494,6 +495,7 @@ async function generateStoryContractJson(args: {
   chain: ModelCandidate[]
   input: StoryContractInput
   route?: AiModelRoute
+  signal?: AbortSignal
 }): Promise<unknown> {
   const system = buildStoryContractSystemPrompt()
   const prompt = buildStoryContractPrompt(projectStoryContractInput(args.input))
@@ -507,12 +509,14 @@ async function generateStoryContractJson(args: {
         prompt,
         temperature: args.route?.temperature ?? undefined,
         maxOutputTokens: args.route?.maxOutputTokens ?? undefined,
+        abortSignal: args.signal,
       })
       const usage = bestEffortUsage(result.usage)
       const text = await result.text
       await logUsage(args.route?.useCase ?? 'story_contract', label, usage)
       return parseModelJson(text)
     } catch (error) {
+      if (args.signal?.aborted) throw error
       lastError = error
       console.log(
         `[v0] gateway-provider: kandidat story contract ${label} gagal, mencoba fallback berikutnya:`,
@@ -619,7 +623,10 @@ export function createGatewayProvider(
       }
     },
 
-    async generateStoryContract(input: StoryContractInput): Promise<unknown> {
+    async generateStoryContract(
+      input: StoryContractInput,
+      options?: StoryContractCallOptions,
+    ): Promise<unknown> {
       const { getAiModelRoute } = await import('@/lib/ops/ai-model-routes')
       const contractRoute = await getAiModelRoute('story_contract') ?? aiRoute
       let contractChain = resolveModelChain(opts.model)
@@ -630,6 +637,7 @@ export function createGatewayProvider(
         chain: contractChain,
         input,
         route: contractRoute,
+        signal: options?.signal,
       })
     },
 

@@ -26,6 +26,7 @@ import {
   type ChoiceProviderInput,
   type LastParagraphs,
   type StoryContractInput,
+  type StoryContractCallOptions,
 } from './provider'
 import { ChapterBriefSchema, ChoiceHistoryEntrySchema } from '../story-engine/chapter-brief'
 import { RouteStateSchema } from '../story-engine/route-state'
@@ -41,6 +42,7 @@ export interface GatewayDeps {
 export async function generateStoryContractRaw(
   deps: GatewayDeps,
   input: StoryContractInput,
+  options?: StoryContractCallOptions,
 ): Promise<unknown> {
   const generateStoryContract = deps.provider.generateStoryContract
   if (!generateStoryContract) {
@@ -49,7 +51,7 @@ export async function generateStoryContractRaw(
       'CONTRACT_PROVIDER_UNAVAILABLE',
     )
   }
-  return generateStoryContract.call(deps.provider, input)
+  return generateStoryContract.call(deps.provider, input, options)
 }
 
 export async function generatePlan(

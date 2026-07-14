@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 15 / 28 tasks
+- **Complete:** 16 / 28 tasks
 - **In progress:** None
-- **Pending:** Task 16–28
-- **Next:** Task 16 — Contract persistence and canon bootstrap
+- **Pending:** Task 17–28
+- **Next:** Task 17 — Personalized chapter runtime
 
 ---
 
@@ -171,11 +171,11 @@
   - [x] Record `contract_source`.
   - [x] Never fail story creation due only to provider failure.
 
-- [ ] **Task 16: Contract persistence and canon bootstrap**
-  - [ ] Persist contract fields in approved columns.
-  - [ ] Create all required canon rows transactionally.
-  - [ ] Create exactly 50 chapter blueprints.
-  - [ ] Generate no chapter during bootstrap.
+- [x] **Task 16: Contract persistence and canon bootstrap**
+  - [x] Persist contract fields in approved columns.
+  - [x] Create all required canon rows transactionally.
+  - [x] Create exactly 50 chapter blueprints.
+  - [x] Generate no chapter during bootstrap.
 
 - [ ] **Task 17: Personalized chapter runtime**
   - [ ] Load contract and internal reader state.

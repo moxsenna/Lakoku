@@ -6,6 +6,7 @@ import {
   parseChoiceBranch,
   validateChoiceBranch,
 } from '@/lib/ai-gateway/schemas'
+import { GatewayError } from '@/lib/ai-gateway/gateway'
 
 interface BranchFixture {
   choicePrompt: string
@@ -142,7 +143,21 @@ describe('parseChoiceBranch', () => {
     expect(errors(parseChoiceBranch(rute))).toContain('RUTE_NOT_ALLOWED')
   })
 
-  it.each(['prompt', 'token', 'model', 'LLM', 'provider', 'route'])('rejects internal leak word %s everywhere reader-facing', (word) => {
+  it.each([
+    'narraza',
+    'prompt',
+    'token',
+    'gpt-4',
+    'claude',
+    'gemini',
+    'LLM',
+    'model id',
+    'temperature',
+    'system prompt',
+    'rag',
+    'embedding',
+    'provider',
+  ])('rejects gateway leak term %s everywhere reader-facing', (word) => {
     for (const field of ['choicePrompt', 'label', 'hint', 'consequence'] as const) {
       const input = validBranch()
       if (field === 'choicePrompt') input.choicePrompt = `Pilih tindakan tanpa ${word} rahasia`
@@ -208,51 +223,113 @@ describe('parseChoiceBranch', () => {
 })
 
 describe('validateChoiceBranch', () => {
-  it('rejects invalid chapter numbers', () => {
+  function expectGatewayError(
+    invoke: () => unknown,
+    code: string,
+    message?: string,
+  ): GatewayError {
+    let caught: unknown
+    try {
+      invoke()
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBeInstanceOf(GatewayError)
+    expect(caught).toMatchObject({ code })
+    if (message !== undefined) expect((caught as GatewayError).message).toBe(message)
+    return caught as GatewayError
+  }
+
+  it('throws CHOICE_INVALID for invalid chapter numbers', () => {
     for (const chapter of [0, 1.5, 51, Number.NaN]) {
-      const result = validateChoiceBranch(validBranch(), chapter)
-      expect(result.ok).toBe(false)
-      if (!result.ok) expect(result.errors.join('\n')).toContain('CHAPTER_NUMBER_INVALID')
+      const error = expectGatewayError(
+        () => validateChoiceBranch(validBranch(), chapter),
+        'CHOICE_INVALID',
+      )
+      expect(error.errors?.join('\n')).toContain('CHAPTER_NUMBER_INVALID')
     }
   })
 
-  it('requires chapter + 1 and non-ending outcomes in chapters 1..48', () => {
-    expect(validateChoiceBranch(validBranch(2, 12), 12).ok).toBe(true)
+  it('returns branch for chapter + 1 non-ending outcomes in chapters 1..48', () => {
+    expect(validateChoiceBranch(validBranch(2, 12), 12)).toMatchObject({
+      outcomes: [
+        { nextChapterNumber: 13, isEnding: false },
+        { nextChapterNumber: 13, isEnding: false },
+      ],
+    })
 
     const mismatch = validBranch(2, 12)
     mismatch.outcomes[0].nextChapterNumber = 14
-    expect(validateChoiceBranch(mismatch, 12)).toMatchObject({ ok: false })
-    const mismatchResult = validateChoiceBranch(mismatch, 12)
-    if (!mismatchResult.ok) expect(mismatchResult.errors.join('\n')).toContain('NEXT_CHAPTER_MISMATCH')
+    const mismatchError = expectGatewayError(
+      () => validateChoiceBranch(mismatch, 12),
+      'CHOICE_INVALID',
+    )
+    expect(mismatchError.errors?.join('\n')).toContain('NEXT_CHAPTER_MISMATCH')
 
     const ending = validBranch(2, 12)
     ending.outcomes[0].isEnding = true
     ending.outcomes[0].nextChapterNumber = null
-    const endingResult = validateChoiceBranch(ending, 12)
-    expect(endingResult.ok).toBe(false)
-    if (!endingResult.ok) expect(endingResult.errors.join('\n')).toContain('ENDING_NOT_ALLOWED')
+    const endingError = expectGatewayError(
+      () => validateChoiceBranch(ending, 12),
+      'CHOICE_INVALID',
+    )
+    expect(endingError.errors?.join('\n')).toContain('ENDING_NOT_ALLOWED')
   })
 
-  it('requires chapter 50 continuation and rejects ending or null at chapter 49', () => {
-    expect(validateChoiceBranch(validBranch(2, 49), 49).ok).toBe(true)
-
-    const ending = validBranch(2, 49)
-    ending.outcomes[0].isEnding = true
-    let result = validateChoiceBranch(ending, 49)
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.errors.join('\n')).toContain('ENDING_NOT_ALLOWED')
-
-    const nullNext = validBranch(2, 49)
-    nullNext.outcomes[0].nextChapterNumber = null
-    result = validateChoiceBranch(nullNext, 49)
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.errors.join('\n')).toContain('NEXT_CHAPTER_MISMATCH')
+  it('accepts chapter 49 normal continuation when all outcomes point to chapter 50', () => {
+    expect(validateChoiceBranch(validBranch(2, 49), 49)).toMatchObject({
+      outcomes: [
+        { nextChapterNumber: 50, isEnding: false },
+        { nextChapterNumber: 50, isEnding: false },
+      ],
+    })
   })
 
-  it('always rejects choices for chapter 50', () => {
-    const result = validateChoiceBranch(validBranch(2, 49), 50)
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.errors.join('\n')).toContain('CHOICES_NOT_ALLOWED')
+  it('accepts chapter 49 special ending when all outcomes end without a next chapter', () => {
+    const specialEnding = validBranch(2, 49)
+    specialEnding.outcomes.forEach((outcome) => {
+      outcome.isEnding = true
+      outcome.nextChapterNumber = null
+    })
+
+    expect(validateChoiceBranch(specialEnding, 49)).toMatchObject({
+      outcomes: [
+        { nextChapterNumber: null, isEnding: true },
+        { nextChapterNumber: null, isEnding: true },
+      ],
+    })
+  })
+
+  it('rejects chapter 49 outcomes outside normal or special-ending pairs', () => {
+    const invalidPair = validBranch(2, 49)
+    invalidPair.outcomes[0].isEnding = true
+    invalidPair.outcomes[0].nextChapterNumber = 50
+
+    const error = expectGatewayError(
+      () => validateChoiceBranch(invalidPair, 49),
+      'CHOICE_INVALID',
+    )
+    expect(error.errors?.join('\n')).toContain('CHAPTER_49_OUTCOME_INVALID')
+  })
+
+  it('throws exact CHOICES_NOT_ALLOWED error for chapter 50', () => {
+    expectGatewayError(
+      () => validateChoiceBranch(validBranch(2, 49), 50),
+      'CHOICES_NOT_ALLOWED',
+      'Bab terakhir tidak memiliki pilihan.',
+    )
+  })
+
+  it('throws CHOICE_INVALID for malformed branch input', () => {
+    const invalid = validBranch()
+    invalid.choices[0].label = 'Lanjutkan'
+
+    const error = expectGatewayError(
+      () => validateChoiceBranch(invalid, 12),
+      'CHOICE_INVALID',
+    )
+    expect(error.errors?.join('\n')).toContain('CHOICE_GENERIC_OR_INTERNAL')
   })
 })
 

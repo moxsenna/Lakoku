@@ -12,6 +12,7 @@ import {
   type RouteChoiceEffect,
 } from '../story-engine/route-state'
 import { validateChoiceQuality } from '../story-engine/quality'
+import { GatewayError, scanForLeaks } from './safety'
 
 // ---------- Plan (WF step 2: Plan chapter) ----------
 
@@ -119,7 +120,6 @@ export type ChapterDraftParsed = z.infer<typeof ChapterDraftSchema>
 
 const SAFE_CHOICE_ID_PATTERN = /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/u
 const RUTE_PATTERN = /\brute\b/iu
-const INTERNAL_CHOICE_LEAK_PATTERN = /\b(?:prompts?|tokens?|models?|llms?|providers?|routes?)\b/iu
 
 const normalizedChoiceIdSchema = z.string()
   .trim()
@@ -172,7 +172,7 @@ function checkReaderFacingText(
   context: z.RefinementCtx,
   path: PropertyKey[],
 ): void {
-  if (INTERNAL_CHOICE_LEAK_PATTERN.test(value)) {
+  if (scanForLeaks(value).length > 0) {
     addChoiceIssue(
       context,
       path,
@@ -240,15 +240,6 @@ export const ChoiceBranchSchema = z.object({
     outcome.consequence.forEach((item, consequenceIndex) => {
       checkReaderFacingText(item, context, ['outcomes', index, 'consequence', consequenceIndex])
     })
-
-    if (outcome.isEnding) {
-      addChoiceIssue(
-        context,
-        ['outcomes', index, 'isEnding'],
-        'ENDING_NOT_ALLOWED',
-        'Choice outcomes cannot end the story in the current branch flow.',
-      )
-    }
   })
 
   const setsMatch = choiceIds.size === outcomeIds.size
@@ -291,32 +282,50 @@ export function parseChoiceBranch(input: unknown): ParseResult<ChoiceBranch> {
 export function validateChoiceBranch(
   input: unknown,
   chapterNumber: number,
-): ParseResult<ChoiceBranch> {
-  if (!Number.isInteger(chapterNumber) || chapterNumber < 1 || chapterNumber > 50) {
-    return {
-      ok: false,
-      errors: ['chapterNumber: CHAPTER_NUMBER_INVALID: Chapter number must be an integer from 1 through 50.'],
-    }
+): ChoiceBranch {
+  if (chapterNumber === 50) {
+    throw new GatewayError(
+      'Bab terakhir tidak memiliki pilihan.',
+      'CHOICES_NOT_ALLOWED',
+    )
   }
 
-  if (chapterNumber === 50) {
-    return {
-      ok: false,
-      errors: ['chapterNumber: CHOICES_NOT_ALLOWED: Chapter 50 is final and cannot contain choices.'],
-    }
+  if (!Number.isInteger(chapterNumber) || chapterNumber < 1 || chapterNumber > 50) {
+    throw new GatewayError(
+      'Cabang pilihan tidak valid.',
+      'CHOICE_INVALID',
+      ['chapterNumber: CHAPTER_NUMBER_INVALID: Chapter number must be an integer from 1 through 50.'],
+    )
   }
 
   const parsed = parseChoiceBranch(input)
-  if (!parsed.ok) return parsed
+  if (!parsed.ok) {
+    throw new GatewayError(
+      'Cabang pilihan tidak valid.',
+      'CHOICE_INVALID',
+      parsed.errors,
+    )
+  }
 
   const errors: string[] = []
-  const expectedNextChapter = chapterNumber + 1
   parsed.data.outcomes.forEach((outcome, index) => {
+    if (chapterNumber === 49) {
+      const isNormalContinuation = !outcome.isEnding && outcome.nextChapterNumber === 50
+      const isSpecialEnding = outcome.isEnding && outcome.nextChapterNumber === null
+      if (!isNormalContinuation && !isSpecialEnding) {
+        errors.push(
+          `outcomes.${index}: CHAPTER_49_OUTCOME_INVALID: Expected { nextChapterNumber: 50, isEnding: false } or { nextChapterNumber: null, isEnding: true }.`,
+        )
+      }
+      return
+    }
+
     if (outcome.isEnding) {
       errors.push(
-        `outcomes.${index}.isEnding: ENDING_NOT_ALLOWED: Choice outcomes cannot end the story before Chapter 50.`,
+        `outcomes.${index}.isEnding: ENDING_NOT_ALLOWED: Choice outcomes cannot end the story before Chapter 49.`,
       )
     }
+    const expectedNextChapter = chapterNumber + 1
     if (outcome.nextChapterNumber !== expectedNextChapter) {
       errors.push(
         `outcomes.${index}.nextChapterNumber: NEXT_CHAPTER_MISMATCH: Expected Chapter ${expectedNextChapter}.`,
@@ -324,7 +333,15 @@ export function validateChoiceBranch(
     }
   })
 
-  return errors.length > 0 ? { ok: false, errors } : parsed
+  if (errors.length > 0) {
+    throw new GatewayError(
+      'Cabang pilihan tidak valid.',
+      'CHOICE_INVALID',
+      errors,
+    )
+  }
+
+  return parsed.data
 }
 
 function issueToString(i: {

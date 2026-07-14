@@ -19,17 +19,9 @@ import {
   type GenerationProvider,
   type DraftDefect,
 } from './provider'
+import { GatewayError, scanForLeaks } from './safety'
 
-export class GatewayError extends Error {
-  constructor(
-    message: string,
-    readonly code: string,
-    readonly errors?: string[],
-  ) {
-    super(message)
-    this.name = 'GatewayError'
-  }
-}
+export { GatewayError, scanForLeaks } from './safety'
 
 export interface GatewayDeps {
   provider: GenerationProvider
@@ -71,26 +63,6 @@ export async function writeChapter(
 
 // ---------- Boundary consumer-safe ----------
 
-/**
- * Istilah yang TIDAK BOLEH bocor ke string yang dilihat pembaca
- * (ARCH §"reader only sees safe narrative language").
- */
-const FORBIDDEN_LEAK_PATTERNS: RegExp[] = [
-  /\bnarraza\b/i,
-  /\bprompt\b/i,
-  /\btoken(s)?\b/i,
-  /\bgpt[-\s]?\d/i,
-  /\bclaude\b/i,
-  /\bgemini\b/i,
-  /\bllm\b/i,
-  /\bmodel\s*id\b/i,
-  /\btemperature\b/i,
-  /\bsystem\s*prompt\b/i,
-  /\brag\b/i,
-  /\bembedding(s)?\b/i,
-  /\bprovider\b/i,
-]
-
 export interface ReaderSafeChapter {
   chapterNumber: number
   title: string
@@ -106,16 +78,6 @@ export function toReaderSafe(draft: ChapterDraftParsed): ReaderSafeChapter {
     paragraphs: draft.paragraphs,
     hasChoiceOrGate: draft.hasChoiceOrGate,
   }
-}
-
-/** Kembalikan daftar istilah bocor yang ditemukan pada teks (kosong = aman). */
-export function scanForLeaks(text: string): string[] {
-  const hits: string[] = []
-  for (const re of FORBIDDEN_LEAK_PATTERNS) {
-    const m = text.match(re)
-    if (m) hits.push(m[0])
-  }
-  return hits
 }
 
 /** Lempar bila payload aman-pembaca mengandung kebocoran istilah internal. */

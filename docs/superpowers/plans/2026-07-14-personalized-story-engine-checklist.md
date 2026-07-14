@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 6 / 28 tasks
-- **In progress:** Task 7 — plot-debt auditor and deterministic ending resolver
-- **Pending:** Task 8–28
-- **Current gate:** Chapter 36/41/45/48/50 debt boundaries and ending lock resolution
+- **Complete:** 7 / 28 tasks
+- **In progress:** Task 8 — chapter brief and deterministic quality gates
+- **Pending:** Task 9–28
+- **Current gate:** Chapter runway brief plus mobile-readable prose and choice quality validation
 
 ---
 
@@ -95,13 +95,13 @@
   - [ ] Deduplicate evidence.
   - [ ] Produce deterministic prompt summary.
 
-- [ ] 🔄 **Task 7: Plot-debt auditor and ending resolver**
+- [x] **Task 7: Plot-debt auditor and ending resolver**
   - [ ] Enforce chapter 36/41/45/48/50 boundaries.
   - [ ] Lock ending deterministically at Chapter 45.
   - [ ] Preserve locked ending through Chapter 50.
   - [ ] Add boundary and tie-breaking tests.
 
-- [ ] **Task 8: Chapter brief and deterministic quality gates**
+- [ ] 🔄 **Task 8: Chapter brief and deterministic quality gates**
   - [ ] Build chapter brief from contract, canon, route state, and prior choice.
   - [ ] Enforce conflict/thread/ending runway rules.
   - [ ] Add prose quality checks.

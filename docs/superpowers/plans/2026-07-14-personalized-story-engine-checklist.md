@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 18 / 28 tasks
+- **Complete:** 19 / 28 tasks
 - **In progress:** None
-- **Pending:** Task 19–28
-- **Next:** Task 19 — Atomic personalized choice service
+- **Pending:** Task 20, 22–28
+- **Next:** Task 20/22 after Worker B lands continuation; Task 25–27 available
 
 ---
 
@@ -213,12 +213,12 @@
   - [ ] Avoid duplicate generation promises.
   - [ ] Return optional `nextChapterReady`.
 
-- [ ] **Task 21: Exact per-chapter status endpoint**
-  - [ ] Check chapter existence first.
-  - [ ] Check exact active lease.
-  - [ ] Check latest exact failed attempt.
-  - [ ] Do not use story-level status as chapter truth.
-  - [ ] Authorize private story access.
+- [x] **Task 21: Exact per-chapter status endpoint**
+  - [x] Check chapter existence first.
+  - [x] Check exact active lease.
+  - [x] Check latest exact failed attempt.
+  - [x] Do not use story-level status as chapter truth.
+  - [x] Authorize private story access.
 
 - [ ] **Task 22: Reader polling and final chapter UI**
   - [ ] Poll pending personalized chapter status.

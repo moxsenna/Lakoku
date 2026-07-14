@@ -11,7 +11,7 @@ function resolve(
 ) {
   return resolveEnding({
     routeState: {},
-    contract: misteriDramaContract,
+    storyContract: misteriDramaContract,
     chapterNumber: 45,
     ...overrides,
   })
@@ -77,7 +77,7 @@ describe('resolveEnding', () => {
     expect(() => resolve({ routeState: { endingBias: { [firstEnding.key]: 1.5 } } })).toThrow(z.ZodError)
     expect(() => resolve({ chapterNumber: 51 })).toThrow(z.ZodError)
     expect(() => resolve({
-      contract: {
+      storyContract: {
         ...structuredClone(misteriDramaContract),
         endingCandidates: [],
       } as unknown as StoryContract,
@@ -86,16 +86,16 @@ describe('resolveEnding', () => {
 
   it('returns cloned closure arrays and does not mutate inputs', () => {
     const routeState = { endingBias: { [firstEnding.key]: 9 } }
-    const contract = structuredClone(misteriDramaContract)
+    const storyContract = structuredClone(misteriDramaContract)
     const routeBefore = structuredClone(routeState)
-    const contractBefore = structuredClone(contract)
+    const contractBefore = structuredClone(storyContract)
 
-    const resolved = resolve({ routeState, contract })
+    const resolved = resolve({ routeState, storyContract })
     resolved.requiredClosure.push('Mutation outside resolver.')
 
     expect(routeState).toEqual(routeBefore)
-    expect(contract).toEqual(contractBefore)
-    expect(contract.endingCandidates[0].requiredClosure).toEqual(
+    expect(storyContract).toEqual(contractBefore)
+    expect(storyContract.endingCandidates[0].requiredClosure).toEqual(
       firstEnding.requiredClosure,
     )
   })

@@ -4,7 +4,7 @@ import { NO_NEW_THREAD_FROM_CHAPTER } from '@/lib/narrative/threads'
 import { fantasiPetualanganContract } from '@/fixtures/contracts/fantasi-petualangan'
 import { misteriDramaContract } from '@/fixtures/contracts/misteri-drama'
 import { romansaDramaContract } from '@/fixtures/contracts/romansa-drama'
-import { auditPlotDebt } from '@/lib/story-engine/plot-debt'
+import { auditPlotDebts } from '@/lib/story-engine/plot-debt'
 import type { StoryContract } from '@/lib/story-engine/story-contract'
 
 function contractWithDebts(
@@ -27,11 +27,11 @@ const mainMystery = {
 
 function audit(
   chapterNumber: number,
-  overrides: Partial<Parameters<typeof auditPlotDebt>[0]> = {},
+  overrides: Partial<Parameters<typeof auditPlotDebts>[0]> = {},
 ) {
-  return auditPlotDebt({
+  return auditPlotDebts({
     chapterNumber,
-    contract: contractWithDebts([{ ...mainMystery, status: 'closed' }]),
+    debts: [{ ...mainMystery, status: 'closed' }],
     opensMajorMystery: false,
     opensNewThread: false,
     endingLocked: chapterNumber >= 45,
@@ -40,7 +40,7 @@ function audit(
   })
 }
 
-describe('auditPlotDebt', () => {
+describe('auditPlotDebts', () => {
   it('uses contract closure runway aligned with narrative boundaries', () => {
     expect(misteriDramaContract.closureRunway.noNewThreadAfter + 1).toBe(
       NO_NEW_THREAD_FROM_CHAPTER,
@@ -73,8 +73,8 @@ describe('auditPlotDebt', () => {
   it('rejects unresolved main_mystery from chapter 48', () => {
     const contract = contractWithDebts([mainMystery])
 
-    expect(audit(47, { contract }).findings).toEqual([])
-    expect(audit(48, { contract }).findings.map((finding) => finding.code)).toEqual([
+    expect(audit(47, { debts: contract.plotDebts }).findings).toEqual([])
+    expect(audit(48, { debts: contract.plotDebts }).findings.map((finding) => finding.code)).toEqual([
       'MAIN_MYSTERY_OPEN',
     ])
   })
@@ -84,7 +84,7 @@ describe('auditPlotDebt', () => {
     romansaDramaContract,
     fantasiPetualanganContract,
   ])('rejects unresolved main_mystery at chapter 48 in $genre fixture', (contract) => {
-    expect(audit(48, { contract }).findings.map((finding) => finding.code)).toContain(
+    expect(audit(48, { debts: contract.plotDebts }).findings.map((finding) => finding.code)).toContain(
       'MAIN_MYSTERY_OPEN',
     )
   })
@@ -95,7 +95,7 @@ describe('auditPlotDebt', () => {
       { ...mainMystery, id: 'side_debt', status: 'progressing' },
     ])
 
-    expect(audit(50, { contract, opensNewConflict: true }).findings.map(
+    expect(audit(50, { debts: contract.plotDebts, opensNewConflict: true }).findings.map(
       (finding) => finding.code,
     )).toEqual(['OPEN_CONFLICT_AT_END', 'NEW_CONFLICT_AT_END'])
   })
@@ -107,7 +107,7 @@ describe('auditPlotDebt', () => {
     ])
 
     const result = audit(50, {
-      contract,
+      debts: contract.plotDebts,
       opensMajorMystery: true,
       opensNewThread: true,
       endingLocked: false,
@@ -137,7 +137,7 @@ describe('auditPlotDebt', () => {
     const contract = contractWithDebts([mainMystery])
     const input = {
       chapterNumber: 48,
-      contract,
+      debts: contract.plotDebts,
       opensMajorMystery: false,
       opensNewThread: false,
       endingLocked: true,
@@ -145,15 +145,28 @@ describe('auditPlotDebt', () => {
     }
     const before = structuredClone(input)
 
-    auditPlotDebt(input)
+    auditPlotDebts(input)
 
     expect(input).toEqual(before)
   })
 
-  it('throws for invalid chapter or contract input', () => {
+  it('returns only public finding fields without leaking aggregate debt IDs', () => {
+    const debts = [
+      mainMystery,
+      { ...mainMystery, id: 'side_debt', question: 'Apa utang sampingnya?' },
+    ]
+
+    expect(audit(50, { debts }).findings).toEqual([
+      { code: 'MAIN_MYSTERY_OPEN', debtId: 'main_mystery' },
+      { code: 'OPEN_CONFLICT_AT_END' },
+    ])
+  })
+
+  it('throws for invalid chapter or debts input', () => {
     expect(() => audit(0)).toThrow()
+    expect(() => audit(50, { debts: [] })).toThrow()
     expect(() => audit(50, {
-      contract: { ...structuredClone(misteriDramaContract), totalChapters: 49 } as unknown as StoryContract,
-    })).toThrow()
+      debts: [{ ...mainMystery, id: 'side_debt' }],
+    })).toThrow('Plot debts must contain exactly one main_mystery debt.')
   })
 })

@@ -14,14 +14,14 @@ export interface EndingResolution {
 
 export interface ResolveEndingInput {
   routeState: RouteState | unknown
-  contract: StoryContract
+  storyContract: StoryContract
   chapterNumber: number
   lockedEndingKey?: string | null
 }
 
 const ResolveEndingInputSchema = z.object({
   routeState: RouteStateSchema,
-  contract: StoryContractSchema,
+  storyContract: StoryContractSchema,
   chapterNumber: z.number().int().min(1).max(50),
   lockedEndingKey: z.string().trim().min(1).max(80).nullable().optional(),
 }).strict()
@@ -36,16 +36,16 @@ function publicEnding(candidate: EndingCandidate): EndingResolution {
 
 export function resolveEnding(input: ResolveEndingInput): EndingResolution {
   const parsed = ResolveEndingInputSchema.parse(input)
-  const { contract, chapterNumber, lockedEndingKey, routeState } = parsed
+  const { storyContract, chapterNumber, lockedEndingKey, routeState } = parsed
 
-  if (chapterNumber < contract.closureRunway.endingLockChapter) {
+  if (chapterNumber < storyContract.closureRunway.endingLockChapter) {
     throw new Error(
-      `Ending cannot lock before chapter ${contract.closureRunway.endingLockChapter}.`,
+      `Ending cannot lock before chapter ${storyContract.closureRunway.endingLockChapter}.`,
     )
   }
 
   if (lockedEndingKey != null) {
-    const locked = contract.endingCandidates.find(
+    const locked = storyContract.endingCandidates.find(
       (candidate) => candidate.key === lockedEndingKey,
     )
     if (!locked) {
@@ -54,7 +54,7 @@ export function resolveEnding(input: ResolveEndingInput): EndingResolution {
     return publicEnding(locked)
   }
 
-  const ranked = contract.endingCandidates
+  const ranked = storyContract.endingCandidates
     .map((candidate, index) => ({
       candidate,
       index,

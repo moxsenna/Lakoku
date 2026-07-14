@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import {
-  StoryContractSchema,
+  PlotDebtSchema,
   type PlotDebt,
   type StoryContract,
 } from './story-contract'
@@ -18,8 +18,7 @@ export type PlotDebtFindingCode = z.infer<typeof PlotDebtFindingCodeSchema>
 
 export interface PlotDebtFinding {
   code: PlotDebtFindingCode
-  message: string
-  debtIds?: string[]
+  debtId?: string
 }
 
 export interface PlotDebtAuditResult {
@@ -29,7 +28,7 @@ export interface PlotDebtAuditResult {
 
 export interface PlotDebtAuditInput {
   chapterNumber: number
-  contract: StoryContract
+  debts: StoryContract['plotDebts']
   opensMajorMystery: boolean
   opensNewThread: boolean
   endingLocked: boolean
@@ -38,51 +37,57 @@ export interface PlotDebtAuditInput {
 
 const PlotDebtAuditInputSchema = z.object({
   chapterNumber: z.number().int().min(1).max(50),
-  contract: StoryContractSchema,
+  debts: z.array(PlotDebtSchema).min(1).max(20).superRefine((debts, context) => {
+    if (debts.filter((debt) => debt.id === 'main_mystery').length !== 1) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Plot debts must contain exactly one main_mystery debt.',
+      })
+    }
+  }),
   opensMajorMystery: z.boolean(),
   opensNewThread: z.boolean(),
   endingLocked: z.boolean(),
   opensNewConflict: z.boolean(),
 }).strict()
 
+const CLOSURE_RUNWAY = {
+  noNewMajorConflictAfter: 35,
+  noNewThreadAfter: 40,
+  endingLockChapter: 45,
+  mainMysteryResolveBy: 48,
+  finalEndingChapter: 50,
+} as const
+
 function unresolved(debt: PlotDebt): boolean {
   return debt.status !== 'closed'
 }
 
-export function auditPlotDebt(input: PlotDebtAuditInput): PlotDebtAuditResult {
+export function auditPlotDebts(input: PlotDebtAuditInput): PlotDebtAuditResult {
   const parsed = PlotDebtAuditInputSchema.parse(input)
-  const { chapterNumber, contract } = parsed
-  const { closureRunway } = contract
+  const { chapterNumber, debts } = parsed
+  const closureRunway = CLOSURE_RUNWAY
   const findings: PlotDebtFinding[] = []
 
   if (
     parsed.opensMajorMystery
     && chapterNumber > closureRunway.noNewMajorConflictAfter
   ) {
-    findings.push({
-      code: 'MAJOR_MYSTERY_AFTER_35',
-      message: `Chapter ${chapterNumber} cannot open a major mystery after chapter ${closureRunway.noNewMajorConflictAfter}.`,
-    })
+    findings.push({ code: 'MAJOR_MYSTERY_AFTER_35' })
   }
 
   if (parsed.opensNewThread && chapterNumber > closureRunway.noNewThreadAfter) {
-    findings.push({
-      code: 'THREAD_AFTER_40',
-      message: `Chapter ${chapterNumber} cannot open a thread after chapter ${closureRunway.noNewThreadAfter}.`,
-    })
+    findings.push({ code: 'THREAD_AFTER_40' })
   }
 
   if (
     chapterNumber >= closureRunway.endingLockChapter
     && !parsed.endingLocked
   ) {
-    findings.push({
-      code: 'ENDING_NOT_LOCKED',
-      message: `Ending must be locked from chapter ${closureRunway.endingLockChapter}.`,
-    })
+    findings.push({ code: 'ENDING_NOT_LOCKED' })
   }
 
-  const openMainMystery = contract.plotDebts.find(
+  const openMainMystery = debts.find(
     (debt) => debt.id === 'main_mystery' && unresolved(debt),
   )
   if (
@@ -91,25 +96,16 @@ export function auditPlotDebt(input: PlotDebtAuditInput): PlotDebtAuditResult {
   ) {
     findings.push({
       code: 'MAIN_MYSTERY_OPEN',
-      message: `Main mystery must be closed by chapter ${closureRunway.mainMysteryResolveBy}.`,
-      debtIds: [openMainMystery.id],
+      debtId: openMainMystery.id,
     })
   }
 
   if (chapterNumber === closureRunway.finalEndingChapter) {
-    const openDebtIds = contract.plotDebts.filter(unresolved).map((debt) => debt.id)
-    if (openDebtIds.length > 0 || parsed.opensNewConflict) {
-      findings.push({
-        code: 'OPEN_CONFLICT_AT_END',
-        message: `Chapter ${closureRunway.finalEndingChapter} cannot end with open plot debts or conflicts.`,
-        ...(openDebtIds.length > 0 ? { debtIds: openDebtIds } : {}),
-      })
+    if (debts.some(unresolved) || parsed.opensNewConflict) {
+      findings.push({ code: 'OPEN_CONFLICT_AT_END' })
     }
     if (parsed.opensNewConflict) {
-      findings.push({
-        code: 'NEW_CONFLICT_AT_END',
-        message: `Chapter ${closureRunway.finalEndingChapter} cannot open a new conflict.`,
-      })
+      findings.push({ code: 'NEW_CONFLICT_AT_END' })
     }
   }
 

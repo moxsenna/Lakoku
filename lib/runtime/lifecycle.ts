@@ -96,10 +96,10 @@ export async function publishChapterV2(
   input: PublishChapterV2Input,
 ): Promise<PublishResult> {
   const outcomes = input.outcomes.map((outcome) => ({
-    choice_id: outcome.choiceId,
+    choiceId: outcome.choiceId,
     consequence: outcome.consequence,
-    next_chapter_number: outcome.nextChapterNumber,
-    is_ending: outcome.isEnding,
+    nextChapterNumber: outcome.nextChapterNumber,
+    isEnding: outcome.isEnding,
     effect_json: ChoiceEffectSchema.parse(outcome.effect),
     choice_kind: outcome.choiceKind,
   }))

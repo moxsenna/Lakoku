@@ -15,7 +15,7 @@ begin
 end
 $$;
 
-select plan(36);
+select plan(38);
 
 -- Fixed UUIDs and story IDs keep fixtures deterministic. Transaction rollback leaves no data.
 insert into auth.users (
@@ -316,9 +316,33 @@ select is(
 );
 reset role;
 
-select skip(
-  'publish_chapter_v2 added after linked RPC derivation; Task 12 replaces skip with role EXECUTE assertions',
-  1
+select ok(
+  not has_function_privilege(
+    'anon',
+    'public.publish_chapter_v2(text,integer,text,jsonb,text,jsonb,jsonb,uuid,text)',
+    'EXECUTE'
+  ) and not has_function_privilege(
+    'authenticated',
+    'public.publish_chapter_v2(text,integer,text,jsonb,text,jsonb,jsonb,uuid,text)',
+    'EXECUTE'
+  ),
+  'anon and authenticated cannot execute publish_chapter_v2'
+);
+select ok(
+  has_function_privilege(
+    'service_role',
+    'public.publish_chapter_v2(text,integer,text,jsonb,text,jsonb,jsonb,uuid,text)',
+    'EXECUTE'
+  ),
+  'service_role can execute publish_chapter_v2'
+);
+select ok(
+  not has_function_privilege(
+    'public',
+    'public.publish_chapter_v2(text,integer,text,jsonb,text,jsonb,jsonb,uuid,text)',
+    'EXECUTE'
+  ),
+  'PUBLIC cannot execute publish_chapter_v2'
 );
 
 select * from finish();

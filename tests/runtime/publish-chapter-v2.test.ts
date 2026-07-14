@@ -92,10 +92,10 @@ describe('publishChapterV2', () => {
       ],
       p_outcomes: [
         {
-          choice_id: 'open-door',
+          choiceId: 'open-door',
           consequence: ['Raka menemukan surat lama.'],
-          next_chapter_number: 13,
-          is_ending: false,
+          nextChapterNumber: 13,
+          isEnding: false,
           effect_json: {
             routeDeltas: { truth: 1 },
             trustDeltas: { Sari: 2 },
@@ -107,10 +107,10 @@ describe('publishChapterV2', () => {
           choice_kind: 'normal',
         },
         {
-          choice_id: 'stop-guard',
+          choiceId: 'stop-guard',
           consequence: ['Penjaga menutup jalan.'],
-          next_chapter_number: 13,
-          is_ending: false,
+          nextChapterNumber: 13,
+          isEnding: false,
           effect_json: {
             routeDeltas: {},
             trustDeltas: {},
@@ -152,9 +152,9 @@ describe('publishChapterV2', () => {
 
     expect(rpc).toHaveBeenCalledWith('publish_chapter_v2', expect.objectContaining({
       p_outcomes: [expect.objectContaining({
-        choice_id: 'leave',
-        next_chapter_number: null,
-        is_ending: true,
+        choiceId: 'leave',
+        nextChapterNumber: null,
+        isEnding: true,
         choice_kind: 'special_bad_ending',
       })],
     }))
@@ -175,7 +175,7 @@ describe('publishChapterV2', () => {
       choicePrompt: null,
       choices,
       outcomes: [],
-      leaseId: null,
+      leaseId: 'lease-50',
       idempotencyKey: `publish-50-${choices === null ? 'null' : 'empty'}`,
     })
 
@@ -187,7 +187,7 @@ describe('publishChapterV2', () => {
       p_choice_prompt: null,
       p_choices: choices,
       p_outcomes: [],
-      p_lease_id: null,
+      p_lease_id: 'lease-50',
       p_idempotency_key: `publish-50-${choices === null ? 'null' : 'empty'}`,
     })
   })

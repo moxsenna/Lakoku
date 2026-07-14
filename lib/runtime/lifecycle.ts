@@ -47,16 +47,8 @@ export interface PublishOutcomeV2 extends PublishOutcome {
   choiceKind: PublishChoiceKind
 }
 
-export interface PublishChapterV2Input {
-  storyId: string
-  chapterNumber: number
-  title: string
-  paragraphs: string[]
-  choicePrompt: string | null
-  choices: Array<{ id: string; label: string; hint?: string }> | null
+export interface PublishChapterV2Input extends Omit<PublishChapterInput, 'outcomes'> {
   outcomes: PublishOutcomeV2[]
-  leaseId: string | null
-  idempotencyKey: string
 }
 
 /** Ambil lease generasi (idempoten). Menolak bila sudah ada generasi aktif. */

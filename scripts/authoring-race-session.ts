@@ -92,6 +92,18 @@ function psqlArgs(container: string, variables: Record<string, string>): string[
   return args
 }
 
+function localMarkerPrelude(): string {
+  return `set lakoku.test_target = 'local-cli';
+do $$
+begin
+  if current_setting('lakoku.test_target', true) <> 'local-cli' then
+    raise exception 'local test target marker unavailable';
+  end if;
+end
+$$;
+`
+}
+
 export function execLocalPsql(
   target: Pick<RaceTarget, 'container' | 'context'>,
   sql: string,
@@ -100,7 +112,7 @@ export function execLocalPsql(
 ): string {
   try {
     return execFileSync('docker', psqlArgs(target.container, variables), {
-      input: sql,
+      input: `${localMarkerPrelude()}${sql}`,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: timeoutMs,
@@ -147,7 +159,7 @@ export function verifyLocalRaceTarget(context: string): RaceTarget {
 }
 
 function sessionPrelude(): string {
-  return `set application_name = :'race_application_name';
+  return `${localMarkerPrelude()}set application_name = :'race_application_name';
 set statement_timeout = '10s';
 set lock_timeout = '3s';
 set idle_in_transaction_session_timeout = '5s';

@@ -28,10 +28,18 @@ describe('authoring race lifecycle harnesses', () => {
     expect(source).not.toContain('if (running.backendPid === null) return')
   })
 
+  it('sets and verifies local marker inside every privileged psql connection', () => {
+    const source = readScript('authoring-race-session.ts')
+
+    expect(source).toContain("set lakoku.test_target = 'local-cli';")
+    expect(source).toContain("current_setting('lakoku.test_target', true) <> 'local-cli'")
+  })
+
   it.each([
     'authoring-race-cleanup-failure.ts',
     'authoring-story-claim-race.ts',
     'authoring-story-bible-race.ts',
+    'publish-chapter-v2-race.ts',
   ])('enters cleanup scope before setup in %s', (name) => {
     const source = readScript(name)
     const main = source.slice(source.indexOf('async function main()'))

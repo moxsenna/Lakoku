@@ -13,6 +13,7 @@
 import type { CanonSnapshot, ChapterBlueprint, Finding } from '@lakoku/narrative-core'
 import type { ChapterBrief, ChoiceHistoryEntry } from '../story-engine/chapter-brief'
 import type { RouteState } from '../story-engine/route-state'
+import type { TasteProfile } from '../taste-profile/schema'
 import type { ChapterDraftParsed } from './schemas'
 
 export interface PlanInput {
@@ -52,6 +53,12 @@ export interface ChoiceInput {
 }
 
 /** Proyeksi ketat dan terbatas yang menjadi satu-satunya input provider pilihan. */
+export interface StoryContractInput {
+  storyId: string
+  tasteJson: TasteProfile
+  repairErrors?: string[]
+}
+
 export interface ChoiceProviderInput {
   storyId: string
   currentChapter: number
@@ -95,6 +102,7 @@ export interface GenerationProvider {
   generatePlan(input: PlanInput): Promise<unknown>
   writeChapter(input: WriteInput): Promise<unknown>
   generateChoices?(input: ChoiceProviderInput): Promise<unknown>
+  generateStoryContract?(input: StoryContractInput): Promise<unknown>
 }
 
 /** Policy runtime generasi (target kata & scene). Diambil dari generation_policy DB. */

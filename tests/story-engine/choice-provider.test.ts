@@ -289,6 +289,7 @@ describe('createGatewayProvider choice adapter', () => {
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     for (const key of envKeys) {
       const value = originalEnv.get(key)
       if (value === undefined) delete process.env[key]
@@ -447,6 +448,49 @@ describe('createGatewayProvider choice adapter', () => {
       totalTokens: 200,
     }))
     logSpy.mockRestore()
+  })
+
+  it.each(['usage rejection', 'logging throw'] as const)(
+    'keeps successful choice text when telemetry has %s',
+    async (failure) => {
+      const branch = validBranch()
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {
+        if (failure === 'logging throw') throw new Error('telemetry sink unavailable')
+      })
+      streamTextMock.mockReturnValue({
+        text: Promise.resolve(JSON.stringify(branch)),
+        usage: failure === 'usage rejection'
+          ? Promise.reject(new Error('usage unavailable'))
+          : Promise.resolve({ totalTokens: 12 }),
+      })
+      const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+      const provider = createGatewayProvider()
+
+      await expect(generateChoiceBranch({ provider }, choiceInput())).resolves.toEqual(branch)
+      expect(streamTextMock).toHaveBeenCalledOnce()
+      logSpy.mockRestore()
+    },
+  )
+
+  it('handles choice usage rejection before delayed successful text settles', async () => {
+    const branch = validBranch()
+    let resolveText: ((text: string) => void) | undefined
+    const text = new Promise<string>((resolve) => {
+      resolveText = resolve
+    })
+    streamTextMock.mockReturnValue({
+      text,
+      usage: Promise.reject(new Error('choice usage unavailable immediately')),
+    })
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider()
+
+    const generation = generateChoiceBranch({ provider }, choiceInput())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    resolveText?.(JSON.stringify(branch))
+
+    await expect(generation).resolves.toEqual(branch)
+    expect(streamTextMock).toHaveBeenCalledOnce()
   })
 
   it('falls back to chapter route when no choices route is configured', async () => {

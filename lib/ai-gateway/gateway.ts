@@ -25,6 +25,7 @@ import {
   type ChoiceInput,
   type ChoiceProviderInput,
   type LastParagraphs,
+  type StoryContractInput,
 } from './provider'
 import { ChapterBriefSchema, ChoiceHistoryEntrySchema } from '../story-engine/chapter-brief'
 import { RouteStateSchema } from '../story-engine/route-state'
@@ -34,6 +35,21 @@ export { GatewayError, scanForLeaks } from './safety'
 
 export interface GatewayDeps {
   provider: GenerationProvider
+}
+
+/** Teruskan generasi kontrak mentah; validasi dan repair dimiliki caller. */
+export async function generateStoryContractRaw(
+  deps: GatewayDeps,
+  input: StoryContractInput,
+): Promise<unknown> {
+  const generateStoryContract = deps.provider.generateStoryContract
+  if (!generateStoryContract) {
+    throw new GatewayError(
+      'Provider kontrak cerita tidak tersedia.',
+      'CONTRACT_PROVIDER_UNAVAILABLE',
+    )
+  }
+  return generateStoryContract.call(deps.provider, input)
 }
 
 export async function generatePlan(

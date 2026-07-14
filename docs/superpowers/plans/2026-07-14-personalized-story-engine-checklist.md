@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 12 / 28 tasks
-- **In progress:** Task 13 — Phase 1–3 integration gate
+- **Complete:** 13 / 28 tasks
+- **In progress:** None
 - **Pending:** Task 14–28
-- **Current gate:** Combined story engine, dynamic choices, atomic publish, RLS/privacy, legacy compatibility, and local DB concurrency
+- **Next:** Task 14 — Story-contract provider gateway
 
 ---
 
@@ -147,13 +147,13 @@
   - [ ] Restrict execution to service role.
   - [ ] Prove rollback and idempotency with pgTAP.
 
-- [ ] 🔄 **Task 13: Phase 1–3 integration gate**
-  - [ ] Run focused pure-engine/runtime tests.
-  - [ ] Run all unit tests.
-  - [ ] Run typecheck.
-  - [ ] Run fresh local DB tests.
-  - [ ] Verify no reader wildcard/internal-field leaks.
-  - [ ] Verify old standard generation remains unchanged.
+- [x] **Task 13: Phase 1–3 integration gate**
+  - [x] Run focused pure-engine/runtime tests.
+  - [x] Run all unit tests.
+  - [x] Run typecheck.
+  - [x] Run fresh local DB tests.
+  - [x] Verify no reader wildcard/internal-field leaks.
+  - [x] Verify old standard generation remains unchanged.
 
 ---
 

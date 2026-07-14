@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 14 / 28 tasks
+- **Complete:** 15 / 28 tasks
 - **In progress:** None
-- **Pending:** Task 15–28
-- **Next:** Task 15 — Resilient contract generation
+- **Pending:** Task 16–28
+- **Next:** Task 16 — Contract persistence and canon bootstrap
 
 ---
 
@@ -164,12 +164,12 @@
   - [x] Reuse existing model routing/logging/cost path.
   - [x] Preserve legacy provider compatibility.
 
-- [ ] **Task 15: Resilient contract generation**
-  - [ ] Enforce maximum 30-second generation timeout.
-  - [ ] Permit exactly one repair attempt.
-  - [ ] Fall back to validated fixture.
-  - [ ] Record `contract_source`.
-  - [ ] Never fail story creation due only to provider failure.
+- [x] **Task 15: Resilient contract generation**
+  - [x] Enforce maximum 30-second generation timeout.
+  - [x] Permit exactly one repair attempt.
+  - [x] Fall back to validated fixture.
+  - [x] Record `contract_source`.
+  - [x] Never fail story creation due only to provider failure.
 
 - [ ] **Task 16: Contract persistence and canon bootstrap**
   - [ ] Persist contract fields in approved columns.

@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 17 / 28 tasks
+- **Complete:** 18 / 28 tasks
 - **In progress:** None
-- **Pending:** Task 18–28
-- **Next:** Task 18 — Authenticated idempotent personalized creation endpoint
+- **Pending:** Task 19–28
+- **Next:** Task 19 — Atomic personalized choice service
 
 ---
 
@@ -185,15 +185,15 @@
   - [x] Skip choices for Chapter 50.
   - [x] Mark reader complete only after Chapter 50 publish succeeds.
 
-- [ ] **Task 18: Authenticated idempotent personalized creation endpoint**
-  - [ ] Require authenticated user.
-  - [ ] Require strong `Idempotency-Key`.
-  - [ ] Load taste profile.
-  - [ ] Create private owned story shell.
-  - [ ] Generate/fallback contract.
-  - [ ] Bootstrap canon before generation.
-  - [ ] Generate Chapter 1 only.
-  - [ ] Return reader-safe story ID and redirect.
+- [x] **Task 18: Authenticated idempotent personalized creation endpoint**
+  - [x] Require authenticated user.
+  - [x] Require strong `Idempotency-Key`.
+  - [x] Load taste profile.
+  - [x] Create private owned story shell.
+  - [x] Generate/fallback contract.
+  - [x] Bootstrap canon before generation.
+  - [x] Generate Chapter 1 only.
+  - [x] Return reader-safe story ID and redirect.
 
 ---
 

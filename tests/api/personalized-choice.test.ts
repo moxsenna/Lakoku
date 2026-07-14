@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
   cookieFactory: vi.fn(),
   adminFactory: vi.fn(),
+  continuePersonalizedGeneration: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
@@ -20,6 +21,9 @@ vi.mock('@/lib/api/user-state', () => ({
 }))
 vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.cookieFactory }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@/lib/api/generation-continuation.server', () => ({
+  continuePersonalizedGeneration: mocks.continuePersonalizedGeneration,
+}))
 
 type DbResult = { data: unknown; error: { message: string; code?: string } | null }
 type DbCall = { table?: string; method: string; args: unknown[] }
@@ -210,6 +214,7 @@ beforeEach(() => {
     choices: [{ id: 'standard-choice', label: 'Pilih standar' }],
   })
   mocks.applyChoiceToUserState.mockResolvedValue(undefined)
+  mocks.continuePersonalizedGeneration.mockResolvedValue({ nextChapterReady: true })
 })
 
 describe('applyPersonalizedChoice', () => {
@@ -532,9 +537,15 @@ describe('personalized choice route dispatch', () => {
     const body = await response.json()
 
     expect(response.status).toBe(200)
-    expect(body).toEqual({ outcome: publicOutcome })
+    expect(body).toEqual({ outcome: publicOutcome, nextChapterReady: true })
     expect(JSON.stringify(body)).not.toMatch(
       /effect_json|choice_kind|route_state|choice_history|locked_ending_key|owner_user_id|story_mode|expected_state|ledger|replayed/,
     )
+    expect(mocks.continuePersonalizedGeneration).toHaveBeenCalledWith({
+      storyId,
+      userId,
+      chapterNumber: 2,
+      triggerChoiceId: 'private-choice',
+    })
   })
 })

@@ -6,6 +6,7 @@ import {
   applyPersonalizedChoice,
   PersonalizedChoiceError,
 } from '@/lib/api/personalized-choice.server'
+import { continuePersonalizedGeneration } from '@/lib/api/generation-continuation.server'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
 
 /**
@@ -41,6 +42,23 @@ export async function POST(
           choiceId,
           idempotencyKey: req.headers.get('Idempotency-Key') ?? '',
         })
+
+        const nextChapterNumber = result.nextChapterNumber ?? result.outcome.nextChapterNumber
+        if (
+          !result.outcome.isEnding
+          && typeof nextChapterNumber === 'number'
+          && Number.isInteger(nextChapterNumber)
+          && nextChapterNumber > 0
+        ) {
+          const { nextChapterReady } = await continuePersonalizedGeneration({
+            storyId: id,
+            userId: user.id,
+            chapterNumber: nextChapterNumber,
+            triggerChoiceId: choiceId,
+          })
+          return NextResponse.json({ outcome: result.outcome, nextChapterReady })
+        }
+
         return NextResponse.json({ outcome: result.outcome })
       } catch (error) {
         if (error instanceof PersonalizedChoiceError) {

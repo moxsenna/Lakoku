@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 19 / 28 tasks
-- **In progress:** None
-- **Pending:** Task 20, 22–28
-- **Next:** Task 20/22 after Worker B lands continuation; Task 25–27 available
+- **Complete:** 20 / 28 tasks
+- **In progress:** Task 22 — Reader polling and final chapter UI
+- **Pending:** Task 20, 23–28
+- **Next:** Complete Task 22; Worker B resolves Task 20 durability blocker; Task 25–27 available
 
 ---
 
@@ -199,13 +199,13 @@
 
 ## Phase 5 — Choice Effects, Continuation, Status, and Reader Polling
 
-- [ ] **Task 19: Atomic personalized choice service**
-  - [ ] Authorize owner before internal outcome lookup.
-  - [ ] Merge route effect safely.
-  - [ ] Append summarized `choice_history`.
-  - [ ] Preserve reader-safe `jejak`.
-  - [ ] Make replay idempotent.
-  - [ ] Reject conflicting second choice.
+- [x] **Task 19: Atomic personalized choice service**
+  - [x] Authorize owner before internal outcome lookup.
+  - [x] Merge route effect safely.
+  - [x] Append summarized `choice_history`.
+  - [x] Preserve reader-safe `jejak`.
+  - [x] Make replay idempotent.
+  - [x] Reject conflicting second choice.
 
 - [ ] **Task 20: Durable generation continuation**
   - [ ] Verify runtime durability support.

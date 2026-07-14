@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 13 / 28 tasks
+- **Complete:** 14 / 28 tasks
 - **In progress:** None
-- **Pending:** Task 14–28
-- **Next:** Task 14 — Story-contract provider gateway
+- **Pending:** Task 15–28
+- **Next:** Task 15 — Resilient contract generation
 
 ---
 
@@ -159,10 +159,10 @@
 
 ## Phase 4 — Contract Generation, Bootstrap, Runtime, and Creation
 
-- [ ] **Task 14: Story-contract provider gateway**
-  - [ ] Add optional raw contract-generation provider method.
-  - [ ] Reuse existing model routing/logging/cost path.
-  - [ ] Preserve legacy provider compatibility.
+- [x] **Task 14: Story-contract provider gateway**
+  - [x] Add optional raw contract-generation provider method.
+  - [x] Reuse existing model routing/logging/cost path.
+  - [x] Preserve legacy provider compatibility.
 
 - [ ] **Task 15: Resilient contract generation**
   - [ ] Enforce maximum 30-second generation timeout.

@@ -36,7 +36,7 @@ export const romansaDramaContract = buildContractFixture({
   ],
   plotDebts: [
     {
-      id: 'debt:unread-letter',
+      id: 'main_mystery',
       question: 'Apa isi surat yang Aluna titipkan sebelum meninggalkan Raka?',
       introducedAt: 2,
       mustProgressBy: [12, 32],

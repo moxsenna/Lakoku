@@ -72,7 +72,7 @@ describe('StoryContractSchema fixtures', () => {
         { key: 'mercy', name: 'Belas Kasih', condition: 'Nara memahami motif pelaku.', requiredClosure: ['Korban mendapat pemulihan.'] },
       ],
       plotDebts: [
-        { id: 'debt:first', question: 'Siapa pemalsu bukti?', introducedAt: 1, mustProgressBy: [12, 32], mustCloseBy: 48, status: 'open' },
+        { id: 'main_mystery', question: 'Siapa pemalsu bukti?', introducedAt: 1, mustProgressBy: [12, 32], mustCloseBy: 48, status: 'open' },
       ],
       revealRunway: [
         { secretId: 'secret:first', revealGateChapter: 20 },
@@ -103,7 +103,7 @@ describe('StoryContractSchema fixtures', () => {
         { key: 'leave', name: 'Jalan Baru', condition: 'Saka melepaskan warisan.', requiredClosure: ['Saka memilih masa depan.'] },
       ],
       plotDebts: [
-        { id: 'debt:second', question: 'Siapa yang menghapus nama ibu?', introducedAt: 2, mustProgressBy: [20, 40], mustCloseBy: 48, status: 'progressing' },
+        { id: 'main_mystery', question: 'Siapa yang menghapus nama ibu?', introducedAt: 2, mustProgressBy: [20, 40], mustCloseBy: 48, status: 'progressing' },
       ],
       revealRunway: [
         { secretId: 'secret:third', revealGateChapter: 20 },
@@ -150,6 +150,7 @@ describe('StoryContractSchema rejection', () => {
     ['unknown nested field', (input: any) => { input.mainCharacter.providerTrace = 'hidden' }],
     ['duplicate ending keys', (input: any) => { input.endingCandidates[1].key = input.endingCandidates[0].key }],
     ['duplicate debt IDs', (input: any) => { input.plotDebts[1].id = input.plotDebts[0].id }],
+    ['missing main_mystery debt', (input: any) => { input.plotDebts[0].id = 'debt:replacement' }],
     ['duplicate reveal secrets', (input: any) => { input.revealRunway[1].secretId = input.revealRunway[0].secretId }],
     ['unsorted debt progression', (input: any) => { input.plotDebts[0].mustProgressBy = [32, 12] }],
     ['duplicate debt progression', (input: any) => { input.plotDebts[0].mustProgressBy = [12, 12] }],

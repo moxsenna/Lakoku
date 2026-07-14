@@ -134,6 +134,13 @@ export const StoryContractSchema = z.object({
     'Plot debt IDs must be unique.',
     context,
   )
+  if (contract.plotDebts.filter((debt) => debt.id === 'main_mystery').length !== 1) {
+    context.addIssue({
+      code: 'custom',
+      path: ['plotDebts'],
+      message: 'Story contract must contain exactly one main_mystery plot debt.',
+    })
+  }
   addDuplicateIssues(
     contract.revealRunway.map((reveal) => reveal.secretId),
     ['revealRunway'],

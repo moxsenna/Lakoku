@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { ENDING_RULES } from '@/lib/narrative/template'
 import { NO_NEW_THREAD_FROM_CHAPTER } from '@/lib/narrative/threads'
+import { fantasiPetualanganContract } from '@/fixtures/contracts/fantasi-petualangan'
 import { misteriDramaContract } from '@/fixtures/contracts/misteri-drama'
+import { romansaDramaContract } from '@/fixtures/contracts/romansa-drama'
 import { auditPlotDebt } from '@/lib/story-engine/plot-debt'
 import type { StoryContract } from '@/lib/story-engine/story-contract'
 
@@ -77,8 +79,19 @@ describe('auditPlotDebt', () => {
     ])
   })
 
+  it.each([
+    misteriDramaContract,
+    romansaDramaContract,
+    fantasiPetualanganContract,
+  ])('rejects unresolved main_mystery at chapter 48 in $genre fixture', (contract) => {
+    expect(audit(48, { contract }).findings.map((finding) => finding.code)).toContain(
+      'MAIN_MYSTERY_OPEN',
+    )
+  })
+
   it('rejects open debt and newly opened conflict at chapter 50', () => {
     const contract = contractWithDebts([
+      { ...mainMystery, status: 'closed' },
       { ...mainMystery, id: 'side_debt', status: 'progressing' },
     ])
 

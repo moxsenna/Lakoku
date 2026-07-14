@@ -18,10 +18,14 @@ function resolve(
 }
 
 describe('resolveEnding', () => {
-  it('rejects lock resolution before chapter 45', () => {
-    expect(() => resolve({ chapterNumber: 44 })).toThrow(
+  it('rejects null lock resolution before chapter 45', () => {
+    expect(() => resolve({ chapterNumber: 44, lockedEndingKey: null })).toThrow(
       'Ending cannot lock before chapter 45.',
     )
+  })
+
+  it('treats null as no existing lock at chapter 45', () => {
+    expect(resolve({ lockedEndingKey: null }).key).toBe(firstEnding.key)
   })
 
   it('selects highest ending bias without parsing natural-language conditions', () => {

@@ -16,14 +16,14 @@ export interface ResolveEndingInput {
   routeState: RouteState | unknown
   contract: StoryContract
   chapterNumber: number
-  lockedEndingKey?: string
+  lockedEndingKey?: string | null
 }
 
 const ResolveEndingInputSchema = z.object({
   routeState: RouteStateSchema,
   contract: StoryContractSchema,
   chapterNumber: z.number().int().min(1).max(50),
-  lockedEndingKey: z.string().trim().min(1).max(80).optional(),
+  lockedEndingKey: z.string().trim().min(1).max(80).nullable().optional(),
 }).strict()
 
 function publicEnding(candidate: EndingCandidate): EndingResolution {
@@ -44,7 +44,7 @@ export function resolveEnding(input: ResolveEndingInput): EndingResolution {
     )
   }
 
-  if (lockedEndingKey !== undefined) {
+  if (lockedEndingKey != null) {
     const locked = contract.endingCandidates.find(
       (candidate) => candidate.key === lockedEndingKey,
     )

@@ -36,7 +36,7 @@ export const fantasiPetualanganContract = buildContractFixture({
   ],
   plotDebts: [
     {
-      id: 'debt:broken-star-map',
+      id: 'main_mystery',
       question: 'Siapa yang merobek peta bintang peninggalan ibu Kirana?',
       introducedAt: 1,
       mustProgressBy: [12, 32, 40],

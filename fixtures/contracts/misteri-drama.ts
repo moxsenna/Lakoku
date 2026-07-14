@@ -30,7 +30,7 @@ export const misteriDramaContract = buildContractFixture({
   ],
   plotDebts: [
     {
-      id: 'debt:missing-rain-ledger',
+      id: 'main_mystery',
       question: 'Siapa yang mengambil buku catatan debit hujan dari arsip kota?',
       introducedAt: 1,
       mustProgressBy: [12, 32, 45],

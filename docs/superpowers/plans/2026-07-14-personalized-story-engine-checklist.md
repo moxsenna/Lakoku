@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 16 / 28 tasks
+- **Complete:** 17 / 28 tasks
 - **In progress:** None
-- **Pending:** Task 17–28
-- **Next:** Task 17 — Personalized chapter runtime
+- **Pending:** Task 18–28
+- **Next:** Task 18 — Authenticated idempotent personalized creation endpoint
 
 ---
 
@@ -177,13 +177,13 @@
   - [x] Create exactly 50 chapter blueprints.
   - [x] Generate no chapter during bootstrap.
 
-- [ ] **Task 17: Personalized chapter runtime**
-  - [ ] Load contract and internal reader state.
-  - [ ] Build chapter brief.
-  - [ ] Reuse existing plan/write/Layer A/Layer B/repair flow.
-  - [ ] Generate dynamic choices for Chapters 1–49.
-  - [ ] Skip choices for Chapter 50.
-  - [ ] Mark reader complete only after Chapter 50 publish succeeds.
+- [x] **Task 17: Personalized chapter runtime**
+  - [x] Load contract and internal reader state.
+  - [x] Build chapter brief.
+  - [x] Reuse existing plan/write/Layer A/Layer B/repair flow.
+  - [x] Generate dynamic choices for Chapters 1–49.
+  - [x] Skip choices for Chapter 50.
+  - [x] Mark reader complete only after Chapter 50 publish succeeds.
 
 - [ ] **Task 18: Authenticated idempotent personalized creation endpoint**
   - [ ] Require authenticated user.

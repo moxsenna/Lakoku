@@ -15,7 +15,7 @@ begin
 end
 $$;
 
-select plan(71);
+select plan(79);
 
 -- Personalized story shape.
 select has_column('public', 'stories', 'source_story_id', 'stories.source_story_id exists');
@@ -357,6 +357,68 @@ select ok(
     and has_column_privilege('service_role', 'public.reader_states', 'route_state', 'UPDATE')
     and has_table_privilege('service_role', 'public.story_generation_contracts', 'SELECT'),
   'service_role retains full personalized internal privileges'
+);
+
+-- Contract persistence and canon bootstrap.
+select has_function(
+  'public',
+  'bootstrap_personalized_story_v1',
+  array[
+    'text', 'uuid', 'text', 'jsonb', 'jsonb', 'jsonb', 'jsonb', 'jsonb',
+    'jsonb', 'jsonb', 'jsonb', 'jsonb', 'jsonb', 'jsonb', 'jsonb', 'jsonb'
+  ],
+  'transactional personalized bootstrap RPC exists'
+);
+select ok(
+  (select p.prosecdef from pg_proc p where p.oid =
+    'public.bootstrap_personalized_story_v1(text,uuid,text,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)'::regprocedure),
+  'personalized bootstrap RPC is SECURITY DEFINER'
+);
+select is(
+  (select p.proconfig from pg_proc p where p.oid =
+    'public.bootstrap_personalized_story_v1(text,uuid,text,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)'::regprocedure),
+  array['search_path=""']::text[],
+  'personalized bootstrap RPC has fixed empty search_path'
+);
+select ok(
+  not has_function_privilege(
+    'anon',
+    'public.bootstrap_personalized_story_v1(text,uuid,text,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)',
+    'EXECUTE'
+  ),
+  'anon cannot execute personalized bootstrap RPC'
+);
+select ok(
+  not has_function_privilege(
+    'authenticated',
+    'public.bootstrap_personalized_story_v1(text,uuid,text,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)',
+    'EXECUTE'
+  ),
+  'authenticated cannot execute personalized bootstrap RPC'
+);
+select ok(
+  has_function_privilege(
+    'service_role',
+    'public.bootstrap_personalized_story_v1(text,uuid,text,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)',
+    'EXECUTE'
+  ),
+  'service_role can execute personalized bootstrap RPC'
+);
+select ok(
+  not exists (
+    select 1
+    from aclexplode(coalesce(
+      (select p.proacl from pg_proc p where p.oid =
+        'public.bootstrap_personalized_story_v1(text,uuid,text,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)'::regprocedure),
+      acldefault('f', 0)
+    )) acl
+    where acl.grantee = 0 and acl.privilege_type = 'EXECUTE'
+  ),
+  'PUBLIC cannot execute personalized bootstrap RPC'
+);
+select ok(
+  to_regprocedure('public.bootstrap_personalized_story_v1(text,text,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)') is null,
+  'legacy ownerless bootstrap signature is removed'
 );
 
 select * from finish();

@@ -36,7 +36,7 @@ function createQueryClient(
     from: vi.fn((table: string) => {
       calls.push({ method: 'from', args: [table] })
       const builder: Record<string, unknown> = {}
-      for (const method of ['select', 'eq', 'in', 'or', 'order', 'lte', 'limit']) {
+      for (const method of ['select', 'eq', 'in', 'or', 'order', 'lte', 'limit', 'is']) {
         builder[method] = vi.fn((...args: unknown[]) => {
           calls.push({ method, args })
           return builder
@@ -253,6 +253,98 @@ describe('reader-safe query projections', () => {
 
     expect(db.calls).toContainEqual({ method: 'select', args: [queries.CHAPTER_READER_COLUMNS] })
     expect(db.calls).toContainEqual({ method: 'select', args: [queries.OUTCOME_READER_COLUMNS] })
+    expect(db.calls.some((call) => call.method === 'select' && call.args[0] === '*')).toBe(false)
+  })
+})
+
+describe('share and taste-profile projections', () => {
+  it('uses exact public-safe projection for getShareBySlug', async () => {
+    const shareRow = {
+      id: 'share-a',
+      share_slug: 'ending-a',
+      share_type: 'ending_card',
+      visibility: 'public',
+      title: 'Ending A',
+      teaser_json: {
+        title: 'Ending A',
+        tropes: [],
+        bigChoices: [],
+        cta: 'Coba jalurmu sendiri',
+        seedVersion: 1,
+      },
+      expires_at: null,
+      revoked_at: null,
+      created_at: '2026-07-14T00:00:00.000Z',
+    }
+    const db = createQueryClient([{ data: shareRow, error: null }])
+    mocks.cookieFactory.mockResolvedValue(db.client)
+    const share = await import('@/lib/api/share')
+
+    const result = await share.getShareBySlug('ending-a')
+
+    expect(share.SHARE_PUBLIC_COLUMNS).toBe(
+      'id,share_slug,share_type,visibility,title,teaser_json,expires_at,revoked_at,created_at',
+    )
+    expect(share.SHARE_PUBLIC_COLUMNS).not.toMatch(/owner_user_id|source_story_id/)
+    expect(db.calls).toContainEqual({
+      method: 'select',
+      args: [share.SHARE_PUBLIC_COLUMNS],
+    })
+    expect(result).not.toHaveProperty('ownerUserId')
+    expect(result).not.toHaveProperty('sourceStoryId')
+  })
+
+  it('uses exact public-safe projection for listPublicShareTeasers', async () => {
+    const shareRow = {
+      id: 'share-a',
+      share_slug: 'ending-a',
+      share_type: 'ending_card',
+      visibility: 'public',
+      title: 'Ending A',
+      teaser_json: {
+        title: 'Ending A',
+        tropes: [],
+        bigChoices: [],
+        cta: 'Coba jalurmu sendiri',
+        seedVersion: 1,
+      },
+      expires_at: null,
+      revoked_at: null,
+      created_at: '2026-07-14T00:00:00.000Z',
+    }
+    const db = createQueryClient([{ data: [shareRow], error: null }])
+    mocks.cookieFactory.mockResolvedValue(db.client)
+    const share = await import('@/lib/api/share')
+
+    const result = await share.listPublicShareTeasers()
+
+    expect(db.calls).toContainEqual({
+      method: 'select',
+      args: [share.SHARE_PUBLIC_COLUMNS],
+    })
+    expect(result[0]).not.toHaveProperty('ownerUserId')
+    expect(result[0]).not.toHaveProperty('sourceStoryId')
+  })
+
+  it('selects only taste_json when reading a taste profile', async () => {
+    const tasteJson = {
+      version: 1,
+      preferredGenres: ['misteri'],
+      likedTropes: [],
+      avoidedTropes: [],
+      dramaIntensity: 'sedang',
+      romanceLevel: 'subtle',
+      pacing: 'seimbang',
+      languageStyle: 'sinematik',
+      endingBias: 'keadilan',
+      contentBoundaries: [],
+    }
+    const db = createQueryClient([{ data: { taste_json: tasteJson }, error: null }])
+    mocks.cookieFactory.mockResolvedValue(db.client)
+    const tasteProfile = await import('@/lib/api/taste-profile')
+
+    await expect(tasteProfile.getTasteProfileForUser('user-a')).resolves.toEqual(tasteJson)
+    expect(db.calls).toContainEqual({ method: 'select', args: ['taste_json'] })
     expect(db.calls.some((call) => call.method === 'select' && call.args[0] === '*')).toBe(false)
   })
 })

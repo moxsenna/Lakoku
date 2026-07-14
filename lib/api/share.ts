@@ -36,19 +36,25 @@ export interface SharedStoryLink {
   ownerUserId?: string
 }
 
-type ShareRow = {
+export const SHARE_PUBLIC_COLUMNS =
+  'id,share_slug,share_type,visibility,title,teaser_json,expires_at,revoked_at,created_at'
+
+type SharePublicRow = {
   id: string
-  owner_user_id: string
-  source_story_id: string
   share_slug: string
   share_type: ShareType
   visibility: ShareVisibility
   title: string
   teaser_json: ShareTeaser
-  spoiler_level: string
   expires_at: string | null
   revoked_at: string | null
   created_at: string
+}
+
+type ShareRow = SharePublicRow & {
+  owner_user_id: string
+  source_story_id: string
+  spoiler_level: string
 }
 
 function shortSlug(len = 10): string {
@@ -80,7 +86,10 @@ export function pickBigChoices(jejak: JejakItem[]): string[] {
   return out.slice(0, Math.max(3, Math.min(5, out.length)))
 }
 
-function toPublicLink(row: ShareRow, includeInternal = false): SharedStoryLink {
+function toPublicLink(
+  row: SharePublicRow | ShareRow,
+  includeInternal = false,
+): SharedStoryLink {
   const teaser = (row.teaser_json ?? {}) as ShareTeaser
   return {
     id: row.id,
@@ -99,7 +108,7 @@ function toPublicLink(row: ShareRow, includeInternal = false): SharedStoryLink {
       seedVersion: typeof teaser.seedVersion === 'number' ? teaser.seedVersion : 1,
     },
     createdAt: row.created_at,
-    ...(includeInternal
+    ...(includeInternal && 'source_story_id' in row && 'owner_user_id' in row
       ? { sourceStoryId: row.source_story_id, ownerUserId: row.owner_user_id }
       : {}),
   }
@@ -185,12 +194,12 @@ export const getShareBySlug = cache(async function getShareBySlug(
   const supabase = await createClient()
   const { data, error } = await supabase
     .from('shared_story_links')
-    .select('*')
+    .select(SHARE_PUBLIC_COLUMNS)
     .eq('share_slug', slug)
     .maybeSingle()
   if (error) throw new Error(`getShareBySlug: ${error.message}`)
   if (!data) return null
-  const row = data as ShareRow
+  const row = data as SharePublicRow
   if (row.revoked_at) return null
   if (row.expires_at && new Date(row.expires_at).getTime() <= Date.now()) return null
   // Public payload only — strip source id
@@ -201,13 +210,13 @@ export async function listPublicShareTeasers(limit = 20): Promise<SharedStoryLin
   const supabase = await createClient()
   const { data, error } = await supabase
     .from('shared_story_links')
-    .select('*')
+    .select(SHARE_PUBLIC_COLUMNS)
     .eq('visibility', 'public')
     .is('revoked_at', null)
     .order('created_at', { ascending: false })
     .limit(limit)
   if (error) throw new Error(`listPublicShareTeasers: ${error.message}`)
-  return ((data ?? []) as ShareRow[])
+  return ((data ?? []) as SharePublicRow[])
     .filter((r) => !r.expires_at || new Date(r.expires_at).getTime() > Date.now())
     .map((r) => toPublicLink(r, false))
 }

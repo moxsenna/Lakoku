@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 10 / 28 tasks
-- **In progress:** Task 11 — additive TypeScript publishChapterV2 wrapper
-- **Pending:** Task 12–28
-- **Current gate:** V2 payload mapping, internal effects, Chapter 50 empty branch, and legacy wrapper compatibility
+- **Complete:** 11 / 28 tasks
+- **In progress:** Task 12 — atomic `publish_chapter_v2` RPC
+- **Pending:** Task 13–28
+- **Current gate:** Introspection-derived atomic publish, V2 effects, idempotency, lease validation, and Chapter 50 empty branch
 
 ---
 
@@ -133,13 +133,13 @@
   - [ ] Route through existing model configuration/logging/cost path.
   - [ ] Validate raw output before runtime use.
 
-- [ ] 🔄 **Task 11: TypeScript `publishChapterV2` boundary**
+- [x] **Task 11: TypeScript `publishChapterV2` boundary**
   - [ ] Add V2 input/outcome types.
   - [ ] Map `effect_json` and `choice_kind` explicitly.
   - [ ] Support Chapter 50 null/empty choices and outcomes.
   - [ ] Preserve old `publishChapter()` unchanged.
 
-- [ ] **Task 12: Atomic `publish_chapter_v2` RPC**
+- [ ] 🔄 **Task 12: Atomic `publish_chapter_v2` RPC**
   - [ ] Mechanically derive from exact legacy RPC dump.
   - [ ] Preserve idempotency, event, lease, and conflict semantics.
   - [ ] Add effect persistence atomically.

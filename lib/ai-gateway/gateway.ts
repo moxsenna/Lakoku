@@ -12,12 +12,15 @@ import type { CanonSnapshot, ChapterBlueprint, Finding } from '@lakoku/narrative
 import {
   parsePlan,
   parseDraft,
+  validateChoiceBranch,
   type ChapterPlan,
   type ChapterDraftParsed,
+  type ChoiceBranch,
 } from './schemas'
 import {
   type GenerationProvider,
   type DraftDefect,
+  type ChoiceInput,
 } from './provider'
 import { GatewayError, scanForLeaks } from './safety'
 
@@ -59,6 +62,25 @@ export async function writeChapter(
     throw new GatewayError('Draft bab tidak valid.', 'DRAFT_INVALID', parsed.errors)
   }
   return parsed.data
+}
+
+/** Hasilkan pilihan dinamis tanpa memberi provider referensi mutable milik caller. */
+export async function generateChoiceBranch(
+  deps: GatewayDeps,
+  input: ChoiceInput,
+): Promise<ChoiceBranch | null> {
+  if (input.chapterNumber === 50) return null
+
+  const generateChoices = deps.provider.generateChoices
+  if (!generateChoices) {
+    throw new GatewayError(
+      'Provider pilihan tidak tersedia.',
+      'CHOICE_PROVIDER_UNAVAILABLE',
+    )
+  }
+
+  const raw = await generateChoices.call(deps.provider, structuredClone(input))
+  return validateChoiceBranch(raw, input.chapterNumber)
 }
 
 // ---------- Boundary consumer-safe ----------

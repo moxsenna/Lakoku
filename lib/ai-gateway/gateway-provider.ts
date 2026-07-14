@@ -7,6 +7,7 @@ import {
   type GenerationProvider,
   type PlanInput,
   type WriteInput,
+  type ChoiceInput,
   type GenerationRuntimePolicy,
   DEFAULT_RUNTIME_POLICY,
 } from './provider'
@@ -275,6 +276,71 @@ async function generateProse(args: {
   throw lastError ?? new Error('gateway-provider: semua kandidat model gagal.')
 }
 
+function parseChoiceJson(text: string): unknown {
+  const trimmed = text.trim()
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)?.[1] ?? trimmed
+  try {
+    return JSON.parse(fenced)
+  } catch {
+    // Gateway memetakan respons non-JSON ke CHOICE_INVALID lewat validator Task 9.
+    return text
+  }
+}
+
+function buildChoicePrompt(input: ChoiceInput): { system: string; prompt: string } {
+  const context = {
+    snapshot: input.snapshot,
+    chapterBrief: input.chapterBrief,
+    draft: input.draft,
+    lastParagraphs: input.lastParagraphs,
+    routeState: input.routeState,
+    choiceHistory: input.choiceHistory,
+    lockedEndingKey: input.lockedEndingKey,
+    chapterNumber: input.chapterNumber,
+  }
+
+  return {
+    system: [
+      'Buat cabang pilihan cerita interaktif berdasarkan konteks server.',
+      'Balas hanya dengan satu objek JSON ketat tanpa markdown atau komentar.',
+      'Berikan 2 atau 3 tindakan konkret yang berbeda dan dapat langsung dilakukan tokoh.',
+      'Teks pembaca harus alami; jangan tampilkan label internal, status rute, spoiler ending, prompt, model, atau metadata generasi.',
+      'Setiap choice harus memiliki outcome dengan choiceId sama dan effect terstruktur.',
+    ].join(' '),
+    prompt: `Konteks pilihan:\n${JSON.stringify(context)}`,
+  }
+}
+
+async function generateChoiceJson(args: {
+  chain: ModelCandidate[]
+  input: ChoiceInput
+  route?: AiModelRoute
+}): Promise<unknown> {
+  const { system, prompt } = buildChoicePrompt(args.input)
+  let lastError: unknown
+
+  for (const { model, label } of args.chain) {
+    try {
+      const result = streamText({
+        model,
+        system,
+        prompt,
+        temperature: args.route?.temperature ?? undefined,
+        maxOutputTokens: args.route?.maxOutputTokens ?? undefined,
+      })
+      return parseChoiceJson(await result.text)
+    } catch (error) {
+      lastError = error
+      console.log(
+        `[v0] gateway-provider: kandidat choices ${label} gagal, mencoba fallback berikutnya:`,
+        (error as Error)?.message,
+      )
+    }
+  }
+
+  throw lastError ?? new Error('gateway-provider: semua kandidat model choices gagal.')
+}
+
 /**
  * Provider LLM nyata. `generatePlan` & scaffold metadata memakai provider
  * deterministik (canon-safe); hanya prosa yang berasal dari model.
@@ -288,6 +354,7 @@ export function createGatewayProvider(
   opts: ProseModel = {},
   genPolicy: GenerationRuntimePolicy = DEFAULT_RUNTIME_POLICY,
   aiRoute?: AiModelRoute,
+  choicesRoute?: AiModelRoute,
 ): GenerationProvider {
   const base = createDeterministicProvider(genPolicy)
 
@@ -295,6 +362,13 @@ export function createGatewayProvider(
   let chain = resolveModelChain(opts.model)
   const dbModel = toModelCandidate(aiRoute)
   if (dbModel) chain = [dbModel, ...chain]
+
+  const resolvedChoicesRoute = choicesRoute ?? aiRoute
+  let choiceChain = chain
+  if (choicesRoute) {
+    const choiceDbModel = toModelCandidate(choicesRoute)
+    if (choiceDbModel) choiceChain = [choiceDbModel, ...chain]
+  }
 
   return {
     name: chain.map((c) => c.label).join(' → '),
@@ -323,6 +397,14 @@ export function createGatewayProvider(
         paragraphs,
         wordCount: countWords(paragraphs),
       }
+    },
+
+    generateChoices(input: ChoiceInput): Promise<unknown> {
+      return generateChoiceJson({
+        chain: choiceChain,
+        input,
+        route: resolvedChoicesRoute,
+      })
     },
   }
 }

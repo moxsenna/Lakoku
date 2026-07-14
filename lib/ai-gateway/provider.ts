@@ -11,6 +11,9 @@
  */
 
 import type { CanonSnapshot, ChapterBlueprint, Finding } from '@lakoku/narrative-core'
+import type { ChapterBrief, ChoiceHistoryEntry } from '../story-engine/chapter-brief'
+import type { RouteState } from '../story-engine/route-state'
+import type { ChapterDraftParsed } from './schemas'
 
 export interface PlanInput {
   snapshot: CanonSnapshot
@@ -27,6 +30,24 @@ export interface WriteInput {
   injectDefects?: DraftDefect[]
 }
 
+/** Konteks server-only yang terbatas untuk menghasilkan cabang pilihan dinamis. */
+export type LastParagraphs =
+  | [string, string, string]
+  | [string, string, string, string]
+  | [string, string, string, string, string]
+
+export interface ChoiceInput {
+  snapshot: CanonSnapshot
+  chapterBrief: ChapterBrief
+  draft: ChapterDraftParsed
+  lastParagraphs: LastParagraphs
+  routeState: RouteState
+  /** Maksimum satu entry per bab yang menyediakan pilihan (Bab 1–49). */
+  choiceHistory: ChoiceHistoryEntry[]
+  lockedEndingKey: string | null
+  chapterNumber: number
+}
+
 export type DraftDefect =
   | 'SHORT'
   | 'NO_CHOICE'
@@ -41,6 +62,7 @@ export interface GenerationProvider {
   readonly name: string
   generatePlan(input: PlanInput): Promise<unknown>
   writeChapter(input: WriteInput): Promise<unknown>
+  generateChoices?(input: ChoiceInput): Promise<unknown>
 }
 
 /** Policy runtime generasi (target kata & scene). Diambil dari generation_policy DB. */

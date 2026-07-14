@@ -1,4 +1,5 @@
 import 'server-only'
+import { ChoiceEffectSchema, type ChoiceEffect } from '@lakoku/ai-gateway'
 import { createAdminClient } from '@lakoku/db'
 
 /**
@@ -35,6 +36,25 @@ export interface PublishChapterInput {
   choicePrompt: string | null
   choices: unknown[] | null
   outcomes: PublishOutcome[]
+  leaseId: string | null
+  idempotencyKey: string
+}
+
+export type PublishChoiceKind = 'normal' | 'special_bad_ending'
+
+export interface PublishOutcomeV2 extends PublishOutcome {
+  effect: ChoiceEffect
+  choiceKind: PublishChoiceKind
+}
+
+export interface PublishChapterV2Input {
+  storyId: string
+  chapterNumber: number
+  title: string
+  paragraphs: string[]
+  choicePrompt: string | null
+  choices: Array<{ id: string; label: string; hint?: string }> | null
+  outcomes: PublishOutcomeV2[]
   leaseId: string | null
   idempotencyKey: string
 }
@@ -76,6 +96,34 @@ export async function publishChapter(
     p_idempotency_key: input.idempotencyKey,
   })
   if (error) throw new Error(`publishChapter: ${error.message}`)
+  return data as PublishResult
+}
+
+/** Publish satu bab personalisasi secara atomik & idempoten. */
+export async function publishChapterV2(
+  input: PublishChapterV2Input,
+): Promise<PublishResult> {
+  const outcomes = input.outcomes.map((outcome) => ({
+    choice_id: outcome.choiceId,
+    consequence: outcome.consequence,
+    next_chapter_number: outcome.nextChapterNumber,
+    is_ending: outcome.isEnding,
+    effect_json: ChoiceEffectSchema.parse(outcome.effect),
+    choice_kind: outcome.choiceKind,
+  }))
+  const supabase = createAdminClient()
+  const { data, error } = await supabase.rpc('publish_chapter_v2', {
+    p_story_id: input.storyId,
+    p_chapter_number: input.chapterNumber,
+    p_title: input.title,
+    p_paragraphs: input.paragraphs,
+    p_choice_prompt: input.choicePrompt,
+    p_choices: input.choices,
+    p_outcomes: outcomes,
+    p_lease_id: input.leaseId,
+    p_idempotency_key: input.idempotencyKey,
+  })
+  if (error) throw new Error(`publishChapterV2: ${error.message}`)
   return data as PublishResult
 }
 

@@ -16,10 +16,21 @@ const boundedArray = (maxItems: number, maxLength: number) => (
   z.array(boundedString(maxLength)).max(maxItems)
 )
 
+const ChoiceEffectSummarySchema = z.object({
+  truth: z.number().int().min(-20).max(20).optional(),
+  risk: z.number().int().min(-20).max(20).optional(),
+  secrecy: z.number().int().min(-20).max(20).optional(),
+  empathy: z.number().int().min(-20).max(20).optional(),
+  flagsSet: boundedArray(32, 80),
+}).strict()
+
 export const ChoiceHistoryEntrySchema = z.object({
   chapterNumber: z.number().int().min(1).max(49),
   choiceId: boundedString(100),
   label: boundedString(240),
+  consequence: boundedArray(2, 160).min(1),
+  effectSummary: ChoiceEffectSummarySchema,
+  createdAt: z.iso.datetime({ offset: true }),
 }).strict()
 
 export type ChoiceHistoryEntry = z.infer<typeof ChoiceHistoryEntrySchema>
@@ -54,7 +65,38 @@ export const ChapterBriefSchema = z.object({
   lockedEndingKey: boundedString(80).nullable(),
   allowsChoices: z.boolean(),
   finalChapter: z.boolean(),
-}).strict()
+  goals: boundedArray(1, 1200).length(1),
+  routeSummary: boundedString(4096),
+  debtsToProgress: boundedArray(20, 100),
+  debtsToClose: boundedArray(20, 100),
+  allowMajorNewConflict: z.boolean(),
+  allowNewThread: z.boolean(),
+  lockEnding: z.boolean(),
+  endingKey: boundedString(80).nullable(),
+  previousChoiceSummary: z.string().max(4096),
+}).strict().superRefine((brief, context) => {
+  const aliases: Array<[PropertyKey, unknown, unknown]> = [
+    ['goals', brief.goals, [brief.chapterGoal]],
+    ['routeSummary', brief.routeSummary, brief.routeStateSummary],
+    ['debtsToProgress', brief.debtsToProgress, brief.plotDebtsToProgress],
+    ['debtsToClose', brief.debtsToClose, brief.plotDebtsToClose],
+    ['allowMajorNewConflict', brief.allowMajorNewConflict, brief.allowedMajorNewConflict],
+    ['allowNewThread', brief.allowNewThread, brief.allowedNewThread],
+    ['lockEnding', brief.lockEnding, brief.lockedEndingKey !== null],
+    ['endingKey', brief.endingKey, brief.lockedEndingKey],
+    ['previousChoiceSummary', brief.previousChoiceSummary, brief.choiceHistorySummary],
+  ]
+
+  for (const [field, alias, canonical] of aliases) {
+    if (JSON.stringify(alias) !== JSON.stringify(canonical)) {
+      context.addIssue({
+        code: 'custom',
+        path: [field],
+        message: `${String(field)} must equal its canonical chapter brief value.`,
+      })
+    }
+  }
+})
 
 export type ChapterBrief = z.infer<typeof ChapterBriefSchema>
 
@@ -127,6 +169,24 @@ function policyExclusions(chapterNumber: number): string[] {
   return exclusions
 }
 
+function summarizeChoice(entry: ChoiceHistoryEntry): string {
+  const effectParts = (['truth', 'risk', 'secrecy', 'empathy'] as const)
+    .flatMap((key) => entry.effectSummary[key] === undefined
+      ? []
+      : [`${key}=${entry.effectSummary[key]}`])
+  effectParts.push(
+    `flagsSet=${entry.effectSummary.flagsSet.length > 0
+      ? entry.effectSummary.flagsSet.join(',')
+      : '-'}`,
+  )
+
+  return [
+    `Bab ${entry.chapterNumber} [${entry.choiceId}]: ${entry.label}`,
+    `Konsekuensi: ${entry.consequence.join(' / ')}`,
+    `Efek: ${effectParts.join('; ')}`,
+  ].join(' | ')
+}
+
 function summarizeChoiceHistory(
   history: readonly ChoiceHistoryEntry[],
   previousChoice: ChoiceHistoryEntry | null,
@@ -139,7 +199,7 @@ function summarizeChoiceHistory(
     ))
 
   return sorted
-    .map(({ entry }) => `Bab ${entry.chapterNumber} [${entry.choiceId}]: ${entry.label}`)
+    .map(({ entry }) => summarizeChoice(entry))
     .join('\n')
     .slice(0, 4096)
 }
@@ -183,15 +243,26 @@ export function buildChapterBrief(input: BuildChapterBriefInput): ChapterBrief {
   if (!blueprint) throw new Error(`Missing canon blueprint for chapter ${chapterNumber}.`)
 
   const openDebts = storyContract.plotDebts.filter((debt) => debt.status !== 'closed')
-  const plotDebtsToClose = openDebts
-    .filter((debt) => debt.mustCloseBy === chapterNumber)
-    .map((debt) => debt.id)
+  const plotDebtsToClose = stableUnique(openDebts
+    .filter((debt) => debt.mustCloseBy <= chapterNumber)
+    .map((debt) => debt.id))
   const closingIds = new Set(plotDebtsToClose)
-  const plotDebtsToProgress = openDebts
+  const plotDebtsToProgress = stableUnique(openDebts
     .filter((debt) => (
-      !closingIds.has(debt.id) && debt.mustProgressBy.includes(chapterNumber)
+      !closingIds.has(debt.id)
+      && debt.mustProgressBy.some((milestone) => milestone <= chapterNumber)
     ))
-    .map((debt) => debt.id)
+    .map((debt) => debt.id))
+  const routeStateSummary = summarizeRouteStateForPrompt(readerState.routeState)
+  const choiceHistorySummary = summarizeChoiceHistory(readerState.choiceHistory, previousChoice)
+  const allowedNewThread = chapterNumber <= storyContract.closureRunway.noNewThreadAfter
+  const allowedMajorNewConflict = chapterNumber <= storyContract.closureRunway.noNewMajorConflictAfter
+  const lockedEndingKey = endingKeyFor(
+    storyContract,
+    chapterNumber,
+    readerState.routeState,
+    readerState.lockedEndingKey,
+  )
 
   const brief: ChapterBrief = {
     storyId: storyContract.storyId,
@@ -214,21 +285,25 @@ export function buildChapterBrief(input: BuildChapterBriefInput): ChapterBrief {
       ...target.mustNotReveal,
       ...blueprint.forbiddenReveals,
     ]),
-    routeStateSummary: summarizeRouteStateForPrompt(readerState.routeState),
-    choiceHistorySummary: summarizeChoiceHistory(readerState.choiceHistory, previousChoice),
+    routeStateSummary,
+    choiceHistorySummary,
     plotDebtsToProgress,
     plotDebtsToClose,
-    allowedNewThread: chapterNumber <= storyContract.closureRunway.noNewThreadAfter,
-    allowedMajorNewConflict: chapterNumber <= storyContract.closureRunway.noNewMajorConflictAfter,
+    allowedNewThread,
+    allowedMajorNewConflict,
     endingRunway: runwayFor(chapterNumber),
-    lockedEndingKey: endingKeyFor(
-      storyContract,
-      chapterNumber,
-      readerState.routeState,
-      readerState.lockedEndingKey,
-    ),
+    lockedEndingKey,
     allowsChoices: chapterNumber < storyContract.closureRunway.finalEndingChapter,
     finalChapter: chapterNumber === storyContract.closureRunway.finalEndingChapter,
+    goals: [target.goal],
+    routeSummary: routeStateSummary,
+    debtsToProgress: plotDebtsToProgress,
+    debtsToClose: plotDebtsToClose,
+    allowMajorNewConflict: allowedMajorNewConflict,
+    allowNewThread: allowedNewThread,
+    lockEnding: lockedEndingKey !== null,
+    endingKey: lockedEndingKey,
+    previousChoiceSummary: choiceHistorySummary,
   }
 
   return ChapterBriefSchema.parse(brief)

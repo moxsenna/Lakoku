@@ -47,6 +47,18 @@ function snapshot(): CanonSnapshot {
   }
 }
 
+function choiceHistoryEntry(overrides: Partial<z.input<typeof ChoiceHistoryEntrySchema>> = {}) {
+  return {
+    chapterNumber: 2,
+    choiceId: 'wait',
+    label: 'Tunggu Raka',
+    consequence: ['Raka tiba setelah hujan reda.'],
+    effectSummary: { truth: 1, flagsSet: ['waited_for_raka'] },
+    createdAt: '2026-07-14T10:30:00.000Z',
+    ...overrides,
+  }
+}
+
 function brief(chapterNumber: number, overrides: Partial<Parameters<typeof buildChapterBrief>[0]> = {}) {
   return buildChapterBrief({
     storyContract: misteriDramaContract,
@@ -63,27 +75,47 @@ function brief(chapterNumber: number, overrides: Partial<Parameters<typeof build
 }
 
 describe('ChoiceHistoryEntrySchema', () => {
-  it('is strict and bounded', () => {
-    expect(ChoiceHistoryEntrySchema.parse({
-      chapterNumber: 3,
-      choiceId: 'inspect-letter',
-      label: 'Periksa surat lama',
-    })).toEqual({
-      chapterNumber: 3,
-      choiceId: 'inspect-letter',
-      label: 'Periksa surat lama',
-    })
+  const completeEntry = {
+    chapterNumber: 3,
+    choiceId: 'inspect-letter',
+    label: 'Periksa surat lama',
+    consequence: ['Nara menemukan cap pengiriman.'],
+    effectSummary: {
+      truth: 2,
+      risk: -1,
+      flagsSet: ['letter_inspected'],
+    },
+    createdAt: '2026-07-14T10:30:00.000Z',
+  }
+
+  it('requires the complete strict choice history contract', () => {
+    expect(ChoiceHistoryEntrySchema.parse(completeEntry)).toEqual(completeEntry)
     expect(ChoiceHistoryEntrySchema.safeParse({
-      chapterNumber: 3,
-      choiceId: 'inspect-letter',
-      label: 'Periksa surat lama',
+      ...completeEntry,
       provider: 'hidden',
     }).success).toBe(false)
     expect(ChoiceHistoryEntrySchema.safeParse({
-      chapterNumber: 50,
-      choiceId: 'late',
-      label: 'Pilihan terlambat',
+      ...completeEntry,
+      effectSummary: { ...completeEntry.effectSummary, provider: 1 },
     }).success).toBe(false)
+
+    for (const field of ['consequence', 'effectSummary', 'createdAt'] as const) {
+      const incomplete = { ...completeEntry }
+      delete incomplete[field]
+      expect(ChoiceHistoryEntrySchema.safeParse(incomplete).success).toBe(false)
+    }
+  })
+
+  it.each([
+    ['chapter 50', { ...completeEntry, chapterNumber: 50 }],
+    ['oversized consequence list', { ...completeEntry, consequence: ['a', 'b', 'c'] }],
+    ['oversized consequence', { ...completeEntry, consequence: ['x'.repeat(161)] }],
+    ['effect outside bounds', { ...completeEntry, effectSummary: { truth: 21, flagsSet: [] } }],
+    ['oversized flags list', { ...completeEntry, effectSummary: { flagsSet: Array.from({ length: 33 }, (_, index) => `flag-${index}`) } }],
+    ['oversized flag', { ...completeEntry, effectSummary: { flagsSet: ['x'.repeat(81)] } }],
+    ['non-ISO timestamp', { ...completeEntry, createdAt: '14 July 2026' }],
+  ])('rejects %s', (_name, input) => {
+    expect(ChoiceHistoryEntrySchema.safeParse(input).success).toBe(false)
   })
 })
 
@@ -156,6 +188,24 @@ describe('buildChapterBrief content', () => {
     ]))
     expect(result.routeStateSummary).toContain('truth=4')
     expect(result.routeStateSummary).toContain('Raka=2')
+    expect(result.previousChoiceSummary).toBe(result.choiceHistorySummary)
+  })
+
+  it('retains canonical fields and exposes equal plan aliases', () => {
+    const result = brief(45, {
+      previousChoice: choiceHistoryEntry({ chapterNumber: 44 }),
+    })
+
+    expect(result.goals).toEqual([result.chapterGoal])
+    expect(result.routeSummary).toBe(result.routeStateSummary)
+    expect(result.debtsToProgress).toEqual(result.plotDebtsToProgress)
+    expect(result.debtsToClose).toEqual(result.plotDebtsToClose)
+    expect(result.allowMajorNewConflict).toBe(result.allowedMajorNewConflict)
+    expect(result.allowNewThread).toBe(result.allowedNewThread)
+    expect(result.lockEnding).toBe(result.lockedEndingKey !== null)
+    expect(result.endingKey).toBe(result.lockedEndingKey)
+    expect(result.previousChoiceSummary).toBe(result.choiceHistorySummary)
+    expect(ChapterBriefSchema.safeParse(result).success).toBe(true)
   })
 
   it('selects debt progress and closure deadlines deterministically in contract order', () => {
@@ -192,31 +242,91 @@ describe('buildChapterBrief content', () => {
       plotDebtsToClose: [],
     })
     expect(brief(30, { storyContract: contract })).toMatchObject({
-      plotDebtsToProgress: [],
+      plotDebtsToProgress: ['main_mystery'],
       plotDebtsToClose: ['debt-b'],
     })
   })
 
-  it('summarizes persisted and previous choices in stable history order', () => {
+  it('carries overdue open and progressing debts at chapter 31 without duplicates', () => {
+    const contract = structuredClone(misteriDramaContract)
+    contract.plotDebts = [
+      {
+        id: 'progress-overdue',
+        question: 'Utang progres lama?',
+        introducedAt: 1,
+        mustProgressBy: [10, 20, 30],
+        mustCloseBy: 40,
+        status: 'progressing',
+      },
+      {
+        id: 'main_mystery',
+        question: 'Misteri utama?',
+        introducedAt: 1,
+        mustProgressBy: [12, 32],
+        mustCloseBy: 48,
+        status: 'open',
+      },
+      {
+        id: 'close-overdue',
+        question: 'Utang penutupan lama?',
+        introducedAt: 1,
+        mustProgressBy: [15, 25],
+        mustCloseBy: 30,
+        status: 'open',
+      },
+      {
+        id: 'closed-overdue',
+        question: 'Sudah ditutup?',
+        introducedAt: 1,
+        mustProgressBy: [10],
+        mustCloseBy: 20,
+        status: 'closed',
+      },
+    ]
+
+    const result = brief(31, { storyContract: contract })
+
+    expect(result.plotDebtsToProgress).toEqual(['progress-overdue', 'main_mystery'])
+    expect(result.plotDebtsToClose).toEqual(['close-overdue'])
+    expect(result.debtsToProgress).toEqual(result.plotDebtsToProgress)
+    expect(result.debtsToClose).toEqual(result.plotDebtsToClose)
+    expect(new Set(result.plotDebtsToProgress).size).toBe(result.plotDebtsToProgress.length)
+    expect(new Set(result.plotDebtsToClose).size).toBe(result.plotDebtsToClose.length)
+  })
+
+  it('summarizes persisted and previous choices with bounded details in stable history order', () => {
     const result = brief(8, {
       readerState: {
         routeState: {},
         choiceHistory: [
-          { chapterNumber: 2, choiceId: 'wait', label: 'Tunggu Raka' },
-          { chapterNumber: 5, choiceId: 'follow', label: 'Ikuti mobil hitam' },
+          choiceHistoryEntry(),
+          choiceHistoryEntry({
+            chapterNumber: 5,
+            choiceId: 'follow',
+            label: 'Ikuti mobil hitam',
+            consequence: ['Nara melihat mobil berhenti di gudang.', 'Raka kehilangan jejak Nara.'],
+            effectSummary: { risk: 2, secrecy: 1, flagsSet: ['found_warehouse', 'left_raka'] },
+            createdAt: '2026-07-14T11:00:00.000Z',
+          }),
         ],
         lockedEndingKey: null,
       },
-      previousChoice: {
+      previousChoice: choiceHistoryEntry({
         chapterNumber: 7,
         choiceId: 'open',
         label: 'Buka pintu gudang',
-      },
+        consequence: ['Alarm gudang menyala.'],
+        effectSummary: { truth: 2, empathy: -1, flagsSet: [] },
+        createdAt: '2026-07-14T12:00:00.000Z',
+      }),
     })
 
-    expect(result.choiceHistorySummary).toBe(
-      'Bab 2 [wait]: Tunggu Raka\nBab 5 [follow]: Ikuti mobil hitam\nBab 7 [open]: Buka pintu gudang',
-    )
+    expect(result.choiceHistorySummary).toBe([
+      'Bab 2 [wait]: Tunggu Raka | Konsekuensi: Raka tiba setelah hujan reda. | Efek: truth=1; flagsSet=waited_for_raka',
+      'Bab 5 [follow]: Ikuti mobil hitam | Konsekuensi: Nara melihat mobil berhenti di gudang. / Raka kehilangan jejak Nara. | Efek: risk=2; secrecy=1; flagsSet=found_warehouse,left_raka',
+      'Bab 7 [open]: Buka pintu gudang | Konsekuensi: Alarm gudang menyala. | Efek: truth=2; empathy=-1; flagsSet=-',
+    ].join('\n'))
+    expect(result.previousChoiceSummary).toBe(result.choiceHistorySummary)
   })
 
   it('requires exact matching target and blueprint', () => {
@@ -232,10 +342,14 @@ describe('buildChapterBrief content', () => {
     const canon = snapshot()
     const readerState = {
       routeState: { evidence: ['surat'] },
-      choiceHistory: [{ chapterNumber: 2, choiceId: 'read', label: 'Baca surat' }],
+      choiceHistory: [choiceHistoryEntry({ choiceId: 'read', label: 'Baca surat' })],
       lockedEndingKey: null,
     }
-    const previousChoice = { chapterNumber: 4, choiceId: 'ask', label: 'Tanya Raka' }
+    const previousChoice = choiceHistoryEntry({
+      chapterNumber: 4,
+      choiceId: 'ask',
+      label: 'Tanya Raka',
+    })
     const before = structuredClone({ storyContract, canon, readerState, previousChoice })
 
     buildChapterBrief({ storyContract, snapshot: canon, readerState, chapterNumber: 5, previousChoice })

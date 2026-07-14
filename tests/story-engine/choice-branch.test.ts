@@ -313,6 +313,18 @@ describe('validateChoiceBranch', () => {
     expect(error.errors?.join('\n')).toContain('CHAPTER_49_OUTCOME_INVALID')
   })
 
+  it('rejects mixed normal and special-ending outcomes at chapter 49', () => {
+    const mixed = validBranch(2, 49)
+    mixed.outcomes[0].isEnding = true
+    mixed.outcomes[0].nextChapterNumber = null
+
+    const error = expectGatewayError(
+      () => validateChoiceBranch(mixed, 49),
+      'CHOICE_INVALID',
+    )
+    expect(error.errors?.join('\n')).toContain('CHAPTER_49_MODE_MISMATCH')
+  })
+
   it('throws exact CHOICES_NOT_ALLOWED error for chapter 50', () => {
     expectGatewayError(
       () => validateChoiceBranch(validBranch(2, 49), 50),

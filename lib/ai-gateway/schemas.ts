@@ -333,6 +333,15 @@ export function validateChoiceBranch(
     }
   })
 
+  if (chapterNumber === 49) {
+    const endingModes = new Set(parsed.data.outcomes.map((outcome) => outcome.isEnding))
+    if (endingModes.size > 1) {
+      errors.push(
+        'outcomes: CHAPTER_49_MODE_MISMATCH: All Chapter 49 outcomes must use the same normal-continuation or special-ending mode.',
+      )
+    }
+  }
+
   if (errors.length > 0) {
     throw new GatewayError(
       'Cabang pilihan tidak valid.',

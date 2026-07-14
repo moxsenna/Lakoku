@@ -136,7 +136,6 @@ function choiceInput(chapterNumber = 12): ChoiceInput {
     routeState,
     choiceHistory,
     lockedEndingKey: chapterBrief.lockedEndingKey,
-    chapterNumber,
   }
 }
 
@@ -164,11 +163,13 @@ describe('generateChoiceBranch', () => {
   it('calls provider once, returns validated branch, and preserves caller input', async () => {
     const input = choiceInput()
     const before = structuredClone(input)
-    let received: ChoiceInput | undefined
-    const generateChoices = vi.fn(async (providerInput: ChoiceInput) => {
+    let received: Parameters<NonNullable<GenerationProvider['generateChoices']>>[0] | undefined
+    const generateChoices = vi.fn(async (
+      providerInput: Parameters<NonNullable<GenerationProvider['generateChoices']>>[0],
+    ) => {
       received = providerInput
-      providerInput.snapshot.storyId = 'mutated-by-provider'
-      providerInput.lastParagraphs[0] = 'mutated paragraph'
+      providerInput.storyId = 'mutated-by-provider'
+      providerInput.draft.lastParagraphs[0] = 'mutated paragraph'
       return validBranch()
     })
     const base = createDeterministicProvider()
@@ -213,6 +214,38 @@ describe('generateChoiceBranch', () => {
     expect(generateChoices).not.toHaveBeenCalled()
   })
 
+  it('rejects mismatched brief chapter before provider call', async () => {
+    const input = choiceInput(12)
+    input.chapterBrief = { ...input.chapterBrief, chapterNumber: 50 }
+    const generateChoices = vi.fn(async () => validBranch())
+    const provider: GenerationProvider = {
+      ...createDeterministicProvider(),
+      generateChoices,
+    }
+
+    await expect(generateChoiceBranch({ provider }, input)).rejects.toSatisfy((error) => {
+      expectGatewayError(error, 'CHOICE_INPUT_INVALID')
+      return true
+    })
+    expect(generateChoices).not.toHaveBeenCalled()
+  })
+
+  it('cannot bypass the chapter 50 guard with a mismatched brief chapter', async () => {
+    const input = choiceInput(50)
+    input.chapterBrief = { ...input.chapterBrief, chapterNumber: 49 }
+    const generateChoices = vi.fn(async () => validBranch(49))
+    const provider: GenerationProvider = {
+      ...createDeterministicProvider(),
+      generateChoices,
+    }
+
+    await expect(generateChoiceBranch({ provider }, input)).rejects.toSatisfy((error) => {
+      expectGatewayError(error, 'CHOICE_INPUT_INVALID')
+      return true
+    })
+    expect(generateChoices).not.toHaveBeenCalled()
+  })
+
   it.each(['normal', 'special'] as const)(
     'supports chapter 49 %s validation flow',
     async (flow) => {
@@ -246,6 +279,9 @@ describe('createGatewayProvider choice adapter', () => {
   beforeEach(() => {
     streamTextMock.mockReset()
     createOpenAICompatibleMock.mockReset()
+    createOpenAICompatibleMock.mockImplementation(({ name }: { name: string }) => (
+      (modelId: string) => `${name}:${modelId}`
+    ))
     for (const key of envKeys) {
       originalEnv.set(key, process.env[key])
       delete process.env[key]
@@ -261,9 +297,12 @@ describe('createGatewayProvider choice adapter', () => {
     originalEnv.clear()
   })
 
-  it('uses existing stream model chain and dedicated choices route config', async () => {
+  it('uses dedicated choices route config and exact bounded prompt contract', async () => {
     const branch = validBranch()
-    streamTextMock.mockReturnValue({ text: Promise.resolve(JSON.stringify(branch)) })
+    streamTextMock.mockReturnValue({
+      text: Promise.resolve(JSON.stringify(branch)),
+      usage: Promise.resolve({ inputTokens: 120, outputTokens: 80, totalTokens: 200 }),
+    })
     const chapterRoute: AiModelRoute = {
       useCase: 'chapter_prose',
       provider: 'gateway',
@@ -294,9 +333,25 @@ describe('createGatewayProvider choice adapter', () => {
       maxOutputTokens: 900,
     }))
     const request = streamTextMock.mock.calls[0][0]
-    expect(request.system).toContain('JSON')
-    expect(request.system).toContain('2 atau 3 tindakan konkret')
+    expect(request.system).toContain('"choicePrompt"')
+    expect(request.system).toContain('"choices"')
+    expect(request.system).toContain('"outcomes"')
+    expect(request.system).toContain('"routeDeltas"')
+    expect(request.system).toContain('"trustDeltas"')
+    expect(request.system).toContain('"flagsSet"')
+    expect(request.system).toContain('"evidenceAdded"')
+    expect(request.system).toContain('"endingBiasDeltas"')
+    expect(request.system).toContain('"threadTouches"')
+    expect(request.system).toContain('outcome.choiceId')
+    expect(request.system).toContain('choices[].id')
+    expect(request.system).toContain('nextChapterNumber = currentChapter + 1')
+    expect(request.system).toContain('nextChapterNumber = 50')
+    expect(request.system).toContain('nextChapterNumber = null')
+    expect(request.system).toContain('tanpa markdown')
+    expect(request.system).toContain('spoiler ending')
+    expect(request.system).toContain('provider')
     expect(request.prompt).toContain('provider_signal_server_only')
+    expect(request.prompt.length).toBeLessThanOrEqual(16_000)
     expect(createOpenAICompatibleMock).not.toHaveBeenCalled()
   })
 
@@ -315,6 +370,85 @@ describe('createGatewayProvider choice adapter', () => {
     expect(streamTextMock.mock.calls[0][0].prompt).toContain('provider_signal_server_only')
   })
 
+  it('rejects oversized and unknown choice input before provider call', async () => {
+    const input = choiceInput() as ChoiceInput & { hidden?: string }
+    input.hidden = 'server-only'
+    input.lastParagraphs[0] = 'x'.repeat(401)
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider()
+
+    await expect(generateChoiceBranch({ provider }, input)).rejects.toSatisfy((error) => {
+      expectGatewayError(error, 'CHOICE_INPUT_INVALID')
+      return true
+    })
+    expect(streamTextMock).not.toHaveBeenCalled()
+  })
+
+  it('passes strict bounded projection to custom choice provider', async () => {
+    process.env.CUSTOM_LLM_BASE_URL = 'https://choice.example.test/v1'
+    const branch = validBranch()
+    streamTextMock.mockReturnValue({
+      text: Promise.resolve(JSON.stringify(branch)),
+      usage: Promise.resolve({ inputTokens: 120, outputTokens: 80, totalTokens: 200 }),
+    })
+    const choicesRoute: AiModelRoute = {
+      useCase: 'choices',
+      provider: 'custom',
+      modelId: 'choice-custom',
+      fallbackModels: [],
+      temperature: 0.2,
+      maxOutputTokens: 900,
+      routeVersion: 'choice-v1',
+    }
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, undefined, choicesRoute)
+
+    await generateChoiceBranch({ provider }, choiceInput())
+
+    expect(streamTextMock).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'custom:choice-custom',
+    }))
+    expect(streamTextMock.mock.calls[0][0].prompt.length).toBeLessThanOrEqual(16_000)
+  })
+
+  it('executes dedicated primary then fallback model and logs successful usage', async () => {
+    const branch = validBranch()
+    const usage = { inputTokens: 120, outputTokens: 80, totalTokens: 200 }
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    streamTextMock
+      .mockImplementationOnce(() => { throw new Error('primary unavailable') })
+      .mockReturnValueOnce({
+        text: Promise.resolve(JSON.stringify(branch)),
+        usage: Promise.resolve(usage),
+      })
+    const choicesRoute: AiModelRoute = {
+      useCase: 'choices',
+      provider: 'gateway',
+      modelId: 'openai/choice-primary',
+      fallbackModels: ['openai/choice-fallback'],
+      temperature: 0.2,
+      maxOutputTokens: 900,
+      routeVersion: 'choice-v1',
+    }
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, undefined, choicesRoute)
+
+    await expect(generateChoiceBranch({ provider }, choiceInput())).resolves.toEqual(branch)
+
+    expect(streamTextMock.mock.calls.map(([request]) => request.model)).toEqual([
+      'openai/choice-primary',
+      'openai/choice-fallback',
+    ])
+    expect(logSpy).toHaveBeenCalledWith('[v0] ai-gateway usage', expect.objectContaining({
+      useCase: 'choices',
+      model: 'db:gateway:openai/choice-fallback',
+      inputTokens: 120,
+      outputTokens: 80,
+      totalTokens: 200,
+    }))
+    logSpy.mockRestore()
+  })
+
   it('falls back to chapter route when no choices route is configured', async () => {
     streamTextMock.mockReturnValue({ text: Promise.resolve(JSON.stringify(validBranch())) })
     const chapterRoute: AiModelRoute = {
@@ -329,7 +463,7 @@ describe('createGatewayProvider choice adapter', () => {
     const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
     const provider = createGatewayProvider(undefined, undefined, chapterRoute)
 
-    await provider.generateChoices?.(choiceInput())
+    await generateChoiceBranch({ provider }, choiceInput())
 
     expect(streamTextMock).toHaveBeenCalledWith(expect.objectContaining({
       model: 'openai/chapter-model',

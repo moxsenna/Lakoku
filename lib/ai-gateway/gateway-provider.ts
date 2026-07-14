@@ -7,11 +7,11 @@ import {
   type GenerationProvider,
   type PlanInput,
   type WriteInput,
-  type ChoiceInput,
+  type ChoiceProviderInput,
   type GenerationRuntimePolicy,
   DEFAULT_RUNTIME_POLICY,
 } from './provider'
-import { scanForLeaks } from './gateway'
+import { GatewayError, scanForLeaks } from './gateway'
 import { buildWriterPrompt } from '@/lib/prose/prompt-engine'
 import { getAiModelRoute, DEFAULT_AI_MODEL_ROUTE, type AiModelRoute } from '@/lib/ops/ai-model-routes'
 
@@ -100,6 +100,16 @@ function resolveModelChain(optModel?: string): ModelCandidate[] {
     chain.push({ model: modelId, label: `gateway:${modelId}` })
   }
   return chain
+}
+
+/** Perluas rantai env dengan kandidat dari DB route (termasuk fallbackModels). */
+function expandChainWithRoute(chain: ModelCandidate[], route: AiModelRoute): ModelCandidate[] {
+  const routeCandidates: ModelCandidate[] = []
+  for (const modelId of [route.modelId, ...route.fallbackModels]) {
+    const candidate = toModelCandidate({ ...route, modelId, fallbackModels: [] })
+    if (candidate) routeCandidates.push(candidate)
+  }
+  return routeCandidates.length > 0 ? [...routeCandidates, ...chain] : chain
 }
 
 /** Skema prosa yang diminta dari model — hanya konten naratif untuk pembaca. */
@@ -264,6 +274,7 @@ async function generateProse(args: {
         const { title, paragraphs } = parseProse(text)
         const blob = [title, ...paragraphs].join('\n')
         if (scanForLeaks(blob).length === 0) {
+          await logUsage('chapter_prose', label, result.usage)
           return { title, paragraphs, usedModel: label }
         }
       }
@@ -274,6 +285,82 @@ async function generateProse(args: {
     }
   }
   throw lastError ?? new Error('gateway-provider: semua kandidat model gagal.')
+}
+
+// ---------- Choice prompt contract ----------
+
+const MAX_PROMPT_CHARS = 16_000
+
+function buildChoiceSystemPrompt(): string {
+  return [
+    'Kamu adalah engine pilihan cerita interaktif Lakoku.',
+    'Balas HANYA dengan satu objek JSON, tanpa markdown, tanpa komentar, tanpa teks lain.',
+    'Teks pembaca harus alami — jangan tampilkan label internal, status rute, spoiler ending, nama prompt, model, token, provider, atau metadata generasi apa pun.',
+    '',
+    'Skema JSON (TEPAT):',
+    '{',
+    '  "choicePrompt": "<string 8–120 karakter, pertanyaan naratif yang memicu pilihan>",',
+    '  "choices": [',
+    '    { "id": "<lowercase-hyphen 1–50 karakter>", "label": "<string 8–90 karakter, kata kerja konkret diawali huruf besar>", "hint": "<string 8–140 karakter, opsional>" }',
+    '  ],',
+    '  "outcomes": [',
+    '    { "choiceId": "<harus cocok dengan salah satu choices[].id>", "consequence": ["<string 1–160 karakter>", "<string 1–160 karakter, opsional>"], "nextChapterNumber": <integer|null>, "isEnding": <boolean>, "effect": { "routeDeltas": { "truth": <int -20..20 optional>, "risk": <int -20..20 optional>, "secrecy": <int -20..20 optional>, "empathy": <int -20..20 optional> }, "trustDeltas": { "<characterId>": <int -10..10> }, "flagsSet": { "<flagKey>": true }, "evidenceAdded": ["<string 1–240 karakter>"], "endingBiasDeltas": { "<endingKey>": <int -100..100> }, "threadTouches": ["<string 1–120 karakter>"] } }',
+    '  ]',
+    '}',
+    '',
+    'ATURAN:',
+    '- choices.length === outcomes.length (2 atau 3).',
+    '- Setiap outcome.choiceId harus cocok dengan tepat satu choices[].id.',
+    '- Untuk bab 1..48: nextChapterNumber = currentChapter + 1, isEnding = false.',
+    '- Untuk bab 49 normal: nextChapterNumber = 50, isEnding = false (semua outcome).',
+    '- Untuk bab 49 spesial: nextChapterNumber = null, isEnding = true (semua outcome).',
+    '- Semua outcome dalam satu respons bab 49 harus memakai mode sama; jangan campur normal dan spesial.',
+    '- Gunakan aturan di atas berdasarkan currentChapter dari konteks.',
+    '- Untuk nilai yang diwajibkan null, tulis JSON null; jangan tulis string "null" dan jangan hilangkan key.',
+    '- Label pilihan harus berupa tindakan konkret (kata kerja) yang bisa dibayangkan pembaca.',
+    '- Jangan pernah gunakan kata "rute", "prompt", "model", "token", "provider", "narraza", "llm", "gateway" di teks pembaca.',
+  ].join('\n')
+}
+
+function buildChoicePrompt(input: ChoiceProviderInput): { system: string; prompt: string } {
+  const prompt = `Konteks pilihan (currentChapter=${input.currentChapter}):\n${JSON.stringify(input)}`
+
+  // Reject oversized serialized prompt.
+  if (prompt.length > MAX_PROMPT_CHARS) {
+    throw new GatewayError(
+      'Pilihan cabang tidak dapat dihasilkan.',
+      'CHOICE_INPUT_INVALID',
+      [`Prompt length ${prompt.length} exceeds limit ${MAX_PROMPT_CHARS}.`],
+    )
+  }
+
+  return { system: buildChoiceSystemPrompt(), prompt }
+}
+
+// ---------- Shared usage / cost accounting log ----------
+
+type ModelUsage = {
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+  raw?: Record<string, unknown>
+}
+
+async function logUsage(
+  useCase: string,
+  model: string,
+  usage: PromiseLike<ModelUsage> | undefined,
+): Promise<void> {
+  const resolved = usage ? await usage : undefined
+  console.log('[v0] ai-gateway usage', {
+    useCase,
+    model,
+    provider: 'gateway-provider',
+    inputTokens: resolved?.inputTokens,
+    outputTokens: resolved?.outputTokens,
+    totalTokens: resolved?.totalTokens,
+    cost: resolved?.raw?.cost ?? null,
+  })
 }
 
 function parseChoiceJson(text: string): unknown {
@@ -287,33 +374,11 @@ function parseChoiceJson(text: string): unknown {
   }
 }
 
-function buildChoicePrompt(input: ChoiceInput): { system: string; prompt: string } {
-  const context = {
-    snapshot: input.snapshot,
-    chapterBrief: input.chapterBrief,
-    draft: input.draft,
-    lastParagraphs: input.lastParagraphs,
-    routeState: input.routeState,
-    choiceHistory: input.choiceHistory,
-    lockedEndingKey: input.lockedEndingKey,
-    chapterNumber: input.chapterNumber,
-  }
-
-  return {
-    system: [
-      'Buat cabang pilihan cerita interaktif berdasarkan konteks server.',
-      'Balas hanya dengan satu objek JSON ketat tanpa markdown atau komentar.',
-      'Berikan 2 atau 3 tindakan konkret yang berbeda dan dapat langsung dilakukan tokoh.',
-      'Teks pembaca harus alami; jangan tampilkan label internal, status rute, spoiler ending, prompt, model, atau metadata generasi.',
-      'Setiap choice harus memiliki outcome dengan choiceId sama dan effect terstruktur.',
-    ].join(' '),
-    prompt: `Konteks pilihan:\n${JSON.stringify(context)}`,
-  }
-}
+// ---------- Choice generation with fallback ----------
 
 async function generateChoiceJson(args: {
   chain: ModelCandidate[]
-  input: ChoiceInput
+  input: ChoiceProviderInput
   route?: AiModelRoute
 }): Promise<unknown> {
   const { system, prompt } = buildChoicePrompt(args.input)
@@ -328,7 +393,9 @@ async function generateChoiceJson(args: {
         temperature: args.route?.temperature ?? undefined,
         maxOutputTokens: args.route?.maxOutputTokens ?? undefined,
       })
-      return parseChoiceJson(await result.text)
+      const text = await result.text
+      await logUsage(args.route?.useCase ?? 'choices', label, result.usage)
+      return parseChoiceJson(text)
     } catch (error) {
       lastError = error
       console.log(
@@ -349,6 +416,7 @@ async function generateChoiceJson(args: {
  * @param genPolicy — generation policy dari DB (target kata/scene).
  * @param aiRoute — route model dari DB ai_model_routes (opsional). Bila ada,
  *   digunakan sebagai prioritas pertama sebelum env/code fallback.
+ * @param choicesRoute — route khusus choices (opsional). Fallback ke aiRoute bila kosong.
  */
 export function createGatewayProvider(
   opts: ProseModel = {},
@@ -360,14 +428,15 @@ export function createGatewayProvider(
 
   // Build chain: DB route first if available, then env, then code fallback.
   let chain = resolveModelChain(opts.model)
-  const dbModel = toModelCandidate(aiRoute)
-  if (dbModel) chain = [dbModel, ...chain]
+  if (aiRoute) {
+    chain = expandChainWithRoute(chain, aiRoute)
+  }
 
+  // Route choices berdiri sendiri. Hanya bila tidak ada, pakai route chapter.
   const resolvedChoicesRoute = choicesRoute ?? aiRoute
-  let choiceChain = chain
-  if (choicesRoute) {
-    const choiceDbModel = toModelCandidate(choicesRoute)
-    if (choiceDbModel) choiceChain = [choiceDbModel, ...chain]
+  let choiceChain = resolveModelChain(opts.model)
+  if (resolvedChoicesRoute) {
+    choiceChain = expandChainWithRoute(choiceChain, resolvedChoicesRoute)
   }
 
   return {
@@ -399,7 +468,7 @@ export function createGatewayProvider(
       }
     },
 
-    generateChoices(input: ChoiceInput): Promise<unknown> {
+    generateChoices(input: ChoiceProviderInput): Promise<unknown> {
       return generateChoiceJson({
         chain: choiceChain,
         input,
@@ -427,16 +496,12 @@ function toModelCandidate(route: AiModelRoute | undefined): ModelCandidate | nul
   if (route.provider === 'openrouter') {
     const apiKey = process.env.OPENROUTER_API_KEY?.trim()
     if (!apiKey) return null
-    const models = route.fallbackModels.length
-      ? [route.modelId, ...route.fallbackModels]
-      : [route.modelId]
     const openrouter = createOpenAICompatible({
       name: 'openrouter',
       baseURL: 'https://openrouter.ai/api/v1',
       apiKey,
-      transformRequestBody: (args) => ({ ...args, models }),
     })
-    return { model: openrouter(models[0]), label: `db:openrouter:${models.join('|')}` }
+    return { model: openrouter(route.modelId), label: `db:openrouter:${route.modelId}` }
   }
 
   if (route.provider === 'gateway') {

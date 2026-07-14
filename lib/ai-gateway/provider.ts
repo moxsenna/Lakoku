@@ -30,7 +30,11 @@ export interface WriteInput {
   injectDefects?: DraftDefect[]
 }
 
-/** Konteks server-only yang terbatas untuk menghasilkan cabang pilihan dinamis. */
+/** Konteks server-only yang terbatas untuk menghasilkan cabang pilihan dinamis.
+ *
+ * chapterNumber disengaja TIDAK ada — diambil dari draft.chapterNumber.
+ * Caller tidak boleh mengirim chapter yang berbeda dari isi draft.
+ */
 export type LastParagraphs =
   | [string, string, string]
   | [string, string, string, string]
@@ -45,7 +49,35 @@ export interface ChoiceInput {
   /** Maksimum satu entry per bab yang menyediakan pilihan (Bab 1–49). */
   choiceHistory: ChoiceHistoryEntry[]
   lockedEndingKey: string | null
-  chapterNumber: number
+}
+
+/** Proyeksi ketat dan terbatas yang menjadi satu-satunya input provider pilihan. */
+export interface ChoiceProviderInput {
+  storyId: string
+  currentChapter: number
+  draft: {
+    title: string
+    lastParagraphs: LastParagraphs
+  }
+  chapterBrief: {
+    phase: string
+    chapterGoal: string
+    mustInclude: string[]
+    mustNotInclude: string[]
+    mustNotReveal: string[]
+    plotDebtsToProgress: string[]
+    plotDebtsToClose: string[]
+    remainingChapters: number
+    endingRunway: ChapterBrief['endingRunway']
+  }
+  routeState: RouteState
+  choiceHistory: ChoiceHistoryEntry[]
+  lockedEndingKey: string | null
+  canon: {
+    activeCharacters: Array<{ id: string; name: string }>
+    activeThreads: Array<{ id: string; title: string }>
+    pendingReveals: Array<{ id: string; description: string; gateChapter: number }>
+  }
 }
 
 export type DraftDefect =
@@ -62,7 +94,7 @@ export interface GenerationProvider {
   readonly name: string
   generatePlan(input: PlanInput): Promise<unknown>
   writeChapter(input: WriteInput): Promise<unknown>
-  generateChoices?(input: ChoiceInput): Promise<unknown>
+  generateChoices?(input: ChoiceProviderInput): Promise<unknown>
 }
 
 /** Policy runtime generasi (target kata & scene). Diambil dari generation_policy DB. */

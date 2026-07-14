@@ -329,6 +329,21 @@ describe('continuePersonalizedGeneration', () => {
     })).resolves.toEqual({ nextChapterReady: false })
   })
 
+  it('maps generation rejection within wait window to nextChapterReady false without throwing', async () => {
+    mocks.generateNextPersonalizedChapter.mockRejectedValue(new Error('choice branch missing'))
+    const { continuePersonalizedGeneration } = await import(
+      '@/lib/api/generation-continuation.server'
+    )
+
+    await expect(continuePersonalizedGeneration({
+      storyId: `${storyId}:throw`,
+      userId,
+      chapterNumber: 8,
+      triggerChoiceId: choiceId,
+    })).resolves.toEqual({ nextChapterReady: false })
+    expect(mocks.after).toHaveBeenCalledOnce()
+  })
+
   it('maps terminal generation failure to nextChapterReady false', async () => {
     mocks.generateNextPersonalizedChapter.mockResolvedValue({
       ok: false,

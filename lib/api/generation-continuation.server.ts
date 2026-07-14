@@ -58,12 +58,17 @@ export async function continuePersonalizedGeneration(input: {
   // Same in-flight promise continues after response via OpenNext/Cloudflare waitUntil.
   after(() => promise)
 
+  // Keep after() registered on the raw promise so timeout/reject still continues.
+  // Map reject to non-ready so choice response never 500 after apply succeeded.
   const raced = await Promise.race([
-    promise.then((result) => ({ kind: 'result' as const, result })),
+    promise.then(
+      (result) => ({ kind: 'result' as const, result }),
+      () => ({ kind: 'failed' as const }),
+    ),
     waitMs(CONTINUATION_WAIT_MS).then(() => ({ kind: 'timeout' as const })),
   ])
 
-  if (raced.kind === 'timeout') {
+  if (raced.kind === 'timeout' || raced.kind === 'failed') {
     return { nextChapterReady: false }
   }
 

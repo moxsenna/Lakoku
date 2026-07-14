@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 11 / 28 tasks
-- **In progress:** Task 12 — atomic `publish_chapter_v2` RPC
-- **Pending:** Task 13–28
-- **Current gate:** Introspection-derived atomic publish, V2 effects, idempotency, lease validation, and Chapter 50 empty branch
+- **Complete:** 12 / 28 tasks
+- **In progress:** Task 13 — Phase 1–3 integration gate
+- **Pending:** Task 14–28
+- **Current gate:** Combined story engine, dynamic choices, atomic publish, RLS/privacy, legacy compatibility, and local DB concurrency
 
 ---
 
@@ -139,7 +139,7 @@
   - [ ] Support Chapter 50 null/empty choices and outcomes.
   - [ ] Preserve old `publishChapter()` unchanged.
 
-- [ ] 🔄 **Task 12: Atomic `publish_chapter_v2` RPC**
+- [x] **Task 12: Atomic `publish_chapter_v2` RPC**
   - [ ] Mechanically derive from exact legacy RPC dump.
   - [ ] Preserve idempotency, event, lease, and conflict semantics.
   - [ ] Add effect persistence atomically.
@@ -147,7 +147,7 @@
   - [ ] Restrict execution to service role.
   - [ ] Prove rollback and idempotency with pgTAP.
 
-- [ ] **Task 13: Phase 1–3 integration gate**
+- [ ] 🔄 **Task 13: Phase 1–3 integration gate**
   - [ ] Run focused pure-engine/runtime tests.
   - [ ] Run all unit tests.
   - [ ] Run typecheck.

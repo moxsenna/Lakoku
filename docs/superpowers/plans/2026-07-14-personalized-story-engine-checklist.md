@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 7 / 28 tasks
-- **In progress:** Task 8 — chapter brief and deterministic quality gates
-- **Pending:** Task 9–28
-- **Current gate:** Chapter runway brief plus mobile-readable prose and choice quality validation
+- **Complete:** 8 / 28 tasks
+- **In progress:** Task 9 — dynamic choice schemas and chapter-aware validation
+- **Pending:** Task 10–28
+- **Current gate:** Choice/effect shape, ID matching, concrete labels, chapter transitions, and Chapter 50 skip
 
 ---
 
@@ -101,7 +101,7 @@
   - [ ] Preserve locked ending through Chapter 50.
   - [ ] Add boundary and tie-breaking tests.
 
-- [ ] 🔄 **Task 8: Chapter brief and deterministic quality gates**
+- [x] **Task 8: Chapter brief and deterministic quality gates**
   - [ ] Build chapter brief from contract, canon, route state, and prior choice.
   - [ ] Enforce conflict/thread/ending runway rules.
   - [ ] Add prose quality checks.
@@ -119,7 +119,7 @@
 
 ## Phase 3 — Dynamic Choices and Atomic Publish V2
 
-- [ ] **Task 9: Choice schemas and chapter-aware validation**
+- [ ] 🔄 **Task 9: Choice schemas and chapter-aware validation**
   - [ ] Add `ChoiceEffectSchema`.
   - [ ] Add `ChoiceBranchSchema`.
   - [ ] Match exact choice/outcome ID sets.

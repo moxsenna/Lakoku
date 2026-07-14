@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 8 / 28 tasks
-- **In progress:** Task 9 — dynamic choice schemas and chapter-aware validation
-- **Pending:** Task 10–28
-- **Current gate:** Choice/effect shape, ID matching, concrete labels, chapter transitions, and Chapter 50 skip
+- **Complete:** 9 / 28 tasks
+- **In progress:** Task 10 — dynamic choice provider through AI gateway
+- **Pending:** Task 11–28
+- **Current gate:** Optional provider compatibility, shared model routing, validated choice generation, and Chapter 50 skip
 
 ---
 
@@ -119,7 +119,7 @@
 
 ## Phase 3 — Dynamic Choices and Atomic Publish V2
 
-- [ ] 🔄 **Task 9: Choice schemas and chapter-aware validation**
+- [x] **Task 9: Choice schemas and chapter-aware validation**
   - [ ] Add `ChoiceEffectSchema`.
   - [ ] Add `ChoiceBranchSchema`.
   - [ ] Match exact choice/outcome ID sets.
@@ -127,7 +127,7 @@
   - [ ] Enforce next-chapter and ending-window rules.
   - [ ] Reject choice generation for Chapter 50.
 
-- [ ] **Task 10: Optional choice-provider gateway**
+- [ ] 🔄 **Task 10: Optional choice-provider gateway**
   - [ ] Add optional `generateChoices` provider method.
   - [ ] Preserve existing providers.
   - [ ] Route through existing model configuration/logging/cost path.

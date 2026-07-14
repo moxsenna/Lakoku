@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 9 / 28 tasks
-- **In progress:** Task 10 — dynamic choice provider through AI gateway
-- **Pending:** Task 11–28
-- **Current gate:** Optional provider compatibility, shared model routing, validated choice generation, and Chapter 50 skip
+- **Complete:** 10 / 28 tasks
+- **In progress:** Task 11 — additive TypeScript publishChapterV2 wrapper
+- **Pending:** Task 12–28
+- **Current gate:** V2 payload mapping, internal effects, Chapter 50 empty branch, and legacy wrapper compatibility
 
 ---
 
@@ -127,13 +127,13 @@
   - [ ] Enforce next-chapter and ending-window rules.
   - [ ] Reject choice generation for Chapter 50.
 
-- [ ] 🔄 **Task 10: Optional choice-provider gateway**
+- [x] **Task 10: Optional choice-provider gateway**
   - [ ] Add optional `generateChoices` provider method.
   - [ ] Preserve existing providers.
   - [ ] Route through existing model configuration/logging/cost path.
   - [ ] Validate raw output before runtime use.
 
-- [ ] **Task 11: TypeScript `publishChapterV2` boundary**
+- [ ] 🔄 **Task 11: TypeScript `publishChapterV2` boundary**
   - [ ] Add V2 input/outcome types.
   - [ ] Map `effect_json` and `choice_kind` explicitly.
   - [ ] Support Chapter 50 null/empty choices and outcomes.

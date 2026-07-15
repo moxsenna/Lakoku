@@ -16,8 +16,8 @@
 
 - **Complete:** 27 / 28 tasks
 - **In progress:** Task 28 — Full gates and release evidence
-- **Pending:** none after Task 28
-- **Next:** Local Docker/Supabase for Task 26/23 pgTAP live run; clear remaining lint debt; authenticated E2E + release evidence
+- **Pending:** authenticated browser E2E only
+- **Next:** Browser cookie-session E2E matrix; keep production exposure blocked until NTM/M9 authorization
 
 ---
 
@@ -271,17 +271,17 @@
   - [x] Add `smoke:personalized-story` package command.
 
 - [ ] **Task 28: Full gates and release evidence**
-  - [ ] `pnpm typecheck`
-  - [ ] `pnpm lint`
-  - [ ] `pnpm test:unit`
-  - [ ] Local Supabase reset/migration tests
-  - [ ] `pnpm smoke:personalized-story`
-  - [ ] Existing smoke suite
-  - [ ] Next.js build
-  - [ ] Cloudflare/OpenNext build
+  - [x] `pnpm typecheck`
+  - [x] `pnpm lint`
+  - [x] `pnpm test:unit`
+  - [x] Local Supabase reset/migration tests
+  - [x] `pnpm smoke:personalized-story`
+  - [x] Existing smoke suite
+  - [x] Next.js build
+  - [x] Cloudflare/OpenNext build
   - [ ] Authenticated local end-to-end flow
-  - [ ] Write release evidence report
-  - [ ] Verify unrelated docs remain untouched
+  - [x] Write release evidence report
+  - [x] Verify unrelated docs remain untouched
 
 ---
 

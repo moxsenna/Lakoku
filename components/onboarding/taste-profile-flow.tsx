@@ -19,7 +19,6 @@ import {
   actSkipTasteProfile,
 } from '@/app/onboarding/selera/actions'
 import {
-  readGuestTasteProfile,
   saveGuestTasteProfile,
 } from '@/lib/taste-profile/storage'
 import {

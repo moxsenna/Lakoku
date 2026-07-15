@@ -136,7 +136,7 @@ export async function loadAdminUserDetail(userId: string): Promise<AdminUserDeta
   const db = createAdminClient()
 
   // Email from RPC
-  let email: string | null = null
+  const email: string | null = null
   let createdAt: string | null = null
   try {
     const { data: prof } = await db

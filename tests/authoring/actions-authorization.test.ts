@@ -43,7 +43,36 @@ vi.mock('@/lib/supabase/admin', () => ({
   createAdminClient: mocks.adminFactory,
 }))
 
-function validDraft() {
+import type { StoryBibleDraft } from '@/lib/authoring/schema'
+
+/**
+ * Writable fixture for intentional invalid mutation tests.
+ * Nested access kept; values loose for schema rejection cases.
+ */
+type StoryBibleDraftFixture = {
+  premise: {
+    tropes: string[]
+    [key: string]: unknown
+  }
+  cast: {
+    characters: Array<{
+      voice: unknown
+      [key: string]: unknown
+    }>
+    [key: string]: unknown
+  }
+  world: {
+    internalFindings?: unknown
+    [key: string]: unknown
+  }
+  [key: string]: unknown
+}
+
+function cloneDraft(value: StoryBibleDraft): StoryBibleDraftFixture {
+  return structuredClone(value) as unknown as StoryBibleDraftFixture
+}
+
+function validDraft(): StoryBibleDraft {
   return {
     premise: {
       title: 'Warisan Terkubur',
@@ -138,13 +167,15 @@ describe('brainstorm action authorization', () => {
   })
 
   it.each([
-    ['malformed nested input', (draft: Record<string, any>) => { draft.cast.characters[0].voice = { register: 'ok', secret: 'provider-key' } }],
-    ['unknown key', (draft: Record<string, any>) => { draft.world.internalFindings = ['secret'] }],
-    ['oversized cast', (draft: Record<string, any>) => { draft.cast.characters = Array.from({ length: 9 }, () => draft.cast.characters[0]) }],
-    ['oversized tropes', (draft: Record<string, any>) => { draft.premise.tropes = ['Satu', 'Dua', 'Tiga', 'Empat', 'Lima', 'Enam'] }],
+    ['malformed nested input', (draft: StoryBibleDraftFixture) => {
+      draft.cast.characters[0].voice = { register: 'ok', secret: 'provider-key' }
+    }],
+    ['unknown key', (draft: StoryBibleDraftFixture) => { draft.world.internalFindings = ['secret'] }],
+    ['oversized cast', (draft: StoryBibleDraftFixture) => { draft.cast.characters = Array.from({ length: 9 }, () => draft.cast.characters[0]) }],
+    ['oversized tropes', (draft: StoryBibleDraftFixture) => { draft.premise.tropes = ['Satu', 'Dua', 'Tiga', 'Empat', 'Lima', 'Enam'] }],
   ])('rejects authenticated lock %s before ladder, provider, or persistence', async (_name, mutate) => {
     mocks.getSessionUser.mockResolvedValue({ id: 'user-a' })
-    const draft = validDraft() as Record<string, any>
+    const draft = cloneDraft(validDraft())
     mutate(draft)
     const actions = await import('@/app/brainstorm/actions')
 

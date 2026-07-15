@@ -21,7 +21,6 @@ import type {
 } from './types'
 import {
   queryStories,
-  queryStory,
   queryStoriesByIdsForUser,
   queryStoryForUser,
   queryExploreStories,

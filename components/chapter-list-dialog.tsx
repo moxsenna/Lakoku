@@ -86,7 +86,10 @@ function ChapterListDialogInner({
   }, [storyId])
 
   useEffect(() => {
-    fetchChapters()
+    const timer = window.setTimeout(() => {
+      void fetchChapters()
+    }, 0)
+    return () => window.clearTimeout(timer)
   }, [fetchChapters])
 
   const completedChapterNumbers = new Set(jejak.map((j) => j.chapter))

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseStoryContract, StoryContractSchema } from '@/lib/story-engine/story-contract'
+import { parseStoryContract, StoryContractSchema, type StoryContract } from '@/lib/story-engine/story-contract'
 import { buildContractFixture } from '@/fixtures/contracts/build-contract-fixture'
 import { fantasiPetualanganContract } from '@/fixtures/contracts/fantasi-petualangan'
 import { misteriDramaContract } from '@/fixtures/contracts/misteri-drama'
@@ -10,6 +10,56 @@ const fixtures = [
   romansaDramaContract,
   fantasiPetualanganContract,
 ]
+
+/**
+ * Writable fixture for intentional invalid mutation tests.
+ * Keeps nested field access without `any`; values stay loose for schema rejection cases.
+ */
+type StoryContractFixture = {
+  title: string
+  totalChapters: number
+  provider?: unknown
+  mainCharacter: {
+    providerTrace?: unknown
+    [key: string]: unknown
+  }
+  chapterTargets: Array<{
+    chapterNumber: number
+    mustInclude: string[]
+    expectedThreadMovement: unknown
+    internal?: unknown
+    [key: string]: unknown
+  }>
+  endingCandidates: Array<{ key: string; [key: string]: unknown }>
+  plotDebts: Array<{
+    id: string
+    introducedAt: number
+    mustCloseBy: number
+    mustProgressBy: number[]
+    [key: string]: unknown
+  }>
+  revealRunway: Array<{
+    secretId: string
+    revealGateChapter: number
+    [key: string]: unknown
+  }>
+  closureRunway: {
+    mainMysteryResolveBy: number
+    internal?: unknown
+    [key: string]: unknown
+  }
+  actPlan: Array<{
+    actNumber: number
+    fromChapter: number
+    toChapter: number
+    [key: string]: unknown
+  }>
+  [key: string]: unknown
+}
+
+function cloneFixture(value: StoryContract): StoryContractFixture {
+  return structuredClone(value) as unknown as StoryContractFixture
+}
 
 function clone<T>(value: T): T {
   return structuredClone(value)
@@ -143,41 +193,41 @@ describe('StoryContractSchema rejection', () => {
   })
 
   it.each([
-    ['duplicate chapter target', (input: any) => { input.chapterTargets[1].chapterNumber = 1 }],
-    ['out-of-order chapter target', (input: any) => { [input.chapterTargets[0], input.chapterTargets[1]] = [input.chapterTargets[1], input.chapterTargets[0]] }],
-    ['non-50 total', (input: any) => { input.totalChapters = 49 }],
-    ['unknown root field', (input: any) => { input.provider = 'hidden' }],
-    ['unknown nested field', (input: any) => { input.mainCharacter.providerTrace = 'hidden' }],
-    ['duplicate ending keys', (input: any) => { input.endingCandidates[1].key = input.endingCandidates[0].key }],
-    ['duplicate debt IDs', (input: any) => { input.plotDebts[1].id = input.plotDebts[0].id }],
-    ['missing main_mystery debt', (input: any) => { input.plotDebts[0].id = 'debt:replacement' }],
-    ['duplicate reveal secrets', (input: any) => { input.revealRunway[1].secretId = input.revealRunway[0].secretId }],
-    ['unsorted debt progression', (input: any) => { input.plotDebts[0].mustProgressBy = [32, 12] }],
-    ['duplicate debt progression', (input: any) => { input.plotDebts[0].mustProgressBy = [12, 12] }],
-    ['progression before debt introduction', (input: any) => { input.plotDebts[0].introducedAt = 20; input.plotDebts[0].mustProgressBy = [12, 32] }],
-    ['progression after debt closure', (input: any) => { input.plotDebts[0].mustCloseBy = 20; input.plotDebts[0].mustProgressBy = [12, 32] }],
-    ['invalid debt closure chapter', (input: any) => { input.plotDebts[0].mustCloseBy = 51 }],
-    ['invalid reveal gate', (input: any) => { input.revealRunway[0].revealGateChapter = 0 }],
-    ['fewer than two ending candidates', (input: any) => { input.endingCandidates = input.endingCandidates.slice(0, 1) }],
-    ['bad closure literal', (input: any) => { input.closureRunway.mainMysteryResolveBy = 47 }],
-    ['unknown closure field', (input: any) => { input.closureRunway.internal = 50 }],
-    ['scalar expected thread movement', (input: any) => { input.chapterTargets[0].expectedThreadMovement = 'scalar' }],
-    ['empty expected thread movement', (input: any) => { input.chapterTargets[0].expectedThreadMovement = [] }],
-    ['oversized string', (input: any) => { input.title = 'x'.repeat(161) }],
-    ['oversized array', (input: any) => { input.chapterTargets[0].mustInclude = Array.from({ length: 9 }, (_, index) => `Beat ${index}`) }],
-    ['oversized thread movement array', (input: any) => { input.chapterTargets[0].expectedThreadMovement = Array.from({ length: 9 }, (_, index) => `Movement ${index}`) }],
-    ['unknown chapter target field', (input: any) => { input.chapterTargets[0].internal = true }],
-    ['gapped act plan', (input: any) => { input.actPlan[1].fromChapter += 1 }],
-    ['overlapping act plan', (input: any) => { input.actPlan[1].fromChapter -= 1 }],
-    ['unordered acts', (input: any) => { input.actPlan[1].actNumber = input.actPlan[0].actNumber }],
+    ['duplicate chapter target', (input: StoryContractFixture) => { input.chapterTargets[1].chapterNumber = 1 }],
+    ['out-of-order chapter target', (input: StoryContractFixture) => { [input.chapterTargets[0], input.chapterTargets[1]] = [input.chapterTargets[1], input.chapterTargets[0]] }],
+    ['non-50 total', (input: StoryContractFixture) => { input.totalChapters = 49 }],
+    ['unknown root field', (input: StoryContractFixture) => { input.provider = 'hidden' }],
+    ['unknown nested field', (input: StoryContractFixture) => { input.mainCharacter.providerTrace = 'hidden' }],
+    ['duplicate ending keys', (input: StoryContractFixture) => { input.endingCandidates[1].key = input.endingCandidates[0].key }],
+    ['duplicate debt IDs', (input: StoryContractFixture) => { input.plotDebts[1].id = input.plotDebts[0].id }],
+    ['missing main_mystery debt', (input: StoryContractFixture) => { input.plotDebts[0].id = 'debt:replacement' }],
+    ['duplicate reveal secrets', (input: StoryContractFixture) => { input.revealRunway[1].secretId = input.revealRunway[0].secretId }],
+    ['unsorted debt progression', (input: StoryContractFixture) => { input.plotDebts[0].mustProgressBy = [32, 12] }],
+    ['duplicate debt progression', (input: StoryContractFixture) => { input.plotDebts[0].mustProgressBy = [12, 12] }],
+    ['progression before debt introduction', (input: StoryContractFixture) => { input.plotDebts[0].introducedAt = 20; input.plotDebts[0].mustProgressBy = [12, 32] }],
+    ['progression after debt closure', (input: StoryContractFixture) => { input.plotDebts[0].mustCloseBy = 20; input.plotDebts[0].mustProgressBy = [12, 32] }],
+    ['invalid debt closure chapter', (input: StoryContractFixture) => { input.plotDebts[0].mustCloseBy = 51 }],
+    ['invalid reveal gate', (input: StoryContractFixture) => { input.revealRunway[0].revealGateChapter = 0 }],
+    ['fewer than two ending candidates', (input: StoryContractFixture) => { input.endingCandidates = input.endingCandidates.slice(0, 1) }],
+    ['bad closure literal', (input: StoryContractFixture) => { input.closureRunway.mainMysteryResolveBy = 47 }],
+    ['unknown closure field', (input: StoryContractFixture) => { input.closureRunway.internal = 50 }],
+    ['scalar expected thread movement', (input: StoryContractFixture) => { input.chapterTargets[0].expectedThreadMovement = 'scalar' }],
+    ['empty expected thread movement', (input: StoryContractFixture) => { input.chapterTargets[0].expectedThreadMovement = [] }],
+    ['oversized string', (input: StoryContractFixture) => { input.title = 'x'.repeat(161) }],
+    ['oversized array', (input: StoryContractFixture) => { input.chapterTargets[0].mustInclude = Array.from({ length: 9 }, (_, index) => `Beat ${index}`) }],
+    ['oversized thread movement array', (input: StoryContractFixture) => { input.chapterTargets[0].expectedThreadMovement = Array.from({ length: 9 }, (_, index) => `Movement ${index}`) }],
+    ['unknown chapter target field', (input: StoryContractFixture) => { input.chapterTargets[0].internal = true }],
+    ['gapped act plan', (input: StoryContractFixture) => { input.actPlan[1].fromChapter += 1 }],
+    ['overlapping act plan', (input: StoryContractFixture) => { input.actPlan[1].fromChapter -= 1 }],
+    ['unordered acts', (input: StoryContractFixture) => { input.actPlan[1].actNumber = input.actPlan[0].actNumber }],
   ])('rejects %s', (_name, mutate) => {
-    const input = clone(misteriDramaContract) as any
+    const input = cloneFixture(misteriDramaContract)
     mutate(input)
     expect(StoryContractSchema.safeParse(input).success).toBe(false)
   })
 
   it('trims every accepted string', () => {
-    const input = clone(misteriDramaContract) as any
+    const input = cloneFixture(misteriDramaContract)
     input.title = `  ${input.title}  `
     input.chapterTargets[0].mustInclude[0] = `  ${input.chapterTargets[0].mustInclude[0]}  `
 

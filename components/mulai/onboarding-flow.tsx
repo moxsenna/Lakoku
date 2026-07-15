@@ -136,8 +136,10 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
 
   // Baca taste profile — localStorage dulu, lalu server (best-effort, jangan block UI).
   useEffect(() => {
-    // Local first: instant, no network.
-    setTasteProfile(readGuestTasteProfile())
+    // Local first: defer setState out of effect body (same pattern as reader-view).
+    const timer = window.setTimeout(() => {
+      setTasteProfile(readGuestTasteProfile())
+    }, 0)
 
     // Server: best-effort, fallback ke localStorage kalau gagal.
     startTransition(async () => {
@@ -146,6 +148,8 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
         setTasteProfile(result.profile)
       }
     })
+
+    return () => window.clearTimeout(timer)
   }, [])
 
   const failBuild = useCallback((message?: string) => {

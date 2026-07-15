@@ -8,7 +8,7 @@
  *  - lib/admin/credits.ts exports adminGrantCredits
  *  - No client-side service-role access (static)
  */
-import { readFileSync, statSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 
 let pass = 0

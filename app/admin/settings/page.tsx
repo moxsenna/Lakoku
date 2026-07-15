@@ -1,15 +1,14 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { AdminSectionCard } from '@/components/admin/admin-section-card'
 import { AdminEmptyState } from '@/components/admin/admin-empty-state'
-import { AdminStatCard } from '@/components/admin/admin-stat-card'
 import { StatusBadge } from '@/components/admin/status-badge'
 import { EditCreditProductDialog, type CreditProductRow } from '@/components/admin/settings/edit-credit-product-dialog'
 import { EditFeatureCreditCostDialog } from '@/components/admin/settings/edit-feature-credit-cost-dialog'
 import { EditGenerationPolicyDialog } from '@/components/admin/settings/edit-generation-policy-dialog'
 import { EditAiModelRouteDialog } from '@/components/admin/settings/edit-ai-model-route-dialog'
-import { idr, isoDate, isoDatetime } from '@/lib/admin/format'
+import { idr, isoDatetime } from '@/lib/admin/format'
 import { Pencil } from 'lucide-react'
 
 interface SettingsData {
@@ -28,14 +27,6 @@ interface SettingsData {
     id: string; adminEmail: string | null; settingArea: string; settingKey: string
     oldValue: unknown; newValue: unknown; reason: string; createdAt: string
   }[]
-}
-
-function formatValue(v: unknown): string {
-  if (v == null) return '-'
-  if (typeof v === 'number') return String(v)
-  if (typeof v === 'string') return v
-  if (typeof v === 'boolean') return v ? 'Active' : 'Inactive'
-  try { return JSON.stringify(v).slice(0, 80) } catch { return '-' }
 }
 
 function valDiff(oldVal: unknown, newVal: unknown): string {
@@ -70,14 +61,22 @@ export default function AdminSettingsPage() {
     routeVersion: string; notes: string | null
   } | null>(null)
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
     setLoading(true)
     try {
       const res = await fetch('/api/admin/settings/read')
       if (res.ok) setData(await res.json())
-    } catch { } finally { setLoading(false) }
-  }
-  useEffect(() => { loadData() }, [])
+    } catch { /* no-op */ } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadData()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [loadData])
 
   if (loading) return <div className="py-12 text-center text-sm text-muted-foreground">Memuat settings...</div>
   if (!data) return <AdminEmptyState message="Gagal memuat settings." />

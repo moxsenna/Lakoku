@@ -15,7 +15,7 @@ import { createAdminClient } from '@lakoku/db'
  */
 export const dynamic = 'force-dynamic'
 
-export async function GET(request: Request): Promise<Response> {
+export async function GET(_request: Request): Promise<Response> {
   // Try auth (optional — guest juga bisa lihat produk, tapi tanpa bonus first topup).
   let userId: string | null = null
   try {

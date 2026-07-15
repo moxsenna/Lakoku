@@ -282,7 +282,6 @@ check(
 )
 
 const personalizedRuntimePath = 'lib/runtime/personalized-generation.ts'
-const personalizedRuntime = source(personalizedRuntimePath)
 const personalizedRuntimeAst = sourceFile(personalizedRuntimePath)
 const choiceBranches: ts.IfStatement[] = []
 walk(personalizedRuntimeAst, (node) => {

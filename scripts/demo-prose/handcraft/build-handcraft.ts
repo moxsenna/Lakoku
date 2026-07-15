@@ -3,7 +3,6 @@
  * Full editorial prose — no padding, no generator filler, show-don't-tell.
  */
 import {
-  MOBILE_DRAMA_RHYTHM,
   type ChapterMode,
 } from '../../../lib/prose/mobile-drama-style'
 import { evaluateProseDraft } from '../../../lib/prose/prompt-engine'
@@ -16,8 +15,6 @@ export type HandcraftChapter = {
   paragraphs: string[]
   chapterMode: ChapterMode
 }
-
-const R = MOBILE_DRAMA_RHYTHM
 
 /** Bab 1 — arrival, cold welcome, photo frame tension. ~803 kata, 50 paragraf. */
 function coreCh1(): string[] {

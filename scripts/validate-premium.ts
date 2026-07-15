@@ -3,7 +3,7 @@ import { buildAllPremiumBilikKetujuhV2Drafts as buildAllPremiumBilikKetujuh50Dra
 const drafts = buildAllPremiumBilikKetujuh50Drafts()
 const snapshot = buildPremiumBilikKetujuh50Snapshot()
 
-let errors: string[] = []
+const errors: string[] = []
 
 if (drafts.length !== 50) errors.push(`Total drafts is not 50, it is ${drafts.length}`)
 

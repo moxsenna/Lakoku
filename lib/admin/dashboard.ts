@@ -46,12 +46,7 @@ export async function loadAdminDashboardMetrics(): Promise<AdminDashboardMetrics
   } catch { /* No-op */ }
 
   // --- Credit totals ---
-  try {
-    const { data: ledgerSum } = await db.rpc('credit_balance_v1', {
-      p_user_id: '00000000-0000-0000-0000-000000000000', // sentinel placeholder
-    }).maybeSingle()
-    // credit_balance_v1 returns per-user; aggregate differently
-  } catch { /* No-op */ }
+  // Note: credit_balance_v1 is per-user; circulating total uses ledger sum below.
 
   try {
     const { data: circ } = await db

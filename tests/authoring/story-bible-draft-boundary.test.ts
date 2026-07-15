@@ -1,7 +1,47 @@
 import { describe, expect, it } from 'vitest'
-import { StoryBibleDraftSchema } from '@/lib/authoring/schema'
+import { StoryBibleDraftSchema, type StoryBibleDraft } from '@/lib/authoring/schema'
 
-function validDraft(): unknown {
+/**
+ * Writable fixture for intentional invalid mutation tests.
+ * Nested access kept; values loose for schema rejection cases.
+ */
+type StoryBibleDraftFixture = {
+  premise: {
+    synopsis: string
+    tropes: string[]
+    [key: string]: unknown
+  }
+  cast: {
+    characters: Array<{
+      voice: unknown
+      aliases: Array<{ alias: string; aliasType: string; [key: string]: unknown }>
+      [key: string]: unknown
+    }>
+    [key: string]: unknown
+  }
+  mystery: {
+    mainMystery: {
+      providerTrace?: unknown
+      [key: string]: unknown
+    }
+    [key: string]: unknown
+  }
+  world: {
+    threads: Array<{
+      payoffWindow: number
+      [key: string]: unknown
+    }>
+    [key: string]: unknown
+  }
+  internalConfig?: unknown
+  [key: string]: unknown
+}
+
+function cloneDraft(value: StoryBibleDraft): StoryBibleDraftFixture {
+  return structuredClone(value) as unknown as StoryBibleDraftFixture
+}
+
+function validDraft(): StoryBibleDraft {
   return {
     premise: {
       title: 'Warisan yang Terkubur',
@@ -37,7 +77,7 @@ function validDraft(): unknown {
 
 describe('StoryBibleDraftSchema', () => {
   it('accepts current valid fixture and trims trope elements', () => {
-    const draft = validDraft() as Record<string, any>
+    const draft = cloneDraft(validDraft())
     draft.premise.tropes = ['  Rahasia Keluarga  ', ' Kebangkitan Diri ']
 
     const parsed = StoryBibleDraftSchema.parse(draft)
@@ -46,19 +86,19 @@ describe('StoryBibleDraftSchema', () => {
   })
 
   it.each([
-    ['malformed nested input', (draft: Record<string, any>) => { draft.cast.characters[0].voice = 'secret' }],
-    ['aggregate unknown key', (draft: Record<string, any>) => { draft.internalConfig = 'secret' }],
-    ['nested unknown key', (draft: Record<string, any>) => { draft.mystery.mainMystery.providerTrace = 'secret' }],
-    ['oversized string', (draft: Record<string, any>) => { draft.premise.synopsis = 'x'.repeat(701) }],
-    ['oversized cast', (draft: Record<string, any>) => { draft.cast.characters = Array.from({ length: 9 }, () => draft.cast.characters[0]) }],
-    ['oversized aliases array', (draft: Record<string, any>) => { draft.cast.characters[0].aliases = Array.from({ length: 5 }, (_, index) => ({ alias: `Alias ${index}`, aliasType: 'NAME' })) }],
-    ['undersized tropes', (draft: Record<string, any>) => { draft.premise.tropes = ['Solo'] }],
-    ['oversized tropes', (draft: Record<string, any>) => { draft.premise.tropes = ['Satu', 'Dua', 'Tiga', 'Empat', 'Lima', 'Enam'] }],
-    ['blank trimmed trope', (draft: Record<string, any>) => { draft.premise.tropes = ['  ', 'Valid'] }],
-    ['oversized trope element', (draft: Record<string, any>) => { draft.premise.tropes = ['x'.repeat(41), 'Valid'] }],
-    ['chapter beyond fixed story length', (draft: Record<string, any>) => { draft.world.threads[0].payoffWindow = 51 }],
+    ['malformed nested input', (draft: StoryBibleDraftFixture) => { draft.cast.characters[0].voice = 'secret' }],
+    ['aggregate unknown key', (draft: StoryBibleDraftFixture) => { draft.internalConfig = 'secret' }],
+    ['nested unknown key', (draft: StoryBibleDraftFixture) => { draft.mystery.mainMystery.providerTrace = 'secret' }],
+    ['oversized string', (draft: StoryBibleDraftFixture) => { draft.premise.synopsis = 'x'.repeat(701) }],
+    ['oversized cast', (draft: StoryBibleDraftFixture) => { draft.cast.characters = Array.from({ length: 9 }, () => draft.cast.characters[0]) }],
+    ['oversized aliases array', (draft: StoryBibleDraftFixture) => { draft.cast.characters[0].aliases = Array.from({ length: 5 }, (_, index) => ({ alias: `Alias ${index}`, aliasType: 'NAME' })) }],
+    ['undersized tropes', (draft: StoryBibleDraftFixture) => { draft.premise.tropes = ['Solo'] }],
+    ['oversized tropes', (draft: StoryBibleDraftFixture) => { draft.premise.tropes = ['Satu', 'Dua', 'Tiga', 'Empat', 'Lima', 'Enam'] }],
+    ['blank trimmed trope', (draft: StoryBibleDraftFixture) => { draft.premise.tropes = ['  ', 'Valid'] }],
+    ['oversized trope element', (draft: StoryBibleDraftFixture) => { draft.premise.tropes = ['x'.repeat(41), 'Valid'] }],
+    ['chapter beyond fixed story length', (draft: StoryBibleDraftFixture) => { draft.world.threads[0].payoffWindow = 51 }],
   ])('rejects %s', (_name, mutate) => {
-    const draft = validDraft() as Record<string, any>
+    const draft = cloneDraft(validDraft())
     mutate(draft)
 
     expect(StoryBibleDraftSchema.safeParse(draft).success).toBe(false)

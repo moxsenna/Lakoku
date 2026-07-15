@@ -1,6 +1,5 @@
 import { AdminStatCard } from '@/components/admin/admin-stat-card'
 import { AdminSectionCard } from '@/components/admin/admin-section-card'
-import { AdminErrorState } from '@/components/admin/admin-error-state'
 import { loadAdminDashboardMetrics } from '@/lib/admin/dashboard'
 import { idr, compactNumber } from '@/lib/admin/format'
 import Link from 'next/link'
@@ -8,8 +7,7 @@ import Link from 'next/link'
 export const dynamic = 'force-dynamic'
 
 export default async function AdminOverviewPage() {
-  let m = await loadAdminDashboardMetrics()
-  const error = false // swallow individual query errors
+  const m = await loadAdminDashboardMetrics()
 
   return (
     <div className="flex flex-col gap-6">

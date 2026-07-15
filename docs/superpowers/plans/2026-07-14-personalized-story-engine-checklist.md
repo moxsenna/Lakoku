@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 20 / 28 tasks
-- **In progress:** Task 22 — Reader polling and final chapter UI
-- **Pending:** Task 20, 23–28
-- **Next:** Complete Task 22; Worker B resolves Task 20 durability blocker; Task 25–27 available
+- **Complete:** 22 / 28 tasks
+- **In progress:** Task 23 — Transactional premium clone RPC
+- **Pending:** Task 24–28
+- **Next:** Complete Task 23; Worker C owns Task 24; Task 25–27 available
 
 ---
 
@@ -207,11 +207,11 @@
   - [x] Make replay idempotent.
   - [x] Reject conflicting second choice.
 
-- [ ] **Task 20: Durable generation continuation**
-  - [ ] Verify runtime durability support.
-  - [ ] Use proven `after()` continuation or durable outbox.
-  - [ ] Avoid duplicate generation promises.
-  - [ ] Return optional `nextChapterReady`.
+- [x] **Task 20: Durable generation continuation**
+  - [x] Verify runtime durability support.
+  - [x] Use proven `after()` continuation or durable outbox.
+  - [x] Avoid duplicate generation promises.
+  - [x] Return optional `nextChapterReady`.
 
 - [x] **Task 21: Exact per-chapter status endpoint**
   - [x] Check chapter existence first.
@@ -220,13 +220,13 @@
   - [x] Do not use story-level status as chapter truth.
   - [x] Authorize private story access.
 
-- [ ] **Task 22: Reader polling and final chapter UI**
-  - [ ] Poll pending personalized chapter status.
-  - [ ] Navigate when ready.
-  - [ ] Show reader-safe failure state.
-  - [ ] Stop polling on unmount.
-  - [ ] Show no choice buttons on Chapter 50.
-  - [ ] Show Library/New Story CTAs.
+- [x] **Task 22: Reader polling and final chapter UI**
+  - [x] Poll pending personalized chapter status.
+  - [x] Navigate when ready.
+  - [x] Show reader-safe failure state.
+  - [x] Stop polling on unmount.
+  - [x] Show no choice buttons on Chapter 50.
+  - [x] Show Library/New Story CTAs.
 
 ---
 

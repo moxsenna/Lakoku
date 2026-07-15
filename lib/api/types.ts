@@ -9,7 +9,9 @@
 export {
   REPORT_CATEGORIES,
   ChapterAvailabilitySchema,
+  ChapterGenerationStatusSchema,
   ChapterSchema,
+  ChapterStatusResponseSchema,
   ChoiceOptionSchema,
   ChoiceOutcomeSchema,
   ErrorResponseSchema,
@@ -33,6 +35,8 @@ export {
 export type {
   Chapter,
   ChapterAvailability,
+  ChapterGenerationStatus,
+  ChapterStatusResponse,
   ChoiceOption,
   ChoiceOutcome,
   ErrorResponse,

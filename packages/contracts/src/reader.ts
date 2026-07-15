@@ -121,6 +121,15 @@ export const ChoiceOutcomeSchema = z.object({
 })
 export type ChoiceOutcome = z.infer<typeof ChoiceOutcomeSchema>
 
+export const ChapterGenerationStatusSchema = z.enum(['ready', 'generating', 'failed'])
+export type ChapterGenerationStatus = z.infer<typeof ChapterGenerationStatusSchema>
+
+export const ChapterStatusResponseSchema = z.object({
+  status: ChapterGenerationStatusSchema,
+  chapterNumber: z.number().int().positive(),
+}).strict()
+export type ChapterStatusResponse = z.infer<typeof ChapterStatusResponseSchema>
+
 export const ErrorResponseSchema = z.object({
   error: z.string().min(1),
 })
@@ -149,7 +158,8 @@ export type SubmitChoiceRequest = z.infer<typeof SubmitChoiceRequestSchema>
 
 export const SubmitChoiceResponseSchema = z.object({
   outcome: ChoiceOutcomeSchema,
-})
+  nextChapterReady: z.boolean().optional(),
+}).strict()
 export type SubmitChoiceResponse = z.infer<typeof SubmitChoiceResponseSchema>
 
 export const SubmitReportRequestSchema = z.object({
@@ -180,6 +190,8 @@ const contractSchemas = {
   StorySummary: StorySummarySchema,
   StoryDetail: StoryDetailSchema,
   ChoiceOutcome: ChoiceOutcomeSchema,
+  ChapterGenerationStatus: ChapterGenerationStatusSchema,
+  ChapterStatusResponse: ChapterStatusResponseSchema,
   ErrorResponse: ErrorResponseSchema,
   ListStoriesResponse: ListStoriesResponseSchema,
   GetStoryResponse: GetStoryResponseSchema,

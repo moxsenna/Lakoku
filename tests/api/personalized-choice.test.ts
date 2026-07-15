@@ -28,6 +28,40 @@ vi.mock('@/lib/api/generation-continuation.server', () => ({
 type DbResult = { data: unknown; error: { message: string; code?: string } | null }
 type DbCall = { table?: string; method: string; args: unknown[] }
 
+const REPLAY_INTERNAL_KEYS = new Set([
+  'effect',
+  'effectJson',
+  'effect_json',
+  'routeState',
+  'route_state',
+  'choiceHistory',
+  'choice_history',
+  'lockedEndingKey',
+  'locked_ending_key',
+  'ownerUserId',
+  'owner_user_id',
+  'storyMode',
+  'story_mode',
+  'choiceKind',
+  'choice_kind',
+  'replayed',
+  'attempts',
+])
+
+function replayInternalPaths(value: unknown, path = '$'): string[] {
+  if (value === null || typeof value !== 'object') return []
+  if (Array.isArray(value)) {
+    return value.flatMap((child, index) => replayInternalPaths(child, `${path}[${index}]`))
+  }
+  return Object.entries(value as Record<string, unknown>).flatMap(([key, child]) => {
+    const childPath = `${path}.${key}`
+    return [
+      ...(REPLAY_INTERNAL_KEYS.has(key) ? [childPath] : []),
+      ...replayInternalPaths(child, childPath),
+    ]
+  })
+}
+
 const userId = '10000000-0000-4000-8000-000000000001'
 const storyId = 'test:personalized-private-a'
 const idempotencyKey = `choice:${storyId}:1:private-choice`
@@ -417,13 +451,14 @@ describe('personalized choice route dispatch', () => {
     expect(mocks.adminFactory).not.toHaveBeenCalled()
   })
 
-  it('returns same generic 404 for user B guessed private story without admin or outcome lookup', async () => {
+  it('returns same generic 404 for user B before admin, RPC, or outcome lookup', async () => {
     const userB = '20000000-0000-4000-8000-000000000002'
-    mocks.getSessionUser.mockResolvedValue({ id: userB })
-    mocks.cookieFactory.mockResolvedValue(createCookieDb({
+    const cookie = createCookieDb({
       user: { id: userB },
       story: { data: null, error: null },
-    }).client)
+    })
+    mocks.getSessionUser.mockResolvedValue({ id: userB })
+    mocks.cookieFactory.mockResolvedValue(cookie.client)
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
     const response = await POST(request(), { params: Promise.resolve({ id: storyId }) })
@@ -431,6 +466,8 @@ describe('personalized choice route dispatch', () => {
     expect(response.status).toBe(404)
     expect(await response.json()).toEqual({ error: 'Pilihan tidak dikenali.' })
     expect(mocks.adminFactory).not.toHaveBeenCalled()
+    expect(cookie.calls.some((call) => call.method === 'rpc')).toBe(false)
+    expect(cookie.calls.some((call) => call.table === 'choice_outcomes')).toBe(false)
     expect(mocks.queryChoiceOutcome).not.toHaveBeenCalled()
   })
 
@@ -523,10 +560,17 @@ describe('personalized choice route dispatch', () => {
     expect(JSON.stringify(body)).not.toContain('secret')
   })
 
-  it('returns only recursively reader-safe outcome fields for personalized replay', async () => {
+  it('strict schema strips injected nested RPC fields before public personalized replay response', async () => {
     const fixture = personalizedDb({
       rpc: {
-        data: { outcome: publicOutcome, nextChapterNumber: 2, replayed: true },
+        data: {
+          outcome: {
+            ...publicOutcome,
+            audit: { transport: { effect_json: { truth: 2 } } },
+          },
+          nextChapterNumber: 2,
+          replayed: true,
+        },
         error: null,
       },
     })
@@ -538,6 +582,7 @@ describe('personalized choice route dispatch', () => {
 
     expect(response.status).toBe(200)
     expect(body).toEqual({ outcome: publicOutcome, nextChapterReady: true })
+    expect(replayInternalPaths(body)).toEqual([])
     expect(JSON.stringify(body)).not.toMatch(
       /effect_json|choice_kind|route_state|choice_history|locked_ending_key|owner_user_id|story_mode|expected_state|ledger|replayed/,
     )

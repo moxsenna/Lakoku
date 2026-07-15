@@ -3,7 +3,7 @@ import { buildFixtureSnapshot } from '@/fixtures/narrative/fixture-50'
 import { misteriDramaContract } from '@/fixtures/contracts/misteri-drama'
 import type { CanonSnapshot } from '@/lib/narrative/types'
 import type { StoryContract } from '@/lib/story-engine/story-contract'
-import type { ChapterBrief, ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
+import type { BuildChapterBriefInput, ChapterBrief, ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
 import { normalizeRouteState } from '@/lib/story-engine/route-state'
 import type { ChoiceBranch, ChapterDraftParsed } from '@/lib/ai-gateway/schemas'
 import type { GenerationProvider } from '@/lib/ai-gateway/provider'
@@ -49,8 +49,11 @@ vi.mock('@/lib/runtime/story-generation', async () => {
 
 const USER_A = '11111111-1111-4111-8111-111111111111'
 const USER_B = '22222222-2222-4222-8222-222222222222'
-const STORY_A = 'ai:story-a'
-const STORY_B = 'ai:story-b'
+const PREMIUM_TEMPLATE_ID = 'premium:rain-archive'
+const PREMIUM_INSTANCE_A = 'ai:premium:rain-archive:11111111-1111-4111-8111-111111111111'
+const PREMIUM_INSTANCE_B = 'ai:premium:rain-archive:22222222-2222-4222-8222-222222222222'
+const STORY_A = PREMIUM_INSTANCE_A
+const STORY_B = PREMIUM_INSTANCE_B
 
 type CallName =
   | 'lease'
@@ -156,7 +159,7 @@ function contractFor(storyId: string, debtsStatus: 'open' | 'progressing' | 'clo
 }
 
 function snapshotFor(storyId: string): CanonSnapshot {
-  const snapshot = buildFixtureSnapshot()
+  const snapshot = structuredClone(buildFixtureSnapshot())
   snapshot.storyId = storyId
   for (const character of snapshot.characters) character.storyId = storyId
   for (const fact of snapshot.facts) fact.storyId = storyId
@@ -236,6 +239,7 @@ function makeDeps(options: {
   generateStatus?: 'PUBLISHED' | 'FAILED_REVIEW_REQUIRED'
   draftSignals?: DraftAuditSignals
   useRealAudit?: boolean
+  routeTruth?: number
   capture?: {
     publishInputs: PublishChapterV2Input[]
     calls: CallName[]
@@ -262,6 +266,8 @@ function makeDeps(options: {
     storyIdsSeen: [],
   }
   const draft = draftFor(storyId, chapterNumber, options.draftSignals)
+  const contractTitleByStory = new Map<string, string>()
+  const routeTruthByStory = new Map<string, number>()
   const provider: GenerationProvider = {
     name: 'test-provider',
     generatePlan: async () => ({}),
@@ -299,11 +305,22 @@ function makeDeps(options: {
         ...readerState({ lockedEndingKey }),
         user_id: userId,
         story_id: id,
+        route_state: normalizeRouteState({
+          truth: options.routeTruth ?? 3,
+          risk: id === STORY_A ? 1 : 7,
+          endingBias: id === STORY_A
+            ? { 'publish-truth': 4 }
+            : { 'protect-witnesses': 6 },
+        }),
       }
     }),
-    buildChapterBrief: vi.fn(() => {
+    buildChapterBrief: vi.fn((input: BuildChapterBriefInput) => {
       push('brief')
-      return briefStub(storyId, chapterNumber, lockedEndingKey)
+      const inputStoryId = input.storyContract.storyId
+      const routeState = normalizeRouteState(input.readerState.routeState)
+      contractTitleByStory.set(inputStoryId, input.storyContract.title)
+      routeTruthByStory.set(inputStoryId, routeState.truth)
+      return briefStub(inputStoryId, chapterNumber, lockedEndingKey)
     }),
     compileContext: vi.fn(() => {
       push('compile')
@@ -333,7 +350,10 @@ function makeDeps(options: {
     }),
     persistRetrievalLog: vi.fn(async () => undefined),
     selectProvider: vi.fn(async () => provider),
-    generateChapter: vi.fn(async () => {
+    generateChapter: vi.fn(async (
+      _providerInput: unknown,
+      input: { snapshot: CanonSnapshot; chapterNumber: number },
+    ) => {
       push('generateChapter')
       if (options.generateStatus === 'FAILED_REVIEW_REQUIRED') {
         return {
@@ -346,10 +366,16 @@ function makeDeps(options: {
           reason: 'fail',
         }
       }
+      const generatedDraft = structuredClone(draft)
+      generatedDraft.paragraphs = [
+        `Cerita ${input.snapshot.storyId} memakai kontrak ${contractTitleByStory.get(input.snapshot.storyId)}.`,
+        `Rute ${routeTruthByStory.get(input.snapshot.storyId)} menjaga bab ${input.chapterNumber} tetap lokal.`,
+        ...draft.paragraphs.slice(2),
+      ]
       return {
         status: 'PUBLISHED' as const,
         chapterNumber,
-        draft,
+        draft: generatedDraft,
         attempts: 0,
         findings: [],
       }
@@ -893,45 +919,116 @@ describe('generateNextPersonalizedChapter', () => {
     expect(deps.persistEndingLock).toHaveBeenCalled()
   })
 
-  it('keeps story A/B IDs and snapshots isolated', async () => {
-    const captureA = {
+  it('keeps same-number A/B generation isolated on shared dependencies and capture', async () => {
+    const sharedCapture = {
       publishInputs: [] as PublishChapterV2Input[],
       calls: [] as CallName[],
       choiceCalls: 0,
       markCalls: [] as Array<{ userId: string; storyId: string; endingName: string; endingKey: string }>,
-      lockCalls: [] as Array<{ userId: string; storyId: string; endingKey: string; endingName: string }>,
+      lockCalls: [] as Array<{ userId: string; storyId: string; endingName: string; endingKey: string }>,
       auditInputs: [] as Array<Record<string, unknown>>,
       storyIdsSeen: [] as string[],
     }
-    const captureB = {
-      publishInputs: [] as PublishChapterV2Input[],
-      calls: [] as CallName[],
-      choiceCalls: 0,
-      markCalls: [] as Array<{ userId: string; storyId: string; endingName: string; endingKey: string }>,
-      lockCalls: [] as Array<{ userId: string; storyId: string; endingKey: string; endingName: string }>,
-      auditInputs: [] as Array<Record<string, unknown>>,
-      storyIdsSeen: [] as string[],
-    }
-    const a = makeDeps({ storyId: STORY_A, chapterNumber: 12, capture: captureA })
-    const b = makeDeps({ storyId: STORY_B, chapterNumber: 12, capture: captureB })
+    const shared = makeDeps({ storyId: STORY_A, chapterNumber: 12, capture: sharedCapture })
+    const contractTitleByStory = new Map<string, string>()
+    const routeTruthByStory = new Map<string, number>()
+    const sourceTemplateByStory = new Map([
+      [STORY_A, PREMIUM_TEMPLATE_ID],
+      [STORY_B, PREMIUM_TEMPLATE_ID],
+    ])
+    const factByStory = new Map([
+      [STORY_A, 'Arsip A terbakar.'],
+      [STORY_B, 'Arsip B terendam.'],
+    ])
+    shared.deps.loadCanonSnapshot = vi.fn(async (storyId: string) => {
+      const snapshot = snapshotFor(storyId)
+      snapshot.facts[0].statement = factByStory.get(storyId) ?? 'Fakta cerita tidak dikenal.'
+      return snapshot
+    })
+    shared.deps.loadStoryGenerationContract = vi.fn(async (storyId: string) => ({
+      ...contractFor(storyId),
+      title: storyId === STORY_A ? 'Kontrak Arsip Merah' : 'Kontrak Arsip Biru',
+    }))
+    shared.deps.loadReaderStateInternal = vi.fn(async (userId: string, storyId: string) => ({
+      ...readerState(),
+      user_id: userId,
+      story_id: storyId,
+      route_state: normalizeRouteState(storyId === STORY_A
+        ? { truth: 8, risk: 1, endingBias: { 'publish-truth': 5 } }
+        : { truth: 1, risk: 9, endingBias: { 'protect-witnesses': 7 } }),
+    }))
+    shared.deps.buildChapterBrief = vi.fn((input: BuildChapterBriefInput) => {
+      const routeState = normalizeRouteState(input.readerState.routeState)
+      contractTitleByStory.set(input.storyContract.storyId, input.storyContract.title)
+      routeTruthByStory.set(input.storyContract.storyId, routeState.truth)
+      const brief = briefStub(input.storyContract.storyId, 12)
+      brief.routeSummary = `truth=${routeState.truth}`
+      brief.routeStateSummary = brief.routeSummary
+      return brief
+    })
+    shared.deps.generateChapter = vi.fn(async (
+      _providerInput: unknown,
+      input: { snapshot: CanonSnapshot; chapterNumber: number },
+    ) => ({
+      status: 'PUBLISHED' as const,
+      chapterNumber: input.chapterNumber,
+      draft: {
+        ...draftFor(input.snapshot.storyId, input.chapterNumber),
+        paragraphs: [
+          `Snapshot ${input.snapshot.storyId}: ${input.snapshot.facts[0].statement}`,
+          `${contractTitleByStory.get(input.snapshot.storyId)}; truth=${routeTruthByStory.get(input.snapshot.storyId)}.`,
+        ],
+      },
+      attempts: 0,
+      findings: [],
+    }))
     const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
 
-    await generateNextPersonalizedChapter({
-      storyId: STORY_A,
-      userId: USER_A,
-      chapterNumber: 12,
-    }, a.deps)
-    await generateNextPersonalizedChapter({
-      storyId: STORY_B,
-      userId: USER_B,
-      chapterNumber: 12,
-    }, b.deps)
+    await Promise.all([
+      generateNextPersonalizedChapter({
+        storyId: STORY_A,
+        userId: USER_A,
+        chapterNumber: 12,
+      }, shared.deps),
+      generateNextPersonalizedChapter({
+        storyId: STORY_B,
+        userId: USER_B,
+        chapterNumber: 12,
+      }, shared.deps),
+    ])
 
-    expect(captureA.publishInputs[0].storyId).toBe(STORY_A)
-    expect(captureB.publishInputs[0].storyId).toBe(STORY_B)
-    expect(captureA.storyIdsSeen.every((id) => id === STORY_A)).toBe(true)
-    expect(captureB.storyIdsSeen.every((id) => id === STORY_B)).toBe(true)
-    expect(captureA.publishInputs[0].storyId).not.toBe(captureB.publishInputs[0].storyId)
+    expect(shared.deps.loadCanonSnapshot.mock.calls).toEqual([[STORY_A, 12], [STORY_B, 12]])
+    expect(shared.deps.loadStoryGenerationContract.mock.calls).toEqual([[STORY_A], [STORY_B]])
+    expect(shared.deps.loadReaderStateInternal.mock.calls).toEqual([
+      [USER_A, STORY_A],
+      [USER_B, STORY_B],
+    ])
+    expect(sharedCapture.publishInputs.map((input) => input.storyId)).toEqual([STORY_A, STORY_B])
+    expect(sharedCapture.publishInputs.map((input) => input.chapterNumber)).toEqual([12, 12])
+    const publishedByStory = new Map(sharedCapture.publishInputs.map((input) => [input.storyId, input]))
+    expect(publishedByStory.get(STORY_A)?.paragraphs).toEqual([
+      `Snapshot ${STORY_A}: Arsip A terbakar.`,
+      'Kontrak Arsip Merah; truth=8.',
+    ])
+    expect(publishedByStory.get(STORY_B)?.paragraphs).toEqual([
+      `Snapshot ${STORY_B}: Arsip B terendam.`,
+      'Kontrak Arsip Biru; truth=1.',
+    ])
+    expect(JSON.stringify(publishedByStory.get(STORY_A)?.paragraphs)).not.toMatch(
+      /Arsip B terendam|Kontrak Arsip Biru|truth=1/,
+    )
+    expect(JSON.stringify(publishedByStory.get(STORY_B)?.paragraphs)).not.toMatch(
+      /Arsip A terbakar|Kontrak Arsip Merah|truth=8/,
+    )
+    expect(sourceTemplateByStory).toEqual(new Map([
+      [PREMIUM_INSTANCE_A, PREMIUM_TEMPLATE_ID],
+      [PREMIUM_INSTANCE_B, PREMIUM_TEMPLATE_ID],
+    ]))
+    expect(sharedCapture.publishInputs.map((input) => input.storyId).sort()).toEqual([
+      PREMIUM_INSTANCE_A,
+      PREMIUM_INSTANCE_B,
+    ].sort())
+    expect(sharedCapture.publishInputs.every((input) => input.storyId !== PREMIUM_TEMPLATE_ID)).toBe(true)
   })
 
   it('exports generateNextChapterReal unchanged and never calls it from personalized path', async () => {

@@ -15,7 +15,7 @@ begin
 end
 $$;
 
-select plan(108);
+select plan(114);
 
 -- Fixed UUIDs and story IDs keep fixtures deterministic. Transaction rollback leaves no data.
 insert into auth.users (

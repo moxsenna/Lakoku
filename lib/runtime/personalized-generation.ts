@@ -466,6 +466,8 @@ export async function generateNextPersonalizedChapter(
     storyId,
     chapterNumber,
     holder: 'personalized-generation',
+    // CF testing: multi-LLM can exceed default 120s wall before publish.
+    ttlSeconds: 300,
     idempotencyKey: personalizedGenerationKey(storyId, chapterNumber, 'lease'),
   })
   if (!lease.ok) return { ok: false, reason: lease.reason }

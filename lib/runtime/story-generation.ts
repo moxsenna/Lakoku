@@ -136,6 +136,9 @@ export async function generateNextChapterReal(
     storyId,
     chapterNumber,
     holder: 'story-generation',
+    // Multi-LLM plan→write→repair di CF waitUntil bisa >2 menit wall.
+    // Default 120s terlalu ketat bila model lambat; 300s cocok fase testing.
+    ttlSeconds: 300,
     idempotencyKey: realGenerationKey(storyId, chapterNumber, 'lease'),
   })
   if (!lease.ok) return { ok: false, reason: lease.reason }

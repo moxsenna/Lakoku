@@ -18,6 +18,10 @@
   "observability": {
     "enabled": true
   },
+  // NOTE: limits.cpu_ms TIDAK didukung Free plan (CF error 100328).
+  // Akun free → gen Bab 1 di after/waitUntil rawan exceededResources.
+  // Mitigasi testing: model prosa stabil (DB ai_model_routes) + lease TTL 300s.
+  // Nanti: Workers Paid ($5) untuk cpu_ms, atau pindah gen ke VPS consumer.
   // Menyalakan jalur LLM nyata (lib/ai-gateway/select-provider.ts). Tanpa ini
   // runtime fallback ke provider deterministik.
   "vars": {

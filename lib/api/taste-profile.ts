@@ -10,11 +10,7 @@ import { createClient } from '@/lib/supabase/server'
 import { TasteProfileSchema, type TasteProfile } from '@/lib/taste-profile/schema'
 
 interface TasteProfileRow {
-  id: string
-  user_id: string
   taste_json: TasteProfile
-  created_at: string
-  updated_at: string
 }
 
 function parseRow(row: TasteProfileRow | null): TasteProfile | null {
@@ -34,7 +30,7 @@ export async function getTasteProfileForUser(
 
   const { data, error } = await supabase
     .from('reader_taste_profiles')
-    .select('*')
+    .select('taste_json')
     .eq('user_id', userId)
     .maybeSingle()
 

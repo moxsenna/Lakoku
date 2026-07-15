@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { queryChapter } from '@/lib/api/queries'
+import { getChapter } from '@/lib/api/server'
 import { jsonWithETag } from '@/lib/api/etag'
 
 export async function GET(
@@ -12,7 +12,7 @@ export async function GET(
     if (!Number.isFinite(n) || n < 1) {
       return NextResponse.json({ error: 'Nomor bab tidak valid.' }, { status: 400 })
     }
-    const chapter = await queryChapter(id, n)
+    const chapter = await getChapter(id, n)
     if (!chapter) {
       return NextResponse.json({ error: 'Bab tidak ditemukan.' }, { status: 404 })
     }

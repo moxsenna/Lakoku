@@ -1,24 +1,27 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, Settings2, Flag, Minus, Plus, RefreshCw, List, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   clearPendingChoice,
+  getChapterGenerationStatus,
   getPendingChoice,
   recordChapterReached,
   recordLastChoiceSummary,
   getLastChoiceSummary,
   recordPendingChoice,
-  retryPendingChoice,
-  submitChoice,
+  retryPendingChoiceWithReadiness,
+  submitChoiceWithReadiness,
   type Chapter,
+  type ChapterStatusResponse,
   type ChoiceOutcome,
   type JejakItem,
   type PendingChoice,
   type StoryDetail,
+  type SubmitChoiceResponse,
 } from '@/lib/api'
 import { ReportDialog } from '@/components/report-dialog'
 import { ChapterUnavailableBanner } from '@/components/chapter-unavailable-banner'
@@ -27,12 +30,109 @@ import { useReaderFontSize } from '@/components/font-size-provider'
 import { PoetryLottie } from '@/components/mulai/poetry-lottie'
 
 type ReaderTheme = 'ink' | 'cream'
-type Phase = 'reading' | 'processing' | 'pending'
+type Phase = 'reading' | 'processing' | 'pending' | 'generation-failed'
+type ChoiceAdvanceAction = 'ending' | 'navigate' | 'poll'
+type PollResult = 'ready' | 'failed' | 'aborted'
 const SELECTED_FEEDBACK_MS = 180
 const MIN_PROCESSING_MS = 1200
+export const CHAPTER_STATUS_POLL_MS = 1500
 
 function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+export function getChoiceAdvanceAction(
+  response: SubmitChoiceResponse,
+): ChoiceAdvanceAction {
+  if (response.outcome.isEnding) return 'ending'
+  return response.nextChapterReady === false ? 'poll' : 'navigate'
+}
+
+export function pollChapterGenerationStatus({
+  storyId,
+  chapterNumber,
+  signal,
+  getStatus = getChapterGenerationStatus,
+}: {
+  storyId: string
+  chapterNumber: number
+  signal: AbortSignal
+  getStatus?: (
+    storyId: string,
+    chapterNumber: number,
+    signal?: AbortSignal,
+  ) => Promise<ChapterStatusResponse>
+}): Promise<PollResult> {
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let settled = false
+
+    const finish = (result: PollResult) => {
+      if (settled) return
+      settled = true
+      if (timer !== null) clearTimeout(timer)
+      signal.removeEventListener('abort', abort)
+      resolve(result)
+    }
+    const abort = () => finish('aborted')
+    const schedule = () => {
+      timer = setTimeout(check, CHAPTER_STATUS_POLL_MS)
+    }
+    const check = async () => {
+      timer = null
+      if (signal.aborted) return finish('aborted')
+      try {
+        const response = await getStatus(storyId, chapterNumber, signal)
+        if (signal.aborted) return finish('aborted')
+        if (response.status === 'ready') return finish('ready')
+        if (response.status === 'failed') return finish('failed')
+      } catch {
+        if (signal.aborted) return finish('aborted')
+      }
+      schedule()
+    }
+
+    if (signal.aborted) return finish('aborted')
+    signal.addEventListener('abort', abort, { once: true })
+    schedule()
+  })
+}
+
+export function GenerationFailedView({ storyId }: { storyId: string }) {
+  return (
+    <main className="mx-auto flex min-h-svh w-full max-w-md flex-col items-center justify-center gap-6 bg-background px-8 text-center">
+      <span className="font-serif text-2xl text-foreground">lakoku</span>
+      <div className="flex flex-col gap-2">
+        <h1 className="font-serif text-2xl leading-snug text-foreground text-balance">
+          Bab berikutnya belum siap.
+        </h1>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          Penulisan bab mengalami kendala.
+        </p>
+      </div>
+      <Link
+        href={`/cerita/${storyId}`}
+        className="flex min-h-13 w-full items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+      >
+        Kembali ke detail cerita
+      </Link>
+    </main>
+  )
+}
+
+function subscribeLocalPreviousChoice(onStoreChange: () => void) {
+  if (typeof window === 'undefined') return () => {}
+  const notify = () => onStoreChange()
+  window.addEventListener('storage', notify)
+  return () => window.removeEventListener('storage', notify)
+}
+
+function readLocalPreviousChoiceSnapshot(
+  storyId: string,
+  chapterNumber: number,
+): JejakItem | null {
+  if (typeof window === 'undefined') return null
+  return getLastChoiceSummary(storyId, chapterNumber)
 }
 
 export function ReaderView({
@@ -42,6 +142,7 @@ export function ReaderView({
   isReRead = false,
   previousChoice = null,
   previousChapterJejak = null,
+  initialLocalPreviousChoice = null,
 }: {
   story: StoryDetail
   chapter: Chapter
@@ -49,6 +150,7 @@ export function ReaderView({
   isReRead?: boolean
   previousChoice?: JejakItem | null
   previousChapterJejak?: JejakItem | null
+  initialLocalPreviousChoice?: JejakItem | null
 }) {
   const router = useRouter()
   const [theme, setTheme] = useState<ReaderTheme>('ink')
@@ -59,11 +161,19 @@ export function ReaderView({
   const [phase, setPhase] = useState<Phase>('reading')
   const [pendingChoice, setPendingChoice] = useState<PendingChoice | null>(null)
   const [selectedChoiceId, setSelectedChoiceId] = useState<string | null>(null)
-  // Fallback guest: ringkasan pilihan dari localStorage (dibaca setelah mount).
-  const [localPreviousChoice, setLocalPreviousChoice] = useState<JejakItem | null>(null)
+  const [pollingChapterNumber, setPollingChapterNumber] = useState<number | null>(null)
   // Guard anti double-advance: cegah pilihan terkirim lebih dari sekali
   // (mis. tap ganda) sebelum state processing sempat merender ulang.
   const submittingRef = useRef(false)
+  const localPreviousChoiceEnabled = !previousChapterJejak && !isReRead
+  const localPreviousChoice = useSyncExternalStore(
+    subscribeLocalPreviousChoice,
+    () =>
+      localPreviousChoiceEnabled
+        ? readLocalPreviousChoiceSnapshot(story.id, chapter.number)
+        : null,
+    () => (localPreviousChoiceEnabled ? initialLocalPreviousChoice : null),
+  )
 
   const isCream = theme === 'cream'
 
@@ -80,22 +190,45 @@ export function ReaderView({
     }
   }, [story.id, chapter.number])
 
-  // Fallback tamu: baca ringkasan pilihan dari localStorage setelah mount
-  // (hindari hydration mismatch — jangan baca localStorage langsung di render).
   useEffect(() => {
-    if (previousChapterJejak || isReRead) return
-    setLocalPreviousChoice(getLastChoiceSummary(story.id, chapter.number))
-  }, [story.id, chapter.number, previousChapterJejak, isReRead])
+    if (pollingChapterNumber === null) return
+    const controller = new AbortController()
+
+    void pollChapterGenerationStatus({
+      storyId: story.id,
+      chapterNumber: pollingChapterNumber,
+      signal: controller.signal,
+    }).then((result) => {
+      if (result === 'aborted') return
+      setPollingChapterNumber(null)
+      submittingRef.current = false
+      setSelectedChoiceId(null)
+      if (result === 'ready') {
+        recordChapterReached(story.id, pollingChapterNumber)
+        router.push(`/baca/${story.id}?bab=${pollingChapterNumber}`)
+        return
+      }
+      setPhase('generation-failed')
+    })
+
+    return () => controller.abort()
+  }, [pollingChapterNumber, router, story.id])
 
   // Resolve previous choice untuk card: server jejak utama, localStorage fallback.
   const effectivePreviousChoice = previousChapterJejak ?? localPreviousChoice
 
-  function showOutcome(outcome: ChoiceOutcome, choiceId?: string) {
+  function showOutcome(
+    outcome: ChoiceOutcome,
+    choiceId?: string,
+    nextChapterReady?: boolean,
+  ) {
     clearPendingChoice()
     setPendingChoice(null)
 
+    const advanceAction = getChoiceAdvanceAction({ outcome, nextChapterReady })
+
     // Ending: tidak perlu simpan summary — redirect langsung ke halaman akhir.
-    if (outcome.isEnding) {
+    if (advanceAction === 'ending') {
       submittingRef.current = false
       setSelectedChoiceId(null)
       router.push(`/akhir/${story.id}`)
@@ -103,7 +236,6 @@ export function ReaderView({
     }
 
     const nextBab = outcome.nextChapterNumber ?? chapter.number + 1
-    recordChapterReached(story.id, nextBab)
 
     // Simpan ringkasan untuk fallback tamu (server jejak tidak tersedia tanpa login).
     const chosenLabel =
@@ -118,6 +250,12 @@ export function ReaderView({
       })
     }
 
+    if (advanceAction === 'poll') {
+      setPollingChapterNumber(nextBab)
+      return
+    }
+
+    recordChapterReached(story.id, nextBab)
     submittingRef.current = false
     setSelectedChoiceId(null)
     router.push(`/baca/${story.id}?bab=${nextBab}`)
@@ -127,8 +265,8 @@ export function ReaderView({
     if (submittingRef.current) return
     submittingRef.current = true
     setSelectedChoiceId(id)
-    const outcomePromise = submitChoice(story.id, chapter.number, id).then(
-      (outcome) => ({ ok: true as const, outcome }),
+    const outcomePromise = submitChoiceWithReadiness(story.id, chapter.number, id).then(
+      (response) => ({ ok: true as const, response }),
       (error) => ({ ok: false as const, error }),
     )
     try {
@@ -136,7 +274,7 @@ export function ReaderView({
       setPhase('processing')
       const [result] = await Promise.all([outcomePromise, wait(MIN_PROCESSING_MS)])
       if (!result.ok) throw result.error
-      showOutcome(result.outcome, id)
+      showOutcome(result.response.outcome, id, result.response.nextChapterReady)
     } catch {
       const pending = recordPendingChoice({
         storyId: story.id,
@@ -155,14 +293,21 @@ export function ReaderView({
     submittingRef.current = true
     setPhase('processing')
     try {
-      const [outcome] = await Promise.all([retryPendingChoice(), wait(MIN_PROCESSING_MS)])
-      if (!outcome) {
+      const [response] = await Promise.all([
+        retryPendingChoiceWithReadiness(),
+        wait(MIN_PROCESSING_MS),
+      ])
+      if (!response) {
         setPendingChoice(null)
         submittingRef.current = false
         setPhase('reading')
         return
       }
-      showOutcome(outcome, pendingChoice?.choiceId)
+      showOutcome(
+        response.outcome,
+        pendingChoice?.choiceId,
+        response.nextChapterReady,
+      )
     } catch {
       setPendingChoice(getPendingChoice())
       submittingRef.current = false
@@ -171,12 +316,15 @@ export function ReaderView({
   }
 
   if (phase === 'processing') {
+    const isWaitingForChapter = pollingChapterNumber !== null
     return (
       <main className="mx-auto flex min-h-svh w-full max-w-md flex-col items-center justify-center gap-6 bg-background px-8 text-center">
         <span className="lk-pulse-soft font-serif text-2xl text-foreground">lakoku</span>
         <div className="flex flex-col gap-2">
           <h1 className="font-serif text-2xl leading-snug text-foreground text-balance">
-            Pilihanmu sedang mengubah jalan cerita...
+            {isWaitingForChapter
+              ? 'Bab berikutnya sedang disiapkan...'
+              : 'Pilihanmu sedang mengubah jalan cerita...'}
           </h1>
           <p className="text-sm leading-relaxed text-muted-foreground">
             Kami sedang menulis bab berikutnya berdasarkan keputusanmu.
@@ -185,6 +333,10 @@ export function ReaderView({
         <PoetryLottie className="h-32 w-32" />
       </main>
     )
+  }
+
+  if (phase === 'generation-failed') {
+    return <GenerationFailedView storyId={story.id} />
   }
 
   if (phase === 'pending') {
@@ -359,7 +511,7 @@ export function ReaderView({
               Pilihanmu sebelumnya
             </p>
             <p className="mt-2 text-sm font-medium text-foreground">
-              "{effectivePreviousChoice.decision}"
+              &ldquo;{effectivePreviousChoice.decision}&rdquo;
             </p>
             <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
               {effectivePreviousChoice.consequence}
@@ -382,7 +534,10 @@ export function ReaderView({
           ))}
         </div>
 
-        {phase === 'reading' && chapter.choices && (
+        {phase === 'reading' &&
+          chapter.number < story.totalChapters &&
+          chapter.choices &&
+          chapter.choices.length > 0 && (
           <section aria-labelledby="pilihan-heading" className="mt-6 flex flex-col gap-4">
             <div className="flex flex-col gap-1 border-t border-border pt-6">
               <span className="text-[11px] font-semibold tracking-wide text-lavender">
@@ -444,6 +599,23 @@ export function ReaderView({
               </Link>
             )}
           </section>
+        )}
+
+        {chapter.number >= story.totalChapters && (
+          <nav aria-label="Cerita selesai" className="mt-6 flex flex-col gap-3 border-t border-border pt-6">
+            <Link
+              href="/koleksiku"
+              className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+            >
+              Kembali ke Library
+            </Link>
+            <Link
+              href="/mulai"
+              className="flex min-h-13 items-center justify-center rounded-2xl border border-border px-6 text-sm font-semibold text-foreground transition-colors hover:bg-card"
+            >
+              Buat Cerita Baru
+            </Link>
+          </nav>
         )}
       </article>
 

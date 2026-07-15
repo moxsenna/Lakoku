@@ -624,7 +624,7 @@ export function buildPremiumBilikKetujuhV2Draft(
     proposedStateDelta: { ...spec.proposedStateDelta },
     newNamedCharacters: [...spec.newNamedCharacters],
     dialogue: spec.dialogue.map(text => ({ characterId: 'char:unknown', text })), 
-    emotionBeats: spec.emotionBeats.map(text => ({ characterId: 'char:unknown', targetCharacterId: 'char:unknown', valence: 'neutral' })), 
+    emotionBeats: spec.emotionBeats.map(() => ({ characterId: 'char:unknown', targetCharacterId: 'char:unknown', valence: 'neutral' })), 
     softClaims: [],
     advancedThreadIds: [...spec.threadIds],
     opensNewThread: false,

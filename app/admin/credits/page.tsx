@@ -4,7 +4,7 @@ import { AdminSectionCard } from '@/components/admin/admin-section-card'
 import { AdminEmptyState } from '@/components/admin/admin-empty-state'
 import { StatusBadge } from '@/components/admin/status-badge'
 import { GrantCreditForm } from '@/components/admin/grant-credit-form'
-import { idr, isoDatetime } from '@/lib/admin/format'
+import { isoDatetime } from '@/lib/admin/format'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,7 +14,6 @@ export default async function AdminCreditsPage() {
   // Aggregate stats
   let totalCirculating = 0
   let totalPurchased = 0
-  let totalBonus = 0
   let totalAdminGranted = 0
   let totalSpent = 0
   let grantsToday = 0

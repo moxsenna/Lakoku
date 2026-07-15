@@ -23,12 +23,18 @@ import {
 import { runLockLadder, type AiRepairFn } from '@/lib/authoring/repair'
 import { enrichOpeningVoiceSheets } from '@/lib/authoring'
 import { generateNextChapterReal } from '@lakoku/runtime'
-import type {
-  PremiseDraft,
-  CastDraft,
-  MysteryDraft,
-  WorldDraft,
-  StoryBibleDraft,
+import { createAdminClient } from '@/lib/supabase/admin'
+import { ensureReaderStateStarted } from '@/lib/api/user-state'
+import {
+  AUTHORING_AUTH_REQUIRED_ERROR,
+  requireAuthoringSessionUser,
+} from '@/lib/authoring/action-auth'
+import {
+  StoryBibleDraftSchema,
+  type PremiseDraft,
+  type CastDraft,
+  type MysteryDraft,
+  type WorldDraft,
 } from '@/lib/authoring/schema'
 import type { Finding } from '@lakoku/narrative-core'
 
@@ -38,15 +44,20 @@ export interface ActionError {
 }
 export type ActionResult<T> = ({ ok: true } & T) | ActionError
 
+const STORY_NOT_FOUND_ERROR = 'Cerita tidak ditemukan.'
+
 function fail(err: unknown): ActionError {
   const message = err instanceof Error ? err.message : 'Terjadi kesalahan tak terduga.'
-  const publicMessage = publicAuthoringErrorMessage(err)
+  const publicMessage = message === AUTHORING_AUTH_REQUIRED_ERROR
+    ? AUTHORING_AUTH_REQUIRED_ERROR
+    : publicAuthoringErrorMessage(err)
   console.log('[v0] brainstorm action error:', message, { publicMessage })
   return { ok: false, error: publicMessage }
 }
 
 export async function actProposePremises(idea: string): Promise<ActionResult<{ proposals: PremiseDraft[] }>> {
   try {
+    await requireAuthoringSessionUser()
     const { proposals } = await proposePremises(idea)
     return { ok: true, proposals }
   } catch (e) {
@@ -56,6 +67,7 @@ export async function actProposePremises(idea: string): Promise<ActionResult<{ p
 
 export async function actRefinePremise(current: PremiseDraft, feedback: string): Promise<ActionResult<{ premise: PremiseDraft }>> {
   try {
+    await requireAuthoringSessionUser()
     const { premise } = await refinePremise(current, feedback)
     return { ok: true, premise }
   } catch (e) {
@@ -65,6 +77,7 @@ export async function actRefinePremise(current: PremiseDraft, feedback: string):
 
 export async function actProposeCast(premise: PremiseDraft, feedback?: string, previous?: CastDraft): Promise<ActionResult<{ cast: CastDraft }>> {
   try {
+    await requireAuthoringSessionUser()
     const { cast } = await proposeCast(premise, feedback, previous)
     return { ok: true, cast }
   } catch (e) {
@@ -74,6 +87,7 @@ export async function actProposeCast(premise: PremiseDraft, feedback?: string, p
 
 export async function actProposeMystery(premise: PremiseDraft, cast: CastDraft, feedback?: string, previous?: MysteryDraft): Promise<ActionResult<{ mystery: MysteryDraft }>> {
   try {
+    await requireAuthoringSessionUser()
     const { mystery } = await proposeMystery(premise, cast, feedback, previous)
     return { ok: true, mystery }
   } catch (e) {
@@ -83,6 +97,7 @@ export async function actProposeMystery(premise: PremiseDraft, cast: CastDraft, 
 
 export async function actProposeWorld(premise: PremiseDraft, cast: CastDraft, mystery: MysteryDraft, feedback?: string, previous?: WorldDraft): Promise<ActionResult<{ world: WorldDraft }>> {
   try {
+    await requireAuthoringSessionUser()
     const { world } = await proposeWorld(premise, cast, mystery, feedback, previous)
     return { ok: true, world }
   } catch (e) {
@@ -106,11 +121,14 @@ function findingsToFeedback(findings: Finding[]): string {
  * Kunci story bible: jalankan tangga kegagalan, lalu persist bila LOCKED.
  * aiRepair meregenerasi tahap misteri & world dengan umpan-balik dari validator.
  */
-export async function lockStoryBible(draft: StoryBibleDraft): Promise<
+export async function lockStoryBible(rawDraft: unknown): Promise<
   ActionResult<{ storyId: string; resolvedBy: string; transforms: string[] }>
   | ({ ok: false; needsAuthor: true; findings: Finding[]; transforms: string[] })
 > {
   try {
+    const user = await requireAuthoringSessionUser()
+    const draft = StoryBibleDraftSchema.parse(rawDraft)
+
     const aiRepair: AiRepairFn = async (d, findings) => {
       const feedback = findingsToFeedback(findings)
       const [{ mystery }, worldBase] = [
@@ -134,13 +152,9 @@ export async function lockStoryBible(draft: StoryBibleDraft): Promise<
       console.log('[v0] opening package voice — diperkaya:', opening.enrichedIds, 'fallback:', opening.fallbackIds)
     }
 
-    const { getSessionUser, ensureReaderStateStarted } = await import('@/lib/api/user-state')
-    const user = await getSessionUser()
-    const { storyId } = await persistStoryBible(opening.compiled, {
-      ownerUserId: user?.id ?? null,
-    })
+    const { storyId } = await persistStoryBible(opening.compiled, user.id)
     // Library personal muncul sejak lock (AMENDMENTS v0.5).
-    if (user) await ensureReaderStateStarted(storyId, 1, 'BARU')
+    await ensureReaderStateStarted(storyId, 1, 'BARU')
 
     // T-SHARE-3: bila user datang dari share landing, ikat story baru ke start row.
     // Client menyimpan startId di sessionStorage; optional header/cookie tidak dipakai.
@@ -164,6 +178,19 @@ export async function startFirstChapter(
   storyId: string,
 ): Promise<ActionResult<{ chapterNumber: number }>> {
   try {
+    const user = await requireAuthoringSessionUser()
+
+    const admin = createAdminClient()
+    const { data: ownedStory, error: ownerError } = await admin
+      .from('stories')
+      .select('id')
+      .eq('id', storyId)
+      .eq('owner_user_id', user.id)
+      .maybeSingle()
+    if (ownerError || !ownedStory) {
+      return { ok: false, error: STORY_NOT_FOUND_ERROR }
+    }
+
     const { after } = await import('next/server')
     after(async () => {
       const result = await generateNextChapterReal(storyId, 1)
@@ -174,7 +201,6 @@ export async function startFirstChapter(
 
     // Progress personal login (AMENDMENTS v0.5). Kolom demo global di `stories`
     // tidak lagi diandalkan sebagai status personal untuk semua pengunjung.
-    const { ensureReaderStateStarted } = await import('@/lib/api/user-state')
     await ensureReaderStateStarted(storyId, 1)
 
     return { ok: true, chapterNumber: 1 }

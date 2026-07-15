@@ -1,5 +1,5 @@
-import type { ChoiceOutcome } from './types'
-import { submitChoice } from './client'
+import type { ChoiceOutcome, SubmitChoiceResponse } from './types'
+import { submitChoice, submitChoiceWithReadiness } from './client'
 import { buildChoiceIdempotencyKey } from './choice-idempotency'
 
 const STORAGE_KEY = 'lakoku:pending-choice:v1'
@@ -21,6 +21,12 @@ export type SubmitChoiceFn = (
   chapterNumber: number,
   choiceId: string,
 ) => Promise<ChoiceOutcome>
+
+export type SubmitChoiceWithReadinessFn = (
+  storyId: string,
+  chapterNumber: number,
+  choiceId: string,
+) => Promise<SubmitChoiceResponse>
 
 function storage(): Storage | null {
   if (typeof window === 'undefined') return null
@@ -90,18 +96,34 @@ export function clearPendingChoice(): void {
   }
 }
 
-export async function retryPendingChoice(
-  submit: SubmitChoiceFn = submitChoice,
-): Promise<ChoiceOutcome | null> {
+async function retryPendingChoiceUsing<Result>(
+  submit: (
+    storyId: string,
+    chapterNumber: number,
+    choiceId: string,
+  ) => Promise<Result>,
+): Promise<Result | null> {
   const pending = getPendingChoice()
   if (!pending) return null
 
   try {
-    const outcome = await submit(pending.storyId, pending.chapterNumber, pending.choiceId)
+    const result = await submit(pending.storyId, pending.chapterNumber, pending.choiceId)
     clearPendingChoice()
-    return outcome
+    return result
   } catch (error) {
     writePendingChoice({ ...pending, lastError: safeError(error) })
     throw error
   }
+}
+
+export function retryPendingChoice(
+  submit: SubmitChoiceFn = submitChoice,
+): Promise<ChoiceOutcome | null> {
+  return retryPendingChoiceUsing(submit)
+}
+
+export function retryPendingChoiceWithReadiness(
+  submit: SubmitChoiceWithReadinessFn = submitChoiceWithReadiness,
+): Promise<SubmitChoiceResponse | null> {
+  return retryPendingChoiceUsing(submit)
 }

@@ -85,7 +85,6 @@ export default async function KreditPage() {
                 const calc = calculateTopupCredits(p, isFirstTopup)
                 const pricePerCredit = p.priceIdr / Math.max(p.credits, 1)
                 const isBestValue = bestPricePerCredit != null && pricePerCredit === bestPricePerCredit
-                const perChapter = Math.round(pricePerCredit * policy.creditsPerChapter)
                 const hasBonus = calc.bonusCredits > 0
                 const showFirstTopupBonus = isFirstTopup && p.firstTopupBonusCredits > 0 && p.firstTopupBonusCredits > (p.normalBonusCredits || 0)
 

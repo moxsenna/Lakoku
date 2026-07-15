@@ -21,7 +21,9 @@ import type {
 } from './types'
 import {
   queryStories,
-  queryStory,
+  queryStoriesByIdsForUser,
+  queryStoryForUser,
+  queryExploreStories,
   queryChapter,
   queryLatestAvailableChapter,
   queryChapterMetadatas,
@@ -34,13 +36,6 @@ import {
 } from './user-state'
 import { isChapterPreparing } from './leases'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
-
-/** Demo/seed resmi yang boleh tampil di Jelajahi sebelum share katalog hidup. */
-const OFFICIAL_DEMO_STORY_IDS = new Set(['demo:selasa-akhir', 'premium:bilik-ketujuh-v2'])
-
-function isOfficialDemoStory(id: string): boolean {
-  return id.startsWith('demo:') || OFFICIAL_DEMO_STORY_IDS.has(id)
-}
 
 function overlay<T extends StorySummary>(story: T, state?: ReaderState | null): T {
   if (!state) return story
@@ -84,7 +79,7 @@ export async function listMyLibraryStories(): Promise<StorySummary[]> {
   const states = await getReaderStates()
   if (states.size === 0) return []
 
-  const stories = await queryStories()
+  const stories = await queryStoriesByIdsForUser([...states.keys()], user.id)
   const byId = new Map(stories.map((s) => [s.id, s]))
   const mine: StorySummary[] = []
   for (const [storyId, state] of states) {
@@ -100,9 +95,8 @@ export async function listMyLibraryStories(): Promise<StorySummary[]> {
  * Progress personal di-overlay bila user pernah mulai demo tsb.
  */
 export async function listExploreStories(): Promise<StorySummary[]> {
-  const [stories, states] = await Promise.all([queryStories(), getReaderStates()])
+  const [stories, states] = await Promise.all([queryExploreStories(), getReaderStates()])
   return stories
-    .filter((s) => isOfficialDemoStory(s.id))
     .map((s) => {
       const state = states.get(s.id)
       if (state) return overlay(s, state)
@@ -121,12 +115,13 @@ export async function listExploreStories(): Promise<StorySummary[]> {
 /** Detail lengkap satu cerita, dengan state per-user bila login. */
 export async function getStory(id: string): Promise<StoryDetail | null> {
   const storyId = normalizeStoryRouteId(id)
-  const [story, state] = await Promise.all([queryStory(storyId), getReaderState(storyId)])
+  const user = await getSessionUser()
+  const story = await queryStoryForUser(storyId, user?.id ?? null)
   if (!story) return null
+  const state = user ? await getReaderState(storyId) : null
   if (state) return overlay(story, state)
   // Login tanpa personal state: jangan pakai demo global status sebagai milik user.
   // currentChapter = 1 (bukan 0): reader butuh bab valid; 0 memicu "Bab 0 dirapikan".
-  const user = await getSessionUser()
   if (user) {
     return {
       ...story,
@@ -150,10 +145,11 @@ export async function getChapter(
   chapterNumber?: number,
 ): Promise<Chapter | null> {
   storyId = normalizeStoryRouteId(storyId)
+  const story = await getStory(storyId)
+  if (!story) return null
+
   let target = chapterNumber
   if (target == null) {
-    const story = await getStory(storyId)
-    if (!story) return null
     target = story.currentChapter
   }
   target = Math.max(1, target)
@@ -187,6 +183,8 @@ export async function getChapterAvailability(
   chapterNumber: number,
 ): Promise<ChapterAvailability> {
   storyId = normalizeStoryRouteId(storyId)
+  const story = await getStory(storyId)
+  if (!story) return 'UNAVAILABLE'
   const chapter = await queryChapter(storyId, chapterNumber)
   if (chapter) return 'PUBLISHED'
   const preparing = await isChapterPreparing(storyId, chapterNumber)

@@ -129,12 +129,14 @@ async function main() {
       const { persistStoryBible } = await import('../lib/authoring/server')
       const { loadCanonSnapshot } = await import('@lakoku/narrative-core/server')
       const c = compileStoryBible(validDraft(), `m7-smoke-${Date.now()}`)
-      const { storyId } = await persistStoryBible(c)
+      const ownerUserId = process.env.AUTHORING_SMOKE_OWNER_USER_ID?.trim()
+      if (!ownerUserId) throw new Error('AUTHORING_SMOKE_OWNER_USER_ID wajib untuk persist smoke')
+      const { storyId } = await persistStoryBible(c, ownerUserId)
       const back = await loadCanonSnapshot(storyId)
       check('roundtrip: 50 blueprint', back.blueprints.length === TOTAL_CHAPTERS, back.blueprints.length)
       check('roundtrip: jumlah karakter sama', back.characters.length === c.snapshot.characters.length)
       check('roundtrip: jumlah secret sama', back.secrets.length === c.snapshot.secrets.length)
-      console.log(`  (story uji "${storyId}" tertinggal di DB — hapus manual bila perlu)`) 
+      console.log(`  (story uji "${storyId}" tertinggal di DB — hapus manual bila perlu)`)
     } catch (e) {
       console.log('  SKIP  roundtrip gagal:', (e as Error).message)
     }

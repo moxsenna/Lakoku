@@ -27,8 +27,16 @@ import { getAiModelRoute } from '@/lib/ops/ai-model-routes'
 export async function selectProvider(): Promise<GenerationProvider> {
   const genPolicy = await getGenerationPolicy()
   if (process.env.NARRATIVE_PROVIDER === 'gateway') {
-    const aiRoute = (await getAiModelRoute('chapter_prose')) ?? undefined
-    return createGatewayProvider(undefined, genPolicy, aiRoute)
+    const [aiRoute, choicesRoute] = await Promise.all([
+      getAiModelRoute('chapter_prose'),
+      getAiModelRoute('choices'),
+    ])
+    return createGatewayProvider(
+      undefined,
+      genPolicy,
+      aiRoute ?? undefined,
+      choicesRoute ?? undefined,
+    )
   }
   return createDeterministicProvider(genPolicy)
 }

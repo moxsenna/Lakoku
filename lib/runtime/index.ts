@@ -9,3 +9,4 @@
 export * from './lifecycle'
 export * from './fake-generation'
 export * from './story-generation'
+export * from './personalized-generation'

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import {
+  AuthoringGenerationError,
   authorObjectFromCandidates,
   publicAuthoringErrorMessage,
   resolveAuthoringModels,
@@ -60,9 +61,18 @@ async function main() {
   check('object tervalidasi tetap dikembalikan', result.object.proposals.length === 3)
 
   console.log('\npublic error message:')
-  const message = publicAuthoringErrorMessage(new Error('No object generated: response did not match schema.'))
+  const schemaError = new Error('No object generated: response did not match schema.')
+  const message = publicAuthoringErrorMessage(
+    new AuthoringGenerationError(schemaError, [
+      `openrouter:bad-model: ${schemaError.message}`,
+    ]),
+  )
   check('schema error tidak bocor ke UI', !/No object generated|schema/i.test(message))
   check('pesan meminta coba ulang', /coba ulang/i.test(message))
+  check(
+    'error tak dikenal tetap fail-closed',
+    publicAuthoringErrorMessage(schemaError) === 'Terjadi kesalahan tak terduga.',
+  )
 
   console.log('\ndefault model order:')
   const previousKey = process.env.OPENROUTER_API_KEY

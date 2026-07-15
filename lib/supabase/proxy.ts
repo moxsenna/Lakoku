@@ -44,7 +44,7 @@ export async function updateSession(request: NextRequest) {
 
   // Rute yang memerlukan sesi (pengalaman baca personal & koleksi).
   // Jelajah (/beranda, /cerita) dan /profil (punya CTA masuk) tetap publik.
-  const PROTECTED_PREFIXES = ['/baca', '/akhir', '/koleksiku']
+  const PROTECTED_PREFIXES = ['/baca', '/akhir', '/koleksiku', '/mulai', '/brainstorm']
   const pathname = request.nextUrl.pathname
   const needsAuth = PROTECTED_PREFIXES.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`),

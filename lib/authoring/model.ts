@@ -9,7 +9,7 @@
  * Override via env `AUTHORING_MODELS` (dipisah koma).
  */
 import 'server-only'
-import { generateObject, NoObjectGeneratedError, type LanguageModel } from 'ai'
+import { generateObject, type LanguageModel } from 'ai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import type { z } from 'zod'
 
@@ -19,6 +19,7 @@ const AUTHORING_LAST_RESORT_JSON = 'google/gemini-2.5-flash-lite'
 const GATEWAY_FALLBACK = AUTHORING_PRIMARY_JSON
 const PUBLIC_AUTHORING_ERROR =
   'Usulan cerita belum berhasil dibentuk. Coba ulang sebentar lagi.'
+const PUBLIC_UNEXPECTED_ERROR = 'Terjadi kesalahan tak terduga.'
 
 export interface AuthoringModel {
   model: LanguageModel
@@ -41,7 +42,14 @@ export type AuthorObjectGenerate = <T>(
   args: AuthorObjectGenerateArgs<T>,
 ) => Promise<{ object: T }>
 
-export class AuthoringGenerationError extends Error {
+export class PublicAuthoringError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PublicAuthoringError'
+  }
+}
+
+export class AuthoringGenerationError extends PublicAuthoringError {
   readonly cause: unknown
   readonly failures: readonly string[]
 
@@ -92,18 +100,9 @@ function describeError(error: unknown): string {
   return String(error)
 }
 
-function isAuthoringSchemaError(error: unknown): boolean {
-  if (NoObjectGeneratedError.isInstance(error)) return true
-  const message = describeError(error)
-  return /No object generated|did not match schema|response did not match schema/i.test(message)
-}
-
 export function publicAuthoringErrorMessage(error: unknown): string {
-  if (error instanceof AuthoringGenerationError || isAuthoringSchemaError(error)) {
-    return PUBLIC_AUTHORING_ERROR
-  }
-  if (error instanceof Error && error.message.trim()) return error.message
-  return 'Terjadi kesalahan tak terduga.'
+  if (error instanceof PublicAuthoringError) return error.message
+  return PUBLIC_UNEXPECTED_ERROR
 }
 
 /**

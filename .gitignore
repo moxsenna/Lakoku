@@ -16,6 +16,7 @@ env
 node_modules
 .next/
 .DS_Store
+.worktrees/
 
 # Cloudflare / OpenNext
 .open-next/
@@ -26,5 +27,9 @@ testsprite_tests/tmp/
 
 # Playwright MCP session artifacts
 .playwright-mcp/
+
+# Local linked Supabase introspection, status credentials, and release evidence
+.local/
+supabase/.temp/
 
 testsprite_tests\tmp\config.json

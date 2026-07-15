@@ -1,157 +1,133 @@
 [
   {
     "id": "TC001",
-    "title": "Resume an onboarding draft after signing in",
-    "description": "Verifies a guest can reach the resume stage, sign in, and continue the saved onboarding draft without losing progress.",
-    "category": "Story Onboarding Flow",
+    "title": "Create a personalized story and open Chapter 1",
+    "description": "This verifies that a signed-in user can complete personalized story creation and land in Chapter 1 of the reader.",
+    "category": "Personalized story creation",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /mulai?resume=1"
+        "description": "Navigate to /login"
       },
       {
         "type": "action",
-        "description": "Enter valid credentials and submit the sign-in form"
+        "description": "Fill in the email field with {{LOGIN_USER}}"
       },
       {
         "type": "action",
-        "description": "Continue the restored onboarding draft"
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /mulai"
+      },
+      {
+        "type": "action",
+        "description": "Complete the personalized story creation flow"
       },
       {
         "type": "assertion",
-        "description": "Verify the onboarding draft is restored"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the user can continue setup from the saved state"
+        "description": "Verify the first chapter is displayed in the reader"
       }
     ],
     "priority": "High"
   },
   {
     "id": "TC002",
-    "title": "Start a story from quick onboarding",
-    "description": "Verifies a guest can complete the quick story setup, choose one premise, and enter the story reading screen.",
-    "category": "Story Onboarding Flow",
+    "title": "Keep private stories out of the public feed",
+    "description": "This verifies that private personalized stories do not appear in the public explore feed while public stories remain available.",
+    "category": "Ownership-safe library",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /mulai"
+        "description": "Navigate to /beranda"
       },
       {
         "type": "action",
-        "description": "Choose the quick start mode"
-      },
-      {
-        "type": "action",
-        "description": "Answer each guided story question"
-      },
-      {
-        "type": "action",
-        "description": "Continue to the premise review"
-      },
-      {
-        "type": "action",
-        "description": "Select one premise proposal"
-      },
-      {
-        "type": "action",
-        "description": "Start the story"
+        "description": "Browse the public story feed"
       },
       {
         "type": "assertion",
-        "description": "Verify the story reading screen is displayed"
+        "description": "Verify public stories are displayed"
       },
       {
         "type": "assertion",
-        "description": "Verify a selected premise is reflected in the story setup"
+        "description": "Verify private personalized stories are not shown in the public feed"
       }
     ],
     "priority": "High"
   },
   {
     "id": "TC003",
-    "title": "Start a story from a custom idea",
-    "description": "Verifies a guest can enter a free-form story idea, generate proposals, choose one, and start the story.",
-    "category": "Story Onboarding Flow",
+    "title": "Branch through a story chapter and continue to the next generated chapter",
+    "description": "Verifies that a reader can choose a branch in /baca/[id], see processing feedback, and reach the next chapter when generation completes.",
+    "category": "Reader branching choice and chapter continuation",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /mulai"
+        "description": "Navigate to /baca/[id] for a non-final chapter"
       },
       {
         "type": "action",
-        "description": "Choose the custom idea mode"
+        "description": "Select a branching choice"
       },
       {
         "type": "action",
-        "description": "Enter a free-form story idea"
+        "description": "Wait for the next chapter to be ready"
       },
       {
         "type": "action",
-        "description": "Submit the idea"
-      },
-      {
-        "type": "action",
-        "description": "Select one premise proposal"
-      },
-      {
-        "type": "action",
-        "description": "Start the story"
+        "description": "Open the next chapter"
       },
       {
         "type": "assertion",
-        "description": "Verify the story reading screen is displayed"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the generated premise proposals are replaced by the chosen premise"
+        "description": "Verify the next chapter is displayed after the choice"
       }
     ],
     "priority": "High"
   },
   {
     "id": "TC004",
-    "title": "Resume a guest draft after signing in",
-    "description": "A guest who returns to a saved onboarding draft can sign in and continue the story setup without losing progress.",
-    "category": "Guest Draft Resume After Login",
+    "title": "Explore public stories from the landing page",
+    "description": "This verifies that a visitor can leave the landing page, reach the public feed, and browse public stories successfully.",
+    "category": "Landing and navigation shell",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /mulai?resume=1"
+        "description": "Navigate to /"
       },
       {
         "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the sign-in form"
+        "description": "Click the option to explore stories"
       },
       {
         "type": "assertion",
-        "description": "Verify the saved story setup is restored"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the onboarding flow continues from the draft"
+        "description": "Verify the public story feed is displayed"
       }
     ],
     "priority": "High"
   },
   {
     "id": "TC005",
-    "title": "Keep draft progress after signing in",
-    "description": "A guest can return to the resume flow after login and see the draft content they had already started.",
-    "category": "Guest Draft Resume After Login",
+    "title": "Resume private story creation after signing in",
+    "description": "This verifies that a guest can reach the persistence boundary in the story start flow, sign in, and continue creating a private personalized story without losing progress.",
+    "category": "Auth login and guest resume boundary",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /mulai?resume=1"
+        "description": "Navigate to /mulai"
+      },
+      {
+        "type": "action",
+        "description": "Progress through the story start flow until the persistence boundary is reached"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
       },
       {
         "type": "action",
@@ -163,82 +139,90 @@
       },
       {
         "type": "action",
-        "description": "Submit the sign-in form"
+        "description": "Submit the login form"
       },
       {
         "type": "assertion",
-        "description": "Verify the draft answers remain available after sign-in"
+        "description": "Verify the private story creation flow is resumed after sign-in"
       },
       {
         "type": "assertion",
-        "description": "Verify the user can continue the setup flow"
+        "description": "Verify the user can continue toward creating a private story"
       }
     ],
     "priority": "High"
   },
   {
     "id": "TC006",
-    "title": "Complete the full story planning flow",
-    "description": "Verifies a reader can work through the detailed multi-stage story planner and continue setup at the end.",
-    "category": "Story Onboarding Flow",
+    "title": "Continue a personalized story through branching chapters to completion",
+    "description": "This verifies that a signed-in user can read a private personalized story, make chapter choices, and reach the completion state after multiple continuations.",
+    "category": "Personalized story creation",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /brainstorm"
+        "description": "Navigate to /login"
       },
       {
         "type": "action",
-        "description": "Complete each story planning stage in sequence"
+        "description": "Fill in the email field with {{LOGIN_USER}}"
       },
       {
         "type": "action",
-        "description": "Continue past the final planning stage"
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /mulai"
+      },
+      {
+        "type": "action",
+        "description": "Complete the personalized story creation flow"
+      },
+      {
+        "type": "action",
+        "description": "Continue through chapter choices until the story ends"
       },
       {
         "type": "assertion",
-        "description": "Verify the completed planning summary is displayed"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the story setup can continue from the wizard"
+        "description": "Verify the completion screen is displayed"
       }
     ],
     "priority": "High"
   },
   {
     "id": "TC007",
-    "title": "Open the full planning wizard from onboarding",
-    "description": "Verifies a reader can choose full mode from the onboarding entry and reach the detailed planning wizard.",
-    "category": "Story Onboarding Flow",
+    "title": "Start personalized story creation from the landing page",
+    "description": "This verifies that a visitor can begin the personalized story flow from the landing page and reach the onboarding start screen.",
+    "category": "Landing and navigation shell",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /mulai"
+        "description": "Navigate to /"
       },
       {
         "type": "action",
-        "description": "Choose the full mode"
+        "description": "Click the option to start a story"
       },
       {
         "type": "assertion",
-        "description": "Verify the full planning wizard is displayed"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the user is on the story planning flow"
+        "description": "Verify the personalized story start flow is displayed"
       }
     ],
     "priority": "High"
   },
   {
     "id": "TC008",
-    "title": "Restore a saved draft at the resume stage",
-    "description": "A user who reaches the resume-lock stage can authenticate and return to the same onboarding session.",
-    "category": "Guest Draft Resume After Login",
+    "title": "Continue reading through multiple chapter choices",
+    "description": "Verifies that a signed-in reader can complete a multi-step branching reading journey across more than one chapter.",
+    "category": "Reader branching choice and chapter continuation",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /mulai?resume=1"
+        "description": "Navigate to /auth/login"
       },
       {
         "type": "action",
@@ -250,135 +234,77 @@
       },
       {
         "type": "action",
-        "description": "Submit the sign-in form"
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /baca/[id] for an active story"
+      },
+      {
+        "type": "action",
+        "description": "Select a branching choice"
+      },
+      {
+        "type": "action",
+        "description": "Wait for the next chapter to be ready"
+      },
+      {
+        "type": "action",
+        "description": "Select another branching choice"
       },
       {
         "type": "assertion",
-        "description": "Verify the saved onboarding session is restored"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the user stays on the story setup journey"
+        "description": "Verify the story advances through multiple chapters"
       }
     ],
     "priority": "High"
   },
   {
     "id": "TC009",
-    "title": "Use a custom answer during quick start",
-    "description": "Verifies a reader can replace one guided quick-start answer with their own text and continue through story setup successfully.",
-    "category": "Custom Answer Entry in Quick Start",
+    "title": "Open the personal library after signing in",
+    "description": "This verifies that a signed-in user can access their private library and open one of their owned stories.",
+    "category": "Ownership-safe library",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /mulai"
+        "description": "Navigate to /auth/login"
       },
       {
         "type": "action",
-        "description": "Choose the quick start mode"
+        "description": "Fill in the email field with {{LOGIN_USER}}"
       },
       {
         "type": "action",
-        "description": "Open one guided question"
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
       },
       {
         "type": "action",
-        "description": "Choose to write a custom answer"
+        "description": "Submit the login form"
       },
       {
         "type": "action",
-        "description": "Enter a custom answer in the answer field"
+        "description": "Navigate to /koleksiku"
       },
       {
         "type": "action",
-        "description": "Save the answer"
-      },
-      {
-        "type": "action",
-        "description": "Continue through the remaining questions"
+        "description": "Open an owned private story from the library"
       },
       {
         "type": "assertion",
-        "description": "Verify the custom answer is accepted and the setup can continue"
+        "description": "Verify the private library is displayed"
       },
       {
         "type": "assertion",
-        "description": "Verify premise proposals are available after completing the quiz"
+        "description": "Verify an owned private story detail is opened"
       }
     ],
     "priority": "High"
   },
   {
     "id": "TC010",
-    "title": "Continue setup after login from a guest resume prompt",
-    "description": "Signing in from a guest resume prompt returns the user to the in-progress story creation path.",
-    "category": "Guest Draft Resume After Login",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /mulai?resume=1"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the sign-in form"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the pending story draft is restored"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the story creation flow remains active"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC011",
-    "title": "Return to the saved onboarding draft after authentication",
-    "description": "A signed-in reader can resume the preserved setup state and keep moving toward story creation.",
-    "category": "Guest Draft Resume After Login",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /mulai?resume=1"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the email field with {{LOGIN_USER}}"
-      },
-      {
-        "type": "action",
-        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
-      },
-      {
-        "type": "action",
-        "description": "Submit the sign-in form"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the saved draft content is visible again"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the next step in onboarding is available"
-      }
-    ],
-    "priority": "High"
-  },
-  {
-    "id": "TC012",
-    "title": "Use the default answer during quick start",
-    "description": "Verifies a reader can keep the suggested quick-start answer and continue to story proposal review without custom entry.",
-    "category": "Custom Answer Entry in Quick Start",
+    "title": "Resume personalized story creation after reaching the persistence boundary",
+    "description": "This verifies that a guest can reach the login boundary from the personalized flow, sign in, and resume creation without losing progress.",
+    "category": "Personalized story creation",
     "steps": [
       {
         "type": "action",
@@ -386,144 +312,297 @@
       },
       {
         "type": "action",
-        "description": "Choose the quick start mode"
+        "description": "Advance through the onboarding flow until persistence is required"
       },
       {
         "type": "action",
-        "description": "Open one guided question"
+        "description": "Navigate to /login"
       },
       {
         "type": "action",
-        "description": "Choose the default suggested answer"
+        "description": "Fill in the email field with {{LOGIN_USER}}"
       },
       {
         "type": "action",
-        "description": "Continue through the remaining questions"
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
       },
       {
         "type": "action",
-        "description": "Review the premise proposals"
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Return to the personalized story flow and continue creation"
       },
       {
         "type": "assertion",
-        "description": "Verify premise proposals are displayed"
+        "description": "Verify the creation flow resumes successfully"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC011",
+    "title": "Show the guest persistence boundary in story creation",
+    "description": "This verifies that a guest can begin the story start flow and reaches the point where sign-in is required before private persistence continues.",
+    "category": "Auth login and guest resume boundary",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /mulai"
+      },
+      {
+        "type": "action",
+        "description": "Progress through the onboarding flow until the persistence boundary is reached"
       },
       {
         "type": "assertion",
-        "description": "Verify the quick-start flow continues without requiring custom text entry"
+        "description": "Verify a sign-in requirement is shown"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the user cannot continue private creation without authenticating"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC012",
+    "title": "Finish a story and choose a next action",
+    "description": "This verifies that a reader reaching the final chapter sees the ending state and can proceed to the library or start a new story.",
+    "category": "Personalized story creation",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /baca/[id]"
+      },
+      {
+        "type": "action",
+        "description": "Read until the final chapter is reached"
+      },
+      {
+        "type": "action",
+        "description": "Continue to the ending screen"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify completion actions are displayed"
       }
     ],
     "priority": "High"
   },
   {
     "id": "TC013",
-    "title": "Start story creation from the landing page",
-    "description": "A visitor can begin story onboarding from the landing page and reach the story setup entry screen.",
-    "category": "Home and Library Shell",
+    "title": "Reach the final chapter ending with no choices",
+    "description": "Verifies that the final chapter shows an ending state without branch options and offers completion actions.",
+    "category": "Final chapter completion experience",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /"
-      },
-      {
-        "type": "action",
-        "description": "Click the control to begin creating a story"
+        "description": "Navigate to /baca/[id] on a final chapter"
       },
       {
         "type": "assertion",
-        "description": "Verify the story onboarding entry screen is displayed"
+        "description": "Verify no choice options are shown"
       },
       {
         "type": "assertion",
-        "description": "Verify the user can choose a story creation mode"
+        "description": "Verify completion actions are available"
       }
     ],
     "priority": "High"
   },
   {
     "id": "TC014",
-    "title": "Save a taste profile and keep the choices",
-    "description": "Verifies a reader can complete the taste profile form, save preferences, and see that the profile is stored.",
-    "category": "Reader Taste Profile",
+    "title": "Browse the public feed and open a story detail",
+    "description": "This verifies that a visitor can browse public stories in the feed and open a public story detail page successfully.",
+    "category": "Public explore and story detail browsing",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /onboarding/selera"
+        "description": "Navigate to /beranda"
       },
       {
         "type": "action",
-        "description": "Answer the taste profile questions"
-      },
-      {
-        "type": "action",
-        "description": "Save the profile"
+        "description": "Open a public story from the feed"
       },
       {
         "type": "assertion",
-        "description": "Verify a saved profile confirmation is visible"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the completed taste profile is retained"
+        "description": "Verify a public story detail is displayed"
       }
     ],
-    "priority": "Medium"
+    "priority": "High"
   },
   {
     "id": "TC015",
-    "title": "Open the home shell from the landing page",
-    "description": "A visitor can start on the landing page and choose to enter the main home area.",
-    "category": "Home and Library Shell",
+    "title": "Open a private story owned by the signed-in user",
+    "description": "This verifies that a signed-in user can open their own private story detail successfully.",
+    "category": "Ownership-safe library",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /"
+        "description": "Navigate to /auth/login"
       },
       {
         "type": "action",
-        "description": "Click the control to open the home area"
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /cerita/[id]"
+      },
+      {
+        "type": "action",
+        "description": "Open a private story that belongs to the signed-in user"
       },
       {
         "type": "assertion",
-        "description": "Verify the home shell is displayed"
+        "description": "Verify the private story detail is accessible"
       },
       {
         "type": "assertion",
-        "description": "Verify the library area is available"
+        "description": "Verify the story detail content is displayed"
       }
     ],
-    "priority": "Medium"
+    "priority": "High"
   },
   {
     "id": "TC016",
-    "title": "Move from landing to the story setup entry",
-    "description": "A visitor can use the landing page to reach the story creation entry point without leaving the app flow.",
-    "category": "Home and Library Shell",
+    "title": "Read a public story from its detail page",
+    "description": "This verifies that a user can open a readable public story detail and continue into the reader successfully.",
+    "category": "Public explore and story detail browsing",
     "steps": [
       {
         "type": "action",
-        "description": "Navigate to /"
+        "description": "Navigate to /cerita/[id]"
       },
       {
         "type": "action",
-        "description": "Click the control to begin creating a story"
+        "description": "Continue reading the story"
       },
       {
         "type": "assertion",
-        "description": "Verify the story setup entry is shown"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the onboarding flow is ready to continue"
+        "description": "Verify the story reader is displayed"
       }
     ],
-    "priority": "Medium"
+    "priority": "High"
   },
   {
     "id": "TC017",
-    "title": "Reach the home shell from the landing page",
-    "description": "Verifies a visitor can use the landing page navigation to reach the home shell browsing experience.",
-    "category": "Reader browsing the home/library shell",
+    "title": "Clone a premium template into a private story and read chapter one",
+    "description": "Verifies that a signed-in user can clone a public premium template into a private instance and open the cloned first chapter successfully.",
+    "category": "Premium template clone",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /beranda"
+      },
+      {
+        "type": "action",
+        "description": "Open a public premium story detail"
+      },
+      {
+        "type": "action",
+        "description": "Clone the template into a private instance"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the cloned story becomes available to read"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC018",
+    "title": "Complete taste onboarding and continue",
+    "description": "A user can finish the taste onboarding flow and continue into the personalized experience with their selected preferences saved.",
+    "category": "Profile and taste settings",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /onboarding/selera"
+      },
+      {
+        "type": "action",
+        "description": "Select valid taste preferences"
+      },
+      {
+        "type": "action",
+        "description": "Continue from onboarding"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the onboarding completion state is shown"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the selected preferences are preserved"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC019",
+    "title": "Continue the guest onboarding flow into the app after sign-up",
+    "description": "This verifies that a new account can be created from the sign-up page and the user can continue into the app afterward.",
+    "category": "Auth login and guest resume boundary",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/sign-up"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the sign-up form"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the user enters the app after account creation"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify authenticated access is available"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC020",
+    "title": "Open account access from the landing page",
+    "description": "This verifies that a visitor can open the authentication entry point from the landing page when they need to sign in or register.",
+    "category": "Landing and navigation shell",
     "steps": [
       {
         "type": "action",
@@ -531,95 +610,253 @@
       },
       {
         "type": "action",
-        "description": "Open the home shell from the landing page"
+        "description": "Click the option to access an account"
       },
       {
         "type": "assertion",
-        "description": "Verify the home shell is displayed"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the library and explore areas are available"
+        "description": "Verify an authentication screen is displayed"
       }
     ],
-    "priority": "Medium"
-  },
-  {
-    "id": "TC018",
-    "title": "Browse the library area in the home shell",
-    "description": "A user can open the home shell and view the library section for browsing content.",
-    "category": "Home and Library Shell",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /beranda"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the home shell is displayed"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the library section is visible"
-      }
-    ],
-    "priority": "Medium"
-  },
-  {
-    "id": "TC019",
-    "title": "Explore content from the home shell",
-    "description": "A user can access the home shell and browse the explore area as part of the main app experience.",
-    "category": "Home and Library Shell",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /beranda"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the home shell is displayed"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the explore area is visible"
-      }
-    ],
-    "priority": "Medium"
-  },
-  {
-    "id": "TC020",
-    "title": "Skip taste profile setup for now",
-    "description": "Verifies a reader can leave taste profile onboarding without saving preferences.",
-    "category": "Reader Taste Profile",
-    "steps": [
-      {
-        "type": "action",
-        "description": "Navigate to /onboarding/selera"
-      },
-      {
-        "type": "action",
-        "description": "Open the taste profile flow"
-      },
-      {
-        "type": "action",
-        "description": "Choose to skip for now"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify the user leaves the profile setup flow"
-      },
-      {
-        "type": "assertion",
-        "description": "Verify no saved profile is created"
-      }
-    ],
-    "priority": "Medium"
+    "priority": "High"
   },
   {
     "id": "TC021",
-    "title": "Save a partial taste profile",
-    "description": "Verifies a reader can save a partially completed taste profile when the flow allows incomplete preferences.",
-    "category": "Reader Taste Profile",
+    "title": "Return to the library from the ending screen",
+    "description": "Verifies that a reader can leave the final chapter completion screen and return to their library.",
+    "category": "Final chapter completion experience",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /baca/[id] on a final chapter"
+      },
+      {
+        "type": "action",
+        "description": "Open the completion screen"
+      },
+      {
+        "type": "action",
+        "description": "Return to the library"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the library page is displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC022",
+    "title": "Browse public story details without exposing private content",
+    "description": "This verifies that public story detail browsing shows only publicly accessible information and does not expose private story ownership data.",
+    "category": "Public explore and story detail browsing",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /beranda"
+      },
+      {
+        "type": "action",
+        "description": "Open a public story from the feed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the public detail view is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify private ownership information is not displayed"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC023",
+    "title": "Start a new story from the ending screen",
+    "description": "Verifies that a reader can use the completion screen to begin creating a new story after finishing one.",
+    "category": "Final chapter completion experience",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /baca/[id] on a final chapter"
+      },
+      {
+        "type": "action",
+        "description": "Open the completion screen"
+      },
+      {
+        "type": "action",
+        "description": "Start a new story"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the story start flow is displayed"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC024",
+    "title": "Update taste preferences and save them",
+    "description": "A user can adjust personalization settings in profile and save the changes successfully.",
+    "category": "Profile and taste settings",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /profil"
+      },
+      {
+        "type": "action",
+        "description": "Adjust one or more taste preference settings"
+      },
+      {
+        "type": "action",
+        "description": "Save the updated preferences"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the updated preferences are reflected in the profile settings view"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC025",
+    "title": "Read a premium story detail before cloning",
+    "description": "Verifies that a visitor can open a public premium story detail and review its content before deciding to clone it.",
+    "category": "Premium template clone",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /cerita/[id] for a public premium story"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the story detail page displays its overview and reading entry point"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC026",
+    "title": "Change taste preferences after onboarding",
+    "description": "A user can revisit taste settings and update their preferences after completing onboarding.",
+    "category": "Profile and taste settings",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /profil"
+      },
+      {
+        "type": "action",
+        "description": "Open the taste preferences section"
+      },
+      {
+        "type": "action",
+        "description": "Change an existing preference selection"
+      },
+      {
+        "type": "action",
+        "description": "Save the updated preferences"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the revised preferences are shown in the profile settings"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC027",
+    "title": "Inspect credits on the credits page",
+    "description": "This verifies that a visitor can open the credits surface and review their current credit information.",
+    "category": "Credits and top-up surface",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /kredit"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the credits surface is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify current credit information is visible"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC028",
+    "title": "Repeat cloning stays consistent for the same premium template",
+    "description": "Verifies that repeating the clone action for the same public premium template keeps the private instance consistent.",
+    "category": "Premium template clone",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /auth/login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /cerita/[id] for a public premium template"
+      },
+      {
+        "type": "action",
+        "description": "Clone the template into a private instance"
+      },
+      {
+        "type": "action",
+        "description": "Open the same premium template detail again"
+      },
+      {
+        "type": "action",
+        "description": "Repeat the clone action for the same template"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the private instance remains consistent after the repeated clone"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC029",
+    "title": "Open profile settings and review taste preferences",
+    "description": "A user can open profile settings and view their taste preferences for personalization.",
+    "category": "Profile and taste settings",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /profil"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify profile settings content is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify taste preferences are visible"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC030",
+    "title": "Retain taste preferences when returning to onboarding",
+    "description": "A user who has already selected tastes can reopen onboarding and see their prior preference choices preserved.",
+    "category": "Profile and taste settings",
     "steps": [
       {
         "type": "action",
@@ -627,19 +864,98 @@
       },
       {
         "type": "action",
-        "description": "Answer some of the taste profile questions"
+        "description": "Select valid taste preferences"
       },
       {
         "type": "action",
-        "description": "Save the profile"
+        "description": "Continue from onboarding"
+      },
+      {
+        "type": "action",
+        "description": "Return to /onboarding/selera"
       },
       {
         "type": "assertion",
-        "description": "Verify a partial profile save confirmation is visible"
+        "description": "Verify the previously selected preferences are still visible"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC031",
+    "title": "Retry a story choice when another attempt is needed",
+    "description": "Verifies that a reader can retry a chosen branch and still continue once the next chapter is ready.",
+    "category": "Reader branching choice and chapter continuation",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /baca/[id] for a non-final chapter"
+      },
+      {
+        "type": "action",
+        "description": "Select a branching choice"
+      },
+      {
+        "type": "action",
+        "description": "Retry the selected choice"
+      },
+      {
+        "type": "action",
+        "description": "Wait for the next chapter to be ready"
       },
       {
         "type": "assertion",
-        "description": "Verify the saved preferences are available for later use"
+        "description": "Verify the reader can continue to the next chapter after retrying"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC032",
+    "title": "Skip onboarding with no selection",
+    "description": "A user can continue from taste onboarding without choosing preferences and still reach the next step.",
+    "category": "Profile and taste settings",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /onboarding/selera"
+      },
+      {
+        "type": "action",
+        "description": "Continue without selecting any preferences"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the flow completes successfully"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the user can proceed to the personalized experience"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC033",
+    "title": "Block access to another user's private story detail",
+    "description": "This verifies that a private story owned by someone else cannot be opened from the story detail route.",
+    "category": "Ownership-safe library",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /cerita/[id]"
+      },
+      {
+        "type": "action",
+        "description": "Attempt to open another user's private story detail"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify an access restriction is shown"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the private story detail is not accessible"
       }
     ],
     "priority": "Low"

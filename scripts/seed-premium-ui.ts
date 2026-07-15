@@ -2,8 +2,11 @@ import { createClient } from '@supabase/supabase-js'
 import {
   PREMIUM_BILIK_KETUJUH_V2_STORY_ID,
   PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP,
-  buildAllPremiumBilikKetujuhV2Drafts
+  buildAllPremiumBilikKetujuhV2Drafts,
 } from '../fixtures/narrative/premium-bilik-ketujuh-v2'
+
+type ChoiceGate = (typeof PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP.choiceGates)[keyof typeof PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP.choiceGates]
+type GateChoice = ChoiceGate['choices'][number]
 
 const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -62,7 +65,7 @@ async function main() {
     let choice_prompt
 
     if (gate) {
-      choices = gate.choices.map((c: any) => ({ id: c.id, label: c.label }))
+      choices = gate.choices.map((c: GateChoice) => ({ id: c.id, label: c.label }))
       choice_prompt = gate.prompt
     } else {
       choices = [{ id: 'lanjut', label: 'Lanjutkan membaca' }]
@@ -83,14 +86,12 @@ async function main() {
     for (const choice of choices) {
       let resulting_chapter = draft.chapterNumber < 50 ? draft.chapterNumber + 1 : draft.chapterNumber
       let consequence = 'Cerita berlanjut ke bab berikutnya.'
-      let state_delta = {}
 
       if (gate) {
-        const c = gate.choices.find((x: any) => x.id === choice.id) as any
+        const c = gate.choices.find((x: GateChoice) => x.id === choice.id)
         if (c) {
           resulting_chapter = c.nextChapter
           consequence = `Mengambil rute ${c.route}`
-          state_delta = c.stateDelta || {}
         }
       }
 

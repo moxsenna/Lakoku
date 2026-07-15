@@ -19,6 +19,12 @@ import type {
   ReportCategory,
   ReportResult,
 } from './types'
+import {
+  ChapterStatusResponseSchema,
+  SubmitChoiceResponseSchema,
+  type ChapterStatusResponse,
+  type SubmitChoiceResponse,
+} from '../../packages/contracts/src/reader'
 import { buildChoiceIdempotencyKey } from './choice-idempotency'
 
 const API_BASE = '/api'
@@ -63,23 +69,50 @@ export async function submitChoice(
   chapterNumber: number,
   choiceId: string,
 ): Promise<ChoiceOutcome> {
-  const res = await fetch(
-    `${API_BASE}/stories/${encodeURIComponent(storyId)}/choices`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Idempotency-Key': buildChoiceIdempotencyKey(storyId, chapterNumber, choiceId),
-      },
-      body: JSON.stringify({ chapterNumber, choiceId }),
-    },
-  )
-
-  if (!res.ok) throw new Error('Pilihan belum berhasil dikirim.')
-
-  const data = (await res.json()) as { outcome?: ChoiceOutcome }
-  if (!data.outcome) throw new Error('Pilihan belum berhasil dikirim.')
+  const data = await submitChoiceWithReadiness(storyId, chapterNumber, choiceId)
   return data.outcome
+}
+
+export async function submitChoiceWithReadiness(
+  storyId: string,
+  chapterNumber: number,
+  choiceId: string,
+): Promise<SubmitChoiceResponse> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/stories/${encodeURIComponent(storyId)}/choices`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': buildChoiceIdempotencyKey(storyId, chapterNumber, choiceId),
+        },
+        body: JSON.stringify({ chapterNumber, choiceId }),
+      },
+    )
+
+    if (!res.ok) throw new Error()
+    return SubmitChoiceResponseSchema.parse(await res.json())
+  } catch {
+    throw new Error('Pilihan belum berhasil dikirim.')
+  }
+}
+
+export async function getChapterGenerationStatus(
+  storyId: string,
+  chapterNumber: number,
+  signal?: AbortSignal,
+): Promise<ChapterStatusResponse> {
+  try {
+    const url = `${API_BASE}/stories/${encodeURIComponent(storyId)}/chapters/${chapterNumber}/status`
+    const res = signal
+      ? await fetch(url, { signal })
+      : await fetch(url)
+    if (!res.ok) throw new Error()
+    return ChapterStatusResponseSchema.parse(await res.json())
+  } catch {
+    throw new Error('Status bab belum berhasil diperiksa.')
+  }
 }
 
 /**

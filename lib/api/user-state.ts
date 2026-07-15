@@ -12,6 +12,8 @@ import { cache } from 'react'
 import { createClient } from '@/lib/supabase/server'
 import type { JejakItem, ChoiceOutcome } from './types'
 
+export const READER_STATE_PUBLIC_COLUMNS = 'user_id,story_id,status,current_chapter,jejak,ending_name,updated_at' as const
+
 export interface ReaderState {
   storyId: string
   status: 'BARU' | 'BERJALAN' | 'SELESAI'
@@ -71,7 +73,7 @@ export const getReaderStates = cache(async function getReaderStates(): Promise<M
   const { supabase, user } = await getSessionContext()
   if (!user) return new Map()
 
-  const { data, error } = await supabase.from('reader_states').select('*')
+  const { data, error } = await supabase.from('reader_states').select(READER_STATE_PUBLIC_COLUMNS)
   if (error) throw new Error(`getReaderStates: ${error.message}`)
   return new Map(
     (data as ReaderStateRow[]).map((r) => [r.story_id, toState(r)]),
@@ -87,7 +89,7 @@ export const getReaderState = cache(async function getReaderState(
 
   const { data, error } = await supabase
     .from('reader_states')
-    .select('*')
+    .select(READER_STATE_PUBLIC_COLUMNS)
     .eq('story_id', storyId)
     .maybeSingle()
   if (error) throw new Error(`getReaderState: ${error.message}`)

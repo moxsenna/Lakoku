@@ -6,5 +6,12 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/baca/:path*', '/akhir/:path*', '/koleksiku/:path*', '/admin/:path*'],
+  matcher: [
+    '/baca/:path*',
+    '/akhir/:path*',
+    '/koleksiku/:path*',
+    '/mulai/:path*',
+    '/brainstorm/:path*',
+    '/admin/:path*',
+  ],
 }

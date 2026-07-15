@@ -12,7 +12,9 @@ export {
   listStories,
   getStory,
   getChapter,
+  getChapterGenerationStatus,
   submitChoice,
+  submitChoiceWithReadiness,
   submitReport,
   listChapters,
 } from './client'
@@ -28,6 +30,12 @@ export {
   getPendingChoice,
   recordPendingChoice,
   retryPendingChoice,
+  retryPendingChoiceWithReadiness,
 } from './pending-choice'
-export type { PendingChoice, PendingChoiceInput, SubmitChoiceFn } from './pending-choice'
+export type {
+  PendingChoice,
+  PendingChoiceInput,
+  SubmitChoiceFn,
+  SubmitChoiceWithReadinessFn,
+} from './pending-choice'
 export { recordLastChoiceSummary, getLastChoiceSummary } from './last-choice-summary'

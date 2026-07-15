@@ -10,6 +10,8 @@
 import { cache } from 'react'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { requireSupabaseAnonKey, requireSupabaseUrl } from '@/lib/supabase/env'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { createClient as createCookieClient } from '@/lib/supabase/server'
 import type {
   StorySummary,
   StoryDetail,
@@ -18,6 +20,11 @@ import type {
   JejakItem,
   ChoiceOption,
 } from './types'
+
+export const STORY_READER_COLUMNS = 'id,title,cover,tagline,role,tropes,total_chapters,synopsis,status,current_chapter,jejak,ending_name' as const
+export const CHAPTER_READER_COLUMNS = 'story_id,number,title,paragraphs,choice_prompt,choices' as const
+export const OUTCOME_READER_COLUMNS = 'story_id,chapter_number,choice_id,consequence,next_chapter_number,is_ending' as const
+export const EXPLORE_STORY_FILTER = 'id.like.demo:%,id.like.premium:%' as const
 
 type StoryRow = {
   id: string
@@ -84,8 +91,8 @@ export const queryStories = cache(async function queryStories(): Promise<StorySu
   const supabase = createClient()
   const { data, error } = await supabase
     .from('stories')
-    .select('*')
-    .order('created_at', { ascending: true })
+    .select(STORY_READER_COLUMNS)
+    .order('id', { ascending: true })
   if (error) throw new Error(`queryStories: ${error.message}`)
   return (data as StoryRow[]).map(toDetail)
 })
@@ -94,21 +101,75 @@ export const queryStory = cache(async function queryStory(id: string): Promise<S
   const supabase = createClient()
   const { data, error } = await supabase
     .from('stories')
-    .select('*')
+    .select(STORY_READER_COLUMNS)
     .eq('id', id)
     .maybeSingle()
   if (error) throw new Error(`queryStory: ${error.message}`)
   return data ? toDetail(data as StoryRow) : null
 })
 
+/**
+ * Reads trusted user library rows with service role, but only after exact ID and
+ * explicit public/owner constraints. Internal filter fields never enter result.
+ */
+export async function queryStoriesByIdsForUser(
+  storyIds: string[],
+  userId: string,
+): Promise<StorySummary[]> {
+  if (storyIds.length === 0) return []
+
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('stories')
+    .select(STORY_READER_COLUMNS)
+    .in('id', storyIds)
+    .or(`visibility.eq.public,owner_user_id.eq.${userId}`)
+    .order('id', { ascending: true })
+  if (error) throw new Error(`queryStoriesByIdsForUser: ${error.message}`)
+  return (data as StoryRow[]).map(toDetail)
+}
+
+/** Public detail or exact trusted owner only. */
+export async function queryStoryForUser(
+  id: string,
+  userId: string | null,
+): Promise<StoryDetail | null> {
+  const supabase = createAdminClient()
+  let query = supabase
+    .from('stories')
+    .select(STORY_READER_COLUMNS)
+    .eq('id', id)
+
+  query = userId
+    ? query.or(`visibility.eq.public,owner_user_id.eq.${userId}`)
+    : query.eq('visibility', 'public')
+
+  const { data, error } = await query.maybeSingle()
+  if (error) throw new Error(`queryStoryForUser: ${error.message}`)
+  return data ? toDetail(data as StoryRow) : null
+}
+
+/** Public official demos and premium templates only. */
+export async function queryExploreStories(): Promise<StorySummary[]> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('stories')
+    .select(STORY_READER_COLUMNS)
+    .eq('visibility', 'public')
+    .or(EXPLORE_STORY_FILTER)
+    .order('id', { ascending: true })
+  if (error) throw new Error(`queryExploreStories: ${error.message}`)
+  return (data as StoryRow[]).map(toDetail)
+}
+
 export const queryChapter = cache(async function queryChapter(
   storyId: string,
   number: number,
 ): Promise<Chapter | null> {
-  const supabase = createClient()
+  const supabase = await createCookieClient()
   const { data, error } = await supabase
     .from('chapters')
-    .select('*')
+    .select(CHAPTER_READER_COLUMNS)
     .eq('story_id', storyId)
     .eq('number', number)
     .maybeSingle()
@@ -136,10 +197,10 @@ export const queryLatestAvailableChapter = cache(async function queryLatestAvail
   storyId: string,
   atMost: number,
 ): Promise<Chapter | null> {
-  const supabase = createClient()
+  const supabase = await createCookieClient()
   const { data, error } = await supabase
     .from('chapters')
-    .select('*')
+    .select(CHAPTER_READER_COLUMNS)
     .eq('story_id', storyId)
     .lte('number', atMost)
     .order('number', { ascending: false })
@@ -166,7 +227,7 @@ export const queryChapterMetadatas = cache(async function queryChapterMetadatas(
   storyId: string,
   maxNumber: number,
 ): Promise<{ number: number; title: string }[]> {
-  const supabase = createClient()
+  const supabase = await createCookieClient()
   const { data, error } = await supabase
     .from('chapters')
     .select('number,title')
@@ -182,10 +243,10 @@ export async function queryChoiceOutcome(
   chapterNumber: number,
   choiceId: string,
 ): Promise<ChoiceOutcome | null> {
-  const supabase = createClient()
+  const supabase = await createCookieClient()
   const { data, error } = await supabase
     .from('choice_outcomes')
-    .select('*')
+    .select(OUTCOME_READER_COLUMNS)
     .eq('story_id', storyId)
     .eq('chapter_number', chapterNumber)
     .eq('choice_id', choiceId)

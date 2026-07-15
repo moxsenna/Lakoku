@@ -3,11 +3,11 @@
  * Kontrak ini yang nanti dipindahkan ke Cloudflare Workers tanpa berubah.
  */
 import { NextResponse } from 'next/server'
-import { queryStories } from '@/lib/api/queries'
+import { listExploreStories } from '@/lib/api/server'
 
 export async function GET() {
   try {
-    const stories = await queryStories()
+    const stories = await listExploreStories()
     return NextResponse.json({ stories })
   } catch {
     return NextResponse.json(

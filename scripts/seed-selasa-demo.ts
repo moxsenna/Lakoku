@@ -14,7 +14,6 @@ import {
   DEMO_TOTAL_CHAPTERS,
   demoChoicesForSeed,
   demoOutcomesForSeed,
-  getDemoBeat,
 } from './demo-prose/chapter-beats'
 import { buildHandcraftChapter } from './demo-prose/handcraft/build-handcraft'
 import { generateChapterProse } from './demo-prose/generate-chapter-prose'
@@ -86,7 +85,7 @@ function buildOutcomes(chapterNumber: number): ChoiceOutcomeRow[] {
  * - dialog padat, show-don't-tell
  * - tanpa meta "pilihan menunggumu" / filler "kata"
  */
-const CHAPTER_TITLES = [
+const _CHAPTER_TITLES = [
   'Hujan di Atap Kaca',
   'Teh yang Dingin',
   'Kunci di Laci',
@@ -157,7 +156,7 @@ function linePick(ch: number, options: string[]): string {
   return options[(ch - 1) % options.length]!
 }
 
-function buildSceneParagraphs(ch: number): string[] {
+function _buildSceneParagraphs(ch: number): string[] {
   const key = beatKey(ch)
   const n = ch
 

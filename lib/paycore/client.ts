@@ -1,7 +1,7 @@
 import 'server-only'
 import { hmacSha256Hex, sha256Hex } from './crypto'
 import { loadPayCoreOutboundConfig, type PayCoreOutboundConfig } from './config'
-import { getCreditProduct, calculateTopupCredits, type CreditProduct, type TopupCreditCalculation } from './products'
+import { getCreditProduct, calculateTopupCredits, type TopupCreditCalculation } from './products'
 import { createAdminClient } from '@lakoku/db'
 
 /**

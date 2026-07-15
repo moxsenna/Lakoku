@@ -11,6 +11,10 @@
  */
 
 import type { CanonSnapshot, ChapterBlueprint, Finding } from '@lakoku/narrative-core'
+import type { ChapterBrief, ChoiceHistoryEntry } from '../story-engine/chapter-brief'
+import type { RouteState } from '../story-engine/route-state'
+import type { TasteProfile } from '../taste-profile/schema'
+import type { ChapterDraftParsed } from './schemas'
 
 export interface PlanInput {
   snapshot: CanonSnapshot
@@ -27,6 +31,66 @@ export interface WriteInput {
   injectDefects?: DraftDefect[]
 }
 
+/** Konteks server-only yang terbatas untuk menghasilkan cabang pilihan dinamis.
+ *
+ * chapterNumber disengaja TIDAK ada — diambil dari draft.chapterNumber.
+ * Caller tidak boleh mengirim chapter yang berbeda dari isi draft.
+ */
+export type LastParagraphs =
+  | [string, string, string]
+  | [string, string, string, string]
+  | [string, string, string, string, string]
+
+export interface ChoiceInput {
+  snapshot: CanonSnapshot
+  chapterBrief: ChapterBrief
+  draft: ChapterDraftParsed
+  lastParagraphs: LastParagraphs
+  routeState: RouteState
+  /** Maksimum satu entry per bab yang menyediakan pilihan (Bab 1–49). */
+  choiceHistory: ChoiceHistoryEntry[]
+  lockedEndingKey: string | null
+}
+
+/** Proyeksi ketat dan terbatas yang menjadi satu-satunya input provider pilihan. */
+export interface StoryContractInput {
+  storyId: string
+  tasteJson: TasteProfile
+  repairErrors?: string[]
+}
+
+export interface StoryContractCallOptions {
+  signal?: AbortSignal
+}
+
+export interface ChoiceProviderInput {
+  storyId: string
+  currentChapter: number
+  draft: {
+    title: string
+    lastParagraphs: LastParagraphs
+  }
+  chapterBrief: {
+    phase: string
+    chapterGoal: string
+    mustInclude: string[]
+    mustNotInclude: string[]
+    mustNotReveal: string[]
+    plotDebtsToProgress: string[]
+    plotDebtsToClose: string[]
+    remainingChapters: number
+    endingRunway: ChapterBrief['endingRunway']
+  }
+  routeState: RouteState
+  choiceHistory: ChoiceHistoryEntry[]
+  lockedEndingKey: string | null
+  canon: {
+    activeCharacters: Array<{ id: string; name: string }>
+    activeThreads: Array<{ id: string; title: string }>
+    pendingReveals: Array<{ id: string; description: string; gateChapter: number }>
+  }
+}
+
 export type DraftDefect =
   | 'SHORT'
   | 'NO_CHOICE'
@@ -41,6 +105,11 @@ export interface GenerationProvider {
   readonly name: string
   generatePlan(input: PlanInput): Promise<unknown>
   writeChapter(input: WriteInput): Promise<unknown>
+  generateChoices?(input: ChoiceProviderInput): Promise<unknown>
+  generateStoryContract?(
+    input: StoryContractInput,
+    options?: StoryContractCallOptions,
+  ): Promise<unknown>
 }
 
 /** Policy runtime generasi (target kata & scene). Diambil dari generation_policy DB. */
@@ -105,13 +174,19 @@ function buildParagraphs(
   const paragraphs: string[] = []
   let words = 0
   let idx = 0
-  while (words < targetWords) {
-    const s = pool[idx % pool.length]!
-    paragraphs.push(s)
-    words += s.split(/\s+/).filter(Boolean).length
-    idx++
-    // Jaga minimal ~18 paragraf gaya mobile bila target penuh.
-    if (paragraphs.length >= 40 && words >= targetWords) break
+  // publish_chapter_v2 hard-caps paragraphs at 100. Keep mobile-ish density
+  // by packing a few short beats into each paragraph instead of exploding count.
+  const maxParagraphs = 100
+  while (words < targetWords && paragraphs.length < maxParagraphs) {
+    const remaining = maxParagraphs - paragraphs.length
+    const pack = words + 40 < targetWords && remaining > 8 ? 3 : 1
+    const chunk = Array.from({ length: pack }, (_, offset) => {
+      return pool[(idx + offset) % pool.length]!
+    }).join(' ')
+    paragraphs.push(chunk)
+    words += chunk.split(/\s+/).filter(Boolean).length
+    idx += pack
+    if (paragraphs.length >= 35 && words >= targetWords) break
   }
   // Pastikan lead name muncul (beberapa kalimat pakai "Aku" generik).
   if (!paragraphs.some((p) => p.includes(lead)) && lead !== 'Aku') {
@@ -267,6 +342,105 @@ export function createDeterministicProvider(
         dialogue,
         emotionBeats,
         softClaims,
+      }
+    },
+
+    async generateChoices(input: ChoiceProviderInput): Promise<unknown> {
+      if (input.currentChapter >= 50) return null
+
+      const active = input.canon.activeCharacters
+      const lead = active[0]
+      const support = active[1] ?? lead
+      const threadId = input.canon.activeThreads[0]?.id ?? 'thread:main'
+      const nextChapterNumber = input.currentChapter + 1
+
+      const openId = 'buka-jejak'
+      const waitId = 'tahan-langkah'
+      const confrontId = support && support.id !== lead?.id ? 'hadap-lawan' : null
+
+      const choices = [
+        {
+          id: openId,
+          label: lead
+            ? `Buka brankas milik ${lead.name}`
+            : 'Buka brankas yang tersisa',
+          hint: 'Suara langkah mendekat dari lorong gelap',
+        },
+        {
+          id: waitId,
+          label: 'Sembunyikan kunci di balik papan',
+          hint: 'Kehati-hatian bisa membuka sudut lain',
+        },
+      ]
+      if (confrontId && support) {
+        choices.push({
+          id: confrontId,
+          label: `Hadang ${support.name} di ujung lorong`,
+          hint: 'Konfrontasi bisa menaikkan risiko',
+        })
+      }
+
+      const outcomes = choices.map((choice) => {
+        if (choice.id === openId) {
+          return {
+            choiceId: choice.id,
+            consequence: [
+              lead
+                ? `${lead.name} menemukan jejak yang belum sempat ditutup.`
+                : 'Jejak baru terbuka di ujung lorong.',
+            ],
+            nextChapterNumber,
+            isEnding: false,
+            effect: {
+              routeDeltas: { truth: 1 },
+              trustDeltas: lead ? { [lead.id]: 1 } : {},
+              flagsSet: { opened_trail: true },
+              evidenceAdded: ['jejak baru'],
+              endingBiasDeltas: {},
+              threadTouches: [threadId],
+            },
+          }
+        }
+        if (choice.id === waitId) {
+          return {
+            choiceId: choice.id,
+            consequence: ['Langkah ditahan, dan ruang itu memberi jeda untuk membaca ulang petunjuk.'],
+            nextChapterNumber,
+            isEnding: false,
+            effect: {
+              routeDeltas: { secrecy: 1 },
+              trustDeltas: {},
+              flagsSet: { waited_out: true },
+              evidenceAdded: [],
+              endingBiasDeltas: {},
+              threadTouches: [threadId],
+            },
+          }
+        }
+        return {
+          choiceId: choice.id,
+          consequence: [
+            support
+              ? `Konfrontasi dengan ${support.name} menaikkan ketegangan di lorong.`
+              : 'Konfrontasi menaikkan ketegangan di lorong.',
+          ],
+          nextChapterNumber,
+          isEnding: false,
+          effect: {
+            routeDeltas: { risk: 1 },
+            trustDeltas: support ? { [support.id]: -1 } : {},
+            flagsSet: { confronted: true },
+            evidenceAdded: [],
+            endingBiasDeltas: {},
+            threadTouches: [threadId],
+          },
+        }
+      })
+
+      return {
+        choicePrompt: 'Apa yang harus dilakukan sekarang di lorong ini?',
+        choices,
+        outcomes,
       }
     },
   }

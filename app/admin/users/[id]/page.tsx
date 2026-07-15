@@ -2,7 +2,6 @@ import { loadAdminUserDetail } from '@/lib/admin/users'
 import { AdminStatCard } from '@/components/admin/admin-stat-card'
 import { AdminSectionCard } from '@/components/admin/admin-section-card'
 import { AdminEmptyState } from '@/components/admin/admin-empty-state'
-import { AdminErrorState } from '@/components/admin/admin-error-state'
 import { StatusBadge } from '@/components/admin/status-badge'
 import { GrantCreditForm } from '@/components/admin/grant-credit-form'
 import { idr, isoDatetime } from '@/lib/admin/format'
@@ -16,7 +15,7 @@ export default async function AdminUserDetailPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  let detail = await loadAdminUserDetail(id)
+  const detail = await loadAdminUserDetail(id)
 
   if (!detail) return notFound()
 

@@ -40,10 +40,12 @@ check('migration: grant execute to service_role', migration.includes("grant exec
 const adminCreditsLib = join(root, 'lib/admin/credits.ts')
 const adminGrantRoute = join(root, 'app/api/admin/credits/grant/route.ts')
 const adminCreditsPage = join(root, 'app/admin/credits/page.tsx')
+const grantCreditForm = join(root, 'components/admin/grant-credit-form.tsx')
 
 check('lib/admin/credits.ts exists', existsSync(adminCreditsLib))
 check('app/api/admin/credits/grant/route.ts exists', existsSync(adminGrantRoute))
 check('app/admin/credits/page.tsx exists', existsSync(adminCreditsPage))
+check('components/admin/grant-credit-form.tsx exists', existsSync(grantCreditForm))
 
 // --- Content checks ---
 if (existsSync(adminCreditsLib)) {
@@ -63,9 +65,14 @@ if (existsSync(adminGrantRoute)) {
 
 if (existsSync(adminCreditsPage)) {
   const content = readFileSync(adminCreditsPage, 'utf-8')
-  check('page is client component', content.includes("'use client'"))
-  check('page has Grant Kredit button', content.includes('Grant Kredit'))
-  check('page posts to /api/admin/credits/grant', content.includes('/api/admin/credits/grant'))
+  check('page renders GrantCreditForm', content.includes('<GrantCreditForm'))
+  check('page has Grant Kredit section', content.includes('Grant Kredit'))
+}
+
+if (existsSync(grantCreditForm)) {
+  const content = readFileSync(grantCreditForm, 'utf-8')
+  check('grant form is client component', content.includes("'use client'"))
+  check('grant form posts to /api/admin/credits/grant', content.includes('/api/admin/credits/grant'))
 }
 
 console.log(`\nadmin-credit-grant-smoke: ${pass}/${pass + fail} PASS`)

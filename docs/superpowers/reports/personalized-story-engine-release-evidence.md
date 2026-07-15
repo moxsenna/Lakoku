@@ -16,7 +16,7 @@
 - Local app URL: not required for automated gates in this evidence set
 - Local Supabase API: `http://127.0.0.1:54321` only
 - Narrative provider: automated gates used deterministic/unit fixtures; no live gateway generation required for this evidence
-- Decision: **NO-GO for production exposure** — local automated gates pass; authenticated browser E2E and production/staging authorization remain open
+- Decision: **NO-GO for production exposure** — local automated and authenticated cookie-session HTTP E2E pass; production/staging authorization remain open
 
 ## Scope
 
@@ -202,16 +202,42 @@ publish chapter V2 races: 5/5 PASS
 
 ### Status
 
-**Not executed end-to-end.** No dedicated authenticated browser/session runner exists for Task 28 matrix. Automated API/DB ownership and privacy suites cover much of the same isolation surface, but they are not a substitute for cookie-session browser evidence.
+**Executed via cookie-session HTTP runner.**
 
-### Remaining required matrix
+Command:
 
-- User A personalized create + idempotent replay
-- Chapter 1 choice + continuation/poll to Chapter 2
-- Recursive scan of actual HTTP response bodies under cookie auth
-- User B isolation against A resources
-- Premium clone create/replay with template immutability
-- Chapter 50 no-choice UI and completion CTAs in browser
+```powershell
+pnpm test:e2e:personalized-auth
+```
+
+Result:
+
+```text
+personalized-authenticated-e2e: 28/28 PASS
+```
+
+Covered:
+
+- User A cookie session create + exact idempotent replay
+- Anonymous create denied
+- Owner chapter 1 read + recursive internal-field scan
+- User B denied private chapter read and choice apply
+- Personalized choice + next chapter ready path
+- Premium clone create/replay with distinct `ai:premium:` instance
+- Template remains public `premium_template`
+- Instance private/owned with `source_story_id` template
+- Final chapter 50 no-choice reader-safe body
+
+Notes:
+
+- Runner uses local Supabase loopback + local Next production server.
+- Deterministic provider used (`NARRATIVE_PROVIDER` unset).
+- Dynamic route conflict fixed: status path now under `/chapters/[number]/status`.
+- Deterministic provider gained `generateChoices` and paragraph packing under publish V2 100-paragraph cap.
+
+### Remaining optional browser evidence
+
+- Full browser UI click-through for final CTA labels (`Kembali ke Library`, `Buat Cerita Baru`) still optional; API/final-chapter reader contract already covered.
 
 ## Cleanup
 
@@ -250,9 +276,10 @@ Reason:
 
 ```text
 Local automated gates for Tasks 22–27 pass, including typecheck, lint, unit,
-personalized smoke, Next/Cloudflare builds earlier in session, and full
-pnpm release:personalized against loopback Supabase. Remaining release blockers:
-authenticated browser E2E matrix and production/staging authorization process.
-Also note local db reset still requires baseline restore because root stories
-schema is not fully represented by tracked migrations alone.
+personalized smoke, Next/Cloudflare builds, full pnpm release:personalized, and
+cookie-session authenticated HTTP e2e (28/28). Remaining release blockers are
+process/authorization only: production/staging promotion under AGENT_RULES and
+optional browser UI click-through evidence. Local db reset still requires
+baseline restore because root stories schema is not fully represented by tracked
+migrations alone.
 ```

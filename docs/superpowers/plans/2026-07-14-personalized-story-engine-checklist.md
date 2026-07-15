@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 27 / 28 tasks
-- **In progress:** Task 28 — Full gates and release evidence
-- **Pending:** authenticated browser E2E only
-- **Next:** Browser cookie-session E2E matrix; keep production exposure blocked until NTM/M9 authorization
+- **Complete:** 28 / 28 tasks
+- **In progress:** none
+- **Pending:** production/staging authorization only
+- **Next:** Keep production exposure blocked until NTM/M9 authorization; optional browser UI click-through
 
 ---
 
@@ -270,7 +270,7 @@
   - [x] Verify old generation/publish paths preserved.
   - [x] Add `smoke:personalized-story` package command.
 
-- [ ] **Task 28: Full gates and release evidence**
+- [x] **Task 28: Full gates and release evidence**
   - [x] `pnpm typecheck`
   - [x] `pnpm lint`
   - [x] `pnpm test:unit`
@@ -279,7 +279,7 @@
   - [x] Existing smoke suite
   - [x] Next.js build
   - [x] Cloudflare/OpenNext build
-  - [ ] Authenticated local end-to-end flow
+  - [x] Authenticated local end-to-end flow
   - [x] Write release evidence report
   - [x] Verify unrelated docs remain untouched
 

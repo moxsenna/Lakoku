@@ -5,6 +5,7 @@ import type {
   ChapterStatusResponse,
   StoryDetail,
   Chapter,
+  JejakItem,
 } from '../packages/contracts/src/reader'
 
 vi.mock('next/navigation', () => ({
@@ -105,6 +106,36 @@ describe('final reader chapter', () => {
     expect(html).toContain('PILIHANMU')
     expect(html).toContain('Kebenaran mungkin menunggu.')
     expect(html).not.toContain('Kembali ke Library')
+  })
+
+  it('renders a local previous choice snapshot without changing server precedence', () => {
+    const localChoice: JejakItem = {
+      chapter: 1,
+      decision: 'Buka pintu',
+      consequence: 'Lorong rahasia terbuka.',
+    }
+    const serverChoice: JejakItem = {
+      chapter: 1,
+      decision: 'Tutup pintu',
+      consequence: 'Rahasia tetap tersembunyi.',
+    }
+
+    const localHtml = renderToStaticMarkup(createElement(ReaderView, {
+      story,
+      chapter: chapter({ number: 2 }),
+      initialLocalPreviousChoice: localChoice,
+    }))
+    const serverHtml = renderToStaticMarkup(createElement(ReaderView, {
+      story,
+      chapter: chapter({ number: 2 }),
+      previousChapterJejak: serverChoice,
+      initialLocalPreviousChoice: localChoice,
+    }))
+
+    expect(localHtml).toContain('Buka pintu')
+    expect(localHtml).toContain('Lorong rahasia terbuka.')
+    expect(serverHtml).toContain('Tutup pintu')
+    expect(serverHtml).not.toContain('Buka pintu')
   })
 })
 

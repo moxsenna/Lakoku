@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, Settings2, Flag, Minus, Plus, RefreshCw, List, Check } from 'lucide-react'
@@ -120,6 +120,21 @@ export function GenerationFailedView({ storyId }: { storyId: string }) {
   )
 }
 
+function subscribeLocalPreviousChoice(onStoreChange: () => void) {
+  if (typeof window === 'undefined') return () => {}
+  const notify = () => onStoreChange()
+  window.addEventListener('storage', notify)
+  return () => window.removeEventListener('storage', notify)
+}
+
+function readLocalPreviousChoiceSnapshot(
+  storyId: string,
+  chapterNumber: number,
+): JejakItem | null {
+  if (typeof window === 'undefined') return null
+  return getLastChoiceSummary(storyId, chapterNumber)
+}
+
 export function ReaderView({
   story,
   chapter,
@@ -127,6 +142,7 @@ export function ReaderView({
   isReRead = false,
   previousChoice = null,
   previousChapterJejak = null,
+  initialLocalPreviousChoice = null,
 }: {
   story: StoryDetail
   chapter: Chapter
@@ -134,6 +150,7 @@ export function ReaderView({
   isReRead?: boolean
   previousChoice?: JejakItem | null
   previousChapterJejak?: JejakItem | null
+  initialLocalPreviousChoice?: JejakItem | null
 }) {
   const router = useRouter()
   const [theme, setTheme] = useState<ReaderTheme>('ink')
@@ -145,11 +162,18 @@ export function ReaderView({
   const [pendingChoice, setPendingChoice] = useState<PendingChoice | null>(null)
   const [selectedChoiceId, setSelectedChoiceId] = useState<string | null>(null)
   const [pollingChapterNumber, setPollingChapterNumber] = useState<number | null>(null)
-  // Fallback guest: ringkasan pilihan dari localStorage (dibaca setelah mount).
-  const [localPreviousChoice, setLocalPreviousChoice] = useState<JejakItem | null>(null)
   // Guard anti double-advance: cegah pilihan terkirim lebih dari sekali
   // (mis. tap ganda) sebelum state processing sempat merender ulang.
   const submittingRef = useRef(false)
+  const localPreviousChoiceEnabled = !previousChapterJejak && !isReRead
+  const localPreviousChoice = useSyncExternalStore(
+    subscribeLocalPreviousChoice,
+    () =>
+      localPreviousChoiceEnabled
+        ? readLocalPreviousChoiceSnapshot(story.id, chapter.number)
+        : null,
+    () => (localPreviousChoiceEnabled ? initialLocalPreviousChoice : null),
+  )
 
   const isCream = theme === 'cream'
 
@@ -165,13 +189,6 @@ export function ReaderView({
       return () => window.clearTimeout(timer)
     }
   }, [story.id, chapter.number])
-
-  // Fallback tamu: baca ringkasan pilihan dari localStorage setelah mount
-  // (hindari hydration mismatch — jangan baca localStorage langsung di render).
-  useEffect(() => {
-    if (previousChapterJejak || isReRead) return
-    setLocalPreviousChoice(getLastChoiceSummary(story.id, chapter.number))
-  }, [story.id, chapter.number, previousChapterJejak, isReRead])
 
   useEffect(() => {
     if (pollingChapterNumber === null) return
@@ -494,7 +511,7 @@ export function ReaderView({
               Pilihanmu sebelumnya
             </p>
             <p className="mt-2 text-sm font-medium text-foreground">
-              "{effectivePreviousChoice.decision}"
+              &ldquo;{effectivePreviousChoice.decision}&rdquo;
             </p>
             <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
               {effectivePreviousChoice.consequence}

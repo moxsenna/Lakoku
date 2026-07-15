@@ -232,7 +232,7 @@ insert into public.chapters (
   'premium:clone-source', 1, 'The Locked Archive',
   '["char:hero","char:hero enters prose","fact:clue"]'::jsonb,
   'What should Raka do?',
-  '[{"id":"open-door","label":"Open the door","character":"char:ally"},{"id":"wait","label":"Wait","thread":"thread:main"}]'::jsonb,
+  '[{"id":"open-door","label":"Open the archive door"},{"id":"wait","label":"Guard the hallway"}]'::jsonb,
   '2020-01-01 00:00:00+00'
 );
 
@@ -241,9 +241,9 @@ insert into public.choice_outcomes (
   is_ending, created_at, effect_json, choice_kind
 ) values
   ('premium:clone-source', 1, 'open-door', '["fact:clue","secret:key"]', 2, false, '2020-01-01 00:00:00+00',
-   '{"character":"char:hero","thread":"thread:main"}', 'normal'),
+   '{"routeDeltas":{"truth":1},"trustDeltas":{"char:hero":2},"flagsSet":{"archiveOpened":true},"evidenceAdded":["fact:clue"],"endingBiasDeltas":{"truthEnding":5},"threadTouches":["thread:main"]}', 'normal'),
   ('premium:clone-source', 1, 'wait', '["char:ally"]', 2, false, '2020-01-01 00:00:00+00',
-   '{"fact":"fact:ally","secret":"secret:ally"}', 'normal');
+   '{"routeDeltas":{"risk":1},"trustDeltas":{"char:ally":1},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":["thread:ally"]}', 'normal');
 
 insert into public.reader_states (
   user_id, story_id, status, current_chapter, jejak, ending_name,
@@ -335,6 +335,46 @@ insert into public.facts_ledger (
   0.5, false, false, '2020-01-01 00:00:00+00'
 );
 select pg_temp.seed_template_case('premium:no-chapter', 'premium_template', 'public', 50, true);
+select pg_temp.seed_template_case('premium:malformed-effect', 'premium_template', 'public', 50, true);
+insert into public.chapters (
+  story_id, number, title, paragraphs, choice_prompt, choices, created_at
+) values (
+  'premium:malformed-effect', 1, 'Malformed Effect', '["A valid opening paragraph."]'::jsonb,
+  'What should Raka do?',
+  '[{"id":"open-door","label":"Open the archive door"},{"id":"wait","label":"Guard the hallway"}]'::jsonb,
+  '2020-01-01 00:00:00+00'
+);
+insert into public.choice_outcomes (
+  story_id, chapter_number, choice_id, consequence, next_chapter_number,
+  is_ending, created_at, effect_json, choice_kind
+) values
+  ('premium:malformed-effect', 1, 'open-door', '["The archive opens."]', 2, false,
+   '2020-01-01 00:00:00+00', '{"routeDeltas":{"truth":21}}', 'normal'),
+  ('premium:malformed-effect', 1, 'wait', '["The hallway stays quiet."]', 2, false,
+   '2020-01-01 00:00:00+00',
+   '{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]}',
+   'normal');
+select pg_temp.seed_template_case('premium:incoherent-outcome', 'premium_template', 'public', 50, true);
+insert into public.chapters (
+  story_id, number, title, paragraphs, choice_prompt, choices, created_at
+) values (
+  'premium:incoherent-outcome', 1, 'Incoherent Outcome', '["A valid opening paragraph."]'::jsonb,
+  'What should Raka do?',
+  '[{"id":"open-door","label":"Open the archive door"},{"id":"wait","label":"Guard the hallway"}]'::jsonb,
+  '2020-01-01 00:00:00+00'
+);
+insert into public.choice_outcomes (
+  story_id, chapter_number, choice_id, consequence, next_chapter_number,
+  is_ending, created_at, effect_json, choice_kind
+) values
+  ('premium:incoherent-outcome', 1, 'open-door', '["The archive opens."]', 2, false,
+   '2020-01-01 00:00:00+00',
+   '{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]}',
+   'normal'),
+  ('premium:incoherent-outcome', 1, 'unknown-choice', '["No matching choice exists."]', 2, false,
+   '2020-01-01 00:00:00+00',
+   '{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]}',
+   'normal');
 
 insert into public.stories (id, title, owner_user_id, visibility)
 values ('premium:collision-target', 'Preserve this target', '20000000-0000-4000-8000-000000000002', 'private');
@@ -417,6 +457,24 @@ select ok(
     and not has_function_privilege('authenticated', 'public.clone_premium_story_remap_jsonb(jsonb,text[],text[])', 'EXECUTE')
     and not has_function_privilege('service_role', 'public.clone_premium_story_remap_jsonb(jsonb,text[],text[])', 'EXECUTE'),
   'recursive JSON remap helper is internal to function owner'
+);
+select is(
+  public.clone_premium_story_remap_jsonb(
+    '{"char:hero":{"nested":"char:hero"},"unrelated":"keep"}'::jsonb,
+    array['char:hero'],
+    array['target:character:hero']
+  ),
+  '{"target:character:hero":{"nested":"target:character:hero"},"unrelated":"keep"}'::jsonb,
+  'recursive JSON remap changes exact object keys and values but preserves unrelated keys'
+);
+select throws_ok(
+  $$select public.clone_premium_story_remap_jsonb(
+    '{"char:hero":1,"target:character:hero":2}'::jsonb,
+    array['char:hero'],
+    array['target:character:hero']
+  )$$,
+  '22023', 'JSON_REMAP_KEY_COLLISION',
+  'recursive JSON remap fails closed when key remapping collides'
 );
 
 -- Direct role boundary.
@@ -550,6 +608,26 @@ select is(
   'nonexistent source returns same invalid-template result'
 );
 select is(
+  public.clone_premium_story_instance('premium:malformed-effect', '10000000-0000-4000-8000-000000000001', 'premium:reject-malformed-effect'),
+  '{"ok":false,"reason":"INVALID_TEMPLATE"}'::jsonb,
+  'malformed curated V2 effect rejects before target persistence'
+);
+select is(
+  public.clone_premium_story_instance('premium:incoherent-outcome', '10000000-0000-4000-8000-000000000001', 'premium:reject-incoherent-outcome'),
+  '{"ok":false,"reason":"INVALID_TEMPLATE"}'::jsonb,
+  'curated outcome IDs must exactly match Chapter 1 choice IDs'
+);
+select is(
+  (select row(
+    (select count(*) from public.stories where id = 'premium:reject-malformed-effect'),
+    (select count(*) from public.chapters where story_id = 'premium:reject-malformed-effect'),
+    (select count(*) from public.choice_outcomes where story_id = 'premium:reject-malformed-effect'),
+    (select count(*) from public.reader_states where story_id = 'premium:reject-malformed-effect')
+  )::text),
+  row(0::bigint, 0::bigint, 0::bigint, 0::bigint)::text,
+  'malformed curated effect leaves no target rows'
+);
+select is(
   (select count(*) from public.stories where id like 'premium:reject-%'),
   0::bigint,
   'invalid source cases create no target shells'
@@ -618,7 +696,8 @@ select is(
     jsonb_build_object(
       'hero', pg_temp.remapped_id('premium:clone-target', 'character', 'char:hero'),
       'prose', 'char:hero appears',
-      'char:hero', pg_temp.remapped_id('premium:clone-target', 'character', 'char:hero')
+      pg_temp.remapped_id('premium:clone-target', 'character', 'char:hero'),
+        pg_temp.remapped_id('premium:clone-target', 'character', 'char:hero')
     ),
     jsonb_build_object(
       'storyId', 'premium:clone-target',
@@ -829,8 +908,18 @@ select is(
       'next_chapter_number', 2,
       'is_ending', false,
       'effect_json', jsonb_build_object(
-        'character', pg_temp.remapped_id('premium:clone-target', 'character', 'char:hero'),
-        'thread', pg_temp.remapped_id('premium:clone-target', 'thread', 'thread:main')
+        'routeDeltas', jsonb_build_object('truth', 1),
+        'trustDeltas', jsonb_build_object(
+          pg_temp.remapped_id('premium:clone-target', 'character', 'char:hero'), 2
+        ),
+        'flagsSet', jsonb_build_object('archiveOpened', true),
+        'evidenceAdded', jsonb_build_array(
+          pg_temp.remapped_id('premium:clone-target', 'fact', 'fact:clue')
+        ),
+        'endingBiasDeltas', jsonb_build_object('truthEnding', 5),
+        'threadTouches', jsonb_build_array(
+          pg_temp.remapped_id('premium:clone-target', 'thread', 'thread:main')
+        )
       ),
       'choice_kind', 'normal'
     ),
@@ -842,8 +931,16 @@ select is(
       'next_chapter_number', 2,
       'is_ending', false,
       'effect_json', jsonb_build_object(
-        'fact', pg_temp.remapped_id('premium:clone-target', 'fact', 'fact:ally'),
-        'secret', pg_temp.remapped_id('premium:clone-target', 'secret', 'secret:ally')
+        'routeDeltas', jsonb_build_object('risk', 1),
+        'trustDeltas', jsonb_build_object(
+          pg_temp.remapped_id('premium:clone-target', 'character', 'char:ally'), 1
+        ),
+        'flagsSet', '{}'::jsonb,
+        'evidenceAdded', '[]'::jsonb,
+        'endingBiasDeltas', '{}'::jsonb,
+        'threadTouches', jsonb_build_array(
+          pg_temp.remapped_id('premium:clone-target', 'thread', 'thread:ally')
+        )
       ),
       'choice_kind', 'normal'
     )
@@ -861,15 +958,71 @@ select is(
   row(
     '10000000-0000-4000-8000-000000000001'::uuid,
     'BERJALAN'::text, 1, '[]'::jsonb, null::text,
-    '{}'::jsonb, '[]'::jsonb, null::text
+    '{"truth":0,"risk":0,"secrecy":0,"empathy":0,"trust":{},"evidence":[],"flags":{},"endingBias":{}}'::jsonb,
+    '[]'::jsonb, null::text
   )::text,
-  'fresh reader state ignores source reader progress'
+  'fresh reader state uses exact canonical RouteStateSchema defaults'
 );
 select ok(
   (select created_at > '2020-01-02 00:00:00+00'::timestamptz
    and updated_at > '2020-01-02 00:00:00+00'::timestamptz
    from public.reader_states where story_id = 'premium:clone-target'),
   'fresh reader state receives new timestamps'
+);
+select lives_ok(
+  $$select public.apply_personalized_choice(
+    '10000000-0000-4000-8000-000000000001',
+    'premium:clone-target',
+    1,
+    'open-door',
+    'premium-clone-first-choice',
+    jsonb_build_object(
+      'user_id', state.user_id,
+      'story_id', state.story_id,
+      'status', state.status,
+      'current_chapter', state.current_chapter,
+      'jejak', state.jejak,
+      'ending_name', state.ending_name,
+      'route_state', state.route_state,
+      'choice_history', state.choice_history,
+      'locked_ending_key', state.locked_ending_key,
+      'updated_at', to_jsonb(state.updated_at)
+    ),
+    jsonb_build_object(
+      'truth', 1,
+      'risk', 0,
+      'secrecy', 0,
+      'empathy', 0,
+      'trust', jsonb_build_object(
+        pg_temp.remapped_id('premium:clone-target', 'character', 'char:hero'), 2
+      ),
+      'evidence', jsonb_build_array(
+        pg_temp.remapped_id('premium:clone-target', 'fact', 'fact:clue')
+      ),
+      'flags', jsonb_build_object('archiveOpened', true),
+      'endingBias', jsonb_build_object('truthEnding', 5)
+    ),
+    jsonb_build_object(
+      'chapterNumber', 1,
+      'choiceId', 'open-door',
+      'label', 'Open the archive door',
+      'consequence', jsonb_build_array(
+        pg_temp.remapped_id('premium:clone-target', 'fact', 'fact:clue'),
+        pg_temp.remapped_id('premium:clone-target', 'secret', 'secret:key')
+      ),
+      'effectSummary', '{"flagsSet":["archiveOpened"],"truth":1}'::jsonb,
+      'createdAt', '2026-07-15T00:00:00.000Z'
+    ),
+    jsonb_build_object(
+      'chapter', 1,
+      'decision', 'Open the archive door',
+      'consequence', pg_temp.remapped_id('premium:clone-target', 'fact', 'fact:clue')
+    )
+  )
+  from public.reader_states as state
+  where state.user_id = '10000000-0000-4000-8000-000000000001'
+    and state.story_id = 'premium:clone-target'$$,
+  'first choice succeeds against cloned canonical reader state'
 );
 
 select is(

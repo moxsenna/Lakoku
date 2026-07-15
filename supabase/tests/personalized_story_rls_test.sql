@@ -15,7 +15,7 @@ begin
 end
 $$;
 
-select plan(102);
+select plan(108);
 
 -- Fixed UUIDs and story IDs keep fixtures deterministic. Transaction rollback leaves no data.
 insert into auth.users (
@@ -306,6 +306,30 @@ select is(
   1::bigint,
   'service_role can read private generation contract internals'
 );
+select is(
+  (select owner_user_id from public.stories where id = 'test:personalized-private-a'),
+  '10000000-0000-4000-8000-000000000001'::uuid,
+  'service_role can read internal story owner column'
+);
+select is(
+  (select effect_json from public.choice_outcomes
+   where story_id = 'test:personalized-private-a' and chapter_number = 1 and choice_id = 'private-choice'),
+  '{"routeDeltas":{"truth":2},"trustDeltas":{"mira":1},"flagsSet":{"clue_found":true},"evidenceAdded":["surat"],"endingBiasDeltas":{},"threadTouches":[]}'::jsonb,
+  'service_role can read internal outcome effect column'
+);
+select is(
+  (select route_state from public.reader_states
+   where user_id = '10000000-0000-4000-8000-000000000001'
+     and story_id = 'test:personalized-private-a'),
+  '{"truth":1,"risk":0,"secrecy":0,"empathy":0,"trust":{},"evidence":["surat"],"flags":{},"endingBias":{}}'::jsonb,
+  'service_role can read internal reader-state route column'
+);
+select is(
+  (select mode from public.story_generation_contracts
+   where story_id = 'test:personalized-private-a'),
+  'personalized_ai',
+  'service_role can read internal generation contract mode'
+);
 select ok(
   pg_temp.try_exec($sql$
     insert into public.story_generation_contracts (story_id, mode)
@@ -327,6 +351,64 @@ select is(
   pg_temp.visible_story_rows(to_regclass('public.story_creation_requests'), 'test:service-role-write'),
   1::bigint,
   'service_role can read creation request internals'
+);
+reset role;
+
+select ok(
+  has_column_privilege('anon', 'public.stories', 'id', 'SELECT')
+    and has_column_privilege('authenticated', 'public.stories', 'id', 'SELECT')
+    and has_column_privilege('anon', 'public.chapters', 'story_id', 'SELECT')
+    and has_column_privilege('authenticated', 'public.chapters', 'story_id', 'SELECT')
+    and has_column_privilege('anon', 'public.choice_outcomes', 'story_id', 'SELECT')
+    and has_column_privilege('authenticated', 'public.choice_outcomes', 'story_id', 'SELECT')
+    and has_column_privilege('anon', 'public.reader_states', 'story_id', 'SELECT')
+    and has_column_privilege('authenticated', 'public.reader_states', 'story_id', 'SELECT'),
+  'reader roles have explicit safe-column SELECT privileges'
+);
+select ok(
+  not has_column_privilege('anon', 'public.stories', 'owner_user_id', 'SELECT')
+    and not has_column_privilege('authenticated', 'public.stories', 'owner_user_id', 'SELECT')
+    and not has_column_privilege('anon', 'public.choice_outcomes', 'effect_json', 'SELECT')
+    and not has_column_privilege('authenticated', 'public.choice_outcomes', 'effect_json', 'SELECT')
+    and not has_column_privilege('anon', 'public.reader_states', 'route_state', 'SELECT')
+    and not has_column_privilege('authenticated', 'public.reader_states', 'route_state', 'SELECT'),
+  'reader roles lack internal story, outcome, and state column privileges'
+);
+select ok(
+  not has_table_privilege('public', 'public.story_generation_contracts', 'SELECT')
+    and not has_table_privilege('anon', 'public.story_generation_contracts', 'SELECT')
+    and not has_table_privilege('authenticated', 'public.story_generation_contracts', 'SELECT'),
+  'PUBLIC, anon, and authenticated have no generation contract SELECT privilege'
+);
+select ok(
+  has_table_privilege('service_role', 'public.story_generation_contracts', 'SELECT'),
+  'service_role has generation contract SELECT privilege'
+);
+select ok(
+  has_column_privilege('service_role', 'public.stories', 'owner_user_id', 'SELECT')
+    and has_column_privilege('service_role', 'public.choice_outcomes', 'effect_json', 'SELECT')
+    and has_column_privilege('service_role', 'public.reader_states', 'route_state', 'SELECT'),
+  'service_role has internal story, outcome, and state column privileges'
+);
+set local role service_role;
+select is(
+  (select count(id) from public.stories
+   where visibility = 'public' and id like 'premium:%'
+     and id = 'premium:test-public-template'),
+  1::bigint,
+  'service_role sees exact public premium fixture'
+);
+select is(
+  (select count(story_id) from public.chapters
+   where story_id = 'premium:test-public-template'),
+  1::bigint,
+  'service_role sees public premium chapter fixture'
+);
+select is(
+  (select count(story_id) from public.choice_outcomes
+   where story_id = 'premium:test-public-template'),
+  1::bigint,
+  'service_role sees public premium outcome fixture'
 );
 reset role;
 

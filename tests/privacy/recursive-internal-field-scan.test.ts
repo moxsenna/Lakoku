@@ -332,7 +332,7 @@ describe('reader route response privacy', () => {
   it('scans actual choice, status, personalized create, and premium clone route bodies', async () => {
     const [{ POST: choice }, { GET: status }, { POST: create }, { POST: clone }] = await Promise.all([
       import('@/app/api/stories/[id]/choices/route'),
-      import('@/app/api/stories/[id]/chapters/[chapterNumber]/status/route'),
+      import('@/app/api/stories/[id]/chapters/[number]/status/route'),
       import('@/app/api/stories/personalized/route'),
       import('@/app/api/stories/premium/[templateId]/clone/route'),
     ])
@@ -347,7 +347,7 @@ describe('reader route response privacy', () => {
     ))
     const statusBody = await responseBody(await status(
       new Request('http://localhost/api/stories/demo/chapters/3/status'),
-      { params: Promise.resolve({ id: storySummary.id, chapterNumber: '3' }) },
+      { params: Promise.resolve({ id: storySummary.id, number: '3' }) },
     ))
     const createBody = await responseBody(await create(new Request(
       'http://localhost/api/stories/personalized',

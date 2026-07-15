@@ -182,12 +182,27 @@ describe('generateChoiceBranch', () => {
   })
 
   it('throws CHOICE_PROVIDER_UNAVAILABLE when optional method is absent', async () => {
-    const provider = createDeterministicProvider()
+    const base = createDeterministicProvider()
+    const provider: GenerationProvider = {
+      name: base.name,
+      generatePlan: base.generatePlan,
+      writeChapter: base.writeChapter,
+    }
 
     await expect(generateChoiceBranch({ provider }, choiceInput())).rejects.toSatisfy((error) => {
       expectGatewayError(error, 'CHOICE_PROVIDER_UNAVAILABLE')
       return true
     })
+  })
+
+  it('builds a valid deterministic choice branch without a live model', async () => {
+    const provider = createDeterministicProvider()
+    const branch = await generateChoiceBranch({ provider }, choiceInput())
+    expect(branch).not.toBeNull()
+    expect(branch?.choices.length).toBeGreaterThanOrEqual(2)
+    expect(branch?.outcomes.map((outcome) => outcome.choiceId).sort()).toEqual(
+      branch?.choices.map((choice) => choice.id).sort(),
+    )
   })
 
   it('maps malformed provider output to CHOICE_INVALID', async () => {

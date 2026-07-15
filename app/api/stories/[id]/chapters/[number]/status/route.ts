@@ -6,18 +6,21 @@ import {
 } from '@/lib/api/chapter-status.server'
 
 /**
- * GET /api/stories/[id]/chapters/[chapterNumber]/status
+ * GET /api/stories/[id]/chapters/[number]/status
  *
  * Exact per-chapter generation status for personalized reader polling.
  * Auth required for private stories (session cookie). Response is reader-safe:
  * { status, chapterNumber } only.
+ *
+ * Dynamic segment is `[number]` to match sibling chapter content route under
+ * the same path tree. Response field remains `chapterNumber`.
  */
 export async function GET(
   _req: Request,
-  { params }: { params: Promise<{ id: string; chapterNumber: string }> },
+  { params }: { params: Promise<{ id: string; number: string }> },
 ) {
   try {
-    const { id, chapterNumber: rawChapter } = await params
+    const { id, number: rawChapter } = await params
     const chapterNumber = Number.parseInt(rawChapter, 10)
     if (!Number.isFinite(chapterNumber) || chapterNumber < 1) {
       return NextResponse.json({ error: 'Nomor bab tidak valid.' }, { status: 400 })

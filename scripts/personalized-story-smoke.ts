@@ -100,7 +100,7 @@ const readerSelectTargets = [
   'app/api/stories/[id]/chapters/route.ts',
   'app/api/stories/[id]/chapters/[number]/route.ts',
   'app/api/stories/[id]/choices/route.ts',
-  'app/api/stories/[id]/chapters/[chapterNumber]/status/route.ts',
+  'app/api/stories/[id]/chapters/[number]/status/route.ts',
   'app/api/stories/personalized/route.ts',
   'app/api/stories/premium/[templateId]/clone/route.ts',
 ] as const

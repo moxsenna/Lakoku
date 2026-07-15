@@ -286,13 +286,13 @@ describe('getChapterStatusForUser', () => {
   })
 })
 
-describe('GET /api/stories/[id]/chapters/[chapterNumber]/status', () => {
+describe('GET /api/stories/[id]/chapters/[number]/status', () => {
   it('returns 400 for invalid chapter number', async () => {
     const { GET } = await import(
-      '@/app/api/stories/[id]/chapters/[chapterNumber]/status/route'
+      '@/app/api/stories/[id]/chapters/[number]/status/route'
     )
     const response = await GET(request(STORY_A, 0), {
-      params: Promise.resolve({ id: STORY_A, chapterNumber: '0' }),
+      params: Promise.resolve({ id: STORY_A, number: '0' }),
     })
     expect(response.status).toBe(400)
     expect(await response.json()).toEqual({ error: 'Nomor bab tidak valid.' })
@@ -301,10 +301,10 @@ describe('GET /api/stories/[id]/chapters/[chapterNumber]/status', () => {
   it('returns 401 when session missing for private status', async () => {
     mocks.cookieFactory.mockResolvedValue(createCookieDb({ user: null }))
     const { GET } = await import(
-      '@/app/api/stories/[id]/chapters/[chapterNumber]/status/route'
+      '@/app/api/stories/[id]/chapters/[number]/status/route'
     )
     const response = await GET(request(), {
-      params: Promise.resolve({ id: STORY_A, chapterNumber: '2' }),
+      params: Promise.resolve({ id: STORY_A, number: '2' }),
     })
     expect(response.status).toBe(401)
     expect(await response.json()).toEqual({ error: 'Tidak diizinkan.' })
@@ -313,10 +313,10 @@ describe('GET /api/stories/[id]/chapters/[chapterNumber]/status', () => {
   it('returns 404 for non-owner private story', async () => {
     mocks.queryStoryForUser.mockResolvedValue(null)
     const { GET } = await import(
-      '@/app/api/stories/[id]/chapters/[chapterNumber]/status/route'
+      '@/app/api/stories/[id]/chapters/[number]/status/route'
     )
     const response = await GET(request(), {
-      params: Promise.resolve({ id: STORY_A, chapterNumber: '2' }),
+      params: Promise.resolve({ id: STORY_A, number: '2' }),
     })
     expect(response.status).toBe(404)
     expect(await response.json()).toEqual({ error: 'Cerita tidak ditemukan.' })
@@ -328,10 +328,10 @@ describe('GET /api/stories/[id]/chapters/[chapterNumber]/status', () => {
     })
     mocks.adminFactory.mockReturnValue(fixture.client)
     const { GET } = await import(
-      '@/app/api/stories/[id]/chapters/[chapterNumber]/status/route'
+      '@/app/api/stories/[id]/chapters/[number]/status/route'
     )
     const response = await GET(request(), {
-      params: Promise.resolve({ id: STORY_A, chapterNumber: '2' }),
+      params: Promise.resolve({ id: STORY_A, number: '2' }),
     })
     const json = await response.json()
     expect(response.status).toBe(200)

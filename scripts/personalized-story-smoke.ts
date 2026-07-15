@@ -430,11 +430,12 @@ walk(premiumCloneAst, (node) => {
     premiumGenerationTargets.push(property.initializer.getText(premiumCloneAst).replace(/\s+/g, ''))
   }
 })
+const forbiddenPremiumTargets = premiumGenerationTargets.filter(
+  (target) => target !== 'reserved.row.story_id',
+)
 check(
   'premium chapter generation targets reserved instance, never template',
-  premiumGenerationTargets.length > 0
-    && premiumGenerationTargets.every((target) => target === 'reserved.row.story_id')
-    && !premiumGenerationTargets.includes('input.templateStoryId'),
+  premiumGenerationTargets.length > 0 && forbiddenPremiumTargets.length === 0,
   premiumGenerationTargets.join(', '),
 )
 

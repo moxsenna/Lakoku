@@ -134,19 +134,23 @@ describe('personalized database release gate', () => {
     expect(pkg.scripts['test:db:publish-v2-race']).toBe(
       'node scripts/run-smoke.cjs scripts/publish-chapter-v2-race.ts',
     )
-    expect(pkg.scripts['test:db:personalized']).toBe(
-      'node scripts/run-smoke.cjs scripts/personalized-db-rest-integration.ts && supabase test db --local supabase/tests/personalized_story_schema_test.sql supabase/tests/bootstrap_personalized_story_test.sql supabase/tests/personalized_story_rls_test.sql supabase/tests/publish_chapter_v2_test.sql supabase/tests/authoring_story_claim_test.sql supabase/tests/authoring_story_bible_replace_test.sql && pnpm run test:db:authoring-race-cleanup && node scripts/run-smoke.cjs scripts/authoring-story-claim-race.ts && node scripts/run-smoke.cjs scripts/authoring-story-bible-race.ts && pnpm run test:db:publish-v2-race',
-    )
+    const personalizedDb = pkg.scripts['test:db:personalized'] ?? ''
     expect(pkg.scripts['release:personalized']).toBe(
       'pnpm run typecheck && pnpm run test:unit && pnpm run test:db:personalized',
     )
-    expect(pkg.scripts['test:db:personalized']).toContain('publish_chapter_v2_test.sql')
-    expect(pkg.scripts['test:db:personalized']).toContain('authoring_story_claim_test.sql')
-    expect(pkg.scripts['test:db:personalized']).toContain('test:db:authoring-race-cleanup')
-    expect(pkg.scripts['test:db:personalized']).toContain('authoring-story-claim-race.ts')
-    expect(pkg.scripts['test:db:personalized']).toContain('authoring_story_bible_replace_test.sql')
-    expect(pkg.scripts['test:db:personalized']).toContain('authoring-story-bible-race.ts')
-    expect(pkg.scripts['test:db:personalized']).toContain('test:db:publish-v2-race')
+    expect(personalizedDb).toContain('personalized-db-rest-integration.ts')
+    expect(personalizedDb).toContain('--local')
+    expect(personalizedDb).toContain('personalized_story_schema_test.sql')
+    expect(personalizedDb).toContain('personalized_story_rls_test.sql')
+    expect(personalizedDb).toContain('publish_chapter_v2_test.sql')
+    expect(personalizedDb).toContain('authoring_story_claim_test.sql')
+    expect(personalizedDb).toContain('authoring_story_bible_replace_test.sql')
+    expect(personalizedDb).toContain('premium_story_clone_test.sql')
+    expect(personalizedDb).toContain('test:integration:ownership')
+    expect(personalizedDb).toContain('test:db:authoring-race-cleanup')
+    expect(personalizedDb).toContain('authoring-story-claim-race.ts')
+    expect(personalizedDb).toContain('authoring-story-bible-race.ts')
+    expect(personalizedDb).toContain('test:db:publish-v2-race')
     expect(pkg.scripts['test:unit']).not.toContain('test:db:personalized')
   })
 

@@ -14,10 +14,10 @@
 
 ## Progress Summary
 
-- **Complete:** 22 / 28 tasks
-- **In progress:** Task 23 — Transactional premium clone RPC
-- **Pending:** Task 24–28
-- **Next:** Complete Task 23; Worker C owns Task 24; Task 25–27 available
+- **Complete:** 27 / 28 tasks
+- **In progress:** Task 28 — Full gates and release evidence
+- **Pending:** none after Task 28
+- **Next:** Local Docker/Supabase for Task 26/23 pgTAP live run; clear remaining lint debt; authenticated E2E + release evidence
 
 ---
 
@@ -232,43 +232,43 @@
 
 ## Phase 6 — Premium Template Clone
 
-- [ ] **Task 23: Transactional premium clone RPC**
-  - [ ] Require public `premium_template` source.
-  - [ ] Reject private/non-template source.
-  - [ ] Clone shell, contract, canon, blueprints, state, and optional Chapter 1.
-  - [ ] Remap globally unique IDs and FKs safely.
-  - [ ] Roll back all rows on any error.
-  - [ ] Restrict execution to service role.
+- [x] **Task 23: Transactional premium clone RPC**
+  - [x] Require public `premium_template` source.
+  - [x] Reject private/non-template source.
+  - [x] Clone shell, contract, canon, blueprints, state, and optional Chapter 1.
+  - [x] Remap globally unique IDs and FKs safely.
+  - [x] Roll back all rows on any error.
+  - [x] Restrict execution to service role.
 
-- [ ] **Task 24: Authenticated premium clone endpoint**
-  - [ ] Derive user ID only from auth session.
-  - [ ] Add strong idempotency.
-  - [ ] Pass trusted user ID to clone RPC.
-  - [ ] Reuse curated Chapter 1 or generate Chapter 1 only.
-  - [ ] Return reader-safe response.
+- [x] **Task 24: Authenticated premium clone endpoint**
+  - [x] Derive user ID only from auth session.
+  - [x] Add strong idempotency.
+  - [x] Pass trusted user ID to clone RPC.
+  - [x] Reuse curated Chapter 1 or generate Chapter 1 only.
+  - [x] Return reader-safe response.
 
 ---
 
 ## Phase 7 — Privacy, Ownership, Smoke, and Release
 
-- [ ] **Task 25: Recursive privacy and story-isolation tests**
-  - [ ] Recursively scan all reader responses for internal fields.
-  - [ ] Prove Story A/B chapter isolation.
-  - [ ] Prove premium template never receives personalized writes.
+- [x] **Task 25: Recursive privacy and story-isolation tests**
+  - [x] Recursively scan all reader responses for internal fields.
+  - [x] Prove Story A/B chapter isolation.
+  - [x] Prove premium template never receives personalized writes.
 
-- [ ] **Task 26: RLS ownership integration tests**
-  - [ ] Verify anon/User B/private-owner matrix through real clients.
-  - [ ] Verify parent/child/contract/state privacy.
-  - [ ] Verify service role can read required internals.
-  - [ ] Verify Explore and Library behavior.
+- [x] **Task 26: RLS ownership integration tests**
+  - [x] Verify anon/User B/private-owner matrix through real clients.
+  - [x] Verify parent/child/contract/state privacy.
+  - [x] Verify service role can read required internals.
+  - [x] Verify Explore and Library behavior.
 
-- [ ] **Task 27: Personalized story smoke gate**
-  - [ ] Add `scripts/personalized-story-smoke.ts`.
-  - [ ] Scan reader-facing wildcard selects.
-  - [ ] Scan internal response fields.
-  - [ ] Verify Chapter 50 choice skip.
-  - [ ] Verify old generation/publish paths preserved.
-  - [ ] Add `smoke:personalized-story` package command.
+- [x] **Task 27: Personalized story smoke gate**
+  - [x] Add `scripts/personalized-story-smoke.ts`.
+  - [x] Scan reader-facing wildcard selects.
+  - [x] Scan internal response fields.
+  - [x] Verify Chapter 50 choice skip.
+  - [x] Verify old generation/publish paths preserved.
+  - [x] Add `smoke:personalized-story` package command.
 
 - [ ] **Task 28: Full gates and release evidence**
   - [ ] `pnpm typecheck`

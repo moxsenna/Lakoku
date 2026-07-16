@@ -9,7 +9,10 @@
  */
 import 'server-only'
 import { cache } from 'react'
+import { headers } from 'next/headers'
+import { createClient as createSupabaseJsClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
+import { requireSupabaseAnonKey, requireSupabaseUrl } from '@/lib/supabase/env'
 import type { JejakItem, ChoiceOutcome } from './types'
 
 export const READER_STATE_PUBLIC_COLUMNS = 'user_id,story_id,status,current_chapter,jejak,ending_name,updated_at' as const
@@ -62,10 +65,42 @@ const getSessionContext = cache(async function getSessionContext() {
   return { supabase, user }
 })
 
-/** User dari sesi cookie saat ini, atau null untuk tamu. */
+/**
+ * Resolve user from Authorization: Bearer <access_token> (Android / API clients).
+ * Cookie session remains primary for web via getSessionContext.
+ */
+async function getUserFromBearerAuthorization(): Promise<
+  Awaited<ReturnType<typeof getSessionUser>>
+> {
+  try {
+    const headerStore = await headers()
+    const auth = headerStore.get('authorization') ?? headerStore.get('Authorization')
+    if (!auth || !auth.toLowerCase().startsWith('bearer ')) return null
+    const token = auth.slice(7).trim()
+    if (!token) return null
+    const supabase = createSupabaseJsClient(
+      requireSupabaseUrl(),
+      requireSupabaseAnonKey(),
+      { auth: { persistSession: false, autoRefreshToken: false } },
+    )
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser(token)
+    if (error || !user) return null
+    return user
+  } catch {
+    return null
+  }
+}
+
+/**
+ * User dari sesi cookie (web) atau Bearer JWT (Android/API), atau null untuk tamu.
+ */
 export const getSessionUser = cache(async function getSessionUser() {
   const { user } = await getSessionContext()
-  return user
+  if (user) return user
+  return getUserFromBearerAuthorization()
 })
 
 /** Seluruh reader-state milik user saat ini (RLS membatasi ke pemiliknya). */

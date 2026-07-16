@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/api/user-state'
 import {
   ChapterStatusError,
   getChapterStatusForUser,
@@ -9,8 +9,8 @@ import {
  * GET /api/stories/[id]/chapters/[number]/status
  *
  * Exact per-chapter generation status for personalized reader polling.
- * Auth required for private stories (session cookie). Response is reader-safe:
- * { status, chapterNumber } only.
+ * Auth: session cookie (web) or Authorization Bearer JWT (Android).
+ * Response is reader-safe: { status, chapterNumber } only.
  *
  * Dynamic segment is `[number]` to match sibling chapter content route under
  * the same path tree. Response field remains `chapterNumber`.
@@ -26,14 +26,13 @@ export async function GET(
       return NextResponse.json({ error: 'Nomor bab tidak valid.' }, { status: 400 })
     }
 
-    const supabase = await createClient()
-    const { data: auth, error: authError } = await supabase.auth.getUser()
-    if (authError || !auth?.user) {
+    const user = await getSessionUser()
+    if (!user) {
       return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 401 })
     }
 
     const status = await getChapterStatusForUser({
-      userId: auth.user.id,
+      userId: user.id,
       storyId: id,
       chapterNumber,
     })

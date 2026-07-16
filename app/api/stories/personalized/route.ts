@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/api/user-state'
 import {
   createPersonalizedStory,
   PersonalizedStoryError,
@@ -9,14 +9,13 @@ import {
  * POST /api/stories/personalized
  *
  * Authenticated strong-idempotency creation of a private personalized_ai story.
- * Owner is always the cookie session user. Body userId is ignored/never trusted.
+ * Owner is always the session user (cookie or Bearer JWT). Body userId ignored.
  * Response is reader-safe: storyId + redirectUrl only.
  */
 export async function POST(req: Request) {
   try {
-    const supabase = await createClient()
-    const { data: auth, error: authError } = await supabase.auth.getUser()
-    if (authError || !auth?.user) {
+    const user = await getSessionUser()
+    if (!user) {
       return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 401 })
     }
 
@@ -25,7 +24,7 @@ export async function POST(req: Request) {
     await req.json().catch(() => null)
 
     const result = await createPersonalizedStory({
-      userId: auth.user.id,
+      userId: user.id,
       idempotencyKey,
     })
 

@@ -105,7 +105,16 @@ function syntheticChapterBrief(
   draft: ChapterDraftParsed,
 ): ChapterBrief {
   const remaining = Math.max(0, TOTAL_CHAPTERS - chapterNumber)
-  const chapterGoal = draft.chapterGoal?.trim() || draft.title
+  // Chapter draft has prose only; goal/phase derived for choice provider brief.
+  const chapterGoal = draft.title
+  const phase =
+    chapterNumber <= 10
+      ? 'setup'
+      : chapterNumber <= 25
+        ? 'rising'
+        : chapterNumber <= 40
+          ? 'complication'
+          : 'resolution'
   const empty: string[] = []
   const endingRunway =
     chapterNumber >= 50
@@ -122,7 +131,7 @@ function syntheticChapterBrief(
     storyId,
     chapterNumber,
     totalChapters: 50,
-    phase: draft.phase || 'rising',
+    phase,
     remainingChapters: remaining,
     chapterGoal,
     mustInclude: empty,

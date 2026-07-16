@@ -4,7 +4,10 @@ import {
   generateNextPersonalizedChapter,
   type PersonalizedGenerateInput,
 } from '@/lib/runtime/personalized-generation'
-import type { RealGenerateResult } from '@/lib/runtime/story-generation'
+import {
+  generateNextChapterReal,
+  type RealGenerateResult,
+} from '@/lib/runtime/story-generation'
 
 export const CONTINUATION_WAIT_MS = 25_000
 
@@ -21,12 +24,14 @@ function isReady(result: RealGenerateResult): boolean {
   return result.reason === 'CHAPTER_EXISTS'
 }
 
-function startOrReuseJob(input: PersonalizedGenerateInput): ContinuationJob {
-  const key = continuationJobKey(input.storyId, input.chapterNumber)
+function startOrReuseJob(
+  key: string,
+  launch: () => ContinuationJob,
+): ContinuationJob {
   const existing = jobs.get(key)
   if (existing) return existing
 
-  const promise = generateNextPersonalizedChapter(input).finally(() => {
+  const promise = launch().finally(() => {
     // Keep settled jobs briefly reusable only while still referenced by after/wait.
     // Drop from map once settled so later requests can relaunch if needed.
     if (jobs.get(key) === promise) jobs.delete(key)
@@ -41,21 +46,8 @@ function waitMs(ms: number): Promise<'timeout'> {
   })
 }
 
-export async function continuePersonalizedGeneration(input: {
-  storyId: string
-  userId: string
-  chapterNumber: number
-  triggerChoiceId?: string
-}): Promise<{ nextChapterReady: boolean }> {
-  const generationInput: PersonalizedGenerateInput = {
-    storyId: input.storyId,
-    userId: input.userId,
-    chapterNumber: input.chapterNumber,
-    triggerChoiceId: input.triggerChoiceId,
-  }
-
-  const promise = startOrReuseJob(generationInput)
-  // Same in-flight promise continues after response via OpenNext/Cloudflare waitUntil.
+async function raceContinuation(promise: ContinuationJob): Promise<{ nextChapterReady: boolean }> {
+  // Same in-flight promise continues after response via after()/waitUntil.
   after(() => promise)
 
   // Keep after() registered on the raw promise so timeout/reject still continues.
@@ -73,4 +65,37 @@ export async function continuePersonalizedGeneration(input: {
   }
 
   return { nextChapterReady: isReady(raced.result) }
+}
+
+export async function continuePersonalizedGeneration(input: {
+  storyId: string
+  userId: string
+  chapterNumber: number
+  triggerChoiceId?: string
+}): Promise<{ nextChapterReady: boolean }> {
+  const generationInput: PersonalizedGenerateInput = {
+    storyId: input.storyId,
+    userId: input.userId,
+    chapterNumber: input.chapterNumber,
+    triggerChoiceId: input.triggerChoiceId,
+  }
+
+  const key = continuationJobKey(input.storyId, input.chapterNumber)
+  const promise = startOrReuseJob(key, () => generateNextPersonalizedChapter(generationInput))
+  return raceContinuation(promise)
+}
+
+/**
+ * Standard/onboarding stories: kick off next chapter via generateNextChapterReal.
+ * Same 25s race + after() semantics as personalized path.
+ */
+export async function continueStandardGeneration(input: {
+  storyId: string
+  chapterNumber: number
+}): Promise<{ nextChapterReady: boolean }> {
+  const key = continuationJobKey(input.storyId, input.chapterNumber)
+  const promise = startOrReuseJob(key, () =>
+    generateNextChapterReal(input.storyId, input.chapterNumber),
+  )
+  return raceContinuation(promise)
 }

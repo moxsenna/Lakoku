@@ -3,6 +3,7 @@ import type { RealGenerateResult } from '@/lib/runtime/story-generation'
 
 const mocks = vi.hoisted(() => ({
   generateNextPersonalizedChapter: vi.fn(),
+  generateNextChapterReal: vi.fn(),
   after: vi.fn(),
   queryChoiceOutcome: vi.fn(),
   queryChapter: vi.fn(),
@@ -22,6 +23,9 @@ vi.mock('next/server', async () => {
 })
 vi.mock('@/lib/runtime/personalized-generation', () => ({
   generateNextPersonalizedChapter: mocks.generateNextPersonalizedChapter,
+}))
+vi.mock('@/lib/runtime/story-generation', () => ({
+  generateNextChapterReal: mocks.generateNextChapterReal,
 }))
 vi.mock('@/lib/api/queries', () => ({
   queryChoiceOutcome: mocks.queryChoiceOutcome,
@@ -391,7 +395,7 @@ describe('choice route generation continuation', () => {
     )
   })
 
-  it('omits nextChapterReady on standard path', async () => {
+  it('omits nextChapterReady on guest standard path', async () => {
     mocks.getSessionUser.mockResolvedValue(null)
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
@@ -403,7 +407,38 @@ describe('choice route generation continuation', () => {
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ outcome: publicOutcome })
     expect(mocks.generateNextPersonalizedChapter).not.toHaveBeenCalled()
+    expect(mocks.generateNextChapterReal).not.toHaveBeenCalled()
     expect(mocks.after).not.toHaveBeenCalled()
+  })
+
+  it('kicks standard generateNextChapterReal for authenticated standard path', async () => {
+    mocks.getSessionUser.mockResolvedValue({ id: userId })
+    mocks.generateNextChapterReal.mockResolvedValue(publishedResult(2))
+    // Force fallthrough: personalized apply throws NOT_PERSONALIZED
+    mocks.adminFactory.mockReturnValue(createAdminDb({
+      tables: {
+        stories: [{
+          data: {
+            id: 'demo:standard',
+            owner_user_id: userId,
+            visibility: 'private',
+            story_mode: 'standard',
+          },
+          error: null,
+        }],
+      },
+    }))
+    const { POST } = await import('@/app/api/stories/[id]/choices/route')
+
+    const response = await POST(choiceRequest({
+      id: 'demo:standard',
+      body: { chapterNumber: 1, choiceId: 'standard-choice' },
+    }), { params: Promise.resolve({ id: 'demo%3Astandard' }) })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ outcome: publicOutcome, nextChapterReady: true })
+    expect(mocks.generateNextChapterReal).toHaveBeenCalledWith('demo:standard', 2)
+    expect(mocks.generateNextPersonalizedChapter).not.toHaveBeenCalled()
   })
 
   it('skips continuation for personalized ending outcomes', async () => {

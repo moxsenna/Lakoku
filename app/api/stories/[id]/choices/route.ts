@@ -6,7 +6,10 @@ import {
   applyPersonalizedChoice,
   PersonalizedChoiceError,
 } from '@/lib/api/personalized-choice.server'
-import { continuePersonalizedGeneration } from '@/lib/api/generation-continuation.server'
+import {
+  continuePersonalizedGeneration,
+  continueStandardGeneration,
+} from '@/lib/api/generation-continuation.server'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
 
 /**
@@ -101,6 +104,23 @@ export async function POST(
     const decision =
       chapter?.choices?.find((c) => c.id === choiceId)?.label ?? choiceId
     await applyChoiceToUserState(id, chapterNumber, decision, outcome)
+
+    // Standard path (auth owner): kick off next chapter (same poll UX as personalized).
+    // Guests on public demos skip — chapters usually pre-seeded; no session gen budget.
+    const nextChapterNumber = outcome.nextChapterNumber
+    if (
+      user
+      && !outcome.isEnding
+      && typeof nextChapterNumber === 'number'
+      && Number.isInteger(nextChapterNumber)
+      && nextChapterNumber > 0
+    ) {
+      const { nextChapterReady } = await continueStandardGeneration({
+        storyId: id,
+        chapterNumber: nextChapterNumber,
+      })
+      return NextResponse.json({ outcome, nextChapterReady })
+    }
 
     return NextResponse.json({ outcome })
   } catch {

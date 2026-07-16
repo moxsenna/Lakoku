@@ -16,14 +16,18 @@ import {
 import { loadCanonSnapshot, persistRetrievalLog } from '@lakoku/narrative-core/server'
 import {
   generateChapter,
+  generateChoiceBranch,
   toReaderSafe,
   assertConsumerSafe,
   scanForLeaks,
   type ThreadContext,
   type ChapterDraftParsed,
+  type ChoiceBranch,
 } from '@lakoku/ai-gateway'
 import { selectProvider } from '@lakoku/ai-gateway/server'
 import { recordGenerationAttempt } from '@/lib/observability/server'
+import type { ChapterBrief } from '@/lib/story-engine/chapter-brief'
+import { normalizeRouteState } from '@/lib/story-engine/route-state'
 
 /**
  * Workflow generasi bab NYATA (M2→M5 disatukan) — "jalur cerita AI end-to-end".
@@ -85,8 +89,82 @@ function resolveBlueprint(
   }
 }
 
-/** Susun cabang pilihan reader-safe deterministik dari draft tervalidasi. */
-function buildChoices(
+function lastParagraphs(draft: ChapterDraftParsed): [string, string, string] | [string, string, string, string] | [string, string, string, string, string] {
+  const paragraphs = draft.paragraphs.filter((p) => p.trim().length > 0)
+  const slice = paragraphs.slice(-5)
+  while (slice.length < 3) {
+    slice.unshift(paragraphs[0] ?? draft.title)
+  }
+  return slice as ReturnType<typeof lastParagraphs>
+}
+
+/** Minimal chapter brief for standard/onboarding stories (no story_generation_contracts row). */
+function syntheticChapterBrief(
+  storyId: string,
+  chapterNumber: number,
+  draft: ChapterDraftParsed,
+): ChapterBrief {
+  const remaining = Math.max(0, TOTAL_CHAPTERS - chapterNumber)
+  const chapterGoal = draft.chapterGoal?.trim() || draft.title
+  const empty: string[] = []
+  const endingRunway =
+    chapterNumber >= 50
+      ? 'final'
+      : chapterNumber >= 45
+        ? 'payoff'
+        : chapterNumber >= 40
+          ? 'convergence'
+          : chapterNumber >= 30
+            ? 'closure-emphasis'
+            : 'expansion'
+
+  return {
+    storyId,
+    chapterNumber,
+    totalChapters: 50,
+    phase: draft.phase || 'rising',
+    remainingChapters: remaining,
+    chapterGoal,
+    mustInclude: empty,
+    mustNotInclude: empty,
+    mustNotReveal: empty,
+    routeStateSummary: 'Awal perjalanan; belum ada bias rute kuat.',
+    choiceHistorySummary: 'Belum ada pilihan sebelumnya.',
+    plotDebtsToProgress: empty,
+    plotDebtsToClose: empty,
+    allowedNewThread: chapterNumber < 40,
+    allowedMajorNewConflict: chapterNumber < 45,
+    endingRunway,
+    lockedEndingKey: null,
+    allowsChoices: chapterNumber < TOTAL_CHAPTERS,
+    finalChapter: chapterNumber >= TOTAL_CHAPTERS,
+    goals: [chapterGoal],
+    routeSummary: 'Awal perjalanan; belum ada bias rute kuat.',
+    debtsToProgress: empty,
+    debtsToClose: empty,
+    allowMajorNewConflict: chapterNumber < 45,
+    allowNewThread: chapterNumber < 40,
+    lockEnding: false,
+    endingKey: null,
+    previousChoiceSummary: 'Belum ada pilihan sebelumnya.',
+  }
+}
+
+function mapBranchToPublishOutcomes(
+  branch: ChoiceBranch,
+): PublishOutcome[] {
+  return branch.outcomes.map((outcome) => ({
+    choiceId: outcome.choiceId,
+    consequence: outcome.consequence,
+    nextChapterNumber: outcome.nextChapterNumber,
+    isEnding: outcome.isEnding,
+  }))
+}
+
+/**
+ * Fallback bila LLM choices gagal: tetap grounded di draft (bukan maju/tahan generik).
+ */
+function fallbackChoicesFromDraft(
   draft: ChapterDraftParsed,
   chapterNumber: number,
 ): {
@@ -96,30 +174,80 @@ function buildChoices(
 } {
   const isEnding = chapterNumber >= TOTAL_CHAPTERS
   const next = isEnding ? null : chapterNumber + 1
-  const choicePrompt = 'Apa yang kaulakukan sekarang?'
+  const hook = (draft.paragraphs.at(-1) ?? draft.title).slice(0, 80)
+  const choicePrompt = isEnding
+    ? 'Bagaimana kau menutup kisah ini?'
+    : `Setelah ${hook}${hook.length >= 80 ? '…' : ''}, apa yang kau lakukan?`
   const choices = [
-    { id: 'maju', label: 'Melangkah maju menghadapi keadaan' },
-    { id: 'tahan', label: 'Menahan diri dan mengamati' },
+    { id: 'hadapi', label: 'Hadapi langsung apa yang baru terbuka' },
+    { id: 'selidiki', label: 'Selidiki dulu jejak yang tersisa' },
   ]
   const outcomes: PublishOutcome[] = [
     {
-      choiceId: 'maju',
+      choiceId: 'hadapi',
       consequence: isEnding
-        ? ['Kau memilih menuntaskan semuanya; kisah menemukan penutupnya.']
-        : ['Kau maju; konsekuensi dari langkah ini membuka babak berikutnya.'],
+        ? ['Kau menuntaskan semuanya; kisah menemukan penutupnya.']
+        : ['Kau melangkah ke depan; konsekuensi menunggu di bab berikutnya.'],
       nextChapterNumber: next,
       isEnding,
     },
     {
-      choiceId: 'tahan',
+      choiceId: 'selidiki',
       consequence: isEnding
         ? ['Kau memilih melepaskan; kisah mengendap dalam keheningan.']
-        : ['Kau menahan diri; namun arus cerita tetap menyeretmu ke depan.'],
+        : ['Kau menahan nafas dan mengamati; arus cerita tetap menarikmu maju.'],
       nextChapterNumber: next,
       isEnding,
     },
   ]
-  return { choicePrompt, choices, outcomes }
+  return { choicePrompt: choicePrompt.slice(0, 120), choices, outcomes }
+}
+
+/** LLM choices grounded di prose bab; fallback lokal bila provider gagal. */
+async function buildChoices(
+  snapshot: CanonSnapshot,
+  draft: ChapterDraftParsed,
+  chapterNumber: number,
+): Promise<{
+  choicePrompt: string
+  choices: { id: string; label: string }[]
+  outcomes: PublishOutcome[]
+}> {
+  if (chapterNumber >= TOTAL_CHAPTERS) {
+    return fallbackChoicesFromDraft(draft, chapterNumber)
+  }
+
+  try {
+    const brief = syntheticChapterBrief(snapshot.storyId, chapterNumber, draft)
+    const branch = await generateChoiceBranch(
+      { provider: await selectProvider() },
+      {
+        snapshot,
+        chapterBrief: brief,
+        draft,
+        lastParagraphs: lastParagraphs(draft),
+        routeState: normalizeRouteState({}),
+        choiceHistory: [],
+        lockedEndingKey: null,
+      },
+    )
+    if (!branch) return fallbackChoicesFromDraft(draft, chapterNumber)
+    return {
+      choicePrompt: branch.choicePrompt,
+      choices: branch.choices.map((c) => ({
+        id: c.id,
+        label: c.label,
+        ...(c.hint ? { hint: c.hint } : {}),
+      })),
+      outcomes: mapBranchToPublishOutcomes(branch),
+    }
+  } catch (err) {
+    console.log(
+      '[v0] buildChoices LLM gagal, pakai fallback grounded draft:',
+      err instanceof Error ? err.message : err,
+    )
+    return fallbackChoicesFromDraft(draft, chapterNumber)
+  }
 }
 
 /**
@@ -196,8 +324,8 @@ export async function generateNextChapterReal(
     const readerSafe = toReaderSafe(draft)
     assertConsumerSafe(readerSafe)
 
-    // 7) Susun cabang pilihan & petakan ke input publish atomik.
-    const branch = buildChoices(draft, chapterNumber)
+    // 7) Cabang pilihan LLM (grounded di prosa bab) — fallback lokal bila gagal.
+    const branch = await buildChoices(snapshot, draft, chapterNumber)
     const leakInChoices = [
       branch.choicePrompt,
       ...branch.choices.map((c) => c.label),

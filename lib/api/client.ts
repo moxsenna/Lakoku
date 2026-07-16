@@ -19,6 +19,7 @@ import type {
   ReportCategory,
   ReportResult,
 } from './types'
+import type { StoryBibleDraft } from '@/lib/authoring/schema'
 import {
   ChapterStatusResponseSchema,
   SubmitChoiceResponseSchema,
@@ -28,6 +29,17 @@ import {
 import { buildChoiceIdempotencyKey } from './choice-idempotency'
 
 const API_BASE = '/api'
+
+/** Result of POST /api/stories/authoring/lock (Android/web shared). */
+export type LockStoryBibleClientResult =
+  | { ok: true; storyId: string; resolvedBy: string; transforms: string[] }
+  | { ok: false; error: string }
+  | { ok: false; needsAuthor: true; findings: unknown[]; transforms: string[] }
+
+/** Result of POST /api/stories/[id]/start-chapter */
+export type StartChapterClientResult =
+  | { ok: true; chapterNumber: number }
+  | { ok: false; error: string }
 
 /** Daftar seluruh cerita (ringkasan) untuk katalog/beranda/koleksiku. */
 export async function listStories(): Promise<StorySummary[]> {
@@ -155,4 +167,60 @@ export async function listChapters(storyId: string): Promise<{
   )
   if (!res.ok) throw new Error('Gagal memuat daftar bab.')
   return res.json()
+}
+
+/**
+ * Kunci story bible via REST (session cookie). Shared web/Android surface.
+ * Does not throw on business failure — returns ok:false envelope.
+ */
+export async function lockStoryBible(
+  draft: StoryBibleDraft,
+): Promise<LockStoryBibleClientResult> {
+  try {
+    const res = await fetch(`${API_BASE}/stories/authoring/lock`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(draft),
+      credentials: 'same-origin',
+    })
+    const data = (await res.json().catch(() => null)) as LockStoryBibleClientResult | null
+    if (data && typeof data === 'object' && 'ok' in data) return data
+    if (res.status === 401) {
+      return { ok: false, error: 'Masuk untuk membuat cerita.' }
+    }
+    return { ok: false, error: 'Gagal mengunci cerita.' }
+  } catch {
+    return { ok: false, error: 'Gagal mengunci cerita.' }
+  }
+}
+
+/**
+ * Picu generasi bab (default 1) via REST. Background on server; returns 202 envelope.
+ */
+export async function startChapter(
+  storyId: string,
+  chapterNumber = 1,
+): Promise<StartChapterClientResult> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/stories/${encodeURIComponent(storyId)}/start-chapter`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chapterNumber }),
+        credentials: 'same-origin',
+      },
+    )
+    const data = (await res.json().catch(() => null)) as StartChapterClientResult | null
+    if (data && typeof data === 'object' && 'ok' in data) return data
+    if (res.status === 401) {
+      return { ok: false, error: 'Masuk untuk membuat cerita.' }
+    }
+    if (res.status === 404) {
+      return { ok: false, error: 'Cerita tidak ditemukan.' }
+    }
+    return { ok: false, error: 'Gagal memulai bab.' }
+  } catch {
+    return { ok: false, error: 'Gagal memulai bab.' }
+  }
 }

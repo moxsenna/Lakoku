@@ -17,10 +17,9 @@ import {
   actProposeCast,
   actProposeMystery,
   actProposeWorld,
-  lockStoryBible,
-  startFirstChapter,
   type ActionResult,
 } from '@/app/brainstorm/actions'
+import { lockStoryBible, startChapter } from '@/lib/api/client'
 import type {
   PremiseDraft,
   CastDraft,
@@ -219,7 +218,7 @@ export function BrainstormWizard() {
         setErr(null)
         // Cerita terkunci. Siapkan Bab 1 (generasi nyata) sebelum masuk reader.
         setPreparing(true)
-        const gen = await startFirstChapter(res.storyId)
+        const gen = await startChapter(res.storyId, 1)
         if (!gen.ok) {
           // Bab gagal disiapkan: jangan buntu — arahkan ke detail cerita.
           setPreparing(false)

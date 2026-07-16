@@ -10,9 +10,9 @@
  * Setiap pertanyaan quick punya opsi "Tulis sendiri" selain opsi tetap dan
  * "Pilihkan untukku". Custom idea bisa diketik bebas di textarea.
  *
- * Semua kerja berat memakai server action authoring yang sama dengan wizard
- * /brainstorm (T7.4); komponen ini hanya mengurut tahap & menyajikan progres.
- * Untuk merancang detail (edit tiap tahap), pembaca diarahkan ke /brainstorm.
+ * Lock + Bab 1 lewat Reader API (`/api/stories/authoring/lock`,
+ * `/api/stories/[id]/start-chapter`) agar web & Android berbagi kontrak.
+ * Tahap propose cast/misteri/dunia masih server action; detail penuh di /brainstorm.
  */
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
 import dynamic from 'next/dynamic'
@@ -31,9 +31,8 @@ import {
   actProposeCast,
   actProposeMystery,
   actProposeWorld,
-  lockStoryBible,
-  startFirstChapter,
 } from '@/app/brainstorm/actions'
+import { lockStoryBible, startChapter } from '@/lib/api/client'
 import { actProposeStorySetupPremises } from '@/app/mulai/actions'
 import { actGetTasteProfile } from '@/app/onboarding/selera/actions'
 import { readGuestTasteProfile } from '@/lib/taste-profile/storage'
@@ -201,7 +200,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     }
 
     setBuildStage('chapter')
-    const gen = await startFirstChapter(lockRes.storyId)
+    const gen = await startChapter(lockRes.storyId, 1)
     if (!gen.ok) {
       router.push(`/cerita/${lockRes.storyId}`)
       return

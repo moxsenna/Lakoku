@@ -1,0 +1,7 @@
+# Append to /opt/wacrm/deploy/Caddyfile then reload Caddy.
+# Domain: lakoku.appvibe.biz.id → reverse_proxy lakoku-web:5200 on wacrm_edge
+
+lakoku.appvibe.biz.id {
+	encode gzip
+	reverse_proxy lakoku-web:5200
+}

@@ -1,0 +1,45 @@
+# Lakoku on VPS (deploy-kit multi-app)
+# Path: /opt/lakoku
+# Port: 5200 (internal; 5100 reserved by 9router)
+# Network: wacrm_edge (shared Caddy)
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY}
+        NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL: ${NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL:-https://lakoku.appvibe.biz.id}
+    container_name: lakoku-web
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      LAKOKU_DEPLOY: vps
+      PORT: "5200"
+      HOSTNAME: 0.0.0.0
+      NARRATIVE_PROVIDER: ${NARRATIVE_PROVIDER:-gateway}
+    ports:
+      - "127.0.0.1:5200:5200"
+    networks:
+      - edge
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5200/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+networks:
+  edge:
+    name: wacrm_edge
+    external: true

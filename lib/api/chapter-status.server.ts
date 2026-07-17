@@ -133,6 +133,7 @@ export async function getChapterStatusForUser(input: {
   if (await chapterExists(storyId, chapterNumber)) return 'ready'
   if (await hasActiveLease(storyId, chapterNumber)) return 'generating'
   if (await latestExactFailedAttempt(storyId, chapterNumber)) return 'failed'
-  // Triggered/unknown: chapter not published, no live lease, no exact failure → still in progress.
-  return 'generating'
+  // No chapter + no live lease: generation died (timeout/kill) or never started.
+  // Do NOT report perpetual "generating" — that traps the reader UI forever.
+  return 'failed'
 }

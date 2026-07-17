@@ -38,6 +38,9 @@ import type { AiModelRoute } from '@/lib/ops/ai-model-routes'
  */
 
 const DEFAULT_MODEL = 'openai/gpt-4.1-mini'
+/** Max wall time per model attempt — hang proxy must not hold lease forever. */
+const LLM_PROSE_TIMEOUT_MS = 90_000
+const LLM_CHOICE_TIMEOUT_MS = 45_000
 
 /** Satu kandidat "otak" dalam rantai fallback. */
 type ModelCandidate = { model: LanguageModel; label: string }
@@ -48,7 +51,10 @@ type ModelCandidate = { model: LanguageModel; label: string }
 const OPENROUTER_FREE_DEFAULT = 'nousresearch/hermes-3-llama-3.1-405b:free'
 const OPENROUTER_PAID_DEFAULT = 'deepseek/deepseek-v3.2'
 
-/** Kandidat endpoint OpenAI-compatible kustom (tunnel/proxy pribadi). */
+/**
+ * Kandidat endpoint OpenAI-compatible kustom (tunnel/proxy pribadi). Memakai
+ * env `CUSTOM_LLM_BASE_URL` + `CUSTOM_LLM_API_KEY`. Berbeda dari 9router.
+ */
 function customCandidate(optModel?: string): ModelCandidate | null {
   const baseURL = process.env.CUSTOM_LLM_BASE_URL?.trim()
   if (!baseURL) return null
@@ -59,6 +65,26 @@ function customCandidate(optModel?: string): ModelCandidate | null {
     apiKey: process.env.CUSTOM_LLM_API_KEY,
   })
   return { model: custom(modelId), label: `custom:${modelId}` }
+}
+
+/**
+ * Kandidat 9router (OpenAI-compatible). Memakai env `NINEROUTER_BASE_URL` +
+ * `NINEROUTER_API_KEY`. Base URL/key berbeda dari `custom` sehingga 9router
+ * bisa dikonfigurasi sebagai provider mandiri di ai_model_routes (provider =
+ * '9router') atau dipakai via env fallback chain.
+ */
+function nineRouterCandidate(optModel?: string): ModelCandidate | null {
+  const baseURL = process.env.NINEROUTER_BASE_URL?.trim()
+  if (!baseURL) return null
+  const apiKey = process.env.NINEROUTER_API_KEY?.trim()
+  if (!apiKey) return null
+  const modelId = optModel ?? process.env.NARRATIVE_MODEL ?? 'gcli/grok-4.5-high'
+  const nine = createOpenAICompatible({
+    name: '9router',
+    baseURL,
+    apiKey,
+  })
+  return { model: nine(modelId), label: `9router:${modelId}` }
 }
 
 /**
@@ -96,6 +122,8 @@ function resolveModelChain(optModel?: string): ModelCandidate[] {
   const chain: ModelCandidate[] = []
   const custom = customCandidate(optModel)
   if (custom) chain.push(custom)
+  const nine = nineRouterCandidate(optModel)
+  if (nine) chain.push(nine)
   const or = openRouterCandidate()
   if (or) chain.push(or)
   if (chain.length === 0) {
@@ -108,8 +136,17 @@ function resolveModelChain(optModel?: string): ModelCandidate[] {
 /** Perluas rantai env dengan kandidat dari DB route (termasuk fallbackModels). */
 function expandChainWithRoute(chain: ModelCandidate[], route: AiModelRoute): ModelCandidate[] {
   const routeCandidates: ModelCandidate[] = []
-  for (const modelId of [route.modelId, ...route.fallbackModels]) {
-    const candidate = toModelCandidate({ ...route, modelId, fallbackModels: [] })
+  // Primary: pakai provider + modelId route.
+  const primary = toModelCandidate({ ...route, fallbackModels: [] })
+  if (primary) routeCandidates.push(primary)
+  // Fallback: tiap entry boleh provider beda dari primary.
+  for (const fb of route.fallbackModels) {
+    const candidate = toModelCandidate({
+      ...route,
+      provider: fb.provider,
+      modelId: fb.modelId,
+      fallbackModels: [],
+    })
     if (candidate) routeCandidates.push(candidate)
   }
   return routeCandidates.length > 0 ? [...routeCandidates, ...chain] : chain
@@ -265,6 +302,7 @@ async function generateProse(args: {
         // OpenAI-compatible (termasuk proxy/tunnel & OpenRouter) SELALU membalas
         // SSE streaming meski diminta non-stream, sehingga parser non-stream
         // gagal. streamText mem-parse SSE; kita cukup menunggu `text` rampung.
+        // Timeout: hang di 9router/proxy tidak boleh menahan lease forever.
         const result = streamText({
           model,
           system,
@@ -272,6 +310,7 @@ async function generateProse(args: {
             attempt === 0
               ? prompt
               : `${prompt}\n\nCATATAN: revisi sebelumnya memuat istilah teknis terlarang. Tulis ulang murni sebagai narasi cerita.`,
+          abortSignal: AbortSignal.timeout(LLM_PROSE_TIMEOUT_MS),
         })
         const usage = bestEffortUsage(result.usage)
         const text = await result.text
@@ -546,6 +585,7 @@ async function generateChoiceJson(args: {
         prompt,
         temperature: args.route?.temperature ?? undefined,
         maxOutputTokens: args.route?.maxOutputTokens ?? undefined,
+        abortSignal: AbortSignal.timeout(LLM_CHOICE_TIMEOUT_MS),
       })
       const usage = bestEffortUsage(result.usage)
       const text = await result.text
@@ -675,6 +715,18 @@ function toModelCandidate(route: AiModelRoute | undefined): ModelCandidate | nul
       apiKey,
     })
     return { model: openrouter(route.modelId), label: `db:openrouter:${route.modelId}` }
+  }
+
+  if (route.provider === '9router') {
+    const baseURL = process.env.NINEROUTER_BASE_URL?.trim()
+    const apiKey = process.env.NINEROUTER_API_KEY?.trim()
+    if (!baseURL || !apiKey) return null
+    const nine = createOpenAICompatible({
+      name: '9router',
+      baseURL,
+      apiKey,
+    })
+    return { model: nine(route.modelId), label: `db:9router:${route.modelId}` }
   }
 
   if (route.provider === 'gateway') {

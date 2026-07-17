@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, RefreshCw } from 'lucide-react'
 import type { StoryDetail } from '@/lib/api'
+import { startChapter } from '@/lib/api/client'
 
 /**
  * Layar reader-safe saat sebuah bab belum bisa disajikan.
@@ -29,6 +30,7 @@ export function ChapterUnavailable({
 }) {
   const router = useRouter()
   const [retrying, setRetrying] = useState(false)
+  const [retryNote, setRetryNote] = useState<string | null>(null)
 
   // Saat bab sedang disiapkan, periksa ulang berkala (server component akan
   // mengambil bab bila sudah terbit). Berhenti saat komponen dilepas.
@@ -38,11 +40,22 @@ export function ChapterUnavailable({
     return () => clearInterval(timer)
   }, [state, router])
 
-  function retry() {
+  async function retry() {
     setRetrying(true)
+    setRetryNote(null)
+    try {
+      // Kick generation again (idempotent if lease held / chapter exists).
+      const kicked = await startChapter(story.id, chapterNumber)
+      if (!kicked.ok) {
+        setRetryNote(kicked.error || 'Belum bisa memulai ulang penulisan.')
+      } else {
+        setRetryNote('Menulis ulang bab… halaman akan terbuka bila siap.')
+      }
+    } catch {
+      setRetryNote('Belum bisa memulai ulang. Coba beberapa saat lagi.')
+    }
     router.refresh()
-    // Beri umpan balik singkat lalu lepaskan (refresh akan me-remount bila perlu).
-    setTimeout(() => setRetrying(false), 1500)
+    setTimeout(() => setRetrying(false), 2000)
   }
 
   const preparing = state === 'PREPARING'
@@ -88,14 +101,29 @@ export function ChapterUnavailable({
           </p>
         </div>
 
+        {retryNote ? (
+          <p className="text-xs text-muted-foreground text-pretty">{retryNote}</p>
+        ) : null}
+
         {preparing ? (
-          <div className="h-1 w-48 overflow-hidden rounded-full bg-muted">
-            <div className="lk-pulse-soft h-full w-1/2 bg-primary" />
+          <div className="flex w-full flex-col items-center gap-4">
+            <div className="h-1 w-48 overflow-hidden rounded-full bg-muted">
+              <div className="lk-pulse-soft h-full w-1/2 bg-primary" />
+            </div>
+            <button
+              type="button"
+              onClick={() => void retry()}
+              disabled={retrying}
+              className="flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-border px-6 text-sm font-semibold text-foreground transition-colors hover:bg-card disabled:opacity-60"
+            >
+              <RefreshCw className={`size-4 ${retrying ? 'animate-spin' : ''}`} aria-hidden="true" />
+              {retrying ? 'Memeriksa…' : 'Coba tulis ulang'}
+            </button>
           </div>
         ) : (
           <button
             type="button"
-            onClick={retry}
+            onClick={() => void retry()}
             disabled={retrying}
             className="flex min-h-13 w-full items-center justify-center gap-2 rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
           >

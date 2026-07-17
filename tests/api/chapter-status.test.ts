@@ -214,7 +214,7 @@ describe('getChapterStatusForUser', () => {
     })).resolves.toBe('generating')
   })
 
-  it('returns generating for unknown triggered state with no chapter/lease/failure', async () => {
+  it('returns failed when no chapter, no live lease, and no exact failure (dead generation)', async () => {
     const fixture = createAdminDb({
       chapter: { data: null, error: null },
       leases: { data: null, error: null },
@@ -227,7 +227,7 @@ describe('getChapterStatusForUser', () => {
       userId: USER_A,
       storyId: STORY_A,
       chapterNumber: 4,
-    })).resolves.toBe('generating')
+    })).resolves.toBe('failed')
   })
 
   it('denies private story for non-owner and anon before lease/event reads', async () => {
@@ -282,7 +282,7 @@ describe('getChapterStatusForUser', () => {
       userId: USER_A,
       storyId: STORY_A,
       chapterNumber: 2,
-    })).resolves.toBe('generating')
+    })).resolves.toBe('failed')
   })
 })
 

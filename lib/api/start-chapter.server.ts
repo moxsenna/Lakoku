@@ -57,9 +57,17 @@ export async function startOwnedChapterGeneration(
     }
 
     after(async () => {
-      const result = await generateNextChapterReal(storyId, chapterNumber)
-      if (!result.ok && result.reason !== 'CHAPTER_EXISTS' && result.reason !== 'LEASE_HELD') {
-        console.log('[v0] startOwnedChapterGeneration gagal:', result.reason, result.detail)
+      try {
+        const result = await generateNextChapterReal(storyId, chapterNumber)
+        if (!result.ok && result.reason !== 'CHAPTER_EXISTS' && result.reason !== 'LEASE_HELD') {
+          console.log('[v0] startOwnedChapterGeneration gagal:', result.reason, result.detail)
+        }
+      } catch (err) {
+        // Ensure after() never dies silently — release path is inside generateNextChapterReal catch.
+        console.log(
+          '[v0] startOwnedChapterGeneration exception:',
+          err instanceof Error ? err.message : err,
+        )
       }
     })
 

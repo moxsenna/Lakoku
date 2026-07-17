@@ -11,13 +11,19 @@ import { createAdminClient } from '@lakoku/db'
  * Fallback code: bila DB & env sama-sama tak tersedia.
  */
 
-export type AiProvider = 'custom' | 'openrouter' | 'gateway' | 'deterministic'
+export type AiProvider = 'custom' | 'openrouter' | '9router' | 'gateway' | 'deterministic'
+
+/** Satu kandidat fallback: provider sendiri + modelId (tidak warisi primary). */
+export interface AiFallbackModel {
+  provider: AiProvider
+  modelId: string
+}
 
 export interface AiModelRoute {
   useCase: string
   provider: AiProvider
   modelId: string
-  fallbackModels: string[]
+  fallbackModels: AiFallbackModel[]
   temperature: number | null
   maxOutputTokens: number | null
   routeVersion: string
@@ -27,10 +33,67 @@ interface AiModelRouteRow {
   use_case: string
   provider: AiProvider
   model_id: string
-  fallback_models: string[]
+  fallback_models: unknown
   temperature: number | null
   max_output_tokens: number | null
   route_version: string
+}
+
+const KNOWN_PROVIDERS = new Set<AiProvider>([
+  'custom',
+  'openrouter',
+  '9router',
+  'gateway',
+  'deterministic',
+])
+
+/**
+ * Infer provider for legacy string model ids when DB only stores text[].
+ * OpenRouter-style ids contain `/` (e.g. deepseek/deepseek-v3.2).
+ * Do NOT inherit primary provider blindly — 9router primary + openrouter
+ * fallback strings used to become 9router:openai/... and hang.
+ */
+function inferProviderForModelId(
+  modelId: string,
+  fallbackProvider: AiProvider,
+): AiProvider {
+  if (modelId.includes('/')) return 'openrouter'
+  if (fallbackProvider === '9router' || fallbackProvider === 'custom') {
+    return 'openrouter'
+  }
+  return fallbackProvider
+}
+
+/** Normalisasi fallback_models dari DB (jsonb baru, atau legacy text[]). */
+export function normalizeFallbackModels(
+  raw: unknown,
+  fallbackProvider: AiProvider = 'gateway',
+): AiFallbackModel[] {
+  if (!Array.isArray(raw)) return []
+  const out: AiFallbackModel[] = []
+  for (const entry of raw) {
+    if (typeof entry === 'string') {
+      const modelId = entry.trim()
+      if (modelId.length >= 3) {
+        out.push({
+          provider: inferProviderForModelId(modelId, fallbackProvider),
+          modelId,
+        })
+      }
+      continue
+    }
+    if (entry && typeof entry === 'object') {
+      const rec = entry as Record<string, unknown>
+      const modelId = String(rec.modelId ?? rec.model_id ?? '').trim()
+      const providerRaw = String(rec.provider ?? '').trim()
+      if (modelId.length < 3) continue
+      const provider = (KNOWN_PROVIDERS.has(providerRaw as AiProvider)
+        ? (providerRaw as AiProvider)
+        : inferProviderForModelId(modelId, fallbackProvider))
+      out.push({ provider, modelId })
+    }
+  }
+  return out
 }
 
 function mapRow(r: AiModelRouteRow): AiModelRoute {
@@ -38,7 +101,7 @@ function mapRow(r: AiModelRouteRow): AiModelRoute {
     useCase: r.use_case,
     provider: r.provider,
     modelId: r.model_id,
-    fallbackModels: r.fallback_models,
+    fallbackModels: normalizeFallbackModels(r.fallback_models, r.provider),
     temperature: r.temperature,
     maxOutputTokens: r.max_output_tokens,
     routeVersion: r.route_version,

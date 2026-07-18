@@ -153,7 +153,7 @@ describe('createGatewayProvider story-contract adapter', () => {
       useCase: 'story_contract',
       provider: 'gateway',
       modelId: 'openai/contract-primary',
-      fallbackModels: ['openai/contract-fallback'],
+      fallbackModels: [{ provider: 'gateway', modelId: 'openai/contract-fallback' }],
       temperature: 0.15,
       maxOutputTokens: 8000,
       routeVersion: 'contract-v1',

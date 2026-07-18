@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   cookieFactory: vi.fn(),
   adminFactory: vi.fn(),
   continuePersonalizedGeneration: vi.fn(),
+  continueStandardGeneration: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
@@ -23,10 +24,16 @@ vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.cookieFactory }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.adminFactory }))
 vi.mock('@/lib/api/generation-continuation.server', () => ({
   continuePersonalizedGeneration: mocks.continuePersonalizedGeneration,
+  continueStandardGeneration: mocks.continueStandardGeneration,
 }))
 
 type DbResult = { data: unknown; error: { message: string; code?: string } | null }
 type DbCall = { table?: string; method: string; args: unknown[] }
+type TestQueryBuilder = {
+  select: (columns: string) => TestQueryBuilder
+  eq: (column: string, value: unknown) => TestQueryBuilder
+  maybeSingle: () => Promise<DbResult>
+}
 
 const REPLAY_INTERNAL_KEYS = new Set([
   'effect',
@@ -138,18 +145,28 @@ function createCookieDb(input?: {
     from: vi.fn((table: string) => {
       input?.order?.push(`cookie:${table}`)
       calls.push({ table, method: 'from', args: [] })
-      const builder: Record<string, unknown> = {}
-      for (const method of ['select', 'eq']) {
-        builder[method] = vi.fn((...args: unknown[]) => {
-          calls.push({ table, method, args })
+      const predicates = new Map<string, unknown>()
+      const builder: TestQueryBuilder = {
+        select: vi.fn((...args: unknown[]) => {
+          calls.push({ table, method: 'select', args })
           return builder
-        })
+        }),
+        eq: vi.fn((column: string, value: unknown) => {
+          calls.push({ table, method: 'eq', args: [column, value] })
+          predicates.set(column, value)
+          return builder
+        }),
+        maybeSingle: vi.fn(async () => {
+          input?.order?.push('cookie:authorized')
+          calls.push({ table, method: 'maybeSingle', args: [] })
+          const result = input?.story ?? { data: { id: storyId }, error: null }
+          if (result.error || result.data === null || typeof result.data !== 'object') return result
+          const row = result.data as Record<string, unknown>
+          const matches = predicates.size > 0
+            && [...predicates].every(([column, value]) => row[column] === value)
+          return matches ? result : { data: null, error: null }
+        }),
       }
-      builder.maybeSingle = vi.fn(async () => {
-        input?.order?.push('cookie:authorized')
-        calls.push({ table, method: 'maybeSingle', args: [] })
-        return input?.story ?? { data: { id: storyId }, error: null }
-      })
       return builder
     }),
   }
@@ -174,17 +191,27 @@ function createAdminDb(input?: {
     from: vi.fn((table: string) => {
       input?.order?.push(`admin:${table}`)
       calls.push({ table, method: 'from', args: [] })
-      const builder: Record<string, unknown> = {}
-      for (const method of ['select', 'eq']) {
-        builder[method] = vi.fn((...args: unknown[]) => {
-          calls.push({ table, method, args })
+      const predicates = new Map<string, unknown>()
+      const builder: TestQueryBuilder = {
+        select: vi.fn((...args: unknown[]) => {
+          calls.push({ table, method: 'select', args })
           return builder
-        })
+        }),
+        eq: vi.fn((column: string, value: unknown) => {
+          calls.push({ table, method: 'eq', args: [column, value] })
+          predicates.set(column, value)
+          return builder
+        }),
+        maybeSingle: vi.fn(async () => {
+          calls.push({ table, method: 'maybeSingle', args: [] })
+          const result = next(table)
+          if (result.error || result.data === null || typeof result.data !== 'object') return result
+          const row = result.data as Record<string, unknown>
+          const matches = predicates.size > 0
+            && [...predicates].every(([column, value]) => row[column] === value)
+          return matches ? result : { data: null, error: null }
+        }),
       }
-      builder.maybeSingle = vi.fn(async () => {
-        calls.push({ table, method: 'maybeSingle', args: [] })
-        return next(table)
-      })
       return builder
     }),
     rpc: vi.fn(async (...args: unknown[]) => {
@@ -249,6 +276,7 @@ beforeEach(() => {
   })
   mocks.applyChoiceToUserState.mockResolvedValue(undefined)
   mocks.continuePersonalizedGeneration.mockResolvedValue({ nextChapterReady: true })
+  mocks.continueStandardGeneration.mockResolvedValue({ nextChapterReady: true })
 })
 
 describe('applyPersonalizedChoice', () => {
@@ -282,6 +310,9 @@ describe('applyPersonalizedChoice', () => {
     ])
     expect(cookie.calls.filter((call) => call.method === 'select')).toEqual([
       { table: 'stories', method: 'select', args: ['id'] },
+    ])
+    expect(cookie.calls.filter((call) => call.method === 'eq')).toEqual([
+      { table: 'stories', method: 'eq', args: ['id', storyId] },
     ])
   })
 
@@ -363,6 +394,16 @@ describe('applyPersonalizedChoice', () => {
       'user_id,story_id,status,current_chapter,jejak,ending_name,route_state,choice_history,locked_ending_key,updated_at',
       'story_id,chapter_number,choice_id,consequence,next_chapter_number,is_ending,effect_json,choice_kind',
       'story_id,number,choices',
+    ])
+    expect(fixture.calls.filter((call) => call.method === 'eq')).toEqual([
+      { table: 'stories', method: 'eq', args: ['id', storyId] },
+      { table: 'reader_states', method: 'eq', args: ['user_id', userId] },
+      { table: 'reader_states', method: 'eq', args: ['story_id', storyId] },
+      { table: 'choice_outcomes', method: 'eq', args: ['story_id', storyId] },
+      { table: 'choice_outcomes', method: 'eq', args: ['chapter_number', 1] },
+      { table: 'choice_outcomes', method: 'eq', args: ['choice_id', 'private-choice'] },
+      { table: 'chapters', method: 'eq', args: ['story_id', storyId] },
+      { table: 'chapters', method: 'eq', args: ['number', 1] },
     ])
     expect(fixture.client.rpc).toHaveBeenCalledOnce()
     const [rpcName, rpcInput] = fixture.client.rpc.mock.calls[0] as [string, Record<string, unknown>]
@@ -474,6 +515,9 @@ describe('personalized choice route dispatch', () => {
   it('falls through to old path for authenticated standard story', async () => {
     const standardMetadata = { ...metadataRow, id: 'demo:standard', visibility: 'public', story_mode: 'standard' }
     const fixture = createAdminDb({ tables: { stories: [{ data: standardMetadata, error: null }] } })
+    mocks.cookieFactory.mockResolvedValue(createCookieDb({
+      story: { data: { id: 'demo:standard' }, error: null },
+    }).client)
     mocks.adminFactory.mockReturnValue(fixture.client)
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
@@ -490,6 +534,9 @@ describe('personalized choice route dispatch', () => {
   it('falls through to old path for authenticated unlisted standard story', async () => {
     const standardMetadata = { ...metadataRow, id: 'demo:unlisted', visibility: 'unlisted', story_mode: 'standard' }
     const fixture = createAdminDb({ tables: { stories: [{ data: standardMetadata, error: null }] } })
+    mocks.cookieFactory.mockResolvedValue(createCookieDb({
+      story: { data: { id: 'demo:unlisted' }, error: null },
+    }).client)
     mocks.adminFactory.mockReturnValue(fixture.client)
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
@@ -499,7 +546,7 @@ describe('personalized choice route dispatch', () => {
     } }), { params: Promise.resolve({ id: 'demo%3Aunlisted' }) })
 
     expect(response.status).toBe(200)
-    expect(await response.json()).toEqual({ outcome: publicOutcome })
+    expect(await response.json()).toEqual({ outcome: publicOutcome, nextChapterReady: true })
     expect(mocks.applyChoiceToUserState).toHaveBeenCalledOnce()
     expect(fixture.client.rpc).not.toHaveBeenCalled()
   })

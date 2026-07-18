@@ -39,8 +39,34 @@ import type { AiModelRoute } from '@/lib/ops/ai-model-routes'
 
 const DEFAULT_MODEL = 'openai/gpt-4.1-mini'
 /** Max wall time per model attempt — hang proxy must not hold lease forever. */
-const LLM_PROSE_TIMEOUT_MS = 90_000
-const LLM_CHOICE_TIMEOUT_MS = 45_000
+const LLM_PROSE_TIMEOUT_MS = 120_000
+const LLM_CHOICE_TIMEOUT_MS = 60_000
+/**
+ * Antigravity Gemini (`ag/*` via 9router) spends a large share of `max_tokens`
+ * on reasoning/thinking. Without a high floor, chapter prose truncates mid-sentence.
+ * Empirically: mt=1024 → ~40 content tokens; mt=2048 → full short replies.
+ */
+const AG_REASONING_MAX_OUTPUT_FLOOR = 4096
+const DEFAULT_PROSE_MAX_OUTPUT_TOKENS = 2048
+
+function isAntigravityModelLabel(label: string, modelId?: string): boolean {
+  const blob = `${label} ${modelId ?? ''}`.toLowerCase()
+  return blob.includes('ag/') || blob.includes('antigravity')
+}
+
+/** Resolve maxOutputTokens with a hard floor for ag/* reasoning models. */
+function resolveMaxOutputTokens(args: {
+  label: string
+  modelId?: string
+  routeMax?: number | null
+  fallback?: number
+}): number {
+  const base = args.routeMax ?? args.fallback ?? DEFAULT_PROSE_MAX_OUTPUT_TOKENS
+  if (isAntigravityModelLabel(args.label, args.modelId)) {
+    return Math.max(base, AG_REASONING_MAX_OUTPUT_FLOOR)
+  }
+  return base
+}
 
 /** Satu kandidat "otak" dalam rantai fallback. */
 type ModelCandidate = { model: LanguageModel; label: string }
@@ -288,6 +314,7 @@ async function generateProse(args: {
   snapshot: CanonSnapshot
   plan: Record<string, unknown>
   repairFindings?: Finding[]
+  route?: AiModelRoute
 }): Promise<{ title: string; paragraphs: string[]; usedModel: string }> {
   const { system, prompt } = buildPrompt(args)
   let lastError: unknown
@@ -303,6 +330,12 @@ async function generateProse(args: {
         // SSE streaming meski diminta non-stream, sehingga parser non-stream
         // gagal. streamText mem-parse SSE; kita cukup menunggu `text` rampung.
         // Timeout: hang di 9router/proxy tidak boleh menahan lease forever.
+        // maxOutputTokens: wajib untuk ag/* (reasoning memakan budget).
+        const maxOutputTokens = resolveMaxOutputTokens({
+          label,
+          routeMax: args.route?.maxOutputTokens,
+          fallback: DEFAULT_PROSE_MAX_OUTPUT_TOKENS,
+        })
         const result = streamText({
           model,
           system,
@@ -310,6 +343,8 @@ async function generateProse(args: {
             attempt === 0
               ? prompt
               : `${prompt}\n\nCATATAN: revisi sebelumnya memuat istilah teknis terlarang. Tulis ulang murni sebagai narasi cerita.`,
+          temperature: args.route?.temperature ?? undefined,
+          maxOutputTokens,
           abortSignal: AbortSignal.timeout(LLM_PROSE_TIMEOUT_MS),
         })
         const usage = bestEffortUsage(result.usage)
@@ -547,7 +582,11 @@ async function generateStoryContractJson(args: {
         system,
         prompt,
         temperature: args.route?.temperature ?? undefined,
-        maxOutputTokens: args.route?.maxOutputTokens ?? undefined,
+        maxOutputTokens: resolveMaxOutputTokens({
+          label,
+          routeMax: args.route?.maxOutputTokens,
+          fallback: DEFAULT_PROSE_MAX_OUTPUT_TOKENS,
+        }),
         abortSignal: args.signal,
       })
       const usage = bestEffortUsage(result.usage)
@@ -584,7 +623,12 @@ async function generateChoiceJson(args: {
         system,
         prompt,
         temperature: args.route?.temperature ?? undefined,
-        maxOutputTokens: args.route?.maxOutputTokens ?? undefined,
+        maxOutputTokens: resolveMaxOutputTokens({
+          label,
+          routeMax: args.route?.maxOutputTokens,
+          // Choices shorter, but ag/* still needs reasoning headroom.
+          fallback: isAntigravityModelLabel(label) ? AG_REASONING_MAX_OUTPUT_FLOOR : 1024,
+        }),
         abortSignal: AbortSignal.timeout(LLM_CHOICE_TIMEOUT_MS),
       })
       const usage = bestEffortUsage(result.usage)
@@ -646,12 +690,13 @@ export function createGatewayProvider(
       // 1) Scaffold canon-safe (semua metadata terstruktur & sinyal Layer B).
       const scaffold = (await base.writeChapter(input)) as Record<string, unknown>
 
-      // 2) Prosa nyata dari LLM (dengan rantai fallback).
+      // 2) Prosa nyata dari LLM (dengan rantai fallback + max token floor for ag/*).
       const { title, paragraphs } = await generateProse({
         chain,
         snapshot: input.snapshot,
         plan: input.plan as Record<string, unknown>,
         repairFindings: input.repairFindings,
+        route: aiRoute,
       })
 
       // 3) Gabungkan: prosa model menggantikan judul/paragraf; sisanya canon-safe.

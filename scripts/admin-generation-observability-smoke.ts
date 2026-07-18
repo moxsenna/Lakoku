@@ -82,5 +82,22 @@ check(
     && /await\s+generate\s*\(/.test(authoringSource),
 )
 
+console.log('\nadmin generation dashboard boundaries:')
+
+const generationLoader = readFileSync(resolve(root, 'lib/admin/generation.ts'), 'utf8')
+const generationPage = readFileSync(resolve(root, 'app/admin/generation/page.tsx'), 'utf8')
+const generationComponentsRoot = resolve(root, 'components/admin/generation')
+const generationUiSource = [generationPage, ...sourceFiles(generationComponentsRoot).map((file) => readFileSync(file, 'utf8'))].join('\n')
+
+check('generation loader does not read story_events directly', !/story_events/.test(generationLoader))
+check('generation loader uses cookie-scoped client', /createClient/.test(generationLoader) && !/createAdminClient/.test(generationLoader))
+const generationUiWithoutMaskedEmail = generationUiSource.replaceAll('masked_user_email', '')
+check('generation dashboard renders masked identity only', !/\.email\b|raw_email|user_email/.test(generationUiWithoutMaskedEmail))
+check('generation dashboard omits claim token', !/claim_?token/i.test(generationUiSource))
+check('generation dashboard omits publication result fields', !/publication_?(result|json)|publication payload/i.test(generationUiSource))
+check('generation dashboard has no mutation controls', !/retry job|cancel job|recover job|edit route/i.test(generationUiSource))
+check('generation dashboard links authorized user detail', /\/admin\/users\//.test(generationUiSource))
+check('generation dashboard has loading route', readFileSync(resolve(root, 'app/admin/generation/loading.tsx'), 'utf8').length > 0)
+
 console.log(`\n${pass}/${pass + fail} PASS`)
 if (fail > 0) process.exit(1)

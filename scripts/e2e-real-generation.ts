@@ -54,7 +54,12 @@ async function main() {
   console.log('\n[e2e] generasi nyata Bab 1..3')
   const results = []
   for (let n = 1; n <= 3; n++) {
-    const r = await generateNextChapterReal(STORY, n)
+    const r = await generateNextChapterReal({
+      storyId: STORY,
+      userId: '00000000-0000-4000-8000-000000000001',
+      chapterNumber: n,
+      correlationId: crypto.randomUUID(),
+    })
     results.push(r)
     console.log(`  Bab ${n}:`, JSON.stringify(r))
   }
@@ -119,7 +124,12 @@ async function main() {
     .from('chapters')
     .select('*', { count: 'exact', head: true })
     .eq('story_id', STORY)
-  const again = await generateNextChapterReal(STORY, 1)
+  const again = await generateNextChapterReal({
+    storyId: STORY,
+    userId: '00000000-0000-4000-8000-000000000001',
+    chapterNumber: 1,
+    correlationId: crypto.randomUUID(),
+  })
   const { count: after } = await db
     .from('chapters')
     .select('*', { count: 'exact', head: true })

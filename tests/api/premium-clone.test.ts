@@ -304,7 +304,12 @@ describe('clonePremiumStoryForUser', () => {
     const { clonePremiumStoryForUser } = await import('@/lib/api/premium-clone.server')
     await clonePremiumStoryForUser({ userId, templateStoryId, idempotencyKey })
     expect(mocks.generate).toHaveBeenCalledOnce()
-    expect(mocks.generate).toHaveBeenCalledWith({ storyId, userId, chapterNumber: 1 })
+    expect(mocks.generate).toHaveBeenCalledWith({
+      storyId,
+      userId,
+      chapterNumber: 1,
+      correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    })
     expect(mocks.generate.mock.calls[0]?.[0].storyId).not.toBe(templateStoryId)
   })
 

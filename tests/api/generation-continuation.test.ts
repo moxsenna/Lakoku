@@ -39,6 +39,7 @@ vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.cookieFactory }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.adminFactory }))
 
 const userId = '10000000-0000-4000-8000-000000000001'
+const correlationId = '20000000-0000-4000-8000-000000000002'
 const storyId = 'test:continuation-story'
 const choiceId = 'private-choice'
 const idempotencyKey = `choice:${storyId}:1:${choiceId}`
@@ -224,6 +225,7 @@ describe('continuePersonalizedGeneration', () => {
     const result = await continuePersonalizedGeneration({
       storyId: `${storyId}:ready`,
       userId,
+      correlationId,
       chapterNumber: 2,
       triggerChoiceId: choiceId,
     })
@@ -234,6 +236,7 @@ describe('continuePersonalizedGeneration', () => {
     expect(mocks.generateNextPersonalizedChapter).toHaveBeenCalledWith({
       storyId: `${storyId}:ready`,
       userId,
+      correlationId,
       chapterNumber: 2,
       triggerChoiceId: choiceId,
     })
@@ -252,6 +255,7 @@ describe('continuePersonalizedGeneration', () => {
     await expect(continuePersonalizedGeneration({
       storyId: `${storyId}:exists`,
       userId,
+      correlationId,
       chapterNumber: 3,
       triggerChoiceId: choiceId,
     })).resolves.toEqual({ nextChapterReady: true })
@@ -271,6 +275,7 @@ describe('continuePersonalizedGeneration', () => {
     const wait = continuePersonalizedGeneration({
       storyId: `${storyId}:timeout`,
       userId,
+      correlationId,
       chapterNumber: 4,
       triggerChoiceId: choiceId,
     })
@@ -300,6 +305,7 @@ describe('continuePersonalizedGeneration', () => {
     const input = {
       storyId: `${storyId}:shared`,
       userId,
+      correlationId,
       chapterNumber: 5,
       triggerChoiceId: choiceId,
     }
@@ -328,6 +334,7 @@ describe('continuePersonalizedGeneration', () => {
     await expect(continuePersonalizedGeneration({
       storyId: `${storyId}:lease`,
       userId,
+      correlationId,
       chapterNumber: 6,
       triggerChoiceId: choiceId,
     })).resolves.toEqual({ nextChapterReady: false })
@@ -342,6 +349,7 @@ describe('continuePersonalizedGeneration', () => {
     await expect(continuePersonalizedGeneration({
       storyId: `${storyId}:throw`,
       userId,
+      correlationId,
       chapterNumber: 8,
       triggerChoiceId: choiceId,
     })).resolves.toEqual({ nextChapterReady: false })
@@ -360,6 +368,7 @@ describe('continuePersonalizedGeneration', () => {
     await expect(continuePersonalizedGeneration({
       storyId: `${storyId}:fail`,
       userId,
+      correlationId,
       chapterNumber: 7,
       triggerChoiceId: choiceId,
     })).resolves.toEqual({ nextChapterReady: false })
@@ -386,6 +395,7 @@ describe('choice route generation continuation', () => {
     expect(mocks.generateNextPersonalizedChapter).toHaveBeenCalledWith({
       storyId,
       userId,
+      correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       chapterNumber: 2,
       triggerChoiceId: choiceId,
     })
@@ -437,7 +447,12 @@ describe('choice route generation continuation', () => {
 
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ outcome: publicOutcome, nextChapterReady: true })
-    expect(mocks.generateNextChapterReal).toHaveBeenCalledWith('demo:standard', 2)
+    expect(mocks.generateNextChapterReal).toHaveBeenCalledWith({
+      storyId: 'demo:standard',
+      userId,
+      chapterNumber: 2,
+      correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    })
     expect(mocks.generateNextPersonalizedChapter).not.toHaveBeenCalled()
   })
 

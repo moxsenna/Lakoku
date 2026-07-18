@@ -4,7 +4,12 @@ import { fantasiPetualanganContract } from '@/fixtures/contracts/fantasi-petuala
 import { misteriDramaContract } from '@/fixtures/contracts/misteri-drama'
 import { romansaDramaContract } from '@/fixtures/contracts/romansa-drama'
 import { generateStoryContractRaw } from '@/lib/ai-gateway/gateway'
-import type { GenerationProvider, StoryContractInput } from '@/lib/ai-gateway/provider'
+import type {
+  GenerationProvider,
+  ModelCallExecutionOptions,
+  StoryContractInput,
+} from '@/lib/ai-gateway/provider'
+import type { ProviderCallContext } from '@/lib/observability/generation-provider-call.contract'
 import {
   createDefaultTasteProfile,
   type TasteProfile,
@@ -38,11 +43,13 @@ async function generateWithinBudget(
   provider: GenerationProvider,
   input: StoryContractInput,
   timeoutMs: number,
+  options?: ModelCallExecutionOptions,
 ): Promise<unknown> {
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
   const providerResult = generateStoryContractRaw({ provider }, input, {
     signal: controller.signal,
+    ...options,
   })
   const timeout = new Promise<never>((_resolve, reject) => {
     controller.signal.addEventListener('abort', () => {
@@ -341,6 +348,7 @@ export async function createResilientStoryContract(input: {
   storyId: string
   tasteJson: TasteProfile
   provider: GenerationProvider
+  telemetryContext?: ProviderCallContext
   timeoutMs?: number
 }): Promise<{ contract: StoryContract; contractSource: ContractSource }> {
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -353,7 +361,17 @@ export async function createResilientStoryContract(input: {
   })
 
   try {
-    const raw = await generateWithinBudget(input.provider, providerInput(), timeoutMs)
+    const raw = await generateWithinBudget(
+      input.provider,
+      providerInput(),
+      timeoutMs,
+      input.telemetryContext
+        ? {
+            telemetryContext: input.telemetryContext,
+            workflowPhase: 'STORY_CONTRACT_INITIAL',
+          }
+        : undefined,
+    )
     const first = parseRequestedContract(raw, input.storyId)
     if (first.success) return { contract: first.data, contractSource: 'llm' }
 
@@ -361,6 +379,12 @@ export async function createResilientStoryContract(input: {
       input.provider,
       providerInput(issueStrings(first.error)),
       timeoutMs,
+      input.telemetryContext
+        ? {
+            telemetryContext: input.telemetryContext,
+            workflowPhase: 'STORY_CONTRACT_REPAIR',
+          }
+        : undefined,
     )
     const repaired = parseRequestedContract(repairedRaw, input.storyId)
     if (repaired.success) return { contract: repaired.data, contractSource: 'llm_repaired' }

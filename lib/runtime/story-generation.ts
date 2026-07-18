@@ -28,6 +28,8 @@ import { selectProvider } from '@lakoku/ai-gateway/server'
 import { recordGenerationAttempt } from '@/lib/observability/server'
 import type { ChapterBrief } from '@/lib/story-engine/chapter-brief'
 import { normalizeRouteState } from '@/lib/story-engine/route-state'
+import { createSynchronousProviderContext } from './generation-provider-context'
+import type { ProviderCallContext } from '@/lib/observability/generation-provider-call.contract'
 
 /**
  * Workflow generasi bab NYATA (M2→M5 disatukan) — "jalur cerita AI end-to-end".
@@ -217,6 +219,7 @@ async function buildChoices(
   snapshot: CanonSnapshot,
   draft: ChapterDraftParsed,
   chapterNumber: number,
+  providerContext: ProviderCallContext,
 ): Promise<{
   choicePrompt: string
   choices: { id: string; label: string }[]
@@ -229,7 +232,7 @@ async function buildChoices(
   try {
     const brief = syntheticChapterBrief(snapshot.storyId, chapterNumber, draft)
     const branch = await generateChoiceBranch(
-      { provider: await selectProvider() },
+      { provider: await selectProvider(providerContext) },
       {
         snapshot,
         chapterBrief: brief,
@@ -238,6 +241,10 @@ async function buildChoices(
         routeState: normalizeRouteState({}),
         choiceHistory: [],
         lockedEndingKey: null,
+      },
+      {
+        telemetryContext: providerContext,
+        workflowPhase: 'CHOICES_INITIAL',
       },
     )
     if (!branch) return fallbackChoicesFromDraft(draft, chapterNumber)
@@ -264,10 +271,25 @@ async function buildChoices(
  * Aman dipanggil berulang (idempoten); pada kegagalan review, lease dilepas
  * agar retry tidak terblokir hingga TTL habis.
  */
+export interface StandardGenerateInput {
+  storyId: string
+  userId: string
+  chapterNumber: number
+  correlationId: string
+}
+
 export async function generateNextChapterReal(
-  storyId: string,
-  chapterNumber: number,
+  input: StandardGenerateInput,
 ): Promise<RealGenerateResult> {
+  const { storyId, userId, chapterNumber, correlationId } = input
+  const providerContext = createSynchronousProviderContext({
+    userId,
+    storyId,
+    chapterNumber,
+    generationKind: 'standard',
+    correlationId,
+  })
+
   // 1) Lease (idempoten). Menolak bila ada generasi lain aktif.
   const lease = await acquireGenerationLease({
     storyId,
@@ -302,8 +324,17 @@ export async function generateNextChapterReal(
 
     // 5) Generasi tervalidasi: plan → write → Layer A → Layer B → repair.
     const result = await generateChapter(
-      { provider: await selectProvider() },
-      { snapshot, blueprint, chapterNumber, threadContext },
+      { provider: await selectProvider(providerContext) },
+      {
+        snapshot,
+        blueprint,
+        chapterNumber,
+        threadContext,
+        executionOptions: {
+          telemetryContext: providerContext,
+          workflowPhase: 'CHAPTER_PROSE_INITIAL',
+        },
+      },
     )
 
     if (result.status !== 'PUBLISHED' || !result.draft) {
@@ -334,7 +365,7 @@ export async function generateNextChapterReal(
     assertConsumerSafe(readerSafe)
 
     // 7) Cabang pilihan LLM (grounded di prosa bab) — fallback lokal bila gagal.
-    const branch = await buildChoices(snapshot, draft, chapterNumber)
+    const branch = await buildChoices(snapshot, draft, chapterNumber, providerContext)
     const leakInChoices = [
       branch.choicePrompt,
       ...branch.choices.map((c) => c.label),

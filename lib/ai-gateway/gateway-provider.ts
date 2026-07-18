@@ -11,6 +11,7 @@ import {
   type ChoiceProviderInput,
   type StoryContractInput,
   type StoryContractCallOptions,
+  type ModelCallExecutionOptions,
   type GenerationRuntimePolicy,
   DEFAULT_RUNTIME_POLICY,
 } from './provider'
@@ -695,9 +696,12 @@ export function createGatewayProvider(
       return base.generatePlan(input)
     },
 
-    async writeChapter(input: WriteInput): Promise<unknown> {
+    async writeChapter(
+      input: WriteInput,
+      _options?: ModelCallExecutionOptions,
+    ): Promise<unknown> {
       // 1) Scaffold canon-safe (semua metadata terstruktur & sinyal Layer B).
-      const scaffold = (await base.writeChapter(input)) as Record<string, unknown>
+      const scaffold = (await base.writeChapter(input, _options)) as Record<string, unknown>
 
       // 2) Prosa nyata dari LLM (dengan rantai fallback).
       const { title, paragraphs } = await generateProse({
@@ -731,7 +735,10 @@ export function createGatewayProvider(
       })
     },
 
-    generateChoices(input: ChoiceProviderInput): Promise<unknown> {
+    generateChoices(
+      input: ChoiceProviderInput,
+      _options?: ModelCallExecutionOptions,
+    ): Promise<unknown> {
       return generateChoiceJson({
         chain: choiceChain,
         input,

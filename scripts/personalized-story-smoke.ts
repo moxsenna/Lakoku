@@ -370,7 +370,9 @@ check(
   'existing generation route still selects generateNextChapterReal',
   generationRoute.includes("from '@lakoku/runtime'")
     && generationRoute.includes('generateNextChapterReal')
-    && generationRoute.includes('await generateNextChapterReal(id, n)'),
+    && generationRoute.includes('await generateNextChapterReal({')
+    && generationRoute.includes('userId: user.id')
+    && generationRoute.includes('correlationId: crypto.randomUUID()'),
 )
 
 const personalizedSourcePaths = [

@@ -14,6 +14,7 @@ import type { CanonSnapshot, ChapterBlueprint, Finding } from '@lakoku/narrative
 import type { ChapterBrief, ChoiceHistoryEntry } from '../story-engine/chapter-brief'
 import type { RouteState } from '../story-engine/route-state'
 import type { TasteProfile } from '../taste-profile/schema'
+import type { ProviderCallContext } from '../observability/generation-provider-call.contract'
 import type { ChapterDraftParsed } from './schemas'
 
 export interface PlanInput {
@@ -59,8 +60,15 @@ export interface StoryContractInput {
   repairErrors?: string[]
 }
 
+export interface ModelCallExecutionOptions {
+  telemetryContext: ProviderCallContext
+  workflowPhase: string
+}
+
 export interface StoryContractCallOptions {
   signal?: AbortSignal
+  telemetryContext?: ProviderCallContext
+  workflowPhase?: string
 }
 
 export interface ChoiceProviderInput {
@@ -104,8 +112,11 @@ export interface GenerationProvider {
   /** Nama internal — untuk log/korelasi, tak pernah ke pembaca. */
   readonly name: string
   generatePlan(input: PlanInput): Promise<unknown>
-  writeChapter(input: WriteInput): Promise<unknown>
-  generateChoices?(input: ChoiceProviderInput): Promise<unknown>
+  writeChapter(input: WriteInput, options?: ModelCallExecutionOptions): Promise<unknown>
+  generateChoices?(
+    input: ChoiceProviderInput,
+    options?: ModelCallExecutionOptions,
+  ): Promise<unknown>
   generateStoryContract?(
     input: StoryContractInput,
     options?: StoryContractCallOptions,
@@ -245,7 +256,7 @@ export function createDeterministicProvider(
       }
     },
 
-    async writeChapter({ snapshot, plan, repairFindings, injectDefects }): Promise<unknown> {
+    async writeChapter({ snapshot, plan, repairFindings, injectDefects }, _options): Promise<unknown> {
       const p = plan as {
         chapterNumber: number
         phase: string
@@ -345,7 +356,7 @@ export function createDeterministicProvider(
       }
     },
 
-    async generateChoices(input: ChoiceProviderInput): Promise<unknown> {
+    async generateChoices(input: ChoiceProviderInput, _options): Promise<unknown> {
       if (input.currentChapter >= 50) return null
 
       const active = input.canon.activeCharacters

@@ -11,6 +11,21 @@ import { createDefaultTasteProfile, type TasteProfile } from '@/lib/taste-profil
 
 vi.mock('server-only', () => ({}))
 
+const USER_ID = '10000000-0000-4000-8000-000000000001'
+const CORRELATION_ID = '20000000-0000-4000-8000-000000000002'
+
+function contractContext(storyId: string) {
+  return {
+    userId: USER_ID,
+    storyId,
+    chapterNumber: null,
+    generationKind: 'personalized' as const,
+    jobId: null,
+    correlationId: CORRELATION_ID,
+    attemptNumber: null,
+  }
+}
+
 function cloneContract(contract: StoryContract = misteriDramaContract): StoryContract {
   return structuredClone(contract)
 }
@@ -45,6 +60,7 @@ describe('createResilientStoryContract', () => {
       storyId: contract.storyId,
       tasteJson: taste(),
       provider: providerWith(generateStoryContract),
+      telemetryContext: contractContext(contract.storyId),
     })
 
     expect(result).toEqual({ contract, contractSource: 'llm' })
@@ -54,6 +70,8 @@ describe('createResilientStoryContract', () => {
       tasteJson: taste(),
     }, {
       signal: expect.any(AbortSignal),
+      telemetryContext: contractContext(contract.storyId),
+      workflowPhase: 'STORY_CONTRACT_INITIAL',
     })
   })
 
@@ -68,11 +86,20 @@ describe('createResilientStoryContract', () => {
       storyId: contract.storyId,
       tasteJson: taste(),
       provider: providerWith(generateStoryContract),
+      telemetryContext: contractContext(contract.storyId),
     })
 
     expect(result).toEqual({ contract, contractSource: 'llm_repaired' })
     expect(generateStoryContract).toHaveBeenCalledTimes(2)
     expect(generateStoryContract.mock.calls[0][0]).not.toHaveProperty('repairErrors')
+    expect(generateStoryContract.mock.calls[0][1]).toMatchObject({
+      telemetryContext: contractContext(contract.storyId),
+      workflowPhase: 'STORY_CONTRACT_INITIAL',
+    })
+    expect(generateStoryContract.mock.calls[1][1]).toMatchObject({
+      telemetryContext: contractContext(contract.storyId),
+      workflowPhase: 'STORY_CONTRACT_REPAIR',
+    })
     expect(generateStoryContract.mock.calls[1][0]).toEqual({
       storyId: contract.storyId,
       tasteJson: taste(),

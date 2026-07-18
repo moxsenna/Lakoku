@@ -319,11 +319,23 @@ describe('createPersonalizedStory', () => {
 
     await createPersonalizedStory({ userId, idempotencyKey })
 
+    const expectedProviderContext = {
+      userId,
+      storyId: reservedStoryId,
+      chapterNumber: null,
+      generationKind: 'personalized',
+      jobId: null,
+      correlationId: '11111111-1111-4111-8111-111111111111',
+      attemptNumber: null,
+    }
+    expect(mocks.selectProvider).toHaveBeenCalledOnce()
+    expect(mocks.selectProvider).toHaveBeenCalledWith(expectedProviderContext)
     expect(mocks.createResilientStoryContract).toHaveBeenCalledOnce()
     expect(mocks.createResilientStoryContract).toHaveBeenCalledWith(expect.objectContaining({
       storyId: reservedStoryId,
       tasteJson: tasteProfile,
       provider: { name: 'fake-provider' },
+      telemetryContext: expectedProviderContext,
     }))
     expect(mocks.persistContractAndCanon).toHaveBeenCalledOnce()
     expect(mocks.persistContractAndCanon).toHaveBeenCalledWith({
@@ -352,6 +364,7 @@ describe('createPersonalizedStory', () => {
       storyId: reservedStoryId,
       userId,
       chapterNumber: 1,
+      correlationId: '11111111-1111-4111-8111-111111111111',
     })
     expect(mocks.generateNextPersonalizedChapter.mock.calls[0][0].chapterNumber).toBe(1)
   })
@@ -472,7 +485,7 @@ describe('createPersonalizedStory', () => {
       status: 'FAILED',
       error_code: 'GENERATION_FAILED',
     })
-    expect(mocks.randomUUID).toHaveBeenCalledTimes(1)
+    expect(mocks.randomUUID).toHaveBeenCalledTimes(2)
   })
 
   it('never accepts body userId; owner is only the provided session userId', async () => {

@@ -25,7 +25,7 @@ import {
 } from '@lakoku/narrative-core'
 import { generatePlan, writeChapter, type GatewayDeps } from './gateway'
 import type { ChapterDraftParsed } from './schemas'
-import type { DraftDefect } from './provider'
+import type { DraftDefect, ModelCallExecutionOptions } from './provider'
 
 export const MAX_REPAIR_ATTEMPTS = 2 // per lapis
 
@@ -92,6 +92,7 @@ export async function generateChapter(
     injectDefects?: DraftDefect[]
     threadContext?: ThreadContext
     layerBContext?: LayerBContext
+    executionOptions?: ModelCallExecutionOptions
   },
 ): Promise<GenerationResult> {
   const { snapshot, blueprint, chapterNumber, threadContext, layerBContext } = args
@@ -103,7 +104,7 @@ export async function generateChapter(
     snapshot,
     plan,
     injectDefects: args.injectDefects,
-  })
+  }, args.executionOptions)
   let attempts = 0
 
   const fail = (
@@ -130,7 +131,11 @@ export async function generateChapter(
   while (needsRepair(aFindings) && aAttempts < MAX_REPAIR_ATTEMPTS) {
     aAttempts++
     attempts++
-    draft = await writeChapter(deps, { snapshot, plan, repairFindings: aFindings })
+    draft = await writeChapter(
+      deps,
+      { snapshot, plan, repairFindings: aFindings },
+      args.executionOptions,
+    )
     aFindings = runLayerA(snapshot, draft, chapterNumber, threadContext)
   }
   if (needsRepair(aFindings)) return fail('A', aFindings)
@@ -141,7 +146,11 @@ export async function generateChapter(
   while (needsRepair(bFindings) && bAttempts < MAX_REPAIR_ATTEMPTS) {
     bAttempts++
     attempts++
-    draft = await writeChapter(deps, { snapshot, plan, repairFindings: bFindings })
+    draft = await writeChapter(
+      deps,
+      { snapshot, plan, repairFindings: bFindings },
+      args.executionOptions,
+    )
     bFindings = validateLayerB(snapshot, draft, layerBContext ?? {}).findings
   }
   if (needsRepair(bFindings)) return fail('B', bFindings)

@@ -137,6 +137,11 @@ describe('generation route ownership authorization', () => {
 
     expect(response.status).toBe(201)
     expect(mocks.guardAdminToken).toHaveBeenCalledOnce()
-    expect(mocks.generateNextChapterReal).toHaveBeenCalledWith('premium:story-a', 1)
+    expect(mocks.generateNextChapterReal).toHaveBeenCalledWith({
+      storyId: 'premium:story-a',
+      userId: 'user-a',
+      chapterNumber: 1,
+      correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    })
   })
 })

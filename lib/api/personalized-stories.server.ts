@@ -12,6 +12,7 @@ import { createResilientStoryContract } from '@/lib/story-engine/contract-genera
 import { persistContractAndCanon } from '@/lib/story-engine/contract-persistence.server'
 import { normalizeRouteState } from '@/lib/story-engine/route-state'
 import { generateNextPersonalizedChapter } from '@/lib/runtime/personalized-generation'
+import { createSynchronousProviderContext } from '@/lib/runtime/generation-provider-context'
 
 const UNIQUE_VIOLATION = '23505'
 const REQUEST_KIND = 'personalized' as const
@@ -188,6 +189,7 @@ export async function createPersonalizedStory(
 
   const admin = createAdminClient()
   const storyId = `ai:${randomUUID()}`
+  const correlationId = randomUUID()
 
   const { error: reserveError } = await admin
     .from('story_creation_requests')
@@ -246,11 +248,19 @@ export async function createPersonalizedStory(
   }
 
   try {
-    const provider = await selectProvider()
+    const contractProviderContext = createSynchronousProviderContext({
+      userId,
+      storyId,
+      chapterNumber: null,
+      generationKind: 'personalized',
+      correlationId,
+    })
+    const provider = await selectProvider(contractProviderContext)
     const { contract, contractSource } = await createResilientStoryContract({
       storyId,
       tasteJson: tasteProfile,
       provider,
+      telemetryContext: contractProviderContext,
     })
 
     const meta = shellMetadata(
@@ -301,6 +311,7 @@ export async function createPersonalizedStory(
       storyId,
       userId,
       chapterNumber: 1,
+      correlationId,
     })
     if (!generated.ok && generated.reason !== 'CHAPTER_EXISTS') {
       throw new PersonalizedStoryError('GENERATION_FAILED')

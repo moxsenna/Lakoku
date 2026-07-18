@@ -56,9 +56,15 @@ export async function startOwnedChapterGeneration(
       return { ok: false, error: STORY_NOT_FOUND_ERROR }
     }
 
+    const correlationId = crypto.randomUUID()
     after(async () => {
       try {
-        const result = await generateNextChapterReal(storyId, chapterNumber)
+        const result = await generateNextChapterReal({
+          storyId,
+          userId: user.id,
+          chapterNumber,
+          correlationId,
+        })
         if (!result.ok && result.reason !== 'CHAPTER_EXISTS' && result.reason !== 'LEASE_HELD') {
           console.log('[v0] startOwnedChapterGeneration gagal:', result.reason, result.detail)
         }

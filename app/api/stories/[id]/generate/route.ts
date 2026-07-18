@@ -61,7 +61,12 @@ export async function POST(
     const result =
       mode === 'fake'
         ? await generateNextChapter(id, n)
-        : await generateNextChapterReal(id, n)
+        : await generateNextChapterReal({
+            storyId: id,
+            userId: user.id,
+            chapterNumber: n,
+            correlationId: crypto.randomUUID(),
+          })
 
     if (!result.ok) {
       // LEASE_HELD/CHAPTER_EXISTS/FAILED_REVIEW_REQUIRED → konflik/tak-dapat-diproses.

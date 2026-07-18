@@ -27,6 +27,7 @@ import {
   type LastParagraphs,
   type StoryContractInput,
   type StoryContractCallOptions,
+  type ModelCallExecutionOptions,
 } from './provider'
 import { ChapterBriefSchema, ChoiceHistoryEntrySchema } from '../story-engine/chapter-brief'
 import { RouteStateSchema } from '../story-engine/route-state'
@@ -74,13 +75,14 @@ export async function writeChapter(
     repairFindings?: Finding[]
     injectDefects?: DraftDefect[]
   },
+  options?: ModelCallExecutionOptions,
 ): Promise<ChapterDraftParsed> {
   const raw = await deps.provider.writeChapter({
     snapshot: args.snapshot,
     plan: args.plan,
     repairFindings: args.repairFindings,
     injectDefects: args.injectDefects,
-  })
+  }, options)
   const parsed = parseDraft(raw)
   if (!parsed.ok) {
     throw new GatewayError('Draft bab tidak valid.', 'DRAFT_INVALID', parsed.errors)
@@ -273,6 +275,7 @@ function projectChoiceInput(input: ChoiceInput): ChoiceProviderInput {
 export async function generateChoiceBranch(
   deps: GatewayDeps,
   input: ChoiceInput,
+  options?: ModelCallExecutionOptions,
 ): Promise<ChoiceBranch | null> {
   const providerInput = projectChoiceInput(input)
   if (providerInput.currentChapter === 50) return null
@@ -285,7 +288,11 @@ export async function generateChoiceBranch(
     )
   }
 
-  const raw = await generateChoices.call(deps.provider, structuredClone(providerInput))
+  const raw = await generateChoices.call(
+    deps.provider,
+    structuredClone(providerInput),
+    options,
+  )
   return validateChoiceBranch(raw, providerInput.currentChapter)
 }
 

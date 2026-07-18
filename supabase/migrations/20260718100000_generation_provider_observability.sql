@@ -233,7 +233,19 @@ as $$
 declare
   v_job public.generation_jobs%rowtype;
 begin
-  if tg_op in ('UPDATE', 'DELETE') then
+  if tg_op = 'DELETE' then
+    if pg_catalog.current_setting(
+      'lakoku.generation_provider_retention_delete', true
+    ) = 'v1' then
+      return old;
+    end if;
+
+    raise exception using
+      errcode = 'P0001',
+      message = 'GENERATION_PROVIDER_CALL_APPEND_ONLY';
+  end if;
+
+  if tg_op = 'UPDATE' then
     raise exception using
       errcode = 'P0001',
       message = 'GENERATION_PROVIDER_CALL_APPEND_ONLY';
@@ -480,4 +492,303 @@ grant execute on function public.record_generation_provider_call_v1(
   text, text, text, text, text, integer, boolean,
   timestamptz, timestamptz, bigint, text, text,
   bigint, bigint, bigint, numeric, text
+) to service_role;
+
+create table public.generation_provider_call_daily (
+  day date not null,
+  provider_id text not null,
+  model_id text not null,
+  use_case text not null,
+  workflow_phase text not null,
+  outcome text not null,
+  generation_kind text,
+  cost_source text not null,
+  cost_currency text,
+  call_count bigint not null,
+  success_count bigint not null,
+  fallback_call_count bigint not null,
+  input_token_count_sum numeric not null,
+  output_token_count_sum numeric not null,
+  total_token_count_sum numeric not null,
+  priced_call_count bigint not null,
+  unavailable_cost_count bigint not null,
+  cost_amount_sum numeric(28,8) not null,
+  elapsed_ms_sum numeric not null,
+  elapsed_ms_max bigint not null,
+  constraint generation_provider_call_daily_dimensions_key
+    unique nulls not distinct (
+      day, provider_id, model_id, use_case, workflow_phase,
+      outcome, generation_kind, cost_source, cost_currency
+    ),
+  constraint generation_provider_call_daily_provider_id_check check (
+    provider_id = pg_catalog.btrim(provider_id)
+    and pg_catalog.length(provider_id) between 1 and 80
+    and provider_id !~ '[[:cntrl:]]'
+  ),
+  constraint generation_provider_call_daily_model_id_check check (
+    model_id = pg_catalog.btrim(model_id)
+    and pg_catalog.length(model_id) between 1 and 200
+    and model_id !~ '[[:cntrl:]]'
+  ),
+  constraint generation_provider_call_daily_use_case_check check (
+    use_case = pg_catalog.btrim(use_case)
+    and pg_catalog.length(use_case) between 1 and 100
+    and use_case !~ '[[:cntrl:]]'
+  ),
+  constraint generation_provider_call_daily_workflow_phase_check check (
+    workflow_phase = pg_catalog.btrim(workflow_phase)
+    and pg_catalog.length(workflow_phase) between 1 and 100
+    and workflow_phase !~ '[[:cntrl:]]'
+  ),
+  constraint generation_provider_call_daily_outcome_check check (
+    outcome in (
+      'SUCCEEDED', 'PROVIDER_ERROR', 'TIMEOUT', 'ABORTED',
+      'INVALID_RESPONSE', 'CONTENT_REJECTED'
+    )
+  ),
+  constraint generation_provider_call_daily_generation_kind_check check (
+    generation_kind is null or generation_kind in ('standard', 'personalized')
+  ),
+  constraint generation_provider_call_daily_cost_source_check check (
+    cost_source in ('provider_actual', 'price_estimate', 'unavailable')
+  ),
+  constraint generation_provider_call_daily_cost_currency_check check (
+    cost_currency is null or cost_currency ~ '^[A-Z]{3}$'
+  ),
+  constraint generation_provider_call_daily_cost_dimension_check check (
+    (cost_source = 'unavailable' and cost_currency is null)
+    or (cost_source <> 'unavailable' and cost_currency is not null)
+  ),
+  constraint generation_provider_call_daily_metrics_check check (
+    call_count > 0
+    and success_count between 0 and call_count
+    and fallback_call_count between 0 and call_count
+    and input_token_count_sum >= 0
+    and output_token_count_sum >= 0
+    and total_token_count_sum >= 0
+    and priced_call_count between 0 and call_count
+    and unavailable_cost_count between 0 and call_count
+    and priced_call_count + unavailable_cost_count = call_count
+    and cost_amount_sum >= 0
+    and elapsed_ms_sum >= 0
+    and elapsed_ms_max >= 0
+  )
+);
+
+alter table public.generation_provider_call_daily enable row level security;
+alter table public.generation_provider_call_daily force row level security;
+
+revoke all on table public.generation_provider_call_daily
+  from public, anon, authenticated, service_role;
+
+create function public.rollup_and_purge_generation_provider_calls_v1(
+  p_batch_size integer default 1000,
+  p_detail_before timestamptz default pg_catalog.clock_timestamp() - interval '90 days',
+  p_aggregate_before date default (
+    pg_catalog.now()::date - interval '13 months'
+  )::date
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_detail_ids uuid[] := array[]::uuid[];
+  v_rolled_up integer := 0;
+  v_deleted_details integer := 0;
+  v_deleted_aggregates integer := 0;
+  v_has_more boolean := false;
+begin
+  if p_batch_size is null or p_batch_size < 1 or p_batch_size > 5000 then
+    raise exception using
+      errcode = 'P0001',
+      message = 'INVALID_RETENTION_BATCH_SIZE';
+  end if;
+
+  if p_detail_before is null
+    or p_aggregate_before is null
+    or p_detail_before > pg_catalog.clock_timestamp() - interval '90 days'
+    or p_aggregate_before > (
+      pg_catalog.now()::date - interval '13 months'
+    )::date then
+    raise exception using
+      errcode = 'P0001',
+      message = 'INVALID_RETENTION_CUTOFF';
+  end if;
+
+  select coalesce(
+    pg_catalog.array_agg(candidate.id order by candidate.created_at, candidate.id),
+    array[]::uuid[]
+  )
+  into v_detail_ids
+  from (
+    select calls.id, calls.created_at
+    from public.generation_provider_calls as calls
+    where calls.created_at < p_detail_before
+    order by calls.created_at, calls.id
+    for update skip locked
+    limit p_batch_size
+  ) as candidate;
+
+  v_rolled_up := coalesce(pg_catalog.array_length(v_detail_ids, 1), 0);
+
+  if v_rolled_up > 0 then
+    insert into public.generation_provider_call_daily (
+      day,
+      provider_id,
+      model_id,
+      use_case,
+      workflow_phase,
+      outcome,
+      generation_kind,
+      cost_source,
+      cost_currency,
+      call_count,
+      success_count,
+      fallback_call_count,
+      input_token_count_sum,
+      output_token_count_sum,
+      total_token_count_sum,
+      priced_call_count,
+      unavailable_cost_count,
+      cost_amount_sum,
+      elapsed_ms_sum,
+      elapsed_ms_max
+    )
+    select
+      calls.started_at::date,
+      calls.provider_id,
+      calls.model_id,
+      calls.use_case,
+      calls.workflow_phase,
+      calls.outcome,
+      calls.generation_kind,
+      calls.cost_source,
+      calls.cost_currency,
+      pg_catalog.count(*)::bigint,
+      pg_catalog.count(*) filter (where calls.outcome = 'SUCCEEDED')::bigint,
+      pg_catalog.count(*) filter (where calls.fallback_index > 0)::bigint,
+      coalesce(pg_catalog.sum(calls.input_token_count), 0)::numeric,
+      coalesce(pg_catalog.sum(calls.output_token_count), 0)::numeric,
+      coalesce(pg_catalog.sum(calls.total_token_count), 0)::numeric,
+      pg_catalog.count(*) filter (where calls.cost_source <> 'unavailable')::bigint,
+      pg_catalog.count(*) filter (where calls.cost_source = 'unavailable')::bigint,
+      coalesce(pg_catalog.sum(calls.cost_amount), 0)::numeric(28,8),
+      pg_catalog.sum(calls.elapsed_ms)::numeric,
+      pg_catalog.max(calls.elapsed_ms)::bigint
+    from public.generation_provider_calls as calls
+    where calls.id = any(v_detail_ids)
+    group by
+      calls.started_at::date,
+      calls.provider_id,
+      calls.model_id,
+      calls.use_case,
+      calls.workflow_phase,
+      calls.outcome,
+      calls.generation_kind,
+      calls.cost_source,
+      calls.cost_currency
+    on conflict (
+      day, provider_id, model_id, use_case, workflow_phase,
+      outcome, generation_kind, cost_source, cost_currency
+    )
+    do update set
+      call_count = public.generation_provider_call_daily.call_count
+        + excluded.call_count,
+      success_count = public.generation_provider_call_daily.success_count
+        + excluded.success_count,
+      fallback_call_count = public.generation_provider_call_daily.fallback_call_count
+        + excluded.fallback_call_count,
+      input_token_count_sum = public.generation_provider_call_daily.input_token_count_sum
+        + excluded.input_token_count_sum,
+      output_token_count_sum = public.generation_provider_call_daily.output_token_count_sum
+        + excluded.output_token_count_sum,
+      total_token_count_sum = public.generation_provider_call_daily.total_token_count_sum
+        + excluded.total_token_count_sum,
+      priced_call_count = public.generation_provider_call_daily.priced_call_count
+        + excluded.priced_call_count,
+      unavailable_cost_count = public.generation_provider_call_daily.unavailable_cost_count
+        + excluded.unavailable_cost_count,
+      cost_amount_sum = public.generation_provider_call_daily.cost_amount_sum
+        + excluded.cost_amount_sum,
+      elapsed_ms_sum = public.generation_provider_call_daily.elapsed_ms_sum
+        + excluded.elapsed_ms_sum,
+      elapsed_ms_max = greatest(
+        public.generation_provider_call_daily.elapsed_ms_max,
+        excluded.elapsed_ms_max
+      );
+
+    perform pg_catalog.set_config(
+      'lakoku.generation_provider_retention_delete', 'v1', true
+    );
+
+    delete from public.generation_provider_calls as calls
+    where calls.id = any(v_detail_ids);
+
+    get diagnostics v_deleted_details = row_count;
+
+    perform pg_catalog.set_config(
+      'lakoku.generation_provider_retention_delete', '', true
+    );
+
+    if v_deleted_details <> v_rolled_up then
+      raise exception using
+        errcode = 'P0001',
+        message = 'GENERATION_PROVIDER_RETENTION_DELETE_MISMATCH';
+    end if;
+  end if;
+
+  with aggregate_candidates as (
+    select daily.ctid
+    from public.generation_provider_call_daily as daily
+    where daily.day < p_aggregate_before
+    order by
+      daily.day,
+      daily.provider_id,
+      daily.model_id,
+      daily.use_case,
+      daily.workflow_phase,
+      daily.outcome,
+      daily.generation_kind nulls first,
+      daily.cost_source,
+      daily.cost_currency nulls first
+    for update skip locked
+    limit p_batch_size
+  ), deleted_aggregates as (
+    delete from public.generation_provider_call_daily as daily
+    using aggregate_candidates
+    where daily.ctid = aggregate_candidates.ctid
+    returning 1
+  )
+  select pg_catalog.count(*)::integer
+  into v_deleted_aggregates
+  from deleted_aggregates;
+
+  v_has_more :=
+    exists (
+      select 1
+      from public.generation_provider_calls as calls
+      where calls.created_at < p_detail_before
+    )
+    or exists (
+      select 1
+      from public.generation_provider_call_daily as daily
+      where daily.day < p_aggregate_before
+    );
+
+  return pg_catalog.jsonb_build_object(
+    'rolledUp', v_rolled_up,
+    'deletedDetails', v_deleted_details,
+    'deletedAggregates', v_deleted_aggregates,
+    'hasMore', v_has_more
+  );
+end
+$$;
+
+revoke all on function public.rollup_and_purge_generation_provider_calls_v1(
+  integer, timestamptz, date
+) from public, anon, authenticated, service_role;
+grant execute on function public.rollup_and_purge_generation_provider_calls_v1(
+  integer, timestamptz, date
 ) to service_role;

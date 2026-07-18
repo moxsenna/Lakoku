@@ -13,7 +13,7 @@ begin
 end
 $$;
 
-select plan(52);
+select plan(54);
 
 select has_table('public', 'generation_provider_calls', 'generation_provider_calls exists');
 select has_pk('public', 'generation_provider_calls', 'generation_provider_calls has primary key');
@@ -30,6 +30,22 @@ select ok(
       and contype = 'u'
   ),
   'provider_call_id has named uniqueness'
+);
+select col_is_unique(
+  'public', 'generation_model_pricing_versions',
+  array['provider_id', 'model_id', 'effective_from'],
+  'pricing effective start is unique per provider and model regardless of currency'
+);
+select ok(
+  exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.generation_model_pricing_versions'::regclass
+      and conname = 'generation_model_pricing_versions_no_overlap'
+      and contype = 'x'
+      and pg_get_constraintdef(oid) !~ '\mcurrency\M'
+  ),
+  'pricing overlap exclusion has no currency dimension'
 );
 select columns_are(
   'public', 'generation_provider_calls',
@@ -179,14 +195,17 @@ select ok(
   'story_id is a snapshot without stories FK'
 );
 select ok(
-  not exists (
+  exists (
     select 1
     from pg_constraint c
     join pg_attribute a on a.attrelid = c.conrelid and a.attnum = any(c.conkey)
     where c.conrelid = 'public.generation_provider_calls'::regclass
-      and c.contype = 'f' and a.attname = 'pricing_version_id'
+      and c.contype = 'f'
+      and c.confrelid = 'public.generation_model_pricing_versions'::regclass
+      and c.confdeltype = 'r'
+      and a.attname = 'pricing_version_id'
   ),
-  'pricing_version_id has no Task 3 FK yet'
+  'pricing_version_id references Task 3 pricing with ON DELETE RESTRICT'
 );
 
 insert into auth.users (
@@ -589,6 +608,14 @@ select throws_ok(
 select throws_ok(
   $$select pg_temp.insert_sync_call('sync-valid')$$,
   '23505', null, 'provider_call_id is unique'
+);
+insert into public.generation_model_pricing_versions (
+  id, provider_id, model_id, input_token_price, output_token_price,
+  currency, unit_size, effective_from, created_by
+) values (
+  '45000000-0000-4000-8000-000000000001', 'openrouter', 'model-v1',
+  1, 1, 'USD', 1000000, clock_timestamp() - interval '1 day',
+  '41000000-0000-4000-8000-000000000001'
 );
 select lives_ok(
   $$select pg_temp.insert_sync_call('cost-unavailable-valid','unavailable',null,null,null);

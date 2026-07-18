@@ -63,12 +63,14 @@ export interface StoryContractInput {
 export interface ModelCallExecutionOptions {
   telemetryContext: ProviderCallContext
   workflowPhase: string
+  consume?: (raw: unknown) => unknown | Promise<unknown>
 }
 
 export interface StoryContractCallOptions {
   signal?: AbortSignal
   telemetryContext?: ProviderCallContext
   workflowPhase?: string
+  consume?: (raw: unknown) => unknown | Promise<unknown>
 }
 
 export interface ChoiceProviderInput {

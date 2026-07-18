@@ -4,6 +4,7 @@ import { fantasiPetualanganContract } from '@/fixtures/contracts/fantasi-petuala
 import { misteriDramaContract } from '@/fixtures/contracts/misteri-drama'
 import { romansaDramaContract } from '@/fixtures/contracts/romansa-drama'
 import { generateStoryContractRaw } from '@/lib/ai-gateway/gateway'
+import { InvalidModelResponseError } from '@/lib/ai-gateway/model-call-errors'
 import type {
   GenerationProvider,
   ModelCallExecutionOptions,
@@ -50,6 +51,7 @@ async function generateWithinBudget(
   const providerResult = generateStoryContractRaw({ provider }, input, {
     signal: controller.signal,
     ...options,
+    consume: options?.consume,
   })
   const timeout = new Promise<never>((_resolve, reject) => {
     controller.signal.addEventListener('abort', () => {
@@ -361,18 +363,37 @@ export async function createResilientStoryContract(input: {
   })
 
   try {
-    const raw = await generateWithinBudget(
-      input.provider,
-      providerInput(),
-      timeoutMs,
-      input.telemetryContext
-        ? {
-            telemetryContext: input.telemetryContext,
-            workflowPhase: 'STORY_CONTRACT_INITIAL',
-          }
-        : undefined,
-    )
-    const first = parseRequestedContract(raw, input.storyId)
+    let firstValidation: ReturnType<typeof parseRequestedContract> | undefined
+    let raw: unknown
+    try {
+      raw = await generateWithinBudget(
+        input.provider,
+        providerInput(),
+        timeoutMs,
+        input.telemetryContext
+          ? {
+              telemetryContext: input.telemetryContext,
+              workflowPhase: 'STORY_CONTRACT_INITIAL',
+              consume: (candidate) => {
+                const parsed = parseRequestedContract(candidate, input.storyId)
+                if (!parsed.success) {
+                  throw new InvalidModelResponseError(
+                    'Story contract response failed validation.',
+                    issueStrings(parsed.error),
+                    candidate,
+                  )
+                }
+                return candidate
+              },
+            }
+          : undefined,
+      )
+    } catch (error) {
+      if (!(error instanceof InvalidModelResponseError)) throw error
+      raw = error.rejectedValue
+      firstValidation = parseRequestedContract(raw, input.storyId)
+    }
+    const first = firstValidation ?? parseRequestedContract(raw, input.storyId)
     if (first.success) return { contract: first.data, contractSource: 'llm' }
 
     const repairedRaw = await generateWithinBudget(
@@ -383,6 +404,17 @@ export async function createResilientStoryContract(input: {
         ? {
             telemetryContext: input.telemetryContext,
             workflowPhase: 'STORY_CONTRACT_REPAIR',
+            consume: (candidate) => {
+              const parsed = parseRequestedContract(candidate, input.storyId)
+              if (!parsed.success) {
+                throw new InvalidModelResponseError(
+                  'Story contract repair failed validation.',
+                  issueStrings(parsed.error),
+                  candidate,
+                )
+              }
+              return candidate
+            },
           }
         : undefined,
     )

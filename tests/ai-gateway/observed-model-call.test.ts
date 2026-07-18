@@ -141,7 +141,8 @@ describe('executeObservedModelCall', () => {
       consume: (text) => ({ parsed: text }),
     }), observedDeps)).resolves.toEqual({ parsed: 'model text' })
 
-    expect(accessed).toEqual(['text', 'usage', 'finalStep'])
+    expect(accessed).toHaveLength(3)
+    expect(accessed).toEqual(expect.arrayContaining(['text', 'usage', 'finalStep']))
     expect(record).toHaveBeenCalledOnce()
     expect(record).toHaveBeenCalledWith({
       providerCallId: 'provider-call-1',
@@ -250,6 +251,27 @@ describe('executeObservedModelCall', () => {
       totalTokenCount: 30,
       outcome,
       errorCode,
+    }))
+  })
+
+  it('preserves consumed text when usage or final-step observation rejects', async () => {
+    const record = vi.fn().mockResolvedValue(undefined)
+    const observedDeps = deps({ record })
+
+    await expect(executeObservedModelCall(input({
+      call: () => result({
+        usage: Promise.reject(new Error('usage unavailable')),
+        finalStep: Promise.reject(new Error('final step unavailable')),
+      }) as never,
+    }), observedDeps)).resolves.toBe('MODEL TEXT')
+
+    expect(record).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
+      actualModelId: 'configured-model',
+      actualModelResolved: false,
+      inputTokenCount: null,
+      outputTokenCount: null,
+      totalTokenCount: null,
+      outcome: 'SUCCEEDED',
     }))
   })
 

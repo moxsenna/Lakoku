@@ -13,9 +13,17 @@ import {
 } from '@/lib/ai-gateway/gateway'
 import type { AiModelRoute } from '@/lib/ops/ai-model-routes'
 
-const streamTextMock = vi.fn()
-const createOpenAICompatibleMock = vi.fn()
-const getAiModelRouteMock = vi.fn()
+const {
+  streamTextMock,
+  createOpenAICompatibleMock,
+  getAiModelRouteMock,
+  recordGenerationProviderCallMock,
+} = vi.hoisted(() => ({
+  streamTextMock: vi.fn(),
+  createOpenAICompatibleMock: vi.fn(),
+  getAiModelRouteMock: vi.fn(),
+  recordGenerationProviderCallMock: vi.fn(),
+}))
 
 vi.mock('server-only', () => ({}))
 vi.mock('ai', () => ({
@@ -27,6 +35,35 @@ vi.mock('@ai-sdk/openai-compatible', () => ({
 vi.mock('@/lib/ops/ai-model-routes', () => ({
   getAiModelRoute: getAiModelRouteMock,
 }))
+vi.mock('@/lib/observability/generation-provider-call.server', () => ({
+  recordGenerationProviderCall: recordGenerationProviderCallMock,
+}))
+
+const telemetryContext = {
+  userId: '10000000-0000-4000-8000-000000000001',
+  storyId: 'personalized:story-14',
+  chapterNumber: null,
+  generationKind: 'personalized',
+  jobId: null,
+  correlationId: '20000000-0000-4000-8000-000000000002',
+  attemptNumber: null,
+} as const
+
+const executionOptions = {
+  telemetryContext,
+  workflowPhase: 'STORY_CONTRACT_INITIAL',
+} as const
+
+function observedResult(text: string, modelId?: string) {
+  return {
+    text: Promise.resolve(text),
+    usage: Promise.resolve({ inputTokens: 100, outputTokens: 50, totalTokens: 150 }),
+    finalStep: Promise.resolve({
+      response: modelId === undefined ? {} : { modelId },
+      providerMetadata: {},
+    }),
+  }
+}
 
 function contractInput(repairErrors?: string[]): StoryContractInput {
   return {
@@ -64,7 +101,7 @@ describe('generateStoryContractRaw', () => {
   it('throws CONTRACT_PROVIDER_UNAVAILABLE when optional method is absent', async () => {
     const provider = createDeterministicProvider()
 
-    await expect(generateStoryContractRaw({ provider }, contractInput())).rejects.toSatisfy((error) => {
+    await expect(generateStoryContractRaw({ provider }, contractInput(), executionOptions)).rejects.toSatisfy((error) => {
       expectGatewayError(error, 'CONTRACT_PROVIDER_UNAVAILABLE')
       return true
     })
@@ -79,9 +116,9 @@ describe('generateStoryContractRaw', () => {
     }
     const input = contractInput(['chapterTargets: Expected 50 entries.'])
 
-    await expect(generateStoryContractRaw({ provider }, input)).resolves.toBe(invalidRaw)
+    await expect(generateStoryContractRaw({ provider }, input, executionOptions)).resolves.toBe(invalidRaw)
     expect(generateStoryContract).toHaveBeenCalledOnce()
-    expect(generateStoryContract).toHaveBeenCalledWith(input, undefined)
+    expect(generateStoryContract).toHaveBeenCalledWith(input, executionOptions)
   })
 
   it('passes optional call options while keeping one-argument providers compatible', async () => {
@@ -95,9 +132,12 @@ describe('generateStoryContractRaw', () => {
     await expect(generateStoryContractRaw(
       { provider },
       contractInput(),
-      { signal: controller.signal },
+      { ...executionOptions, signal: controller.signal },
     )).resolves.toBe(contractInput().storyId)
-    expect(legacyGenerate).toHaveBeenCalledWith(contractInput(), { signal: controller.signal })
+    expect(legacyGenerate).toHaveBeenCalledWith(contractInput(), {
+      ...executionOptions,
+      signal: controller.signal,
+    })
   })
 })
 
@@ -117,6 +157,8 @@ describe('createGatewayProvider story-contract adapter', () => {
     streamTextMock.mockReset()
     createOpenAICompatibleMock.mockReset()
     getAiModelRouteMock.mockReset()
+    recordGenerationProviderCallMock.mockReset()
+    recordGenerationProviderCallMock.mockResolvedValue(undefined)
     createOpenAICompatibleMock.mockImplementation(({ name }: { name: string }) => (
       (modelId: string) => `${name}:${modelId}`
     ))
@@ -165,7 +207,7 @@ describe('createGatewayProvider story-contract adapter', () => {
     const provider = createGatewayProvider()
     const input = contractInput(['chapterTargets: Expected exactly 50 items.'])
 
-    await expect(generateStoryContractRaw({ provider }, input)).resolves.toEqual(invalidRaw)
+    await expect(generateStoryContractRaw({ provider }, input, executionOptions)).resolves.toEqual(invalidRaw)
 
     expect(getAiModelRouteMock).toHaveBeenCalledOnce()
     expect(getAiModelRouteMock).toHaveBeenCalledWith('story_contract')
@@ -187,28 +229,13 @@ describe('createGatewayProvider story-contract adapter', () => {
     expect(streamTextMock.mock.calls[1][0].prompt).not.toContain('completedAt')
     expect(streamTextMock.mock.calls[1][0].prompt.length).toBeLessThanOrEqual(16_000)
     expect(createOpenAICompatibleMock).not.toHaveBeenCalled()
-    expect(logSpy).toHaveBeenCalledWith(
-      expect.stringContaining('db:gateway:openai/contract-primary'),
-      expect.objectContaining({
-        providerId: 'gateway',
-        configuredModelId: 'openai/contract-primary',
-        routeVersion: 'contract-v1',
-        fallbackIndex: 0,
-      }),
-      'primary unavailable',
-    )
-    expect(logSpy).toHaveBeenCalledWith('[v0] ai-gateway usage', expect.objectContaining({
-      useCase: 'story_contract',
-      model: 'db:gateway:openai/contract-fallback',
+    expect(logSpy).toHaveBeenCalledWith('[v0] gateway-provider fallback', {
+      workflowPhase: 'STORY_CONTRACT_INITIAL',
       providerId: 'gateway',
-      configuredModelId: 'openai/contract-fallback',
-      routeVersion: 'contract-v1',
-      fallbackIndex: 1,
-      inputTokens: 100,
-      outputTokens: 50,
-      totalTokens: 150,
-      cost: 0.0042,
-    }))
+      configuredModelId: 'openai/contract-primary',
+      errorCode: 'PROVIDER_REQUEST_FAILED',
+    })
+    expect(JSON.stringify(logSpy.mock.calls)).not.toContain('primary unavailable')
   })
 
   it('merges DB and env candidates, preserves order, and dedupes provider plus model', async () => {
@@ -240,7 +267,7 @@ describe('createGatewayProvider story-contract adapter', () => {
     const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
     const provider = createGatewayProvider()
 
-    await generateStoryContractRaw({ provider }, contractInput())
+    await generateStoryContractRaw({ provider }, contractInput(), executionOptions)
 
     expect(streamTextMock.mock.calls.map(([request]) => request.model)).toEqual([
       'custom:custom-db-model',
@@ -248,12 +275,13 @@ describe('createGatewayProvider story-contract adapter', () => {
       '9router:custom-db-model',
       'openrouter:model-b',
     ])
-    expect(logSpy).toHaveBeenCalledWith('[v0] ai-gateway usage', expect.objectContaining({
+    expect(recordGenerationProviderCallMock).toHaveBeenCalledTimes(4)
+    expect(recordGenerationProviderCallMock.mock.calls.at(-1)?.[0].candidate).toMatchObject({
       providerId: 'openrouter',
       configuredModelId: 'model-b',
       routeVersion: null,
       fallbackIndex: 3,
-    }))
+    })
   })
 
   it.each([
@@ -282,7 +310,7 @@ describe('createGatewayProvider story-contract adapter', () => {
     const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
     const provider = createGatewayProvider()
 
-    await expect(generateStoryContractRaw({ provider }, contractInput())).resolves.toEqual(expected)
+    await expect(generateStoryContractRaw({ provider }, contractInput(), executionOptions)).resolves.toEqual(expected)
     expect(streamTextMock).toHaveBeenCalledOnce()
   })
 
@@ -295,7 +323,7 @@ describe('createGatewayProvider story-contract adapter', () => {
     await generateStoryContractRaw(
       { provider },
       contractInput(),
-      { signal: controller.signal },
+      { ...executionOptions, signal: controller.signal },
     )
 
     expect(streamTextMock).toHaveBeenCalledOnce()
@@ -340,7 +368,7 @@ describe('createGatewayProvider story-contract adapter', () => {
     ]
 
     for (const input of invalidCases) {
-      await expect(generateStoryContractRaw({ provider }, input)).rejects.toSatisfy((error) => {
+      await expect(generateStoryContractRaw({ provider }, input, executionOptions)).rejects.toSatisfy((error) => {
         expectGatewayError(error, 'CONTRACT_INPUT_INVALID')
         return true
       })
@@ -357,7 +385,7 @@ describe('createGatewayProvider story-contract adapter', () => {
     const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
     const provider = createGatewayProvider()
 
-    await generateStoryContractRaw({ provider }, input)
+    await generateStoryContractRaw({ provider }, input, executionOptions)
 
     const prompt = streamTextMock.mock.calls[0][0].prompt as string
     expect(prompt).toContain('preferredGenres')
@@ -376,7 +404,7 @@ describe('createGatewayProvider story-contract adapter', () => {
     const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
     const provider = createGatewayProvider()
 
-    await generateStoryContractRaw({ provider }, input)
+    await generateStoryContractRaw({ provider }, input, executionOptions)
 
     const prompt = streamTextMock.mock.calls[0][0].prompt as string
     expect(prompt.match(/<UNTRUSTED_STORY_CONTRACT_INPUT_JSON>/g)).toHaveLength(1)
@@ -397,7 +425,7 @@ describe('createGatewayProvider story-contract adapter', () => {
     const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
     const provider = createGatewayProvider()
 
-    const generation = generateStoryContractRaw({ provider }, contractInput())
+    const generation = generateStoryContractRaw({ provider }, contractInput(), executionOptions)
     await new Promise((resolve) => setTimeout(resolve, 0))
     resolveText?.(JSON.stringify(raw))
 
@@ -421,7 +449,7 @@ describe('createGatewayProvider story-contract adapter', () => {
       const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
       const provider = createGatewayProvider()
 
-      await expect(generateStoryContractRaw({ provider }, contractInput())).resolves.toEqual(raw)
+      await expect(generateStoryContractRaw({ provider }, contractInput(), executionOptions)).resolves.toEqual(raw)
       expect(streamTextMock).toHaveBeenCalledOnce()
       logSpy.mockRestore()
     },
@@ -433,7 +461,82 @@ describe('createGatewayProvider story-contract adapter', () => {
     const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
     const provider = createGatewayProvider()
 
-    await expect(generateStoryContractRaw({ provider }, contractInput())).resolves.toEqual(invalidRaw)
+    await expect(generateStoryContractRaw({ provider }, contractInput(), executionOptions)).resolves.toEqual(invalidRaw)
     expect(streamTextMock).toHaveBeenCalledOnce()
+  })
+
+  it('records failed contract candidate before fallback success with unique IDs and actual models', async () => {
+    streamTextMock
+      .mockImplementationOnce(() => { throw new Error('primary unavailable') })
+      .mockReturnValueOnce(observedResult('{"totalChapters":49}', 'actual-contract-fallback'))
+    getAiModelRouteMock.mockResolvedValue({
+      useCase: 'story_contract',
+      provider: 'gateway',
+      modelId: 'openai/contract-primary',
+      fallbackModels: [{ provider: 'gateway', modelId: 'openai/contract-fallback' }],
+      temperature: 0.15,
+      maxOutputTokens: 8000,
+      routeVersion: 'contract-v3',
+    } satisfies AiModelRoute)
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider()
+
+    await expect(generateStoryContractRaw(
+      { provider },
+      contractInput(),
+      { telemetryContext, workflowPhase: 'STORY_CONTRACT_INITIAL' },
+    )).resolves.toEqual({ totalChapters: 49 })
+
+    expect(recordGenerationProviderCallMock).toHaveBeenCalledTimes(2)
+    const records = recordGenerationProviderCallMock.mock.calls
+    expect(new Set(records.map(([start]) => start.providerCallId)).size).toBe(2)
+    expect(records.map(([start, completion]) => ({
+      phase: start.workflowPhase,
+      fallbackIndex: start.candidate.fallbackIndex,
+      configuredModelId: start.candidate.configuredModelId,
+      actualModelId: completion.actualModelId,
+      actualModelResolved: completion.actualModelResolved,
+      outcome: completion.outcome,
+    }))).toEqual([
+      {
+        phase: 'STORY_CONTRACT_INITIAL',
+        fallbackIndex: 0,
+        configuredModelId: 'openai/contract-primary',
+        actualModelId: 'openai/contract-primary',
+        actualModelResolved: false,
+        outcome: 'PROVIDER_ERROR',
+      },
+      {
+        phase: 'STORY_CONTRACT_INITIAL',
+        fallbackIndex: 1,
+        configuredModelId: 'openai/contract-fallback',
+        actualModelId: 'actual-contract-fallback',
+        actualModelResolved: true,
+        outcome: 'SUCCEEDED',
+      },
+    ])
+  })
+
+  it('records contract repair phase and preserves output when telemetry write rejects', async () => {
+    recordGenerationProviderCallMock.mockRejectedValue(new Error('telemetry unavailable'))
+    streamTextMock.mockReturnValue(observedResult('{"totalChapters":49}'))
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider()
+
+    await expect(generateStoryContractRaw(
+      { provider },
+      contractInput(['totalChapters: Expected 50']),
+      { telemetryContext, workflowPhase: 'STORY_CONTRACT_REPAIR' },
+    )).resolves.toEqual({ totalChapters: 49 })
+
+    expect(recordGenerationProviderCallMock).toHaveBeenCalledOnce()
+    expect(recordGenerationProviderCallMock).toHaveBeenCalledWith(
+      expect.objectContaining({ workflowPhase: 'STORY_CONTRACT_REPAIR' }),
+      expect.objectContaining({
+        actualModelId: 'openai/gpt-4.1-mini',
+        actualModelResolved: false,
+        outcome: 'SUCCEEDED',
+      }),
+    )
   })
 })

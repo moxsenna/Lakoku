@@ -18,6 +18,11 @@ import {
 import { GatewayError, scanForLeaks } from './gateway'
 import { buildWriterPrompt } from '@/lib/prose/prompt-engine'
 import type { AiModelRoute } from '@/lib/ops/ai-model-routes'
+import {
+  ContentRejectedError,
+  InvalidModelResponseError,
+  executeObservedModelCall,
+} from './observed-model-call.server'
 
 /**
  * Provider LLM NYATA via Vercel AI Gateway.
@@ -326,6 +331,7 @@ async function generateProse(args: {
   snapshot: CanonSnapshot
   plan: Record<string, unknown>
   repairFindings?: Finding[]
+  options: ModelCallExecutionOptions
 }): Promise<{ title: string; paragraphs: string[]; usedModel: string }> {
   const { system, prompt } = buildPrompt(args)
   let lastError: unknown
@@ -337,37 +343,53 @@ async function generateProse(args: {
     const { model, label } = candidate
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
-        // Pakai streamText (bukan generateText): banyak endpoint
-        // OpenAI-compatible (termasuk proxy/tunnel & OpenRouter) SELALU membalas
-        // SSE streaming meski diminta non-stream, sehingga parser non-stream
-        // gagal. streamText mem-parse SSE; kita cukup menunggu `text` rampung.
-        // Timeout: hang di 9router/proxy tidak boleh menahan lease forever.
-        const result = streamText({
-          model,
-          system,
-          prompt:
-            attempt === 0
-              ? prompt
-              : `${prompt}\n\nCATATAN: revisi sebelumnya memuat istilah teknis terlarang. Tulis ulang murni sebagai narasi cerita.`,
-          abortSignal: AbortSignal.timeout(LLM_PROSE_TIMEOUT_MS),
-        })
-        const usage = bestEffortUsage(result.usage)
-        const text = await result.text
-        const { title, paragraphs } = parseProse(text)
-        const blob = [title, ...paragraphs].join('\n')
-        if (scanForLeaks(blob).length === 0) {
-          await logUsage('chapter_prose', candidate, usage)
-          return { title, paragraphs, usedModel: label }
+        const workflowPhase = attempt === 0
+          ? args.options.workflowPhase
+          : 'CHAPTER_PROSE_LEAK_REPAIR'
+        try {
+          const parsed = await executeObservedModelCall({
+            context: args.options.telemetryContext,
+            candidate: candidateIdentity(candidate),
+            useCase: 'chapter_prose',
+            workflowPhase,
+            call: () => streamText({
+              model,
+              system,
+              prompt:
+                attempt === 0
+                  ? prompt
+                  : `${prompt}\n\nCATATAN: revisi sebelumnya memuat istilah teknis terlarang. Tulis ulang murni sebagai narasi cerita.`,
+              abortSignal: AbortSignal.timeout(LLM_PROSE_TIMEOUT_MS),
+            }),
+            consume: (text) => {
+              let prose
+              try {
+                prose = parseProse(text)
+              } catch (error) {
+                throw new InvalidModelResponseError(
+                  error instanceof Error ? error.message : undefined,
+                )
+              }
+              const leaks = scanForLeaks([prose.title, ...prose.paragraphs].join('\n'))
+              if (leaks.length > 0) {
+                throw new ContentRejectedError(
+                  'Chapter prose contains forbidden internal language.',
+                  leaks,
+                )
+              }
+              return prose
+            },
+          })
+          return { ...parsed, usedModel: label }
+        } catch (error) {
+          lastError = error
+          if (error instanceof ContentRejectedError && attempt === 0) continue
+          throw error
         }
       }
-      lastError = new Error(`gateway-provider: prosa dari ${label} bocor istilah internal setelah 2 percobaan.`)
-    } catch (err) {
-      lastError = err
-      console.log(
-        `[v0] gateway-provider: kandidat ${label} gagal, mencoba fallback berikutnya:`,
-        candidateIdentity(candidate),
-        (err as Error)?.message,
-      )
+    } catch (error) {
+      lastError = error
+      logCandidateFailure(args.options.workflowPhase, candidate, error)
     }
   }
   throw lastError ?? new Error('gateway-provider: semua kandidat model gagal.')
@@ -544,34 +566,32 @@ function candidateIdentity(candidate: ModelCandidate): Omit<ModelCandidate, 'mod
   }
 }
 
-function bestEffortUsage(
-  usage: PromiseLike<ModelUsage> | undefined,
-): Promise<ModelUsage | undefined> {
-  return usage ? Promise.resolve(usage).catch(() => undefined) : Promise.resolve(undefined)
+function controlledErrorCode(error: unknown): string {
+  if (error instanceof ContentRejectedError) return 'PROVIDER_CONTENT_REJECTED'
+  if (error instanceof InvalidModelResponseError) return 'PROVIDER_INVALID_RESPONSE'
+  const name = error && typeof error === 'object'
+    ? (error as { name?: unknown }).name
+    : undefined
+  if (name === 'TimeoutError') return 'PROVIDER_TIMEOUT'
+  if (name === 'AbortError') return 'PROVIDER_ABORTED'
+  if (name === 'AI_InvalidResponseDataError') return 'PROVIDER_INVALID_RESPONSE'
+  return 'PROVIDER_REQUEST_FAILED'
 }
 
-async function logUsage(
-  useCase: string,
+function logCandidateFailure(
+  workflowPhase: string,
   candidate: ModelCandidate,
-  usage: PromiseLike<ModelUsage | undefined> | undefined,
-): Promise<void> {
+  error: unknown,
+): void {
   try {
-    const resolved = usage ? await usage : undefined
-    console.log('[v0] ai-gateway usage', {
-      useCase,
-      model: candidate.label,
-      provider: 'gateway-provider',
+    console.log('[v0] gateway-provider fallback', {
+      workflowPhase,
       providerId: candidate.providerId,
       configuredModelId: candidate.configuredModelId,
-      routeVersion: candidate.routeVersion,
-      fallbackIndex: candidate.fallbackIndex,
-      inputTokens: resolved?.inputTokens,
-      outputTokens: resolved?.outputTokens,
-      totalTokens: resolved?.totalTokens,
-      cost: resolved?.raw?.cost ?? null,
+      errorCode: controlledErrorCode(error),
     })
   } catch {
-    // Telemetry best-effort; hasil model sukses tidak boleh gagal karena logging.
+    // Bounded diagnostics must not affect generation.
   }
 }
 
@@ -589,36 +609,38 @@ function parseModelJson(text: string): unknown {
 async function generateStoryContractJson(args: {
   chain: ModelCandidate[]
   input: StoryContractInput
+  options: StoryContractCallOptions & Required<Pick<StoryContractCallOptions, 'telemetryContext' | 'workflowPhase'>>
   route?: AiModelRoute
-  signal?: AbortSignal
 }): Promise<unknown> {
   const system = buildStoryContractSystemPrompt()
   const prompt = buildStoryContractPrompt(projectStoryContractInput(args.input))
   let lastError: unknown
 
   for (const candidate of args.chain) {
-    const { model, label } = candidate
+    const { model } = candidate
     try {
-      const result = streamText({
-        model,
-        system,
-        prompt,
-        temperature: args.route?.temperature ?? undefined,
-        maxOutputTokens: args.route?.maxOutputTokens ?? undefined,
-        abortSignal: args.signal,
+      return await executeObservedModelCall({
+        context: args.options.telemetryContext,
+        candidate: candidateIdentity(candidate),
+        useCase: args.route?.useCase ?? 'story_contract',
+        workflowPhase: args.options.workflowPhase,
+        call: () => streamText({
+          model,
+          system,
+          prompt,
+          temperature: args.route?.temperature ?? undefined,
+          maxOutputTokens: args.route?.maxOutputTokens ?? undefined,
+          abortSignal: args.options.signal,
+        }),
+        consume: async (text) => {
+          const parsed = parseModelJson(text)
+          return args.options.consume ? args.options.consume(parsed) : parsed
+        },
       })
-      const usage = bestEffortUsage(result.usage)
-      const text = await result.text
-      await logUsage(args.route?.useCase ?? 'story_contract', candidate, usage)
-      return parseModelJson(text)
     } catch (error) {
-      if (args.signal?.aborted) throw error
+      if (args.options.signal?.aborted) throw error
       lastError = error
-      console.log(
-        `[v0] gateway-provider: kandidat story contract ${label} gagal, mencoba fallback berikutnya:`,
-        candidateIdentity(candidate),
-        (error as Error)?.message,
-      )
+      logCandidateFailure(args.options.workflowPhase, candidate, error)
     }
   }
 
@@ -630,33 +652,36 @@ async function generateStoryContractJson(args: {
 async function generateChoiceJson(args: {
   chain: ModelCandidate[]
   input: ChoiceProviderInput
+  options: ModelCallExecutionOptions
   route?: AiModelRoute
 }): Promise<unknown> {
   const { system, prompt } = buildChoicePrompt(args.input)
   let lastError: unknown
 
   for (const candidate of args.chain) {
-    const { model, label } = candidate
+    const { model } = candidate
     try {
-      const result = streamText({
-        model,
-        system,
-        prompt,
-        temperature: args.route?.temperature ?? undefined,
-        maxOutputTokens: args.route?.maxOutputTokens ?? undefined,
-        abortSignal: AbortSignal.timeout(LLM_CHOICE_TIMEOUT_MS),
+      return await executeObservedModelCall({
+        context: args.options.telemetryContext,
+        candidate: candidateIdentity(candidate),
+        useCase: args.route?.useCase ?? 'choices',
+        workflowPhase: args.options.workflowPhase,
+        call: () => streamText({
+          model,
+          system,
+          prompt,
+          temperature: args.route?.temperature ?? undefined,
+          maxOutputTokens: args.route?.maxOutputTokens ?? undefined,
+          abortSignal: AbortSignal.timeout(LLM_CHOICE_TIMEOUT_MS),
+        }),
+        consume: async (text) => {
+          const parsed = parseModelJson(text)
+          return args.options.consume ? args.options.consume(parsed) : parsed
+        },
       })
-      const usage = bestEffortUsage(result.usage)
-      const text = await result.text
-      await logUsage(args.route?.useCase ?? 'choices', candidate, usage)
-      return parseModelJson(text)
     } catch (error) {
       lastError = error
-      console.log(
-        `[v0] gateway-provider: kandidat choices ${label} gagal, mencoba fallback berikutnya:`,
-        candidateIdentity(candidate),
-        (error as Error)?.message,
-      )
+      logCandidateFailure(args.options.workflowPhase, candidate, error)
     }
   }
 
@@ -698,10 +723,13 @@ export function createGatewayProvider(
 
     async writeChapter(
       input: WriteInput,
-      _options?: ModelCallExecutionOptions,
+      options?: ModelCallExecutionOptions,
     ): Promise<unknown> {
       // 1) Scaffold canon-safe (semua metadata terstruktur & sinyal Layer B).
-      const scaffold = (await base.writeChapter(input, _options)) as Record<string, unknown>
+      const scaffold = (await base.writeChapter(input, options)) as Record<string, unknown>
+      if (!options) {
+        throw new Error('gateway-provider: telemetry execution options are required.')
+      }
 
       // 2) Prosa nyata dari LLM (dengan rantai fallback).
       const { title, paragraphs } = await generateProse({
@@ -709,6 +737,7 @@ export function createGatewayProvider(
         snapshot: input.snapshot,
         plan: input.plan as Record<string, unknown>,
         repairFindings: input.repairFindings,
+        options,
       })
 
       // 3) Gabungkan: prosa model menggantikan judul/paragraf; sisanya canon-safe.
@@ -727,22 +756,33 @@ export function createGatewayProvider(
       const { getAiModelRoute } = await import('@/lib/ops/ai-model-routes')
       const contractRoute = await getAiModelRoute('story_contract') ?? aiRoute
       const contractChain = resolveModelChain(opts.model, contractRoute ?? undefined)
+      if (!options?.telemetryContext || !options.workflowPhase) {
+        throw new Error('gateway-provider: telemetry execution options are required.')
+      }
       return generateStoryContractJson({
         chain: contractChain,
         input,
         route: contractRoute,
-        signal: options?.signal,
+        options: {
+          ...options,
+          telemetryContext: options.telemetryContext,
+          workflowPhase: options.workflowPhase,
+        },
       })
     },
 
     generateChoices(
       input: ChoiceProviderInput,
-      _options?: ModelCallExecutionOptions,
+      options?: ModelCallExecutionOptions,
     ): Promise<unknown> {
+      if (!options) {
+        throw new Error('gateway-provider: telemetry execution options are required.')
+      }
       return generateChoiceJson({
         chain: choiceChain,
         input,
         route: resolvedChoicesRoute,
+        options,
       })
     },
   }

@@ -134,7 +134,12 @@ export async function generateChapter(
     draft = await writeChapter(
       deps,
       { snapshot, plan, repairFindings: aFindings },
-      args.executionOptions,
+      args.executionOptions
+        ? {
+            ...args.executionOptions,
+            workflowPhase: `CHAPTER_PROSE_LAYER_A_REPAIR_${aAttempts}`,
+          }
+        : undefined,
     )
     aFindings = runLayerA(snapshot, draft, chapterNumber, threadContext)
   }
@@ -149,7 +154,12 @@ export async function generateChapter(
     draft = await writeChapter(
       deps,
       { snapshot, plan, repairFindings: bFindings },
-      args.executionOptions,
+      args.executionOptions
+        ? {
+            ...args.executionOptions,
+            workflowPhase: `CHAPTER_PROSE_LAYER_B_REPAIR_${bAttempts}`,
+          }
+        : undefined,
     )
     bFindings = validateLayerB(snapshot, draft, layerBContext ?? {}).findings
   }

@@ -10,20 +10,12 @@ import {
   recordGenerationProviderCall,
   type ProviderCallStart,
 } from '@/lib/observability/generation-provider-call.server'
+import {
+  ContentRejectedError,
+  InvalidModelResponseError,
+} from './model-call-errors'
 
-export class InvalidModelResponseError extends Error {
-  constructor(message = 'Model response failed validation.') {
-    super(message)
-    this.name = 'InvalidModelResponseError'
-  }
-}
-
-export class ContentRejectedError extends Error {
-  constructor(message = 'Model content was rejected.') {
-    super(message)
-    this.name = 'ContentRejectedError'
-  }
-}
+export { ContentRejectedError, InvalidModelResponseError } from './model-call-errors'
 
 export interface ObservedModelCallInput<T> {
   context: ProviderCallContext
@@ -254,14 +246,22 @@ export async function executeObservedModelCall<T>(
 
   try {
     const result = input.call()
-    const [text, usage, finalStep] = await Promise.all([
-      result.text,
-      result.usage,
-      result.finalStep,
+    // Attach rejection handlers immediately. Usage/final-step promises may reject
+    // before slower model text settles, but remain best-effort telemetry only.
+    const usagePromise = Promise.resolve()
+      .then(() => result.usage)
+      .catch(() => undefined)
+    const finalStepPromise = Promise.resolve()
+      .then(() => result.finalStep)
+      .catch(() => undefined)
+    const text = await result.text
+    const [usage, finalStep] = await Promise.all([
+      usagePromise,
+      finalStepPromise,
     ])
     observation = {
-      usage: usage as ObservedUsage,
-      finalStep: finalStep as ObservedFinalStep,
+      usage: usage as ObservedUsage | undefined,
+      finalStep: finalStep as ObservedFinalStep | undefined,
     }
     const value = await input.consume(text)
     const completion: ProviderCallCompletion = {

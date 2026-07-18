@@ -16,8 +16,15 @@ import {
 import type { ChapterDraftParsed, ChoiceBranch } from '@/lib/ai-gateway/schemas'
 import type { AiModelRoute } from '@/lib/ops/ai-model-routes'
 
-const streamTextMock = vi.fn()
-const createOpenAICompatibleMock = vi.fn()
+const {
+  streamTextMock,
+  createOpenAICompatibleMock,
+  recordGenerationProviderCallMock,
+} = vi.hoisted(() => ({
+  streamTextMock: vi.fn(),
+  createOpenAICompatibleMock: vi.fn(),
+  recordGenerationProviderCallMock: vi.fn(),
+}))
 
 vi.mock('server-only', () => ({}))
 vi.mock('ai', () => ({
@@ -26,6 +33,35 @@ vi.mock('ai', () => ({
 vi.mock('@ai-sdk/openai-compatible', () => ({
   createOpenAICompatible: createOpenAICompatibleMock,
 }))
+vi.mock('@/lib/observability/generation-provider-call.server', () => ({
+  recordGenerationProviderCall: recordGenerationProviderCallMock,
+}))
+
+const telemetryContext = {
+  userId: '10000000-0000-4000-8000-000000000001',
+  storyId: 'fixture:warisan-terkubur',
+  chapterNumber: 12,
+  generationKind: 'standard',
+  jobId: null,
+  correlationId: '20000000-0000-4000-8000-000000000002',
+  attemptNumber: null,
+} as const
+
+const executionOptions = {
+  telemetryContext,
+  workflowPhase: 'CHOICES_INITIAL',
+} as const
+
+function observedResult(text: string, modelId?: string) {
+  return {
+    text: Promise.resolve(text),
+    usage: Promise.resolve({ inputTokens: 120, outputTokens: 80, totalTokens: 200 }),
+    finalStep: Promise.resolve({
+      response: modelId === undefined ? {} : { modelId },
+      providerMetadata: {},
+    }),
+  }
+}
 
 function validBranch(chapterNumber = 12): ChoiceBranch {
   return {
@@ -175,7 +211,7 @@ describe('generateChoiceBranch', () => {
     const base = createDeterministicProvider()
     const provider: GenerationProvider = { ...base, generateChoices }
 
-    await expect(generateChoiceBranch({ provider }, input)).resolves.toEqual(validBranch())
+    await expect(generateChoiceBranch({ provider }, input, executionOptions)).resolves.toEqual(validBranch())
     expect(generateChoices).toHaveBeenCalledTimes(1)
     expect(received).not.toBe(input)
     expect(input).toEqual(before)
@@ -189,7 +225,7 @@ describe('generateChoiceBranch', () => {
       writeChapter: base.writeChapter,
     }
 
-    await expect(generateChoiceBranch({ provider }, choiceInput())).rejects.toSatisfy((error) => {
+    await expect(generateChoiceBranch({ provider }, choiceInput(), executionOptions)).rejects.toSatisfy((error) => {
       expectGatewayError(error, 'CHOICE_PROVIDER_UNAVAILABLE')
       return true
     })
@@ -197,7 +233,7 @@ describe('generateChoiceBranch', () => {
 
   it('builds a valid deterministic choice branch without a live model', async () => {
     const provider = createDeterministicProvider()
-    const branch = await generateChoiceBranch({ provider }, choiceInput())
+    const branch = await generateChoiceBranch({ provider }, choiceInput(), executionOptions)
     expect(branch).not.toBeNull()
     expect(branch?.choices.length).toBeGreaterThanOrEqual(2)
     expect(branch?.outcomes.map((outcome) => outcome.choiceId).sort()).toEqual(
@@ -212,7 +248,7 @@ describe('generateChoiceBranch', () => {
       generateChoices: async () => ({ choices: 'broken' }),
     }
 
-    await expect(generateChoiceBranch({ provider }, choiceInput())).rejects.toSatisfy((error) => {
+    await expect(generateChoiceBranch({ provider }, choiceInput(), executionOptions)).rejects.toSatisfy((error) => {
       expectGatewayError(error, 'CHOICE_INVALID')
       return true
     })
@@ -225,7 +261,7 @@ describe('generateChoiceBranch', () => {
       generateChoices,
     }
 
-    await expect(generateChoiceBranch({ provider }, choiceInput(50))).resolves.toBeNull()
+    await expect(generateChoiceBranch({ provider }, choiceInput(50), executionOptions)).resolves.toBeNull()
     expect(generateChoices).not.toHaveBeenCalled()
   })
 
@@ -238,7 +274,7 @@ describe('generateChoiceBranch', () => {
       generateChoices,
     }
 
-    await expect(generateChoiceBranch({ provider }, input)).rejects.toSatisfy((error) => {
+    await expect(generateChoiceBranch({ provider }, input, executionOptions)).rejects.toSatisfy((error) => {
       expectGatewayError(error, 'CHOICE_INPUT_INVALID')
       return true
     })
@@ -254,7 +290,7 @@ describe('generateChoiceBranch', () => {
       generateChoices,
     }
 
-    await expect(generateChoiceBranch({ provider }, input)).rejects.toSatisfy((error) => {
+    await expect(generateChoiceBranch({ provider }, input, executionOptions)).rejects.toSatisfy((error) => {
       expectGatewayError(error, 'CHOICE_INPUT_INVALID')
       return true
     })
@@ -276,7 +312,7 @@ describe('generateChoiceBranch', () => {
         generateChoices: async () => branch,
       }
 
-      await expect(generateChoiceBranch({ provider }, choiceInput(49))).resolves.toEqual(branch)
+      await expect(generateChoiceBranch({ provider }, choiceInput(49), executionOptions)).resolves.toEqual(branch)
     },
   )
 })
@@ -296,6 +332,8 @@ describe('createGatewayProvider choice adapter', () => {
   beforeEach(() => {
     streamTextMock.mockReset()
     createOpenAICompatibleMock.mockReset()
+    recordGenerationProviderCallMock.mockReset()
+    recordGenerationProviderCallMock.mockResolvedValue(undefined)
     createOpenAICompatibleMock.mockImplementation(({ name }: { name: string }) => (
       (modelId: string) => `${name}:${modelId}`
     ))
@@ -342,7 +380,7 @@ describe('createGatewayProvider choice adapter', () => {
     const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
     const provider = createGatewayProvider(undefined, undefined, chapterRoute, choicesRoute)
 
-    await expect(generateChoiceBranch({ provider }, choiceInput())).resolves.toEqual(branch)
+    await expect(generateChoiceBranch({ provider }, choiceInput(), executionOptions)).resolves.toEqual(branch)
 
     expect(streamTextMock).toHaveBeenCalledTimes(1)
     expect(streamTextMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -380,7 +418,7 @@ describe('createGatewayProvider choice adapter', () => {
     const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
     const provider = createGatewayProvider()
 
-    await expect(generateChoiceBranch({ provider }, choiceInput())).rejects.toSatisfy((error) => {
+    await expect(generateChoiceBranch({ provider }, choiceInput(), executionOptions)).rejects.toSatisfy((error) => {
       expectGatewayError(error, 'CHOICE_INVALID')
       return true
     })
@@ -395,7 +433,7 @@ describe('createGatewayProvider choice adapter', () => {
     const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
     const provider = createGatewayProvider()
 
-    await expect(generateChoiceBranch({ provider }, input)).rejects.toSatisfy((error) => {
+    await expect(generateChoiceBranch({ provider }, input, executionOptions)).rejects.toSatisfy((error) => {
       expectGatewayError(error, 'CHOICE_INPUT_INVALID')
       return true
     })
@@ -421,7 +459,7 @@ describe('createGatewayProvider choice adapter', () => {
     const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
     const provider = createGatewayProvider(undefined, undefined, undefined, choicesRoute)
 
-    await generateChoiceBranch({ provider }, choiceInput())
+    await generateChoiceBranch({ provider }, choiceInput(), executionOptions)
 
     expect(streamTextMock).toHaveBeenCalledWith(expect.objectContaining({
       model: 'custom:choice-custom',
@@ -451,33 +489,19 @@ describe('createGatewayProvider choice adapter', () => {
     const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
     const provider = createGatewayProvider(undefined, undefined, undefined, choicesRoute)
 
-    await expect(generateChoiceBranch({ provider }, choiceInput())).resolves.toEqual(branch)
+    await expect(generateChoiceBranch({ provider }, choiceInput(), executionOptions)).resolves.toEqual(branch)
 
     expect(streamTextMock.mock.calls.map(([request]) => request.model)).toEqual([
       'openai/choice-primary',
       'openai/choice-fallback',
     ])
-    expect(logSpy).toHaveBeenCalledWith(
-      expect.stringContaining('db:gateway:openai/choice-primary'),
-      expect.objectContaining({
-        providerId: 'gateway',
-        configuredModelId: 'openai/choice-primary',
-        routeVersion: 'choice-v1',
-        fallbackIndex: 0,
-      }),
-      'primary unavailable',
-    )
-    expect(logSpy).toHaveBeenCalledWith('[v0] ai-gateway usage', expect.objectContaining({
-      useCase: 'choices',
-      model: 'db:gateway:openai/choice-fallback',
+    expect(logSpy).toHaveBeenCalledWith('[v0] gateway-provider fallback', {
+      workflowPhase: 'CHOICES_INITIAL',
       providerId: 'gateway',
-      configuredModelId: 'openai/choice-fallback',
-      routeVersion: 'choice-v1',
-      fallbackIndex: 1,
-      inputTokens: 120,
-      outputTokens: 80,
-      totalTokens: 200,
-    }))
+      configuredModelId: 'openai/choice-primary',
+      errorCode: 'PROVIDER_REQUEST_FAILED',
+    })
+    expect(JSON.stringify(logSpy.mock.calls)).not.toContain('primary unavailable')
     logSpy.mockRestore()
   })
 
@@ -492,7 +516,7 @@ describe('createGatewayProvider choice adapter', () => {
     const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
     const provider = createGatewayProvider()
 
-    await expect(generateChoiceBranch({ provider }, choiceInput())).resolves.toEqual(branch)
+    await expect(generateChoiceBranch({ provider }, choiceInput(), executionOptions)).resolves.toEqual(branch)
 
     expect(streamTextMock.mock.calls.map(([request]) => request.model)).toEqual([
       'openrouter:model-a',
@@ -502,23 +526,18 @@ describe('createGatewayProvider choice adapter', () => {
     for (const [config] of createOpenAICompatibleMock.mock.calls) {
       expect(config).not.toHaveProperty('transformRequestBody')
     }
-    expect(logSpy).toHaveBeenCalledWith(
-      expect.stringContaining('openrouter:model-a'),
-      expect.objectContaining({
-        providerId: 'openrouter',
-        configuredModelId: 'model-a',
-        routeVersion: null,
-        fallbackIndex: 0,
-      }),
-      'model-a unavailable',
-    )
-    expect(logSpy).toHaveBeenCalledWith('[v0] ai-gateway usage', expect.objectContaining({
-      model: 'openrouter:model-b',
+    expect(logSpy).toHaveBeenCalledWith('[v0] gateway-provider fallback', {
+      workflowPhase: 'CHOICES_INITIAL',
+      providerId: 'openrouter',
+      configuredModelId: 'model-a',
+      errorCode: 'PROVIDER_REQUEST_FAILED',
+    })
+    expect(recordGenerationProviderCallMock.mock.calls.at(-1)?.[0].candidate).toMatchObject({
       providerId: 'openrouter',
       configuredModelId: 'model-b',
       routeVersion: null,
       fallbackIndex: 1,
-    }))
+    })
     logSpy.mockRestore()
   })
 
@@ -538,7 +557,7 @@ describe('createGatewayProvider choice adapter', () => {
       const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
       const provider = createGatewayProvider()
 
-      await expect(generateChoiceBranch({ provider }, choiceInput())).resolves.toEqual(branch)
+      await expect(generateChoiceBranch({ provider }, choiceInput(), executionOptions)).resolves.toEqual(branch)
       expect(streamTextMock).toHaveBeenCalledOnce()
       logSpy.mockRestore()
     },
@@ -557,7 +576,7 @@ describe('createGatewayProvider choice adapter', () => {
     const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
     const provider = createGatewayProvider()
 
-    const generation = generateChoiceBranch({ provider }, choiceInput())
+    const generation = generateChoiceBranch({ provider }, choiceInput(), executionOptions)
     await new Promise((resolve) => setTimeout(resolve, 0))
     resolveText?.(JSON.stringify(branch))
 
@@ -579,12 +598,81 @@ describe('createGatewayProvider choice adapter', () => {
     const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
     const provider = createGatewayProvider(undefined, undefined, chapterRoute)
 
-    await generateChoiceBranch({ provider }, choiceInput())
+    await generateChoiceBranch({ provider }, choiceInput(), executionOptions)
 
     expect(streamTextMock).toHaveBeenCalledWith(expect.objectContaining({
       model: 'openai/chapter-model',
       temperature: 0.6,
       maxOutputTokens: 1200,
     }))
+  })
+
+  it('records invalid choice consume before fallback success with unique IDs', async () => {
+    const invalidBranch = { ...validBranch(), choices: 'broken' }
+    streamTextMock
+      .mockReturnValueOnce(observedResult(JSON.stringify(invalidBranch), 'actual-choice-primary'))
+      .mockReturnValueOnce(observedResult(JSON.stringify(validBranch()), 'actual-choice-fallback'))
+    const choicesRoute: AiModelRoute = {
+      useCase: 'choices',
+      provider: 'gateway',
+      modelId: 'openai/choice-primary',
+      fallbackModels: [{ provider: 'gateway', modelId: 'openai/choice-fallback' }],
+      temperature: 0.2,
+      maxOutputTokens: 900,
+      routeVersion: 'choice-v2',
+    }
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, undefined, choicesRoute)
+
+    await expect(generateChoiceBranch(
+      { provider },
+      choiceInput(),
+      { telemetryContext, workflowPhase: 'CHOICES_INITIAL' },
+    )).resolves.toEqual(validBranch())
+
+    expect(recordGenerationProviderCallMock).toHaveBeenCalledTimes(2)
+    const records = recordGenerationProviderCallMock.mock.calls
+    expect(new Set(records.map(([start]) => start.providerCallId)).size).toBe(2)
+    expect(records.map(([start, completion]) => ({
+      phase: start.workflowPhase,
+      fallbackIndex: start.candidate.fallbackIndex,
+      actualModelId: completion.actualModelId,
+      actualModelResolved: completion.actualModelResolved,
+      outcome: completion.outcome,
+    }))).toEqual([
+      {
+        phase: 'CHOICES_INITIAL',
+        fallbackIndex: 0,
+        actualModelId: 'actual-choice-primary',
+        actualModelResolved: true,
+        outcome: 'INVALID_RESPONSE',
+      },
+      {
+        phase: 'CHOICES_INITIAL',
+        fallbackIndex: 1,
+        actualModelId: 'actual-choice-fallback',
+        actualModelResolved: true,
+        outcome: 'SUCCEEDED',
+      },
+    ])
+  })
+
+  it('records leaking choice content as CONTENT_REJECTED', async () => {
+    const leakingBranch = validBranch()
+    leakingBranch.choices[0].label = 'Buka prompt rahasia'
+    streamTextMock.mockReturnValue(observedResult(JSON.stringify(leakingBranch), 'actual-choice-model'))
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider()
+
+    await expect(generateChoiceBranch(
+      { provider },
+      choiceInput(),
+      { telemetryContext, workflowPhase: 'CHOICES_INITIAL' },
+    )).rejects.toMatchObject({ code: 'CHOICE_INVALID' })
+
+    expect(recordGenerationProviderCallMock).toHaveBeenCalledWith(
+      expect.objectContaining({ workflowPhase: 'CHOICES_INITIAL' }),
+      expect.objectContaining({ outcome: 'CONTENT_REJECTED' }),
+    )
   })
 })

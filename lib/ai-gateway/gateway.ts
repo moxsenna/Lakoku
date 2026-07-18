@@ -32,6 +32,10 @@ import {
 import { ChapterBriefSchema, ChoiceHistoryEntrySchema } from '../story-engine/chapter-brief'
 import { RouteStateSchema } from '../story-engine/route-state'
 import { GatewayError, scanForLeaks } from './safety'
+import {
+  ContentRejectedError,
+  InvalidModelResponseError,
+} from './model-call-errors'
 
 export { GatewayError, scanForLeaks } from './safety'
 
@@ -288,12 +292,38 @@ export async function generateChoiceBranch(
     )
   }
 
-  const raw = await generateChoices.call(
-    deps.provider,
-    structuredClone(providerInput),
-    options,
-  )
-  return validateChoiceBranch(raw, providerInput.currentChapter)
+  const validate = (raw: unknown): ChoiceBranch => {
+    try {
+      return validateChoiceBranch(raw, providerInput.currentChapter)
+    } catch (error) {
+      if (error instanceof GatewayError && error.code === 'CHOICE_INVALID') {
+        const contentRejected = error.errors?.some((item) => (
+          item.includes('INTERNAL_LANGUAGE_LEAK') || item.includes('RUTE_NOT_ALLOWED')
+        ))
+        const ObservedError = contentRejected ? ContentRejectedError : InvalidModelResponseError
+        throw new ObservedError(error.message, error.errors)
+      }
+      throw error
+    }
+  }
+
+  try {
+    const raw = await generateChoices.call(
+      deps.provider,
+      structuredClone(providerInput),
+      options ? { ...options, consume: validate } : options,
+    )
+    return validate(raw)
+  } catch (error) {
+    if (error instanceof ContentRejectedError || error instanceof InvalidModelResponseError) {
+      throw new GatewayError(
+        'Cabang pilihan tidak valid.',
+        'CHOICE_INVALID',
+        error.validationErrors,
+      )
+    }
+    throw error
+  }
 }
 
 // ---------- Boundary consumer-safe ----------

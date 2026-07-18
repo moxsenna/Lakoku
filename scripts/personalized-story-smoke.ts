@@ -378,7 +378,6 @@ const personalizedSourcePaths = [
   'lib/api/personalized-stories.server.ts',
   'lib/api/premium-clone.server.ts',
   'lib/api/personalized-choice.server.ts',
-  'lib/api/generation-continuation.server.ts',
   'app/api/stories/personalized/route.ts',
   'app/api/stories/premium/[templateId]/clone/route.ts',
 ] as const

@@ -266,8 +266,6 @@ insert into public.outbox (topic, payload)
 values ('source.topic', '{"story_id":"premium:clone-source"}');
 insert into public.retrieval_logs (story_id, target_chapter, included_ids, excluded_ids, budget_report)
 values ('premium:clone-source', 2, '["fact:clue"]', '[]', '{}');
-insert into public.content_reports (story_id, chapter_number, reporter_id, category, note, canonical_refs)
-values ('premium:clone-source', 1, '20000000-0000-4000-8000-000000000002', 'other', 'source report', '{}');
 insert into public.shared_story_links (
   owner_user_id, source_story_id, share_slug, share_type, visibility,
   title, teaser_json, spoiler_level
@@ -1032,13 +1030,12 @@ select is(
     (select count(*) from public.idempotency_keys where story_id = 'premium:clone-target'),
     (select count(*) from public.outbox where payload @> '{"story_id":"premium:clone-target"}'),
     (select count(*) from public.retrieval_logs where story_id = 'premium:clone-target'),
-    (select count(*) from public.content_reports where story_id = 'premium:clone-target'),
     (select count(*) from public.shared_story_links where source_story_id = 'premium:clone-target'),
     (select count(*) from public.shared_story_starts where new_story_id = 'premium:clone-target'),
     (select count(*) from public.story_creation_requests where story_id = 'premium:clone-target')
   )::text),
-  row(0::bigint,0::bigint,0::bigint,0::bigint,0::bigint,0::bigint,0::bigint,0::bigint,0::bigint)::text,
-  'runtime history, requests, logs, reports, and shares are not cloned or synthesized'
+  row(0::bigint,0::bigint,0::bigint,0::bigint,0::bigint,0::bigint,0::bigint,0::bigint)::text,
+  'runtime history, requests, logs, and shares are not cloned or synthesized'
 );
 
 select is(

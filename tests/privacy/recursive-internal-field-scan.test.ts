@@ -94,6 +94,8 @@ const INTERNAL_KEYS = new Set([
   'locked_ending_key',
   'ownerUserId',
   'owner_user_id',
+  'userId',
+  'user_id',
   'sourceStoryId',
   'source_story_id',
   'storyMode',
@@ -102,6 +104,9 @@ const INTERNAL_KEYS = new Set([
   'generation_status',
   'choiceKind',
   'choice_kind',
+  'expectedState',
+  'expected_state',
+  'ledger',
   'reservationRequest',
   'reservation_request',
   'requestHash',
@@ -212,7 +217,9 @@ beforeEach(() => {
       })),
     },
   })
-  routeMocks.getSessionUser.mockResolvedValue(null)
+  routeMocks.getSessionUser.mockResolvedValue({
+    id: '11111111-1111-4111-8111-111111111111',
+  })
   routeMocks.queryChoiceOutcome.mockResolvedValue(publicShapes.choice.outcome)
   routeMocks.queryChapter.mockResolvedValue(publicShapes.chapter.chapter)
   routeMocks.applyChoiceToUserState.mockResolvedValue(undefined)
@@ -330,6 +337,8 @@ describe('reader route response privacy', () => {
   })
 
   it('scans actual choice, status, personalized create, and premium clone route bodies', async () => {
+    routeMocks.getSessionUser.mockResolvedValueOnce(null)
+
     const [{ POST: choice }, { GET: status }, { POST: create }, { POST: clone }] = await Promise.all([
       import('@/app/api/stories/[id]/choices/route'),
       import('@/app/api/stories/[id]/chapters/[number]/status/route'),
@@ -369,19 +378,38 @@ describe('reader route response privacy', () => {
 })
 
 describe('recursive public response internal-field scanner', () => {
-  it('reports exact paths for deliberately nested leaks', () => {
+  it('reports exact paths for hostile nested internal-field leaks', () => {
     const leaked = {
       stories: [{
         id: 'demo:aman',
-        chapters: [{ payload: { effect_json: {}, storyContractJson: {} } }],
+        chapters: [{
+          payload: {
+            route_state: { flags: { hidden: true } },
+            transport: [{ effect_json: { routeDeltas: { truth: 2 } } }],
+            storyContractJson: {},
+          },
+        }],
       }],
-      meta: { debug: { ending_lock_json: {}, leaseId: 'private-lease' } },
+      actor: { identity: { user_id: 'private-user' } },
+      meta: {
+        debug: {
+          ending_lock_json: {},
+          expected_state: { current_chapter: 2 },
+          ledger: { request_hash: 'private-hash' },
+          leaseId: 'private-lease',
+        },
+      },
     }
 
     expect(findInternalPaths(leaked)).toEqual([
-      '$.stories[0].chapters[0].payload.effect_json',
+      '$.stories[0].chapters[0].payload.route_state',
+      '$.stories[0].chapters[0].payload.transport[0].effect_json',
       '$.stories[0].chapters[0].payload.storyContractJson',
+      '$.actor.identity.user_id',
       '$.meta.debug.ending_lock_json',
+      '$.meta.debug.expected_state',
+      '$.meta.debug.ledger',
+      '$.meta.debug.ledger.request_hash',
       '$.meta.debug.leaseId',
     ])
   })
@@ -397,6 +425,7 @@ describe('recursive public response internal-field scanner', () => {
     expect(findInternalPaths({
       title: 'Efek Rumah Kaca',
       tagline: 'Pilihanmu memberi effect dramatis.',
+      synopsis: 'User memilih jalan pulang dan ledger tua menjadi petunjuk cerita.',
       status: 'ready',
     })).toEqual([])
   })

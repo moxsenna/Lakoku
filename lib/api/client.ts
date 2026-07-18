@@ -20,6 +20,7 @@ import type {
   ReportResult,
 } from './types'
 import type { StoryBibleDraft } from '@/lib/authoring/schema'
+import type { Finding } from '@lakoku/narrative-core'
 import {
   ChapterStatusResponseSchema,
   SubmitChoiceResponseSchema,
@@ -34,7 +35,7 @@ const API_BASE = '/api'
 export type LockStoryBibleClientResult =
   | { ok: true; storyId: string; resolvedBy: string; transforms: string[] }
   | { ok: false; error: string }
-  | { ok: false; needsAuthor: true; findings: unknown[]; transforms: string[] }
+  | { ok: false; needsAuthor: true; findings: Finding[]; transforms: string[] }
 
 /** Result of POST /api/stories/[id]/start-chapter */
 export type StartChapterClientResult =

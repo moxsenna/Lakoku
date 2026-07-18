@@ -1,4 +1,10 @@
-import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import {
+  execFileSync,
+  spawn,
+  type ChildProcessWithoutNullStreams,
+  type ExecFileSyncOptionsWithStringEncoding,
+} from 'node:child_process'
+import fs from 'node:fs'
 import path from 'node:path'
 import { assertLoopbackSupabaseUrl } from './personalized-db-safety'
 
@@ -16,6 +22,20 @@ export interface RaceTarget {
   container: string
   context: string
   applicationPrefix: string
+}
+
+type ExecFile = (
+  file: string,
+  args: readonly string[],
+  options: ExecFileSyncOptionsWithStringEncoding,
+) => string
+
+export interface LocalRaceVerificationDependencies {
+  cwd: string
+  readConfig: (configPath: string) => string
+  readStatus: (context: string) => Record<string, unknown>
+  inspectContainerProject: (container: string, context: string) => string
+  readPersistentMarker: (target: RaceTarget) => string
 }
 
 type ProcessExit = {
@@ -93,8 +113,7 @@ function psqlArgs(container: string, variables: Record<string, string>): string[
 }
 
 function localMarkerPrelude(): string {
-  return `set lakoku.test_target = 'local-cli';
-do $$
+  return `do $$
 begin
   if current_setting('lakoku.test_target', true) <> 'local-cli' then
     raise exception 'local test target marker unavailable';
@@ -109,33 +128,34 @@ export function execLocalPsql(
   sql: string,
   variables: Record<string, string> = {},
   timeoutMs = LOCAL_PSQL_TIMEOUT_MS,
+  execFile: ExecFile = execFileSync,
 ): string {
   try {
-    return execFileSync('docker', psqlArgs(target.container, variables), {
+    return execFile('docker', psqlArgs(target.container, variables), {
       input: `${localMarkerPrelude()}${sql}`,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: timeoutMs,
-    })
+    }) as string
   } catch (error) {
     const reason = isTimeoutError(error) ? 'timed out' : 'failed'
     throw new Error(`${target.context}: local PostgreSQL command ${reason}`)
   }
 }
 
-export function verifyLocalRaceTarget(context: string): RaceTarget {
-  const status = localStatus(context)
-  checkRace(typeof status.API_URL === 'string', context, 'local Supabase API URL unavailable')
-  checkRace(typeof status.DB_URL === 'string', context, 'local Supabase DB URL unavailable')
-  assertLoopbackSupabaseUrl(status.API_URL)
-  assertLoopbackSupabaseUrl(status.DB_URL)
+export function parseSupabaseProjectId(config: string): string {
+  const projectLines = config
+    .split(/\r?\n/)
+    .filter((line) => /^\s*project_id\s*=/.test(line))
+  checkRace(projectLines.length === 1, 'local Supabase config', 'expected exactly one project_id')
+  const match = projectLines[0].match(/^\s*project_id\s*=\s*"([^"]*)"\s*(?:#.*)?$/)
+  checkRace(match && /^[a-zA-Z0-9_-]+$/.test(match[1]), 'local Supabase config', 'unsafe project_id')
+  return match[1]
+}
 
-  const project = path.basename(process.cwd())
-  checkRace(/^[a-zA-Z0-9_-]+$/.test(project), context, 'unsafe local project name')
-  const container = `supabase_db_${project}`
-  let label = ''
+function inspectContainerProject(container: string, context: string): string {
   try {
-    label = execFileSync(
+    return execFileSync(
       'docker',
       ['inspect', '--format', '{{ index .Config.Labels "com.supabase.cli.project" }}', container],
       {
@@ -146,14 +166,63 @@ export function verifyLocalRaceTarget(context: string): RaceTarget {
     const reason = isTimeoutError(error) ? 'timed out' : 'unavailable'
     throw new Error(`${context}: local Supabase database container ${reason}`)
   }
+}
+
+const defaultLocalRaceVerificationDependencies: LocalRaceVerificationDependencies = {
+  cwd: process.cwd(),
+  readConfig: (configPath) => fs.readFileSync(configPath, 'utf8'),
+  readStatus: localStatus,
+  inspectContainerProject,
+  readPersistentMarker: (target) => execLocalPsql(target, "select current_setting('lakoku.test_target', true);"),
+}
+
+function localSupabaseProjectId(
+  context: string,
+  dependencies: LocalRaceVerificationDependencies,
+): string {
+  const configPath = path.join(dependencies.cwd, 'supabase', 'config.toml')
+  let config = ''
+  try {
+    config = dependencies.readConfig(configPath)
+  } catch {
+    throw new Error(`${context}: tracked Supabase config unavailable`)
+  }
+  try {
+    return parseSupabaseProjectId(config)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'invalid project_id'
+    throw new Error(`${context}: ${message}`)
+  }
+}
+
+export function verifyLocalRaceContainer(
+  context: string,
+  dependencies: LocalRaceVerificationDependencies = defaultLocalRaceVerificationDependencies,
+): RaceTarget {
+  const status = dependencies.readStatus(context)
+  checkRace(typeof status.API_URL === 'string', context, 'local Supabase API URL unavailable')
+  checkRace(typeof status.DB_URL === 'string', context, 'local Supabase DB URL unavailable')
+  assertLoopbackSupabaseUrl(status.API_URL)
+  assertLoopbackSupabaseUrl(status.DB_URL)
+
+  const project = localSupabaseProjectId(context, dependencies)
+  const container = `supabase_db_${project}`
+  const label = dependencies.inspectContainerProject(container, context)
   checkRace(label === project, context, 'database container is not current local Supabase project')
 
-  const target: RaceTarget = {
+  return {
     container,
     context,
     applicationPrefix: `lakoku-${safeLabel(context)}`,
   }
-  const marker = execLocalPsql(target, "select current_setting('lakoku.test_target', true);").trim()
+}
+
+export function verifyLocalRaceTarget(
+  context: string,
+  dependencies: LocalRaceVerificationDependencies = defaultLocalRaceVerificationDependencies,
+): RaceTarget {
+  const target = verifyLocalRaceContainer(context, dependencies)
+  const marker = dependencies.readPersistentMarker(target).trim()
   checkRace(marker === 'local-cli', context, 'lakoku.test_target must equal local-cli')
   return target
 }

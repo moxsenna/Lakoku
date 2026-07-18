@@ -10,7 +10,7 @@
 import 'server-only'
 import { cache } from 'react'
 import { headers } from 'next/headers'
-import { createClient as createSupabaseJsClient } from '@supabase/supabase-js'
+import { createClient as createSupabaseJsClient, type User } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { requireSupabaseAnonKey, requireSupabaseUrl } from '@/lib/supabase/env'
 import type { JejakItem, ChoiceOutcome } from './types'
@@ -69,9 +69,7 @@ const getSessionContext = cache(async function getSessionContext() {
  * Resolve user from Authorization: Bearer <access_token> (Android / API clients).
  * Cookie session remains primary for web via getSessionContext.
  */
-async function getUserFromBearerAuthorization(): Promise<
-  Awaited<ReturnType<typeof getSessionUser>>
-> {
+async function getUserFromBearerAuthorization(): Promise<User | null> {
   try {
     const headerStore = await headers()
     const auth = headerStore.get('authorization') ?? headerStore.get('Authorization')
@@ -97,7 +95,7 @@ async function getUserFromBearerAuthorization(): Promise<
 /**
  * User dari sesi cookie (web) atau Bearer JWT (Android/API), atau null untuk tamu.
  */
-export const getSessionUser = cache(async function getSessionUser() {
+export const getSessionUser = cache(async function getSessionUser(): Promise<User | null> {
   const { user } = await getSessionContext()
   if (user) return user
   return getUserFromBearerAuthorization()

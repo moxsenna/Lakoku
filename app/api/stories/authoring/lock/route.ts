@@ -23,7 +23,8 @@ export async function POST(req: Request) {
     if ('needsAuthor' in result && result.needsAuthor) {
       return NextResponse.json(result, { status: 422 })
     }
-    const status = result.error === AUTHORING_AUTH_REQUIRED_ERROR ? 401 : 400
+    const status =
+      'error' in result && result.error === AUTHORING_AUTH_REQUIRED_ERROR ? 401 : 400
     return NextResponse.json(result, { status })
   }
 

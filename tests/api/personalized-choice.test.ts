@@ -638,6 +638,7 @@ describe('personalized choice route dispatch', () => {
       userId,
       chapterNumber: 2,
       triggerChoiceId: 'private-choice',
+      correlationId: expect.any(String),
     })
   })
 })

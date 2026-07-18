@@ -246,7 +246,7 @@ describe('createGatewayProvider story-contract adapter', () => {
     process.env.OPENROUTER_API_KEY = 'openrouter-key'
     process.env.OPENROUTER_MODELS = 'model-a, model-b, model-a'
     process.env.NARRATIVE_MODEL = 'custom-db-model'
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
     streamTextMock
       .mockImplementationOnce(() => { throw new Error('db custom unavailable') })
       .mockImplementationOnce(() => { throw new Error('db openrouter unavailable') })

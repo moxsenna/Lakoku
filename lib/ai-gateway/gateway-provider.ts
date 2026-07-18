@@ -550,13 +550,6 @@ function buildStoryContractPrompt(input: StoryContractProviderInput): string {
 
 // ---------- Shared usage / cost accounting log ----------
 
-type ModelUsage = {
-  inputTokens?: number
-  outputTokens?: number
-  totalTokens?: number
-  raw?: Record<string, unknown>
-}
-
 function candidateIdentity(candidate: ModelCandidate): Omit<ModelCandidate, 'model' | 'label'> {
   return {
     providerId: candidate.providerId,

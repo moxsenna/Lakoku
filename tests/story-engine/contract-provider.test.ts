@@ -107,6 +107,8 @@ describe('createGatewayProvider story-contract adapter', () => {
     'CUSTOM_LLM_API_KEY',
     'OPENROUTER_API_KEY',
     'OPENROUTER_MODELS',
+    'NINEROUTER_BASE_URL',
+    'NINEROUTER_API_KEY',
     'NARRATIVE_MODEL',
   ] as const
   const originalEnv = new Map<string, string | undefined>()
@@ -185,13 +187,72 @@ describe('createGatewayProvider story-contract adapter', () => {
     expect(streamTextMock.mock.calls[1][0].prompt).not.toContain('completedAt')
     expect(streamTextMock.mock.calls[1][0].prompt.length).toBeLessThanOrEqual(16_000)
     expect(createOpenAICompatibleMock).not.toHaveBeenCalled()
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining('db:gateway:openai/contract-primary'),
+      expect.objectContaining({
+        providerId: 'gateway',
+        configuredModelId: 'openai/contract-primary',
+        routeVersion: 'contract-v1',
+        fallbackIndex: 0,
+      }),
+      'primary unavailable',
+    )
     expect(logSpy).toHaveBeenCalledWith('[v0] ai-gateway usage', expect.objectContaining({
       useCase: 'story_contract',
       model: 'db:gateway:openai/contract-fallback',
+      providerId: 'gateway',
+      configuredModelId: 'openai/contract-fallback',
+      routeVersion: 'contract-v1',
+      fallbackIndex: 1,
       inputTokens: 100,
       outputTokens: 50,
       totalTokens: 150,
       cost: 0.0042,
+    }))
+  })
+
+  it('merges DB and env candidates, preserves order, and dedupes provider plus model', async () => {
+    process.env.CUSTOM_LLM_BASE_URL = 'https://custom.example.test/v1'
+    process.env.CUSTOM_LLM_API_KEY = 'custom-key'
+    process.env.NINEROUTER_BASE_URL = 'https://nine.example.test/v1'
+    process.env.NINEROUTER_API_KEY = 'nine-key'
+    process.env.OPENROUTER_API_KEY = 'openrouter-key'
+    process.env.OPENROUTER_MODELS = 'model-a, model-b, model-a'
+    process.env.NARRATIVE_MODEL = 'custom-db-model'
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    streamTextMock
+      .mockImplementationOnce(() => { throw new Error('db custom unavailable') })
+      .mockImplementationOnce(() => { throw new Error('db openrouter unavailable') })
+      .mockImplementationOnce(() => { throw new Error('env 9router unavailable') })
+      .mockReturnValueOnce({ text: Promise.resolve('{"totalChapters":49}') })
+    getAiModelRouteMock.mockResolvedValue({
+      useCase: 'story_contract',
+      provider: 'custom',
+      modelId: 'custom-db-model',
+      fallbackModels: [
+        { provider: 'openrouter', modelId: 'model-a' },
+        { provider: 'custom', modelId: 'custom-db-model' },
+      ],
+      temperature: 0.15,
+      maxOutputTokens: 8000,
+      routeVersion: 'contract-v2',
+    } satisfies AiModelRoute)
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider()
+
+    await generateStoryContractRaw({ provider }, contractInput())
+
+    expect(streamTextMock.mock.calls.map(([request]) => request.model)).toEqual([
+      'custom:custom-db-model',
+      'openrouter:model-a',
+      '9router:custom-db-model',
+      'openrouter:model-b',
+    ])
+    expect(logSpy).toHaveBeenCalledWith('[v0] ai-gateway usage', expect.objectContaining({
+      providerId: 'openrouter',
+      configuredModelId: 'model-b',
+      routeVersion: null,
+      fallbackIndex: 3,
     }))
   })
 

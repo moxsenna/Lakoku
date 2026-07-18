@@ -287,6 +287,8 @@ describe('createGatewayProvider choice adapter', () => {
     'CUSTOM_LLM_API_KEY',
     'OPENROUTER_API_KEY',
     'OPENROUTER_MODELS',
+    'NINEROUTER_BASE_URL',
+    'NINEROUTER_API_KEY',
     'NARRATIVE_MODEL',
   ] as const
   const originalEnv = new Map<string, string | undefined>()
@@ -455,12 +457,67 @@ describe('createGatewayProvider choice adapter', () => {
       'openai/choice-primary',
       'openai/choice-fallback',
     ])
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining('db:gateway:openai/choice-primary'),
+      expect.objectContaining({
+        providerId: 'gateway',
+        configuredModelId: 'openai/choice-primary',
+        routeVersion: 'choice-v1',
+        fallbackIndex: 0,
+      }),
+      'primary unavailable',
+    )
     expect(logSpy).toHaveBeenCalledWith('[v0] ai-gateway usage', expect.objectContaining({
       useCase: 'choices',
       model: 'db:gateway:openai/choice-fallback',
+      providerId: 'gateway',
+      configuredModelId: 'openai/choice-fallback',
+      routeVersion: 'choice-v1',
+      fallbackIndex: 1,
       inputTokens: 120,
       outputTokens: 80,
       totalTokens: 200,
+    }))
+    logSpy.mockRestore()
+  })
+
+  it('runs each OpenRouter env model as one explicit indexed request', async () => {
+    process.env.OPENROUTER_API_KEY = 'openrouter-key'
+    process.env.OPENROUTER_MODELS = 'model-a, model-b'
+    const branch = validBranch()
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    streamTextMock
+      .mockImplementationOnce(() => { throw new Error('model-a unavailable') })
+      .mockReturnValueOnce({ text: Promise.resolve(JSON.stringify(branch)) })
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider()
+
+    await expect(generateChoiceBranch({ provider }, choiceInput())).resolves.toEqual(branch)
+
+    expect(streamTextMock.mock.calls.map(([request]) => request.model)).toEqual([
+      'openrouter:model-a',
+      'openrouter:model-b',
+    ])
+    expect(createOpenAICompatibleMock).toHaveBeenCalled()
+    for (const [config] of createOpenAICompatibleMock.mock.calls) {
+      expect(config).not.toHaveProperty('transformRequestBody')
+    }
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining('openrouter:model-a'),
+      expect.objectContaining({
+        providerId: 'openrouter',
+        configuredModelId: 'model-a',
+        routeVersion: null,
+        fallbackIndex: 0,
+      }),
+      'model-a unavailable',
+    )
+    expect(logSpy).toHaveBeenCalledWith('[v0] ai-gateway usage', expect.objectContaining({
+      model: 'openrouter:model-b',
+      providerId: 'openrouter',
+      configuredModelId: 'model-b',
+      routeVersion: null,
+      fallbackIndex: 1,
     }))
     logSpy.mockRestore()
   })

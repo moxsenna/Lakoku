@@ -60,11 +60,29 @@ function parseOptional<T>(
   return result.data
 }
 
+function parseFlexibleTimestamp(value: string): string {
+  const trimmed = value.trim()
+  // ISO with offset / Z.
+  if (/[zZ]$|[+-]\d{2}:\d{2}$/.test(trimmed)) {
+    const withOffset = new Date(trimmed)
+    if (Number.isNaN(withOffset.getTime())) throw new Error('Invalid timestamp')
+    return withOffset.toISOString()
+  }
+  // datetime-local: YYYY-MM-DDTHH:mm[:ss] (browser local time)
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(trimmed)) {
+    const local = new Date(trimmed)
+    if (Number.isNaN(local.getTime())) throw new Error('Invalid timestamp')
+    return local.toISOString()
+  }
+  const parsed = new Date(trimmed)
+  if (Number.isNaN(parsed.getTime())) throw new Error('Invalid timestamp')
+  return parsed.toISOString()
+}
+
 function parseTimestamp(input: SearchParamsInput, key: string, fallback: Date): string {
   const value = readParam(input, key)
   if (value === undefined || value === '') return fallback.toISOString()
-  if (!TimestampSchema.safeParse(value).success) throw new Error(`Invalid ${key}`)
-  return new Date(value).toISOString()
+  return parseFlexibleTimestamp(value)
 }
 
 export function parseAdminGenerationFilters(

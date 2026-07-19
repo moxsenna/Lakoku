@@ -66,7 +66,21 @@ export async function startOwnedChapterGeneration(
           correlationId,
         })
         if (!result.ok && result.reason !== 'CHAPTER_EXISTS' && result.reason !== 'LEASE_HELD') {
-          console.log('START_CHAPTER_BACKGROUND_FAILED', { reason: result.reason })
+          console.log('START_CHAPTER_BACKGROUND_FAILED', {
+            reason: result.reason,
+            failedLayer:
+              result.detail && typeof result.detail === 'object' && 'failedLayer' in result.detail
+                ? (result.detail as { failedLayer?: string | null }).failedLayer ?? null
+                : null,
+            findingCodes:
+              result.detail && typeof result.detail === 'object' && Array.isArray((result.detail as { findings?: unknown }).findings)
+                ? ((result.detail as { findings: Array<{ severity?: string; code?: string }> }).findings)
+                    .slice(0, 12)
+                    .map((f) => `${f.severity ?? '?'}:${f.code ?? '?'}`)
+                : [],
+          }) => `${f.severity ?? '?'}:${f.code ?? '?'}`)
+            : [],
+        })
         }
       } catch {
         // Ensure after() never dies silently — release path is inside generateNextChapterReal catch.

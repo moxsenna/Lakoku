@@ -344,6 +344,17 @@ export async function generateNextChapterReal(
         repairAttempts: result.attempts,
         findings: result.findings,
       })
+      // Bounded ops log only — no prose/prompts. Helps diagnose "LLM OK, chapter missing".
+      const findingCodes = result.findings
+        .slice(0, 12)
+        .map((f) => `${f.severity}:${f.code}`)
+      console.log('GENERATION_REVIEW_REQUIRED', {
+        storyId,
+        chapterNumber,
+        failedLayer: result.failedLayer ?? null,
+        repairAttempts: result.attempts,
+        findingCodes,
+      })
       return {
         ok: false,
         reason: 'FAILED_REVIEW_REQUIRED',

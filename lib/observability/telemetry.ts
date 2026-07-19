@@ -104,6 +104,8 @@ export async function recordGenerationAttempt(input: {
       critical_remaining: sev.criticalRemaining,
       major_remaining: sev.majorRemaining,
       minor_remaining: sev.minorRemaining,
+      // Bounded codes only (severity:code). No finding message/prose.
+      finding_codes: input.findings.slice(0, 12).map((f) => `${f.severity}:${f.code}`),
     })
   } catch (err) {
     console.log('[v0] recordGenerationAttempt gagal (non-kritis):', (err as Error)?.message)

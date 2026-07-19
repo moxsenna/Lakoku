@@ -11,9 +11,15 @@
  *  3. Karakter tak tahu info di luar knowledge scope-nya         CRITICAL
  *  4. State delta ⊆ allowed_state_delta                          CRITICAL
  *  5. Timeline monoton (tanpa flashback marker)                  MAJOR
- *  6. Struktur bab (500–800 kata, 2–4 scene, ada choice/gate)    MAJOR
+ *  6. Struktur bab (kata/scene/choice)                           MAJOR
  *  7. Nama/alias cocok registry (G5)                             MAJOR
  *  8. Karakter baru bernama setelah Bab 30 ada di blueprint      CRITICAL
+ *
+ * Panjang bab:
+ *  - hard band 500–1200 kata → MAJOR di luar band (bisa gagal review)
+ *  - soft band 800–1000 kata (generation_policy / mobile-drama target)
+ *  - soft miss = MINOR agar provider call sukses tidak sia-sia
+ *    hanya karena model sedikit di bawah 800 kata.
  */
 
 import type {
@@ -30,8 +36,12 @@ export interface LayerAResult {
   blocking: boolean // ada CRITICAL?
 }
 
-const WORD_MIN = 800
-const WORD_MAX = 1000
+/** Hard band — di luar ini MAJOR (masuk repair / bisa gagal review). */
+const WORD_MIN = 500
+const WORD_MAX = 1200
+/** Soft band — selaras generation_policy target 800–1000. Soft miss = MINOR. */
+const WORD_SOFT_MIN = 800
+const WORD_SOFT_MAX = 1000
 const SCENE_MIN = 2
 const SCENE_MAX = 4
 const NEW_CHARACTER_GATE = 30
@@ -200,8 +210,15 @@ export function validateLayerA(
     findings.push({
       code: 'CHAPTER_LENGTH_OUT_OF_RANGE',
       severity: 'MAJOR',
-      message: `Panjang bab ${draft.wordCount} kata di luar rentang ${WORD_MIN}–${WORD_MAX}.`,
-      detail: { wordCount: draft.wordCount },
+      message: `Panjang bab ${draft.wordCount} kata di luar rentang keras ${WORD_MIN}–${WORD_MAX}.`,
+      detail: { wordCount: draft.wordCount, band: 'hard' },
+    })
+  } else if (draft.wordCount < WORD_SOFT_MIN || draft.wordCount > WORD_SOFT_MAX) {
+    findings.push({
+      code: 'CHAPTER_LENGTH_SOFT_MISS',
+      severity: 'MINOR',
+      message: `Panjang bab ${draft.wordCount} kata di luar target lunak ${WORD_SOFT_MIN}–${WORD_SOFT_MAX} (masih dalam band keras).`,
+      detail: { wordCount: draft.wordCount, band: 'soft' },
     })
   }
   if (draft.sceneCount < SCENE_MIN || draft.sceneCount > SCENE_MAX) {

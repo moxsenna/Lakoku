@@ -12,6 +12,12 @@ const migrationPath = path.join(
   'migrations',
   '20260707000000_core_runtime_baseline.sql',
 )
+const hardeningMigrationPath = path.join(
+  process.cwd(),
+  'supabase',
+  'migrations',
+  '20260718060000_harden_legacy_lifecycle_function_acl.sql',
+)
 
 function snapshot(target: RaceTarget): string {
   return execLocalPsql(target, String.raw`
@@ -75,6 +81,31 @@ function main(): void {
   const after = snapshot(target)
   if (after !== before) throw new Error('runtime baseline sentinel: validation-only path mutated catalog')
 
+  const hardeningMigration = fs.readFileSync(hardeningMigrationPath, 'utf8')
+  execLocalPsql(target, String.raw`
+begin;
+grant execute on function public.acquire_generation_lease(text,integer,text,integer,text) to public;
+grant execute on function public.publish_chapter(text,integer,text,jsonb,text,jsonb,jsonb,uuid,text) to public;
+${migration}
+${hardeningMigration}
+do $acl_hardened$
+begin
+  if has_function_privilege('anon','public.acquire_generation_lease(text,integer,text,integer,text)','EXECUTE')
+    or has_function_privilege('authenticated','public.acquire_generation_lease(text,integer,text,integer,text)','EXECUTE')
+    or has_function_privilege('anon','public.release_generation_lease(text,uuid)','EXECUTE')
+    or has_function_privilege('authenticated','public.release_generation_lease(text,uuid)','EXECUTE')
+    or has_function_privilege('anon','public.publish_chapter(text,integer,text,jsonb,text,jsonb,jsonb,uuid,text)','EXECUTE')
+    or has_function_privilege('authenticated','public.publish_chapter(text,integer,text,jsonb,text,jsonb,jsonb,uuid,text)','EXECUTE')
+    or not has_function_privilege('service_role','public.acquire_generation_lease(text,integer,text,integer,text)','EXECUTE')
+    or not has_function_privilege('service_role','public.release_generation_lease(text,uuid)','EXECUTE')
+    or not has_function_privilege('service_role','public.publish_chapter(text,integer,text,jsonb,text,jsonb,jsonb,uuid,text)','EXECUTE') then
+    raise exception 'legacy lifecycle function ACL hardening failed';
+  end if;
+end
+$acl_hardened$;
+rollback;
+`, {}, 30_000)
+
   expectDrift(
     target,
     migration,
@@ -86,6 +117,12 @@ function main(): void {
     migration,
     'revoke execute on function public.acquire_generation_lease(text,integer,text,integer,text) from service_role;',
     'function ACL',
+  )
+  expectDrift(
+    target,
+    migration,
+    'grant execute on function public.release_generation_lease(text,uuid) to public;',
+    'unknown legacy function ACL',
   )
   expectDrift(
     target,

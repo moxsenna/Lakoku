@@ -16,6 +16,7 @@ import {
   DEFAULT_RUNTIME_POLICY,
 } from './provider'
 import { GatewayError, scanForLeaks } from './gateway'
+import { clampChapterParagraphs, countParagraphWords } from '@/lib/prose/clamp-chapter-prose'
 import { buildWriterPrompt } from '@/lib/prose/prompt-engine'
 import type { AiModelRoute } from '@/lib/ops/ai-model-routes'
 import {
@@ -275,7 +276,7 @@ type ProseModel = {
 }
 
 function countWords(paragraphs: string[]): number {
-  return paragraphs.join(' ').split(/\s+/).filter(Boolean).length
+  return countParagraphWords(paragraphs)
 }
 
 function activeCharacterNames(snapshot: CanonSnapshot, chapter: number): string[] {
@@ -777,7 +778,7 @@ export function createGatewayProvider(
       }
 
       // 2) Prosa nyata dari LLM (dengan rantai fallback + max token floor for ag/*).
-      const { title, paragraphs } = await generateProse({
+      const { title, paragraphs: rawParagraphs } = await generateProse({
         chain,
         snapshot: input.snapshot,
         plan: input.plan as Record<string, unknown>,
@@ -786,7 +787,20 @@ export function createGatewayProvider(
         route: aiRoute,
       })
 
-      // 3) Gabungkan: prosa model menggantikan judul/paragraf; sisanya canon-safe.
+      // 3) Clamp to Layer A hard band. High maxOutputTokens (ag/* floor 4096)
+      // often yields 1500–2500+ words; without clamp, review fails with
+      // MAJOR:CHAPTER_LENGTH_OUT_OF_RANGE after 2 wasted repairs.
+      const paragraphs = clampChapterParagraphs(rawParagraphs)
+      if (countWords(rawParagraphs) > countWords(paragraphs)) {
+        console.log('CHAPTER_PROSE_CLAMPED', {
+          beforeWords: countWords(rawParagraphs),
+          afterWords: countWords(paragraphs),
+          beforeParagraphs: rawParagraphs.length,
+          afterParagraphs: paragraphs.length,
+        })
+      }
+
+      // 4) Gabungkan: prosa model menggantikan judul/paragraf; sisanya canon-safe.
       return {
         ...scaffold,
         title,

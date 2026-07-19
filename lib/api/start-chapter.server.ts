@@ -78,9 +78,7 @@ export async function startOwnedChapterGeneration(
                     .slice(0, 12)
                     .map((f) => `${f.severity ?? '?'}:${f.code ?? '?'}`)
                 : [],
-          }) => `${f.severity ?? '?'}:${f.code ?? '?'}`)
-            : [],
-        })
+          })
         }
       } catch {
         // Ensure after() never dies silently — release path is inside generateNextChapterReal catch.

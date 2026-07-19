@@ -88,3 +88,13 @@ describe('admin generation filters', () => {
     expect(serializeAdminGenerationFilters(parsed).has('unknown')).toBe(false)
   })
 })
+
+it('accepts datetime-local timestamps from browser inputs', () => {
+  const filters = parseAdminGenerationFilters({
+    from: '2026-07-18T00:00',
+    to: '2026-07-19T00:00',
+  })
+  expect(Number.isNaN(Date.parse(filters.from))).toBe(false)
+  expect(Number.isNaN(Date.parse(filters.to))).toBe(false)
+  expect(new Date(filters.to).getTime()).toBeGreaterThan(new Date(filters.from).getTime())
+})

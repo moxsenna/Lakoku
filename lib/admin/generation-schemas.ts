@@ -4,9 +4,31 @@ import {
   ProviderCallOutcomeSchema,
 } from '@/lib/observability/generation-provider-call.contract'
 
-const TimestampSchema = z.iso.datetime({ offset: true })
-const NonnegativeDecimalStringSchema = z.string().regex(/^\d+(?:\.\d+)?$/)
-const NonnegativeIntegerStringSchema = z.string().regex(/^\d+$/)
+// PostgREST may return timestamptz / numeric / bigint as string or number.
+const TimestampSchema = z.union([
+  z.string(),
+  z.date(),
+]).transform((value, ctx) => {
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    ctx.addIssue({ code: 'custom', message: 'Invalid timestamp' })
+    return z.NEVER
+  }
+  return date.toISOString()
+})
+
+const NonnegativeDecimalStringSchema = z.union([
+  z.string().regex(/^\d+(?:\.\d+)?$/),
+  z.number().finite().nonnegative(),
+  z.bigint().nonnegative(),
+]).transform((value) => String(value))
+
+const NonnegativeIntegerStringSchema = z.union([
+  z.string().regex(/^\d+$/),
+  z.number().int().nonnegative(),
+  z.bigint().nonnegative(),
+]).transform((value) => String(value))
+
 const CurrencySchema = z.string().regex(/^[A-Z]{3}$/)
 const GenerationKindSchema = z.enum(['standard', 'personalized'])
 const GenerationJobStatusSchema = z.enum([

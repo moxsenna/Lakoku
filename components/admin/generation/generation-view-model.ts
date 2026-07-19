@@ -46,9 +46,15 @@ export function buildGenerationViewModel(
   error?: unknown,
 ): GenerationViewModel {
   if (error || dashboard === null) {
+    // Never surface raw DB/provider text. Only known loader codes are safe.
+    const code = error instanceof Error ? error.message : ''
+    const message = code === 'Generation observability query failed'
+      || code === 'Generation observability response was invalid'
+      ? code
+      : 'Generation observability is unavailable.'
     return {
       state: 'error',
-      errorMessage: 'Generation observability is unavailable.',
+      errorMessage: message,
       current: null,
       previous: null,
       costs: [],

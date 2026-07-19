@@ -42,6 +42,35 @@ const overviewRow = {
   stale_job_count: '0',
 } as const
 
+const overviewRowFromPostgrestNumbers = {
+  ...overviewRow,
+  call_count: 12,
+  input_token_count: 100,
+  output_token_count: 200,
+  total_token_count: 300,
+  success_count: 10,
+  error_count: 2,
+  fallback_call_count: 1,
+  success_rate: 0.8333333333333334,
+  error_rate: 0.16666666666666666,
+  fallback_rate: 0.08333333333333333,
+  p50_elapsed_ms: 1200.5,
+  actual_cost_amount: 12.34,
+  estimated_cost_amount: 1.23,
+  unavailable_cost_count: 2,
+  active_job_count: 3,
+  failed_job_count: 1,
+  retrying_job_count: 1,
+  stale_job_count: 0,
+} as const
+
+  it('accepts overview rows with numeric PostgREST values', () => {
+    const parsed = AdminGenerationOverviewSchema.parse([overviewRowFromPostgrestNumbers])
+    expect(parsed[0]?.call_count).toBe('12')
+    expect(parsed[0]?.actual_cost_amount).toBe('12.34')
+    expect(parsed[0]?.p50_elapsed_ms).toBe('1200.5')
+  })
+
 const timeseriesRow = {
   bucket_start: FROM,
   cost_currency: 'USD',

@@ -27,6 +27,18 @@ produk. Nama produk konsumen: **Lakoku**.
 - Aplikasi **Android native (Kotlin)** menyusul sebagai **client kedua** di atas
   kontrak API yang sama, setelah metrik retensi/monetisasi web terbukti.
 
+### 2.1 Production deploy (wajib dibaca sebelum tanya user)
+
+- **Production app = VPS**, bukan Cloudflare Worker / Vercel default.
+- Runbook lengkap: **`docs/VPS_DEPLOY.md`** (entry singkat: `deploy/README.deploy.md`).
+- Kit multi-app VPS: **`D:\Coding\deploy-kit\AGENT-HANDOFF.md`** (+ `README.md`, `MULTI-APP.md`).
+- Path app: `/opt/lakoku`, container `lakoku-web`, port `127.0.0.1:5200`, domain
+  `https://lakoku.appvibe.biz.id`, network Docker `wacrm_edge` (Caddy shared di `/opt/wacrm`).
+- Build mode VPS: `LAKOKU_DEPLOY=vps` → Next standalone (`Dockerfile` + `docker-compose.yml`).
+- **DB production = Supabase linked** dari laptop (`pnpm exec supabase db push --linked`);
+  rebuild container **tidak** menerapkan migration.
+- Jangan tanya “deploy ke mana?” kecuali akses SSH/VPS gagal atau user minta override.
+
 ## 3. Aturan wajib untuk client (web sekarang, Android nanti)
 
 Semua ini berlaku identik untuk client mana pun:
@@ -61,6 +73,9 @@ Semua ini berlaku identik untuk client mana pun:
 
 | Dokumen | Untuk apa |
 |---|---|
+| `docs/VPS_DEPLOY.md` | **Deploy production VPS** (path, port, Caddy, update, rollback, migration split) |
+| `deploy/README.deploy.md` | Ringkas entry deploy VPS |
+| `D:\Coding\deploy-kit\AGENT-HANDOFF.md` | Handoff multi-app VPS (host, SSH, wacrm, port policy) |
 | `docs/CLIENT_SEQUENCING.md` | Kenapa web-first, invariant reuse Kotlin, dua-jalur |
 | `docs/IMPLEMENTATION_PLAN.md` | Runbook milestone M0–M9 (M6-WEB = web reader) |
 | `docs/PROGRESS_CHECKLIST.md` | **Status task M0–M9 (centang di sini).** Cek dulu sebelum mulai kerja — biar task terlewat ketahuan |

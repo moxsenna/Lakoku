@@ -31,6 +31,7 @@ const requiredFiles = [
   'app/admin/credits/page.tsx',
   'app/admin/payments/page.tsx',
   'app/admin/generation/page.tsx',
+  'app/admin/generation/loading.tsx',
   'app/admin/settings/page.tsx',
   'app/admin/consistency/page.tsx',
   'components/admin/admin-shell.tsx',
@@ -42,6 +43,14 @@ const requiredFiles = [
   'components/admin/admin-error-state.tsx',
   'components/admin/grant-credit-form.tsx',
   'components/admin/status-badge.tsx',
+  'components/admin/generation/generation-filter-bar.tsx',
+  'components/admin/generation/generation-summary-grid.tsx',
+  'components/admin/generation/generation-timeseries.tsx',
+  'components/admin/generation/model-performance-table.tsx',
+  'components/admin/generation/error-fallback-distribution.tsx',
+  'components/admin/generation/provider-call-ledger.tsx',
+  'components/admin/generation/generation-job-drawer.tsx',
+  'components/admin/generation/generation-data-quality.tsx',
 ]
 
 for (const f of requiredFiles) {
@@ -97,6 +106,15 @@ if (existsSync(payPath)) {
   const c = readFileSync(payPath, 'utf-8')
   check('payments: no reconcile button', !c.includes('reconcile'))
   check('payments: no refund button', !c.includes('refund'))
+}
+
+// Generation observability stays read-only and RPC-backed
+const generationPath = join(root, 'app/admin/generation/page.tsx')
+if (existsSync(generationPath)) {
+  const c = readFileSync(generationPath, 'utf-8')
+  check('generation: uses typed dashboard loader', c.includes('loadAdminGenerationDashboard'))
+  check('generation: has no mutation controls', !/retry job|cancel job|recover job|edit route/i.test(c))
+  check('generation: no story_events source', !c.includes('story_events'))
 }
 
 // Consistency page still exists

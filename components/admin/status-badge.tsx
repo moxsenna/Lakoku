@@ -18,6 +18,17 @@ const statusMap: Record<string, { label: string; className: string }> = {
   none: { label: 'None', className: 'bg-muted text-muted-foreground' },
   first_topup: { label: 'First Topup', className: 'bg-lavender/10 text-lavender' },
   normal: { label: 'Normal', className: 'bg-muted text-muted-foreground' },
+  SUCCEEDED: { label: 'Succeeded', className: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' },
+  PROVIDER_ERROR: { label: 'Provider Error', className: 'bg-red-500/10 text-red-600 dark:text-red-400' },
+  TIMEOUT: { label: 'Timeout', className: 'bg-red-500/10 text-red-600 dark:text-red-400' },
+  ABORTED: { label: 'Aborted', className: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' },
+  INVALID_RESPONSE: { label: 'Invalid Response', className: 'bg-red-500/10 text-red-600 dark:text-red-400' },
+  CONTENT_REJECTED: { label: 'Content Rejected', className: 'bg-red-500/10 text-red-600 dark:text-red-400' },
+  QUEUED: { label: 'Queued', className: 'bg-sky-500/10 text-sky-600 dark:text-sky-400' },
+  RUNNING: { label: 'Running', className: 'bg-sky-500/10 text-sky-600 dark:text-sky-400' },
+  RETRY_WAIT: { label: 'Retry Wait', className: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' },
+  FAILED: { label: 'Failed', className: 'bg-red-500/10 text-red-600 dark:text-red-400' },
+  CANCELLED: { label: 'Cancelled', className: 'bg-muted text-muted-foreground' },
 }
 
 export function StatusBadge({ status }: StatusBadgeProps) {

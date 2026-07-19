@@ -48,6 +48,7 @@ vi.mock('@/lib/runtime/story-generation', async () => {
 })
 
 const USER_A = '11111111-1111-4111-8111-111111111111'
+const CORRELATION_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const USER_B = '22222222-2222-4222-8222-222222222222'
 const PREMIUM_TEMPLATE_ID = 'premium:rain-archive'
 const PREMIUM_INSTANCE_A = 'ai:premium:rain-archive:11111111-1111-4111-8111-111111111111'
@@ -474,6 +475,7 @@ describe('generateNextPersonalizedChapter', () => {
     const result: RealGenerateResult = await generateNextPersonalizedChapter({
       storyId: STORY_A,
       userId: USER_A,
+      correlationId: CORRELATION_ID,
       chapterNumber: 12,
     }, deps)
 
@@ -483,6 +485,17 @@ describe('generateNextPersonalizedChapter', () => {
       seq: 9,
       repairAttempts: 0,
     })
+    const expectedContext = {
+      userId: USER_A,
+      storyId: STORY_A,
+      chapterNumber: 12,
+      generationKind: 'personalized',
+      jobId: null,
+      correlationId: CORRELATION_ID,
+      attemptNumber: null,
+    }
+    expect(deps.selectProvider).toHaveBeenNthCalledWith(1, expectedContext)
+    expect(deps.selectProvider).toHaveBeenNthCalledWith(2, expectedContext)
 
     expect(capture.calls).toEqual([
       'lease',
@@ -531,6 +544,7 @@ describe('generateNextPersonalizedChapter', () => {
     const result = await generateNextPersonalizedChapter({
       storyId: STORY_A,
       userId: USER_A,
+      correlationId: CORRELATION_ID,
       chapterNumber: 50,
     }, deps)
 
@@ -585,6 +599,7 @@ describe('generateNextPersonalizedChapter', () => {
     await expect(generateNextPersonalizedChapter({
       storyId: STORY_A,
       userId: USER_A,
+      correlationId: CORRELATION_ID,
       chapterNumber: 50,
     }, deps)).rejects.toThrow(/network down/)
     expect(deps.markReaderStateSelesai).not.toHaveBeenCalled()
@@ -603,6 +618,7 @@ describe('generateNextPersonalizedChapter', () => {
     const result = await generateNextPersonalizedChapter({
       storyId: STORY_A,
       userId: USER_A,
+      correlationId: CORRELATION_ID,
       chapterNumber: 50,
     }, deps)
 
@@ -646,6 +662,7 @@ describe('generateNextPersonalizedChapter', () => {
     await expect(generateNextPersonalizedChapter({
       storyId: STORY_A,
       userId: USER_A,
+      correlationId: CORRELATION_ID,
       chapterNumber: 50,
     }, first.deps)).rejects.toThrow(/transient write failure/)
     expect(first.deps.publishChapterV2).toHaveBeenCalledTimes(1)
@@ -670,6 +687,7 @@ describe('generateNextPersonalizedChapter', () => {
     const recovery = await generateNextPersonalizedChapter({
       storyId: STORY_A,
       userId: USER_A,
+      correlationId: CORRELATION_ID,
       chapterNumber: 50,
     }, second.deps)
 
@@ -708,6 +726,7 @@ describe('generateNextPersonalizedChapter', () => {
     const result = await generateNextPersonalizedChapter({
       storyId: STORY_A,
       userId: USER_A,
+      correlationId: CORRELATION_ID,
       chapterNumber: 45,
     }, deps)
 
@@ -773,6 +792,7 @@ describe('generateNextPersonalizedChapter', () => {
     const result = await generateNextPersonalizedChapter({
       storyId: STORY_A,
       userId: USER_A,
+      correlationId: CORRELATION_ID,
       chapterNumber: 41,
     }, deps)
 
@@ -799,6 +819,7 @@ describe('generateNextPersonalizedChapter', () => {
     const result = await generateNextPersonalizedChapter({
       storyId: STORY_A,
       userId: USER_A,
+      correlationId: CORRELATION_ID,
       chapterNumber: 36,
     }, deps)
 
@@ -827,6 +848,7 @@ describe('generateNextPersonalizedChapter', () => {
     const result = await generateNextPersonalizedChapter({
       storyId: STORY_A,
       userId: USER_A,
+      correlationId: CORRELATION_ID,
       chapterNumber: 50,
     }, deps)
 
@@ -868,6 +890,7 @@ describe('generateNextPersonalizedChapter', () => {
     const result = await generateNextPersonalizedChapter({
       storyId: STORY_A,
       userId: USER_A,
+      correlationId: CORRELATION_ID,
       chapterNumber: 46,
     }, deps)
 
@@ -908,6 +931,7 @@ describe('generateNextPersonalizedChapter', () => {
     const result = await generateNextPersonalizedChapter({
       storyId: STORY_A,
       userId: USER_A,
+      correlationId: CORRELATION_ID,
       chapterNumber: 45,
     }, deps)
 
@@ -988,11 +1012,13 @@ describe('generateNextPersonalizedChapter', () => {
       generateNextPersonalizedChapter({
         storyId: STORY_A,
         userId: USER_A,
+        correlationId: CORRELATION_ID,
         chapterNumber: 12,
       }, shared.deps),
       generateNextPersonalizedChapter({
         storyId: STORY_B,
         userId: USER_B,
+        correlationId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
         chapterNumber: 12,
       }, shared.deps),
     ])
@@ -1041,6 +1067,7 @@ describe('generateNextPersonalizedChapter', () => {
     await runtime.generateNextPersonalizedChapter({
       storyId: STORY_A,
       userId: USER_A,
+      correlationId: CORRELATION_ID,
       chapterNumber: 12,
     }, deps)
 
@@ -1068,6 +1095,7 @@ describe('generateNextPersonalizedChapter', () => {
     const result = await generateNextPersonalizedChapter({
       storyId: STORY_A,
       userId: USER_A,
+      correlationId: CORRELATION_ID,
       chapterNumber: 12,
     }, heldDeps)
 
@@ -1086,6 +1114,7 @@ describe('generateNextPersonalizedChapter', () => {
     const result = await generateNextPersonalizedChapter({
       storyId: STORY_A,
       userId: USER_A,
+      correlationId: CORRELATION_ID,
       chapterNumber: 12,
     }, deps)
 
@@ -1105,6 +1134,7 @@ describe('generateNextPersonalizedChapter', () => {
     await generateNextPersonalizedChapter({
       storyId: STORY_A,
       userId: USER_A,
+      correlationId: CORRELATION_ID,
       chapterNumber: 12,
     }, deps)
 

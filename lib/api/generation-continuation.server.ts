@@ -71,12 +71,14 @@ export async function continuePersonalizedGeneration(input: {
   storyId: string
   userId: string
   chapterNumber: number
+  correlationId: string
   triggerChoiceId?: string
 }): Promise<{ nextChapterReady: boolean }> {
   const generationInput: PersonalizedGenerateInput = {
     storyId: input.storyId,
     userId: input.userId,
     chapterNumber: input.chapterNumber,
+    correlationId: input.correlationId,
     triggerChoiceId: input.triggerChoiceId,
   }
 
@@ -91,11 +93,11 @@ export async function continuePersonalizedGeneration(input: {
  */
 export async function continueStandardGeneration(input: {
   storyId: string
+  userId: string
   chapterNumber: number
+  correlationId: string
 }): Promise<{ nextChapterReady: boolean }> {
   const key = continuationJobKey(input.storyId, input.chapterNumber)
-  const promise = startOrReuseJob(key, () =>
-    generateNextChapterReal(input.storyId, input.chapterNumber),
-  )
+  const promise = startOrReuseJob(key, () => generateNextChapterReal(input))
   return raceContinuation(promise)
 }

@@ -2,6 +2,10 @@ import 'server-only'
 import { createDeterministicProvider } from './provider'
 import { createGatewayProvider } from './gateway-provider'
 import type { GenerationProvider } from './provider'
+import {
+  ProviderCallContextSchema,
+  type ProviderCallContext,
+} from '@/lib/observability/generation-provider-call.contract'
 import { getGenerationPolicy } from '@/lib/ops/generation-policy'
 import { getAiModelRoute } from '@/lib/ops/ai-model-routes'
 
@@ -24,7 +28,10 @@ import { getAiModelRoute } from '@/lib/ops/ai-model-routes'
  * Fungsi async karena membaca generation_policy & ai_model_routes dari DB
  * (dengan cache per-request).
  */
-export async function selectProvider(): Promise<GenerationProvider> {
+export async function selectProvider(
+  context: ProviderCallContext,
+): Promise<GenerationProvider> {
+  ProviderCallContextSchema.parse(context)
   const genPolicy = await getGenerationPolicy()
   if (process.env.NARRATIVE_PROVIDER === 'gateway') {
     const [aiRoute, choicesRoute] = await Promise.all([

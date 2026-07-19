@@ -196,7 +196,12 @@ describe('POST /api/stories/[id]/start-chapter', () => {
     expect(res.status).toBe(202)
     expect(await res.json()).toEqual({ ok: true, chapterNumber: 1 })
     expect(mocks.after).toHaveBeenCalledTimes(1)
-    expect(mocks.generateNextChapterReal).toHaveBeenCalledWith('story-a', 1)
+    expect(mocks.generateNextChapterReal).toHaveBeenCalledWith({
+      storyId: 'story-a',
+      userId: 'user-a',
+      chapterNumber: 1,
+      correlationId: expect.any(String),
+    })
     expect(mocks.ensureReaderStateStarted).toHaveBeenCalledWith('story-a', 1)
   })
 })

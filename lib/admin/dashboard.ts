@@ -1,5 +1,7 @@
 import 'server-only'
 import { createAdminClient } from '@lakoku/db'
+import { loadAdminGenerationOverview } from '@/lib/admin/generation'
+import type { AdminGenerationFilters } from '@/lib/admin/generation-filters'
 
 export interface AdminDashboardMetrics {
   totalUsers: number
@@ -13,9 +15,11 @@ export interface AdminDashboardMetrics {
   consistencyCriticalRate: number | null
 }
 
-export async function loadAdminDashboardMetrics(): Promise<AdminDashboardMetrics> {
+export async function loadAdminDashboardMetrics(
+  now = new Date(),
+): Promise<AdminDashboardMetrics> {
   const db = createAdminClient()
-  const today = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
+  const today = now.toISOString().slice(0, 10) // YYYY-MM-DD
 
   const metrics: AdminDashboardMetrics = {
     totalUsers: 0,
@@ -93,22 +97,33 @@ export async function loadAdminDashboardMetrics(): Promise<AdminDashboardMetrics
     }
   } catch { /* No-op */ }
 
-  // --- Generation (via observability) ---
-  try {
-    const { data: gen } = await db
-      .from('story_events')
-      .select('payload')
-      .eq('event_name', 'GENERATION_ATTEMPT')
-      .gte('created_at', `${today}T00:00:00`)
-    if (gen) {
-      metrics.generationAttemptsToday = gen.length
-      const failures = gen.filter((e) => {
-        const p = (e.payload as Record<string, unknown>)?.outcome
-        return p !== 'PUBLISHED'
-      }).length
-      metrics.generationFailuresToday = failures
-    }
-  } catch { /* No-op */ }
+  // --- Generation (same authorized observability overview as generation dashboard) ---
+  const generationFilters: AdminGenerationFilters = {
+    from: `${today}T00:00:00.000Z`,
+    to: now.toISOString(),
+    providerId: null,
+    modelId: null,
+    useCase: null,
+    workflowPhase: null,
+    outcome: null,
+    errorCode: null,
+    costSource: null,
+    userId: null,
+    storyId: null,
+    generationKind: null,
+    jobId: null,
+    correlationId: null,
+    chapterNumber: null,
+    cursorStartedAt: null,
+    cursorId: null,
+    pageSize: 1,
+  }
+  const generationOverview = await loadAdminGenerationOverview(generationFilters)
+  const currentGeneration = generationOverview.find((row) => row.period_name === 'current')
+  if (currentGeneration) {
+    metrics.generationAttemptsToday = Number(currentGeneration.call_count)
+    metrics.generationFailuresToday = Number(currentGeneration.error_count)
+  }
 
   return metrics
 }

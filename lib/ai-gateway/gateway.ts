@@ -27,10 +27,15 @@ import {
   type LastParagraphs,
   type StoryContractInput,
   type StoryContractCallOptions,
+  type ModelCallExecutionOptions,
 } from './provider'
 import { ChapterBriefSchema, ChoiceHistoryEntrySchema } from '../story-engine/chapter-brief'
 import { RouteStateSchema } from '../story-engine/route-state'
 import { GatewayError, scanForLeaks } from './safety'
+import {
+  ContentRejectedError,
+  InvalidModelResponseError,
+} from './model-call-errors'
 
 export { GatewayError, scanForLeaks } from './safety'
 
@@ -74,13 +79,14 @@ export async function writeChapter(
     repairFindings?: Finding[]
     injectDefects?: DraftDefect[]
   },
+  options?: ModelCallExecutionOptions,
 ): Promise<ChapterDraftParsed> {
   const raw = await deps.provider.writeChapter({
     snapshot: args.snapshot,
     plan: args.plan,
     repairFindings: args.repairFindings,
     injectDefects: args.injectDefects,
-  })
+  }, options)
   const parsed = parseDraft(raw)
   if (!parsed.ok) {
     throw new GatewayError('Draft bab tidak valid.', 'DRAFT_INVALID', parsed.errors)
@@ -273,6 +279,7 @@ function projectChoiceInput(input: ChoiceInput): ChoiceProviderInput {
 export async function generateChoiceBranch(
   deps: GatewayDeps,
   input: ChoiceInput,
+  options?: ModelCallExecutionOptions,
 ): Promise<ChoiceBranch | null> {
   const providerInput = projectChoiceInput(input)
   if (providerInput.currentChapter === 50) return null
@@ -285,8 +292,38 @@ export async function generateChoiceBranch(
     )
   }
 
-  const raw = await generateChoices.call(deps.provider, structuredClone(providerInput))
-  return validateChoiceBranch(raw, providerInput.currentChapter)
+  const validate = (raw: unknown): ChoiceBranch => {
+    try {
+      return validateChoiceBranch(raw, providerInput.currentChapter)
+    } catch (error) {
+      if (error instanceof GatewayError && error.code === 'CHOICE_INVALID') {
+        const contentRejected = error.errors?.some((item) => (
+          item.includes('INTERNAL_LANGUAGE_LEAK') || item.includes('RUTE_NOT_ALLOWED')
+        ))
+        const ObservedError = contentRejected ? ContentRejectedError : InvalidModelResponseError
+        throw new ObservedError(error.message, error.errors)
+      }
+      throw error
+    }
+  }
+
+  try {
+    const raw = await generateChoices.call(
+      deps.provider,
+      structuredClone(providerInput),
+      options ? { ...options, consume: validate } : options,
+    )
+    return validate(raw)
+  } catch (error) {
+    if (error instanceof ContentRejectedError || error instanceof InvalidModelResponseError) {
+      throw new GatewayError(
+        'Cabang pilihan tidak valid.',
+        'CHOICE_INVALID',
+        error.validationErrors,
+      )
+    }
+    throw error
+  }
 }
 
 // ---------- Boundary consumer-safe ----------

@@ -57,6 +57,7 @@ export async function POST(
             storyId: id,
             userId: user.id,
             chapterNumber: nextChapterNumber,
+            correlationId: crypto.randomUUID(),
             triggerChoiceId: choiceId,
           })
           return NextResponse.json({ outcome: result.outcome, nextChapterReady })
@@ -117,7 +118,9 @@ export async function POST(
     ) {
       const { nextChapterReady } = await continueStandardGeneration({
         storyId: id,
+        userId: user.id,
         chapterNumber: nextChapterNumber,
+        correlationId: crypto.randomUUID(),
       })
       return NextResponse.json({ outcome, nextChapterReady })
     }

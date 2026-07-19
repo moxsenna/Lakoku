@@ -337,6 +337,7 @@ export async function clonePremiumStoryForUser(input: {
         storyId: reserved.row.story_id,
         userId: input.userId,
         chapterNumber: 1,
+        correlationId: crypto.randomUUID(),
       })
     } catch {
       throw new PremiumCloneError('INTERNAL_ERROR')

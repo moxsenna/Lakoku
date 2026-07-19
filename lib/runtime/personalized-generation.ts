@@ -55,6 +55,8 @@ import {
   type PublishResult,
 } from './lifecycle'
 import type { RealGenerateResult } from './story-generation'
+import { createSynchronousProviderContext } from './generation-provider-context'
+import { ProviderCallContextSchema } from '@/lib/observability/generation-provider-call.contract'
 
 /**
  * Personalized chapter runtime (Task 17).
@@ -97,7 +99,10 @@ export interface PersonalizedGenerateInput {
   storyId: string
   userId: string
   chapterNumber: number
+  correlationId: string
   triggerChoiceId?: string
+  jobId?: string
+  attemptNumber?: number
 }
 
 export interface PersistEndingLockInput {
@@ -138,7 +143,9 @@ export interface PersonalizedGenerationDeps {
     chapterNumber: number,
     packet: ChapterContextPacket,
   ) => Promise<void>
-  selectProvider: () => Promise<GenerationProvider>
+  selectProvider: (
+    context: ReturnType<typeof createSynchronousProviderContext>,
+  ) => Promise<GenerationProvider>
   generateChapter: (
     deps: { provider: GenerationProvider },
     args: {
@@ -146,6 +153,7 @@ export interface PersonalizedGenerationDeps {
       blueprint: ChapterBlueprint
       chapterNumber: number
       threadContext?: ThreadContext
+      executionOptions?: Parameters<GenerationProvider['writeChapter']>[1]
     },
   ) => Promise<GenerationResult>
   toReaderSafe: (draft: ChapterDraftParsed) => {
@@ -163,6 +171,7 @@ export interface PersonalizedGenerationDeps {
   generateChoiceBranch: (
     deps: { provider: GenerationProvider },
     input: ChoiceInput,
+    options?: Parameters<GenerationProvider['writeChapter']>[1],
   ) => Promise<ChoiceBranch | null>
   resolveEnding: typeof resolveEnding
   auditPlotDebts: (input: PlotDebtAuditInput) => PlotDebtAuditResult
@@ -452,7 +461,32 @@ export async function generateNextPersonalizedChapter(
   deps?: PersonalizedGenerationDeps,
 ): Promise<RealGenerateResult> {
   const d = deps ?? defaultDeps()
-  const { storyId, userId, chapterNumber, triggerChoiceId } = input
+  const {
+    storyId,
+    userId,
+    chapterNumber,
+    correlationId,
+    triggerChoiceId,
+    jobId,
+    attemptNumber,
+  } = input
+  const providerContext = jobId === undefined && attemptNumber === undefined
+    ? createSynchronousProviderContext({
+        userId,
+        storyId,
+        chapterNumber,
+        generationKind: 'personalized',
+        correlationId,
+      })
+    : ProviderCallContextSchema.parse({
+        userId,
+        storyId,
+        chapterNumber,
+        generationKind: 'personalized',
+        jobId: jobId ?? null,
+        correlationId,
+        attemptNumber: attemptNumber ?? null,
+      })
 
   if (
     !Number.isInteger(chapterNumber)
@@ -518,8 +552,17 @@ export async function generateNextPersonalizedChapter(
     }
 
     const result = await d.generateChapter(
-      { provider: await d.selectProvider() },
-      { snapshot, blueprint, chapterNumber, threadContext },
+      { provider: await d.selectProvider(providerContext) },
+      {
+        snapshot,
+        blueprint,
+        chapterNumber,
+        threadContext,
+        executionOptions: {
+          telemetryContext: providerContext,
+          workflowPhase: 'CHAPTER_PROSE_INITIAL',
+        },
+      },
     )
 
     if (result.status !== 'PUBLISHED' || !result.draft) {
@@ -552,7 +595,7 @@ export async function generateNextPersonalizedChapter(
     let ending: EndingResolution | null = null
 
     if (chapterNumber < TOTAL_PERSONALIZED_CHAPTERS) {
-      const provider = await d.selectProvider()
+      const provider = await d.selectProvider(providerContext)
       const branch = await d.generateChoiceBranch(
         { provider },
         {
@@ -563,6 +606,10 @@ export async function generateNextPersonalizedChapter(
           routeState,
           choiceHistory,
           lockedEndingKey: brief.lockedEndingKey,
+        },
+        {
+          telemetryContext: providerContext,
+          workflowPhase: 'CHOICES_INITIAL',
         },
       )
       if (!branch) {

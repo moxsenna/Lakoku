@@ -293,7 +293,12 @@ describe('brainstorm action authorization', () => {
     expect(db.builder.eq).toHaveBeenNthCalledWith(2, 'owner_user_id', 'user-a')
     expect(db.calls).toEqual(['select', 'eq', 'eq', 'maybeSingle'])
     expect(mocks.after).toHaveBeenCalledTimes(1)
-    expect(mocks.generateNextChapterReal).toHaveBeenCalledWith('story-a', 1)
+    expect(mocks.generateNextChapterReal).toHaveBeenCalledWith({
+      storyId: 'story-a',
+      userId: 'user-a',
+      chapterNumber: 1,
+      correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    })
     expect(mocks.ensureReaderStateStarted).toHaveBeenCalledWith('story-a', 1)
   })
 })

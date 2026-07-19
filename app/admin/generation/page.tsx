@@ -1,75 +1,84 @@
-import {
-  loadAdminGenerationMetrics,
-  listAdminGenerationEvents,
-} from '@/lib/admin/generation'
-import { AdminStatCard } from '@/components/admin/admin-stat-card'
-import { AdminSectionCard } from '@/components/admin/admin-section-card'
 import { AdminEmptyState } from '@/components/admin/admin-empty-state'
-import { StatusBadge } from '@/components/admin/status-badge'
-import { isoDatetime } from '@/lib/admin/format'
+import { AdminErrorState } from '@/components/admin/admin-error-state'
+import { ErrorFallbackDistribution } from '@/components/admin/generation/error-fallback-distribution'
+import { GenerationCostBreakdown } from '@/components/admin/generation/generation-cost-breakdown'
+import { GenerationDataQuality } from '@/components/admin/generation/generation-data-quality'
+import { GenerationFilterBar } from '@/components/admin/generation/generation-filter-bar'
+import { GenerationJobDrawer } from '@/components/admin/generation/generation-job-drawer'
+import { GenerationSummaryGrid } from '@/components/admin/generation/generation-summary-grid'
+import { GenerationTimeseries } from '@/components/admin/generation/generation-timeseries'
+import { buildGenerationViewModel, formatTimestamp } from '@/components/admin/generation/generation-view-model'
+import { ModelPerformanceTable } from '@/components/admin/generation/model-performance-table'
+import { ProviderCallLedger } from '@/components/admin/generation/provider-call-ledger'
+import { loadAdminGenerationDashboard } from '@/lib/admin/generation'
+import { parseAdminGenerationFilters } from '@/lib/admin/generation-filters'
 
 export const dynamic = 'force-dynamic'
 
-export default async function AdminGenerationPage() {
-  const metrics = await loadAdminGenerationMetrics()
-  const events = await listAdminGenerationEvents(30)
+type SearchParams = Record<string, string | string[] | undefined>
+
+export default async function AdminGenerationPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>
+}) {
+  let filters
+  try {
+    filters = parseAdminGenerationFilters(await searchParams)
+  } catch {
+    return (
+      <div className="flex flex-col gap-6">
+        <header><h1 className="font-serif text-xl text-foreground">Generation operations</h1><p className="text-xs text-muted-foreground">Read-only provider-call and durable-job observability.</p></header>
+        <AdminErrorState error="Invalid generation filters. Use ISO timestamps and bounded values." />
+      </div>
+    )
+  }
+
+  const dashboard = await loadAdminGenerationDashboard(filters).catch(() => null)
+  const viewModel = buildGenerationViewModel(
+    filters,
+    dashboard,
+    dashboard === null ? new Error('QUERY_FAILED') : undefined,
+  )
+
+  if (dashboard === null) {
+    return (
+      <div className="flex flex-col gap-6">
+        <header>
+          <h1 className="font-serif text-xl text-foreground">Generation operations</h1>
+          <p className="text-xs text-muted-foreground">Selected range: {formatTimestamp(filters.from)} – {formatTimestamp(filters.to)}</p>
+        </header>
+        <GenerationFilterBar filters={filters} />
+        <AdminErrorState error={viewModel.errorMessage ?? 'Generation observability is unavailable.'} />
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-6">
       <header>
-        <h1 className="font-serif text-xl text-foreground">Generation</h1>
-        <p className="text-xs text-muted-foreground">
-          Kesehatan AI generation & failure monitor.
-        </p>
+        <h1 className="font-serif text-xl text-foreground">Generation operations</h1>
+        <p className="text-xs text-muted-foreground">Read-only provider-call and durable-job observability.</p>
+        <p className="mt-1 text-[11px] text-muted-foreground">Selected range: {formatTimestamp(filters.from)} – {formatTimestamp(filters.to)}</p>
       </header>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <AdminStatCard title="Attempts Today" value={metrics.attemptsToday} />
-        <AdminStatCard title="Success Today" value={metrics.successToday} tone="good" />
-        <AdminStatCard
-          title="Failed Today"
-          value={metrics.failedToday}
-          tone={metrics.failedToday > 0 ? 'bad' : 'good'}
-        />
-        <AdminStatCard
-          title="Failure Rate"
-          value={`${Math.round(metrics.failureRate * 100)}%`}
-          tone={metrics.failureRate > 0.1 ? 'warn' : 'good'}
-        />
-      </div>
+      <GenerationFilterBar filters={filters} />
+      <GenerationDataQuality rows={dashboard.dataQuality} />
 
-      <AdminSectionCard title="Latest Generation Events" subtitle="30 event terbaru dari story_events">
-        {events.length === 0 ? (
-          <AdminEmptyState message="Belum ada generation event." />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-border bg-muted/30 text-left">
-                  <th className="px-3 py-2">Date</th>
-                  <th className="px-3 py-2">Story</th>
-                  <th className="px-3 py-2">Chapter</th>
-                  <th className="px-3 py-2">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {events.map((e) => (
-                  <tr key={e.id} className="border-b border-border hover:bg-muted/20">
-                    <td className="px-3 py-1.5 text-muted-foreground">{isoDatetime(e.createdAt)}</td>
-                    <td className="px-3 py-1.5 font-mono text-[10px]">
-                      {e.storyId ? `${e.storyId.slice(0, 8)}...` : '-'}
-                    </td>
-                    <td className="px-3 py-1.5">{e.chapterId ?? '-'}</td>
-                    <td className="px-3 py-1.5">
-                      <StatusBadge status={e.status} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </AdminSectionCard>
+      {viewModel.state === 'empty' ? (
+        <AdminEmptyState title="No generation activity" message="No provider calls exist for selected range and filters." />
+      ) : (
+        <>
+          <GenerationSummaryGrid viewModel={viewModel} />
+          <GenerationTimeseries rows={dashboard.timeseries} />
+          <ModelPerformanceTable rows={dashboard.modelPerformance} />
+          <ErrorFallbackDistribution rows={dashboard.errorDistribution} />
+          <GenerationCostBreakdown rows={dashboard.costBreakdown} />
+          <ProviderCallLedger calls={dashboard.providerCalls} filters={filters} nextHref={viewModel.nextHref} />
+        </>
+      )}
+
+      {filters.jobId !== null && <GenerationJobDrawer rows={dashboard.jobDetail ?? []} filters={filters} />}
     </div>
   )
 }

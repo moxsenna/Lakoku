@@ -4,7 +4,13 @@ import { fantasiPetualanganContract } from '@/fixtures/contracts/fantasi-petuala
 import { misteriDramaContract } from '@/fixtures/contracts/misteri-drama'
 import { romansaDramaContract } from '@/fixtures/contracts/romansa-drama'
 import { generateStoryContractRaw } from '@/lib/ai-gateway/gateway'
-import type { GenerationProvider, StoryContractInput } from '@/lib/ai-gateway/provider'
+import { InvalidModelResponseError } from '@/lib/ai-gateway/model-call-errors'
+import type {
+  GenerationProvider,
+  ModelCallExecutionOptions,
+  StoryContractInput,
+} from '@/lib/ai-gateway/provider'
+import type { ProviderCallContext } from '@/lib/observability/generation-provider-call.contract'
 import {
   createDefaultTasteProfile,
   type TasteProfile,
@@ -38,11 +44,14 @@ async function generateWithinBudget(
   provider: GenerationProvider,
   input: StoryContractInput,
   timeoutMs: number,
+  options?: ModelCallExecutionOptions,
 ): Promise<unknown> {
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
   const providerResult = generateStoryContractRaw({ provider }, input, {
     signal: controller.signal,
+    ...options,
+    consume: options?.consume,
   })
   const timeout = new Promise<never>((_resolve, reject) => {
     controller.signal.addEventListener('abort', () => {
@@ -341,6 +350,7 @@ export async function createResilientStoryContract(input: {
   storyId: string
   tasteJson: TasteProfile
   provider: GenerationProvider
+  telemetryContext?: ProviderCallContext
   timeoutMs?: number
 }): Promise<{ contract: StoryContract; contractSource: ContractSource }> {
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -353,14 +363,60 @@ export async function createResilientStoryContract(input: {
   })
 
   try {
-    const raw = await generateWithinBudget(input.provider, providerInput(), timeoutMs)
-    const first = parseRequestedContract(raw, input.storyId)
+    let firstValidation: ReturnType<typeof parseRequestedContract> | undefined
+    let raw: unknown
+    try {
+      raw = await generateWithinBudget(
+        input.provider,
+        providerInput(),
+        timeoutMs,
+        input.telemetryContext
+          ? {
+              telemetryContext: input.telemetryContext,
+              workflowPhase: 'STORY_CONTRACT_INITIAL',
+              consume: (candidate) => {
+                const parsed = parseRequestedContract(candidate, input.storyId)
+                if (!parsed.success) {
+                  throw new InvalidModelResponseError(
+                    'Story contract response failed validation.',
+                    issueStrings(parsed.error),
+                    candidate,
+                  )
+                }
+                return candidate
+              },
+            }
+          : undefined,
+      )
+    } catch (error) {
+      if (!(error instanceof InvalidModelResponseError)) throw error
+      raw = error.rejectedValue
+      firstValidation = parseRequestedContract(raw, input.storyId)
+    }
+    const first = firstValidation ?? parseRequestedContract(raw, input.storyId)
     if (first.success) return { contract: first.data, contractSource: 'llm' }
 
     const repairedRaw = await generateWithinBudget(
       input.provider,
       providerInput(issueStrings(first.error)),
       timeoutMs,
+      input.telemetryContext
+        ? {
+            telemetryContext: input.telemetryContext,
+            workflowPhase: 'STORY_CONTRACT_REPAIR',
+            consume: (candidate) => {
+              const parsed = parseRequestedContract(candidate, input.storyId)
+              if (!parsed.success) {
+                throw new InvalidModelResponseError(
+                  'Story contract repair failed validation.',
+                  issueStrings(parsed.error),
+                  candidate,
+                )
+              }
+              return candidate
+            },
+          }
+        : undefined,
     )
     const repaired = parseRequestedContract(repairedRaw, input.storyId)
     if (repaired.success) return { contract: repaired.data, contractSource: 'llm_repaired' }

@@ -11,12 +11,18 @@ import {
   type ChoiceProviderInput,
   type StoryContractInput,
   type StoryContractCallOptions,
+  type ModelCallExecutionOptions,
   type GenerationRuntimePolicy,
   DEFAULT_RUNTIME_POLICY,
 } from './provider'
 import { GatewayError, scanForLeaks } from './gateway'
 import { buildWriterPrompt } from '@/lib/prose/prompt-engine'
 import type { AiModelRoute } from '@/lib/ops/ai-model-routes'
+import {
+  ContentRejectedError,
+  InvalidModelResponseError,
+  executeObservedModelCall,
+} from './observed-model-call.server'
 
 /**
  * Provider LLM NYATA via Vercel AI Gateway.
@@ -68,12 +74,21 @@ function resolveMaxOutputTokens(args: {
   return base
 }
 
-/** Satu kandidat "otak" dalam rantai fallback. */
-type ModelCandidate = { model: LanguageModel; label: string }
+/** Satu kandidat model dengan identitas terstruktur dalam rantai fallback. */
+type ModelCandidate = {
+  model: LanguageModel
+  providerId: 'custom' | 'openrouter' | '9router' | 'gateway'
+  configuredModelId: string
+  routeVersion: string | null
+  fallbackIndex: number
+  /** Label terbatas untuk diagnosis internal; identitas tidak pernah diparse darinya. */
+  label: string
+}
 
-// Default model OpenRouter: primary GRATIS berkualitas naratif terbaik →
-// fallback berbayar sangat murah. Fallback antar-model ditangani OpenRouter
-// sendiri lewat param `models` (array), dalam satu request.
+type UnindexedModelCandidate = Omit<ModelCandidate, 'fallbackIndex'>
+
+// Default OpenRouter: primary gratis berkualitas naratif, lalu fallback murah.
+// Setiap model menjadi request eksplisit agar identitas fallback bisa diamati.
 const OPENROUTER_FREE_DEFAULT = 'nousresearch/hermes-3-llama-3.1-405b:free'
 const OPENROUTER_PAID_DEFAULT = 'deepseek/deepseek-v3.2'
 
@@ -81,7 +96,7 @@ const OPENROUTER_PAID_DEFAULT = 'deepseek/deepseek-v3.2'
  * Kandidat endpoint OpenAI-compatible kustom (tunnel/proxy pribadi). Memakai
  * env `CUSTOM_LLM_BASE_URL` + `CUSTOM_LLM_API_KEY`. Berbeda dari 9router.
  */
-function customCandidate(optModel?: string): ModelCandidate | null {
+function customCandidate(optModel?: string): UnindexedModelCandidate | null {
   const baseURL = process.env.CUSTOM_LLM_BASE_URL?.trim()
   if (!baseURL) return null
   const modelId = optModel ?? process.env.NARRATIVE_MODEL ?? 'gpt-4o-mini'
@@ -90,7 +105,13 @@ function customCandidate(optModel?: string): ModelCandidate | null {
     baseURL,
     apiKey: process.env.CUSTOM_LLM_API_KEY,
   })
-  return { model: custom(modelId), label: `custom:${modelId}` }
+  return {
+    model: custom(modelId),
+    providerId: 'custom',
+    configuredModelId: modelId,
+    routeVersion: null,
+    label: `custom:${modelId}`,
+  }
 }
 
 /**
@@ -99,7 +120,7 @@ function customCandidate(optModel?: string): ModelCandidate | null {
  * bisa dikonfigurasi sebagai provider mandiri di ai_model_routes (provider =
  * '9router') atau dipakai via env fallback chain.
  */
-function nineRouterCandidate(optModel?: string): ModelCandidate | null {
+function nineRouterCandidate(optModel?: string): UnindexedModelCandidate | null {
   const baseURL = process.env.NINEROUTER_BASE_URL?.trim()
   if (!baseURL) return null
   const apiKey = process.env.NINEROUTER_API_KEY?.trim()
@@ -110,72 +131,94 @@ function nineRouterCandidate(optModel?: string): ModelCandidate | null {
     baseURL,
     apiKey,
   })
-  return { model: nine(modelId), label: `9router:${modelId}` }
+  return {
+    model: nine(modelId),
+    providerId: '9router',
+    configuredModelId: modelId,
+    routeVersion: null,
+    label: `9router:${modelId}`,
+  }
 }
 
-/**
- * Kandidat OpenRouter (juga OpenAI-compatible). Memakai fitur array `models`
- * OpenRouter: dikirim [gratis, berbayar] dan OpenRouter otomatis pindah ke
- * model berikut bila yang pertama error/kena rate-limit — semua dalam satu
- * request. Model bisa dioverride via `OPENROUTER_MODELS` (dipisah koma).
- */
-function openRouterCandidate(): ModelCandidate | null {
+/** Satu kandidat OpenRouter per model; tanpa fallback `models` tersembunyi. */
+function openRouterCandidates(): UnindexedModelCandidate[] {
   const apiKey = process.env.OPENROUTER_API_KEY?.trim()
-  if (!apiKey) return null
+  if (!apiKey) return []
 
-  const models = (process.env.OPENROUTER_MODELS?.trim()
-    ? process.env.OPENROUTER_MODELS.split(',').map((s) => s.trim()).filter(Boolean)
-    : [OPENROUTER_FREE_DEFAULT, OPENROUTER_PAID_DEFAULT])
-
+  const modelIds = process.env.OPENROUTER_MODELS?.trim()
+    ? process.env.OPENROUTER_MODELS.split(',').map((value) => value.trim()).filter(Boolean)
+    : [OPENROUTER_FREE_DEFAULT, OPENROUTER_PAID_DEFAULT]
   const openrouter = createOpenAICompatible({
     name: 'openrouter',
     baseURL: 'https://openrouter.ai/api/v1',
     apiKey,
-    // Suntik param non-standar `models` (fallback bawaan OpenRouter) ke body.
-    transformRequestBody: (args) => ({ ...args, models }),
   })
-  // `model` utama = model pertama; `models` array mengatur urutan fallback.
-  return { model: openrouter(models[0]), label: `openrouter:${models.join('|')}` }
+
+  return modelIds.map((modelId) => ({
+    model: openrouter(modelId),
+    providerId: 'openrouter' as const,
+    configuredModelId: modelId,
+    routeVersion: null,
+    label: `openrouter:${modelId}`,
+  }))
 }
 
-/**
- * Bangun RANTAI model berurutan (fallback bila satu gagal). Prioritas:
- *   1) DB route (ai_model_routes) — bila `resolvedRoute` ada.
- *   2) Env override (CUSTOM_LLM_BASE_URL / OPENROUTER_API_KEY) — backward compat.
- *   3) Vercel AI Gateway (model string) — fallback terakhir.
- */
-function resolveModelChain(optModel?: string): ModelCandidate[] {
-  const chain: ModelCandidate[] = []
+/** Bangun kandidat env mentah dalam urutan fallback lama. */
+function resolveEnvModelCandidates(optModel?: string): UnindexedModelCandidate[] {
+  const candidates: UnindexedModelCandidate[] = []
   const custom = customCandidate(optModel)
-  if (custom) chain.push(custom)
+  if (custom) candidates.push(custom)
   const nine = nineRouterCandidate(optModel)
-  if (nine) chain.push(nine)
-  const or = openRouterCandidate()
-  if (or) chain.push(or)
-  if (chain.length === 0) {
+  if (nine) candidates.push(nine)
+  candidates.push(...openRouterCandidates())
+
+  if (candidates.length === 0) {
     const modelId = optModel ?? process.env.NARRATIVE_MODEL ?? DEFAULT_MODEL
-    chain.push({ model: modelId, label: `gateway:${modelId}` })
+    candidates.push({
+      model: modelId,
+      providerId: 'gateway',
+      configuredModelId: modelId,
+      routeVersion: null,
+      label: `gateway:${modelId}`,
+    })
   }
-  return chain
+  return candidates
 }
 
-/** Perluas rantai env dengan kandidat dari DB route (termasuk fallbackModels). */
-function expandChainWithRoute(chain: ModelCandidate[], route: AiModelRoute): ModelCandidate[] {
-  const routeCandidates: ModelCandidate[] = []
-  // Primary: pakai provider + modelId route.
+/** Perluas DB route menjadi primary dan fallback mentah. */
+function routeModelCandidates(route: AiModelRoute): UnindexedModelCandidate[] {
+  const candidates: UnindexedModelCandidate[] = []
   const primary = toModelCandidate({ ...route, fallbackModels: [] })
-  if (primary) routeCandidates.push(primary)
-  // Fallback: tiap entry boleh provider beda dari primary.
-  for (const fb of route.fallbackModels) {
+  if (primary) candidates.push(primary)
+  for (const fallback of route.fallbackModels) {
     const candidate = toModelCandidate({
       ...route,
-      provider: fb.provider,
-      modelId: fb.modelId,
+      provider: fallback.provider,
+      modelId: fallback.modelId,
       fallbackModels: [],
     })
-    if (candidate) routeCandidates.push(candidate)
+    if (candidate) candidates.push(candidate)
   }
-  return routeCandidates.length > 0 ? [...routeCandidates, ...chain] : chain
+  return candidates
+}
+
+/** Dedupe identitas provider+model, lalu beri indeks setelah semua sumber digabung. */
+function finalizeModelChain(candidates: UnindexedModelCandidate[]): ModelCandidate[] {
+  const seen = new Set<string>()
+  const deduped = candidates.filter((candidate) => {
+    const key = `${candidate.providerId}\u0000${candidate.configuredModelId}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+  return deduped.map((candidate, fallbackIndex) => ({ ...candidate, fallbackIndex }))
+}
+
+/** DB route lebih dulu, lalu env/code fallback; indeks mengikuti chain final. */
+function resolveModelChain(optModel?: string, route?: AiModelRoute): ModelCandidate[] {
+  const envCandidates = resolveEnvModelCandidates(optModel)
+  const routeCandidates = route ? routeModelCandidates(route) : []
+  return finalizeModelChain([...routeCandidates, ...envCandidates])
 }
 
 /** Skema prosa yang diminta dari model — hanya konten naratif untuk pembaca. */
@@ -314,6 +357,7 @@ async function generateProse(args: {
   snapshot: CanonSnapshot
   plan: Record<string, unknown>
   repairFindings?: Finding[]
+  options: ModelCallExecutionOptions
   route?: AiModelRoute
 }): Promise<{ title: string; paragraphs: string[]; usedModel: string }> {
   const { system, prompt } = buildPrompt(args)
@@ -322,44 +366,67 @@ async function generateProse(args: {
   // Rantai fallback: coba tiap kandidat model berurutan. Kegagalan (error
   // jaringan/HTTP maupun kebocoran istilah internal setelah repair) memicu
   // pindah ke kandidat berikutnya.
-  for (const { model, label } of args.chain) {
+  for (const candidate of args.chain) {
+    const { model, label } = candidate
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
-        // Pakai streamText (bukan generateText): banyak endpoint
-        // OpenAI-compatible (termasuk proxy/tunnel & OpenRouter) SELALU membalas
-        // SSE streaming meski diminta non-stream, sehingga parser non-stream
-        // gagal. streamText mem-parse SSE; kita cukup menunggu `text` rampung.
-        // Timeout: hang di 9router/proxy tidak boleh menahan lease forever.
+        const workflowPhase = attempt === 0
+          ? args.options.workflowPhase
+          : 'CHAPTER_PROSE_LEAK_REPAIR'
         // maxOutputTokens: wajib untuk ag/* (reasoning memakan budget).
         const maxOutputTokens = resolveMaxOutputTokens({
           label,
+          modelId: candidate.configuredModelId,
           routeMax: args.route?.maxOutputTokens,
           fallback: DEFAULT_PROSE_MAX_OUTPUT_TOKENS,
         })
-        const result = streamText({
-          model,
-          system,
-          prompt:
-            attempt === 0
-              ? prompt
-              : `${prompt}\n\nCATATAN: revisi sebelumnya memuat istilah teknis terlarang. Tulis ulang murni sebagai narasi cerita.`,
-          temperature: args.route?.temperature ?? undefined,
-          maxOutputTokens,
-          abortSignal: AbortSignal.timeout(LLM_PROSE_TIMEOUT_MS),
-        })
-        const usage = bestEffortUsage(result.usage)
-        const text = await result.text
-        const { title, paragraphs } = parseProse(text)
-        const blob = [title, ...paragraphs].join('\n')
-        if (scanForLeaks(blob).length === 0) {
-          await logUsage('chapter_prose', label, usage)
-          return { title, paragraphs, usedModel: label }
+        try {
+          const parsed = await executeObservedModelCall({
+            context: args.options.telemetryContext,
+            candidate: candidateIdentity(candidate),
+            useCase: 'chapter_prose',
+            workflowPhase,
+            call: () => streamText({
+              model,
+              system,
+              prompt:
+                attempt === 0
+                  ? prompt
+                  : `${prompt}\n\nCATATAN: revisi sebelumnya memuat istilah teknis terlarang. Tulis ulang murni sebagai narasi cerita.`,
+              temperature: args.route?.temperature ?? undefined,
+              maxOutputTokens,
+              abortSignal: AbortSignal.timeout(LLM_PROSE_TIMEOUT_MS),
+              maxRetries: 0,
+            }),
+            consume: (text) => {
+              let prose
+              try {
+                prose = parseProse(text)
+              } catch (error) {
+                throw new InvalidModelResponseError(
+                  error instanceof Error ? error.message : undefined,
+                )
+              }
+              const leaks = scanForLeaks([prose.title, ...prose.paragraphs].join('\n'))
+              if (leaks.length > 0) {
+                throw new ContentRejectedError(
+                  'Chapter prose contains forbidden internal language.',
+                  leaks,
+                )
+              }
+              return prose
+            },
+          })
+          return { ...parsed, usedModel: label }
+        } catch (error) {
+          lastError = error
+          if (error instanceof ContentRejectedError && attempt === 0) continue
+          throw error
         }
       }
-      lastError = new Error(`gateway-provider: prosa dari ${label} bocor istilah internal setelah 2 percobaan.`)
-    } catch (err) {
-      lastError = err
-      console.log(`[v0] gateway-provider: kandidat ${label} gagal, mencoba fallback berikutnya:`, (err as Error)?.message)
+    } catch (error) {
+      lastError = error
+      logCandidateFailure(args.options.workflowPhase, candidate, error)
     }
   }
   throw lastError ?? new Error('gateway-provider: semua kandidat model gagal.')
@@ -520,37 +587,41 @@ function buildStoryContractPrompt(input: StoryContractProviderInput): string {
 
 // ---------- Shared usage / cost accounting log ----------
 
-type ModelUsage = {
-  inputTokens?: number
-  outputTokens?: number
-  totalTokens?: number
-  raw?: Record<string, unknown>
+function candidateIdentity(candidate: ModelCandidate): Omit<ModelCandidate, 'model' | 'label'> {
+  return {
+    providerId: candidate.providerId,
+    configuredModelId: candidate.configuredModelId,
+    routeVersion: candidate.routeVersion,
+    fallbackIndex: candidate.fallbackIndex,
+  }
 }
 
-function bestEffortUsage(
-  usage: PromiseLike<ModelUsage> | undefined,
-): Promise<ModelUsage | undefined> {
-  return usage ? Promise.resolve(usage).catch(() => undefined) : Promise.resolve(undefined)
+function controlledErrorCode(error: unknown): string {
+  if (error instanceof ContentRejectedError) return 'PROVIDER_CONTENT_REJECTED'
+  if (error instanceof InvalidModelResponseError) return 'PROVIDER_INVALID_RESPONSE'
+  const name = error && typeof error === 'object'
+    ? (error as { name?: unknown }).name
+    : undefined
+  if (name === 'TimeoutError') return 'PROVIDER_TIMEOUT'
+  if (name === 'AbortError') return 'PROVIDER_ABORTED'
+  if (name === 'AI_InvalidResponseDataError') return 'PROVIDER_INVALID_RESPONSE'
+  return 'PROVIDER_REQUEST_FAILED'
 }
 
-async function logUsage(
-  useCase: string,
-  model: string,
-  usage: PromiseLike<ModelUsage | undefined> | undefined,
-): Promise<void> {
+function logCandidateFailure(
+  workflowPhase: string,
+  candidate: ModelCandidate,
+  error: unknown,
+): void {
   try {
-    const resolved = usage ? await usage : undefined
-    console.log('[v0] ai-gateway usage', {
-      useCase,
-      model,
-      provider: 'gateway-provider',
-      inputTokens: resolved?.inputTokens,
-      outputTokens: resolved?.outputTokens,
-      totalTokens: resolved?.totalTokens,
-      cost: resolved?.raw?.cost ?? null,
+    console.log('[v0] gateway-provider fallback', {
+      workflowPhase,
+      providerId: candidate.providerId,
+      configuredModelId: candidate.configuredModelId,
+      errorCode: controlledErrorCode(error),
     })
   } catch {
-    // Telemetry best-effort; hasil model sukses tidak boleh gagal karena logging.
+    // Bounded diagnostics must not affect generation.
   }
 }
 
@@ -568,38 +639,44 @@ function parseModelJson(text: string): unknown {
 async function generateStoryContractJson(args: {
   chain: ModelCandidate[]
   input: StoryContractInput
+  options: StoryContractCallOptions & Required<Pick<StoryContractCallOptions, 'telemetryContext' | 'workflowPhase'>>
   route?: AiModelRoute
-  signal?: AbortSignal
 }): Promise<unknown> {
   const system = buildStoryContractSystemPrompt()
   const prompt = buildStoryContractPrompt(projectStoryContractInput(args.input))
   let lastError: unknown
 
-  for (const { model, label } of args.chain) {
+  for (const candidate of args.chain) {
+    const { model } = candidate
     try {
-      const result = streamText({
-        model,
-        system,
-        prompt,
-        temperature: args.route?.temperature ?? undefined,
-        maxOutputTokens: resolveMaxOutputTokens({
-          label,
-          routeMax: args.route?.maxOutputTokens,
-          fallback: DEFAULT_PROSE_MAX_OUTPUT_TOKENS,
+      return await executeObservedModelCall({
+        context: args.options.telemetryContext,
+        candidate: candidateIdentity(candidate),
+        useCase: args.route?.useCase ?? 'story_contract',
+        workflowPhase: args.options.workflowPhase,
+        call: () => streamText({
+          model,
+          system,
+          prompt,
+          temperature: args.route?.temperature ?? undefined,
+          maxOutputTokens: resolveMaxOutputTokens({
+            label: candidate.label,
+            modelId: candidate.configuredModelId,
+            routeMax: args.route?.maxOutputTokens,
+            fallback: DEFAULT_PROSE_MAX_OUTPUT_TOKENS,
+          }),
+          abortSignal: args.options.signal,
+          maxRetries: 0,
         }),
-        abortSignal: args.signal,
+        consume: async (text) => {
+          const parsed = parseModelJson(text)
+          return args.options.consume ? args.options.consume(parsed) : parsed
+        },
       })
-      const usage = bestEffortUsage(result.usage)
-      const text = await result.text
-      await logUsage(args.route?.useCase ?? 'story_contract', label, usage)
-      return parseModelJson(text)
     } catch (error) {
-      if (args.signal?.aborted) throw error
+      if (args.options.signal?.aborted) throw error
       lastError = error
-      console.log(
-        `[v0] gateway-provider: kandidat story contract ${label} gagal, mencoba fallback berikutnya:`,
-        (error as Error)?.message,
-      )
+      logCandidateFailure(args.options.workflowPhase, candidate, error)
     }
   }
 
@@ -611,36 +688,45 @@ async function generateStoryContractJson(args: {
 async function generateChoiceJson(args: {
   chain: ModelCandidate[]
   input: ChoiceProviderInput
+  options: ModelCallExecutionOptions
   route?: AiModelRoute
 }): Promise<unknown> {
   const { system, prompt } = buildChoicePrompt(args.input)
   let lastError: unknown
 
-  for (const { model, label } of args.chain) {
+  for (const candidate of args.chain) {
+    const { model, label } = candidate
     try {
-      const result = streamText({
-        model,
-        system,
-        prompt,
-        temperature: args.route?.temperature ?? undefined,
-        maxOutputTokens: resolveMaxOutputTokens({
-          label,
-          routeMax: args.route?.maxOutputTokens,
-          // Choices shorter, but ag/* still needs reasoning headroom.
-          fallback: isAntigravityModelLabel(label) ? AG_REASONING_MAX_OUTPUT_FLOOR : 1024,
+      return await executeObservedModelCall({
+        context: args.options.telemetryContext,
+        candidate: candidateIdentity(candidate),
+        useCase: args.route?.useCase ?? 'choices',
+        workflowPhase: args.options.workflowPhase,
+        call: () => streamText({
+          model,
+          system,
+          prompt,
+          temperature: args.route?.temperature ?? undefined,
+          maxOutputTokens: resolveMaxOutputTokens({
+            label,
+            modelId: candidate.configuredModelId,
+            routeMax: args.route?.maxOutputTokens,
+            // Choices shorter, but ag/* still needs reasoning headroom.
+            fallback: isAntigravityModelLabel(label, candidate.configuredModelId)
+              ? AG_REASONING_MAX_OUTPUT_FLOOR
+              : 1024,
+          }),
+          abortSignal: AbortSignal.timeout(LLM_CHOICE_TIMEOUT_MS),
+          maxRetries: 0,
         }),
-        abortSignal: AbortSignal.timeout(LLM_CHOICE_TIMEOUT_MS),
+        consume: async (text) => {
+          const parsed = parseModelJson(text)
+          return args.options.consume ? args.options.consume(parsed) : parsed
+        },
       })
-      const usage = bestEffortUsage(result.usage)
-      const text = await result.text
-      await logUsage(args.route?.useCase ?? 'choices', label, usage)
-      return parseModelJson(text)
     } catch (error) {
       lastError = error
-      console.log(
-        `[v0] gateway-provider: kandidat choices ${label} gagal, mencoba fallback berikutnya:`,
-        (error as Error)?.message,
-      )
+      logCandidateFailure(args.options.workflowPhase, candidate, error)
     }
   }
 
@@ -666,17 +752,11 @@ export function createGatewayProvider(
   const base = createDeterministicProvider(genPolicy)
 
   // Build chain: DB route first if available, then env, then code fallback.
-  let chain = resolveModelChain(opts.model)
-  if (aiRoute) {
-    chain = expandChainWithRoute(chain, aiRoute)
-  }
+  const chain = resolveModelChain(opts.model, aiRoute)
 
   // Route choices berdiri sendiri. Hanya bila tidak ada, pakai route chapter.
   const resolvedChoicesRoute = choicesRoute ?? aiRoute
-  let choiceChain = resolveModelChain(opts.model)
-  if (resolvedChoicesRoute) {
-    choiceChain = expandChainWithRoute(choiceChain, resolvedChoicesRoute)
-  }
+  const choiceChain = resolveModelChain(opts.model, resolvedChoicesRoute)
 
   return {
     name: chain.map((c) => c.label).join(' → '),
@@ -686,9 +766,15 @@ export function createGatewayProvider(
       return base.generatePlan(input)
     },
 
-    async writeChapter(input: WriteInput): Promise<unknown> {
+    async writeChapter(
+      input: WriteInput,
+      options?: ModelCallExecutionOptions,
+    ): Promise<unknown> {
       // 1) Scaffold canon-safe (semua metadata terstruktur & sinyal Layer B).
-      const scaffold = (await base.writeChapter(input)) as Record<string, unknown>
+      const scaffold = (await base.writeChapter(input, options)) as Record<string, unknown>
+      if (!options) {
+        throw new Error('gateway-provider: telemetry execution options are required.')
+      }
 
       // 2) Prosa nyata dari LLM (dengan rantai fallback + max token floor for ag/*).
       const { title, paragraphs } = await generateProse({
@@ -696,6 +782,7 @@ export function createGatewayProvider(
         snapshot: input.snapshot,
         plan: input.plan as Record<string, unknown>,
         repairFindings: input.repairFindings,
+        options,
         route: aiRoute,
       })
 
@@ -714,31 +801,47 @@ export function createGatewayProvider(
     ): Promise<unknown> {
       const { getAiModelRoute } = await import('@/lib/ops/ai-model-routes')
       const contractRoute = await getAiModelRoute('story_contract') ?? aiRoute
-      let contractChain = resolveModelChain(opts.model)
-      if (contractRoute) {
-        contractChain = expandChainWithRoute(contractChain, contractRoute)
+      const contractChain = resolveModelChain(opts.model, contractRoute ?? undefined)
+      if (!options?.telemetryContext || !options.workflowPhase) {
+        throw new Error('gateway-provider: telemetry execution options are required.')
       }
       return generateStoryContractJson({
         chain: contractChain,
         input,
         route: contractRoute,
-        signal: options?.signal,
+        options: {
+          ...options,
+          telemetryContext: options.telemetryContext,
+          workflowPhase: options.workflowPhase,
+        },
       })
     },
 
-    generateChoices(input: ChoiceProviderInput): Promise<unknown> {
+    generateChoices(
+      input: ChoiceProviderInput,
+      options?: ModelCallExecutionOptions,
+    ): Promise<unknown> {
+      if (!options) {
+        throw new Error('gateway-provider: telemetry execution options are required.')
+      }
       return generateChoiceJson({
         chain: choiceChain,
         input,
         route: resolvedChoicesRoute,
+        options,
       })
     },
   }
 }
 
-/** Konversi DB route ke ModelCandidate untuk dimasukkan ke chain. */
-function toModelCandidate(route: AiModelRoute | undefined): ModelCandidate | null {
+/** Konversi DB route ke kandidat mentah untuk dimasukkan ke chain. */
+function toModelCandidate(route: AiModelRoute | undefined): UnindexedModelCandidate | null {
   if (!route) return null
+
+  const identity = {
+    configuredModelId: route.modelId,
+    routeVersion: route.routeVersion,
+  }
 
   if (route.provider === 'custom') {
     const baseURL = process.env.CUSTOM_LLM_BASE_URL?.trim()
@@ -748,7 +851,12 @@ function toModelCandidate(route: AiModelRoute | undefined): ModelCandidate | nul
       baseURL,
       apiKey: process.env.CUSTOM_LLM_API_KEY,
     })
-    return { model: custom(route.modelId), label: `db:custom:${route.modelId}` }
+    return {
+      model: custom(route.modelId),
+      providerId: 'custom',
+      ...identity,
+      label: `db:custom:${route.modelId}`,
+    }
   }
 
   if (route.provider === 'openrouter') {
@@ -759,7 +867,12 @@ function toModelCandidate(route: AiModelRoute | undefined): ModelCandidate | nul
       baseURL: 'https://openrouter.ai/api/v1',
       apiKey,
     })
-    return { model: openrouter(route.modelId), label: `db:openrouter:${route.modelId}` }
+    return {
+      model: openrouter(route.modelId),
+      providerId: 'openrouter',
+      ...identity,
+      label: `db:openrouter:${route.modelId}`,
+    }
   }
 
   if (route.provider === '9router') {
@@ -771,11 +884,21 @@ function toModelCandidate(route: AiModelRoute | undefined): ModelCandidate | nul
       baseURL,
       apiKey,
     })
-    return { model: nine(route.modelId), label: `db:9router:${route.modelId}` }
+    return {
+      model: nine(route.modelId),
+      providerId: '9router',
+      ...identity,
+      label: `db:9router:${route.modelId}`,
+    }
   }
 
   if (route.provider === 'gateway') {
-    return { model: route.modelId, label: `db:gateway:${route.modelId}` }
+    return {
+      model: route.modelId,
+      providerId: 'gateway',
+      ...identity,
+      label: `db:gateway:${route.modelId}`,
+    }
   }
 
   // deterministic — no real model.

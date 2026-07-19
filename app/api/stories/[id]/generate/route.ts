@@ -61,7 +61,12 @@ export async function POST(
     const result =
       mode === 'fake'
         ? await generateNextChapter(id, n)
-        : await generateNextChapterReal(id, n)
+        : await generateNextChapterReal({
+            storyId: id,
+            userId: user.id,
+            chapterNumber: n,
+            correlationId: crypto.randomUUID(),
+          })
 
     if (!result.ok) {
       // LEASE_HELD/CHAPTER_EXISTS/FAILED_REVIEW_REQUIRED → konflik/tak-dapat-diproses.
@@ -74,10 +79,8 @@ export async function POST(
       return NextResponse.json({ ok: false, reason: result.reason }, { status })
     }
     return NextResponse.json(result, { status: 201 })
-  } catch (err) {
-    console.error('[generation route] failed', {
-      errorType: err instanceof Error ? err.name : typeof err,
-    })
+  } catch {
+    console.error('GENERATION_ROUTE_FAILED')
     return NextResponse.json({ error: 'Gagal menghasilkan bab.' }, { status: 500 })
   }
 }

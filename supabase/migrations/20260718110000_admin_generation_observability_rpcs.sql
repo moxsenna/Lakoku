@@ -31,7 +31,7 @@ create table public.admin_generation_access_audit (
   ),
   created_at timestamptz not null default pg_catalog.clock_timestamp(),
   constraint admin_generation_access_audit_target_check check (
-    (action = 'VIEW_CALL_DETAIL' and target_provider_call_id is not null and target_job_id is null)
+    (action = 'VIEW_CALL_DETAIL' and target_job_id is null)
     or (action = 'VIEW_JOB_DETAIL' and target_provider_call_id is null and target_job_id is not null)
     or (action = 'EXPORT_CALLS' and target_provider_call_id is null and target_job_id is null)
   )
@@ -410,42 +410,69 @@ begin
   );
 
   return query
+  with filtered_calls as (
+    select c.*
+    from public.generation_provider_calls as c
+    where c.started_at >= p_from and c.started_at < p_to
+      and (p_provider_id is null or c.provider_id = p_provider_id)
+      and (p_model_id is null or c.model_id = p_model_id)
+      and (p_use_case is null or c.use_case = p_use_case)
+      and (p_workflow_phase is null or c.workflow_phase = p_workflow_phase)
+      and (p_outcome is null or c.outcome = p_outcome)
+      and (p_error_code is null or c.error_code = p_error_code)
+      and (p_cost_source is null or c.cost_source = p_cost_source)
+      and (p_user_id is null or c.user_id = p_user_id)
+      and (p_story_id is null or c.story_id = p_story_id)
+      and (p_generation_kind is null or c.generation_kind = p_generation_kind)
+      and (p_job_id is null or c.job_id = p_job_id)
+      and (p_correlation_id is null or c.correlation_id = p_correlation_id)
+      and (p_chapter_number is null or c.chapter_number = p_chapter_number)
+  ), daily_metrics as (
+    select
+      pg_catalog.date_trunc('day', c.started_at) as bucket_start,
+      pg_catalog.count(*)::bigint as call_count,
+      pg_catalog.count(*) filter (where c.outcome = 'SUCCEEDED')::bigint as success_count,
+      pg_catalog.count(*) filter (where c.outcome <> 'SUCCEEDED')::bigint as error_count,
+      pg_catalog.count(*) filter (where c.fallback_index > 0)::bigint as fallback_count,
+      coalesce(pg_catalog.sum(c.input_token_count), 0)::numeric as input_tokens,
+      coalesce(pg_catalog.sum(c.output_token_count), 0)::numeric as output_tokens,
+      coalesce(pg_catalog.sum(c.total_token_count), 0)::numeric as total_tokens,
+      pg_catalog.count(*) filter (where c.cost_source = 'unavailable')::bigint as unavailable_count,
+      pg_catalog.percentile_cont(0.5) within group (order by c.elapsed_ms)::numeric as p50,
+      pg_catalog.percentile_cont(0.95) within group (order by c.elapsed_ms)::numeric as p95
+    from filtered_calls as c
+    group by pg_catalog.date_trunc('day', c.started_at)
+  ), daily_costs as (
+    select
+      pg_catalog.date_trunc('day', c.started_at) as bucket_start,
+      c.cost_currency,
+      coalesce(pg_catalog.sum(c.cost_amount) filter (
+        where c.cost_source = 'provider_actual'
+      ), 0)::numeric as actual_cost,
+      coalesce(pg_catalog.sum(c.cost_amount) filter (
+        where c.cost_source = 'price_estimate'
+      ), 0)::numeric as estimated_cost
+    from filtered_calls as c
+    group by pg_catalog.date_trunc('day', c.started_at), c.cost_currency
+  )
   select
-    pg_catalog.date_trunc('day', c.started_at) as bucket_start,
-    c.cost_currency,
-    pg_catalog.count(*)::bigint,
-    pg_catalog.count(*) filter (where c.outcome = 'SUCCEEDED')::bigint,
-    pg_catalog.count(*) filter (where c.outcome <> 'SUCCEEDED')::bigint,
-    pg_catalog.count(*) filter (where c.fallback_index > 0)::bigint,
-    coalesce(pg_catalog.sum(c.input_token_count), 0)::numeric,
-    coalesce(pg_catalog.sum(c.output_token_count), 0)::numeric,
-    coalesce(pg_catalog.sum(c.total_token_count), 0)::numeric,
-    coalesce(pg_catalog.sum(c.cost_amount) filter (
-      where c.cost_source = 'provider_actual'
-    ), 0)::numeric,
-    coalesce(pg_catalog.sum(c.cost_amount) filter (
-      where c.cost_source = 'price_estimate'
-    ), 0)::numeric,
-    pg_catalog.count(*) filter (where c.cost_source = 'unavailable')::bigint,
-    pg_catalog.percentile_cont(0.5) within group (order by c.elapsed_ms)::numeric,
-    pg_catalog.percentile_cont(0.95) within group (order by c.elapsed_ms)::numeric
-  from public.generation_provider_calls as c
-  where c.started_at >= p_from and c.started_at < p_to
-    and (p_provider_id is null or c.provider_id = p_provider_id)
-    and (p_model_id is null or c.model_id = p_model_id)
-    and (p_use_case is null or c.use_case = p_use_case)
-    and (p_workflow_phase is null or c.workflow_phase = p_workflow_phase)
-    and (p_outcome is null or c.outcome = p_outcome)
-    and (p_error_code is null or c.error_code = p_error_code)
-    and (p_cost_source is null or c.cost_source = p_cost_source)
-    and (p_user_id is null or c.user_id = p_user_id)
-    and (p_story_id is null or c.story_id = p_story_id)
-    and (p_generation_kind is null or c.generation_kind = p_generation_kind)
-    and (p_job_id is null or c.job_id = p_job_id)
-    and (p_correlation_id is null or c.correlation_id = p_correlation_id)
-    and (p_chapter_number is null or c.chapter_number = p_chapter_number)
-  group by pg_catalog.date_trunc('day', c.started_at), c.cost_currency
-  order by bucket_start, c.cost_currency nulls last;
+    m.bucket_start,
+    costs.cost_currency,
+    m.call_count,
+    m.success_count,
+    m.error_count,
+    m.fallback_count,
+    m.input_tokens,
+    m.output_tokens,
+    m.total_tokens,
+    costs.actual_cost,
+    costs.estimated_cost,
+    m.unavailable_count,
+    m.p50,
+    m.p95
+  from daily_metrics as m
+  join daily_costs as costs using (bucket_start)
+  order by m.bucket_start, costs.cost_currency nulls last;
 end
 $$;
 
@@ -646,12 +673,15 @@ returns table (
   pricing_version_id uuid
 )
 language plpgsql
-stable
+volatile
 security definer
 set search_path = ''
 as $$
+declare
+  v_actor uuid;
+  v_filter_fingerprint text;
 begin
-  perform private.require_generation_observability_reader_v1();
+  v_actor := private.require_generation_observability_reader_v1();
   perform private.validate_generation_observability_range_v1(p_from, p_to);
   perform private.validate_generation_observability_filters_v1(
     p_provider_id, p_model_id, p_use_case, p_workflow_phase, p_outcome,
@@ -665,6 +695,21 @@ begin
   if (p_cursor_started_at is null) <> (p_cursor_id is null) then
     raise exception using errcode = 'P0001', message = 'INVALID_CURSOR';
   end if;
+
+  v_filter_fingerprint := pg_catalog.md5(pg_catalog.concat_ws('|',
+    p_from::text, p_to::text, coalesce(p_provider_id, ''), coalesce(p_model_id, ''),
+    coalesce(p_use_case, ''), coalesce(p_workflow_phase, ''), coalesce(p_outcome, ''),
+    coalesce(p_error_code, ''), coalesce(p_cost_source, ''), coalesce(p_user_id::text, ''),
+    coalesce(p_story_id, ''), coalesce(p_generation_kind, ''), coalesce(p_job_id::text, ''),
+    coalesce(p_correlation_id::text, ''), coalesce(p_chapter_number::text, ''),
+    coalesce(p_cursor_started_at::text, ''), coalesce(p_cursor_id::text, ''), p_page_size::text
+  ));
+  insert into public.admin_generation_access_audit (
+    actor_user_id, action, target_provider_call_id, filter_fingerprint
+  ) values (
+    v_actor, 'VIEW_CALL_DETAIL', null,
+    v_filter_fingerprint
+  );
 
   return query
   select
@@ -859,8 +904,17 @@ begin
 
     select
       'ATTEMPT',
-      100000::bigint + pg_catalog.row_number() over (
-        order by a.attempt_number, a.started_at, a.id
+      (
+        select pg_catalog.count(*)::bigint
+        from (
+          select a2.started_at, 0 as kind_order, a2.id
+          from public.generation_job_attempts as a2 where a2.job_id = j.id
+          union all
+          select c2.started_at, 1 as kind_order, c2.id
+          from public.generation_provider_calls as c2 where c2.job_id = j.id
+        ) as event_order
+        where (event_order.started_at, event_order.kind_order, event_order.id)
+          <= (a.started_at, 0, a.id)
       ),
       j.id,
       j.status,
@@ -913,8 +967,17 @@ begin
 
     select
       'CALL',
-      200000::bigint + pg_catalog.row_number() over (
-        order by c.started_at, c.id
+      (
+        select pg_catalog.count(*)::bigint
+        from (
+          select a2.started_at, 0 as kind_order, a2.id
+          from public.generation_job_attempts as a2 where a2.job_id = j.id
+          union all
+          select c2.started_at, 1 as kind_order, c2.id
+          from public.generation_provider_calls as c2 where c2.job_id = j.id
+        ) as event_order
+        where (event_order.started_at, event_order.kind_order, event_order.id)
+          <= (c.started_at, 1, c.id)
       ),
       j.id,
       j.status,
@@ -963,7 +1026,165 @@ begin
     from target as j
     join public.generation_provider_calls as c on c.job_id = j.id
   )
-  select * from timeline order by timeline.sequence_number;
+  select * from timeline
+  order by
+    case when timeline.row_kind = 'JOB' then 0 else 1 end,
+    timeline.started_at nulls first,
+    case timeline.row_kind when 'ATTEMPT' then 0 when 'CALL' then 1 else 0 end,
+    coalesce(timeline.attempt_id, timeline.provider_call_row_id, timeline.job_id);
+end
+$$;
+
+create function public.admin_generation_error_distribution_v1(
+  p_from timestamptz,
+  p_to timestamptz,
+  p_provider_id text,
+  p_model_id text,
+  p_use_case text,
+  p_workflow_phase text,
+  p_outcome text,
+  p_error_code text,
+  p_cost_source text,
+  p_user_id uuid,
+  p_story_id text,
+  p_generation_kind text,
+  p_job_id uuid,
+  p_correlation_id uuid,
+  p_chapter_number integer
+)
+returns table (
+  outcome text,
+  error_code text,
+  fallback_bucket text,
+  call_count bigint
+)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+begin
+  perform private.require_generation_observability_reader_v1();
+  perform private.validate_generation_observability_range_v1(p_from, p_to);
+  perform private.validate_generation_observability_filters_v1(
+    p_provider_id, p_model_id, p_use_case, p_workflow_phase, p_outcome,
+    p_error_code, p_cost_source, p_story_id, p_generation_kind, p_chapter_number
+  );
+
+  return query
+  select
+    c.outcome,
+    c.error_code,
+    case when c.fallback_index > 0 then 'FALLBACK'::text else 'PRIMARY'::text end,
+    pg_catalog.count(*)::bigint
+  from public.generation_provider_calls as c
+  where c.started_at >= p_from and c.started_at < p_to
+    and (p_provider_id is null or c.provider_id = p_provider_id)
+    and (p_model_id is null or c.model_id = p_model_id)
+    and (p_use_case is null or c.use_case = p_use_case)
+    and (p_workflow_phase is null or c.workflow_phase = p_workflow_phase)
+    and (p_outcome is null or c.outcome = p_outcome)
+    and (p_error_code is null or c.error_code = p_error_code)
+    and (p_cost_source is null or c.cost_source = p_cost_source)
+    and (p_user_id is null or c.user_id = p_user_id)
+    and (p_story_id is null or c.story_id = p_story_id)
+    and (p_generation_kind is null or c.generation_kind = p_generation_kind)
+    and (p_job_id is null or c.job_id = p_job_id)
+    and (p_correlation_id is null or c.correlation_id = p_correlation_id)
+    and (p_chapter_number is null or c.chapter_number = p_chapter_number)
+  group by c.outcome, c.error_code,
+    case when c.fallback_index > 0 then 'FALLBACK'::text else 'PRIMARY'::text end
+  order by pg_catalog.count(*) desc, c.outcome, c.error_code nulls first, fallback_bucket;
+end
+$$;
+
+create function public.admin_generation_cost_breakdown_v1(
+  p_from timestamptz,
+  p_to timestamptz,
+  p_provider_id text,
+  p_model_id text,
+  p_use_case text,
+  p_workflow_phase text,
+  p_outcome text,
+  p_error_code text,
+  p_cost_source text,
+  p_user_id uuid,
+  p_story_id text,
+  p_generation_kind text,
+  p_job_id uuid,
+  p_correlation_id uuid,
+  p_chapter_number integer,
+  p_limit integer
+)
+returns table (
+  use_case text,
+  user_id uuid,
+  masked_user_email text,
+  generation_kind text,
+  provider_id text,
+  model_id text,
+  cost_currency text,
+  call_count bigint,
+  actual_cost_amount numeric,
+  estimated_cost_amount numeric,
+  unavailable_cost_count bigint
+)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+begin
+  perform private.require_generation_observability_reader_v1();
+  perform private.validate_generation_observability_range_v1(p_from, p_to);
+  perform private.validate_generation_observability_filters_v1(
+    p_provider_id, p_model_id, p_use_case, p_workflow_phase, p_outcome,
+    p_error_code, p_cost_source, p_story_id, p_generation_kind, p_chapter_number
+  );
+  if p_limit is null or p_limit < 1 or p_limit > 500 then
+    raise exception using errcode = 'P0001', message = 'INVALID_PAGE_SIZE';
+  end if;
+
+  return query
+  select
+    c.use_case,
+    c.user_id,
+    private.mask_email_v1(u.email::text),
+    c.generation_kind,
+    c.provider_id,
+    c.model_id,
+    c.cost_currency,
+    pg_catalog.count(*)::bigint,
+    coalesce(pg_catalog.sum(c.cost_amount) filter (
+      where c.cost_source = 'provider_actual'
+    ), 0)::numeric,
+    coalesce(pg_catalog.sum(c.cost_amount) filter (
+      where c.cost_source = 'price_estimate'
+    ), 0)::numeric,
+    pg_catalog.count(*) filter (where c.cost_source = 'unavailable')::bigint
+  from public.generation_provider_calls as c
+  left join auth.users as u on u.id = c.user_id
+  where c.started_at >= p_from and c.started_at < p_to
+    and (p_provider_id is null or c.provider_id = p_provider_id)
+    and (p_model_id is null or c.model_id = p_model_id)
+    and (p_use_case is null or c.use_case = p_use_case)
+    and (p_workflow_phase is null or c.workflow_phase = p_workflow_phase)
+    and (p_outcome is null or c.outcome = p_outcome)
+    and (p_error_code is null or c.error_code = p_error_code)
+    and (p_cost_source is null or c.cost_source = p_cost_source)
+    and (p_user_id is null or c.user_id = p_user_id)
+    and (p_story_id is null or c.story_id = p_story_id)
+    and (p_generation_kind is null or c.generation_kind = p_generation_kind)
+    and (p_job_id is null or c.job_id = p_job_id)
+    and (p_correlation_id is null or c.correlation_id = p_correlation_id)
+    and (p_chapter_number is null or c.chapter_number = p_chapter_number)
+  group by c.use_case, c.user_id, u.email, c.generation_kind,
+    c.provider_id, c.model_id, c.cost_currency
+  order by
+    coalesce(pg_catalog.sum(c.cost_amount), 0) desc,
+    c.use_case, c.user_id, c.generation_kind, c.provider_id, c.model_id,
+    c.cost_currency nulls last
+  limit p_limit;
 end
 $$;
 
@@ -1103,3 +1324,21 @@ revoke all on function public.admin_generation_data_quality_v1(timestamptz,times
   from public, anon, authenticated, service_role;
 grant execute on function public.admin_generation_data_quality_v1(timestamptz,timestamptz)
   to authenticated;
+
+revoke all on function public.admin_generation_error_distribution_v1(
+  timestamptz,timestamptz,text,text,text,text,text,text,text,
+  uuid,text,text,uuid,uuid,integer
+) from public, anon, authenticated, service_role;
+grant execute on function public.admin_generation_error_distribution_v1(
+  timestamptz,timestamptz,text,text,text,text,text,text,text,
+  uuid,text,text,uuid,uuid,integer
+) to authenticated;
+
+revoke all on function public.admin_generation_cost_breakdown_v1(
+  timestamptz,timestamptz,text,text,text,text,text,text,text,
+  uuid,text,text,uuid,uuid,integer,integer
+) from public, anon, authenticated, service_role;
+grant execute on function public.admin_generation_cost_breakdown_v1(
+  timestamptz,timestamptz,text,text,text,text,text,text,text,
+  uuid,text,text,uuid,uuid,integer,integer
+) to authenticated;

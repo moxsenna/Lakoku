@@ -360,6 +360,7 @@ async function generateProse(args: {
                   ? prompt
                   : `${prompt}\n\nCATATAN: revisi sebelumnya memuat istilah teknis terlarang. Tulis ulang murni sebagai narasi cerita.`,
               abortSignal: AbortSignal.timeout(LLM_PROSE_TIMEOUT_MS),
+              maxRetries: 0,
             }),
             consume: (text) => {
               let prose
@@ -624,6 +625,7 @@ async function generateStoryContractJson(args: {
           temperature: args.route?.temperature ?? undefined,
           maxOutputTokens: args.route?.maxOutputTokens ?? undefined,
           abortSignal: args.options.signal,
+          maxRetries: 0,
         }),
         consume: async (text) => {
           const parsed = parseModelJson(text)
@@ -666,6 +668,7 @@ async function generateChoiceJson(args: {
           temperature: args.route?.temperature ?? undefined,
           maxOutputTokens: args.route?.maxOutputTokens ?? undefined,
           abortSignal: AbortSignal.timeout(LLM_CHOICE_TIMEOUT_MS),
+          maxRetries: 0,
         }),
         consume: async (text) => {
           const parsed = parseModelJson(text)

@@ -9,6 +9,8 @@ export interface GenerationCostSummary {
   currency: string
   actual: string
   estimated: string
+  previousActual: string | null
+  previousEstimated: string | null
 }
 
 export interface GenerationViewModel {
@@ -61,14 +63,22 @@ export function buildGenerationViewModel(
   const previous = previousRows[0] ?? null
   const costs = currentRows
     .filter((row): row is AdminGenerationOverviewRow & { cost_currency: string } => row.cost_currency !== null)
-    .map((row) => ({
-      currency: row.cost_currency,
-      actual: row.actual_cost_amount,
-      estimated: row.estimated_cost_amount,
-    }))
+    .map((row) => {
+      const previousCost = previousRows.find((candidate) =>
+        candidate.cost_currency === row.cost_currency)
+      return {
+        currency: row.cost_currency,
+        actual: row.actual_cost_amount,
+        estimated: row.estimated_cost_amount,
+        previousActual: previousCost?.actual_cost_amount ?? null,
+        previousEstimated: previousCost?.estimated_cost_amount ?? null,
+      }
+    })
 
   const unavailableCostCount = current?.unavailable_cost_count ?? '0'
-  const qualityIssues = dashboard.dataQuality.some((row) => BigInt(row.issue_count) > BigInt(0))
+  const qualityIssues = dashboard.dataQuality.some((row) =>
+    row.metric_name !== 'calls_lacking_durable_correlation'
+    && BigInt(row.issue_count) > BigInt(0))
   const missingLedgerValues = dashboard.providerCalls.some((call) =>
     call.total_token_count === null || call.cost_source === 'unavailable')
   const partial = qualityIssues || BigInt(unavailableCostCount) > BigInt(0) || missingLedgerValues
@@ -133,6 +143,21 @@ export function formatDuration(value: string | null): string {
   if (!Number.isFinite(numeric)) return value
   if (numeric < 1000) return `${Math.round(numeric)} ms`
   return `${(numeric / 1000).toFixed(2)} s`
+}
+
+export function formatComparison(current: string | null, previous: string | null): string {
+  if (current === null || previous === null) return 'Previous unavailable'
+  const currentValue = Number(current)
+  const previousValue = Number(previous)
+  if (!Number.isFinite(currentValue) || !Number.isFinite(previousValue)) {
+    return 'Previous unavailable'
+  }
+  if (previousValue === 0) {
+    return currentValue === 0 ? 'No change vs previous' : 'No previous activity'
+  }
+  const change = ((currentValue - previousValue) / Math.abs(previousValue)) * 100
+  const sign = change > 0 ? '+' : ''
+  return `${sign}${change.toFixed(1)}% vs previous`
 }
 
 export function formatTimestamp(value: string | null): string {

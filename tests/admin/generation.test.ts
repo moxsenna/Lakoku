@@ -114,7 +114,7 @@ beforeEach(() => {
 })
 
 describe('admin generation RPC loaders', () => {
-  it('maps filters to exact six RPC signatures using cookie-scoped client only', async () => {
+  it('maps filters to exact eight RPC signatures using cookie-scoped client only', async () => {
     const client = createRpcClient()
     mocks.createClient.mockResolvedValue(client)
     const generation = await import('@/lib/admin/generation')
@@ -125,6 +125,8 @@ describe('admin generation RPC loaders', () => {
     await generation.loadAdminGenerationProviderCalls(filters)
     await generation.loadAdminGenerationJobDetail(UUID_A)
     await generation.loadAdminGenerationDataQuality(filters)
+    await generation.loadAdminGenerationErrorDistribution(filters)
+    await generation.loadAdminGenerationCostBreakdown(filters)
 
     expect(client.rpc.mock.calls).toEqual([
       ['admin_generation_overview_v1', commonArgs],
@@ -138,8 +140,10 @@ describe('admin generation RPC loaders', () => {
       }],
       ['admin_generation_job_detail_v1', { p_job_id: UUID_A }],
       ['admin_generation_data_quality_v1', { p_from: FROM, p_to: TO }],
+      ['admin_generation_error_distribution_v1', commonArgs],
+      ['admin_generation_cost_breakdown_v1', { ...commonArgs, p_limit: 100 }],
     ])
-    expect(mocks.createClient).toHaveBeenCalledTimes(6)
+    expect(mocks.createClient).toHaveBeenCalledTimes(8)
     expect(mocks.createAdminClient).not.toHaveBeenCalled()
   })
 
@@ -155,13 +159,15 @@ describe('admin generation RPC loaders', () => {
     const { loadAdminGenerationDashboard } = await import('@/lib/admin/generation')
 
     const resultPromise = loadAdminGenerationDashboard(filters)
-    await vi.waitFor(() => expect(rpc).toHaveBeenCalledTimes(6))
+    await vi.waitFor(() => expect(rpc).toHaveBeenCalledTimes(8))
     pendingResolvers.forEach((resolve) => resolve())
     const result = await resultPromise
 
     expect(mocks.createClient).toHaveBeenCalledTimes(1)
     expect(result.overview.map((row) => row.cost_currency)).toEqual(['USD', 'IDR'])
     expect(result.timeseries).toEqual([])
+    expect(result.errorDistribution).toEqual([])
+    expect(result.costBreakdown).toEqual([])
     expect(result.jobDetail).toEqual([])
   })
 
@@ -172,7 +178,7 @@ describe('admin generation RPC loaders', () => {
 
     const result = await loadAdminGenerationDashboard({ ...filters, jobId: null })
 
-    expect(client.rpc).toHaveBeenCalledTimes(5)
+    expect(client.rpc).toHaveBeenCalledTimes(7)
     expect(result.jobDetail).toBeNull()
   })
 

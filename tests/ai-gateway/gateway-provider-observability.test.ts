@@ -131,6 +131,8 @@ describe('createGatewayProvider prose observability', () => {
       workflowPhase: 'CHAPTER_PROSE_INITIAL',
     })).resolves.toMatchObject({ title: 'Pintu Lama', paragraphs })
 
+    expect(streamTextMock).toHaveBeenNthCalledWith(1, expect.objectContaining({ maxRetries: 0 }))
+    expect(streamTextMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ maxRetries: 0 }))
     expect(recordGenerationProviderCallMock).toHaveBeenCalledTimes(2)
     const records = recordGenerationProviderCallMock.mock.calls
     expect(new Set(records.map(([start]) => start.providerCallId)).size).toBe(2)
@@ -158,6 +160,29 @@ describe('createGatewayProvider prose observability', () => {
     ])
   })
 
+  it('logs only controlled fallback fields without raw provider error text', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    streamTextMock.mockImplementationOnce(() => {
+      throw new Error('provider-secret-api-key')
+    })
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, route())
+    const input = await chapterInput()
+
+    await expect(provider.writeChapter({ snapshot: input.snapshot, plan: input.plan }, {
+      telemetryContext,
+      workflowPhase: 'CHAPTER_PROSE_INITIAL',
+    })).rejects.toThrow()
+
+    expect(JSON.stringify(log.mock.calls)).not.toContain('provider-secret-api-key')
+    expect(log).toHaveBeenCalledWith('[v0] gateway-provider fallback', {
+      workflowPhase: 'CHAPTER_PROSE_INITIAL',
+      providerId: 'gateway',
+      configuredModelId: 'openai/chapter-primary',
+      errorCode: 'PROVIDER_REQUEST_FAILED',
+    })
+  })
+
   it('records leak repair on same fallback index with new ID', async () => {
     streamTextMock
       .mockReturnValueOnce(observedResult(prose('Prompt Rahasia', ['Rani membuka pintu.']), 'actual-primary'))
@@ -171,6 +196,8 @@ describe('createGatewayProvider prose observability', () => {
       workflowPhase: 'CHAPTER_PROSE_INITIAL',
     })
 
+    expect(streamTextMock).toHaveBeenNthCalledWith(1, expect.objectContaining({ maxRetries: 0 }))
+    expect(streamTextMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ maxRetries: 0 }))
     expect(recordGenerationProviderCallMock).toHaveBeenCalledTimes(2)
     const records = recordGenerationProviderCallMock.mock.calls
     expect(new Set(records.map(([start]) => start.providerCallId)).size).toBe(2)

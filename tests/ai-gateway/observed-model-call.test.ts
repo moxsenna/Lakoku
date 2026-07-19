@@ -90,6 +90,7 @@ function deps(overrides: Partial<ObservedModelCallDeps> = {}): ObservedModelCall
     now: vi.fn(() => wallTimes.shift() ?? new Date('2026-07-18T12:00:01.000Z')),
     monotonicNow: vi.fn(() => monotonicTimes.shift() ?? 1100),
     record: vi.fn().mockResolvedValue(undefined),
+    recorderTimeoutMs: 1_500,
     ...overrides,
   }
 }
@@ -287,6 +288,61 @@ describe('executeObservedModelCall', () => {
     await expect(executeObservedModelCall(input({
       call: () => { throw providerError },
     }), deps({ record: failureRecord }))).rejects.toBe(providerError)
+  })
+
+  it('bounds recorder wait and preserves success when recorder never resolves', async () => {
+    vi.useFakeTimers()
+    try {
+      const pending = executeObservedModelCall(input(), deps({
+        record: vi.fn(() => new Promise<void>(() => {})),
+        recorderTimeoutMs: 10,
+      }))
+
+      await vi.advanceTimersByTimeAsync(10)
+      await expect(pending).resolves.toBe('MODEL TEXT')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('bounds recorder wait and preserves original error when recorder never resolves', async () => {
+    vi.useFakeTimers()
+    try {
+      const providerError = new Error('provider secret')
+      const pending = executeObservedModelCall(input({
+        call: () => { throw providerError },
+      }), deps({
+        record: vi.fn(() => new Promise<void>(() => {})),
+        recorderTimeoutMs: 10,
+      }))
+      const assertion = expect(pending).rejects.toBe(providerError)
+
+      await vi.advanceTimersByTimeAsync(10)
+      await assertion
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('handles recorder rejection after timeout without exposing it', async () => {
+    vi.useFakeTimers()
+    try {
+      let rejectRecorder!: (error: Error) => void
+      const record = vi.fn(() => new Promise<void>((_resolve, reject) => {
+        rejectRecorder = reject
+      }))
+      const pending = executeObservedModelCall(input(), deps({
+        record,
+        recorderTimeoutMs: 10,
+      }))
+
+      await vi.advanceTimersByTimeAsync(10)
+      await expect(pending).resolves.toBe('MODEL TEXT')
+      rejectRecorder(new Error('late recorder secret'))
+      await Promise.resolve()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('creates one unique UUID before each provider call', async () => {

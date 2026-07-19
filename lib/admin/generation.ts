@@ -3,7 +3,9 @@ import type { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import type { AdminGenerationFilters } from '@/lib/admin/generation-filters'
 import {
+  AdminGenerationCostBreakdownSchema,
   AdminGenerationDataQualitySchema,
+  AdminGenerationErrorDistributionSchema,
   AdminGenerationJobDetailSchema,
   AdminGenerationOverviewSchema,
   AdminGenerationProviderCallPageSchema,
@@ -11,7 +13,9 @@ import {
   AdminModelPerformanceSchema,
 } from '@/lib/admin/generation-schemas'
 import type {
+  AdminGenerationCostBreakdownRow,
   AdminGenerationDataQualityRow,
+  AdminGenerationErrorDistributionRow,
   AdminGenerationJobDetailRow,
   AdminGenerationOverviewRow,
   AdminGenerationProviderCall,
@@ -161,6 +165,30 @@ export async function loadAdminGenerationDataQuality(
   )
 }
 
+export async function loadAdminGenerationErrorDistribution(
+  filters: AdminGenerationFilters,
+  client?: GenerationRpcClient,
+): Promise<AdminGenerationErrorDistributionRow[]> {
+  return queryRpc(
+    client ?? await cookieClient(),
+    'admin_generation_error_distribution_v1',
+    commonArgs(filters),
+    AdminGenerationErrorDistributionSchema,
+  )
+}
+
+export async function loadAdminGenerationCostBreakdown(
+  filters: AdminGenerationFilters,
+  client?: GenerationRpcClient,
+): Promise<AdminGenerationCostBreakdownRow[]> {
+  return queryRpc(
+    client ?? await cookieClient(),
+    'admin_generation_cost_breakdown_v1',
+    { ...commonArgs(filters), p_limit: 100 },
+    AdminGenerationCostBreakdownSchema,
+  )
+}
+
 export interface AdminGenerationDashboard {
   overview: AdminGenerationOverviewRow[]
   timeseries: AdminGenerationTimeseriesRow[]
@@ -168,6 +196,8 @@ export interface AdminGenerationDashboard {
   providerCalls: AdminGenerationProviderCall[]
   jobDetail: AdminGenerationJobDetailRow[] | null
   dataQuality: AdminGenerationDataQualityRow[]
+  errorDistribution: AdminGenerationErrorDistributionRow[]
+  costBreakdown: AdminGenerationCostBreakdownRow[]
 }
 
 export async function loadAdminGenerationDashboard(
@@ -178,17 +208,36 @@ export async function loadAdminGenerationDashboard(
     ? Promise.resolve(null)
     : loadAdminGenerationJobDetail(filters.jobId, client)
 
-  const [overview, timeseries, modelPerformance, providerCalls, jobDetail, dataQuality] =
-    await Promise.all([
-      loadAdminGenerationOverview(filters, client),
-      loadAdminGenerationTimeseries(filters, client),
-      loadAdminModelPerformance(filters, client),
-      loadAdminGenerationProviderCalls(filters, client),
-      jobDetailPromise,
-      loadAdminGenerationDataQuality(filters, client),
-    ])
+  const [
+    overview,
+    timeseries,
+    modelPerformance,
+    providerCalls,
+    jobDetail,
+    dataQuality,
+    errorDistribution,
+    costBreakdown,
+  ] = await Promise.all([
+    loadAdminGenerationOverview(filters, client),
+    loadAdminGenerationTimeseries(filters, client),
+    loadAdminModelPerformance(filters, client),
+    loadAdminGenerationProviderCalls(filters, client),
+    jobDetailPromise,
+    loadAdminGenerationDataQuality(filters, client),
+    loadAdminGenerationErrorDistribution(filters, client),
+    loadAdminGenerationCostBreakdown(filters, client),
+  ])
 
-  return { overview, timeseries, modelPerformance, providerCalls, jobDetail, dataQuality }
+  return {
+    overview,
+    timeseries,
+    modelPerformance,
+    providerCalls,
+    jobDetail,
+    dataQuality,
+    errorDistribution,
+    costBreakdown,
+  }
 }
 
 // Compatibility readers for existing Task 11 page. Task 12 replaces its view model.

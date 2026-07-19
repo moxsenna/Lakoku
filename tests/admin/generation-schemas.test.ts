@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AdminGenerationCostBreakdownSchema,
   AdminGenerationDataQualitySchema,
+  AdminGenerationErrorDistributionSchema,
   AdminGenerationJobDetailSchema,
   AdminGenerationOverviewSchema,
   AdminGenerationProviderCallPageSchema,
@@ -179,9 +181,28 @@ describe('admin generation RPC schemas', () => {
     expect(AdminModelPerformanceSchema.parse([modelRow])).toHaveLength(1)
   })
 
-  it('accepts exact provider-call, job-detail, and data-quality outputs', () => {
+  it('accepts exact provider-call, job-detail, distribution, breakdown, and data-quality outputs', () => {
     expect(AdminGenerationProviderCallPageSchema.parse([providerCallRow])).toHaveLength(1)
     expect(AdminGenerationJobDetailSchema.parse([jobRow])).toHaveLength(1)
+    expect(AdminGenerationErrorDistributionSchema.parse([{
+      outcome: 'TIMEOUT',
+      error_code: 'PROVIDER_TIMEOUT',
+      fallback_bucket: 'FALLBACK',
+      call_count: '2',
+    }])).toHaveLength(1)
+    expect(AdminGenerationCostBreakdownSchema.parse([{
+      use_case: 'chapter',
+      user_id: UUID_B,
+      masked_user_email: 'a***@example.com',
+      generation_kind: 'standard',
+      provider_id: 'openrouter',
+      model_id: 'model-a',
+      cost_currency: 'USD',
+      call_count: '2',
+      actual_cost_amount: '1.25',
+      estimated_cost_amount: '0.5',
+      unavailable_cost_count: '0',
+    }])).toHaveLength(1)
     expect(AdminGenerationDataQualitySchema.parse([{
       metric_name: 'missing_usage',
       issue_count: '2',
@@ -196,6 +217,15 @@ describe('admin generation RPC schemas', () => {
     ['model performance', AdminModelPerformanceSchema, [modelRow]],
     ['provider calls', AdminGenerationProviderCallPageSchema, [providerCallRow]],
     ['job detail', AdminGenerationJobDetailSchema, [jobRow]],
+    ['error distribution', AdminGenerationErrorDistributionSchema, [{
+      outcome: 'TIMEOUT', error_code: 'PROVIDER_TIMEOUT', fallback_bucket: 'FALLBACK', call_count: '2',
+    }]],
+    ['cost breakdown', AdminGenerationCostBreakdownSchema, [{
+      use_case: 'chapter', user_id: UUID_B, masked_user_email: 'a***@example.com',
+      generation_kind: 'standard', provider_id: 'openrouter', model_id: 'model-a',
+      cost_currency: 'USD', call_count: '2', actual_cost_amount: '1.25',
+      estimated_cost_amount: '0.5', unavailable_cost_count: '0',
+    }]],
     ['data quality', AdminGenerationDataQualitySchema, [{
       metric_name: 'missing_usage', issue_count: '2', oldest_issue_at: null, newest_issue_at: null,
     }]],

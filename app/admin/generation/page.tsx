@@ -1,6 +1,7 @@
 import { AdminEmptyState } from '@/components/admin/admin-empty-state'
 import { AdminErrorState } from '@/components/admin/admin-error-state'
 import { ErrorFallbackDistribution } from '@/components/admin/generation/error-fallback-distribution'
+import { GenerationCostBreakdown } from '@/components/admin/generation/generation-cost-breakdown'
 import { GenerationDataQuality } from '@/components/admin/generation/generation-data-quality'
 import { GenerationFilterBar } from '@/components/admin/generation/generation-filter-bar'
 import { GenerationJobDrawer } from '@/components/admin/generation/generation-job-drawer'
@@ -71,7 +72,8 @@ export default async function AdminGenerationPage({
           <GenerationSummaryGrid viewModel={viewModel} />
           <GenerationTimeseries rows={dashboard.timeseries} />
           <ModelPerformanceTable rows={dashboard.modelPerformance} />
-          <ErrorFallbackDistribution calls={dashboard.providerCalls} />
+          <ErrorFallbackDistribution rows={dashboard.errorDistribution} />
+          <GenerationCostBreakdown rows={dashboard.costBreakdown} />
           <ProviderCallLedger calls={dashboard.providerCalls} filters={filters} nextHref={viewModel.nextHref} />
         </>
       )}

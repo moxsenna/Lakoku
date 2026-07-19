@@ -7,6 +7,7 @@ import type {
   AdminGenerationJobDetailRow,
   AdminGenerationOverviewRow,
   AdminGenerationProviderCall,
+  AdminGenerationTimeseriesRow,
 } from '@/lib/admin/generation-schemas'
 import {
   addDecimalStrings,
@@ -15,6 +16,11 @@ import {
   generationJobHref,
 } from '@/components/admin/generation/generation-view-model'
 import { GenerationSummaryGrid } from '@/components/admin/generation/generation-summary-grid'
+import { GenerationTimeseries } from '@/components/admin/generation/generation-timeseries'
+import { ErrorFallbackDistribution } from '@/components/admin/generation/error-fallback-distribution'
+import { GenerationCostBreakdown } from '@/components/admin/generation/generation-cost-breakdown'
+import { GenerationDataQuality } from '@/components/admin/generation/generation-data-quality'
+import { GenerationFilterBar } from '@/components/admin/generation/generation-filter-bar'
 import { ProviderCallLedger } from '@/components/admin/generation/provider-call-ledger'
 import { GenerationJobDrawer } from '@/components/admin/generation/generation-job-drawer'
 import GenerationLoading from '@/app/admin/generation/loading'
@@ -171,6 +177,8 @@ function dashboard(overrides: Partial<AdminGenerationDashboard> = {}): AdminGene
     providerCalls: [],
     jobDetail: null,
     dataQuality: [],
+    errorDistribution: [],
+    costBreakdown: [],
     ...overrides,
   }
 }
@@ -205,6 +213,139 @@ describe('generation operations view model', () => {
     expect(rendered).toContain('USD')
     expect(rendered).toContain('IDR')
     expect(rendered).toContain('Unavailable')
+  })
+
+  it('keeps valid synchronous calls informational instead of degraded', () => {
+    const quality = [{
+      metric_name: 'calls_lacking_durable_correlation' as const,
+      issue_count: '3',
+      oldest_issue_at: FROM,
+      newest_issue_at: TO,
+    }]
+    const vm = buildGenerationViewModel(filters, dashboard({
+      overview: [overview({ unavailable_cost_count: '0' })],
+      dataQuality: quality,
+    }))
+
+    expect(vm.state).toBe('ready')
+    const rendered = renderToStaticMarkup(createElement(GenerationDataQuality, { rows: quality }))
+    expect(rendered).toContain('Synchronous calls')
+    expect(rendered).not.toContain('Partial data')
+  })
+
+  it('renders previous-period comparisons including zero and unavailable baselines', () => {
+    const vm = buildGenerationViewModel(filters, dashboard({
+      overview: [
+        overview({ unavailable_cost_count: '0' }),
+        overview({
+          period_name: 'previous',
+          call_count: '0',
+          total_token_count: '0',
+          success_rate: '0.4',
+          error_rate: '0',
+          fallback_rate: '0',
+          p50_elapsed_ms: null,
+          p95_elapsed_ms: null,
+          actual_cost_amount: '0',
+          estimated_cost_amount: '0',
+          unavailable_cost_count: '0',
+        }),
+      ],
+    }))
+    const rendered = renderToStaticMarkup(createElement(GenerationSummaryGrid, { viewModel: vm }))
+
+    expect(rendered).toContain('vs previous')
+    expect(rendered).toContain('No previous activity')
+    expect(rendered).toContain('Previous unavailable')
+    expect(rendered.match(/previous/gi) ?? []).toHaveLength(13)
+  })
+
+  it('deduplicates daily call and token totals while rendering currency-separated cost series', () => {
+    const base: AdminGenerationTimeseriesRow = {
+      bucket_start: FROM,
+      cost_currency: 'USD',
+      call_count: '10',
+      success_count: '8',
+      error_count: '2',
+      fallback_call_count: '1',
+      input_token_count: '100',
+      output_token_count: '200',
+      total_token_count: '300',
+      actual_cost_amount: '1',
+      estimated_cost_amount: '0.5',
+      unavailable_cost_count: '0',
+      p50_elapsed_ms: '1000',
+      p95_elapsed_ms: '2000',
+    }
+    const rendered = renderToStaticMarkup(createElement(GenerationTimeseries, {
+      rows: [base, { ...base, cost_currency: 'EUR', actual_cost_amount: '2' }],
+    }))
+
+    expect((rendered.match(/>10<\/td>/g) ?? [])).toHaveLength(1)
+    expect((rendered.match(/>300<\/td>/g) ?? [])).toHaveLength(1)
+    expect(rendered).toContain('Cost USD')
+    expect(rendered).toContain('Cost EUR')
+    expect(rendered).toContain('USD 1.5')
+    expect(rendered).toContain('EUR 2.5')
+  })
+
+  it('renders full-range aggregate distribution and cost breakdown dimensions', () => {
+    const distribution = renderToStaticMarkup(createElement(ErrorFallbackDistribution, { rows: [{
+      outcome: 'TIMEOUT',
+      error_code: 'PROVIDER_TIMEOUT',
+      fallback_bucket: 'FALLBACK',
+      call_count: '42',
+    }] }))
+    expect(distribution).toContain('full selected range')
+    expect(distribution).toContain('FALLBACK')
+    expect(distribution).toContain('42')
+
+    const breakdown = renderToStaticMarkup(createElement(GenerationCostBreakdown, { rows: [{
+      use_case: 'chapter',
+      user_id: UUID_B,
+      masked_user_email: 'a***@example.com',
+      generation_kind: 'standard',
+      provider_id: 'openrouter',
+      model_id: 'model-a',
+      cost_currency: 'USD',
+      call_count: '2',
+      actual_cost_amount: '1.25',
+      estimated_cost_amount: '0.5',
+      unavailable_cost_count: '0',
+    }] }))
+    expect(breakdown).toContain('Cost breakdown')
+    expect(breakdown).toContain('a***@example.com')
+    expect(breakdown).toContain('chapter')
+    expect(breakdown).toContain('standard')
+    expect(breakdown).toContain('openrouter')
+    expect(breakdown).toContain('model-a')
+    expect(breakdown).toContain('USD 1.75')
+  })
+
+  it('renders every filter control and resets cursors on submission', () => {
+    const rendered = renderToStaticMarkup(createElement(GenerationFilterBar, {
+      filters: {
+        ...filters,
+        errorCode: 'PROVIDER_TIMEOUT',
+        userId: UUID_A,
+        storyId: 'story-1',
+        generationKind: 'standard',
+        jobId: UUID_C,
+        correlationId: UUID_B,
+        chapterNumber: 2,
+        cursorStartedAt: FROM,
+        cursorId: UUID_A,
+      },
+    }))
+
+    for (const name of [
+      'from', 'to', 'provider', 'model', 'useCase', 'phase', 'outcome',
+      'errorCode', 'costSource', 'userId', 'storyId', 'generationKind',
+      'jobId', 'correlationId', 'chapter', 'pageSize',
+    ]) expect(rendered).toContain(`name="${name}"`)
+    expect(rendered).not.toContain('name="cursorStartedAt"')
+    expect(rendered).not.toContain('name="cursorId"')
+    expect(rendered.match(/type="hidden"/g) ?? []).toHaveLength(0)
   })
 
   it('builds deterministic next cursor and preserves active filters for large pages', () => {

@@ -173,6 +173,35 @@ export const AdminGenerationJobDetailRowSchema = z.object({
 
 export const AdminGenerationJobDetailSchema = z.array(AdminGenerationJobDetailRowSchema)
 
+export const AdminGenerationErrorDistributionRowSchema = z.object({
+  outcome: ProviderCallOutcomeSchema,
+  error_code: z.string().regex(/^[A-Z0-9_]{1,100}$/).nullable(),
+  fallback_bucket: z.enum(['PRIMARY', 'FALLBACK']),
+  call_count: NonnegativeIntegerStringSchema,
+}).strict()
+
+export const AdminGenerationErrorDistributionSchema = z.array(
+  AdminGenerationErrorDistributionRowSchema,
+)
+
+export const AdminGenerationCostBreakdownRowSchema = z.object({
+  use_case: z.string().trim().min(1).max(100),
+  user_id: z.string().uuid(),
+  masked_user_email: z.string().nullable(),
+  generation_kind: GenerationKindSchema.nullable(),
+  provider_id: z.string().trim().min(1).max(80),
+  model_id: z.string().trim().min(1).max(200),
+  cost_currency: CurrencySchema.nullable(),
+  call_count: NonnegativeIntegerStringSchema,
+  actual_cost_amount: NonnegativeDecimalStringSchema,
+  estimated_cost_amount: NonnegativeDecimalStringSchema,
+  unavailable_cost_count: NonnegativeIntegerStringSchema,
+}).strict()
+
+export const AdminGenerationCostBreakdownSchema = z.array(
+  AdminGenerationCostBreakdownRowSchema,
+)
+
 export const AdminGenerationDataQualityRowSchema = z.object({
   metric_name: z.enum([
     'missing_usage',
@@ -194,4 +223,6 @@ export type AdminGenerationTimeseriesRow = z.infer<typeof AdminGenerationTimeser
 export type AdminModelPerformanceRow = z.infer<typeof AdminModelPerformanceRowSchema>
 export type AdminGenerationProviderCall = z.infer<typeof AdminGenerationProviderCallRowSchema>
 export type AdminGenerationJobDetailRow = z.infer<typeof AdminGenerationJobDetailRowSchema>
+export type AdminGenerationErrorDistributionRow = z.infer<typeof AdminGenerationErrorDistributionRowSchema>
+export type AdminGenerationCostBreakdownRow = z.infer<typeof AdminGenerationCostBreakdownRowSchema>
 export type AdminGenerationDataQualityRow = z.infer<typeof AdminGenerationDataQualityRowSchema>

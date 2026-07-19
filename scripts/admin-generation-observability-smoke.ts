@@ -62,6 +62,30 @@ check(
   unaccountedStreamCalls.length === 0,
   unaccountedStreamCalls.join('; '),
 )
+check(
+  'every observed streamText call disables hidden SDK retries',
+  countMatches(readFileSync(gatewayProvider, 'utf8'), /\bmaxRetries\s*:\s*0\b/g)
+    === countMatches(readFileSync(gatewayProvider, 'utf8'), observedClosurePattern),
+)
+
+const generationLogFiles = [
+  resolve(root, 'lib/runtime/story-generation.ts'),
+  resolve(root, 'lib/api/start-chapter.server.ts'),
+  resolve(root, 'app/api/stories/[id]/generate/route.ts'),
+]
+const rawGenerationLogs = generationLogFiles.filter((file) => {
+  const source = readFileSync(file, 'utf8')
+  const calls = source.match(/console\.(?:log|error|warn)\((?:[^()]|\([^()]*\))*\)/g) ?? []
+  return calls.some((call) => {
+    const args = call.replace(/^console\.(?:log|error|warn)/, '')
+    return /err(?:or)?\.message|\berr\b|\berror\b/.test(args)
+  })
+})
+check(
+  'changed generation paths log controlled codes only',
+  rawGenerationLogs.length === 0,
+  rawGenerationLogs.map((file) => relative(root, file)).join(', '),
+)
 
 const libRoot = resolve(root, 'lib')
 const generateObjectImports = sourceFiles(libRoot).filter((file) => {
@@ -91,6 +115,29 @@ const generationUiSource = [generationPage, ...sourceFiles(generationComponentsR
 
 check('generation loader does not read story_events directly', !/story_events/.test(generationLoader))
 check('generation loader uses cookie-scoped client', /createClient/.test(generationLoader) && !/createAdminClient/.test(generationLoader))
+for (const rpc of [
+  'admin_generation_overview_v1',
+  'admin_generation_timeseries_v1',
+  'admin_model_performance_v1',
+  'admin_generation_provider_calls_v1',
+  'admin_generation_job_detail_v1',
+  'admin_generation_data_quality_v1',
+  'admin_generation_error_distribution_v1',
+  'admin_generation_cost_breakdown_v1',
+]) check(`generation loader includes ${rpc}`, generationLoader.includes(rpc))
+check(
+  'distribution renders full-range aggregate rows',
+  /ErrorFallbackDistribution rows=\{dashboard\.errorDistribution\}/.test(generationPage),
+)
+check(
+  'dashboard renders bounded cost breakdown',
+  /GenerationCostBreakdown rows=\{dashboard\.costBreakdown\}/.test(generationPage),
+)
+for (const filter of [
+  'errorCode', 'userId', 'storyId', 'generationKind', 'jobId',
+  'correlationId', 'chapter',
+]) check(`generation dashboard exposes ${filter} filter`, generationUiSource.includes(`name=\"${filter}\"`))
+check('generation filter submission resets cursor', !/name=\"cursor(?:StartedAt|Id)\"/.test(generationUiSource))
 const generationUiWithoutMaskedEmail = generationUiSource.replaceAll('masked_user_email', '')
 check('generation dashboard renders masked identity only', !/\.email\b|raw_email|user_email/.test(generationUiWithoutMaskedEmail))
 check('generation dashboard omits claim token', !/claim_?token/i.test(generationUiSource))

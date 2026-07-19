@@ -257,11 +257,8 @@ async function buildChoices(
       })),
       outcomes: mapBranchToPublishOutcomes(branch),
     }
-  } catch (err) {
-    console.log(
-      '[v0] buildChoices LLM gagal, pakai fallback grounded draft:',
-      err instanceof Error ? err.message : err,
-    )
+  } catch {
+    console.log('GENERATION_CHOICES_FALLBACK_USED')
     return fallbackChoicesFromDraft(draft, chapterNumber)
   }
 }

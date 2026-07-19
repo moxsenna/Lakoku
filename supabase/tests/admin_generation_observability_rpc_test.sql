@@ -154,6 +154,24 @@ insert into observability_rpc_signatures values
     'admin_generation_data_quality_v1',
     array['timestamp with time zone', 'timestamp with time zone'],
     'public.admin_generation_data_quality_v1(timestamptz,timestamptz)'
+  ),
+  (
+    'admin_generation_error_distribution_v1',
+    array[
+      'timestamp with time zone', 'timestamp with time zone',
+      'text', 'text', 'text', 'text', 'text', 'text', 'text',
+      'uuid', 'text', 'text', 'uuid', 'uuid', 'integer'
+    ],
+    'public.admin_generation_error_distribution_v1(timestamptz,timestamptz,text,text,text,text,text,text,text,uuid,text,text,uuid,uuid,integer)'
+  ),
+  (
+    'admin_generation_cost_breakdown_v1',
+    array[
+      'timestamp with time zone', 'timestamp with time zone',
+      'text', 'text', 'text', 'text', 'text', 'text', 'text',
+      'uuid', 'text', 'text', 'uuid', 'uuid', 'integer', 'integer'
+    ],
+    'public.admin_generation_cost_breakdown_v1(timestamptz,timestamptz,text,text,text,text,text,text,text,uuid,text,text,uuid,uuid,integer,integer)'
   );
 
 select has_function(
@@ -507,6 +525,18 @@ select * from public.admin_model_performance_v1(
   pg_catalog.clock_timestamp() + interval '1 minute',
   null,null,null,null,null,null,null,null,null,null,null,null,null
 );
+create temporary table admin_observe_distribution as
+select * from public.admin_generation_error_distribution_v1(
+  pg_catalog.clock_timestamp() - interval '24 hours',
+  pg_catalog.clock_timestamp() + interval '1 minute',
+  null,null,null,null,null,null,null,null,null,null,null,null,null
+);
+create temporary table admin_observe_cost_breakdown as
+select * from public.admin_generation_cost_breakdown_v1(
+  pg_catalog.clock_timestamp() - interval '24 hours',
+  pg_catalog.clock_timestamp() + interval '1 minute',
+  null,null,null,null,null,null,null,null,null,null,null,null,null,100
+);
 create temporary table admin_observe_quality as
 select * from public.admin_generation_data_quality_v1(
   pg_catalog.clock_timestamp() - interval '24 hours',
@@ -596,6 +626,47 @@ select ok(
   'timeseries keeps currencies separate'
 );
 select is(
+  (select count(distinct call_count::text || ':' || total_token_count::text)
+   from admin_observe_timeseries
+   where bucket_start = (select min(bucket_start) from admin_observe_timeseries)),
+  1::bigint,
+  'same-date currency partitions repeat full call and token totals instead of splitting them'
+);
+select is(
+  (select pg_catalog.sum(call_count) from admin_observe_distribution),
+  4::numeric,
+  'error distribution covers full filtered range, not provider ledger page'
+);
+select ok(
+  exists (
+    select 1 from admin_observe_distribution
+    where outcome = 'TIMEOUT' and error_code = 'PROVIDER_TIMEOUT'
+      and fallback_bucket = 'FALLBACK' and call_count = 1
+  ),
+  'error distribution includes outcome, controlled error, and fallback buckets'
+);
+select ok(
+  exists (
+    select 1 from admin_observe_cost_breakdown
+    where use_case = 'chapter_generation'
+      and masked_user_email = 'a***@example.com'
+      and generation_kind = 'standard'
+      and provider_id = 'provider-a'
+      and model_id = 'model-a'
+      and cost_currency = 'USD'
+  )
+  and exists (
+    select 1 from admin_observe_cost_breakdown
+    where use_case = 'choice_generation'
+      and masked_user_email = 'b***@example.net'
+      and generation_kind = 'personalized'
+      and provider_id = 'provider-b'
+      and model_id = 'model-b'
+      and cost_currency = 'EUR'
+  ),
+  'cost breakdown includes bounded use case, DB-masked user, kind, provider, model, and currency dimensions'
+);
+select is(
   (select row(call_count, success_rate, fallback_rate, p95_elapsed_ms)::text
    from admin_observe_models
    where provider_id = 'provider-a' and model_id = 'model-a'
@@ -605,8 +676,15 @@ select is(
 );
 select is(
   (select count(*) from public.admin_generation_access_audit),
-  0::bigint,
-  'ordinary provider ledger and aggregate pages create no detail audit rows'
+  3::bigint,
+  'successful provider ledger reads create one VIEW_CALL_DETAIL audit row each'
+);
+select is(
+  (select count(distinct filter_fingerprint)
+   from public.admin_generation_access_audit
+   where action = 'VIEW_CALL_DETAIL'),
+  3::bigint,
+  'provider ledger audit stores stable non-sensitive filter fingerprints'
 );
 select ok(
   (select issue_count = 1 from admin_observe_quality
@@ -640,16 +718,16 @@ select is(
   'job detail writes exactly one VIEW_JOB_DETAIL audit row'
 );
 select is(
-  (select array_agg(attempt_number order by sequence_number)
-   from admin_observe_job_detail where row_kind = 'ATTEMPT'),
-  array[1,2],
-  'job attempts order by attempt number then started_at and id'
-);
-select is(
-  (select array_agg(provider_call_id order by sequence_number)
-   from admin_observe_job_detail where row_kind = 'CALL'),
-  array['admin-observe-current-1','admin-observe-current-2'],
-  'job provider calls order by started_at ASC and id ASC'
+  (select array_agg(row_kind || ':' || coalesce(provider_call_id, attempt_number::text)
+                    order by sequence_number)
+   from admin_observe_job_detail where row_kind <> 'JOB'),
+  array[
+    'ATTEMPT:1',
+    'CALL:admin-observe-current-1',
+    'ATTEMPT:2',
+    'CALL:admin-observe-current-2'
+  ],
+  'job timeline interleaves attempts and calls chronologically with stable kind/id tie-break'
 );
 select is(
   (select masked_user_email from admin_observe_job_detail

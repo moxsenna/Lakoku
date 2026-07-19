@@ -79,10 +79,8 @@ export async function POST(
       return NextResponse.json({ ok: false, reason: result.reason }, { status })
     }
     return NextResponse.json(result, { status: 201 })
-  } catch (err) {
-    console.error('[generation route] failed', {
-      errorType: err instanceof Error ? err.name : typeof err,
-    })
+  } catch {
+    console.error('GENERATION_ROUTE_FAILED')
     return NextResponse.json({ error: 'Gagal menghasilkan bab.' }, { status: 500 })
   }
 }

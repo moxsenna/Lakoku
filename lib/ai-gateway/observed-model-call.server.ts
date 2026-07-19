@@ -34,6 +34,7 @@ export interface ObservedModelCallDeps {
     start: ProviderCallStart,
     completion: ProviderCallCompletion,
   ) => Promise<void>
+  recorderTimeoutMs: number
 }
 
 type ObservedUsage = {
@@ -67,6 +68,7 @@ const defaultObservedModelCallDeps: ObservedModelCallDeps = {
   now: () => new Date(),
   monotonicNow: () => performance.now(),
   record: recordGenerationProviderCall,
+  recorderTimeoutMs: 1_500,
 }
 
 function scalarTokenCount(value: unknown): number | null {
@@ -201,10 +203,18 @@ async function recordBestEffort(
   completion: ProviderCallCompletion,
   deps: ObservedModelCallDeps,
 ): Promise<void> {
+  const recorder = Promise.resolve()
+    .then(() => deps.record(start, completion))
+    .catch(() => undefined)
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<void>((resolve) => {
+    timeout = setTimeout(resolve, deps.recorderTimeoutMs)
+  })
+
   try {
-    await deps.record(start, completion)
-  } catch {
-    // Observability must never change generation success or original failure.
+    await Promise.race([recorder, deadline])
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout)
   }
 }
 

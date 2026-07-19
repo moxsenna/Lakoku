@@ -26,7 +26,7 @@ function fail(err: unknown): StartChapterFailure {
     : message === STORY_NOT_FOUND_ERROR
       ? STORY_NOT_FOUND_ERROR
       : publicAuthoringErrorMessage(err)
-  console.log('[v0] start chapter error:', message, { publicMessage })
+  console.log('START_CHAPTER_FAILED', { publicMessage })
   return { ok: false, error: publicMessage }
 }
 
@@ -66,14 +66,11 @@ export async function startOwnedChapterGeneration(
           correlationId,
         })
         if (!result.ok && result.reason !== 'CHAPTER_EXISTS' && result.reason !== 'LEASE_HELD') {
-          console.log('[v0] startOwnedChapterGeneration gagal:', result.reason, result.detail)
+          console.log('START_CHAPTER_BACKGROUND_FAILED', { reason: result.reason })
         }
-      } catch (err) {
+      } catch {
         // Ensure after() never dies silently — release path is inside generateNextChapterReal catch.
-        console.log(
-          '[v0] startOwnedChapterGeneration exception:',
-          err instanceof Error ? err.message : err,
-        )
+        console.log('START_CHAPTER_BACKGROUND_EXCEPTION')
       }
     })
 

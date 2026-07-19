@@ -89,12 +89,18 @@ describe('admin generation filters', () => {
   })
 })
 
-it('accepts datetime-local timestamps from browser inputs', () => {
-  const filters = parseAdminGenerationFilters({
+it('rejects bare datetime-local timestamps without timezone offset', () => {
+  expect(() => parseAdminGenerationFilters({
     from: '2026-07-18T00:00',
     to: '2026-07-19T00:00',
+  })).toThrow(/Invalid timestamp/)
+})
+
+it('accepts absolute ISO timestamps with offset', () => {
+  const filters = parseAdminGenerationFilters({
+    from: '2026-07-18T00:00:00.000Z',
+    to: '2026-07-19T00:00:00.000Z',
   })
-  expect(Number.isNaN(Date.parse(filters.from))).toBe(false)
-  expect(Number.isNaN(Date.parse(filters.to))).toBe(false)
-  expect(new Date(filters.to).getTime()).toBeGreaterThan(new Date(filters.from).getTime())
+  expect(filters.from).toBe('2026-07-18T00:00:00.000Z')
+  expect(filters.to).toBe('2026-07-19T00:00:00.000Z')
 })

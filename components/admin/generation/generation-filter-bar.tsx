@@ -1,6 +1,9 @@
+'use client'
+
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { useEffect, useState } from 'react'
 import type { AdminGenerationFilters } from '@/lib/admin/generation-filters'
-import { serializeAdminGenerationFilters } from '@/lib/admin/generation-filters'
 
 export interface GenerationFilterBarProps {
   filters: AdminGenerationFilters
@@ -9,53 +12,167 @@ export interface GenerationFilterBarProps {
 const inputClass = 'mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground'
 const labelClass = 'text-[11px] text-muted-foreground'
 
-function toLocalInputValue(iso: string): string {
+function pad(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
+/** Display ISO instant as browser-local datetime-local value. */
+export function toLocalInputValue(iso: string): string {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return ''
-  const pad = (n: number) => String(n).padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-function presetHref(hours: number): string {
-  const to = new Date()
-  const from = new Date(to.getTime() - hours * 60 * 60 * 1000)
+/**
+ * Convert datetime-local wall-clock (browser local) to UTC ISO.
+ * Never send bare datetime-local to the server — VPS is UTC and would misread it.
+ */
+export function localInputToIso(localValue: string): string {
+  const trimmed = localValue.trim()
+  if (!trimmed) throw new Error('empty timestamp')
+  // Already absolute.
+  if (/[zZ]$|[+-]\d{2}:\d{2}$/.test(trimmed)) {
+    const absolute = new Date(trimmed)
+    if (Number.isNaN(absolute.getTime())) throw new Error('invalid timestamp')
+    return absolute.toISOString()
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(trimmed)
+  if (!match) throw new Error('invalid timestamp')
+  const [, y, mo, d, h, mi, s] = match
+  const date = new Date(
+    Number(y),
+    Number(mo) - 1,
+    Number(d),
+    Number(h),
+    Number(mi),
+    s ? Number(s) : 0,
+    0,
+  )
+  if (Number.isNaN(date.getTime())) throw new Error('invalid timestamp')
+  return date.toISOString()
+}
+
+export function buildPresetRange(hours: number, now = new Date()): { from: string; to: string } {
+  const to = new Date(now.getTime())
+  const from = new Date(now.getTime() - hours * 60 * 60 * 1000)
+  return { from: from.toISOString(), to: to.toISOString() }
+}
+
+export function buildGenerationQuery(args: {
+  from: string
+  to: string
+  provider?: string
+  model?: string
+  useCase?: string
+  phase?: string
+  outcome?: string
+  errorCode?: string
+  costSource?: string
+  userId?: string
+  storyId?: string
+  generationKind?: string
+  jobId?: string
+  correlationId?: string
+  chapter?: string
+  pageSize?: string
+}): string {
   const params = new URLSearchParams()
-  params.set('from', from.toISOString())
-  params.set('to', to.toISOString())
+  params.set('from', args.from)
+  params.set('to', args.to)
+  const optional: Array<[string, string | undefined]> = [
+    ['provider', args.provider],
+    ['model', args.model],
+    ['useCase', args.useCase],
+    ['phase', args.phase],
+    ['outcome', args.outcome],
+    ['errorCode', args.errorCode],
+    ['costSource', args.costSource],
+    ['userId', args.userId],
+    ['storyId', args.storyId],
+    ['generationKind', args.generationKind],
+    ['jobId', args.jobId],
+    ['correlationId', args.correlationId],
+    ['chapter', args.chapter],
+    ['pageSize', args.pageSize],
+  ]
+  for (const [key, value] of optional) {
+    const trimmed = value?.trim()
+    if (trimmed) params.set(key, trimmed)
+  }
   return `/admin/generation?${params.toString()}`
 }
 
 export function GenerationFilterBar({ filters }: GenerationFilterBarProps) {
-  const clearHref = `/admin/generation?${serializeAdminGenerationFilters({
-    ...filters,
-    from: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-    to: new Date().toISOString(),
-    providerId: null,
-    modelId: null,
-    useCase: null,
-    workflowPhase: null,
-    outcome: null,
-    errorCode: null,
-    costSource: null,
-    userId: null,
-    storyId: null,
-    generationKind: null,
-    jobId: null,
-    correlationId: null,
-    chapterNumber: null,
-    cursorStartedAt: null,
-    cursorId: null,
-    pageSize: 50,
-  }).toString()}`
+  const router = useRouter()
+  const [fromLocal, setFromLocal] = useState(() => toLocalInputValue(filters.from))
+  const [toLocal, setToLocal] = useState(() => toLocalInputValue(filters.to))
+  const [error, setError] = useState<string | null>(null)
+
+  // Keep pickers in sync when URL/presets change.
+  useEffect(() => {
+    setFromLocal(toLocalInputValue(filters.from))
+    setToLocal(toLocalInputValue(filters.to))
+    setError(null)
+  }, [filters.from, filters.to])
+
+  function goPreset(hours: number) {
+    const range = buildPresetRange(hours)
+    // Absolute ISO only — no advanced filters, no cursor.
+    router.push(buildGenerationQuery(range))
+  }
+
+  function onSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setError(null)
+    const form = new FormData(event.currentTarget)
+    try {
+      const from = localInputToIso(String(form.get('fromLocal') ?? fromLocal))
+      const to = localInputToIso(String(form.get('toLocal') ?? toLocal))
+      if (new Date(from).getTime() >= new Date(to).getTime()) {
+        setError('Waktu "Dari" harus sebelum "Sampai".')
+        return
+      }
+      const maxMs = 90 * 24 * 60 * 60 * 1000
+      if (new Date(to).getTime() - new Date(from).getTime() > maxMs) {
+        setError('Maksimal rentang 90 hari.')
+        return
+      }
+      router.push(buildGenerationQuery({
+        from,
+        to,
+        provider: String(form.get('provider') ?? ''),
+        model: String(form.get('model') ?? ''),
+        useCase: String(form.get('useCase') ?? ''),
+        phase: String(form.get('phase') ?? ''),
+        outcome: String(form.get('outcome') ?? ''),
+        errorCode: String(form.get('errorCode') ?? ''),
+        costSource: String(form.get('costSource') ?? ''),
+        userId: String(form.get('userId') ?? ''),
+        storyId: String(form.get('storyId') ?? ''),
+        generationKind: String(form.get('generationKind') ?? ''),
+        jobId: String(form.get('jobId') ?? ''),
+        correlationId: String(form.get('correlationId') ?? ''),
+        chapter: String(form.get('chapter') ?? ''),
+        pageSize: String(form.get('pageSize') ?? ''),
+      }))
+    } catch {
+      setError('Waktu tidak valid. Pakai preset 24 jam.')
+    }
+  }
+
+  const resetHref = buildGenerationQuery(buildPresetRange(24))
 
   return (
-    <form action="/admin/generation" method="get" className="rounded-xl border border-border bg-card p-4">
+    <form onSubmit={onSubmit} className="rounded-xl border border-border bg-card p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <span className="text-[11px] text-muted-foreground">Cepat:</span>
-        <PresetLink href={presetHref(24)} label="24 jam" />
-        <PresetLink href={presetHref(24 * 7)} label="7 hari" />
-        <PresetLink href={presetHref(24 * 30)} label="30 hari" />
-        <Link href={clearHref} className="ml-auto text-xs text-muted-foreground underline underline-offset-4">
+        <PresetButton label="24 jam" onClick={() => goPreset(24)} />
+        <PresetButton label="7 hari" onClick={() => goPreset(24 * 7)} />
+        <PresetButton label="30 hari" onClick={() => goPreset(24 * 30)} />
+        <Link
+          href={resetHref}
+          className="ml-auto text-xs text-muted-foreground underline underline-offset-4"
+        >
           Reset ke 24 jam
         </Link>
       </div>
@@ -64,26 +181,38 @@ export function GenerationFilterBar({ filters }: GenerationFilterBarProps) {
         <label className={labelClass}>
           Dari
           <input
-            name="from"
+            key={`from-${filters.from}`}
+            name="fromLocal"
             type="datetime-local"
-            defaultValue={toLocalInputValue(filters.from)}
+            value={fromLocal}
+            onChange={(event) => setFromLocal(event.target.value)}
             className={inputClass}
             required
           />
-          <span className="mt-1 block text-[10px] text-muted-foreground">Waktu lokal perangkat kamu</span>
+          <span className="mt-1 block text-[10px] text-muted-foreground">
+            Waktu lokal perangkat · dikirim sebagai UTC ke server
+          </span>
         </label>
         <label className={labelClass}>
           Sampai
           <input
-            name="to"
+            key={`to-${filters.to}`}
+            name="toLocal"
             type="datetime-local"
-            defaultValue={toLocalInputValue(filters.to)}
+            value={toLocal}
+            onChange={(event) => setToLocal(event.target.value)}
             className={inputClass}
             required
           />
-          <span className="mt-1 block text-[10px] text-muted-foreground">Default: 24 jam terakhir</span>
+          <span className="mt-1 block text-[10px] text-muted-foreground">
+            Default: 24 jam terakhir (bukan semua riwayat)
+          </span>
         </label>
       </div>
+
+      {error ? (
+        <p className="mt-2 text-xs text-red-500">{error}</p>
+      ) : null}
 
       <details className="mt-4 rounded-lg border border-border/70 bg-background/40 p-3">
         <summary className="cursor-pointer text-xs font-medium text-foreground">
@@ -144,21 +273,22 @@ export function GenerationFilterBar({ filters }: GenerationFilterBarProps) {
           Terapkan
         </button>
         <span className="text-[11px] text-muted-foreground">
-          Tip: mulai dari preset 24 jam, biarkan filter lanjutan tertutup.
+          Tip: klik <strong>24 jam</strong> dulu. Filter lanjutan biarkan tertutup.
         </span>
       </div>
     </form>
   )
 }
 
-function PresetLink({ href, label }: { href: string; label: string }) {
+function PresetButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <Link
-      href={href}
+    <button
+      type="button"
+      onClick={onClick}
       className="rounded-full border border-border bg-background px-2.5 py-1 text-[11px] text-foreground hover:bg-muted"
     >
       {label}
-    </Link>
+    </button>
   )
 }
 

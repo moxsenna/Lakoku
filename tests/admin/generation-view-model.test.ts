@@ -1,6 +1,6 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { AdminGenerationDashboard } from '@/lib/admin/generation'
 import type { AdminGenerationFilters } from '@/lib/admin/generation-filters'
 import type {
@@ -24,6 +24,7 @@ import { GenerationFilterBar } from '@/components/admin/generation/generation-fi
 import { ProviderCallLedger } from '@/components/admin/generation/provider-call-ledger'
 import { GenerationJobDrawer } from '@/components/admin/generation/generation-job-drawer'
 import GenerationLoading from '@/app/admin/generation/loading'
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }) }))
 
 const UUID_A = '11111111-1111-4111-8111-111111111111'
 const UUID_B = '22222222-2222-4222-8222-222222222222'
@@ -339,10 +340,13 @@ describe('generation operations view model', () => {
     }))
 
     for (const name of [
-      'from', 'to', 'provider', 'model', 'useCase', 'phase', 'outcome',
+      'fromLocal', 'toLocal', 'provider', 'model', 'useCase', 'phase', 'outcome',
       'errorCode', 'costSource', 'userId', 'storyId', 'generationKind',
       'jobId', 'correlationId', 'chapter', 'pageSize',
     ]) expect(rendered).toContain(`name="${name}"`)
+    expect(rendered).toContain('24 jam')
+    expect(rendered).toContain('type="datetime-local"')
+    expect(rendered).toContain('Filter lanjutan')
     expect(rendered).not.toContain('name="cursorStartedAt"')
     expect(rendered).not.toContain('name="cursorId"')
     expect(rendered.match(/type="hidden"/g) ?? []).toHaveLength(0)

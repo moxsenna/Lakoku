@@ -62,21 +62,14 @@ function parseOptional<T>(
 
 function parseFlexibleTimestamp(value: string): string {
   const trimmed = value.trim()
-  // ISO with offset / Z.
+  // Absolute ISO only. Browser must convert datetime-local → ISO Z before navigate.
+  // Bare "YYYY-MM-DDTHH:mm" is ambiguous (server UTC ≠ user local) and is rejected.
   if (/[zZ]$|[+-]\d{2}:\d{2}$/.test(trimmed)) {
     const withOffset = new Date(trimmed)
     if (Number.isNaN(withOffset.getTime())) throw new Error('Invalid timestamp')
     return withOffset.toISOString()
   }
-  // datetime-local: YYYY-MM-DDTHH:mm[:ss] (browser local time)
-  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(trimmed)) {
-    const local = new Date(trimmed)
-    if (Number.isNaN(local.getTime())) throw new Error('Invalid timestamp')
-    return local.toISOString()
-  }
-  const parsed = new Date(trimmed)
-  if (Number.isNaN(parsed.getTime())) throw new Error('Invalid timestamp')
-  return parsed.toISOString()
+  throw new Error('Invalid timestamp: absolute ISO with offset required')
 }
 
 function parseTimestamp(input: SearchParamsInput, key: string, fallback: Date): string {

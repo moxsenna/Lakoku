@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { queryStoryForUser } from '@/lib/api/queries'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
 import { GENERATION_ATTEMPT_EVENT } from '@/lib/observability/telemetry'
+import { GENERATION_RUNTIME_FAILED_EVENT } from '@/lib/observability/generation-stages'
 
 /**
  * Exact per-chapter generation status for personalized reader polling (Task 21).
@@ -11,8 +12,9 @@ import { GENERATION_ATTEMPT_EVENT } from '@/lib/observability/telemetry'
  * Precedence (exact chapter only):
  *   1. chapter row exists        → ready
  *   2. active unexpired lease    → generating
- *   3. latest GENERATION_ATTEMPT with REVIEW_REQUIRED for that chapter → failed
- *   4. otherwise                 → generating  (triggered/unknown in-flight)
+ *   3. latest GENERATION_ATTEMPT REVIEW_REQUIRED or GENERATION_RUNTIME_FAILED
+ *      for that chapter → failed
+ *   4. otherwise                 → failed (dead generation — no perpetual preparing)
  *
  * Never consults stories.generation_status as chapter truth.
  */
@@ -90,19 +92,24 @@ async function latestExactFailedAttempt(
 ): Promise<boolean> {
   const admin = createAdminClient()
   // Indexed path: story_events(story_id, seq). Filter exact chapter + outcome in app.
+  // Include both attempt review failures and runtime failures.
   const { data, error } = await admin
     .from('story_events')
     .select('seq, type, payload, created_at')
     .eq('story_id', storyId)
-    .eq('type', GENERATION_ATTEMPT_EVENT)
+    .in('type', [GENERATION_ATTEMPT_EVENT, GENERATION_RUNTIME_FAILED_EVENT])
     .order('seq', { ascending: false })
     .limit(50)
   if (error) throw new ChapterStatusError('INTERNAL_ERROR')
 
   for (const row of data ?? []) {
-    const payload = (row as { payload?: unknown }).payload
+    const typed = row as { type?: string; payload?: unknown }
+    const payload = typed.payload
     const chapter = chapterFromPayload(payload)
     if (chapter !== chapterNumber) continue
+
+    if (typed.type === GENERATION_RUNTIME_FAILED_EVENT) return true
+
     const outcome = payload && typeof payload === 'object'
       ? (payload as GenerationAttemptPayload).outcome
       : undefined

@@ -14,12 +14,18 @@ export interface ProviderCallLedgerProps {
 
 export function ProviderCallLedger({ calls, filters, nextHref }: ProviderCallLedgerProps) {
   return (
-    <AdminSectionCard title="Provider-call ledger" subtitle="Read-only, newest first. Masked identity comes from authorized RPC.">
+    <AdminSectionCard
+      title="Provider-call ledger"
+      subtitle="Read-only, newest first. Hasil provider tidak selalu berarti bab sudah diterbitkan."
+    >
       {calls.length === 0 ? <AdminEmptyState message="No provider calls match selected filters." /> : (
         <>
+          <p className="px-3 pb-2 text-[11px] text-muted-foreground">
+            Kolom &quot;Hasil provider&quot; = HTTP/model call saja. Workflow publish/review terpisah di event GENERATION_ATTEMPT.
+          </p>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
-              <thead><tr className="border-b border-border bg-muted/30 text-left"><th className="px-3 py-2">Started</th><th className="px-3 py-2">Identity</th><th className="px-3 py-2">Story / job</th><th className="px-3 py-2">Provider / phase</th><th className="px-3 py-2">Outcome</th><th className="px-3 py-2 text-right">Latency</th><th className="px-3 py-2 text-right">Tokens</th><th className="px-3 py-2 text-right">Cost</th></tr></thead>
+              <thead><tr className="border-b border-border bg-muted/30 text-left"><th className="px-3 py-2">Started</th><th className="px-3 py-2">Identity</th><th className="px-3 py-2">Story / job</th><th className="px-3 py-2">Provider / phase</th><th className="px-3 py-2">Hasil provider</th><th className="px-3 py-2 text-right">Latency</th><th className="px-3 py-2 text-right">Tokens</th><th className="px-3 py-2 text-right">Cost</th></tr></thead>
               <tbody>{calls.map((call) => (
                 <tr key={call.id} className="border-b border-border align-top hover:bg-muted/20">
                   <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{formatTimestamp(call.started_at)}<div className="font-mono text-[10px]">{call.provider_call_id}</div></td>

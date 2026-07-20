@@ -26,6 +26,7 @@ import {
 } from './metrics'
 
 export const GENERATION_ATTEMPT_EVENT = 'GENERATION_ATTEMPT' as const
+export { GENERATION_RUNTIME_FAILED_EVENT } from './generation-stages'
 
 type Db = ReturnType<typeof createAdminClient>
 
@@ -93,11 +94,13 @@ export async function recordGenerationAttempt(input: {
   outcome: GenerationOutcome
   repairAttempts: number
   findings: Finding[]
+  /** Optional correlation for admin workflow join (legacy rows may omit). */
+  correlationId?: string | null
 }): Promise<void> {
   try {
     const db = createAdminClient()
     const sev = countBySeverity(input.findings)
-    await appendStoryEvent(db, input.storyId, GENERATION_ATTEMPT_EVENT, {
+    const payload: Record<string, unknown> = {
       chapter_number: input.chapter,
       outcome: input.outcome,
       repair_attempts: input.repairAttempts,
@@ -106,9 +109,38 @@ export async function recordGenerationAttempt(input: {
       minor_remaining: sev.minorRemaining,
       // Bounded codes only (severity:code). No finding message/prose.
       finding_codes: input.findings.slice(0, 12).map((f) => `${f.severity}:${f.code}`),
-    })
+    }
+    if (input.correlationId) payload.correlation_id = input.correlationId
+    await appendStoryEvent(db, input.storyId, GENERATION_ATTEMPT_EVENT, payload)
   } catch (err) {
     console.log('[v0] recordGenerationAttempt gagal (non-kritis):', (err as Error)?.message)
+  }
+}
+
+/**
+ * Terminal runtime failure (not review). Best-effort; never throws to caller.
+ * Payload is metadata-only — no raw errorMessage (may contain provider/DB detail).
+ */
+export async function recordGenerationRuntimeFailed(input: {
+  storyId: string
+  chapter: number
+  correlationId: string
+  stage: string
+  errorCode: string
+  errorName: string
+}): Promise<void> {
+  try {
+    const db = createAdminClient()
+    const { GENERATION_RUNTIME_FAILED_EVENT } = await import('./generation-stages')
+    await appendStoryEvent(db, input.storyId, GENERATION_RUNTIME_FAILED_EVENT, {
+      chapter_number: input.chapter,
+      correlation_id: input.correlationId,
+      stage: input.stage.slice(0, 64),
+      error_code: input.errorCode.slice(0, 80),
+      error_name: input.errorName.slice(0, 80),
+    })
+  } catch (err) {
+    console.log('[v0] recordGenerationRuntimeFailed gagal (non-kritis):', (err as Error)?.message)
   }
 }
 

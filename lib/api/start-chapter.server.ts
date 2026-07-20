@@ -12,10 +12,20 @@ import {
   requireAuthoringSessionUser,
 } from '@/lib/authoring/action-auth'
 import { publicAuthoringErrorMessage } from '@/lib/authoring/server'
+import { safeErrorInfo } from '@/lib/observability/safe-error'
 
 export const STORY_NOT_FOUND_ERROR = 'Cerita tidak ditemukan.'
 
-export type StartChapterSuccess = { ok: true; chapterNumber: number }
+export type StartChapterKickoffStatus =
+  | 'STARTED'
+  | 'ALREADY_RUNNING'
+  | 'ALREADY_READY'
+
+export type StartChapterSuccess = {
+  ok: true
+  chapterNumber: number
+  status: StartChapterKickoffStatus
+}
 export type StartChapterFailure = { ok: false; error: string }
 export type StartChapterResult = StartChapterSuccess | StartChapterFailure
 
@@ -30,9 +40,41 @@ function fail(err: unknown): StartChapterFailure {
   return { ok: false, error: publicMessage }
 }
 
+async function chapterExists(storyId: string, chapterNumber: number): Promise<boolean> {
+  const admin = createAdminClient()
+  const { data, error } = await admin
+    .from('chapters')
+    .select('number')
+    .eq('story_id', storyId)
+    .eq('number', chapterNumber)
+    .maybeSingle()
+  if (error) throw new Error('INTERNAL_STATUS_CHECK_FAILED')
+  return data != null
+}
+
+async function hasActiveLease(storyId: string, chapterNumber: number): Promise<boolean> {
+  const admin = createAdminClient()
+  const { data, error } = await admin
+    .from('generation_leases')
+    .select('id')
+    .eq('story_id', storyId)
+    .eq('chapter_number', chapterNumber)
+    .eq('status', 'ACTIVE')
+    .gt('expires_at', new Date().toISOString())
+    .limit(1)
+    .maybeSingle()
+  if (error) throw new Error('INTERNAL_STATUS_CHECK_FAILED')
+  return data != null
+}
+
 /**
  * Owner-only. Idempotent: CHAPTER_EXISTS / LEASE_HELD treated as success in background.
  * chapterNumber defaults to 1 (onboarding kickoff).
+ *
+ * Preflight exact chapter status:
+ *   ready → ALREADY_READY (no schedule)
+ *   active lease → ALREADY_RUNNING (no schedule)
+ *   else → schedule after() → STARTED
  */
 export async function startOwnedChapterGeneration(
   storyId: string,
@@ -56,8 +98,19 @@ export async function startOwnedChapterGeneration(
       return { ok: false, error: STORY_NOT_FOUND_ERROR }
     }
 
+    // Preflight — avoid useless after() when chapter already ready / in flight.
+    if (await chapterExists(storyId, chapterNumber)) {
+      await ensureReaderStateStarted(storyId, chapterNumber)
+      return { ok: true, chapterNumber, status: 'ALREADY_READY' }
+    }
+    if (await hasActiveLease(storyId, chapterNumber)) {
+      await ensureReaderStateStarted(storyId, chapterNumber)
+      return { ok: true, chapterNumber, status: 'ALREADY_RUNNING' }
+    }
+
     const correlationId = crypto.randomUUID()
     after(async () => {
+      const startedAt = Date.now()
       try {
         const result = await generateNextChapterReal({
           storyId,
@@ -67,6 +120,9 @@ export async function startOwnedChapterGeneration(
         })
         if (!result.ok && result.reason !== 'CHAPTER_EXISTS' && result.reason !== 'LEASE_HELD') {
           console.log('START_CHAPTER_BACKGROUND_FAILED', {
+            storyId,
+            chapterNumber,
+            correlationId,
             reason: result.reason,
             failedLayer:
               result.detail && typeof result.detail === 'object' && 'failedLayer' in result.detail
@@ -78,17 +134,27 @@ export async function startOwnedChapterGeneration(
                     .slice(0, 12)
                     .map((f) => `${f.severity ?? '?'}:${f.code ?? '?'}`)
                 : [],
+            elapsedMs: Date.now() - startedAt,
           })
         }
-      } catch {
-        // Ensure after() never dies silently — release path is inside generateNextChapterReal catch.
-        console.log('START_CHAPTER_BACKGROUND_EXCEPTION')
+      } catch (err) {
+        const info = safeErrorInfo(err)
+        console.error('START_CHAPTER_BACKGROUND_EXCEPTION', {
+          storyId,
+          chapterNumber,
+          correlationId,
+          stage: 'AFTER_CALLBACK',
+          errorName: info.errorName,
+          errorMessage: info.errorMessage,
+          errorStack: info.errorStack,
+          elapsedMs: Date.now() - startedAt,
+        })
       }
     })
 
     await ensureReaderStateStarted(storyId, chapterNumber)
 
-    return { ok: true, chapterNumber }
+    return { ok: true, chapterNumber, status: 'STARTED' }
   } catch (e) {
     return fail(e)
   }

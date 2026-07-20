@@ -38,8 +38,13 @@ export type LockStoryBibleClientResult =
   | { ok: false; needsAuthor: true; findings: Finding[]; transforms: string[] }
 
 /** Result of POST /api/stories/[id]/start-chapter */
+export type StartChapterKickoffStatus =
+  | 'STARTED'
+  | 'ALREADY_RUNNING'
+  | 'ALREADY_READY'
+
 export type StartChapterClientResult =
-  | { ok: true; chapterNumber: number }
+  | { ok: true; chapterNumber: number; status?: StartChapterKickoffStatus }
   | { ok: false; error: string }
 
 /** Daftar seluruh cerita (ringkasan) untuk katalog/beranda/koleksiku. */

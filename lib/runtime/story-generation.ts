@@ -25,7 +25,12 @@ import {
   type ChoiceBranch,
 } from '@lakoku/ai-gateway'
 import { selectProvider } from '@lakoku/ai-gateway/server'
-import { recordGenerationAttempt } from '@/lib/observability/server'
+import {
+  recordGenerationAttempt,
+  recordGenerationRuntimeFailed,
+} from '@/lib/observability/server'
+import type { GenerationStage } from '@/lib/observability/generation-stages'
+import { safeErrorInfo } from '@/lib/observability/safe-error'
 import type { ChapterBrief } from '@/lib/story-engine/chapter-brief'
 import { normalizeRouteState } from '@/lib/story-engine/route-state'
 import { createSynchronousProviderContext } from './generation-provider-context'
@@ -279,6 +284,11 @@ export async function generateNextChapterReal(
   input: StandardGenerateInput,
 ): Promise<RealGenerateResult> {
   const { storyId, userId, chapterNumber, correlationId } = input
+  const startedAt = Date.now()
+  let stage: GenerationStage = 'ACQUIRE_LEASE'
+  let leaseId: string | null = null
+  let leaseReleased = false
+
   const providerContext = createSynchronousProviderContext({
     userId,
     storyId,
@@ -287,28 +297,80 @@ export async function generateNextChapterReal(
     correlationId,
   })
 
+  const releaseLeaseOnce = async () => {
+    if (!leaseId || leaseReleased) return
+    try {
+      await releaseGenerationLease({ storyId, leaseId })
+      leaseReleased = true
+    } catch (releaseErr) {
+      const info = safeErrorInfo(releaseErr)
+      console.error('GENERATION_LEASE_RELEASE_FAILED', {
+        storyId,
+        chapterNumber,
+        correlationId,
+        stage,
+        errorName: info.errorName,
+        errorMessage: info.errorMessage,
+      })
+    }
+  }
+
+  const logRuntimeFailure = async (errorCode: string, err: unknown) => {
+    const info = safeErrorInfo(err)
+    console.error('GENERATION_RUNTIME_FAILED', {
+      storyId,
+      chapterNumber,
+      correlationId,
+      stage,
+      errorCode,
+      errorName: info.errorName,
+      errorMessage: info.errorMessage,
+      errorStack: info.errorStack,
+      elapsedMs: Date.now() - startedAt,
+    })
+    await recordGenerationRuntimeFailed({
+      storyId,
+      chapter: chapterNumber,
+      correlationId,
+      stage,
+      errorCode,
+      errorName: info.errorName,
+    })
+  }
+
   // 1) Lease (idempoten). Menolak bila ada generasi lain aktif.
+  stage = 'ACQUIRE_LEASE'
   const lease = await acquireGenerationLease({
     storyId,
     chapterNumber,
     holder: 'story-generation',
-    // Multi-LLM plan→write→repair di CF waitUntil bisa >2 menit wall.
-    // Default 120s terlalu ketat bila model lambat; 300s cocok fase testing.
+    // Multi-LLM plan→write→repair can exceed 2 minutes wall on VPS.
+    // Default 120s too tight when model is slow; 300s for testing phase.
     ttlSeconds: 300,
     idempotencyKey: realGenerationKey(storyId, chapterNumber, 'lease'),
   })
   if (!lease.ok) return { ok: false, reason: lease.reason }
+  leaseId = lease.lease_id
 
   try {
     // 2) Muat canon (read-only) resolved sampai bab target.
+    stage = 'LOAD_CANON'
     const snapshot = await loadCanonSnapshot(storyId, chapterNumber)
     const blueprint = resolveBlueprint(snapshot, chapterNumber)
     if (!blueprint || snapshot.characters.length === 0) {
-      await releaseGenerationLease({ storyId, leaseId: lease.lease_id })
+      await releaseLeaseOnce()
+      console.log('GENERATION_CANON_MISSING', {
+        storyId,
+        chapterNumber,
+        correlationId,
+        stage,
+        elapsedMs: Date.now() - startedAt,
+      })
       return { ok: false, reason: 'CANON_MISSING' }
     }
 
     // 3) Kompilasi konteks + catat jejak retrieval (best-effort observability).
+    stage = 'COMPILE_CONTEXT'
     const packet = compileContext(snapshot, chapterNumber)
     await persistRetrievalLog(storyId, chapterNumber, packet)
 
@@ -320,6 +382,7 @@ export async function generateNextChapterReal(
     }
 
     // 5) Generasi tervalidasi: plan → write → Layer A → Layer B → repair.
+    stage = 'GENERATE_PROSE'
     const result = await generateChapter(
       { provider: await selectProvider(providerContext) },
       {
@@ -334,26 +397,29 @@ export async function generateNextChapterReal(
       },
     )
 
+    stage = 'VALIDATE_PROSE'
     if (result.status !== 'PUBLISHED' || !result.draft) {
-      await releaseGenerationLease({ storyId, leaseId: lease.lease_id })
-      // Telemetri konsistensi (T8.1) — attempt gagal review. Non-kritis.
+      await releaseLeaseOnce()
+      stage = 'RECORD_TERMINAL_ATTEMPT'
       await recordGenerationAttempt({
         storyId,
         chapter: chapterNumber,
         outcome: 'REVIEW_REQUIRED',
         repairAttempts: result.attempts,
         findings: result.findings,
+        correlationId,
       })
-      // Bounded ops log only — no prose/prompts. Helps diagnose "LLM OK, chapter missing".
       const findingCodes = result.findings
         .slice(0, 12)
         .map((f) => `${f.severity}:${f.code}`)
       console.log('GENERATION_REVIEW_REQUIRED', {
         storyId,
         chapterNumber,
+        correlationId,
         failedLayer: result.failedLayer ?? null,
         repairAttempts: result.attempts,
         findingCodes,
+        elapsedMs: Date.now() - startedAt,
       })
       return {
         ok: false,
@@ -369,11 +435,14 @@ export async function generateNextChapterReal(
     const draft = result.draft
 
     // 6) Boundary consumer-safe: tak ada istilah internal yang bocor ke pembaca.
+    stage = 'CONSUMER_SAFE'
     const readerSafe = toReaderSafe(draft)
     assertConsumerSafe(readerSafe)
 
     // 7) Cabang pilihan LLM (grounded di prosa bab) — fallback lokal bila gagal.
+    stage = 'BUILD_CHOICES'
     const branch = await buildChoices(snapshot, draft, chapterNumber, providerContext)
+    stage = 'VALIDATE_CHOICES'
     const leakInChoices = [
       branch.choicePrompt,
       ...branch.choices.map((c) => c.label),
@@ -381,11 +450,16 @@ export async function generateNextChapterReal(
     ]
       .flatMap(scanForLeaks)
     if (leakInChoices.length) {
-      await releaseGenerationLease({ storyId, leaseId: lease.lease_id })
-      throw new Error(`Kebocoran istilah internal pada cabang pilihan: ${leakInChoices.join(', ')}`)
+      await releaseLeaseOnce()
+      const err = new Error(
+        `Kebocoran istilah internal pada cabang pilihan: ${leakInChoices.join(', ')}`,
+      )
+      await logRuntimeFailure('CHOICE_LEAK_REJECTED', err)
+      throw err
     }
 
     // 8) Publish atomik (chapter + outcomes + event + release lease).
+    stage = 'PUBLISH_CHAPTER'
     const published: PublishResult = await publishChapter({
       storyId,
       chapterNumber,
@@ -398,16 +472,39 @@ export async function generateNextChapterReal(
       idempotencyKey: realGenerationKey(storyId, chapterNumber, 'publish'),
     })
 
-    if (!published.ok) return { ok: false, reason: published.reason }
+    // publish_chapter releases lease transactionally on success.
+    if (published.ok) leaseReleased = true
 
-    // Telemetri konsistensi (T8.1) — attempt sukses. Dipancarkan SETELAH publish
-    // (yang menulis CHAPTER_PUBLISHED) agar tak berlomba seq. Non-kritis.
+    if (!published.ok) {
+      await releaseLeaseOnce()
+      console.log('GENERATION_PUBLISH_CONFLICT', {
+        storyId,
+        chapterNumber,
+        correlationId,
+        reason: published.reason,
+        elapsedMs: Date.now() - startedAt,
+      })
+      return { ok: false, reason: published.reason }
+    }
+
+    // Telemetri konsistensi (T8.1) — attempt sukses. Dipancarkan SETELAH publish.
+    stage = 'RECORD_TERMINAL_ATTEMPT'
     await recordGenerationAttempt({
       storyId,
       chapter: chapterNumber,
       outcome: 'PUBLISHED',
       repairAttempts: result.attempts,
       findings: result.findings,
+      correlationId,
+    })
+
+    stage = 'COMPLETE'
+    console.log('GENERATION_PUBLISHED', {
+      storyId,
+      chapterNumber,
+      correlationId,
+      repairAttempts: result.attempts,
+      elapsedMs: Date.now() - startedAt,
     })
 
     return {
@@ -418,7 +515,8 @@ export async function generateNextChapterReal(
     }
   } catch (err) {
     // Kegagalan tak terduga: lepas lease agar tak mengunci story.
-    await releaseGenerationLease({ storyId, leaseId: lease.lease_id }).catch(() => {})
+    await releaseLeaseOnce()
+    await logRuntimeFailure('UNKNOWN_RUNTIME_EXCEPTION', err)
     throw err
   }
 }

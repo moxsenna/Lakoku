@@ -1,64 +1,160 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, RefreshCw } from 'lucide-react'
 import type { StoryDetail } from '@/lib/api'
-import { startChapter } from '@/lib/api/client'
+import { getChapterGenerationStatus, startChapter } from '@/lib/api/client'
+import {
+  CHAPTER_STATUS_POLL_MS,
+  decideAfterNetworkError,
+  decideAfterStatus,
+  noteForStartStatus,
+  readerCopy,
+  type ReaderChapterUiState,
+} from '@/lib/reader/chapter-status-poller'
 
 /**
  * Layar reader-safe saat sebuah bab belum bisa disajikan.
  *
- * Dua keadaan (tanpa membocorkan detail teknis apa pun):
- *  - `PREPARING`  : bab sedang ditulis → bahasa menenangkan + auto-refresh
- *                   berkala agar bab muncul begitu siap.
- *  - `UNAVAILABLE`: bab belum tersedia / cerita sedang dirapikan penulisnya →
- *                   tawarkan "coba lagi" dan jalan kembali yang jelas.
+ * - PREPARING: poll exact status endpoint (not blind router.refresh only)
+ * - UNAVAILABLE: terminal failure — offer honest retry
  *
- * Sesuai T7.3: bahasa aman, bab rusak tak pernah dipaksa tampil, dan pembaca
- * tak pernah menemui jalan buntu.
+ * Never shows provider / LLM / validator / HTTP / correlation internals.
  */
 export function ChapterUnavailable({
   story,
   chapterNumber,
-  state,
+  state: initialState,
 }: {
   story: StoryDetail
   chapterNumber: number
-  state: 'PREPARING' | 'UNAVAILABLE'
+  state: ReaderChapterUiState
 }) {
   const router = useRouter()
+  const [uiState, setUiState] = useState<ReaderChapterUiState>(initialState)
   const [retrying, setRetrying] = useState(false)
   const [retryNote, setRetryNote] = useState<string | null>(null)
+  const [checking, setChecking] = useState(false)
 
-  // Saat bab sedang disiapkan, periksa ulang berkala (server component akan
-  // mengambil bab bila sudah terbit). Berhenti saat komponen dilepas.
+  const abortRef = useRef<AbortController | null>(null)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const inFlightRef = useRef(false)
+  const mountedRef = useRef(true)
+
+  const clearTimer = useCallback(() => {
+    if (timerRef.current != null) {
+      clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+  }, [])
+
+  const schedule = useCallback((delayMs: number, fn: () => void) => {
+    clearTimer()
+    timerRef.current = setTimeout(fn, delayMs)
+  }, [clearTimer])
+
+  const pollOnce = useCallback(async () => {
+    if (!mountedRef.current || inFlightRef.current) return
+    inFlightRef.current = true
+    setChecking(true)
+
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    try {
+      const res = await getChapterGenerationStatus(
+        story.id,
+        chapterNumber,
+        controller.signal,
+      )
+      if (!mountedRef.current) return
+
+      const decision = decideAfterStatus(res.status)
+      if (decision.action === 'refresh') {
+        clearTimer()
+        router.refresh()
+        return
+      }
+      if (decision.action === 'failed') {
+        clearTimer()
+        setUiState('UNAVAILABLE')
+        return
+      }
+      // generating
+      setUiState('PREPARING')
+      schedule(decision.nextDelayMs, () => {
+        void pollOnce()
+      })
+    } catch {
+      if (!mountedRef.current || controller.signal.aborted) return
+      // Network/transient: keep reader-safe state, retry later — do NOT flip to failed.
+      const decision = decideAfterNetworkError()
+      schedule(decision.nextDelayMs, () => {
+        void pollOnce()
+      })
+    } finally {
+      inFlightRef.current = false
+      if (mountedRef.current) setChecking(false)
+    }
+  }, [story.id, chapterNumber, router, clearTimer, schedule])
+
   useEffect(() => {
-    if (state !== 'PREPARING') return
-    const timer = setInterval(() => router.refresh(), 6000)
-    return () => clearInterval(timer)
-  }, [state, router])
+    mountedRef.current = true
+    setUiState(initialState)
+    return () => {
+      mountedRef.current = false
+      clearTimer()
+      abortRef.current?.abort()
+    }
+  }, [initialState, clearTimer])
+
+  // Immediate check + recursive polling while PREPARING.
+  useEffect(() => {
+    if (uiState !== 'PREPARING') {
+      clearTimer()
+      return
+    }
+    void pollOnce()
+    return () => {
+      clearTimer()
+      abortRef.current?.abort()
+    }
+  }, [uiState, pollOnce, clearTimer])
 
   async function retry() {
     setRetrying(true)
     setRetryNote(null)
     try {
-      // Kick generation again (idempotent if lease held / chapter exists).
       const kicked = await startChapter(story.id, chapterNumber)
       if (!kicked.ok) {
         setRetryNote(kicked.error || 'Belum bisa memulai ulang penulisan.')
+      } else if (kicked.status === 'ALREADY_READY') {
+        setRetryNote(noteForStartStatus('ALREADY_READY'))
+        router.refresh()
+      } else if (kicked.status === 'ALREADY_RUNNING') {
+        setRetryNote(noteForStartStatus('ALREADY_RUNNING'))
+        setUiState('PREPARING')
       } else {
-        setRetryNote('Menulis ulang bab… halaman akan terbuka bila siap.')
+        setRetryNote(noteForStartStatus(kicked.status ?? 'STARTED'))
+        setUiState('PREPARING')
       }
     } catch {
       setRetryNote('Belum bisa memulai ulang. Coba beberapa saat lagi.')
     }
-    router.refresh()
-    setTimeout(() => setRetrying(false), 2000)
+    setTimeout(() => {
+      if (mountedRef.current) setRetrying(false)
+    }, 1500)
   }
 
-  const preparing = state === 'PREPARING'
+  async function checkNow() {
+    await pollOnce()
+  }
+
+  const preparing = uiState === 'PREPARING'
+  const copy = readerCopy(uiState, chapterNumber)
 
   return (
     <main className="mx-auto flex min-h-svh w-full max-w-md flex-col bg-background">
@@ -90,14 +186,10 @@ export function ChapterUnavailable({
 
         <div className="flex flex-col gap-2">
           <h1 className="font-serif text-2xl leading-snug text-foreground text-balance">
-            {preparing
-              ? 'Bab ini sedang ditulis.'
-              : 'Cerita ini sedang dirapikan penulisnya.'}
+            {copy.title}
           </h1>
           <p className="text-sm leading-relaxed text-muted-foreground text-pretty">
-            {preparing
-              ? `Bab ${chapterNumber} sedang disusun dengan cermat agar tetap setia pada kisahmu. Halaman ini akan terbuka sendiri begitu babnya siap.`
-              : `Bab ${chapterNumber} belum bisa ditampilkan sekarang. Kami menahannya sebentar demi menjaga cerita tetap utuh — coba lagi beberapa saat lagi.`}
+            {copy.description}
           </p>
         </div>
 
@@ -107,17 +199,21 @@ export function ChapterUnavailable({
 
         {preparing ? (
           <div className="flex w-full flex-col items-center gap-4">
+            {/* Indeterminate progress — no fake percentage */}
             <div className="h-1 w-48 overflow-hidden rounded-full bg-muted">
               <div className="lk-pulse-soft h-full w-1/2 bg-primary" />
             </div>
             <button
               type="button"
-              onClick={() => void retry()}
-              disabled={retrying}
+              onClick={() => void checkNow()}
+              disabled={checking || retrying}
               className="flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-border px-6 text-sm font-semibold text-foreground transition-colors hover:bg-card disabled:opacity-60"
             >
-              <RefreshCw className={`size-4 ${retrying ? 'animate-spin' : ''}`} aria-hidden="true" />
-              {retrying ? 'Memeriksa…' : 'Coba tulis ulang'}
+              <RefreshCw
+                className={`size-4 ${checking ? 'animate-spin' : ''}`}
+                aria-hidden="true"
+              />
+              {checking ? 'Memeriksa…' : copy.primaryCta}
             </button>
           </div>
         ) : (
@@ -131,7 +227,7 @@ export function ChapterUnavailable({
               className={retrying ? 'lk-pulse-soft size-4' : 'size-4'}
               aria-hidden="true"
             />
-            {retrying ? 'Memeriksa…' : 'Coba lagi'}
+            {retrying ? 'Memulai…' : copy.primaryCta}
           </button>
         )}
 

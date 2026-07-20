@@ -52,7 +52,7 @@ function createAdminDb(input: {
       const chain = (...methods: string[]) => {
         for (const method of methods) {
           builder[method] = vi.fn((...args: unknown[]) => {
-            if (method === 'eq' || method === 'gt' || method === 'order' || method === 'limit') {
+            if (method === 'eq' || method === 'gt' || method === 'order' || method === 'limit' || method === 'in') {
               filters.push([method, args])
             }
             calls.push({ table, method, args, filters: [...filters] })
@@ -60,7 +60,7 @@ function createAdminDb(input: {
           })
         }
       }
-      chain('select', 'eq', 'gt', 'order', 'limit')
+      chain('select', 'eq', 'gt', 'order', 'limit', 'in')
       builder.maybeSingle = vi.fn(async () => {
         calls.push({ table, method: 'maybeSingle', args: [], filters: [...filters] })
         if (table === 'chapters') return input.chapter ?? { data: null, error: null }

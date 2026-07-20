@@ -82,16 +82,46 @@ function validDraft(): StoryBibleDraft {
   }
 }
 
-function ownerQuery(owner: boolean) {
-  const builder = {
-    select: vi.fn(() => builder),
-    eq: vi.fn(() => builder),
-    maybeSingle: vi.fn(async () => ({
-      data: owner ? { id: 'story-a' } : null,
-      error: null,
-    })),
+function ownerQuery(
+  owner: boolean,
+  opts?: {
+    chapterExists?: boolean
+    activeLease?: boolean
+  },
+) {
+  const chapterExists = opts?.chapterExists ?? false
+  const activeLease = opts?.activeLease ?? false
+  return {
+    client: {
+      from: vi.fn((table: string) => {
+        const builder: Record<string, unknown> = {}
+        const chain = () => builder
+        builder.select = vi.fn(chain)
+        builder.eq = vi.fn(chain)
+        builder.gt = vi.fn(chain)
+        builder.limit = vi.fn(chain)
+        builder.maybeSingle = vi.fn(async () => {
+          if (table === 'stories') {
+            return { data: owner ? { id: 'story-a' } : null, error: null }
+          }
+          if (table === 'chapters') {
+            return {
+              data: chapterExists ? { number: 1 } : null,
+              error: null,
+            }
+          }
+          if (table === 'generation_leases') {
+            return {
+              data: activeLease ? { id: 'lease-1' } : null,
+              error: null,
+            }
+          }
+          return { data: null, error: null }
+        })
+        return builder
+      }),
+    },
   }
-  return { client: { from: vi.fn(() => builder) }, builder }
 }
 
 beforeEach(() => {
@@ -182,7 +212,7 @@ describe('POST /api/stories/[id]/start-chapter', () => {
     expect(mocks.after).not.toHaveBeenCalled()
   })
 
-  it('returns 202 and schedules gen for owner', async () => {
+  it('returns 202 STARTED and schedules gen when chapter missing and no lease', async () => {
     mocks.getSessionUser.mockResolvedValue({ id: 'user-a' })
     mocks.adminFactory.mockReturnValue(ownerQuery(true).client)
     const { POST } = await import('@/app/api/stories/[id]/start-chapter/route')
@@ -194,7 +224,11 @@ describe('POST /api/stories/[id]/start-chapter', () => {
       { params: Promise.resolve({ id: 'story-a' }) },
     )
     expect(res.status).toBe(202)
-    expect(await res.json()).toEqual({ ok: true, chapterNumber: 1 })
+    expect(await res.json()).toEqual({
+      ok: true,
+      chapterNumber: 1,
+      status: 'STARTED',
+    })
     expect(mocks.after).toHaveBeenCalledTimes(1)
     expect(mocks.generateNextChapterReal).toHaveBeenCalledWith({
       storyId: 'story-a',
@@ -203,5 +237,50 @@ describe('POST /api/stories/[id]/start-chapter', () => {
       correlationId: expect.any(String),
     })
     expect(mocks.ensureReaderStateStarted).toHaveBeenCalledWith('story-a', 1)
+  })
+
+  it('returns ALREADY_READY without scheduling when chapter exists', async () => {
+    mocks.getSessionUser.mockResolvedValue({ id: 'user-a' })
+    mocks.adminFactory.mockReturnValue(
+      ownerQuery(true, { chapterExists: true }).client,
+    )
+    const { POST } = await import('@/app/api/stories/[id]/start-chapter/route')
+    const res = await POST(
+      new Request('http://localhost/api/stories/story-a/start-chapter', {
+        method: 'POST',
+        body: JSON.stringify({ chapterNumber: 1 }),
+      }),
+      { params: Promise.resolve({ id: 'story-a' }) },
+    )
+    expect(res.status).toBe(202)
+    expect(await res.json()).toEqual({
+      ok: true,
+      chapterNumber: 1,
+      status: 'ALREADY_READY',
+    })
+    expect(mocks.after).not.toHaveBeenCalled()
+    expect(mocks.generateNextChapterReal).not.toHaveBeenCalled()
+  })
+
+  it('returns ALREADY_RUNNING without scheduling when active lease exists', async () => {
+    mocks.getSessionUser.mockResolvedValue({ id: 'user-a' })
+    mocks.adminFactory.mockReturnValue(
+      ownerQuery(true, { activeLease: true }).client,
+    )
+    const { POST } = await import('@/app/api/stories/[id]/start-chapter/route')
+    const res = await POST(
+      new Request('http://localhost/api/stories/story-a/start-chapter', {
+        method: 'POST',
+        body: JSON.stringify({ chapterNumber: 1 }),
+      }),
+      { params: Promise.resolve({ id: 'story-a' }) },
+    )
+    expect(res.status).toBe(202)
+    expect(await res.json()).toEqual({
+      ok: true,
+      chapterNumber: 1,
+      status: 'ALREADY_RUNNING',
+    })
+    expect(mocks.after).not.toHaveBeenCalled()
   })
 })

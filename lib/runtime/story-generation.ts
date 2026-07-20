@@ -520,3 +520,13 @@ export async function generateNextChapterReal(
     throw err
   }
 }
+
+// ---- Test-only exports (Phase 0 baseline) ----
+// Exported for characterization / desired-behavior TDD tests only.
+// Must NOT be imported by production code. Logic unchanged.
+export {
+  fallbackChoicesFromDraft as __testFallbackChoicesFromDraft,
+  buildChoices as __testBuildChoices,
+  mapBranchToPublishOutcomes as __testMapBranchToPublishOutcomes,
+  syntheticChapterBrief as __testSyntheticChapterBrief,
+}

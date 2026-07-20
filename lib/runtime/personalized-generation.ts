@@ -326,6 +326,11 @@ export async function defaultPersistEndingLock(input: PersistEndingLockInput): P
 /** Test seam for default atomic ending-lock path. */
 export const defaultPersistEndingLockForTest = defaultPersistEndingLock
 
+// ---- Test-only exports (Phase 0 baseline) ----
+// Exported for characterization / desired-behavior TDD tests only.
+// Must NOT be imported by production code. Logic unchanged.
+export { mapBranchToV2Outcomes as __testMapBranchToV2Outcomes }
+
 type DraftAuditSignals = ChapterDraftParsed & {
   opensNewThread?: boolean
   opensMajorMystery?: boolean

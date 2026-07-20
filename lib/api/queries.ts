@@ -162,20 +162,7 @@ export async function queryExploreStories(): Promise<StorySummary[]> {
   return (data as StoryRow[]).map(toDetail)
 }
 
-export const queryChapter = cache(async function queryChapter(
-  storyId: string,
-  number: number,
-): Promise<Chapter | null> {
-  const supabase = await createCookieClient()
-  const { data, error } = await supabase
-    .from('chapters')
-    .select(CHAPTER_READER_COLUMNS)
-    .eq('story_id', storyId)
-    .eq('number', number)
-    .maybeSingle()
-  if (error) throw new Error(`queryChapter: ${error.message}`)
-  if (!data) return null
-  const r = data as ChapterRow
+function mapChapterRow(r: ChapterRow): Chapter {
   return {
     storyId: r.story_id,
     number: r.number,
@@ -184,6 +171,30 @@ export const queryChapter = cache(async function queryChapter(
     choicePrompt: r.choice_prompt ?? '',
     choices: r.choices ?? [],
   }
+}
+
+/**
+ * Read one chapter after story authorization.
+ *
+ * Uses service-role (admin) — same pattern as queryStoryForUser — because private
+ * chapters rely on RLS `story_is_owned_by_auth` which fails when the cookie JWT
+ * is missing/stale even though the page already authorized the story via admin.
+ * Callers MUST authorize parent story first (getStory / queryStoryForUser).
+ */
+export const queryChapter = cache(async function queryChapter(
+  storyId: string,
+  number: number,
+): Promise<Chapter | null> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('chapters')
+    .select(CHAPTER_READER_COLUMNS)
+    .eq('story_id', storyId)
+    .eq('number', number)
+    .maybeSingle()
+  if (error) throw new Error(`queryChapter: ${error.message}`)
+  if (!data) return null
+  return mapChapterRow(data as ChapterRow)
 })
 
 /**
@@ -192,12 +203,14 @@ export const queryChapter = cache(async function queryChapter(
  * (mis. reader-state terlanjur maju melewati konten yang ada), pembaca dijatuhkan
  * ke bab terakhir yang benar-benar bisa dibaca, bukan layar kosong permanen.
  * Mengembalikan null bila tak ada bab <= atMost.
+ *
+ * Admin client after story authorization (see queryChapter).
  */
 export const queryLatestAvailableChapter = cache(async function queryLatestAvailableChapter(
   storyId: string,
   atMost: number,
 ): Promise<Chapter | null> {
-  const supabase = await createCookieClient()
+  const supabase = createAdminClient()
   const { data, error } = await supabase
     .from('chapters')
     .select(CHAPTER_READER_COLUMNS)
@@ -208,26 +221,19 @@ export const queryLatestAvailableChapter = cache(async function queryLatestAvail
     .maybeSingle()
   if (error) throw new Error(`queryLatestAvailableChapter: ${error.message}`)
   if (!data) return null
-  const r = data as ChapterRow
-  return {
-    storyId: r.story_id,
-    number: r.number,
-    title: r.title,
-    paragraphs: r.paragraphs,
-    choicePrompt: r.choice_prompt ?? '',
-    choices: r.choices ?? [],
-  }
+  return mapChapterRow(data as ChapterRow)
 })
 
 /**
  * Metadata bab (hanya number + title) untuk daftar bab, dibatasi sampai maxNumber.
  * Tidak mengambil paragraphs/choices utk menghindari data boros di list.
+ * Admin client after story authorization (see queryChapter).
  */
 export const queryChapterMetadatas = cache(async function queryChapterMetadatas(
   storyId: string,
   maxNumber: number,
 ): Promise<{ number: number; title: string }[]> {
-  const supabase = await createCookieClient()
+  const supabase = createAdminClient()
   const { data, error } = await supabase
     .from('chapters')
     .select('number,title')
@@ -243,7 +249,8 @@ export async function queryChoiceOutcome(
   chapterNumber: number,
   choiceId: string,
 ): Promise<ChoiceOutcome | null> {
-  const supabase = await createCookieClient()
+  // Outcomes for private stories need the same ownership-safe path as chapters.
+  const supabase = createAdminClient()
   const { data, error } = await supabase
     .from('choice_outcomes')
     .select(OUTCOME_READER_COLUMNS)

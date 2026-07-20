@@ -123,9 +123,11 @@ export async function getChapterGenerationStatus(
 ): Promise<ChapterStatusResponse> {
   try {
     const url = `${API_BASE}/stories/${encodeURIComponent(storyId)}/chapters/${chapterNumber}/status`
-    const res = signal
-      ? await fetch(url, { signal })
-      : await fetch(url)
+    const res = await fetch(url, {
+      signal,
+      credentials: 'same-origin',
+      cache: 'no-store',
+    })
     if (!res.ok) throw new Error()
     return ChapterStatusResponseSchema.parse(await res.json())
   } catch {

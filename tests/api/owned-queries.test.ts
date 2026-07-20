@@ -224,7 +224,9 @@ describe('reader-safe query projections', () => {
     expect(story).not.toHaveProperty('owner_user_id')
   })
 
-  it('uses safe chapter and outcome projections through cookie RLS client', async () => {
+  it('uses safe chapter and outcome projections through admin client after ownership auth', async () => {
+    // Private chapters cannot rely on cookie RLS alone (story_is_owned_by_auth
+    // fails when JWT is missing). After page-level story auth, reads use admin.
     const chapterRow = {
       story_id: 'private:a',
       number: 1,
@@ -245,7 +247,7 @@ describe('reader-safe query projections', () => {
       { data: chapterRow, error: null },
       { data: outcomeRow, error: null },
     ])
-    mocks.cookieFactory.mockResolvedValue(db.client)
+    mocks.adminFactory.mockReturnValue(db.client)
     const queries = await import('@/lib/api/queries')
 
     await queries.queryChapter('private:a', 1)
@@ -254,6 +256,7 @@ describe('reader-safe query projections', () => {
     expect(db.calls).toContainEqual({ method: 'select', args: [queries.CHAPTER_READER_COLUMNS] })
     expect(db.calls).toContainEqual({ method: 'select', args: [queries.OUTCOME_READER_COLUMNS] })
     expect(db.calls.some((call) => call.method === 'select' && call.args[0] === '*')).toBe(false)
+    expect(mocks.adminFactory).toHaveBeenCalled()
   })
 })
 

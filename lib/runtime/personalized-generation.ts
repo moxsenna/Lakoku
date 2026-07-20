@@ -630,6 +630,14 @@ export async function generateNextPersonalizedChapter(
 
       if (!choiceResult.ok) {
         await d.releaseGenerationLease({ storyId, leaseId: lease.lease_id })
+        // Preserve pre-extraction error surfaces for callers/logs.
+        const nullBranch = choiceResult.validationFindings.some((f) => f.code === 'NULL_BRANCH')
+        if (nullBranch) {
+          throw new Error(`Choice branch missing for chapter ${chapterNumber}`)
+        }
+        if (choiceResult.cause instanceof Error) {
+          throw choiceResult.cause
+        }
         throw new Error(
           `Choice branch failed: ${choiceResult.reason} (findings: ${
             choiceResult.validationFindings.map((f) => f.code).join(', ') || 'none'

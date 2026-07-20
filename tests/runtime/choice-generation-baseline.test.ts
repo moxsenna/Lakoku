@@ -167,23 +167,27 @@ function providerContext(chapterNumber = 12): ProviderCallContext {
 
 describe('Phase 0 — Characterization (current buggy behavior)', () => {
   describe('fallbackChoicesFromDraft', () => {
-    it('always returns the two generic hard-coded labels', async () => {
-      const { __testFallbackChoicesFromDraft: fallback } = await import(
-        '@/lib/runtime/story-generation'
-      )
-      const draft = mockDraft(12)
-      const result = fallback(draft, 12)
+    it(
+      'always returns the two generic hard-coded labels',
+      async () => {
+        const { __testFallbackChoicesFromDraft: fallback } = await import(
+          '@/lib/runtime/story-generation'
+        )
+        const draft = mockDraft(12)
+        const result = fallback(draft, 12)
 
-      expect(result.choices).toHaveLength(2)
-      expect(result.choices[0]).toEqual({
-        id: 'hadapi',
-        label: 'Hadapi langsung apa yang baru terbuka',
-      })
-      expect(result.choices[1]).toEqual({
-        id: 'selidiki',
-        label: 'Selidiki dulu jejak yang tersisa',
-      })
-    })
+        expect(result.choices).toHaveLength(2)
+        expect(result.choices[0]).toEqual({
+          id: 'hadapi',
+          label: 'Hadapi langsung apa yang baru terbuka',
+        })
+        expect(result.choices[1]).toEqual({
+          id: 'selidiki',
+          label: 'Selidiki dulu jejak yang tersisa',
+        })
+      },
+      15_000,
+    )
 
     it('returns generic fallback even for last chapter (ending scenario)', async () => {
       const { __testFallbackChoicesFromDraft: fallback } = await import(

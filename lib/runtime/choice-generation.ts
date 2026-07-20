@@ -45,6 +45,8 @@ export type ChoiceBuildFailure = {
   reason: ChoiceBuildFailureReason
   validationFindings: ChoiceFinding[]
   repairAttempts: number
+  /** Original provider/gateway error when available (parity for callers). */
+  cause?: unknown
 }
 
 export type ChoiceBuildResult = ChoiceBuildSuccess | ChoiceBuildFailure
@@ -230,7 +232,7 @@ export async function buildChoiceBranch(
       validationFindings: [],
       repairAttempts: 0,
     }
-  } catch (_err) {
+  } catch (err) {
     deps.telemetry?.onChoiceFallback?.({
       chapterNumber: input.chapterNumber,
       reason: 'provider_error',
@@ -241,11 +243,12 @@ export async function buildChoiceBranch(
       validationFindings: [
         {
           code: 'PROVIDER_ERROR',
-          message: 'Choice provider threw an error.',
+          message: err instanceof Error ? err.message : 'Choice provider threw an error.',
           severity: 'ERROR',
         },
       ],
       repairAttempts: 0,
+      cause: err,
     }
   }
 }

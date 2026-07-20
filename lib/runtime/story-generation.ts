@@ -35,6 +35,12 @@ import type { ChapterBrief } from '@/lib/story-engine/chapter-brief'
 import { normalizeRouteState } from '@/lib/story-engine/route-state'
 import { createSynchronousProviderContext } from './generation-provider-context'
 import type { ProviderCallContext } from '@/lib/observability/generation-provider-call.contract'
+import {
+  buildChoiceBranch,
+  fallbackChoicesFromDraft,
+  type BuildChoiceBranchInput,
+  type ChoiceBuildDeps,
+} from './choice-generation'
 
 /**
  * Workflow generasi bab NYATA (M2→M5 disatukan) — "jalur cerita AI end-to-end".
@@ -179,8 +185,9 @@ function mapBranchToPublishOutcomes(
 
 /**
  * Fallback bila LLM choices gagal: tetap grounded di draft (bukan maju/tahan generik).
+ * Delegates to shared choice-generation module.
  */
-function fallbackChoicesFromDraft(
+function fallbackChoicesFromDraftFn(
   draft: ChapterDraftParsed,
   chapterNumber: number,
 ): {
@@ -188,35 +195,24 @@ function fallbackChoicesFromDraft(
   choices: { id: string; label: string }[]
   outcomes: PublishOutcome[]
 } {
-  const isEnding = chapterNumber >= TOTAL_CHAPTERS
-  const next = isEnding ? null : chapterNumber + 1
-  const hook = (draft.paragraphs.at(-1) ?? draft.title).slice(0, 80)
-  const choicePrompt = isEnding
-    ? 'Bagaimana kau menutup kisah ini?'
-    : `Setelah ${hook}${hook.length >= 80 ? '…' : ''}, apa yang kau lakukan?`
-  const choices = [
-    { id: 'hadapi', label: 'Hadapi langsung apa yang baru terbuka' },
-    { id: 'selidiki', label: 'Selidiki dulu jejak yang tersisa' },
-  ]
-  const outcomes: PublishOutcome[] = [
-    {
-      choiceId: 'hadapi',
-      consequence: isEnding
-        ? ['Kau menuntaskan semuanya; kisah menemukan penutupnya.']
-        : ['Kau melangkah ke depan; konsekuensi menunggu di bab berikutnya.'],
-      nextChapterNumber: next,
-      isEnding,
+  return fallbackChoicesFromDraft(draft, chapterNumber) as {
+    choicePrompt: string
+    choices: { id: string; label: string }[]
+    outcomes: PublishOutcome[]
+  }
+}
+
+/** DI dependencies injected for standard choice build path. */
+function standardChoiceDeps(): ChoiceBuildDeps {
+  return {
+    selectProvider: selectProvider as ChoiceBuildDeps['selectProvider'],
+    generateChoiceBranch: generateChoiceBranch as ChoiceBuildDeps['generateChoiceBranch'],
+    telemetry: {
+      onChoiceFallback: () => {
+        console.log('GENERATION_CHOICES_FALLBACK_USED')
+      },
     },
-    {
-      choiceId: 'selidiki',
-      consequence: isEnding
-        ? ['Kau memilih melepaskan; kisah mengendap dalam keheningan.']
-        : ['Kau menahan nafas dan mengamati; arus cerita tetap menarikmu maju.'],
-      nextChapterNumber: next,
-      isEnding,
-    },
-  ]
-  return { choicePrompt: choicePrompt.slice(0, 120), choices, outcomes }
+  }
 }
 
 /** LLM choices grounded di prose bab; fallback lokal bila provider gagal. */
@@ -230,42 +226,36 @@ async function buildChoices(
   choices: { id: string; label: string }[]
   outcomes: PublishOutcome[]
 }> {
-  if (chapterNumber >= TOTAL_CHAPTERS) {
-    return fallbackChoicesFromDraft(draft, chapterNumber)
+  const brief = syntheticChapterBrief(snapshot.storyId, chapterNumber, draft)
+  const deps = standardChoiceDeps()
+  const input: BuildChoiceBranchInput = {
+    snapshot,
+    draft,
+    chapterNumber,
+    chapterBrief: brief,
+    lastParagraphs: lastParagraphs(draft),
+    routeState: normalizeRouteState({}),
+    choiceHistory: [],
+    lockedEndingKey: null,
+    providerContext,
   }
 
-  try {
-    const brief = syntheticChapterBrief(snapshot.storyId, chapterNumber, draft)
-    const branch = await generateChoiceBranch(
-      { provider: await selectProvider(providerContext) },
-      {
-        snapshot,
-        chapterBrief: brief,
-        draft,
-        lastParagraphs: lastParagraphs(draft),
-        routeState: normalizeRouteState({}),
-        choiceHistory: [],
-        lockedEndingKey: null,
-      },
-      {
-        telemetryContext: providerContext,
-        workflowPhase: 'CHOICES_INITIAL',
-      },
-    )
-    if (!branch) return fallbackChoicesFromDraft(draft, chapterNumber)
+  const result = await buildChoiceBranch(deps, input)
+
+  if (result.ok) {
     return {
-      choicePrompt: branch.choicePrompt,
-      choices: branch.choices.map((c) => ({
+      choicePrompt: result.branch.choicePrompt,
+      choices: result.branch.choices.map((c) => ({
         id: c.id,
         label: c.label,
         ...(c.hint ? { hint: c.hint } : {}),
       })),
-      outcomes: mapBranchToPublishOutcomes(branch),
+      outcomes: mapBranchToPublishOutcomes(result.branch),
     }
-  } catch {
-    console.log('GENERATION_CHOICES_FALLBACK_USED')
-    return fallbackChoicesFromDraft(draft, chapterNumber)
   }
+
+  // Legacy fallback for standard flow — preserves current behavior
+  return fallbackChoicesFromDraftFn(draft, chapterNumber)
 }
 
 /**

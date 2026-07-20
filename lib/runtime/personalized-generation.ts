@@ -57,6 +57,11 @@ import {
 import type { RealGenerateResult } from './story-generation'
 import { createSynchronousProviderContext } from './generation-provider-context'
 import { ProviderCallContextSchema } from '@/lib/observability/generation-provider-call.contract'
+import {
+  buildChoiceBranch,
+  type BuildChoiceBranchInput,
+  type ChoiceBuildDeps,
+} from './choice-generation'
 
 /**
  * Personalized chapter runtime (Task 17).
@@ -257,6 +262,14 @@ function previousChoiceFrom(
     if (match) return match
   }
   return history[history.length - 1] ?? null
+}
+
+/** Build ChoiceBuildDeps from PersonalizedGenerationDeps for the shared seam. */
+function choiceDepsFromPersonalized(deps: PersonalizedGenerationDeps): ChoiceBuildDeps {
+  return {
+    selectProvider: deps.selectProvider as ChoiceBuildDeps['selectProvider'],
+    generateChoiceBranch: deps.generateChoiceBranch as ChoiceBuildDeps['generateChoiceBranch'],
+  }
 }
 
 async function defaultLoadStoryGenerationContract(storyId: string): Promise<StoryContract> {
@@ -600,27 +613,31 @@ export async function generateNextPersonalizedChapter(
     let ending: EndingResolution | null = null
 
     if (chapterNumber < TOTAL_PERSONALIZED_CHAPTERS) {
-      const provider = await d.selectProvider(providerContext)
-      const branch = await d.generateChoiceBranch(
-        { provider },
-        {
-          snapshot,
-          chapterBrief: brief,
-          draft,
-          lastParagraphs: lastParagraphs(draft),
-          routeState,
-          choiceHistory,
-          lockedEndingKey: brief.lockedEndingKey,
-        },
-        {
-          telemetryContext: providerContext,
-          workflowPhase: 'CHOICES_INITIAL',
-        },
-      )
-      if (!branch) {
-        await d.releaseGenerationLease({ storyId, leaseId: lease.lease_id })
-        throw new Error(`Choice branch missing for chapter ${chapterNumber}`)
+      // Use the shared choice-build seam (Phase 1 extraction).
+      const choiceInput: BuildChoiceBranchInput = {
+        snapshot,
+        draft,
+        chapterNumber,
+        chapterBrief: brief,
+        lastParagraphs: lastParagraphs(draft),
+        routeState,
+        choiceHistory,
+        lockedEndingKey: brief.lockedEndingKey,
+        totalChapters: TOTAL_PERSONALIZED_CHAPTERS,
+        providerContext,
       }
+      const choiceResult = await buildChoiceBranch(choiceDepsFromPersonalized(d), choiceInput)
+
+      if (!choiceResult.ok) {
+        await d.releaseGenerationLease({ storyId, leaseId: lease.lease_id })
+        throw new Error(
+          `Choice branch failed: ${choiceResult.reason} (findings: ${
+            choiceResult.validationFindings.map((f) => f.code).join(', ') || 'none'
+          })`,
+        )
+      }
+
+      const branch = choiceResult.branch
 
       const leakInChoices = [
         branch.choicePrompt,

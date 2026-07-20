@@ -62,6 +62,7 @@ import {
   type BuildChoiceBranchInput,
   type ChoiceBuildDeps,
 } from './choice-generation'
+import { groundedChoiceProseFromFinalDraft } from './choice-context'
 
 /**
  * Personalized chapter runtime (Task 17).
@@ -225,15 +226,6 @@ function resolveBlueprint(
   } catch {
     return null
   }
-}
-
-function lastParagraphs(draft: ChapterDraftParsed): ChoiceInput['lastParagraphs'] {
-  const paragraphs = draft.paragraphs.filter((p) => p.trim().length > 0)
-  const slice = paragraphs.slice(-5)
-  while (slice.length < 3) {
-    slice.unshift(paragraphs[0] ?? draft.title)
-  }
-  return slice as ChoiceInput['lastParagraphs']
 }
 
 function mapBranchToV2Outcomes(
@@ -614,14 +606,19 @@ export async function generateNextPersonalizedChapter(
 
     if (chapterNumber < TOTAL_PERSONALIZED_CHAPTERS) {
       // Use the shared choice-build seam (Phase 1 extraction).
+      const { finalChapter, endingParagraphs } = groundedChoiceProseFromFinalDraft(draft)
+      const previousChoice =
+        choiceHistory.length > 0 ? choiceHistory[choiceHistory.length - 1] ?? null : null
       const choiceInput: BuildChoiceBranchInput = {
         snapshot,
         draft,
         chapterNumber,
         chapterBrief: brief,
-        lastParagraphs: lastParagraphs(draft),
+        finalChapter,
+        lastParagraphs: endingParagraphs,
         routeState,
         choiceHistory,
+        previousChoice,
         lockedEndingKey: brief.lockedEndingKey,
         totalChapters: TOTAL_PERSONALIZED_CHAPTERS,
         providerContext,

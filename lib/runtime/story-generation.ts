@@ -41,6 +41,7 @@ import {
   type BuildChoiceBranchInput,
   type ChoiceBuildDeps,
 } from './choice-generation'
+import { groundedChoiceProseFromFinalDraft } from './choice-context'
 
 /**
  * Workflow generasi bab NYATA (M2→M5 disatukan) — "jalur cerita AI end-to-end".
@@ -100,15 +101,6 @@ function resolveBlueprint(
   } catch {
     return null // bab di luar rentang template
   }
-}
-
-function lastParagraphs(draft: ChapterDraftParsed): [string, string, string] | [string, string, string, string] | [string, string, string, string, string] {
-  const paragraphs = draft.paragraphs.filter((p) => p.trim().length > 0)
-  const slice = paragraphs.slice(-5)
-  while (slice.length < 3) {
-    slice.unshift(paragraphs[0] ?? draft.title)
-  }
-  return slice as ReturnType<typeof lastParagraphs>
 }
 
 /** Minimal chapter brief for standard/onboarding stories (no story_generation_contracts row). */
@@ -226,16 +218,20 @@ async function buildChoices(
   choices: { id: string; label: string }[]
   outcomes: PublishOutcome[]
 }> {
+  // Phase 2: choice grounding uses final repaired draft only.
   const brief = syntheticChapterBrief(snapshot.storyId, chapterNumber, draft)
+  const { finalChapter, endingParagraphs } = groundedChoiceProseFromFinalDraft(draft)
   const deps = standardChoiceDeps()
   const input: BuildChoiceBranchInput = {
     snapshot,
     draft,
     chapterNumber,
     chapterBrief: brief,
-    lastParagraphs: lastParagraphs(draft),
+    finalChapter,
+    lastParagraphs: endingParagraphs,
     routeState: normalizeRouteState({}),
     choiceHistory: [],
+    previousChoice: null,
     lockedEndingKey: null,
     providerContext,
   }

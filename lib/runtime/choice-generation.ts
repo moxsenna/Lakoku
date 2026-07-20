@@ -11,6 +11,18 @@ import type {
 import type { GenerationProvider } from '@lakoku/ai-gateway'
 import type { ChapterBrief, ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
 import type { RouteState } from '@/lib/story-engine/route-state'
+import {
+  groundedChoiceProseFromFinalDraft,
+  type EndingParagraphs,
+  type FinalChapterProse,
+} from '@/lib/runtime/choice-context'
+
+export {
+  buildEndingParagraphs,
+  groundedChoiceProseFromFinalDraft,
+  toFinalChapterProse,
+} from '@/lib/runtime/choice-context'
+export type { EndingParagraphs, FinalChapterProse } from '@/lib/runtime/choice-context'
 
 // ---- Types ----
 
@@ -78,20 +90,32 @@ export interface ChoiceBuildDeps {
 
 /**
  * Explicit, fully-grounded input for choice branch generation.
- * Always carries the final repaired prose as `draft` and `lastParagraphs`.
+ * Always carries the final repaired prose as `draft` / `finalChapter`.
+ * Prefer omitting `lastParagraphs` so they are derived from final draft only.
  */
 export interface BuildChoiceBranchInput {
   snapshot: CanonSnapshot
+  /** Final post-repair draft — source of truth for choice grounding. */
   draft: ChapterDraftParsed
   chapterNumber: number
   chapterBrief: ChapterBrief
-  lastParagraphs: ChoiceInput['lastParagraphs']
+  /**
+   * Optional override. When omitted, derived from final draft paragraphs only
+   * via buildEndingParagraphs (never blueprint/synopsis/pre-repair text).
+   */
+  lastParagraphs?: EndingParagraphs
+  /** Explicit final prose view; defaults from draft when omitted. */
+  finalChapter?: FinalChapterProse
   routeState: RouteState
   choiceHistory: ChoiceHistoryEntry[]
+  previousChoice?: ChoiceHistoryEntry | null
   lockedEndingKey: string | null
   providerContext: unknown
   /** Override total chapters (defaults to narrative-core TOTAL_CHAPTERS). */
   totalChapters?: number
+  activeCharacters?: Array<{ id: string; name: string }>
+  activeThreads?: Array<{ id: string; summary: string }>
+  forbiddenRevelations?: string[]
 }
 
 // ---- Guards ----
@@ -192,14 +216,25 @@ export async function buildChoiceBranch(
   }
 
   try {
+    // Final repaired prose is the only grounding source.
+    const fromFinal = groundedChoiceProseFromFinalDraft(input.draft)
+    const finalChapter = input.finalChapter ?? fromFinal.finalChapter
+    const endingParagraphs = input.lastParagraphs ?? fromFinal.endingParagraphs
+    // Keep draft.paragraphs aligned with explicit finalChapter when provided.
+    const groundedDraft: ChapterDraftParsed = {
+      ...input.draft,
+      title: finalChapter.title,
+      paragraphs: finalChapter.paragraphs,
+    }
+
     const provider = await deps.selectProvider(input.providerContext)
     const branch = await deps.generateChoiceBranch(
       { provider },
       {
         snapshot: input.snapshot,
         chapterBrief: input.chapterBrief,
-        draft: input.draft,
-        lastParagraphs: input.lastParagraphs,
+        draft: groundedDraft,
+        lastParagraphs: endingParagraphs,
         routeState: input.routeState,
         choiceHistory: input.choiceHistory,
         lockedEndingKey: input.lockedEndingKey,

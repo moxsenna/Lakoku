@@ -451,6 +451,104 @@ describe('Phase 1 — choice-generation module unit tests', () => {
     })
   })
 
+  describe('Phase 2 — final repaired prose as source of truth', () => {
+    it('buildEndingParagraphs uses only final draft paragraphs (last 3–5)', async () => {
+      const { buildEndingParagraphs } = await import('@/lib/runtime/choice-context')
+      const paragraphs = [
+        'Awal yang tidak relevan.',
+        'Setup lama yang sudah lewat.',
+        'Maya di gudang arsip basah.',
+        'Suara langkah dari tangga.',
+        'Pintu besi terbuka setengah.',
+        'Kalung ibu tergantung di gagang.',
+        'Nara menahan napas.',
+      ]
+      const ending = buildEndingParagraphs(paragraphs, 'Judul')
+      expect(ending.length).toBeGreaterThanOrEqual(3)
+      expect(ending.length).toBeLessThanOrEqual(5)
+      expect(ending).toEqual(paragraphs.slice(-5))
+      expect(ending.join(' ')).toContain('Kalung ibu')
+      expect(ending.join(' ')).not.toContain('tidak relevan')
+      expect(ending.join(' ')).not.toContain('Setup lama')
+    })
+
+    it('sends exact final paragraphs to generateChoiceBranch, not pre-repair text', async () => {
+      const { buildChoiceBranch } = await import('@/lib/runtime/choice-generation')
+      const preRepair = mockDraft(12)
+      preRepair.paragraphs = [
+        'Draft awal: Nara belum menemukan apa-apa.',
+        'Draft awal: Lorong masih gelap.',
+        'Draft awal: Tidak ada petunjuk.',
+        'Draft awal: Hanya debu.',
+        'Draft awal: Nara ragu.',
+      ]
+      const finalRepaired = mockDraft(12)
+      finalRepaired.paragraphs = [
+        'Nara menahan napas di balik lemari.',
+        'Pintu besi terbuka setengah jengkal.',
+        'Langkah sepatu semakin dekat dari tangga.',
+        'Kalung milik ibunya tergantung di gagang.',
+        'Nara harus memilih sekarang.',
+      ]
+      finalRepaired.title = 'Bab 12: Kalung di Pintu Besi'
+
+      const generateChoiceBranch = vi.fn(async (_deps, input) => {
+        expect(input.draft.paragraphs).toEqual(finalRepaired.paragraphs)
+        expect(input.draft.title).toBe(finalRepaired.title)
+        expect(input.lastParagraphs).toEqual(finalRepaired.paragraphs.slice(-5))
+        expect(input.lastParagraphs.join(' ')).toContain('Kalung milik ibunya')
+        expect(input.lastParagraphs.join(' ')).not.toContain('Draft awal')
+        return mockBranch(12)
+      })
+      const deps: ChoiceBuildDeps = {
+        selectProvider: async () => ({ name: 'test' }) as never,
+        generateChoiceBranch,
+      }
+      const snapshot = (await import('@/fixtures/narrative/fixture-50')).buildFixtureSnapshot()
+      const brief = mockBrief(snapshot, 12)
+
+      // Caller only has finalRepaired after generateChapter PUBLISHED — never preRepair.
+      const result = await buildChoiceBranch(deps, {
+        snapshot,
+        draft: finalRepaired,
+        chapterNumber: 12,
+        chapterBrief: brief,
+        routeState: normalizeRouteState({}),
+        choiceHistory: [],
+        lockedEndingKey: null,
+        providerContext: {},
+      })
+
+      expect(result.ok).toBe(true)
+      expect(generateChoiceBranch).toHaveBeenCalledTimes(1)
+      // Prove pre-repair was never sent
+      const sent = generateChoiceBranch.mock.calls[0][1] as {
+        draft: ChapterDraftParsed
+        lastParagraphs: string[]
+      }
+      expect(sent.draft.paragraphs).not.toEqual(preRepair.paragraphs)
+      expect(sent.lastParagraphs.some((p) => p.includes('Draft awal'))).toBe(false)
+    })
+
+    it('groundedChoiceProseFromFinalDraft derives ending from final draft only', async () => {
+      const { groundedChoiceProseFromFinalDraft } = await import(
+        '@/lib/runtime/choice-context'
+      )
+      const finalDraft = mockDraft(12)
+      finalDraft.paragraphs = [
+        'P1 irrelevant setup',
+        'P2 Nara di tangga',
+        'P3 pintu besi',
+        'P4 kalung ibu',
+        'P5 langkah mendekat',
+      ]
+      const grounded = groundedChoiceProseFromFinalDraft(finalDraft)
+      expect(grounded.finalChapter.title).toBe(finalDraft.title)
+      expect(grounded.finalChapter.paragraphs).toEqual(finalDraft.paragraphs)
+      expect(grounded.endingParagraphs).toEqual(finalDraft.paragraphs.slice(-5))
+    })
+  })
+
   describe('ending-policy guard', () => {
     it('rejects choice generation for chapter >= totalChapters with custom total', async () => {
       const { buildChoiceBranch } = await import('@/lib/runtime/choice-generation')

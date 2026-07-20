@@ -345,6 +345,46 @@ describe('Phase 0 — Characterization (current buggy behavior)', () => {
     })
   })
 
+  describe('choice validation after buildChoices (B5)', () => {
+    it('current VALIDATE_CHOICES path only scans for internal leaks, not prose grounding', async () => {
+      // Characterization of story-generation.ts VALIDATE_CHOICES block:
+      // leakInChoices = [choicePrompt, labels, consequences].flatMap(scanForLeaks)
+      // There is no call to a semantic grounding validator against draft.paragraphs.
+      const source = await import('node:fs').then((fs) =>
+        fs.promises.readFile(
+          new URL('../../lib/runtime/story-generation.ts', import.meta.url),
+          'utf8',
+        ),
+      )
+
+      expect(source).toContain('scanForLeaks')
+      expect(source).toContain("stage = 'VALIDATE_CHOICES'")
+      // No semantic grounding module wired into standard flow yet
+      expect(source).not.toMatch(/validateChoiceBranchQuality/)
+      expect(source).not.toMatch(/CHOICE_PROMPT_UNGROUNDED|CHOICE_LABEL_UNGROUNDED/)
+    })
+
+    it('fallback outcomes have publishable legacy PublishOutcome shape (can be published)', async () => {
+      const { __testFallbackChoicesFromDraft: fallback } = await import(
+        '@/lib/runtime/story-generation'
+      )
+      const result = fallback(mockDraft(12), 12)
+
+      // generateNextChapterReal publishes whatever buildChoices returns.
+      // Fallback outcomes match legacy PublishOutcome keys accepted by publishChapter.
+      for (const outcome of result.outcomes) {
+        expect(Object.keys(outcome).sort()).toEqual(
+          ['choiceId', 'consequence', 'isEnding', 'nextChapterNumber'].sort(),
+        )
+        expect(typeof outcome.choiceId).toBe('string')
+        expect(Array.isArray(outcome.consequence)).toBe(true)
+        expect(typeof outcome.isEnding).toBe('boolean')
+      }
+      expect(typeof result.choicePrompt).toBe('string')
+      expect(result.choices).toHaveLength(2)
+    })
+  })
+
   describe('syntheticChapterBrief', () => {
     it('always reports empty routeStateSummary and choiceHistorySummary', async () => {
       const { __testSyntheticChapterBrief: brief } = await import(
@@ -421,21 +461,36 @@ describe('Phase 0 — Desired behavior (TDD: it.fails)', () => {
     it.fails(
       'does NOT return generic fallback when provider fails; instead indicates error',
       async () => {
+        mocks.selectProvider.mockResolvedValue({
+          name: 'test',
+          generateChoices: async () => mockBranch(),
+        })
+        mocks.generateChoiceBranch.mockRejectedValue(new Error('LLM overload'))
+        mocks.mockConsoleLog.mockClear()
+
         const { __testBuildChoices: buildChoices } = await import(
           '@/lib/runtime/story-generation'
         )
+        const snapshot = (await import('@/fixtures/narrative/fixture-50')).buildFixtureSnapshot()
 
-        // DESIRED: Provider failure should NOT produce hard-coded choices
-        // that are indistinguishable from real LLM output and get published.
-        // This test asserts a return type with an error discriminator.
-        //
-        // Currently: buildChoices silently returns fallback.
-        // After fix: should return { ok: false, reason: 'CHOICE_GENERATION_FAILED' }
-        // or throw so that generateNextChapterReal does not publish.
-        throw new Error(
-          'DESIRED: buildChoices should indicate failure, not silently return generic fallback. ' +
-          'Currently, on any catch, it returns hadapi/selidiki which gets published without error.',
+        const result = await buildChoices(
+          snapshot,
+          mockDraft(12),
+          12,
+          providerContext(),
         )
+
+        // DESIRED: failure is explicit — not hard-coded hadapi/selidiki.
+        // Accept either result-union failure or throw (personalized style).
+        // Current: returns fallback that is publishable as success.
+        const asRecord = result as unknown as Record<string, unknown>
+        const isExplicitFailure =
+          asRecord.ok === false ||
+          typeof asRecord.reason === 'string' ||
+          result.choices.length === 0
+
+        expect(isExplicitFailure).toBe(true)
+        expect(result.choices.map((c) => c.id)).not.toEqual(['hadapi', 'selidiki'])
       },
     )
   })
@@ -460,29 +515,105 @@ describe('Phase 0 — Desired behavior (TDD: it.fails)', () => {
         // Currently: returns fallbackChoicesFromDraft with hadapi/selidiki.
         expect(result.choices).toHaveLength(0)
         expect(result.outcomes).toHaveLength(0)
-        expect(result.choicePrompt).toBe('')
+        expect(result.choicePrompt === '' || result.choicePrompt === null).toBe(true)
       },
     )
   })
 
   describe('buildChoices — route state pass-through', () => {
     it.fails(
-      'accepts and passes real routeState to generateChoiceBranch',
+      'passes non-default routeState/choiceHistory when reader context exists',
       async () => {
-        // DESIRED: buildChoices should accept routeState/choiceHistory/lockedEndingKey
-        // parameters and pass them through to generateChoiceBranch.
-        //
-        // Currently hard-coded at story-generation.ts:246-248:
-        //   routeState: normalizeRouteState({})
-        //   choiceHistory: []
-        //   lockedEndingKey: null
-        //
-        // After fix: buildChoices signature changes to include these or derives
-        // them from a reader context provided by generateNextChapterReal.
-        throw new Error(
-          'DESIRED: buildChoices must pass real routeState/choiceHistory/lockedEndingKey. ' +
-          'Currently hard-coded to empty defaults (normalizeRouteState({}), [], null).',
+        mocks.selectProvider.mockResolvedValue({
+          name: 'test',
+          generateChoices: async () => mockBranch(),
+        })
+        mocks.generateChoiceBranch.mockResolvedValue(mockBranch())
+        mocks.generateChoiceBranch.mockClear()
+
+        const { __testBuildChoices: buildChoices } = await import(
+          '@/lib/runtime/story-generation'
         )
+        const snapshot = (await import('@/fixtures/narrative/fixture-50')).buildFixtureSnapshot()
+
+        // DESIRED: when real reader state is available (later via signature/context),
+        // generateChoiceBranch must receive non-empty routeState / history / lock.
+        // Current hard-code: normalizeRouteState({}), [], null — this assertion fails.
+        await buildChoices(snapshot, mockDraft(12), 12, providerContext())
+
+        expect(mocks.generateChoiceBranch).toHaveBeenCalled()
+        const choiceInput = mocks.generateChoiceBranch.mock.calls[0][1] as Record<
+          string,
+          unknown
+        >
+        const rs = choiceInput.routeState as Record<string, number>
+        const history = choiceInput.choiceHistory as unknown[]
+
+        // At least one signal that real reader context was threaded through.
+        // (After Phase 3: non-zero deltas or non-empty history or locked ending.)
+        const hasRealContext =
+          (rs.truth ?? 0) !== 0 ||
+          (rs.risk ?? 0) !== 0 ||
+          (rs.secrecy ?? 0) !== 0 ||
+          (rs.empathy ?? 0) !== 0 ||
+          history.length > 0 ||
+          choiceInput.lockedEndingKey != null
+
+        expect(hasRealContext).toBe(true)
+      },
+    )
+  })
+
+  describe('choice validation — must ground against final repaired prose', () => {
+    it.fails(
+      'rejects generic ungrounded labels that ignore final paragraphs',
+      async () => {
+        // DESIRED (Phase 4+): semantic validation against finalDraft.paragraphs
+        // must reject hard-coded generic labels when prose has concrete entities.
+        // Current VALIDATE_CHOICES only runs scanForLeaks — generic labels pass.
+        const finalParagraphs = mockDraft(12).paragraphs
+        const genericLabels = [
+          'Hadapi langsung apa yang baru terbuka',
+          'Selidiki dulu jejak yang tersisa',
+        ]
+
+        // Import quality validator once it exists; until then this fails.
+        // After Phase 4, choice-quality module should export validateChoiceBranchQuality.
+        const quality = await import('@/lib/story-engine/choice-quality').catch(() => null)
+        expect(quality).not.toBeNull()
+        if (!quality) return
+
+        const validate = (
+          quality as {
+            validateChoiceBranchQuality?: (input: unknown) => {
+              ok: boolean
+              findings: Array<{ code: string }>
+            }
+          }
+        ).validateChoiceBranchQuality
+        expect(typeof validate).toBe('function')
+        if (!validate) return
+
+        const result = validate({
+          branch: {
+            choicePrompt: 'Apa yang kau lakukan selanjutnya?',
+            choices: [
+              { id: 'hadapi', label: genericLabels[0] },
+              { id: 'selidiki', label: genericLabels[1] },
+            ],
+            outcomes: [],
+          },
+          finalChapter: { title: 'Bab 12', paragraphs: finalParagraphs },
+          endingParagraphs: finalParagraphs.slice(-3),
+        })
+
+        expect(result.ok).toBe(false)
+        const codes = result.findings.map((f) => f.code)
+        expect(
+          codes.some((c) =>
+            c.includes('UNGROUNDED') || c.includes('GENERIC') || c.includes('TOO_SIMILAR'),
+          ),
+        ).toBe(true)
       },
     )
   })

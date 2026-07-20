@@ -170,21 +170,24 @@ Pada kondisi di mana provider gagal:
 
 File: `tests/runtime/choice-generation-baseline.test.ts`
 
-### Characterization tests (11, all PASS)
+### Characterization tests (PASS — document current bugs)
 - `fallbackChoicesFromDraft` — hard-coded labels, ending scenario, no effect/choiceKind
 - `mapBranchToPublishOutcomes` — drops effect, only maps 4 fields
 - `buildChoices` — empty routeState, chapter 50 fallback, GENERATION_CHOICES_FALLBACK_USED log, null branch fallback
+- B5 validation gap — source asserts VALIDATE_CHOICES only uses `scanForLeaks`, no `validateChoiceBranchQuality`
+- Publishability — fallback outcomes match legacy PublishOutcome shape (can be published)
 - `syntheticChapterBrief` — empty summaries, null lockedEndingKey
 
-### Desired-behavior TDD tests (6, all `it.fails` — RED)
+### Desired-behavior TDD tests (`it.fails` — RED until later phases)
 - Effect preservation in outcomes
 - choiceKind field
-- No silent fallback on provider failure
+- No silent fallback on provider failure (**real assertion** against `__testBuildChoices` + mocked provider throw)
 - Chapter 50 no choices
-- Route state pass-through
-- Cross-flow parity with personalized
+- Route state pass-through (**real assertion** that generateChoiceBranch received non-default context)
+- Semantic grounding against final repaired paragraphs (expects `choice-quality` module)
+- Cross-flow parity with personalized on effect/choiceKind
 
-### Cross-flow comparison (1 PASS + 1 `it.fails`)
+### Cross-flow comparison
 - Personalized correctly preserves effect (PASS)
 - Standard should match personalized (it.fails — RED)
 
@@ -193,7 +196,10 @@ File: `tests/runtime/choice-generation-baseline.test.ts`
 ## Phase 0 exit criteria checklist
 
 - [x] Document baseline evidence why screenshots would show generic fallback
-- [x] At least one RED test reproducing main problem (6 it.fails tests)
+- [x] At least one RED test reproducing main problem
+- [x] B5: choices not validated against final repaired paragraphs (characterization + it.fails)
+- [x] Stub RED tests replaced with real assertions exercising production code
+- [x] Publishability of fallback outcomes covered at unit shape level
 - [x] NO production behavior changes (only tests + docs + test-only exports)
 - [x] Characterization tests PASS, documenting current buggy behavior
 - [x] TDD desired-behavior tests RED (it.fails)

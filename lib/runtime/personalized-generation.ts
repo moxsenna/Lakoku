@@ -601,10 +601,17 @@ export async function generateNextPersonalizedChapter(
     let ending: EndingResolution | null = null
 
     if (chapterNumber < TOTAL_PERSONALIZED_CHAPTERS) {
-      // Use the shared choice-build seam (Phase 1 extraction).
+      // Shared choice-build seam. Keep trigger-aware previousChoice from narrativeContext.
       const { finalChapter, endingParagraphs } = groundedChoiceProseFromFinalDraft(draft)
-      const previousChoice =
-        choiceHistory.length > 0 ? choiceHistory[choiceHistory.length - 1] ?? null : null
+      const activeCharacters = snapshot.characters
+        .slice(0, 24)
+        .map((c) => ({ id: c.id, name: c.canonicalName ?? c.id }))
+      const activeThreads = snapshot.threads
+        .slice(0, 24)
+        .map((th) => ({
+          id: th.id,
+          summary: ('title' in th && typeof th.title === 'string' ? th.title : th.id),
+        }))
       const choiceInput: BuildChoiceBranchInput = {
         snapshot,
         draft,
@@ -615,27 +622,32 @@ export async function generateNextPersonalizedChapter(
         routeState,
         choiceHistory,
         previousChoice,
-        lockedEndingKey: brief.lockedEndingKey,
+        lockedEndingKey: narrativeContext.lockedEndingKey ?? brief.lockedEndingKey,
         totalChapters: TOTAL_PERSONALIZED_CHAPTERS,
         providerContext,
+        activeCharacters,
+        activeThreads,
       }
       const choiceResult = await buildChoiceBranch(choiceDepsFromPersonalized(d), choiceInput)
 
       if (!choiceResult.ok) {
         await d.releaseGenerationLease({ storyId, leaseId: lease.lease_id })
-        // Preserve pre-extraction error surfaces for callers/logs.
-        const nullBranch = choiceResult.validationFindings.some((f) => f.code === 'NULL_BRANCH')
-        if (nullBranch) {
-          throw new Error(`Choice branch missing for chapter ${chapterNumber}`)
+        await d.recordGenerationAttempt({
+          storyId,
+          chapter: chapterNumber,
+          outcome: 'REVIEW_REQUIRED',
+          repairAttempts: result.attempts + choiceResult.repairAttempts,
+          findings: result.findings,
+        }).catch(() => undefined)
+        return {
+          ok: false,
+          reason: 'CHOICE_GENERATION_FAILED',
+          detail: {
+            choiceReason: choiceResult.reason,
+            findingCodes: choiceResult.validationFindings.map((f) => f.code),
+            repairAttempts: choiceResult.repairAttempts,
+          },
         }
-        if (choiceResult.cause instanceof Error) {
-          throw choiceResult.cause
-        }
-        throw new Error(
-          `Choice branch failed: ${choiceResult.reason} (findings: ${
-            choiceResult.validationFindings.map((f) => f.code).join(', ') || 'none'
-          })`,
-        )
       }
 
       const branch = choiceResult.branch

@@ -31,7 +31,7 @@ import {
 } from '@/lib/observability/server'
 import type { GenerationStage } from '@/lib/observability/generation-stages'
 import { safeErrorInfo } from '@/lib/observability/safe-error'
-import type { ChapterBrief } from '@/lib/story-engine/chapter-brief'
+import type { ChapterBrief, ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
 import { normalizeRouteState, type RouteState } from '@/lib/story-engine/route-state'
 import { summarizeRouteStateForPrompt } from '@/lib/story-engine/route-state'
 import { createSynchronousProviderContext } from './generation-provider-context'
@@ -243,16 +243,9 @@ async function loadStandardNarrativeContext(
 function fallbackChoicesFromDraftFn(
   draft: ChapterDraftParsed,
   chapterNumber: number,
-): {
-  choicePrompt: string
-  choices: { id: string; label: string }[]
-  outcomes: PublishOutcome[]
-} {
-  return fallbackChoicesFromDraft(draft, chapterNumber) as {
-    choicePrompt: string
-    choices: { id: string; label: string }[]
-    outcomes: PublishOutcome[]
-  }
+) {
+  // Test/fixture only — not used on production success path (Phase 5).
+  return fallbackChoicesFromDraft(draft, chapterNumber)
 }
 
 /** DI dependencies injected for standard choice build path. */
@@ -316,6 +309,15 @@ async function buildChoices(
   const brief = syntheticChapterBrief(snapshot.storyId, chapterNumber, draft, narrativeContext)
   const { finalChapter, endingParagraphs } = groundedChoiceProseFromFinalDraft(draft)
   const deps = standardChoiceDeps(providerContext.correlationId)
+  const activeCharacters = snapshot.characters
+    .slice(0, 24)
+    .map((c) => ({ id: c.id, name: c.canonicalName ?? c.id }))
+  const activeThreads = snapshot.threads
+    .slice(0, 24)
+    .map((th) => ({
+      id: th.id,
+      summary: ('title' in th && typeof th.title === 'string' ? th.title : th.id),
+    }))
   const input: BuildChoiceBranchInput = {
     snapshot,
     draft,
@@ -328,6 +330,8 @@ async function buildChoices(
     previousChoice: narrativeContext.previousChoice,
     lockedEndingKey: narrativeContext.lockedEndingKey,
     providerContext,
+    activeCharacters,
+    activeThreads,
   }
 
   const result = await buildChoiceBranch(deps, input)
@@ -613,6 +617,7 @@ export async function generateNextChapterReal(
     const leakInChoices = [
       branch.choicePrompt,
       ...branch.choices.map((c) => c.label),
+      ...branch.choices.flatMap((c) => ('hint' in c && c.hint ? [String(c.hint)] : [])),
       ...branch.outcomes.flatMap((o) => o.consequence),
     ]
       .flatMap(scanForLeaks)

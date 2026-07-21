@@ -344,6 +344,7 @@ export async function clonePremiumStoryForUser(input: {
     }
 
     if (!generated.ok) {
+        // Includes FAILED_REVIEW_REQUIRED and CHOICE_GENERATION_FAILED
       if (generated.reason === 'CHAPTER_EXISTS') {
         if (!await chapterOneExists({ admin, storyId: reserved.row.story_id })) {
           throw new PremiumCloneError('INTERNAL_ERROR')
@@ -353,6 +354,7 @@ export async function clonePremiumStoryForUser(input: {
       } else if (
         generated.reason === 'CANON_MISSING'
         || generated.reason === 'FAILED_REVIEW_REQUIRED'
+        || generated.reason === 'CHOICE_GENERATION_FAILED'
       ) {
         const transition = await updateReservation({
           admin,

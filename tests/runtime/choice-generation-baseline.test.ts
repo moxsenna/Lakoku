@@ -242,8 +242,8 @@ describe('Phase 0 — Characterization (current buggy behavior)', () => {
       // effect IS preserved — Phase 6 fix
       expect(outcomes[0]).toHaveProperty('effect')
       expect(outcomes[0]).toHaveProperty('choiceKind')
-      const o0 = outcomes[0] as Record<string, unknown>
-      const effect = o0.effect as Record<string, unknown>
+      const o0 = outcomes[0] as unknown as Record<string, unknown>
+      const effect = o0.effect as unknown as Record<string, unknown>
       expect(effect.routeDeltas).toEqual({ truth: 2 })
       expect(effect.trustDeltas).toEqual({ Raka: 1 })
       expect(effect.endingBiasDeltas).toEqual({ 'publish-truth': 1 })
@@ -305,12 +305,12 @@ describe('Phase 0 — Characterization (current buggy behavior)', () => {
       // Verify generateChoiceBranch was called
       expect(mocks.generateChoiceBranch).toHaveBeenCalledTimes(1)
       const callArgs = mocks.generateChoiceBranch.mock.calls[0] as unknown[]
-      const choiceInput = callArgs[1] as Record<string, unknown>
+      const choiceInput = callArgs[1] as unknown as Record<string, unknown>
 
       // Current behavior: routeState is empty (normalizeRouteState({}))
       // verify it has all zero/default values
       expect(choiceInput.routeState).toBeDefined()
-      const rs = choiceInput.routeState as Record<string, unknown>
+      const rs = choiceInput.routeState as unknown as Record<string, unknown>
       expect(rs.truth).toBe(0)
       expect(rs.risk).toBe(0)
       expect(rs.secrecy).toBe(0)
@@ -472,9 +472,9 @@ describe('Phase 0 — Desired behavior (TDD: now passing)', () => {
 
         // DESIRED: effect is preserved
         expect(outcomes[0]).toHaveProperty('effect')
-        const o0 = outcomes[0] as Record<string, unknown>
+        const o0 = outcomes[0] as unknown as Record<string, unknown>
         if (o0.effect) {
-          const effect = o0.effect as Record<string, unknown>
+          const effect = o0.effect as unknown as Record<string, unknown>
           expect(effect.routeDeltas).toEqual({ truth: 2 })
           expect(effect.trustDeltas).toEqual({ Raka: 1 })
           expect(effect.endingBiasDeltas).toEqual({ 'publish-truth': 1 })
@@ -492,7 +492,7 @@ describe('Phase 0 — Desired behavior (TDD: now passing)', () => {
         const branch = mockBranch(12, true)
 
         const outcomes = mapper(branch, 12)
-        const o0 = outcomes[0] as Record<string, unknown>
+        const o0 = outcomes[0] as unknown as Record<string, unknown>
         expect(o0).toHaveProperty('choiceKind')
       },
     )
@@ -582,16 +582,16 @@ describe('Phase 0 — Desired behavior (TDD: now passing)', () => {
               consequence: ['Kau menemukan surat wasiat.'],
               effectSummary: { truth: 1, risk: 0, secrecy: 0, empathy: 0, flagsSet: ['found-chest'] },
               createdAt: '2026-01-01T00:00:00.000Z',
-            } as Record<string, unknown>,
-          ] as unknown as typeof import('@/lib/story-engine/chapter-brief').ChoiceHistoryEntry[],
-          previousChoice: null as typeof import('@/lib/story-engine/chapter-brief').ChoiceHistoryEntry | null,
+            } as unknown as Record<string, unknown>,
+          ] as any,
+          previousChoice: null as any,
           lockedEndingKey: 'secret-ending-a',
         }
 
         await buildChoices(snapshot, mockDraft(12), 12, providerContext(), narrativeContext)
 
         expect(mocks.generateChoiceBranch).toHaveBeenCalled()
-        const choiceInput = mocks.generateChoiceBranch.mock.calls[0][1] as Record<
+        const choiceInput = (mocks.generateChoiceBranch.mock.calls[0]?.[1] ?? {}) as unknown as Record<
           string,
           unknown
         >
@@ -700,8 +700,8 @@ describe('Phase 0 — Cross-flow comparison', () => {
       // Both standard and personalized call the same shared mapper.
       expect(outcomes[0]).toHaveProperty('effect')
       expect(outcomes[0]).toHaveProperty('choiceKind')
-      const o0 = outcomes[0] as Record<string, unknown>
-      const effect = o0.effect as Record<string, unknown>
+      const o0 = outcomes[0] as unknown as Record<string, unknown>
+      const effect = o0.effect as unknown as Record<string, unknown>
       expect(effect.routeDeltas).toEqual({ truth: 2 })
       expect(effect.trustDeltas).toEqual({ Raka: 1 })
     },

@@ -361,10 +361,26 @@ export async function buildChoiceBranch(
           },
         )
       } else {
-        // Default repair: re-generate once with repair workflow phase.
+        // Default findings-aware repair: re-generate once with repair phase.
+        // Bounded finding codes + prior bad labels only (no full prose log).
+        const badLabels = branch
+          ? branch.choices.map((c) => c.label).filter(Boolean).slice(0, 4)
+          : []
+        const findingCodes = lastFindings.map((f) => f.code).slice(0, 8)
+        const repairInput = {
+          ...providerInput,
+          chapterBrief: {
+            ...providerInput.chapterBrief,
+            mustNotInclude: [
+              ...providerInput.chapterBrief.mustNotInclude,
+              ...findingCodes,
+              ...badLabels,
+            ].slice(0, 16),
+          },
+        }
         repaired = await deps.generateChoiceBranch(
           { provider },
-          providerInput,
+          repairInput,
           {
             telemetryContext: input.providerContext,
             workflowPhase: 'CHOICES_REPAIR_1',

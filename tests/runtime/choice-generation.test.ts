@@ -116,7 +116,7 @@ function mockBrief(snapshot: unknown, chapterNumber = 12) {
   return {
     storyId: snap.storyId ?? 'story-test',
     chapterNumber,
-    totalChapters: 50,
+    totalChapters: 50 as const,
     phase: 'setup',
     remainingChapters: 50 - chapterNumber,
     chapterGoal: 'Buka misteri arsip lama',
@@ -620,7 +620,7 @@ describe('Phase 1 — choice-generation module unit tests', () => {
         providerContext: {},
       })
 
-      const sent = generateChoiceBranch.mock.calls[0][1] as {
+      const sent = ((generateChoiceBranch.mock.calls as any)[0]?.[1] ?? {}) as {
         routeState: { truth: number; risk: number }
         choiceHistory: unknown[]
         lockedEndingKey: string | null
@@ -703,7 +703,7 @@ describe('Phase 1 — choice-generation module unit tests', () => {
       expect(result.ok).toBe(true)
       expect(generateChoiceBranch).toHaveBeenCalledTimes(1)
       // Prove pre-repair was never sent
-      const sent = generateChoiceBranch.mock.calls[0][1] as {
+      const sent = ((generateChoiceBranch.mock.calls as any)[0]?.[1] ?? {}) as {
         draft: ChapterDraftParsed
         lastParagraphs: string[]
       }

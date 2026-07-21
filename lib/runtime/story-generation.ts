@@ -32,7 +32,8 @@ import {
 import type { GenerationStage } from '@/lib/observability/generation-stages'
 import { safeErrorInfo } from '@/lib/observability/safe-error'
 import type { ChapterBrief } from '@/lib/story-engine/chapter-brief'
-import { normalizeRouteState } from '@/lib/story-engine/route-state'
+import { normalizeRouteState, type RouteState } from '@/lib/story-engine/route-state'
+import { summarizeRouteStateForPrompt } from '@/lib/story-engine/route-state'
 import { createSynchronousProviderContext } from './generation-provider-context'
 import type { ProviderCallContext } from '@/lib/observability/generation-provider-call.contract'
 import {
@@ -40,8 +41,14 @@ import {
   fallbackChoicesFromDraft,
   type BuildChoiceBranchInput,
   type ChoiceBuildDeps,
+  type ChoiceNarrativeContext,
 } from './choice-generation'
-import { groundedChoiceProseFromFinalDraft } from './choice-context'
+import {
+  groundedChoiceProseFromFinalDraft,
+  emptyChoiceNarrativeContext,
+  choiceNarrativeContextFromReader,
+} from './choice-context'
+import { createAdminClient } from '@lakoku/db'
 
 /**
  * Workflow generasi bab NYATA (M2→M5 disatukan) — "jalur cerita AI end-to-end".
@@ -108,6 +115,7 @@ function syntheticChapterBrief(
   storyId: string,
   chapterNumber: number,
   draft: ChapterDraftParsed,
+  narrativeContext?: ChoiceNarrativeContext,
 ): ChapterBrief {
   const remaining = Math.max(0, TOTAL_CHAPTERS - chapterNumber)
   // Chapter draft has prose only; goal/phase derived for choice provider brief.
@@ -132,6 +140,33 @@ function syntheticChapterBrief(
             ? 'closure-emphasis'
             : 'expansion'
 
+  // Use real reader context when available; fall back to generic placeholder.
+  const hasRealContext = narrativeContext && (
+    narrativeContext.choiceHistory.length > 0
+    || (narrativeContext.routeState.truth ?? 0) !== 0
+    || (narrativeContext.routeState.risk ?? 0) !== 0
+    || (narrativeContext.routeState.secrecy ?? 0) !== 0
+    || (narrativeContext.routeState.empathy ?? 0) !== 0
+    || Object.keys(narrativeContext.routeState.trust ?? {}).length > 0
+    || Object.keys(narrativeContext.routeState.flags ?? {}).length > 0
+    || (narrativeContext.routeState.evidence ?? []).length > 0
+    || narrativeContext.lockedEndingKey != null
+  )
+
+  const routeStateSummary = hasRealContext
+    ? summarizeRouteStateForChapterBrief(narrativeContext!.routeState)
+    : 'Awal perjalanan; belum ada bias rute kuat.'
+
+  const choiceHistorySummary = hasRealContext && narrativeContext!.choiceHistory.length > 0
+    ? `Pembaca sudah membuat ${narrativeContext!.choiceHistory.length} pilihan.${
+        narrativeContext!.previousChoice
+          ? ` Pilihan terakhir: ${narrativeContext!.previousChoice.label.slice(0, 80)}`
+          : ''
+      }`
+    : 'Belum ada pilihan sebelumnya.'
+
+  const lockedEndingKey = narrativeContext?.lockedEndingKey ?? null
+
   return {
     storyId,
     chapterNumber,
@@ -142,25 +177,25 @@ function syntheticChapterBrief(
     mustInclude: empty,
     mustNotInclude: empty,
     mustNotReveal: empty,
-    routeStateSummary: 'Awal perjalanan; belum ada bias rute kuat.',
-    choiceHistorySummary: 'Belum ada pilihan sebelumnya.',
+    routeStateSummary,
+    choiceHistorySummary,
     plotDebtsToProgress: empty,
     plotDebtsToClose: empty,
     allowedNewThread: chapterNumber < 40,
     allowedMajorNewConflict: chapterNumber < 45,
     endingRunway,
-    lockedEndingKey: null,
+    lockedEndingKey,
     allowsChoices: chapterNumber < TOTAL_CHAPTERS,
     finalChapter: chapterNumber >= TOTAL_CHAPTERS,
     goals: [chapterGoal],
-    routeSummary: 'Awal perjalanan; belum ada bias rute kuat.',
+    routeSummary: routeStateSummary,
     debtsToProgress: empty,
     debtsToClose: empty,
     allowMajorNewConflict: chapterNumber < 45,
     allowNewThread: chapterNumber < 40,
-    lockEnding: false,
-    endingKey: null,
-    previousChoiceSummary: 'Belum ada pilihan sebelumnya.',
+    lockEnding: lockedEndingKey !== null,
+    endingKey: lockedEndingKey,
+    previousChoiceSummary: choiceHistorySummary,
   }
 }
 
@@ -173,6 +208,42 @@ function mapBranchToPublishOutcomes(
     nextChapterNumber: outcome.nextChapterNumber,
     isEnding: outcome.isEnding,
   }))
+}
+
+/** Concise route state summary for synthetic chapter briefs (reuses canonical summarizer). */
+function summarizeRouteStateForChapterBrief(routeState: RouteState): string {
+  return summarizeRouteStateForPrompt(routeState)
+}
+
+/**
+ * Attempt to load reader narrative context from reader_states for the standard flow.
+ * Returns loaded context when reader row exists; otherwise returns empty defaults.
+ *
+ * Silent fallback: no reader row is NOT an error — it means the story is truly a
+ * fresh standard/onboarding playthrough.
+ */
+async function loadStandardNarrativeContext(
+  userId: string,
+  storyId: string,
+): Promise<ChoiceNarrativeContext> {
+  try {
+    const supabase = createAdminClient()
+    const { data, error } = await supabase
+      .from('reader_states')
+      .select('route_state, choice_history, locked_ending_key')
+      .eq('user_id', userId)
+      .eq('story_id', storyId)
+      .maybeSingle()
+    if (error || !data) return emptyChoiceNarrativeContext()
+    return choiceNarrativeContextFromReader({
+      route_state: (data as { route_state: unknown }).route_state,
+      choice_history: (data as { choice_history?: ChoiceHistoryEntry[] }).choice_history,
+      locked_ending_key: (data as { locked_ending_key?: string | null }).locked_ending_key,
+    })
+  } catch {
+    // DB down or table missing: fallback silently (Phase 5 removes this).
+    return emptyChoiceNarrativeContext()
+  }
 }
 
 /**
@@ -213,13 +284,21 @@ async function buildChoices(
   draft: ChapterDraftParsed,
   chapterNumber: number,
   providerContext: ProviderCallContext,
+  narrativeContextOverride?: ChoiceNarrativeContext,
 ): Promise<{
   choicePrompt: string
   choices: { id: string; label: string }[]
   outcomes: PublishOutcome[]
 }> {
+  // Resolve narrative context: override > DB reader state > empty defaults.
+  const narrativeContext: ChoiceNarrativeContext = narrativeContextOverride
+    ?? await loadStandardNarrativeContext(
+      providerContext.userId,
+      snapshot.storyId,
+    )
+
   // Phase 2: choice grounding uses final repaired draft only.
-  const brief = syntheticChapterBrief(snapshot.storyId, chapterNumber, draft)
+  const brief = syntheticChapterBrief(snapshot.storyId, chapterNumber, draft, narrativeContext)
   const { finalChapter, endingParagraphs } = groundedChoiceProseFromFinalDraft(draft)
   const deps = standardChoiceDeps()
   const input: BuildChoiceBranchInput = {
@@ -229,10 +308,10 @@ async function buildChoices(
     chapterBrief: brief,
     finalChapter,
     lastParagraphs: endingParagraphs,
-    routeState: normalizeRouteState({}),
-    choiceHistory: [],
-    previousChoice: null,
-    lockedEndingKey: null,
+    routeState: narrativeContext.routeState,
+    choiceHistory: narrativeContext.choiceHistory,
+    previousChoice: narrativeContext.previousChoice,
+    lockedEndingKey: narrativeContext.lockedEndingKey,
     providerContext,
   }
 

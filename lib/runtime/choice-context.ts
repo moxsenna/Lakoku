@@ -1,7 +1,7 @@
 import 'server-only'
 import type { ChapterDraftParsed, ChoiceInput } from '@lakoku/ai-gateway'
 import type { ChoiceHistoryEntry, ChapterBrief } from '@/lib/story-engine/chapter-brief'
-import type { RouteState } from '@/lib/story-engine/route-state'
+import { normalizeRouteState, type RouteState } from '@/lib/story-engine/route-state'
 
 /** 3–5 ending paragraphs from final repaired prose only. */
 export type EndingParagraphs = ChoiceInput['lastParagraphs']
@@ -55,8 +55,44 @@ export type ChoiceNarrativeContext = {
   choiceHistory: ChoiceHistoryEntry[]
   previousChoice: ChoiceHistoryEntry | null
   lockedEndingKey: string | null
-  chapterBrief: ChapterBrief
-  activeCharacters: Array<{ id: string; name: string }>
-  activeThreads: Array<{ id: string; summary: string }>
-  forbiddenRevelations: string[]
+}
+
+/**
+ * Single source of truth for empty/default choice narrative context.
+ * All default fallbacks MUST use this factory; never scatter hard-coded zeros.
+ */
+export function emptyChoiceNarrativeContext(): ChoiceNarrativeContext {
+  return {
+    routeState: normalizeRouteState({}),
+    choiceHistory: [],
+    previousChoice: null,
+    lockedEndingKey: null,
+  }
+}
+
+/**
+ * Build a ChoiceNarrativeContext from a reader_states DB row shape.
+ * The caller is responsible for validation (normalizeRouteState, schema check).
+ */
+export function choiceNarrativeContextFromReader(reader: {
+  route_state: unknown
+  choice_history?: ChoiceHistoryEntry[]
+  locked_ending_key?: string | null
+  triggerChoiceId?: string
+}): ChoiceNarrativeContext {
+  const history = (Array.isArray(reader.choice_history) ? reader.choice_history : []) as ChoiceHistoryEntry[]
+  let previousChoice: ChoiceHistoryEntry | null = null
+  if (reader.triggerChoiceId) {
+    const match = [...history].reverse().find((entry) => entry.choiceId === reader.triggerChoiceId)
+    if (match) previousChoice = match
+  }
+  if (!previousChoice && history.length > 0) {
+    previousChoice = history[history.length - 1] ?? null
+  }
+  return {
+    routeState: normalizeRouteState(reader.route_state),
+    choiceHistory: history,
+    previousChoice,
+    lockedEndingKey: reader.locked_ending_key ?? null,
+  }
 }

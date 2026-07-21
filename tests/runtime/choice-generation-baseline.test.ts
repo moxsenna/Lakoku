@@ -30,10 +30,18 @@ const mocks = vi.hoisted(() => ({
   selectProvider: vi.fn(),
   generateChoiceBranch: vi.fn(),
   mockConsoleLog: vi.fn(),
+  supabaseChain: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', () => ({
+  createAdminClient: () => ({
+    from: mocks.supabaseChain.mockReturnThis(),
+    select: mocks.supabaseChain.mockReturnThis(),
+    eq: mocks.supabaseChain.mockReturnThis(),
+    maybeSingle: mocks.supabaseChain.mockResolvedValue(null),
+  }),
+}))
 vi.mock('@lakoku/narrative-core', async () => {
   const actual = await import('@/lib/narrative/index')
   return actual
@@ -525,7 +533,7 @@ describe('Phase 0 — Desired behavior (TDD: it.fails)', () => {
   })
 
   describe('buildChoices — route state pass-through', () => {
-    it.fails(
+    it(
       'passes non-default routeState/choiceHistory when reader context exists',
       async () => {
         mocks.selectProvider.mockResolvedValue({
@@ -538,12 +546,27 @@ describe('Phase 0 — Desired behavior (TDD: it.fails)', () => {
         const { __testBuildChoices: buildChoices } = await import(
           '@/lib/runtime/story-generation'
         )
+        const { normalizeRouteState } = await import('@/lib/story-engine/route-state')
         const snapshot = (await import('@/fixtures/narrative/fixture-50')).buildFixtureSnapshot()
 
-        // DESIRED: when real reader state is available (later via signature/context),
-        // generateChoiceBranch must receive non-empty routeState / history / lock.
-        // Current hard-code: normalizeRouteState({}), [], null — this assertion fails.
-        await buildChoices(snapshot, mockDraft(12), 12, providerContext())
+        // Phase 3: caller passes narrativeContextOverride with real reader data.
+        const narrativeContext = {
+          routeState: normalizeRouteState({ truth: 5, risk: 2 }),
+          choiceHistory: [
+            {
+              chapterNumber: 3,
+              choiceId: 'open-chest',
+              label: 'Buka peti harta',
+              consequence: ['Kau menemukan surat wasiat.'],
+              effectSummary: { truth: 1, risk: 0, secrecy: 0, empathy: 0, flagsSet: ['found-chest'] },
+              createdAt: '2026-01-01T00:00:00.000Z',
+            } as Record<string, unknown>,
+          ] as unknown as typeof import('@/lib/story-engine/chapter-brief').ChoiceHistoryEntry[],
+          previousChoice: null as typeof import('@/lib/story-engine/chapter-brief').ChoiceHistoryEntry | null,
+          lockedEndingKey: 'secret-ending-a',
+        }
+
+        await buildChoices(snapshot, mockDraft(12), 12, providerContext(), narrativeContext)
 
         expect(mocks.generateChoiceBranch).toHaveBeenCalled()
         const choiceInput = mocks.generateChoiceBranch.mock.calls[0][1] as Record<
@@ -554,7 +577,6 @@ describe('Phase 0 — Desired behavior (TDD: it.fails)', () => {
         const history = choiceInput.choiceHistory as unknown[]
 
         // At least one signal that real reader context was threaded through.
-        // (After Phase 3: non-zero deltas or non-empty history or locked ending.)
         const hasRealContext =
           (rs.truth ?? 0) !== 0 ||
           (rs.risk ?? 0) !== 0 ||

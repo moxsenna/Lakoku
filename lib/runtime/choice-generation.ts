@@ -13,16 +13,21 @@ import type { ChapterBrief, ChoiceHistoryEntry } from '@/lib/story-engine/chapte
 import type { RouteState } from '@/lib/story-engine/route-state'
 import {
   groundedChoiceProseFromFinalDraft,
+  emptyChoiceNarrativeContext,
+  choiceNarrativeContextFromReader,
   type EndingParagraphs,
   type FinalChapterProse,
+  type ChoiceNarrativeContext,
 } from '@/lib/runtime/choice-context'
 
 export {
   buildEndingParagraphs,
   groundedChoiceProseFromFinalDraft,
+  emptyChoiceNarrativeContext,
+  choiceNarrativeContextFromReader,
   toFinalChapterProse,
 } from '@/lib/runtime/choice-context'
-export type { EndingParagraphs, FinalChapterProse } from '@/lib/runtime/choice-context'
+export type { EndingParagraphs, FinalChapterProse, ChoiceNarrativeContext } from '@/lib/runtime/choice-context'
 
 // ---- Types ----
 

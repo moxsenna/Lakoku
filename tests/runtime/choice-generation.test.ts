@@ -451,6 +451,129 @@ describe('Phase 1 — choice-generation module unit tests', () => {
     })
   })
 
+  describe('Phase 3 — unified standard/personalized narrative context', () => {
+    it('emptyChoiceNarrativeContext is the single default factory', async () => {
+      const {
+        emptyChoiceNarrativeContext,
+      } = await import('@/lib/runtime/choice-context')
+      const a = emptyChoiceNarrativeContext()
+      const b = emptyChoiceNarrativeContext()
+      expect(a).toEqual(b)
+      expect(a.routeState.truth).toBe(0)
+      expect(a.choiceHistory).toEqual([])
+      expect(a.previousChoice).toBeNull()
+      expect(a.lockedEndingKey).toBeNull()
+    })
+
+    it('choiceNarrativeContextFromReader forwards route state, history, previous, lock', async () => {
+      const { choiceNarrativeContextFromReader } = await import(
+        '@/lib/runtime/choice-context'
+      )
+      const ctx = choiceNarrativeContextFromReader({
+        route_state: { truth: 4, risk: 1, secrecy: 0, empathy: 2 },
+        choice_history: [
+          {
+            chapterNumber: 2,
+            choiceId: 'open-door',
+            label: 'Buka pintu',
+            consequence: ['Pintu berderit.'],
+            effectSummary: {
+              truth: 1,
+              risk: 0,
+              secrecy: 0,
+              empathy: 0,
+              flagsSet: [],
+            },
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+          {
+            chapterNumber: 3,
+            choiceId: 'hide',
+            label: 'Bersembunyi',
+            consequence: ['Nafas tertahan.'],
+            effectSummary: {
+              truth: 0,
+              risk: 1,
+              secrecy: 1,
+              empathy: 0,
+              flagsSet: [],
+            },
+            createdAt: '2026-01-02T00:00:00.000Z',
+          },
+        ],
+        locked_ending_key: 'ending-truth',
+        triggerChoiceId: 'open-door',
+      })
+      expect(ctx.routeState.truth).toBe(4)
+      expect(ctx.routeState.risk).toBe(1)
+      expect(ctx.choiceHistory).toHaveLength(2)
+      expect(ctx.previousChoice?.choiceId).toBe('open-door')
+      expect(ctx.lockedEndingKey).toBe('ending-truth')
+    })
+
+    it('buildChoiceBranch receives non-empty standard narrative context when provided', async () => {
+      const { buildChoiceBranch } = await import('@/lib/runtime/choice-generation')
+      const generateChoiceBranch = vi.fn(async () => mockBranch(12))
+      const deps: ChoiceBuildDeps = {
+        selectProvider: async () => ({ name: 'test' }) as never,
+        generateChoiceBranch,
+      }
+      const snapshot = (await import('@/fixtures/narrative/fixture-50')).buildFixtureSnapshot()
+      const brief = mockBrief(snapshot, 12)
+      const routeState = normalizeRouteState({ truth: 7, risk: 3, secrecy: 1 })
+
+      await buildChoiceBranch(deps, {
+        snapshot,
+        draft: mockDraft(12),
+        chapterNumber: 12,
+        chapterBrief: brief,
+        routeState,
+        choiceHistory: [
+          {
+            chapterNumber: 5,
+            choiceId: 'inspect',
+            label: 'Periksa jejak',
+            consequence: ['Jejak basah.'],
+            effectSummary: {
+              truth: 1,
+              risk: 0,
+              secrecy: 0,
+              empathy: 0,
+              flagsSet: [],
+            },
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+        previousChoice: {
+          chapterNumber: 5,
+          choiceId: 'inspect',
+          label: 'Periksa jejak',
+          consequence: ['Jejak basah.'],
+          effectSummary: {
+            truth: 1,
+            risk: 0,
+            secrecy: 0,
+            empathy: 0,
+            flagsSet: [],
+          },
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+        lockedEndingKey: 'ending-a',
+        providerContext: {},
+      })
+
+      const sent = generateChoiceBranch.mock.calls[0][1] as {
+        routeState: { truth: number; risk: number }
+        choiceHistory: unknown[]
+        lockedEndingKey: string | null
+      }
+      expect(sent.routeState.truth).toBe(7)
+      expect(sent.routeState.risk).toBe(3)
+      expect(sent.choiceHistory).toHaveLength(1)
+      expect(sent.lockedEndingKey).toBe('ending-a')
+    })
+  })
+
   describe('Phase 2 — final repaired prose as source of truth', () => {
     it('buildEndingParagraphs uses only final draft paragraphs (last 3–5)', async () => {
       const { buildEndingParagraphs } = await import('@/lib/runtime/choice-context')

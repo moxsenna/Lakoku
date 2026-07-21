@@ -62,7 +62,10 @@ import {
   type BuildChoiceBranchInput,
   type ChoiceBuildDeps,
 } from './choice-generation'
-import { groundedChoiceProseFromFinalDraft } from './choice-context'
+import {
+  groundedChoiceProseFromFinalDraft,
+  choiceNarrativeContextFromReader,
+} from './choice-context'
 
 /**
  * Personalized chapter runtime (Task 17).
@@ -536,9 +539,17 @@ export async function generateNextPersonalizedChapter(
       throw new Error('Reader state ownership mismatch.')
     }
 
-    const routeState: RouteState = reader.route_state
-    const choiceHistory = reader.choice_history
-    const previousChoice = previousChoiceFrom(choiceHistory, triggerChoiceId)
+    // Phase 3: same ChoiceNarrativeContext semantics as standard flow.
+    const narrativeContext = choiceNarrativeContextFromReader({
+      route_state: reader.route_state,
+      choice_history: reader.choice_history,
+      locked_ending_key: reader.locked_ending_key,
+      triggerChoiceId,
+    })
+    const routeState: RouteState = narrativeContext.routeState
+    const choiceHistory = narrativeContext.choiceHistory
+    const previousChoice =
+      narrativeContext.previousChoice ?? previousChoiceFrom(choiceHistory, triggerChoiceId)
 
     const brief = d.buildChapterBrief({
       storyContract: contract,
@@ -546,7 +557,7 @@ export async function generateNextPersonalizedChapter(
       readerState: {
         routeState,
         choiceHistory,
-        lockedEndingKey: reader.locked_ending_key,
+        lockedEndingKey: narrativeContext.lockedEndingKey,
       },
       chapterNumber,
       previousChoice,

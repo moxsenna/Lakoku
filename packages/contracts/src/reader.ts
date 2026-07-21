@@ -121,12 +121,26 @@ export const ChoiceOutcomeSchema = z.object({
 })
 export type ChoiceOutcome = z.infer<typeof ChoiceOutcomeSchema>
 
-export const ChapterGenerationStatusSchema = z.enum(['ready', 'generating', 'failed'])
+export const ChapterGenerationStatusSchema = z.enum([
+  'ready',
+  'queued',
+  'generating',
+  'failed',
+])
 export type ChapterGenerationStatus = z.infer<typeof ChapterGenerationStatusSchema>
+
+/** Soft reader-facing queue/progress hints (optional; never a hard SLA). */
+export const ChapterStatusQueueSchema = z.object({
+  position: z.number().int().positive().nullable(),
+  estimatedWaitSeconds: z.number().int().nonnegative(),
+  phase: z.enum(['queued', 'active']),
+}).strict()
+export type ChapterStatusQueue = z.infer<typeof ChapterStatusQueueSchema>
 
 export const ChapterStatusResponseSchema = z.object({
   status: ChapterGenerationStatusSchema,
   chapterNumber: z.number().int().positive(),
+  queue: ChapterStatusQueueSchema.optional(),
 }).strict()
 export type ChapterStatusResponse = z.infer<typeof ChapterStatusResponseSchema>
 

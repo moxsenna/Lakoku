@@ -31,15 +31,16 @@ export async function GET(
       return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 401 })
     }
 
-    const status = await getChapterStatusForUser({
+    const result = await getChapterStatusForUser({
       userId: user.id,
       storyId: id,
       chapterNumber,
     })
 
     return NextResponse.json({
-      status,
-      chapterNumber,
+      status: result.status,
+      chapterNumber: result.chapterNumber,
+      ...(result.queue ? { queue: result.queue } : {}),
     })
   } catch (error) {
     if (error instanceof ChapterStatusError) {

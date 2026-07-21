@@ -39,9 +39,15 @@ beforeEach(() => {
 })
 
 describe('reader chapter status contracts', () => {
-  it('accepts only reader-safe chapter generation statuses', () => {
-    expect(ChapterGenerationStatusSchema.options).toEqual(['ready', 'generating', 'failed'])
-    expect(ChapterGenerationStatusSchema.safeParse('queued').success).toBe(false)
+  it('accepts reader-safe chapter generation statuses including queue', () => {
+    expect(ChapterGenerationStatusSchema.options).toEqual([
+      'ready',
+      'queued',
+      'generating',
+      'failed',
+    ])
+    expect(ChapterGenerationStatusSchema.safeParse('queued').success).toBe(true)
+    expect(ChapterGenerationStatusSchema.safeParse('lease_held').success).toBe(false)
   })
 
   it('requires exact public status fields', () => {
@@ -49,6 +55,24 @@ describe('reader chapter status contracts', () => {
       status: 'ready',
       chapterNumber: 2,
     })).toEqual({ status: 'ready', chapterNumber: 2 })
+
+    expect(ChapterStatusResponseSchema.parse({
+      status: 'queued',
+      chapterNumber: 2,
+      queue: {
+        position: 3,
+        estimatedWaitSeconds: 120,
+        phase: 'queued',
+      },
+    })).toEqual({
+      status: 'queued',
+      chapterNumber: 2,
+      queue: {
+        position: 3,
+        estimatedWaitSeconds: 120,
+        phase: 'queued',
+      },
+    })
 
     expect(ChapterStatusResponseSchema.safeParse({
       status: 'generating',

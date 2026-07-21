@@ -223,7 +223,7 @@ beforeEach(() => {
   routeMocks.queryChoiceOutcome.mockResolvedValue(publicShapes.choice.outcome)
   routeMocks.queryChapter.mockResolvedValue(publicShapes.chapter.chapter)
   routeMocks.applyChoiceToUserState.mockResolvedValue(undefined)
-  routeMocks.getChapterStatusForUser.mockResolvedValue('ready')
+  routeMocks.getChapterStatusForUser.mockResolvedValue({ status: 'ready', chapterNumber: 3 })
   routeMocks.createPersonalizedStory.mockResolvedValue({
     ...publicShapes.personalizedCreate,
     replayed: false,

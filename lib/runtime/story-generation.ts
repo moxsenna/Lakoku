@@ -379,7 +379,11 @@ export async function generateNextChapterReal(
   input: StandardGenerateInput,
 ): Promise<RealGenerateResult> {
   return withGenerationSlot(
-    input.userId,
+    {
+      userId: input.userId,
+      storyId: input.storyId,
+      chapterNumber: input.chapterNumber,
+    },
     async ({ waitMs }) => {
       if (waitMs > 0) {
         console.log('GENERATION_CAPACITY_WAIT_DONE', {

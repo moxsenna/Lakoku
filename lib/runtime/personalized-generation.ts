@@ -56,6 +56,7 @@ import {
   type PublishResult,
 } from './lifecycle'
 import type { RealGenerateResult } from './story-generation'
+import { withGenerationSlot } from './generation-concurrency'
 import { createSynchronousProviderContext } from './generation-provider-context'
 import { ProviderCallContextSchema } from '@/lib/observability/generation-provider-call.contract'
 import {
@@ -455,6 +456,38 @@ function defaultDeps(): PersonalizedGenerationDeps {
  * Never calls generateNextChapterReal.
  */
 export async function generateNextPersonalizedChapter(
+  input: PersonalizedGenerateInput,
+  deps?: PersonalizedGenerationDeps,
+): Promise<RealGenerateResult> {
+  return withGenerationSlot(
+    input.userId,
+    async ({ waitMs }) => {
+      if (waitMs > 0) {
+        console.log('GENERATION_CAPACITY_WAIT_DONE', {
+          storyId: input.storyId,
+          chapterNumber: input.chapterNumber,
+          correlationId: input.correlationId,
+          waitMs,
+          path: 'personalized',
+        })
+      }
+      return generateNextPersonalizedChapterInner(input, deps)
+    },
+    (reason, meta) => {
+      console.log('GENERATION_CAPACITY_REJECTED', {
+        storyId: input.storyId,
+        chapterNumber: input.chapterNumber,
+        correlationId: input.correlationId,
+        reason,
+        path: 'personalized',
+        ...meta,
+      })
+      return { ok: false, reason, detail: meta }
+    },
+  )
+}
+
+async function generateNextPersonalizedChapterInner(
   input: PersonalizedGenerateInput,
   deps?: PersonalizedGenerationDeps,
 ): Promise<RealGenerateResult> {

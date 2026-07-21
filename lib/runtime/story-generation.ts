@@ -7,6 +7,7 @@ import {
   type PublishOutcomeV2,
   type PublishResult,
 } from './lifecycle'
+import { withGenerationSlot } from './generation-concurrency'
 import {
   compileContext,
   buildBlueprints,
@@ -79,6 +80,8 @@ export type RealGenerateResult =
         | 'CANON_MISSING'
         | 'FAILED_REVIEW_REQUIRED'
         | 'CHOICE_GENERATION_FAILED'
+        | 'CAPACITY_BUSY'
+        | 'CAPACITY_TIMEOUT'
       detail?: unknown
     }
 
@@ -373,6 +376,37 @@ export interface StandardGenerateInput {
 }
 
 export async function generateNextChapterReal(
+  input: StandardGenerateInput,
+): Promise<RealGenerateResult> {
+  return withGenerationSlot(
+    input.userId,
+    async ({ waitMs }) => {
+      if (waitMs > 0) {
+        console.log('GENERATION_CAPACITY_WAIT_DONE', {
+          storyId: input.storyId,
+          chapterNumber: input.chapterNumber,
+          correlationId: input.correlationId,
+          waitMs,
+          path: 'standard',
+        })
+      }
+      return generateNextChapterRealInner(input)
+    },
+    (reason, meta) => {
+      console.log('GENERATION_CAPACITY_REJECTED', {
+        storyId: input.storyId,
+        chapterNumber: input.chapterNumber,
+        correlationId: input.correlationId,
+        reason,
+        path: 'standard',
+        ...meta,
+      })
+      return { ok: false, reason, detail: meta }
+    },
+  )
+}
+
+async function generateNextChapterRealInner(
   input: StandardGenerateInput,
 ): Promise<RealGenerateResult> {
   const { storyId, userId, chapterNumber, correlationId } = input

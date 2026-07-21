@@ -3,6 +3,8 @@
  * No React / DOM — unit-testable without jsdom.
  */
 
+import { formatEstimatedWait } from '@/lib/runtime/generation-latency-estimate'
+
 export type ReaderChapterUiState = 'PREPARING' | 'UNAVAILABLE'
 
 export type ChapterPollStatus = 'ready' | 'queued' | 'generating' | 'failed'
@@ -41,14 +43,7 @@ export function decideAfterNetworkError(
   return { action: 'retry_later', nextDelayMs: pollMs }
 }
 
-/** Format soft wait estimate for Indonesian casual UI. */
-export function formatEstimatedWait(seconds: number): string {
-  const s = Math.max(0, Math.round(seconds))
-  if (s < 60) return `±${Math.max(15, s)} detik`
-  const mins = Math.max(1, Math.round(s / 60))
-  if (mins === 1) return '±1 menit'
-  return `±${mins} menit`
-}
+export { formatEstimatedWait }
 
 export function readerCopy(
   state: ReaderChapterUiState,
@@ -60,38 +55,36 @@ export function readerCopy(
       const pos = queue.position
       const wait = formatEstimatedWait(queue.estimatedWaitSeconds)
       return {
-        title: 'Bab ini sedang mengantri.',
+        title: 'Lagi antri dulu.',
         description:
-          `Banyak pembaca menulis bersamaan. Bab ${chapterNumber} menunggu giliran ` +
-          'biar kualitasnya tetap jaga. Halaman ini akan terbuka sendiri begitu babnya siap.',
-        primaryCta: 'Periksa sekarang',
+          `Lagi ramai yang nulis bab bareng. Bab ${chapterNumber} nunggu giliran ` +
+          'biar servernya nggak numpuk. Nanti halaman ini kebuka sendiri kalau babnya siap.',
+        primaryCta: 'Cek lagi',
         queueLine:
           pos != null
-            ? `Antrian #${pos} · estimasi ${wait}`
-            : `Sedang mengantri · estimasi ${wait}`,
+            ? `Antrian ke-${pos} · perkiraan ${wait}`
+            : `Masih antri · perkiraan ${wait}`,
       }
     }
-    const waitLine =
+
+    const wait =
       queue?.estimatedWaitSeconds != null
-        ? ` Estimasi ${formatEstimatedWait(queue.estimatedWaitSeconds)}.`
-        : ''
+        ? formatEstimatedWait(queue.estimatedWaitSeconds)
+        : null
     return {
-      title: 'Bab ini sedang ditulis.',
+      title: 'Babnya lagi ditulis.',
       description:
-        `Bab ${chapterNumber} sedang disusun dengan cermat agar tetap setia pada kisahmu. ` +
-        `Halaman ini akan terbuka sendiri begitu babnya siap.${waitLine}`,
-      primaryCta: 'Periksa sekarang',
-      queueLine:
-        queue?.estimatedWaitSeconds != null
-          ? `Sedang ditulis · estimasi ${formatEstimatedWait(queue.estimatedWaitSeconds)}`
-          : null,
+        `Bab ${chapterNumber} lagi disusun biar nyambung sama cerita kamu. ` +
+        'Santai aja — halaman ini kebuka sendiri kalau sudah siap.',
+      primaryCta: 'Cek lagi',
+      queueLine: wait ? `Lagi ditulis · ${wait}` : null,
     }
   }
   return {
     title: 'Bab ini belum berhasil disiapkan.',
     description:
       `Bab ${chapterNumber} belum bisa ditampilkan sekarang. ` +
-      'Kamu bisa mencoba menulis ulang tanpa mengubah bagian cerita yang sudah tersimpan.',
+      'Kamu bisa coba tulis ulang tanpa mengubah bagian cerita yang sudah tersimpan.',
     primaryCta: 'Coba tulis ulang',
     queueLine: null,
   }
@@ -101,6 +94,6 @@ export function noteForStartStatus(
   status: 'STARTED' | 'ALREADY_RUNNING' | 'ALREADY_READY' | undefined,
 ): string {
   if (status === 'ALREADY_READY') return 'Bab sudah siap. Membuka halaman…'
-  if (status === 'ALREADY_RUNNING') return 'Bab ini masih sedang disiapkan.'
+  if (status === 'ALREADY_RUNNING') return 'Bab ini masih disiapkan / mengantri.'
   return 'Penulisan dimulai. Halaman akan terbuka bila bab siap.'
 }

@@ -22,7 +22,9 @@ export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicCo
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [emailLoading, setEmailLoading] = useState(false)
+  const [googleLoading, setGoogleLoading] = useState(false)
+  const busy = emailLoading || googleLoading
   const mounted = useSyncExternalStore(
     subscribeToMounted,
     getMountedSnapshot,
@@ -32,8 +34,8 @@ export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicCo
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (loading) return
-    setLoading(true)
+    if (busy) return
+    setEmailLoading(true)
     setError(null)
 
     try {
@@ -77,18 +79,18 @@ export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicCo
       }
     } finally {
       // Jika hard nav jalan, unmount mengabaikan ini. Jika gagal, tombol bisa dipakai lagi.
-      setLoading(false)
+      setEmailLoading(false)
     }
   }
 
   async function handleGoogle() {
-    if (loading) return
-    setLoading(true)
+    if (busy) return
+    setGoogleLoading(true)
     setError(null)
     try {
       if (!supabaseConfig?.url || !supabaseConfig?.anonKey) {
         setError('Login Google belum siap. Konfigurasi Supabase belum terbaca di browser.')
-        setLoading(false)
+        setGoogleLoading(false)
         return
       }
       const supabase = createClient(supabaseConfig)
@@ -101,12 +103,12 @@ export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicCo
       })
       if (error) {
         setError('Login Google gagal. Coba lagi atau masuk dengan email.')
-        setLoading(false)
+        setGoogleLoading(false)
       }
-      // On success browser navigates away to Google; keep loading true.
+      // On success browser navigates away to Google; keep googleLoading true.
     } catch {
       setError('Login Google belum siap. Konfigurasi Supabase belum terbaca di browser.')
-      setLoading(false)
+      setGoogleLoading(false)
     }
   }
 
@@ -162,10 +164,10 @@ export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicCo
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={busy}
             className="mt-2 flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
           >
-            {loading ? 'Membuka pintu...' : resumeOnboarding ? 'Simpan Ceritaku' : 'Masuk'}
+            {emailLoading ? 'Membuka pintu...' : resumeOnboarding ? 'Simpan Ceritaku' : 'Masuk'}
           </button>
         </form>
 
@@ -176,7 +178,11 @@ export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicCo
         </div>
 
         <div className="mt-6">
-          <GoogleSignInButton loading={loading} onClick={() => void handleGoogle()} />
+          <GoogleSignInButton
+            loading={googleLoading}
+            disabled={busy}
+            onClick={() => void handleGoogle()}
+          />
         </div>
 
         <p className="mt-6 text-center text-sm text-muted-foreground">

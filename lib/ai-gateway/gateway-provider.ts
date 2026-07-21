@@ -88,9 +88,8 @@ type ModelCandidate = {
 
 type UnindexedModelCandidate = Omit<ModelCandidate, 'fallbackIndex'>
 
-// Default OpenRouter: primary gratis berkualitas naratif, lalu fallback murah.
+// Default OpenRouter: paid model only when OPENROUTER_MODELS unset.
 // Setiap model menjadi request eksplisit agar identitas fallback bisa diamati.
-const OPENROUTER_FREE_DEFAULT = 'nousresearch/hermes-3-llama-3.1-405b:free'
 const OPENROUTER_PAID_DEFAULT = 'deepseek/deepseek-v3.2'
 
 /**
@@ -148,7 +147,7 @@ function openRouterCandidates(): UnindexedModelCandidate[] {
 
   const modelIds = process.env.OPENROUTER_MODELS?.trim()
     ? process.env.OPENROUTER_MODELS.split(',').map((value) => value.trim()).filter(Boolean)
-    : [OPENROUTER_FREE_DEFAULT, OPENROUTER_PAID_DEFAULT]
+    : [OPENROUTER_PAID_DEFAULT]
   const openrouter = createOpenAICompatible({
     name: 'openrouter',
     baseURL: 'https://openrouter.ai/api/v1',

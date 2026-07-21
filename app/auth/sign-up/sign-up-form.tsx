@@ -24,12 +24,14 @@ export function SignUpForm({
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [emailLoading, setEmailLoading] = useState(false)
+  const [googleLoading, setGoogleLoading] = useState(false)
+  const busy = emailLoading || googleLoading
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (loading) return
-    setLoading(true)
+    if (busy) return
+    setEmailLoading(true)
     setError(null)
 
     try {
@@ -48,24 +50,24 @@ export function SignUpForm({
             ? 'Email ini sudah terdaftar. Coba masuk.'
             : 'Pendaftaran gagal. Periksa email dan kata sandi (min. 6 karakter).',
         )
-        setLoading(false)
+        setEmailLoading(false)
         return
       }
       router.push('/auth/sign-up-success')
     } catch {
       setError('Pendaftaran belum siap. Konfigurasi Supabase belum terbaca di browser.')
-      setLoading(false)
+      setEmailLoading(false)
     }
   }
 
   async function handleGoogle() {
-    if (loading) return
-    setLoading(true)
+    if (busy) return
+    setGoogleLoading(true)
     setError(null)
     try {
       if (!supabaseConfig?.url || !supabaseConfig?.anonKey) {
         setError('Login Google belum siap. Konfigurasi Supabase belum terbaca di browser.')
-        setLoading(false)
+        setGoogleLoading(false)
         return
       }
       const supabase = createClient(supabaseConfig)
@@ -78,11 +80,11 @@ export function SignUpForm({
       })
       if (error) {
         setError('Login Google gagal. Coba lagi atau masuk dengan email.')
-        setLoading(false)
+        setGoogleLoading(false)
       }
     } catch {
       setError('Login Google belum siap. Konfigurasi Supabase belum terbaca di browser.')
-      setLoading(false)
+      setGoogleLoading(false)
     }
   }
 
@@ -150,10 +152,10 @@ export function SignUpForm({
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={busy}
             className="mt-2 flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
           >
-            {loading ? 'Menyiapkan halamanmu...' : 'Daftar'}
+            {emailLoading ? 'Menyiapkan halamanmu...' : 'Daftar'}
           </button>
         </form>
 
@@ -164,7 +166,11 @@ export function SignUpForm({
         </div>
 
         <div className="mt-6">
-          <GoogleSignInButton loading={loading} onClick={() => void handleGoogle()} />
+          <GoogleSignInButton
+            loading={googleLoading}
+            disabled={busy}
+            onClick={() => void handleGoogle()}
+          />
         </div>
 
         <p className="mt-6 text-center text-sm text-muted-foreground">

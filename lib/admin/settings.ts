@@ -1,6 +1,10 @@
 import 'server-only'
 import { createAdminClient } from '@lakoku/db'
 import { requireAdminUser } from '@/lib/admin/auth'
+import {
+  normalizeFallbackModels,
+  type AiProvider,
+} from '@/lib/ops/ai-model-routes'
 import type {
   UpdateCreditProductInput,
   UpdateFeatureCreditCostInput,
@@ -19,10 +23,19 @@ export interface AdminCreditProduct {
   active: boolean
 }
 
+export interface AdminFallbackModel {
+  provider: string
+  modelId: string
+}
+
 export interface AdminGenerationPolicy {
   targetWordsMin: number
   targetWordsMax: number
   targetScenes: number
+  leaseTtlSeconds: number
+  maxConcurrentGenerations: number
+  maxConcurrentGenerationsPerUser: number
+  generationMaxQueue: number
   updatedAt: string | null
 }
 
@@ -30,7 +43,7 @@ export interface AdminAiModelRoute {
   useCase: string
   provider: string
   modelId: string
-  fallbackModels: string[]
+  fallbackModels: AdminFallbackModel[]
   temperature: number | null
   maxOutputTokens: number | null
   isActive: boolean
@@ -70,7 +83,9 @@ export async function getAdminGenerationPolicy(): Promise<AdminGenerationPolicy 
   const db = createAdminClient()
   const { data } = await db
     .from('generation_policy')
-    .select('target_words_min,target_words_max,target_scenes,updated_at')
+    .select(
+      'target_words_min,target_words_max,target_scenes,lease_ttl_seconds,max_concurrent_generations,max_concurrent_generations_per_user,generation_max_queue,updated_at',
+    )
     .eq('id', 1)
     .maybeSingle()
   if (!data) return null
@@ -79,6 +94,15 @@ export async function getAdminGenerationPolicy(): Promise<AdminGenerationPolicy 
     targetWordsMin: d.target_words_min as number,
     targetWordsMax: d.target_words_max as number,
     targetScenes: d.target_scenes as number,
+    leaseTtlSeconds: d.lease_ttl_seconds != null ? Number(d.lease_ttl_seconds) : 300,
+    maxConcurrentGenerations:
+      d.max_concurrent_generations != null ? Number(d.max_concurrent_generations) : 10,
+    maxConcurrentGenerationsPerUser:
+      d.max_concurrent_generations_per_user != null
+        ? Number(d.max_concurrent_generations_per_user)
+        : 1,
+    generationMaxQueue:
+      d.generation_max_queue != null ? Number(d.generation_max_queue) : 40,
     updatedAt: (d.updated_at as string) ?? null,
   }
 }
@@ -90,17 +114,20 @@ export async function listAdminAiModelRoutes(): Promise<AdminAiModelRoute[]> {
     .select('*')
     .order('use_case', { ascending: true })
   if (!data) return []
-  return (data as Record<string, unknown>[]).map((r) => ({
-    useCase: r.use_case as string,
-    provider: r.provider as string,
-    modelId: r.model_id as string,
-    fallbackModels: (r.fallback_models as string[]) ?? [],
-    temperature: (r.temperature as number) ?? null,
-    maxOutputTokens: (r.max_output_tokens as number) ?? null,
-    isActive: (r.is_active as boolean) ?? false,
-    routeVersion: r.route_version as string,
-    notes: (r.notes as string) ?? null,
-  }))
+  return (data as Record<string, unknown>[]).map((r) => {
+    const provider = r.provider as string
+    return {
+      useCase: r.use_case as string,
+      provider,
+      modelId: r.model_id as string,
+      fallbackModels: normalizeFallbackModels(r.fallback_models, provider as AiProvider),
+      temperature: (r.temperature as number) ?? null,
+      maxOutputTokens: (r.max_output_tokens as number) ?? null,
+      isActive: (r.is_active as boolean) ?? false,
+      routeVersion: r.route_version as string,
+      notes: (r.notes as string) ?? null,
+    }
+  })
 }
 
 export async function listAdminFeatureCreditCosts(): Promise<AdminFeatureCreditCost[]> {
@@ -347,6 +374,10 @@ export async function updateGenerationPolicy(
     target_words_min: oldRow.target_words_min,
     target_words_max: oldRow.target_words_max,
     target_scenes: oldRow.target_scenes,
+    lease_ttl_seconds: oldRow.lease_ttl_seconds,
+    max_concurrent_generations: oldRow.max_concurrent_generations,
+    max_concurrent_generations_per_user: oldRow.max_concurrent_generations_per_user,
+    generation_max_queue: oldRow.generation_max_queue,
   }
 
   const { error } = await db
@@ -355,6 +386,10 @@ export async function updateGenerationPolicy(
       target_words_min: input.targetWordsMin,
       target_words_max: input.targetWordsMax,
       target_scenes: input.targetScenes,
+      lease_ttl_seconds: input.leaseTtlSeconds,
+      max_concurrent_generations: input.maxConcurrentGenerations,
+      max_concurrent_generations_per_user: input.maxConcurrentGenerationsPerUser,
+      generation_max_queue: input.generationMaxQueue,
       updated_at: new Date().toISOString(),
     })
     .eq('id', 1)
@@ -371,6 +406,10 @@ export async function updateGenerationPolicy(
       target_words_min: input.targetWordsMin,
       target_words_max: input.targetWordsMax,
       target_scenes: input.targetScenes,
+      lease_ttl_seconds: input.leaseTtlSeconds,
+      max_concurrent_generations: input.maxConcurrentGenerations,
+      max_concurrent_generations_per_user: input.maxConcurrentGenerationsPerUser,
+      generation_max_queue: input.generationMaxQueue,
     },
     reason: input.reason,
   })
@@ -379,6 +418,10 @@ export async function updateGenerationPolicy(
     targetWordsMin: input.targetWordsMin,
     targetWordsMax: input.targetWordsMax,
     targetScenes: input.targetScenes,
+    leaseTtlSeconds: input.leaseTtlSeconds,
+    maxConcurrentGenerations: input.maxConcurrentGenerations,
+    maxConcurrentGenerationsPerUser: input.maxConcurrentGenerationsPerUser,
+    generationMaxQueue: input.generationMaxQueue,
     updatedAt: new Date().toISOString(),
   }
 }
@@ -396,10 +439,18 @@ export async function updateAiModelRoute(
     .single()
   if (!oldRow) throw new Error('AI model route not found')
 
+  const structuredFallbacks = input.fallbackModels.map((f) => ({
+    provider: f.provider,
+    modelId: f.modelId,
+  }))
+
   const oldVal = {
     provider: oldRow.provider,
     model_id: oldRow.model_id,
-    fallback_models: oldRow.fallback_models,
+    fallback_models: normalizeFallbackModels(
+      oldRow.fallback_models,
+      oldRow.provider as AiProvider,
+    ),
     temperature: oldRow.temperature,
     max_output_tokens: oldRow.max_output_tokens,
     is_active: oldRow.is_active,
@@ -412,7 +463,7 @@ export async function updateAiModelRoute(
     .update({
       provider: input.provider,
       model_id: input.modelId,
-      fallback_models: input.fallbackModels,
+      fallback_models: structuredFallbacks,
       temperature: input.temperature,
       max_output_tokens: input.maxOutputTokens,
       is_active: input.isActive,
@@ -433,7 +484,7 @@ export async function updateAiModelRoute(
     newValue: {
       provider: input.provider,
       model_id: input.modelId,
-      fallback_models: input.fallbackModels,
+      fallback_models: structuredFallbacks,
       temperature: input.temperature,
       max_output_tokens: input.maxOutputTokens,
       is_active: input.isActive,
@@ -447,7 +498,7 @@ export async function updateAiModelRoute(
     useCase: input.useCase,
     provider: input.provider,
     modelId: input.modelId,
-    fallbackModels: input.fallbackModels,
+    fallbackModels: structuredFallbacks,
     temperature: input.temperature,
     maxOutputTokens: input.maxOutputTokens,
     isActive: input.isActive,

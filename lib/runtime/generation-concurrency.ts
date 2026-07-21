@@ -15,9 +15,16 @@ import 'server-only'
  *   LAKOKU_MAX_CONCURRENT_GENERATIONS_PER_USER default 1
  *   LAKOKU_GENERATION_MAX_QUEUE               default 40
  *   LAKOKU_GENERATION_QUEUE_WAIT_MS           default 600000 (10m)
+ *   LAKOKU_GENERATION_AVG_SECONDS             default 90 (UX estimate only)
  */
 
 export type GenerationCapacityFailReason = 'CAPACITY_BUSY' | 'CAPACITY_TIMEOUT'
+
+export type GenerationJobKey = {
+  userId: string
+  storyId: string
+  chapterNumber: number
+}
 
 export type GenerationSlotAcquireResult =
   | { ok: true; waitMs: number; active: number; queued: number }
@@ -29,11 +36,31 @@ export type GenerationSlotAcquireResult =
       waitMs: number
     }
 
+export type GenerationProgressSnapshot = {
+  phase: 'queued' | 'active'
+  /** 1-based position in wait queue; null when already active */
+  queuePosition: number | null
+  /** Soft UX estimate in whole seconds; never a hard SLA */
+  estimatedWaitSeconds: number
+  active: number
+  queued: number
+  maxConcurrent: number
+}
+
 type Waiter = {
   userId: string
+  storyId: string
+  chapterNumber: number
   enqueuedAt: number
   resolve: (result: GenerationSlotAcquireResult) => void
   timer: ReturnType<typeof setTimeout> | null
+}
+
+type ActiveJob = {
+  userId: string
+  storyId: string
+  chapterNumber: number
+  startedAt: number
 }
 
 function envInt(name: string, fallback: number, min: number, max: number): number {
@@ -48,10 +75,18 @@ const MAX_CONCURRENT = envInt('LAKOKU_MAX_CONCURRENT_GENERATIONS', 10, 1, 64)
 const MAX_PER_USER = envInt('LAKOKU_MAX_CONCURRENT_GENERATIONS_PER_USER', 1, 1, 8)
 const MAX_QUEUE = envInt('LAKOKU_GENERATION_MAX_QUEUE', 40, 0, 500)
 const QUEUE_WAIT_MS = envInt('LAKOKU_GENERATION_QUEUE_WAIT_MS', 600_000, 5_000, 3_600_000)
+/** Soft estimate for reader UX only — not a measured SLA. */
+const AVG_CHAPTER_SECONDS = envInt('LAKOKU_GENERATION_AVG_SECONDS', 90, 20, 600)
 
 let active = 0
 const activeByUser = new Map<string, number>()
 const queue: Waiter[] = []
+/** storyId:chapterNumber → active job (writing after slot acquired) */
+const activeJobs = new Map<string, ActiveJob>()
+
+function jobKey(storyId: string, chapterNumber: number): string {
+  return `${storyId}:${chapterNumber}`
+}
 
 export function getGenerationConcurrencyConfig() {
   return {
@@ -59,6 +94,7 @@ export function getGenerationConcurrencyConfig() {
     maxPerUser: MAX_PER_USER,
     maxQueue: MAX_QUEUE,
     queueWaitMs: QUEUE_WAIT_MS,
+    avgChapterSeconds: AVG_CHAPTER_SECONDS,
   }
 }
 
@@ -103,6 +139,55 @@ function removeWaiter(waiter: Waiter): void {
   }
 }
 
+function estimateQueuedWaitSeconds(queuePosition1Based: number): number {
+  // Position 1 with full slots ≈ 1 wave; position 11 with 10 slots ≈ 2 waves.
+  const waves = Math.max(1, Math.ceil(queuePosition1Based / MAX_CONCURRENT))
+  return Math.max(15, waves * AVG_CHAPTER_SECONDS)
+}
+
+function estimateActiveWaitSeconds(startedAt: number): number {
+  const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+  const remaining = AVG_CHAPTER_SECONDS - elapsed
+  // Soft floor so UI never claims "0 detik" while still writing.
+  return Math.max(20, remaining > 0 ? remaining : 30)
+}
+
+/**
+ * Reader/status lookup: is this chapter currently queued or actively generating
+ * inside this process capacity gate? (Lease may not exist yet while queued.)
+ */
+export function getGenerationProgress(
+  storyId: string,
+  chapterNumber: number,
+): GenerationProgressSnapshot | null {
+  const key = jobKey(storyId, chapterNumber)
+  const activeJob = activeJobs.get(key)
+  if (activeJob) {
+    return {
+      phase: 'active',
+      queuePosition: null,
+      estimatedWaitSeconds: estimateActiveWaitSeconds(activeJob.startedAt),
+      active,
+      queued: queue.length,
+      maxConcurrent: MAX_CONCURRENT,
+    }
+  }
+
+  const idx = queue.findIndex(
+    (w) => w.storyId === storyId && w.chapterNumber === chapterNumber,
+  )
+  if (idx < 0) return null
+  const position = idx + 1
+  return {
+    phase: 'queued',
+    queuePosition: position,
+    estimatedWaitSeconds: estimateQueuedWaitSeconds(position),
+    active,
+    queued: queue.length,
+    maxConcurrent: MAX_CONCURRENT,
+  }
+}
+
 function pumpQueue(): void {
   // Fair-ish FIFO, but skip waiters blocked only by per-user cap when others can run.
   let i = 0
@@ -118,9 +203,18 @@ function pumpQueue(): void {
       waiter.timer = null
     }
     takeSlot(waiter.userId)
-    const waitMs = Date.now() - waiter.enqueuedAt
+    const startedAt = Date.now()
+    activeJobs.set(jobKey(waiter.storyId, waiter.chapterNumber), {
+      userId: waiter.userId,
+      storyId: waiter.storyId,
+      chapterNumber: waiter.chapterNumber,
+      startedAt,
+    })
+    const waitMs = startedAt - waiter.enqueuedAt
     console.log('GENERATION_CAPACITY_ACQUIRED', {
       userId: waiter.userId,
+      storyId: waiter.storyId,
+      chapterNumber: waiter.chapterNumber,
       waitMs,
       ...getGenerationConcurrencyStats(),
     })
@@ -136,13 +230,25 @@ function pumpQueue(): void {
 /**
  * Acquire a global generation slot (may queue). Always pair with release in finally.
  */
-export function acquireGenerationSlot(userId: string): Promise<GenerationSlotAcquireResult> {
-  const uid = userId || 'anonymous'
+export function acquireGenerationSlot(
+  job: GenerationJobKey,
+): Promise<GenerationSlotAcquireResult> {
+  const uid = job.userId || 'anonymous'
+  const storyId = job.storyId
+  const chapterNumber = job.chapterNumber
 
   if (canEnterNow(uid)) {
     takeSlot(uid)
+    activeJobs.set(jobKey(storyId, chapterNumber), {
+      userId: uid,
+      storyId,
+      chapterNumber,
+      startedAt: Date.now(),
+    })
     console.log('GENERATION_CAPACITY_ACQUIRED', {
       userId: uid,
+      storyId,
+      chapterNumber,
       waitMs: 0,
       ...getGenerationConcurrencyStats(),
     })
@@ -157,6 +263,8 @@ export function acquireGenerationSlot(userId: string): Promise<GenerationSlotAcq
   if (queue.length >= MAX_QUEUE) {
     console.log('GENERATION_CAPACITY_BUSY', {
       userId: uid,
+      storyId,
+      chapterNumber,
       ...getGenerationConcurrencyStats(),
     })
     return Promise.resolve({
@@ -168,10 +276,19 @@ export function acquireGenerationSlot(userId: string): Promise<GenerationSlotAcq
     })
   }
 
+  // Dedup: if same story/chapter already queued or active, do not double-queue.
+  // Caller should still hold story lease eventually; this is capacity-level only.
+  const existingProgress = getGenerationProgress(storyId, chapterNumber)
+  if (existingProgress?.phase === 'active') {
+    // Another path already holds the slot for this chapter — rare; wait by reusing queue.
+  }
+
   return new Promise<GenerationSlotAcquireResult>((resolve) => {
     const enqueuedAt = Date.now()
     const waiter: Waiter = {
       userId: uid,
+      storyId,
+      chapterNumber,
       enqueuedAt,
       resolve,
       timer: null,
@@ -180,6 +297,8 @@ export function acquireGenerationSlot(userId: string): Promise<GenerationSlotAcq
       removeWaiter(waiter)
       console.log('GENERATION_CAPACITY_TIMEOUT', {
         userId: uid,
+        storyId,
+        chapterNumber,
         waitMs: Date.now() - enqueuedAt,
         ...getGenerationConcurrencyStats(),
       })
@@ -195,6 +314,10 @@ export function acquireGenerationSlot(userId: string): Promise<GenerationSlotAcq
     queue.push(waiter)
     console.log('GENERATION_CAPACITY_QUEUED', {
       userId: uid,
+      storyId,
+      chapterNumber,
+      queuePosition: queue.length,
+      estimatedWaitSeconds: estimateQueuedWaitSeconds(queue.length),
       ...getGenerationConcurrencyStats(),
     })
     // In case a slot freed between canEnterNow and push
@@ -202,11 +325,15 @@ export function acquireGenerationSlot(userId: string): Promise<GenerationSlotAcq
   })
 }
 
-export function releaseGenerationSlot(userId: string): void {
-  const uid = userId || 'anonymous'
+export function releaseGenerationSlot(job: GenerationJobKey): void {
+  const uid = job.userId || 'anonymous'
+  const key = jobKey(job.storyId, job.chapterNumber)
+  activeJobs.delete(key)
   freeSlot(uid)
   console.log('GENERATION_CAPACITY_RELEASED', {
     userId: uid,
+    storyId: job.storyId,
+    chapterNumber: job.chapterNumber,
     ...getGenerationConcurrencyStats(),
   })
 }
@@ -216,7 +343,7 @@ export function releaseGenerationSlot(userId: string): void {
  * On capacity reject, returns the fail reason without calling `fn`.
  */
 export async function withGenerationSlot<T>(
-  userId: string,
+  job: GenerationJobKey,
   fn: (meta: { waitMs: number }) => Promise<T>,
   onCapacityFail: (
     reason: GenerationCapacityFailReason,
@@ -227,7 +354,7 @@ export async function withGenerationSlot<T>(
     },
   ) => T | Promise<T>,
 ): Promise<T> {
-  const slot = await acquireGenerationSlot(userId)
+  const slot = await acquireGenerationSlot(job)
   if (!slot.ok) {
     return onCapacityFail(slot.reason, {
       active: slot.active,
@@ -238,6 +365,6 @@ export async function withGenerationSlot<T>(
   try {
     return await fn({ waitMs: slot.waitMs })
   } finally {
-    releaseGenerationSlot(userId)
+    releaseGenerationSlot(job)
   }
 }

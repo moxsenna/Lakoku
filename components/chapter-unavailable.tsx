@@ -37,6 +37,11 @@ export function ChapterUnavailable({
   const [retrying, setRetrying] = useState(false)
   const [retryNote, setRetryNote] = useState<string | null>(null)
   const [checking, setChecking] = useState(false)
+  const [queueHint, setQueueHint] = useState<{
+    position: number | null
+    estimatedWaitSeconds: number
+    phase: 'queued' | 'active'
+  } | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -72,6 +77,8 @@ export function ChapterUnavailable({
       )
       if (!mountedRef.current) return
 
+      setQueueHint(res.queue ?? null)
+
       const decision = decideAfterStatus(res.status)
       if (decision.action === 'refresh') {
         clearTimer()
@@ -80,10 +87,11 @@ export function ChapterUnavailable({
       }
       if (decision.action === 'failed') {
         clearTimer()
+        setQueueHint(null)
         setUiState('UNAVAILABLE')
         return
       }
-      // generating
+      // queued | generating
       setUiState('PREPARING')
       schedule(decision.nextDelayMs, () => {
         void pollOnce()
@@ -154,7 +162,7 @@ export function ChapterUnavailable({
   }
 
   const preparing = uiState === 'PREPARING'
-  const copy = readerCopy(uiState, chapterNumber)
+  const copy = readerCopy(uiState, chapterNumber, queueHint)
 
   return (
     <main className="mx-auto flex min-h-svh w-full max-w-md flex-col bg-background">
@@ -191,6 +199,11 @@ export function ChapterUnavailable({
           <p className="text-sm leading-relaxed text-muted-foreground text-pretty">
             {copy.description}
           </p>
+          {copy.queueLine ? (
+            <p className="text-sm font-medium text-foreground/80 text-pretty">
+              {copy.queueLine}
+            </p>
+          ) : null}
         </div>
 
         {retryNote ? (

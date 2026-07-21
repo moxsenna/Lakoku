@@ -5,21 +5,36 @@ import { queryStoryForUser } from '@/lib/api/queries'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
 import { GENERATION_ATTEMPT_EVENT } from '@/lib/observability/telemetry'
 import { GENERATION_RUNTIME_FAILED_EVENT } from '@/lib/observability/generation-stages'
+import { getGenerationProgress } from '@/lib/runtime/generation-concurrency'
 
 /**
  * Exact per-chapter generation status for personalized reader polling (Task 21).
  *
  * Precedence (exact chapter only):
- *   1. chapter row exists        → ready
- *   2. active unexpired lease    → generating
- *   3. latest GENERATION_ATTEMPT REVIEW_REQUIRED or GENERATION_RUNTIME_FAILED
+ *   1. chapter row exists              → ready
+ *   2. process-local capacity gate
+ *      queued / active for chapter     → queued | generating (+ soft estimate)
+ *   3. active unexpired lease          → generating
+ *   4. latest GENERATION_ATTEMPT REVIEW_REQUIRED or GENERATION_RUNTIME_FAILED
  *      for that chapter → failed
- *   4. otherwise                 → failed (dead generation — no perpetual preparing)
+ *   5. otherwise                       → failed (dead generation — no perpetual preparing)
  *
  * Never consults stories.generation_status as chapter truth.
  */
 
-export type PersonalizedChapterStatus = 'ready' | 'generating' | 'failed'
+export type PersonalizedChapterStatus = 'ready' | 'queued' | 'generating' | 'failed'
+
+export type ChapterStatusQueueHint = {
+  position: number | null
+  estimatedWaitSeconds: number
+  phase: 'queued' | 'active'
+}
+
+export type ChapterStatusResult = {
+  status: PersonalizedChapterStatus
+  chapterNumber: number
+  queue?: ChapterStatusQueueHint
+}
 
 export type ChapterStatusErrorCode =
   | 'INVALID_CHAPTER'
@@ -128,7 +143,7 @@ export async function getChapterStatusForUser(input: {
   userId: string | null
   storyId: string
   chapterNumber: number
-}): Promise<PersonalizedChapterStatus> {
+}): Promise<ChapterStatusResult> {
   const userId = UserIdSchema.parse(input.userId)
   const chapterNumber = ChapterNumberSchema.parse(input.chapterNumber)
   const storyId = normalizeStoryRouteId(input.storyId)
@@ -137,10 +152,32 @@ export async function getChapterStatusForUser(input: {
   const story = await queryStoryForUser(storyId, userId)
   if (!story) throw new ChapterStatusError('NOT_FOUND')
 
-  if (await chapterExists(storyId, chapterNumber)) return 'ready'
-  if (await hasActiveLease(storyId, chapterNumber)) return 'generating'
-  if (await latestExactFailedAttempt(storyId, chapterNumber)) return 'failed'
-  // No chapter + no live lease: generation died (timeout/kill) or never started.
+  if (await chapterExists(storyId, chapterNumber)) {
+    return { status: 'ready', chapterNumber }
+  }
+
+  // Capacity gate may hold the job before a DB lease exists (queued / just acquired).
+  const progress = getGenerationProgress(storyId, chapterNumber)
+  if (progress) {
+    const queue: ChapterStatusQueueHint = {
+      position: progress.queuePosition,
+      estimatedWaitSeconds: progress.estimatedWaitSeconds,
+      phase: progress.phase,
+    }
+    return {
+      status: progress.phase === 'queued' ? 'queued' : 'generating',
+      chapterNumber,
+      queue,
+    }
+  }
+
+  if (await hasActiveLease(storyId, chapterNumber)) {
+    return { status: 'generating', chapterNumber }
+  }
+  if (await latestExactFailedAttempt(storyId, chapterNumber)) {
+    return { status: 'failed', chapterNumber }
+  }
+  // No chapter + no live lease / queue ticket: generation died (timeout/kill) or never started.
   // Do NOT report perpetual "generating" — that traps the reader UI forever.
-  return 'failed'
+  return { status: 'failed', chapterNumber }
 }

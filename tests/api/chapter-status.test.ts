@@ -117,7 +117,7 @@ describe('getChapterStatusForUser', () => {
       userId: USER_A,
       storyId: STORY_A,
       chapterNumber: 2,
-    })).resolves.toBe('ready')
+    })).resolves.toEqual(expect.objectContaining({ status: 'ready' }))
 
     expect(mocks.queryStoryForUser).toHaveBeenCalledWith(STORY_A, USER_A)
     const tables = fixture.calls.map((call) => call.table)
@@ -147,7 +147,7 @@ describe('getChapterStatusForUser', () => {
       userId: USER_A,
       storyId: STORY_A,
       chapterNumber: 2,
-    })).resolves.toBe('generating')
+    })).resolves.toEqual(expect.objectContaining({ status: 'generating' }))
   })
 
   it('ignores stale or other-chapter leases and falls through to latest failed attempt', async () => {
@@ -176,7 +176,7 @@ describe('getChapterStatusForUser', () => {
       userId: USER_A,
       storyId: STORY_A,
       chapterNumber: 2,
-    })).resolves.toBe('failed')
+    })).resolves.toEqual(expect.objectContaining({ status: 'failed' }))
   })
 
   it('prefers active lease over older failed attempt', async () => {
@@ -211,7 +211,7 @@ describe('getChapterStatusForUser', () => {
       userId: USER_A,
       storyId: STORY_A,
       chapterNumber: 3,
-    })).resolves.toBe('generating')
+    })).resolves.toEqual(expect.objectContaining({ status: 'generating' }))
   })
 
   it('returns failed when no chapter, no live lease, and no exact failure (dead generation)', async () => {
@@ -227,7 +227,7 @@ describe('getChapterStatusForUser', () => {
       userId: USER_A,
       storyId: STORY_A,
       chapterNumber: 4,
-    })).resolves.toBe('failed')
+    })).resolves.toEqual(expect.objectContaining({ status: 'failed' }))
   })
 
   it('denies private story for non-owner and anon before lease/event reads', async () => {
@@ -282,7 +282,7 @@ describe('getChapterStatusForUser', () => {
       userId: USER_A,
       storyId: STORY_A,
       chapterNumber: 2,
-    })).resolves.toBe('failed')
+    })).resolves.toEqual(expect.objectContaining({ status: 'failed' }))
   })
 })
 

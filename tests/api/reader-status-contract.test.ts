@@ -112,6 +112,11 @@ describe('reader status API client', () => {
     })
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/stories/private%2Fstory%20id/chapters/7/status',
+      {
+        signal: undefined,
+        credentials: 'same-origin',
+        cache: 'no-store',
+      },
     )
   })
 
@@ -126,7 +131,11 @@ describe('reader status API client', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/stories/story-id/chapters/7/status',
-      { signal: controller.signal },
+      {
+        signal: controller.signal,
+        credentials: 'same-origin',
+        cache: 'no-store',
+      },
     )
   })
 

@@ -398,7 +398,8 @@ describe('Phase 0 — Characterization (current buggy behavior)', () => {
       )
 
       expect(source).toContain('scanForLeaks')
-      expect(source).toContain("stage = 'VALIDATE_CHOICES'")
+      // Phase 8 stages: VALIDATE_CHOICES_FINAL or VALIDATE_CHOICES depending on repair source
+      expect(source).toMatch(/VALIDATE_CHOICES/)
       // Phase 5: semantic grounding lives in choice-generation (called via buildChoiceBranch)
       expect(source).toContain('buildChoices')
       expect(source).toMatch(/CHOICE_GENERATION_FAILED|FINAL_CHAPTER/)

@@ -256,13 +256,27 @@ function fallbackChoicesFromDraftFn(
 }
 
 /** DI dependencies injected for standard choice build path. */
-function standardChoiceDeps(): ChoiceBuildDeps {
+function standardChoiceDeps(correlationId?: string): ChoiceBuildDeps {
   return {
     selectProvider: selectProvider as ChoiceBuildDeps['selectProvider'],
     generateChoiceBranch: generateChoiceBranch as ChoiceBuildDeps['generateChoiceBranch'],
     telemetry: {
-      onChoiceFallback: () => {
-        console.log('GENERATION_CHOICES_FALLBACK_USED')
+      onChoiceRepair: ({ chapterNumber, findingCodes, attempt }) => {
+        console.log('GENERATION_CHOICES_REPAIR', {
+          chapterNumber,
+          correlationId: correlationId ?? null,
+          findingCodes: findingCodes.slice(0, 12),
+          attempt,
+        })
+      },
+      onChoiceFailed: ({ chapterNumber, reason, findingCodes, repairAttempts }) => {
+        console.log('GENERATION_CHOICES_TERMINAL', {
+          chapterNumber,
+          correlationId: correlationId ?? null,
+          reason,
+          findingCodes: findingCodes.slice(0, 12),
+          repairAttempts,
+        })
       },
     },
   }
@@ -301,7 +315,7 @@ async function buildChoices(
   // Phase 2: choice grounding uses final repaired draft only.
   const brief = syntheticChapterBrief(snapshot.storyId, chapterNumber, draft, narrativeContext)
   const { finalChapter, endingParagraphs } = groundedChoiceProseFromFinalDraft(draft)
-  const deps = standardChoiceDeps()
+  const deps = standardChoiceDeps(providerContext.correlationId)
   const input: BuildChoiceBranchInput = {
     snapshot,
     draft,
@@ -515,7 +529,9 @@ export async function generateNextChapterReal(
 
     // 7) Cabang pilihan LLM (grounded di prosa bab).
     // Phase 5: no silent generic fallback — failure releases lease and fails terminal.
+    stage = 'BUILD_CHOICE_CONTEXT'
     stage = 'BUILD_CHOICES'
+    stage = 'GENERATE_CHOICES_INITIAL'
     const branch = await buildChoices(snapshot, draft, chapterNumber, providerContext)
     if (!branch.ok) {
       // Final chapter: publish ending without choices (Phase 7 also covers this).
@@ -538,6 +554,7 @@ export async function generateNextChapterReal(
           return { ok: false, reason: publishedEnding.reason }
         }
         stage = 'RECORD_TERMINAL_ATTEMPT'
+        // Best-effort telemetry — never convert publish success into workflow failure.
         await recordGenerationAttempt({
           storyId,
           chapter: chapterNumber,
@@ -545,7 +562,7 @@ export async function generateNextChapterReal(
           repairAttempts: result.attempts,
           findings: result.findings,
           correlationId,
-        })
+        }).catch(() => undefined)
         stage = 'COMPLETE'
         return {
           ok: true,
@@ -557,15 +574,22 @@ export async function generateNextChapterReal(
 
       await releaseLeaseOnce()
       stage = 'RECORD_TERMINAL_ATTEMPT'
+      const { mapChoiceFailureReasonToErrorCode } = await import(
+        '@/lib/observability/generation-stages'
+      )
       console.log('GENERATION_CHOICES_FAILED', {
         storyId,
         chapterNumber,
         correlationId,
+        generationKind: 'standard',
+        stage: branch.repairAttempts > 0 ? 'VALIDATE_CHOICES_FINAL' : 'VALIDATE_CHOICES_INITIAL',
+        errorCode: mapChoiceFailureReasonToErrorCode(branch.reason),
         reason: branch.reason,
         findingCodes: branch.validationFindings.map((f) => f.code).slice(0, 12),
         repairAttempts: branch.repairAttempts,
         elapsedMs: Date.now() - startedAt,
       })
+      // Best-effort: telemetry failure must not change primary failure reason.
       await recordGenerationAttempt({
         storyId,
         chapter: chapterNumber,
@@ -585,7 +609,7 @@ export async function generateNextChapterReal(
       }
     }
 
-    stage = 'VALIDATE_CHOICES'
+    stage = branch.source === 'REPAIRED' ? 'VALIDATE_CHOICES_FINAL' : 'VALIDATE_CHOICES'
     const leakInChoices = [
       branch.choicePrompt,
       ...branch.choices.map((c) => c.label),

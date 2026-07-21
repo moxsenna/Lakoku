@@ -1,4 +1,12 @@
 import 'server-only'
+import {
+  clampWaitSeconds,
+  computeP50Ms,
+  estimateActiveWaitSeconds as estimateActiveWaitSecondsPure,
+  estimateQueuedWaitSeconds as estimateQueuedWaitSecondsPure,
+  pushLatencySampleMs,
+  secondsFromMs,
+} from './generation-latency-estimate'
 
 /**
  * Process-local global concurrency gate for chapter generation.
@@ -15,7 +23,7 @@ import 'server-only'
  *   LAKOKU_MAX_CONCURRENT_GENERATIONS_PER_USER default 1
  *   LAKOKU_GENERATION_MAX_QUEUE               default 40
  *   LAKOKU_GENERATION_QUEUE_WAIT_MS           default 600000 (10m)
- *   LAKOKU_GENERATION_AVG_SECONDS             default 90 (UX estimate only)
+ *   LAKOKU_GENERATION_AVG_SECONDS             default 90 (cold-start fallback only)
  */
 
 export type GenerationCapacityFailReason = 'CAPACITY_BUSY' | 'CAPACITY_TIMEOUT'
@@ -45,6 +53,8 @@ export type GenerationProgressSnapshot = {
   active: number
   queued: number
   maxConcurrent: number
+  /** Whether estimate used rolling p50 (true) or env fallback (false). */
+  estimateSource: 'p50' | 'fallback'
 }
 
 type Waiter = {
@@ -75,7 +85,7 @@ const MAX_CONCURRENT = envInt('LAKOKU_MAX_CONCURRENT_GENERATIONS', 10, 1, 64)
 const MAX_PER_USER = envInt('LAKOKU_MAX_CONCURRENT_GENERATIONS_PER_USER', 1, 1, 8)
 const MAX_QUEUE = envInt('LAKOKU_GENERATION_MAX_QUEUE', 40, 0, 500)
 const QUEUE_WAIT_MS = envInt('LAKOKU_GENERATION_QUEUE_WAIT_MS', 600_000, 5_000, 3_600_000)
-/** Soft estimate for reader UX only — not a measured SLA. */
+/** Cold-start fallback only — replaced by rolling p50 once enough samples exist. */
 const AVG_CHAPTER_SECONDS = envInt('LAKOKU_GENERATION_AVG_SECONDS', 90, 20, 600)
 
 let active = 0
@@ -83,6 +93,8 @@ const activeByUser = new Map<string, number>()
 const queue: Waiter[] = []
 /** storyId:chapterNumber → active job (writing after slot acquired) */
 const activeJobs = new Map<string, ActiveJob>()
+/** Rolling occupancy durations (ms) while a slot was held. */
+const latencySamplesMs: number[] = []
 
 function jobKey(storyId: string, chapterNumber: number): string {
   return `${storyId}:${chapterNumber}`
@@ -99,6 +111,7 @@ export function getGenerationConcurrencyConfig() {
 }
 
 export function getGenerationConcurrencyStats() {
+  const p50ms = computeP50Ms(latencySamplesMs)
   return {
     active,
     queued: queue.length,
@@ -106,7 +119,20 @@ export function getGenerationConcurrencyStats() {
     maxPerUser: MAX_PER_USER,
     maxQueue: MAX_QUEUE,
     usersActive: activeByUser.size,
+    latencySamples: latencySamplesMs.length,
+    p50Seconds: p50ms != null ? secondsFromMs(p50ms) : null,
   }
+}
+
+/** Record a finished generation occupancy duration (ms). Prefer success paths. */
+export function recordGenerationDurationMs(elapsedMs: number): void {
+  pushLatencySampleMs(latencySamplesMs, elapsedMs)
+}
+
+function resolvedP50Seconds(): { seconds: number; source: 'p50' | 'fallback' } {
+  const p50ms = computeP50Ms(latencySamplesMs)
+  if (p50ms == null) return { seconds: AVG_CHAPTER_SECONDS, source: 'fallback' }
+  return { seconds: secondsFromMs(p50ms), source: 'p50' }
 }
 
 function userActive(userId: string): number {
@@ -139,17 +165,46 @@ function removeWaiter(waiter: Waiter): void {
   }
 }
 
-function estimateQueuedWaitSeconds(queuePosition1Based: number): number {
-  // Position 1 with full slots ≈ 1 wave; position 11 with 10 slots ≈ 2 waves.
-  const waves = Math.max(1, Math.ceil(queuePosition1Based / MAX_CONCURRENT))
-  return Math.max(15, waves * AVG_CHAPTER_SECONDS)
+function activeRemainingSecondsList(p50Seconds: number, nowMs = Date.now()): number[] {
+  const out: number[] = []
+  for (const job of activeJobs.values()) {
+    out.push(
+      estimateActiveWaitSecondsPure({
+        startedAtMs: job.startedAt,
+        nowMs,
+        p50Seconds,
+      }),
+    )
+  }
+  return out
 }
 
-function estimateActiveWaitSeconds(startedAt: number): number {
-  const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
-  const remaining = AVG_CHAPTER_SECONDS - elapsed
-  // Soft floor so UI never claims "0 detik" while still writing.
-  return Math.max(20, remaining > 0 ? remaining : 30)
+function estimateQueuedWaitSeconds(queuePosition1Based: number): {
+  seconds: number
+  source: 'p50' | 'fallback'
+} {
+  const { seconds: p50Seconds, source } = resolvedP50Seconds()
+  const seconds = estimateQueuedWaitSecondsPure({
+    queuePosition1Based,
+    maxConcurrent: MAX_CONCURRENT,
+    activeCount: active,
+    activeRemainingSeconds: activeRemainingSecondsList(p50Seconds),
+    p50Seconds,
+  })
+  return { seconds: clampWaitSeconds(seconds), source }
+}
+
+function estimateActiveWaitSeconds(startedAt: number): {
+  seconds: number
+  source: 'p50' | 'fallback'
+} {
+  const { seconds: p50Seconds, source } = resolvedP50Seconds()
+  const seconds = estimateActiveWaitSecondsPure({
+    startedAtMs: startedAt,
+    nowMs: Date.now(),
+    p50Seconds,
+  })
+  return { seconds: clampWaitSeconds(seconds), source }
 }
 
 /**
@@ -163,13 +218,15 @@ export function getGenerationProgress(
   const key = jobKey(storyId, chapterNumber)
   const activeJob = activeJobs.get(key)
   if (activeJob) {
+    const est = estimateActiveWaitSeconds(activeJob.startedAt)
     return {
       phase: 'active',
       queuePosition: null,
-      estimatedWaitSeconds: estimateActiveWaitSeconds(activeJob.startedAt),
+      estimatedWaitSeconds: est.seconds,
       active,
       queued: queue.length,
       maxConcurrent: MAX_CONCURRENT,
+      estimateSource: est.source,
     }
   }
 
@@ -178,13 +235,15 @@ export function getGenerationProgress(
   )
   if (idx < 0) return null
   const position = idx + 1
+  const est = estimateQueuedWaitSeconds(position)
   return {
     phase: 'queued',
     queuePosition: position,
-    estimatedWaitSeconds: estimateQueuedWaitSeconds(position),
+    estimatedWaitSeconds: est.seconds,
     active,
     queued: queue.length,
     maxConcurrent: MAX_CONCURRENT,
+    estimateSource: est.source,
   }
 }
 
@@ -276,13 +335,6 @@ export function acquireGenerationSlot(
     })
   }
 
-  // Dedup: if same story/chapter already queued or active, do not double-queue.
-  // Caller should still hold story lease eventually; this is capacity-level only.
-  const existingProgress = getGenerationProgress(storyId, chapterNumber)
-  if (existingProgress?.phase === 'active') {
-    // Another path already holds the slot for this chapter — rare; wait by reusing queue.
-  }
-
   return new Promise<GenerationSlotAcquireResult>((resolve) => {
     const enqueuedAt = Date.now()
     const waiter: Waiter = {
@@ -312,15 +364,16 @@ export function acquireGenerationSlot(
     }, QUEUE_WAIT_MS)
 
     queue.push(waiter)
+    const est = estimateQueuedWaitSeconds(queue.length)
     console.log('GENERATION_CAPACITY_QUEUED', {
       userId: uid,
       storyId,
       chapterNumber,
       queuePosition: queue.length,
-      estimatedWaitSeconds: estimateQueuedWaitSeconds(queue.length),
+      estimatedWaitSeconds: est.seconds,
+      estimateSource: est.source,
       ...getGenerationConcurrencyStats(),
     })
-    // In case a slot freed between canEnterNow and push
     pumpQueue()
   })
 }
@@ -328,7 +381,12 @@ export function acquireGenerationSlot(
 export function releaseGenerationSlot(job: GenerationJobKey): void {
   const uid = job.userId || 'anonymous'
   const key = jobKey(job.storyId, job.chapterNumber)
-  activeJobs.delete(key)
+  const held = activeJobs.get(key)
+  if (held) {
+    // Occupancy duration feeds rolling p50 (how long a slot stays busy).
+    recordGenerationDurationMs(Date.now() - held.startedAt)
+    activeJobs.delete(key)
+  }
   freeSlot(uid)
   console.log('GENERATION_CAPACITY_RELEASED', {
     userId: uid,

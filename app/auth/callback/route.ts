@@ -1,11 +1,13 @@
 import { createClient } from '@/lib/supabase/server'
 import { sanitizeNextPath } from '@/lib/auth/safe-next'
+import { getPublicOrigin } from '@/lib/auth/public-origin'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET(request: NextRequest) {
-  const { searchParams, origin } = request.nextUrl
+  const { searchParams } = request.nextUrl
   const code = searchParams.get('code')
   const next = sanitizeNextPath(searchParams.get('next'))
+  const origin = getPublicOrigin(request)
 
   if (code) {
     const supabase = await createClient()

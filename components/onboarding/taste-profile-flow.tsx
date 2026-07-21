@@ -25,6 +25,7 @@ import {
   createDefaultTasteProfile,
   type TasteProfile,
 } from '@/lib/taste-profile/schema'
+import { buildOptionsFromGenres } from '@/lib/taste-profile/options'
 
 // ─── Step definitions ─────────────────────────────────────────────
 
@@ -163,45 +164,6 @@ const FALLBACK_AVOIDED_OPTIONS: string[] = [
   'Konflik perang',
 ]
 
-const MAX_OPTIONS = 6
-
-/** Gabungkan opsi dari genre yang dipilih, deduplicate, max 6. */
-function buildOptionsFromGenres(
-  selectedGenres: string[],
-  genreMap: Record<string, string[]>,
-  fallback: string[],
-): { label: string; value: string }[] {
-  if (!selectedGenres.length) {
-    return fallback.map((v) => ({ label: v, value: v }))
-  }
-
-  const seen = new Set<string>()
-  const result: string[] = []
-
-  for (const genre of selectedGenres) {
-    const options = genreMap[genre]
-    if (!options) continue
-    for (const opt of options) {
-      if (result.length >= MAX_OPTIONS) break
-      if (seen.has(opt)) continue
-      seen.add(opt)
-      result.push(opt)
-    }
-    if (result.length >= MAX_OPTIONS) break
-  }
-
-  if (result.length < MAX_OPTIONS) {
-    for (const opt of fallback) {
-      if (result.length >= MAX_OPTIONS) break
-      if (seen.has(opt)) continue
-      seen.add(opt)
-      result.push(opt)
-    }
-  }
-
-  return result.map((v) => ({ label: v, value: v }))
-}
-
 // ── Static steps (genre, intensity, ending-style) ─────────────────
 
 const GENRE_STEP: StepDefinition = {
@@ -256,7 +218,7 @@ function buildSteps(selectedGenres: string[]): StepDefinition[] {
       subtitle: 'Pilih satu atau beberapa.',
       multiSelect: true,
       field: 'likedTropes',
-      options: buildOptionsFromGenres(selectedGenres, GENRE_TROPE_OPTIONS, FALLBACK_TROPE_OPTIONS),
+      options: buildOptionsFromGenres(selectedGenres, GENRE_TROPE_OPTIONS, FALLBACK_TROPE_OPTIONS).map((v) => ({ label: v, value: v })),
     },
     {
       id: 'avoided',
@@ -265,7 +227,7 @@ function buildSteps(selectedGenres: string[]): StepDefinition[] {
       subtitle: 'Kami akan menghindari ini saat membuat cerita untukmu.',
       multiSelect: true,
       field: 'avoidedTropes',
-      options: buildOptionsFromGenres(selectedGenres, GENRE_AVOIDED_OPTIONS, FALLBACK_AVOIDED_OPTIONS),
+      options: buildOptionsFromGenres(selectedGenres, GENRE_AVOIDED_OPTIONS, FALLBACK_AVOIDED_OPTIONS).map((v) => ({ label: v, value: v })),
     },
     INTENSITY_STEP,
     ENDING_STEP,

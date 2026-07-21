@@ -18,7 +18,7 @@ import {
   defaultStorySetupQuestions,
   adaptStorySetupQuestionsForAnswers,
 } from '../lib/onboarding/question-presets'
-
+import { buildOptionsFromGenres } from '../lib/taste-profile/options'
 let pass = 0
 let fail = 0
 
@@ -182,7 +182,6 @@ check('Schema toleran: tanpa updatedAt', minimal.success)
 
 console.log('\n── Phase 6C: Dynamic genre-based options ──')
 
-// Replicate buildOptionsFromGenres logic from taste-profile-flow.tsx
 const P6_GENRE_TROPE: Record<string, string[]> = {
   'Misteri & rahasia': [
     'Rahasia keluarga yang dikubur lama',
@@ -207,35 +206,23 @@ const P6_FALLBACK = [
   'Sekutu jadi cinta', 'Balas dendam yang tertunda',
 ]
 
-function buildOpts(genres: string[], map: Record<string, string[]>, fb: string[]): string[] {
-  if (!genres.length) return fb.slice(0, 6)
-  const seen = new Set<string>(); const result: string[] = []
-  for (const g of genres) {
-    const opts = map[g]; if (!opts) continue
-    for (const o of opts) { if (result.length >= 6) break; if (seen.has(o)) continue; seen.add(o); result.push(o) }
-    if (result.length >= 6) break
-  }
-  for (const o of fb) { if (result.length >= 6) break; if (seen.has(o)) continue; seen.add(o); result.push(o) }
-  return result
-}
-
 {
-  const opts = buildOpts(['Misteri & rahasia'], P6_GENRE_TROPE, P6_FALLBACK)
+  const opts = buildOptionsFromGenres(['Misteri & rahasia'], P6_GENRE_TROPE, P6_FALLBACK)
   check('6C: Misteri → has "Rahasia keluarga yang dikubur lama"', opts.includes('Rahasia keluarga yang dikubur lama'))
   check('6C: Misteri → max 6', opts.length <= 6)
 }
 {
-  const opts = buildOpts(['Romansa'], P6_GENRE_TROPE, P6_FALLBACK)
+  const opts = buildOptionsFromGenres(['Romansa'], P6_GENRE_TROPE, P6_FALLBACK)
   check('6C: Romansa → has "Cinta lama yang kembali"', opts.includes('Cinta lama yang kembali'))
   check('6C: Romansa → no misteri option', !opts.includes('Rahasia keluarga yang dikubur lama'))
 }
 {
-  const opts = buildOpts(['Misteri & rahasia', 'Romansa'], P6_GENRE_TROPE, P6_FALLBACK)
+  const opts = buildOptionsFromGenres(['Misteri & rahasia', 'Romansa'], P6_GENRE_TROPE, P6_FALLBACK)
   check('6C: Multi-genre → max 6', opts.length <= 6)
   check('6C: Multi-genre → no dupes', new Set(opts).size === opts.length)
 }
 {
-  const opts = buildOpts([], P6_GENRE_TROPE, P6_FALLBACK)
+  const opts = buildOptionsFromGenres([], P6_GENRE_TROPE, P6_FALLBACK)
   check('6C: No genre → fallback', opts[0] === P6_FALLBACK[0])
 }
 

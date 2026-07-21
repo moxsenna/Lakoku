@@ -591,7 +591,7 @@ describe('Phase 0 — Desired behavior (TDD: it.fails)', () => {
   })
 
   describe('choice validation — must ground against final repaired prose', () => {
-    it.fails(
+    it(
       'rejects generic ungrounded labels that ignore final paragraphs',
       async () => {
         // DESIRED (Phase 4+): semantic validation against finalDraft.paragraphs

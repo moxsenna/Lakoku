@@ -12,6 +12,11 @@ import type { GenerationProvider } from '@lakoku/ai-gateway'
 import type { ChapterBrief, ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
 import type { RouteState } from '@/lib/story-engine/route-state'
 import {
+  validateChoiceBranchQuality,
+  mapFindingToReason,
+  type ChoiceQualityInput,
+} from '@/lib/story-engine/choice-quality'
+import {
   groundedChoiceProseFromFinalDraft,
   emptyChoiceNarrativeContext,
   choiceNarrativeContextFromReader,
@@ -265,11 +270,34 @@ export async function buildChoiceBranch(
       }
     }
 
+    // Phase 4: semantic quality validation
+    const qualityInput: ChoiceQualityInput = {
+      branch,
+      finalChapter,
+      endingParagraphs,
+      activeCharacters: input.activeCharacters,
+      activeThreads: input.activeThreads,
+      chapterNumber: input.chapterNumber,
+      totalChapters: input.totalChapters,
+      previousChoice: input.previousChoice ?? null,
+      routeState: input.routeState,
+    }
+    const qualityResult = validateChoiceBranchQuality(qualityInput)
+
+    if (!qualityResult.ok) {
+      return {
+        ok: false,
+        reason: mapFindingToReason(qualityResult.findings) as ChoiceBuildFailureReason,
+        validationFindings: qualityResult.findings,
+        repairAttempts: 0,
+      }
+    }
+
     return {
       ok: true,
       source: 'INITIAL',
       branch,
-      validationFindings: [],
+      validationFindings: qualityResult.findings,
       repairAttempts: 0,
     }
   } catch (err) {

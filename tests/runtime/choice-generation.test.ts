@@ -47,6 +47,17 @@ function emptyEffect() {
   }
 }
 
+function distinctEffect(index: number) {
+  return {
+    routeDeltas: { truth: index + 1 },
+    trustDeltas: {},
+    flagsSet: {},
+    evidenceAdded: [],
+    endingBiasDeltas: {},
+    threadTouches: [],
+  }
+}
+
 function mockDraft(chapterNumber = 12): ChapterDraftParsed {
   return {
     storyId: 'story-test',
@@ -87,14 +98,14 @@ function mockBranch(chapterNumber = 12): ChoiceBranch {
         consequence: ['Maya menemukan berkas basah yang masih bisa dibaca.'],
         nextChapterNumber: next,
         isEnding: false,
-        effect: emptyEffect() as ChoiceBranch['outcomes'][number]['effect'],
+        effect: distinctEffect(0) as unknown as ChoiceBranch['outcomes'][number]['effect'],
       },
       {
         choiceId: 'ikuti-suara',
         consequence: ['Sosok Raka muncul dari balik tikungan dengan wajah khawatir.'],
         nextChapterNumber: next,
         isEnding: false,
-        effect: emptyEffect() as ChoiceBranch['outcomes'][number]['effect'],
+        effect: distinctEffect(1) as unknown as ChoiceBranch['outcomes'][number]['effect'],
       },
     ],
   }

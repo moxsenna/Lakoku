@@ -86,28 +86,39 @@ function emptyEffect() {
   }
 }
 
+function distinctEffect(index: number) {
+  return {
+    routeDeltas: { truth: index + 1 },
+    trustDeltas: {},
+    flagsSet: {},
+    evidenceAdded: [],
+    endingBiasDeltas: {},
+    threadTouches: [],
+  }
+}
+
 function branchFor(chapterNumber: number): ChoiceBranch {
   const next = chapterNumber === 49 ? 50 : chapterNumber + 1
   return {
-    choicePrompt: 'Apa yang Maya lakukan sekarang?',
+    choicePrompt: 'Apa yang Maya lakukan selanjutnya di arsip?',
     choices: [
-      { id: 'open-door', label: 'Buka pintu arsip basah' },
-      { id: 'call-saksi', label: 'Telepon saksi sebelum lari' },
+      { id: 'open-door', label: 'Buka pintu arsip basah di depan Maya' },
+      { id: 'investigate-light', label: 'Periksa lampu lorong yang berkedip' },
     ],
     outcomes: [
       {
         choiceId: 'open-door',
-        consequence: ['Maya menemukan lembar basah.'],
+        consequence: ['Maya menemukan lembar basah di dalam arsip.'],
         nextChapterNumber: next,
         isEnding: false,
-        effect: emptyEffect(),
+        effect: distinctEffect(0),
       },
       {
-        choiceId: 'call-saksi',
-        consequence: ['Saksi menjawab dengan suara gemetar.'],
+        choiceId: 'investigate-light',
+        consequence: ['Lampu padam dan langkah terdengar semakin dekat.'],
         nextChapterNumber: next,
         isEnding: false,
-        effect: emptyEffect(),
+        effect: distinctEffect(1),
       },
     ],
   }
@@ -131,8 +142,8 @@ function draftFor(
     paragraphs: [
       'Maya menahan napas di depan arsip basah.',
       'Lampu lorong berkedip di atas kepalanya.',
-      'Suara langkah basah mendekat dari ujung koridor.',
-      'Dia mengepal kertas yang masih hangat di tangannya.',
+      'Suara langkah basah mendekat dari ujung koridor berdebu.',
+      'Dia mengepal kertas hangat di tangan sambil melirik lampu lorong.',
     ],
     wordCount: 40,
     sceneCount: 1,
@@ -369,8 +380,8 @@ function makeDeps(options: {
       }
       const generatedDraft = structuredClone(draft)
       generatedDraft.paragraphs = [
-        `Cerita ${input.snapshot.storyId} memakai kontrak ${contractTitleByStory.get(input.snapshot.storyId)}.`,
-        `Rute ${routeTruthByStory.get(input.snapshot.storyId)} menjaga bab ${input.chapterNumber} tetap lokal.`,
+        `Cerita ${input.snapshot.storyId} berlanjut di arsip basah.`,
+        `Rute ${routeTruthByStory.get(input.snapshot.storyId)} dengan lampu lorong berkedip menjaga bab ${input.chapterNumber}.`,
         ...draft.paragraphs.slice(2),
       ]
       return {
@@ -519,17 +530,17 @@ describe('generateNextPersonalizedChapter', () => {
     expect(capture.publishInputs[0]).toMatchObject({
       storyId: STORY_A,
       chapterNumber: 12,
-      choicePrompt: 'Apa yang Maya lakukan sekarang?',
+      choicePrompt: 'Apa yang Maya lakukan selanjutnya di arsip?',
       choices: [
-        { id: 'open-door', label: 'Buka pintu arsip basah' },
-        { id: 'call-saksi', label: 'Telepon saksi sebelum lari' },
+        { id: 'open-door', label: 'Buka pintu arsip basah di depan Maya' },
+        { id: 'investigate-light', label: 'Periksa lampu lorong yang berkedip' },
       ],
     })
     expect(capture.publishInputs[0].outcomes).toHaveLength(2)
     expect(capture.publishInputs[0].outcomes[0]).toMatchObject({
       choiceId: 'open-door',
       choiceKind: 'normal',
-      effect: emptyEffect(),
+      effect: distinctEffect(0),
     })
   })
 
@@ -999,8 +1010,8 @@ describe('generateNextPersonalizedChapter', () => {
       draft: {
         ...draftFor(input.snapshot.storyId, input.chapterNumber),
         paragraphs: [
-          `Snapshot ${input.snapshot.storyId}: ${input.snapshot.facts[0].statement}`,
-          `${contractTitleByStory.get(input.snapshot.storyId)}; truth=${routeTruthByStory.get(input.snapshot.storyId)}.`,
+          `Snapshot ${input.snapshot.storyId}: Maya di depan arsip basah. ${input.snapshot.facts[0].statement}`,
+          `${contractTitleByStory.get(input.snapshot.storyId)}; lampu lorong berkedip. truth=${routeTruthByStory.get(input.snapshot.storyId)}.`,
         ],
       },
       attempts: 0,
@@ -1033,12 +1044,12 @@ describe('generateNextPersonalizedChapter', () => {
     expect(sharedCapture.publishInputs.map((input) => input.chapterNumber)).toEqual([12, 12])
     const publishedByStory = new Map(sharedCapture.publishInputs.map((input) => [input.storyId, input]))
     expect(publishedByStory.get(STORY_A)?.paragraphs).toEqual([
-      `Snapshot ${STORY_A}: Arsip A terbakar.`,
-      'Kontrak Arsip Merah; truth=8.',
+      `Snapshot ${STORY_A}: Maya di depan arsip basah. Arsip A terbakar.`,
+      'Kontrak Arsip Merah; lampu lorong berkedip. truth=8.',
     ])
     expect(publishedByStory.get(STORY_B)?.paragraphs).toEqual([
-      `Snapshot ${STORY_B}: Arsip B terendam.`,
-      'Kontrak Arsip Biru; truth=1.',
+      `Snapshot ${STORY_B}: Maya di depan arsip basah. Arsip B terendam.`,
+      'Kontrak Arsip Biru; lampu lorong berkedip. truth=1.',
     ])
     expect(JSON.stringify(publishedByStory.get(STORY_A)?.paragraphs)).not.toMatch(
       /Arsip B terendam|Kontrak Arsip Biru|truth=1/,

@@ -11,15 +11,34 @@ import { EditAiModelRouteDialog } from '@/components/admin/settings/edit-ai-mode
 import { idr, isoDatetime } from '@/lib/admin/format'
 import { Pencil } from 'lucide-react'
 
+interface FallbackRow { provider: string; modelId: string }
+
+interface RouteRow {
+  useCase: string
+  provider: string
+  modelId: string
+  fallbackModels: FallbackRow[]
+  temperature: number | null
+  maxOutputTokens: number | null
+  isActive: boolean
+  routeVersion: string
+  notes: string | null
+}
+
 interface SettingsData {
   isOwner: boolean
   creditProducts: CreditProductRow[]
-  generationPolicy: { targetWordsMin: number; targetWordsMax: number; targetScenes: number; updatedAt: string | null } | null
-  aiModelRoutes: {
-    useCase: string; provider: string; modelId: string; fallbackModels: string[]
-    temperature: number | null; maxOutputTokens: number | null; isActive: boolean
-    routeVersion: string; notes: string | null
-  }[]
+  generationPolicy: {
+    targetWordsMin: number
+    targetWordsMax: number
+    targetScenes: number
+    leaseTtlSeconds: number
+    maxConcurrentGenerations: number
+    maxConcurrentGenerationsPerUser: number
+    generationMaxQueue: number
+    updatedAt: string | null
+  } | null
+  aiModelRoutes: RouteRow[]
   featureCreditCosts: {
     featureKey: string; creditsRequired: number; isActive: boolean; pricingVersion: string; updatedAt: string | null
   }[]
@@ -49,17 +68,21 @@ function valDiff(oldVal: unknown, newVal: unknown): string {
   return 'changed'
 }
 
+function fallbackPreview(fallbacks: FallbackRow[]): string {
+  if (!fallbacks.length) return '-'
+  const first = fallbacks[0]
+  const label = `${first.provider}:${first.modelId}`
+  if (fallbacks.length === 1) return label
+  return `${label} +${fallbacks.length - 1}`
+}
+
 export default function AdminSettingsPage() {
   const [data, setData] = useState<SettingsData | null>(null)
   const [loading, setLoading] = useState(true)
   const [editProduct, setEditProduct] = useState<CreditProductRow | null>(null)
   const [editFeature, setEditFeature] = useState<{ featureKey: string; creditsRequired: number; isActive: boolean; pricingVersion: string } | null>(null)
   const [editGenPolicy, setEditGenPolicy] = useState(false)
-  const [editRoute, setEditRoute] = useState<{
-    useCase: string; provider: string; modelId: string; fallbackModels: string[]
-    temperature: number | null; maxOutputTokens: number | null; isActive: boolean
-    routeVersion: string; notes: string | null
-  } | null>(null)
+  const [editRoute, setEditRoute] = useState<RouteRow | null>(null)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -153,10 +176,14 @@ export default function AdminSettingsPage() {
       <AdminSectionCard title="Generation Policy">
         {data.generationPolicy ? (
           <div className="flex items-end justify-between p-4">
-            <div className="flex gap-6">
+            <div className="flex flex-wrap gap-6">
               <div><span className="text-[10px] text-muted-foreground">Min Words</span><div className="text-sm font-semibold">{data.generationPolicy.targetWordsMin}</div></div>
               <div><span className="text-[10px] text-muted-foreground">Max Words</span><div className="text-sm font-semibold">{data.generationPolicy.targetWordsMax}</div></div>
               <div><span className="text-[10px] text-muted-foreground">Scenes</span><div className="text-sm font-semibold">{data.generationPolicy.targetScenes}</div></div>
+              <div><span className="text-[10px] text-muted-foreground">Lease TTL</span><div className="text-sm font-semibold">{data.generationPolicy.leaseTtlSeconds}s</div></div>
+              <div><span className="text-[10px] text-muted-foreground">Max Concurrent</span><div className="text-sm font-semibold">{data.generationPolicy.maxConcurrentGenerations}</div></div>
+              <div><span className="text-[10px] text-muted-foreground">Max / User</span><div className="text-sm font-semibold">{data.generationPolicy.maxConcurrentGenerationsPerUser}</div></div>
+              <div><span className="text-[10px] text-muted-foreground">Max Queue</span><div className="text-sm font-semibold">{data.generationPolicy.generationMaxQueue}</div></div>
             </div>
             {owner && <button onClick={() => setEditGenPolicy(true)} className="text-lavender hover:underline text-[10px] flex items-center gap-1"><Pencil className="size-3" />Edit Policy</button>}
           </div>
@@ -178,7 +205,7 @@ export default function AdminSettingsPage() {
                     <td className="px-3 py-1.5 font-medium">{r.useCase}</td>
                     <td className="px-3 py-1.5">{r.provider}</td>
                     <td className="px-3 py-1.5 font-mono text-[10px]">{r.modelId}</td>
-                    <td className="px-3 py-1.5 text-muted-foreground text-[10px]">{r.fallbackModels.length ? `${r.fallbackModels.length} models` : '-'}</td>
+                    <td className="px-3 py-1.5 text-muted-foreground text-[10px] font-mono">{fallbackPreview(r.fallbackModels ?? [])}</td>
                     <td className="px-3 py-1.5 text-muted-foreground">{r.routeVersion}</td>
                     <td className="px-3 py-1.5"><StatusBadge status={r.isActive ? 'active' : 'inactive'} /></td>
                     {owner && <td className="px-3 py-1.5"><button onClick={() => setEditRoute(r)} className="text-lavender hover:underline text-[10px] flex items-center gap-1"><Pencil className="size-3" />Edit</button></td>}
@@ -219,7 +246,14 @@ export default function AdminSettingsPage() {
       {editProduct && <EditCreditProductDialog product={editProduct} onClose={() => setEditProduct(null)} onSaved={loadData} />}
       {editFeature && <EditFeatureCreditCostDialog feature={editFeature} onClose={() => setEditFeature(null)} onSaved={loadData} />}
       {editGenPolicy && data.generationPolicy && <EditGenerationPolicyDialog policy={data.generationPolicy} onClose={() => setEditGenPolicy(false)} onSaved={loadData} />}
-      {editRoute && <EditAiModelRouteDialog route={editRoute} onClose={() => setEditRoute(null)} onSaved={loadData} />}
+      {editRoute && (
+        <EditAiModelRouteDialog
+          route={editRoute}
+          proseRoute={data.aiModelRoutes.find((r) => r.useCase === 'chapter_prose') ?? null}
+          onClose={() => setEditRoute(null)}
+          onSaved={loadData}
+        />
+      )}
     </div>
   )
 }

@@ -50,6 +50,7 @@ import {
   choiceNarrativeContextFromReader,
 } from './choice-context'
 import { createAdminClient } from '@lakoku/db'
+import { resolveGenerationLeaseTtlSeconds } from './generation-lease-ttl'
 
 /**
  * Workflow generasi bab NYATA (M2→M5 disatukan) — "jalur cerita AI end-to-end".
@@ -470,13 +471,14 @@ async function generateNextChapterRealInner(
 
   // 1) Lease (idempoten). Menolak bila ada generasi lain aktif.
   stage = 'ACQUIRE_LEASE'
+  const ttlSeconds = await resolveGenerationLeaseTtlSeconds()
   const lease = await acquireGenerationLease({
     storyId,
     chapterNumber,
     holder: 'story-generation',
     // Multi-LLM plan→write→repair can exceed 2 minutes wall on VPS.
-    // Default 120s too tight when model is slow; 300s for testing phase.
-    ttlSeconds: 300,
+    // TTL from generation_policy (clamped 60..1800).
+    ttlSeconds,
     idempotencyKey: realGenerationKey(storyId, chapterNumber, 'lease'),
   })
   if (!lease.ok) return { ok: false, reason: lease.reason }

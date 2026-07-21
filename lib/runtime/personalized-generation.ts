@@ -68,6 +68,7 @@ import {
   groundedChoiceProseFromFinalDraft,
   choiceNarrativeContextFromReader,
 } from './choice-context'
+import { resolveGenerationLeaseTtlSeconds } from './generation-lease-ttl'
 
 /**
  * Personalized chapter runtime (Task 17).
@@ -531,12 +532,14 @@ async function generateNextPersonalizedChapterInner(
     throw new Error(`Invalid personalized chapter number: ${chapterNumber}`)
   }
 
+  const ttlSeconds = await resolveGenerationLeaseTtlSeconds()
   const lease = await d.acquireGenerationLease({
     storyId,
     chapterNumber,
     holder: 'personalized-generation',
-    // CF testing: multi-LLM can exceed default 120s wall before publish.
-    ttlSeconds: 300,
+    // Multi-LLM can exceed default 120s wall before publish.
+    // TTL from generation_policy (clamped 60..1800).
+    ttlSeconds,
     idempotencyKey: personalizedGenerationKey(storyId, chapterNumber, 'lease'),
   })
   if (!lease.ok) return { ok: false, reason: lease.reason }

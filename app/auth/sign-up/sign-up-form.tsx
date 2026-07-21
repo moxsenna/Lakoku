@@ -4,8 +4,15 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient, type SupabasePublicConfig } from '@/lib/supabase/client'
+import { sanitizeNextPath } from '@/lib/auth/safe-next'
+import { GoogleSignInButton } from '@/components/auth/google-sign-in-button'
 import { ArrowLeft } from 'lucide-react'
 import { getEmailRedirectTo } from './redirect'
+
+function readSafeNextFromWindow(): string {
+  if (typeof window === 'undefined') return '/beranda'
+  return sanitizeNextPath(new URLSearchParams(window.location.search).get('next'))
+}
 
 export function SignUpForm({
   supabaseConfig,
@@ -47,6 +54,34 @@ export function SignUpForm({
       router.push('/auth/sign-up-success')
     } catch {
       setError('Pendaftaran belum siap. Konfigurasi Supabase belum terbaca di browser.')
+      setLoading(false)
+    }
+  }
+
+  async function handleGoogle() {
+    if (loading) return
+    setLoading(true)
+    setError(null)
+    try {
+      if (!supabaseConfig?.url || !supabaseConfig?.anonKey) {
+        setError('Login Google belum siap. Konfigurasi Supabase belum terbaca di browser.')
+        setLoading(false)
+        return
+      }
+      const supabase = createClient(supabaseConfig)
+      const next = readSafeNextFromWindow()
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
+        },
+      })
+      if (error) {
+        setError('Login Google gagal. Coba lagi atau masuk dengan email.')
+        setLoading(false)
+      }
+    } catch {
+      setError('Login Google belum siap. Konfigurasi Supabase belum terbaca di browser.')
       setLoading(false)
     }
   }
@@ -121,6 +156,16 @@ export function SignUpForm({
             {loading ? 'Menyiapkan halamanmu...' : 'Daftar'}
           </button>
         </form>
+
+        <div className="mt-6 flex items-center gap-3">
+          <div className="h-px flex-1 bg-border" />
+          <span className="text-xs font-medium text-muted-foreground">atau</span>
+          <div className="h-px flex-1 bg-border" />
+        </div>
+
+        <div className="mt-6">
+          <GoogleSignInButton loading={loading} onClick={() => void handleGoogle()} />
+        </div>
 
         <p className="mt-6 text-center text-sm text-muted-foreground">
           Sudah punya akun?{' '}

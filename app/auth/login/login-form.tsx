@@ -5,18 +5,17 @@ import Link from 'next/link'
 import { createClient, type SupabasePublicConfig } from '@/lib/supabase/client'
 import { readGuestTasteProfile, clearGuestTasteProfile } from '@/lib/taste-profile/storage'
 import { actMergeGuestTasteProfile } from '@/app/onboarding/selera/actions'
+import { sanitizeNextPath } from '@/lib/auth/safe-next'
+import { GoogleSignInButton } from '@/components/auth/google-sign-in-button'
 import { ArrowLeft } from 'lucide-react'
 
 const subscribeToMounted = () => () => {}
 const getMountedSnapshot = () => true
 const getServerMountedSnapshot = () => false
 
-/** Ambil ?next= dan hanya izinkan path internal (cegah open-redirect). */
-function safeNext(): string {
+function readSafeNextFromWindow(): string {
   if (typeof window === 'undefined') return '/beranda'
-  const next = new URLSearchParams(window.location.search).get('next')
-  if (next && next.startsWith('/') && !next.startsWith('//')) return next
-  return '/beranda'
+  return sanitizeNextPath(new URLSearchParams(window.location.search).get('next'))
 }
 
 export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicConfig }) {
@@ -29,7 +28,7 @@ export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicCo
     getMountedSnapshot,
     getServerMountedSnapshot,
   )
-  const resumeOnboarding = mounted && safeNext() === '/mulai?resume=1'
+  const resumeOnboarding = mounted && readSafeNextFromWindow() === '/mulai?resume=1'
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -69,7 +68,7 @@ export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicCo
 
       // Hard navigation: soft router.push + refresh sering macet di CF/OpenNext
       // sebelum cookie sesi terbaca server components (loading tetap true).
-      window.location.assign(safeNext())
+      window.location.assign(readSafeNextFromWindow())
     } catch (err) {
       if (err instanceof Error && err.message === 'LOGIN_TIMEOUT') {
         setError('Login terlalu lama. Periksa koneksi lalu coba lagi.')
@@ -78,6 +77,35 @@ export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicCo
       }
     } finally {
       // Jika hard nav jalan, unmount mengabaikan ini. Jika gagal, tombol bisa dipakai lagi.
+      setLoading(false)
+    }
+  }
+
+  async function handleGoogle() {
+    if (loading) return
+    setLoading(true)
+    setError(null)
+    try {
+      if (!supabaseConfig?.url || !supabaseConfig?.anonKey) {
+        setError('Login Google belum siap. Konfigurasi Supabase belum terbaca di browser.')
+        setLoading(false)
+        return
+      }
+      const supabase = createClient(supabaseConfig)
+      const next = readSafeNextFromWindow()
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
+        },
+      })
+      if (error) {
+        setError('Login Google gagal. Coba lagi atau masuk dengan email.')
+        setLoading(false)
+      }
+      // On success browser navigates away to Google; keep loading true.
+    } catch {
+      setError('Login Google belum siap. Konfigurasi Supabase belum terbaca di browser.')
       setLoading(false)
     }
   }
@@ -140,6 +168,16 @@ export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicCo
             {loading ? 'Membuka pintu...' : resumeOnboarding ? 'Simpan Ceritaku' : 'Masuk'}
           </button>
         </form>
+
+        <div className="mt-6 flex items-center gap-3">
+          <div className="h-px flex-1 bg-border" />
+          <span className="text-xs font-medium text-muted-foreground">atau</span>
+          <div className="h-px flex-1 bg-border" />
+        </div>
+
+        <div className="mt-6">
+          <GoogleSignInButton loading={loading} onClick={() => void handleGoogle()} />
+        </div>
 
         <p className="mt-6 text-center text-sm text-muted-foreground">
           Belum punya akun?{' '}

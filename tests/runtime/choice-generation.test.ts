@@ -236,7 +236,7 @@ describe('Phase 1 — choice-generation module unit tests', () => {
       expect(generateChoiceBranch).toHaveBeenCalledTimes(1)
     })
 
-    it('returns PROVIDER_FAILED when generateChoiceBranch returns null', async () => {
+    it('returns REPAIR_EXHAUSTED when generateChoiceBranch returns null even after repair', async () => {
       const { buildChoiceBranch } = await import('@/lib/runtime/choice-generation')
       const selectProvider = vi.fn().mockResolvedValue({ name: 'test' })
       const generateChoiceBranch = vi.fn().mockResolvedValue(null)
@@ -259,21 +259,23 @@ describe('Phase 1 — choice-generation module unit tests', () => {
 
       expect(result.ok).toBe(false)
       if (!result.ok) {
-        expect(result.reason).toBe('PROVIDER_FAILED')
+        // Phase 5: initial null → one repair attempt → still null → REPAIR_EXHAUSTED
+        expect(result.reason).toBe('REPAIR_EXHAUSTED')
         expect(result.validationFindings.some((f) => f.code === 'NULL_BRANCH')).toBe(true)
-        expect(result.repairAttempts).toBe(0)
+        expect(result.repairAttempts).toBe(1)
+        expect(generateChoiceBranch).toHaveBeenCalledTimes(2)
       }
     })
 
-    it('returns PROVIDER_FAILED when provider throws', async () => {
+    it('returns PROVIDER_FAILED when selectProvider throws before generation', async () => {
       const { buildChoiceBranch } = await import('@/lib/runtime/choice-generation')
       const selectProvider = vi.fn().mockRejectedValue(new Error('LLM timeout'))
       const generateChoiceBranch = vi.fn()
-      const onChoiceFallback = vi.fn()
+      const onChoiceFailed = vi.fn()
       const deps: ChoiceBuildDeps = {
         selectProvider,
         generateChoiceBranch,
-        telemetry: { onChoiceFallback },
+        telemetry: { onChoiceFailed },
       }
 
       const snapshot = (await import('@/fixtures/narrative/fixture-50')).buildFixtureSnapshot()
@@ -296,14 +298,59 @@ describe('Phase 1 — choice-generation module unit tests', () => {
       if (!result.ok) {
         expect(result.reason).toBe('PROVIDER_FAILED')
         expect(result.validationFindings.some((f) => f.code === 'PROVIDER_ERROR')).toBe(true)
-        expect(result.repairAttempts).toBe(0)
       }
+      expect(generateChoiceBranch).not.toHaveBeenCalled()
+      expect(onChoiceFailed).toHaveBeenCalled()
+    })
 
-      // Telemetry callback fires
-      expect(onChoiceFallback).toHaveBeenCalledWith({
+    it('repairs invalid initial branch then returns source REPAIRED', async () => {
+      const { buildChoiceBranch } = await import('@/lib/runtime/choice-generation')
+      const invalid = mockBranch(12)
+      invalid.choicePrompt = 'Apa yang kau lakukan?'
+      invalid.choices = [
+        { id: 'hadapi', label: 'Hadapi langsung apa yang baru terbuka' },
+        { id: 'selidiki', label: 'Selidiki dulu jejak yang tersisa' },
+      ]
+      const valid = mockBranch(12)
+      valid.choicePrompt = 'Langkah mendekat di tangga. Apa yang Maya lakukan?'
+      valid.choices = [
+        { id: 'buka-pintu', label: 'Buka pintu gudang arsip dengan hati-hati' },
+        { id: 'ikuti-suara', label: 'Ikuti sumber suara langkah di lorong' },
+      ]
+      const selectProvider = vi.fn().mockResolvedValue({ name: 'test' })
+      const generateChoiceBranch = vi
+        .fn()
+        .mockResolvedValueOnce(invalid)
+        .mockResolvedValueOnce(valid)
+      const onChoiceRepair = vi.fn()
+      const deps: ChoiceBuildDeps = {
+        selectProvider,
+        generateChoiceBranch,
+        telemetry: { onChoiceRepair },
+      }
+      const snapshot = (await import('@/fixtures/narrative/fixture-50')).buildFixtureSnapshot()
+      const draft = mockDraft(12)
+      const brief = mockBrief(snapshot, 12)
+
+      const result = await buildChoiceBranch(deps, {
+        snapshot,
+        draft,
         chapterNumber: 12,
-        reason: 'provider_error',
+        chapterBrief: brief,
+        routeState: normalizeRouteState({}),
+        choiceHistory: [],
+        lockedEndingKey: null,
+        providerContext: {},
       })
+
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.source).toBe('REPAIRED')
+        expect(result.repairAttempts).toBe(1)
+        expect(result.branch.choices[0].id).toBe('buka-pintu')
+      }
+      expect(onChoiceRepair).toHaveBeenCalled()
+      expect(generateChoiceBranch).toHaveBeenCalledTimes(2)
     })
 
     it('returns FINAL_CHAPTER for chapter 50 without calling provider', async () => {

@@ -78,6 +78,7 @@ export type RealGenerateResult =
         | 'CHAPTER_EXISTS'
         | 'CANON_MISSING'
         | 'FAILED_REVIEW_REQUIRED'
+        | 'CHOICE_GENERATION_FAILED'
       detail?: unknown
     }
 
@@ -278,7 +279,10 @@ function standardChoiceDeps(): ChoiceBuildDeps {
   }
 }
 
-/** LLM choices grounded di prose bab; fallback lokal bila provider gagal. */
+/**
+ * LLM choices grounded di prose bab.
+ * Phase 5: returns null on failure (no hard-coded generic fallback publish).
+ */
 async function buildChoices(
   snapshot: CanonSnapshot,
   draft: ChapterDraftParsed,
@@ -286,9 +290,17 @@ async function buildChoices(
   providerContext: ProviderCallContext,
   narrativeContextOverride?: ChoiceNarrativeContext,
 ): Promise<{
+  ok: true
   choicePrompt: string
   choices: { id: string; label: string }[]
   outcomes: PublishOutcome[]
+  repairAttempts: number
+  source: 'INITIAL' | 'REPAIRED'
+} | {
+  ok: false
+  reason: string
+  validationFindings: Array<{ code: string; message: string; severity: string }>
+  repairAttempts: number
 }> {
   // Resolve narrative context: override > DB reader state > empty defaults.
   const narrativeContext: ChoiceNarrativeContext = narrativeContextOverride
@@ -319,6 +331,7 @@ async function buildChoices(
 
   if (result.ok) {
     return {
+      ok: true,
       choicePrompt: result.branch.choicePrompt,
       choices: result.branch.choices.map((c) => ({
         id: c.id,
@@ -326,11 +339,18 @@ async function buildChoices(
         ...(c.hint ? { hint: c.hint } : {}),
       })),
       outcomes: mapBranchToPublishOutcomes(result.branch),
+      repairAttempts: result.repairAttempts,
+      source: result.source,
     }
   }
 
-  // Legacy fallback for standard flow — preserves current behavior
-  return fallbackChoicesFromDraftFn(draft, chapterNumber)
+  // Phase 5: no silent generic fallback on production path.
+  return {
+    ok: false,
+    reason: result.reason,
+    validationFindings: result.validationFindings,
+    repairAttempts: result.repairAttempts,
+  }
 }
 
 /**
@@ -504,9 +524,78 @@ export async function generateNextChapterReal(
     const readerSafe = toReaderSafe(draft)
     assertConsumerSafe(readerSafe)
 
-    // 7) Cabang pilihan LLM (grounded di prosa bab) — fallback lokal bila gagal.
+    // 7) Cabang pilihan LLM (grounded di prosa bab).
+    // Phase 5: no silent generic fallback — failure releases lease and fails terminal.
     stage = 'BUILD_CHOICES'
     const branch = await buildChoices(snapshot, draft, chapterNumber, providerContext)
+    if (!branch.ok) {
+      // Final chapter: publish ending without choices (Phase 7 also covers this).
+      if (branch.reason === 'FINAL_CHAPTER') {
+        stage = 'PUBLISH_CHAPTER'
+        const publishedEnding: PublishResult = await publishChapter({
+          storyId,
+          chapterNumber,
+          title: readerSafe.title,
+          paragraphs: readerSafe.paragraphs,
+          choicePrompt: null,
+          choices: null,
+          outcomes: [],
+          leaseId: lease.lease_id,
+          idempotencyKey: realGenerationKey(storyId, chapterNumber, 'publish'),
+        })
+        if (publishedEnding.ok) leaseReleased = true
+        if (!publishedEnding.ok) {
+          await releaseLeaseOnce()
+          return { ok: false, reason: publishedEnding.reason }
+        }
+        stage = 'RECORD_TERMINAL_ATTEMPT'
+        await recordGenerationAttempt({
+          storyId,
+          chapter: chapterNumber,
+          outcome: 'PUBLISHED',
+          repairAttempts: result.attempts,
+          findings: result.findings,
+          correlationId,
+        })
+        stage = 'COMPLETE'
+        return {
+          ok: true,
+          chapterNumber: publishedEnding.chapter_number,
+          seq: publishedEnding.seq,
+          repairAttempts: result.attempts,
+        }
+      }
+
+      await releaseLeaseOnce()
+      stage = 'RECORD_TERMINAL_ATTEMPT'
+      console.log('GENERATION_CHOICES_FAILED', {
+        storyId,
+        chapterNumber,
+        correlationId,
+        reason: branch.reason,
+        findingCodes: branch.validationFindings.map((f) => f.code).slice(0, 12),
+        repairAttempts: branch.repairAttempts,
+        elapsedMs: Date.now() - startedAt,
+      })
+      await recordGenerationAttempt({
+        storyId,
+        chapter: chapterNumber,
+        outcome: 'REVIEW_REQUIRED',
+        repairAttempts: result.attempts + branch.repairAttempts,
+        findings: result.findings,
+        correlationId,
+      }).catch(() => undefined)
+      return {
+        ok: false,
+        reason: 'CHOICE_GENERATION_FAILED',
+        detail: {
+          choiceReason: branch.reason,
+          findingCodes: branch.validationFindings.map((f) => f.code),
+          repairAttempts: branch.repairAttempts,
+        },
+      }
+    }
+
     stage = 'VALIDATE_CHOICES'
     const leakInChoices = [
       branch.choicePrompt,

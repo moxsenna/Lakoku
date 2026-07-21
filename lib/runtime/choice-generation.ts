@@ -94,7 +94,19 @@ export interface ChoiceBuildDeps {
     options?: { telemetryContext: unknown; workflowPhase: string },
   ) => Promise<ChoiceBranch | null>
   telemetry?: {
+    /** @deprecated Phase 5: production must not publish generic fallback. Kept for tests only. */
     onChoiceFallback?: (context: { chapterNumber: number; reason: string }) => void
+    onChoiceRepair?: (context: {
+      chapterNumber: number
+      findingCodes: string[]
+      attempt: number
+    }) => void
+    onChoiceFailed?: (context: {
+      chapterNumber: number
+      reason: string
+      findingCodes: string[]
+      repairAttempts: number
+    }) => void
   }
 }
 
@@ -193,15 +205,49 @@ export function fallbackChoicesFromDraft(
 
 // ---- Main orchestrator ----
 
+function qualityInputFor(
+  branch: ChoiceBranch,
+  finalChapter: FinalChapterProse,
+  endingParagraphs: EndingParagraphs,
+  input: BuildChoiceBranchInput,
+): ChoiceQualityInput {
+  return {
+    branch,
+    finalChapter,
+    endingParagraphs,
+    activeCharacters: input.activeCharacters,
+    activeThreads: input.activeThreads,
+    chapterNumber: input.chapterNumber,
+    totalChapters: input.totalChapters,
+    previousChoice: input.previousChoice ?? null,
+    routeState: input.routeState,
+  }
+}
+
+function choiceProviderInput(
+  input: BuildChoiceBranchInput,
+  groundedDraft: ChapterDraftParsed,
+  endingParagraphs: EndingParagraphs,
+): ChoiceInput {
+  return {
+    snapshot: input.snapshot,
+    chapterBrief: input.chapterBrief,
+    draft: groundedDraft,
+    lastParagraphs: endingParagraphs,
+    routeState: input.routeState,
+    choiceHistory: input.choiceHistory,
+    lockedEndingKey: input.lockedEndingKey,
+  }
+}
+
 /**
  * Generate a choice branch via the injected provider.
  *
- * Responsibilities:
- *  - Ending-policy guard: final chapter returns ok:false without calling provider.
- *  - Provider orchestration: selectProvider -> generateChoiceBranch.
- *  - Error handling: catches provider errors and returns structured failure.
+ * Pipeline:
+ *  CHOICES_INITIAL → quality validate → optional CHOICES_REPAIR_1 → final validate
  *
- * Callers decide whether to fall back (standard) or throw (personalized).
+ * On total failure returns structured ok:false (never hard-coded generic choices).
+ * Callers must NOT publish on failure; release lease and mark retryable.
  */
 export async function buildChoiceBranch(
   deps: ChoiceBuildDeps,
@@ -209,7 +255,7 @@ export async function buildChoiceBranch(
 ): Promise<ChoiceBuildResult> {
   const total = input.totalChapters ?? TOTAL_CHAPTERS
 
-  // Ending policy guard
+  // Ending policy guard — no provider call
   if (isFinalChapter(input.chapterNumber, total)) {
     return {
       ok: false,
@@ -225,85 +271,158 @@ export async function buildChoiceBranch(
     }
   }
 
+  // Final repaired prose is the only grounding source.
+  const fromFinal = groundedChoiceProseFromFinalDraft(input.draft)
+  const finalChapter = input.finalChapter ?? fromFinal.finalChapter
+  const endingParagraphs = input.lastParagraphs ?? fromFinal.endingParagraphs
+  const groundedDraft: ChapterDraftParsed = {
+    ...input.draft,
+    title: finalChapter.title,
+    paragraphs: finalChapter.paragraphs,
+  }
+  const providerInput = choiceProviderInput(input, groundedDraft, endingParagraphs)
+
+  let repairAttempts = 0
+  let lastFindings: ChoiceFinding[] = []
+  let lastReason: ChoiceBuildFailureReason = 'PROVIDER_FAILED'
+  let lastCause: unknown
+
   try {
-    // Final repaired prose is the only grounding source.
-    const fromFinal = groundedChoiceProseFromFinalDraft(input.draft)
-    const finalChapter = input.finalChapter ?? fromFinal.finalChapter
-    const endingParagraphs = input.lastParagraphs ?? fromFinal.endingParagraphs
-    // Keep draft.paragraphs aligned with explicit finalChapter when provided.
-    const groundedDraft: ChapterDraftParsed = {
-      ...input.draft,
-      title: finalChapter.title,
-      paragraphs: finalChapter.paragraphs,
-    }
-
     const provider = await deps.selectProvider(input.providerContext)
-    const branch = await deps.generateChoiceBranch(
-      { provider },
-      {
-        snapshot: input.snapshot,
-        chapterBrief: input.chapterBrief,
-        draft: groundedDraft,
-        lastParagraphs: endingParagraphs,
-        routeState: input.routeState,
-        choiceHistory: input.choiceHistory,
-        lockedEndingKey: input.lockedEndingKey,
-      },
-      {
-        telemetryContext: input.providerContext,
-        workflowPhase: 'CHOICES_INITIAL',
-      },
-    )
 
-    if (!branch) {
-      return {
-        ok: false,
-        reason: 'PROVIDER_FAILED',
-        validationFindings: [
-          {
-            code: 'NULL_BRANCH',
-            message: 'Choice branch returned null.',
-            severity: 'ERROR',
-          },
-        ],
-        repairAttempts: 0,
-      }
+    // ---- INITIAL ----
+    let branch: ChoiceBranch | null = null
+    try {
+      branch = await deps.generateChoiceBranch(
+        { provider },
+        providerInput,
+        {
+          telemetryContext: input.providerContext,
+          workflowPhase: 'CHOICES_INITIAL',
+        },
+      )
+    } catch (err) {
+      lastCause = err
+      lastFindings = [
+        {
+          code: 'PROVIDER_ERROR',
+          message: err instanceof Error ? err.message : 'Choice provider threw an error.',
+          severity: 'ERROR',
+        },
+      ]
+      lastReason = 'PROVIDER_FAILED'
+      branch = null
     }
 
-    // Phase 4: semantic quality validation
-    const qualityInput: ChoiceQualityInput = {
-      branch,
-      finalChapter,
-      endingParagraphs,
-      activeCharacters: input.activeCharacters,
-      activeThreads: input.activeThreads,
+    if (branch) {
+      const qualityResult = validateChoiceBranchQuality(
+        qualityInputFor(branch, finalChapter, endingParagraphs, input),
+      )
+      if (qualityResult.ok) {
+        return {
+          ok: true,
+          source: 'INITIAL',
+          branch,
+          validationFindings: qualityResult.findings,
+          repairAttempts: 0,
+        }
+      }
+      lastFindings = qualityResult.findings
+      lastReason = mapFindingToReason(qualityResult.findings) as ChoiceBuildFailureReason
+    } else if (lastFindings.length === 0) {
+      lastFindings = [
+        {
+          code: 'NULL_BRANCH',
+          message: 'Choice branch returned null.',
+          severity: 'ERROR',
+        },
+      ]
+      lastReason = 'PROVIDER_FAILED'
+    }
+
+    // ---- REPAIR (one attempt) ----
+    deps.telemetry?.onChoiceRepair?.({
       chapterNumber: input.chapterNumber,
-      totalChapters: input.totalChapters,
-      previousChoice: input.previousChoice ?? null,
-      routeState: input.routeState,
-    }
-    const qualityResult = validateChoiceBranchQuality(qualityInput)
+      findingCodes: lastFindings.map((f) => f.code),
+      attempt: 1,
+    })
+    repairAttempts = 1
 
-    if (!qualityResult.ok) {
-      return {
-        ok: false,
-        reason: mapFindingToReason(qualityResult.findings) as ChoiceBuildFailureReason,
-        validationFindings: qualityResult.findings,
-        repairAttempts: 0,
+    let repaired: ChoiceBranch | null = null
+    try {
+      if (deps.repairChoiceBranch) {
+        repaired = await deps.repairChoiceBranch(
+          { provider },
+          providerInput,
+          lastFindings,
+          {
+            telemetryContext: input.providerContext,
+            workflowPhase: 'CHOICES_REPAIR_1',
+          },
+        )
+      } else {
+        // Default repair: re-generate once with repair workflow phase.
+        repaired = await deps.generateChoiceBranch(
+          { provider },
+          providerInput,
+          {
+            telemetryContext: input.providerContext,
+            workflowPhase: 'CHOICES_REPAIR_1',
+          },
+        )
       }
+    } catch (err) {
+      lastCause = err
+      lastFindings = [
+        ...lastFindings,
+        {
+          code: 'REPAIR_PROVIDER_ERROR',
+          message: err instanceof Error ? err.message : 'Choice repair provider threw.',
+          severity: 'ERROR',
+        },
+      ]
+      repaired = null
     }
+
+    if (repaired) {
+      const repairedQuality = validateChoiceBranchQuality(
+        qualityInputFor(repaired, finalChapter, endingParagraphs, input),
+      )
+      if (repairedQuality.ok) {
+        return {
+          ok: true,
+          source: 'REPAIRED',
+          branch: repaired,
+          validationFindings: repairedQuality.findings,
+          repairAttempts,
+        }
+      }
+      lastFindings = repairedQuality.findings
+      lastReason = 'REPAIR_EXHAUSTED'
+    } else {
+      lastReason = 'REPAIR_EXHAUSTED'
+    }
+
+    deps.telemetry?.onChoiceFailed?.({
+      chapterNumber: input.chapterNumber,
+      reason: lastReason,
+      findingCodes: lastFindings.map((f) => f.code),
+      repairAttempts,
+    })
 
     return {
-      ok: true,
-      source: 'INITIAL',
-      branch,
-      validationFindings: qualityResult.findings,
-      repairAttempts: 0,
+      ok: false,
+      reason: lastReason,
+      validationFindings: lastFindings,
+      repairAttempts,
+      cause: lastCause,
     }
   } catch (err) {
-    deps.telemetry?.onChoiceFallback?.({
+    deps.telemetry?.onChoiceFailed?.({
       chapterNumber: input.chapterNumber,
-      reason: 'provider_error',
+      reason: 'PROVIDER_FAILED',
+      findingCodes: ['PROVIDER_ERROR'],
+      repairAttempts,
     })
     return {
       ok: false,
@@ -315,7 +434,7 @@ export async function buildChoiceBranch(
           severity: 'ERROR',
         },
       ],
-      repairAttempts: 0,
+      repairAttempts,
       cause: err,
     }
   }

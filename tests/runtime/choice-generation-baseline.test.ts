@@ -299,7 +299,7 @@ describe('Phase 0 — Characterization (current buggy behavior)', () => {
       expect(choiceInput.lockedEndingKey).toBeNull()
     })
 
-    it('returns generic fallback when chapterNumber >= 50 (even chapter 50)', async () => {
+    it('returns FINAL_CHAPTER failure for chapter 50 without calling provider', async () => {
       mocks.selectProvider.mockClear()
       mocks.generateChoiceBranch.mockClear()
 
@@ -310,16 +310,16 @@ describe('Phase 0 — Characterization (current buggy behavior)', () => {
 
       const result = await buildChoices(snapshot, mockDraft(50), 50, providerContext(50))
 
-      // Current behavior: chapter 50 returns fallback with hard-coded labels
-      expect(result.choices[0].id).toBe('hadapi')
-      expect(result.choices[1].id).toBe('selidiki')
-      // selectProvider and generateChoiceBranch are NOT called
-      // (the early return at line 233-234 triggers before the try block)
+      // Phase 5/7: chapter 50 is ending policy — no generic hadapi/selidiki publish
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.reason).toBe('FINAL_CHAPTER')
+      }
       expect(mocks.selectProvider).not.toHaveBeenCalled()
       expect(mocks.generateChoiceBranch).not.toHaveBeenCalled()
     })
 
-    it('logs GENERATION_CHOICES_FALLBACK_USED and returns fallback when generateChoiceBranch throws', async () => {
+    it('returns explicit failure (no generic fallback) when generateChoiceBranch throws', async () => {
       mocks.selectProvider.mockResolvedValue({ name: 'test', generateChoices: async () => mockBranch() })
       mocks.generateChoiceBranch.mockRejectedValue(new Error('LLM overload'))
       mocks.mockConsoleLog.mockClear()
@@ -331,14 +331,16 @@ describe('Phase 0 — Characterization (current buggy behavior)', () => {
 
       const result = await buildChoices(snapshot, mockDraft(12), 12, providerContext())
 
-      // Current behavior: silently returns hard-coded fallback on provider error
-      expect(result.choices[0].id).toBe('hadapi')
-      expect(result.choices[1].id).toBe('selidiki')
-      // Logs the fallback event (line 266)
-      expect(mocks.mockConsoleLog).toHaveBeenCalledWith('GENERATION_CHOICES_FALLBACK_USED')
+      // Phase 5: no silent generic fallback publish path
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.reason).toBeTruthy()
+        expect(result.reason).not.toBe('SUCCESS')
+      }
+      expect(mocks.mockConsoleLog).not.toHaveBeenCalledWith('GENERATION_CHOICES_FALLBACK_USED')
     })
 
-    it('returns generic fallback when generateChoiceBranch returns null', async () => {
+    it('returns explicit failure when generateChoiceBranch returns null after repair', async () => {
       mocks.selectProvider.mockResolvedValue({ name: 'test', generateChoices: async () => mockBranch() })
       mocks.generateChoiceBranch.mockResolvedValue(null)
       mocks.mockConsoleLog.mockClear()
@@ -350,9 +352,11 @@ describe('Phase 0 — Characterization (current buggy behavior)', () => {
 
       const result = await buildChoices(snapshot, mockDraft(12), 12, providerContext())
 
-      // Current behavior: returns fallback on null branch (no log for null case)
-      expect(result.choices[0].id).toBe('hadapi')
-      // No log emitted for null branch path (only on catch)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.reason).toBe('REPAIR_EXHAUSTED')
+        expect(result.repairAttempts).toBe(1)
+      }
       expect(mocks.mockConsoleLog).not.toHaveBeenCalledWith('GENERATION_CHOICES_FALLBACK_USED')
     })
   })
@@ -371,9 +375,9 @@ describe('Phase 0 — Characterization (current buggy behavior)', () => {
 
       expect(source).toContain('scanForLeaks')
       expect(source).toContain("stage = 'VALIDATE_CHOICES'")
-      // No semantic grounding module wired into standard flow yet
-      expect(source).not.toMatch(/validateChoiceBranchQuality/)
-      expect(source).not.toMatch(/CHOICE_PROMPT_UNGROUNDED|CHOICE_LABEL_UNGROUNDED/)
+      // Phase 5: semantic grounding lives in choice-generation (called via buildChoiceBranch)
+      expect(source).toContain('buildChoices')
+      expect(source).toMatch(/CHOICE_GENERATION_FAILED|FINAL_CHAPTER/)
     })
 
     it('fallback outcomes have publishable legacy PublishOutcome shape (can be published)', async () => {
@@ -470,7 +474,7 @@ describe('Phase 0 — Desired behavior (TDD: it.fails)', () => {
   })
 
   describe('buildChoices — should not silently fall back', () => {
-    it.fails(
+    it(
       'does NOT return generic fallback when provider fails; instead indicates error',
       async () => {
         mocks.selectProvider.mockResolvedValue({
@@ -492,24 +496,18 @@ describe('Phase 0 — Desired behavior (TDD: it.fails)', () => {
           providerContext(),
         )
 
-        // DESIRED: failure is explicit — not hard-coded hadapi/selidiki.
-        // Accept either result-union failure or throw (personalized style).
-        // Current: returns fallback that is publishable as success.
-        const asRecord = result as unknown as Record<string, unknown>
-        const isExplicitFailure =
-          asRecord.ok === false ||
-          typeof asRecord.reason === 'string' ||
-          result.choices.length === 0
-
-        expect(isExplicitFailure).toBe(true)
-        expect(result.choices.map((c) => c.id)).not.toEqual(['hadapi', 'selidiki'])
+        // Phase 5: failure is explicit result union — never hadapi/selidiki publish.
+        expect(result.ok).toBe(false)
+        if (!result.ok) {
+          expect(typeof result.reason).toBe('string')
+        }
       },
     )
   })
 
   describe('buildChoices — chapter 50 should skip choices', () => {
-    it.fails(
-      'returns no choices for chapter 50 (matches personalized flow)',
+    it(
+      'returns FINAL_CHAPTER (no choices) for chapter 50',
       async () => {
         const { __testBuildChoices: buildChoices } = await import(
           '@/lib/runtime/story-generation'
@@ -523,11 +521,10 @@ describe('Phase 0 — Desired behavior (TDD: it.fails)', () => {
           providerContext(50),
         )
 
-        // DESIRED: chapter 50 should return null/empty choices, not fallback.
-        // Currently: returns fallbackChoicesFromDraft with hadapi/selidiki.
-        expect(result.choices).toHaveLength(0)
-        expect(result.outcomes).toHaveLength(0)
-        expect(result.choicePrompt === '' || result.choicePrompt === null).toBe(true)
+        expect(result.ok).toBe(false)
+        if (!result.ok) {
+          expect(result.reason).toBe('FINAL_CHAPTER')
+        }
       },
     )
   })

@@ -1,9 +1,10 @@
 import 'server-only'
 import {
   acquireGenerationLease,
-  publishChapter,
+  publishChapterV2,
   releaseGenerationLease,
-  type PublishOutcome,
+  mapBranchToV2Outcomes,
+  type PublishOutcomeV2,
   type PublishResult,
 } from './lifecycle'
 import {
@@ -22,7 +23,6 @@ import {
   scanForLeaks,
   type ThreadContext,
   type ChapterDraftParsed,
-  type ChoiceBranch,
 } from '@lakoku/ai-gateway'
 import { selectProvider } from '@lakoku/ai-gateway/server'
 import {
@@ -200,17 +200,6 @@ function syntheticChapterBrief(
   }
 }
 
-function mapBranchToPublishOutcomes(
-  branch: ChoiceBranch,
-): PublishOutcome[] {
-  return branch.outcomes.map((outcome) => ({
-    choiceId: outcome.choiceId,
-    consequence: outcome.consequence,
-    nextChapterNumber: outcome.nextChapterNumber,
-    isEnding: outcome.isEnding,
-  }))
-}
-
 /** Concise route state summary for synthetic chapter briefs (reuses canonical summarizer). */
 function summarizeRouteStateForChapterBrief(routeState: RouteState): string {
   return summarizeRouteStateForPrompt(routeState)
@@ -293,7 +282,7 @@ async function buildChoices(
   ok: true
   choicePrompt: string
   choices: { id: string; label: string }[]
-  outcomes: PublishOutcome[]
+  outcomes: PublishOutcomeV2[]
   repairAttempts: number
   source: 'INITIAL' | 'REPAIRED'
 } | {
@@ -338,7 +327,7 @@ async function buildChoices(
         label: c.label,
         ...(c.hint ? { hint: c.hint } : {}),
       })),
-      outcomes: mapBranchToPublishOutcomes(result.branch),
+      outcomes: mapBranchToV2Outcomes(result.branch, chapterNumber),
       repairAttempts: result.repairAttempts,
       source: result.source,
     }
@@ -532,7 +521,7 @@ export async function generateNextChapterReal(
       // Final chapter: publish ending without choices (Phase 7 also covers this).
       if (branch.reason === 'FINAL_CHAPTER') {
         stage = 'PUBLISH_CHAPTER'
-        const publishedEnding: PublishResult = await publishChapter({
+        const publishedEnding: PublishResult = await publishChapterV2({
           storyId,
           chapterNumber,
           title: readerSafe.title,
@@ -614,7 +603,7 @@ export async function generateNextChapterReal(
 
     // 8) Publish atomik (chapter + outcomes + event + release lease).
     stage = 'PUBLISH_CHAPTER'
-    const published: PublishResult = await publishChapter({
+    const published: PublishResult = await publishChapterV2({
       storyId,
       chapterNumber,
       title: readerSafe.title,
@@ -681,6 +670,5 @@ export async function generateNextChapterReal(
 export {
   fallbackChoicesFromDraft as __testFallbackChoicesFromDraft,
   buildChoices as __testBuildChoices,
-  mapBranchToPublishOutcomes as __testMapBranchToPublishOutcomes,
   syntheticChapterBrief as __testSyntheticChapterBrief,
 }

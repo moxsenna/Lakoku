@@ -1,5 +1,5 @@
 import 'server-only'
-import { ChoiceEffectSchema, type ChoiceEffect } from '@lakoku/ai-gateway'
+import { ChoiceEffectSchema, type ChoiceEffect, type ChoiceBranch } from '@lakoku/ai-gateway'
 import { createAdminClient } from '@lakoku/db'
 
 /**
@@ -146,4 +146,24 @@ export async function listStoryEvents(storyId: string) {
     .order('seq', { ascending: true })
   if (error) throw new Error(`listStoryEvents: ${error.message}`)
   return data ?? []
+}
+
+/**
+ * Map ChoiceBranch outcomes to PublishOutcomeV2, preserving effect and
+ * deriving choiceKind. Shared across standard and personalized flows.
+ */
+export function mapBranchToV2Outcomes(
+  branch: ChoiceBranch,
+  chapterNumber: number,
+): PublishOutcomeV2[] {
+  return branch.outcomes.map((outcome) => ({
+    choiceId: outcome.choiceId,
+    consequence: outcome.consequence,
+    nextChapterNumber: outcome.nextChapterNumber,
+    isEnding: outcome.isEnding,
+    effect: outcome.effect,
+    choiceKind: outcome.isEnding && chapterNumber === 49
+      ? 'special_bad_ending'
+      : 'normal',
+  }))
 }

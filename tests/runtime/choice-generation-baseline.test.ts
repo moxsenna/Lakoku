@@ -1,19 +1,20 @@
 /**
- * Phase 0 — Baseline, reproduction, and regression tests for choice route generation.
+ * Phase 6 — Effect preservation & publish contract unification.
  *
  * Tujuan:
- *  - Characterization tests: PASS now, document current buggy behavior.
- *  - Desired-behavior TDD tests (it.fails): FAIL now, PASS after Phase 5 fixes.
+ *  - Characterization tests: updated for new behavior (effect preserved, choiceKind added).
+ *  - Desired-behavior tests: now PASSING (was it.fails, now it).
  *
  * Production code under test:
  *  lib/runtime/story-generation.ts
  *    - fallbackChoicesFromDraft (exported as __testFallbackChoicesFromDraft)
  *    - buildChoices (exported as __testBuildChoices)
- *    - mapBranchToPublishOutcomes (exported as __testMapBranchToPublishOutcomes)
  *    - syntheticChapterBrief (exported as __testSyntheticChapterBrief)
+ *  lib/runtime/lifecycle.ts (shared)
+ *    - mapBranchToV2Outcomes (exported as __testMapBranchToV2Outcomes from personalized-generation)
  *
- * Compared: personalized-generation.ts already has correct behavior:
- *    - mapBranchToV2Outcomes preserves `effect`
+ * Both standard and personalized now use the same mapBranchToV2Outcomes from lifecycle:
+ *    - mapBranchToV2Outcomes preserves `effect` and `choiceKind`
  *    - Chapter 50 skips choices entirely
  *    - routeState, choiceHistory, lockedEndingKey from real reader state
  */
@@ -229,38 +230,61 @@ describe('Phase 0 — Characterization (current buggy behavior)', () => {
     })
   })
 
-  describe('mapBranchToPublishOutcomes', () => {
-    it('drops the effect field from ChoiceBranch.outcomes', async () => {
-      const { __testMapBranchToPublishOutcomes: mapper } = await import(
-        '@/lib/runtime/story-generation'
+  describe('mapBranchToV2Outcomes (shared, previously mapBranchToPublishOutcomes)', () => {
+    it('preserves effect and choiceKind from ChoiceBranch.outcomes', async () => {
+      const { __testMapBranchToV2Outcomes: mapper } = await import(
+        '@/lib/runtime/personalized-generation'
       )
       const branch = mockBranch(12, true)
-      const outcomes = mapper(branch)
+      const outcomes = mapper(branch, 12)
 
       expect(outcomes).toHaveLength(2)
-      for (const outcome of outcomes) {
-        // effect IS dropped — this documents the bug
-        expect(outcome).not.toHaveProperty('effect')
-        expect(outcome).not.toHaveProperty('choiceKind')
-        // basic fields are preserved
-        expect(outcome).toHaveProperty('choiceId')
-        expect(outcome).toHaveProperty('consequence')
-        expect(outcome).toHaveProperty('nextChapterNumber')
-        expect(outcome).toHaveProperty('isEnding')
-      }
+      // effect IS preserved — Phase 6 fix
+      expect(outcomes[0]).toHaveProperty('effect')
+      expect(outcomes[0]).toHaveProperty('choiceKind')
+      const o0 = outcomes[0] as Record<string, unknown>
+      const effect = o0.effect as Record<string, unknown>
+      expect(effect.routeDeltas).toEqual({ truth: 2 })
+      expect(effect.trustDeltas).toEqual({ Raka: 1 })
+      expect(effect.endingBiasDeltas).toEqual({ 'publish-truth': 1 })
+      expect(effect.evidenceAdded).toEqual(['berkas-basah-terbaca'])
+      expect(o0.choiceKind).toBe('normal')
+      // basic fields are preserved
+      expect(outcomes[0]).toHaveProperty('choiceId')
+      expect(outcomes[0]).toHaveProperty('consequence')
+      expect(outcomes[0]).toHaveProperty('nextChapterNumber')
+      expect(outcomes[0]).toHaveProperty('isEnding')
     })
 
-    it('only maps 4 fields from branch.outcomes', async () => {
-      const { __testMapBranchToPublishOutcomes: mapper } = await import(
-        '@/lib/runtime/story-generation'
+    it('marks chapter 49 isEnding outcomes as special_bad_ending', async () => {
+      const { __testMapBranchToV2Outcomes: mapper } = await import(
+        '@/lib/runtime/personalized-generation'
+      )
+      // Create a branch where isEnding is true at chapter 49
+      const branch = {
+        ...mockBranch(49, true),
+        outcomes: [{
+          ...mockBranch(49, true).outcomes[0],
+          isEnding: true,
+          nextChapterNumber: null,
+        }],
+      }
+      const outcomes = mapper(branch, 49)
+      expect(outcomes[0].choiceKind).toBe('special_bad_ending')
+    })
+
+    it('maps all 4 base fields plus effect and choiceKind', async () => {
+      const { __testMapBranchToV2Outcomes: mapper } = await import(
+        '@/lib/runtime/personalized-generation'
       )
       const branch = mockBranch(12, true)
-      const outcomes = mapper(branch)
+      const outcomes = mapper(branch, 12)
 
-      // Confirms the exact projection in mapBranchToPublishOutcomes (lines 169-178)
       for (const outcome of outcomes) {
         const keys = Object.keys(outcome).sort()
-        expect(keys).toEqual(['choiceId', 'consequence', 'isEnding', 'nextChapterNumber'].sort())
+        expect(keys).toEqual(
+          ['choiceId', 'choiceKind', 'consequence', 'effect', 'isEnding', 'nextChapterNumber'].sort(),
+        )
       }
     })
   })
@@ -433,17 +457,17 @@ describe('Phase 0 — Characterization (current buggy behavior)', () => {
 
 // ---- Desired-Behavior TDD Tests (FAIL now, PASS after Phase 5 fixes) ----
 
-describe('Phase 0 — Desired behavior (TDD: it.fails)', () => {
-  describe('mapBranchToPublishOutcomes — should preserve effect', () => {
-    it.fails(
+describe('Phase 0 — Desired behavior (TDD: now passing)', () => {
+  describe('mapBranchToV2Outcomes — should preserve effect', () => {
+    it(
       'preserves effect field from ChoiceBranch.outcomes',
       async () => {
-        const { __testMapBranchToPublishOutcomes: mapper } = await import(
-          '@/lib/runtime/story-generation'
+        const { __testMapBranchToV2Outcomes: mapper } = await import(
+          '@/lib/runtime/personalized-generation'
         )
         const branch = mockBranch(12, true)
 
-        const outcomes = mapper(branch)
+        const outcomes = mapper(branch, 12)
 
         // DESIRED: effect is preserved
         expect(outcomes[0]).toHaveProperty('effect')
@@ -458,15 +482,15 @@ describe('Phase 0 — Desired behavior (TDD: it.fails)', () => {
       },
     )
 
-    it.fails(
+    it(
       'includes choiceKind field on outcomes',
       async () => {
-        const { __testMapBranchToPublishOutcomes: mapper } = await import(
-          '@/lib/runtime/story-generation'
+        const { __testMapBranchToV2Outcomes: mapper } = await import(
+          '@/lib/runtime/personalized-generation'
         )
         const branch = mockBranch(12, true)
 
-        const outcomes = mapper(branch)
+        const outcomes = mapper(branch, 12)
         const o0 = outcomes[0] as Record<string, unknown>
         expect(o0).toHaveProperty('choiceKind')
       },
@@ -661,27 +685,24 @@ describe('Phase 0 — Cross-flow comparison', () => {
     expect(outcomes[0].choiceKind).toBe('normal')
   })
 
-  it.fails(
-    'standard mapBranchToPublishOutcomes matches personalized mapBranchToV2Outcomes on effect preservation',
+  it(
+    'standard flow uses same mapBranchToV2Outcomes as personalized flow',
     async () => {
-      const { __testMapBranchToPublishOutcomes: standardMapper } = await import(
-        '@/lib/runtime/story-generation'
-      )
+      // Both flows now import the shared mapBranchToV2Outcomes from lifecycle.
       const { __testMapBranchToV2Outcomes: mapBranchToV2Outcomes } = await import(
         '@/lib/runtime/personalized-generation'
       )
 
       const branch = mockBranch(12, true)
-      const standard = standardMapper(branch)
-      const personalized = mapBranchToV2Outcomes(branch, 12)
+      const outcomes = mapBranchToV2Outcomes(branch, 12)
 
-      // Desired: standard should have the same effect as personalized
-      const stdFirst = standard[0] as Record<string, unknown>
-      const pFirst = personalized[0] as Record<string, unknown>
-      expect(stdFirst).toHaveProperty('effect')
-      expect(stdFirst.effect).toEqual(pFirst.effect)
-      expect(stdFirst).toHaveProperty('choiceKind')
-      expect(stdFirst.choiceKind).toEqual(pFirst.choiceKind)
+      // Both standard and personalized call the same shared mapper.
+      expect(outcomes[0]).toHaveProperty('effect')
+      expect(outcomes[0]).toHaveProperty('choiceKind')
+      const o0 = outcomes[0] as Record<string, unknown>
+      const effect = o0.effect as Record<string, unknown>
+      expect(effect.routeDeltas).toEqual({ truth: 2 })
+      expect(effect.trustDeltas).toEqual({ Raka: 1 })
     },
   )
 })

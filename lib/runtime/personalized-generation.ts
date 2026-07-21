@@ -49,6 +49,7 @@ import {
   acquireGenerationLease,
   releaseGenerationLease,
   publishChapterV2,
+  mapBranchToV2Outcomes,
   type AcquireLeaseResult,
   type PublishChapterV2Input,
   type PublishOutcomeV2,
@@ -231,22 +232,6 @@ function resolveBlueprint(
   }
 }
 
-function mapBranchToV2Outcomes(
-  branch: ChoiceBranch,
-  chapterNumber: number,
-): PublishOutcomeV2[] {
-  return branch.outcomes.map((outcome) => ({
-    choiceId: outcome.choiceId,
-    consequence: outcome.consequence,
-    nextChapterNumber: outcome.nextChapterNumber,
-    isEnding: outcome.isEnding,
-    effect: outcome.effect,
-    choiceKind: outcome.isEnding && chapterNumber === 49
-      ? 'special_bad_ending'
-      : 'normal',
-  }))
-}
-
 function previousChoiceFrom(
   history: ChoiceHistoryEntry[],
   triggerChoiceId: string | undefined,
@@ -336,8 +321,8 @@ export const defaultPersistEndingLockForTest = defaultPersistEndingLock
 
 // ---- Test-only exports (Phase 0 baseline) ----
 // Exported for characterization / desired-behavior TDD tests only.
-// Must NOT be imported by production code. Logic unchanged.
-export { mapBranchToV2Outcomes as __testMapBranchToV2Outcomes }
+// Must NOT be imported by production code. Re-exported from shared lifecycle.
+export { mapBranchToV2Outcomes as __testMapBranchToV2Outcomes } from './lifecycle'
 
 type DraftAuditSignals = ChapterDraftParsed & {
   opensNewThread?: boolean

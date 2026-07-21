@@ -18,7 +18,7 @@ import {
  * Scope: single Node process (one `lakoku-web` container). Multi-instance
  * would need Redis/DB coordination later.
  *
- * Env:
+ * Env (pins override DB policy when set):
  *   LAKOKU_MAX_CONCURRENT_GENERATIONS          default 10
  *   LAKOKU_MAX_CONCURRENT_GENERATIONS_PER_USER default 1
  *   LAKOKU_GENERATION_MAX_QUEUE               default 40
@@ -81,9 +81,17 @@ function envInt(name: string, fallback: number, min: number, max: number): numbe
   return Math.min(max, Math.max(min, n))
 }
 
-const MAX_CONCURRENT = envInt('LAKOKU_MAX_CONCURRENT_GENERATIONS', 10, 1, 64)
-const MAX_PER_USER = envInt('LAKOKU_MAX_CONCURRENT_GENERATIONS_PER_USER', 1, 1, 8)
-const MAX_QUEUE = envInt('LAKOKU_GENERATION_MAX_QUEUE', 40, 0, 500)
+function clamp(n: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, n))
+}
+
+const ENV_PIN_CONCURRENT = Boolean(process.env.LAKOKU_MAX_CONCURRENT_GENERATIONS?.trim())
+const ENV_PIN_PER_USER = Boolean(process.env.LAKOKU_MAX_CONCURRENT_GENERATIONS_PER_USER?.trim())
+const ENV_PIN_QUEUE = Boolean(process.env.LAKOKU_GENERATION_MAX_QUEUE?.trim())
+
+let maxConcurrent = envInt('LAKOKU_MAX_CONCURRENT_GENERATIONS', 10, 1, 64)
+let maxPerUser = envInt('LAKOKU_MAX_CONCURRENT_GENERATIONS_PER_USER', 1, 1, 8)
+let maxQueue = envInt('LAKOKU_GENERATION_MAX_QUEUE', 40, 0, 500)
 const QUEUE_WAIT_MS = envInt('LAKOKU_GENERATION_QUEUE_WAIT_MS', 600_000, 5_000, 3_600_000)
 /** Cold-start fallback only — replaced by rolling p50 once enough samples exist. */
 const AVG_CHAPTER_SECONDS = envInt('LAKOKU_GENERATION_AVG_SECONDS', 90, 20, 600)
@@ -102,11 +110,34 @@ function jobKey(storyId: string, chapterNumber: number): string {
 
 export function getGenerationConcurrencyConfig() {
   return {
-    maxConcurrent: MAX_CONCURRENT,
-    maxPerUser: MAX_PER_USER,
-    maxQueue: MAX_QUEUE,
+    maxConcurrent,
+    maxPerUser,
+    maxQueue,
     queueWaitMs: QUEUE_WAIT_MS,
     avgChapterSeconds: AVG_CHAPTER_SECONDS,
+    envPinned: {
+      maxConcurrent: ENV_PIN_CONCURRENT,
+      maxPerUser: ENV_PIN_PER_USER,
+      maxQueue: ENV_PIN_QUEUE,
+    },
+  }
+}
+
+/**
+ * Refresh process-local caps from ops generation policy.
+ * Env-pinned values stay fixed for process lifetime.
+ */
+export async function refreshGenerationConcurrencyFromPolicy(): Promise<void> {
+  const { getGenerationPolicy } = await import('@/lib/ops/generation-policy')
+  const policy = await getGenerationPolicy()
+  if (!ENV_PIN_CONCURRENT) {
+    maxConcurrent = clamp(policy.maxConcurrentGenerations, 1, 64)
+  }
+  if (!ENV_PIN_PER_USER) {
+    maxPerUser = clamp(policy.maxConcurrentGenerationsPerUser, 1, 8)
+  }
+  if (!ENV_PIN_QUEUE) {
+    maxQueue = clamp(policy.generationMaxQueue, 0, 500)
   }
 }
 
@@ -115,9 +146,9 @@ export function getGenerationConcurrencyStats() {
   return {
     active,
     queued: queue.length,
-    maxConcurrent: MAX_CONCURRENT,
-    maxPerUser: MAX_PER_USER,
-    maxQueue: MAX_QUEUE,
+    maxConcurrent,
+    maxPerUser,
+    maxQueue,
     usersActive: activeByUser.size,
     latencySamples: latencySamplesMs.length,
     p50Seconds: p50ms != null ? secondsFromMs(p50ms) : null,
@@ -140,7 +171,7 @@ function userActive(userId: string): number {
 }
 
 function canEnterNow(userId: string): boolean {
-  return active < MAX_CONCURRENT && userActive(userId) < MAX_PER_USER
+  return active < maxConcurrent && userActive(userId) < maxPerUser
 }
 
 function takeSlot(userId: string): void {
@@ -158,7 +189,7 @@ function freeSlot(userId: string): void {
 
 function removeWaiter(waiter: Waiter): void {
   const idx = queue.indexOf(waiter)
-  if (idx >= 0) queue.splice(idx)
+  if (idx >= 0) queue.splice(idx, 1)
   if (waiter.timer) {
     clearTimeout(waiter.timer)
     waiter.timer = null
@@ -186,7 +217,7 @@ function estimateQueuedWaitSeconds(queuePosition1Based: number): {
   const { seconds: p50Seconds, source } = resolvedP50Seconds()
   const seconds = estimateQueuedWaitSecondsPure({
     queuePosition1Based,
-    maxConcurrent: MAX_CONCURRENT,
+    maxConcurrent,
     activeCount: active,
     activeRemainingSeconds: activeRemainingSecondsList(p50Seconds),
     p50Seconds,
@@ -225,7 +256,7 @@ export function getGenerationProgress(
       estimatedWaitSeconds: est.seconds,
       active,
       queued: queue.length,
-      maxConcurrent: MAX_CONCURRENT,
+      maxConcurrent,
       estimateSource: est.source,
     }
   }
@@ -242,7 +273,7 @@ export function getGenerationProgress(
     estimatedWaitSeconds: est.seconds,
     active,
     queued: queue.length,
-    maxConcurrent: MAX_CONCURRENT,
+    maxConcurrent,
     estimateSource: est.source,
   }
 }
@@ -250,9 +281,9 @@ export function getGenerationProgress(
 function pumpQueue(): void {
   // Fair-ish FIFO, but skip waiters blocked only by per-user cap when others can run.
   let i = 0
-  while (i < queue.length && active < MAX_CONCURRENT) {
+  while (i < queue.length && active < maxConcurrent) {
     const waiter = queue[i]!
-    if (userActive(waiter.userId) >= MAX_PER_USER) {
+    if (userActive(waiter.userId) >= maxPerUser) {
       i += 1
       continue
     }
@@ -319,7 +350,7 @@ export function acquireGenerationSlot(
     })
   }
 
-  if (queue.length >= MAX_QUEUE) {
+  if (queue.length >= maxQueue) {
     console.log('GENERATION_CAPACITY_BUSY', {
       userId: uid,
       storyId,
@@ -412,6 +443,11 @@ export async function withGenerationSlot<T>(
     },
   ) => T | Promise<T>,
 ): Promise<T> {
+  try {
+    await refreshGenerationConcurrencyFromPolicy()
+  } catch {
+    // best-effort: keep last known caps
+  }
   const slot = await acquireGenerationSlot(job)
   if (!slot.ok) {
     return onCapacityFail(slot.reason, {

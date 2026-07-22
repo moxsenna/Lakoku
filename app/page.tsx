@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import Image from 'next/image'
-import { Drama, GitFork, Flame } from 'lucide-react'
+import { Drama, GitFork, Flame, BookOpen, Shield } from 'lucide-react'
 
 const values = [
   {
@@ -20,21 +20,27 @@ const values = [
   },
 ]
 
-export default function OnboardingPage() {
+export default function HomePage() {
   return (
     <main className="mx-auto flex min-h-svh w-full max-w-md flex-col bg-background">
-      <div className="relative h-[46svh] w-full overflow-hidden">
+      <div className="relative h-[42svh] w-full overflow-hidden">
         <Image
           src="/covers/pesan-terakhir.png"
-          alt=""
+          alt="Ilustrasi sampul cerita Lakoku"
           fill
           priority
           sizes="448px"
           className="object-cover object-top"
         />
         <div className="absolute inset-0 bg-gradient-to-b from-background/20 via-background/60 to-background" />
-        <header className="absolute left-6 top-8">
-          <span className="font-serif text-2xl tracking-tight text-foreground">lakoku</span>
+        <header className="absolute left-6 top-8 right-6 flex items-center justify-between">
+          <span className="font-serif text-2xl tracking-tight text-foreground">Lakoku</span>
+          <Link
+            href="/auth/login"
+            className="text-xs font-semibold text-foreground/90 underline-offset-4 hover:underline"
+          >
+            Masuk
+          </Link>
         </header>
       </div>
 
@@ -47,8 +53,34 @@ export default function OnboardingPage() {
             Kamu bukan sekadar pembaca. Kamu adalah tokoh utamanya.
           </h1>
           <p className="text-sm leading-relaxed text-muted-foreground text-pretty">
-            Masuk ke cerita, ambil keputusan, dan lihat hidup tokohmu berubah karena pilihanmu.
+            <strong className="font-semibold text-foreground">Lakoku</strong> adalah aplikasi novel
+            interaktif. Masuk ke cerita, ambil keputusan, dan lihat hidup tokohmu berubah karena
+            pilihanmu—bukan sekadar membaca, melainkan menjalani alurmu sendiri.
           </p>
+        </div>
+
+        <div className="rounded-2xl border border-border bg-card p-4">
+          <div className="flex items-start gap-3">
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary">
+              <BookOpen className="size-5" aria-hidden="true" />
+            </span>
+            <div className="space-y-2 text-xs leading-relaxed text-muted-foreground">
+              <h2 className="text-sm font-semibold text-foreground">Apa itu Lakoku?</h2>
+              <p>
+                Lakoku menampilkan novel interaktif di web: kamu membuat atau memilih cerita,
+                membaca bab, dan memilih cabang yang mengubah hubungan, misteri, dan akhir. Sebagian
+                konten disusun dengan bantuan model AI sesuai input dan pilihanmu.
+              </p>
+              <p>
+                Login (email atau Google) dipakai agar progres, koleksi cerita, dan preferensi
+                tersimpan di akunmu. Data akun diproses untuk menyediakan fitur tersebut—lihat{' '}
+                <Link href="/privacy" className="font-semibold text-primary">
+                  Kebijakan Privasi
+                </Link>
+                .
+              </p>
+            </div>
+          </div>
         </div>
 
         <ul className="flex flex-col gap-4">
@@ -79,8 +111,24 @@ export default function OnboardingPage() {
             Jelajahi Cerita
           </Link>
         </div>
+
+        <footer className="flex flex-col gap-3 border-t border-border pt-6 text-center text-xs text-muted-foreground">
+          <p className="flex items-center justify-center gap-1.5">
+            <Shield className="size-3.5 shrink-0" aria-hidden="true" />
+            <span>Akun &amp; data dilindungi sesuai kebijakan kami</span>
+          </p>
+          <p>
+            <Link href="/privacy" className="font-semibold text-primary">
+              Kebijakan Privasi
+            </Link>
+            {' · '}
+            <Link href="/terms" className="font-semibold text-primary">
+              Syarat Layanan
+            </Link>
+          </p>
+          <p className="text-[11px]">© {new Date().getFullYear()} Lakoku</p>
+        </footer>
       </section>
     </main>
   )
 }
-

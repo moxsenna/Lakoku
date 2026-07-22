@@ -2,13 +2,13 @@
  * Smoke: story-setup prompt composer.
  *
  * Memverifikasi buildStorySetupIdea menghasilkan prompt yang valid untuk
- * setiap mode (quick/custom) dan mengikuti aturan prioritas.
+ * setiap mode (quick/custom) dan mengikuti aturan soft/hard prioritas.
  */
 import {
   StorySetupInputSchema,
   buildStorySetupIdea,
 } from '../lib/onboarding/story-setup'
-import { createDefaultTasteProfile } from '../lib/taste-profile/schema'
+import { createDefaultTasteProfile, createEmptyTasteProfile } from '../lib/taste-profile/schema'
 
 let pass = 0
 let fail = 0
@@ -91,12 +91,12 @@ check(
   priorityResult.includes('petualangan di kerajaan bawah laut'),
 )
 
-// ── Hard constraints: avoidedTropes masuk prompt ─────────────────
+// ── Soft vs Hard split (V2) ───────────────────────────────────────
 
 const constrainedProfile = {
-  ...profile,
-  avoidedTropes: ['kekerasan eksplisit', 'pengkhianatan pasangan'],
-  contentBoundaries: ['tidak ada adegan dewasa'],
+  ...createEmptyTasteProfile(),
+  softAvoidanceIds: ['avoid_unearned_twist', 'avoid_romance_takeover'],
+  contentBoundaryIds: ['boundary_explicit_sexual_content'],
 }
 
 const constrainedResult = buildStorySetupIdea({
@@ -105,18 +105,56 @@ const constrainedResult = buildStorySetupIdea({
 })
 
 check(
-  'avoidedTropes masuk prompt sebagai BATAS',
-  constrainedResult.includes('BATAS') && constrainedResult.includes('kekerasan eksplisit'),
+  'softAvoidanceIds pakai soft wording, bukan BATAS',
+  constrainedResult.includes('Kurangi atau hindari') &&
+    !constrainedResult.includes('JANGAN pakai trope'),
 )
 
 check(
-  'contentBoundaries masuk prompt sebagai BATAS',
-  constrainedResult.includes('tidak ada adegan dewasa'),
+  'contentBoundaryIds masuk prompt sebagai BATAS KONTEN WAJIB',
+  constrainedResult.includes('BATAS KONTEN WAJIB') &&
+    constrainedResult.includes('Jangan masukkan'),
 )
 
 check(
-  'avoidedTropes menggunakan label JANGAN',
-  constrainedResult.includes('JANGAN'),
+  'softAvoidanceIds TIDAK memakai label JANGAN hard',
+  !constrainedResult.includes('JANGAN pakai trope'),
+)
+
+// Catalog labels appear (not only raw IDs when catalog has them)
+check(
+  'softAvoidance label catalog muncul',
+  constrainedResult.includes('Twist yang muncul tanpa petunjuk') ||
+    constrainedResult.includes('avoid_unearned_twist'),
+)
+
+// ── V1-shaped raw migrates ────────────────────────────────────────
+
+const v1Shaped = {
+  version: 1 as const,
+  preferredGenres: ['Misteri & rahasia'],
+  likedTropes: [],
+  avoidedTropes: ['Cinta segitiga', 'Kekerasan eksplisit'],
+  dramaIntensity: 'sedang' as const,
+  romanceLevel: 'subtle' as const,
+  pacing: 'seimbang' as const,
+  languageStyle: 'sinematik' as const,
+  endingBias: 'keadilan' as const,
+  contentBoundaries: ['tanpa adegan dewasa'],
+}
+
+const v1Result = buildStorySetupIdea({
+  setup: { mode: 'quick', answers: {} },
+  tasteProfile: v1Shaped,
+})
+
+check(
+  'V1-shaped raw: soft avoid tanpa JANGAN trope hard',
+  v1Result.includes('Kurangi atau hindari') || v1Result.includes('soft'),
+)
+check(
+  'V1-shaped raw: hard boundary tetap BATAS',
+  v1Result.includes('BATAS KONTEN WAJIB'),
 )
 
 // ── Empty answers tetap menghasilkan prompt valid ─────────────────

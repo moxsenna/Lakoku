@@ -12,7 +12,8 @@ import type { ConflictEntry } from './catalog'
 
 /**
  * Check if a profile has enough user data to be usable for personalization.
- * Empty/skipped profiles with no explicit preferences return false.
+ * True when completedAt set OR primaryGenreId OR likedConflictIds length,
+ * or other explicit prefs. Empty/skipped-only → false.
  */
 export function hasUsableTasteProfile(profile?: TasteProfileV2 | null): boolean {
   if (!profile) return false

@@ -10,6 +10,9 @@
  * Jangan hapus opsi default. Jangan generate opsi pakai LLM. Jangan >6 opsi per step.
  */
 import { type TasteProfileV2 } from '@/lib/taste-profile/schema'
+import { hasUsableTasteProfile } from '@/lib/taste-profile/resolver'
+
+export { hasUsableTasteProfile }
 
 export interface SetupQuestion {
   key: string
@@ -245,27 +248,9 @@ function personalizeQuestion(q: SetupQuestion, profile: TasteProfileV2): SetupQu
 // ─── Public API ────────────────────────────────────────────────────
 
 /**
- * Cek apakah profile punya data yang cukup untuk personalisasi.
- * Profile kosong/skipped (tanpa completedAt + tanpa pilihan eksplisit) tidak dipakai.
- */
-export function hasUsableTasteProfile(profile?: TasteProfileV2 | null): boolean {
-  if (!profile) return false
-  // Skipped tapi belum pernah complete — jangan personalisasi.
-  if (profile.skippedAt && !profile.completedAt) return false
-
-  return Boolean(
-    profile.completedAt ||
-      profile.primaryGenreId ||
-      profile.secondaryGenreId ||
-      profile.likedConflictIds.length > 0 ||
-      profile.softAvoidanceIds.length > 0 ||
-      profile.contentBoundaryIds.length > 0,
-  )
-}
-
-/**
  * Ambil pertanyaan onboarding yang sudah dipersonalisasi berdasarkan Taste Profile.
  * Return default jika profile tidak punya data yang bisa dipakai.
+ * hasUsableTasteProfile di-centralize di lib/taste-profile/resolver.ts.
  */
 export function getStorySetupQuestions(profile?: TasteProfileV2 | null): SetupQuestion[] {
   if (!hasUsableTasteProfile(profile)) {

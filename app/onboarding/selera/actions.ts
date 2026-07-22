@@ -9,7 +9,6 @@ import {
 } from '@/lib/api/taste-profile'
 import {
   TasteProfileV2Schema,
-  TasteProfileV1Schema,
   createEmptyTasteProfile,
   mergeTasteProfiles,
   normalizeTasteProfile,

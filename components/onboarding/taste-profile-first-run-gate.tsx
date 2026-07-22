@@ -4,7 +4,7 @@
  * First-run gate: redirect ke /onboarding/selera jika user belum pernah
  * complete/skip Taste Profile. Hanya redirect logic, tidak render apapun.
  *
- * Guest: cek localStorage lakoku:taste-profile:v1
+ * Guest: cek localStorage dual-read v2→v1 (storage.ts)
  * Login: panggil actGetTasteProfile()
  *
  * Bonus: jika login user punya guest profile di localStorage tapi belum di DB,

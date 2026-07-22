@@ -7,12 +7,11 @@
  * Guest tidak punya baris di tabel ini — guest pakai localStorage fallback.
  *
  * Migration-on-read: saat membaca dari DB, V1 profile di-migrate ke V2
- * sebelum dikembalikan. Penyimpanan selalu V2.
+ * sebelum dikembalikan. Penyimpanan selalu V2 JSON.
  */
 import { createClient } from '@/lib/supabase/server'
 import {
   normalizeTasteProfile,
-  TasteProfileV2Schema,
   type TasteProfileV2,
 } from '@/lib/taste-profile/schema'
 
@@ -20,9 +19,12 @@ interface TasteProfileRow {
   taste_json: unknown
 }
 
+/**
+ * Parse DB row → V2. Migration-on-read for V1-shaped taste_json.
+ * Invalid/empty row → null (not empty profile).
+ */
 function parseRow(row: TasteProfileRow | null): TasteProfileV2 | null {
-  if (!row) return null
-  // normalizeTasteProfile auto-migrates V1 to V2
+  if (!row || row.taste_json == null) return null
   const profile = normalizeTasteProfile(row.taste_json)
   return profile.version === 2 ? profile : null
 }
@@ -52,6 +54,7 @@ export async function getTasteProfileForUser(
 
 /**
  * Simpan profile selera untuk user tertentu (V2).
+ * Normalize first so accidental V1 payload still stored as V2.
  * Upsert berdasarkan user_id — insert jika belum ada, update jika sudah ada.
  */
 export async function saveTasteProfileForUser(
@@ -59,13 +62,14 @@ export async function saveTasteProfileForUser(
   profile: TasteProfileV2,
 ): Promise<void> {
   const supabase = await createClient()
+  const toStore = normalizeTasteProfile(profile)
 
   const { error } = await supabase
     .from('reader_taste_profiles')
     .upsert(
       {
         user_id: userId,
-        taste_json: profile as unknown as Record<string, unknown>,
+        taste_json: toStore as unknown as Record<string, unknown>,
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'user_id' },

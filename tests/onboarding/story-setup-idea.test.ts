@@ -146,11 +146,15 @@ describe('buildStorySetupIdea — soft avoidance for softAvoidanceIds (V2)', () 
       expect(result).toContain('BATAS KONTEN WAJIB')
       expect(result).toContain('tidak ada adegan dewasa')
 
-      // Soft items should NOT be in the BATAS section
+      // Hard block first (priority), soft separate after
       const batasIndex = result.indexOf('BATAS KONTEN WAJIB')
       const softIndex = result.indexOf('Kurangi atau hindari')
-      // Soft should come before hard (if both present) or at least be separate sections
-      expect(softIndex).toBeLessThan(batasIndex)
+      expect(batasIndex).toBeGreaterThanOrEqual(0)
+      expect(softIndex).toBeGreaterThan(batasIndex)
+
+      // Soft item must not appear inside the hard block lines
+      const hardSection = result.slice(batasIndex, softIndex)
+      expect(hardSection).not.toContain('Pengkhianatan pasangan')
     })
   })
 

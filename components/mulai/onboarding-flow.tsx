@@ -36,16 +36,23 @@ import { lockStoryBible, startChapter } from '@/lib/api/client'
 import { actProposeStorySetupPremises } from '@/app/mulai/actions'
 import { actGetTasteProfile } from '@/app/onboarding/selera/actions'
 import { readGuestTasteProfile } from '@/lib/taste-profile/storage'
-import { getStorySetupQuestions, adaptStorySetupQuestionsForAnswers, type SetupQuestion } from '@/lib/onboarding/question-presets'
+import {
+  buildStorySpecificQuestions,
+  profileSummaryForMulai,
+  type AutoOrValue,
+  type StorySpecificQuestion,
+} from '@/lib/onboarding/story-questions'
+import { hasUsableTasteProfile } from '@/lib/taste-profile/resolver'
 import type { PremiseDraft, StoryBibleDraft } from '@/lib/authoring/schema'
 import type { TasteProfile } from '@/lib/taste-profile/schema'
+import type { StoryCreativeDirection } from '@/lib/onboarding/creative-direction'
 
 const PoetryLottie = dynamic(
   () => import('@/components/mulai/poetry-lottie').then((m) => m.PoetryLottie),
   { ssr: false },
 )
 
-const SMART_DEFAULT_LABEL = 'Pilihkan untukku'
+const SMART_DEFAULT_LABEL = 'Pilihkan yang paling cocok'
 const CUSTOM_ANSWER_LABEL = 'Tulis sendiri'
 
 // ─── Phase + state ────────────────────────────────────────────────
@@ -115,12 +122,14 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
   const [phase, setPhase] = useState<Phase>('entry')
   const [entryMode, setEntryMode] = useState<'quick' | 'custom' | null>(null)
   const [step, setStep] = useState(0)
-  const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [answers, setAnswers] = useState<Record<string, AutoOrValue>>({})
   const [customIdea, setCustomIdea] = useState('')
   const [tasteProfile, setTasteProfile] = useState<TasteProfile | null>(null)
-  const [activeQuestions, setActiveQuestions] = useState<SetupQuestion[]>([])
+  const [activeQuestions, setActiveQuestions] = useState<StorySpecificQuestion[]>([])
   const [customAnswerFor, setCustomAnswerFor] = useState<string | null>(null)
   const [customAnswerText, setCustomAnswerText] = useState('')
+  const [creativeDirection, setCreativeDirection] = useState<StoryCreativeDirection | null>(null)
+  const [publicSummary, setPublicSummary] = useState<string | null>(null)
 
   const [proposals, setProposals] = useState<PremiseDraft[]>([])
   const [selected, setSelected] = useState<PremiseDraft | null>(null)
@@ -160,7 +169,8 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
 
   function startQuickFlow() {
     setEntryMode('quick')
-    setActiveQuestions(getStorySetupQuestions(tasteProfile))
+    setActiveQuestions(buildStorySpecificQuestions({ tasteProfile }))
+    setAnswers({})
     setStep(0)
     setPhase('quiz')
   }
@@ -237,23 +247,11 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
 
   // ── Kuis ────────────────────────────────────────────────────────
 
-  function pickAnswer(key: string, value: string) {
-    const currentQuestion = questions.find((q) => q.key === key)
-    const resolved =
-      value === SMART_DEFAULT_LABEL && currentQuestion
-        ? currentQuestion.defaultAnswer
-        : value
-    const next = { ...answers, [key]: resolved }
+  function pickAnswer(key: string, answer: AutoOrValue) {
+    const next = { ...answers, [key]: answer }
     setAnswers(next)
     setCustomAnswerFor(null)
     setCustomAnswerText('')
-
-    // Jawaban trope mengubah future questions agar lebih relevan.
-    if (key === 'trope') {
-      setActiveQuestions((current) =>
-        adaptStorySetupQuestionsForAnswers(current, next),
-      )
-    }
 
     if (step < totalQuestions - 1) {
       setTimeout(() => setStep((s) => s + 1), 220)
@@ -264,12 +262,12 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
 
   function submitCustomAnswer() {
     if (!customAnswerFor || !customAnswerText.trim()) return
-    pickAnswer(customAnswerFor, customAnswerText.trim())
+    pickAnswer(customAnswerFor, { mode: 'custom', text: customAnswerText.trim() })
   }
 
   // ── Generate premis dari AI ────────────────────────────────────
 
-  function generateProposals(currentAnswers: Record<string, string>) {
+  function generateProposals(currentAnswers: Record<string, AutoOrValue>) {
     setErr(null)
     setPhase('proposals')
     startTransition(async () => {
@@ -284,6 +282,8 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
         return
       }
       setProposals(res.proposals)
+      if (res.direction) setCreativeDirection(res.direction)
+      if (res.publicSummary) setPublicSummary(res.publicSummary)
     })
   }
 
@@ -306,6 +306,8 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
         return
       }
       setProposals(res.proposals)
+      if (res.direction) setCreativeDirection(res.direction)
+      if (res.publicSummary) setPublicSummary(res.publicSummary)
     })
   }
 
@@ -317,6 +319,8 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     setPhase('building')
     startTransition(async () => {
       setBuildStage('cast')
+      // Fase 4 will thread creativeDirection into cast/mystery/world.
+      // Keep direction in stash for resume so it is not lost after premise.
       const castRes = await actProposeCast(premise)
       if (!castRes.ok) return failBuild(castRes.error)
 
@@ -333,11 +337,20 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
         cast: castRes.cast,
         mystery: mysteryRes.mystery,
         world: worldRes.world,
+        creativeDirection: creativeDirection ?? undefined,
       }
 
       setBuildStage('lock')
       if (!(await hasSession())) {
-        saveOnboardingDraftStash(window.localStorage, { ...draft, answers })
+        saveOnboardingDraftStash(window.localStorage, {
+          ...draft,
+          answers: Object.fromEntries(
+            Object.entries(answers).map(([k, v]) => [
+              k,
+              v.mode === 'custom' ? v.text : v.mode === 'selected' ? v.value : 'auto',
+            ]),
+          ),
+        })
         router.push(RESUME_LOGIN_URL)
         return
       }
@@ -356,6 +369,8 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     setCustomAnswerText('')
     setProposals([])
     setSelected(null)
+    setCreativeDirection(null)
+    setPublicSummary(null)
     setErr(null)
   }
 
@@ -582,24 +597,61 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
               MULAI CERITA
             </span>
             <h1 className="font-serif text-3xl leading-tight text-foreground text-balance">
-              Kamu mau mulai dari mana?
+              Cerita seperti apa yang ingin kamu jalani kali ini?
             </h1>
           </div>
 
+          {hasUsableTasteProfile(tasteProfile) ? (
+            <div className="rounded-2xl border border-border bg-card p-4">
+              <p className="text-[11px] font-semibold tracking-wide text-lavender">
+                SELERA YANG AKAN DIPAKAI
+              </p>
+              <p className="mt-1 text-sm font-medium text-foreground">
+                {profileSummaryForMulai(tasteProfile)}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Kami akan memakai selera ini untuk menyusun premis, tokoh, konflik, dan gaya cerita.
+              </p>
+              <Link
+                href="/onboarding/selera?next=/mulai"
+                className="mt-2 inline-block text-xs font-semibold text-lavender underline-offset-4 hover:underline"
+              >
+                Ubah selera utama
+              </Link>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-border bg-card p-4">
+              <p className="text-sm font-medium text-foreground">Belum ada selera tersimpan.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Atur selera dulu agar premis dan gaya cerita lebih cocok, atau lanjut tanpa mengatur.
+              </p>
+              <div className="mt-3 flex flex-col gap-2">
+                <Link
+                  href="/onboarding/selera?next=/mulai"
+                  className="flex min-h-11 items-center justify-center rounded-xl bg-primary px-4 text-xs font-semibold text-primary-foreground"
+                >
+                  Atur selera dulu
+                </Link>
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-col gap-3">
-            {/* Mulai cepat */}
             <button
               type="button"
               onClick={startQuickFlow}
               className="flex flex-col gap-1 rounded-2xl border border-border bg-card p-5 text-left transition-colors hover:border-primary/60"
             >
-              <span className="text-sm font-semibold text-foreground">Jawab pertanyaan singkat</span>
+              <span className="text-sm font-semibold text-foreground">
+                {hasUsableTasteProfile(tasteProfile)
+                  ? 'Mulai cepat dari seleraku'
+                  : 'Lanjut tanpa mengatur'}
+              </span>
               <span className="text-xs text-muted-foreground">
-                Pilih beberapa arah cerita, dan Lakoku menyiapkan 3 premis untukmu.
+                Jawab beberapa detail khusus, lalu Lakoku menyiapkan 3 premis.
               </span>
             </button>
 
-            {/* Aku punya ide sendiri */}
             <button
               type="button"
               onClick={() => {
@@ -610,34 +662,19 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
             >
               <span className="text-sm font-semibold text-foreground">Aku sudah punya ide cerita</span>
               <span className="text-xs text-muted-foreground">
-                Tulis benih ceritamu langsung, Lakoku mengubahnya jadi 3 premis.
+                Tulis benih ceritamu. Selera dan batas ceritamu tetap ikut diterapkan.
               </span>
             </button>
 
-            {/* Mode lengkap → /brainstorm */}
             <Link
               href="/brainstorm"
               className="flex flex-col gap-1 rounded-2xl border border-border bg-card p-5 text-left transition-colors hover:border-primary/60"
             >
-              <span className="text-sm font-semibold text-foreground">Rancang perlahan, selangkah demi selangkah</span>
+              <span className="text-sm font-semibold text-foreground">Rancang perlahan</span>
               <span className="text-xs text-muted-foreground">
-                Tentukan premis, tokoh, misteri, dan dunia cerita satu per satu.
+                Tentukan premis, tokoh, misteri, dan dunia satu per satu.
               </span>
             </Link>
-
-            {/* Taste profile teaser */}
-            {!tasteProfile?.completedAt && (
-              <p className="mt-1 text-center text-xs text-muted-foreground">
-                Mau cerita yang lebih pas dengan seleramu?{' '}
-                <Link
-                  href="/onboarding/selera?next=/mulai"
-                  className="underline underline-offset-4 hover:text-foreground"
-                >
-                  Atur selera cerita
-                </Link>
-                {' '}dulu.
-              </p>
-            )}
           </div>
         </section>
       )}
@@ -696,31 +733,55 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
           </div>
 
           <div className="flex flex-col gap-3" role="group" aria-label={question.prompt}>
-            {[...question.options, SMART_DEFAULT_LABEL, CUSTOM_ANSWER_LABEL].map((opt) => {
-              const isSelected = answers[question.key] === opt
+            {question.options.map((opt) => {
+              const current = answers[question.key]
+              const isSelected =
+                current?.mode === 'selected' && current.value === opt.id
               return (
                 <button
-                  key={opt}
+                  key={opt.id}
                   type="button"
-                  onClick={() => {
-                    if (opt === CUSTOM_ANSWER_LABEL) {
-                      setCustomAnswerFor(question.key)
-                    } else {
-                      pickAnswer(question.key, opt)
-                    }
-                  }}
+                  onClick={() =>
+                    pickAnswer(question.key, { mode: 'selected', value: opt.id })
+                  }
                   className={cn(
-                    'flex min-h-14 items-center justify-between gap-3 rounded-2xl border px-5 py-4 text-left text-sm font-medium transition-colors',
+                    'flex min-h-14 items-center justify-between gap-3 rounded-2xl border px-5 py-4 text-left text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                     isSelected
                       ? 'border-primary bg-primary/10 text-foreground'
                       : 'border-border bg-card text-foreground hover:border-primary/50',
                   )}
                 >
-                  <span>{opt}</span>
+                  <span>{opt.label}</span>
                   {isSelected && <Check className="size-4 shrink-0 text-primary" aria-hidden="true" />}
                 </button>
               )
             })}
+            {question.allowAuto && (
+              <button
+                type="button"
+                onClick={() => pickAnswer(question.key, { mode: 'auto' })}
+                className={cn(
+                  'flex min-h-14 items-center justify-between gap-3 rounded-2xl border px-5 py-4 text-left text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  answers[question.key]?.mode === 'auto'
+                    ? 'border-primary bg-primary/10 text-foreground'
+                    : 'border-border bg-card text-foreground hover:border-primary/50',
+                )}
+              >
+                <span>{question.autoLabel || SMART_DEFAULT_LABEL}</span>
+                {answers[question.key]?.mode === 'auto' && (
+                  <Check className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                )}
+              </button>
+            )}
+            {question.allowCustom && (
+              <button
+                type="button"
+                onClick={() => setCustomAnswerFor(question.key)}
+                className="flex min-h-14 items-center justify-between gap-3 rounded-2xl border border-border bg-card px-5 py-4 text-left text-sm font-medium text-foreground transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span>{question.customLabel || CUSTOM_ANSWER_LABEL}</span>
+              </button>
+            )}
           </div>
 
           {/* Custom answer input */}
@@ -754,6 +815,11 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
             <span className="text-[11px] font-semibold tracking-wide text-lavender">
               {progress.label}
             </span>
+            {publicSummary && (
+              <p className="rounded-xl bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                {publicSummary}
+              </p>
+            )}
             <h1 className="font-serif text-3xl leading-tight text-foreground text-balance">
               {pending && proposals.length === 0
                 ? 'Menyiapkan tiga cerita untukmu…'

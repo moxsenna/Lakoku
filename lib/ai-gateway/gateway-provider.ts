@@ -24,6 +24,11 @@ import {
   InvalidModelResponseError,
   executeObservedModelCall,
 } from './observed-model-call.server'
+import {
+  asV1Compat,
+  createEmptyTasteProfile,
+  type TasteProfileV2,
+} from '@/lib/taste-profile/schema'
 
 /**
  * Provider LLM NYATA via Vercel AI Gateway.
@@ -517,22 +522,67 @@ function contractInputError(errors: string[]): GatewayError {
 }
 
 function projectStoryContractInput(input: StoryContractInput): StoryContractProviderInput {
-  const taste = input?.tasteJson
+  const taste = input?.tasteJson as Record<string, unknown> | null | undefined
+  // Provider prompt still speaks V1 field names.
+  // Accept V2 (bridge via asV1Compat) or legacy V1-shaped objects (pass-through).
+  // Pass-through raw arrays when present so max-length validation still applies.
+  let projectedTaste: unknown = taste
+  if (taste && typeof taste === 'object') {
+    const isV2 =
+      taste.version === 2 ||
+      'primaryGenreId' in taste ||
+      'likedConflictIds' in taste ||
+      'softAvoidanceIds' in taste ||
+      'contentBoundaryIds' in taste
+
+    if (isV2) {
+      const v1 = asV1Compat({
+        ...createEmptyTasteProfile(),
+        ...(taste as object),
+        version: 2,
+      } as TasteProfileV2)
+      projectedTaste = {
+        preferredGenres: Array.isArray(taste.preferredGenres)
+          ? taste.preferredGenres
+          : v1.preferredGenres,
+        likedTropes: Array.isArray(taste.likedTropes)
+          ? taste.likedTropes
+          : Array.isArray(taste.likedConflictIds)
+            ? taste.likedConflictIds
+            : v1.likedTropes,
+        avoidedTropes: Array.isArray(taste.avoidedTropes)
+          ? taste.avoidedTropes
+          : Array.isArray(taste.softAvoidanceIds)
+            ? taste.softAvoidanceIds
+            : v1.avoidedTropes,
+        dramaIntensity: v1.dramaIntensity,
+        romanceLevel: v1.romanceLevel,
+        pacing: v1.pacing,
+        languageStyle: v1.languageStyle,
+        endingBias: v1.endingBias,
+        contentBoundaries: Array.isArray(taste.contentBoundaries)
+          ? taste.contentBoundaries
+          : Array.isArray(taste.contentBoundaryIds)
+            ? taste.contentBoundaryIds
+            : v1.contentBoundaries,
+      }
+    } else {
+      projectedTaste = {
+        preferredGenres: taste.preferredGenres,
+        likedTropes: taste.likedTropes,
+        avoidedTropes: taste.avoidedTropes,
+        dramaIntensity: taste.dramaIntensity,
+        romanceLevel: taste.romanceLevel,
+        pacing: taste.pacing,
+        languageStyle: taste.languageStyle,
+        endingBias: taste.endingBias,
+        contentBoundaries: taste.contentBoundaries,
+      }
+    }
+  }
   const projected = StoryContractProviderInputSchema.safeParse({
     storyId: input?.storyId,
-    taste: taste && typeof taste === 'object'
-      ? {
-          preferredGenres: taste.preferredGenres,
-          likedTropes: taste.likedTropes,
-          avoidedTropes: taste.avoidedTropes,
-          dramaIntensity: taste.dramaIntensity,
-          romanceLevel: taste.romanceLevel,
-          pacing: taste.pacing,
-          languageStyle: taste.languageStyle,
-          endingBias: taste.endingBias,
-          contentBoundaries: taste.contentBoundaries,
-        }
-      : taste,
+    taste: projectedTaste,
     repairErrors: input?.repairErrors,
   })
   if (!projected.success) {

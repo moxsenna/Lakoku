@@ -1,37 +1,30 @@
 /**
- * Regression test: buildStorySetupIdea — Bug 2 (avoidedTropes as hard constraint).
+ * Regression test: buildStorySetupIdea — soft avoidance for avoidedTropes (V2).
  *
- * buildStorySetupIdea saat ini menulis "JANGAN pakai trope" dan memperlakukan
- * avoidedTropes sebagai hard constraint setara contentBoundaries.
+ * V2: softAvoidanceIds are soft preferences ("Kurangi atau hindari bila tidak diperlukan").
+ * contentBoundaryIds are hard constraints ("BATAS KONTEN WAJIB").
  *
- * Perilaku yang diinginkan (dari plan):
- *   - avoidedTropes: soft avoidance — "Kurangi atau hindari bila tidak diperlukan"
- *   - contentBoundaries: tetap hard constraint — "tidak boleh dilanggar"
- *   - Tidak ada kata "JANGAN" untuk avoidedTropes
- *
- * Test ini MENGUJI buildStorySetupIdea LANGSUNG dengan assertions yang AKAN FAIL
- * sampai implementasi soft avoidance diperbaiki.
+ * buildStorySetupIdea now uses V2 TasteProfileV2. V1 profile data is
+ * migrated on read via normalizeTasteProfile.
  */
-
 import { describe, expect, it } from 'vitest'
 import {
   buildStorySetupIdea,
   StorySetupInputSchema,
 } from '@/lib/onboarding/story-setup'
 import {
-  createDefaultTasteProfile,
-  TasteProfileSchema,
+  createEmptyTasteProfile,
+  type TasteProfileV2,
 } from '@/lib/taste-profile/schema'
-import type { TasteProfile } from '@/lib/taste-profile/schema'
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-function makeProfile(overrides: Partial<TasteProfile> = {}): TasteProfile {
-  const base = createDefaultTasteProfile()
+function makeProfile(overrides: Partial<TasteProfileV2> = {}): TasteProfileV2 {
+  const base = createEmptyTasteProfile()
   return { ...base, ...overrides }
 }
 
-describe('buildStorySetupIdea — soft avoidance for avoidedTropes', () => {
+describe('buildStorySetupIdea — soft avoidance for softAvoidanceIds (V2)', () => {
   it('schema accepts quick mode with answers', () => {
     const result = StorySetupInputSchema.safeParse({
       mode: 'quick',
@@ -75,15 +68,13 @@ describe('buildStorySetupIdea — soft avoidance for avoidedTropes', () => {
   })
 
   // ═════════════════════════════════════════════════════════════════
-  // REGRESSION: avoidedTropes should be SOFT, not hard
+  // FIXED: softAvoidanceIds are SOFT, not hard
   // ═════════════════════════════════════════════════════════════════
 
-  describe('REGRESSION: avoidedTropes as soft avoidance (CURRENTLY FAILS)', () => {
-    it('REG-1: avoidedTropes should NOT say "JANGAN" (FAILS)', () => {
-      // CURRENT: "JANGAN pakai trope: ..." — hard constraint
-      // DESIRED:  "Kurangi atau hindari bila tidak diperlukan: ..." — soft
+  describe('soft avoidance — softAvoidanceIds (V2)', () => {
+    it('REG-1: softAvoidanceIds should NOT say "JANGAN"', () => {
       const profile = makeProfile({
-        avoidedTropes: ['kekerasan eksplisit'],
+        softAvoidanceIds: ['kekerasan eksplisit'],
       })
 
       const result = buildStorySetupIdea({
@@ -91,15 +82,12 @@ describe('buildStorySetupIdea — soft avoidance for avoidedTropes', () => {
         tasteProfile: profile,
       })
 
-      const containsJangan = result.includes('JANGAN')
-      expect(containsJangan).toBe(false)
+      expect(result).not.toContain('JANGAN')
     })
 
-    it('REG-2: avoidedTropes should NOT be labeled as hard "BATAS" (FAILS)', () => {
-      // CURRENT: avoidedTropes grouped under "BATAS" alongside contentBoundaries
-      // DESIRED:  avoidedTropes in separate soft section
+    it('REG-2: softAvoidanceIds should NOT be labeled "BATAS"', () => {
       const profile = makeProfile({
-        avoidedTropes: ['kekerasan eksplisit'],
+        softAvoidanceIds: ['kekerasan eksplisit'],
       })
 
       const result = buildStorySetupIdea({
@@ -107,27 +95,13 @@ describe('buildStorySetupIdea — soft avoidance for avoidedTropes', () => {
         tasteProfile: profile,
       })
 
-      // The word "BATAS" should not appear for avoidedTropes alone
-      // (it's acceptable for contentBoundaries only)
-      // But currently both are in the same "BATAS" block
-      const batasIndex = result.indexOf('BATAS')
-      const avoidedIndex = result.indexOf('kekerasan eksplisit')
-
-      // If avoidedIndex comes after BATAS and there are no contentBoundaries,
-      // it means avoidedTropes is inside the BATAS block — which is the bug.
-      // We want avoidedTropes to NOT be inside a "BATAS" block when there
-      // are no contentBoundaries.
-      if (batasIndex >= 0 && avoidedIndex > batasIndex) {
-        // Check if contentBoundaries are present — they shouldn't be in this test
-        expect(profile.contentBoundaries).toHaveLength(0)
-        // Since only avoidedTropes are set, BATAS should not be present
-        expect(batasIndex).toBe(-1)
-      }
+      // Only soft avoidance — no content boundaries — BATAS should NOT appear
+      expect(result).not.toContain('BATAS KONTEN WAJIB')
     })
 
-    it('REG-3: avoidedTropes should use soft wording "Kurangi atau hindari" (FAILS)', () => {
+    it('REG-3: softAvoidanceIds use soft wording "Kurangi atau hindari"', () => {
       const profile = makeProfile({
-        avoidedTropes: ['kekerasan eksplisit'],
+        softAvoidanceIds: ['kekerasan eksplisit'],
       })
 
       const result = buildStorySetupIdea({
@@ -138,9 +112,9 @@ describe('buildStorySetupIdea — soft avoidance for avoidedTropes', () => {
       expect(result).toContain('Kurangi atau hindari')
     })
 
-    it('REG-4: contentBoundaries remain hard constraint (existing behavior OK)', () => {
+    it('REG-4: contentBoundaryIds remain hard constraint', () => {
       const profile = makeProfile({
-        contentBoundaries: ['tidak ada adegan dewasa'],
+        contentBoundaryIds: ['tidak ada adegan dewasa'],
       })
 
       const result = buildStorySetupIdea({
@@ -148,13 +122,15 @@ describe('buildStorySetupIdea — soft avoidance for avoidedTropes', () => {
         tasteProfile: profile,
       })
 
-      // contentBoundaries should still be enforced strictly
+      // contentBoundaries should still enforce "BATAS KONTEN WAJIB"
+      expect(result).toContain('BATAS KONTEN WAJIB')
       expect(result).toContain('tidak ada adegan dewasa')
     })
 
-    it('REG-5: only contentBoundaries without avoidedTropes — BATAS is OK', () => {
+    it('REG-5: both soft + hard: BATAS only for contentBoundaryIds', () => {
       const profile = makeProfile({
-        contentBoundaries: ['tidak ada adegan dewasa'],
+        softAvoidanceIds: ['Pengkhianatan pasangan'],
+        contentBoundaryIds: ['tidak ada adegan dewasa'],
       })
 
       const result = buildStorySetupIdea({
@@ -162,20 +138,30 @@ describe('buildStorySetupIdea — soft avoidance for avoidedTropes', () => {
         tasteProfile: profile,
       })
 
-      // contentBoundaries alone → BATAS label is correct
-      expect(result).toContain('BATAS')
+      // Soft section present
+      expect(result).toContain('Kurangi atau hindari')
+      expect(result).toContain('Pengkhianatan pasangan')
+
+      // Hard section separate
+      expect(result).toContain('BATAS KONTEN WAJIB')
       expect(result).toContain('tidak ada adegan dewasa')
+
+      // Soft items should NOT be in the BATAS section
+      const batasIndex = result.indexOf('BATAS KONTEN WAJIB')
+      const softIndex = result.indexOf('Kurangi atau hindari')
+      // Soft should come before hard (if both present) or at least be separate sections
+      expect(softIndex).toBeLessThan(batasIndex)
     })
   })
 
   // ═════════════════════════════════════════════════════════════════
-  // REGRESSION: PROMISE — soft avoidance affects prompt wording
+  // REGRESSION: soft avoidance wording contract
   // ═════════════════════════════════════════════════════════════════
 
-  describe('avoidedTropes wording contract (desired behavior)', () => {
-    it('avoidedTropes described as soft preference, not prohibition', () => {
+  describe('soft avoidance wording contract (V2)', () => {
+    it('softAvoidanceIds described as soft preference, not prohibition', () => {
       const profile = makeProfile({
-        avoidedTropes: ['kekerasan eksplisit', 'pengkhianatan pasangan'],
+        softAvoidanceIds: ['kekerasan eksplisit', 'Pengkhianatan pasangan'],
       })
 
       const result = buildStorySetupIdea({
@@ -183,8 +169,6 @@ describe('buildStorySetupIdea — soft avoidance for avoidedTropes', () => {
         tasteProfile: profile,
       })
 
-      // Desired contract: soft avoidance, not prohibition
-      // FAILS until buildTasteProfileBlock is updated
       const lower = result.toLowerCase()
       const hasSoftWording =
         lower.includes('kurangi') ||
@@ -195,10 +179,10 @@ describe('buildStorySetupIdea — soft avoidance for avoidedTropes', () => {
       expect(hasSoftWording).toBe(true)
     })
 
-    it('avoidedTropes listed but with permissive framing', () => {
+    it('likedConflictIds listed in preferences', () => {
       const profile = makeProfile({
-        avoidedTropes: ['kekerasan eksplisit'],
-        likedTropes: ['cinta lama kembali'],
+        likedConflictIds: ['Rahasia keluarga yang dikubur lama'],
+        softAvoidanceIds: ['kekerasan eksplisit'],
       })
 
       const result = buildStorySetupIdea({
@@ -206,11 +190,31 @@ describe('buildStorySetupIdea — soft avoidance for avoidedTropes', () => {
         tasteProfile: profile,
       })
 
-      // Liked tropes should still appear in prompt
-      expect(result).toContain('cinta lama kembali')
-      // Avoided tropes should appear but not with "JANGAN"
+      // Liked conflicts should still appear in prompt
+      expect(result).toContain('Rahasia keluarga yang dikubur lama')
+      // Soft avoidance should appear but not with "JANGAN"
       expect(result).toContain('kekerasan eksplisit')
       expect(result).not.toContain('JANGAN pakai trope: kekerasan eksplisit')
     })
+  })
+
+  // ── Empty/null taste profile ─────────────────────────────────────
+
+  it('null tasteProfile produces valid prompt', () => {
+    const result = buildStorySetupIdea({
+      setup: { mode: 'quick', answers: {} },
+      tasteProfile: null,
+    })
+    expect(result).toContain('3 premis')
+  })
+
+  it('empty taste profile produces valid prompt without fake defaults', () => {
+    const result = buildStorySetupIdea({
+      setup: { mode: 'quick', answers: { trope: 'drama' } },
+      tasteProfile: createEmptyTasteProfile(),
+    })
+    expect(result).toContain('3 premis')
+    // No fake preference strings from empty profile
+    expect(result).not.toContain('sedang')
   })
 })

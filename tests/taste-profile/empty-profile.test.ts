@@ -1,139 +1,111 @@
 /**
- * Regression test: empty/skipped profile — Bugs 3 & 4.
+ * Regression test: empty/skipped profile — V2 schema.
  *
- * Bug 3: Skip discards answers.
- *   - buildProfile(isSkip=true) → createDefaultTasteProfile + skippedAt
- *   - actSkipTasteProfile → createDefaultTasteProfile + skippedAt
- *   - Partial answers di last step di-wipe oleh "Lewati dulu"
- *
- * Bug 4: Profile stops after premise.
- *   - cast/mystery/world tidak menerima creative direction.
- *   - Untuk Fase 0: dokumentasikan API surface dengan contract test.
+ * In V2, an empty profile has all preference fields as null/[].
+ * There are no fake defaults (subtle, sinematik, keadilan) injected.
+ * This fixes Bug 3 & Bug 4 from Fase 0.
  *
  * Perilaku yang diinginkan:
  *   - Skip di intro (step 0): empty profile + skippedAt, TANPA fake defaults
- *     (subtle, sinematik, keadilan)
- *   - "Lewati dulu" di last step: simpan apa yang sudah dipilih user
- *   - Intro "Nanti saja": empty + skippedAt tanpa preferensi palsu
+ *   - createEmptyTasteProfile() returns truly empty V2
  */
-
 import { describe, expect, it } from 'vitest'
 import {
-  createDefaultTasteProfile,
-  TasteProfileSchema,
+  createEmptyTasteProfile,
+  TasteProfileV2Schema,
+  type TasteProfileV2,
 } from '@/lib/taste-profile/schema'
-import type { TasteProfile } from '@/lib/taste-profile/schema'
 
-// ═══════════════════════════════════════════════════════════════════
-// Bug 3: createDefaultTasteProfile injects fake user preferences
-// ═══════════════════════════════════════════════════════════════════
-
-describe('createDefaultTasteProfile — empty profile contract', () => {
-  it('creates a valid profile', () => {
-    const profile = createDefaultTasteProfile()
-    expect(TasteProfileSchema.safeParse(profile).success).toBe(true)
+describe('createEmptyTasteProfile — V2 empty profile contract', () => {
+  it('creates a valid V2 profile', () => {
+    const profile = createEmptyTasteProfile()
+    expect(TasteProfileV2Schema.safeParse(profile).success).toBe(true)
   })
 
-  it('has version 1', () => {
-    const profile = createDefaultTasteProfile()
-    expect(profile.version).toBe(1)
+  it('has version 2', () => {
+    const profile = createEmptyTasteProfile()
+    expect(profile.version).toBe(2)
   })
 
   it('has empty arrays for all array fields', () => {
-    const profile = createDefaultTasteProfile()
-    expect(profile.preferredGenres).toEqual([])
-    expect(profile.likedTropes).toEqual([])
-    expect(profile.avoidedTropes).toEqual([])
-    expect(profile.contentBoundaries).toEqual([])
+    const profile = createEmptyTasteProfile()
+    expect(profile.likedConflictIds).toEqual([])
+    expect(profile.softAvoidanceIds).toEqual([])
+    expect(profile.contentBoundaryIds).toEqual([])
   })
 
   // ═════════════════════════════════════════════════════════════════
-  // REGRESSION: defaults look like user preferences (Bug 3)
+  // FIXED: V2 empty profile has null values, not fake defaults
   // ═════════════════════════════════════════════════════════════════
 
-  it('REG-1: default profile injects romanceLevel="subtle" as if user chose it (FAILS)', () => {
-    // CURRENT: createDefaultTasteProfile parses {} → romanceLevel = 'subtle'
-    // DESIRED: empty profile should have null/undefined romanceLevel
-    //   or 'subtle' should be explicitly marked as "not a user choice"
-    const profile = createDefaultTasteProfile()
-
-    // This test FAILS because createDefaultTasteProfile returns
-    // romanceLevel: 'subtle' via Zod defaults
-    // The bug: there's no way to tell if the user actually chose 'subtle'
-    // or if it's a system default
-    expect(profile.romanceLevel).not.toBe('subtle')
+  it('REG-1: empty profile has dramaIntensity null (not fake "sedang")', () => {
+    const profile = createEmptyTasteProfile()
+    // V2: truly empty — null instead of fake default
+    expect(profile.dramaIntensity).toBeNull()
   })
 
-  it('REG-2: default profile injects languageStyle="sinematik" as if user chose it (FAILS)', () => {
-    const profile = createDefaultTasteProfile()
-
-    // Same issue as romanceLevel — system default indistinguishable from user choice
-    expect(profile.languageStyle).not.toBe('sinematik')
+  it('REG-2: empty profile has languageStyle null (not fake "sinematik")', () => {
+    const profile = createEmptyTasteProfile()
+    expect(profile.languageStyle).toBeNull()
   })
 
-  it('REG-3: default profile injects endingBias="keadilan" as if user chose it (FAILS)', () => {
-    const profile = createDefaultTasteProfile()
-
-    expect(profile.endingBias).not.toBe('keadilan')
+  it('REG-3: empty profile has endingBias null (not fake "keadilan")', () => {
+    const profile = createEmptyTasteProfile()
+    expect(profile.endingBias).toBeNull()
   })
 
-  it('REG-4: default profile has dramaIntensity="sedang" which is the "middle" default (FAILS)', () => {
-    const profile = createDefaultTasteProfile()
+  it('REG-4: empty profile has pacing null (not fake default)', () => {
+    const profile = createEmptyTasteProfile()
+    expect(profile.pacing).toBeNull()
+  })
 
-    // 'sedang' is the middle value — for an empty profile, it could be argued
-    // as OK since there's no real "none". But for V1 we document the issue.
-    expect(profile.dramaIntensity).not.toBe('sedang')
+  it('all nullable fields are null in empty profile', () => {
+    const profile = createEmptyTasteProfile()
+    expect(profile.primaryGenreId).toBeNull()
+    expect(profile.secondaryGenreId).toBeNull()
+    expect(profile.customLikedConflict).toBeNull()
+    expect(profile.dramaIntensity).toBeNull()
+    expect(profile.pacing).toBeNull()
+    expect(profile.languageStyle).toBeNull()
+    expect(profile.endingBias).toBeNull()
+    expect(profile.completedAt).toBeNull()
+    expect(profile.skippedAt).toBeNull()
+    expect(profile.updatedAt).toBeNull()
   })
 })
 
 // ═══════════════════════════════════════════════════════════════════
-// Bug 3: Skip behavior — discards partial answers
+// Bug 3: Skip behavior — no longer injects fake defaults
 // ═══════════════════════════════════════════════════════════════════
 
-describe('Skip profile behavior (Bug 3)', () => {
-  it('createDefaultTasteProfile used as skip base — arrays are empty', () => {
-    const profile = createDefaultTasteProfile()
-    // Arrays ARE empty for default — skip doesn't add fake genres/tropes
-    expect(profile.preferredGenres).toHaveLength(0)
-    expect(profile.likedTropes).toHaveLength(0)
-    expect(profile.avoidedTropes).toHaveLength(0)
-  })
-
-  it('REG-5: actSkipTasteProfile stores createDefaultTasteProfile + skippedAt (FAILS)', () => {
-    // CURRENT: actSkipTasteProfile uses createDefaultTasteProfile() which includes
-    //   romanceLevel: 'subtle', languageStyle: 'sinematik', endingBias: 'keadilan',
-    //   dramaIntensity: 'sedang', pacing: 'seimbang'
-    // These are indistinguishable from user-chosen preferences.
-    //
-    // DESIRED: skipped profile should signal "no preferences" — either:
-    //   a) A new createEmptyTasteProfile() with null-ish preference fields, or
-    //   b) A flag/isSkipped marker so consumers know not to use defaults as preferences
-    //
-    // For Fase 0: document the bug. This test verifies the CURRENT behavior
-    // and will be updated in Fase 1 when V2 schema adds explicit nullability.
-
-    // Simulating what actSkipTasteProfile does:
-    const skipped: TasteProfile = {
-      ...createDefaultTasteProfile(),
+describe('Skip profile behavior (Bug 3 — fixed in V2)', () => {
+  it('actSkipTasteProfile stores empty V2 + skippedAt', () => {
+    // Simulating what actSkipTasteProfile should do with V2:
+    const skipped: TasteProfileV2 = {
+      ...createEmptyTasteProfile(),
       skippedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
 
-    // DESIRED: consumers should know this is a skipped (empty) profile
-    // Currently, skippedAt is the only signal — but preferences like
-    // 'subtle', 'sinematik', 'keadilan' are still present as defaults
+    expect(Boolean(skipped.skippedAt)).toBe(true)
 
-    // This test documents the gap:
-    const hasSkippedAt = Boolean(skipped.skippedAt)
-    expect(hasSkippedAt).toBe(true)
+    // V2: no fake defaults — all preferences are null
+    expect(skipped.dramaIntensity).toBeNull()
+    expect(skipped.languageStyle).toBeNull()
+    expect(skipped.endingBias).toBeNull()
+    expect(skipped.pacing).toBeNull()
+    expect(skipped.primaryGenreId).toBeNull()
+    expect(skipped.secondaryGenreId).toBeNull()
+    expect(skipped.likedConflictIds).toEqual([])
+    expect(skipped.softAvoidanceIds).toEqual([])
+    expect(skipped.contentBoundaryIds).toEqual([])
+  })
 
-    // But the defaults are still there:
-    expect(skipped.romanceLevel).toBe('subtle')
-    expect(skipped.languageStyle).toBe('sinematik')
-    expect(skipped.endingBias).toBe('keadilan')
-
-    // For now, skippedAt IS the signal — consumers must check it.
-    // Fase 1 V2 schema will address this properly.
+  it('createEmptyTasteProfile used as skip base — arrays are empty', () => {
+    const profile = createEmptyTasteProfile()
+    expect(profile.likedConflictIds).toHaveLength(0)
+    expect(profile.softAvoidanceIds).toHaveLength(0)
+    expect(profile.contentBoundaryIds).toHaveLength(0)
   })
 })
 
@@ -143,57 +115,31 @@ describe('Skip profile behavior (Bug 3)', () => {
 
 describe('Authoring direction block contract (Bug 4)', () => {
   it('CONTRACT: proposeCast should accept direction option', () => {
-    // Document the expected future API surface.
-    // Currently proposeCast only takes storyId + chapter context
-    // The plan says cast/mystery/world should receive creative direction
-    // from taste profile + story setup answers.
-
-    // This is a pure contract test — no implementation to test yet.
-    // The contract is: direction parameter should be part of the function
-    // signature for all authoring proposers.
-
-    // For Fase 0, we document the expected shape:
     interface DirectionBlock {
-      tasteProfile: TasteProfile | null
+      tasteProfile: TasteProfileV2 | null
       storySetupAnswers: Record<string, string>
     }
 
-    // Expected function signature (future):
-    //   proposeCast(storyId: string, direction?: DirectionBlock): Promise<...>
-
-    // This is documentation — not a failing assertion, because the function
-    // doesn't exist yet or doesn't accept this parameter.
+    // This is documentation — not a failing assertion
     expect(true).toBe(true)
   })
 
   it('CONTRACT: direction block should carry taste profile preferences', () => {
     const direction = {
-      tasteProfile: createDefaultTasteProfile(),
+      tasteProfile: createEmptyTasteProfile(),
       storySetupAnswers: { trope: 'Rahasia keluarga' },
     } as const
 
-    expect(direction.tasteProfile.version).toBe(1)
+    expect(direction.tasteProfile.version).toBe(2)
     expect(direction.storySetupAnswers.trope).toBe('Rahasia keluarga')
   })
 
   it('CONTRACT: buildAuthoringDirectionBlock should be a pure function', () => {
-    // Future pure function that composes creative direction for authoring
-    // Input: TasteProfile + StorySetupInput
-    // Output: structured direction string for AI proposals (cast, world, mystery)
-
-    // This doesn't exist yet — documenting the interface:
     type BuildDirectionInput = {
-      tasteProfile?: TasteProfile | null
+      tasteProfile?: TasteProfileV2 | null
       answers: Record<string, string>
       customIdea?: string | null
     }
-
-    // Expected output should contain:
-    // - Genre preferences from taste profile
-    // - Trope/style preferences
-    // - Content boundaries (hard)
-    // - Story-specific answers from quick/custom input
-    // - Creative direction priority: custom > answers > taste > default
 
     const input: BuildDirectionInput = {
       tasteProfile: null,
@@ -201,7 +147,6 @@ describe('Authoring direction block contract (Bug 4)', () => {
       customIdea: null,
     }
 
-    // Even null tasteProfile should not break direction generation
     expect(input.answers.trope).toBeTruthy()
   })
 })

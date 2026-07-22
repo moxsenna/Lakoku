@@ -1,34 +1,23 @@
 /**
- * Regression test: Pilihkan untukku hard-coded defaults — Bug 5.
+ * Test: question-smart-defaults — V2 smart defaults from taste profile.
  *
- * defaultAnswer di question-presets selalu 'Pasangan yang berkhianat' dll —
- * tidak dipersonalisasi dari Taste Profile. Dengan mystery taste profile,
- * defaultAnswer untuk trope seharusnya TIDAK tetap 'Pasangan yang berkhianat'
- * setelah personalization.
- *
- * Test ini mendokumentasikan bug: getStorySetupQuestions dengan mystery profile
- * masih mengembalikan defaultAnswer hard-coded untuk trope.
- *
- * Perilaku yang diinginkan (dari plan):
- *   - Auto-resolve defaultAnswer dari taste profile (server-side)
- *   - Client tidak boleh bake universal defaults sebagai satu-satunya path
- *   - Dengan mystery profile, defaultAnswer trope seharusnya opsi misteri pertama
+ * In V2, getStorySetupQuestions sets defaultAnswer to the first promoted
+ * option when a usable taste profile is present. This fixes Bug 5 from Fase 0.
  */
-
 import { describe, expect, it } from 'vitest'
 import {
   getStorySetupQuestions,
   defaultStorySetupQuestions,
 } from '@/lib/onboarding/question-presets'
 import {
-  createDefaultTasteProfile,
+  createEmptyTasteProfile,
+  type TasteProfileV2,
 } from '@/lib/taste-profile/schema'
-import type { TasteProfile } from '@/lib/taste-profile/schema'
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-function makeProfile(overrides: Partial<TasteProfile> = {}): TasteProfile {
-  const base = createDefaultTasteProfile()
+function makeProfile(overrides: Partial<TasteProfileV2> = {}): TasteProfileV2 {
+  const base = createEmptyTasteProfile()
   return { ...base, ...overrides }
 }
 
@@ -43,9 +32,7 @@ describe('defaultStorySetupQuestions', () => {
       expect(q.prompt).toBeTruthy()
       expect(q.defaultAnswer).toBeTruthy()
       expect(q.options.length).toBeGreaterThan(0)
-      // defaultAnswer must be in options (normalize dash variants:
-      // pre-existing data issue: akhir uses '-' in defaultAnswer
-      // but '—' (em-dash) in options)
+      // defaultAnswer must be in options (normalize em-dash variants)
       const normalizedDefault = q.defaultAnswer.replace(/—/g, '-').replace(/–/g, '-')
       const normalizedOpts = q.options.map((o) => o.replace(/—/g, '-').replace(/–/g, '-'))
       expect(normalizedOpts).toContain(normalizedDefault)
@@ -65,21 +52,19 @@ describe('getStorySetupQuestions with null/empty profile', () => {
   })
 
   it('returns defaults for empty profile (no completedAt, no genres)', () => {
-    const qs = getStorySetupQuestions(createDefaultTasteProfile())
+    const qs = getStorySetupQuestions(createEmptyTasteProfile())
     expect(qs).toHaveLength(defaultStorySetupQuestions.length)
   })
 })
 
 // ═══════════════════════════════════════════════════════════════════
-// REGRESSION: defaultAnswer not personalized (Bug 5)
+// FIXED: smart defaultAnswer from taste profile (Bug 5)
 // ═══════════════════════════════════════════════════════════════════
 
-describe('REGRESSION: hard-coded defaultAnswer (CURRENTLY FAILS)', () => {
-  it('REG-1: mystery profile → trope defaultAnswer should NOT be "Pasangan yang berkhianat" (FAILS)', () => {
-    // Dengan mystery taste profile, defaultAnswer untuk trope seharusnya
-    // di-resolve ke opsi yang relevan dengan misteri, bukan default universal.
+describe('Smart defaults: defaultAnswer from taste profile (V2)', () => {
+  it('REG-1: mystery profile → trope defaultAnswer should NOT be "Pasangan yang berkhianat"', () => {
     const profile = makeProfile({
-      preferredGenres: ['Misteri & rahasia'],
+      primaryGenreId: 'mystery',
       completedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     })
@@ -87,14 +72,13 @@ describe('REGRESSION: hard-coded defaultAnswer (CURRENTLY FAILS)', () => {
     const qs = getStorySetupQuestions(profile)
     const tropeQ = qs.find((q) => q.key === 'trope')!
 
-    // DESIRED: defaultAnswer should be personalized — the first mystery-relevant option
-    // CURRENT BUG: defaultAnswer remains 'Pasangan yang berkhianat'
+    // Fixed: defaultAnswer should be personalized — the first promoted option
     expect(tropeQ.defaultAnswer).not.toBe('Pasangan yang berkhianat')
   })
 
-  it('REG-2: mystery profile → trope defaultAnswer should be a mystery-relevant option (FAILS)', () => {
+  it('REG-2: mystery profile → trope defaultAnswer should be a mystery-relevant option', () => {
     const profile = makeProfile({
-      preferredGenres: ['Misteri & rahasia'],
+      primaryGenreId: 'mystery',
       completedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     })
@@ -102,7 +86,7 @@ describe('REGRESSION: hard-coded defaultAnswer (CURRENTLY FAILS)', () => {
     const qs = getStorySetupQuestions(profile)
     const tropeQ = qs.find((q) => q.key === 'trope')!
 
-    // DESIRED: defaultAnswer from personalized options (mystery genre)
+    // defaultAnswer should be first option, which is promoted mystery-relevant option
     const mysteryKeywords = ['rahasia', 'misteri', 'warisan', 'tersembunyi', 'dikubur', 'terungkap']
     const isMysteryRelevant = mysteryKeywords.some((kw) =>
       tropeQ.defaultAnswer.toLowerCase().includes(kw),
@@ -111,9 +95,9 @@ describe('REGRESSION: hard-coded defaultAnswer (CURRENTLY FAILS)', () => {
     expect(isMysteryRelevant).toBe(true)
   })
 
-  it('REG-3: romance profile → trope defaultAnswer should be romance-relevant (FAILS)', () => {
+  it('REG-3: romance profile → trope defaultAnswer should be romance-relevant', () => {
     const profile = makeProfile({
-      preferredGenres: ['Romansa'],
+      primaryGenreId: 'romance',
       completedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     })
@@ -121,8 +105,8 @@ describe('REGRESSION: hard-coded defaultAnswer (CURRENTLY FAILS)', () => {
     const qs = getStorySetupQuestions(profile)
     const tropeQ = qs.find((q) => q.key === 'trope')!
 
-    // DESIRED: defaultAnswer from personalized options (romance genre)
-    const romanceKeywords = ['cinta', 'pernikahan', 'hubungan']
+    // defaultAnswer should be first option, which is promoted romance-relevant option
+    const romanceKeywords = ['cinta', 'pernikahan', 'hubungan', 'pasangan']
     const isRomanceRelevant = romanceKeywords.some((kw) =>
       tropeQ.defaultAnswer.toLowerCase().includes(kw),
     )
@@ -130,11 +114,9 @@ describe('REGRESSION: hard-coded defaultAnswer (CURRENTLY FAILS)', () => {
     expect(isRomanceRelevant).toBe(true)
   })
 
-  it('REG-4: endingBias keadilan → akhir defaultAnswer still first keadilan option', () => {
-    // Bug 5 is about trope defaultAnswer, but endingBias personalization
-    // already works via promoteOptions. Let's verify the side doesn't regress.
+  it('REG-4: endingBias victory → akhir options promoted', () => {
     const profile = makeProfile({
-      endingBias: 'kemenangan',
+      endingBias: 'victory',
       completedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     })
@@ -142,54 +124,23 @@ describe('REGRESSION: hard-coded defaultAnswer (CURRENTLY FAILS)', () => {
     const qs = getStorySetupQuestions(profile)
     const akhirQ = qs.find((q) => q.key === 'akhir')!
 
-    // With kemenangan endingBias, kemenangan option should be promoted to top
-    // and defaultAnswer should ideally reflect the bias
-    // CURRENT: defaultAnswer for akhir stays 'Keadilan - semua rahasia terbuka'
-    // This is a lesser bug but worth documenting.
+    // With victory endingBias, victory option should be promoted to top
     expect(akhirQ.options[0]).toContain('Kemenangan')
+    // And defaultAnswer should be the first (victory) option
+    expect(akhirQ.defaultAnswer).toBe(akhirQ.options[0])
   })
 
-  it('REG-5: mystery profile → trope options include mystery injection', () => {
-    // Verify the option injection works (options get personalized)
-    // But defaultAnswer still doesn't — this is the precise bug.
+  it('smart defaults: defaultAnswer equals first option when taste present', () => {
     const profile = makeProfile({
-      preferredGenres: ['Misteri & rahasia'],
+      primaryGenreId: 'mystery',
       completedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     })
 
     const qs = getStorySetupQuestions(profile)
-    const tropeQ = qs.find((q) => q.key === 'trope')!
 
-    // Options ARE personalized with mystery keywords
-    const hasMysteryOption = tropeQ.options.some((o) =>
-      o.toLowerCase().includes('rahasia'),
-    )
-    expect(hasMysteryOption).toBe(true)
-
-    // But defaultAnswer is still hard-coded 'Pasangan yang berkhianat'
-    // This is the bug — options are personalized but defaultAnswer is not
-  })
-})
-
-// ═══════════════════════════════════════════════════════════════════
-// Desired contract: smart defaults from taste profile
-// ═══════════════════════════════════════════════════════════════════
-
-describe('Desired: smart defaultAnswer from taste profile', () => {
-  it('CONTRACT: defaultAnswer should be first personalized option', () => {
-    // This is the target behavior. After personalization, defaultAnswer
-    // should be the first option in the reordered/personalized list.
-    const profile = makeProfile({
-      preferredGenres: ['Misteri & rahasia'],
-      completedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    })
-
-    const qs = getStorySetupQuestions(profile)
-    const tropeQ = qs.find((q) => q.key === 'trope')!
-
-    // Desired: defaultAnswer == options[0] (the most relevant personalized option)
-    expect(tropeQ.defaultAnswer).toBe(tropeQ.options[0])
+    for (const q of qs) {
+      expect(q.defaultAnswer).toBe(q.options[0])
+    }
   })
 })

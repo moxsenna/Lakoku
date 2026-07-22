@@ -1,20 +1,13 @@
 /**
- * Regression test: buildOptionsFromGenres — Bug 1 (sequential fill).
+ * Test: buildBalancedOptionsFromGenres — 4+2 interleave.
  *
- * Saat user memilih 2 genre, loop saat ini mengisi semua 6 slot dari
- * genre pertama sehingga genre kedua tidak mendapat slot.
+ * buildBalancedOptionsFromGenres is now the default export (production path).
+ * buildOptionsFromGenres is kept as legacy sequential variant.
  *
- * Perilaku yang diinginkan:
+ * Perilaku:
  *   - 1 genre → 6 dari genre tersebut
  *   - 2+ genre → 4 primer + 2 sekunder, diinterleave, urutan stabil, dedupe by ID
- *
- * Test ini mendokumentasikan:
- *   A) buildOptionsFromGenres (CURRENT) — sequential, semua dari genre pertama.
- *      Test untuk DESIRED 4+2 interleave di bagian B akan FAIL pada fungsi ini.
- *   B) buildBalancedOptionsFromGenres (DESIRED) — algoritma balanced 4+2.
- *      Test ini PASS karena fungsinya sudah pure-correct, tapi belum wired ke komponen.
  */
-
 import { describe, expect, it } from 'vitest'
 import {
   buildOptionsFromGenres,
@@ -61,77 +54,10 @@ const FALLBACK = [
 ]
 
 // ═══════════════════════════════════════════════════════════════════
-// SECTION A: buildOptionsFromGenres (CURRENT — sequential behavior)
+// SECTION A: buildBalancedOptionsFromGenres (PRODUCTION — 4+2 interleave)
 // ═══════════════════════════════════════════════════════════════════
 
-describe('buildOptionsFromGenres (CURRENT sequential)', () => {
-  it('single genre: returns up to 6 options from that genre', () => {
-    const result = buildOptionsFromGenres(['Misteri & rahasia'], GENRE_TROPE, FALLBACK)
-    expect(result.length).toBe(6)
-    // All 6 should be Misteri options in original order
-    expect(result).toEqual(GENRE_TROPE['Misteri & rahasia'])
-  })
-
-  it('no genre: returns fallback (first 6)', () => {
-    const result = buildOptionsFromGenres([], GENRE_TROPE, FALLBACK)
-    expect(result.length).toBe(6)
-    expect(result).toEqual(FALLBACK)
-  })
-
-  it('deduplicates across genres', () => {
-    const sharedOpts: Record<string, string[]> = {
-      A: ['x', 'y'],
-      B: ['x', 'z'],
-    }
-    const result = buildOptionsFromGenres(['A', 'B'], sharedOpts, ['fb'])
-    expect(result).toEqual(['x', 'y', 'z', 'fb'])
-    // 'x' appears only once
-    expect(new Set(result).size).toBe(result.length)
-  })
-
-  it('fills missing slots from fallback', () => {
-    const result = buildOptionsFromGenres(['Drama keluarga'], SMALL_GENRE_MAP, FALLBACK)
-    expect(result.length).toBe(6)
-    // First 3 should be from Drama keluarga
-    expect(result.slice(0, 3)).toEqual(SMALL_GENRE_MAP['Drama keluarga'])
-    // Remaining 3 from fallback
-    expect(result.slice(3)).toEqual(FALLBACK.slice(0, 3))
-  })
-
-  it('unknown genre returns fallback', () => {
-    const result = buildOptionsFromGenres(['Genre tidak dikenal'], GENRE_TROPE, FALLBACK)
-    expect(result).toEqual(FALLBACK)
-  })
-
-  it('BUG DEMO: 2 genres — all 6 come from first genre (BUG)', () => {
-    // DESIRED: 4 from Misteri + 2 from Romansa, interleaved.
-    // CURRENT: all 6 from Misteri because sequential loop fills all slots.
-    const result = buildOptionsFromGenres(
-      ['Misteri & rahasia', 'Romansa'],
-      GENRE_TROPE,
-      FALLBACK,
-    )
-
-    expect(result.length).toBe(6)
-
-    // BUG: None from Romansa — all 6 are Misteri options
-    const hasRomansaOption = result.some((o) =>
-      GENRE_TROPE['Romansa'].includes(o),
-    )
-    expect(hasRomansaOption).toBe(false)
-
-    // All from Misteri (current behavior documents the bug)
-    result.forEach((o) => {
-      expect(GENRE_TROPE['Misteri & rahasia']).toContain(o)
-    })
-  })
-})
-
-// ═══════════════════════════════════════════════════════════════════
-// SECTION B: buildBalancedOptionsFromGenres (DESIRED 4+2 interleave)
-// ═══════════════════════════════════════════════════════════════════
-
-describe('buildBalancedOptionsFromGenres (DESIRED 4+2 interleave)', () => {
+describe('buildBalancedOptionsFromGenres (PRODUCTION 4+2 interleave)', () => {
   it('single genre: returns up to 6 options from that genre', () => {
     const result = buildBalancedOptionsFromGenres(
       ['Misteri & rahasia'], GENRE_TROPE, FALLBACK,
@@ -205,14 +131,12 @@ describe('buildBalancedOptionsFromGenres (DESIRED 4+2 interleave)', () => {
     const secondaryInResult = result.filter((o) => secondaryOpts.includes(o))
 
     // Primary items should maintain original order
-    // P: [0,2,4,5] → original indices should be ascending
     const primaryIndices = primaryInResult.map((o) => primaryOpts.indexOf(o))
     for (let i = 1; i < primaryIndices.length; i++) {
       expect(primaryIndices[i]).toBeGreaterThan(primaryIndices[i - 1])
     }
 
     // Secondary items should maintain original order
-    // S: [0,1]
     const secondaryIndices = secondaryInResult.map((o) => secondaryOpts.indexOf(o))
     for (let i = 1; i < secondaryIndices.length; i++) {
       expect(secondaryIndices[i]).toBeGreaterThan(secondaryIndices[i - 1])
@@ -282,52 +206,41 @@ describe('buildBalancedOptionsFromGenres (DESIRED 4+2 interleave)', () => {
 })
 
 // ═══════════════════════════════════════════════════════════════════
-// SECTION C: Regression — DESIRED behavior NOT in buildOptionsFromGenres
+// SECTION B: buildOptionsFromGenres (LEGACY sequential — kept for compat)
 // ═══════════════════════════════════════════════════════════════════
 
-describe('REGRESSION: buildOptionsFromGenres FAILS desired 4+2 interleave', () => {
-  it('two genres: buildOptionsFromGenres does NOT interleave (BUG)', () => {
-    // This test SHOULD fail because buildOptionsFromGenres is still sequential.
-    // When fixed, this test will pass.
-    const result = buildOptionsFromGenres(
-      ['Misteri & rahasia', 'Romansa'],
-      GENRE_TROPE,
-      FALLBACK,
-    )
-
-    const secondaryOpts = GENRE_TROPE['Romansa']
-    const secondaryInResult = result.filter((o) => secondaryOpts.includes(o))
-
-    // DESIRED: at least 2 from secondary genre
-    // CURRENT: 0 from secondary (sequential fills all 6 from first)
-    expect(secondaryInResult.length).toBeGreaterThanOrEqual(2)
+describe('buildOptionsFromGenres (LEGACY sequential)', () => {
+  it('single genre: returns up to 6 options from that genre', () => {
+    const result = buildOptionsFromGenres(['Misteri & rahasia'], GENRE_TROPE, FALLBACK)
+    expect(result.length).toBe(6)
+    expect(result).toEqual(GENRE_TROPE['Misteri & rahasia'])
   })
 
-  it('two genres: interleaved order P-S-P-S-P-P (BUG)', () => {
-    // This tests the desired interleave pattern directly against
-    // buildOptionsFromGenres (sequential). WILL FAIL until fixed.
-    const result = buildOptionsFromGenres(
-      ['Misteri & rahasia', 'Romansa'],
-      GENRE_TROPE,
-      FALLBACK,
-    )
+  it('no genre: returns fallback (first 6)', () => {
+    const result = buildOptionsFromGenres([], GENRE_TROPE, FALLBACK)
+    expect(result.length).toBe(6)
+    expect(result).toEqual(FALLBACK)
+  })
 
-    const primaryOpts = GENRE_TROPE['Misteri & rahasia']
-    const secondaryOpts = GENRE_TROPE['Romansa']
-    const isPrimary = (o: string) => primaryOpts.includes(o)
-    const isSecondary = (o: string) => secondaryOpts.includes(o)
-
-    // Desired pattern: P S P S P P
-    try {
-      expect(isPrimary(result[0])).toBe(true)
-      expect(isSecondary(result[1])).toBe(true)
-      expect(isPrimary(result[2])).toBe(true)
-      expect(isSecondary(result[3])).toBe(true)
-      expect(isPrimary(result[4])).toBe(true)
-      expect(isPrimary(result[5])).toBe(true)
-    } catch {
-      // Expected to throw on current code — document what we got instead:
-      // result[1] is actually primary (Misteri), not secondary (Romansa)
+  it('deduplicates across genres', () => {
+    const sharedOpts: Record<string, string[]> = {
+      A: ['x', 'y'],
+      B: ['x', 'z'],
     }
+    const result = buildOptionsFromGenres(['A', 'B'], sharedOpts, ['fb'])
+    expect(result).toEqual(['x', 'y', 'z', 'fb'])
+    expect(new Set(result).size).toBe(result.length)
+  })
+
+  it('fills missing slots from fallback', () => {
+    const result = buildOptionsFromGenres(['Drama keluarga'], SMALL_GENRE_MAP, FALLBACK)
+    expect(result.length).toBe(6)
+    expect(result.slice(0, 3)).toEqual(SMALL_GENRE_MAP['Drama keluarga'])
+    expect(result.slice(3)).toEqual(FALLBACK.slice(0, 3))
+  })
+
+  it('unknown genre returns fallback', () => {
+    const result = buildOptionsFromGenres(['Genre tidak dikenal'], GENRE_TROPE, FALLBACK)
+    expect(result).toEqual(FALLBACK)
   })
 })

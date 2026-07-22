@@ -1,12 +1,12 @@
 /**
  * localStorage helper untuk Taste Profile guest.
  *
- * Key terpisah dari onboarding-draft agar tidak tabrakan. Profile disimpan
- * sebagai JSON mentah; validasi terjadi saat dibaca (normalizeTasteProfile).
+ * Key versioned to avoid conflicts. Profile disimpan sebagai JSON mentah;
+ * validasi terjadi saat dibaca (normalizeTasteProfile auto-migrates V1).
  */
-import { TasteProfileSchema, type TasteProfile } from './schema'
+import { TasteProfileV2Schema, normalizeTasteProfile, type TasteProfileV2 } from './schema'
 
-export const TASTE_PROFILE_STORAGE_KEY = 'lakoku:taste-profile:v1'
+export const TASTE_PROFILE_STORAGE_KEY = 'lakoku:taste-profile:v2'
 
 function getStorage(): Storage | null {
   if (typeof window === 'undefined') return null
@@ -20,7 +20,7 @@ function getStorage(): Storage | null {
  * JSON invalid, schema tidak cocok, field tidak lengkap. Jangan pernah
  * biarkan parse error menjatuhkan /mulai. Onboarding tetap jalan normal.
  */
-export function readGuestTasteProfile(): TasteProfile | null {
+export function readGuestTasteProfile(): TasteProfileV2 | null {
   const storage = getStorage()
   if (!storage) return null
 
@@ -31,8 +31,9 @@ export function readGuestTasteProfile(): TasteProfile | null {
     const parsed = JSON.parse(raw)
     if (!parsed || typeof parsed !== 'object') return null
 
-    const result = TasteProfileSchema.safeParse(parsed)
-    return result.success ? result.data : null
+    // normalizeTasteProfile handles both V1 and V2, auto-migrating
+    const profile = normalizeTasteProfile(parsed)
+    return profile.version === 2 ? profile : null
   } catch {
     // JSON rusak, key corrupt, dsb. — jangan ganggu UX.
     return null
@@ -40,7 +41,7 @@ export function readGuestTasteProfile(): TasteProfile | null {
 }
 
 /** Simpan profile guest ke localStorage. */
-export function saveGuestTasteProfile(profile: TasteProfile): void {
+export function saveGuestTasteProfile(profile: TasteProfileV2): void {
   const storage = getStorage()
   if (!storage) return
 

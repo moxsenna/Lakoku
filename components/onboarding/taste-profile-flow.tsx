@@ -21,11 +21,11 @@ import {
 import {
   saveGuestTasteProfile,
 } from '@/lib/taste-profile/storage'
-import {
-  type TasteProfile,
-} from '@/lib/taste-profile/schema'
 import { buildOptionsFromGenres } from '@/lib/taste-profile/options'
-import { buildSkipOrSaveProfile } from '@/lib/taste-profile/build-from-steps'
+import {
+  buildSkipOrSaveProfile,
+  type TasteStepAnswers,
+} from '@/lib/taste-profile/build-from-steps'
 
 // ─── Step definitions ─────────────────────────────────────────────
 
@@ -37,7 +37,7 @@ interface StepDefinition {
   options: { label: string; value: string }[]
   multiSelect?: boolean
   /** Field yang di-set saat step ini selesai (untuk multi-select). */
-  field?: keyof TasteProfile
+  field?: keyof TasteStepAnswers
 }
 
 // ── Genre → trope/konflik mapping (dynamic step 2) ────────────────
@@ -244,7 +244,7 @@ export function TasteProfileFlow() {
   const nextUrl = searchParams.get('next') || '/beranda'
 
   const [step, setStep] = useState(0)
-  const [stepAnswers, setStepAnswers] = useState<Partial<TasteProfile>>({})
+  const [stepAnswers, setStepAnswers] = useState<TasteStepAnswers>({})
   const [err, setErr] = useState<string | null>(null)
 
   // Steps dibangun ulang saat genre berubah.
@@ -257,7 +257,7 @@ export function TasteProfileFlow() {
 
   // ── Multi-select toggle ─────────────────────────────────────────
 
-  function toggleMulti(field: keyof TasteProfile, value: string) {
+  function toggleMulti(field: keyof TasteStepAnswers, value: string) {
     const current = (stepAnswers[field] as string[]) ?? []
     const next = current.includes(value)
       ? current.filter((v) => v !== value)
@@ -266,7 +266,7 @@ export function TasteProfileFlow() {
     setStepAnswers((prev) => ({ ...prev, [field]: next }))
   }
 
-  function isSelected(field: keyof TasteProfile, value: string): boolean {
+  function isSelected(field: keyof TasteStepAnswers, value: string): boolean {
     const current = (stepAnswers[field] as string[]) ?? []
     return current.includes(value)
   }
@@ -384,9 +384,9 @@ export function TasteProfileFlow() {
                   if (currentStep.multiSelect && currentStep.field) {
                     toggleMulti(currentStep.field, opt.value)
                   } else if (currentStep.id === 'intensity') {
-                    setStepAnswers((prev) => ({ ...prev, dramaIntensity: opt.value as TasteProfile['dramaIntensity'] }))
+                    setStepAnswers((prev) => ({ ...prev, dramaIntensity: opt.value }))
                   } else if (currentStep.id === 'ending-style') {
-                    setStepAnswers((prev) => ({ ...prev, endingBias: opt.value as TasteProfile['endingBias'] }))
+                    setStepAnswers((prev) => ({ ...prev, endingBias: opt.value }))
                   }
                 }}
                 className={cn(

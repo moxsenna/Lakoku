@@ -1,17 +1,19 @@
 'use server'
 
 /**
- * Server actions untuk /onboarding/selera — simpan, baca, skip, merge Taste Profile.
+ * Server actions untuk /onboarding/selera — simpan, baca, skip, merge Taste Profile (V2).
  */
 import {
   getTasteProfileForUser,
   saveTasteProfileForUser,
 } from '@/lib/api/taste-profile'
 import {
-  TasteProfileSchema,
-  createDefaultTasteProfile,
+  TasteProfileV2Schema,
+  TasteProfileV1Schema,
+  createEmptyTasteProfile,
   mergeTasteProfiles,
-  type TasteProfile,
+  normalizeTasteProfile,
+  type TasteProfileV2,
 } from '@/lib/taste-profile/schema'
 
 type ActionOk = { ok: true }
@@ -24,7 +26,14 @@ export async function actSaveTasteProfile(
   rawInput: unknown,
 ): Promise<ActionResult> {
   try {
-    const profile = TasteProfileSchema.parse(rawInput)
+    // Accept V2 directly, or V1 and auto-migrate
+    let profile: TasteProfileV2
+    const v2Result = TasteProfileV2Schema.safeParse(rawInput)
+    if (v2Result.success) {
+      profile = v2Result.data
+    } else {
+      profile = normalizeTasteProfile(rawInput)
+    }
 
     const { getSessionUser } = await import('@/lib/api/user-state')
     const user = await getSessionUser()
@@ -33,7 +42,7 @@ export async function actSaveTasteProfile(
       return { ok: false, error: 'Harus masuk untuk menyimpan selera.' }
     }
 
-    const toSave: TasteProfile = {
+    const toSave: TasteProfileV2 = {
       ...profile,
       completedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -50,7 +59,7 @@ export async function actSaveTasteProfile(
 // ── Ambil profile server ──────────────────────────────────────────
 
 export async function actGetTasteProfile(): Promise<
-  { ok: true; profile: TasteProfile | null } | ActionError
+  { ok: true; profile: TasteProfileV2 | null } | ActionError
 > {
   try {
     const { getSessionUser } = await import('@/lib/api/user-state')
@@ -79,8 +88,8 @@ export async function actSkipTasteProfile(): Promise<ActionResult> {
       return { ok: false, error: 'Harus masuk untuk melewati.' }
     }
 
-    const skipped: TasteProfile = {
-      ...createDefaultTasteProfile(),
+    const skipped: TasteProfileV2 = {
+      ...createEmptyTasteProfile(),
       skippedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
@@ -113,9 +122,8 @@ export async function actMergeGuestTasteProfile(
       return { ok: true, merged: false }
     }
 
-    // Parse guest profile dari argumen client (bukan localStorage server).
-    const parsed = TasteProfileSchema.safeParse(rawGuestProfile)
-    const guestProfile = parsed.success ? parsed.data : null
+    // Parse guest profile (accepts both V1 and V2)
+    const guestProfile = normalizeTasteProfile(rawGuestProfile)
 
     if (!guestProfile || !guestProfile.completedAt) {
       return { ok: true, merged: false }
@@ -130,7 +138,7 @@ export async function actMergeGuestTasteProfile(
       return { ok: true, merged: false }
     }
 
-    const toSave: TasteProfile = {
+    const toSave: TasteProfileV2 = {
       ...profile,
       updatedAt: new Date().toISOString(),
     }

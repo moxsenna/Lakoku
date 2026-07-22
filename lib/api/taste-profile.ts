@@ -1,31 +1,39 @@
 /**
- * API server-side untuk Taste Profile — baca/tulis ke Supabase.
+ * API server-side untuk Taste Profile — baca/tulis ke Supabase (V2).
  *
  * Fungsi di sini menerima `userId` dari pemanggil (server action/route)
  * yang sudah mendapatkan session user. Tidak menerima raw input dari client.
  *
  * Guest tidak punya baris di tabel ini — guest pakai localStorage fallback.
+ *
+ * Migration-on-read: saat membaca dari DB, V1 profile di-migrate ke V2
+ * sebelum dikembalikan. Penyimpanan selalu V2.
  */
 import { createClient } from '@/lib/supabase/server'
-import { TasteProfileSchema, type TasteProfile } from '@/lib/taste-profile/schema'
+import {
+  normalizeTasteProfile,
+  TasteProfileV2Schema,
+  type TasteProfileV2,
+} from '@/lib/taste-profile/schema'
 
 interface TasteProfileRow {
-  taste_json: TasteProfile
+  taste_json: unknown
 }
 
-function parseRow(row: TasteProfileRow | null): TasteProfile | null {
+function parseRow(row: TasteProfileRow | null): TasteProfileV2 | null {
   if (!row) return null
-  const parsed = TasteProfileSchema.safeParse(row.taste_json)
-  return parsed.success ? parsed.data : null
+  // normalizeTasteProfile auto-migrates V1 to V2
+  const profile = normalizeTasteProfile(row.taste_json)
+  return profile.version === 2 ? profile : null
 }
 
 /**
  * Ambil profile selera untuk user tertentu.
- * Return null jika user belum pernah menyimpan / data rusak.
+ * Auto-migrates V1 → V2 on read. Return null jika user belum pernah menyimpan / data rusak.
  */
 export async function getTasteProfileForUser(
   userId: string,
-): Promise<TasteProfile | null> {
+): Promise<TasteProfileV2 | null> {
   const supabase = await createClient()
 
   const { data, error } = await supabase
@@ -43,12 +51,12 @@ export async function getTasteProfileForUser(
 }
 
 /**
- * Simpan profile selera untuk user tertentu.
+ * Simpan profile selera untuk user tertentu (V2).
  * Upsert berdasarkan user_id — insert jika belum ada, update jika sudah ada.
  */
 export async function saveTasteProfileForUser(
   userId: string,
-  profile: TasteProfile,
+  profile: TasteProfileV2,
 ): Promise<void> {
   const supabase = await createClient()
 

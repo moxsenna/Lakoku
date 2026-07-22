@@ -54,12 +54,7 @@
     "smoke:runtime": "node scripts/run-smoke.cjs scripts/runtime-invariants.ts",
     "smoke:e2e-real": "node scripts/run-smoke.cjs scripts/e2e-real-generation.ts",
     "release:m9": "node scripts/run-smoke.cjs scripts/m9-release-gate.ts",
-    "release:personalized": "pnpm run typecheck && pnpm run test:unit && pnpm run test:db:personalized",
-    "build:cloudflare": "node scripts/patch-opennext-cloudflare.cjs deps && opennextjs-cloudflare build && node scripts/patch-opennext-cloudflare.cjs worker",
-    "preview": "pnpm run build:cloudflare && opennextjs-cloudflare preview",
-    "deploy": "pnpm run build:cloudflare && opennextjs-cloudflare deploy",
-    "upload": "pnpm run build:cloudflare && opennextjs-cloudflare upload",
-    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
+    "release:personalized": "pnpm run typecheck && pnpm run test:unit && pnpm run test:db:personalized"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.5",
@@ -86,7 +81,6 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.5",
-    "@opennextjs/cloudflare": "^1.20.1",
     "@tailwindcss/postcss": "^4.2.0",
     "@types/node": "^24",
     "@types/react": "^19",
@@ -97,7 +91,6 @@
     "postcss": "^8.5",
     "tailwindcss": "^4.2.0",
     "typescript": "5.7.3",
-    "vitest": "^4.1.10",
-    "wrangler": "^4.107.0"
+    "vitest": "^4.1.10"
   }
 }

@@ -353,6 +353,22 @@ function buildPrompt(args: {
 }
 
 /**
+ * Teruskan reasoning effort route-level ke panggilan model via providerOptions.
+ * Key harus cocok dengan nama provider yang didaftarkan createOpenAICompatible
+ * (custom | openrouter | 9router). Key tak dikenal diabaikan SDK, jadi aman
+ * untuk kandidat `gateway`. `reasoning_effort` dikirim apa adanya ke body request
+ * (mis. 'none' mematikan thinking pada model ag/* reasoning).
+ */
+function routeProviderOptions(
+  candidate: ModelCandidate,
+  route?: AiModelRoute,
+): Record<string, Record<string, string>> | undefined {
+  const effort = route?.reasoningEffort?.trim()
+  if (!effort) return undefined
+  return { [candidate.providerId]: { reasoning_effort: effort } }
+}
+
+/**
  * Hasilkan prosa via LLM dengan penjagaan: bila terdeteksi kebocoran istilah
  * internal, coba sekali lagi; bila masih bocor, lempar agar pipeline menangani
  * (fallback aman ditangani pemanggil bila perlu).
@@ -400,6 +416,7 @@ async function generateProse(args: {
                   : `${prompt}\n\nCATATAN: revisi sebelumnya memuat istilah teknis terlarang. Tulis ulang murni sebagai narasi cerita.`,
               temperature: args.route?.temperature ?? undefined,
               maxOutputTokens,
+              providerOptions: routeProviderOptions(candidate, args.route),
               abortSignal: AbortSignal.timeout(LLM_PROSE_TIMEOUT_MS),
               maxRetries: 0,
             }),
@@ -715,6 +732,7 @@ async function generateStoryContractJson(args: {
             routeMax: args.route?.maxOutputTokens,
             fallback: DEFAULT_PROSE_MAX_OUTPUT_TOKENS,
           }),
+          providerOptions: routeProviderOptions(candidate, args.route),
           abortSignal: args.options.signal,
           maxRetries: 0,
         }),
@@ -766,6 +784,7 @@ async function generateChoiceJson(args: {
               ? AG_REASONING_MAX_OUTPUT_FLOOR
               : 1024,
           }),
+          providerOptions: routeProviderOptions(candidate, args.route),
           abortSignal: AbortSignal.timeout(LLM_CHOICE_TIMEOUT_MS),
           maxRetries: 0,
         }),

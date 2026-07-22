@@ -26,6 +26,12 @@ export interface AiModelRoute {
   fallbackModels: AiFallbackModel[]
   temperature: number | null
   maxOutputTokens: number | null
+  /**
+   * Provider reasoning effort passed through to the model call
+   * (e.g. 'none' | 'minimal' | 'low' | 'medium' | 'high').
+   * Null/absent = provider default. Applied to every candidate in this route's chain.
+   */
+  reasoningEffort?: string | null
   routeVersion: string
 }
 
@@ -36,6 +42,7 @@ interface AiModelRouteRow {
   fallback_models: unknown
   temperature: number | null
   max_output_tokens: number | null
+  reasoning_effort: string | null
   route_version: string
 }
 
@@ -104,8 +111,16 @@ function mapRow(r: AiModelRouteRow): AiModelRoute {
     fallbackModels: normalizeFallbackModels(r.fallback_models, r.provider),
     temperature: r.temperature,
     maxOutputTokens: r.max_output_tokens,
+    reasoningEffort: normalizeReasoningEffort(r.reasoning_effort),
     routeVersion: r.route_version,
   }
+}
+
+/** Trim and drop empty reasoning-effort values; null = provider default. */
+function normalizeReasoningEffort(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const trimmed = raw.trim()
+  return trimmed.length > 0 ? trimmed : null
 }
 
 /** Fallback aman bila DB & env tak tersedia. */
@@ -116,6 +131,7 @@ export const DEFAULT_AI_MODEL_ROUTE: AiModelRoute = {
   fallbackModels: [],
   temperature: null,
   maxOutputTokens: null,
+  reasoningEffort: null,
   routeVersion: 'fallback-code',
 }
 
@@ -130,7 +146,7 @@ export const getAiModelRoute = cache(
       const { data } = await db
         .from('ai_model_routes')
         .select(
-          'use_case,provider,model_id,fallback_models,temperature,max_output_tokens,route_version',
+          'use_case,provider,model_id,fallback_models,temperature,max_output_tokens,reasoning_effort,route_version',
         )
         .eq('use_case', useCase)
         .eq('is_active', true)

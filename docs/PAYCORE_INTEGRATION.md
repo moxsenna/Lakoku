@@ -60,15 +60,20 @@ memberi nilai berikut (staging & production terpisah — README PayCore §11):
 > README PayCore melarang agen eksternal mengubah secret/DB PayCore — laporkan data
 > di atas ke maintainer, jangan sentuh repo PayCore.
 
-## 4. Secrets di Cloudflare (worker `lakoku-v2`)
+## 4. Secrets di VPS (`.env` container `lakoku-web`)
 
-```bash
-wrangler secret put PAYCORE_WEBHOOK_SECRET     # inbound (WAJIB, jika tidak → webhook 503)
-wrangler secret put PAYCORE_BASE_URL           # https://pay.appvibe.biz.id (prod) / pay-staging (staging)
-wrangler secret put PAYCORE_APP_ID             # lakoku
-wrangler secret put PAYCORE_KEY_ID             # pk_prod_lakoku_01
-wrangler secret put PAYCORE_APP_SECRET         # outbound sign
-wrangler secret put PAYCORE_RETURN_URL         # https://<domain>/payment/return
+Production Lakoku berjalan sebagai Next.js standalone di VPS (Docker), bukan Cloudflare Worker.
+Secret di-set lewat file `.env` yang dibaca `docker-compose.yml` (`env_file: .env`), lalu
+`docker compose up -d --build`. Jangan commit `.env`.
+
+```dotenv
+# .env di /opt/lakoku (VPS)
+PAYCORE_WEBHOOK_SECRET=...   # inbound (WAJIB, jika tidak → webhook 503)
+PAYCORE_BASE_URL=https://pay.appvibe.biz.id   # prod / pay-staging untuk staging
+PAYCORE_APP_ID=lakoku
+PAYCORE_KEY_ID=pk_prod_lakoku_01
+PAYCORE_APP_SECRET=...        # outbound sign
+PAYCORE_RETURN_URL=https://<domain>/payment/return
 ```
 
 Webhook & create-order **fail-closed 503** bila secret kurang → aman (tak ada grant/order palsu).

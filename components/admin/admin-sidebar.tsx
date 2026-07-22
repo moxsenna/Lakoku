@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard,
@@ -28,6 +29,13 @@ export function AdminSidebar() {
   return (
     <aside className="hidden w-56 shrink-0 border-r border-border bg-card lg:flex lg:flex-col">
       <div className="flex h-14 items-center gap-2 border-b border-border px-4">
+        <Image
+          src="/logo.webp"
+          alt="Lakoku Logo"
+          width={28}
+          height={28}
+          className="h-7 w-7 rounded-full object-cover shadow-sm"
+        />
         <span className="font-serif text-lg font-semibold text-foreground">Lakoku</span>
         <span className="rounded bg-lavender/15 px-1.5 py-0.5 text-[10px] font-medium text-lavender">
           Admin

@@ -2,13 +2,24 @@
 
 **Version:** 1.1  
 **Status:** Build-ready technical baseline  
-**Last updated:** 10 July 2026  
+**Last updated:** 22 July 2026 — backend stack sections amended to reflect the real VPS deployment (Next.js standalone + Supabase); original Cloudflare Workers/Queues/Workflows/R2 design retained only as historical context  
 **Amendments applied:** AMENDMENTS v0.3 (§B), AMENDMENTS v0.4 (§B), AMENDMENTS v0.5 (§B) — see `docs/AMENDMENTS_v0.3.md`, `docs/AMENDMENTS_v0.4.md`, `docs/AMENDMENTS_v0.5.md`  
 **Primary release:** Private Beta — web reader mobile-first first, Android (Kotlin) second  
 **Client sequencing:** Web reader (Next.js) is the first production client; Android native follows once web retention/monetization is proven — see AMENDMENTS v0.4 §0 (LD-CLIENT-SEQ)  
 **Primary app stack:** Web reader — Next.js (App Router); Android — Kotlin + Jetpack Compose (second client)  
-**Backend stack:** TypeScript + Hono on Cloudflare Workers, Cloudflare Queues/Workflows, Supabase PostgreSQL  
+**Backend stack:** Next.js App Router route handlers (TypeScript) running as a standalone Node server on a VPS (Docker), Supabase PostgreSQL  
 **Canonical product documents:** `docs/PRD_Lakoku_Interactive_v0.3.md`, `LAKOKU_BRAND_GUIDELINES_v1.1.md`  
+
+> **CATATAN DEPLOYMENT (realita saat ini).** Baseline ini awalnya merancang backend
+> "Hono di Cloudflare Workers + Cloudflare Queues/Workflows + R2". Rancangan itu
+> **tidak jadi dipakai.** Implementasi nyata: satu aplikasi Next.js (App Router) —
+> UI + API route handlers dalam satu proses — di-build `output: 'standalone'` dan
+> dijalankan `node server.js` di dalam kontainer Docker di VPS (lihat
+> [VPS_DEPLOY.md](./VPS_DEPLOY.md)). Tidak ada Hono, Cloudflare Workers/Queues/
+> Workflows, atau R2 di runtime. Kerja generasi berjalan lewat `after()` Next.js
+> di-back oleh tabel Postgres `generation_jobs` (fondasi durable). Cloudflare hanya
+> dipakai sebagai DNS/edge di depan VPS. Bagian di bawah yang menyebut primitif
+> Cloudflare dipertahankan sebagai konteks desain historis, bukan arsitektur aktif.
 **Normative narrative-consistency spec:** `docs/NARRATIVE_CONSISTENCY_SPEC.md` (NCS v1.0). For long-form 50-chapter consistency, NCS governs; this document must not contradict it. See also `docs/NARRATIVE_TRACEABILITY_MATRIX.md`.
 
 ---
@@ -51,11 +62,11 @@ This is an **architecture document**, not a screen specification or complete dat
 | Mobile client | Kotlin + Jetpack Compose | Android-first reader needs native scroll behavior, durable local cache, system text scaling, background retry, and a polished reading surface. |
 | Android pattern | Repository + unidirectional data flow + ViewModel | Clear state ownership, testability, and lifecycle-safe Compose screens. |
 | Local data | Room + DataStore | Published chapters and progress are locally readable; preferences are durable and small. |
-| API edge | Hono on Cloudflare Workers | Low-ops TypeScript API layer compatible with existing Cloudflare-oriented infrastructure. |
-| Durable jobs | Cloudflare Queues + Cloudflare Workflows | Queues decouple post-commit work; Workflows orchestrate retriable, multi-step chapter generation. |
+| API layer | Next.js App Router route handlers (`app/api/**`) | Same TypeScript codebase as the web reader; deployed as one standalone Node server on the VPS. No separate edge API. |
+| Durable jobs | Next.js `after()` + Postgres `generation_jobs` table (claim/lease/heartbeat/recover RPCs) | Post-response background work orchestrates the retriable, multi-step chapter-generation pipeline; job state, leases, and recovery live in Postgres. |
 | Canonical database | Supabase PostgreSQL | Relational canon/state, transactions, JSONB, full-text search, pgvector where appropriate, Auth integration, and RLS defense in depth. |
 | Authentication | Supabase Auth | Email/password initially, short-lived access tokens, server-side JWT verification, and a future OAuth path. |
-| Object storage | Cloudflare R2 private bucket | Covers, scene images, and internal generation artifacts stay outside the primary database; access is mediated by API rules. |
+| Object storage | Not in use (planned: private object bucket) | Covers/scene images are not served from a dedicated object store in the current build; if introduced later, artifacts stay outside the primary database with API-mediated access. |
 | AI integration | Server-side provider gateway | Provider/model routing, schema validation, cost controls, and fallbacks stay private and replaceable. |
 | Observability | Structured logs + Sentry-compatible error monitoring + database audit tables | Correlates app request, choice, queue event, workflow, model call, validation, and publish result without logging private prose broadly. |
 | API contract | Versioned OpenAPI + JSON Schema/Zod contracts | Android and backend integrations are explicit, validated, and regression-testable. |
@@ -76,25 +87,23 @@ This is an **architecture document**, not a screen specification or complete dat
 
 ```mermaid
 flowchart LR
-    R[Reader on Android] --> A[Lakoku Android App]
-    A --> E[Cloudflare Edge / Hono Reader API]
+    R[Reader on Web/Android] --> A[Lakoku Client]
+    A --> E[Next.js App on VPS\nUI + API route handlers]
 
     E --> AU[Supabase Auth]
     E --> RT[Lakoku Interactive Runtime]
     E --> AS[Private Asset Gateway]
 
     RT --> DB[(Supabase PostgreSQL\nCanonical Story State)]
-    RT --> Q[Cloudflare Queues]
-    Q --> WF[Cloudflare Workflows]
-    WF --> NC[Internal Narrative Core]
+    RT --> BG["Background work: after() + generation_jobs (Postgres)"]
+    BG --> NC[Internal Narrative Core]
     NC --> AG[AI Provider Gateway]
     AG --> AP[Approved AI Providers]
 
-    WF --> R2[Cloudflare R2\nVisuals & Internal Artifacts]
-    WF --> DB
+    BG --> DB
 
     E --> AN[Privacy-aware Analytics Events]
-    WF --> NO[Notification Outbox]
+    BG --> NO[Notification Outbox]
     NO --> FCM[Firebase Cloud Messaging]
 
     OP[Private Narrative Operations / Admin] --> E
@@ -112,8 +121,8 @@ flowchart LR
 | Internal Narrative Core | Context compilation, planner/writer contracts, canon/reveal checks, validation and repair logic | Become a reader-facing brand or UI concept. |
 | AI Provider Gateway | Model routing, structured generation, timeout/retry classification, cost accounting, provider isolation | Trust client model parameters or allow raw output to publish automatically. |
 | PostgreSQL | Canonical story state, event ledger, relational authorization, transactional commands | Store unrestricted binaries or serve as a public reader CDN. |
-| Queues / Workflows | Reliable asynchronous handoff and durable multi-step orchestration | Be the source of truth for story state. |
-| R2 asset storage | Covers, scene visuals, private diagnostic artifacts | Decide user authorization or canonical story state. |
+| Background jobs (`after()` + `generation_jobs`) | Reliable asynchronous handoff and durable multi-step orchestration | Be the source of truth for story state. |
+| Asset storage (planned) | Covers, scene visuals, private diagnostic artifacts | Decide user authorization or canonical story state. |
 | Operations console | Template, QA, reports, and controlled remediation | Share raw reader data with Narraza author workspaces by default. |
 
 ---
@@ -125,56 +134,55 @@ flowchart LR
 ```mermaid
 flowchart TB
     subgraph Staging
-        SA[Android Internal Test Build]
-        SW[lakoku-api-staging Worker]
-        SQ[staging queues/workflows]
+        SA[Web/Android Internal Test Build]
+        SW[Next.js standalone container - staging VPS]
+        SQ["Background: after() + generation_jobs (staging)"]
         SS[(Supabase Staging)]
-        SR2[(R2 Staging)]
         SK[Staging AI credentials]
         SA --> SW
         SW --> SS
         SW --> SQ
         SQ --> SS
-        SQ --> SR2
         SQ --> SK
     end
 
     subgraph Production
-        PA[Android Production Build]
-        PW[lakoku-api-prod Worker]
-        PQ[production queues/workflows]
+        PA[Web/Android Production Build]
+        PW[Next.js standalone container - prod VPS]
+        PQ["Background: after() + generation_jobs (prod)"]
         PS[(Supabase Production)]
-        PR2[(R2 Production)]
         PK[Production AI credentials]
         PA --> PW
         PW --> PS
         PW --> PQ
         PQ --> PS
-        PQ --> PR2
         PQ --> PK
     end
 ```
 
 ### 4.2 Environment rules
 
-- Staging and production use separate Supabase projects, Cloudflare bindings, R2 buckets, Auth settings, payment credentials, FCM credentials, provider credentials, and error-monitoring projects.
+- Staging and production use separate Supabase projects, VPS containers/`.env` files, Auth settings, payment credentials, FCM credentials, provider credentials, and error-monitoring projects.
 - Production data must never be copied into staging without an approved anonymization procedure.
 - Android internal testing points only to staging; release candidates point to production only after approval.
-- Worker bindings and secret names are environment-scoped. Source code must not infer an environment from URL strings.
+- Environment variables and secret names are environment-scoped (per-VPS `.env`). Source code must not infer an environment from URL strings.
 - Every database migration runs on staging first, has a matching rollback/forward plan, and is applied through CI or an audited deployment command.
 
-### 4.3 Cloudflare runtime roles
+### 4.3 Runtime roles (VPS)
+
+Semua peran berjalan dalam satu proses Next.js standalone di VPS (bukan Worker/Queue/Workflow terpisah):
 
 | Runtime | Trigger | Role |
 |---|---|---|
-| `lakoku-api` Worker | HTTP requests from Android/admin | Auth, reader endpoints, choice acceptance, progress sync, signed asset issuance, admin commands. |
-| `generation-dispatch` consumer | Queue messages + outbox sweeper | Starts an idempotent chapter workflow after a committed database outbox event. |
-| `GenerateChapterWorkflow` | Workflow instance | Planner → writer → validator → repair → atomic publish pipeline. |
-| `outbox-sweeper` scheduled Worker | Cron | Re-enqueues unsent or lease-expired outbox records. |
-| `notification-dispatch` consumer | Queue message | Sends safe, spoiler-free push notifications after a valid product event. |
-| `analytics-dispatch` consumer | Queue message | Sends privacy-filtered events to the analytics destination and writes operational aggregates. |
+| Next.js route handlers (`app/api/**`) | HTTP requests dari web/Android/admin | Auth, reader endpoints, choice acceptance, progress sync, admin commands. |
+| `after()` background task | Kickoff dari route handler (mis. `start-chapter`) | Menjalankan pipeline generasi bab setelah response terkirim, idempoten via lease. |
+| Chapter-generation pipeline | Dipanggil di dalam `after()` | Planner → writer → validator → repair → publish atomik. |
+| `generation_jobs` + RPC recovery | Postgres (claim/lease/heartbeat/recover) | Fondasi durable untuk klaim job, lease, dan recovery job basi. **Catatan:** belum ada worker/cron yang men-drain antrian ini — generasi masih bergantung pada `after()`. |
 
-Queues are used for decoupled handoff and backpressure; Workflows are used for the chapter-generation process because it has ordered steps, state, retry, and failure recovery. Cloudflare documents Workflows as durable multi-step execution with persisted state and retries, and Queues as a reliable worker-integrated buffer for asynchronous delivery. See [Cloudflare Workflows](https://developers.cloudflare.com/workflows/) and [Cloudflare Queues](https://developers.cloudflare.com/queues/).
+> **Rencana durable.** Tabel `generation_jobs` + RPC worker sudah ada untuk memindahkan
+> generasi ke konsumen durable (worker VPS + cron recovery), menggantikan ketergantungan
+> pada `after()`. Desain historis memakai Cloudflare Queues/Workflows untuk ini; runtime
+> nyata menggantinya dengan orkestrasi Postgres-backed di VPS.
 
 ---
 
@@ -191,7 +199,7 @@ lakoku/
 │   │   ├── feature/
 │   │   ├── build-logic/
 │   │   └── gradle/
-│   ├── api/                             # Hono Worker / Reader API
+│   ├── api/                             # Next.js route handlers (app/api/**)
 │   └── admin/                           # private operations UI, later if needed
 ├── packages/
 │   ├── contracts/                       # OpenAPI, JSON Schema, Zod, generated types
@@ -202,7 +210,7 @@ lakoku/
 │   ├── analytics/                       # event taxonomy and sanitizers
 │   └── config/                          # typed environment configuration
 ├── infra/
-│   ├── cloudflare/                      # wrangler configs, queue/workflow bindings
+│   ├── docker/                          # Dockerfile, docker-compose, Caddy snippet (VPS)
 │   ├── supabase/                        # config, SQL migrations, seed data
 │   └── ci/                              # release scripts and checks
 ├── docs/
@@ -433,14 +441,14 @@ sequenceDiagram
 - **Share access relationship:** public/unlisted clients may read only an active `shared_story_links` row and its sanitized `teaser_json`. They must **not** gain read access to the source story instance, chapters, secrets, or full choice trail. Never treat `source_story_instance_id` as a public capability (LD-SHARE-PRIVACY).
 - **Jelajahi / catalog** lists official demo seeds and/or `visibility = public` share cards — not every playthrough row in the database (LD-CATALOG-SHARE).
 - Entitlements are evaluated server-side immediately before story creation, locked-content access, replay creation, or commercial commands.
-- Admin access is separate from reader access. It requires a role/permission check, audited session, and additional operational protection such as Cloudflare Access for the internal console.
+- Admin access is separate from reader access. It requires a role/permission check, audited session, and additional operational protection such as a reverse-proxy access-control layer (e.g. Caddy/basic-auth or an SSO gateway) for the internal console.
 
 ### 8.3 Database security posture
 
 - Enable RLS on all reader-owned tables and any view exposed through Supabase APIs.
 - Do not expose direct table access to the Android app; the BFF remains the normal access path.
 - Use RLS as defense in depth against accidental exposure, support tooling mistakes, and future feature expansion.
-- Backend database access uses a least-privilege server role/controlled RPC boundary. Service credentials remain only in Cloudflare secrets and are never logged or bundled into the app.
+- Backend database access uses a least-privilege server role/controlled RPC boundary. Service credentials remain only in server-side secrets (the VPS container `.env`, injected at runtime) and are never logged or bundled into the app.
 - SQL functions that coordinate story state have explicit permission, fixed `search_path`, schema-validated parameters, and audit fields.
 - Security-definer functions are exceptional and must be reviewed; they must not become a generic bypass around ownership checks.
 
@@ -850,7 +858,7 @@ The policy is internal, versioned, auditable, and changeable without an app rele
 | LLM injects or changes canon | Structured schema, allowed state delta, validator gate, atomic backend commit only. |
 | User prompt injection during foundation | Treat input as creative data, never as system instructions; schema normalize and enforce policy. |
 | Secret/reveal leaks | Knowledge scopes, reveal rules, spoiler guard in context compiler and publish validator. |
-| Provider key exposure | Cloudflare secret bindings only; no key in Android, API response, crash report, or client analytics. |
+| Provider key exposure | Server-side secrets only (VPS container `.env`); no key in Android, API response, crash report, or client analytics. |
 | Sensitive prose leakage in logs | Structured metadata logs by default; redacted snippets only under controlled diagnostic policy. |
 | Admin misuse | RBAC, extra authentication layer, audit logs, least privilege, separate console. |
 | Malicious asset upload / unsafe visual | Private ingestion, content checks, quarantine path, explicit allow-to-publish transition. |
@@ -1026,7 +1034,7 @@ Typecheck / lint
 
 1. Merge approved change to the staging branch/environment.
 2. Apply additive database migration.
-3. Deploy Worker and workflow code.
+3. Build and deploy the Next.js standalone container to the staging VPS (`docker compose up -d --build`).
 4. Deploy Android internal build.
 5. Run smoke tests against staging.
 6. Run representative Narrative Test Lab simulations.
@@ -1107,7 +1115,7 @@ These are deliberately deferred because they do not block private beta:
 | Decision | Trigger to revisit |
 |---|---|
 | Flutter/iOS client | iOS becomes a committed launch market within the next two product milestones. |
-| Separate generation service | Workflow throughput, provider networking, or cost control exceeds Worker/workflow operational needs. |
+| Separate generation service | Generation throughput, provider networking, or cost control exceeds what in-process `after()` + `generation_jobs` on the app VPS can handle. |
 | Dedicated vector database | Scene retrieval volume/latency exceeds PostgreSQL pgvector capabilities after measurement. |
 | Dedicated analytics warehouse | Product event volume or reporting needs exceed operational Postgres/initial analytics pipeline. |
 | Public web reader | Android retention/product-market fit validates content model and access rules. |
@@ -1188,7 +1196,7 @@ These are deliberately deferred because they do not block private beta:
 - [Narrative Traceability Matrix](./NARRATIVE_TRACEABILITY_MATRIX.md)
 - [Android architecture recommendations](https://developer.android.com/topic/architecture/recommendations)
 - [Android offline-first data layer](https://developer.android.com/topic/architecture/data-layer/offline-first)
-- [Cloudflare Workflows documentation](https://developers.cloudflare.com/workflows/)
-- [Cloudflare Queues documentation](https://developers.cloudflare.com/queues/)
+- [Next.js `after()` documentation](https://nextjs.org/docs/app/api-reference/functions/after)
+- [Next.js standalone output / self-hosting](https://nextjs.org/docs/app/api-reference/config/next-config-js/output)
 - [Supabase Row Level Security documentation](https://supabase.com/docs/guides/database/postgres/row-level-security)
 

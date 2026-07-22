@@ -23,8 +23,11 @@ export const metadata: Metadata = {
     'Kamu bukan sekadar pembaca. Kamu adalah tokoh utamanya. Masuk ke cerita, ambil keputusan, dan lihat hidup tokohmu berubah karena pilihanmu.',
   generator: 'v0.app',
   icons: {
-    icon: '/icon.svg',
-    apple: '/apple-icon.png',
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/logo.webp', type: 'image/webp' },
+    ],
+    apple: '/logo.webp',
   },
 }
 

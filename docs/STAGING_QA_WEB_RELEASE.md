@@ -1,5 +1,11 @@
 # Web Release Staging QA
 
+> **HISTORIS (2026-07-08).** Bukti QA di bawah dijalankan saat staging masih berjalan
+> sebagai Cloudflare Worker `lakoku-v2` (`wrangler tail`, `cf-ray`). Deployment itu
+> **sudah ditinggalkan** — production & staging Lakoku sekarang Next.js standalone di
+> VPS (Docker). Lihat [VPS_DEPLOY.md](./VPS_DEPLOY.md) untuk prosedur rilis terkini.
+> Catatan CF Worker di halaman ini dipertahankan sebagai arsip, bukan panduan aktif.
+
 Gunakan checklist ini untuk release web nyata setelah gate otomatis hijau. Isi dengan bukti staging, bukan asumsi lokal.
 
 ## Build Under Test

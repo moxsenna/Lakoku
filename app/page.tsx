@@ -34,7 +34,16 @@ export default function HomePage() {
         />
         <div className="absolute inset-0 bg-gradient-to-b from-background/20 via-background/60 to-background" />
         <header className="absolute left-6 top-8 right-6 flex items-center justify-between">
-          <span className="font-serif text-2xl tracking-tight text-foreground">Lakoku</span>
+          <Link href="/" className="flex items-center gap-2">
+            <Image
+              src="/logo.webp"
+              alt="Lakoku Logo"
+              width={32}
+              height={32}
+              className="h-8 w-8 rounded-full object-cover shadow-sm"
+            />
+            <span className="font-serif text-2xl tracking-tight text-foreground">Lakoku</span>
+          </Link>
           <Link
             href="/auth/login"
             className="text-xs font-semibold text-foreground/90 underline-offset-4 hover:underline"

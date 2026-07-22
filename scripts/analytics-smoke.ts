@@ -43,7 +43,9 @@ if (fs.existsSync(migrationPath)) {
 
 // ── Schema strictness ──────────────────────────────────────────────
 
-check('All event names non-empty', ANALYTICS_EVENT_NAMES.length === 11)
+check('All event names non-empty', ANALYTICS_EVENT_NAMES.length >= 11)
+check('Taste onboarding events present', ANALYTICS_EVENT_NAMES.includes('taste_onboarding_viewed'))
+check('Taste save events present', ANALYTICS_EVENT_NAMES.includes('taste_profile_saved'))
 check('Event name accept valid', AnalyticsEventSchema.safeParse({
   event_name: 'story_setup_entry_viewed',
   anonymous_id: null,

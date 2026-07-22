@@ -138,6 +138,15 @@ export interface BuildChoiceBranchInput {
   activeCharacters?: Array<{ id: string; name: string }>
   activeThreads?: Array<{ id: string; summary: string }>
   forbiddenRevelations?: string[]
+  /**
+   * Soft creative direction signals for choice design (reader-safe labels only).
+   * Never overrides final-prose grounding.
+   */
+  creativeDirectionHints?: {
+    relationshipFocus?: string | null
+    agencyStyle?: string | null
+    hardBoundaryLabels?: string[]
+  }
 }
 
 // ---- Guards ----
@@ -229,9 +238,34 @@ function choiceProviderInput(
   groundedDraft: ChapterDraftParsed,
   endingParagraphs: EndingParagraphs,
 ): ChoiceInput {
+  // Fold soft direction into chapterBrief mustNotInclude / goal without changing
+  // grounding source (final prose remains authority).
+  let chapterBrief = input.chapterBrief
+  const hints = input.creativeDirectionHints
+  if (hints) {
+    const extraMustNot = [...(chapterBrief.mustNotInclude ?? [])]
+    for (const label of hints.hardBoundaryLabels ?? []) {
+      const line = `Jangan tampilkan: ${label}`
+      if (!extraMustNot.includes(line)) extraMustNot.push(line)
+    }
+    const softBits: string[] = []
+    if (hints.agencyStyle) softBits.push(`Bias pilihan: ${hints.agencyStyle}`)
+    if (hints.relationshipFocus) softBits.push(`Fokus relasi: ${hints.relationshipFocus}`)
+    let chapterGoal = chapterBrief.chapterGoal
+    if (softBits.length) {
+      chapterGoal = `${chapterGoal} (${softBits.join('; ')})`.slice(0, 1200)
+    }
+    chapterBrief = {
+      ...chapterBrief,
+      chapterGoal,
+      mustNotInclude: extraMustNot.slice(0, 16),
+      goals: [chapterGoal],
+    }
+  }
+
   return {
     snapshot: input.snapshot,
-    chapterBrief: input.chapterBrief,
+    chapterBrief,
     draft: groundedDraft,
     lastParagraphs: endingParagraphs,
     routeState: input.routeState,

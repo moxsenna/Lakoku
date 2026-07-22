@@ -20,6 +20,7 @@ import {
   saveGuestTasteProfile,
   saveTasteDraft,
 } from '@/lib/taste-profile/storage'
+import { trackEvent } from '@/lib/analytics/client'
 import {
   BOUNDARY_NONE,
   CONTENT_BOUNDARY_CATALOG,
@@ -117,6 +118,7 @@ export function TasteProfileFlow() {
 
   // Load draft once on mount
   useEffect(() => {
+    trackEvent('taste_onboarding_viewed', { stage: 'intro', profile_version: 2 })
     const draft = readTasteDraft()
     if (!draft) return
     const restored = answersFromDraft(draft)
@@ -216,6 +218,7 @@ export function TasteProfileFlow() {
   function skipIntro() {
     setErr(null)
     const profile = buildProfileFromAnswers(emptyAnswers(), { mode: 'skip_intro' })
+    trackEvent('taste_onboarding_skipped', { stage: 'intro', profile_version: 2 })
     startTransition(async () => {
       try {
         const res = await actSkipTasteProfile()
@@ -242,12 +245,22 @@ export function TasteProfileFlow() {
       customLikedConflict: customConflictText.trim() || null,
     }
     const profile = buildProfileFromAnswers(withCustom, { mode: 'complete' })
+    const genreCount = selectedGenreIds(withCustom).length
+    const safeCounts = {
+      profile_version: 2 as const,
+      genre_count: genreCount,
+      conflict_count: withCustom.likedConflictIds.length,
+      soft_avoidance_count: withCustom.softAvoidanceIds.length,
+      boundary_count: withCustom.contentBoundaryIds.filter((id) => id !== BOUNDARY_NONE)
+        .length,
+    }
 
     startTransition(async () => {
       try {
         const res = await actSaveTasteProfile(profile)
         if (res.ok) {
           clearTasteDraft()
+          trackEvent('taste_profile_saved', safeCounts)
           setPhase('done')
           router.push(nextUrl)
           return
@@ -256,9 +269,17 @@ export function TasteProfileFlow() {
         try {
           saveGuestTasteProfile(profile)
           clearTasteDraft()
+          trackEvent('taste_profile_saved_local_only', {
+            ...safeCounts,
+            error_code: 'local_only',
+          })
           setSaveStatus('local_only')
           setPhase('save_error')
         } catch {
+          trackEvent('taste_profile_saved_local_only', {
+            ...safeCounts,
+            error_code: 'save_failed',
+          })
           setSaveStatus('failed')
           setPhase('save_error')
           setErr('Seleramu belum berhasil disimpan. Pilihanmu tetap ada di halaman ini.')
@@ -267,9 +288,17 @@ export function TasteProfileFlow() {
         try {
           saveGuestTasteProfile(profile)
           clearTasteDraft()
+          trackEvent('taste_profile_saved_local_only', {
+            ...safeCounts,
+            error_code: 'local_only',
+          })
           setSaveStatus('local_only')
           setPhase('save_error')
         } catch {
+          trackEvent('taste_profile_saved_local_only', {
+            ...safeCounts,
+            error_code: 'save_failed',
+          })
           setSaveStatus('failed')
           setPhase('save_error')
           setErr('Seleramu belum berhasil disimpan. Pilihanmu tetap ada di halaman ini.')
@@ -325,7 +354,13 @@ export function TasteProfileFlow() {
           konflik, gaya penulisan, dan arah akhir. Semuanya bisa diubah nanti.
         </p>
         <div className="mt-auto flex flex-col gap-3 pt-8">
-          <PrimaryButton onClick={() => setPhase('genre')} disabled={pending}>
+          <PrimaryButton
+            onClick={() => {
+              trackEvent('taste_onboarding_started', { stage: 'intro', profile_version: 2 })
+              setPhase('genre')
+            }}
+            disabled={pending}
+          >
             Atur seleraku
           </PrimaryButton>
           <SecondaryButton onClick={skipIntro} disabled={pending}>

@@ -46,6 +46,8 @@ import { hasUsableTasteProfile } from '@/lib/taste-profile/resolver'
 import type { PremiseDraft, StoryBibleDraft } from '@/lib/authoring/schema'
 import type { TasteProfile } from '@/lib/taste-profile/schema'
 import type { StoryCreativeDirection } from '@/lib/onboarding/creative-direction'
+import { trackEvent } from '@/lib/analytics/client'
+import { isTasteProfileV2Enabled } from '@/lib/feature-flags'
 
 const PoetryLottie = dynamic(
   () => import('@/components/mulai/poetry-lottie').then((m) => m.PoetryLottie),
@@ -169,10 +171,24 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
 
   function startQuickFlow() {
     setEntryMode('quick')
-    setActiveQuestions(buildStorySpecificQuestions({ tasteProfile }))
+    const qs = isTasteProfileV2Enabled()
+      ? buildStorySpecificQuestions({ tasteProfile })
+      : buildStorySpecificQuestions({ tasteProfile: null })
+    setActiveQuestions(qs)
     setAnswers({})
     setStep(0)
     setPhase('quiz')
+    trackEvent('story_setup_mode_selected', {
+      story_setup_mode: 'quick',
+      stage: 'entry',
+      has_usable_taste: hasUsableTasteProfile(tasteProfile),
+      question_count: qs.length,
+      taste_profile_source: tasteProfile?.completedAt
+        ? 'server'
+        : tasteProfile
+          ? 'guest'
+          : 'none',
+    })
   }
 
   const hasSession = useCallback(async () => {
@@ -301,6 +317,12 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
       setProposals(res.proposals)
       if (res.direction) setCreativeDirection(res.direction)
       if (res.publicSummary) setPublicSummary(res.publicSummary)
+      trackEvent('story_premises_generated', {
+        story_setup_mode: 'quick',
+        stage: 'proposal',
+        has_usable_taste: hasUsableTasteProfile(tasteProfile),
+        direction_fingerprint: res.fingerprint,
+      })
     })
   }
 

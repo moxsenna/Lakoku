@@ -347,6 +347,8 @@ async function buildChoices(
       id: th.id,
       summary: ('title' in th && typeof th.title === 'string' ? th.title : th.id),
     }))
+  const { AGENCY_LABEL, RELATIONSHIP_LABEL } = await import('@/lib/onboarding/role-catalog')
+  const { CONTENT_BOUNDARY_LABEL } = await import('@/lib/taste-profile/catalog')
   const input: BuildChoiceBranchInput = {
     snapshot,
     draft,
@@ -361,6 +363,19 @@ async function buildChoices(
     providerContext,
     activeCharacters,
     activeThreads,
+    creativeDirectionHints: choiceDirection
+      ? {
+          relationshipFocus:
+            RELATIONSHIP_LABEL[choiceDirection.storySetup.relationshipFocus] ??
+            choiceDirection.storySetup.relationshipFocus,
+          agencyStyle:
+            AGENCY_LABEL[choiceDirection.storySetup.agencyStyle] ??
+            choiceDirection.storySetup.agencyStyle,
+          hardBoundaryLabels: choiceDirection.hardBoundaries.map(
+            (id) => CONTENT_BOUNDARY_LABEL[id] ?? id,
+          ),
+        }
+      : undefined,
   }
 
   const result = await buildChoiceBranch(deps, input)
@@ -528,7 +543,10 @@ async function generateNextChapterRealInner(
     // 2b) Load story creative direction snapshot (best-effort; neutral if missing).
     let creativeDirection: Awaited<ReturnType<typeof loadStoryCreativeDirection>> = null
     try {
-      creativeDirection = await loadStoryCreativeDirection(storyId)
+      const { isStoryCreativeDirectionV1Enabled } = await import('@/lib/feature-flags')
+      if (isStoryCreativeDirectionV1Enabled()) {
+        creativeDirection = await loadStoryCreativeDirection(storyId)
+      }
     } catch {
       creativeDirection = null
     }

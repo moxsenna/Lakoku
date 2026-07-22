@@ -14,6 +14,8 @@ export interface OnboardingDraftPayload {
   mystery: MysteryDraft
   world: WorldDraft
   answers?: Record<string, string>
+  /** Optional creative direction snapshot for resume (opaque JSON). */
+  creativeDirection?: unknown
 }
 
 export interface OnboardingDraftStashRecord {

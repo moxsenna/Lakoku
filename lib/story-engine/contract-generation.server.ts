@@ -12,9 +12,12 @@ import type {
 } from '@/lib/ai-gateway/provider'
 import type { ProviderCallContext } from '@/lib/observability/generation-provider-call.contract'
 import {
-  createDefaultTasteProfile,
-  type TasteProfile,
+  createEmptyTasteProfile,
+  type TasteProfileV2,
 } from '@/lib/taste-profile/schema'
+import {
+  resolveGenreId,
+} from '@/lib/taste-profile/catalog'
 import { StoryContractSchema, type StoryContract } from './story-contract'
 
 export type ContractSource = 'llm' | 'llm_repaired' | 'template_fallback'
@@ -76,28 +79,32 @@ function boundedTasteItems(value: unknown): string[] {
     .filter(Boolean)
 }
 
-function createTasteSnapshot(tasteJson: TasteProfile): TasteProfile {
-  const defaults = createDefaultTasteProfile()
-  const enumValue = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T => (
-    typeof value === 'string' && allowed.includes(value as T) ? value as T : fallback
-  )
+/**
+ * Create a frozen snapshot of a V2 taste profile for use in contract generation.
+ * Maps V2 stable IDs back to V1-era labels for template matching compatibility.
+ */
+function createTasteSnapshotV2(tasteJson: TasteProfileV2): TasteProfileV2 {
+  const defaults = createEmptyTasteProfile()
 
-  const snapshot: TasteProfile = {
-    version: 1,
-    preferredGenres: boundedTasteItems(tasteJson?.preferredGenres),
-    likedTropes: boundedTasteItems(tasteJson?.likedTropes),
-    avoidedTropes: boundedTasteItems(tasteJson?.avoidedTropes),
-    dramaIntensity: enumValue(tasteJson?.dramaIntensity, ['ringan', 'sedang', 'tinggi'], defaults.dramaIntensity),
-    romanceLevel: enumValue(tasteJson?.romanceLevel, ['none', 'subtle', 'utama'], defaults.romanceLevel),
-    pacing: enumValue(tasteJson?.pacing, ['slow-burn', 'seimbang', 'cepat'], defaults.pacing),
-    languageStyle: enumValue(tasteJson?.languageStyle, ['ringkas', 'puitis', 'sinematik'], defaults.languageStyle),
-    endingBias: enumValue(tasteJson?.endingBias, ['keadilan', 'kedamaian', 'kemenangan', 'tragis-manis'], defaults.endingBias),
-    contentBoundaries: boundedTasteItems(tasteJson?.contentBoundaries),
+  const snapshot: TasteProfileV2 = {
+    version: 2,
+    primaryGenreId: tasteJson?.primaryGenreId ?? defaults.primaryGenreId,
+    secondaryGenreId: tasteJson?.secondaryGenreId ?? defaults.secondaryGenreId,
+    likedConflictIds: boundedTasteItems(tasteJson?.likedConflictIds),
+    customLikedConflict: tasteJson?.customLikedConflict ?? defaults.customLikedConflict,
+    softAvoidanceIds: boundedTasteItems(tasteJson?.softAvoidanceIds),
+    contentBoundaryIds: boundedTasteItems(tasteJson?.contentBoundaryIds),
+    dramaIntensity: tasteJson?.dramaIntensity ?? defaults.dramaIntensity,
+    pacing: tasteJson?.pacing ?? defaults.pacing,
+    languageStyle: tasteJson?.languageStyle ?? defaults.languageStyle,
+    endingBias: tasteJson?.endingBias ?? defaults.endingBias,
+    completedAt: tasteJson?.completedAt ?? defaults.completedAt,
+    skippedAt: tasteJson?.skippedAt ?? defaults.skippedAt,
+    updatedAt: tasteJson?.updatedAt ?? defaults.updatedAt,
   }
-  Object.freeze(snapshot.preferredGenres)
-  Object.freeze(snapshot.likedTropes)
-  Object.freeze(snapshot.avoidedTropes)
-  Object.freeze(snapshot.contentBoundaries)
+  Object.freeze(snapshot.likedConflictIds)
+  Object.freeze(snapshot.softAvoidanceIds)
+  Object.freeze(snapshot.contentBoundaryIds)
   return Object.freeze(snapshot)
 }
 
@@ -136,19 +143,14 @@ function normalizeTasteToken(value: string): string {
   return value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('id-ID')
 }
 
-const GENRE_TOKENS: Record<string, { template: TemplateKey; label: string }> = {
-  'drama keluarga': { template: 'mystery', label: 'Drama keluarga' },
-  romansa: { template: 'romance', label: 'Romansa' },
-  romance: { template: 'romance', label: 'Romansa' },
-  'misteri & rahasia': { template: 'mystery', label: 'Misteri & rahasia' },
-  misteri: { template: 'mystery', label: 'Misteri' },
-  'fantasi & kerajaan': { template: 'fantasy', label: 'Fantasi & kerajaan' },
-  fantasi: { template: 'fantasy', label: 'Fantasi' },
-  'fantasi epik': { template: 'fantasy', label: 'Fantasi epik' },
-  'fantasi petualangan': { template: 'fantasy', label: 'Fantasi Petualangan' },
-  petualangan: { template: 'fantasy', label: 'Petualangan' },
-  'slice of life': { template: 'mystery', label: 'Slice of life' },
-  'thriller & bertahan hidup': { template: 'mystery', label: 'Thriller & bertahan hidup' },
+/** Template selection maps V2 genre IDs to internal template keys. */
+const GENRE_TO_TEMPLATE: Record<string, string> = {
+  family_drama: 'mystery',
+  mystery: 'mystery',
+  slice_of_life: 'mystery',
+  survival_thriller: 'mystery',
+  romance: 'romance',
+  fantasy_kingdom: 'fantasy',
 }
 
 const CURATED_TROPES = [
@@ -194,82 +196,94 @@ const CURATED_TROPE_BY_TOKEN = new Map(
   CURATED_TROPES.map((trope) => [normalizeTasteToken(trope), trope]),
 )
 
-const TITLES: Record<TemplateKey, Record<TasteProfile['languageStyle'], string>> = {
+type LanguageStyleKey = 'clear_concise' | 'poetic_emotional' | 'cinematic_visual'
+type PacingKey = 'slow_deep' | 'balanced' | 'fast_eventful'
+type EndingBiasKey = 'peaceful' | 'justice' | 'victory' | 'bittersweet'
+
+const TITLES: Record<TemplateKey, Record<LanguageStyleKey, string>> = {
   fantasy: {
-    ringkas: 'Kompas Terakhir di Langit Retak',
-    puitis: 'Nyanyian dari Langit yang Retak',
-    sinematik: 'Badai di Atas Takhta Langit',
+    clear_concise: 'Kompas Terakhir di Langit Retak',
+    poetic_emotional: 'Nyanyian dari Langit yang Retak',
+    cinematic_visual: 'Badai di Atas Takhta Langit',
   },
   mystery: {
-    ringkas: 'Arsip Hujan Terakhir',
-    puitis: 'Nama-Nama yang Larut dalam Hujan',
-    sinematik: 'Malam Saat Arsip Kota Terbuka',
+    clear_concise: 'Arsip Hujan Terakhir',
+    poetic_emotional: 'Nama-Nama yang Larut dalam Hujan',
+    cinematic_visual: 'Malam Saat Arsip Kota Terbuka',
   },
   romance: {
-    ringkas: 'Duet untuk Pulang',
-    puitis: 'Nada yang Menunggu di Pesisir',
-    sinematik: 'Panggung Terakhir Sebelum Pulang',
+    clear_concise: 'Duet untuk Pulang',
+    poetic_emotional: 'Nada yang Menunggu di Pesisir',
+    cinematic_visual: 'Panggung Terakhir Sebelum Pulang',
   },
 }
 
-const PROTAGONIST_ALIASES: Record<TemplateKey, Record<TasteProfile['pacing'], string>> = {
+const PROTAGONIST_ALIASES: Record<TemplateKey, Record<PacingKey, string>> = {
   fantasy: {
-    'slow-burn': 'Nara Arunika',
-    seimbang: 'Sena Aksara',
-    cepat: 'Tara Dirgantara',
+    slow_deep: 'Nara Arunika',
+    balanced: 'Sena Aksara',
+    fast_eventful: 'Tara Dirgantara',
   },
   mystery: {
-    'slow-burn': 'Ratri Pradana',
-    seimbang: 'Naya Adikara',
-    cepat: 'Dara Prabaswara',
+    slow_deep: 'Ratri Pradana',
+    balanced: 'Naya Adikara',
+    fast_eventful: 'Dara Prabaswara',
   },
   romance: {
-    'slow-burn': 'Laras Maheswari',
-    seimbang: 'Nadira Ayuningrum',
-    cepat: 'Kaila Pramesti',
+    slow_deep: 'Laras Maheswari',
+    balanced: 'Nadira Ayuningrum',
+    fast_eventful: 'Kaila Pramesti',
   },
 }
 
-const SETTING_PHRASES: Record<TemplateKey, Record<TasteProfile['endingBias'], string>> = {
+const SETTING_PHRASES: Record<TemplateKey, Record<EndingBiasKey, string>> = {
   fantasy: {
-    keadilan: 'Jejak kompas membawanya ke kerajaan awan, tempat hukum lama melindungi perebutan takhta.',
-    kedamaian: 'Jejak kompas membawanya ke kerajaan awan netral, tempat perdamaian antarpulau hampir runtuh.',
-    kemenangan: 'Jejak kompas membawanya ke kerajaan awan, pusat perebutan takhta yang menentukan nasib semua pulau.',
-    'tragis-manis': 'Jejak kompas membawanya ke kerajaan awan yang sekarat, tempat satu takhta hanya dapat diselamatkan dengan kehilangan besar.',
+    justice: 'Jejak kompas membawanya ke kerajaan awan, tempat hukum lama melindungi perebutan takhta.',
+    peaceful: 'Jejak kompas membawanya ke kerajaan awan netral, tempat perdamaian antarpulau hampir runtuh.',
+    victory: 'Jejak kompas membawanya ke kerajaan awan, pusat perebutan takhta yang menentukan nasib semua pulau.',
+    bittersweet: 'Jejak kompas membawanya ke kerajaan awan yang sekarat, tempat satu takhta hanya dapat diselamatkan dengan kehilangan besar.',
   },
   mystery: {
-    keadilan: 'Penyelidikan bergerak ke balai kota tua, tempat arsip hujan menentukan siapa yang harus bertanggung jawab.',
-    kedamaian: 'Penyelidikan bergerak ke kawasan sungai lama, tempat warga menjaga ingatan yang ingin dikubur pejabat kota.',
-    kemenangan: 'Penyelidikan bergerak ke ruang sidang kota, tempat jaringan pejabat mempertaruhkan kendali terakhirnya.',
-    'tragis-manis': 'Penyelidikan bergerak ke permukiman banjir lama, tempat kebenaran dapat pulih meski keluarga tidak kembali utuh.',
+    justice: 'Penyelidikan bergerak ke balai kota tua, tempat arsip hujan menentukan siapa yang harus bertanggung jawab.',
+    peaceful: 'Penyelidikan bergerak ke kawasan sungai lama, tempat warga menjaga ingatan yang ingin dikubur pejabat kota.',
+    victory: 'Penyelidikan bergerak ke ruang sidang kota, tempat jaringan pejabat mempertaruhkan kendali terakhirnya.',
+    bittersweet: 'Penyelidikan bergerak ke permukiman banjir lama, tempat kebenaran dapat pulih meski keluarga tidak kembali utuh.',
   },
   romance: {
-    keadilan: 'Perjuangan mereka berpusat di gedung kesenian pesisir, tempat hak sekolah musik diperebutkan secara terbuka.',
-    kedamaian: 'Perjuangan mereka berpusat di panggung komunitas pesisir, tempat luka lama mendapat ruang untuk reda.',
-    kemenangan: 'Perjuangan mereka berpusat di festival kota pesisir, kesempatan terakhir merebut kembali rumah bagi sekolah musik.',
-    'tragis-manis': 'Perjuangan mereka berpusat di stasiun tua pesisir, tempat satu pertunjukan terakhir memaksa mereka memilih apa yang harus dilepas.',
+    justice: 'Perjuangan mereka berpusat di gedung kesenian pesisir, tempat hak sekolah musik diperebutkan secara terbuka.',
+    peaceful: 'Perjuangan mereka berpusat di panggung komunitas pesisir, tempat luka lama mendapat ruang untuk reda.',
+    victory: 'Perjuangan mereka berpusat di festival kota pesisir, kesempatan terakhir merebut kembali rumah bagi sekolah musik.',
+    bittersweet: 'Perjuangan mereka berpusat di stasiun tua pesisir, tempat satu pertunjukan terakhir memaksa mereka memilih apa yang harus dilepas.',
   },
 }
 
-const STYLE_PROMISES: Record<TasteProfile['languageStyle'], string> = {
-  ringkas: 'Kisah bergerak dengan bahasa jernih dan keputusan konkret.',
-  puitis: 'Kisah menjaga citraan puitis tanpa mengaburkan pilihan tokoh.',
-  sinematik: 'Kisah menonjolkan adegan sinematik dan perubahan emosi yang terlihat.',
+const STYLE_PROMISES: Record<LanguageStyleKey, string> = {
+  clear_concise: 'Kisah bergerak dengan bahasa jernih dan keputusan konkret.',
+  poetic_emotional: 'Kisah menjaga citraan puitis tanpa mengaburkan pilihan tokoh.',
+  cinematic_visual: 'Kisah menonjolkan adegan sinematik dan perubahan emosi yang terlihat.',
 }
 
-function selectTemplate(tasteJson: TasteProfile): SelectedTemplate {
-  for (const rawGenre of tasteJson.preferredGenres) {
-    const genre = GENRE_TOKENS[normalizeTasteToken(rawGenre)]
-    if (!genre) continue
-    if (genre.template === 'fantasy') {
-      return { key: 'fantasy', contract: fantasiPetualanganContract, genre: genre.label }
+function selectTemplate(tasteJson: TasteProfileV2): SelectedTemplate {
+  // Check primary genre first
+  if (tasteJson.primaryGenreId) {
+    const template = GENRE_TO_TEMPLATE[tasteJson.primaryGenreId] as TemplateKey | undefined
+    if (template) {
+      return templateKeyToContract(template)
     }
-    if (genre.template === 'romance') {
-      return { key: 'romance', contract: romansaDramaContract, genre: genre.label }
-    }
-    return { key: 'mystery', contract: misteriDramaContract, genre: genre.label }
   }
   return { key: 'mystery', contract: misteriDramaContract }
+}
+
+function templateKeyToContract(key: TemplateKey): SelectedTemplate {
+  switch (key) {
+    case 'fantasy':
+      return { key: 'fantasy', contract: fantasiPetualanganContract, genre: 'Fantasi & kerajaan' }
+    case 'romance':
+      return { key: 'romance', contract: romansaDramaContract, genre: 'Romansa' }
+    case 'mystery':
+    default:
+      return { key: 'mystery', contract: misteriDramaContract }
+  }
 }
 
 function appendWholeWithinLimit(base: string, additions: string[], maximum: number): string {
@@ -298,13 +312,13 @@ function replaceProtagonistReferences(
   }
 }
 
-function safeLikedTropes(tasteSnapshot: TasteProfile): string[] {
+function safeLikedTropes(tasteSnapshot: TasteProfileV2): string[] {
   const blockedTropes = new Set(
-    [...tasteSnapshot.avoidedTropes, ...tasteSnapshot.contentBoundaries]
+    [...tasteSnapshot.softAvoidanceIds, ...tasteSnapshot.contentBoundaryIds]
       .map(normalizeTasteToken),
   )
   const selected: string[] = []
-  for (const rawTrope of tasteSnapshot.likedTropes) {
+  for (const rawTrope of tasteSnapshot.likedConflictIds) {
     const token = normalizeTasteToken(rawTrope)
     const trope = CURATED_TROPE_BY_TOKEN.get(token)
     if (!trope || blockedTropes.has(token) || selected.includes(trope)) continue
@@ -314,26 +328,29 @@ function safeLikedTropes(tasteSnapshot: TasteProfile): string[] {
   return selected
 }
 
-function mapTasteSnapshotToTemplate(tasteSnapshot: TasteProfile, storyId: string): StoryContract {
+function mapTasteSnapshotToTemplate(tasteSnapshot: TasteProfileV2, storyId: string): StoryContract {
   const selectedTemplate = selectTemplate(tasteSnapshot)
   const template = StoryContractSchema.parse(selectedTemplate.contract)
   const contract = structuredClone(template)
-  const protagonistName = PROTAGONIST_ALIASES[selectedTemplate.key][tasteSnapshot.pacing]
+  const pacing: PacingKey = tasteSnapshot.pacing ?? 'balanced'
+  const languageStyle: LanguageStyleKey = tasteSnapshot.languageStyle ?? 'cinematic_visual'
+  const endingBias: EndingBiasKey = tasteSnapshot.endingBias ?? 'justice'
+  const protagonistName = PROTAGONIST_ALIASES[selectedTemplate.key][pacing]
   const likedTropes = safeLikedTropes(tasteSnapshot)
 
   replaceProtagonistReferences(contract, template.mainCharacter.name, protagonistName)
   contract.storyId = storyId
-  contract.title = TITLES[selectedTemplate.key][tasteSnapshot.languageStyle]
+  contract.title = TITLES[selectedTemplate.key][languageStyle]
   if (selectedTemplate.genre) contract.genre = selectedTemplate.genre
   contract.mainConflict = appendWholeWithinLimit(
     contract.mainConflict,
-    [SETTING_PHRASES[selectedTemplate.key][tasteSnapshot.endingBias]],
+    [SETTING_PHRASES[selectedTemplate.key][endingBias]],
     800,
   )
   contract.corePromise = appendWholeWithinLimit(
     contract.corePromise,
     [
-      STYLE_PROMISES[tasteSnapshot.languageStyle],
+      STYLE_PROMISES[languageStyle],
       ...(likedTropes.length ? [`Trope pilihan: ${likedTropes.join(', ')}.`] : []),
     ],
     800,
@@ -342,20 +359,20 @@ function mapTasteSnapshotToTemplate(tasteSnapshot: TasteProfile, storyId: string
   return StoryContractSchema.parse(contract)
 }
 
-export function mapTasteToTemplate(tasteJson: TasteProfile, storyId: string): StoryContract {
-  return mapTasteSnapshotToTemplate(createTasteSnapshot(tasteJson), storyId)
+export function mapTasteToTemplate(tasteJson: TasteProfileV2, storyId: string): StoryContract {
+  return mapTasteSnapshotToTemplate(createTasteSnapshotV2(tasteJson), storyId)
 }
 
 export async function createResilientStoryContract(input: {
   storyId: string
-  tasteJson: TasteProfile
+  tasteJson: TasteProfileV2
   provider: GenerationProvider
   telemetryContext?: ProviderCallContext
   timeoutMs?: number
 }): Promise<{ contract: StoryContract; contractSource: ContractSource }> {
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS
   validateTimeout(timeoutMs)
-  const tasteSnapshot = createTasteSnapshot(input.tasteJson)
+  const tasteSnapshot = createTasteSnapshotV2(input.tasteJson)
   const providerInput = (repairErrors?: string[]): StoryContractInput => ({
     storyId: input.storyId,
     tasteJson: structuredClone(tasteSnapshot),

@@ -36,7 +36,8 @@ function minimalSnapshot(): CanonSnapshot {
       reconciliationReason: null,
     }],
     timeline: [],
-  } as CanonSnapshot
+    actRollups: [],
+  } as unknown as CanonSnapshot
 }
 
 function draft(wordCount: number): ChapterDraft {

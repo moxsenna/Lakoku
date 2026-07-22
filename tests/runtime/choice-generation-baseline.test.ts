@@ -582,9 +582,9 @@ describe('Phase 0 — Desired behavior (TDD: now passing)', () => {
               consequence: ['Kau menemukan surat wasiat.'],
               effectSummary: { truth: 1, risk: 0, secrecy: 0, empathy: 0, flagsSet: ['found-chest'] },
               createdAt: '2026-01-01T00:00:00.000Z',
-            } as unknown as Record<string, unknown>,
-          ] as any,
-          previousChoice: null as any,
+            },
+          ],
+          previousChoice: null,
           lockedEndingKey: 'secret-ending-a',
         }
 

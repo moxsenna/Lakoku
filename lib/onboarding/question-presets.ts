@@ -1,14 +1,18 @@
 /**
- * Question preset untuk quick onboarding /mulai.
+ * Question preset untuk quick onboarding /mulai — V2 compatible.
  *
- * getStorySetupQuestions(profile) mempersonalisasi opsi berdasarkan Taste Profile:
- * - preferredGenres & likedTropes → promote/inject opsi yang cocok
- * - avoidedTropes → demote opsi yang mirip (tidak dihapus, hanya turun)
- * - dramaIntensity, romanceLevel, endingBias → promote opsi terkait (hanya jika completedAt)
+ * getStorySetupQuestions(profile) mempersonalisasi opsi berdasarkan Taste Profile V2:
+ * - primaryGenreId / secondaryGenreId → promote/inject opsi yang cocok
+ * - likedConflictIds → promote opsi terkait
+ * - softAvoidanceIds → demote opsi yang mirip (tidak dihapus, hanya turun)
+ * - dramaIntensity, endingBias → promote opsi terkait (hanya jika completedAt)
  *
  * Jangan hapus opsi default. Jangan generate opsi pakai LLM. Jangan >6 opsi per step.
  */
-import type { TasteProfile } from '@/lib/taste-profile/schema'
+import { type TasteProfileV2 } from '@/lib/taste-profile/schema'
+import { hasUsableTasteProfile } from '@/lib/taste-profile/resolver'
+
+export { hasUsableTasteProfile }
 
 export interface SetupQuestion {
   key: string
@@ -63,7 +67,7 @@ export const defaultStorySetupQuestions: SetupQuestion[] = [
     prompt: 'Akhir seperti apa yang paling ingin kamu kejar?',
     helper: 'Cerita tetap bisa berubah karena pilihanmu.',
     frame: (a) => `Akhir yang dikejar: ${a.toLowerCase()}.`,
-    defaultAnswer: 'Keadilan - semua rahasia terbuka',
+    defaultAnswer: 'Keadilan — semua rahasia terbuka',
     options: [
       'Keadilan — semua rahasia terbuka',
       'Kedamaian — melepaskan dan melangkah',
@@ -116,7 +120,7 @@ function demoteOptions(options: string[], avoided: string[]): string[] {
   })
 }
 
-/** Fuzzy match: substring whole, atau minimal satu kata ≥3 huruf cocok. */
+/** Fuzzy match: substring whole, atau minimal satu kata >=3 huruf cocok. */
 function tokenMatches(normalizedOption: string, normalizedQuery: string): boolean {
   if (normalizedOption.includes(normalizedQuery)) return true
   const words = normalizedQuery.split(/\s+/).filter((w) => w.length >= 3)
@@ -146,59 +150,68 @@ function injectOptions(options: string[], injected: string[], max = 6): string[]
 
 // ── Personalization per question ───────────────────────────────────
 
-/** Genre → injectable drama options untuk question `trope`. */
+/** Genre (V2 stable ID) → injectable drama options untuk question `trope`. */
 const GENRE_DRAMA_OPTIONS: Record<string, string[]> = {
-  'drama keluarga': ['Konflik warisan yang memecah keluarga'],
-  'romansa': ['Pernikahan kontrak yang berubah arah'],
-  'misteri & rahasia': ['Rahasia yang tersimpan puluhan tahun', 'Misteri yang terungkap perlahan'],
-  'fantasi & kerajaan': ['Tahta yang diperebutkan', 'Takdir kerajaan yang tersembunyi'],
-  'slice of life': ['Hidup baru di tempat tak terduga'],
-  'thriller & bertahan hidup': ['Terjebak tanpa jalan keluar'],
+  family_drama: ['Konflik warisan yang memecah keluarga'],
+  romance: ['Pernikahan kontrak yang berubah arah', 'Hubungan pura-pura yang jadi nyata'],
+  mystery: ['Rahasia yang tersimpan puluhan tahun', 'Misteri yang terungkap perlahan'],
+  fantasy_kingdom: ['Tahta yang diperebutkan', 'Takdir kerajaan yang tersembunyi'],
+  slice_of_life: ['Hidup baru di tempat tak terduga'],
+  survival_thriller: ['Terjebak tanpa jalan keluar'],
 }
 
-/** dramaIntensity → promote candidate untuk question `sikap`. */
+/** Genre → promote tokens for fuzzy matching on question options. */
+const GENRE_PROMOTE_TOKENS: Record<string, string[]> = {
+  family_drama: ['keluarga', 'warisan', 'pengorbanan'],
+  romance: ['cinta', 'pasangan', 'pernikahan', 'hubungan'],
+  mystery: ['rahasia', 'misteri', 'tersembunyi', 'dikubur', 'terungkap', 'warisan'],
+  fantasy_kingdom: ['tahta', 'kerajaan', 'sihir', 'takdir', 'ramalan'],
+  slice_of_life: ['hidup', 'sederhana', 'kampung'],
+  survival_thriller: ['terjebak', 'bahaya', 'dendam', 'berlari'],
+}
+
+/** dramaIntensity V2 → promote candidate untuk question `sikap`. */
 const INTENSITY_SIKAP_PROMOTE: Record<string, string[]> = {
-  'ringan': ['Tenang dan menyusun rencana'],
-  'sedang': ['Menyimpan semuanya sampai waktunya tiba'],
-  'tinggi': ['Langsung menghadapi, apa pun risikonya'],
+  warm: ['Tenang dan menyusun rencana'],
+  balanced: ['Menyimpan semuanya sampai waktunya tiba'],
+  intense: ['Langsung menghadapi, apa pun risikonya'],
 }
 
-/** romanceLevel → promote candidate untuk question `hubungan`. */
-const ROMANCE_HUBUNGAN_PROMOTE: Record<string, string[]> = {
-  'utama': ['Cinta yang harus diperjuangkan lagi'],
-  'subtle': ['Sekutu yang perlahan menjadi lebih'],
-  'none': ['Fokus pada diriku sendiri dulu'],
-}
-
-/** endingBias → promote candidate untuk question `akhir`. */
+/** endingBias V2 → promote candidate untuk question `akhir`. */
 const ENDING_BIAS_PROMOTE: Record<string, string> = {
-  'keadilan': 'Keadilan — semua rahasia terbuka',
-  'kedamaian': 'Kedamaian — melepaskan dan melangkah',
-  'kemenangan': 'Kemenangan — merebut kembali posisiku',
-  'tragis-manis': 'Kedamaian — melepaskan dan melangkah',
+  justice: 'Keadilan — semua rahasia terbuka',
+  peaceful: 'Kedamaian — melepaskan dan melangkah',
+  victory: 'Kemenangan — merebut kembali posisiku',
+  bittersweet: 'Kedamaian — melepaskan dan melangkah',
 }
 
 // ── Personalizer utama ─────────────────────────────────────────────
 
-function personalizeQuestion(q: SetupQuestion, profile: TasteProfile): SetupQuestion {
+function personalizeQuestion(q: SetupQuestion, profile: TasteProfileV2): SetupQuestion {
   const result = cloneQuestion(q)
 
-  // 1. avoidedTropes: demote di semua pertanyaan (selalu).
-  result.options = demoteOptions(result.options, profile.avoidedTropes)
+  // 1. softAvoidanceIds: demote di semua pertanyaan (selalu).
+  result.options = demoteOptions(result.options, profile.softAvoidanceIds)
 
-  // 2. likedTropes: promote di semua pertanyaan (selalu).
-  result.options = promoteOptions(result.options, profile.likedTropes)
+  // 2. likedConflictIds: promote di semua pertanyaan (selalu).
+  result.options = promoteOptions(result.options, profile.likedConflictIds)
 
   switch (result.key) {
     case 'trope': {
-      // preferredGenres: inject genre-specific options + promote
+      // primaryGenreId / secondaryGenreId: inject genre-specific options + promote
       const genreInjects: string[] = []
-      for (const genre of profile.preferredGenres) {
-        const mapped = GENRE_DRAMA_OPTIONS[normalizeToken(genre)]
+      const promoteTokens: string[] = []
+      const genreIds = [profile.primaryGenreId, profile.secondaryGenreId].filter(Boolean)
+      for (const genreId of genreIds) {
+        if (!genreId) continue
+        const mapped = GENRE_DRAMA_OPTIONS[genreId]
         if (mapped) genreInjects.push(...mapped)
+        const tokens = GENRE_PROMOTE_TOKENS[genreId]
+        if (tokens) promoteTokens.push(...tokens)
       }
       result.options = injectOptions(result.options, genreInjects)
-      result.options = promoteOptions(result.options, profile.preferredGenres)
+      // Promote using genre-specific tokens for better matching
+      result.options = promoteOptions(result.options, promoteTokens)
       break
     }
 
@@ -213,12 +226,8 @@ function personalizeQuestion(q: SetupQuestion, profile: TasteProfile): SetupQues
     }
 
     case 'hubungan': {
-      if (profile.completedAt && profile.romanceLevel) {
-        const promoteCandidates = ROMANCE_HUBUNGAN_PROMOTE[profile.romanceLevel]
-        if (promoteCandidates) {
-          result.options = promoteOptions(result.options, promoteCandidates)
-        }
-      }
+      // V2 doesn't have romanceLevel — skip relationship personalization
+      // For now, keep defaults. Romance level may return in a future V3.
       break
     }
 
@@ -239,34 +248,26 @@ function personalizeQuestion(q: SetupQuestion, profile: TasteProfile): SetupQues
 // ─── Public API ────────────────────────────────────────────────────
 
 /**
- * Cek apakah profile punya data yang cukup untuk personalisasi.
- * Profile kosong/skipped (tanpa completedAt + tanpa pilihan eksplisit) tidak dipakai.
- */
-export function hasUsableTasteProfile(profile?: TasteProfile | null): boolean {
-  if (!profile) return false
-  // Skipped tapi belum pernah complete → jangan personalisasi.
-  if (profile.skippedAt && !profile.completedAt) return false
-
-  return Boolean(
-    profile.completedAt ||
-      profile.preferredGenres.length > 0 ||
-      profile.likedTropes.length > 0 ||
-      profile.avoidedTropes.length > 0 ||
-      profile.contentBoundaries.length > 0,
-  )
-}
-
-/**
  * Ambil pertanyaan onboarding yang sudah dipersonalisasi berdasarkan Taste Profile.
  * Return default jika profile tidak punya data yang bisa dipakai.
+ * hasUsableTasteProfile di-centralize di lib/taste-profile/resolver.ts.
  */
-export function getStorySetupQuestions(profile?: TasteProfile | null): SetupQuestion[] {
+export function getStorySetupQuestions(profile?: TasteProfileV2 | null): SetupQuestion[] {
   if (!hasUsableTasteProfile(profile)) {
     return defaultStorySetupQuestions.map(cloneQuestion)
   }
 
   // non-null setelah hasUsableTasteProfile.
-  return defaultStorySetupQuestions.map((q) => personalizeQuestion(q, profile!))
+  const personalized = defaultStorySetupQuestions.map((q) => personalizeQuestion(q, profile!))
+
+  // Smart defaults: set defaultAnswer to the first promoted option when taste is present
+  for (const q of personalized) {
+    if (q.options.length > 0) {
+      q.defaultAnswer = q.options[0]
+    }
+  }
+
+  return personalized
 }
 
 // ── Contextual adaptation berdasarkan jawaban user ─────────────────
@@ -274,9 +275,6 @@ export function getStorySetupQuestions(profile?: TasteProfile | null): SetupQues
 /**
  * Answer-based contextual options: ubah future questions berdasarkan jawaban user
  * di sesi onboarding /mulai. Ini terpisah dari Taste Profile personalization.
- *
- * Contoh: jika jawaban trope mengandung kata "misteri"/"rahasia"/"warisan",
- * pertanyaan sikap/hubungan/akhir disesuaikan ke konteks misteri.
  */
 
 const MYSTERY_KEYWORDS = ['misteri', 'rahasia', 'warisan', 'tersembunyi', 'dikubur', 'terungkap', 'surat lama', 'kematian']

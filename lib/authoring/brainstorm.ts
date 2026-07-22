@@ -21,6 +21,15 @@ import {
   type MysteryDraft,
   type WorldDraft,
 } from './schema'
+import type { StoryCreativeDirection } from '@/lib/onboarding/creative-direction'
+import {
+  buildCreativeDirectionPromptBlock,
+  stageDirectionHints,
+} from './creative-direction'
+
+export type AuthoringDirectionOpts = {
+  direction?: StoryCreativeDirection | null
+}
 
 const SYSTEM = [
   'Kamu adalah penulis drama serial Bahasa Indonesia yang berpengalaman.',
@@ -62,22 +71,35 @@ export async function refinePremise(current: PremiseDraft, feedback: string): Pr
   return { premise: object, usedModel }
 }
 
-/** Tahap 2 — usulkan/revisi cast dari premis (opsional masukan + cast sebelumnya). */
+function directionBlock(
+  stage: 'cast' | 'mystery' | 'world',
+  opts?: AuthoringDirectionOpts,
+): string {
+  if (!opts?.direction) return ''
+  const base = buildCreativeDirectionPromptBlock(opts.direction)
+  const hints = stageDirectionHints(stage, opts.direction)
+  return [base, ...hints].filter(Boolean).join('\n')
+}
+
+/** Tahap 2 — usulkan/revisi cast dari premis (opsional masukan + cast sebelumnya + direction). */
 export async function proposeCast(
   premise: PremiseDraft,
   feedback?: string,
   previous?: CastDraft,
+  opts?: AuthoringDirectionOpts,
 ): Promise<{ cast: CastDraft; usedModel: string }> {
   const { object, usedModel } = await authorObject({
     schema: CastSchema,
     system: SYSTEM,
     prompt: [
       `Premis final:\n${JSON.stringify(premise, null, 2)}`,
+      directionBlock('cast', opts),
       previous ? `Cast sebelumnya:\n${JSON.stringify(previous, null, 2)}` : '',
       feedback ? `Masukan pengguna: "${feedback}".` : '',
       'Rancang 3–8 karakter inti. Karakter PERTAMA wajib protagonis yang sesuai peran pembaca.',
       'Beri tiap karakter voice sheet (register, kebiasaan bicara, kata terlarang, contoh dialog).',
       'Sebar introducedChapter secara wajar (protagonis di bab 1).',
+      'Hard boundaries tidak boleh masuk ke backstory sebagai kejadian utama.',
     ].filter(Boolean).join('\n'),
   })
   return { cast: object, usedModel }
@@ -89,12 +111,14 @@ export async function proposeMystery(
   cast: CastDraft,
   feedback?: string,
   previous?: MysteryDraft,
+  opts?: AuthoringDirectionOpts,
 ): Promise<{ mystery: MysteryDraft; usedModel: string }> {
   const { object, usedModel } = await authorObject({
     schema: MysterySchema,
     system: SYSTEM,
     prompt: [
       `Premis:\n${JSON.stringify(premise, null, 2)}`,
+      directionBlock('mystery', opts),
       `Karakter:\n${cast.characters.map((c) => `- ${c.canonicalName} (${c.role})`).join('\n')}`,
       previous ? `Misteri sebelumnya:\n${JSON.stringify(previous, null, 2)}` : '',
       feedback ? `Masukan pengguna: "${feedback}".` : '',
@@ -112,18 +136,21 @@ export async function proposeWorld(
   mystery: MysteryDraft,
   feedback?: string,
   previous?: WorldDraft,
+  opts?: AuthoringDirectionOpts,
 ): Promise<{ world: WorldDraft; usedModel: string }> {
   const { object, usedModel } = await authorObject({
     schema: WorldSchema,
     system: SYSTEM,
     prompt: [
       `Premis:\n${JSON.stringify(premise, null, 2)}`,
+      directionBlock('world', opts),
       `Karakter:\n${cast.characters.map((c) => `- ${c.canonicalName}`).join('\n')}`,
       `Misteri utama: ${mystery.mainMystery.title}`,
       previous ? `World sebelumnya:\n${JSON.stringify(previous, null, 2)}` : '',
       feedback ? `Masukan pengguna: "${feedback}".` : '',
       'Rancang 1–6 thread naratif tambahan dan 3–12 fakta pijakan.',
       'Fakta loadBearing=true untuk fakta yang menopang misteri utama. subjectName harus salah satu nama karakter atau null.',
+      'Jangan mengubah struktur 50 bab atau posisi reveal gate.',
     ].filter(Boolean).join('\n'),
   })
   return { world: object, usedModel }

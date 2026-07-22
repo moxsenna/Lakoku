@@ -107,5 +107,7 @@ export const StoryBibleDraftSchema = z.object({
   cast: CastSchema,
   mystery: MysterySchema,
   world: WorldSchema,
+  /** Optional story-level creative direction snapshot (not LLM prose). */
+  creativeDirection: z.unknown().optional(),
 }).strict()
 export type StoryBibleDraft = z.infer<typeof StoryBibleDraftSchema>

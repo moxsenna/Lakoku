@@ -5,6 +5,7 @@ import { selectProvider } from '@lakoku/ai-gateway/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getTasteProfileForUser } from '@/lib/api/taste-profile'
 import {
+  asV1Compat,
   createDefaultTasteProfile,
   type TasteProfile,
 } from '@/lib/taste-profile/schema'
@@ -266,7 +267,7 @@ export async function createPersonalizedStory(
     const meta = shellMetadata(
       contract.title,
       contract.genre,
-      tasteProfile.likedTropes ?? [],
+      asV1Compat(tasteProfile).likedTropes ?? [],
     )
     await admin
       .from('stories')

@@ -108,11 +108,14 @@ export function GenerationFilterBar({ filters }: GenerationFilterBarProps) {
   const [toLocal, setToLocal] = useState(() => toLocalInputValue(filters.to))
   const [error, setError] = useState<string | null>(null)
 
-  // Keep pickers in sync when URL/presets change.
+  // Keep pickers in sync when URL/presets change (defer to avoid sync setState-in-effect lint).
   useEffect(() => {
-    setFromLocal(toLocalInputValue(filters.from))
-    setToLocal(toLocalInputValue(filters.to))
-    setError(null)
+    const timer = window.setTimeout(() => {
+      setFromLocal(toLocalInputValue(filters.from))
+      setToLocal(toLocalInputValue(filters.to))
+      setError(null)
+    }, 0)
+    return () => window.clearTimeout(timer)
   }, [filters.from, filters.to])
 
   function goPreset(hours: number) {

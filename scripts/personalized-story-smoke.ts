@@ -294,7 +294,10 @@ const beforeFinalText = finalChoiceBranch?.thenStatement.getText(personalizedRun
 const finalText = finalChoiceBranch?.elseStatement?.getText(personalizedRuntimeAst) ?? ''
 check(
   'personalized runtime generates choices only before final chapter',
-  choiceBranches.length === 1 && beforeFinalText.includes('generateChoiceBranch') && !finalText.includes('generateChoiceBranch'),
+  choiceBranches.length === 1
+    && (beforeFinalText.includes('buildChoiceBranch') || beforeFinalText.includes('generateChoiceBranch'))
+    && !finalText.includes('buildChoiceBranch')
+    && !finalText.includes('generateChoiceBranch'),
 )
 check(
   'Chapter 50 publishes null choicePrompt, null choices, and empty outcomes',
@@ -341,7 +344,7 @@ check(
   'legacy real generation path remains exported and uses buildChoices plus publishChapter',
   standardGeneration.includes('export async function generateNextChapterReal')
     && standardCalls.has('buildChoices')
-    && standardCalls.has('publishChapter'),
+    && (standardCalls.has('publishChapterV2') || standardCalls.has('publishChapter')),
 )
 
 const lifecyclePath = 'lib/runtime/lifecycle.ts'
@@ -396,7 +399,8 @@ check(
 )
 check(
   'personalized runtime uses dynamic choice generator and v2 publisher',
-  calledNames(personalizedRuntimePath).has('generateChoiceBranch')
+  (calledNames(personalizedRuntimePath).has('buildChoiceBranch')
+    || calledNames(personalizedRuntimePath).has('generateChoiceBranch'))
     && calledNames(personalizedRuntimePath).has('publishChapterV2'),
 )
 

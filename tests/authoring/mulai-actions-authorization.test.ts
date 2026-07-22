@@ -3,10 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
   proposePremises: vi.fn(),
+  getTasteProfileForUser: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/api/user-state', () => ({ getSessionUser: mocks.getSessionUser }))
+vi.mock('@/lib/api/taste-profile', () => ({
+  getTasteProfileForUser: mocks.getTasteProfileForUser,
+}))
 vi.mock('@/lib/authoring/server', () => ({
   proposePremises: mocks.proposePremises,
   publicAuthoringErrorMessage: (error: unknown) =>

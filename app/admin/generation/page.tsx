@@ -42,11 +42,11 @@ export default async function AdminGenerationPage({
     )
   }
 
-  let loadError: unknown
-  const dashboard = await loadAdminGenerationDashboard(filters).catch((error) => {
-    loadError = error
-    return null
-  })
+  const loaded = await loadAdminGenerationDashboard(filters)
+    .then((dashboard) => ({ dashboard, loadError: null as unknown }))
+    .catch((error: unknown) => ({ dashboard: null, loadError: error }))
+  const dashboard = loaded.dashboard
+  const loadError = loaded.loadError
   const viewModel = buildGenerationViewModel(
     filters,
     dashboard,

@@ -7,7 +7,6 @@ import { ArrowLeft, RefreshCw } from 'lucide-react'
 import type { StoryDetail } from '@/lib/api'
 import { getChapterGenerationStatus, startChapter } from '@/lib/api/client'
 import {
-  CHAPTER_STATUS_POLL_MS,
   decideAfterNetworkError,
   decideAfterStatus,
   noteForStartStatus,
@@ -47,6 +46,7 @@ export function ChapterUnavailable({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const inFlightRef = useRef(false)
   const mountedRef = useRef(true)
+  const pollOnceRef = useRef<() => Promise<void>>(async () => {})
 
   const clearTimer = useCallback(() => {
     if (timerRef.current != null) {
@@ -55,10 +55,13 @@ export function ChapterUnavailable({
     }
   }, [])
 
-  const schedule = useCallback((delayMs: number, fn: () => void) => {
-    clearTimer()
-    timerRef.current = setTimeout(fn, delayMs)
-  }, [clearTimer])
+  const schedule = useCallback(
+    (delayMs: number, fn: () => void) => {
+      clearTimer()
+      timerRef.current = setTimeout(fn, delayMs)
+    },
+    [clearTimer],
+  )
 
   const pollOnce = useCallback(async () => {
     if (!mountedRef.current || inFlightRef.current) return
@@ -93,15 +96,17 @@ export function ChapterUnavailable({
       }
       // queued | generating
       setUiState('PREPARING')
-      schedule(decision.nextDelayMs, () => {
-        void pollOnce()
-      })
+      if (decision.action === 'continue') {
+        schedule(decision.nextDelayMs, () => {
+          void pollOnceRef.current()
+        })
+      }
     } catch {
       if (!mountedRef.current || controller.signal.aborted) return
       // Network/transient: keep reader-safe state, retry later — do NOT flip to failed.
       const decision = decideAfterNetworkError()
       schedule(decision.nextDelayMs, () => {
-        void pollOnce()
+        void pollOnceRef.current()
       })
     } finally {
       inFlightRef.current = false
@@ -110,14 +115,25 @@ export function ChapterUnavailable({
   }, [story.id, chapterNumber, router, clearTimer, schedule])
 
   useEffect(() => {
+    pollOnceRef.current = pollOnce
+  }, [pollOnce])
+
+  useEffect(() => {
     mountedRef.current = true
-    setUiState(initialState)
     return () => {
       mountedRef.current = false
       clearTimer()
       abortRef.current?.abort()
     }
-  }, [initialState, clearTimer])
+  }, [clearTimer])
+
+  // When parent initialState changes, adopt via deferred update (avoid sync setState-in-effect).
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (mountedRef.current) setUiState(initialState)
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [initialState])
 
   // Immediate check + recursive polling while PREPARING.
   useEffect(() => {
@@ -125,12 +141,12 @@ export function ChapterUnavailable({
       clearTimer()
       return
     }
-    void pollOnce()
+    void pollOnceRef.current()
     return () => {
       clearTimer()
       abortRef.current?.abort()
     }
-  }, [uiState, pollOnce, clearTimer])
+  }, [uiState, clearTimer])
 
   async function retry() {
     setRetrying(true)
@@ -212,7 +228,6 @@ export function ChapterUnavailable({
 
         {preparing ? (
           <div className="flex w-full flex-col items-center gap-4">
-            {/* Indeterminate progress — no fake percentage */}
             <div className="h-1 w-48 overflow-hidden rounded-full bg-muted">
               <div className="lk-pulse-soft h-full w-1/2 bg-primary" />
             </div>

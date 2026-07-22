@@ -23,7 +23,7 @@ function withGenre(primary: 'mystery' | 'romance' | 'fantasy_kingdom', secondary
 
 describe('toggleGenre', () => {
   it('sets primary then secondary', () => {
-    let a = emptyAnswers()
+    const a = emptyAnswers()
     let r = toggleGenre(a, 'mystery')
     expect(r.answers.primaryGenreId).toBe('mystery')
     expect(r.maxReached).toBe(false)
@@ -34,7 +34,7 @@ describe('toggleGenre', () => {
   })
 
   it('rejects third genre', () => {
-    let a = withGenre('mystery', 'fantasy_kingdom')
+    const a = withGenre('mystery', 'fantasy_kingdom')
     const r = toggleGenre(a, 'romance')
     expect(r.maxReached).toBe(true)
     expect(r.answers.primaryGenreId).toBe('mystery')

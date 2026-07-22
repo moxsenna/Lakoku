@@ -116,15 +116,18 @@ export function TasteProfileFlow() {
   const [draftOffer, setDraftOffer] = useState(false)
   const [genreChangeWarning, setGenreChangeWarning] = useState<string | null>(null)
 
-  // Load draft once on mount
+  // Load draft once on mount (defer setState to avoid set-state-in-effect lint).
   useEffect(() => {
     trackEvent('taste_onboarding_viewed', { stage: 'intro', profile_version: 2 })
-    const draft = readTasteDraft()
-    if (!draft) return
-    const restored = answersFromDraft(draft)
-    if (restored.primaryGenreId || restored.likedConflictIds.length > 0) {
-      setDraftOffer(true)
-    }
+    const timer = window.setTimeout(() => {
+      const draft = readTasteDraft()
+      if (!draft) return
+      const restored = answersFromDraft(draft)
+      if (restored.primaryGenreId || restored.likedConflictIds.length > 0) {
+        setDraftOffer(true)
+      }
+    }, 0)
+    return () => window.clearTimeout(timer)
   }, [])
 
   // Persist draft on answer change (not on intro)

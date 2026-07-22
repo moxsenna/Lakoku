@@ -44,6 +44,12 @@ import {
   type ChoiceBuildDeps,
   type ChoiceNarrativeContext,
 } from './choice-generation'
+import { loadStoryCreativeDirection } from '@/lib/authoring/persist-creative-direction'
+import {
+  boundaryMustNotInclude,
+  softPreferenceHints,
+  validateContentBoundaries,
+} from './content-boundaries'
 import {
   groundedChoiceProseFromFinalDraft,
   emptyChoiceNarrativeContext,
@@ -120,10 +126,14 @@ function syntheticChapterBrief(
   chapterNumber: number,
   draft: ChapterDraftParsed,
   narrativeContext?: ChoiceNarrativeContext,
+  directionHints?: { mustNotInclude?: string[]; softHints?: string[] },
 ): ChapterBrief {
   const remaining = Math.max(0, TOTAL_CHAPTERS - chapterNumber)
   // Chapter draft has prose only; goal/phase derived for choice provider brief.
-  const chapterGoal = draft.title
+  let chapterGoal = draft.title
+  if (directionHints?.softHints?.length) {
+    chapterGoal = `${chapterGoal} (${directionHints.softHints.slice(0, 2).join('; ')})`.slice(0, 1200)
+  }
   const phase =
     chapterNumber <= 10
       ? 'setup'
@@ -170,6 +180,7 @@ function syntheticChapterBrief(
     : 'Belum ada pilihan sebelumnya.'
 
   const lockedEndingKey = narrativeContext?.lockedEndingKey ?? null
+  const mustNotInclude = directionHints?.mustNotInclude ?? empty
 
   return {
     storyId,
@@ -179,7 +190,7 @@ function syntheticChapterBrief(
     remainingChapters: remaining,
     chapterGoal,
     mustInclude: empty,
-    mustNotInclude: empty,
+    mustNotInclude,
     mustNotReveal: empty,
     routeStateSummary,
     choiceHistorySummary,
@@ -309,7 +320,22 @@ async function buildChoices(
     )
 
   // Phase 2: choice grounding uses final repaired draft only.
-  const brief = syntheticChapterBrief(snapshot.storyId, chapterNumber, draft, narrativeContext)
+  let choiceDirection: Awaited<ReturnType<typeof loadStoryCreativeDirection>> = null
+  try {
+    choiceDirection = await loadStoryCreativeDirection(snapshot.storyId)
+  } catch {
+    choiceDirection = null
+  }
+  const brief = syntheticChapterBrief(
+    snapshot.storyId,
+    chapterNumber,
+    draft,
+    narrativeContext,
+    {
+      mustNotInclude: boundaryMustNotInclude(choiceDirection),
+      softHints: softPreferenceHints(choiceDirection),
+    },
+  )
   const { finalChapter, endingParagraphs } = groundedChoiceProseFromFinalDraft(draft)
   const deps = standardChoiceDeps(providerContext.correlationId)
   const activeCharacters = snapshot.characters
@@ -499,6 +525,14 @@ async function generateNextChapterRealInner(
       return { ok: false, reason: 'CANON_MISSING' }
     }
 
+    // 2b) Load story creative direction snapshot (best-effort; neutral if missing).
+    let creativeDirection: Awaited<ReturnType<typeof loadStoryCreativeDirection>> = null
+    try {
+      creativeDirection = await loadStoryCreativeDirection(storyId)
+    } catch {
+      creativeDirection = null
+    }
+
     // 3) Kompilasi konteks + catat jejak retrieval (best-effort observability).
     stage = 'COMPILE_CONTEXT'
     const packet = compileContext(snapshot, chapterNumber)
@@ -563,6 +597,46 @@ async function generateNextChapterRealInner(
     }
 
     const draft = result.draft
+
+    // 5b) Hard content-boundary check (prompt-only is insufficient).
+    const proseText = [draft.title, ...(draft.paragraphs ?? [])].join('\n')
+    const boundaryFindings = validateContentBoundaries({
+      prose: proseText,
+      direction: creativeDirection,
+      chapterNumber,
+    })
+    if (boundaryFindings.some((f) => f.severity === 'CRITICAL')) {
+      await releaseLeaseOnce()
+      stage = 'RECORD_TERMINAL_ATTEMPT'
+      await recordGenerationAttempt({
+        storyId,
+        chapter: chapterNumber,
+        outcome: 'REVIEW_REQUIRED',
+        repairAttempts: result.attempts,
+        findings: boundaryFindings.map((f) => ({
+          code: f.code,
+          severity: f.severity,
+          message: f.message,
+        })),
+        correlationId,
+      }).catch(() => undefined)
+      console.log('GENERATION_BOUNDARY_VIOLATION', {
+        storyId,
+        chapterNumber,
+        correlationId,
+        codes: boundaryFindings.map((f) => f.code),
+        elapsedMs: Date.now() - startedAt,
+      })
+      return {
+        ok: false,
+        reason: 'FAILED_REVIEW_REQUIRED',
+        detail: {
+          failedLayer: 'BOUNDARY',
+          findings: boundaryFindings,
+          reason: 'Hard content boundary violation',
+        },
+      }
+    }
 
     // 6) Boundary consumer-safe: tak ada istilah internal yang bocor ke pembaca.
     stage = 'CONSUMER_SAFE'

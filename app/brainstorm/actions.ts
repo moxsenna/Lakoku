@@ -34,6 +34,16 @@ import type {
   MysteryDraft,
   WorldDraft,
 } from '@/lib/authoring/schema'
+import {
+  StoryCreativeDirectionSchema,
+  type StoryCreativeDirection,
+} from '@/lib/onboarding/creative-direction'
+
+function parseDirection(raw: unknown): StoryCreativeDirection | null {
+  if (!raw) return null
+  const parsed = StoryCreativeDirectionSchema.safeParse(raw)
+  return parsed.success ? parsed.data : null
+}
 
 export interface ActionError {
   ok: false
@@ -70,30 +80,54 @@ export async function actRefinePremise(current: PremiseDraft, feedback: string):
   }
 }
 
-export async function actProposeCast(premise: PremiseDraft, feedback?: string, previous?: CastDraft): Promise<ActionResult<{ cast: CastDraft }>> {
+export async function actProposeCast(
+  premise: PremiseDraft,
+  feedback?: string,
+  previous?: CastDraft,
+  directionRaw?: unknown,
+): Promise<ActionResult<{ cast: CastDraft }>> {
   try {
     await requireAuthoringSessionUser()
-    const { cast } = await proposeCast(premise, feedback, previous)
+    const { cast } = await proposeCast(premise, feedback, previous, {
+      direction: parseDirection(directionRaw),
+    })
     return { ok: true, cast }
   } catch (e) {
     return fail(e)
   }
 }
 
-export async function actProposeMystery(premise: PremiseDraft, cast: CastDraft, feedback?: string, previous?: MysteryDraft): Promise<ActionResult<{ mystery: MysteryDraft }>> {
+export async function actProposeMystery(
+  premise: PremiseDraft,
+  cast: CastDraft,
+  feedback?: string,
+  previous?: MysteryDraft,
+  directionRaw?: unknown,
+): Promise<ActionResult<{ mystery: MysteryDraft }>> {
   try {
     await requireAuthoringSessionUser()
-    const { mystery } = await proposeMystery(premise, cast, feedback, previous)
+    const { mystery } = await proposeMystery(premise, cast, feedback, previous, {
+      direction: parseDirection(directionRaw),
+    })
     return { ok: true, mystery }
   } catch (e) {
     return fail(e)
   }
 }
 
-export async function actProposeWorld(premise: PremiseDraft, cast: CastDraft, mystery: MysteryDraft, feedback?: string, previous?: WorldDraft): Promise<ActionResult<{ world: WorldDraft }>> {
+export async function actProposeWorld(
+  premise: PremiseDraft,
+  cast: CastDraft,
+  mystery: MysteryDraft,
+  feedback?: string,
+  previous?: WorldDraft,
+  directionRaw?: unknown,
+): Promise<ActionResult<{ world: WorldDraft }>> {
   try {
     await requireAuthoringSessionUser()
-    const { world } = await proposeWorld(premise, cast, mystery, feedback, previous)
+    const { world } = await proposeWorld(premise, cast, mystery, feedback, previous, {
+      direction: parseDirection(directionRaw),
+    })
     return { ok: true, world }
   } catch (e) {
     return fail(e)

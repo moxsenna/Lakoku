@@ -95,6 +95,35 @@ export async function lockStoryBibleForSession(
     }
 
     const { storyId } = await persistStoryBible(opening.compiled, user.id)
+
+    // Persist creative direction snapshot when present (best-effort; lock still succeeds).
+    if (draft.creativeDirection) {
+      try {
+        const { persistStoryCreativeDirection } = await import(
+          '@/lib/authoring/persist-creative-direction'
+        )
+        const { StoryCreativeDirectionSchema } = await import(
+          '@/lib/onboarding/creative-direction'
+        )
+        const parsed = StoryCreativeDirectionSchema.safeParse(draft.creativeDirection)
+        if (parsed.success) {
+          const saved = await persistStoryCreativeDirection({
+            storyId,
+            ownerUserId: user.id,
+            direction: parsed.data,
+          })
+          if (saved.ok) {
+            console.log('[v0] creative direction persisted', {
+              storyId,
+              fingerprint: saved.fingerprint,
+            })
+          }
+        }
+      } catch {
+        // best-effort
+      }
+    }
+
     await ensureReaderStateStarted(storyId, 1, 'BARU')
 
     return {

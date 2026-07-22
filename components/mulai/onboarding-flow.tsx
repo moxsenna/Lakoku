@@ -319,17 +319,28 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     setPhase('building')
     startTransition(async () => {
       setBuildStage('cast')
-      // Fase 4 will thread creativeDirection into cast/mystery/world.
-      // Keep direction in stash for resume so it is not lost after premise.
-      const castRes = await actProposeCast(premise)
+      const castRes = await actProposeCast(premise, undefined, undefined, creativeDirection)
       if (!castRes.ok) return failBuild(castRes.error)
 
       setBuildStage('mystery')
-      const mysteryRes = await actProposeMystery(premise, castRes.cast)
+      const mysteryRes = await actProposeMystery(
+        premise,
+        castRes.cast,
+        undefined,
+        undefined,
+        creativeDirection,
+      )
       if (!mysteryRes.ok) return failBuild(mysteryRes.error)
 
       setBuildStage('world')
-      const worldRes = await actProposeWorld(premise, castRes.cast, mysteryRes.mystery)
+      const worldRes = await actProposeWorld(
+        premise,
+        castRes.cast,
+        mysteryRes.mystery,
+        undefined,
+        undefined,
+        creativeDirection,
+      )
       if (!worldRes.ok) return failBuild(worldRes.error)
 
       const draft = {

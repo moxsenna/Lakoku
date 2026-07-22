@@ -67,7 +67,7 @@ export const defaultStorySetupQuestions: SetupQuestion[] = [
     prompt: 'Akhir seperti apa yang paling ingin kamu kejar?',
     helper: 'Cerita tetap bisa berubah karena pilihanmu.',
     frame: (a) => `Akhir yang dikejar: ${a.toLowerCase()}.`,
-    defaultAnswer: 'Keadilan - semua rahasia terbuka',
+    defaultAnswer: 'Keadilan — semua rahasia terbuka',
     options: [
       'Keadilan — semua rahasia terbuka',
       'Kedamaian — melepaskan dan melangkah',

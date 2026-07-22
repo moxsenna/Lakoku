@@ -2,11 +2,11 @@
  * Pure helper: rakit step answers jadi profile.
  *
  * Diekstrak dari TasteProfileFlow.buildProfile agar bisa diuji tanpa React.
- * Perilaku SAAT INI (Bug 3): mode skip apa pun MEMBUANG stepAnswers.
  *
- * Kontrak diinginkan (belum diimplementasi):
- *   - skip_intro / empty skip → empty + skippedAt (OK)
- *   - skip_with_partial → JAGA partial answers + skippedAt (jangan wipe)
+ * Kontrak:
+ *   - skip_intro → empty + skippedAt
+ *   - skip_with_partial → jaga partial answers + skippedAt
+ *   - complete → answers + completedAt
  *
  * Fase 1a: UI masih mengirim field V1 (preferredGenres, likedTropes, …).
  * Return type keeps transitional V1 step fields alongside V2 base.
@@ -55,10 +55,17 @@ export function buildTasteProfileFromSteps(args: {
   const base = createDefaultTasteProfile()
   const now = args.now ?? new Date().toISOString()
 
-  // CURRENT behavior (Bug 3): any skip wipes partial answers.
-  // Desired: skip_with_partial should keep answers — see failing test.
-  if (args.mode === 'skip_intro' || args.mode === 'skip_with_partial') {
+  if (args.mode === 'skip_intro') {
     return { ...base, skippedAt: now, updatedAt: now }
+  }
+
+  if (args.mode === 'skip_with_partial') {
+    return {
+      ...base,
+      ...args.answers,
+      skippedAt: now,
+      updatedAt: now,
+    } as BuiltTasteProfile
   }
 
   return {
@@ -71,7 +78,7 @@ export function buildTasteProfileFromSteps(args: {
 
 /**
  * Compat shim matching TasteProfileFlow submitProfile(isSkip).
- * isSkip=true maps to skip_with_partial (same wipe today).
+ * isSkip=true maps to skip_with_partial (keeps partial answers).
  */
 export function buildSkipOrSaveProfile(
   stepAnswers: TasteStepAnswers,

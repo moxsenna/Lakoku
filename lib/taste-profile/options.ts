@@ -4,10 +4,8 @@
  * Digunakan oleh TasteProfileFlow untuk membangun opsi-opsi trope-liked
  * dan avoided-options berdasarkan pilihan genre user.
  *
- * BUG DIDOKUMENTASIKAN: Loop saat ini berurutan (sequential) — jika genre
- * pertama memiliki >=6 opsi, semua 6 opsi akan diambil dari genre pertama
- * tanpa memberi slot ke genre kedua. Perilaku yang diinginkan: interleave
- * 4 dari genre primer + 2 dari genre sekunder, stabil, dedupe by ID.
+ * Default: balanced 4+2 interleave (primer 4 + sekunder 2), stabil, dedupe by ID.
+ * buildBalancedOptionsFromGenres tetap diekspor (sama algoritma).
  *
  * Lihat: tests/taste-profile/build-options-from-genres.test.ts
  */
@@ -15,68 +13,29 @@
 const MAX_OPTIONS = 6
 
 /**
- * Gabungkan opsi dari genre yang dipilih, deduplicate, max 6.
+ * Build options dari genre terpilih.
+ * Default = balanced 4+2 interleave (alias production path).
  *
- * Perilaku SAAT INI (Bug 1 — sequential):
- *   Loop outer genre → inner options → jika penuh, break.
- *   Dengan 1 genre: 6 dari genre tersebut (OK).
- *   Dengan 2 genre (mis. Misteri 6 + Romansa 6):
- *    6 opsi pertama Misteri mengisi semua slot → Romansa tidak dapat slot.
- *
- * Perilaku yang DIINGINKAN (dari plan Fase 0):
  *   1 genre → 6 dari genre tersebut.
- *   2 genre → 4 dari genre primer + 2 dari genre sekunder,
- *     diinterleave, urutan stabil, dedupe by ID.
+ *   2 genre → 4 primer + 2 sekunder, diinterleave, urutan stabil, dedupe by ID.
+ *   0 genre / unknown → fallback (max 6).
  */
 export function buildOptionsFromGenres(
   selectedGenres: string[],
   genreMap: Record<string, string[]>,
   fallback: string[],
 ): string[] {
-  if (!selectedGenres.length) {
-    return fallback.slice(0, MAX_OPTIONS)
-  }
-
-  const seen = new Set<string>()
-  const result: string[] = []
-
-  for (const genre of selectedGenres) {
-    const options = genreMap[genre]
-    if (!options) continue
-    for (const opt of options) {
-      if (result.length >= MAX_OPTIONS) break
-      if (seen.has(opt)) continue
-      seen.add(opt)
-      result.push(opt)
-    }
-    if (result.length >= MAX_OPTIONS) break
-  }
-
-  if (result.length < MAX_OPTIONS) {
-    for (const opt of fallback) {
-      if (result.length >= MAX_OPTIONS) break
-      if (seen.has(opt)) continue
-      seen.add(opt)
-      result.push(opt)
-    }
-  }
-
-  return result
+  return buildBalancedOptionsFromGenres(selectedGenres, genreMap, fallback)
 }
 
 /**
- * DESIRED: Build balanced options di mana genre primer dapat 4 slot,
- * genre sekunder dapat 2 slot (diinterleave untuk stabilitas urutan).
+ * Build balanced options: genre primer 4 slot, sekunder 2 slot (interleave).
  *
  * Algoritma interleave:
  *   Primer: ambil 1, Sekunder: ambil 1, Primer: ambil 1, ...
  *   — sampai primer habis (4 terpenuhi) atau sekunder habis (2 terpenuhi).
- *   Lalu fill sisanya dari primer atau fallback.
+ *   Lalu fill sisanya dari primer/secondary/fallback.
  *   Dedupe by ID (Set tracking).
- *
- * Fungsi ini adalah target behavior yang belum diimplementasi di komponen.
- * Test di tests/taste-profile/build-options-from-genres.test.ts akan FAIL
- * sampai buildOptionsFromGenres diganti dengan algoritma balanced ini.
  */
 export function buildBalancedOptionsFromGenres(
   selectedGenres: string[],

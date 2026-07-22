@@ -1,9 +1,8 @@
 /**
- * Bug 3 — skip path discards partial stepAnswers.
+ * skip path preserves partial stepAnswers.
  *
- * CURRENT: buildTasteProfileFromSteps({ mode: 'skip_with_partial' }) wipes genres.
- * DESIRED: mid/final "Lewati dulu" with answers keeps partial choices.
- * Intro "Nanti saja" / skip_intro may stay empty + skippedAt.
+ * skip_with_partial: mid/final "Lewati dulu" with answers keeps partial choices.
+ * skip_intro / intro "Nanti saja": empty + skippedAt.
  */
 import { describe, expect, it } from 'vitest'
 import {
@@ -39,21 +38,19 @@ describe('buildTasteProfileFromSteps — skip vs complete', () => {
     expect(profile.preferredGenres).toBeUndefined()
   })
 
-  // ── FAILING until Bug 3 fixed ──────────────────────────────────────
-  it('DESIRED: skip_with_partial keeps preferredGenres (must not wipe)', () => {
+  it('skip_with_partial keeps preferredGenres (must not wipe)', () => {
     const profile = buildTasteProfileFromSteps({
       answers: { preferredGenres: ['Misteri'] },
       mode: 'skip_with_partial',
       now: NOW,
     })
 
-    // Current wipe returns empty base without preferredGenres → fails.
     expect(profile.preferredGenres).toEqual(['Misteri'])
     expect(profile.skippedAt).toBe(NOW)
     expect(profile.updatedAt).toBe(NOW)
   })
 
-  it('DESIRED: skip_with_partial keeps likedTropes too', () => {
+  it('skip_with_partial keeps likedTropes too', () => {
     const profile = buildTasteProfileFromSteps({
       answers: {
         preferredGenres: ['Misteri'],
@@ -80,17 +77,13 @@ describe('buildSkipOrSaveProfile — component shim', () => {
     expect(profile.completedAt).toBe(NOW)
   })
 
-  it('DOCUMENTS BUG: isSkip=true currently wipes answers', () => {
-    // Documents CURRENT wipe so we notice when behavior changes.
+  it('isSkip=true keeps partial answers + skippedAt', () => {
     const profile = buildSkipOrSaveProfile(
       { preferredGenres: ['Misteri'] },
       true,
       NOW,
     )
-    // Today: wiped. After fix, preferredGenres should survive.
-    // Keep this assertion on CURRENT wipe so suite still proves baseline.
-    // Pair with DESIRED tests above that fail until fix.
-    expect(profile.preferredGenres).toBeUndefined()
+    expect(profile.preferredGenres).toEqual(['Misteri'])
     expect(profile.skippedAt).toBe(NOW)
   })
 })

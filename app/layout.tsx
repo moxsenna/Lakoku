@@ -25,9 +25,9 @@ export const metadata: Metadata = {
   icons: {
     icon: [
       { url: '/favicon.ico', sizes: 'any' },
-      { url: '/logo.webp', type: 'image/webp' },
+      { url: '/logo.png', type: 'image/png' },
     ],
-    apple: '/logo.webp',
+    apple: '/apple-icon.png',
   },
 }
 

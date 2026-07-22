@@ -30,7 +30,7 @@ export function AdminSidebar() {
     <aside className="hidden w-56 shrink-0 border-r border-border bg-card lg:flex lg:flex-col">
       <div className="flex h-14 items-center gap-2 border-b border-border px-4">
         <Image
-          src="/logo.webp"
+          src="/logo.png"
           alt="Lakoku Logo"
           width={28}
           height={28}

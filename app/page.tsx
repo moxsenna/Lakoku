@@ -44,7 +44,7 @@ export default function HomePage() {
         <header className="absolute left-6 top-8 right-6 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <Image
-              src="/logo.webp"
+              src="/logo.png"
               alt="Lakoku Logo"
               width={32}
               height={32}

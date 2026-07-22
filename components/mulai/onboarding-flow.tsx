@@ -232,7 +232,24 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
       }
 
       setSelected(draft.premise)
-      setAnswers(draft.answers ?? {})
+      // Resume stash stores string answers; convert lightly for display state only.
+      if (draft.answers) {
+        const restored: Record<string, AutoOrValue> = {}
+        for (const [k, v] of Object.entries(draft.answers)) {
+          if (!v) continue
+          restored[k] =
+            v === 'auto'
+              ? { mode: 'auto' }
+              : /^[a-z][a-z0-9_]*$/.test(v)
+                ? { mode: 'selected', value: v }
+                : { mode: 'custom', text: v }
+        }
+        setAnswers(restored)
+      }
+      if (draft.creativeDirection) {
+        // Opaque stash — cast only if shape looks like direction
+        setCreativeDirection(draft.creativeDirection as StoryCreativeDirection)
+      }
       setErr(null)
       setPhase('building')
       startTransition(async () => {

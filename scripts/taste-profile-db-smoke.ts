@@ -83,7 +83,11 @@ if (apiExists) {
   check('upsert onConflict user_id', apiSrc.includes("onConflict: 'user_id'"))
   check('getTasteProfileForUser exported', apiSrc.includes('export async function getTasteProfileForUser'))
   check('saveTasteProfileForUser exported', apiSrc.includes('export async function saveTasteProfileForUser'))
-  check('parseRow handles null', apiSrc.includes('if (!row) return null'))
+  check(
+    'parseRow handles null',
+    apiSrc.includes('if (!row) return null') ||
+      apiSrc.includes('if (!row || row.taste_json == null) return null'),
+  )
 }
 
 // ── Merge logic di schema ─────────────────────────────────────────

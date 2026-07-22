@@ -11,7 +11,7 @@ Production is **VPS**, not Cloudflare/Vercel.
 | Container | `lakoku-web` |
 | Port | `127.0.0.1:5200` |
 | Network | `wacrm_edge` (shared Caddy) |
-| Domain | `https://lakoku.appvibe.biz.id` |
+| Domain | `https://lakoku.biz.id` |
 | Mode | `LAKOKU_DEPLOY=vps` (Next standalone) |
 | DB | Supabase linked (migrate from local CLI) |
 
@@ -41,7 +41,7 @@ docker compose -f /opt/lakoku/docker-compose.yml logs -f --tail=100
 
 ```bash
 curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:5200/
-curl -sS -o /dev/null -w "%{http_code}\n" https://lakoku.appvibe.biz.id/
+curl -sS -o /dev/null -w "%{http_code}\n" https://lakoku.biz.id/
 ```
 
 ## Rollback

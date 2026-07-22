@@ -17,13 +17,13 @@ async function main() {
   console.log('Auth redirect smoke:')
 
   const redirect = getEmailRedirectTo(
-    'https://lakoku.appvibe.biz.id',
+    'https://lakoku.biz.id',
     'https://v0.app/chat/api/supabase/redirect/6MYKydJOsnj',
   )
 
   check(
     'email confirmation redirect stays on current app origin',
-    redirect === 'https://lakoku.appvibe.biz.id/auth/callback',
+    redirect === 'https://lakoku.biz.id/auth/callback',
     redirect,
   )
 

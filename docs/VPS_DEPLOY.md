@@ -32,7 +32,7 @@ Dokumen ini khusus **Lakoku**. Jangan tanya ulang host/stack ke user kecuali aks
 | Container | `lakoku-web` |
 | Internal port | `5200` (host bind **only** `127.0.0.1:5200`) |
 | Docker network | `wacrm_edge` (**external**, shared with Caddy) |
-| Public URL | `https://lakoku.appvibe.biz.id` |
+| Public URL | `https://lakoku.biz.id` |
 | Reverse proxy | Caddy di stack `/opt/wacrm` |
 | Runtime mode | `LAKOKU_DEPLOY=vps` → Next **standalone** (`next.config.mjs`) |
 | DB | Supabase project linked dari local CLI (bukan container Postgres di VPS) |
@@ -53,7 +53,7 @@ Port reserved by neighbors: `5000–5002` (wacrm), `5100` (9router). Lakoku uses
 
 ```text
 Browser
-  → https://lakoku.appvibe.biz.id
+  → https://lakoku.biz.id
   → Caddy (/opt/wacrm)
   → lakoku-web:5200  (Next standalone on VPS)
 
@@ -147,7 +147,7 @@ Public build-args required by `Dockerfile`:
 NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL   # default https://lakoku.appvibe.biz.id
+NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL   # default https://lakoku.biz.id
 ```
 
 Runtime:
@@ -169,10 +169,10 @@ If a key is missing: tell user to fill `/opt/lakoku/.env`. Do not invent credent
 Snippet lives in repo `deploy/Caddyfile.snippet` and is applied in shared Caddy:
 
 ```caddy
-lakoku.appvibe.biz.id {
-	encode gzip
-	reverse_proxy lakoku-web:5200
-}
+lakoku.biz.id, app.lakoku.biz.id {
+		encode gzip
+		reverse_proxy lakoku-web:5200
+	}
 ```
 
 Reload after Caddyfile edits:
@@ -199,7 +199,7 @@ curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:5200/
 curl -sSI http://127.0.0.1:5200/ | head
 
 # public
-curl -sS -o /dev/null -w "%{http_code}\n" https://lakoku.appvibe.biz.id/
+curl -sS -o /dev/null -w "%{http_code}\n" https://lakoku.biz.id/
 ```
 
 Expect HTTP `200` (or app-level redirect that still proves routing).
@@ -285,7 +285,7 @@ acquire_generation_lease / publish_chapter / release_generation_lease
 [ ] If DB needed: local supabase dry-run → approval → push linked
 [ ] Package/sync code to /opt/lakoku without wiping .env
 [ ] docker compose up -d --build
-[ ] curl 127.0.0.1:5200 and https://lakoku.appvibe.biz.id
+[ ] curl 127.0.0.1:5200 and https://lakoku.biz.id
 [ ] Record update command + rollback path in reply
 ```
 
@@ -296,5 +296,5 @@ acquire_generation_lease / publish_chapter / release_generation_lease
 ```text
 Supabase = DB/auth (linked CLI from laptop)
 VPS Docker = Next standalone web (LAKOKU_DEPLOY=vps)
-Caddy@wacrm = public HTTPS for lakoku.appvibe.biz.id → lakoku-web:5200
+Caddy@wacrm = public HTTPS for lakoku.biz.id → lakoku-web:5200
 ```

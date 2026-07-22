@@ -22,23 +22,23 @@ describe('getPublicOrigin', () => {
     delete process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL
     const origin = getPublicOrigin(
       req('http://0.0.0.0:5200/auth/callback?code=x', {
-        'x-forwarded-host': 'lakoku.appvibe.biz.id',
+        'x-forwarded-host': 'lakoku.biz.id',
         'x-forwarded-proto': 'https',
         host: '0.0.0.0:5200',
       }),
     )
-    expect(origin).toBe('https://lakoku.appvibe.biz.id')
+    expect(origin).toBe('https://lakoku.biz.id')
   })
 
   it('falls back to NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL when host is 0.0.0.0', () => {
-    process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL = 'https://lakoku.appvibe.biz.id'
+    process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL = 'https://lakoku.biz.id'
     delete process.env.NEXT_PUBLIC_SITE_URL
     const origin = getPublicOrigin(
       req('http://0.0.0.0:5200/auth/callback', {
         host: '0.0.0.0:5200',
       }),
     )
-    expect(origin).toBe('https://lakoku.appvibe.biz.id')
+    expect(origin).toBe('https://lakoku.biz.id')
   })
 
   it('uses localhost public host for local dev', () => {

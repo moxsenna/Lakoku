@@ -14,7 +14,7 @@ export default function PrivacyPage() {
       <p>
         Kebijakan ini menjelaskan bagaimana <strong className="text-foreground">Lakoku</strong>{' '}
         (&quot;kami&quot;) menangani informasi saat kamu memakai situs{' '}
-        <a href="https://lakoku.appvibe.biz.id">https://lakoku.appvibe.biz.id</a> dan layanan
+        <a href="https://lakoku.biz.id">https://lakoku.biz.id</a> dan layanan
         terkait (novel interaktif, akun, kredit, dan fitur AI).
       </p>
 

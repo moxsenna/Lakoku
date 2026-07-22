@@ -33,7 +33,7 @@ produk. Nama produk konsumen: **Lakoku**.
 - Runbook lengkap: **`docs/VPS_DEPLOY.md`** (entry singkat: `deploy/README.deploy.md`).
 - Kit multi-app VPS: **`D:\Coding\deploy-kit\AGENT-HANDOFF.md`** (+ `README.md`, `MULTI-APP.md`).
 - Path app: `/opt/lakoku`, container `lakoku-web`, port `127.0.0.1:5200`, domain
-  `https://lakoku.appvibe.biz.id`, network Docker `wacrm_edge` (Caddy shared di `/opt/wacrm`).
+  `https://lakoku.biz.id`, network Docker `wacrm_edge` (Caddy shared di `/opt/wacrm`).
 - Build mode VPS: `LAKOKU_DEPLOY=vps` → Next standalone (`Dockerfile` + `docker-compose.yml`).
 - **DB production = Supabase linked** dari laptop (`pnpm exec supabase db push --linked`);
   rebuild container **tidak** menerapkan migration.

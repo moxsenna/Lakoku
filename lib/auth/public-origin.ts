@@ -36,7 +36,7 @@ export function getPublicOrigin(request: NextRequest): string {
   }
 
   // Last resort: known production host (never return 0.0.0.0 to browsers).
-  return 'https://lakoku.appvibe.biz.id'
+  return 'https://lakoku.biz.id'
 }
 
 function firstHeader(value: string | null): string | null {

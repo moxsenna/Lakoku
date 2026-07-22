@@ -13,7 +13,7 @@ export default function TermsPage() {
     <LegalPage title="Syarat Layanan" updated="22 Juli 2026">
       <p>
         Dengan mengakses atau memakai <strong className="text-foreground">Lakoku</strong> di{' '}
-        <a href="https://lakoku.appvibe.biz.id">https://lakoku.appvibe.biz.id</a> (&quot;Layanan&quot;),
+        <a href="https://lakoku.biz.id">https://lakoku.biz.id</a> (&quot;Layanan&quot;),
         kamu menyetujui syarat ini. Jika tidak setuju, jangan gunakan Layanan.
       </p>
 

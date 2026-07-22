@@ -22,10 +22,10 @@ import {
   saveGuestTasteProfile,
 } from '@/lib/taste-profile/storage'
 import {
-  createDefaultTasteProfile,
   type TasteProfile,
 } from '@/lib/taste-profile/schema'
 import { buildOptionsFromGenres } from '@/lib/taste-profile/options'
+import { buildSkipOrSaveProfile } from '@/lib/taste-profile/build-from-steps'
 
 // ─── Step definitions ─────────────────────────────────────────────
 
@@ -234,28 +234,6 @@ function buildSteps(selectedGenres: string[]): StepDefinition[] {
   ]
 }
 
-// ─── Helper ───────────────────────────────────────────────────────
-
-/** Rakit partial answers jadi TasteProfile utuh untuk disimpan. */
-function buildProfile(
-  stepAnswers: Partial<TasteProfile>,
-  isSkip: boolean,
-): TasteProfile {
-  const base = createDefaultTasteProfile()
-  const now = new Date().toISOString()
-
-  if (isSkip) {
-    return { ...base, skippedAt: now, updatedAt: now }
-  }
-
-  return {
-    ...base,
-    ...stepAnswers,
-    completedAt: now,
-    updatedAt: now,
-  }
-}
-
 // ─── Komponen ─────────────────────────────────────────────────────
 
 export function TasteProfileFlow() {
@@ -316,7 +294,8 @@ export function TasteProfileFlow() {
   function submitProfile(isSkip: boolean) {
     setErr(null)
 
-    const profile = buildProfile(stepAnswers, isSkip)
+    // buildSkipOrSaveProfile: CURRENT skip still wipes partial answers (Bug 3).
+    const profile = buildSkipOrSaveProfile(stepAnswers, isSkip)
 
     startTransition(async () => {
       try {

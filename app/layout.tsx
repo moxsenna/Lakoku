@@ -18,10 +18,10 @@ const dmSerif = DM_Serif_Display({
 })
 
 export const metadata: Metadata = {
-  title: 'Lakoku - Novel Interaktif',
+  title: 'Lakoku — Interactive Fiction / Novel Interaktif',
   description:
-    'Kamu bukan sekadar pembaca. Kamu adalah tokoh utamanya. Masuk ke cerita, ambil keputusan, dan lihat hidup tokohmu berubah karena pilihanmu.',
-  generator: 'v0.app',
+    'Lakoku is an interactive fiction web app (novel interaktif). Read branching stories, make choices that change the plot, and save progress with email or Google sign-in.',
+  applicationName: 'Lakoku',
   icons: {
     icon: [
       { url: '/favicon.ico', sizes: 'any' },

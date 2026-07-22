@@ -1,6 +1,14 @@
+import type { Metadata } from 'next'
 import Link from 'next/link'
 import Image from 'next/image'
 import { Drama, GitFork, Flame, BookOpen, Shield } from 'lucide-react'
+
+export const metadata: Metadata = {
+  title: 'Lakoku — Interactive Fiction / Novel Interaktif',
+  description:
+    'Lakoku is an interactive fiction web app. Read branching stories, make choices that change the plot, and save progress with email or Google sign-in. Lakoku: novel interaktif di web.',
+  applicationName: 'Lakoku',
+}
 
 const values = [
   {
@@ -58,13 +66,21 @@ export default function HomePage() {
           <span className="w-fit rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-[11px] font-semibold tracking-wide text-primary">
             3 bab gratis - tanpa kartu
           </span>
-          <h1 className="font-serif text-4xl leading-tight text-foreground text-balance">
+          {/* Exact OAuth consent app name must appear as primary heading for Google branding checks. */}
+          <h1 className="font-serif text-4xl leading-tight text-foreground text-balance">Lakoku</h1>
+          <p className="font-serif text-2xl leading-snug text-foreground text-balance">
             Kamu bukan sekadar pembaca. Kamu adalah tokoh utamanya.
-          </h1>
+          </p>
           <p className="text-sm leading-relaxed text-muted-foreground text-pretty">
-            <strong className="font-semibold text-foreground">Lakoku</strong> adalah aplikasi novel
-            interaktif. Masuk ke cerita, ambil keputusan, dan lihat hidup tokohmu berubah karena
-            pilihanmu—bukan sekadar membaca, melainkan menjalani alurmu sendiri.
+            <strong className="font-semibold text-foreground">Lakoku</strong> is an interactive
+            fiction web app (novel interaktif). Sign in to read branching stories, make choices that
+            change the plot, and save your progress. Use email or Google login so your account,
+            reading history, and story preferences stay with you.
+          </p>
+          <p className="text-sm leading-relaxed text-muted-foreground text-pretty">
+            Lakoku adalah aplikasi novel interaktif di web. Masuk ke cerita, ambil keputusan, dan
+            lihat hidup tokohmu berubah karena pilihanmu—bukan sekadar membaca, melainkan menjalani
+            alurmu sendiri.
           </p>
         </div>
 
@@ -74,15 +90,29 @@ export default function HomePage() {
               <BookOpen className="size-5" aria-hidden="true" />
             </span>
             <div className="space-y-2 text-xs leading-relaxed text-muted-foreground">
-              <h2 className="text-sm font-semibold text-foreground">Apa itu Lakoku?</h2>
+              <h2 className="text-sm font-semibold text-foreground">
+                About Lakoku / Apa itu Lakoku?
+              </h2>
               <p>
-                Lakoku menampilkan novel interaktif di web: kamu membuat atau memilih cerita,
-                membaca bab, dan memilih cabang yang mengubah hubungan, misteri, dan akhir. Sebagian
-                konten disusun dengan bantuan model AI sesuai input dan pilihanmu.
+                <strong className="text-foreground">Purpose of this application:</strong> Lakoku
+                provides interactive novels on the web. You create or pick a story, read chapters,
+                and choose branches that change relationships, mysteries, and endings. Some story
+                text is generated with AI models based on your inputs and choices.
               </p>
               <p>
-                Login (email atau Google) dipakai agar progres, koleksi cerita, dan preferensi
-                tersimpan di akunmu. Data akun diproses untuk menyediakan fitur tersebut—lihat{' '}
+                <strong className="text-foreground">Tujuan aplikasi:</strong> Lakoku menampilkan
+                novel interaktif di web—membuat atau memilih cerita, membaca bab, dan memilih cabang
+                yang mengubah hubungan, misteri, dan akhir. Sebagian konten disusun dengan bantuan
+                model AI sesuai input dan pilihanmu.
+              </p>
+              <p>
+                <strong className="text-foreground">Google Sign-In:</strong> optional login via
+                Google shares your Google name, email, and profile photo so Lakoku can create or
+                link your account and save progress. See the{' '}
+                <Link href="/privacy" className="font-semibold text-primary">
+                  Privacy Policy
+                </Link>{' '}
+                /{' '}
                 <Link href="/privacy" className="font-semibold text-primary">
                   Kebijakan Privasi
                 </Link>
@@ -133,6 +163,14 @@ export default function HomePage() {
             {' · '}
             <Link href="/terms" className="font-semibold text-primary">
               Syarat Layanan
+            </Link>
+            {' · '}
+            <Link href="/privacy" className="font-semibold text-primary">
+              Privacy Policy
+            </Link>
+            {' · '}
+            <Link href="/terms" className="font-semibold text-primary">
+              Terms of Service
             </Link>
           </p>
           <p className="text-[11px]">© {new Date().getFullYear()} Lakoku</p>

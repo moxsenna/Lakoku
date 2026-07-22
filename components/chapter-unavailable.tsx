@@ -105,9 +105,11 @@ export function ChapterUnavailable({
       if (!mountedRef.current || controller.signal.aborted) return
       // Network/transient: keep reader-safe state, retry later — do NOT flip to failed.
       const decision = decideAfterNetworkError()
-      schedule(decision.nextDelayMs, () => {
-        void pollOnceRef.current()
-      })
+      if (decision.action === 'retry_later') {
+        schedule(decision.nextDelayMs, () => {
+          void pollOnceRef.current()
+        })
+      }
     } finally {
       inFlightRef.current = false
       if (mountedRef.current) setChecking(false)

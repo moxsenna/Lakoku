@@ -11,6 +11,7 @@
  * yang `server-only`) diekspor terpisah lewat `@lakoku/ai-gateway/server`.
  */
 export * from './schemas'
+export * from './choice-draft-v2'
 export * from './provider'
 export * from './gateway'
 export * from './generate'

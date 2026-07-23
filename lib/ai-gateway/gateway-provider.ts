@@ -16,6 +16,7 @@ import {
   DEFAULT_RUNTIME_POLICY,
 } from './provider'
 import { GatewayError, scanForLeaks } from './gateway'
+import { buildChoiceSystemPromptV2 } from './choice-draft-v2'
 import { clampChapterParagraphs, countParagraphWords } from '@/lib/prose/clamp-chapter-prose'
 import { buildWriterPrompt } from '@/lib/prose/prompt-engine'
 import type { AiModelRoute } from '@/lib/ops/ai-model-routes'
@@ -474,37 +475,8 @@ async function generateProse(args: {
 const MAX_PROMPT_CHARS = 16_000
 
 function buildChoiceSystemPrompt(): string {
-  return [
-    'Kamu adalah engine pilihan cerita interaktif Lakoku.',
-    'Balas HANYA dengan satu objek JSON, tanpa markdown, tanpa komentar, tanpa teks lain.',
-    'Teks pembaca harus alami — jangan tampilkan label internal, status rute, spoiler ending, nama prompt, model, token, provider, atau metadata generasi apa pun.',
-    '',
-    'Skema JSON (TEPAT):',
-    '{',
-    '  "choicePrompt": "<string 8–120 karakter, pertanyaan naratif yang memicu pilihan>",',
-    '  "choices": [',
-    '    { "id": "<lowercase-hyphen 1–50 karakter>", "label": "<string 8–90 karakter, kata kerja konkret diawali huruf besar>", "hint": "<string 8–140 karakter, opsional>" }',
-    '  ],',
-    '  "outcomes": [',
-    '    { "choiceId": "<harus cocok dengan salah satu choices[].id>", "consequence": ["<string 1–160 karakter>", "<string 1–160 karakter, opsional>"], "nextChapterNumber": <integer|null>, "isEnding": <boolean>, "effect": { "routeDeltas": { "truth": <int -20..20 optional>, "risk": <int -20..20 optional>, "secrecy": <int -20..20 optional>, "empathy": <int -20..20 optional> }, "trustDeltas": { "<characterId>": <int -10..10> }, "flagsSet": { "<flagKey>": true }, "evidenceAdded": ["<string 1–240 karakter>"], "endingBiasDeltas": { "<endingKey>": <int -100..100> }, "threadTouches": ["<string 1–120 karakter>"] } }',
-    '  ]',
-    '}',
-    '',
-    'ATURAN:',
-    '- choices.length === outcomes.length (2 atau 3).',
-    '- Setiap outcome.choiceId harus cocok dengan tepat satu choices[].id.',
-    '- Untuk bab 1..48: nextChapterNumber = currentChapter + 1, isEnding = false.',
-    '- Untuk bab 49 normal: nextChapterNumber = 50, isEnding = false (semua outcome).',
-    '- Untuk bab 49 spesial: nextChapterNumber = null, isEnding = true (semua outcome).',
-    '- Semua outcome dalam satu respons bab 49 harus memakai mode sama; jangan campur normal dan spesial.',
-    '- Gunakan aturan di atas berdasarkan currentChapter dari konteks.',
-    '- Untuk nilai yang diwajibkan null, tulis JSON null; jangan tulis string "null" dan jangan hilangkan key.',
-    '- Label pilihan harus berupa tindakan konkret (kata kerja) yang bisa dibayangkan pembaca.',
-    '- Di "routeDeltas", HANYA boleh ada key: truth, risk, secrecy, empathy. DILARANG membuat key rute lain (mis. nama tematik seperti "senyap"/"keberanian"); bila ragu, tulis routeDeltas: {}.',
-    '- Setiap objek outcomes HANYA boleh berisi key: choiceId, consequence, nextChapterNumber, isEnding, effect. DILARANG menambah key lain (mis. "label"/"hint" — itu milik choices).',
-    '- Jangan menambah field apa pun di luar skema "effect". Kolom yang tak dipakai (trustDeltas, flagsSet, evidenceAdded, endingBiasDeltas, threadTouches) isi kosong: {} atau [].',
-    '- Jangan pernah gunakan kata "rute", "prompt", "model", "token", "provider", "narraza", "llm", "gateway" di teks pembaca.',
-  ].join('\n')
+  // Protocol V2: creative draft only. Server finalizes IDs / nextChapter / effects.
+  return buildChoiceSystemPromptV2()
 }
 
 function buildChoicePrompt(input: ChoiceProviderInput): { system: string; prompt: string } {

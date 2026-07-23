@@ -20,6 +20,11 @@ import {
   type ChoiceBranch,
 } from './schemas'
 import {
+  finalizeAiChoiceDraft,
+  isAiChoiceDraftShape,
+  parseAiChoiceDraft,
+} from './choice-draft-v2'
+import {
   type GenerationProvider,
   type DraftDefect,
   type ChoiceInput,
@@ -387,7 +392,32 @@ export async function generateChoiceBranch(
 
   const validate = (raw: unknown): ChoiceBranch => {
     try {
-      return validateChoiceBranch(normalizeChoiceReaderText(raw), providerInput.currentChapter)
+      // Protocol V2: creative draft → deterministic finalizer → existing ChoiceBranch.
+      let branchInput: unknown = raw
+      if (isAiChoiceDraftShape(raw)) {
+        const draftParsed = parseAiChoiceDraft(raw)
+        if (!draftParsed.ok) {
+          throw new GatewayError(
+            'Cabang pilihan tidak valid.',
+            'CHOICE_INVALID',
+            draftParsed.errors,
+          )
+        }
+        branchInput = finalizeAiChoiceDraft({
+          aiDraft: draftParsed.data,
+          chapterNumber: providerInput.currentChapter,
+          activeCharacters: providerInput.canon.activeCharacters,
+          activeThreads: providerInput.canon.activeThreads.map((t) => ({
+            id: t.id,
+            title: t.title,
+          })),
+          lockedEndingKey: providerInput.lockedEndingKey,
+        })
+      }
+      return validateChoiceBranch(
+        normalizeChoiceReaderText(branchInput),
+        providerInput.currentChapter,
+      )
     } catch (error) {
       if (error instanceof GatewayError && error.code === 'CHOICE_INVALID') {
         const contentRejected = error.errors?.some((item) => (

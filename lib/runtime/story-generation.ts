@@ -30,6 +30,12 @@ import {
   recordGenerationAttempt,
   recordGenerationRuntimeFailed,
 } from '@/lib/observability/server'
+import { bestEffort } from '@/lib/observability/best-effort'
+import {
+  GenerationStageError,
+  isFailureRecorded,
+  markFailureRecorded,
+} from '@/lib/observability/generation-stage-error'
 import type { GenerationStage } from '@/lib/observability/generation-stages'
 import { safeErrorInfo } from '@/lib/observability/safe-error'
 import type { ChapterBrief, ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
@@ -556,7 +562,11 @@ async function generateNextChapterRealInner(
     // 3) Kompilasi konteks + catat jejak retrieval (best-effort observability).
     stage = 'COMPILE_CONTEXT'
     const packet = compileContext(snapshot, chapterNumber)
-    await persistRetrievalLog(storyId, chapterNumber, packet)
+    await bestEffort(
+      'RETRIEVAL_LOG_PERSIST_FAILED',
+      { storyId, chapterNumber, correlationId, stage },
+      () => persistRetrievalLog(storyId, chapterNumber, packet),
+    )
 
     // 4) Konteks thread untuk lifecycle check (state hidup di canon, bukan draft).
     const threadContext: ThreadContext = {
@@ -755,10 +765,16 @@ async function generateNextChapterRealInner(
       .flatMap(scanForLeaks)
     if (leakInChoices.length) {
       await releaseLeaseOnce()
-      const err = new Error(
+      const err = new GenerationStageError(
         `Kebocoran istilah internal pada cabang pilihan: ${leakInChoices.join(', ')}`,
+        {
+          errorCode: 'CHOICE_LEAK_REJECTED',
+          stage,
+          alreadyRecorded: true,
+        },
       )
       await logRuntimeFailure('CHOICE_LEAK_REJECTED', err)
+      markFailureRecorded(err)
       throw err
     }
 
@@ -792,15 +808,21 @@ async function generateNextChapterRealInner(
     }
 
     // Telemetri konsistensi (T8.1) — attempt sukses. Dipancarkan SETELAH publish.
+    // Best-effort only: never convert publish success into workflow failure.
     stage = 'RECORD_TERMINAL_ATTEMPT'
-    await recordGenerationAttempt({
-      storyId,
-      chapter: chapterNumber,
-      outcome: 'PUBLISHED',
-      repairAttempts: result.attempts,
-      findings: result.findings,
-      correlationId,
-    })
+    await bestEffort(
+      'GENERATION_ATTEMPT_TELEMETRY_FAILED',
+      { storyId, chapterNumber, correlationId, stage },
+      () =>
+        recordGenerationAttempt({
+          storyId,
+          chapter: chapterNumber,
+          outcome: 'PUBLISHED',
+          repairAttempts: result.attempts,
+          findings: result.findings,
+          correlationId,
+        }),
+    )
 
     stage = 'COMPLETE'
     console.log('GENERATION_PUBLISHED', {
@@ -820,7 +842,9 @@ async function generateNextChapterRealInner(
   } catch (err) {
     // Kegagalan tak terduga: lepas lease agar tak mengunci story.
     await releaseLeaseOnce()
-    await logRuntimeFailure('UNKNOWN_RUNTIME_EXCEPTION', err)
+    if (!isFailureRecorded(err)) {
+      await logRuntimeFailure('UNKNOWN_RUNTIME_EXCEPTION', err)
+    }
     throw err
   }
 }

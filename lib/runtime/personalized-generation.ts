@@ -589,7 +589,11 @@ async function generateNextPersonalizedChapterInner(
     })
 
     const packet = d.compileContext(snapshot, chapterNumber, { brief })
-    await d.persistRetrievalLog(storyId, chapterNumber, packet)
+    try {
+      await d.persistRetrievalLog(storyId, chapterNumber, packet)
+    } catch {
+      // best-effort observability — never fail generation
+    }
 
     const threadContext: ThreadContext = {
       threads: snapshot.threads,
@@ -849,13 +853,18 @@ async function generateNextPersonalizedChapterInner(
 
     if (!published.ok) return { ok: false, reason: published.reason }
 
-    await d.recordGenerationAttempt({
-      storyId,
-      chapter: chapterNumber,
-      outcome: 'PUBLISHED',
-      repairAttempts: result.attempts,
-      findings: result.findings,
-    })
+    // Best-effort telemetry — never convert publish success into workflow failure.
+    try {
+      await d.recordGenerationAttempt({
+        storyId,
+        chapter: chapterNumber,
+        outcome: 'PUBLISHED',
+        repairAttempts: result.attempts,
+        findings: result.findings,
+      })
+    } catch {
+      // non-critical
+    }
 
     return {
       ok: true,

@@ -1,7 +1,6 @@
 /**
  * Persist StoryCreativeDirection snapshot after story bible lock.
- * Uses story_generation_contracts with mode 'authoring_snapshot' when available,
- * else lightweight row in story_creative_directions (migration).
+ * Writes ONLY to story_creative_directions — never touches generation contracts.
  */
 import 'server-only'
 import { createAdminClient } from '@lakoku/db'
@@ -11,21 +10,59 @@ import {
   type StoryCreativeDirection,
 } from '@/lib/onboarding/creative-direction'
 
+export type PersistCreativeDirectionResult =
+  | {
+      ok: true
+      fingerprint: string
+      storage: 'story_creative_directions'
+    }
+  | {
+      ok: false
+      error: 'INVALID_DIRECTION' | 'TABLE_UNAVAILABLE' | 'WRITE_FAILED'
+    }
+
+function isMissingRelation(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false
+  const code = String(error.code ?? '')
+  const message = String(error.message ?? '').toLowerCase()
+  // PostgREST / Postgres missing relation signals
+  if (code === '42P01' || code === 'PGRST205' || code === 'PGRST204') return true
+  if (message.includes('does not exist') && message.includes('story_creative_directions')) {
+    return true
+  }
+  if (message.includes('could not find the table')) return true
+  return false
+}
+
+function logSafeCreativeDirectionFailure(args: {
+  storyId: string
+  fingerprint: string | null
+  errorCode: string
+  dbCode?: string
+}): void {
+  console.log('[v0] persist creative direction failed', {
+    storyId: args.storyId,
+    fingerprint: args.fingerprint,
+    errorCode: args.errorCode,
+    dbCode: args.dbCode ?? null,
+  })
+}
+
 export async function persistStoryCreativeDirection(args: {
   storyId: string
   ownerUserId: string
   direction: StoryCreativeDirection
-}): Promise<{ ok: true; fingerprint: string } | { ok: false; error: string }> {
+}): Promise<PersistCreativeDirectionResult> {
   const parsed = StoryCreativeDirectionSchema.safeParse(args.direction)
   if (!parsed.success) {
-    return { ok: false, error: 'invalid_direction' }
+    return { ok: false, error: 'INVALID_DIRECTION' }
   }
+
   const direction = parsed.data
   const fingerprint = creativeDirectionFingerprint(direction)
   const db = createAdminClient()
 
-  // Prefer dedicated table if present
-  const dedicated = await db.from('story_creative_directions').upsert(
+  const result = await db.from('story_creative_directions').upsert(
     {
       story_id: args.storyId,
       owner_user_id: args.ownerUserId,
@@ -38,43 +75,22 @@ export async function persistStoryCreativeDirection(args: {
     { onConflict: 'story_id' },
   )
 
-  if (!dedicated.error) {
-    return { ok: true, fingerprint }
-  }
-
-  // Fallback: store in story_generation_contracts.onboarding_json sidecar fields
-  // Only if table accepts insert; mode check may reject — best effort.
-  const { error: contractError } = await db.from('story_generation_contracts').upsert(
-    {
-      story_id: args.storyId,
-      mode: 'personalized_ai',
-      total_chapters: 50,
-      contract_source: 'template_fallback',
-      onboarding_json: {
-        creative_direction: direction,
-        creative_direction_fingerprint: fingerprint,
-      },
-      story_contract_json: {},
-      route_schema_json: {},
-      plot_debts_json: [],
-      ending_candidates_json: [],
-      quality_profile: 'lakoku_mobile_drama_v1',
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'story_id' },
-  )
-
-  if (contractError) {
-    // Non-fatal for lock path — log-friendly code only
-    console.log('[v0] persist creative direction failed', {
+  if (result.error) {
+    const errorCode = isMissingRelation(result.error) ? 'TABLE_UNAVAILABLE' : 'WRITE_FAILED'
+    logSafeCreativeDirectionFailure({
       storyId: args.storyId,
       fingerprint,
-      code: dedicated.error?.code ?? contractError.code,
+      errorCode,
+      dbCode: result.error.code,
     })
-    return { ok: false, error: 'persist_failed' }
+    return { ok: false, error: errorCode }
   }
 
-  return { ok: true, fingerprint }
+  return {
+    ok: true,
+    fingerprint,
+    storage: 'story_creative_directions',
+  }
 }
 
 export async function loadStoryCreativeDirection(
@@ -93,6 +109,8 @@ export async function loadStoryCreativeDirection(
     if (parsed.success) return parsed.data
   }
 
+  // Read-only legacy path: older rows may have stored direction in onboarding_json.
+  // Never write generation contracts from this module.
   const { data: contract } = await db
     .from('story_generation_contracts')
     .select('onboarding_json')

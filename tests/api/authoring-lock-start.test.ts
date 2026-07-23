@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   persistStoryBible: vi.fn(),
   enrichOpeningVoiceSheets: vi.fn(),
   generateNextChapterReal: vi.fn(),
+  runChapterGenerationAttempt: vi.fn(),
   after: vi.fn(),
   adminFactory: vi.fn(),
   proposeMystery: vi.fn(),
@@ -31,6 +32,9 @@ vi.mock('@/lib/authoring', () => ({
 }))
 vi.mock('@lakoku/runtime', () => ({
   generateNextChapterReal: mocks.generateNextChapterReal,
+}))
+vi.mock('@/lib/runtime/generation-mode', () => ({
+  runChapterGenerationAttempt: mocks.runChapterGenerationAttempt,
 }))
 vi.mock('next/server', () => ({
   after: mocks.after,
@@ -130,6 +134,11 @@ beforeEach(() => {
     void callback()
   })
   mocks.generateNextChapterReal.mockResolvedValue({ ok: true, chapterNumber: 1 })
+  mocks.runChapterGenerationAttempt.mockResolvedValue({
+    ok: true,
+    mode: 'standard',
+    result: { ok: true, chapterNumber: 1 },
+  })
   mocks.ensureReaderStateStarted.mockResolvedValue(undefined)
 })
 
@@ -224,17 +233,20 @@ describe('POST /api/stories/[id]/start-chapter', () => {
       { params: Promise.resolve({ id: 'story-a' }) },
     )
     expect(res.status).toBe(202)
-    expect(await res.json()).toEqual({
+    const body = await res.json()
+    expect(body).toEqual({
       ok: true,
       chapterNumber: 1,
       status: 'STARTED',
+      attemptId: expect.any(String),
     })
     expect(mocks.after).toHaveBeenCalledTimes(1)
-    expect(mocks.generateNextChapterReal).toHaveBeenCalledWith({
+    expect(mocks.runChapterGenerationAttempt).toHaveBeenCalledWith({
       storyId: 'story-a',
       userId: 'user-a',
       chapterNumber: 1,
       correlationId: expect.any(String),
+      attemptId: expect.any(String),
     })
     expect(mocks.ensureReaderStateStarted).toHaveBeenCalledWith('story-a', 1)
   })
@@ -257,9 +269,10 @@ describe('POST /api/stories/[id]/start-chapter', () => {
       ok: true,
       chapterNumber: 1,
       status: 'ALREADY_READY',
+      attemptId: null,
     })
     expect(mocks.after).not.toHaveBeenCalled()
-    expect(mocks.generateNextChapterReal).not.toHaveBeenCalled()
+    expect(mocks.runChapterGenerationAttempt).not.toHaveBeenCalled()
   })
 
   it('returns ALREADY_RUNNING without scheduling when active lease exists', async () => {
@@ -280,6 +293,7 @@ describe('POST /api/stories/[id]/start-chapter', () => {
       ok: true,
       chapterNumber: 1,
       status: 'ALREADY_RUNNING',
+      attemptId: null,
     })
     expect(mocks.after).not.toHaveBeenCalled()
   })

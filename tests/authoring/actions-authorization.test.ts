@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   persistStoryBible: vi.fn(),
   enrichOpeningVoiceSheets: vi.fn(),
   generateNextChapterReal: vi.fn(),
+  runChapterGenerationAttempt: vi.fn(),
   after: vi.fn(),
   adminFactory: vi.fn(),
   proposePremises: vi.fn(),
@@ -37,6 +38,9 @@ vi.mock('@/lib/authoring', () => ({
 }))
 vi.mock('@lakoku/runtime', () => ({
   generateNextChapterReal: mocks.generateNextChapterReal,
+}))
+vi.mock('@/lib/runtime/generation-mode', () => ({
+  runChapterGenerationAttempt: mocks.runChapterGenerationAttempt,
 }))
 vi.mock('next/server', () => ({ after: mocks.after }))
 vi.mock('@/lib/supabase/admin', () => ({
@@ -108,22 +112,33 @@ function validDraft(): StoryBibleDraft {
 
 function ownerQuery(owner: boolean) {
   const calls: string[] = []
-  const builder = {
-    select: vi.fn(() => {
-      calls.push('select')
-      return builder
-    }),
-    eq: vi.fn(() => {
-      calls.push('eq')
-      return builder
-    }),
-    maybeSingle: vi.fn(async () => {
-      calls.push('maybeSingle')
+  const builder: Record<string, unknown> = {}
+  let currentTable = 'stories'
+  builder.select = vi.fn(() => {
+    calls.push('select')
+    return builder
+  })
+  builder.eq = vi.fn(() => {
+    calls.push('eq')
+    return builder
+  })
+  builder.gt = vi.fn(() => builder)
+  builder.limit = vi.fn(() => builder)
+  builder.maybeSingle = vi.fn(async () => {
+    calls.push('maybeSingle')
+    if (currentTable === 'stories') {
       return { data: owner ? { id: 'story-a' } : null, error: null }
-    }),
-  }
+    }
+    // chapters / generation_leases: missing by default so kickoff can STARTED
+    return { data: null, error: null }
+  })
   return {
-    client: { from: vi.fn(() => builder) },
+    client: {
+      from: vi.fn((table: string) => {
+        currentTable = table
+        return builder
+      }),
+    },
     builder,
     calls,
   }
@@ -133,6 +148,11 @@ beforeEach(() => {
   vi.clearAllMocks()
   mocks.after.mockImplementation((callback: () => Promise<void>) => callback())
   mocks.generateNextChapterReal.mockResolvedValue({ ok: true, chapterNumber: 1 })
+  mocks.runChapterGenerationAttempt.mockResolvedValue({
+    ok: true,
+    mode: 'standard',
+    result: { ok: true, chapterNumber: 1 },
+  })
   mocks.ensureReaderStateStarted.mockResolvedValue(undefined)
 })
 
@@ -259,7 +279,7 @@ describe('brainstorm action authorization', () => {
     expect(result).toEqual({ ok: false, error: 'Masuk untuk membuat cerita.' })
     expect(mocks.adminFactory).not.toHaveBeenCalled()
     expect(mocks.after).not.toHaveBeenCalled()
-    expect(mocks.generateNextChapterReal).not.toHaveBeenCalled()
+    expect(mocks.runChapterGenerationAttempt).not.toHaveBeenCalled()
   })
 
   it('rejects another owner before scheduling or generation', async () => {
@@ -275,7 +295,7 @@ describe('brainstorm action authorization', () => {
     expect(db.builder.eq).toHaveBeenNthCalledWith(1, 'id', 'story-a')
     expect(db.builder.eq).toHaveBeenNthCalledWith(2, 'owner_user_id', 'user-b')
     expect(mocks.after).not.toHaveBeenCalled()
-    expect(mocks.generateNextChapterReal).not.toHaveBeenCalled()
+    expect(mocks.runChapterGenerationAttempt).not.toHaveBeenCalled()
     expect(mocks.ensureReaderStateStarted).not.toHaveBeenCalled()
   })
 
@@ -287,17 +307,19 @@ describe('brainstorm action authorization', () => {
 
     const result = await actions.startFirstChapter('story-a')
 
-    expect(result).toEqual({ ok: true, chapterNumber: 1 })
+    expect(result).toMatchObject({ ok: true, chapterNumber: 1, status: 'STARTED' })
     expect(db.client.from).toHaveBeenCalledWith('stories')
     expect(db.builder.eq).toHaveBeenNthCalledWith(1, 'id', 'story-a')
     expect(db.builder.eq).toHaveBeenNthCalledWith(2, 'owner_user_id', 'user-a')
-    expect(db.calls).toEqual(['select', 'eq', 'eq', 'maybeSingle'])
+    // ownership lookup is first; chapter/lease preflight may add more calls
+    expect(db.calls.slice(0, 4)).toEqual(['select', 'eq', 'eq', 'maybeSingle'])
     expect(mocks.after).toHaveBeenCalledTimes(1)
-    expect(mocks.generateNextChapterReal).toHaveBeenCalledWith({
+    expect(mocks.runChapterGenerationAttempt).toHaveBeenCalledWith({
       storyId: 'story-a',
       userId: 'user-a',
       chapterNumber: 1,
       correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      attemptId: expect.stringMatching(/^[0-9a-f-]{36}$/),
     })
     expect(mocks.ensureReaderStateStarted).toHaveBeenCalledWith('story-a', 1)
   })

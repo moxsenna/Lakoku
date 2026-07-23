@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server'
-import { generateNextChapter, generateNextChapterReal } from '@lakoku/runtime'
+import { generateNextChapter } from '@lakoku/runtime'
 import { guardAdminToken } from '@/lib/auth/admin-guard'
 import { getSessionUser } from '@/lib/api/user-state'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
+import { runChapterGenerationAttempt } from '@/lib/runtime/generation-mode'
 
 /**
  * Endpoint runtime: memicu workflow generasi satu bab.
@@ -58,25 +59,35 @@ export async function POST(
     }
 
     const mode = body.mode === 'fake' ? 'fake' : 'real'
-    const result =
-      mode === 'fake'
-        ? await generateNextChapter(id, n)
-        : await generateNextChapterReal({
-            storyId: id,
-            userId: user.id,
-            chapterNumber: n,
-            correlationId: crypto.randomUUID(),
-          })
+    if (mode === 'fake') {
+      const result = await generateNextChapter(id, n)
+      if (!result.ok) {
+        return NextResponse.json({ ok: false, reason: result.reason }, { status: 409 })
+      }
+      return NextResponse.json(result, { status: 201 })
+    }
 
+    const correlationId = crypto.randomUUID()
+    const dispatched = await runChapterGenerationAttempt({
+      storyId: id,
+      userId: user.id,
+      chapterNumber: n,
+      correlationId,
+    })
+    if (!dispatched.ok) {
+      return NextResponse.json({ ok: false, reason: dispatched.reason }, { status: 422 })
+    }
+    const result = dispatched.result as { ok: boolean; reason?: string }
     if (!result.ok) {
       // LEASE_HELD/CHAPTER_EXISTS/FAILED_REVIEW_REQUIRED → konflik/tak-dapat-diproses.
+      const reason = result.reason ?? 'UNKNOWN'
       const status =
-        result.reason === 'FAILED_REVIEW_REQUIRED'
+        reason === 'FAILED_REVIEW_REQUIRED' || reason === 'GENERATION_CONTRACT_INVALID'
           ? 422
-          : result.reason === 'CANON_MISSING'
+          : reason === 'CANON_MISSING'
             ? 404
             : 409
-      return NextResponse.json({ ok: false, reason: result.reason }, { status })
+      return NextResponse.json({ ok: false, reason }, { status })
     }
     return NextResponse.json(result, { status: 201 })
   } catch {

@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   createAdminClient: vi.fn(),
   generateNextChapter: vi.fn(),
   generateNextChapterReal: vi.fn(),
+  runChapterGenerationAttempt: vi.fn(),
 }))
 
 vi.mock('@/lib/auth/admin-guard', () => ({ guardAdminToken: mocks.guardAdminToken }))
@@ -14,6 +15,9 @@ vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.createAdminCli
 vi.mock('@lakoku/runtime', () => ({
   generateNextChapter: mocks.generateNextChapter,
   generateNextChapterReal: mocks.generateNextChapterReal,
+}))
+vi.mock('@/lib/runtime/generation-mode', () => ({
+  runChapterGenerationAttempt: mocks.runChapterGenerationAttempt,
 }))
 
 function makeOwnerDb(ownerFound: boolean) {
@@ -48,6 +52,11 @@ beforeEach(() => {
   vi.clearAllMocks()
   mocks.guardAdminToken.mockReturnValue(null)
   mocks.generateNextChapterReal.mockResolvedValue({ ok: true, chapterNumber: 1 })
+  mocks.runChapterGenerationAttempt.mockResolvedValue({
+    ok: true,
+    mode: 'standard',
+    result: { ok: true, chapterNumber: 1 },
+  })
 })
 
 describe('generation route ownership authorization', () => {
@@ -61,7 +70,7 @@ describe('generation route ownership authorization', () => {
 
     expect(response.status).toBe(401)
     expect(mocks.createAdminClient).not.toHaveBeenCalled()
-    expect(mocks.generateNextChapterReal).not.toHaveBeenCalled()
+    expect(mocks.runChapterGenerationAttempt).not.toHaveBeenCalled()
   })
 
   it('rejects other owner before generation', async () => {
@@ -81,18 +90,22 @@ describe('generation route ownership authorization', () => {
       ['eq', 'owner_user_id', 'user-b'],
       ['maybeSingle'],
     ])
-    expect(mocks.generateNextChapterReal).not.toHaveBeenCalled()
+    expect(mocks.runChapterGenerationAttempt).not.toHaveBeenCalled()
   })
 
   it('omits generation detail and internal findings from failed response', async () => {
     mocks.getSessionUser.mockResolvedValue({ id: 'user-a' })
     const fixture = makeOwnerDb(true)
     mocks.createAdminClient.mockReturnValue(fixture.db)
-    mocks.generateNextChapterReal.mockResolvedValue({
-      ok: false,
-      reason: 'FAILED_REVIEW_REQUIRED',
-      detail: 'provider secret sk-live-do-not-leak',
-      findings: [{ message: 'internal canon finding secret' }],
+    mocks.runChapterGenerationAttempt.mockResolvedValue({
+      ok: true,
+      mode: 'standard',
+      result: {
+        ok: false,
+        reason: 'FAILED_REVIEW_REQUIRED',
+        detail: 'provider secret sk-live-do-not-leak',
+        findings: [{ message: 'internal canon finding secret' }],
+      },
     })
     const { POST } = await import('@/app/api/stories/[id]/generate/route')
 
@@ -112,7 +125,9 @@ describe('generation route ownership authorization', () => {
     mocks.getSessionUser.mockResolvedValue({ id: 'user-a' })
     const fixture = makeOwnerDb(true)
     mocks.createAdminClient.mockReturnValue(fixture.db)
-    mocks.generateNextChapterReal.mockRejectedValue(new Error('DATABASE_URL=postgresql://internal-secret'))
+    mocks.runChapterGenerationAttempt.mockRejectedValue(
+      new Error('DATABASE_URL=postgresql://internal-secret'),
+    )
     const { POST } = await import('@/app/api/stories/[id]/generate/route')
 
     const response = await POST(request(), {
@@ -137,7 +152,7 @@ describe('generation route ownership authorization', () => {
 
     expect(response.status).toBe(201)
     expect(mocks.guardAdminToken).toHaveBeenCalledOnce()
-    expect(mocks.generateNextChapterReal).toHaveBeenCalledWith({
+    expect(mocks.runChapterGenerationAttempt).toHaveBeenCalledWith({
       storyId: 'premium:story-a',
       userId: 'user-a',
       chapterNumber: 1,

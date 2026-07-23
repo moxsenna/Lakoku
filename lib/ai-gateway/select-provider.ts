@@ -38,11 +38,25 @@ export async function selectProvider(
       getAiModelRoute('chapter_prose'),
       getAiModelRoute('choices'),
     ])
+    // Choices route must resolve independently. Only fall back to prose when
+    // explicit compatibility env is set; otherwise leave choicesRoute undefined
+    // so env/code fallbacks apply for the choices chain.
+    let resolvedChoices = choicesRoute ?? undefined
+    if (!resolvedChoices && process.env.LAKOKU_CHOICES_FALLBACK_TO_PROSE === '1') {
+      console.log('CHOICES_ROUTE_FALLBACK_TO_PROSE', {
+        reason: 'no_choices_route_and_compat_enabled',
+      })
+      resolvedChoices = aiRoute ?? undefined
+    } else if (!resolvedChoices) {
+      console.log('CHOICES_ROUTE_MISSING', {
+        reason: 'no_db_choices_route_using_env_or_code_fallback',
+      })
+    }
     return createGatewayProvider(
       undefined,
       genPolicy,
       aiRoute ?? undefined,
-      choicesRoute ?? undefined,
+      resolvedChoices,
     )
   }
   return createDeterministicProvider(genPolicy)

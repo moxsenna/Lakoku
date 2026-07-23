@@ -1,5 +1,5 @@
 import 'server-only'
-import { streamText, type LanguageModel } from 'ai'
+import { generateText, streamText, type LanguageModel } from 'ai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { z } from 'zod'
 import type { CanonSnapshot, Finding } from '@lakoku/narrative-core'
@@ -53,7 +53,9 @@ import {
 const DEFAULT_MODEL = 'openai/gpt-4.1-mini'
 /** Max wall time per model attempt — hang proxy must not hold lease forever. */
 const LLM_PROSE_TIMEOUT_MS = 120_000
-const LLM_CHOICE_TIMEOUT_MS = 60_000
+// Choices are small structured outputs; 90s allows slow structured models without
+// matching the longer prose budget.
+const LLM_CHOICE_TIMEOUT_MS = 90_000
 /**
  * Antigravity Gemini (`ag/*` via 9router) spends a large share of `max_tokens`
  * on reasoning/thinking. Without a high floor, chapter prose truncates mid-sentence.
@@ -759,23 +761,25 @@ async function generateChoiceJson(args: {
         candidate: candidateIdentity(candidate),
         useCase: args.route?.useCase ?? 'choices',
         workflowPhase: args.options.workflowPhase,
-        call: () => streamText({
-          model,
-          system,
-          prompt,
-          temperature: args.route?.temperature ?? undefined,
-          maxOutputTokens: resolveMaxOutputTokens({
-            label,
-            modelId: candidate.configuredModelId,
-            routeMax: args.route?.maxOutputTokens,
-            // Choices shorter, but ag/* still needs reasoning headroom.
-            fallback: isAntigravityModelLabel(label, candidate.configuredModelId)
-              ? AG_REASONING_MAX_OUTPUT_FLOOR
-              : 1024,
-          }),
-          abortSignal: AbortSignal.timeout(LLM_CHOICE_TIMEOUT_MS),
-          maxRetries: 0,
-        }),
+        // Choices are small JSON — non-stream generateText reduces failure surface.
+        call: () =>
+          generateText({
+            model,
+            system,
+            prompt,
+            temperature: args.route?.temperature ?? 0.1,
+            maxOutputTokens: resolveMaxOutputTokens({
+              label,
+              modelId: candidate.configuredModelId,
+              routeMax: args.route?.maxOutputTokens,
+              // Choices shorter, but ag/* still needs reasoning headroom.
+              fallback: isAntigravityModelLabel(label, candidate.configuredModelId)
+                ? AG_REASONING_MAX_OUTPUT_FLOOR
+                : 1024,
+            }),
+            abortSignal: AbortSignal.timeout(LLM_CHOICE_TIMEOUT_MS),
+            maxRetries: 0,
+          }) as unknown as ReturnType<typeof streamText>,
         consume: async (text) => {
           const parsed = parseModelJson(text)
           return args.options.consume ? args.options.consume(parsed) : parsed
@@ -812,8 +816,10 @@ export function createGatewayProvider(
   const chain = resolveModelChain(opts.model, aiRoute)
 
   // Route choices berdiri sendiri. Hanya bila tidak ada, pakai route chapter.
-  const resolvedChoicesRoute = choicesRoute ?? aiRoute
-  const choiceChain = resolveModelChain(opts.model, resolvedChoicesRoute)
+  // Prefer dedicated choices route; do not silently share prose route identity
+  // unless caller passed choicesRoute (or selectProvider compat env).
+  const resolvedChoicesRoute = choicesRoute ?? undefined
+  const choiceChain = resolveModelChain(opts.model, resolvedChoicesRoute ?? aiRoute)
 
   return {
     name: chain.map((c) => c.label).join(' → '),

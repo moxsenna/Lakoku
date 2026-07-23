@@ -323,17 +323,38 @@ export async function buildChoiceBranch(
 
   try {
     const provider = await deps.selectProvider(input.providerContext)
+    const providerId = typeof provider.name === 'string' ? provider.name : 'default'
+    const storyId = input.snapshot.storyId
+    const correlationId =
+      input.providerContext &&
+      typeof input.providerContext === 'object' &&
+      input.providerContext !== null &&
+      'correlationId' in input.providerContext
+        ? String((input.providerContext as { correlationId?: string }).correlationId ?? '')
+        : undefined
+
+    // Choice-specific capacity gate (separate from overall generation concurrency).
+    const { withChoiceGenerationSlot } = await import('@/lib/runtime/choice-concurrency')
 
     // ---- INITIAL ----
     let branch: ChoiceBranch | null = null
     try {
-      branch = await deps.generateChoiceBranch(
-        { provider },
-        providerInput,
+      branch = await withChoiceGenerationSlot(
         {
-          telemetryContext: input.providerContext,
-          workflowPhase: 'CHOICES_INITIAL',
+          providerId,
+          storyId,
+          chapterNumber: input.chapterNumber,
+          correlationId,
         },
+        () =>
+          deps.generateChoiceBranch(
+            { provider },
+            providerInput,
+            {
+              telemetryContext: input.providerContext,
+              workflowPhase: 'CHOICES_INITIAL',
+            },
+          ),
       )
     } catch (err) {
       lastCause = err
@@ -395,21 +416,34 @@ export async function buildChoiceBranch(
           },
         )
       } else {
-        // Default findings-aware repair: re-generate once with repair phase.
-        // Bounded finding codes + prior bad labels only (no full prose log).
+        // Findings-aware creative repair — do NOT dump diagnostic codes into
+        // mustNotInclude (that mixes narrative constraints with PROVIDER_ERROR etc.).
+        const { buildChoiceRepairNotes } = await import(
+          '@/lib/runtime/choice-error-taxonomy'
+        )
+        const repairNotes = buildChoiceRepairNotes(lastFindings)
         const badLabels = branch
           ? branch.choices.map((c) => c.label).filter(Boolean).slice(0, 4)
           : []
-        const findingCodes = lastFindings.map((f) => f.code).slice(0, 8)
+        // Soft guidance via chapterGoal only; keep mustNotInclude narrative-only.
+        const repairGoal = [
+          providerInput.chapterBrief.chapterGoal,
+          'Perbaiki dua tindakan:',
+          ...repairNotes.map((n) => `- ${n}`),
+          badLabels.length
+            ? `Hindari mengulang label yang gagal: ${badLabels.join(' | ')}`
+            : '',
+        ]
+          .filter(Boolean)
+          .join('\n')
+          .slice(0, 1200)
         const repairInput = {
           ...providerInput,
           chapterBrief: {
             ...providerInput.chapterBrief,
-            mustNotInclude: [
-              ...providerInput.chapterBrief.mustNotInclude,
-              ...findingCodes,
-              ...badLabels,
-            ].slice(0, 16),
+            chapterGoal: repairGoal,
+            // Keep existing narrative mustNotInclude; never append finding codes.
+            mustNotInclude: providerInput.chapterBrief.mustNotInclude.slice(0, 16),
           },
         }
         repaired = await deps.generateChoiceBranch(

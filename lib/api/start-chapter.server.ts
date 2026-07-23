@@ -1,10 +1,10 @@
 /**
  * Server-only first-chapter kickoff — shared by Server Actions and REST API.
- * Schedules generateNextChapterReal via next/server after(); returns immediately.
+ * Schedules generation via next/server after(); returns immediately.
+ * Mode (standard vs personalized) resolved by central dispatcher.
  */
 import 'server-only'
 import { after } from 'next/server'
-import { generateNextChapterReal } from '@lakoku/runtime'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ensureReaderStateStarted } from '@/lib/api/user-state'
 import {
@@ -13,6 +13,7 @@ import {
 } from '@/lib/authoring/action-auth'
 import { publicAuthoringErrorMessage } from '@/lib/authoring/server'
 import { safeErrorInfo } from '@/lib/observability/safe-error'
+import { runChapterGenerationAttempt } from '@/lib/runtime/generation-mode'
 
 export const STORY_NOT_FOUND_ERROR = 'Cerita tidak ditemukan.'
 
@@ -25,6 +26,8 @@ export type StartChapterSuccess = {
   ok: true
   chapterNumber: number
   status: StartChapterKickoffStatus
+  /** Durable attempt id when available (null until attempt table fully wired). */
+  attemptId: string | null
 }
 export type StartChapterFailure = { ok: false; error: string }
 export type StartChapterResult = StartChapterSuccess | StartChapterFailure
@@ -101,28 +104,46 @@ export async function startOwnedChapterGeneration(
     // Preflight — avoid useless after() when chapter already ready / in flight.
     if (await chapterExists(storyId, chapterNumber)) {
       await ensureReaderStateStarted(storyId, chapterNumber)
-      return { ok: true, chapterNumber, status: 'ALREADY_READY' }
+      return { ok: true, chapterNumber, status: 'ALREADY_READY', attemptId: null }
     }
     if (await hasActiveLease(storyId, chapterNumber)) {
       await ensureReaderStateStarted(storyId, chapterNumber)
-      return { ok: true, chapterNumber, status: 'ALREADY_RUNNING' }
+      return { ok: true, chapterNumber, status: 'ALREADY_RUNNING', attemptId: null }
     }
 
     const correlationId = crypto.randomUUID()
+    const attemptId = correlationId
     after(async () => {
       const startedAt = Date.now()
       try {
-        const result = await generateNextChapterReal({
+        const dispatched = await runChapterGenerationAttempt({
           storyId,
           userId: user.id,
           chapterNumber,
           correlationId,
+          attemptId,
         })
+        if (!dispatched.ok) {
+          console.log('START_CHAPTER_BACKGROUND_FAILED', {
+            storyId,
+            chapterNumber,
+            correlationId,
+            reason: dispatched.reason,
+            elapsedMs: Date.now() - startedAt,
+          })
+          return
+        }
+        const result = dispatched.result as {
+          ok: boolean
+          reason?: string
+          detail?: unknown
+        }
         if (!result.ok && result.reason !== 'CHAPTER_EXISTS' && result.reason !== 'LEASE_HELD') {
           console.log('START_CHAPTER_BACKGROUND_FAILED', {
             storyId,
             chapterNumber,
             correlationId,
+            mode: dispatched.mode,
             reason: result.reason,
             failedLayer:
               result.detail && typeof result.detail === 'object' && 'failedLayer' in result.detail
@@ -154,7 +175,7 @@ export async function startOwnedChapterGeneration(
 
     await ensureReaderStateStarted(storyId, chapterNumber)
 
-    return { ok: true, chapterNumber, status: 'STARTED' }
+    return { ok: true, chapterNumber, status: 'STARTED', attemptId }
   } catch (e) {
     return fail(e)
   }

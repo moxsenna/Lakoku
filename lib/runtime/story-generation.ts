@@ -84,7 +84,14 @@ export function realGenerationKey(storyId: string, n: number, scope: string) {
 }
 
 export type RealGenerateResult =
-  | { ok: true; chapterNumber: number; seq: number; repairAttempts: number }
+  | {
+      ok: true
+      chapterNumber: number
+      seq: number
+      repairAttempts: number
+      /** True when prose was loaded from PROSE_READY checkpoint (choices-only). */
+      fromCheckpoint?: boolean
+    }
   | {
       ok: false
       reason:
@@ -421,6 +428,8 @@ export interface StandardGenerateInput {
   userId: string
   chapterNumber: number
   correlationId: string
+  /** Durable attempt id; used for checkpoint identity. Defaults to correlationId. */
+  attemptId?: string | null
 }
 
 export async function generateNextChapterReal(
@@ -462,10 +471,14 @@ async function generateNextChapterRealInner(
   input: StandardGenerateInput,
 ): Promise<RealGenerateResult> {
   const { storyId, userId, chapterNumber, correlationId } = input
+  const attemptId = input.attemptId?.trim() || correlationId
   const startedAt = Date.now()
   let stage: GenerationStage = 'ACQUIRE_LEASE'
   let leaseId: string | null = null
   let leaseReleased = false
+  let fromCheckpoint = false
+  let proseFingerprintUsed: string | null = null
+  let checkpointAttemptId = attemptId
 
   const providerContext = createSynchronousProviderContext({
     userId,
@@ -532,6 +545,22 @@ async function generateNextChapterRealInner(
   leaseId = lease.lease_id
 
   try {
+    // 1b) Choice-only resume: load PROSE_READY checkpoint when available.
+    const {
+      loadUsableProseCheckpoint,
+      persistProseReadyCheckpoint,
+      markCheckpointStatus,
+      draftFromCheckpoint,
+      proseFingerprint,
+    } = await import('@/lib/runtime/chapter-generation-checkpoint')
+
+    const existingCheckpoint = await loadUsableProseCheckpoint({
+      storyId,
+      chapterNumber,
+      // Prefer any usable checkpoint for story+chapter on retry (not only this attemptId)
+      attemptId: null,
+    })
+
     // 2) Muat canon (read-only) resolved sampai bab target.
     stage = 'LOAD_CANON'
     const snapshot = await loadCanonSnapshot(storyId, chapterNumber)
@@ -575,96 +604,161 @@ async function generateNextChapterRealInner(
       opensNewThread: false,
     }
 
-    // 5) Generasi tervalidasi: plan → write → Layer A → Layer B → repair.
-    stage = 'GENERATE_PROSE'
-    const result = await generateChapter(
-      { provider: await selectProvider(providerContext) },
-      {
-        snapshot,
-        blueprint,
-        chapterNumber,
-        threadContext,
-        executionOptions: {
-          telemetryContext: providerContext,
-          workflowPhase: 'CHAPTER_PROSE_INITIAL',
-        },
-      },
-    )
-
-    stage = 'VALIDATE_PROSE'
-    if (result.status !== 'PUBLISHED' || !result.draft) {
-      await releaseLeaseOnce()
-      stage = 'RECORD_TERMINAL_ATTEMPT'
-      await recordGenerationAttempt({
-        storyId,
-        chapter: chapterNumber,
-        outcome: 'REVIEW_REQUIRED',
-        repairAttempts: result.attempts,
-        findings: result.findings,
-        correlationId,
-      })
-      const findingCodes = result.findings
-        .slice(0, 12)
-        .map((f) => `${f.severity}:${f.code}`)
-      console.log('GENERATION_REVIEW_REQUIRED', {
-        storyId,
-        chapterNumber,
-        correlationId,
-        failedLayer: result.failedLayer ?? null,
-        repairAttempts: result.attempts,
-        findingCodes,
-        elapsedMs: Date.now() - startedAt,
-      })
-      return {
-        ok: false,
-        reason: 'FAILED_REVIEW_REQUIRED',
-        detail: {
-          failedLayer: result.failedLayer,
-          findings: result.findings,
-          reason: result.reason,
-        },
-      }
+    // 5) Prose: resume from checkpoint OR generate + validate.
+    type ProseResult = {
+      status: string
+      draft?: ChapterDraftParsed | null
+      attempts: number
+      findings: Array<{ severity?: string; code?: string; message?: string }>
+      failedLayer?: string | null
+      reason?: string
     }
+    let result: ProseResult
+    let draft: ChapterDraftParsed
 
-    const draft = result.draft
-
-    // 5b) Hard content-boundary check (prompt-only is insufficient).
-    const proseText = [draft.title, ...(draft.paragraphs ?? [])].join('\n')
-    const boundaryFindings = validateContentBoundaries({
-      prose: proseText,
-      direction: creativeDirection,
-      chapterNumber,
-    })
-    if (boundaryFindings.some((f) => f.severity === 'CRITICAL')) {
-      await releaseLeaseOnce()
-      stage = 'RECORD_TERMINAL_ATTEMPT'
-      await recordGenerationAttempt({
+    if (existingCheckpoint) {
+      fromCheckpoint = true
+      proseFingerprintUsed = existingCheckpoint.proseFingerprint
+      checkpointAttemptId = existingCheckpoint.attemptId
+      const resumed = draftFromCheckpoint(existingCheckpoint) as unknown as ChapterDraftParsed
+      draft = resumed
+      result = {
+        status: 'PUBLISHED',
+        draft: resumed,
+        attempts: existingCheckpoint.proseAttemptCount,
+        findings: [],
+      }
+      await markCheckpointStatus({
         storyId,
-        chapter: chapterNumber,
-        outcome: 'REVIEW_REQUIRED',
-        repairAttempts: result.attempts,
-        findings: boundaryFindings.map((f) => ({
-          code: f.code,
-          severity: f.severity,
-          message: f.message,
-        })),
-        correlationId,
-      }).catch(() => undefined)
-      console.log('GENERATION_BOUNDARY_VIOLATION', {
+        chapterNumber,
+        attemptId: checkpointAttemptId,
+        status: 'RUNNING_CHOICES',
+        choiceAttemptCount: existingCheckpoint.choiceAttemptCount + 1,
+      })
+      console.log('GENERATION_CHOICES_ONLY_RESUME', {
         storyId,
         chapterNumber,
         correlationId,
-        codes: boundaryFindings.map((f) => f.code),
+        attemptId: checkpointAttemptId,
+        proseFingerprint: proseFingerprintUsed,
+        choiceAttemptCount: existingCheckpoint.choiceAttemptCount + 1,
         elapsedMs: Date.now() - startedAt,
       })
-      return {
-        ok: false,
-        reason: 'FAILED_REVIEW_REQUIRED',
-        detail: {
-          failedLayer: 'BOUNDARY',
-          findings: boundaryFindings,
-          reason: 'Hard content boundary violation',
+    } else {
+      stage = 'GENERATE_PROSE'
+      result = await generateChapter(
+        { provider: await selectProvider(providerContext) },
+        {
+          snapshot,
+          blueprint,
+          chapterNumber,
+          threadContext,
+          executionOptions: {
+            telemetryContext: providerContext,
+            workflowPhase: 'CHAPTER_PROSE_INITIAL',
+          },
         },
+      )
+
+      stage = 'VALIDATE_PROSE'
+      if (result.status !== 'PUBLISHED' || !result.draft) {
+        await releaseLeaseOnce()
+        stage = 'RECORD_TERMINAL_ATTEMPT'
+        await recordGenerationAttempt({
+          storyId,
+          chapter: chapterNumber,
+          outcome: 'REVIEW_REQUIRED',
+          repairAttempts: result.attempts,
+          findings: result.findings as never,
+          correlationId,
+        })
+        const findingCodes = result.findings
+          .slice(0, 12)
+          .map((f) => `${f.severity}:${f.code}`)
+        console.log('GENERATION_REVIEW_REQUIRED', {
+          storyId,
+          chapterNumber,
+          correlationId,
+          failedLayer: result.failedLayer ?? null,
+          repairAttempts: result.attempts,
+          findingCodes,
+          elapsedMs: Date.now() - startedAt,
+        })
+        return {
+          ok: false,
+          reason: 'FAILED_REVIEW_REQUIRED',
+          detail: {
+            failedLayer: result.failedLayer,
+            findings: result.findings,
+            reason: result.reason,
+          },
+        }
+      }
+
+      draft = result.draft
+
+      // 5b) Hard content-boundary check (prompt-only is insufficient).
+      const proseText = [draft.title, ...(draft.paragraphs ?? [])].join('\n')
+      const boundaryFindings = validateContentBoundaries({
+        prose: proseText,
+        direction: creativeDirection,
+        chapterNumber,
+      })
+      if (boundaryFindings.some((f) => f.severity === 'CRITICAL')) {
+        await releaseLeaseOnce()
+        stage = 'RECORD_TERMINAL_ATTEMPT'
+        await recordGenerationAttempt({
+          storyId,
+          chapter: chapterNumber,
+          outcome: 'REVIEW_REQUIRED',
+          repairAttempts: result.attempts,
+          findings: boundaryFindings.map((f) => ({
+            code: f.code,
+            severity: f.severity,
+            message: f.message,
+          })),
+          correlationId,
+        }).catch(() => undefined)
+        console.log('GENERATION_BOUNDARY_VIOLATION', {
+          storyId,
+          chapterNumber,
+          correlationId,
+          codes: boundaryFindings.map((f) => f.code),
+          elapsedMs: Date.now() - startedAt,
+        })
+        return {
+          ok: false,
+          reason: 'FAILED_REVIEW_REQUIRED',
+          detail: {
+            failedLayer: 'BOUNDARY',
+            findings: boundaryFindings,
+            reason: 'Hard content boundary violation',
+          },
+        }
+      }
+
+      // Persist PROSE_READY before choices so choice failure does not discard prose.
+      const saved = await persistProseReadyCheckpoint({
+        storyId,
+        chapterNumber,
+        attemptId,
+        correlationId,
+        title: draft.title,
+        paragraphs: draft.paragraphs ?? [],
+        proseAttemptCount: result.attempts,
+      })
+      if (saved.ok) {
+        proseFingerprintUsed = saved.checkpoint.proseFingerprint
+        checkpointAttemptId = saved.checkpoint.attemptId
+      } else {
+        // Still continue with in-memory prose; retry may regenerate if table missing.
+        proseFingerprintUsed = proseFingerprint(draft.title, draft.paragraphs ?? [])
+        console.log('CHECKPOINT_PROSE_READY_SKIPPED', {
+          storyId,
+          chapterNumber,
+          correlationId,
+          error: saved.error,
+        })
       }
     }
 
@@ -673,7 +767,7 @@ async function generateNextChapterRealInner(
     const readerSafe = toReaderSafe(draft)
     assertConsumerSafe(readerSafe)
 
-    // 7) Cabang pilihan LLM (grounded di prosa bab).
+    // 7) Cabang pilihan LLM (grounded di prosa bab / checkpoint).
     // Phase 5: no silent generic fallback — failure releases lease and fails terminal.
     stage = 'BUILD_CHOICE_CONTEXT'
     stage = 'BUILD_CHOICES'
@@ -699,14 +793,19 @@ async function generateNextChapterRealInner(
           await releaseLeaseOnce()
           return { ok: false, reason: publishedEnding.reason }
         }
+        await markCheckpointStatus({
+          storyId,
+          chapterNumber,
+          attemptId: checkpointAttemptId,
+          status: 'PUBLISHED',
+        })
         stage = 'RECORD_TERMINAL_ATTEMPT'
-        // Best-effort telemetry — never convert publish success into workflow failure.
         await recordGenerationAttempt({
           storyId,
           chapter: chapterNumber,
           outcome: 'PUBLISHED',
           repairAttempts: result.attempts,
-          findings: result.findings,
+          findings: result.findings as never,
           correlationId,
         }).catch(() => undefined)
         stage = 'COMPLETE'
@@ -715,9 +814,17 @@ async function generateNextChapterRealInner(
           chapterNumber: publishedEnding.chapter_number,
           seq: publishedEnding.seq,
           repairAttempts: result.attempts,
+          fromCheckpoint,
         }
       }
 
+      // Keep PROSE_READY so retry runs choices only.
+      await markCheckpointStatus({
+        storyId,
+        chapterNumber,
+        attemptId: checkpointAttemptId,
+        status: 'CHOICES_RETRY_WAIT',
+      })
       await releaseLeaseOnce()
       stage = 'RECORD_TERMINAL_ATTEMPT'
       const { mapChoiceFailureReasonToErrorCode } = await import(
@@ -727,7 +834,10 @@ async function generateNextChapterRealInner(
         storyId,
         chapterNumber,
         correlationId,
+        attemptId: checkpointAttemptId,
         generationKind: 'standard',
+        fromCheckpoint,
+        proseFingerprint: proseFingerprintUsed,
         stage: branch.repairAttempts > 0 ? 'VALIDATE_CHOICES_FINAL' : 'VALIDATE_CHOICES_INITIAL',
         errorCode: mapChoiceFailureReasonToErrorCode(branch.reason),
         reason: branch.reason,
@@ -735,13 +845,12 @@ async function generateNextChapterRealInner(
         repairAttempts: branch.repairAttempts,
         elapsedMs: Date.now() - startedAt,
       })
-      // Best-effort: telemetry failure must not change primary failure reason.
       await recordGenerationAttempt({
         storyId,
         chapter: chapterNumber,
         outcome: 'REVIEW_REQUIRED',
         repairAttempts: result.attempts + branch.repairAttempts,
-        findings: result.findings,
+        findings: result.findings as never,
         correlationId,
       }).catch(() => undefined)
       return {
@@ -751,6 +860,9 @@ async function generateNextChapterRealInner(
           choiceReason: branch.reason,
           findingCodes: branch.validationFindings.map((f) => f.code),
           repairAttempts: branch.repairAttempts,
+          fromCheckpoint,
+          proseFingerprint: proseFingerprintUsed,
+          attemptId: checkpointAttemptId,
         },
       }
     }
@@ -780,6 +892,13 @@ async function generateNextChapterRealInner(
 
     // 8) Publish atomik (chapter + outcomes + event + release lease).
     stage = 'PUBLISH_CHAPTER'
+    const publishKey = proseFingerprintUsed
+      ? realGenerationKey(
+          storyId,
+          chapterNumber,
+          `publish:${proseFingerprintUsed.slice(0, 16)}`,
+        )
+      : realGenerationKey(storyId, chapterNumber, 'publish')
     const published: PublishResult = await publishChapterV2({
       storyId,
       chapterNumber,
@@ -789,7 +908,7 @@ async function generateNextChapterRealInner(
       choices: branch.choices,
       outcomes: branch.outcomes,
       leaseId: lease.lease_id,
-      idempotencyKey: realGenerationKey(storyId, chapterNumber, 'publish'),
+      idempotencyKey: publishKey,
     })
 
     // publish_chapter releases lease transactionally on success.
@@ -797,15 +916,30 @@ async function generateNextChapterRealInner(
 
     if (!published.ok) {
       await releaseLeaseOnce()
+      // Keep prose checkpoint for retry after publish conflict if chapter not created.
+      await markCheckpointStatus({
+        storyId,
+        chapterNumber,
+        attemptId: checkpointAttemptId,
+        status: 'CHOICES_RETRY_WAIT',
+      })
       console.log('GENERATION_PUBLISH_CONFLICT', {
         storyId,
         chapterNumber,
         correlationId,
         reason: published.reason,
+        fromCheckpoint,
         elapsedMs: Date.now() - startedAt,
       })
       return { ok: false, reason: published.reason }
     }
+
+    await markCheckpointStatus({
+      storyId,
+      chapterNumber,
+      attemptId: checkpointAttemptId,
+      status: 'PUBLISHED',
+    })
 
     // Telemetri konsistensi (T8.1) — attempt sukses. Dipancarkan SETELAH publish.
     // Best-effort only: never convert publish success into workflow failure.
@@ -819,7 +953,7 @@ async function generateNextChapterRealInner(
           chapter: chapterNumber,
           outcome: 'PUBLISHED',
           repairAttempts: result.attempts,
-          findings: result.findings,
+          findings: result.findings as never,
           correlationId,
         }),
     )
@@ -829,7 +963,10 @@ async function generateNextChapterRealInner(
       storyId,
       chapterNumber,
       correlationId,
+      attemptId: checkpointAttemptId,
       repairAttempts: result.attempts,
+      fromCheckpoint,
+      proseFingerprint: proseFingerprintUsed,
       elapsedMs: Date.now() - startedAt,
     })
 
@@ -838,6 +975,7 @@ async function generateNextChapterRealInner(
       chapterNumber: published.chapter_number,
       seq: published.seq,
       repairAttempts: result.attempts,
+      fromCheckpoint,
     }
   } catch (err) {
     // Kegagalan tak terduga: lepas lease agar tak mengunci story.

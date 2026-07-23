@@ -117,6 +117,7 @@ export async function runChapterGenerationAttempt(
     userId: input.userId,
     chapterNumber: input.chapterNumber,
     correlationId: input.correlationId,
+    attemptId: input.attemptId ?? input.correlationId,
   })
   return { ok: true, result, mode: 'standard' }
 }

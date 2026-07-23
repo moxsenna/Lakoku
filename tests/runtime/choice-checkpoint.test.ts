@@ -8,7 +8,7 @@ import {
   proseFingerprint,
   publishIdempotencyKey,
   readerStatusFromCheckpoint,
-} from '@/lib/runtime/chapter-generation-checkpoint'
+} from '@/lib/runtime/chapter-generation-checkpoint.pure'
 
 describe('chapter generation checkpoint helpers', () => {
   it('prose fingerprint stable for same title/paragraphs', () => {

@@ -3,7 +3,7 @@
 **Branch:** `fix/generation-reliability`  
 **Worktree:** `.worktrees/fix-generation-reliability`  
 **Baseline:** `c3133ef`  
-**Head:** `90c6d1f`  
+**Head:** (see git log on branch)  
 **Date:** 2026-07-24  
 
 ## Commits
@@ -13,6 +13,8 @@
 | `b151d0d` | fix(safety): stop creative-direction contract wipe and harden observability |
 | `b1ab3e7` | feat(choices): choice protocol V2 creative draft + deterministic finalizer |
 | `90c6d1f` | feat(generation): mode dispatch, choice reliability, checkpoint foundation |
+| `1b8691d` | docs: generation reliability fix report |
+| *(latest)* | feat(generation): wire PROSE_READY choice-only resume path |
 
 ## Root causes
 
@@ -70,17 +72,21 @@ old AI output (full ChoiceBranch + effects)
 | QUALITY_* | — | quality_repair | — | REPAIR_EXHAUSTED |
 | UNKNOWN | — | — | next_provider | chain exhausted |
 
-## Checkpoint proof (unit-level)
+## Checkpoint proof
 
-Helpers prove:
+Helpers + sync path:
 
 - stable `proseFingerprint`
 - choice job key reuses same prose fingerprint
 - expired / wrong status not usable for choice-only retry
 - reader copy nontechnical (`preparing_choices`)
+- **`generateNextChapterRealInner`**: load usable checkpoint → skip `generateChapter` → `fromCheckpoint: true`
+- choice fail → `CHOICES_RETRY_WAIT` (prose retained)
+- publish success → `PUBLISHED`
 
-**Not yet proven in integrated fake-provider soak:**  
-`prose call count = 1` under choice failures. Full worker wiring to load checkpoint and skip prose remains follow-up (generation_jobs choice enqueue exists; sync path still generates choices inline after prose).
+Policy matrix unit test: `prose: 1, choice: 3, publish: 1`.
+
+**Still not run:** live fake-provider soak / multi-process worker claim.
 
 ## Mode dispatch proof (unit)
 

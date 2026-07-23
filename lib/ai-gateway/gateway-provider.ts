@@ -98,10 +98,38 @@ type UnindexedModelCandidate = Omit<ModelCandidate, 'fallbackIndex'>
 const OPENROUTER_PAID_DEFAULT = 'deepseek/deepseek-v3.2'
 
 /**
+ * Custom fetch yang menyuntik `reasoning_effort` ke body request OpenAI-compatible.
+ * KENAPA: AI SDK TIDAK meneruskan `providerOptions` ke body untuk provider
+ * openai-compatible, jadi reasoning model (ag/* Gemini) tetap ON dan menghabiskan
+ * token untuk berpikir → prosa bab kelaparan kata (<500). Injeksi di sini dijamin
+ * sampai ke body. Nilai berasal dari route.reasoningEffort (tetap tunable via DB).
+ */
+function reasoningInjectingFetch(
+  effort?: string | null,
+): typeof globalThis.fetch | undefined {
+  const value = effort?.trim()
+  if (!value) return undefined
+  return async (input, init) => {
+    if (init && typeof init.body === 'string') {
+      try {
+        const body = JSON.parse(init.body) as Record<string, unknown>
+        if (body && typeof body === 'object' && body.reasoning_effort === undefined) {
+          body.reasoning_effort = value
+          init = { ...init, body: JSON.stringify(body) }
+        }
+      } catch {
+        // Biarkan body apa adanya bila gagal parse.
+      }
+    }
+    return globalThis.fetch(input as Parameters<typeof globalThis.fetch>[0], init)
+  }
+}
+
+/**
  * Kandidat endpoint OpenAI-compatible kustom (tunnel/proxy pribadi). Memakai
  * env `CUSTOM_LLM_BASE_URL` + `CUSTOM_LLM_API_KEY`. Berbeda dari 9router.
  */
-function customCandidate(optModel?: string): UnindexedModelCandidate | null {
+function customCandidate(optModel?: string, effort?: string | null): UnindexedModelCandidate | null {
   const baseURL = process.env.CUSTOM_LLM_BASE_URL?.trim()
   if (!baseURL) return null
   const modelId = optModel ?? process.env.NARRATIVE_MODEL ?? 'gpt-4o-mini'
@@ -109,6 +137,7 @@ function customCandidate(optModel?: string): UnindexedModelCandidate | null {
     name: 'custom',
     baseURL,
     apiKey: process.env.CUSTOM_LLM_API_KEY,
+    fetch: reasoningInjectingFetch(effort),
   })
   return {
     model: custom(modelId),
@@ -125,7 +154,7 @@ function customCandidate(optModel?: string): UnindexedModelCandidate | null {
  * bisa dikonfigurasi sebagai provider mandiri di ai_model_routes (provider =
  * '9router') atau dipakai via env fallback chain.
  */
-function nineRouterCandidate(optModel?: string): UnindexedModelCandidate | null {
+function nineRouterCandidate(optModel?: string, effort?: string | null): UnindexedModelCandidate | null {
   const baseURL = process.env.NINEROUTER_BASE_URL?.trim()
   if (!baseURL) return null
   const apiKey = process.env.NINEROUTER_API_KEY?.trim()
@@ -135,6 +164,7 @@ function nineRouterCandidate(optModel?: string): UnindexedModelCandidate | null 
     name: '9router',
     baseURL,
     apiKey,
+    fetch: reasoningInjectingFetch(effort),
   })
   return {
     model: nine(modelId),
@@ -146,7 +176,7 @@ function nineRouterCandidate(optModel?: string): UnindexedModelCandidate | null 
 }
 
 /** Satu kandidat OpenRouter per model; tanpa fallback `models` tersembunyi. */
-function openRouterCandidates(): UnindexedModelCandidate[] {
+function openRouterCandidates(effort?: string | null): UnindexedModelCandidate[] {
   const apiKey = process.env.OPENROUTER_API_KEY?.trim()
   if (!apiKey) return []
 
@@ -157,6 +187,7 @@ function openRouterCandidates(): UnindexedModelCandidate[] {
     name: 'openrouter',
     baseURL: 'https://openrouter.ai/api/v1',
     apiKey,
+    fetch: reasoningInjectingFetch(effort),
   })
 
   return modelIds.map((modelId) => ({
@@ -169,13 +200,13 @@ function openRouterCandidates(): UnindexedModelCandidate[] {
 }
 
 /** Bangun kandidat env mentah dalam urutan fallback lama. */
-function resolveEnvModelCandidates(optModel?: string): UnindexedModelCandidate[] {
+function resolveEnvModelCandidates(optModel?: string, effort?: string | null): UnindexedModelCandidate[] {
   const candidates: UnindexedModelCandidate[] = []
-  const custom = customCandidate(optModel)
+  const custom = customCandidate(optModel, effort)
   if (custom) candidates.push(custom)
-  const nine = nineRouterCandidate(optModel)
+  const nine = nineRouterCandidate(optModel, effort)
   if (nine) candidates.push(nine)
-  candidates.push(...openRouterCandidates())
+  candidates.push(...openRouterCandidates(effort))
 
   if (candidates.length === 0) {
     const modelId = optModel ?? process.env.NARRATIVE_MODEL ?? DEFAULT_MODEL
@@ -221,7 +252,8 @@ function finalizeModelChain(candidates: UnindexedModelCandidate[]): ModelCandida
 
 /** DB route lebih dulu, lalu env/code fallback; indeks mengikuti chain final. */
 function resolveModelChain(optModel?: string, route?: AiModelRoute): ModelCandidate[] {
-  const envCandidates = resolveEnvModelCandidates(optModel)
+  const effort = route?.reasoningEffort ?? null
+  const envCandidates = resolveEnvModelCandidates(optModel, effort)
   const routeCandidates = route ? routeModelCandidates(route) : []
   return finalizeModelChain([...routeCandidates, ...envCandidates])
 }
@@ -353,22 +385,6 @@ function buildPrompt(args: {
 }
 
 /**
- * Teruskan reasoning effort route-level ke panggilan model via providerOptions.
- * Key harus cocok dengan nama provider yang didaftarkan createOpenAICompatible
- * (custom | openrouter | 9router). Key tak dikenal diabaikan SDK, jadi aman
- * untuk kandidat `gateway`. `reasoning_effort` dikirim apa adanya ke body request
- * (mis. 'none' mematikan thinking pada model ag/* reasoning).
- */
-function routeProviderOptions(
-  candidate: ModelCandidate,
-  route?: AiModelRoute,
-): Record<string, Record<string, string>> | undefined {
-  const effort = route?.reasoningEffort?.trim()
-  if (!effort) return undefined
-  return { [candidate.providerId]: { reasoning_effort: effort } }
-}
-
-/**
  * Hasilkan prosa via LLM dengan penjagaan: bila terdeteksi kebocoran istilah
  * internal, coba sekali lagi; bila masih bocor, lempar agar pipeline menangani
  * (fallback aman ditangani pemanggil bila perlu).
@@ -416,7 +432,6 @@ async function generateProse(args: {
                   : `${prompt}\n\nCATATAN: revisi sebelumnya memuat istilah teknis terlarang. Tulis ulang murni sebagai narasi cerita.`,
               temperature: args.route?.temperature ?? undefined,
               maxOutputTokens,
-              providerOptions: routeProviderOptions(candidate, args.route),
               abortSignal: AbortSignal.timeout(LLM_PROSE_TIMEOUT_MS),
               maxRetries: 0,
             }),
@@ -485,6 +500,9 @@ function buildChoiceSystemPrompt(): string {
     '- Gunakan aturan di atas berdasarkan currentChapter dari konteks.',
     '- Untuk nilai yang diwajibkan null, tulis JSON null; jangan tulis string "null" dan jangan hilangkan key.',
     '- Label pilihan harus berupa tindakan konkret (kata kerja) yang bisa dibayangkan pembaca.',
+    '- Di "routeDeltas", HANYA boleh ada key: truth, risk, secrecy, empathy. DILARANG membuat key rute lain (mis. nama tematik seperti "senyap"/"keberanian"); bila ragu, tulis routeDeltas: {}.',
+    '- Setiap objek outcomes HANYA boleh berisi key: choiceId, consequence, nextChapterNumber, isEnding, effect. DILARANG menambah key lain (mis. "label"/"hint" — itu milik choices).',
+    '- Jangan menambah field apa pun di luar skema "effect". Kolom yang tak dipakai (trustDeltas, flagsSet, evidenceAdded, endingBiasDeltas, threadTouches) isi kosong: {} atau [].',
     '- Jangan pernah gunakan kata "rute", "prompt", "model", "token", "provider", "narraza", "llm", "gateway" di teks pembaca.',
   ].join('\n')
 }
@@ -732,7 +750,6 @@ async function generateStoryContractJson(args: {
             routeMax: args.route?.maxOutputTokens,
             fallback: DEFAULT_PROSE_MAX_OUTPUT_TOKENS,
           }),
-          providerOptions: routeProviderOptions(candidate, args.route),
           abortSignal: args.options.signal,
           maxRetries: 0,
         }),
@@ -784,7 +801,6 @@ async function generateChoiceJson(args: {
               ? AG_REASONING_MAX_OUTPUT_FLOOR
               : 1024,
           }),
-          providerOptions: routeProviderOptions(candidate, args.route),
           abortSignal: AbortSignal.timeout(LLM_CHOICE_TIMEOUT_MS),
           maxRetries: 0,
         }),
@@ -932,6 +948,7 @@ function toModelCandidate(route: AiModelRoute | undefined): UnindexedModelCandid
       name: 'custom',
       baseURL,
       apiKey: process.env.CUSTOM_LLM_API_KEY,
+      fetch: reasoningInjectingFetch(route.reasoningEffort),
     })
     return {
       model: custom(route.modelId),
@@ -948,6 +965,7 @@ function toModelCandidate(route: AiModelRoute | undefined): UnindexedModelCandid
       name: 'openrouter',
       baseURL: 'https://openrouter.ai/api/v1',
       apiKey,
+      fetch: reasoningInjectingFetch(route.reasoningEffort),
     })
     return {
       model: openrouter(route.modelId),
@@ -965,6 +983,7 @@ function toModelCandidate(route: AiModelRoute | undefined): UnindexedModelCandid
       name: '9router',
       baseURL,
       apiKey,
+      fetch: reasoningInjectingFetch(route.reasoningEffort),
     })
     return {
       model: nine(route.modelId),

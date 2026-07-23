@@ -17,7 +17,7 @@ function repairBlock(
   return [
     'PERBAIKAN WAJIB (revisi sebelumnya bermasalah):',
     ...lines,
-    'Perpanjang dengan ADEGAN dan DIALOG pendek bila kurang kata—bukan kalimat panjang atau filler.',
+    'Jika bab kurang kata: tulis ulang JAUH lebih panjang — tiap adegan minimal ~250 kata dengan dialog panjang, deskripsi indrawi, dan monolog batin. JANGAN meringkas; tambah adegan bila perlu, bukan filler.',
   ].join('\n')
 }
 
@@ -47,8 +47,8 @@ export function buildWriterPrompt(input: BuildWriterPromptInput): WriterPromptPa
     beats.length
       ? `Beat wajib — tunjukkan lewat adegan, bukan ringkasan:\n${beats.map((b) => `- ${b}`).join('\n')}`
       : '',
-    `Bentuk ${scenes} adegan yang mengalir di lokasi konkret.`,
-    `Panjang total ${words.softMin}–${words.softMax} kata (wajib ${words.hardMin}–${words.hardMax}).`,
+    `Tulis ${scenes} adegan PENUH yang mengalir di lokasi konkret; tiap adegan minimal ~${Math.round(words.softMin / scenes)} kata dengan dialog panjang, deskripsi indrawi, dan monolog batin tokoh.`,
+    `PANJANG WAJIB minimal ${words.softMin} kata (target ${words.softMin}–${words.softMax}; jangan lewat ${words.hardMax}). JANGAN meringkas atau mempercepat alur — jika terasa kurang dari ${words.softMin} kata, tambahkan adegan atau perpanjang dialog, bukan filler.`,
     `Jumlah paragraf ${paragraphs.softMin}–${paragraphs.softMax} (wajib ${paragraphs.hardMin}–${paragraphs.hardMax}).`,
     'Buka dengan konflik/lanjutan dalam ±100 kata pertama.',
     'Tutup dengan 3–5 paragraf cliffhanger pendek (kecuali bab akhir cerita).',

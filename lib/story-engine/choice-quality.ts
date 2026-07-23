@@ -228,15 +228,26 @@ const INTERNAL_MECHANISM_PATTERNS: RegExp[] = [
  * Check if a label starts with an Indonesian verb.
  * Supports root imperatives, meN-, ber-, di-, ter-, ke- prefixed verbs.
  */
+/** Modifier aspek/cara yang boleh mendahului verba dalam frasa aksi. */
+const LEADING_ACTION_MODIFIERS = new Set([
+  'tetap', 'terus', 'segera', 'langsung', 'perlahan', 'cepat', 'coba',
+  'kembali', 'maju', 'mundur', 'pura-pura', 'tiba-tiba',
+])
+
 function startsWithVerb(label: string): boolean {
-  const firstWord = tokenize(label)[0] ?? ''
+  const tokens = tokenize(label)
+  // Lewati satu modifier aspek/cara di depan ("Tetap berdiri...", "Segera lari...").
+  const firstWord = (LEADING_ACTION_MODIFIERS.has(tokens[0] ?? '')
+    ? tokens[1]
+    : tokens[0]) ?? ''
   if (!firstWord) return false
 
   // Known root imperatives (exact match)
   if (INDO_ROOT_IMPERATIVES.has(firstWord)) return true
 
-  // meN- prefixed verbs: membaca, menulis, mengikuti, menyelidiki, membuka
-  if (/^me(?:m|n|ng|ny)[a-z]/i.test(firstWord)) return true
+  // meN- prefixed verbs (semua alomorf: mem-/men-/meng-/meny- + me-l/r/w/y):
+  // membaca, menulis, meletakkan, melarikan, merampas, mewakili.
+  if (/^me[a-z]{2,}/i.test(firstWord)) return true
 
   // ber- prefixed verbs: berjalan, berlari, bersembunyi, bertanya
   if (/^ber[a-z]/i.test(firstWord)) return true

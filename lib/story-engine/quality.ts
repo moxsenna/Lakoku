@@ -37,7 +37,16 @@ const ABSTRACT_TERMS = new Set([
 const CONCRETE_ACTION_PATTERN = /\b(?:berjalan|berlari|membuka|menutup|mengambil|meletakkan|memukul|menatap|melihat|mendengar|menyentuh|duduk|berdiri|masuk|keluar|membawa|menendang|mengejar|merebut|walk|run|open|close|take|put|hit|look|hear|touch|sit|stand|enter|leave|carry)\b/iu
 const GENERIC_CHOICE_PATTERN = /^(?:lanjut(?:kan)?|terus(?:kan)?|pilihan\s*[a-z0-9]+|apa yang harus dilakukan\??|pilih ini|continue|next|choice\s*[a-z0-9]+|what should .+ do\??)$/iu
 const INTERNAL_CHOICE_PATTERN = /\b(?:prompt|tokens?|models?|llm|providers?|routes?|system|internal)\b/iu
-const ACTION_PREFIX_PATTERN = /^(?:buka|tutup|ambil|tinggalkan|ikuti|hadang|tanya|tolong|selamatkan|lawan|kejar|periksa|baca|sembunyikan|ungkapkan|masuk|keluar|lari|panggil|cari|pilih|tolak|terima|kirim|hancurkan|jaga|dekati|hindari|open|close|take|leave|follow|stop|ask|help|save|fight|chase|inspect|read|hide|reveal|enter|run|call|find|choose|refuse|accept|send|destroy|guard|approach|avoid)\b/iu
+// Root imperatives + meN-/ber-/di-/ter- berimbuhan — selaras dengan
+// startsWithVerb di story-engine/choice-quality.ts. Tanpa dukungan meN-,
+// label alami LLM ("Menyembunyikan mahkota...") ditolak NOT_ACTIONABLE dan
+// SEMUA cabang pilihan gagal schema (akar CHOICE_REPAIR_EXHAUSTED produksi).
+// meN- assimilasi (me-, mem-, men-, meng-, meny-, mele-/mera-/mewa- untuk root
+// l/r/w/y) → cukup `me[a-z]{2,}`. Regex sempit sebelumnya menolak "Meletakkan"/
+// "Melarikan" (me+l) → memblokir seluruh cabang pilihan. Selaras dg startsWithVerb.
+// Modifier aspek/cara opsional di depan (Tetap/Segera/Diam-diam + verba) — pola
+// frasa aksi Indonesia yang lazim ditulis LLM ("Tetap berdiri menghadapi...").
+const ACTION_PREFIX_PATTERN = /^(?:(?:tetap|terus|segera|langsung|perlahan|diam-diam|cepat|coba|kembali|maju|mundur|pura-pura|tiba-tiba)\s+)?(?:me[a-z]{2,}|ber[a-z]+|di[a-z]+|ter[a-z]+|buka|tutup|ambil|tinggalkan|ikuti|hadang|tanya|tolong|selamatkan|lawan|kejar|periksa|baca|sembunyikan|ungkapkan|masuk|keluar|lari|panggil|cari|pilih|tolak|terima|kirim|hancurkan|jaga|dekati|hindari|open|close|take|leave|follow|stop|ask|help|save|fight|chase|inspect|read|hide|reveal|enter|run|call|find|choose|refuse|accept|send|destroy|guard|approach|avoid)\b/iu
 const STOP_WORDS = new Set([
   'yang', 'dan', 'atau', 'di', 'ke', 'dari', 'itu', 'ini', 'dengan', 'untuk',
   'pada', 'dalam', 'sambil', 'lalu', 'sebuah', 'the', 'a', 'an', 'and', 'or',

@@ -275,6 +275,99 @@ function projectChoiceInput(input: ChoiceInput): ChoiceProviderInput {
   }
 }
 
+/**
+ * Potong teks aman-pembaca ke batas maksimum di batas kata. LLM sering menulis
+ * choicePrompt/label sedikit lebih panjang dari batas UI; memotong lebih baik
+ * daripada menolak seluruh cabang pilihan (akar CHOICE_REPAIR_EXHAUSTED).
+ */
+function truncateAtWord(text: string, max: number): string {
+  const trimmed = text.trim()
+  if (trimmed.length <= max) return trimmed
+  const cut = trimmed.slice(0, max)
+  const lastSpace = cut.lastIndexOf(' ')
+  return (lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trim()
+}
+
+const CHOICE_KEYS = new Set(['id', 'label', 'hint'])
+const OUTCOME_KEYS = new Set(['choiceId', 'consequence', 'nextChapterNumber', 'isEnding', 'effect'])
+const EFFECT_KEYS = new Set(['routeDeltas', 'trustDeltas', 'flagsSet', 'evidenceAdded', 'endingBiasDeltas', 'threadTouches'])
+const ROUTE_DELTA_KEYS = new Set(['truth', 'risk', 'secrecy', 'empathy'])
+
+function pick(value: unknown, keys: Set<string>): Record<string, unknown> {
+  const source = (value ?? {}) as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  for (const [key, val] of Object.entries(source)) if (keys.has(key)) out[key] = val
+  return out
+}
+
+/** Clamp nilai numerik record ke rentang schema; buang non-numerik. */
+function clampNumberRecord(value: unknown, min: number, max: number): Record<string, number> {
+  const source = (value ?? {}) as Record<string, unknown>
+  const out: Record<string, number> = {}
+  for (const [key, val] of Object.entries(source)) {
+    if (typeof val === 'number' && Number.isFinite(val)) {
+      out[key] = Math.round(Math.min(max, Math.max(min, val)))
+    }
+  }
+  return out
+}
+
+/**
+ * Normalisasi output pilihan LLM sebelum validasi ketat: (1) potong string
+ * aman-pembaca ke batas UI, (2) buang key tak dikenal (mis. "label" di outcomes,
+ * key rute tematik, field asing di effect) alih-alih menolak seluruh cabang.
+ * Schema tetap `.strict()` — ini hanya membuat pipeline toleran pada kreativitas
+ * model, bukan melonggarkan kontrak. Akar CHOICE_REPAIR_EXHAUSTED produksi.
+ */
+export function normalizeChoiceReaderText(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object') return raw
+  const r = structuredClone(raw) as Record<string, unknown>
+  const result: Record<string, unknown> = {}
+
+  result.choicePrompt = typeof r.choicePrompt === 'string'
+    ? truncateAtWord(r.choicePrompt, 120)
+    : r.choicePrompt
+
+  result.choices = Array.isArray(r.choices)
+    ? r.choices.map((choice) => {
+        if (!choice || typeof choice !== 'object') return choice
+        const picked = pick(choice, CHOICE_KEYS)
+        if (typeof picked.label === 'string') picked.label = truncateAtWord(picked.label, 90)
+        if (typeof picked.hint === 'string') picked.hint = truncateAtWord(picked.hint, 140)
+        return picked
+      })
+    : r.choices
+
+  result.outcomes = Array.isArray(r.outcomes)
+    ? r.outcomes.map((outcome) => {
+        if (!outcome || typeof outcome !== 'object') return outcome
+        const picked = pick(outcome, OUTCOME_KEYS)
+        if (Array.isArray(picked.consequence)) {
+          // Schema membatasi 1..2 item; potong kelebihan, jangan tolak cabang.
+          picked.consequence = picked.consequence.slice(0, 2).map((item) =>
+            typeof item === 'string' ? truncateAtWord(item, 160) : item)
+        }
+        if (picked.effect && typeof picked.effect === 'object') {
+          const effect = pick(picked.effect, EFFECT_KEYS)
+          effect.routeDeltas = clampNumberRecord(pick(effect.routeDeltas, ROUTE_DELTA_KEYS), -20, 20)
+          effect.trustDeltas = clampNumberRecord(effect.trustDeltas, -10, 10)
+          effect.endingBiasDeltas = clampNumberRecord(effect.endingBiasDeltas, -100, 100)
+          if (effect.flagsSet && typeof effect.flagsSet === 'object') {
+            const flags: Record<string, boolean> = {}
+            for (const [k, v] of Object.entries(effect.flagsSet as Record<string, unknown>)) {
+              flags[k] = Boolean(v)
+            }
+            effect.flagsSet = flags
+          }
+          picked.effect = effect
+        }
+        return picked
+      })
+    : r.outcomes
+
+  return result
+}
+
 /** Hasilkan pilihan dinamis dari chapter draft kanonis dan input provider terbatas. */
 export async function generateChoiceBranch(
   deps: GatewayDeps,
@@ -294,7 +387,7 @@ export async function generateChoiceBranch(
 
   const validate = (raw: unknown): ChoiceBranch => {
     try {
-      return validateChoiceBranch(raw, providerInput.currentChapter)
+      return validateChoiceBranch(normalizeChoiceReaderText(raw), providerInput.currentChapter)
     } catch (error) {
       if (error instanceof GatewayError && error.code === 'CHOICE_INVALID') {
         const contentRejected = error.errors?.some((item) => (

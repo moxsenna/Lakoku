@@ -129,9 +129,44 @@ Expected: all listed files green (41+ tests across reliability suite).
 | New migrations | `20260724100000_reconcile_...`, `20260724110000_chapter_generation_checkpoints` |
 | Duplicate version | `story_creative_directions` → `20260722090001_*` |
 | Local reset / db tests | **Not run** (no local supabase push this session) |
-| Linked dry-run | **Not run** — needs explicit approval |
-| Production migration | **Not applied** |
+| Linked dry-run | **OK** (2026-07-24) — would push 4 local-only versions |
+| Production migration | **Not applied** — awaiting approval |
 | Data audit | Script ready; production counts unknown |
+
+### Linked dry-run evidence (user terminal)
+
+```text
+Would push these migrations:
+ • 20260722090001_story_creative_directions.sql
+ • 20260723010000_ai_model_route_reasoning_effort.sql
+ • 20260724100000_reconcile_choice_routes_and_creative_direction.sql
+ • 20260724110000_chapter_generation_checkpoints.sql
+```
+
+`migration list --linked` (tail):
+
+| Local | Remote | Meaning |
+|-------|--------|---------|
+| `20260722090000` | `20260722090000` | Already remote — was **align_choices** (policy + choices route), not creative_directions |
+| `20260722090001` | *(empty)* | Local creative_directions rename — **not** on remote yet |
+| `20260723010000` | *(empty)* | reasoning_effort column |
+| `20260724100000` | *(empty)* | idempotent reconcile |
+| `20260724110000` | *(empty)* | checkpoints |
+
+SQL probes (user dashboard):
+
+- `to_regclass('public.story_creative_directions')` → **NULL** (table missing)
+- `to_regclass('public.chapter_generation_checkpoints')` → **NULL** (table missing)
+
+**Interpretation:** Remote only applied the old dual-prefix winner (`align_choices`). Creative directions never landed. Rename to `…90001` is **safe** (not a re-apply of applied creative_directions). Repair + checkpoint migrations create missing objects with `if not exists`.
+
+**Config note:** CLI warned local `major_version` differs; linked project is PG 17. `supabase/config.toml` still has `major_version = 15` — fix before local DB work; not a blocker for linked push of these SQL files.
+
+**Push command (only after explicit approval):**
+
+```bash
+pnpm exec supabase db push --linked
+```
 
 ## Soak result
 
@@ -143,19 +178,19 @@ Release gate 30/30 eventual publish **not claimed**.
 
 ## Remaining risks / follow-up
 
-1. **Choice-only worker path incomplete:** checkpoint table + helpers exist; `generateNextChapterReal` still runs choices inline after prose. Need wire: persist PROSE_READY → enqueue CHOICES job → claim → publish without prose regen.
+1. **Async choice job worker** still optional: sync path already resumes from PROSE_READY without prose regen; true background CHOICES job enqueue/claim not fully productized.
 2. **Attempt durable table:** `attemptId` currently = `correlationId`; not full `generation_jobs` QUEUED-before-STARTED unless job enqueue path used.
 3. **Status API attempt-aware:** reader status helpers added; chapter status route may still prefer latest story_event failure — needs route integration.
 4. **Native structured `Output.object`:** V2 schema ready; provider still JSON-prompt + parse (generateText). Native schema capability flag not DB-wired.
 5. **Production empty-contract audit** not executed.
-6. **Historical migration rename** `20260722090000` → `20260722090001` for creative_directions: if production already recorded old version name, reconcile carefully before linked push.
+6. **Linked migration push** dry-run OK; production apply still needs approval.
 7. Provider external dependency remains primary reliability risk.
 
 ## Deployment
 
-- Commit SHA head: `90c6d1f`
+- Commit SHA head: `cc49f17` (branch tip may advance)
 - Container image: not built/deployed this session
-- Migration version: pending approval
+- Migration: dry-run linked OK; **not pushed**
 - Health checks: not run on VPS
 
 ## Definition of Done (plan §32)

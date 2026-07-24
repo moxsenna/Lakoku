@@ -130,7 +130,7 @@ Expected: all listed files green (41+ tests across reliability suite).
 | Duplicate version | `story_creative_directions` → `20260722090001_*` |
 | Local reset / db tests | **Not run** (no local supabase push this session) |
 | Linked dry-run | **OK** (2026-07-24) — would push 4 local-only versions |
-| Production migration | **Not applied** — awaiting approval |
+| Production migration | **Applied** (user terminal, 2026-07-24) — 4 versions pushed |
 | Data audit | Script ready; production counts unknown |
 
 ### Linked dry-run evidence (user terminal)
@@ -162,11 +162,19 @@ SQL probes (user dashboard):
 
 **Config note:** CLI warned local `major_version` differs; linked project is PG 17. `supabase/config.toml` still has `major_version = 15` — fix before local DB work; not a blocker for linked push of these SQL files.
 
-**Push command (only after explicit approval):**
+**Push result (applied):**
 
-```bash
-pnpm exec supabase db push --linked
+```text
+Applying migration 20260722090001_story_creative_directions.sql...
+NOTICE: relation "story_creative_directions" already exists, skipping
+Applying migration 20260723010000_ai_model_route_reasoning_effort.sql...
+NOTICE: column "reasoning_effort" ... already exists, skipping
+Applying migration 20260724100000_reconcile_choice_routes_and_creative_direction.sql...
+Applying migration 20260724110000_chapter_generation_checkpoints.sql...
+Finished supabase db push.
 ```
+
+All four versions recorded; idempotent notices expected for objects already present.
 
 ## Soak result
 
@@ -183,14 +191,14 @@ Release gate 30/30 eventual publish **not claimed**.
 3. **Status API attempt-aware:** reader status helpers added; chapter status route may still prefer latest story_event failure — needs route integration.
 4. **Native structured `Output.object`:** V2 schema ready; provider still JSON-prompt + parse (generateText). Native schema capability flag not DB-wired.
 5. **Production empty-contract audit** not executed.
-6. **Linked migration push** dry-run OK; production apply still needs approval.
+6. **Linked migration push** applied 2026-07-24 (4 versions).
 7. Provider external dependency remains primary reliability risk.
 
 ## Deployment
 
 - Commit SHA head: `cc49f17` (branch tip may advance)
 - Container image: not built/deployed this session
-- Migration: dry-run linked OK; **not pushed**
+- Migration: **pushed linked** (20260722090001, 20260723010000, 20260724100000, 20260724110000)
 - Health checks: not run on VPS
 
 ## Definition of Done (plan §32)

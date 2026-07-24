@@ -196,10 +196,15 @@ Release gate 30/30 eventual publish **not claimed**.
 
 ## Deployment
 
-- Commit SHA head: `cc49f17` (branch tip may advance)
-- Container image: not built/deployed this session
+- Commit SHA deployed: `feda39a` (`fix/generation-reliability`)
+- VPS: `/opt/lakoku`, container `lakoku-web`
+- Backup: `/opt/lakoku.old.20260724155013`
+- Image rebuild: `docker compose up -d --build` OK
+- Health: `http://127.0.0.1:5200/` → **200**, `https://lakoku.biz.id/` → **200**, status **healthy**
+- `.env` preserved
+- Neighbors (caddy/9router/publiora) still up
 - Migration: **pushed linked** (20260722090001, 20260723010000, 20260724100000, 20260724110000)
-- Health checks: not run on VPS
+- DB probe: `chapter_generation_checkpoints` present
 
 ## Definition of Done (plan §32)
 

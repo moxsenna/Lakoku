@@ -43,6 +43,7 @@ function createAdminDb(input: {
   chapter?: DbResult
   leases?: DbResult
   events?: DbResult
+  checkpoint?: DbResult
 }) {
   const calls: Call[] = []
   const client = {
@@ -65,6 +66,9 @@ function createAdminDb(input: {
         calls.push({ table, method: 'maybeSingle', args: [], filters: [...filters] })
         if (table === 'chapters') return input.chapter ?? { data: null, error: null }
         if (table === 'generation_leases') return input.leases ?? { data: null, error: null }
+        if (table === 'chapter_generation_checkpoints') {
+          return input.checkpoint ?? { data: null, error: null }
+        }
         return { data: null, error: null }
       })
       // list path for events
@@ -76,6 +80,9 @@ function createAdminDb(input: {
           if (table === 'story_events') return input.events ?? { data: [], error: null }
           if (table === 'generation_leases') return input.leases ?? { data: null, error: null }
           if (table === 'chapters') return input.chapter ?? { data: null, error: null }
+          if (table === 'chapter_generation_checkpoints') {
+            return input.checkpoint ?? { data: null, error: null }
+          }
           return { data: null, error: null }
         }
         return run().then(onfulfilled, onrejected)
@@ -228,6 +235,113 @@ describe('getChapterStatusForUser', () => {
       storyId: STORY_A,
       chapterNumber: 4,
     })).resolves.toEqual(expect.objectContaining({ status: 'failed' }))
+  })
+
+  it('returns generating (preparing_choices) when PROSE_READY checkpoint exists despite old failure', async () => {
+    const attemptId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const fixture = createAdminDb({
+      chapter: { data: null, error: null },
+      leases: { data: null, error: null },
+      events: {
+        data: [
+          {
+            seq: 9,
+            type: 'GENERATION_ATTEMPT',
+            payload: {
+              chapter_number: 2,
+              outcome: 'REVIEW_REQUIRED',
+              correlation_id: attemptId,
+            },
+            created_at: '2026-07-15T01:00:00.000Z',
+          },
+        ],
+        error: null,
+      },
+      checkpoint: {
+        data: {
+          story_id: STORY_A,
+          chapter_number: 2,
+          attempt_id: attemptId,
+          correlation_id: attemptId,
+          status: 'CHOICES_RETRY_WAIT',
+          title: 'Surat',
+          paragraphs_json: ['Paragraf satu.', 'Paragraf dua.'],
+          prose_fingerprint: 'abc123abc123abc123abc123abc123ab',
+          canon_version: null,
+          blueprint_version: null,
+          direction_fingerprint: null,
+          prose_attempt_count: 1,
+          choice_attempt_count: 1,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 60_000).toISOString(),
+        },
+        error: null,
+      },
+    })
+    mocks.adminFactory.mockReturnValue(fixture.client)
+    const { getChapterStatusForUser } = await import('@/lib/api/chapter-status.server')
+
+    await expect(
+      getChapterStatusForUser({
+        userId: USER_A,
+        storyId: STORY_A,
+        chapterNumber: 2,
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        status: 'generating',
+        progressPhase: 'preparing_choices',
+        attemptId,
+      }),
+    )
+  })
+
+  it('ignores stale failure from other attemptId when current attempt has no terminal event', async () => {
+    const currentAttempt = '11111111-1111-4111-8111-111111111111'
+    const oldAttempt = '22222222-2222-4222-8222-222222222222'
+    const fixture = createAdminDb({
+      chapter: { data: null, error: null },
+      leases: { data: null, error: null },
+      checkpoint: { data: null, error: null },
+      events: {
+        data: [
+          {
+            seq: 9,
+            type: 'GENERATION_ATTEMPT',
+            payload: {
+              chapter_number: 2,
+              outcome: 'REVIEW_REQUIRED',
+              correlation_id: oldAttempt,
+            },
+            created_at: '2026-07-15T01:00:00.000Z',
+          },
+        ],
+        error: null,
+      },
+    })
+    mocks.adminFactory.mockReturnValue(fixture.client)
+    const { getChapterStatusForUser } = await import('@/lib/api/chapter-status.server')
+
+    // Without attemptId: old failure still wins (latest for chapter).
+    await expect(
+      getChapterStatusForUser({
+        userId: USER_A,
+        storyId: STORY_A,
+        chapterNumber: 2,
+      }),
+    ).resolves.toEqual(expect.objectContaining({ status: 'failed' }))
+
+    // With new attemptId: ignore old failure → dead/no signal → failed (not stale success).
+    // Still failed because no lease/checkpoint for new attempt — but not because of old event.
+    await expect(
+      getChapterStatusForUser({
+        userId: USER_A,
+        storyId: STORY_A,
+        chapterNumber: 2,
+        attemptId: currentAttempt,
+      }),
+    ).resolves.toEqual(expect.objectContaining({ status: 'failed' }))
   })
 
   it('denies private story for non-owner and anon before lease/event reads', async () => {

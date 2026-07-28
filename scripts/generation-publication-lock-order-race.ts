@@ -55,8 +55,8 @@ function insertFixture(target: RaceTarget, userId: string, personalized: boolean
     values (:'story_id', 'Publication lock order', :'user_id'::uuid, 'private', :'story_mode');
     insert into public.reader_states (user_id, story_id, current_chapter)
     values (:'user_id'::uuid, :'story_id', :'chapter'::integer);
-    insert into public.story_generation_contracts (story_id, mode)
-    select :'story_id', :'story_mode'
+    insert into public.story_generation_contracts (story_id, mode, story_contract_version)
+    select :'story_id', :'story_mode', 1
     where :'story_mode' = 'personalized_ai';
     insert into public.generation_jobs (
       id, story_id, chapter_number, user_id, generation_kind, trigger_choice_id,

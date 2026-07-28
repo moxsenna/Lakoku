@@ -52,10 +52,9 @@ async function verifyRowLockBlocked(
   blockedPid: number,
   retries = 35,
 ): Promise<void> {
-  const query = `select pg_catalog.pg_blocking_pids(${blockedPid})::text;`
+  const query = `select (${blockingPid} = any(pg_catalog.pg_blocking_pids(${blockedPid})))::text;`
   for (let i = 0; i < retries; i++) {
-    const blocking = execLocalPsql(target, query).trim()
-    if (blocking.includes(String(blockingPid))) {
+    if (execLocalPsql(target, query).trim() === 'true') {
       return
     }
     await new Promise((resolve) => setTimeout(resolve, 200))

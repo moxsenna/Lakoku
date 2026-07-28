@@ -11,7 +11,7 @@ import {
   RouteChoiceEffectSchema,
   type RouteChoiceEffect,
 } from '../story-engine/route-state'
-import { validateChoiceQuality } from '../story-engine/quality'
+import { validateChoiceLabelStructural } from '../story-engine/quality'
 import { GatewayError, scanForLeaks } from './safety'
 
 // ---------- Plan (WF step 2: Plan chapter) ----------
@@ -93,6 +93,43 @@ const SoftClaimSchema = z
   })
   .strict()
 
+/**
+ * Plot-debt closure proposal emitted by the writer. Closure is a PROPOSAL only:
+ * the pure resolver (story-engine/plot-debt-closure) decides admissibility.
+ */
+export const PLOT_DEBT_CLOSURE_FORMS = [
+  'RESOLVED',
+  'SUBVERTED',
+  'TRANSFORMED',
+  'ABANDONED',
+] as const
+
+const MAX_CLOSURE_PROPOSALS = 20
+
+const PlotDebtClosureProposalSchema = z
+  .object({
+    debtId: z.string().trim().min(1).max(100),
+    closureForm: z.enum(PLOT_DEBT_CLOSURE_FORMS),
+  })
+  .strict()
+
+const PlotDebtClosureProposalListSchema = z
+  .array(PlotDebtClosureProposalSchema)
+  .max(MAX_CLOSURE_PROPOSALS)
+  .superRefine((proposals, ctx) => {
+    const seen = new Set<string>()
+    proposals.forEach((proposal, index) => {
+      if (seen.has(proposal.debtId)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [index, 'debtId'],
+          message: `Closure proposal debt IDs must be unique; "${proposal.debtId}" repeats.`,
+        })
+      }
+      seen.add(proposal.debtId)
+    })
+  })
+
 export const ChapterDraftSchema = z
   .object({
     storyId: z.string().min(1),
@@ -111,10 +148,18 @@ export const ChapterDraftSchema = z
     dialogue: z.array(DialogueLineSchema).default([]),
     emotionBeats: z.array(EmotionBeatSchema).default([]),
     softClaims: z.array(SoftClaimSchema).default([]),
+    // Sinyal audit plot-debt (opsional) — dibaca derivePlotDebtAuditFlags.
+    // Tidak diberi default agar "tidak dinyatakan" tetap dapat dibedakan dari false.
+    opensNewThread: z.boolean().optional(),
+    opensMajorMystery: z.boolean().optional(),
+    opensNewConflict: z.boolean().optional(),
+    /** Usulan penutupan plot debt; keputusan akhir ada di resolver murni. */
+    closesPlotDebts: PlotDebtClosureProposalListSchema.optional(),
   })
   .strict()
 
 export type ChapterDraftParsed = z.infer<typeof ChapterDraftSchema>
+export type PlotDebtClosureProposalDraft = z.infer<typeof PlotDebtClosureProposalSchema>
 
 // ---------- Dynamic choice branch (chapters 1..49) ----------
 
@@ -214,14 +259,11 @@ export const ChoiceBranchSchema = z.object({
       checkReaderFacingText(choice.hint, context, ['choices', index, 'hint'])
     }
 
-    const qualityFindings = validateChoiceQuality({
-      labels: [choice.label],
-      lastParagraphs: [choice.label],
-    })
-    for (const finding of qualityFindings) {
-      if (finding.code === 'CHOICE_GENERIC_OR_INTERNAL' || finding.code === 'CHOICE_NOT_ACTIONABLE') {
-        addChoiceIssue(context, ['choices', index, 'label'], finding.code, finding.message)
-      }
+    // Structural-only. Grounding/distinctness against final prose is enforced by
+    // the domain validator (validateChoiceBranchQuality), never at schema level.
+    const structuralFindings = validateChoiceLabelStructural(choice.label)
+    for (const finding of structuralFindings) {
+      addChoiceIssue(context, ['choices', index, 'label'], finding.code, finding.message)
     }
   })
 

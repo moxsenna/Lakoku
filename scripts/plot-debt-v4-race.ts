@@ -200,6 +200,70 @@ async function runRaceTests(): Promise<void> {
       console.log('  ✓ Property 1: same job + same payload → idempotent success')
     }
 
+    // ─── Property 1.5: same job + different payload → IDEMPOTENCY_CONFLICT ───
+    // Both read RUNNING in Phase A (no lock). First to acquire J lock succeeds.
+    // Second reads SUCCEEDED under J lock with different hash → IDEMPOTENCY_CONFLICT.
+    // Also verified non-concurrently in plot_debt_closures_functional_test.sql.
+    {
+      const fixture = insertFixture(target, 'idemp-conflict', storyIds)
+
+      const s1 = startRacePsql(target, 'ic-s1', {})
+      sessions.push(s1)
+      await waitForRaceSession(s1)
+      s1.child.stdin.write(`
+        begin;
+        set local statement_timeout = '10s';
+        ${v4CallSql(fixture)}
+        select 'IC_S1';
+      `)
+      await waitForRaceToken(s1, 'IC_S1')
+
+      // Session B: DIFFERENT prose, choicePrompt, and choices on the SAME job.
+      const s2 = startRacePsql(target, 'ic-s2', {})
+      sessions.push(s2)
+      await waitForRaceSession(s2)
+      s2.child.stdin.write(`
+        begin;
+        set local statement_timeout = '10s';
+        set local role service_role;
+        select public.publish_generation_job_chapter_v4(
+          '${fixture.jobId}'::uuid, 'v4-test-worker',
+          '${fixture.claimToken}'::uuid, '${fixture.leaseId}'::uuid,
+          '${fixture.storyId}', ${CHAPTER},
+          'Different Title', '["Different paragraph."]'::jsonb,
+          'Apa yang harus dilakukan?',
+          '[{"id":"go-fast","label":"Ikuti jalan pintas"},{"id":"search-area","label":"Cari area aman"}]'::jsonb,
+          '[{"choiceId":"go-fast","consequence":["Cepat."],"nextChapterNumber":11,"isEnding":false,"effect_json":{},"choice_kind":"normal"},{"choiceId":"search-area","consequence":["Aman."],"nextChapterNumber":11,"isEnding":false,"effect_json":{},"choice_kind":"normal"}]'::jsonb,
+          null, null, null::jsonb
+        )::text;
+        select 'IC_S2';
+      `)
+      await waitForRaceToken(s2, 'IC_S2')
+
+      s1.child.stdin.end(`commit;`)
+      s2.child.stdin.end(`commit;`)
+      await Promise.all([waitForRaceSuccess(s1), waitForRaceSuccess(s2)])
+
+      const statusA = execLocalPsql(target, `
+        select status from public.generation_jobs where id = '${fixture.jobId}';
+      `).trim()
+      check(statusA === 'SUCCEEDED', `P1.5: job SUCCEEDED (got: ${statusA})`)
+
+      // Chapter published exactly once.
+      const chCount = execLocalPsql(target, `
+        select count(*)::text from public.chapters
+        where story_id = '${fixture.storyId}' and number = ${CHAPTER};
+      `).trim()
+      check(chCount === '1', `P1.5: chapter published exactly once (got: ${chCount})`)
+
+      // One session received IDEMPOTENCY_CONFLICT.
+      const hasConflict = s1.stdout.includes('IDEMPOTENCY_CONFLICT')
+        || s2.stdout.includes('IDEMPOTENCY_CONFLICT')
+      check(hasConflict, 'P1.5: one session received IDEMPOTENCY_CONFLICT')
+
+      console.log('  ✓ Property 1.5: same job + different payload → IDEMPOTENCY_CONFLICT')
+    }
+
     // ─── Property 2: different jobs + same debt → DEBT_CLOSURE_CONFLICT ───
     // Two jobs on the SAME story+user. Job A publishes with closure.
     // Job B (different chapter, same debt) must be REJECTED with DEBT_CLOSURE_CONFLICT.
@@ -628,7 +692,23 @@ async function runRaceTests(): Promise<void> {
         check(ch10Count.includes('1'), 'P5: chapter 10 published (A succeeded)')
       }
 
-      console.log('  ✓ Property 5: ending-lock race — E1+E2 contention, no deadlock')
+      // Verify ending lock persistence: proves persist_ending_lock_v1 ran,
+      // which only happens when p_ending_key is not null (ending path taken).
+      // persist_ending_lock_v1 re-enters E2 (key 130600) reentrantly.
+      const lockedEndingKey = execLocalPsql(target, `
+        select locked_ending_key::text from public.reader_states
+        where user_id = '${USER_ID}' and story_id = '${fixture.storyId}';
+      `).trim()
+
+      if (statusA === 'SUCCEEDED') {
+        check(
+          lockedEndingKey === 'ending:happy',
+          `P5: ending lock persisted (locked_ending_key = ${lockedEndingKey})`,
+        )
+        console.log('  ✓ Property 5: ending-lock race — E1+E2 contention, no deadlock, ending lock persisted')
+      } else {
+        console.log(`  ✓ Property 5: ending-lock race — E1+E2 contention, no deadlock (status: ${statusA})`)
+      }
     }
 
     console.log(`\n  All ${CONTEXT} properties verified.`)

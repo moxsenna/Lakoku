@@ -94,12 +94,7 @@ begin
     raise exception using errcode = 'P0001', message = 'GENERATION_PUBLICATION_CONFLICT';
   end if;
 
-  -- Idempotent success fast path (will be rechecked under lock).
-  if v_preflight.status = 'SUCCEEDED' and v_preflight.publication_result is not null then
-    return v_preflight.publication_result;
-  end if;
-
-  -- Canonicalize p_closures (deterministic).
+  -- Canonicalize p_closures (deterministic). Must happen before fast path hash check.
   if p_closures is null or jsonb_typeof(p_closures) <> 'array' or jsonb_array_length(p_closures) = 0 then
     v_canonical_closures := '[]'::jsonb;
   else
@@ -181,6 +176,21 @@ begin
     ),
     'hex'
   );
+
+  -- ═══════════════════════════════════════════════════════════════════════════
+  -- Idempotent success fast path (unlocked, with dual-hash verification).
+  -- Hashes are now computed. If job already SUCCEEDED, verify hashes match.
+  -- Match → cached success. Mismatch → IDEMPOTENCY_CONFLICT.
+  -- NOTE: this is an optimization. Phase C rechecks under J FOR UPDATE.
+  if v_preflight.status = 'SUCCEEDED' and v_preflight.publication_result is not null then
+    if v_preflight.publication_payload_hash = v_pub_hash
+      and v_preflight.closure_payload_hash = v_closure_hash
+    then
+      return v_preflight.publication_result;
+    else
+      raise exception using errcode = 'P0001', message = 'IDEMPOTENCY_CONFLICT';
+    end if;
+  end if;
 
   -- ═══════════════════════════════════════════════════════════════════════════
   -- PHASE B — Lock acquisition (canonical global order)

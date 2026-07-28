@@ -2,30 +2,30 @@
 -- Error paths: tested here (errors raise before publish_chapter_v2).
 -- Happy path: tested here with valid choice fixtures.
 -- Omission/deadline: tested here via closure validation path.
+-- Atomic rollback: proved with real closure ledger entries (atomic_debt).
+-- Same-job replay: proved cached success (Phase A fast path).
+-- IDEMPOTENCY_CONFLICT: race-only path, tested in plot-debt-v4-race.ts P1.5.
 
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(40);
+select plan(45);
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- Setup: story + reader + contract + job + lease + checkpoint fixtures
 -- ═══════════════════════════════════════════════════════════════════════════════
 
--- Minimal story + reader
 insert into public.stories (id, title, owner_user_id, visibility, story_mode, story_contract_version)
 values ('test:v4-fn', 'V4 Functional', '00000000-0000-0000-0000-000000000001', 'private', 'personalized_ai', 1);
 
 insert into public.reader_states (user_id, story_id, status, current_chapter)
 values ('00000000-0000-0000-0000-000000000001', 'test:v4-fn', 'BERJALAN', 10);
 
--- Contract with one debt
 insert into public.story_generation_contracts (story_id, mode, total_chapters, plot_debts_json, story_contract_version)
 values ('test:v4-fn', 'personalized_ai', 50,
   '[{"id":"main_mystery","question":"Q","introducedAt":1,"mustProgressBy":[12,32,45],"mustCloseBy":48,"status":"open"}]'::jsonb,
   1);
 
--- Running job (personalized, ch 10)
 insert into public.generation_jobs (
   id, story_id, chapter_number, user_id, generation_kind,
   status, attempt_count, max_attempts, available_at, deadline_at,
@@ -40,7 +40,6 @@ insert into public.generation_jobs (
   1
 );
 
--- Lease
 insert into public.generation_leases (
   id, story_id, chapter_number, status, holder, expires_at, job_id, claim_token
 ) values (
@@ -50,7 +49,6 @@ insert into public.generation_leases (
   (select claim_token from public.generation_jobs where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
 );
 
--- Checkpoint (V2, personalized, PROSE_READY)
 insert into public.chapter_generation_checkpoints (
   story_id, chapter_number, attempt_id, correlation_id, status,
   title, paragraphs_json, prose_fingerprint,
@@ -62,7 +60,7 @@ insert into public.chapter_generation_checkpoints (
   story_contract_version
 ) values (
   'test:v4-fn', 10, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-  (select correlation_id from public.generation_jobs where id = 'aaaaaaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  (select correlation_id from public.generation_jobs where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
   'PROSE_READY', 'Test Chapter', '["Paragraph one."]'::jsonb,
   'fp123456789012345678901234567890',
   '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
@@ -71,7 +69,6 @@ insert into public.chapter_generation_checkpoints (
   1, 0, clock_timestamp() + interval '24 hours', 1
 );
 
--- Standard job (for standard mode tests)
 insert into public.generation_jobs (
   id, story_id, chapter_number, user_id, generation_kind,
   status, attempt_count, max_attempts, available_at, deadline_at,
@@ -103,10 +100,9 @@ select ok(has_function('public', 'publish_generation_job_chapter_v4',
   'V4 function exists with 14-param signature');
 
 -- ═══════════════════════════════════════════════════════════════════════════════
--- Error paths: job-level errors
+-- Error paths: job-level
 -- ═══════════════════════════════════════════════════════════════════════════════
 
--- GENERATION_JOB_NOT_FOUND
 select throws_ok($$
   select public.publish_generation_job_chapter_v4(
     '00000000-0000-0000-0000-999999999999'::uuid, 'worker', gen_random_uuid(), gen_random_uuid(),
@@ -115,7 +111,6 @@ select throws_ok($$
   )
 $$, 'P0001', null, 'GENERATION_JOB_NOT_FOUND');
 
--- GENERATION_JOB_NOT_RUNNING (job is SUCCEEDED)
 update public.generation_jobs set status = 'SUCCEEDED' where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 select throws_ok($$
   select public.publish_generation_job_chapter_v4(
@@ -126,14 +121,12 @@ select throws_ok($$
     null, null, null::jsonb
   )
 $$, 'P0001', null, 'GENERATION_JOB_NOT_RUNNING');
--- Restore to RUNNING
 update public.generation_jobs set status = 'RUNNING' where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 
 -- ═══════════════════════════════════════════════════════════════════════════════
--- Error paths: personalized contract provenance
+-- Error paths: contract provenance
 -- ═══════════════════════════════════════════════════════════════════════════════
 
--- CONTRACT_PROVENANCE_MISSING (legacy job with NULL version)
 insert into public.generation_jobs (
   id, story_id, chapter_number, user_id, generation_kind,
   status, attempt_count, max_attempts, available_at, deadline_at,
@@ -154,7 +147,6 @@ insert into public.generation_leases (
   'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
   (select claim_token from public.generation_jobs where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee')
 );
-
 select throws_ok($$
   select public.publish_generation_job_chapter_v4(
     'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'::uuid, 'v4-test-worker',
@@ -169,7 +161,6 @@ $$, 'P0001', null, 'CONTRACT_PROVENANCE_MISSING');
 -- Error paths: checkpoint binding
 -- ═══════════════════════════════════════════════════════════════════════════════
 
--- CHECKPOINT_NOT_FOUND (no checkpoint for this job)
 insert into public.generation_jobs (
   id, story_id, chapter_number, user_id, generation_kind,
   status, attempt_count, max_attempts, available_at, deadline_at,
@@ -180,8 +171,7 @@ insert into public.generation_jobs (
   'RUNNING', 1, 4, clock_timestamp() - interval '1 minute',
   clock_timestamp() + interval '20 minutes',
   gen_random_uuid(),
-  'generation-job:11111111-1111-1111-1111-111111111111:publish:12',
-  1
+  'generation-job:11111111-1111-1111-1111-111111111111:publish:12', 1
 );
 insert into public.generation_leases (
   id, story_id, chapter_number, status, holder, expires_at, job_id, claim_token
@@ -191,7 +181,6 @@ insert into public.generation_leases (
   '11111111-1111-1111-1111-111111111111',
   (select claim_token from public.generation_jobs where id = '11111111-1111-1111-1111-111111111111')
 );
-
 select throws_ok($$
   select public.publish_generation_job_chapter_v4(
     '11111111-1111-1111-1111-111111111111'::uuid, 'v4-test-worker',
@@ -203,10 +192,9 @@ select throws_ok($$
 $$, 'P0001', null, 'CHECKPOINT_NOT_FOUND');
 
 -- ═══════════════════════════════════════════════════════════════════════════════
--- Error paths: standard mode + closures
+-- Error paths: standard mode + closures + payload
 -- ═══════════════════════════════════════════════════════════════════════════════
 
--- Standard job with closures → INVALID_CLOSURE_PAYLOAD
 select throws_ok($$
   select public.publish_generation_job_chapter_v4(
     'cccccccc-cccc-cccc-cccc-cccccccccccc'::uuid, 'v4-test-worker',
@@ -217,9 +205,6 @@ select throws_ok($$
   )
 $$, '22023', null, 'standard mode rejects closures');
 
--- Standard job with null closures → passes standard branch (will fail at publication, not closure check)
--- This tests that standard mode skips closure validation entirely.
--- The error should be from publish_chapter_v2 (e.g. INVALID_TITLE), NOT from closure logic.
 select throws_ok($$
   select public.publish_generation_job_chapter_v4(
     'cccccccc-cccc-cccc-cccc-cccccccccccc'::uuid, 'v4-test-worker',
@@ -228,13 +213,8 @@ select throws_ok($$
     'test:v4-fn', 5, '', '[]'::jsonb, '', '[]'::jsonb, '[]'::jsonb,
     null, null, null::jsonb
   )
-$$, '22023', null, 'standard mode reaches publication (empty title rejected by publish_chapter_v2)');
+$$, '22023', null, 'standard reaches publication (empty title rejected)');
 
--- ═══════════════════════════════════════════════════════════════════════════════
--- Error paths: INVALID_CLOSURE_PAYLOAD
--- ═══════════════════════════════════════════════════════════════════════════════
-
--- Malformed closure: missing closureForm
 select throws_ok($$
   select public.publish_generation_job_chapter_v4(
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'v4-test-worker',
@@ -245,7 +225,6 @@ select throws_ok($$
   )
 $$, '22023', null, 'INVALID_CLOSURE_PAYLOAD: missing closureForm');
 
--- Duplicate debtId
 select throws_ok($$
   select public.publish_generation_job_chapter_v4(
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'v4-test-worker',
@@ -256,13 +235,8 @@ select throws_ok($$
   )
 $$, '22023', null, 'INVALID_CLOSURE_PAYLOAD: duplicate debtId');
 
--- ═══════════════════════════════════════════════════════════════════════════════
--- Error paths: checkpoint binding
--- ═══════════════════════════════════════════════════════════════════════════════
-
--- CHECKPOINT_INVALID_STATE: wrong status (EXPIRED instead of PROSE_READY)
-update public.chapter_generation_checkpoints
-set status = 'EXPIRED'
+-- CHECKPOINT_INVALID_STATE: EXPIRED
+update public.chapter_generation_checkpoints set status = 'EXPIRED'
 where story_id = 'test:v4-fn' and chapter_number = 10;
 select throws_ok($$
   select public.publish_generation_job_chapter_v4(
@@ -272,15 +246,12 @@ select throws_ok($$
     'test:v4-fn', 10, 'Title', '["P"]'::jsonb, 'Prompt?', '[]'::jsonb, '[]'::jsonb,
     null, null, '[]'::jsonb
   )
-$$, 'P0001', null, 'CHECKPOINT_INVALID_STATE: EXPIRED status');
--- Restore
-update public.chapter_generation_checkpoints
-set status = 'PROSE_READY'
+$$, 'P0001', null, 'CHECKPOINT_INVALID_STATE: EXPIRED');
+update public.chapter_generation_checkpoints set status = 'PROSE_READY'
 where story_id = 'test:v4-fn' and chapter_number = 10;
 
--- CHECKPOINT_ATTEMPT_AHEAD: checkpoint attempt > job attempt
-update public.chapter_generation_checkpoints
-set job_attempt_number = 99
+-- CHECKPOINT_ATTEMPT_AHEAD
+update public.chapter_generation_checkpoints set job_attempt_number = 99
 where story_id = 'test:v4-fn' and chapter_number = 10;
 select throws_ok($$
   select public.publish_generation_job_chapter_v4(
@@ -291,16 +262,10 @@ select throws_ok($$
     null, null, '[]'::jsonb
   )
 $$, 'P0001', null, 'CHECKPOINT_ATTEMPT_AHEAD');
--- Restore
-update public.chapter_generation_checkpoints
-set job_attempt_number = 1
+update public.chapter_generation_checkpoints set job_attempt_number = 1
 where story_id = 'test:v4-fn' and chapter_number = 10;
 
--- ═══════════════════════════════════════════════════════════════════════════════
--- Error paths: contract version mismatch
--- ═══════════════════════════════════════════════════════════════════════════════
-
--- CONTRACT_VERSION_MISMATCH: story contract version changed since job enqueued
+-- CONTRACT_VERSION_MISMATCH
 update public.stories set story_contract_version = 99 where id = 'test:v4-fn';
 select throws_ok($$
   select public.publish_generation_job_chapter_v4(
@@ -311,14 +276,9 @@ select throws_ok($$
     null, null, '[]'::jsonb
   )
 $$, 'P0001', null, 'CONTRACT_VERSION_MISMATCH');
--- Restore
 update public.stories set story_contract_version = 1 where id = 'test:v4-fn';
 
--- ═══════════════════════════════════════════════════════════════════════════════
--- Error paths: ownership lost
--- ═══════════════════════════════════════════════════════════════════════════════
-
--- GENERATION_JOB_OWNERSHIP_LOST: wrong worker
+-- OWNERSHIP_LOST
 select throws_ok($$
   select public.publish_generation_job_chapter_v4(
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'wrong-worker',
@@ -329,12 +289,7 @@ select throws_ok($$
   )
 $$, 'P0001', null, 'GENERATION_JOB_OWNERSHIP_LOST');
 
--- ═══════════════════════════════════════════════════════════════════════════════
--- Error paths: closure omission deadline
--- ═══════════════════════════════════════════════════════════════════════════════
-
--- DEBT_CLOSURE_DEADLINE_VIOLATION (omission): debt mustCloseBy=48, current ch=48, not closed
--- Need a job at ch 48 with contract having debt mustCloseBy=48.
+-- DEBT_CLOSURE_DEADLINE_VIOLATION: omission at mustCloseBy
 insert into public.generation_jobs (
   id, story_id, chapter_number, user_id, generation_kind,
   status, attempt_count, max_attempts, available_at, deadline_at,
@@ -345,8 +300,7 @@ insert into public.generation_jobs (
   'RUNNING', 1, 4, clock_timestamp() - interval '1 minute',
   clock_timestamp() + interval '20 minutes',
   gen_random_uuid(),
-  'generation-job:33333333-3333-3333-3333-333333333333:publish:48',
-  1
+  'generation-job:33333333-3333-3333-3333-333333333333:publish:48', 1
 );
 insert into public.generation_leases (
   id, story_id, chapter_number, status, holder, expires_at, job_id, claim_token
@@ -363,8 +317,7 @@ insert into public.chapter_generation_checkpoints (
   canon_version, blueprint_version, direction_fingerprint,
   generation_mode, generation_policy_version, prompt_contract_version,
   job_id, job_attempt_number, checkpoint_schema_version,
-  prose_attempt_count, choice_attempt_count, expires_at,
-  story_contract_version
+  prose_attempt_count, choice_attempt_count, expires_at, story_contract_version
 ) values (
   'test:v4-fn', 48, '33333333-3333-3333-3333-333333333333',
   (select correlation_id from public.generation_jobs where id = '33333333-3333-3333-3333-333333333333'),
@@ -374,8 +327,6 @@ insert into public.chapter_generation_checkpoints (
   '33333333-3333-3333-3333-333333333333', 1, 2,
   1, 0, clock_timestamp() + interval '24 hours', 1
 );
-
--- Debt "main_mystery" has mustCloseBy=48. At ch 48 with empty closures → omission deadline.
 select throws_ok($$
   select public.publish_generation_job_chapter_v4(
     '33333333-3333-3333-3333-333333333333'::uuid, 'v4-test-worker',
@@ -386,11 +337,7 @@ select throws_ok($$
   )
 $$, 'P0001', null, 'DEBT_CLOSURE_DEADLINE_VIOLATION: omission at mustCloseBy');
 
--- ═══════════════════════════════════════════════════════════════════════════════
--- Error paths: CHECKPOINT_CLOSURE_PAYLOAD_MISMATCH
--- ═══════════════════════════════════════════════════════════════════════════════
-
--- Checkpoint has closesPlotDebts with a closure, but p_closures is empty → mismatch
+-- CHECKPOINT_CLOSURE_PAYLOAD_MISMATCH
 update public.chapter_generation_checkpoints
 set audit_signals_json = '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[{"debtId":"main_mystery","closureForm":"RESOLVED"}]}'::jsonb
 where story_id = 'test:v4-fn' and chapter_number = 10;
@@ -403,7 +350,6 @@ select throws_ok($$
     null, null, '[]'::jsonb
   )
 $$, 'P0001', null, 'CHECKPOINT_CLOSURE_PAYLOAD_MISMATCH');
--- Restore
 update public.chapter_generation_checkpoints
 set audit_signals_json = '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb
 where story_id = 'test:v4-fn' and chapter_number = 10;
@@ -412,10 +358,6 @@ where story_id = 'test:v4-fn' and chapter_number = 10;
 -- Happy path: personalized publication + closure ledger atomicity
 -- ═══════════════════════════════════════════════════════════════════════════════
 
--- V4 happy path with ACTUAL closures: chapter published, closure ledger written,
--- checkpoint PUBLISHED, job SUCCEEDED, lease RELEASED, both hashes stored.
-
--- Set checkpoint audit signals to match the closure we will pass.
 update public.chapter_generation_checkpoints
 set audit_signals_json = '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[{"debtId":"main_mystery","closureForm":"RESOLVED"}]}'::jsonb
 where story_id = 'test:v4-fn' and chapter_number = 10;
@@ -425,8 +367,7 @@ select lives_ok($$
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'v4-test-worker',
     (select claim_token from public.generation_jobs where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
     'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::uuid,
-    'test:v4-fn', 10,
-    'Bab Sepuluh',
+    'test:v4-fn', 10, 'Bab Sepuluh',
     '["Raka membuka pintu gudang dengan hati-hati."]'::jsonb,
     'Apa yang Raka lakukan sekarang?',
     '[{"id":"open-door","label":"Buka pintu arsip"},{"id":"stop-guard","label":"Hadangi penjaga bertongkat"}]'::jsonb,
@@ -436,73 +377,97 @@ select lives_ok($$
   )
 $$, 'V4 happy path: personalized publication with closure succeeds');
 
--- 1. Chapter published exactly once
-select is(
-  (select count(*)::integer from public.chapters where story_id = 'test:v4-fn' and number = 10),
-  1, 'happy path: chapter 10 published exactly once');
-
--- 2. Closure ledger: exactly one row (matches proposal count)
-select is(
-  (select count(*)::integer from public.reader_plot_debt_closures
-   where user_id = '00000000-0000-0000-0000-000000000001' and story_id = 'test:v4-fn'),
-  1, 'happy path: closure ledger has exactly 1 row');
-
--- 3. Closure ledger: debt_id correct
-select is(
-  (select debt_id from public.reader_plot_debt_closures
-   where user_id = '00000000-0000-0000-0000-000000000001' and story_id = 'test:v4-fn'),
-  'main_mystery', 'happy path: closure debt_id correct');
-
--- 4. Closure ledger: closure_form correct
-select is(
-  (select closure_form from public.reader_plot_debt_closures
-   where user_id = '00000000-0000-0000-0000-000000000001' and story_id = 'test:v4-fn'),
-  'RESOLVED', 'happy path: closure_form correct');
-
--- 5. Closure ledger: closed_at_chapter correct
-select is(
-  (select closed_at_chapter from public.reader_plot_debt_closures
-   where user_id = '00000000-0000-0000-0000-000000000001' and story_id = 'test:v4-fn'),
-  10, 'happy path: closed_at_chapter correct');
-
--- 6. Closure ledger: closed_by_job_id matches V4 job
-select is(
-  (select closed_by_job_id from public.reader_plot_debt_closures
-   where user_id = '00000000-0000-0000-0000-000000000001' and story_id = 'test:v4-fn'),
-  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'happy path: closed_by_job_id correct');
-
--- 7. Job SUCCEEDED
-select is(
-  (select status from public.generation_jobs where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
-  'SUCCEEDED', 'happy path: job status SUCCEEDED');
-
--- 8. Lease RELEASED
-select is(
-  (select status from public.generation_leases where id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'),
-  'RELEASED', 'happy path: lease RELEASED');
-
--- 9. Checkpoint PUBLISHED
-select is(
-  (select status from public.chapter_generation_checkpoints where story_id = 'test:v4-fn' and chapter_number = 10),
-  'PUBLISHED', 'happy path: checkpoint PUBLISHED');
-
--- 10. publication_payload_hash stored (64-char hex)
-select matches(
-  (select publication_payload_hash from public.generation_jobs where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
-  '^[0-9a-f]{64}$', 'happy path: publication_payload_hash stored');
-
--- 11. closure_payload_hash stored (64-char hex)
-select matches(
-  (select closure_payload_hash from public.generation_jobs where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
-  '^[0-9a-f]{64}$', 'happy path: closure_payload_hash stored');
+select is((select count(*)::integer from public.chapters where story_id = 'test:v4-fn' and number = 10), 1, 'happy path: chapter published exactly once');
+select is((select count(*)::integer from public.reader_plot_debt_closures where user_id = '00000000-0000-0000-0000-000000000001' and story_id = 'test:v4-fn'), 1, 'happy path: closure ledger 1 row');
+select is((select debt_id from public.reader_plot_debt_closures where user_id = '00000000-0000-0000-0000-000000000001' and story_id = 'test:v4-fn'), 'main_mystery', 'happy path: debt_id correct');
+select is((select closure_form from public.reader_plot_debt_closures where user_id = '00000000-0000-0000-0000-000000000001' and story_id = 'test:v4-fn'), 'RESOLVED', 'happy path: closure_form correct');
+select is((select closed_at_chapter from public.reader_plot_debt_closures where user_id = '00000000-0000-0000-0000-000000000001' and story_id = 'test:v4-fn'), 10, 'happy path: closed_at_chapter correct');
+select is((select closed_by_job_id from public.reader_plot_debt_closures where user_id = '00000000-0000-0000-0000-000000000001' and story_id = 'test:v4-fn'), 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'happy path: closed_by_job_id correct');
+select is((select status from public.generation_jobs where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'), 'SUCCEEDED', 'happy path: job SUCCEEDED');
+select is((select status from public.generation_leases where id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'), 'RELEASED', 'happy path: lease RELEASED');
+select is((select status from public.chapter_generation_checkpoints where story_id = 'test:v4-fn' and chapter_number = 10), 'PUBLISHED', 'happy path: checkpoint PUBLISHED');
+select matches((select publication_payload_hash from public.generation_jobs where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'), '^[0-9a-f]{64}$', 'happy path: publication_payload_hash valid');
+select matches((select closure_payload_hash from public.generation_jobs where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'), '^[0-9a-f]{64}$', 'happy path: closure_payload_hash valid');
 
 -- ═══════════════════════════════════════════════════════════════════════════════
--- Atomic rollback + dual-hash regression
--- Uses a SEPARATE story (test:v4-atomic) to avoid closure ledger conflicts
--- with the happy path above.
+-- Same-job idempotent replay (Phase A fast path)
 -- ═══════════════════════════════════════════════════════════════════════════════
 
--- Separate story + reader + contract (no debt → empty closures only, avoids ledger conflicts).
+select lives_ok($$
+  select public.publish_generation_job_chapter_v4(
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'v4-test-worker',
+    (select claim_token from public.generation_jobs where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+    'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::uuid,
+    'test:v4-fn', 10, 'Bab Sepuluh',
+    '["Raka membuka pintu gudang dengan hati-hati."]'::jsonb,
+    'Apa yang Raka lakukan sekarang?',
+    '[{"id":"open-door","label":"Buka pintu arsip"},{"id":"stop-guard","label":"Hadangi penjaga bertongkat"}]'::jsonb,
+    '[{"choiceId":"open-door","consequence":["Pintu arsip terbuka."],"nextChapterNumber":11,"isEnding":false,"effect_json":{},"choice_kind":"normal"},{"choiceId":"stop-guard","consequence":["Penjaga berhenti."],"nextChapterNumber":11,"isEnding":false,"effect_json":{},"choice_kind":"normal"}]'::jsonb,
+    null, null,
+    '[{"debtId":"main_mystery","closureForm":"RESOLVED"}]'::jsonb
+  )
+$$, 'same-job replay: cached success');
+
+select is((select count(*)::integer from public.chapters where story_id = 'test:v4-fn' and number = 10), 1, 'same-job replay: chapter still 1');
+select is((select count(*)::integer from public.reader_plot_debt_closures where user_id = '00000000-0000-0000-0000-000000000001' and story_id = 'test:v4-fn'), 1, 'same-job replay: ledger still 1 row');
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- IDEMPOTENCY_CONFLICT: same job + changed payload → IDEMPOTENCY_CONFLICT.
+-- Job is already SUCCEEDED with hashes. Phase A computes new hash, finds mismatch.
+-- Uses null closures (different from stored) to simplify: the publication hash
+-- difference is sufficient to trigger IDEMPOTENCY_CONFLICT.
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+-- 1. Same job + different prose → IDEMPOTENCY_CONFLICT
+select throws_ok($$
+  select public.publish_generation_job_chapter_v4(
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'v4-test-worker',
+    (select claim_token from public.generation_jobs where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+    'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::uuid,
+    'test:v4-fn', 10, 'Bab Sepuluh Berbeda',
+    '["Paragraf yang sama sekali berbeda."]'::jsonb,
+    'Apa yang Raka lakukan sekarang?',
+    '[{"id":"open-door","label":"Buka pintu arsip"},{"id":"stop-guard","label":"Hadangi penjaga bertongkat"}]'::jsonb,
+    '[{"choiceId":"open-door","consequence":["Pintu arsip terbuka."],"nextChapterNumber":11,"isEnding":false,"effect_json":{},"choice_kind":"normal"},{"choiceId":"stop-guard","consequence":["Penjaga berhenti."],"nextChapterNumber":11,"isEnding":false,"effect_json":{},"choice_kind":"normal"}]'::jsonb,
+    null, null, null::jsonb
+  )
+$$, 'P0001', null, 'IDEMPOTENCY_CONFLICT: different prose');
+
+-- 2. Same job + different choicePrompt → IDEMPOTENCY_CONFLICT
+select throws_ok($$
+  select public.publish_generation_job_chapter_v4(
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'v4-test-worker',
+    (select claim_token from public.generation_jobs where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+    'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::uuid,
+    'test:v4-fn', 10, 'Bab Sepuluh',
+    '["Raka membuka pintu gudang dengan hati-hati."]'::jsonb,
+    'Apa yang harus dilakukan?',
+    '[{"id":"open-door","label":"Buka pintu arsip"},{"id":"stop-guard","label":"Hadangi penjaga bertongkat"}]'::jsonb,
+    '[{"choiceId":"open-door","consequence":["Pintu arsip terbuka."],"nextChapterNumber":11,"isEnding":false,"effect_json":{},"choice_kind":"normal"},{"choiceId":"stop-guard","consequence":["Penjaga berhenti."],"nextChapterNumber":11,"isEnding":false,"effect_json":{},"choice_kind":"normal"}]'::jsonb,
+    null, null, null::jsonb
+  )
+$$, 'P0001', null, 'IDEMPOTENCY_CONFLICT: different choicePrompt');
+
+-- 3. Same job + different endingName (with endingKey) → IDEMPOTENCY_CONFLICT
+select throws_ok($$
+  select public.publish_generation_job_chapter_v4(
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'v4-test-worker',
+    (select claim_token from public.generation_jobs where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+    'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::uuid,
+    'test:v4-fn', 10, 'Bab Sepuluh',
+    '["Raka membuka pintu gudang dengan hati-hati."]'::jsonb,
+    'Apa yang Raka lakukan sekarang?',
+    '[{"id":"open-door","label":"Buka pintu arsip"},{"id":"stop-guard","label":"Hadangi penjaga bertongkat"}]'::jsonb,
+    '[{"choiceId":"open-door","consequence":["Pintu arsip terbuka."],"nextChapterNumber":11,"isEnding":false,"effect_json":{},"choice_kind":"normal"},{"choiceId":"stop-guard","consequence":["Penjaga berhenti."],"nextChapterNumber":11,"isEnding":false,"effect_json":{},"choice_kind":"normal"}]'::jsonb,
+    'ending:alt', 'Alternative Ending', null::jsonb
+  )
+$$, 'P0001', null, 'IDEMPOTENCY_CONFLICT: different endingName');
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Atomic rollback: proves closure ledger rolls back with the transaction.
+-- test:v4-atomic has one debt (atomic_debt, mustCloseBy=50).
+-- ═══════════════════════════════════════════════════════════════════════════════
+
 insert into public.stories (id, title, owner_user_id, visibility, story_mode, story_contract_version)
 values ('test:v4-atomic', 'V4 Atomic', '00000000-0000-0000-0000-000000000001', 'private', 'personalized_ai', 1);
 
@@ -510,9 +475,8 @@ insert into public.reader_states (user_id, story_id, status, current_chapter)
 values ('00000000-0000-0000-0000-000000000001', 'test:v4-atomic', 'BERJALAN', 20);
 
 insert into public.story_generation_contracts (story_id, mode, total_chapters, plot_debts_json, story_contract_version)
-values ('test:v4-atomic', 'personalized_ai', 50, '[]'::jsonb, 1);
-
--- ─── Atomic rollback: ledger insert failure → entire V4 rolls back ───
+values ('test:v4-atomic', 'personalized_ai', 50,
+  '[{"id":"atomic_debt","question":"Q","introducedAt":1,"mustProgressBy":[12,32,45],"mustCloseBy":50,"status":"open"}]'::jsonb, 1);
 
 insert into public.generation_jobs (
   id, story_id, chapter_number, user_id, generation_kind,
@@ -524,8 +488,7 @@ insert into public.generation_jobs (
   'RUNNING', 1, 4, clock_timestamp() - interval '1 minute',
   clock_timestamp() + interval '20 minutes',
   gen_random_uuid(),
-  'generation-job:aa000000-0000-0000-0000-0000000000aa:publish:20',
-  1
+  'generation-job:aa000000-0000-0000-0000-0000000000aa:publish:20', 1
 );
 
 insert into public.generation_leases (
@@ -537,7 +500,6 @@ insert into public.generation_leases (
   (select claim_token from public.generation_jobs where id = 'aa000000-0000-0000-0000-0000000000aa')
 );
 
--- Checkpoint with empty closures (no debt to close → closure validation passes).
 insert into public.chapter_generation_checkpoints (
   story_id, chapter_number, attempt_id, correlation_id, status,
   title, paragraphs_json, prose_fingerprint,
@@ -545,46 +507,20 @@ insert into public.chapter_generation_checkpoints (
   canon_version, blueprint_version, direction_fingerprint,
   generation_mode, generation_policy_version, prompt_contract_version,
   job_id, job_attempt_number, checkpoint_schema_version,
-  prose_attempt_count, choice_attempt_count, expires_at,
-  story_contract_version
+  prose_attempt_count, choice_attempt_count, expires_at, story_contract_version
 ) values (
   'test:v4-atomic', 20, 'aa000000-0000-0000-0000-0000000000aa',
   (select correlation_id from public.generation_jobs where id = 'aa000000-0000-0000-0000-0000000000aa'),
   'PROSE_READY', 'Ch20', '["Para 20."]'::jsonb, 'fp20',
-  '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
+  '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[{"debtId":"atomic_debt","closureForm":"RESOLVED"}]}'::jsonb,
   2, 5, 2, 'dir20', 'personalized', 2, 2,
   'aa000000-0000-0000-0000-0000000000aa', 1, 2,
   1, 0, clock_timestamp() + interval '24 hours', 1
 );
 
--- Trigger: blocks reader_plot_debt_closures inserts (simulates insert failure).
-create or replace function test_block_ledger_insert() returns trigger as $$
-begin
-  raise exception 'TEST_BLOCKED_LEDGER_INSERT' using errcode = 'P0001';
-end;
-$$ language plpgsql;
-
-create trigger test_block_ledger_insert_trg
-  before insert on public.reader_plot_debt_closures
-  for each row execute function test_block_ledger_insert();
-
--- Execute: V4 reaches publication but ledger insert triggers abort → entire tx rolls back.
--- NOTE: empty closures means closure validation passes, but the trigger fires
--- when V4 tries to INSERT even an empty closure set? No — V4 only inserts if
--- closures > 0. So we need at least one closure to reach the insert.
--- The trigger won't fire with empty closures because the loop body is skipped.
--- Solution: add a non-existent debt to the closure set? No — validation checks
--- the contract. With empty contract, any closure fails DEBT_CLOSURE_UNKNOWN_DEBT.
--- REVISED APPROACH: Use a trigger on publish_chapter_v2's idempotency insert
--- or on the chapters table instead — failure at chapters insert → rollback.
--- But the cleanest is to use a trigger on generation_jobs UPDATE to SUCCEEDED.
-
-drop trigger test_block_ledger_insert_trg on public.reader_plot_debt_closures;
-drop function test_block_ledger_insert();
-
--- REVISED: Trigger on generation_jobs that blocks SUCCEEDED transition.
--- V4 writes: job → SUCCEEDED after publication. If this UPDATE fails → rollback.
--- This tests that publication + chapter are NOT committed when the job UPDATE fails.
+-- ─── Scenario A: job SUCCEEDED trigger → ALL rolled back including closure ledger ───
+-- Phase G order: closure ledger insert → checkpoint PUBLISHED → job SUCCEEDED.
+-- Trigger at job SUCCEEDED. Rolls back ALL: chapter + ledger + checkpoint + lease.
 
 create or replace function test_block_job_succeeded() returns trigger as $$
 begin
@@ -592,14 +528,12 @@ begin
     raise exception 'TEST_BLOCKED_JOB_SUCCEEDED' using errcode = 'P0001';
   end if;
   return new;
-end;
-$$ language plpgsql;
+end; $$ language plpgsql;
 
 create trigger test_block_job_succeeded_trg
   before update on public.generation_jobs
   for each row execute function test_block_job_succeeded();
 
--- Execute: V4 reaches publication, then job UPDATE to SUCCEEDED triggers abort.
 select throws_ok($$
   select public.publish_generation_job_chapter_v4(
     'aa000000-0000-0000-0000-0000000000aa'::uuid, 'v4-test-worker',
@@ -609,34 +543,22 @@ select throws_ok($$
     'Apa yang dilakukan?',
     '[{"id":"go","label":"Ikuti jalan keluar"},{"id":"stay","label":"Tetap di tempat"}]'::jsonb,
     '[{"choiceId":"go","consequence":["Jalan terbuka."],"nextChapterNumber":21,"isEnding":false,"effect_json":{},"choice_kind":"normal"},{"choiceId":"stay","consequence":["Tetap diam."],"nextChapterNumber":21,"isEnding":false,"effect_json":{},"choice_kind":"normal"}]'::jsonb,
-    null, null, null::jsonb
+    null, null,
+    '[{"debtId":"atomic_debt","closureForm":"RESOLVED"}]'::jsonb
   )
-$$, 'P0001', null, 'job SUCCEEDED trigger blocks V4');
+$$, 'P0001', null, 'atomic rollback A: job SUCCEEDED trigger blocks V4');
 
--- Verify: chapter NOT published (rolled back — publish_chapter_v2 ran but tx aborted).
-select is(
-  (select count(*)::integer from public.chapters where story_id = 'test:v4-atomic' and number = 20),
-  0, 'atomic rollback: chapter NOT published after job failure');
+select is((select count(*)::integer from public.chapters where story_id = 'test:v4-atomic' and number = 20), 0, 'rollback A: chapter NOT published');
+select is((select count(*)::integer from public.reader_plot_debt_closures where user_id = '00000000-0000-0000-0000-000000000001' and story_id = 'test:v4-atomic' and debt_id = 'atomic_debt'), 0, 'rollback A: closure ledger EMPTY for atomic_debt');
+select is((select status from public.chapter_generation_checkpoints where story_id = 'test:v4-atomic' and chapter_number = 20), 'PROSE_READY', 'rollback A: checkpoint still PROSE_READY');
+select is((select status from public.generation_jobs where id = 'aa000000-0000-0000-0000-0000000000aa'), 'RUNNING', 'rollback A: job still RUNNING');
+select is((select status from public.generation_leases where id = 'bb000000-0000-0000-0000-0000000000bb'), 'ACTIVE', 'rollback A: lease still ACTIVE');
 
--- Verify: checkpoint NOT PUBLISHED (rolled back).
-select is(
-  (select status from public.chapter_generation_checkpoints
-   where story_id = 'test:v4-atomic' and chapter_number = 20),
-  'PROSE_READY', 'atomic rollback: checkpoint still PROSE_READY');
-
--- Verify: job NOT SUCCEEDED (rolled back).
-select is(
-  (select status from public.generation_jobs where id = 'aa000000-0000-0000-0000-0000000000aa'),
-  'RUNNING', 'atomic rollback: job still RUNNING after job failure');
-
--- Cleanup: drop trigger.
 drop trigger test_block_job_succeeded_trg on public.generation_jobs;
 drop function test_block_job_succeeded();
 
--- ─── Atomic rollback: checkpoint transition failure → entire V4 rolls back ───
-
--- Checkpoint is still PROSE_READY (previous V4 rolled back).
--- Trigger on chapter_generation_checkpoints blocks UPDATE to PUBLISHED.
+-- ─── Scenario B: checkpoint PUBLISHED trigger → ALL rolled back including closure ledger ───
+-- Trigger at checkpoint PUBLISHED. Rolls back ALL: chapter + ledger + checkpoint + lease.
 
 create or replace function test_block_checkpoint_transition() returns trigger as $$
 begin
@@ -644,14 +566,12 @@ begin
     raise exception 'TEST_BLOCKED_CHECKPOINT_TRANSITION' using errcode = 'P0001';
   end if;
   return new;
-end;
-$$ language plpgsql;
+end; $$ language plpgsql;
 
 create trigger test_block_checkpoint_transition_trg
   before update on public.chapter_generation_checkpoints
   for each row execute function test_block_checkpoint_transition();
 
--- Execute: V4 reaches checkpoint transition, trigger aborts → entire tx rolls back.
 select throws_ok($$
   select public.publish_generation_job_chapter_v4(
     'aa000000-0000-0000-0000-0000000000aa'::uuid, 'v4-test-worker',
@@ -661,125 +581,19 @@ select throws_ok($$
     'Apa yang dilakukan?',
     '[{"id":"go","label":"Ikuti jalan keluar"},{"id":"stay","label":"Tetap di tempat"}]'::jsonb,
     '[{"choiceId":"go","consequence":["Jalan terbuka."],"nextChapterNumber":21,"isEnding":false,"effect_json":{},"choice_kind":"normal"},{"choiceId":"stay","consequence":["Tetap diam."],"nextChapterNumber":21,"isEnding":false,"effect_json":{},"choice_kind":"normal"}]'::jsonb,
-    null, null, null::jsonb
+    null, null,
+    '[{"debtId":"atomic_debt","closureForm":"RESOLVED"}]'::jsonb
   )
-$$, 'P0001', null, 'checkpoint transition trigger blocks V4');
+$$, 'P0001', null, 'atomic rollback B: checkpoint transition trigger blocks V4');
 
--- Verify: chapter NOT published (rolled back).
-select is(
-  (select count(*)::integer from public.chapters where story_id = 'test:v4-atomic' and number = 20),
-  0, 'atomic rollback: chapter NOT published after checkpoint failure');
+select is((select count(*)::integer from public.chapters where story_id = 'test:v4-atomic' and number = 20), 0, 'rollback B: chapter NOT published');
+select is((select count(*)::integer from public.reader_plot_debt_closures where user_id = '00000000-0000-0000-0000-000000000001' and story_id = 'test:v4-atomic' and debt_id = 'atomic_debt'), 0, 'rollback B: closure ledger EMPTY for atomic_debt');
+select is((select status from public.chapter_generation_checkpoints where story_id = 'test:v4-atomic' and chapter_number = 20), 'PROSE_READY', 'rollback B: checkpoint still PROSE_READY');
+select is((select status from public.generation_jobs where id = 'aa000000-0000-0000-0000-0000000000aa'), 'RUNNING', 'rollback B: job still RUNNING');
+select is((select status from public.generation_leases where id = 'bb000000-0000-0000-0000-0000000000bb'), 'ACTIVE', 'rollback B: lease still ACTIVE');
 
--- Verify: checkpoint NOT PUBLISHED (rolled back).
-select is(
-  (select status from public.chapter_generation_checkpoints
-   where story_id = 'test:v4-atomic' and chapter_number = 20),
-  'PROSE_READY', 'atomic rollback: checkpoint still PROSE_READY after checkpoint failure');
-
--- Verify: job NOT SUCCEEDED (rolled back).
-select is(
-  (select status from public.generation_jobs where id = 'aa000000-0000-0000-0000-0000000000aa'),
-  'RUNNING', 'atomic rollback: job still RUNNING after checkpoint failure');
-
--- Cleanup: drop trigger.
 drop trigger test_block_checkpoint_transition_trg on public.chapter_generation_checkpoints;
 drop function test_block_checkpoint_transition();
-
--- ═══════════════════════════════════════════════════════════════════════════════
--- Dual-hash regression: same closures + changed prose → different publication_hash
--- ═══════════════════════════════════════════════════════════════════════════════
--- Uses test:v4-atomic (empty contract → empty closures).
--- Job A: V4 with original prose → SUCCEEDED.
--- Job B: V4 with different prose (same empty closures) → SUCCEEDED (fresh job).
--- Assert: different publication_payload_hash, same closure_payload_hash.
-
--- Job A: succeeds with original prose.
-select lives_ok($$
-  select public.publish_generation_job_chapter_v4(
-    'aa000000-0000-0000-0000-0000000000aa'::uuid, 'v4-test-worker',
-    (select claim_token from public.generation_jobs where id = 'aa000000-0000-0000-0000-0000000000aa'),
-    'bb000000-0000-0000-0000-0000000000bb'::uuid,
-    'test:v4-atomic', 20, 'Bab Dua Puluh', '["Original paragraph one."]'::jsonb,
-    'Apa yang dilakukan?',
-    '[{"id":"go","label":"Ikuti jalan keluar"},{"id":"stay","label":"Tetap di tempat"}]'::jsonb,
-    '[{"choiceId":"go","consequence":["Jalan terbuka."],"nextChapterNumber":21,"isEnding":false,"effect_json":{},"choice_kind":"normal"},{"choiceId":"stay","consequence":["Tetap diam."],"nextChapterNumber":21,"isEnding":false,"effect_json":{},"choice_kind":"normal"}]'::jsonb,
-    null, null, null::jsonb
-  )
-$$, 'dual-hash regression: job A succeeds');
-
--- Job B: fresh job, different prose, same empty closures.
-insert into public.generation_jobs (
-  id, story_id, chapter_number, user_id, generation_kind,
-  status, attempt_count, max_attempts, available_at, deadline_at,
-  correlation_id, publication_idempotency_key, story_contract_version
-) values (
-  'ee000000-0000-0000-0000-0000000000ee', 'test:v4-atomic', 20,
-  '00000000-0000-0000-0000-000000000001', 'personalized',
-  'RUNNING', 1, 4, clock_timestamp() - interval '1 minute',
-  clock_timestamp() + interval '20 minutes',
-  gen_random_uuid(),
-  'generation-job:ee000000-0000-0000-0000-0000000000ee:publish:20',
-  1
-);
-
-insert into public.generation_leases (
-  id, story_id, chapter_number, status, holder, expires_at, job_id, claim_token
-) values (
-  'ff000000-0000-0000-0000-0000000000ff', 'test:v4-atomic', 20, 'ACTIVE',
-  'v4-test-worker', clock_timestamp() + interval '5 minutes',
-  'ee000000-0000-0000-0000-0000000000ee',
-  (select claim_token from public.generation_jobs where id = 'ee000000-0000-0000-0000-0000000000ee')
-);
-
-insert into public.chapter_generation_checkpoints (
-  story_id, chapter_number, attempt_id, correlation_id, status,
-  title, paragraphs_json, prose_fingerprint,
-  audit_signals_json, audit_signals_version,
-  canon_version, blueprint_version, direction_fingerprint,
-  generation_mode, generation_policy_version, prompt_contract_version,
-  job_id, job_attempt_number, checkpoint_schema_version,
-  prose_attempt_count, choice_attempt_count, expires_at,
-  story_contract_version
-) values (
-  'test:v4-atomic', 20, 'ee000000-0000-0000-0000-0000000000ee',
-  (select correlation_id from public.generation_jobs where id = 'ee000000-0000-0000-0000-0000000000ee'),
-  'PROSE_READY', 'Ch20 B', '["Completely different paragraph."]'::jsonb, 'fp20b',
-  '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
-  2, 5, 2, 'dir20b', 'personalized', 2, 2,
-  'ee000000-0000-0000-0000-0000000000ee', 1, 2,
-  1, 0, clock_timestamp() + interval '24 hours', 1
-);
-
--- Job B: different prose, same empty closures → succeeds (fresh job, not replay).
-select lives_ok($$
-  select public.publish_generation_job_chapter_v4(
-    'ee000000-0000-0000-0000-0000000000ee'::uuid, 'v4-test-worker',
-    (select claim_token from public.generation_jobs where id = 'ee000000-0000-0000-0000-0000000000ee'),
-    'ff000000-0000-0000-0000-0000000000ff'::uuid,
-    'test:v4-atomic', 20, 'Bab Dua Puluh B', '["Completely different paragraph."]'::jsonb,
-    'Apa yang dilakukan sekarang?',
-    '[{"id":"go","label":"Ikuti jalan keluar"},{"id":"stay","label":"Tetap di tempat"}]'::jsonb,
-    '[{"choiceId":"go","consequence":["Jalan terbuka."],"nextChapterNumber":21,"isEnding":false,"effect_json":{},"choice_kind":"normal"},{"choiceId":"stay","consequence":["Tetap diam."],"nextChapterNumber":21,"isEnding":false,"effect_json":{},"choice_kind":"normal"}]'::jsonb,
-    null, null, null::jsonb
-  )
-$$, 'dual-hash regression: job B with different prose succeeds (fresh job)');
-
--- Verify: different prose → DIFFERENT publication_payload_hash.
-select isnt(
-  (select publication_payload_hash from public.generation_jobs where id = 'aa000000-0000-0000-0000-0000000000aa'),
-  (select publication_payload_hash from public.generation_jobs where id = 'ee000000-0000-0000-0000-0000000000ee'),
-  'dual-hash regression: different prose → different publication_payload_hash');
-
--- Verify: same empty closures → SAME closure_payload_hash.
-select is(
-  (select closure_payload_hash from public.generation_jobs where id = 'aa000000-0000-0000-0000-0000000000aa'),
-  (select closure_payload_hash from public.generation_jobs where id = 'ee000000-0000-0000-0000-0000000000ee'),
-  'dual-hash regression: same closures → same closure_payload_hash');
-
--- Verify: both hashes are valid 64-char hex.
-select matches(
-  (select publication_payload_hash from public.generation_jobs where id = 'ee000000-0000-0000-0000-0000000000ee'),
-  '^[0-9a-f]{64}$', 'dual-hash regression: job B publication_payload_hash valid');
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- Cleanup

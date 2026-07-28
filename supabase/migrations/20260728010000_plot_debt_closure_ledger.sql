@@ -48,10 +48,24 @@ comment on column public.chapter_generation_checkpoints.story_contract_version i
 -- 2b. story_generation_contracts: contract provenance (matches stories.*)
 -- ──────────────────────────────────────────────────────────────────────────────
 -- V4 verifies job = checkpoint = story = contract on story_contract_version.
--- Backfill existing rows to 1 (matches stories default) so provenance holds.
+-- We backfill from public.stories.story_contract_version for existing rows,
+-- then make the column NOT NULL. Future inserts must populate it explicitly.
 
 alter table public.story_generation_contracts
-  add column if not exists story_contract_version integer not null default 1;
+  add column if not exists story_contract_version integer;
+
+update public.story_generation_contracts c
+set story_contract_version = coalesce(s.story_contract_version, 1)
+from public.stories s
+where s.id = c.story_id;
+
+-- Backfill any orphaned contracts just in case
+update public.story_generation_contracts
+set story_contract_version = 1
+where story_contract_version is null;
+
+alter table public.story_generation_contracts
+  alter column story_contract_version set not null;
 
 comment on column public.story_generation_contracts.story_contract_version is
   'Contract version; V4 requires job = checkpoint = story = contract to match.';

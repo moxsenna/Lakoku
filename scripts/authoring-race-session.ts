@@ -137,9 +137,10 @@ export function execLocalPsql(
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: timeoutMs,
     }) as string
-  } catch (error: any) {
+  } catch (error) {
     const reason = isTimeoutError(error) ? 'timed out' : 'failed'
-    const stderr = error.stderr ? error.stderr.toString() : ''
+    const err = error as { stderr?: Buffer }
+    const stderr = err.stderr ? err.stderr.toString() : ''
     throw new Error(`${target.context}: local PostgreSQL command ${reason}: ${stderr}`)
   }
 }

@@ -21,7 +21,6 @@ import {
   type RaceTarget,
   type RunningRacePsql,
   verifyLocalRaceTarget,
-  waitForProcessExit,
   waitForRaceSession,
   waitForRaceSuccess,
   waitForRaceToken,
@@ -30,6 +29,25 @@ import {
 const CONTEXT = 'plot-debt V4 race'
 const CHAPTER = 10
 const USER_ID = '00000000-0000-0000-0000-000000000001'
+
+async function waitForLockWaiter(
+  target: RaceTarget,
+  type: 'advisory' | 'row',
+  retries = 35,
+): Promise<void> {
+  const query = type === 'advisory'
+    ? "select count(*)::text from pg_locks where locktype = 'advisory' and objid = 120799 and not granted;"
+    : "select count(*)::text from pg_locks where locktype in ('transactionid', 'tuple', 'relation') and not granted;";
+
+  for (let i = 0; i < retries; i++) {
+    const count = execLocalPsql(target, query).trim()
+    if (parseInt(count, 10) > 0) {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
+  throw new Error(`Timeout waiting for ${type} lock waiter`)
+}
 
 function check(value: unknown, message: string): asserts value {
   checkRace(value, CONTEXT, message)
@@ -387,8 +405,8 @@ async function runRaceTests(): Promise<void> {
             '[{"debtId":"main_mystery","closureForm":"SUBVERTED"}]'::jsonb
           );
         `)
-      } catch (error: any) {
-        threwConflict = error.message.includes('DEBT_CLOSURE_CONFLICT')
+      } catch (error) {
+        threwConflict = (error as Error).message.includes('DEBT_CLOSURE_CONFLICT')
       }
       check(threwConflict, 'P2: job B rejected with DEBT_CLOSURE_CONFLICT')
 
@@ -539,6 +557,16 @@ async function runRaceTests(): Promise<void> {
         select claim_token::text from public.generation_jobs where id = '${jobBId}';
       `).trim()
 
+      // Start a persistent session to hold the advisory barrier lock
+      const barrier = startRacePsql(target, 'dl-barrier', {})
+      sessions.push(barrier)
+      await waitForRaceSession(barrier)
+      barrier.child.stdin.write(`
+        select pg_advisory_lock(120799);
+        select 'BARRIER_HELD';
+      `)
+      await waitForRaceToken(barrier, 'BARRIER_HELD')
+
       const s1 = startRacePsql(target, 'dl-jobA', {})
       sessions.push(s1)
       await waitForRaceSession(s1)
@@ -547,15 +575,21 @@ async function runRaceTests(): Promise<void> {
       sessions.push(s2)
       await waitForRaceSession(s2)
 
-      // Both start simultaneously, contending on R + S for the same story.
-      // lock_timeout ensures we detect blocking rather than hanging.
+      // Session A: ending path. Runs V4, then blocks on advisory barrier.
       s1.child.stdin.end(`
         begin;
         set local statement_timeout = '15s';
         set local lock_timeout = '10s';
         ${v4CallSql(fixture)}
+        select pg_advisory_xact_lock(120799);
         commit;
       `)
+
+      // Wait until Session A completes publication and blocks at the barrier
+      await waitForLockWaiter(target, 'advisory')
+
+      // Session B: non-ending path. Wrap in temp table catcher.
+      // B will block on the row-lock R (reader_states) held by Session A.
       s2.child.stdin.end(`
         begin;
         set local statement_timeout = '15s';
@@ -570,7 +604,7 @@ async function runRaceTests(): Promise<void> {
             'Bab Sebelas', '["Paragraf sebelas."]'::jsonb,
             'Apa yang dilakukan?',
             '[{"id":"open-door","label":"Buka pintu arsip"},{"id":"stop-guard","label":"Hadang penjaga bertongkat"}]'::jsonb,
-            '[{"choiceId":"open-door","consequence":["Terbuka."],"nextChapterNumber":12,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"},{"choiceId":"stop-guard","consequence":["Berhenti."],"nextChapterNumber":12,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"}]'::jsonb,
+            '[{"choiceId":"open-door","consequence":["Terbuka."],"nextChapterNumber":12,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"},{"choiceId":"stop-guard","consequence":["Penjaga berhenti."],"nextChapterNumber":12,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"}]'::jsonb,
             null, null, null::jsonb
           );
         exception when others then
@@ -579,6 +613,13 @@ async function runRaceTests(): Promise<void> {
         select res from r_err;
         commit;
       `)
+
+      // Wait until Session B is verified blocked on Session A's transaction row lock
+      await waitForLockWaiter(target, 'row')
+
+      // Release the barrier by ending the barrier holder session to let Session A commit
+      barrier.child.stdin.end('select pg_advisory_unlock(120799);')
+      await waitForRaceSuccess(barrier)
 
       // Both must complete within timeout (no deadlock).
       await Promise.all([waitForRaceSuccess(s1), waitForRaceSuccess(s2)])
@@ -662,6 +703,16 @@ async function runRaceTests(): Promise<void> {
         select claim_token::text from public.generation_jobs where id = '${jobBId}';
       `).trim()
 
+      // Start a persistent session to hold the advisory barrier lock
+      const barrier = startRacePsql(target, 'el-barrier', {})
+      sessions.push(barrier)
+      await waitForRaceSession(barrier)
+      barrier.child.stdin.write(`
+        select pg_advisory_lock(120799);
+        select 'BARRIER_HELD';
+      `)
+      await waitForRaceToken(barrier, 'BARRIER_HELD')
+
       const s1 = startRacePsql(target, 'el-s1', {})
       sessions.push(s1)
       await waitForRaceSession(s1)
@@ -673,6 +724,7 @@ async function runRaceTests(): Promise<void> {
       // Session A: ending path (E1 → E2 → R → S → J → L).
       // persist_ending_lock_v1 re-enters E2 (key 130600) reentrantly.
       // ending_key provided to trigger the ending lock path.
+      // Blocks on advisory barrier at the end.
       s1.child.stdin.end(`
         begin;
         set local statement_timeout = '15s';
@@ -688,10 +740,15 @@ async function runRaceTests(): Promise<void> {
           '[{"choiceId":"open-door","consequence":["Pintu terbuka."],"nextChapterNumber":11,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"},{"choiceId":"stop-guard","consequence":["Penjaga berhenti."],"nextChapterNumber":11,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"}]'::jsonb,
           'ending:happy', 'Happy Ending', null::jsonb
         );
+        select pg_advisory_xact_lock(120799);
         commit;
       `)
 
+      // Wait until Session A completes publication and blocks at the barrier
+      await waitForLockWaiter(target, 'advisory')
+
       // Session B: non-ending path (R → S → J → L). Wrap in temp table catcher.
+      // B will block on the row-lock R (reader_states) held by Session A.
       s2.child.stdin.end(`
         begin;
         set local statement_timeout = '15s';
@@ -715,6 +772,13 @@ async function runRaceTests(): Promise<void> {
         select res from r_err;
         commit;
       `)
+
+      // Wait until Session B is verified blocked on Session A's transaction row lock
+      await waitForLockWaiter(target, 'row')
+
+      // Release the barrier by ending the barrier holder session to let Session A commit
+      barrier.child.stdin.end('select pg_advisory_unlock(120799);')
+      await waitForRaceSuccess(barrier)
 
       // Both must complete within timeout (no deadlock).
       await Promise.all([waitForRaceSuccess(s1), waitForRaceSuccess(s2)])
@@ -780,8 +844,7 @@ async function runRaceTests(): Promise<void> {
   } catch (error) {
     console.error('Race execution error: dumping session outputs:');
     for (const s of sessions) {
-      if (s.stdout) console.log(`[SESSION ${s.label} STDOUT]:`, s.stdout)
-      if (s.stderr) console.error(`[SESSION ${s.label} STDERR]:`, s.stderr)
+      if (s.stdout) console.log(`[SESSION ${s.applicationName} STDOUT]:`, s.stdout)
     }
     throw error;
   } finally {

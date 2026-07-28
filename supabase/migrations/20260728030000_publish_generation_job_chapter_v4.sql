@@ -98,6 +98,21 @@ begin
     return pg_catalog.jsonb_build_object('ok', false, 'result', 'INVALID_TRANSITION');
   end if;
 
+  -- Defense-in-depth: Verify that the chapter has been published in this transaction.
+  -- The chapter table must have the record, and the idempotency key must prove success.
+  if not exists (
+    select 1 from public.chapters c
+    where c.story_id = v_job.story_id and c.number = v_job.chapter_number
+  ) or not exists (
+    select 1 from public.idempotency_keys i
+    where i.key = v_job.publication_idempotency_key
+      and pg_catalog.jsonb_typeof(i.result) = 'object'
+      and i.result @> '{"ok":true}'::jsonb
+      and (i.result->>'chapter_number')::integer = v_job.chapter_number
+  ) then
+    return pg_catalog.jsonb_build_object('ok', false, 'result', 'PROVENANCE_CONFLICT');
+  end if;
+
   v_now := pg_catalog.clock_timestamp();
   update public.chapter_generation_checkpoints
   set status = 'PUBLISHED',
@@ -114,10 +129,7 @@ $$;
 
 revoke all on function public.transition_checkpoint_published_atomic_v4(
   uuid,text,uuid,uuid,text,integer
-) from public, anon, authenticated;
-grant execute on function public.transition_checkpoint_published_atomic_v4(
-  uuid,text,uuid,uuid,text,integer
-) to service_role;
+) from public, anon, authenticated, service_role;
 
 create function public.publish_generation_job_chapter_v4(
   p_job_id uuid,

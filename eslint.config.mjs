@@ -11,6 +11,7 @@ const eslintConfig = [
   ...nextTs,
   {
     ignores: [
+      '.worktrees/**',
       '.local/**',
       '.next/**',
       '.open-next/**',
@@ -94,8 +95,8 @@ const eslintConfig = [
                 '@lakoku/runtime',
                 '@lakoku/api',
                 '@lakoku/db',
-                '@/lib/runtime',
                 '@/lib/runtime/*',
+                '!@/lib/runtime/abort',
                 '@/lib/api',
                 '@/lib/api/*',
                 '@/lib/supabase',

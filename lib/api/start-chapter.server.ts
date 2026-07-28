@@ -1,7 +1,12 @@
 /**
  * Server-only first-chapter kickoff — shared by Server Actions and REST API.
- * Schedules generation via next/server after(); returns immediately.
- * Mode (standard vs personalized) resolved by central dispatcher.
+ *
+ * Flag LAKOKU_GENERATION_WORKER wraps the ENTIRE durable path:
+ *   OFF (default) → legacy after()-direct, NO generation_job, attemptId null
+ *   ON → resolve mode → enqueue job (committed) → STARTED with attemptId=jobId
+ *        → after() claimAndRunGenerationJobById
+ *
+ * Mode (standard vs personalized) resolved by central dispatcher / enqueue mapping.
  */
 import 'server-only'
 import { after } from 'next/server'
@@ -13,7 +18,18 @@ import {
 } from '@/lib/authoring/action-auth'
 import { publicAuthoringErrorMessage } from '@/lib/authoring/server'
 import { safeErrorInfo } from '@/lib/observability/safe-error'
-import { runChapterGenerationAttempt } from '@/lib/runtime/generation-mode'
+import {
+  runChapterGenerationAttempt,
+  resolveStoryGenerationMode,
+} from '@/lib/runtime/generation-mode'
+import {
+  isGenerationWorkerEnabled,
+  mapModeToGenerationKind,
+} from '@/lib/runtime/generation-job-execution'
+import {
+  enqueueGenerationJob,
+  GenerationJobError,
+} from '@/lib/api/generation-job-enqueue.server'
 
 export const STORY_NOT_FOUND_ERROR = 'Cerita tidak ditemukan.'
 
@@ -26,8 +42,13 @@ export type StartChapterSuccess = {
   ok: true
   chapterNumber: number
   status: StartChapterKickoffStatus
-  /** Durable attempt id when available (null until attempt table fully wired). */
+  /**
+   * Durable attempt id = generation_jobs.id when worker flag ON.
+   * null on legacy path (flag OFF) — never a fake in-memory UUID.
+   */
   attemptId: string | null
+  /** Correlation for logs; always present when STARTED. */
+  correlationId?: string | null
 }
 export type StartChapterFailure = { ok: false; error: string }
 export type StartChapterResult = StartChapterSuccess | StartChapterFailure
@@ -111,50 +132,157 @@ export async function startOwnedChapterGeneration(
       return { ok: true, chapterNumber, status: 'ALREADY_RUNNING', attemptId: null }
     }
 
-    const correlationId = crypto.randomUUID()
-    const attemptId = correlationId
+    const workerEnabled = isGenerationWorkerEnabled()
+
+    if (!workerEnabled) {
+      // ---- LEGACY PATH (flag OFF): no generation_job, attemptId null ----
+      const correlationId = crypto.randomUUID()
+      after(async () => {
+        const startedAt = Date.now()
+        try {
+          const dispatched = await runChapterGenerationAttempt({
+            storyId,
+            userId: user.id,
+            chapterNumber,
+            correlationId,
+            attemptId: null,
+          })
+          if (!dispatched.ok) {
+            console.log('START_CHAPTER_BACKGROUND_FAILED', {
+              storyId,
+              chapterNumber,
+              correlationId,
+              reason: dispatched.reason,
+              path: 'legacy',
+              elapsedMs: Date.now() - startedAt,
+            })
+            return
+          }
+          const result = dispatched.result as {
+            ok: boolean
+            reason?: string
+          }
+          if (!result.ok && result.reason !== 'CHAPTER_EXISTS' && result.reason !== 'LEASE_HELD') {
+            console.log('START_CHAPTER_BACKGROUND_FAILED', {
+              storyId,
+              chapterNumber,
+              correlationId,
+              mode: dispatched.mode,
+              reason: result.reason,
+              path: 'legacy',
+              elapsedMs: Date.now() - startedAt,
+            })
+          }
+        } catch (err) {
+          const info = safeErrorInfo(err)
+          console.error('START_CHAPTER_BACKGROUND_EXCEPTION', {
+            storyId,
+            chapterNumber,
+            correlationId,
+            stage: 'AFTER_CALLBACK',
+            path: 'legacy',
+            errorName: info.errorName,
+            errorMessage: info.errorMessage,
+            errorStack: info.errorStack,
+            elapsedMs: Date.now() - startedAt,
+          })
+        }
+      })
+
+      await ensureReaderStateStarted(storyId, chapterNumber)
+      return {
+        ok: true,
+        chapterNumber,
+        status: 'STARTED',
+        attemptId: null,
+        correlationId,
+      }
+    }
+
+    // ---- WORKER PATH (flag ON): enqueue before STARTED ----
+    const modeResolved = await resolveStoryGenerationMode(storyId)
+    if (!modeResolved.ok) {
+      return {
+        ok: false,
+        error: publicAuthoringErrorMessage(new Error(modeResolved.error)),
+      }
+    }
+    const generationKind = mapModeToGenerationKind(modeResolved.mode)
+
+    let enqueued: Awaited<ReturnType<typeof enqueueGenerationJob>>
+    try {
+      enqueued = await enqueueGenerationJob({
+        storyId,
+        chapterNumber,
+        generationKind,
+        triggerChoiceId: null,
+      })
+    } catch (err) {
+      if (err instanceof GenerationJobError) {
+        if (err.code === 'GENERATION_JOB_CONFLICT' || err.code === 'LEASE_HELD') {
+          await ensureReaderStateStarted(storyId, chapterNumber)
+          return {
+            ok: true,
+            chapterNumber,
+            status: 'ALREADY_RUNNING',
+            attemptId: null,
+          }
+        }
+        if (err.code === 'STORY_NOT_FOUND') {
+          return { ok: false, error: STORY_NOT_FOUND_ERROR }
+        }
+        if (err.code === 'AUTH_REQUIRED') {
+          return { ok: false, error: AUTHORING_AUTH_REQUIRED_ERROR }
+        }
+      }
+      throw err
+    }
+
+    if (enqueued.alreadyComplete) {
+      await ensureReaderStateStarted(storyId, chapterNumber)
+      return {
+        ok: true,
+        chapterNumber,
+        status: 'ALREADY_READY',
+        attemptId: enqueued.jobId,
+        correlationId: enqueued.correlationId,
+      }
+    }
+
+    if (!enqueued.jobId || !enqueued.correlationId) {
+      throw new Error('ENQUEUE_MISSING_JOB_ID')
+    }
+
+    const jobId = enqueued.jobId
+    const correlationId = enqueued.correlationId
+
+    // Job row is committed. Only now schedule the worker claim.
     after(async () => {
       const startedAt = Date.now()
       try {
-        const dispatched = await runChapterGenerationAttempt({
-          storyId,
-          userId: user.id,
-          chapterNumber,
-          correlationId,
-          attemptId,
-        })
-        if (!dispatched.ok) {
-          console.log('START_CHAPTER_BACKGROUND_FAILED', {
+        const { claimAndRunGenerationJobById } = await import(
+          '@/lib/runtime/generation-worker'
+        )
+        const run = await claimAndRunGenerationJobById({ jobId })
+        if (!run.ok && run.outcome !== 'RETRY_WAIT') {
+          console.log('START_CHAPTER_WORKER_FAILED', {
             storyId,
             chapterNumber,
+            jobId,
             correlationId,
-            reason: dispatched.reason,
+            outcome: run.outcome,
+            reason: run.reason ?? null,
+            path: 'worker',
             elapsedMs: Date.now() - startedAt,
           })
-          return
-        }
-        const result = dispatched.result as {
-          ok: boolean
-          reason?: string
-          detail?: unknown
-        }
-        if (!result.ok && result.reason !== 'CHAPTER_EXISTS' && result.reason !== 'LEASE_HELD') {
-          console.log('START_CHAPTER_BACKGROUND_FAILED', {
+        } else {
+          console.log('START_CHAPTER_WORKER_DONE', {
             storyId,
             chapterNumber,
+            jobId,
             correlationId,
-            mode: dispatched.mode,
-            reason: result.reason,
-            failedLayer:
-              result.detail && typeof result.detail === 'object' && 'failedLayer' in result.detail
-                ? (result.detail as { failedLayer?: string | null }).failedLayer ?? null
-                : null,
-            findingCodes:
-              result.detail && typeof result.detail === 'object' && Array.isArray((result.detail as { findings?: unknown }).findings)
-                ? ((result.detail as { findings: Array<{ severity?: string; code?: string }> }).findings)
-                    .slice(0, 12)
-                    .map((f) => `${f.severity ?? '?'}:${f.code ?? '?'}`)
-                : [],
+            outcome: run.ok ? run.outcome : run.outcome,
+            path: 'worker',
             elapsedMs: Date.now() - startedAt,
           })
         }
@@ -163,8 +291,10 @@ export async function startOwnedChapterGeneration(
         console.error('START_CHAPTER_BACKGROUND_EXCEPTION', {
           storyId,
           chapterNumber,
+          jobId,
           correlationId,
           stage: 'AFTER_CALLBACK',
+          path: 'worker',
           errorName: info.errorName,
           errorMessage: info.errorMessage,
           errorStack: info.errorStack,
@@ -175,7 +305,13 @@ export async function startOwnedChapterGeneration(
 
     await ensureReaderStateStarted(storyId, chapterNumber)
 
-    return { ok: true, chapterNumber, status: 'STARTED', attemptId }
+    return {
+      ok: true,
+      chapterNumber,
+      status: 'STARTED',
+      attemptId: jobId,
+      correlationId,
+    }
   } catch (e) {
     return fail(e)
   }

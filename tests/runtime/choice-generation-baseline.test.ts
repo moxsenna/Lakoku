@@ -365,6 +365,8 @@ describe('Phase 0 — Characterization (current buggy behavior)', () => {
     })
 
     it('returns explicit failure when generateChoiceBranch returns null after repair', async () => {
+      process.env.LAKOKU_CHOICE_JITTER_MIN_MS = '0'
+      process.env.LAKOKU_CHOICE_JITTER_MAX_MS = '0'
       mocks.selectProvider.mockResolvedValue({ name: 'test', generateChoices: async () => mockBranch() })
       mocks.generateChoiceBranch.mockResolvedValue(null)
       mocks.mockConsoleLog.mockClear()
@@ -383,6 +385,70 @@ describe('Phase 0 — Characterization (current buggy behavior)', () => {
       }
       expect(mocks.mockConsoleLog).not.toHaveBeenCalledWith('GENERATION_CHOICES_FALLBACK_USED')
     })
+
+    it('stops structural repair after provider ignores abort and resolves null', async () => {
+      process.env.LAKOKU_CHOICE_JITTER_MIN_MS = '0'
+      process.env.LAKOKU_CHOICE_JITTER_MAX_MS = '0'
+      const controller = new AbortController()
+      let resolveProvider: ((value: null) => void) | undefined
+      mocks.selectProvider.mockResolvedValue({ name: 'test', generateChoices: async () => mockBranch() })
+      mocks.generateChoiceBranch.mockReset()
+      mocks.generateChoiceBranch.mockImplementationOnce(() => new Promise((resolve) => {
+        resolveProvider = resolve
+      }))
+      const { __testBuildChoices: buildChoices } = await import('@/lib/runtime/story-generation')
+      const snapshot = (await import('@/fixtures/narrative/fixture-50')).buildFixtureSnapshot()
+      const run = buildChoices(snapshot, mockDraft(12), 12, providerContext(), undefined, controller.signal)
+      await vi.waitFor(() => expect(resolveProvider).toBeTypeOf('function'))
+
+      controller.abort()
+      resolveProvider?.(null)
+
+      await expect(run).rejects.toMatchObject({ name: 'AbortError' })
+      expect(mocks.generateChoiceBranch).toHaveBeenCalledTimes(1)
+    })
+
+    it('stops transient retry backoff immediately on abort', async () => {
+      process.env.LAKOKU_CHOICE_JITTER_MIN_MS = '0'
+      process.env.LAKOKU_CHOICE_JITTER_MAX_MS = '0'
+      const controller = new AbortController()
+      mocks.selectProvider.mockResolvedValue({ name: 'test', generateChoices: async () => mockBranch() })
+      mocks.generateChoiceBranch.mockReset()
+      mocks.generateChoiceBranch.mockImplementationOnce(async () => {
+        controller.abort()
+        throw new Error('429 rate limit')
+      })
+      const { __testBuildChoices: buildChoices } = await import('@/lib/runtime/story-generation')
+      const snapshot = (await import('@/fixtures/narrative/fixture-50')).buildFixtureSnapshot()
+      const run = buildChoices(snapshot, mockDraft(12), 12, providerContext(), undefined, controller.signal)
+
+      await expect(run).rejects.toMatchObject({ name: 'AbortError' })
+      expect(mocks.generateChoiceBranch).toHaveBeenCalledTimes(1)
+    })
+
+    it('P1-1: caps total provider calls at the retry budget (<= 5) on repeated failures', async () => {
+      // Zero the choice concurrency jitter so repeated calls do not sleep.
+      process.env.LAKOKU_CHOICE_JITTER_MIN_MS = '0'
+      process.env.LAKOKU_CHOICE_JITTER_MAX_MS = '0'
+      mocks.selectProvider.mockResolvedValue({ name: 'test', generateChoices: async () => mockBranch() })
+      // Always return null (structural failure, no transient backoff sleep) →
+      // orchestrator drives structural repairs until the total-call budget stops it.
+      mocks.generateChoiceBranch.mockClear()
+      mocks.generateChoiceBranch.mockReset()
+      mocks.generateChoiceBranch.mockResolvedValue(null)
+      mocks.mockConsoleLog.mockClear()
+
+      const { __testBuildChoices: buildChoices } = await import(
+        '@/lib/runtime/story-generation'
+      )
+      const snapshot = (await import('@/fixtures/narrative/fixture-50')).buildFixtureSnapshot()
+
+      const result = await buildChoices(snapshot, mockDraft(12), 12, providerContext())
+
+      expect(result.ok).toBe(false)
+      // Total high-level provider calls must never exceed maxTotalCalls (5).
+      expect(mocks.generateChoiceBranch.mock.calls.length).toBeLessThanOrEqual(5)
+    }, 15_000)
   })
 
   describe('choice validation after buildChoices (B5)', () => {

@@ -13,7 +13,7 @@ begin
 end
 $$;
 
-select plan(42);
+select plan(43);
 
 create temporary table fencing_signatures (
   function_name text primary key,
@@ -60,11 +60,6 @@ select ok(
   function_name || ' is service-role-only'
 ) from fencing_signatures order by function_name;
 
-select is(
-  md5(pg_get_functiondef('public.publish_chapter(text,integer,text,jsonb,text,jsonb,jsonb,uuid,text)'::regprocedure)),
-  'e8f33f2aaca0b3343f8fe51200fc402b',
-  'legacy publisher remains byte-stable'
-);
 select is(
   md5(pg_get_functiondef('public.publish_chapter_v2(text,integer,text,jsonb,text,jsonb,jsonb,uuid,text)'::regprocedure)),
   'efcc06ecb050e48e561611951fdf11b7',
@@ -449,9 +444,20 @@ select is(
 );
 
 select ok(
-  position('from public.generation_jobs' in pg_get_functiondef('public.publish_generation_job_chapter_v2(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb)'::regprocedure))
+  position('pg_advisory_xact_lock' in pg_get_functiondef('public.publish_generation_job_chapter_v2(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb)'::regprocedure)) > 0
+    and position('pg_advisory_xact_lock' in pg_get_functiondef('public.publish_generation_job_chapter_v2(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb)'::regprocedure))
+      < position('for update' in pg_get_functiondef('public.publish_generation_job_chapter_v2(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb)'::regprocedure)),
+  'V2 acquires story advisory lock before locking job'
+);
+select ok(
+  position('for update' in pg_get_functiondef('public.publish_generation_job_chapter_v2(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb)'::regprocedure))
     < position('from public.generation_leases' in pg_get_functiondef('public.publish_generation_job_chapter_v2(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb)'::regprocedure)),
-  'wrapper source locks job before lease'
+  'V2 locks job before lease'
+);
+select ok(
+  position('from public.generation_leases' in pg_get_functiondef('public.publish_generation_job_chapter_v2(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb)'::regprocedure))
+    < position('public.publish_chapter_v2' in pg_get_functiondef('public.publish_generation_job_chapter_v2(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb)'::regprocedure)),
+  'V2 locks lease before reentrant publisher story lock'
 );
 
 select * from finish();

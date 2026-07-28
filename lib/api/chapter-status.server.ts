@@ -113,6 +113,47 @@ async function hasActiveLease(storyId: string, chapterNumber: number): Promise<b
   return data != null
 }
 
+type ActiveJobState =
+  | { kind: 'none' }
+  | { kind: 'running' }
+  | { kind: 'queued' }
+  | { kind: 'retry_scheduled' }
+
+/**
+ * P1-3: job-aware liveness. A durable job in QUEUED/RUNNING/RETRY_WAIT means the
+ * chapter is genuinely in flight or scheduled — even a RETRY_WAIT whose
+ * available_at is in the future counts as "queued" (retry scheduled), NOT idle.
+ * Missing table (worker path never deployed) → { kind: 'none' } (fall through).
+ */
+async function activeJobState(
+  storyId: string,
+  chapterNumber: number,
+): Promise<ActiveJobState> {
+  const admin = createAdminClient()
+  const { data, error } = await admin
+    .from('generation_jobs')
+    .select('status, available_at')
+    .eq('story_id', storyId)
+    .eq('chapter_number', chapterNumber)
+    .in('status', ['QUEUED', 'RUNNING', 'RETRY_WAIT'])
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) {
+    // Missing relation / not deployed → treat as no durable job (legacy path).
+    return { kind: 'none' }
+  }
+  if (!data) return { kind: 'none' }
+  const status = String((data as { status?: unknown }).status ?? '')
+  if (status === 'RUNNING') return { kind: 'running' }
+  if (status === 'QUEUED') return { kind: 'queued' }
+  if (status === 'RETRY_WAIT') {
+    // Future available_at still counts as an active (scheduled) job.
+    return { kind: 'retry_scheduled' }
+  }
+  return { kind: 'none' }
+}
+
 async function latestExactFailedAttempt(
   storyId: string,
   chapterNumber: number,
@@ -210,8 +251,31 @@ export async function getChapterStatusForUser(input: {
     }
   }
 
-  // PROSE_READY / CHOICES_RETRY_WAIT: prose is durable; choices still in flight or retryable.
-  // Must beat stale REVIEW_REQUIRED from a previous choice failure on the same chapter.
+  // P1-3: durable job liveness (worker path). Resolved once and reused below so a
+  // CHOICES_RETRY_WAIT checkpoint is only "preparing choices" when a real job is
+  // still scheduled — otherwise it is a stalled retry and must surface as failed.
+  const jobState = await activeJobState(storyId, chapterNumber)
+  if (jobState.kind === 'running') {
+    return {
+      status: 'generating',
+      chapterNumber,
+      progressPhase: 'writing',
+      ...(attemptId ? { attemptId } : {}),
+    }
+  }
+  if (jobState.kind === 'queued' || jobState.kind === 'retry_scheduled') {
+    // Future available_at (retry_scheduled) still counts as queued to the reader.
+    return {
+      status: 'queued',
+      chapterNumber,
+      ...(attemptId ? { attemptId } : {}),
+    }
+  }
+
+  // PROSE_READY / CHOICES_RETRY_WAIT checkpoint: prose durable; choices in flight.
+  // Only report "preparing choices" when a durable job is still active (above) OR
+  // the checkpoint is PROSE_READY / running-choices. A CHOICES_RETRY_WAIT with no
+  // active job is a stalled retry → do NOT report perpetual "preparing choices".
   try {
     const { loadUsableProseCheckpoint } = await import(
       '@/lib/runtime/chapter-generation-checkpoint'
@@ -222,12 +286,17 @@ export async function getChapterStatusForUser(input: {
       attemptId,
     })
     if (checkpoint) {
-      return {
-        status: 'generating',
-        chapterNumber,
-        attemptId: checkpoint.attemptId,
-        progressPhase: 'preparing_choices',
+      const stalled =
+        checkpoint.status === 'CHOICES_RETRY_WAIT' && jobState.kind === 'none'
+      if (!stalled) {
+        return {
+          status: 'generating',
+          chapterNumber,
+          attemptId: checkpoint.attemptId,
+          progressPhase: 'preparing_choices',
+        }
       }
+      // stalled retry-wait with no active job: fall through to failed (retryable).
     }
   } catch {
     // best-effort — missing table/module must not break status

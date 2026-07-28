@@ -1,4 +1,5 @@
 import 'server-only'
+import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import {
   compileContext,
@@ -55,7 +56,24 @@ import {
   type PublishOutcomeV2,
   type PublishResult,
 } from './lifecycle'
-import type { RealGenerateResult } from './story-generation'
+import {
+  GENERATION_PROMPT_CONTRACT_VERSION,
+  type RealGenerateResult,
+} from './story-generation'
+import type { FencedCheckpointMutationResult } from './generation-jobs'
+import {
+  draftFromCheckpoint,
+  loadUsableProseCheckpoint,
+  markCheckpointStatus,
+  persistProseReadyCheckpoint,
+} from './chapter-generation-checkpoint'
+import {
+  CHECKPOINT_AUDIT_SIGNALS_VERSION,
+  type CheckpointAuditSignals,
+  type ChapterGenerationCheckpoint,
+  type CheckpointFreshnessContext,
+  type CheckpointStatus,
+} from './chapter-generation-checkpoint.pure'
 import { withGenerationSlot } from './generation-concurrency'
 import { createSynchronousProviderContext } from './generation-provider-context'
 import { ProviderCallContextSchema } from '@/lib/observability/generation-provider-call.contract'
@@ -69,6 +87,7 @@ import {
   choiceNarrativeContextFromReader,
 } from './choice-context'
 import { resolveGenerationLeaseTtlSeconds } from './generation-lease-ttl'
+import { throwIfAborted } from './abort'
 
 /**
  * Personalized chapter runtime (Task 17).
@@ -77,7 +96,7 @@ import { resolveGenerationLeaseTtlSeconds } from './generation-lease-ttl'
  *   lease → canon → contract → reader state → brief → compile
  *         → generateChapter (plan→write→Layer A→Layer B→repair)
  *         → consumer-safe → choices (<50) / resolveEnding (50)
- *         → auditPlotDebts → ending lock @45 (atomic RPC) → publishChapterV2
+ *         → auditPlotDebts → legacy lock then publish / worker atomic V3 lock+publish
  *         → mark SELESAI @50 after publish ok OR CHAPTER_EXISTS recovery
  *         → telemetry
  *
@@ -115,6 +134,12 @@ export interface PersonalizedGenerateInput {
   triggerChoiceId?: string
   jobId?: string
   attemptNumber?: number
+  /** Durable attempt id (job id on worker path). */
+  attemptId?: string | null
+  /**
+   * Worker path: reuse job lease + fenced publish. Skip own acquireGenerationLease.
+   */
+  jobContext?: import('@/lib/runtime/generation-job-execution').GenerationJobExecutionContext | null
 }
 
 export interface PersistEndingLockInput {
@@ -155,6 +180,45 @@ export interface PersonalizedGenerationDeps {
     chapterNumber: number,
     packet: ChapterContextPacket,
   ) => Promise<void>
+  loadUsableProseCheckpoint: (args: {
+    storyId: string
+    chapterNumber: number
+    attemptId?: string | null
+    freshness?: CheckpointFreshnessContext
+    jobContext?: import('./generation-job-execution').GenerationJobExecutionContext | null
+  }) => Promise<ChapterGenerationCheckpoint | null>
+  persistProseReadyCheckpoint: (args: {
+    storyId: string
+    chapterNumber: number
+    attemptId: string
+    correlationId: string
+    title: string
+    paragraphs: string[]
+    proseAttemptCount?: number
+    auditSignals?: CheckpointAuditSignals | null
+    auditSignalsVersion?: 1 | null
+    directionFingerprint?: string | null
+    canonVersion?: number | null
+    blueprintVersion?: number | null
+    generationMode?: string | null
+    generationPolicyVersion?: number | null
+    promptContractVersion?: number | null
+    jobId?: string | null
+    jobAttemptNumber?: number | null
+    jobContext?: import('./generation-job-execution').GenerationJobExecutionContext | null
+  }) => Promise<
+    | FencedCheckpointMutationResult
+    | { ok: true; checkpoint: ChapterGenerationCheckpoint }
+    | { ok: false; error: 'TABLE_UNAVAILABLE' | 'WRITE_FAILED' }
+  >
+  markCheckpointStatus: (args: {
+    storyId: string
+    chapterNumber: number
+    attemptId: string
+    status: CheckpointStatus
+    choiceAttemptCount?: number
+    jobContext?: import('./generation-job-execution').GenerationJobExecutionContext | null
+  }) => Promise<FencedCheckpointMutationResult | void>
   selectProvider: (
     context: ReturnType<typeof createSynchronousProviderContext>,
   ) => Promise<GenerationProvider>
@@ -438,6 +502,9 @@ function defaultDeps(): PersonalizedGenerationDeps {
     buildChapterBrief,
     compileContext,
     persistRetrievalLog,
+    loadUsableProseCheckpoint,
+    persistProseReadyCheckpoint,
+    markCheckpointStatus,
     selectProvider,
     generateChapter,
     toReaderSafe,
@@ -489,6 +556,7 @@ export async function generateNextPersonalizedChapter(
       })
       return { ok: false, reason, detail: meta }
     },
+    input.jobContext?.signal,
   )
 }
 
@@ -503,9 +571,17 @@ async function generateNextPersonalizedChapterInner(
     chapterNumber,
     correlationId,
     triggerChoiceId,
-    jobId,
-    attemptNumber,
   } = input
+  const jobContext = input.jobContext ?? null
+  const jobId = jobContext?.jobId ?? input.jobId
+  const attemptNumber = jobContext?.attemptNumber ?? input.attemptNumber
+  const attemptId = input.attemptId?.trim() || jobContext?.jobId || correlationId
+  let checkpointAttemptId = attemptId
+  let fromCheckpoint = false
+
+  const checkpointMutationSucceeded = (
+    result: FencedCheckpointMutationResult | { ok: boolean } | void,
+  ): boolean => !jobContext || result?.ok === true
   const providerContext = jobId === undefined && attemptNumber === undefined
     ? createSynchronousProviderContext({
         userId,
@@ -532,35 +608,62 @@ async function generateNextPersonalizedChapterInner(
     throw new Error(`Invalid personalized chapter number: ${chapterNumber}`)
   }
 
-  const ttlSeconds = await resolveGenerationLeaseTtlSeconds()
-  const lease = await d.acquireGenerationLease({
-    storyId,
-    chapterNumber,
-    holder: 'personalized-generation',
-    // Multi-LLM can exceed default 120s wall before publish.
-    // TTL from generation_policy (clamped 60..1800).
-    ttlSeconds,
-    idempotencyKey: personalizedGenerationKey(storyId, chapterNumber, 'lease'),
-  })
-  if (!lease.ok) return { ok: false, reason: lease.reason }
+  if (jobContext?.signal?.aborted) {
+    return { ok: false, reason: 'CAPACITY_TIMEOUT', detail: { reason: 'ABORT_SIGNAL' } }
+  }
+
+  // Worker path reuses job lease (no second acquire). Legacy acquires own.
+  let leaseId: string
+  let ownLease = false
+  if (jobContext) {
+    leaseId = jobContext.leaseId
+    console.log('GENERATION_JOB_LEASE_REUSED', {
+      storyId,
+      chapterNumber,
+      correlationId,
+      jobId: jobContext.jobId,
+      attemptNumber: jobContext.attemptNumber,
+      path: 'personalized',
+    })
+  } else {
+    const ttlSeconds = await resolveGenerationLeaseTtlSeconds()
+    const lease = await d.acquireGenerationLease({
+      storyId,
+      chapterNumber,
+      holder: 'personalized-generation',
+      // Multi-LLM can exceed default 120s wall before publish.
+      // TTL from generation_policy (clamped 60..1800).
+      ttlSeconds,
+      idempotencyKey: personalizedGenerationKey(storyId, chapterNumber, 'lease'),
+    })
+    if (!lease.ok) return { ok: false, reason: lease.reason }
+    leaseId = lease.lease_id
+    ownLease = true
+  }
+
+  const releaseOwnLease = async () => {
+    if (!ownLease) return
+    ownLease = false
+    await d.releaseGenerationLease({ storyId, leaseId }).catch(() => {})
+  }
 
   try {
     const snapshot = await d.loadCanonSnapshot(storyId, chapterNumber)
     const blueprint = resolveBlueprint(snapshot, chapterNumber)
     if (!blueprint || snapshot.characters.length === 0) {
-      await d.releaseGenerationLease({ storyId, leaseId: lease.lease_id })
+      await releaseOwnLease()
       return { ok: false, reason: 'CANON_MISSING' }
     }
 
     const contract = await d.loadStoryGenerationContract(storyId)
     if (contract.storyId !== storyId) {
-      await d.releaseGenerationLease({ storyId, leaseId: lease.lease_id })
+      await releaseOwnLease()
       throw new Error('Contract storyId does not match generation storyId.')
     }
 
     const reader = await d.loadReaderStateInternal(userId, storyId)
     if (reader.story_id !== storyId || reader.user_id !== userId) {
-      await d.releaseGenerationLease({ storyId, leaseId: lease.lease_id })
+      await releaseOwnLease()
       throw new Error('Reader state ownership mismatch.')
     }
 
@@ -595,28 +698,164 @@ async function generateNextPersonalizedChapterInner(
       // best-effort observability — never fail generation
     }
 
+    const canonVersion = snapshot.blueprints.reduce(
+      (max, candidate) => Math.max(max, candidate.version ?? 0),
+      0,
+    )
+    const blueprintVersion = blueprint.version ?? 0
+    const directionFingerprint = createHash('sha256')
+      .update(JSON.stringify(contract))
+      .digest('hex')
+      .slice(0, 32)
+    const freshness: CheckpointFreshnessContext = {
+      canonVersion,
+      blueprintVersion,
+      directionFingerprint,
+      generationMode: 'personalized',
+      generationPolicyVersion: GENERATION_PROMPT_CONTRACT_VERSION,
+      promptContractVersion: GENERATION_PROMPT_CONTRACT_VERSION,
+      requireJobProvenance: jobContext != null,
+      jobId: jobContext?.jobId ?? null,
+      jobAttemptNumber: jobContext?.attemptNumber ?? null,
+    }
+    const existingCheckpoint = await d.loadUsableProseCheckpoint({
+      storyId,
+      chapterNumber,
+      attemptId: null,
+      freshness,
+      jobContext,
+    })
+
+    const reconcilePublishedCheckpoint = async () => {
+      try {
+        const mutation = await d.markCheckpointStatus({
+          storyId,
+          chapterNumber,
+          attemptId: checkpointAttemptId,
+          status: 'PUBLISHED',
+          jobContext,
+        })
+        if (checkpointMutationSucceeded(mutation)) return
+        console.log('CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED', {
+          storyId,
+          chapterNumber,
+          correlationId,
+          jobId: jobContext?.jobId ?? null,
+          checkpointAttemptId,
+          result: mutation && typeof mutation === 'object' && 'result' in mutation
+            ? String(mutation.result).slice(0, 64)
+            : 'NOT_UPDATED',
+          path: 'personalized',
+        })
+      } catch (error) {
+        if (!jobContext) throw error
+        console.log('CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED', {
+          storyId,
+          chapterNumber,
+          correlationId,
+          jobId: jobContext.jobId,
+          checkpointAttemptId,
+          result: 'THREW',
+          errorName: error instanceof Error ? error.name.slice(0, 100) : 'unknown',
+          path: 'personalized',
+        })
+      }
+    }
+
     const threadContext: ThreadContext = {
       threads: snapshot.threads,
       advancedThreadIds: [],
       opensNewThread: false,
     }
 
-    const result = await d.generateChapter(
-      { provider: await d.selectProvider(providerContext) },
-      {
-        snapshot,
-        blueprint,
+    let result: GenerationResult
+    let draft: ChapterDraftParsed
+    if (existingCheckpoint) {
+      fromCheckpoint = true
+      checkpointAttemptId = existingCheckpoint.attemptId
+      draft = draftFromCheckpoint(existingCheckpoint) as ChapterDraftParsed
+      result = {
+        status: 'PUBLISHED',
         chapterNumber,
-        threadContext,
-        executionOptions: {
-          telemetryContext: providerContext,
-          workflowPhase: 'CHAPTER_PROSE_INITIAL',
+        draft,
+        attempts: existingCheckpoint.proseAttemptCount,
+        findings: [],
+      }
+    } else {
+      throwIfAborted(jobContext?.signal)
+      result = await d.generateChapter(
+        { provider: await d.selectProvider(providerContext) },
+        {
+          snapshot,
+          blueprint,
+          chapterNumber,
+          threadContext,
+          executionOptions: {
+            telemetryContext: providerContext,
+            workflowPhase: 'CHAPTER_PROSE_INITIAL',
+            signal: jobContext?.signal,
+          },
         },
-      },
-    )
+      )
+      throwIfAborted(jobContext?.signal)
 
-    if (result.status !== 'PUBLISHED' || !result.draft) {
-      await d.releaseGenerationLease({ storyId, leaseId: lease.lease_id })
+      if (result.status !== 'PUBLISHED' || !result.draft) {
+        await releaseOwnLease()
+        await d.recordGenerationAttempt({
+          storyId,
+          chapter: chapterNumber,
+          outcome: 'REVIEW_REQUIRED',
+          repairAttempts: result.attempts,
+          findings: result.findings,
+        })
+        return {
+          ok: false,
+          reason: 'FAILED_REVIEW_REQUIRED',
+          detail: {
+            failedLayer: result.failedLayer,
+            findings: result.findings,
+            reason: result.reason,
+          },
+        }
+      }
+
+      draft = result.draft
+    }
+
+    const endingProposal = chapterNumber === ENDING_LOCK_CHAPTER || chapterNumber === TOTAL_PERSONALIZED_CHAPTERS
+      ? d.resolveEnding({
+          routeState,
+          storyContract: contract,
+          chapterNumber,
+          lockedEndingKey: reader.locked_ending_key ?? brief.lockedEndingKey,
+        })
+      : null
+    const auditSignals: CheckpointAuditSignals = existingCheckpoint
+      ? existingCheckpoint.auditSignals as CheckpointAuditSignals
+      : (() => {
+          const derived = derivePlotDebtAuditFlags({
+            draft,
+            brief,
+            findings: result.findings,
+            endingLocked: false,
+          })
+          return {
+            opensNewThread: derived.opensNewThread,
+            opensMajorMystery: derived.opensMajorMystery,
+            opensNewConflict: derived.opensNewConflict,
+          }
+        })()
+    const audit = d.auditPlotDebts({
+      chapterNumber,
+      debts: contract.plotDebts,
+      ...auditSignals,
+      endingLocked: Boolean(
+        reader.locked_ending_key ?? brief.lockedEndingKey ??
+        (chapterNumber === ENDING_LOCK_CHAPTER ? endingProposal?.key : null),
+      ),
+    })
+    if (!audit.ok) {
+      await releaseOwnLease()
       await d.recordGenerationAttempt({
         storyId,
         chapter: chapterNumber,
@@ -627,22 +866,61 @@ async function generateNextPersonalizedChapterInner(
       return {
         ok: false,
         reason: 'FAILED_REVIEW_REQUIRED',
-        detail: {
-          failedLayer: result.failedLayer,
-          findings: result.findings,
-          reason: result.reason,
-        },
+        detail: { findings: audit.findings, reason: 'PLOT_DEBT_AUDIT_FAILED' },
       }
     }
 
-    const draft = result.draft
+    throwIfAborted(jobContext?.signal)
+    if (!existingCheckpoint) {
+      const saved = await d.persistProseReadyCheckpoint({
+        storyId,
+        chapterNumber,
+        attemptId,
+        correlationId,
+        title: draft.title,
+        paragraphs: draft.paragraphs ?? [],
+        proseAttemptCount: result.attempts,
+        auditSignals,
+        auditSignalsVersion: CHECKPOINT_AUDIT_SIGNALS_VERSION,
+        canonVersion,
+        blueprintVersion,
+        directionFingerprint,
+        generationMode: 'personalized',
+        generationPolicyVersion: GENERATION_PROMPT_CONTRACT_VERSION,
+        promptContractVersion: GENERATION_PROMPT_CONTRACT_VERSION,
+        jobId: jobContext?.jobId ?? null,
+        jobAttemptNumber: jobContext?.attemptNumber ?? null,
+        jobContext,
+      })
+      if (!checkpointMutationSucceeded(saved)) {
+        return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: saved } }
+      }
+      if (jobContext) checkpointAttemptId = jobContext.jobId
+      else if (
+        'checkpoint' in saved && saved.ok && saved.checkpoint &&
+        typeof saved.checkpoint.attemptId === 'string'
+      ) checkpointAttemptId = saved.checkpoint.attemptId
+    }
+
+    const runningChoices = await d.markCheckpointStatus({
+      storyId,
+      chapterNumber,
+      attemptId: checkpointAttemptId,
+      status: 'RUNNING_CHOICES',
+      ...(existingCheckpoint ? { choiceAttemptCount: existingCheckpoint.choiceAttemptCount + 1 } : {}),
+      jobContext,
+    })
+    if (!checkpointMutationSucceeded(runningChoices)) {
+      return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: runningChoices } }
+    }
+
     const readerSafe = d.toReaderSafe(draft)
     d.assertConsumerSafe(readerSafe)
 
     let choicePrompt: string | null = null
     let choices: unknown[] | null = null
     let outcomes: PublishOutcomeV2[] = []
-    let ending: EndingResolution | null = null
+    let ending: EndingResolution | null = endingProposal
 
     if (chapterNumber < TOTAL_PERSONALIZED_CHAPTERS) {
       // Shared choice-build seam. Keep trigger-aware previousChoice from narrativeContext.
@@ -669,13 +947,30 @@ async function generateNextPersonalizedChapterInner(
         lockedEndingKey: narrativeContext.lockedEndingKey ?? brief.lockedEndingKey,
         totalChapters: TOTAL_PERSONALIZED_CHAPTERS,
         providerContext,
+        signal: jobContext?.signal,
         activeCharacters,
         activeThreads,
       }
+      throwIfAborted(jobContext?.signal)
       const choiceResult = await buildChoiceBranch(choiceDepsFromPersonalized(d), choiceInput)
+      throwIfAborted(jobContext?.signal)
 
       if (!choiceResult.ok) {
-        await d.releaseGenerationLease({ storyId, leaseId: lease.lease_id })
+        const retryCheckpoint = await d.markCheckpointStatus({
+          storyId,
+          chapterNumber,
+          attemptId: checkpointAttemptId,
+          status: 'CHOICES_RETRY_WAIT',
+          jobContext,
+        })
+        if (!checkpointMutationSucceeded(retryCheckpoint)) {
+          return {
+            ok: false,
+            reason: 'FAILED_REVIEW_REQUIRED',
+            detail: { checkpointMutation: retryCheckpoint },
+          }
+        }
+        await releaseOwnLease()
         await d.recordGenerationAttempt({
           storyId,
           chapter: chapterNumber,
@@ -703,7 +998,7 @@ async function generateNextPersonalizedChapterInner(
         ...branch.outcomes.flatMap((o) => o.consequence),
       ].flatMap(scanForLeaks)
       if (leakInChoices.length) {
-        await d.releaseGenerationLease({ storyId, leaseId: lease.lease_id })
+        await releaseOwnLease()
         throw new Error(
           `Kebocoran istilah internal pada cabang pilihan: ${leakInChoices.join(', ')}`,
         )
@@ -713,13 +1008,7 @@ async function generateNextPersonalizedChapterInner(
       choices = branch.choices
       outcomes = mapBranchToV2Outcomes(branch, chapterNumber)
     } else {
-      // Chapter 50: no choice generation; resolve locked ending for final prose metadata.
-      ending = d.resolveEnding({
-        routeState,
-        storyContract: contract,
-        chapterNumber,
-        lockedEndingKey: reader.locked_ending_key ?? brief.lockedEndingKey,
-      })
+      // Chapter 50: ending proposal was resolved once before audit.
       choicePrompt = null
       choices = null
       outcomes = []
@@ -728,8 +1017,6 @@ async function generateNextPersonalizedChapterInner(
     // Ending lock at ch45 (or reuse persisted lock). endingLocked must come from
     // persisted lock or the lock written this turn — never forced by chapter>=45 alone.
     let lockWrittenThisTurn: EndingResolution | null = null
-    const persistedEndingKey = reader.locked_ending_key ?? brief.lockedEndingKey ?? null
-
     if (chapterNumber === ENDING_LOCK_CHAPTER && !reader.locked_ending_key) {
       const lock = ending ?? d.resolveEnding({
         routeState,
@@ -748,36 +1035,14 @@ async function generateNextPersonalizedChapterInner(
       })
     }
 
-    const endingLocked = Boolean(persistedEndingKey || lockWrittenThisTurn?.key)
-
-    const auditFlags = derivePlotDebtAuditFlags({
-      draft,
-      brief,
-      findings: result.findings,
-      endingLocked,
-    })
-    const audit = d.auditPlotDebts({
-      chapterNumber,
-      debts: contract.plotDebts,
-      ...auditFlags,
-    })
-    if (!audit.ok) {
-      await d.releaseGenerationLease({ storyId, leaseId: lease.lease_id })
-      await d.recordGenerationAttempt({
-        storyId,
-        chapter: chapterNumber,
-        outcome: 'REVIEW_REQUIRED',
-        repairAttempts: result.attempts,
-        findings: result.findings,
-      })
-      return {
-        ok: false,
-        reason: 'FAILED_REVIEW_REQUIRED',
-        detail: { findings: audit.findings, reason: 'PLOT_DEBT_AUDIT_FAILED' },
-      }
+    // Abort before ending-lock write so ownership loss cannot mutate reader lock.
+    // Publish stays after this gate.
+    if (jobContext?.signal?.aborted) {
+      await releaseOwnLease()
+      return { ok: false, reason: 'CAPACITY_TIMEOUT', detail: { reason: 'ABORT_SIGNAL' } }
     }
 
-    if (chapterNumber === ENDING_LOCK_CHAPTER) {
+    if (chapterNumber === ENDING_LOCK_CHAPTER && !jobContext) {
       const lock = lockWrittenThisTurn ?? ending ?? d.resolveEnding({
         routeState,
         storyContract: contract,
@@ -794,17 +1059,83 @@ async function generateNextPersonalizedChapterInner(
       })
     }
 
-    const published = await d.publishChapterV2({
-      storyId,
-      chapterNumber,
-      title: readerSafe.title,
-      paragraphs: readerSafe.paragraphs,
-      choicePrompt,
-      choices,
-      outcomes,
-      leaseId: lease.lease_id,
-      idempotencyKey: personalizedGenerationKey(storyId, chapterNumber, 'publish'),
-    })
+    type LocalPublish =
+      | { ok: true; chapter_number: number; seq: number }
+      | { ok: false; reason: 'CHAPTER_EXISTS' | 'LEASE_HELD' | 'FAILED_REVIEW_REQUIRED' | 'CAPACITY_TIMEOUT' }
+
+    let published: LocalPublish
+    if (jobContext) {
+      const { publishGenerationJobChapterV3 } = await import('@/lib/runtime/generation-jobs')
+      const endingLock = chapterNumber === ENDING_LOCK_CHAPTER
+        ? lockWrittenThisTurn ?? ending ?? d.resolveEnding({
+            routeState,
+            storyContract: contract,
+            chapterNumber,
+            lockedEndingKey: reader.locked_ending_key ?? brief.lockedEndingKey,
+          })
+        : null
+      try {
+        const fenced = await publishGenerationJobChapterV3({
+          jobId: jobContext.jobId,
+          workerId: jobContext.workerId,
+          claimToken: jobContext.claimToken,
+          leaseId: jobContext.leaseId,
+          storyId,
+          chapterNumber,
+          title: readerSafe.title,
+          paragraphs: readerSafe.paragraphs,
+          choicePrompt,
+          choices: choices as unknown[],
+          outcomes: outcomes as unknown[],
+          endingLock: endingLock ? { key: endingLock.key, name: endingLock.name } : null,
+        })
+        published = {
+          ok: true,
+          chapter_number: fenced.chapterNumber,
+          seq: fenced.seq,
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (msg.includes('CHAPTER_EXISTS')) {
+          published = { ok: false, reason: 'CHAPTER_EXISTS' }
+        } else if (msg.includes('OWNERSHIP_LOST') || msg.includes('LEASE_HELD')) {
+          published = { ok: false, reason: 'LEASE_HELD' }
+        } else {
+          throw err
+        }
+      }
+    } else {
+      const legacy = await d.publishChapterV2({
+        storyId,
+        chapterNumber,
+        title: readerSafe.title,
+        paragraphs: readerSafe.paragraphs,
+        choicePrompt,
+        choices,
+        outcomes,
+        leaseId,
+        idempotencyKey: personalizedGenerationKey(storyId, chapterNumber, 'publish'),
+      })
+      if (legacy.ok) {
+        // Publish RPC atomically released its lease; caller no longer owns it.
+        ownLease = false
+        published = {
+          ok: true,
+          chapter_number: legacy.chapter_number,
+          seq: legacy.seq,
+        }
+      } else {
+        published = { ok: false, reason: legacy.reason }
+      }
+    }
+
+    // Legacy publish RPC owns lease release on success. Any failed legacy publish
+    // leaves the caller-owned lease to release before reconciliation or return.
+    if (!published.ok) await releaseOwnLease()
+
+    if (published.ok) {
+      await reconcilePublishedCheckpoint()
+    }
 
     // Chapter 50 durability: after publish ok OR CHAPTER_EXISTS, ensure SELESAI.
     // Never mark when publish fails for non-exists reasons.
@@ -819,20 +1150,53 @@ async function generateNextPersonalizedChapterInner(
         chapterNumber,
         lockedEndingKey: reader.locked_ending_key ?? brief.lockedEndingKey,
       })
-      await d.markReaderStateSelesai({
-        userId,
-        storyId,
-        endingName: finalEnding.name,
-        endingKey: finalEnding.key,
-      })
+      const reconcileReaderState = async () => {
+        await d.markReaderStateSelesai({
+          userId,
+          storyId,
+          endingName: finalEnding.name,
+          endingKey: finalEnding.key,
+        })
+      }
+      const reconcileGenerationAttempt = async () => {
+        await d.recordGenerationAttempt({
+          storyId,
+          chapter: chapterNumber,
+          outcome: 'PUBLISHED',
+          repairAttempts: result.attempts,
+          findings: result.findings,
+        })
+      }
 
-      await d.recordGenerationAttempt({
-        storyId,
-        chapter: chapterNumber,
-        outcome: 'PUBLISHED',
-        repairAttempts: result.attempts,
-        findings: result.findings,
-      })
+      if (jobContext && published.ok) {
+        try {
+          await reconcileReaderState()
+        } catch (error) {
+          console.log('POST_PUBLISH_RECONCILIATION_NEEDED', {
+            storyId,
+            chapterNumber,
+            correlationId,
+            jobId: jobContext.jobId,
+            operation: 'MARK_READER_STATE_SELESAI',
+            errorName: error instanceof Error ? error.name.slice(0, 100) : 'unknown',
+          })
+        }
+        try {
+          await reconcileGenerationAttempt()
+        } catch (error) {
+          console.log('POST_PUBLISH_RECONCILIATION_NEEDED', {
+            storyId,
+            chapterNumber,
+            correlationId,
+            jobId: jobContext.jobId,
+            operation: 'RECORD_GENERATION_ATTEMPT',
+            errorName: error instanceof Error ? error.name.slice(0, 100) : 'unknown',
+          })
+        }
+      } else {
+        await reconcileReaderState()
+        await reconcileGenerationAttempt()
+      }
 
       if (published.ok) {
         return {
@@ -840,9 +1204,14 @@ async function generateNextPersonalizedChapterInner(
           chapterNumber: published.chapter_number,
           seq: published.seq,
           repairAttempts: result.attempts,
+          fromCheckpoint,
         }
       }
-      // CHAPTER_EXISTS recovery: chapter already durable; mark completed above.
+      // Worker success requires fenced publish metadata. Reconciliation above is safe,
+      // but CHAPTER_EXISTS must remain a failure so worker maps it to ALREADY_DONE.
+      if (jobContext) return { ok: false, reason: 'CHAPTER_EXISTS' }
+
+      // Legacy CHAPTER_EXISTS recovery: chapter already durable; mark completed above.
       return {
         ok: true,
         chapterNumber,
@@ -871,9 +1240,10 @@ async function generateNextPersonalizedChapterInner(
       chapterNumber: published.chapter_number,
       seq: published.seq,
       repairAttempts: result.attempts,
+      ...(fromCheckpoint ? { fromCheckpoint: true } : {}),
     }
   } catch (err) {
-    await d.releaseGenerationLease({ storyId, leaseId: lease.lease_id }).catch(() => {})
+    await releaseOwnLease()
     throw err
   }
 }

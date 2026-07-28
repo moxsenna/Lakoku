@@ -35,7 +35,7 @@ export type GenerationJobKey = {
 }
 
 export type GenerationSlotAcquireResult =
-  | { ok: true; waitMs: number; active: number; queued: number }
+  | { ok: true; slotToken: string; waitMs: number; active: number; queued: number }
   | {
       ok: false
       reason: GenerationCapacityFailReason
@@ -64,9 +64,12 @@ type Waiter = {
   enqueuedAt: number
   resolve: (result: GenerationSlotAcquireResult) => void
   timer: ReturnType<typeof setTimeout> | null
+  signal?: AbortSignal
+  onAbort?: () => void
 }
 
 type ActiveJob = {
+  slotToken: string
   userId: string
   storyId: string
   chapterNumber: number
@@ -103,6 +106,12 @@ const queue: Waiter[] = []
 const activeJobs = new Map<string, ActiveJob>()
 /** Rolling occupancy durations (ms) while a slot was held. */
 const latencySamplesMs: number[] = []
+
+let slotTokenCounter = 0
+function nextSlotToken(): string {
+  slotTokenCounter += 1
+  return `generation:${Date.now().toString(36)}:${slotTokenCounter.toString(36)}`
+}
 
 function jobKey(storyId: string, chapterNumber: number): string {
   return `${storyId}:${chapterNumber}`
@@ -174,9 +183,23 @@ function canEnterNow(userId: string): boolean {
   return active < maxConcurrent && userActive(userId) < maxPerUser
 }
 
-function takeSlot(userId: string): void {
+function takeSlot(
+  userId: string,
+  storyId: string,
+  chapterNumber: number,
+  startedAt = Date.now(),
+): string {
+  const slotToken = nextSlotToken()
   active += 1
   activeByUser.set(userId, userActive(userId) + 1)
+  activeJobs.set(jobKey(storyId, chapterNumber), {
+    slotToken,
+    userId,
+    storyId,
+    chapterNumber,
+    startedAt,
+  })
+  return slotToken
 }
 
 function freeSlot(userId: string): void {
@@ -193,6 +216,10 @@ function removeWaiter(waiter: Waiter): void {
   if (waiter.timer) {
     clearTimeout(waiter.timer)
     waiter.timer = null
+  }
+  if (waiter.signal && waiter.onAbort) {
+    waiter.signal.removeEventListener('abort', waiter.onAbort)
+    waiter.onAbort = undefined
   }
 }
 
@@ -288,18 +315,15 @@ function pumpQueue(): void {
       continue
     }
     queue.splice(i, 1)
-    if (waiter.timer) {
-      clearTimeout(waiter.timer)
-      waiter.timer = null
-    }
-    takeSlot(waiter.userId)
+    removeWaiter(waiter)
+    if (waiter.signal?.aborted) continue
     const startedAt = Date.now()
-    activeJobs.set(jobKey(waiter.storyId, waiter.chapterNumber), {
-      userId: waiter.userId,
-      storyId: waiter.storyId,
-      chapterNumber: waiter.chapterNumber,
+    const slotToken = takeSlot(
+      waiter.userId,
+      waiter.storyId,
+      waiter.chapterNumber,
       startedAt,
-    })
+    )
     const waitMs = startedAt - waiter.enqueuedAt
     console.log('GENERATION_CAPACITY_ACQUIRED', {
       userId: waiter.userId,
@@ -310,6 +334,7 @@ function pumpQueue(): void {
     })
     waiter.resolve({
       ok: true,
+      slotToken,
       waitMs,
       active,
       queued: queue.length,
@@ -322,19 +347,36 @@ function pumpQueue(): void {
  */
 export function acquireGenerationSlot(
   job: GenerationJobKey,
+  signal?: AbortSignal,
 ): Promise<GenerationSlotAcquireResult> {
+  signal?.throwIfAborted()
   const uid = job.userId || 'anonymous'
   const storyId = job.storyId
   const chapterNumber = job.chapterNumber
 
-  if (canEnterNow(uid)) {
-    takeSlot(uid)
-    activeJobs.set(jobKey(storyId, chapterNumber), {
+  const key = jobKey(storyId, chapterNumber)
+  const duplicateQueued = queue.some(
+    (waiter) => waiter.storyId === storyId && waiter.chapterNumber === chapterNumber,
+  )
+  if (activeJobs.has(key) || duplicateQueued) {
+    console.log('GENERATION_CAPACITY_BUSY', {
       userId: uid,
       storyId,
       chapterNumber,
-      startedAt: Date.now(),
+      duplicateJob: true,
+      ...getGenerationConcurrencyStats(),
     })
+    return Promise.resolve({
+      ok: false,
+      reason: 'CAPACITY_BUSY',
+      active,
+      queued: queue.length,
+      waitMs: 0,
+    })
+  }
+
+  if (canEnterNow(uid)) {
+    const slotToken = takeSlot(uid, storyId, chapterNumber)
     console.log('GENERATION_CAPACITY_ACQUIRED', {
       userId: uid,
       storyId,
@@ -344,6 +386,7 @@ export function acquireGenerationSlot(
     })
     return Promise.resolve({
       ok: true,
+      slotToken,
       waitMs: 0,
       active,
       queued: queue.length,
@@ -366,7 +409,7 @@ export function acquireGenerationSlot(
     })
   }
 
-  return new Promise<GenerationSlotAcquireResult>((resolve) => {
+  return new Promise<GenerationSlotAcquireResult>((resolve, reject) => {
     const enqueuedAt = Date.now()
     const waiter: Waiter = {
       userId: uid,
@@ -375,7 +418,13 @@ export function acquireGenerationSlot(
       enqueuedAt,
       resolve,
       timer: null,
+      signal,
     }
+    waiter.onAbort = () => {
+      removeWaiter(waiter)
+      reject(signal?.reason ?? new DOMException('Aborted', 'AbortError'))
+    }
+    signal?.addEventListener('abort', waiter.onAbort, { once: true })
     waiter.timer = setTimeout(() => {
       removeWaiter(waiter)
       console.log('GENERATION_CAPACITY_TIMEOUT', {
@@ -409,20 +458,31 @@ export function acquireGenerationSlot(
   })
 }
 
-export function releaseGenerationSlot(job: GenerationJobKey): void {
-  const uid = job.userId || 'anonymous'
+export function releaseGenerationSlot(
+  job: GenerationJobKey & { slotToken: string },
+): void {
   const key = jobKey(job.storyId, job.chapterNumber)
   const held = activeJobs.get(key)
-  if (held) {
-    // Occupancy duration feeds rolling p50 (how long a slot stays busy).
-    recordGenerationDurationMs(Date.now() - held.startedAt)
-    activeJobs.delete(key)
+  if (!held || held.slotToken !== job.slotToken) {
+    console.log('GENERATION_SLOT_TOKEN_ORPHAN', {
+      userId: job.userId || 'anonymous',
+      storyId: job.storyId,
+      chapterNumber: job.chapterNumber,
+      slotToken: job.slotToken,
+      ...getGenerationConcurrencyStats(),
+    })
+    return
   }
-  freeSlot(uid)
+
+  activeJobs.delete(key)
+  // Occupancy duration feeds rolling p50 (how long a slot stays busy).
+  recordGenerationDurationMs(Date.now() - held.startedAt)
+  freeSlot(held.userId)
   console.log('GENERATION_CAPACITY_RELEASED', {
-    userId: uid,
-    storyId: job.storyId,
-    chapterNumber: job.chapterNumber,
+    userId: held.userId,
+    storyId: held.storyId,
+    chapterNumber: held.chapterNumber,
+    slotToken: held.slotToken,
     ...getGenerationConcurrencyStats(),
   })
 }
@@ -442,13 +502,14 @@ export async function withGenerationSlot<T>(
       waitMs: number
     },
   ) => T | Promise<T>,
+  signal?: AbortSignal,
 ): Promise<T> {
   try {
     await refreshGenerationConcurrencyFromPolicy()
   } catch {
     // best-effort: keep last known caps
   }
-  const slot = await acquireGenerationSlot(job)
+  const slot = await acquireGenerationSlot(job, signal)
   if (!slot.ok) {
     return onCapacityFail(slot.reason, {
       active: slot.active,
@@ -459,6 +520,6 @@ export async function withGenerationSlot<T>(
   try {
     return await fn({ waitMs: slot.waitMs })
   } finally {
-    releaseGenerationSlot(job)
+    releaseGenerationSlot({ ...job, slotToken: slot.slotToken })
   }
 }

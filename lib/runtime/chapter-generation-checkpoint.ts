@@ -4,9 +4,12 @@
  */
 import 'server-only'
 import { createAdminClient } from '@lakoku/db'
+import type { GenerationJobExecutionContext } from './generation-job-execution'
+import type { FencedCheckpointMutationResult } from './generation-jobs'
 import {
   defaultCheckpointExpiry,
   draftFromCheckpoint,
+  parseCheckpointAuditSignals,
   isCheckpointUsableForChoiceRetry,
   isChoiceDurableCheckpointEnabled,
   proseFingerprint,
@@ -30,6 +33,10 @@ function rowToCheckpoint(row: Record<string, unknown>): ChapterGenerationCheckpo
   const paragraphs = row.paragraphs_json
   if (!Array.isArray(paragraphs)) return null
   const status = String(row.status ?? '') as CheckpointStatus
+  const auditSignalsVersion = row.audit_signals_version == null
+    ? null
+    : Number(row.audit_signals_version)
+  const auditSignals = parseCheckpointAuditSignals(row.audit_signals_json, auditSignalsVersion)
   return {
     storyId: String(row.story_id),
     chapterNumber: Number(row.chapter_number),
@@ -39,10 +46,22 @@ function rowToCheckpoint(row: Record<string, unknown>): ChapterGenerationCheckpo
     title: String(row.title ?? ''),
     paragraphs: paragraphs.map((p) => String(p)),
     proseFingerprint: String(row.prose_fingerprint ?? ''),
+    auditSignals,
+    auditSignalsVersion,
     canonVersion: row.canon_version == null ? null : Number(row.canon_version),
     blueprintVersion: row.blueprint_version == null ? null : Number(row.blueprint_version),
     directionFingerprint:
       row.direction_fingerprint == null ? null : String(row.direction_fingerprint),
+    generationMode: row.generation_mode == null ? null : String(row.generation_mode),
+    generationPolicyVersion:
+      row.generation_policy_version == null ? null : Number(row.generation_policy_version),
+    promptContractVersion:
+      row.prompt_contract_version == null ? null : Number(row.prompt_contract_version),
+    jobId: row.job_id == null ? null : String(row.job_id),
+    jobAttemptNumber:
+      row.job_attempt_number == null ? null : Number(row.job_attempt_number),
+    schemaVersion:
+      row.checkpoint_schema_version == null ? 1 : Number(row.checkpoint_schema_version),
     proseAttemptCount: Number(row.prose_attempt_count ?? 0),
     choiceAttemptCount: Number(row.choice_attempt_count ?? 0),
     createdAt: String(row.created_at ?? ''),
@@ -59,6 +78,12 @@ export async function loadUsableProseCheckpoint(args: {
   storyId: string
   chapterNumber: number
   attemptId?: string | null
+  /**
+   * P1-2: when provided, the loaded checkpoint must pass verifyCheckpointFreshness
+   * against the current runtime versions or it is rejected (stale prose not reused).
+   */
+  freshness?: import('./chapter-generation-checkpoint.pure').CheckpointFreshnessContext
+  jobContext?: GenerationJobExecutionContext | null
 }): Promise<ChapterGenerationCheckpoint | null> {
   if (!isChoiceDurableCheckpointEnabled()) return null
   try {
@@ -97,6 +122,7 @@ export async function loadUsableProseCheckpoint(args: {
 
     const { data, error } = await query.maybeSingle()
     if (error) {
+      if (args.jobContext) throw new Error('WORKER_CHECKPOINT_LOAD_FAILED', { cause: error })
       if (isMissingRelation(error)) {
         console.log('CHECKPOINT_TABLE_UNAVAILABLE', {
           storyId: args.storyId,
@@ -114,8 +140,27 @@ export async function loadUsableProseCheckpoint(args: {
     if (!data) return null
     const cp = rowToCheckpoint(data as Record<string, unknown>)
     if (!cp || !isCheckpointUsableForChoiceRetry(cp)) return null
+    if (args.freshness) {
+      const { verifyCheckpointFreshness } = await import(
+        './chapter-generation-checkpoint.pure'
+      )
+      const verdict = verifyCheckpointFreshness(cp, args.freshness)
+      if (!verdict.fresh) {
+        console.log('CHECKPOINT_STALE_REJECTED', {
+          storyId: args.storyId,
+          chapterNumber: args.chapterNumber,
+          reason: verdict.reason,
+          schemaVersion: cp.schemaVersion,
+        })
+        return null
+      }
+    }
     return cp
   } catch (err) {
+    if (args.jobContext) {
+      if (err instanceof Error && err.message === 'WORKER_CHECKPOINT_LOAD_FAILED') throw err
+      throw new Error('WORKER_CHECKPOINT_LOAD_FAILED', { cause: err })
+    }
     console.log('CHECKPOINT_LOAD_EXCEPTION', {
       storyId: args.storyId,
       chapterNumber: args.chapterNumber,
@@ -133,8 +178,19 @@ export async function persistProseReadyCheckpoint(args: {
   title: string
   paragraphs: string[]
   proseAttemptCount?: number
+  auditSignals?: import('./chapter-generation-checkpoint.pure').CheckpointAuditSignals | null
+  auditSignalsVersion?: 1 | null
   directionFingerprint?: string | null
+  canonVersion?: number | null
+  blueprintVersion?: number | null
+  generationMode?: string | null
+  generationPolicyVersion?: number | null
+  promptContractVersion?: number | null
+  jobId?: string | null
+  jobAttemptNumber?: number | null
+  jobContext?: GenerationJobExecutionContext | null
 }): Promise<
+  | FencedCheckpointMutationResult
   | { ok: true; checkpoint: ChapterGenerationCheckpoint }
   | { ok: false; error: 'TABLE_UNAVAILABLE' | 'WRITE_FAILED' }
 > {
@@ -143,7 +199,58 @@ export async function persistProseReadyCheckpoint(args: {
   }
 
   const fingerprint = proseFingerprint(args.title, args.paragraphs)
+  const auditSignals = parseCheckpointAuditSignals(
+    args.auditSignals ?? null,
+    args.auditSignalsVersion ?? null,
+  )
+  if (
+    (args.generationMode === 'personalized' && auditSignals == null) ||
+    (args.generationMode !== 'personalized' && (
+      args.auditSignals != null || args.auditSignalsVersion != null
+    ))
+  ) {
+    throw new Error('CHECKPOINT_AUDIT_SIGNALS_INVALID')
+  }
+  if (args.jobContext) {
+    if (
+      args.canonVersion == null ||
+      args.blueprintVersion == null ||
+      args.directionFingerprint == null ||
+      args.generationPolicyVersion == null ||
+      args.promptContractVersion == null
+    ) {
+      throw new Error('WORKER_CHECKPOINT_PROVENANCE_INCOMPLETE')
+    }
+    const { upsertGenerationCheckpointFenced } = await import('./generation-jobs')
+    return upsertGenerationCheckpointFenced({
+      jobId: args.jobContext.jobId,
+      workerId: args.jobContext.workerId,
+      claimToken: args.jobContext.claimToken,
+      leaseId: args.jobContext.leaseId,
+      storyId: args.storyId,
+      chapterNumber: args.chapterNumber,
+      title: args.title,
+      paragraphs: args.paragraphs,
+      proseFingerprint: fingerprint,
+      auditSignals: args.auditSignals ?? null,
+      auditSignalsVersion: args.auditSignalsVersion ?? null,
+      canonVersion: args.canonVersion,
+      blueprintVersion: args.blueprintVersion,
+      directionFingerprint: args.directionFingerprint,
+      generationMode: args.jobContext.generationKind,
+      generationPolicyVersion: args.generationPolicyVersion,
+      promptContractVersion: args.promptContractVersion,
+      proseAttemptCount: args.proseAttemptCount ?? 1,
+    })
+  }
   const now = new Date()
+  const canonVersion = args.canonVersion ?? null
+  const blueprintVersion = args.blueprintVersion ?? null
+  const generationMode = args.generationMode ?? null
+  const generationPolicyVersion = args.generationPolicyVersion ?? null
+  const promptContractVersion = args.promptContractVersion ?? null
+  const jobId = args.jobId ?? null
+  const jobAttemptNumber = args.jobAttemptNumber ?? null
   const row = {
     story_id: args.storyId,
     chapter_number: args.chapterNumber,
@@ -153,9 +260,18 @@ export async function persistProseReadyCheckpoint(args: {
     title: args.title,
     paragraphs_json: args.paragraphs,
     prose_fingerprint: fingerprint,
-    canon_version: null,
-    blueprint_version: null,
+    audit_signals_json: args.auditSignals ?? null,
+    audit_signals_version: args.auditSignalsVersion ?? null,
+    canon_version: canonVersion,
+    blueprint_version: blueprintVersion,
     direction_fingerprint: args.directionFingerprint ?? null,
+    generation_mode: generationMode,
+    generation_policy_version: generationPolicyVersion,
+    prompt_contract_version: promptContractVersion,
+    job_id: jobId,
+    job_attempt_number: jobAttemptNumber,
+    // New writes are schema version 2 (strict freshness).
+    checkpoint_schema_version: 2,
     prose_attempt_count: args.proseAttemptCount ?? 1,
     choice_attempt_count: 0,
     updated_at: now.toISOString(),
@@ -202,9 +318,17 @@ export async function persistProseReadyCheckpoint(args: {
         title: args.title,
         paragraphs: args.paragraphs,
         proseFingerprint: fingerprint,
-        canonVersion: null,
-        blueprintVersion: null,
+        auditSignals: args.auditSignals ?? null,
+        auditSignalsVersion: args.auditSignalsVersion ?? null,
+        canonVersion,
+        blueprintVersion,
         directionFingerprint: args.directionFingerprint ?? null,
+        generationMode,
+        generationPolicyVersion,
+        promptContractVersion,
+        jobId,
+        jobAttemptNumber,
+        schemaVersion: 2,
         proseAttemptCount: args.proseAttemptCount ?? 1,
         choiceAttemptCount: 0,
         createdAt: now.toISOString(),
@@ -223,8 +347,22 @@ export async function markCheckpointStatus(args: {
   attemptId: string
   status: CheckpointStatus
   choiceAttemptCount?: number
-}): Promise<void> {
+  jobContext?: GenerationJobExecutionContext | null
+}): Promise<FencedCheckpointMutationResult | void> {
   if (!isChoiceDurableCheckpointEnabled()) return
+  if (args.jobContext) {
+    const { transitionGenerationCheckpointFenced } = await import('./generation-jobs')
+    return transitionGenerationCheckpointFenced({
+      jobId: args.jobContext.jobId,
+      workerId: args.jobContext.workerId,
+      claimToken: args.jobContext.claimToken,
+      leaseId: args.jobContext.leaseId,
+      storyId: args.storyId,
+      chapterNumber: args.chapterNumber,
+      checkpointAttemptId: args.attemptId,
+      newStatus: args.status,
+    })
+  }
   try {
     const db = createAdminClient()
     const patch: Record<string, unknown> = {

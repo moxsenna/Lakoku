@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
+import { readFile } from 'node:fs/promises'
 import {
   draftFromCheckpoint,
   isCheckpointUsableForChoiceRetry,
@@ -34,9 +35,17 @@ function sampleCheckpoint(
     title,
     paragraphs,
     proseFingerprint: proseFingerprint(title, paragraphs),
+    auditSignals: null,
+    auditSignalsVersion: null,
     canonVersion: null,
     blueprintVersion: null,
     directionFingerprint: null,
+    generationMode: null,
+    generationPolicyVersion: null,
+    promptContractVersion: null,
+    jobId: null,
+    jobAttemptNumber: null,
+    schemaVersion: 1,
     proseAttemptCount: 1,
     choiceAttemptCount: 0,
     createdAt: new Date().toISOString(),
@@ -96,6 +105,23 @@ describe('choice-only resume (checkpoint)', () => {
   })
 })
 
+describe('standard worker checkpoint lifecycle', () => {
+  it('passes current worker identity to every checkpoint mutation and handles fenced outcomes', async () => {
+    const source = await readFile(
+      new URL('../../lib/runtime/story-generation.ts', import.meta.url),
+      'utf8',
+    )
+
+    expect(source.match(/jobContext,\s*\n\s*\}/g)?.length ?? 0).toBeGreaterThanOrEqual(5)
+    expect(source).toContain("status: 'RUNNING_CHOICES'")
+    expect(source).toContain("status: 'CHOICES_RETRY_WAIT'")
+    expect(source).toContain("status: 'PUBLISHED'")
+    expect(source).toContain('checkpointMutationSucceeded')
+    expect(source).toContain('requireJobProvenance: jobContext != null')
+    expect(source).toContain('published.jobId')
+  })
+})
+
 describe('choice-only resume policy matrix', () => {
   it('proves prose call count model: 1 prose, N choices', () => {
     // Characterization of intended metrics (not live provider):
@@ -109,7 +135,7 @@ describe('choice-only resume policy matrix', () => {
 
     // first attempt: generate prose once
     calls.prose += 1
-    let proseAttempts = 1
+    const proseAttempts = 1
     let choiceAttempts = 0
     // choice fails
     calls.choice += 1

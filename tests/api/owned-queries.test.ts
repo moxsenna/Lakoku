@@ -346,7 +346,22 @@ describe('share and taste-profile projections', () => {
     mocks.cookieFactory.mockResolvedValue(db.client)
     const tasteProfile = await import('@/lib/api/taste-profile')
 
-    await expect(tasteProfile.getTasteProfileForUser('user-a')).resolves.toEqual(tasteJson)
+    await expect(tasteProfile.getTasteProfileForUser('user-a')).resolves.toEqual({
+      version: 2,
+      primaryGenreId: 'mystery',
+      secondaryGenreId: null,
+      likedConflictIds: [],
+      customLikedConflict: null,
+      dramaIntensity: 'balanced',
+      pacing: 'balanced',
+      languageStyle: 'cinematic_visual',
+      endingBias: 'justice',
+      contentBoundaryIds: [],
+      softAvoidanceIds: [],
+      completedAt: null,
+      skippedAt: null,
+      updatedAt: null,
+    })
     expect(db.calls).toContainEqual({ method: 'select', args: ['taste_json'] })
     expect(db.calls.some((call) => call.method === 'select' && call.args[0] === '*')).toBe(false)
   })

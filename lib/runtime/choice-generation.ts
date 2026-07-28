@@ -24,6 +24,7 @@ import {
   type FinalChapterProse,
   type ChoiceNarrativeContext,
 } from '@/lib/runtime/choice-context'
+import { abortableSleep, isAbortError, throwIfAborted } from '@/lib/runtime/abort'
 
 export {
   buildEndingParagraphs,
@@ -84,14 +85,24 @@ export interface ChoiceBuildDeps {
   generateChoiceBranch: (
     deps: { provider: GenerationProvider },
     input: ChoiceInput,
-    options?: { telemetryContext: unknown; workflowPhase: string },
+    options?: {
+      telemetryContext: unknown
+      workflowPhase: string
+      signal?: AbortSignal
+      callBudget?: { used: number; max: number }
+    },
   ) => Promise<ChoiceBranch | null>
   /** Optional repair function — placeholder/no-op in Phase 1. */
   repairChoiceBranch?: (
     deps: { provider: GenerationProvider },
     input: ChoiceInput,
     previousFindings: ChoiceFinding[],
-    options?: { telemetryContext: unknown; workflowPhase: string },
+    options?: {
+      telemetryContext: unknown
+      workflowPhase: string
+      signal?: AbortSignal
+      callBudget?: { used: number; max: number }
+    },
   ) => Promise<ChoiceBranch | null>
   telemetry?: {
     /** @deprecated Phase 5: production must not publish generic fallback. Kept for tests only. */
@@ -133,6 +144,8 @@ export interface BuildChoiceBranchInput {
   previousChoice?: ChoiceHistoryEntry | null
   lockedEndingKey: string | null
   providerContext: unknown
+  /** Worker ownership cancellation propagated to every choice provider call. */
+  signal?: AbortSignal
   /** Override total chapters (defaults to narrative-core TOTAL_CHAPTERS). */
   totalChapters?: number
   activeCharacters?: Array<{ id: string; name: string }>
@@ -288,6 +301,7 @@ export async function buildChoiceBranch(
   input: BuildChoiceBranchInput,
 ): Promise<ChoiceBuildResult> {
   const total = input.totalChapters ?? TOTAL_CHAPTERS
+  throwIfAborted(input.signal)
 
   // Ending policy guard — no provider call
   if (isFinalChapter(input.chapterNumber, total)) {
@@ -323,6 +337,7 @@ export async function buildChoiceBranch(
 
   try {
     const provider = await deps.selectProvider(input.providerContext)
+    throwIfAborted(input.signal)
     const providerId = typeof provider.name === 'string' ? provider.name : 'default'
     const storyId = input.snapshot.storyId
     const correlationId =
@@ -335,155 +350,222 @@ export async function buildChoiceBranch(
 
     // Choice-specific capacity gate (separate from overall generation concurrency).
     const { withChoiceGenerationSlot } = await import('@/lib/runtime/choice-concurrency')
+    const {
+      DEFAULT_CHOICE_RETRY_BUDGET,
+      classifyChoiceProviderError,
+      choiceRetryAction,
+      transientBackoffMs,
+      buildChoiceRepairNotes,
+    } = await import('@/lib/runtime/choice-error-taxonomy')
 
-    // ---- INITIAL ----
-    let branch: ChoiceBranch | null = null
-    try {
-      branch = await withChoiceGenerationSlot(
-        {
-          providerId,
-          storyId,
-          chapterNumber: input.chapterNumber,
-          correlationId,
-        },
-        () =>
-          deps.generateChoiceBranch(
-            { provider },
-            providerInput,
-            {
-              telemetryContext: input.providerContext,
-              workflowPhase: 'CHOICES_INITIAL',
-            },
-          ),
+    const budget = DEFAULT_CHOICE_RETRY_BUDGET
+    // Shared with gateway-provider: incremented once per ACTUAL candidate request,
+    // including native-schema/fallback candidates. This is the authoritative cap.
+    const providerCallBudget = { used: 0, max: budget.maxTotalCalls }
+    // High-level orchestration attempts are also bounded to prevent local loops.
+    let totalCalls = 0
+    let structuralRepairs = 0
+    let qualityRepairs = 0
+
+    const runProviderCall = (
+      callInput: ChoiceInput,
+      workflowPhase: string,
+    ): Promise<ChoiceBranch | null> =>
+      withChoiceGenerationSlot(
+        { providerId, storyId, chapterNumber: input.chapterNumber, correlationId, signal: input.signal },
+        () => deps.generateChoiceBranch({ provider }, callInput, {
+          telemetryContext: input.providerContext,
+          workflowPhase,
+          signal: input.signal,
+          callBudget: providerCallBudget,
+        }),
       )
-    } catch (err) {
-      lastCause = err
-      lastFindings = [
-        {
+
+    // Build a findings-aware repair input (creative/structural guidance only;
+    // never dump diagnostic codes into narrative mustNotInclude).
+    const buildRepairInput = (
+      findings: ChoiceFinding[],
+      lastBranch: ChoiceBranch | null,
+    ): ChoiceInput => {
+      const repairNotes = buildChoiceRepairNotes(findings)
+      const badLabels = lastBranch
+        ? lastBranch.choices.map((c) => c.label).filter(Boolean).slice(0, 4)
+        : []
+      const repairGoal = [
+        providerInput.chapterBrief.chapterGoal,
+        'Perbaiki dua tindakan:',
+        ...repairNotes.map((n) => `- ${n}`),
+        badLabels.length ? `Hindari mengulang label yang gagal: ${badLabels.join(' | ')}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n')
+        .slice(0, 1200)
+      return {
+        ...providerInput,
+        chapterBrief: {
+          ...providerInput.chapterBrief,
+          chapterGoal: repairGoal,
+          mustNotInclude: providerInput.chapterBrief.mustNotInclude.slice(0, 16),
+        },
+      }
+    }
+
+    let branch: ChoiceBranch | null = null
+    let phase = 'CHOICES_INITIAL'
+    let currentInput: ChoiceInput = providerInput
+    let source: 'INITIAL' | 'REPAIRED' = 'INITIAL'
+
+    // Orchestration loop, bounded strictly by budget.maxTotalCalls.
+    while (totalCalls < budget.maxTotalCalls) {
+      throwIfAborted(input.signal)
+      totalCalls += 1
+      let called: ChoiceBranch | null = null
+      let transientErr = false
+      try {
+        called = await runProviderCall(currentInput, phase)
+      } catch (err) {
+        if (input.signal?.aborted) throw input.signal.reason ?? err
+        if (isAbortError(err)) throw err
+        lastCause = err
+        const code = classifyChoiceProviderError(err)
+        const action = choiceRetryAction(code)
+        lastFindings = [{
           code: 'PROVIDER_ERROR',
           message: err instanceof Error ? err.message : 'Choice provider threw an error.',
           severity: 'ERROR',
-        },
-      ]
-      lastReason = 'PROVIDER_FAILED'
-      branch = null
-    }
-
-    if (branch) {
-      const qualityResult = validateChoiceBranchQuality(
-        qualityInputFor(branch, finalChapter, endingParagraphs, input),
-      )
-      if (qualityResult.ok) {
-        return {
-          ok: true,
-          source: 'INITIAL',
-          branch,
-          validationFindings: qualityResult.findings,
-          repairAttempts: 0,
+        }]
+        lastReason = 'PROVIDER_FAILED'
+        if (action === 'transient_retry' && totalCalls < budget.maxTotalCalls) {
+          // Backoff then retry same input (provider chain handled inside call).
+          await abortableSleep(transientBackoffMs(totalCalls), input.signal)
+          transientErr = true
+        } else if (
+          (action === 'structural_repair' || action === 'quality_repair' || action === 'content_rewrite') &&
+          totalCalls < budget.maxTotalCalls
+        ) {
+          repairAttempts += 1
+          currentInput = buildRepairInput(lastFindings, branch)
+          phase = 'CHOICES_REPAIR_STRUCTURAL'
+          transientErr = true
         }
+        if (transientErr) continue
       }
-      lastFindings = qualityResult.findings
-      lastReason = mapFindingToReason(qualityResult.findings) as ChoiceBuildFailureReason
-    } else if (lastFindings.length === 0) {
-      lastFindings = [
-        {
-          code: 'NULL_BRANCH',
-          message: 'Choice branch returned null.',
-          severity: 'ERROR',
-        },
-      ]
-      lastReason = 'PROVIDER_FAILED'
-    }
 
-    // ---- REPAIR (one attempt) ----
-    deps.telemetry?.onChoiceRepair?.({
-      chapterNumber: input.chapterNumber,
-      findingCodes: lastFindings.map((f) => f.code),
-      attempt: 1,
-    })
-    repairAttempts = 1
-
-    let repaired: ChoiceBranch | null = null
-    try {
-      if (deps.repairChoiceBranch) {
-        repaired = await deps.repairChoiceBranch(
-          { provider },
-          providerInput,
-          lastFindings,
-          {
-            telemetryContext: input.providerContext,
-            workflowPhase: 'CHOICES_REPAIR_1',
-          },
+      if (called) {
+        branch = called
+        const quality = validateChoiceBranchQuality(
+          qualityInputFor(called, finalChapter, endingParagraphs, input),
         )
+        if (quality.ok) {
+          return {
+            ok: true,
+            source,
+            branch: called,
+            validationFindings: quality.findings,
+            repairAttempts,
+          }
+        }
+        // Quality failure → classify from findings and decide repair type.
+        lastFindings = quality.findings
+        lastReason = mapFindingToReason(quality.findings) as ChoiceBuildFailureReason
+        const code = classifyChoiceProviderError(
+          new Error(quality.findings.map((f) => f.code).join(' ')),
+        )
+        const action = choiceRetryAction(code)
+        const canStructural = structuralRepairs < budget.structuralRepair
+        const canQuality = qualityRepairs < budget.qualityRepair
+        if (
+          totalCalls < budget.maxTotalCalls &&
+          ((action === 'structural_repair' && canStructural) ||
+            (action === 'quality_repair' && canQuality) ||
+            action === 'content_rewrite' ||
+            action === 'next_provider')
+        ) {
+          if (action === 'structural_repair') structuralRepairs += 1
+          if (action === 'quality_repair') qualityRepairs += 1
+          repairAttempts += 1
+          source = 'REPAIRED'
+          deps.telemetry?.onChoiceRepair?.({
+            chapterNumber: input.chapterNumber,
+            findingCodes: lastFindings.map((f) => f.code),
+            attempt: repairAttempts,
+          })
+          // Prefer injected repair fn when provided; else findings-aware input.
+          if (deps.repairChoiceBranch && action !== 'next_provider') {
+            try {
+              throwIfAborted(input.signal)
+              totalCalls += 1
+              const repaired = await deps.repairChoiceBranch(
+                { provider },
+                providerInput,
+                lastFindings,
+                {
+                  telemetryContext: input.providerContext,
+                  workflowPhase: 'CHOICES_REPAIR_1',
+                  signal: input.signal,
+                  callBudget: providerCallBudget,
+                },
+              )
+              if (repaired) {
+                const rq = validateChoiceBranchQuality(
+                  qualityInputFor(repaired, finalChapter, endingParagraphs, input),
+                )
+                if (rq.ok) {
+                  return {
+                    ok: true,
+                    source: 'REPAIRED',
+                    branch: repaired,
+                    validationFindings: rq.findings,
+                    repairAttempts,
+                  }
+                }
+                lastFindings = rq.findings
+                lastReason = 'REPAIR_EXHAUSTED'
+              }
+            } catch (err) {
+              if (input.signal?.aborted) throw input.signal.reason ?? err
+              if (isAbortError(err)) throw err
+              lastCause = err
+              lastFindings = [...lastFindings, {
+                code: 'REPAIR_PROVIDER_ERROR',
+                message: err instanceof Error ? err.message : 'Choice repair provider threw.',
+                severity: 'ERROR',
+              }]
+            }
+            continue
+          }
+          currentInput = buildRepairInput(lastFindings, branch)
+          phase = action === 'quality_repair' ? 'CHOICES_REPAIR_QUALITY' : 'CHOICES_REPAIR_STRUCTURAL'
+          continue
+        }
       } else {
-        // Findings-aware creative repair — do NOT dump diagnostic codes into
-        // mustNotInclude (that mixes narrative constraints with PROVIDER_ERROR etc.).
-        const { buildChoiceRepairNotes } = await import(
-          '@/lib/runtime/choice-error-taxonomy'
-        )
-        const repairNotes = buildChoiceRepairNotes(lastFindings)
-        const badLabels = branch
-          ? branch.choices.map((c) => c.label).filter(Boolean).slice(0, 4)
-          : []
-        // Soft guidance via chapterGoal only; keep mustNotInclude narrative-only.
-        const repairGoal = [
-          providerInput.chapterBrief.chapterGoal,
-          'Perbaiki dua tindakan:',
-          ...repairNotes.map((n) => `- ${n}`),
-          badLabels.length
-            ? `Hindari mengulang label yang gagal: ${badLabels.join(' | ')}`
-            : '',
-        ]
-          .filter(Boolean)
-          .join('\n')
-          .slice(0, 1200)
-        const repairInput = {
-          ...providerInput,
-          chapterBrief: {
-            ...providerInput.chapterBrief,
-            chapterGoal: repairGoal,
-            // Keep existing narrative mustNotInclude; never append finding codes.
-            mustNotInclude: providerInput.chapterBrief.mustNotInclude.slice(0, 16),
-          },
+        // Null branch (no exception): treat as a structural failure and attempt
+        // one findings-aware repair within budget before giving up.
+        if (lastFindings.length === 0) {
+          lastFindings = [{ code: 'NULL_BRANCH', message: 'Choice branch returned null.', severity: 'ERROR' }]
         }
-        repaired = await deps.generateChoiceBranch(
-          { provider },
-          repairInput,
-          {
-            telemetryContext: input.providerContext,
-            workflowPhase: 'CHOICES_REPAIR_1',
-          },
-        )
+        lastReason = 'PROVIDER_FAILED'
+        if (structuralRepairs < budget.structuralRepair && totalCalls < budget.maxTotalCalls) {
+          structuralRepairs += 1
+          repairAttempts += 1
+          source = 'REPAIRED'
+          deps.telemetry?.onChoiceRepair?.({
+            chapterNumber: input.chapterNumber,
+            findingCodes: lastFindings.map((f) => f.code),
+            attempt: repairAttempts,
+          })
+          currentInput = buildRepairInput(lastFindings, branch)
+          phase = 'CHOICES_REPAIR_STRUCTURAL'
+          continue
+        }
+        lastReason = repairAttempts > 0 ? 'REPAIR_EXHAUSTED' : 'PROVIDER_FAILED'
       }
-    } catch (err) {
-      lastCause = err
-      lastFindings = [
-        ...lastFindings,
-        {
-          code: 'REPAIR_PROVIDER_ERROR',
-          message: err instanceof Error ? err.message : 'Choice repair provider threw.',
-          severity: 'ERROR',
-        },
-      ]
-      repaired = null
+
+      // No further action possible within budget.
+      break
     }
 
-    if (repaired) {
-      const repairedQuality = validateChoiceBranchQuality(
-        qualityInputFor(repaired, finalChapter, endingParagraphs, input),
-      )
-      if (repairedQuality.ok) {
-        return {
-          ok: true,
-          source: 'REPAIRED',
-          branch: repaired,
-          validationFindings: repairedQuality.findings,
-          repairAttempts,
-        }
-      }
-      lastFindings = repairedQuality.findings
-      lastReason = 'REPAIR_EXHAUSTED'
-    } else {
+    if (lastReason === 'PROVIDER_FAILED' && repairAttempts > 0) {
       lastReason = 'REPAIR_EXHAUSTED'
     }
 
@@ -502,6 +584,8 @@ export async function buildChoiceBranch(
       cause: lastCause,
     }
   } catch (err) {
+    if (input.signal?.aborted) throw input.signal.reason ?? err
+    if (isAbortError(err)) throw err
     deps.telemetry?.onChoiceFailed?.({
       chapterNumber: input.chapterNumber,
       reason: 'PROVIDER_FAILED',

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildFixtureSnapshot } from '@/fixtures/narrative/fixture-50'
 import { misteriDramaContract } from '@/fixtures/contracts/misteri-drama'
@@ -9,11 +10,21 @@ import type { ChoiceBranch, ChapterDraftParsed } from '@/lib/ai-gateway/schemas'
 import type { GenerationProvider } from '@/lib/ai-gateway/provider'
 import type { PublishChapterV2Input, PublishResult } from '@/lib/runtime/lifecycle'
 import type { RealGenerateResult } from '@/lib/runtime/story-generation'
+import {
+  CHECKPOINT_AUDIT_SIGNALS_VERSION,
+  proseFingerprint,
+  verifyCheckpointFreshness,
+  type ChapterGenerationCheckpoint,
+  type CheckpointFreshnessContext,
+  type CheckpointStatus,
+} from '@/lib/runtime/chapter-generation-checkpoint.pure'
+import type { FencedCheckpointMutationResult } from '@/lib/runtime/generation-jobs'
 import { auditPlotDebts } from '@/lib/story-engine/plot-debt'
 
 const mocks = vi.hoisted(() => ({
   adminFactory: vi.fn(),
   generateNextChapterReal: vi.fn(),
+  publishGenerationJobChapterV3: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
@@ -36,6 +47,9 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
 })
 vi.mock('@/lib/observability/server', () => ({
   recordGenerationAttempt: vi.fn(async () => undefined),
+}))
+vi.mock('@/lib/runtime/generation-jobs', () => ({
+  publishGenerationJobChapterV3: mocks.publishGenerationJobChapterV3,
 }))
 vi.mock('@/lib/runtime/story-generation', async () => {
   const actual = await vi.importActual<typeof import('@/lib/runtime/story-generation')>(
@@ -63,7 +77,12 @@ type CallName =
   | 'reader'
   | 'brief'
   | 'compile'
+  | 'loadCheckpoint'
   | 'generateChapter'
+  | 'persistCheckpoint'
+  | 'markRunningChoices'
+  | 'markChoicesRetryWait'
+  | 'markPublished'
   | 'toReaderSafe'
   | 'assertConsumerSafe'
   | 'choices'
@@ -74,17 +93,6 @@ type CallName =
   | 'markSelesai'
   | 'telemetry'
   | 'releaseLease'
-
-function emptyEffect() {
-  return {
-    routeDeltas: {},
-    trustDeltas: {},
-    flagsSet: {},
-    evidenceAdded: [],
-    endingBiasDeltas: {},
-    threadTouches: [],
-  }
-}
 
 function distinctEffect(index: number) {
   return {
@@ -252,6 +260,11 @@ function makeDeps(options: {
   draftSignals?: DraftAuditSignals
   useRealAudit?: boolean
   routeTruth?: number
+  checkpoint?: ChapterGenerationCheckpoint | null
+  rejectStaleCheckpoint?: boolean
+  persistCheckpointResult?: FencedCheckpointMutationResult | { ok: false; error: 'WRITE_FAILED' }
+  checkpointStatusResult?: Partial<Record<CheckpointStatus, FencedCheckpointMutationResult>>
+  choiceFailure?: boolean
   capture?: {
     publishInputs: PublishChapterV2Input[]
     calls: CallName[]
@@ -362,6 +375,37 @@ function makeDeps(options: {
     }),
     persistRetrievalLog: vi.fn(async () => undefined),
     selectProvider: vi.fn(async () => provider),
+    loadUsableProseCheckpoint: vi.fn(async (args: { freshness?: CheckpointFreshnessContext }) => {
+      push('loadCheckpoint')
+      const checkpoint = options.checkpoint ?? null
+      if (
+        checkpoint &&
+        options.rejectStaleCheckpoint &&
+        args.freshness &&
+        !verifyCheckpointFreshness(checkpoint, args.freshness).fresh
+      ) {
+        return null
+      }
+      return checkpoint
+    }),
+    persistProseReadyCheckpoint: vi.fn(async () => {
+      push('persistCheckpoint')
+      return options.persistCheckpointResult ?? {
+        ok: true,
+        result: 'UPDATED' as const,
+        changed: true,
+      }
+    }),
+    markCheckpointStatus: vi.fn(async (args: { status: CheckpointStatus }) => {
+      if (args.status === 'RUNNING_CHOICES') push('markRunningChoices')
+      if (args.status === 'CHOICES_RETRY_WAIT') push('markChoicesRetryWait')
+      if (args.status === 'PUBLISHED') push('markPublished')
+      return options.checkpointStatusResult?.[args.status] ?? {
+        ok: true,
+        result: 'UPDATED' as const,
+        changed: true,
+      }
+    }),
     generateChapter: vi.fn(async (
       _providerInput: unknown,
       input: { snapshot: CanonSnapshot; chapterNumber: number },
@@ -407,7 +451,7 @@ function makeDeps(options: {
     generateChoiceBranch: vi.fn(async () => {
       push('choices')
       capture.choiceCalls += 1
-      return branchFor(chapterNumber)
+      return options.choiceFailure ? null : branchFor(chapterNumber)
     }),
     resolveEnding: vi.fn(() => {
       push('resolveEnding')
@@ -465,6 +509,65 @@ function makeDeps(options: {
   return { deps, capture, draft, provider }
 }
 
+const PERSONALIZED_JOB_CONTEXT = {
+  jobId: '00000000-0000-4000-8000-000000000001',
+  workerId: 'worker-x',
+  claimToken: '00000000-0000-4000-8000-000000000002',
+  leaseId: '00000000-0000-4000-8000-000000000003',
+  attemptNumber: 2,
+  correlationId: CORRELATION_ID,
+  generationKind: 'personalized' as const,
+  signal: new AbortController().signal,
+}
+
+function personalizedDirectionFingerprint(storyId = STORY_A): string {
+  return createHash('sha256')
+    .update(JSON.stringify(contractFor(storyId)))
+    .digest('hex')
+    .slice(0, 32)
+}
+
+function personalizedCheckpoint(
+  overrides: Partial<ChapterGenerationCheckpoint> = {},
+): ChapterGenerationCheckpoint {
+  const title = 'Bab 12 dari checkpoint'
+  const paragraphs = [
+    'Maya membuka arsip yang tersimpan dari percobaan sebelumnya.',
+    'Lampu lorong berkedip saat langkah basah kembali terdengar.',
+  ]
+  return {
+    storyId: STORY_A,
+    chapterNumber: 12,
+    attemptId: PERSONALIZED_JOB_CONTEXT.jobId,
+    correlationId: CORRELATION_ID,
+    status: 'CHOICES_RETRY_WAIT',
+    title,
+    paragraphs,
+    proseFingerprint: proseFingerprint(title, paragraphs),
+    auditSignals: {
+      opensNewThread: false,
+      opensMajorMystery: false,
+      opensNewConflict: false,
+    },
+    auditSignalsVersion: CHECKPOINT_AUDIT_SIGNALS_VERSION,
+    canonVersion: 1,
+    blueprintVersion: 1,
+    directionFingerprint: personalizedDirectionFingerprint(),
+    generationMode: 'personalized',
+    generationPolicyVersion: 2,
+    promptContractVersion: 2,
+    jobId: PERSONALIZED_JOB_CONTEXT.jobId,
+    jobAttemptNumber: 1,
+    schemaVersion: 2,
+    proseAttemptCount: 1,
+    choiceAttemptCount: 1,
+    createdAt: '2026-07-26T00:00:00.000Z',
+    updatedAt: '2026-07-26T00:01:00.000Z',
+    expiresAt: '2099-07-26T00:00:00.000Z',
+    ...overrides,
+  }
+}
+
 describe('generateNextPersonalizedChapter', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -477,6 +580,284 @@ describe('generateNextPersonalizedChapter', () => {
       })),
       rpc: vi.fn(async () => ({ data: null, error: null })),
     })
+  })
+
+  it('reuses same-job earlier-attempt prose with current claim identity and skips prose provider', async () => {
+    const checkpoint = personalizedCheckpoint()
+    const { deps, capture } = makeDeps({ chapterNumber: 12, checkpoint })
+    mocks.publishGenerationJobChapterV3.mockResolvedValueOnce({
+      jobId: PERSONALIZED_JOB_CONTEXT.jobId,
+      chapterNumber: 12,
+      seq: 9,
+    })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await expect(generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 12,
+      attemptId: PERSONALIZED_JOB_CONTEXT.jobId,
+      jobContext: PERSONALIZED_JOB_CONTEXT,
+    }, deps)).resolves.toMatchObject({ ok: true, fromCheckpoint: true })
+
+    expect(deps.loadUsableProseCheckpoint).toHaveBeenCalledWith(expect.objectContaining({
+      storyId: STORY_A,
+      chapterNumber: 12,
+      attemptId: null,
+      jobContext: PERSONALIZED_JOB_CONTEXT,
+      freshness: expect.objectContaining({
+        canonVersion: 1,
+        blueprintVersion: 1,
+        directionFingerprint: personalizedDirectionFingerprint(),
+        generationMode: 'personalized',
+        generationPolicyVersion: 2,
+        promptContractVersion: 2,
+        requireJobProvenance: true,
+        jobId: PERSONALIZED_JOB_CONTEXT.jobId,
+        jobAttemptNumber: 2,
+      }),
+    }))
+    expect(deps.generateChapter).not.toHaveBeenCalled()
+    expect(deps.selectProvider).toHaveBeenCalledTimes(1)
+    expect(deps.persistProseReadyCheckpoint).not.toHaveBeenCalled()
+    expect(deps.markCheckpointStatus).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      attemptId: PERSONALIZED_JOB_CONTEXT.jobId,
+      status: 'RUNNING_CHOICES',
+      choiceAttemptCount: 2,
+      jobContext: PERSONALIZED_JOB_CONTEXT,
+    }))
+    expect(deps.markCheckpointStatus).toHaveBeenLastCalledWith(expect.objectContaining({
+      attemptId: PERSONALIZED_JOB_CONTEXT.jobId,
+      status: 'PUBLISHED',
+      jobContext: PERSONALIZED_JOB_CONTEXT,
+    }))
+    expect(capture.calls.indexOf('loadCheckpoint')).toBeLessThan(capture.calls.indexOf('markRunningChoices'))
+    expect(capture.calls.indexOf('markRunningChoices')).toBeLessThan(capture.calls.indexOf('choices'))
+    expect(capture.calls.indexOf('choices')).toBeLessThan(capture.calls.indexOf('markPublished'))
+  })
+
+  it.each([
+    ['different job', { jobId: '00000000-0000-4000-8000-000000000099' }],
+    ['attempt ahead', { jobAttemptNumber: 3 }],
+  ] as const)('rejects %s checkpoint and generates fresh prose', async (_name, overrides) => {
+    const { deps } = makeDeps({
+      chapterNumber: 12,
+      checkpoint: personalizedCheckpoint(overrides),
+      rejectStaleCheckpoint: true,
+    })
+    mocks.publishGenerationJobChapterV3.mockResolvedValueOnce({
+      jobId: PERSONALIZED_JOB_CONTEXT.jobId,
+      chapterNumber: 12,
+      seq: 9,
+    })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    const result = await generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 12,
+      attemptId: PERSONALIZED_JOB_CONTEXT.jobId,
+      jobContext: PERSONALIZED_JOB_CONTEXT,
+    }, deps)
+
+    expect(result).toMatchObject({ ok: true })
+    expect(deps.generateChapter).toHaveBeenCalledTimes(1)
+    expect(deps.persistProseReadyCheckpoint).toHaveBeenCalledTimes(1)
+  })
+
+  it('persists fresh worker prose before first choice using complete freshness and current identity', async () => {
+    const { deps, capture } = makeDeps({ chapterNumber: 12 })
+    mocks.publishGenerationJobChapterV3.mockResolvedValueOnce({
+      jobId: PERSONALIZED_JOB_CONTEXT.jobId,
+      chapterNumber: 12,
+      seq: 9,
+    })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 12,
+      attemptId: PERSONALIZED_JOB_CONTEXT.jobId,
+      jobContext: PERSONALIZED_JOB_CONTEXT,
+    }, deps)
+
+    expect(deps.persistProseReadyCheckpoint).toHaveBeenCalledWith(expect.objectContaining({
+      storyId: STORY_A,
+      chapterNumber: 12,
+      attemptId: PERSONALIZED_JOB_CONTEXT.jobId,
+      correlationId: CORRELATION_ID,
+      canonVersion: 1,
+      blueprintVersion: 1,
+      directionFingerprint: personalizedDirectionFingerprint(),
+      generationMode: 'personalized',
+      generationPolicyVersion: 2,
+      promptContractVersion: 2,
+      jobId: PERSONALIZED_JOB_CONTEXT.jobId,
+      jobAttemptNumber: 2,
+      jobContext: PERSONALIZED_JOB_CONTEXT,
+    }))
+    expect(capture.calls.indexOf('generateChapter')).toBeLessThan(capture.calls.indexOf('persistCheckpoint'))
+    expect(capture.calls.indexOf('persistCheckpoint')).toBeLessThan(capture.calls.indexOf('markRunningChoices'))
+    expect(capture.calls.indexOf('markRunningChoices')).toBeLessThan(capture.calls.indexOf('choices'))
+  })
+
+  it.each([12, 50])(
+    'keeps committed worker chapter %i successful when PUBLISHED checkpoint reconciliation fails',
+    async (chapterNumber) => {
+      const { deps } = makeDeps({
+        chapterNumber,
+        lockedEndingKey: chapterNumber === 50 ? 'publish-truth' : null,
+        debtsStatus: chapterNumber === 50 ? 'closed' : 'progressing',
+        checkpointStatusResult: {
+          PUBLISHED: { ok: false, result: 'OWNERSHIP_LOST' },
+        },
+      })
+      mocks.publishGenerationJobChapterV3.mockResolvedValueOnce({
+        jobId: PERSONALIZED_JOB_CONTEXT.jobId,
+        chapterNumber,
+        seq: 9,
+      })
+      const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+      await expect(generateNextPersonalizedChapter({
+        storyId: STORY_A,
+        userId: USER_A,
+        correlationId: CORRELATION_ID,
+        chapterNumber,
+        attemptId: PERSONALIZED_JOB_CONTEXT.jobId,
+        jobContext: PERSONALIZED_JOB_CONTEXT,
+      }, deps)).resolves.toMatchObject({ ok: true, chapterNumber, seq: 9 })
+      expect(deps.markCheckpointStatus).toHaveBeenLastCalledWith(expect.objectContaining({
+        status: 'PUBLISHED',
+        jobContext: PERSONALIZED_JOB_CONTEXT,
+      }))
+    },
+  )
+
+  it('keeps committed worker chapter 50 successful when PUBLISHED checkpoint transition throws', async () => {
+    const { deps } = makeDeps({
+      chapterNumber: 50,
+      lockedEndingKey: 'publish-truth',
+      debtsStatus: 'closed',
+    })
+    deps.markCheckpointStatus.mockImplementation(async (args: { status: CheckpointStatus }) => {
+      if (args.status === 'PUBLISHED') throw new Error('checkpoint unavailable')
+      return { ok: true, result: 'UPDATED' as const, changed: true }
+    })
+    mocks.publishGenerationJobChapterV3.mockResolvedValueOnce({
+      jobId: PERSONALIZED_JOB_CONTEXT.jobId,
+      chapterNumber: 50,
+      seq: 9,
+    })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await expect(generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 50,
+      attemptId: PERSONALIZED_JOB_CONTEXT.jobId,
+      jobContext: PERSONALIZED_JOB_CONTEXT,
+    }, deps)).resolves.toMatchObject({ ok: true, chapterNumber: 50, seq: 9 })
+  })
+
+  it('keeps committed worker chapter 50 successful when markReaderStateSelesai throws', async () => {
+    const { deps } = makeDeps({
+      chapterNumber: 50,
+      lockedEndingKey: 'publish-truth',
+      debtsStatus: 'closed',
+    })
+    deps.markReaderStateSelesai.mockRejectedValueOnce(new Error('reader state unavailable'))
+    mocks.publishGenerationJobChapterV3.mockResolvedValueOnce({
+      jobId: PERSONALIZED_JOB_CONTEXT.jobId,
+      chapterNumber: 50,
+      seq: 9,
+    })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await expect(generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 50,
+      attemptId: PERSONALIZED_JOB_CONTEXT.jobId,
+      jobContext: PERSONALIZED_JOB_CONTEXT,
+    }, deps)).resolves.toMatchObject({ ok: true, chapterNumber: 50, seq: 9 })
+    expect(deps.recordGenerationAttempt).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps committed worker chapter 50 successful when recordGenerationAttempt throws', async () => {
+    const { deps } = makeDeps({
+      chapterNumber: 50,
+      lockedEndingKey: 'publish-truth',
+      debtsStatus: 'closed',
+    })
+    deps.recordGenerationAttempt.mockRejectedValueOnce(new Error('telemetry unavailable'))
+    mocks.publishGenerationJobChapterV3.mockResolvedValueOnce({
+      jobId: PERSONALIZED_JOB_CONTEXT.jobId,
+      chapterNumber: 50,
+      seq: 9,
+    })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await expect(generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 50,
+      attemptId: PERSONALIZED_JOB_CONTEXT.jobId,
+      jobContext: PERSONALIZED_JOB_CONTEXT,
+    }, deps)).resolves.toMatchObject({ ok: true, chapterNumber: 50, seq: 9 })
+    expect(deps.markReaderStateSelesai).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops before choices when worker checkpoint persistence loses ownership', async () => {
+    const { deps } = makeDeps({
+      chapterNumber: 12,
+      persistCheckpointResult: { ok: false, result: 'OWNERSHIP_LOST' },
+    })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await expect(generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 12,
+      attemptId: PERSONALIZED_JOB_CONTEXT.jobId,
+      jobContext: PERSONALIZED_JOB_CONTEXT,
+    }, deps)).resolves.toMatchObject({
+      ok: false,
+      reason: 'FAILED_REVIEW_REQUIRED',
+      detail: { checkpointMutation: { result: 'OWNERSHIP_LOST' } },
+    })
+    expect(deps.generateChoiceBranch).not.toHaveBeenCalled()
+    expect(mocks.publishGenerationJobChapterV3).not.toHaveBeenCalled()
+  })
+
+  it('retains checkpoint as CHOICES_RETRY_WAIT when choices fail', async () => {
+    const checkpoint = personalizedCheckpoint({ status: 'PROSE_READY' })
+    const { deps } = makeDeps({ chapterNumber: 12, checkpoint, choiceFailure: true })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await expect(generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 12,
+      attemptId: PERSONALIZED_JOB_CONTEXT.jobId,
+      jobContext: PERSONALIZED_JOB_CONTEXT,
+    }, deps)).resolves.toMatchObject({ ok: false, reason: 'CHOICE_GENERATION_FAILED' })
+
+    expect(deps.markCheckpointStatus).toHaveBeenLastCalledWith(expect.objectContaining({
+      attemptId: checkpoint.attemptId,
+      status: 'CHOICES_RETRY_WAIT',
+      jobContext: PERSONALIZED_JOB_CONTEXT,
+    }))
+    expect(mocks.publishGenerationJobChapterV3).not.toHaveBeenCalled()
   })
 
   it('runs lease → canon → contract → reader → brief → compile → generate → safe → choices → publishV2 → telemetry for chapter < 50', async () => {
@@ -515,12 +896,16 @@ describe('generateNextPersonalizedChapter', () => {
       'reader',
       'brief',
       'compile',
+      'loadCheckpoint',
       'generateChapter',
+      'auditPlotDebts',
+      'persistCheckpoint',
+      'markRunningChoices',
       'toReaderSafe',
       'assertConsumerSafe',
       'choices',
-      'auditPlotDebts',
       'publishV2',
+      'markPublished',
       'telemetry',
     ])
     expect(deps.generateChoiceBranch).toHaveBeenCalledTimes(1)
@@ -542,6 +927,41 @@ describe('generateNextPersonalizedChapter', () => {
       choiceKind: 'normal',
       effect: distinctEffect(0),
     })
+  })
+
+  it('releases owned lease once when non-final legacy publish returns CHAPTER_EXISTS', async () => {
+    const { deps } = makeDeps({ chapterNumber: 12, publishOk: false })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    const result = await generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 12,
+    }, deps)
+
+    expect(result).toEqual({ ok: false, reason: 'CHAPTER_EXISTS' })
+    expect(deps.releaseGenerationLease).toHaveBeenCalledTimes(1)
+    expect(deps.releaseGenerationLease).toHaveBeenCalledWith({
+      storyId: STORY_A,
+      leaseId: `lease-${STORY_A}-12`,
+    })
+  })
+
+  it('does not manually release owned lease after successful legacy publish', async () => {
+    const { deps } = makeDeps({ chapterNumber: 12 })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    const result = await generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 12,
+    }, deps)
+
+    expect(result.ok).toBe(true)
+    expect(deps.publishChapterV2).toHaveBeenCalledTimes(1)
+    expect(deps.releaseGenerationLease).not.toHaveBeenCalled()
   })
 
   it('chapter 50 skips choices, resolves ending, publishes null/empty choices, marks SELESAI only after publish', async () => {
@@ -587,12 +1007,16 @@ describe('generateNextPersonalizedChapter', () => {
       'reader',
       'brief',
       'compile',
+      'loadCheckpoint',
       'generateChapter',
-      'toReaderSafe',
-      'assertConsumerSafe',
       'resolveEnding',
       'auditPlotDebts',
+      'persistCheckpoint',
+      'markRunningChoices',
+      'toReaderSafe',
+      'assertConsumerSafe',
       'publishV2',
+      'markPublished',
       'markSelesai',
       'telemetry',
     ])
@@ -636,6 +1060,7 @@ describe('generateNextPersonalizedChapter', () => {
     expect(result.ok).toBe(true)
     if (result.ok) {
       expect(result.chapterNumber).toBe(50)
+      expect(result.seq).toBe(0)
     }
     expect(deps.markReaderStateSelesai).toHaveBeenCalledWith({
       userId: USER_A,
@@ -643,9 +1068,53 @@ describe('generateNextPersonalizedChapter', () => {
       endingName: 'Arsip Dibuka',
       endingKey: 'publish-truth',
     })
+    expect(deps.releaseGenerationLease).toHaveBeenCalledTimes(1)
+    expect(deps.releaseGenerationLease).toHaveBeenCalledWith({
+      storyId: STORY_A,
+      leaseId: `lease-${STORY_A}-50`,
+    })
     const publishIdx = capture.calls.indexOf('publishV2')
+    const releaseIdx = capture.calls.indexOf('releaseLease')
     const markIdx = capture.calls.indexOf('markSelesai')
-    expect(markIdx).toBeGreaterThan(publishIdx)
+    expect(releaseIdx).toBeGreaterThan(publishIdx)
+    expect(markIdx).toBeGreaterThan(releaseIdx)
+  })
+
+  it('returns CHAPTER_EXISTS after chapter 50 worker reader-state reconciliation', async () => {
+    const { deps } = makeDeps({
+      chapterNumber: 50,
+      lockedEndingKey: 'publish-truth',
+      debtsStatus: 'closed',
+    })
+    mocks.publishGenerationJobChapterV3.mockRejectedValueOnce(new Error('CHAPTER_EXISTS'))
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    const result = await generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 50,
+      jobContext: {
+        jobId: '00000000-0000-4000-8000-000000000001',
+        workerId: 'worker-x',
+        claimToken: '00000000-0000-4000-8000-000000000002',
+        leaseId: 'lease-worker',
+        attemptNumber: 1,
+        correlationId: CORRELATION_ID,
+        generationKind: 'personalized',
+        signal: new AbortController().signal,
+      },
+    }, deps)
+
+    expect(result).toEqual({ ok: false, reason: 'CHAPTER_EXISTS' })
+    expect(deps.markReaderStateSelesai).toHaveBeenCalledWith({
+      userId: USER_A,
+      storyId: STORY_A,
+      endingName: 'Arsip Dibuka',
+      endingKey: 'publish-truth',
+    })
+    expect(deps.publishChapterV2).not.toHaveBeenCalled()
+    expect(deps.releaseGenerationLease).not.toHaveBeenCalled()
   })
 
   it('recovers chapter 50 when first mark SELESAI throws after publish ok', async () => {
@@ -677,6 +1146,7 @@ describe('generateNextPersonalizedChapter', () => {
       chapterNumber: 50,
     }, first.deps)).rejects.toThrow(/transient write failure/)
     expect(first.deps.publishChapterV2).toHaveBeenCalledTimes(1)
+    expect(first.deps.releaseGenerationLease).not.toHaveBeenCalled()
 
     // Retry: chapter already published → CHAPTER_EXISTS; must still mark SELESAI.
     const secondCapture = {
@@ -755,6 +1225,85 @@ describe('generateNextPersonalizedChapter', () => {
     expect(lockIdx).toBeLessThan(publishIdx)
   })
 
+  it('worker chapter 45 publishes V3 with proposed lock and never persists separately', async () => {
+    const { deps, capture } = makeDeps({
+      chapterNumber: 45,
+      lockedEndingKey: null,
+      debtsStatus: 'progressing',
+    })
+    mocks.publishGenerationJobChapterV3.mockResolvedValueOnce({
+      ok: true,
+      jobId: '00000000-0000-4000-8000-000000000001',
+      chapterNumber: 45,
+      seq: 9,
+    })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    const result = await generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 45,
+      jobContext: {
+        jobId: '00000000-0000-4000-8000-000000000001',
+        workerId: 'worker-x',
+        claimToken: '00000000-0000-4000-8000-000000000002',
+        leaseId: '00000000-0000-4000-8000-000000000003',
+        attemptNumber: 1,
+        correlationId: CORRELATION_ID,
+        generationKind: 'personalized',
+        signal: new AbortController().signal,
+      },
+    }, deps)
+
+    expect(result.ok).toBe(true)
+    expect(deps.resolveEnding).toHaveBeenCalledTimes(1)
+    expect(deps.persistEndingLock).not.toHaveBeenCalled()
+    expect(mocks.publishGenerationJobChapterV3).toHaveBeenCalledWith(expect.objectContaining({
+      jobId: '00000000-0000-4000-8000-000000000001',
+      workerId: 'worker-x',
+      claimToken: '00000000-0000-4000-8000-000000000002',
+      leaseId: '00000000-0000-4000-8000-000000000003',
+      storyId: STORY_A,
+      chapterNumber: 45,
+      endingLock: { key: 'publish-truth', name: 'Arsip Dibuka' },
+    }))
+    expect(capture.auditInputs[0]).toMatchObject({ endingLocked: true })
+  })
+
+  it('worker non-45 chapter always publishes V3 with null ending lock', async () => {
+    const { deps } = makeDeps({ chapterNumber: 12 })
+    mocks.publishGenerationJobChapterV3.mockResolvedValueOnce({
+      ok: true,
+      jobId: '00000000-0000-4000-8000-000000000001',
+      chapterNumber: 12,
+      seq: 9,
+    })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 12,
+      jobContext: {
+        jobId: '00000000-0000-4000-8000-000000000001',
+        workerId: 'worker-x',
+        claimToken: '00000000-0000-4000-8000-000000000002',
+        leaseId: '00000000-0000-4000-8000-000000000003',
+        attemptNumber: 1,
+        correlationId: CORRELATION_ID,
+        generationKind: 'personalized',
+        signal: new AbortController().signal,
+      },
+    }, deps)
+
+    expect(mocks.publishGenerationJobChapterV3).toHaveBeenCalledWith(
+      expect.objectContaining({ chapterNumber: 12, endingLock: null }),
+    )
+    expect(deps.persistEndingLock).not.toHaveBeenCalled()
+  })
+
   it('defaultPersistEndingLock calls atomic RPC with reader + contract lock payload', async () => {
     const rpc = vi.fn(async () => ({ data: { ok: true }, error: null }))
     mocks.adminFactory.mockReturnValue({
@@ -788,6 +1337,74 @@ describe('generateNextPersonalizedChapter', () => {
     )
     const rpcArgs = rpc.mock.calls.at(0) as unknown as [string, Record<string, unknown>]
     expect(rpcArgs[0]).toBe('persist_ending_lock_v1')
+  })
+
+  it('chapter 41 choices failure then retry cannot bypass opensNewThread audit', async () => {
+    const first = makeDeps({
+      chapterNumber: 41,
+      lockedEndingKey: null,
+      debtsStatus: 'progressing',
+      draftSignals: { opensNewThread: true },
+      choiceFailure: true,
+    })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    const firstResult = await generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 41,
+    }, first.deps)
+    expect(firstResult).toMatchObject({ ok: false, reason: 'CHOICE_GENERATION_FAILED' })
+    const persistCalls = first.deps.persistProseReadyCheckpoint.mock.calls as unknown as Array<[{
+      title: string
+      paragraphs: string[]
+      auditSignals: NonNullable<ChapterGenerationCheckpoint['auditSignals']>
+      auditSignalsVersion: 1
+    }]>
+    const saved = persistCalls[0]?.[0] as {
+      title: string
+      paragraphs: string[]
+      auditSignals: NonNullable<ChapterGenerationCheckpoint['auditSignals']>
+      auditSignalsVersion: 1
+    }
+    expect(saved).toBeDefined()
+    expect(saved.auditSignals).toEqual({
+      opensNewThread: true,
+      opensMajorMystery: false,
+      opensNewConflict: false,
+    })
+    expect(saved.auditSignalsVersion).toBe(CHECKPOINT_AUDIT_SIGNALS_VERSION)
+
+    const checkpoint = personalizedCheckpoint({
+      chapterNumber: 41,
+      title: saved.title,
+      paragraphs: saved.paragraphs,
+      proseFingerprint: proseFingerprint(saved.title, saved.paragraphs),
+      auditSignals: saved.auditSignals,
+      auditSignalsVersion: saved.auditSignalsVersion,
+      status: 'CHOICES_RETRY_WAIT',
+    })
+    const retry = makeDeps({
+      chapterNumber: 41,
+      lockedEndingKey: null,
+      debtsStatus: 'progressing',
+      checkpoint,
+      useRealAudit: true,
+    })
+    const retryResult = await generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 41,
+    }, retry.deps)
+
+    expect(retryResult).toMatchObject({ ok: false, reason: 'FAILED_REVIEW_REQUIRED' })
+    expect(retry.deps.generateChapter).not.toHaveBeenCalled()
+    expect(retry.deps.persistProseReadyCheckpoint).not.toHaveBeenCalled()
+    expect(retry.deps.markCheckpointStatus).not.toHaveBeenCalled()
+    expect(retry.deps.generateChoiceBranch).not.toHaveBeenCalled()
+    expect(retry.capture.auditInputs[0]).toMatchObject({ opensNewThread: true })
   })
 
   it('fails audit when draft opens new thread after chapter 40', async () => {
@@ -1040,7 +1657,11 @@ describe('generateNextPersonalizedChapter', () => {
       [USER_A, STORY_A],
       [USER_B, STORY_B],
     ])
-    expect(sharedCapture.publishInputs.map((input) => input.storyId)).toEqual([STORY_A, STORY_B])
+    // Concurrent A/B completion order is intentionally nondeterministic; assert
+    // isolation by membership, not Promise.all scheduling order.
+    expect(sharedCapture.publishInputs.map((input) => input.storyId).sort()).toEqual(
+      [STORY_A, STORY_B].sort(),
+    )
     expect(sharedCapture.publishInputs.map((input) => input.chapterNumber)).toEqual([12, 12])
     const publishedByStory = new Map(sharedCapture.publishInputs.map((input) => [input.storyId, input]))
     expect(publishedByStory.get(STORY_A)?.paragraphs).toEqual([
@@ -1113,6 +1734,125 @@ describe('generateNextPersonalizedChapter', () => {
     expect(result).toEqual({ ok: false, reason: 'LEASE_HELD' })
     expect(deps.loadCanonSnapshot).not.toHaveBeenCalled()
     expect(deps.publishChapterV2).not.toHaveBeenCalled()
+  })
+
+  it('provider ignoring abort cannot continue to choices or publish', async () => {
+    const { deps } = makeDeps({ chapterNumber: 12 })
+    const controller = new AbortController()
+    let resolveProse: ((value: Awaited<ReturnType<typeof deps.generateChapter>>) => void) | undefined
+    deps.generateChapter.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveProse = resolve
+    }))
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+    const run = generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 12,
+      jobContext: {
+        jobId: '00000000-0000-4000-8000-000000000001',
+        workerId: 'worker-x',
+        claimToken: '00000000-0000-4000-8000-000000000002',
+        leaseId: 'lease-worker',
+        attemptNumber: 1,
+        correlationId: CORRELATION_ID,
+        generationKind: 'personalized',
+        signal: controller.signal,
+      },
+    }, deps)
+    await vi.waitFor(() => expect(resolveProse).toBeTypeOf('function'))
+
+    controller.abort()
+    resolveProse?.({
+      status: 'PUBLISHED',
+      chapterNumber: 12,
+      draft: draftFor(STORY_A, 12),
+      attempts: 0,
+      findings: [],
+    })
+
+    await expect(run).rejects.toMatchObject({ name: 'AbortError' })
+    expect(deps.persistProseReadyCheckpoint).not.toHaveBeenCalled()
+    expect(deps.markCheckpointStatus).not.toHaveBeenCalled()
+    expect(deps.generateChoiceBranch).not.toHaveBeenCalled()
+    expect(deps.publishChapterV2).not.toHaveBeenCalled()
+    expect(mocks.publishGenerationJobChapterV3).not.toHaveBeenCalled()
+  })
+
+  it('ch45 abort skips checkpoint, ending-lock write, choices, and publish', async () => {
+    const { deps, capture } = makeDeps({
+      chapterNumber: 45,
+      lockedEndingKey: null,
+      debtsStatus: 'progressing',
+    })
+    const controller = new AbortController()
+    deps.auditPlotDebts = vi.fn(() => {
+      controller.abort()
+      capture.calls.push('auditPlotDebts')
+      return { ok: true, findings: [] }
+    })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    const run = generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 45,
+      jobContext: {
+        jobId: '00000000-0000-4000-8000-000000000001',
+        workerId: 'worker-x',
+        claimToken: '00000000-0000-4000-8000-000000000002',
+        leaseId: 'lease-worker',
+        attemptNumber: 1,
+        correlationId: CORRELATION_ID,
+        generationKind: 'personalized',
+        signal: controller.signal,
+      },
+    }, deps)
+
+    await expect(run).rejects.toMatchObject({ name: 'AbortError' })
+    expect(deps.generateChapter).toHaveBeenCalled()
+    expect(deps.persistProseReadyCheckpoint).not.toHaveBeenCalled()
+    expect(deps.markCheckpointStatus).not.toHaveBeenCalled()
+    expect(deps.generateChoiceBranch).not.toHaveBeenCalled()
+    expect(deps.persistEndingLock).not.toHaveBeenCalled()
+    expect(deps.publishChapterV2).not.toHaveBeenCalled()
+    expect(mocks.publishGenerationJobChapterV3).not.toHaveBeenCalled()
+    expect(capture.calls).not.toContain('persistEndingLock')
+    expect(capture.calls).not.toContain('publishV2')
+  })
+
+  it('passes the exact worker signal into personalized prose execution', async () => {
+    const { deps } = makeDeps({ chapterNumber: 12 })
+    const controller = new AbortController()
+    mocks.publishGenerationJobChapterV3.mockResolvedValueOnce({
+      jobId: '00000000-0000-4000-8000-000000000001',
+      chapterNumber: 12,
+      seq: 9,
+    })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 12,
+      jobContext: {
+        jobId: '00000000-0000-4000-8000-000000000001',
+        workerId: 'worker-x',
+        claimToken: '00000000-0000-4000-8000-000000000002',
+        leaseId: 'lease-worker',
+        attemptNumber: 1,
+        correlationId: CORRELATION_ID,
+        generationKind: 'personalized',
+        signal: controller.signal,
+      },
+    }, deps)
+
+    const proseArgs = deps.generateChapter.mock.calls[0][1] as unknown as {
+      executionOptions: { signal?: AbortSignal }
+    }
+    expect(proseArgs.executionOptions.signal).toBe(controller.signal)
   })
 
   it('releases lease and returns FAILED_REVIEW_REQUIRED when generation fails review', async () => {

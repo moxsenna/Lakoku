@@ -60,9 +60,18 @@ export interface StoryContractInput {
   repairErrors?: string[]
 }
 
+export type ProviderCallBudget = {
+  used: number
+  max: number
+}
+
 export interface ModelCallExecutionOptions {
   telemetryContext: ProviderCallContext
   workflowPhase: string
+  /** Parent cancellation (e.g. durable worker ownership lost). */
+  signal?: AbortSignal
+  /** Shared across retries so every actual model candidate counts toward cap. */
+  callBudget?: ProviderCallBudget
   consume?: (raw: unknown) => unknown | Promise<unknown>
 }
 

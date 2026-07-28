@@ -23,6 +23,8 @@ import {
   finalizeAiChoiceDraft,
   isAiChoiceDraftShape,
   parseAiChoiceDraft,
+  rankChoiceRelevantCharacters,
+  rankChoiceRelevantThreads,
 } from './choice-draft-v2'
 import {
   type GenerationProvider,
@@ -41,6 +43,7 @@ import {
   ContentRejectedError,
   InvalidModelResponseError,
 } from './model-call-errors'
+import { throwIfAborted } from '@/lib/runtime/abort'
 
 export { GatewayError, scanForLeaks } from './safety'
 
@@ -86,12 +89,14 @@ export async function writeChapter(
   },
   options?: ModelCallExecutionOptions,
 ): Promise<ChapterDraftParsed> {
+  throwIfAborted(options?.signal)
   const raw = await deps.provider.writeChapter({
     snapshot: args.snapshot,
     plan: args.plan,
     repairFindings: args.repairFindings,
     injectDefects: args.injectDefects,
   }, options)
+  throwIfAborted(options?.signal)
   const parsed = parseDraft(raw)
   if (!parsed.ok) {
     throw new GatewayError('Draft bab tidak valid.', 'DRAFT_INVALID', parsed.errors)
@@ -190,12 +195,28 @@ function issueStrings(error: z.ZodError): string[] {
   })
 }
 
+/** Most recent reader choice label (relevance signal for context ranking). */
+function lastChoiceLabel(
+  history: ReadonlyArray<{ chapterNumber?: number; label?: string }>,
+): string | null {
+  if (!Array.isArray(history) || history.length === 0) return null
+  const sorted = [...history].sort(
+    (a, b) => (b.chapterNumber ?? 0) - (a.chapterNumber ?? 0),
+  )
+  return sorted[0]?.label ?? null
+}
+
 function serializedLength(value: unknown): number {
   try {
     return JSON.stringify(value).length
   } catch {
     return Number.POSITIVE_INFINITY
   }
+}
+
+/** Test-only: exposes the ranked/bounded choice projection (P1-4). */
+export function __projectChoiceInputForTests(input: ChoiceInput): ChoiceProviderInput {
+  return projectChoiceInput(input)
 }
 
 function projectChoiceInput(input: ChoiceInput): ChoiceProviderInput {
@@ -245,17 +266,27 @@ function projectChoiceInput(input: ChoiceInput): ChoiceProviderInput {
     choiceHistory: parsed.data.choiceHistory,
     lockedEndingKey: parsed.data.lockedEndingKey,
     canon: {
-      activeCharacters: snapshot.characters
-        .filter((character) => character.status !== 'DEAD' && character.introducedChapter <= chapterNumber)
-        .slice(0, 24)
-        .map((character) => ({ id: character.id, name: character.canonicalName })),
-      activeThreads: snapshot.threads
-        .filter((thread) => thread.status !== 'RESOLVED' && thread.status !== 'ABANDONED_APPROVED')
-        .slice(0, 24)
-        .map((thread) => ({ id: thread.id, title: thread.title })),
+      // P1-4: rank creative context by relevance and cap tightly (top 6 each).
+      // Grounding uses the final ending paragraphs + last reader choice as signal.
+      activeCharacters: rankChoiceRelevantCharacters({
+        endingParagraphs: parsed.data.lastParagraphs as string[],
+        previousChoiceLabel: lastChoiceLabel(parsed.data.choiceHistory),
+        characters: snapshot.characters
+          .filter((character) => character.status !== 'DEAD' && character.introducedChapter <= chapterNumber)
+          .map((character) => ({ id: character.id, name: character.canonicalName })),
+        limit: 6,
+      }),
+      activeThreads: rankChoiceRelevantThreads({
+        endingParagraphs: parsed.data.lastParagraphs as string[],
+        threads: snapshot.threads
+          .filter((thread) => thread.status !== 'RESOLVED' && thread.status !== 'ABANDONED_APPROVED')
+          .map((thread) => ({ id: thread.id, title: thread.title })),
+        limit: 6,
+      }),
+      // Hard safety constraint: never trimmed by relevance ranking. Every
+      // unrevealed secret + its gate must reach the model so it cannot leak.
       pendingReveals: snapshot.secrets
         .filter((secret) => !secret.revealed)
-        .slice(0, 32)
         .map((secret) => ({
           id: secret.id,
           description: secret.description,
@@ -379,6 +410,7 @@ export async function generateChoiceBranch(
   input: ChoiceInput,
   options?: ModelCallExecutionOptions,
 ): Promise<ChoiceBranch | null> {
+  throwIfAborted(options?.signal)
   const providerInput = projectChoiceInput(input)
   if (providerInput.currentChapter === 50) return null
 
@@ -391,6 +423,7 @@ export async function generateChoiceBranch(
   }
 
   const validate = (raw: unknown): ChoiceBranch => {
+    throwIfAborted(options?.signal)
     try {
       // Protocol V2: creative draft → deterministic finalizer → existing ChoiceBranch.
       let branchInput: unknown = raw
@@ -436,6 +469,7 @@ export async function generateChoiceBranch(
       structuredClone(providerInput),
       options ? { ...options, consume: validate } : options,
     )
+    throwIfAborted(options?.signal)
     return validate(raw)
   } catch (error) {
     if (error instanceof ContentRejectedError || error instanceof InvalidModelResponseError) {

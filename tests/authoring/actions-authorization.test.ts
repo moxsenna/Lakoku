@@ -319,7 +319,8 @@ describe('brainstorm action authorization', () => {
       userId: 'user-a',
       chapterNumber: 1,
       correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
-      attemptId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      // Flag OFF (default): honest attemptId null — no durable job enqueued.
+      attemptId: null,
     })
     expect(mocks.ensureReaderStateStarted).toHaveBeenCalledWith('story-a', 1)
   })

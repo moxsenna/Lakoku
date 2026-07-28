@@ -4,11 +4,12 @@
  * cannot stampede the choices provider.
  */
 import 'server-only'
+import { abortableSleep } from './abort'
 
 export type ChoiceCapacityFailReason = 'CHOICE_CAPACITY_BUSY' | 'CHOICE_CAPACITY_TIMEOUT'
 
 export type ChoiceSlotAcquireResult =
-  | { ok: true; waitMs: number; active: number; queued: number }
+  | { ok: true; slotToken: string; waitMs: number; active: number; queued: number }
   | {
       ok: false
       reason: ChoiceCapacityFailReason
@@ -33,13 +34,34 @@ type Waiter = {
   enqueuedAt: number
   resolve: (result: ChoiceSlotAcquireResult) => void
   timer: ReturnType<typeof setTimeout> | null
+  signal?: AbortSignal
+  onAbort?: () => void
 }
 
 type ActiveSlot = {
+  slotToken: string
   providerId: string
   storyId: string
   chapterNumber: number
   startedAt: number
+}
+
+let slotTokenCounter = 0
+function nextSlotToken(providerId: string): string {
+  slotTokenCounter += 1
+  return `${providerId}:${Date.now().toString(36)}:${slotTokenCounter.toString(36)}`
+}
+
+/**
+ * Reserve an active slot synchronously (before any await), returning its token.
+ * Reserving before jitter closes the check-then-act race where several callers
+ * observe capacity, all await jitter, then all push — overshooting maxActive.
+ */
+function reserveSlot(providerId: string, storyId: string, chapterNumber: number): string {
+  const g = gateFor(providerId)
+  const slotToken = nextSlotToken(providerId)
+  g.active.push({ slotToken, providerId, storyId, chapterNumber, startedAt: Date.now() })
+  return slotToken
 }
 
 function envInt(name: string, fallback: number, min: number, max: number): number {
@@ -107,19 +129,26 @@ function snapshot(providerId: string) {
   return { active: g.active.length, queued: g.waiters.length }
 }
 
+function cleanupWaiter(waiter: Waiter): void {
+  if (waiter.timer) {
+    clearTimeout(waiter.timer)
+    waiter.timer = null
+  }
+  if (waiter.signal && waiter.onAbort) {
+    waiter.signal.removeEventListener('abort', waiter.onAbort)
+    waiter.onAbort = undefined
+  }
+}
+
 function tryPromote(providerId: string): void {
   const policy = resolveChoiceConcurrencyPolicy(providerId)
   const g = gateFor(providerId)
   while (g.active.length < policy.maxActive && g.waiters.length > 0) {
     const next = g.waiters.shift()!
-    if (next.timer) clearTimeout(next.timer)
+    cleanupWaiter(next)
+    if (next.signal?.aborted) continue
     const waitMs = Date.now() - next.enqueuedAt
-    g.active.push({
-      providerId,
-      storyId: next.storyId,
-      chapterNumber: next.chapterNumber,
-      startedAt: Date.now(),
-    })
+    const slotToken = reserveSlot(providerId, next.storyId, next.chapterNumber)
     console.log('CHOICE_CAPACITY_WAIT_DONE', {
       providerId,
       storyId: next.storyId,
@@ -131,6 +160,7 @@ function tryPromote(providerId: string): void {
     })
     next.resolve({
       ok: true,
+      slotToken,
       waitMs,
       active: g.active.length,
       queued: g.waiters.length,
@@ -143,24 +173,30 @@ export async function acquireChoiceSlot(args: {
   storyId: string
   chapterNumber: number
   correlationId?: string
+  signal?: AbortSignal
 }): Promise<ChoiceSlotAcquireResult> {
+  args.signal?.throwIfAborted()
   const providerId = args.providerId || 'default'
   const policy = resolveChoiceConcurrencyPolicy(providerId)
   const g = gateFor(providerId)
   const started = Date.now()
 
   if (g.active.length < policy.maxActive) {
-    // Optional small jitter to desynchronize bursts
+    // Reserve the slot synchronously BEFORE awaiting jitter so concurrent
+    // callers cannot all pass the capacity check and overshoot maxActive.
+    const slotToken = reserveSlot(providerId, args.storyId, args.chapterNumber)
+    // Optional small jitter to desynchronize bursts (slot already held).
     const delay = jitterMs(policy)
-    if (delay > 0) await new Promise((r) => setTimeout(r, delay))
-    g.active.push({
-      providerId,
-      storyId: args.storyId,
-      chapterNumber: args.chapterNumber,
-      startedAt: Date.now(),
-    })
+    try {
+      if (delay > 0) await abortableSleep(delay, args.signal)
+      args.signal?.throwIfAborted()
+    } catch (error) {
+      releaseChoiceSlot({ providerId, slotToken })
+      throw error
+    }
     return {
       ok: true,
+      slotToken,
       waitMs: Date.now() - started,
       ...snapshot(providerId),
     }
@@ -193,7 +229,7 @@ export async function acquireChoiceSlot(args: {
     ...snapshot(providerId),
   })
 
-  return await new Promise<ChoiceSlotAcquireResult>((resolve) => {
+  return await new Promise<ChoiceSlotAcquireResult>((resolve, reject) => {
     const waiter: Waiter = {
       providerId,
       storyId: args.storyId,
@@ -202,10 +238,19 @@ export async function acquireChoiceSlot(args: {
       enqueuedAt: Date.now(),
       resolve,
       timer: null,
+      signal: args.signal,
     }
+    waiter.onAbort = () => {
+      const idx = g.waiters.indexOf(waiter)
+      if (idx >= 0) g.waiters.splice(idx, 1)
+      cleanupWaiter(waiter)
+      reject(args.signal?.reason ?? new DOMException('Aborted', 'AbortError'))
+    }
+    args.signal?.addEventListener('abort', waiter.onAbort, { once: true })
     waiter.timer = setTimeout(() => {
       const idx = g.waiters.indexOf(waiter)
       if (idx >= 0) g.waiters.splice(idx, 1)
+      cleanupWaiter(waiter)
       console.log('CHOICE_CAPACITY_REJECTED', {
         providerId,
         storyId: args.storyId,
@@ -228,22 +273,28 @@ export async function acquireChoiceSlot(args: {
 
 export function releaseChoiceSlot(args: {
   providerId: string
-  storyId: string
-  chapterNumber: number
+  slotToken: string
 }): void {
   const providerId = args.providerId || 'default'
   const g = gateFor(providerId)
-  const idx = g.active.findIndex(
-    (a) => a.storyId === args.storyId && a.chapterNumber === args.chapterNumber,
-  )
-  if (idx >= 0) g.active.splice(idx, 1)
-  else if (g.active.length > 0) g.active.shift()
-  console.log('CHOICE_CAPACITY_RELEASED', {
-    providerId,
-    storyId: args.storyId,
-    chapterNumber: args.chapterNumber,
-    ...snapshot(providerId),
-  })
+  const idx = g.active.findIndex((a) => a.slotToken === args.slotToken)
+  if (idx >= 0) {
+    const [released] = g.active.splice(idx, 1)
+    console.log('CHOICE_CAPACITY_RELEASED', {
+      providerId,
+      storyId: released.storyId,
+      chapterNumber: released.chapterNumber,
+      slotToken: args.slotToken,
+      ...snapshot(providerId),
+    })
+  } else {
+    // Unknown token — never touch another job's slot. Log anomaly only.
+    console.log('CHOICE_SLOT_TOKEN_ORPHAN', {
+      providerId,
+      slotToken: args.slotToken,
+      ...snapshot(providerId),
+    })
+  }
   tryPromote(providerId)
 }
 
@@ -253,6 +304,7 @@ export async function withChoiceGenerationSlot<T>(
     storyId: string
     chapterNumber: number
     correlationId?: string
+    signal?: AbortSignal
   },
   callback: () => Promise<T>,
 ): Promise<T> {
@@ -265,14 +317,16 @@ export async function withChoiceGenerationSlot<T>(
   } finally {
     releaseChoiceSlot({
       providerId: args.providerId,
-      storyId: args.storyId,
-      chapterNumber: args.chapterNumber,
+      slotToken: slot.slotToken,
     })
   }
 }
 
 /** Test-only: reset all gates. */
 export function __resetChoiceConcurrencyForTests(): void {
+  for (const gate of gates.values()) {
+    for (const waiter of gate.waiters) cleanupWaiter(waiter)
+  }
   gates.clear()
 }
 

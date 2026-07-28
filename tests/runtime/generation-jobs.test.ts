@@ -279,6 +279,156 @@ describe('generation job worker RPC adapters', () => {
     })
   })
 
+  it.each([
+    [null, null],
+    [{ key: 'publish-truth', name: 'Arsip Dibuka' }, {
+      p_ending_key: 'publish-truth',
+      p_ending_name: 'Arsip Dibuka',
+    }],
+  ] as const)('V3 publishes with exact ending lock payload %j', async (endingLock, endingArgs) => {
+    const rpc = rpcResult({ ok: true, chapter_number: 45, seq: 8, jobId: JOB_ID })
+    const { publishGenerationJobChapterV3 } = await import('@/lib/runtime/generation-jobs')
+
+    await expect(publishGenerationJobChapterV3({
+      jobId: JOB_ID,
+      workerId: 'worker-a',
+      claimToken: CLAIM_TOKEN,
+      leaseId: LEASE_ID,
+      storyId: 'story-a',
+      chapterNumber: 45,
+      title: 'Bab Empat Puluh Lima',
+      paragraphs: ['Paragraf pertama.'],
+      choicePrompt: null,
+      choices: null,
+      outcomes: [],
+      endingLock,
+    })).resolves.toEqual({ ok: true, chapterNumber: 45, seq: 8, jobId: JOB_ID })
+    expect(rpc).toHaveBeenCalledWith('publish_generation_job_chapter_v3', {
+      p_job_id: JOB_ID,
+      p_worker_id: 'worker-a',
+      p_claim_token: CLAIM_TOKEN,
+      p_lease_id: LEASE_ID,
+      p_story_id: 'story-a',
+      p_chapter_number: 45,
+      p_title: 'Bab Empat Puluh Lima',
+      p_paragraphs: ['Paragraf pertama.'],
+      p_choice_prompt: null,
+      p_choices: null,
+      p_outcomes: [],
+      ...(endingArgs ?? { p_ending_key: null, p_ending_name: null }),
+    })
+  })
+
+  it('V3 rejects partial or unbounded ending locks before RPC', async () => {
+    const { publishGenerationJobChapterV3 } = await import('@/lib/runtime/generation-jobs')
+    const base = {
+      jobId: JOB_ID,
+      workerId: 'worker-a',
+      claimToken: CLAIM_TOKEN,
+      leaseId: LEASE_ID,
+      storyId: 'story-a',
+      chapterNumber: 45,
+      title: 'Bab Empat Puluh Lima',
+      paragraphs: ['Paragraf pertama.'],
+      choicePrompt: null,
+      choices: null,
+      outcomes: [],
+    }
+
+    await expect(publishGenerationJobChapterV3({
+      ...base,
+      // @ts-expect-error desired strict adapter rejects partial lock
+      endingLock: { key: 'publish-truth' },
+    })).rejects.toThrow()
+    await expect(publishGenerationJobChapterV3({
+      ...base,
+      endingLock: { key: 'x'.repeat(81), name: 'Arsip Dibuka' },
+    })).rejects.toThrow()
+    expect(mocks.adminFactory).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['standard', null, null],
+    ['personalized', {
+      opensNewThread: false,
+      opensMajorMystery: true,
+      opensNewConflict: false,
+    }, 1],
+  ] as const)('upserts %s checkpoint with exact audit payload', async (
+    generationMode,
+    auditSignals,
+    auditSignalsVersion,
+  ) => {
+    const rpc = rpcResult({ ok: true, result: 'UPDATED', changed: true })
+    const { upsertGenerationCheckpointFenced } = await import('@/lib/runtime/generation-jobs')
+
+    await upsertGenerationCheckpointFenced({
+      jobId: JOB_ID,
+      workerId: 'worker-a',
+      claimToken: CLAIM_TOKEN,
+      leaseId: LEASE_ID,
+      storyId: 'story-a',
+      chapterNumber: 2,
+      title: 'Bab Dua',
+      paragraphs: ['Paragraf pertama.'],
+      proseFingerprint: '0123456789abcdef0123456789abcdef',
+      auditSignals,
+      auditSignalsVersion,
+      canonVersion: 7,
+      blueprintVersion: 4,
+      directionFingerprint: 'direction-fingerprint',
+      generationMode,
+      generationPolicyVersion: 2,
+      promptContractVersion: 2,
+      proseAttemptCount: 1,
+    })
+
+    expect(rpc).toHaveBeenCalledWith('upsert_generation_checkpoint_fenced_v1', expect.objectContaining({
+      p_generation_mode: generationMode,
+      p_audit_signals: auditSignals,
+      p_audit_signals_version: auditSignalsVersion,
+    }))
+  })
+
+  it('rejects personalized checkpoint with missing or non-exact audit payload before RPC', async () => {
+    const { upsertGenerationCheckpointFenced } = await import('@/lib/runtime/generation-jobs')
+    const base = {
+      jobId: JOB_ID,
+      workerId: 'worker-a',
+      claimToken: CLAIM_TOKEN,
+      leaseId: LEASE_ID,
+      storyId: 'story-a',
+      chapterNumber: 2,
+      title: 'Bab Dua',
+      paragraphs: ['Paragraf pertama.'],
+      proseFingerprint: '0123456789abcdef0123456789abcdef',
+      canonVersion: 7,
+      blueprintVersion: 4,
+      directionFingerprint: 'direction-fingerprint',
+      generationMode: 'personalized' as const,
+      generationPolicyVersion: 2,
+      promptContractVersion: 2,
+      proseAttemptCount: 1,
+    }
+
+    await expect(upsertGenerationCheckpointFenced({
+      ...base,
+      auditSignals: null,
+      auditSignalsVersion: null,
+    })).rejects.toThrow()
+    await expect(upsertGenerationCheckpointFenced({
+      ...base,
+      auditSignals: {
+        opensNewThread: false,
+        opensMajorMystery: false,
+        opensNewConflict: false,
+        extra: false,
+      } as never,
+      auditSignalsVersion: 1,
+    })).rejects.toThrow()
+    expect(mocks.adminFactory).not.toHaveBeenCalled()
+  })
+
   it('rejects malformed RPC outputs instead of casting', async () => {
     rpcResult({ ok: true, status: 'SUCCEEDED' })
     const { finishGenerationJobAttempt } = await import('@/lib/runtime/generation-jobs')

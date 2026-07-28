@@ -28,7 +28,12 @@ const {
 
 vi.mock('server-only', () => ({}))
 vi.mock('ai', () => ({
+  // Choices use generateText (non-stream); prose uses streamText. Both are
+  // driven by the same mock so existing streamTextMock assertions still apply.
   streamText: streamTextMock,
+  generateText: streamTextMock,
+  // P1-6: minimal Output.object stub so native-schema path can be constructed.
+  Output: { object: (cfg: unknown) => ({ __output: cfg }) },
 }))
 vi.mock('@ai-sdk/openai-compatible', () => ({
   createOpenAICompatible: createOpenAICompatibleMock,
@@ -326,6 +331,10 @@ describe('createGatewayProvider choice adapter', () => {
     'NINEROUTER_BASE_URL',
     'NINEROUTER_API_KEY',
     'NARRATIVE_MODEL',
+    'LAKOKU_ALLOW_CHOICES_PROSE_FALLBACK',
+    'LAKOKU_CHOICES_MODEL',
+    'LAKOKU_CHOICES_NATIVE_SCHEMA',
+    'LAKOKU_CHOICES_NATIVE_SCHEMA_MODELS',
   ] as const
   const originalEnv = new Map<string, string | undefined>()
 
@@ -341,6 +350,10 @@ describe('createGatewayProvider choice adapter', () => {
       originalEnv.set(key, process.env[key])
       delete process.env[key]
     }
+    // P1-8: these suites exercise the (degraded) prose-fallback choice path by
+    // design; enable the explicit opt-in so they keep testing that behavior.
+    // A dedicated test below asserts CHOICE_ROUTE_MISSING when the opt-in is off.
+    process.env.LAKOKU_ALLOW_CHOICES_PROSE_FALLBACK = 'true'
   })
 
   afterEach(() => {
@@ -389,23 +402,17 @@ describe('createGatewayProvider choice adapter', () => {
       maxOutputTokens: 900,
     }))
     const request = streamTextMock.mock.calls[0][0]
-    expect(request.system).toContain('"choicePrompt"')
-    expect(request.system).toContain('"choices"')
-    expect(request.system).toContain('"outcomes"')
-    expect(request.system).toContain('"routeDeltas"')
-    expect(request.system).toContain('"trustDeltas"')
-    expect(request.system).toContain('"flagsSet"')
-    expect(request.system).toContain('"evidenceAdded"')
-    expect(request.system).toContain('"endingBiasDeltas"')
-    expect(request.system).toContain('"threadTouches"')
-    expect(request.system).toContain('outcome.choiceId')
-    expect(request.system).toContain('choices[].id')
-    expect(request.system).toContain('nextChapterNumber = currentChapter + 1')
-    expect(request.system).toContain('nextChapterNumber = 50')
-    expect(request.system).toContain('nextChapterNumber = null')
-    expect(request.system).toContain('tanpa markdown')
-    expect(request.system).toContain('spoiler ending')
-    expect(request.system).toContain('provider')
+    // Choice Protocol V2: AI produces only creative draft (question/actions);
+    // server finalizes mechanical fields. System prompt must NOT ask the model to
+    // author IDs, chapter numbers, or state deltas.
+    expect(request.system).toContain('Balas hanya satu objek JSON valid')
+    expect(request.system).toContain('Jangan membuat ID, nomor bab, state delta, atau metadata sistem')
+    expect(request.system).toContain('question: 8–120 karakter')
+    expect(request.system).toContain('actions: tepat 2 objek')
+    expect(request.system).toContain('intent: investigate|confront|protect|escape|trust|deceive|negotiate|sacrifice')
+    // Old pseudo-JSON contract must be gone.
+    expect(request.system).not.toContain('"routeDeltas"')
+    expect(request.system).not.toContain('nextChapterNumber = currentChapter + 1')
     expect(request.prompt).toContain('provider_signal_server_only')
     expect(request.prompt.length).toBeLessThanOrEqual(16_000)
     expect(createOpenAICompatibleMock).not.toHaveBeenCalled()
@@ -584,7 +591,8 @@ describe('createGatewayProvider choice adapter', () => {
     expect(streamTextMock).toHaveBeenCalledOnce()
   })
 
-  it('falls back to chapter route when no choices route is configured', async () => {
+  it('P1-8: falls back to chapter route ONLY when prose fallback explicitly enabled', async () => {
+    // beforeEach sets LAKOKU_ALLOW_CHOICES_PROSE_FALLBACK=true.
     streamTextMock.mockReturnValue({ text: Promise.resolve(JSON.stringify(validBranch())) })
     const chapterRoute: AiModelRoute = {
       useCase: 'chapter_prose',
@@ -604,6 +612,40 @@ describe('createGatewayProvider choice adapter', () => {
       model: 'openai/chapter-model',
       temperature: 0.6,
       maxOutputTokens: 1200,
+    }))
+  })
+
+  it('P1-8: CHOICE_ROUTE_MISSING when no choices route and prose fallback disabled', async () => {
+    delete process.env.LAKOKU_ALLOW_CHOICES_PROSE_FALLBACK
+    const chapterRoute: AiModelRoute = {
+      useCase: 'chapter_prose',
+      provider: 'gateway',
+      modelId: 'openai/chapter-model',
+      fallbackModels: [],
+      temperature: 0.6,
+      maxOutputTokens: 1200,
+      routeVersion: 'chapter-v1',
+    }
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    // aiRoute present but NO choices route and fallback disabled → choices must fail.
+    const provider = createGatewayProvider(undefined, undefined, chapterRoute)
+
+    await expect(
+      generateChoiceBranch({ provider }, choiceInput(), executionOptions),
+    ).rejects.toThrow(/CHOICE_ROUTE_MISSING/)
+    expect(streamTextMock).not.toHaveBeenCalled()
+  })
+
+  it('P1-8: uses env LAKOKU_CHOICES_MODEL when no DB choices route', async () => {
+    delete process.env.LAKOKU_ALLOW_CHOICES_PROSE_FALLBACK
+    process.env.LAKOKU_CHOICES_MODEL = 'openai/env-choice-model'
+    streamTextMock.mockReturnValue({ text: Promise.resolve(JSON.stringify(validBranch())) })
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, undefined)
+
+    await generateChoiceBranch({ provider }, choiceInput(), executionOptions)
+    expect(streamTextMock).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'openai/env-choice-model',
     }))
   })
 
@@ -674,5 +716,94 @@ describe('createGatewayProvider choice adapter', () => {
       expect.objectContaining({ workflowPhase: 'CHOICES_INITIAL' }),
       expect.objectContaining({ outcome: 'CONTENT_REJECTED' }),
     )
+  })
+
+  it('P1-6: native schema off by default → no experimental_output in call', async () => {
+    delete process.env.LAKOKU_CHOICES_NATIVE_SCHEMA
+    delete process.env.LAKOKU_CHOICES_NATIVE_SCHEMA_MODELS
+    streamTextMock.mockReturnValue({ text: Promise.resolve(JSON.stringify(validBranch())) })
+    const choicesRoute: AiModelRoute = {
+      useCase: 'choices',
+      provider: 'gateway',
+      modelId: 'openai/choice-model',
+      fallbackModels: [],
+      temperature: 0.2,
+      maxOutputTokens: 900,
+      routeVersion: 'choice-v1',
+    }
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, undefined, choicesRoute)
+    await generateChoiceBranch({ provider }, choiceInput(), executionOptions)
+    expect(streamTextMock.mock.calls[0][0].experimental_output).toBeUndefined()
+  })
+
+  it('worker ownership AbortSignal reaches the actual choice provider request', async () => {
+    const choicesRoute: AiModelRoute = {
+      useCase: 'choices',
+      provider: 'gateway',
+      modelId: 'openai/choice-model',
+      fallbackModels: [],
+      temperature: 0.2,
+      maxOutputTokens: 900,
+      routeVersion: 'choice-v1',
+    }
+    const controller = new AbortController()
+    streamTextMock.mockReturnValue({ text: Promise.resolve(JSON.stringify(validBranch())) })
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, undefined, choicesRoute)
+    await generateChoiceBranch(
+      { provider },
+      choiceInput(),
+      { ...executionOptions, signal: controller.signal },
+    )
+    const combined = streamTextMock.mock.calls[0][0].abortSignal as AbortSignal
+    expect(combined.aborted).toBe(false)
+    controller.abort()
+    expect(combined.aborted).toBe(true)
+  })
+
+  it('P1-1: shared call budget counts actual fallback candidates and stops at max', async () => {
+    const choicesRoute: AiModelRoute = {
+      useCase: 'choices',
+      provider: 'gateway',
+      modelId: 'openai/choice-primary',
+      fallbackModels: [{ provider: 'gateway', modelId: 'openai/choice-fallback' }],
+      temperature: 0.2,
+      maxOutputTokens: 900,
+      routeVersion: 'choice-v1',
+    }
+    streamTextMock.mockRejectedValue(new Error('503 provider unavailable'))
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, undefined, choicesRoute)
+    const callBudget = { used: 0, max: 1 }
+    await expect(generateChoiceBranch(
+      { provider },
+      choiceInput(),
+      { ...executionOptions, callBudget },
+    )).rejects.toThrow(/BUDGET_EXHAUSTED/)
+    expect(streamTextMock).toHaveBeenCalledTimes(1)
+    expect(callBudget.used).toBe(1)
+  })
+
+  it('P1-6: native schema enabled via allowlist → experimental_output present, parse fallback still consumes text', async () => {
+    process.env.LAKOKU_CHOICES_NATIVE_SCHEMA_MODELS = 'choice-model'
+    streamTextMock.mockReturnValue({ text: Promise.resolve(JSON.stringify(validBranch())) })
+    const choicesRoute: AiModelRoute = {
+      useCase: 'choices',
+      provider: 'gateway',
+      modelId: 'openai/choice-model',
+      fallbackModels: [],
+      temperature: 0.2,
+      maxOutputTokens: 900,
+      routeVersion: 'choice-v1',
+    }
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, undefined, choicesRoute)
+    // Still resolves via text parse fallback even with native requested.
+    await expect(
+      generateChoiceBranch({ provider }, choiceInput(), executionOptions),
+    ).resolves.toEqual(validBranch())
+    expect(streamTextMock.mock.calls[0][0].experimental_output).toBeDefined()
+    delete process.env.LAKOKU_CHOICES_NATIVE_SCHEMA_MODELS
   })
 })

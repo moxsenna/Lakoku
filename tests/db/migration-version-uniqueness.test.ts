@@ -42,6 +42,19 @@ describe('migration version uniqueness', () => {
     expect(duplicates).toEqual([])
   })
 
+  it('ending lock publication migration exists with unique version', () => {
+    const migration = path.join(
+      process.cwd(),
+      'supabase',
+      'migrations',
+      '20260724122000_generation_job_ending_lock_publication.sql',
+    )
+    expect(fs.existsSync(migration)).toBe(true)
+    const sql = fs.readFileSync(migration, 'utf8')
+    expect(sql).toMatch(/create function public\.publish_generation_job_chapter_v3/i)
+    expect(sql).toMatch(/perform public\.persist_ending_lock_v1/i)
+  })
+
   it('repair migration file exists with unique version', () => {
     const repair = path.join(
       process.cwd(),

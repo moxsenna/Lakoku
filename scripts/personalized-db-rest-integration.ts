@@ -292,6 +292,7 @@ async function main() {
       route_schema_json: { secret: contractSecret },
       plot_debts_json: [{ secret: contractSecret }],
       ending_candidates_json: [{ secret: contractSecret }],
+      story_contract_version: 1,
     })
     check(!contractError, 'cannot seed generation-contract fixture')
 

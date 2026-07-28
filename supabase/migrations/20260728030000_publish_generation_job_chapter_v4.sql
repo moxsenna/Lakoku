@@ -106,9 +106,15 @@ begin
   ) or not exists (
     select 1 from public.idempotency_keys i
     where i.key = v_job.publication_idempotency_key
+      and i.story_id = v_job.story_id
+      and i.scope = 'publish_chapter_v2:' || v_job.chapter_number::text
       and pg_catalog.jsonb_typeof(i.result) = 'object'
       and i.result @> '{"ok":true}'::jsonb
-      and (i.result->>'chapter_number')::integer = v_job.chapter_number
+      and case
+            when pg_catalog.jsonb_typeof(i.result->'chapter_number') = 'number'
+            then (i.result->>'chapter_number')::numeric = v_job.chapter_number
+            else false
+          end
   ) then
     return pg_catalog.jsonb_build_object('ok', false, 'result', 'PROVENANCE_CONFLICT');
   end if;
@@ -675,15 +681,18 @@ begin
   -- Verify publication proof.
   v_expected_scope := 'publish_chapter_v2:' || v_job.chapter_number::text;
   select i.result,
-         i.story_id = v_job.story_id
-           and i.scope = v_expected_scope
-           and pg_catalog.jsonb_typeof(i.result) = 'object'
+         pg_catalog.jsonb_typeof(i.result) = 'object'
            and i.result @> '{"ok":true}'::jsonb
-           and pg_catalog.jsonb_typeof(i.result->'chapter_number') = 'number'
-           and (i.result->>'chapter_number')::numeric = v_job.chapter_number
+           and case
+                 when pg_catalog.jsonb_typeof(i.result->'chapter_number') = 'number'
+                 then (i.result->>'chapter_number')::numeric = v_job.chapter_number
+                 else false
+               end
   into v_proof_result, v_proof_valid
   from public.idempotency_keys i
-  where i.key = v_job.publication_idempotency_key;
+  where i.key = v_job.publication_idempotency_key
+    and i.story_id = v_job.story_id
+    and i.scope = v_expected_scope;
 
   if not coalesce(v_proof_valid, false)
     or v_publisher_result is distinct from v_proof_result

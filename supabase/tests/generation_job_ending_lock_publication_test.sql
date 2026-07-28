@@ -83,8 +83,8 @@ begin
     insert into public.reader_states (user_id, story_id)
     values ('72000000-0000-4000-8000-000000000001', v_story_id);
     if p_with_contract then
-      insert into public.story_generation_contracts (story_id, mode)
-      values (v_story_id, 'personalized_ai');
+      insert into public.story_generation_contracts (story_id, mode, story_contract_version)
+      values (v_story_id, 'personalized_ai', 1);
     end if;
   end if;
 

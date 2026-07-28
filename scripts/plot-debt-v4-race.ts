@@ -30,23 +30,37 @@ const CONTEXT = 'plot-debt V4 race'
 const CHAPTER = 10
 const USER_ID = '00000000-0000-0000-0000-000000000001'
 
-async function waitForLockWaiter(
+async function verifyAdvisoryBarrierBlocked(
   target: RaceTarget,
-  type: 'advisory' | 'row',
+  blockedPid: number,
   retries = 35,
 ): Promise<void> {
-  const query = type === 'advisory'
-    ? "select count(*)::text from pg_locks where locktype = 'advisory' and objid = 120799 and not granted;"
-    : "select count(*)::text from pg_locks where locktype in ('transactionid', 'tuple', 'relation') and not granted;";
-
+  const query = `select count(*)::text from pg_locks where locktype = 'advisory' and objid = 120799 and pid = ${blockedPid} and not granted;`
   for (let i = 0; i < retries; i++) {
-    const count = execLocalPsql(target, query).trim()
-    if (parseInt(count, 10) > 0) {
+    const result = execLocalPsql(target, query).trim()
+    if (parseInt(result, 10) > 0) {
       return
     }
     await new Promise((resolve) => setTimeout(resolve, 200))
   }
-  throw new Error(`Timeout waiting for ${type} lock waiter`)
+  throw new Error(`Timeout waiting for advisory barrier on PID ${blockedPid}`)
+}
+
+async function verifyRowLockBlocked(
+  target: RaceTarget,
+  blockingPid: number,
+  blockedPid: number,
+  retries = 35,
+): Promise<void> {
+  const query = `select pg_catalog.pg_blocking_pids(${blockedPid})::text;`
+  for (let i = 0; i < retries; i++) {
+    const blocking = execLocalPsql(target, query).trim()
+    if (blocking.includes(String(blockingPid))) {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
+  throw new Error(`Timeout waiting for row lock block: PID ${blockingPid} blocking PID ${blockedPid}`)
 }
 
 function check(value: unknown, message: string): asserts value {
@@ -578,22 +592,27 @@ async function runRaceTests(): Promise<void> {
       // Session A: ending path. Runs V4, then blocks on advisory barrier.
       s1.child.stdin.end(`
         begin;
-        set local statement_timeout = '15s';
-        set local lock_timeout = '10s';
+        set local statement_timeout = '30s';
+        set local lock_timeout = '0'; -- Disable lock timeout so A holds the transaction locks indefinitely
         ${v4CallSql(fixture)}
         select pg_advisory_xact_lock(120799);
         commit;
       `)
 
-      // Wait until Session A completes publication and blocks at the barrier
-      await waitForLockWaiter(target, 'advisory')
+      check(
+        barrier.backendPid !== null && s1.backendPid !== null && s2.backendPid !== null,
+        'P4: backend PIDs must be resolved'
+      )
+
+      // Wait until Session A completes publication and blocks at the barrier held by barrier holder
+      await verifyAdvisoryBarrierBlocked(target, s1.backendPid)
 
       // Session B: non-ending path. Wrap in temp table catcher.
       // B will block on the row-lock R (reader_states) held by Session A.
       s2.child.stdin.end(`
         begin;
-        set local statement_timeout = '15s';
-        set local lock_timeout = '10s';
+        set local statement_timeout = '30s';
+        set local lock_timeout = '12s'; -- Give B enough lock timeout to verify blocking before unlock
         set role service_role;
         create temp table r_err(res text) on commit drop;
         do $$
@@ -604,7 +623,7 @@ async function runRaceTests(): Promise<void> {
             'Bab Sebelas', '["Paragraf sebelas."]'::jsonb,
             'Apa yang dilakukan?',
             '[{"id":"open-door","label":"Buka pintu arsip"},{"id":"stop-guard","label":"Hadang penjaga bertongkat"}]'::jsonb,
-            '[{"choiceId":"open-door","consequence":["Terbuka."],"nextChapterNumber":12,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"},{"choiceId":"stop-guard","consequence":["Penjaga berhenti."],"nextChapterNumber":12,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"}]'::jsonb,
+            '[{"choiceId":"open-door","consequence":["Terbuka."],"nextChapterNumber":12,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"},{"choiceId":"stop-guard","consequence":["Berhenti."],"nextChapterNumber":12,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"}]'::jsonb,
             null, null, null::jsonb
           );
         exception when others then
@@ -615,7 +634,7 @@ async function runRaceTests(): Promise<void> {
       `)
 
       // Wait until Session B is verified blocked on Session A's transaction row lock
-      await waitForLockWaiter(target, 'row')
+      await verifyRowLockBlocked(target, s1.backendPid, s2.backendPid)
 
       // Release the barrier by ending the barrier holder session to let Session A commit
       barrier.child.stdin.end('select pg_advisory_unlock(120799);')
@@ -727,8 +746,8 @@ async function runRaceTests(): Promise<void> {
       // Blocks on advisory barrier at the end.
       s1.child.stdin.end(`
         begin;
-        set local statement_timeout = '15s';
-        set local lock_timeout = '10s';
+        set local statement_timeout = '30s';
+        set local lock_timeout = '0'; -- Disable lock timeout so A holds the transaction locks indefinitely
         set role service_role;
         select public.publish_generation_job_chapter_v4(
           '${fixture.jobId}'::uuid, 'v4-test-worker',
@@ -744,15 +763,20 @@ async function runRaceTests(): Promise<void> {
         commit;
       `)
 
-      // Wait until Session A completes publication and blocks at the barrier
-      await waitForLockWaiter(target, 'advisory')
+      check(
+        barrier.backendPid !== null && s1.backendPid !== null && s2.backendPid !== null,
+        'P5: backend PIDs must be resolved'
+      )
+
+      // Wait until Session A completes publication and blocks at the barrier held by barrier holder
+      await verifyAdvisoryBarrierBlocked(target, s1.backendPid)
 
       // Session B: non-ending path (R → S → J → L). Wrap in temp table catcher.
       // B will block on the row-lock R (reader_states) held by Session A.
       s2.child.stdin.end(`
         begin;
-        set local statement_timeout = '15s';
-        set local lock_timeout = '10s';
+        set local statement_timeout = '30s';
+        set local lock_timeout = '12s'; -- Give B enough lock timeout to verify blocking before unlock
         set role service_role;
         create temp table r_err(res text) on commit drop;
         do $$
@@ -774,7 +798,7 @@ async function runRaceTests(): Promise<void> {
       `)
 
       // Wait until Session B is verified blocked on Session A's transaction row lock
-      await waitForLockWaiter(target, 'row')
+      await verifyRowLockBlocked(target, s1.backendPid, s2.backendPid)
 
       // Release the barrier by ending the barrier holder session to let Session A commit
       barrier.child.stdin.end('select pg_advisory_unlock(120799);')
@@ -845,6 +869,7 @@ async function runRaceTests(): Promise<void> {
     console.error('Race execution error: dumping session outputs:');
     for (const s of sessions) {
       if (s.stdout) console.log(`[SESSION ${s.applicationName} STDOUT]:`, s.stdout)
+      if (s.stderr) console.error(`[SESSION ${s.applicationName} STDERR]:`, s.stderr)
     }
     throw error;
   } finally {

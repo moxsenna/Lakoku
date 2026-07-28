@@ -47,6 +47,7 @@ type ProcessExit = {
 export interface RunningRacePsql {
   child: ChildProcessWithoutNullStreams
   stdout: string
+  stderr: string
   applicationName: string
   backendPid: number | null
   exit: Promise<ProcessExit>
@@ -252,13 +253,15 @@ export function startRacePsql(
   const running: RunningRacePsql = {
     child,
     stdout: '',
+    stderr: '',
     applicationName,
     backendPid: null,
     exit: Promise.resolve({ code: null, signal: null, startFailed: false }),
   }
   child.stdout.setEncoding('utf8')
   child.stdout.on('data', (chunk: string) => { running.stdout += chunk })
-  child.stderr.resume()
+  child.stderr.setEncoding('utf8')
+  child.stderr.on('data', (chunk: string) => { running.stderr += chunk })
   running.exit = new Promise<ProcessExit>((resolve) => {
     let settled = false
     child.once('error', () => {

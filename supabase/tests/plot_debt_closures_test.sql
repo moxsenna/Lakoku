@@ -4,14 +4,28 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(30);
+select plan(40);
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- Setup: stories + reader_states + generation_jobs (minimal fixtures)
 -- ═══════════════════════════════════════════════════════════════════════════════
 
+-- Seed the owning auth user (stories.owner_user_id FK → auth.users).
+insert into auth.users (
+  id, aud, role, email, encrypted_password, email_confirmed_at,
+  raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+) values (
+  '00000000-0000-0000-0000-000000000001', 'authenticated', 'authenticated',
+  'plot-debt-owner@example.invalid', '', now(),
+  '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb, now(), now()
+) on conflict (id) do nothing;
+
 insert into public.stories (id, title, visibility, story_mode, owner_user_id)
 values ('test:plot-debt', 'Plot Debt Test', 'private', 'personalized_ai', '00000000-0000-0000-0000-000000000001');
+
+-- Seed the reader state for FK reference.
+insert into public.reader_states (user_id, story_id, status, current_chapter)
+values ('00000000-0000-0000-0000-000000000001', 'test:plot-debt', 'BERJALAN', 10);
 
 -- Minimal generation job for FK reference.
 insert into public.generation_jobs (
@@ -21,7 +35,7 @@ insert into public.generation_jobs (
 ) values (
   '11111111-1111-1111-1111-111111111111',
   'test:plot-debt', 10, '00000000-0000-0000-0000-000000000001', 'personalized',
-  'SUCCEEDED', 1, 4, now(), now() + interval '1 hour',
+  'QUEUED', 0, 4, now(), now() + interval '1 hour',
   gen_random_uuid(), 'generation-job:11111111-1111-1111-1111-111111111111:publish:10'
 );
 
@@ -105,8 +119,8 @@ select ok(has_table_privilege('service_role', 'public.reader_plot_debt_closures'
 -- 10. V4 RPC privileges
 -- ═══════════════════════════════════════════════════════════════════════════════
 
-select ok(has_function('public', 'publish_generation_job_chapter_v4',
-  array['uuid','text','uuid','uuid','text','integer','text','jsonb','text','jsonb','jsonb','text','text','jsonb']),
+select has_function('public', 'publish_generation_job_chapter_v4',
+  array['uuid','text','uuid','uuid','text','integer','text','jsonb','text','jsonb','jsonb','text','text','jsonb'],
   'V4 function exists');
 select ok(not has_function_privilege('anon', 'public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)', 'EXECUTE'), 'anon V4 denied');
 select ok(not has_function_privilege('authenticated', 'public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)', 'EXECUTE'), 'authenticated V4 denied');
@@ -141,24 +155,24 @@ select has_column('public', 'chapter_generation_checkpoints', 'story_contract_ve
 -- 14. Old upsert checkpoint RPC no longer exists (16-param pre-audit overload)
 -- ═══════════════════════════════════════════════════════════════════════════════
 
-select ok(not has_function('public', 'upsert_generation_checkpoint_fenced_v1',
-  array['uuid','text','uuid','uuid','text','integer','text','jsonb','text','bigint','bigint','text','text','integer','integer','integer']),
+select hasnt_function('public', 'upsert_generation_checkpoint_fenced_v1',
+  array['uuid','text','uuid','uuid','text','integer','text','jsonb','text','bigint','bigint','text','text','integer','integer','integer'],
   'old 16-param upsert overload removed');
 
 -- ═══════════════════════════════════════════════════════════════════════════════
--- 15. Upser t checkpoint RPC: 18-param is sole signature
+-- 15. Upsert checkpoint RPC: 18-param is sole signature
 -- ═══════════════════════════════════════════════════════════════════════════════
 
-select ok(has_function('public', 'upsert_generation_checkpoint_fenced_v1',
-  array['uuid','text','uuid','uuid','text','integer','text','jsonb','text','jsonb','integer','bigint','bigint','text','text','integer','integer','integer']),
+select has_function('public', 'upsert_generation_checkpoint_fenced_v1',
+  array['uuid','text','uuid','uuid','text','integer','text','jsonb','text','jsonb','integer','bigint','bigint','text','text','integer','integer','integer'],
   '18-param upsert exists');
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- 16. Transition checkpoint RPC: 8-param exists
 -- ═══════════════════════════════════════════════════════════════════════════════
 
-select ok(has_function('public', 'transition_generation_checkpoint_fenced_v1',
-  array['uuid','text','uuid','uuid','text','integer','uuid','text']),
+select has_function('public', 'transition_generation_checkpoint_fenced_v1',
+  array['uuid','text','uuid','uuid','text','integer','uuid','text'],
   '8-param transition exists');
 
 -- ═══════════════════════════════════════════════════════════════════════════════

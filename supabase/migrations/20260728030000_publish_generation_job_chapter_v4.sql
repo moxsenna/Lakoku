@@ -11,6 +11,114 @@
 --   E = ending advisory, R = reader_states, S = stories (advisory),
 --   J = generation_jobs, L = generation_leases, C = reader_plot_debt_closures
 
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Internal: atomic checkpoint → PUBLISHED for V4 in-transaction publication.
+--
+-- transition_generation_checkpoint_fenced_v1 requires job=SUCCEEDED + lease=RELEASED
+-- for a PUBLISHED transition (its contract is for a SEPARATE post-terminalization
+-- call). V4 publishes atomically: it drives the checkpoint to PUBLISHED WHILE the
+-- job is still RUNNING and the lease still ACTIVE, then terminalizes job+lease in
+-- the same transaction. This helper enforces the atomic-path contract and returns
+-- a bounded result the caller MUST check; V4 raises on any non-UPDATED outcome.
+create function public.transition_checkpoint_published_atomic_v4(
+  p_job_id uuid,
+  p_worker_id text,
+  p_claim_token uuid,
+  p_lease_id uuid,
+  p_story_id text,
+  p_chapter_number integer
+) returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_job public.generation_jobs%rowtype;
+  v_lease public.generation_leases%rowtype;
+  v_checkpoint public.chapter_generation_checkpoints%rowtype;
+  v_now timestamptz;
+begin
+  -- Job must be locked, RUNNING, owned by this worker/claim.
+  select j.* into v_job
+  from public.generation_jobs j
+  where j.id = p_job_id
+  for update;
+
+  if not found or v_job.status <> 'RUNNING'
+    or v_job.worker_id is distinct from p_worker_id
+    or v_job.claim_token is distinct from p_claim_token then
+    return pg_catalog.jsonb_build_object('ok', false, 'result', 'OWNERSHIP_LOST');
+  end if;
+  if v_job.story_id is distinct from p_story_id
+    or v_job.chapter_number is distinct from p_chapter_number then
+    return pg_catalog.jsonb_build_object('ok', false, 'result', 'PROVENANCE_CONFLICT');
+  end if;
+
+  -- Lease must be locked, ACTIVE (or already RELEASED by the underlying publish_chapter_v2
+  -- call in Phase F), unexpired, matching.
+  select l.* into v_lease
+  from public.generation_leases l
+  where l.id = p_lease_id
+  for update;
+
+  if not found or v_lease.job_id is distinct from v_job.id
+    or v_lease.claim_token is distinct from p_claim_token
+    or v_lease.story_id is distinct from v_job.story_id
+    or v_lease.chapter_number is distinct from v_job.chapter_number
+    or v_lease.holder is distinct from v_job.worker_id
+    or v_lease.status not in ('ACTIVE', 'RELEASED')
+    or v_lease.expires_at <= pg_catalog.clock_timestamp() then
+    return pg_catalog.jsonb_build_object('ok', false, 'result', 'LEASE_INVALID');
+  end if;
+
+  -- Checkpoint provenance (personalized V2 only reaches here).
+  select c.* into v_checkpoint
+  from public.chapter_generation_checkpoints c
+  where c.story_id = v_job.story_id
+    and c.chapter_number = v_job.chapter_number
+    and c.attempt_id = v_job.id
+  for update;
+
+  if not found or v_checkpoint.checkpoint_schema_version <> 2
+    or v_checkpoint.job_id is distinct from v_job.id
+    or v_checkpoint.correlation_id is distinct from v_job.correlation_id
+    or v_checkpoint.generation_mode is distinct from v_job.generation_kind then
+    return pg_catalog.jsonb_build_object('ok', false, 'result', 'PROVENANCE_CONFLICT');
+  end if;
+  if v_checkpoint.job_attempt_number > v_job.attempt_count then
+    return pg_catalog.jsonb_build_object('ok', false, 'result', 'ATTEMPT_AHEAD');
+  end if;
+
+  -- Idempotent: already PUBLISHED for this same attempt is a no-op success.
+  if v_checkpoint.status = 'PUBLISHED' then
+    return pg_catalog.jsonb_build_object('ok', true, 'result', 'UPDATED', 'changed', false);
+  end if;
+  if v_checkpoint.status not in ('PROSE_READY', 'READY_TO_PUBLISH') then
+    return pg_catalog.jsonb_build_object('ok', false, 'result', 'INVALID_TRANSITION');
+  end if;
+
+  v_now := pg_catalog.clock_timestamp();
+  update public.chapter_generation_checkpoints
+  set status = 'PUBLISHED',
+      updated_at = v_now,
+      expires_at = v_now + interval '1 hour'
+  where story_id = v_checkpoint.story_id
+    and chapter_number = v_checkpoint.chapter_number
+    and attempt_id = v_checkpoint.attempt_id
+  returning * into v_checkpoint;
+
+  return pg_catalog.jsonb_build_object('ok', true, 'result', 'UPDATED', 'changed', true);
+end;
+$$;
+
+revoke all on function public.transition_checkpoint_published_atomic_v4(
+  uuid,text,uuid,uuid,text,integer
+) from public, anon, authenticated;
+grant execute on function public.transition_checkpoint_published_atomic_v4(
+  uuid,text,uuid,uuid,text,integer
+) to service_role;
+
 create function public.publish_generation_job_chapter_v4(
   p_job_id uuid,
   p_worker_id text,
@@ -38,12 +146,13 @@ declare
   v_lease public.generation_leases%rowtype;
   v_checkpoint public.chapter_generation_checkpoints%rowtype;
   v_contract_row record;
-  v_story public.stories%rowtype;
+  v_story_contract_version integer;
   v_expected_key text;
   v_expected_scope text;
   v_publisher_result jsonb;
   v_proof_result jsonb;
   v_proof_valid boolean := false;
+  v_checkpoint_publish_result jsonb;
   v_result jsonb;
   v_replay_result jsonb;
   v_now timestamptz;
@@ -80,7 +189,8 @@ begin
   -- Reads job identity + generation_kind WITHOUT lock.
   -- Values are UNTRUSTED until re-verified under J lock in Phase C.
 
-  select j.id, j.user_id, j.story_id, j.chapter_number, j.generation_kind
+  -- Full row: fast path reads status, publication_result, and both hashes.
+  select j.*
   into v_preflight
   from public.generation_jobs j
   where j.id = p_job_id;
@@ -95,7 +205,13 @@ begin
   end if;
 
   -- Canonicalize p_closures (deterministic). Must happen before fast path hash check.
-  if p_closures is null or jsonb_typeof(p_closures) <> 'array' or jsonb_array_length(p_closures) = 0 then
+  -- NULL is allowed (means "no closures"). Any non-null non-array is a payload error,
+  -- never silently coerced to empty.
+  if p_closures is null then
+    v_canonical_closures := '[]'::jsonb;
+  elsif jsonb_typeof(p_closures) <> 'array' then
+    raise exception using errcode = '22023', message = 'INVALID_CLOSURE_PAYLOAD';
+  elsif jsonb_array_length(p_closures) = 0 then
     v_canonical_closures := '[]'::jsonb;
   else
     if jsonb_array_length(p_closures) > 20 then
@@ -149,7 +265,7 @@ begin
 
   -- Compute closure hash with domain prefix.
   v_closure_hash := encode(
-    pg_catalog.digest(
+    extensions.digest(
       'generation-plot-debt-closures-v1' || v_canonical_closures::text,
       'sha256'
     ),
@@ -170,7 +286,7 @@ begin
     'endingName', p_ending_name
   );
   v_pub_hash := encode(
-    pg_catalog.digest(
+    extensions.digest(
       'generation-publication-v1' || v_pub_payload::text,
       'sha256'
     ),
@@ -313,19 +429,18 @@ begin
   v_is_personalized := v_job.generation_kind = 'personalized';
 
   -- ═══════════════════════════════════════════════════════════════════════════
-  -- Standard branch: skip contract + closure validation
+  -- Standard branch: closures forbidden, no contract/closure validation.
+  -- plpgsql has no GOTO; personalized validation is guarded by v_is_personalized
+  -- and Phase F/G runs for both modes below.
   -- ═══════════════════════════════════════════════════════════════════════════
 
   if not v_is_personalized then
-    -- Standard mode: closures must be null or empty.
-    if p_closures is not null and jsonb_typeof(p_closures) = 'array' and jsonb_array_length(p_closures) > 0 then
+    -- Standard mode: closures must be null or empty array. Phase A already rejected
+    -- non-array shapes; a non-empty canonical set here means closures were supplied.
+    if jsonb_array_length(v_canonical_closures) > 0 then
       raise exception using errcode = '22023', message = 'INVALID_CLOSURE_PAYLOAD';
     end if;
-
-    -- Go directly to publication (Phase F).
-    goto publication;
-  end if;
-
+  else
   -- ═══════════════════════════════════════════════════════════════════════════
   -- Personalized branch: contract provenance + closure validation
   -- ═══════════════════════════════════════════════════════════════════════════
@@ -371,22 +486,49 @@ begin
     raise exception using errcode = 'P0001', message = 'CONTRACT_VERSION_MISMATCH';
   end if;
 
-  select s.story_contract_version into v_story
+  select s.story_contract_version into v_story_contract_version
   from public.stories s
   where s.id = v_job.story_id;
 
-  if v_story.story_contract_version is distinct from v_job.story_contract_version then
+  if v_story_contract_version is distinct from v_job.story_contract_version then
     raise exception using errcode = 'P0001', message = 'CONTRACT_VERSION_MISMATCH';
   end if;
 
-  -- Closure payload must match checkpoint audit signals.
-  if v_canonical_closures is not null and jsonb_typeof(v_canonical_closures) = 'array'
-    and jsonb_array_length(v_canonical_closures) > 0
-  then
-    if v_canonical_closures is distinct from (v_checkpoint.audit_signals_json->'closesPlotDebts') then
+  -- Closure payload must match checkpoint audit signals EXACTLY, including the
+  -- empty case (an empty caller set must not publish a checkpoint that carries
+  -- closures, and vice versa). Both sides are canonicalized to the identical
+  -- {closureForm,debtId} shape sorted by debtId; closedAtChapter (present only on
+  -- the ledger-facing canonical set) is stripped before comparison.
+  declare
+    v_caller_closure_shape jsonb;
+    v_checkpoint_closure_shape jsonb;
+  begin
+    select coalesce(jsonb_agg(
+      jsonb_build_object('closureForm', item.closureForm, 'debtId', item.debtId)
+      order by item.debtId
+    ), '[]'::jsonb)
+    into v_caller_closure_shape
+    from (
+      select elem->>'debtId' as debtId, elem->>'closureForm' as closureForm
+      from jsonb_array_elements(v_canonical_closures) elem
+    ) item;
+
+    select coalesce(jsonb_agg(
+      jsonb_build_object('closureForm', item.closureForm, 'debtId', item.debtId)
+      order by item.debtId
+    ), '[]'::jsonb)
+    into v_checkpoint_closure_shape
+    from (
+      select elem->>'debtId' as debtId, elem->>'closureForm' as closureForm
+      from jsonb_array_elements(
+        coalesce(v_checkpoint.audit_signals_json->'closesPlotDebts', '[]'::jsonb)
+      ) elem
+    ) item;
+
+    if v_caller_closure_shape is distinct from v_checkpoint_closure_shape then
       raise exception using errcode = 'P0001', message = 'CHECKPOINT_CLOSURE_PAYLOAD_MISMATCH';
     end if;
-  end if;
+  end;
 
   -- Load contract (single mutable row per story).
   select plot_debts_json, story_contract_version
@@ -491,7 +633,7 @@ begin
     end if;
   end loop;
 
-  <<publication>>
+  end if;  -- end personalized validation branch
 
   -- ═══════════════════════════════════════════════════════════════════════════
   -- PHASE F — Publication (after all fencing validated)
@@ -572,12 +714,18 @@ begin
   end if;
 
   -- Checkpoint → PUBLISHED (while job is still RUNNING, lease still ACTIVE).
+  -- Uses the atomic-path helper (RUNNING + ACTIVE contract) and MUST verify the
+  -- bounded result; a non-UPDATED outcome fails the whole transaction so the
+  -- chapter, ledger, job, and lease all roll back together.
   if v_is_personalized then
-    perform public.transition_generation_checkpoint_fenced_v1(
+    v_checkpoint_publish_result := public.transition_checkpoint_published_atomic_v4(
       v_job.id, v_job.worker_id, v_job.claim_token, p_lease_id,
-      v_job.story_id, v_job.chapter_number,
-      v_job.id, 'PUBLISHED'
+      v_job.story_id, v_job.chapter_number
     );
+    if v_checkpoint_publish_result->>'ok' is distinct from 'true'
+      or v_checkpoint_publish_result->>'result' is distinct from 'UPDATED' then
+      raise exception using errcode = 'P0001', message = 'CHECKPOINT_PUBLISH_FAILED: ' || v_checkpoint_publish_result::text;
+    end if;
   end if;
 
   -- Job → SUCCEEDED + publication_result + both hashes.

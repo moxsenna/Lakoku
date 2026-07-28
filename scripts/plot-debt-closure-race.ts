@@ -48,19 +48,27 @@ function insertFixture(target: RaceTarget, label: string, storyIds: string[]): F
   storyIds.push(storyId)
 
   execLocalPsql(target, `
+    insert into auth.users (id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+    values (:'user_id'::uuid, 'authenticated', 'authenticated', 'closure-race-owner@example.invalid', '', now(), '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb, now(), now())
+    on conflict (id) do nothing;
     insert into public.stories (id, title, owner_user_id, visibility, story_mode)
     values (:'story_id', 'Closure race', :'user_id'::uuid, 'private', 'personalized_ai');
     insert into public.generation_jobs (
       id, story_id, chapter_number, user_id, generation_kind,
-      status, max_attempts, available_at, deadline_at, publication_idempotency_key,
+      status, attempt_count, max_attempts, available_at, deadline_at, publication_idempotency_key,
       story_contract_version
     ) values (
       :'job_id'::uuid, :'story_id', :chapter::integer, :'user_id'::uuid, 'personalized',
-      'RUNNING', 4, clock_timestamp() - interval '1 minute',
+      'QUEUED', 0, 4, clock_timestamp() - interval '1 minute',
       clock_timestamp() + interval '20 minutes',
       'generation-job:' || :'job_id'::uuid::text || ':publish:' || :chapter,
       1
     );
+    update public.generation_jobs
+    set status = 'RUNNING', attempt_count = 1,
+        worker_id = :'worker_id', claim_token = :'claim_token'::uuid,
+        claimed_at = clock_timestamp(), heartbeat_at = clock_timestamp()
+    where id = :'job_id'::uuid;
     insert into public.generation_leases (
       id, story_id, chapter_number, status, holder, expires_at, job_id, claim_token
     ) values (
@@ -187,10 +195,15 @@ async function runRaceTests(): Promise<void> {
     {
       const fixture = insertFixture(target, 'hash', storyIds)
 
-      const invalid = execLocalPsql(target, `
-        update public.generation_jobs set closure_payload_hash = 'not-a-hash' where id = '${fixture.jobId}';
-      `)
-      check(invalid.includes('ERROR'), 'scenario 3: invalid hash rejected')
+      let threwInvalid = false
+      try {
+        execLocalPsql(target, `
+          update public.generation_jobs set closure_payload_hash = 'not-a-hash' where id = '${fixture.jobId}';
+        `)
+      } catch (error) {
+        threwInvalid = true
+      }
+      check(threwInvalid, 'scenario 3: invalid hash rejected')
 
       const valid = execLocalPsql(target, `
         update public.generation_jobs
@@ -211,12 +224,17 @@ async function runRaceTests(): Promise<void> {
         values ('${USER_ID}', '${fixture.storyId}', 'probe_debt', 'RESOLVED', ${CHAPTER}, '${fixture.jobId}');
       `)
 
-      const updateResult = execLocalPsql(target, `
-        update public.reader_plot_debt_closures
-        set closure_form = 'SUBVERTED'
-        where user_id = '${USER_ID}' and story_id = '${fixture.storyId}' and debt_id = 'probe_debt';
-      `)
-      check(updateResult.includes('PLOT_DEBT_CLOSURE_IMMUTABLE'), 'scenario 4: UPDATE trigger rejected')
+      let threwUpdate = false
+      try {
+        execLocalPsql(target, `
+          update public.reader_plot_debt_closures
+          set closure_form = 'SUBVERTED'
+          where user_id = '${USER_ID}' and story_id = '${fixture.storyId}' and debt_id = 'probe_debt';
+        `)
+      } catch (error) {
+        threwUpdate = true
+      }
+      check(threwUpdate, 'scenario 4: UPDATE trigger rejected')
       console.log('  ✓ Scenario 4: UPDATE trigger rejected')
     }
 

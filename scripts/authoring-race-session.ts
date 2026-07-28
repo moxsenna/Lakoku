@@ -137,9 +137,10 @@ export function execLocalPsql(
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: timeoutMs,
     }) as string
-  } catch (error) {
+  } catch (error: any) {
     const reason = isTimeoutError(error) ? 'timed out' : 'failed'
-    throw new Error(`${target.context}: local PostgreSQL command ${reason}`)
+    const stderr = error.stderr ? error.stderr.toString() : ''
+    throw new Error(`${target.context}: local PostgreSQL command ${reason}: ${stderr}`)
   }
 }
 
@@ -334,7 +335,7 @@ export async function waitForRaceSuccess(running: RunningRacePsql): Promise<void
   checkRace(result.code === 0, 'authoring race session', 'local PostgreSQL session failed')
 }
 
-async function waitForProcessExit(running: RunningRacePsql, timeoutMs: number): Promise<boolean> {
+export async function waitForProcessExit(running: RunningRacePsql, timeoutMs: number): Promise<boolean> {
   if (running.child.exitCode !== null) return true
   try {
     await awaitProcessExit(running, timeoutMs, 'local PostgreSQL process exit timed out')

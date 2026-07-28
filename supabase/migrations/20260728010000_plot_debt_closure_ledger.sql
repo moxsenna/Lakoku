@@ -45,6 +45,18 @@ comment on column public.chapter_generation_checkpoints.story_contract_version i
   'Copied from generation_jobs.story_contract_version at checkpoint creation.';
 
 -- ──────────────────────────────────────────────────────────────────────────────
+-- 2b. story_generation_contracts: contract provenance (matches stories.*)
+-- ──────────────────────────────────────────────────────────────────────────────
+-- V4 verifies job = checkpoint = story = contract on story_contract_version.
+-- Backfill existing rows to 1 (matches stories default) so provenance holds.
+
+alter table public.story_generation_contracts
+  add column if not exists story_contract_version integer not null default 1;
+
+comment on column public.story_generation_contracts.story_contract_version is
+  'Contract version; V4 requires job = checkpoint = story = contract to match.';
+
+-- ──────────────────────────────────────────────────────────────────────────────
 -- 3. reader_plot_debt_closures: append-only per-reader closure ledger
 -- ──────────────────────────────────────────────────────────────────────────────
 

@@ -13,6 +13,8 @@ import {
   type StoryContractCallOptions,
   type ModelCallExecutionOptions,
   type GenerationRuntimePolicy,
+  type ProviderCandidateKind,
+  type ProviderRuntime,
   DEFAULT_RUNTIME_POLICY,
 } from './provider'
 import { GatewayError, scanForLeaks } from './gateway'
@@ -96,6 +98,23 @@ type ModelCandidate = {
 }
 
 type UnindexedModelCandidate = Omit<ModelCandidate, 'fallbackIndex'>
+
+function executeCandidate<T>(
+  runtime: ProviderRuntime | undefined,
+  kind: ProviderCandidateKind,
+  candidate: ModelCandidate,
+  execute: () => T,
+): T {
+  const transport = runtime?.candidateTransport
+  if (!transport) return execute()
+  return transport({
+    kind,
+    providerId: candidate.providerId,
+    modelId: candidate.configuredModelId,
+    fallbackIndex: candidate.fallbackIndex,
+    execute,
+  }) as T
+}
 
 // Default OpenRouter: paid model only when OPENROUTER_MODELS unset.
 // Setiap model menjadi request eksplisit agar identitas fallback bisa diamati.
@@ -429,7 +448,7 @@ async function generateProse(args: {
             candidate: candidateIdentity(candidate),
             useCase: 'chapter_prose',
             workflowPhase,
-            call: () => streamText({
+            call: () => executeCandidate(args.options.providerRuntime, 'prose', candidate, () => streamText({
               model,
               system,
               prompt:
@@ -440,7 +459,7 @@ async function generateProse(args: {
               maxOutputTokens,
               abortSignal: providerAbortSignal(args.options.signal, LLM_PROSE_TIMEOUT_MS),
               maxRetries: 0,
-            }),
+            })),
             consume: (text) => {
               throwIfAborted(args.options.signal)
               let prose
@@ -815,7 +834,7 @@ async function generateChoiceJson(args: {
         workflowPhase: args.options.workflowPhase,
         // Choices are small JSON — non-stream generateText reduces failure surface.
         call: () =>
-          generateText({
+          executeCandidate(args.options.providerRuntime, 'choice', candidate, () => generateText({
             model,
             system,
             prompt,
@@ -833,7 +852,7 @@ async function generateChoiceJson(args: {
               : {}),
             abortSignal: providerAbortSignal(args.options.signal, LLM_CHOICE_TIMEOUT_MS),
             maxRetries: 0,
-          }) as unknown as ReturnType<typeof streamText>,
+          }) as unknown as ReturnType<typeof streamText>),
         consume: async (text) => {
           throwIfAborted(args.options.signal)
           const parsed = parseModelJson(text)

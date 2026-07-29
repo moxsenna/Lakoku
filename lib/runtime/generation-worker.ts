@@ -22,6 +22,7 @@ import {
   choiceRetryBackoffSeconds,
   normalizeGenerationDispatchResult,
   type GenerationJobExecutionContext,
+  type GenerationWorkerOptions,
 } from '@/lib/runtime/generation-job-execution'
 import { resolveGenerationLeaseTtlSeconds } from '@/lib/runtime/generation-lease-ttl'
 import { runChapterGenerationAttempt } from '@/lib/runtime/generation-mode'
@@ -76,8 +77,9 @@ export async function claimAndRunGenerationJobById(args: {
  */
 export async function runAlreadyClaimedGenerationJob(
   job: ClaimedGenerationJob,
+  options?: GenerationWorkerOptions,
 ): Promise<WorkerRunResult> {
-  return executeClaimedJob(job)
+  return executeClaimedJob(job, options)
 }
 
 /**
@@ -104,6 +106,7 @@ export async function claimAndRunAvailableJobs(args: {
  */
 export async function executeClaimedJob(
   job: ClaimedGenerationJob,
+  options?: GenerationWorkerOptions,
 ): Promise<WorkerRunResult> {
   const startedAt = new Date()
   const ttlSeconds = await resolveGenerationLeaseTtlSeconds()
@@ -205,6 +208,7 @@ export async function executeClaimedJob(
         attemptId: job.id,
         triggerChoiceId: job.triggerChoiceId,
         jobContext,
+        ...(options === undefined ? {} : { options }),
       })
     } catch (err) {
       if (ownershipLost || controller.signal.aborted) {

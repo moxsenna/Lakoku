@@ -167,6 +167,42 @@ describe('runChapterGenerationAttempt dispatcher', () => {
     expect(callArg.jobContext).toBe(jobContext)
   })
 
+  it.each([
+    ['standard', null, mocks.generateNextChapterReal],
+    ['personalized_ai', { mode: 'personalized_ai' }, mocks.generateNextPersonalizedChapter],
+  ] as const)('forwards provider runtime options to %s generator', async (_mode, contract, generator) => {
+    mocks.adminFactory.mockReturnValue(contractClient(contract))
+    const { runChapterGenerationAttempt } = await import('@/lib/runtime/generation-mode')
+    const candidateTransport = vi.fn()
+    const options = Object.freeze({
+      providerRuntime: Object.freeze({ candidateTransport }),
+    })
+
+    await runChapterGenerationAttempt({
+      storyId: 'story-options',
+      userId: 'user-options',
+      chapterNumber: 3,
+      correlationId: 'options-correlation',
+      options,
+    })
+
+    expect(generator).toHaveBeenCalledWith(expect.objectContaining({ options }))
+  })
+
+  it('does not add options to either generator on the default path', async () => {
+    mocks.adminFactory.mockReturnValue(contractClient(null))
+    const { runChapterGenerationAttempt } = await import('@/lib/runtime/generation-mode')
+
+    await runChapterGenerationAttempt({
+      storyId: 'story-default',
+      userId: 'user-default',
+      chapterNumber: 1,
+      correlationId: 'default-correlation',
+    })
+
+    expect(mocks.generateNextChapterReal.mock.calls[0][0]).not.toHaveProperty('options')
+  })
+
   it('does not call either generator when contract invalid', async () => {
     mocks.adminFactory.mockReturnValue(contractClient({ mode: 'personalized_???' }))
     const { runChapterGenerationAttempt } = await import('@/lib/runtime/generation-mode')

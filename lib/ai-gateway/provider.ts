@@ -65,6 +65,20 @@ export type ProviderCallBudget = {
   max: number
 }
 
+export type ProviderCandidateKind = 'prose' | 'choice'
+
+export type ProviderCandidateTransport = (input: Readonly<{
+  kind: ProviderCandidateKind
+  providerId: string
+  modelId: string
+  fallbackIndex: number
+  execute: () => unknown
+}>) => unknown
+
+export type ProviderRuntime = Readonly<{
+  candidateTransport?: ProviderCandidateTransport
+}>
+
 export interface ModelCallExecutionOptions {
   telemetryContext: ProviderCallContext
   workflowPhase: string
@@ -72,6 +86,7 @@ export interface ModelCallExecutionOptions {
   signal?: AbortSignal
   /** Shared across retries so every actual model candidate counts toward cap. */
   callBudget?: ProviderCallBudget
+  providerRuntime?: ProviderRuntime
   consume?: (raw: unknown) => unknown | Promise<unknown>
 }
 

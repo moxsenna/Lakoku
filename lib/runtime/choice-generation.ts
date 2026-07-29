@@ -144,6 +144,7 @@ export interface BuildChoiceBranchInput {
   providerContext: unknown
   /** Worker ownership cancellation propagated to every choice provider call. */
   signal?: AbortSignal
+  providerRuntime?: import('@/lib/ai-gateway/provider').ProviderRuntime
   /** Override total chapters (defaults to narrative-core TOTAL_CHAPTERS). */
   totalChapters?: number
   activeCharacters?: Array<{ id: string; name: string }>
@@ -323,6 +324,9 @@ export async function buildChoiceBranch(
           workflowPhase,
           signal: input.signal,
           callBudget: providerCallBudget,
+          ...(input.providerRuntime === undefined
+            ? {}
+            : { providerRuntime: input.providerRuntime }),
         }),
       )
 

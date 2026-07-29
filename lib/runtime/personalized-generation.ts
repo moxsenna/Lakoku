@@ -144,6 +144,7 @@ export interface PersonalizedGenerateInput {
    * Worker path: reuse job lease + fenced publish. Skip own acquireGenerationLease.
    */
   jobContext?: import('@/lib/runtime/generation-job-execution').GenerationJobExecutionContext | null
+  options?: import('@/lib/runtime/generation-job-execution').GenerationWorkerOptions
 }
 
 export interface PersistEndingLockInput {
@@ -799,6 +800,9 @@ async function generateNextPersonalizedChapterInner(
             telemetryContext: providerContext,
             workflowPhase: 'CHAPTER_PROSE_INITIAL',
             signal: jobContext?.signal,
+            ...(input.options?.providerRuntime === undefined
+              ? {}
+              : { providerRuntime: input.options.providerRuntime }),
           },
         },
       )
@@ -962,6 +966,7 @@ async function generateNextPersonalizedChapterInner(
         totalChapters: TOTAL_PERSONALIZED_CHAPTERS,
         providerContext,
         signal: jobContext?.signal,
+        providerRuntime: input.options?.providerRuntime,
         activeCharacters,
         activeThreads,
       }

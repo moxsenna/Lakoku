@@ -226,6 +226,44 @@ describe('createGatewayProvider prose observability', () => {
     expect(generateTextMock.mock.calls[0][0]).toHaveProperty('experimental_output')
   })
 
+  it('uses injected prose candidate transport while preserving timeout invalid fallback policy', async () => {
+    const timeout = new DOMException('candidate A timed out', 'TimeoutError')
+    const invalid = new Error('candidate A invalid')
+    const paragraphs = ['Rani membuka pintu lama.', 'Udara dingin menyentuh wajahnya.']
+    streamTextMock
+      .mockImplementationOnce(() => { throw timeout })
+      .mockImplementationOnce(() => { throw invalid })
+      .mockReturnValueOnce(observedResult(prose('Pintu Lama', paragraphs)))
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, route([
+      { provider: 'gateway', modelId: 'openai/chapter-primary-invalid' },
+      { provider: 'gateway', modelId: 'openai/chapter-fallback' },
+    ]))
+    const input = await chapterInput()
+    const calls: Array<{ kind: string; modelId: string; fallbackIndex: number }> = []
+    const candidateTransport = vi.fn((candidate: {
+      kind: string
+      modelId: string
+      fallbackIndex: number
+      execute: () => unknown
+    }) => {
+      calls.push(candidate)
+      return candidate.execute()
+    })
+
+    await expect(provider.writeChapter({ snapshot: input.snapshot, plan: input.plan }, {
+      telemetryContext,
+      workflowPhase: 'CHAPTER_PROSE_INITIAL',
+      providerRuntime: { candidateTransport },
+    })).resolves.toMatchObject({ title: 'Pintu Lama', paragraphs })
+
+    expect(calls.map(({ kind, modelId, fallbackIndex }) => ({ kind, modelId, fallbackIndex }))).toEqual([
+      { kind: 'prose', modelId: 'openai/chapter-primary', fallbackIndex: 0 },
+      { kind: 'prose', modelId: 'openai/chapter-primary-invalid', fallbackIndex: 1 },
+      { kind: 'prose', modelId: 'openai/chapter-fallback', fallbackIndex: 2 },
+    ])
+  })
+
   it('records provider failure before fallback success with unique IDs and actual response model', async () => {
     const paragraphs = ['Rani membuka pintu lama.', 'Udara dingin menyentuh wajahnya.']
     streamTextMock

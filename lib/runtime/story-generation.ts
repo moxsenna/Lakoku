@@ -312,6 +312,7 @@ async function buildChoices(
   providerContext: ProviderCallContext,
   narrativeContextOverride?: ChoiceNarrativeContext,
   signal?: AbortSignal,
+  providerRuntime?: import('@/lib/ai-gateway/provider').ProviderRuntime,
 ): Promise<{
   ok: true
   choicePrompt: string
@@ -375,6 +376,7 @@ async function buildChoices(
     lockedEndingKey: narrativeContext.lockedEndingKey,
     providerContext,
     signal,
+    providerRuntime,
     activeCharacters,
     activeThreads,
     creativeDirectionHints: choiceDirection
@@ -435,6 +437,7 @@ export interface StandardGenerateInput {
    * Propagate signal into provider-facing work where possible.
    */
   jobContext?: import('@/lib/runtime/generation-job-execution').GenerationJobExecutionContext | null
+  options?: import('@/lib/runtime/generation-job-execution').GenerationWorkerOptions
 }
 
 export async function generateNextChapterReal(
@@ -878,6 +881,9 @@ async function generateNextChapterRealInner(
             telemetryContext: providerContext,
             workflowPhase: 'CHAPTER_PROSE_INITIAL',
             signal: jobContext?.signal,
+            ...(input.options?.providerRuntime === undefined
+              ? {}
+              : { providerRuntime: input.options.providerRuntime }),
           },
         },
       )
@@ -1056,6 +1062,7 @@ async function generateNextChapterRealInner(
       providerContext,
       undefined,
       jobContext?.signal,
+      input.options?.providerRuntime,
     )
     throwIfAborted(jobContext?.signal)
     if (!branch.ok) {

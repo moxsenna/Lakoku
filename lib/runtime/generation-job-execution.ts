@@ -5,6 +5,11 @@
 import 'server-only'
 import type { ClaimedGenerationJob } from './generation-jobs.contract'
 import type { StoryGenerationMode } from './generation-mode'
+import type { ProviderRuntime } from '@lakoku/ai-gateway'
+
+export type GenerationWorkerOptions = Readonly<{
+  providerRuntime?: ProviderRuntime
+}>
 
 /**
  * Feature flag: wraps the ENTIRE durable worker path.

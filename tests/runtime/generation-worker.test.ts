@@ -119,6 +119,38 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
     expect(arg.jobContext.signal).toBeInstanceOf(AbortSignal)
   })
 
+  it('forwards immutable provider runtime options to dispatcher', async () => {
+    mocks.runChapterGenerationAttempt.mockResolvedValueOnce({
+      ok: true,
+      mode: 'standard',
+      result: { ok: true, chapterNumber: 1, seq: 5 },
+    })
+    const { runAlreadyClaimedGenerationJob } = await import('@/lib/runtime/generation-worker')
+    const candidateTransport = vi.fn()
+    const options = Object.freeze({
+      providerRuntime: Object.freeze({ candidateTransport }),
+    })
+
+    await runAlreadyClaimedGenerationJob(JOB, options)
+
+    expect(mocks.runChapterGenerationAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ options }),
+    )
+  })
+
+  it('preserves undefined options as the production default path', async () => {
+    mocks.runChapterGenerationAttempt.mockResolvedValueOnce({
+      ok: true,
+      mode: 'standard',
+      result: { ok: true, chapterNumber: 1, seq: 5 },
+    })
+    const { runAlreadyClaimedGenerationJob } = await import('@/lib/runtime/generation-worker')
+
+    await runAlreadyClaimedGenerationJob(JOB)
+
+    expect(mocks.runChapterGenerationAttempt.mock.calls[0][0]).not.toHaveProperty('options')
+  })
+
   it('preserves null trigger choice without synthesizing one', async () => {
     mocks.runChapterGenerationAttempt.mockResolvedValueOnce({
       ok: true,

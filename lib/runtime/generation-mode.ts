@@ -87,6 +87,7 @@ export type ChapterGenerationDispatchInput = {
    * fenced publishGenerationJobChapterV2. Propagates AbortSignal.
    */
   jobContext?: import('@/lib/runtime/generation-job-execution').GenerationJobExecutionContext | null
+  options?: import('@/lib/runtime/generation-job-execution').GenerationWorkerOptions
 }
 
 /**
@@ -123,6 +124,7 @@ export async function runChapterGenerationAttempt(
       attemptId,
       ...('triggerChoiceId' in input ? { triggerChoiceId: input.triggerChoiceId } : {}),
       jobContext,
+      ...(input.options === undefined ? {} : { options: input.options }),
     })
     return { ok: true, result, mode: 'personalized_ai' }
   }
@@ -135,6 +137,7 @@ export async function runChapterGenerationAttempt(
     correlationId: input.correlationId,
     attemptId,
     jobContext,
+    ...(input.options === undefined ? {} : { options: input.options }),
   })
   return { ok: true, result, mode: 'standard' }
 }

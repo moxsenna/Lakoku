@@ -319,6 +319,70 @@ describe('generation job worker RPC adapters', () => {
     })
   })
 
+  it.each([
+    ['standard', [], null],
+    ['personalized', [
+      { debtId: 'main_mystery', closureForm: 'RESOLVED' as const },
+      { debtId: 'rival_conflict', closureForm: 'TRANSFORMED' as const },
+    ], { key: 'publish-truth', name: 'Arsip Dibuka' }],
+  ] as const)('V4 publishes %s with exact V3 and closure payload', async (_mode, closures, endingLock) => {
+    const rpc = rpcResult({ ok: true, chapter_number: 45, seq: 8, jobId: JOB_ID })
+    const { publishGenerationJobChapterV4 } = await import('@/lib/runtime/generation-jobs')
+
+    await expect(publishGenerationJobChapterV4({
+      jobId: JOB_ID,
+      workerId: 'worker-a',
+      claimToken: CLAIM_TOKEN,
+      leaseId: LEASE_ID,
+      storyId: 'story-a',
+      chapterNumber: 45,
+      title: 'Bab Empat Puluh Lima',
+      paragraphs: ['Paragraf pertama.'],
+      choicePrompt: null,
+      choices: null,
+      outcomes: [],
+      endingLock,
+      closures: [...closures],
+    })).resolves.toEqual({ ok: true, chapterNumber: 45, seq: 8, jobId: JOB_ID })
+    expect(rpc).toHaveBeenCalledWith('publish_generation_job_chapter_v4', {
+      p_job_id: JOB_ID,
+      p_worker_id: 'worker-a',
+      p_claim_token: CLAIM_TOKEN,
+      p_lease_id: LEASE_ID,
+      p_story_id: 'story-a',
+      p_chapter_number: 45,
+      p_title: 'Bab Empat Puluh Lima',
+      p_paragraphs: ['Paragraf pertama.'],
+      p_choice_prompt: null,
+      p_choices: null,
+      p_outcomes: [],
+      p_ending_key: endingLock?.key ?? null,
+      p_ending_name: endingLock?.name ?? null,
+      p_closures: closures,
+    })
+  })
+
+  it('V4 rejects malformed closures before RPC', async () => {
+    const { publishGenerationJobChapterV4 } = await import('@/lib/runtime/generation-jobs')
+
+    await expect(publishGenerationJobChapterV4({
+      jobId: JOB_ID,
+      workerId: 'worker-a',
+      claimToken: CLAIM_TOKEN,
+      leaseId: LEASE_ID,
+      storyId: 'story-a',
+      chapterNumber: 2,
+      title: 'Bab Dua',
+      paragraphs: ['Paragraf pertama.'],
+      choicePrompt: null,
+      choices: null,
+      outcomes: [],
+      endingLock: null,
+      closures: [{ debtId: 'main_mystery', closureForm: 'UNKNOWN' }] as never,
+    })).rejects.toThrow()
+    expect(mocks.adminFactory).not.toHaveBeenCalled()
+  })
+
   it('V3 rejects partial or unbounded ending locks before RPC', async () => {
     const { publishGenerationJobChapterV3 } = await import('@/lib/runtime/generation-jobs')
     const base = {

@@ -132,6 +132,15 @@ const EndingLockSchema = z.object({
 const PublicationV3InputSchema = PublicationInputSchema.extend({
   endingLock: EndingLockSchema.nullable().optional(),
 }).strict()
+const PlotDebtClosureSchema = z.object({
+  debtId: z.string().min(1).max(100)
+    .refine((value) => value === value.trim())
+    .refine((value) => !/[\x00-\x1F\x7F]/.test(value)),
+  closureForm: z.enum(['RESOLVED', 'SUBVERTED', 'TRANSFORMED', 'ABANDONED']),
+}).strict()
+const PublicationV4InputSchema = PublicationV3InputSchema.extend({
+  closures: z.array(PlotDebtClosureSchema).max(20),
+}).strict()
 const FencedCheckpointIdentitySchema = FencedPublicationIdentitySchema.extend({
   storyId: StoryIdSchema,
   chapterNumber: ChapterNumberSchema,
@@ -277,6 +286,7 @@ export type CancelGenerationJobInput = z.input<typeof CancelInputSchema>
 export type RecoverStaleGenerationJobsInput = z.input<typeof RecoverInputSchema>
 export type PublishGenerationJobChapterInput = z.input<typeof PublicationInputSchema>
 export type PublishGenerationJobChapterV3Input = z.input<typeof PublicationV3InputSchema>
+export type PublishGenerationJobChapterV4Input = z.input<typeof PublicationV4InputSchema>
 
 type RpcError = { message?: unknown; code?: unknown }
 
@@ -538,6 +548,15 @@ export function publishGenerationJobChapterV2(
   return publishGenerationJobChapter('publish_generation_job_chapter_v2', input)
 }
 
+function normalizePublicationResult(raw: z.infer<typeof RawPublicationResultSchema>): PublishGenerationJobChapterResult {
+  return PublicationResultSchema.parse({
+    ok: raw.ok,
+    chapterNumber: raw.chapter_number,
+    seq: raw.seq,
+    jobId: raw.jobId,
+  })
+}
+
 export async function publishGenerationJobChapterV3(
   input: PublishGenerationJobChapterV3Input,
 ): Promise<PublishGenerationJobChapterResult> {
@@ -557,10 +576,28 @@ export async function publishGenerationJobChapterV3(
     p_ending_key: parsed.endingLock?.key ?? null,
     p_ending_name: parsed.endingLock?.name ?? null,
   }))
-  return PublicationResultSchema.parse({
-    ok: raw.ok,
-    chapterNumber: raw.chapter_number,
-    seq: raw.seq,
-    jobId: raw.jobId,
-  })
+  return normalizePublicationResult(raw)
+}
+
+export async function publishGenerationJobChapterV4(
+  input: PublishGenerationJobChapterV4Input,
+): Promise<PublishGenerationJobChapterResult> {
+  const parsed = PublicationV4InputSchema.parse(input)
+  const raw = RawPublicationResultSchema.parse(await callRpc('publish_generation_job_chapter_v4', {
+    p_job_id: parsed.jobId,
+    p_worker_id: parsed.workerId,
+    p_claim_token: parsed.claimToken,
+    p_lease_id: parsed.leaseId,
+    p_story_id: parsed.storyId,
+    p_chapter_number: parsed.chapterNumber,
+    p_title: parsed.title,
+    p_paragraphs: parsed.paragraphs,
+    p_choice_prompt: parsed.choicePrompt,
+    p_choices: parsed.choices,
+    p_outcomes: parsed.outcomes,
+    p_ending_key: parsed.endingLock?.key ?? null,
+    p_ending_name: parsed.endingLock?.name ?? null,
+    p_closures: parsed.closures,
+  }))
+  return normalizePublicationResult(raw)
 }

@@ -9,6 +9,7 @@ import {
   GenerationJobStatusSchema,
   GenerationKindSchema,
 } from '../../packages/contracts/src/index'
+import type { PublishGenerationJobChapterV4Input } from '@/lib/runtime/generation-jobs'
 import {
   ClaimedGenerationJobSchema,
   FencedPublicationIdentitySchema,
@@ -154,6 +155,27 @@ describe('public generation job contracts', () => {
 })
 
 describe('internal generation job contracts', () => {
+  it('types V4 as V3 publication fields plus exact closures', () => {
+    const input = {
+      jobId: JOB_ID,
+      workerId: 'worker-a',
+      claimToken: CLAIM_TOKEN,
+      leaseId: LEASE_ID,
+      storyId: 'story-a',
+      chapterNumber: 45,
+      title: 'Bab Empat Puluh Lima',
+      paragraphs: ['Paragraf pertama.'],
+      choicePrompt: null,
+      choices: null,
+      outcomes: [],
+      endingLock: null,
+      closures: [{ debtId: 'main_mystery', closureForm: 'RESOLVED' }],
+    } satisfies PublishGenerationJobChapterV4Input
+
+    expect(input.endingLock).toBeNull()
+    expect(input.closures).toEqual([{ debtId: 'main_mystery', closureForm: 'RESOLVED' }])
+  })
+
   it('accepts a strict fully owned claim', () => {
     expect(ClaimedGenerationJobSchema.parse(claimedJob)).toEqual(claimedJob)
     expect(ClaimedGenerationJobSchema.safeParse({

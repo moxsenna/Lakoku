@@ -86,8 +86,8 @@ function upsertSql(prefix = ''): string {
   return `select '${prefix}' || public.upsert_generation_checkpoint_fenced_v1(
     :'job_id'::uuid, :'worker_id', :'claim_token'::uuid, :'lease_id'::uuid,
     :'story_id', :'chapter'::integer, 'Race prose', '["Race paragraph."]'::jsonb,
-    'race-prose-fingerprint', 1, 1, 'race-direction-fingerprint',
-    'standard', 1, 1, 1
+    'race-prose-fingerprint', null::jsonb, null::integer, 1, 1,
+    'race-direction-fingerprint', 'standard', 1, 1, 1
   )::text;`
 }
 

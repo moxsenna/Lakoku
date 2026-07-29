@@ -255,6 +255,11 @@ set status = 'SUCCEEDED', publication_result = jsonb_build_object(
   'ok', true, 'jobId', id, 'chapter_number', chapter_number, 'seq', 1
 )
 where id = (select job_id from checkpoint_fencing_jobs where fixture_name = 'published');
+insert into public.idempotency_keys (key, story_id, scope, result)
+select j.publication_idempotency_key, j.story_id,
+       'publish_chapter_v2:' || j.chapter_number::text, j.publication_result
+from public.generation_jobs j
+where j.id = (select job_id from checkpoint_fencing_jobs where fixture_name = 'published');
 select is(pg_temp.checkpoint_transition('published', 'PUBLISHED')->>'result', 'UPDATED', 'post-publish proof permits PUBLISHED transition');
 select is((select status from public.chapter_generation_checkpoints where story_id = 'test:checkpoint-fencing:published'), 'PUBLISHED', 'post-publish checkpoint becomes PUBLISHED');
 select ok(

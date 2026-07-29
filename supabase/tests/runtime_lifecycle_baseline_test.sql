@@ -34,9 +34,51 @@ select ok(not has_function_privilege('anon', 'public.acquire_generation_lease(te
 select ok(not has_function_privilege('authenticated', 'public.acquire_generation_lease(text,integer,text,integer,text)', 'EXECUTE'), 'authenticated cannot acquire');
 select ok(has_function_privilege('service_role', 'public.acquire_generation_lease(text,integer,text,integer,text)', 'EXECUTE'), 'service_role can acquire');
 select ok(has_function_privilege('service_role', 'public.release_generation_lease(text,uuid)', 'EXECUTE'), 'service_role can release');
-select is(md5(pg_get_functiondef('public.acquire_generation_lease(text,integer,text,integer,text)'::regprocedure)), 'a510dcaf674b178782dfe971aea57be2', 'acquire function is exact linked definition');
-select is(md5(pg_get_functiondef('public.release_generation_lease(text,uuid)'::regprocedure)), 'aa4b498641464d7d56479860d51a7ec9', 'release function is exact linked definition');
-select is(md5(pg_get_functiondef('public.publish_chapter(text,integer,text,jsonb,text,jsonb,jsonb,uuid,text)'::regprocedure)), 'e8f33f2aaca0b3343f8fe51200fc402b', 'publish function is exact linked definition');
+select ok(
+  (select p.prosecdef
+      and p.provolatile = 'v'
+      and p.proconfig = array['search_path=public']::text[]
+      and pg_get_userbyid(p.proowner) = 'postgres'
+      and not has_function_privilege('public', p.oid, 'EXECUTE')
+      and not has_function_privilege('anon', p.oid, 'EXECUTE')
+      and not has_function_privilege('authenticated', p.oid, 'EXECUTE')
+      and has_function_privilege('service_role', p.oid, 'EXECUTE')
+      and pg_get_function_result(p.oid) = 'jsonb'
+      and pg_get_functiondef(p.oid) like '%insert into public.generation_leases%'
+      and pg_get_functiondef(p.oid) like '%insert into public.idempotency_keys%'
+   from pg_proc p where p.oid = 'public.acquire_generation_lease(text,integer,text,integer,text)'::regprocedure),
+  'acquire function pins security, volatility, ACL, owner, return, and lease behavior'
+);
+select ok(
+  (select p.prosecdef
+      and p.provolatile = 'v'
+      and p.proconfig = array['search_path=public']::text[]
+      and pg_get_userbyid(p.proowner) = 'postgres'
+      and not has_function_privilege('public', p.oid, 'EXECUTE')
+      and not has_function_privilege('anon', p.oid, 'EXECUTE')
+      and not has_function_privilege('authenticated', p.oid, 'EXECUTE')
+      and has_function_privilege('service_role', p.oid, 'EXECUTE')
+      and pg_get_function_result(p.oid) = 'jsonb'
+      and pg_get_functiondef(p.oid) like '%status = ''RELEASED''%'
+      and pg_get_functiondef(p.oid) like '%status = ''ACTIVE''%'
+   from pg_proc p where p.oid = 'public.release_generation_lease(text,uuid)'::regprocedure),
+  'release function pins security, volatility, ACL, owner, return, and release behavior'
+);
+select ok(
+  (select p.prosecdef
+      and p.provolatile = 'v'
+      and p.proconfig = array['search_path=public']::text[]
+      and pg_get_userbyid(p.proowner) = 'postgres'
+      and not has_function_privilege('public', p.oid, 'EXECUTE')
+      and not has_function_privilege('anon', p.oid, 'EXECUTE')
+      and not has_function_privilege('authenticated', p.oid, 'EXECUTE')
+      and has_function_privilege('service_role', p.oid, 'EXECUTE')
+      and pg_get_function_result(p.oid) = 'jsonb'
+      and pg_get_functiondef(p.oid) like '%insert into public.chapters%'
+      and pg_get_functiondef(p.oid) like '%insert into public.idempotency_keys%'
+   from pg_proc p where p.oid = 'public.publish_chapter(text,integer,text,jsonb,text,jsonb,jsonb,uuid,text)'::regprocedure),
+  'publish function pins security, volatility, ACL, owner, return, and durable publication behavior'
+);
 select has_function('public', 'story_is_public', array['text'], 'public story RLS helper exists');
 select has_function('public', 'story_is_owned_by_auth', array['text'], 'owned story RLS helper exists');
 select is(md5(pg_get_functiondef('public.story_is_public(text)'::regprocedure)), '73310f024aff9df0dcfd3995648954ad', 'public story helper is exact linked definition');

@@ -1,7 +1,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(22);
+select plan(25);
 
 insert into public.stories (id, title, visibility, story_mode) values
   ('test:audit:null', 'Audit Null', 'private', 'standard'),
@@ -20,9 +20,11 @@ select col_is_null('public', 'chapter_generation_checkpoints', 'audit_signals_ve
 select ok(exists (
   select 1 from pg_catalog.pg_constraint
   where conrelid = 'public.chapter_generation_checkpoints'::regclass
-    and conname = 'chapter_generation_checkpoints_audit_signals_v1_check'
+    and conname = 'chapter_generation_checkpoints_audit_signals_check'
     and contype = 'c'
 ), 'strict paired audit check exists');
+select has_function('public', 'is_valid_checkpoint_audit_signals_v1', array['jsonb'], 'canonical V1 validator exists');
+select has_function('public', 'is_valid_checkpoint_audit_signals_v2', array['jsonb'], 'canonical V2 validator exists');
 select has_function('public', 'upsert_generation_checkpoint_fenced_v1', array['uuid','text','uuid','uuid','text','integer','text','jsonb','text','jsonb','integer','bigint','bigint','text','text','integer','integer','integer'], 'new upsert signature exists');
 select hasnt_function('public', 'upsert_generation_checkpoint_fenced_v1', array['uuid','text','uuid','uuid','text','integer','text','jsonb','text','bigint','bigint','text','text','integer','integer','integer'], 'old overload removed');
 
@@ -41,6 +43,7 @@ select throws_ok($$insert into public.chapter_generation_checkpoints (story_id,c
 select throws_ok($$insert into public.chapter_generation_checkpoints (story_id,chapter_number,attempt_id,correlation_id,status,title,paragraphs_json,prose_fingerprint,audit_signals_json,audit_signals_version,expires_at) values ('test:audit:missing',1,gen_random_uuid(),gen_random_uuid(),'PROSE_READY','T','["p"]','fp','{"opensNewThread":false,"opensMajorMystery":false}',1,clock_timestamp()+interval '1 hour')$$, '23514', null, 'missing key rejected');
 select throws_ok($$insert into public.chapter_generation_checkpoints (story_id,chapter_number,attempt_id,correlation_id,status,title,paragraphs_json,prose_fingerprint,audit_signals_json,audit_signals_version,expires_at) values ('test:audit:extra',1,gen_random_uuid(),gen_random_uuid(),'PROSE_READY','T','["p"]','fp','{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"extra":false}',1,clock_timestamp()+interval '1 hour')$$, '23514', null, 'extra key rejected');
 select throws_ok($$insert into public.chapter_generation_checkpoints (story_id,chapter_number,attempt_id,correlation_id,status,title,paragraphs_json,prose_fingerprint,audit_signals_json,audit_signals_version,expires_at) values ('test:audit:type',1,gen_random_uuid(),gen_random_uuid(),'PROSE_READY','T','["p"]','fp','{"opensNewThread":0,"opensMajorMystery":false,"opensNewConflict":false}',1,clock_timestamp()+interval '1 hour')$$, '23514', null, 'non-boolean rejected');
+select ok(not public.is_valid_checkpoint_audit_signals_v2(null::jsonb), 'V2 validator is explicitly two-valued for SQL null');
 
 select is((select audit_signals_json from public.chapter_generation_checkpoints where story_id='test:audit:null'), null::jsonb, 'standard JSON null');
 select is((select audit_signals_version from public.chapter_generation_checkpoints where story_id='test:audit:null'), null::integer, 'standard version null');

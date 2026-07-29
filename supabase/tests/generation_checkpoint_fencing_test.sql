@@ -48,7 +48,7 @@ select ok(
 ) from checkpoint_fencing_signatures order by function_name;
 select is(
   (select proconfig from pg_proc where oid = to_regprocedure(identity)),
-  array['search_path=""']::text[], function_name || ' fixes empty search_path'
+  array['search_path=pg_catalog, public']::text[], function_name || ' fixes canonical search_path'
 ) from checkpoint_fencing_signatures order by function_name;
 select ok(
   not exists (
@@ -266,6 +266,23 @@ select ok(
 select pg_temp.add_checkpoint_job('publish-proof-missing');
 select pg_temp.checkpoint_upsert('publish-proof-missing');
 select is(pg_temp.checkpoint_transition('publish-proof-missing', 'PUBLISHED')->>'result', 'INVALID_TRANSITION', 'live job cannot claim post-publish completion');
+
+select pg_temp.add_checkpoint_job('published-no-durable-proof');
+select pg_temp.checkpoint_upsert('published-no-durable-proof');
+insert into public.chapters (story_id, number, title, paragraphs)
+values ('test:checkpoint-fencing:published-no-durable-proof', 2, 'Published', '["published"]');
+update public.generation_leases set status = 'RELEASED'
+where id = (select lease_id from checkpoint_fencing_jobs where fixture_name = 'published-no-durable-proof');
+update public.generation_jobs
+set status = 'SUCCEEDED', publication_result = jsonb_build_object(
+  'ok', true, 'jobId', id, 'chapter_number', chapter_number, 'seq', 1
+)
+where id = (select job_id from checkpoint_fencing_jobs where fixture_name = 'published-no-durable-proof');
+select is(
+  pg_temp.checkpoint_transition('published-no-durable-proof', 'PUBLISHED')->>'result',
+  'INVALID_TRANSITION',
+  'terminal reconciliation rejects missing durable publication proof'
+);
 
 select pg_temp.add_checkpoint_job('late-rollback');
 select pg_temp.checkpoint_upsert('late-rollback');

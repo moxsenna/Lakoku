@@ -36,8 +36,8 @@ select ok(
 select is(
   (select p.proconfig from pg_proc p
    where p.oid = to_regprocedure('public.enqueue_generation_job_v1(text,integer,text,text)')),
-  array['search_path=""']::text[],
-  'enqueue RPC fixes empty search_path'
+  array['search_path=pg_catalog, public']::text[],
+  'enqueue RPC fixes canonical search_path'
 );
 select ok(
   has_function_privilege(

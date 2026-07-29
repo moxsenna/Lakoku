@@ -26,7 +26,8 @@ select columns_are(
     'available_at', 'deadline_at', 'claimed_at', 'heartbeat_at', 'worker_id',
     'claim_token', 'correlation_id', 'last_error_code', 'last_error_class',
     'last_error_at', 'created_at', 'updated_at', 'completed_at',
-    'publication_idempotency_key', 'publication_result'
+    'publication_idempotency_key', 'publication_result',
+    'story_contract_version', 'publication_payload_hash', 'closure_payload_hash'
   ],
   'generation_jobs has exact columns'
 );

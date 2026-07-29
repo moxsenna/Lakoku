@@ -60,7 +60,7 @@ import {
   GENERATION_PROMPT_CONTRACT_VERSION,
   type RealGenerateResult,
 } from './story-generation'
-import type { FencedCheckpointMutationResult } from './generation-jobs'
+import { GenerationJobError, type FencedCheckpointMutationResult } from './generation-jobs'
 import {
   draftFromCheckpoint,
   loadUsableProseCheckpoint,
@@ -69,7 +69,9 @@ import {
 } from './chapter-generation-checkpoint'
 import {
   CHECKPOINT_AUDIT_SIGNALS_VERSION,
+  isCheckpointAuditSignalsV2,
   type CheckpointAuditSignals,
+  type CheckpointAuditSignalsV2,
   type ChapterGenerationCheckpoint,
   type CheckpointFreshnessContext,
   type CheckpointStatus,
@@ -196,7 +198,7 @@ export interface PersonalizedGenerationDeps {
     paragraphs: string[]
     proseAttemptCount?: number
     auditSignals?: CheckpointAuditSignals | null
-    auditSignalsVersion?: 1 | null
+    auditSignalsVersion?: 1 | 2 | null
     directionFingerprint?: string | null
     canonVersion?: number | null
     blueprintVersion?: number | null
@@ -250,7 +252,9 @@ export interface PersonalizedGenerationDeps {
     options?: Parameters<GenerationProvider['writeChapter']>[1],
   ) => Promise<ChoiceBranch | null>
   resolveEnding: typeof resolveEnding
-  auditPlotDebts: (input: PlotDebtAuditInput) => PlotDebtAuditResult
+  auditPlotDebts: (input: PlotDebtAuditInput & {
+    closesPlotDebts: CheckpointAuditSignalsV2['closesPlotDebts']
+  }) => PlotDebtAuditResult & { auditSignals: CheckpointAuditSignalsV2 }
   persistEndingLock: (input: PersistEndingLockInput) => Promise<void>
   publishChapterV2: (input: PublishChapterV2Input) => Promise<PublishResult>
   markReaderStateSelesai: (input: MarkReaderSelesaiInput) => Promise<void>
@@ -499,7 +503,18 @@ function defaultDeps(): PersonalizedGenerationDeps {
     assertConsumerSafe,
     generateChoiceBranch,
     resolveEnding,
-    auditPlotDebts,
+    auditPlotDebts: (input) => {
+      const { closesPlotDebts, ...plotDebtInput } = input
+      return {
+        ...auditPlotDebts(plotDebtInput),
+        auditSignals: {
+          opensNewThread: input.opensNewThread,
+          opensMajorMystery: input.opensMajorMystery,
+          opensNewConflict: input.opensNewConflict,
+          closesPlotDebts,
+        },
+      }
+    },
     persistEndingLock: defaultPersistEndingLock,
     publishChapterV2,
     markReaderStateSelesai: defaultMarkReaderStateSelesai,
@@ -818,31 +833,40 @@ async function generateNextPersonalizedChapterInner(
           lockedEndingKey: reader.locked_ending_key ?? brief.lockedEndingKey,
         })
       : null
-    const auditSignals: CheckpointAuditSignals = existingCheckpoint
-      ? existingCheckpoint.auditSignals as CheckpointAuditSignals
-      : (() => {
-          const derived = derivePlotDebtAuditFlags({
-            draft,
-            brief,
-            findings: result.findings,
-            endingLocked: false,
-          })
-          return {
-            opensNewThread: derived.opensNewThread,
-            opensMajorMystery: derived.opensMajorMystery,
-            opensNewConflict: derived.opensNewConflict,
-          }
-        })()
-    const audit = d.auditPlotDebts({
-      chapterNumber,
-      debts: contract.plotDebts,
-      ...auditSignals,
-      endingLocked: Boolean(
-        reader.locked_ending_key ?? brief.lockedEndingKey ??
-        (chapterNumber === ENDING_LOCK_CHAPTER ? endingProposal?.key : null),
-      ),
-    })
-    if (!audit.ok) {
+    let auditSignals: CheckpointAuditSignalsV2
+    let audit: PlotDebtAuditResult | null = null
+    if (existingCheckpoint) {
+      if (
+        existingCheckpoint.auditSignalsVersion !== CHECKPOINT_AUDIT_SIGNALS_VERSION ||
+        !isCheckpointAuditSignalsV2(existingCheckpoint.auditSignals)
+      ) {
+        throw new Error('PERSONALIZED_AUDIT_V2_REQUIRED')
+      }
+      auditSignals = existingCheckpoint.auditSignals
+    } else {
+      const derived = derivePlotDebtAuditFlags({
+        draft,
+        brief,
+        findings: result.findings,
+        endingLocked: false,
+      })
+      const closesPlotDebts = draft.closesPlotDebts ?? []
+      const audited = d.auditPlotDebts({
+        chapterNumber,
+        debts: contract.plotDebts,
+        opensNewThread: derived.opensNewThread,
+        opensMajorMystery: derived.opensMajorMystery,
+        opensNewConflict: derived.opensNewConflict,
+        closesPlotDebts,
+        endingLocked: Boolean(
+          reader.locked_ending_key ?? brief.lockedEndingKey ??
+          (chapterNumber === ENDING_LOCK_CHAPTER ? endingProposal?.key : null),
+        ),
+      })
+      audit = audited
+      auditSignals = audited.auditSignals
+    }
+    if (audit && !audit.ok) {
       await releaseOwnLease()
       await d.recordGenerationAttempt({
         storyId,
@@ -1053,7 +1077,7 @@ async function generateNextPersonalizedChapterInner(
 
     let published: LocalPublish
     if (jobContext) {
-      const { publishGenerationJobChapterV3 } = await import('@/lib/runtime/generation-jobs')
+      const { publishGenerationJobChapterV4 } = await import('@/lib/runtime/generation-jobs')
       const endingLock = chapterNumber === ENDING_LOCK_CHAPTER
         ? lockWrittenThisTurn ?? ending ?? d.resolveEnding({
             routeState,
@@ -1063,7 +1087,7 @@ async function generateNextPersonalizedChapterInner(
           })
         : null
       try {
-        const fenced = await publishGenerationJobChapterV3({
+        const fenced = await publishGenerationJobChapterV4({
           jobId: jobContext.jobId,
           workerId: jobContext.workerId,
           claimToken: jobContext.claimToken,
@@ -1076,6 +1100,7 @@ async function generateNextPersonalizedChapterInner(
           choices: choices as unknown[],
           outcomes: outcomes as unknown[],
           endingLock: endingLock ? { key: endingLock.key, name: endingLock.name } : null,
+          closures: auditSignals.closesPlotDebts,
         })
         published = {
           ok: true,
@@ -1083,10 +1108,12 @@ async function generateNextPersonalizedChapterInner(
           seq: fenced.seq,
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        if (msg.includes('CHAPTER_EXISTS')) {
+        if (err instanceof GenerationJobError && err.code === 'CHAPTER_EXISTS') {
           published = { ok: false, reason: 'CHAPTER_EXISTS' }
-        } else if (msg.includes('OWNERSHIP_LOST') || msg.includes('LEASE_HELD')) {
+        } else if (
+          err instanceof GenerationJobError &&
+          (err.code === 'GENERATION_JOB_OWNERSHIP_LOST' || err.code === 'LEASE_HELD')
+        ) {
           published = { ok: false, reason: 'LEASE_HELD' }
         } else {
           throw err
@@ -1121,7 +1148,7 @@ async function generateNextPersonalizedChapterInner(
     // leaves the caller-owned lease to release before reconciliation or return.
     if (!published.ok) await releaseOwnLease()
 
-    if (published.ok) {
+    if (published.ok && !jobContext) {
       await reconcilePublishedCheckpoint()
     }
 

@@ -12,10 +12,11 @@ export const NO_CREATIVE_DIRECTION_FINGERPRINT = createHash('sha256')
  * Version stamped on rows written by the current writer path. Kept at 1 so
  * already-persisted rows stay parseable; the v2 writer lands in a later phase.
  */
-export const CHECKPOINT_AUDIT_SIGNALS_VERSION = 1 as const
+const CHECKPOINT_AUDIT_SIGNALS_VERSION_V1 = 1 as const
 
-/** Audit-signal schema that additionally carries plot-debt closure records. */
-export const CHECKPOINT_AUDIT_SIGNALS_VERSION_V2 = 2 as const
+/** Current personalized audit artifact version, including closure records. */
+export const CHECKPOINT_AUDIT_SIGNALS_VERSION = 2 as const
+export const CHECKPOINT_AUDIT_SIGNALS_VERSION_V2 = CHECKPOINT_AUDIT_SIGNALS_VERSION
 
 /**
  * Minimum audit-signal version a personalized checkpoint must carry to be reused
@@ -111,7 +112,7 @@ export function parseCheckpointAuditSignals(
   const record = value as Record<string, unknown>
   const keys = Object.keys(record).sort().join(',')
 
-  if (version === CHECKPOINT_AUDIT_SIGNALS_VERSION) {
+  if (version === CHECKPOINT_AUDIT_SIGNALS_VERSION_V1) {
     if (keys !== V1_KEYS) return null
     return parseAuditFlags(record)
   }

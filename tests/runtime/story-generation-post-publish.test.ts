@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   loadCheckpoint: vi.fn(),
   persistCheckpoint: vi.fn(),
   markCheckpointStatus: vi.fn(),
-  publishGenerationJobChapterV2: vi.fn(),
+  publishGenerationJobChapterV4: vi.fn(),
   recordGenerationAttempt: vi.fn(),
   recordGenerationRuntimeFailed: vi.fn(),
   consoleLog: vi.fn(),
@@ -50,9 +50,15 @@ vi.mock('@/lib/runtime/chapter-generation-checkpoint', async () => {
     markCheckpointStatus: mocks.markCheckpointStatus,
   }
 })
-vi.mock('@/lib/runtime/generation-jobs', () => ({
-  publishGenerationJobChapterV2: mocks.publishGenerationJobChapterV2,
-}))
+vi.mock('@/lib/runtime/generation-jobs', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/runtime/generation-jobs')>(
+    '@/lib/runtime/generation-jobs',
+  )
+  return {
+    ...actual,
+    publishGenerationJobChapterV4: mocks.publishGenerationJobChapterV4,
+  }
+})
 vi.mock('@/lib/observability/server', () => ({
   recordGenerationAttempt: mocks.recordGenerationAttempt,
   recordGenerationRuntimeFailed: mocks.recordGenerationRuntimeFailed,
@@ -140,7 +146,7 @@ beforeEach(() => {
   mocks.loadCheckpoint.mockResolvedValue(null)
   mocks.persistCheckpoint.mockResolvedValue({ ok: true, result: 'UPDATED', changed: true })
   mocks.markCheckpointStatus.mockResolvedValue({ ok: true, result: 'UPDATED', changed: true })
-  mocks.publishGenerationJobChapterV2.mockImplementation(async (input: { chapterNumber: number }) => ({
+  mocks.publishGenerationJobChapterV4.mockImplementation(async (input: { chapterNumber: number }) => ({
     jobId: JOB_CONTEXT.jobId,
     chapterNumber: input.chapterNumber,
     seq: 17,
@@ -189,40 +195,49 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(mocks.consoleLog)
 })
 
-describe('standard generation post-publish checkpoint reconciliation', () => {
-  it.each([
-    ['normal choice non-UPDATED', 12, { ok: false, result: 'OWNERSHIP_LOST' }],
-    ['normal choice throw', 12, new Error('checkpoint transition unavailable')],
-    ['final chapter non-UPDATED', 50, { ok: false, result: 'OWNERSHIP_LOST' }],
-    ['final chapter throw', 50, new Error('checkpoint transition unavailable')],
-  ] as const)(
-    'returns committed publish success when %s PUBLISHED checkpoint transition fails',
-    async (_name, chapterNumber, checkpointFailure) => {
-      mocks.markCheckpointStatus
-        .mockResolvedValueOnce({ ok: true, result: 'UPDATED', changed: true })
-      if (checkpointFailure instanceof Error) {
-        mocks.markCheckpointStatus.mockRejectedValueOnce(checkpointFailure)
-      } else {
-        mocks.markCheckpointStatus.mockResolvedValueOnce(checkpointFailure)
-      }
-
+describe('standard worker V4 publication', () => {
+  it.each([12, 50])(
+    'publishes chapter %i through V4 exactly once with empty closures and no post-publish checkpoint write',
+    async (chapterNumber) => {
       await expect(run(chapterNumber)).resolves.toMatchObject({
         ok: true,
         chapterNumber,
         seq: 17,
       })
-      expect(mocks.publishGenerationJobChapterV2).toHaveBeenCalledTimes(1)
-      expect(mocks.consoleLog).toHaveBeenCalledWith(
-        'CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED',
-        expect.objectContaining({
-          storyId: expect.any(String),
-          chapterNumber,
-          jobId: JOB_CONTEXT.jobId,
-          checkpointAttemptId: JOB_CONTEXT.jobId,
-        }),
+      expect(mocks.publishGenerationJobChapterV4).toHaveBeenCalledTimes(1)
+      expect(mocks.publishGenerationJobChapterV4).toHaveBeenCalledWith(
+        expect.objectContaining({ closures: [] }),
+      )
+      expect(mocks.markCheckpointStatus).toHaveBeenCalledTimes(1)
+      expect(mocks.markCheckpointStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'RUNNING_CHOICES' }),
       )
     },
   )
+
+  it.each([
+    ['CHAPTER_EXISTS', 'CHAPTER_EXISTS'],
+    ['GENERATION_JOB_OWNERSHIP_LOST', 'LEASE_HELD'],
+    ['IDEMPOTENCY_CONFLICT', 'FAILED_REVIEW_REQUIRED'],
+    ['PROVENANCE_CONFLICT', 'FAILED_REVIEW_REQUIRED'],
+    ['CHECKPOINT_CONFLICT', 'FAILED_REVIEW_REQUIRED'],
+    ['CONTRACT_CONFLICT', 'FAILED_REVIEW_REQUIRED'],
+    ['PLOT_DEBT_CONFLICT', 'FAILED_REVIEW_REQUIRED'],
+  ] as const)('classifies typed V4 %s as %s', async (code, reason) => {
+    const { GenerationJobError } = await import('@/lib/runtime/generation-jobs')
+    mocks.publishGenerationJobChapterV4.mockRejectedValueOnce(new GenerationJobError(code))
+
+    await expect(run(12)).resolves.toMatchObject({ ok: false, reason })
+  })
+
+  it('does not classify untyped message substrings as V4 outcomes', async () => {
+    mocks.publishGenerationJobChapterV4.mockRejectedValueOnce(new Error('CHAPTER_EXISTS'))
+
+    await expect(run(12)).resolves.toMatchObject({
+      ok: false,
+      reason: 'FAILED_REVIEW_REQUIRED',
+    })
+  })
 
   it('provider ignoring abort cannot persist checkpoint, choices, or publish', async () => {
     const controller = new AbortController()
@@ -260,6 +275,6 @@ describe('standard generation post-publish checkpoint reconciliation', () => {
     expect(mocks.persistCheckpoint).not.toHaveBeenCalled()
     expect(mocks.markCheckpointStatus).not.toHaveBeenCalled()
     expect(mocks.buildChoiceBranch).not.toHaveBeenCalled()
-    expect(mocks.publishGenerationJobChapterV2).not.toHaveBeenCalled()
+    expect(mocks.publishGenerationJobChapterV4).not.toHaveBeenCalled()
   })
 })

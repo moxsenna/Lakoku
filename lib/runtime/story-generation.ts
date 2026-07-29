@@ -8,7 +8,7 @@ import {
   type PublishResult,
 } from './lifecycle'
 import { NO_CREATIVE_DIRECTION_FINGERPRINT } from './chapter-generation-checkpoint.pure'
-import type { FencedCheckpointMutationResult } from './generation-jobs'
+import { GenerationJobError, type FencedCheckpointMutationResult } from './generation-jobs'
 import { withGenerationSlot } from './generation-concurrency'
 import {
   compileContext,
@@ -561,9 +561,9 @@ async function generateNextChapterRealInner(
       return { ok: false, reason: 'CAPACITY_TIMEOUT' }
     }
     if (jobContext) {
-      const { publishGenerationJobChapterV2 } = await import('@/lib/runtime/generation-jobs')
+      const { publishGenerationJobChapterV4 } = await import('@/lib/runtime/generation-jobs')
       try {
-        const published = await publishGenerationJobChapterV2({
+        const published = await publishGenerationJobChapterV4({
           jobId: jobContext.jobId,
           workerId: jobContext.workerId,
           claimToken: jobContext.claimToken,
@@ -579,6 +579,8 @@ async function generateNextChapterRealInner(
               ? null
               : [args.choices],
           outcomes: args.outcomes as unknown[],
+          endingLock: null,
+          closures: [],
         })
         // Fenced publish marks job SUCCEEDED + releases bound lease.
         leaseReleased = true
@@ -597,12 +599,13 @@ async function generateNextChapterRealInner(
           errorName: info.errorName,
           errorMessage: info.errorMessage,
         })
-        const msg = info.errorMessage ?? ''
-        if (msg.includes('LEASE_HELD') || msg.includes('CHAPTER_EXISTS')) {
-          return { ok: false, reason: 'CHAPTER_EXISTS' }
-        }
-        if (msg.includes('OWNERSHIP_LOST') || msg.includes('GENERATION_JOB_OWNERSHIP')) {
-          return { ok: false, reason: 'LEASE_HELD' }
+        if (err instanceof GenerationJobError) {
+          if (err.code === 'CHAPTER_EXISTS') {
+            return { ok: false, reason: 'CHAPTER_EXISTS' }
+          }
+          if (err.code === 'GENERATION_JOB_OWNERSHIP_LOST' || err.code === 'LEASE_HELD') {
+            return { ok: false, reason: 'LEASE_HELD' }
+          }
         }
         return { ok: false, reason: 'FAILED_REVIEW_REQUIRED' }
       }
@@ -1081,7 +1084,7 @@ async function generateNextChapterRealInner(
         if (jobContext && publishedEnding.jobId !== jobContext.jobId) {
           return { ok: false, reason: 'FAILED_REVIEW_REQUIRED' }
         }
-        await reconcilePublishedCheckpoint()
+        if (!jobContext) await reconcilePublishedCheckpoint()
         stage = 'RECORD_TERMINAL_ATTEMPT'
         await recordGenerationAttempt({
           storyId,
@@ -1231,7 +1234,7 @@ async function generateNextChapterRealInner(
     if (jobContext && published.jobId !== jobContext.jobId) {
       return { ok: false, reason: 'FAILED_REVIEW_REQUIRED' }
     }
-    await reconcilePublishedCheckpoint()
+    if (!jobContext) await reconcilePublishedCheckpoint()
 
     // Telemetri konsistensi (T8.1) — attempt sukses. Dipancarkan SETELAH publish.
     // Best-effort only: never convert publish success into workflow failure.

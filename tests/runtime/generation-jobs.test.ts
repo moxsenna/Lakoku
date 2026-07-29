@@ -526,18 +526,46 @@ describe('generation job worker RPC adapters', () => {
 
   it.each([
     ['GENERATION_JOB_OWNERSHIP_LOST', 'GENERATION_JOB_OWNERSHIP_LOST'],
+    ['GENERATION_JOB_LEASE_INVALID', 'GENERATION_JOB_OWNERSHIP_LOST'],
     ['LEASE_HELD', 'LEASE_HELD'],
+    ['CHAPTER_EXISTS', 'CHAPTER_EXISTS'],
+    ['IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT'],
+    ['PROVENANCE_CONFLICT', 'PROVENANCE_CONFLICT'],
+    ['CHECKPOINT_INVALID_STATE', 'CHECKPOINT_CONFLICT'],
+    ['CHECKPOINT_CLOSURE_PAYLOAD_MISMATCH', 'CHECKPOINT_CONFLICT'],
+    ['CHECKPOINT_PUBLISH_FAILED', 'CHECKPOINT_CONFLICT'],
+    ['CONTRACT_PROVENANCE_MISSING', 'CONTRACT_CONFLICT'],
+    ['CONTRACT_VERSION_MISMATCH', 'CONTRACT_CONFLICT'],
+    ['DEBT_CONTRACT_NOT_FOUND', 'PLOT_DEBT_CONFLICT'],
+    ['DEBT_CLOSURE_UNKNOWN_DEBT', 'PLOT_DEBT_CONFLICT'],
+    ['DEBT_CLOSURE_DEADLINE_VIOLATION', 'PLOT_DEBT_CONFLICT'],
+    ['OPEN_DEBT_AT_END', 'PLOT_DEBT_CONFLICT'],
+    ['MAIN_MYSTERY_UNRESOLVED', 'PLOT_DEBT_CONFLICT'],
     ['GENERATION_JOB_DEADLINE_EXCEEDED', 'GENERATION_DEADLINE_EXCEEDED'],
     ['GENERATION_RETRY_EXHAUSTED', 'GENERATION_RETRY_EXHAUSTED'],
     ['GENERATION_PUBLICATION_CONFLICT', 'GENERATION_PUBLICATION_CONFLICT'],
     ['INVALID_GENERATION_JOB_TRANSITION', 'INVALID_GENERATION_JOB_TRANSITION'],
-  ] as const)('maps known SQL token %s to stable code %s', async (token, expectedCode) => {
+  ] as const)('maps V4 SQL token %s to stable code %s', async (token, expectedCode) => {
     rpcError(`database operation failed: ${token}`)
-    const { claimGenerationJob, GenerationJobError } = await import('@/lib/runtime/generation-jobs')
+    const { publishGenerationJobChapterV4, GenerationJobError } = await import('@/lib/runtime/generation-jobs')
 
-    const error = await claimGenerationJob({ workerId: 'worker-a' }).catch((caught) => caught)
+    const error = await publishGenerationJobChapterV4({
+      jobId: JOB_ID,
+      workerId: 'worker-a',
+      claimToken: CLAIM_TOKEN,
+      leaseId: LEASE_ID,
+      storyId: 'story-a',
+      chapterNumber: 2,
+      title: 'Bab Dua',
+      paragraphs: ['Paragraf pertama.'],
+      choicePrompt: null,
+      choices: null,
+      outcomes: [],
+      endingLock: null,
+      closures: [],
+    }).catch((caught) => caught)
     expect(error).toBeInstanceOf(GenerationJobError)
-    expect(error).toMatchObject({ code: expectedCode, message: expectedCode })
+    expect(error).toMatchObject({ code: expectedCode, message: expectedCode, rpcToken: token })
   })
 
   it('maps unknown database errors to INTERNAL_ERROR without raw code or message', async () => {

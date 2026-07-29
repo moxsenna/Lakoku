@@ -93,6 +93,50 @@ describe('worker checkpoint persistence', () => {
     })
   })
 
+  it('persists personalized audit V2 closures unchanged through fenced RPC', async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: { ok: true, result: 'UPDATED', changed: true },
+      error: null,
+    })
+    mocks.adminFactory.mockReturnValue({ rpc, from: vi.fn() })
+    const { persistProseReadyCheckpoint } = await import(
+      '@/lib/runtime/chapter-generation-checkpoint'
+    )
+    const context = { ...jobContext(), generationKind: 'personalized' as const }
+    const auditSignals = {
+      opensNewThread: false,
+      opensMajorMystery: false,
+      opensNewConflict: false,
+      closesPlotDebts: [{ debtId: 'main_mystery', closureForm: 'RESOLVED' as const }],
+    }
+
+    await persistProseReadyCheckpoint({
+      storyId: 'story-a',
+      chapterNumber: 48,
+      attemptId: JOB_ID,
+      correlationId: CORRELATION_ID,
+      title: 'Bab Empat Puluh Delapan',
+      paragraphs: ['Maya menutup utang misteri utama.'],
+      auditSignals,
+      auditSignalsVersion: 2,
+      canonVersion: 7,
+      blueprintVersion: 4,
+      directionFingerprint: '0123456789abcdef0123456789abcdef',
+      generationMode: 'personalized',
+      generationPolicyVersion: 2,
+      promptContractVersion: 2,
+      jobId: JOB_ID,
+      jobAttemptNumber: 2,
+      jobContext: context,
+    })
+
+    expect(rpc).toHaveBeenCalledWith('upsert_generation_checkpoint_fenced_v1', expect.objectContaining({
+      p_audit_signals: auditSignals,
+      p_audit_signals_version: 2,
+      p_generation_mode: 'personalized',
+    }))
+  })
+
   it.each([
     'UPDATED',
     'OWNERSHIP_LOST',

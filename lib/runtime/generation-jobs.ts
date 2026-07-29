@@ -23,6 +23,12 @@ export type GenerationJobErrorCode =
   | 'GENERATION_JOB_CONFLICT'
   | 'GENERATION_JOB_OWNERSHIP_LOST'
   | 'LEASE_HELD'
+  | 'CHAPTER_EXISTS'
+  | 'IDEMPOTENCY_CONFLICT'
+  | 'PROVENANCE_CONFLICT'
+  | 'CHECKPOINT_CONFLICT'
+  | 'CONTRACT_CONFLICT'
+  | 'PLOT_DEBT_CONFLICT'
   | 'GENERATION_DEADLINE_EXCEEDED'
   | 'GENERATION_RETRY_EXHAUSTED'
   | 'GENERATION_PUBLICATION_CONFLICT'
@@ -30,7 +36,10 @@ export type GenerationJobErrorCode =
   | 'INTERNAL_ERROR'
 
 export class GenerationJobError extends Error {
-  constructor(public readonly code: GenerationJobErrorCode) {
+  constructor(
+    public readonly code: GenerationJobErrorCode,
+    public readonly rpcToken: string = code,
+  ) {
     super(code)
     this.name = 'GenerationJobError'
   }
@@ -145,17 +154,20 @@ const FencedCheckpointIdentitySchema = FencedPublicationIdentitySchema.extend({
   storyId: StoryIdSchema,
   chapterNumber: ChapterNumberSchema,
 }).strict()
-const CheckpointAuditSignalsSchema = z.object({
+const CheckpointAuditSignalsV1Schema = z.object({
   opensNewThread: z.boolean(),
   opensMajorMystery: z.boolean(),
   opensNewConflict: z.boolean(),
+}).strict()
+const CheckpointAuditSignalsV2Schema = CheckpointAuditSignalsV1Schema.extend({
+  closesPlotDebts: z.array(PlotDebtClosureSchema).max(20),
 }).strict()
 const UpsertCheckpointInputSchema = FencedCheckpointIdentitySchema.extend({
   title: z.string().trim().min(1),
   paragraphs: z.array(z.string()).min(1),
   proseFingerprint: z.string().regex(/^[a-f0-9]{32}$/),
-  auditSignals: CheckpointAuditSignalsSchema.nullable(),
-  auditSignalsVersion: z.literal(1).nullable(),
+  auditSignals: z.union([CheckpointAuditSignalsV1Schema, CheckpointAuditSignalsV2Schema]).nullable(),
+  auditSignalsVersion: z.union([z.literal(1), z.literal(2)]).nullable(),
   canonVersion: NonnegativeIntegerSchema,
   blueprintVersion: NonnegativeIntegerSchema,
   directionFingerprint: z.string().trim().min(1).max(256),
@@ -164,7 +176,11 @@ const UpsertCheckpointInputSchema = FencedCheckpointIdentitySchema.extend({
   promptContractVersion: NonnegativeIntegerSchema,
   proseAttemptCount: NonnegativeIntegerSchema,
 }).strict().superRefine((value, ctx) => {
-  const paired = value.auditSignals !== null && value.auditSignalsVersion === 1
+  const paired = value.auditSignalsVersion === 1
+    ? CheckpointAuditSignalsV1Schema.safeParse(value.auditSignals).success
+    : value.auditSignalsVersion === 2
+      ? CheckpointAuditSignalsV2Schema.safeParse(value.auditSignals).success
+      : false
   if (value.generationMode === 'personalized' ? !paired : value.auditSignals !== null || value.auditSignalsVersion !== null) {
     ctx.addIssue({
       code: 'custom',
@@ -302,6 +318,23 @@ const ERROR_TOKEN_MAP: ReadonlyArray<readonly [string, GenerationJobErrorCode]> 
   ['GENERATION_JOB_NOT_RUNNING', 'GENERATION_JOB_OWNERSHIP_LOST'],
   ['GENERATION_JOB_TERMINAL', 'INVALID_GENERATION_JOB_TRANSITION'],
   ['GENERATION_JOB_NOT_FOUND', 'STORY_NOT_FOUND'],
+  ['CHECKPOINT_CLOSURE_PAYLOAD_MISMATCH', 'CHECKPOINT_CONFLICT'],
+  ['CHECKPOINT_INVALID_STATE', 'CHECKPOINT_CONFLICT'],
+  ['CHECKPOINT_PUBLISH_FAILED', 'CHECKPOINT_CONFLICT'],
+  ['CONTRACT_PROVENANCE_MISSING', 'CONTRACT_CONFLICT'],
+  ['CONTRACT_VERSION_MISMATCH', 'CONTRACT_CONFLICT'],
+  ['DEBT_CONTRACT_NOT_FOUND', 'PLOT_DEBT_CONFLICT'],
+  ['DEBT_CONTRACT_INVALID', 'PLOT_DEBT_CONFLICT'],
+  ['DEBT_CLOSURE_UNKNOWN_DEBT', 'PLOT_DEBT_CONFLICT'],
+  ['DEBT_CLOSURE_NOT_INTRODUCED', 'PLOT_DEBT_CONFLICT'],
+  ['DEBT_CLOSURE_ABANDONED_MAIN_MYSTERY', 'PLOT_DEBT_CONFLICT'],
+  ['DEBT_CLOSURE_DEADLINE_VIOLATION', 'PLOT_DEBT_CONFLICT'],
+  ['DEBT_CLOSURE_CONFLICT', 'PLOT_DEBT_CONFLICT'],
+  ['OPEN_DEBT_AT_END', 'PLOT_DEBT_CONFLICT'],
+  ['MAIN_MYSTERY_UNRESOLVED', 'PLOT_DEBT_CONFLICT'],
+  ['IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT'],
+  ['PROVENANCE_CONFLICT', 'PROVENANCE_CONFLICT'],
+  ['CHAPTER_EXISTS', 'CHAPTER_EXISTS'],
   ['GENERATION_JOB_CONFLICT', 'GENERATION_JOB_CONFLICT'],
   ['STORY_NOT_FOUND', 'STORY_NOT_FOUND'],
   ['AUTH_REQUIRED', 'AUTH_REQUIRED'],
@@ -310,8 +343,10 @@ const ERROR_TOKEN_MAP: ReadonlyArray<readonly [string, GenerationJobErrorCode]> 
 
 function mapRpcError(error: RpcError): GenerationJobError {
   const message = typeof error.message === 'string' ? error.message : ''
-  const mapped = ERROR_TOKEN_MAP.find(([token]) => message.includes(token))?.[1]
-  return new GenerationJobError(mapped ?? 'INTERNAL_ERROR')
+  const matched = ERROR_TOKEN_MAP.find(([token]) => message.includes(token))
+  return matched
+    ? new GenerationJobError(matched[1], matched[0])
+    : new GenerationJobError('INTERNAL_ERROR')
 }
 
 async function callRpc(name: string, payload: Record<string, unknown>): Promise<unknown> {

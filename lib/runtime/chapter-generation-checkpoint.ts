@@ -179,7 +179,7 @@ export async function persistProseReadyCheckpoint(args: {
   paragraphs: string[]
   proseAttemptCount?: number
   auditSignals?: import('./chapter-generation-checkpoint.pure').CheckpointAuditSignals | null
-  auditSignalsVersion?: 1 | null
+  auditSignalsVersion?: 1 | 2 | null
   directionFingerprint?: string | null
   canonVersion?: number | null
   blueprintVersion?: number | null

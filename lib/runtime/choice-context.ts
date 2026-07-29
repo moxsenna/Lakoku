@@ -78,17 +78,15 @@ export function choiceNarrativeContextFromReader(reader: {
   route_state: unknown
   choice_history?: ChoiceHistoryEntry[]
   locked_ending_key?: string | null
-  triggerChoiceId?: string
+  triggerChoiceId?: string | null
 }): ChoiceNarrativeContext {
   const history = (Array.isArray(reader.choice_history) ? reader.choice_history : []) as ChoiceHistoryEntry[]
-  let previousChoice: ChoiceHistoryEntry | null = null
-  if (reader.triggerChoiceId) {
-    const match = [...history].reverse().find((entry) => entry.choiceId === reader.triggerChoiceId)
-    if (match) previousChoice = match
-  }
-  if (!previousChoice && history.length > 0) {
-    previousChoice = history[history.length - 1] ?? null
-  }
+  const hasExplicitTrigger = Object.prototype.hasOwnProperty.call(reader, 'triggerChoiceId')
+  const previousChoice = hasExplicitTrigger
+    ? typeof reader.triggerChoiceId === 'string'
+      ? [...history].reverse().find((entry) => entry.choiceId === reader.triggerChoiceId) ?? null
+      : null
+    : history[history.length - 1] ?? null
   return {
     routeState: normalizeRouteState(reader.route_state),
     choiceHistory: history,

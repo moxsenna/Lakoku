@@ -97,7 +97,29 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
     expect(mocks.finishGenerationJobAttempt).not.toHaveBeenCalled()
   })
 
-  it('receives jobContext with a signal and passes attemptId=jobId', async () => {
+  it('preserves claimed explicit trigger choice in execution context and dispatcher input', async () => {
+    mocks.runChapterGenerationAttempt.mockResolvedValueOnce({
+      ok: true,
+      mode: 'personalized_ai',
+      result: { ok: true, chapterNumber: 2, seq: 5 },
+    })
+    const { runAlreadyClaimedGenerationJob } = await import('@/lib/runtime/generation-worker')
+    await runAlreadyClaimedGenerationJob({
+      ...JOB,
+      generationKind: 'personalized',
+      triggerChoiceId: 'choice-A',
+    })
+    const arg = mocks.runChapterGenerationAttempt.mock.calls[0][0]
+    expect(arg.attemptId).toBe(JOB.id)
+    expect(arg.triggerChoiceId).toBe('choice-A')
+    expect(arg.jobContext).toBeTruthy()
+    expect(arg.jobContext.jobId).toBe(JOB.id)
+    expect(arg.jobContext.leaseId).toBe('lease-1')
+    expect(arg.jobContext.triggerChoiceId).toBe('choice-A')
+    expect(arg.jobContext.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('preserves null trigger choice without synthesizing one', async () => {
     mocks.runChapterGenerationAttempt.mockResolvedValueOnce({
       ok: true,
       mode: 'standard',
@@ -106,11 +128,8 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
     const { runAlreadyClaimedGenerationJob } = await import('@/lib/runtime/generation-worker')
     await runAlreadyClaimedGenerationJob(JOB)
     const arg = mocks.runChapterGenerationAttempt.mock.calls[0][0]
-    expect(arg.attemptId).toBe(JOB.id)
-    expect(arg.jobContext).toBeTruthy()
-    expect(arg.jobContext.jobId).toBe(JOB.id)
-    expect(arg.jobContext.leaseId).toBe('lease-1')
-    expect(arg.jobContext.signal).toBeInstanceOf(AbortSignal)
+    expect(arg.triggerChoiceId).toBeNull()
+    expect(arg.jobContext.triggerChoiceId).toBeNull()
   })
 
   it('retryable inner failure → finish RETRY_WAIT (not success)', async () => {

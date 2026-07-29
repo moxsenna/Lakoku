@@ -31,6 +31,7 @@ export type GenerationJobExecutionContext = {
   attemptNumber: number
   correlationId: string
   generationKind: 'standard' | 'personalized'
+  triggerChoiceId?: string | null
   signal: AbortSignal
 }
 
@@ -47,6 +48,7 @@ export function claimedJobToPartialContext(
     attemptNumber: job.attemptCount,
     correlationId: job.correlationId,
     generationKind: job.generationKind,
+    triggerChoiceId: job.triggerChoiceId,
     signal,
   }
 }

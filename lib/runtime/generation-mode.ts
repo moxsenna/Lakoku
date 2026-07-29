@@ -81,6 +81,7 @@ export type ChapterGenerationDispatchInput = {
   chapterNumber: number
   correlationId: string
   attemptId?: string | null
+  triggerChoiceId?: string | null
   /**
    * When present (worker path), generators reuse the job lease and publish via
    * fenced publishGenerationJobChapterV2. Propagates AbortSignal.
@@ -120,6 +121,7 @@ export async function runChapterGenerationAttempt(
       chapterNumber: input.chapterNumber,
       correlationId: input.correlationId,
       attemptId,
+      ...('triggerChoiceId' in input ? { triggerChoiceId: input.triggerChoiceId } : {}),
       jobContext,
     })
     return { ok: true, result, mode: 'personalized_ai' }

@@ -216,6 +216,57 @@ afterEach(() => {
 })
 
 describe('continuePersonalizedGeneration', () => {
+  it('keeps omitted triggerChoiceId absent from generator input', async () => {
+    const { continuePersonalizedGeneration } = await import(
+      '@/lib/api/generation-continuation.server'
+    )
+
+    await continuePersonalizedGeneration({
+      storyId: `${storyId}:omitted`,
+      userId,
+      correlationId,
+      chapterNumber: 2,
+    })
+
+    const generationArg = mocks.generateNextPersonalizedChapter.mock.calls[0][0]
+    expect(generationArg).not.toHaveProperty('triggerChoiceId')
+  })
+
+  it('preserves explicit null triggerChoiceId as a present property', async () => {
+    const { continuePersonalizedGeneration } = await import(
+      '@/lib/api/generation-continuation.server'
+    )
+
+    await continuePersonalizedGeneration({
+      storyId: `${storyId}:null`,
+      userId,
+      correlationId,
+      chapterNumber: 2,
+      triggerChoiceId: null,
+    })
+
+    const generationArg = mocks.generateNextPersonalizedChapter.mock.calls[0][0]
+    expect(generationArg).toHaveProperty('triggerChoiceId', null)
+  })
+
+  it('preserves exact string triggerChoiceId', async () => {
+    const { continuePersonalizedGeneration } = await import(
+      '@/lib/api/generation-continuation.server'
+    )
+
+    await continuePersonalizedGeneration({
+      storyId: `${storyId}:exact`,
+      userId,
+      correlationId,
+      chapterNumber: 2,
+      triggerChoiceId: 'choice-A',
+    })
+
+    expect(mocks.generateNextPersonalizedChapter).toHaveBeenCalledWith(
+      expect.objectContaining({ triggerChoiceId: 'choice-A' }),
+    )
+  })
+
   it('returns nextChapterReady true when generation finishes within wait window', async () => {
     mocks.generateNextPersonalizedChapter.mockResolvedValue(publishedResult(2))
     const { continuePersonalizedGeneration, CONTINUATION_WAIT_MS } = await import(

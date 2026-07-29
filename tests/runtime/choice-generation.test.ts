@@ -569,6 +569,76 @@ describe('Phase 1 — choice-generation module unit tests', () => {
       expect(ctx.lockedEndingKey).toBe('ending-truth')
     })
 
+    it.each([
+      { triggerChoiceId: null, label: 'explicit null' },
+      { triggerChoiceId: 'choice-missing', label: 'unmatched explicit ID' },
+    ])('$label keeps previousChoice null instead of falling back to latest', async ({ triggerChoiceId }) => {
+      const { choiceNarrativeContextFromReader } = await import(
+        '@/lib/runtime/choice-context'
+      )
+      const ctx = choiceNarrativeContextFromReader({
+        route_state: {},
+        choice_history: [
+          {
+            chapterNumber: 2,
+            choiceId: 'choice-A',
+            label: 'Choice A',
+            consequence: [],
+            effectSummary: {
+              truth: 0,
+              risk: 0,
+              secrecy: 0,
+              empathy: 0,
+              flagsSet: [],
+            },
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+          {
+            chapterNumber: 3,
+            choiceId: 'choice-B',
+            label: 'Choice B',
+            consequence: [],
+            effectSummary: {
+              truth: 0,
+              risk: 0,
+              secrecy: 0,
+              empathy: 0,
+              flagsSet: [],
+            },
+            createdAt: '2026-01-02T00:00:00.000Z',
+          },
+        ],
+        triggerChoiceId,
+      })
+      expect(ctx.previousChoice).toBeNull()
+    })
+
+    it('omitted trigger choice retains legacy latest-history fallback', async () => {
+      const { choiceNarrativeContextFromReader } = await import(
+        '@/lib/runtime/choice-context'
+      )
+      const ctx = choiceNarrativeContextFromReader({
+        route_state: {},
+        choice_history: [
+          {
+            chapterNumber: 3,
+            choiceId: 'choice-B',
+            label: 'Choice B',
+            consequence: [],
+            effectSummary: {
+              truth: 0,
+              risk: 0,
+              secrecy: 0,
+              empathy: 0,
+              flagsSet: [],
+            },
+            createdAt: '2026-01-02T00:00:00.000Z',
+          },
+        ],
+      })
+      expect(ctx.previousChoice?.choiceId).toBe('choice-B')
+    })
+
     it('buildChoiceBranch receives non-empty standard narrative context when provided', async () => {
       const { buildChoiceBranch } = await import('@/lib/runtime/choice-generation')
       const generateChoiceBranch = vi.fn(async () => mockBranch(12))

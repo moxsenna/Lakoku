@@ -203,6 +203,7 @@ export async function executeClaimedJob(
         chapterNumber: job.chapterNumber,
         correlationId: job.correlationId,
         attemptId: job.id,
+        triggerChoiceId: job.triggerChoiceId,
         jobContext,
       })
     } catch (err) {

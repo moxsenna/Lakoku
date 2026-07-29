@@ -131,7 +131,7 @@ export interface PersonalizedGenerateInput {
   userId: string
   chapterNumber: number
   correlationId: string
-  triggerChoiceId?: string
+  triggerChoiceId?: string | null
   jobId?: string
   attemptNumber?: number
   /** Durable attempt id (job id on worker path). */
@@ -296,18 +296,6 @@ function resolveBlueprint(
   } catch {
     return null
   }
-}
-
-function previousChoiceFrom(
-  history: ChoiceHistoryEntry[],
-  triggerChoiceId: string | undefined,
-): ChoiceHistoryEntry | null {
-  if (!history.length) return null
-  if (triggerChoiceId) {
-    const match = [...history].reverse().find((entry) => entry.choiceId === triggerChoiceId)
-    if (match) return match
-  }
-  return history[history.length - 1] ?? null
 }
 
 /** Build ChoiceBuildDeps from PersonalizedGenerationDeps for the shared seam. */
@@ -668,16 +656,16 @@ async function generateNextPersonalizedChapterInner(
     }
 
     // Phase 3: same ChoiceNarrativeContext semantics as standard flow.
-    const narrativeContext = choiceNarrativeContextFromReader({
+    const readerContextInput = {
       route_state: reader.route_state,
       choice_history: reader.choice_history,
       locked_ending_key: reader.locked_ending_key,
-      triggerChoiceId,
-    })
+      ...('triggerChoiceId' in input ? { triggerChoiceId } : {}),
+    }
+    const narrativeContext = choiceNarrativeContextFromReader(readerContextInput)
     const routeState: RouteState = narrativeContext.routeState
     const choiceHistory = narrativeContext.choiceHistory
-    const previousChoice =
-      narrativeContext.previousChoice ?? previousChoiceFrom(choiceHistory, triggerChoiceId)
+    const previousChoice = narrativeContext.previousChoice
 
     const brief = d.buildChapterBrief({
       storyContract: contract,

@@ -9,7 +9,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(45);
+select no_plan();
 
 -- generation_jobs_enforce_state_v1 requires new jobs to be inserted as QUEUED
 -- (attempt_count 0, no ownership) and only reach RUNNING via update carrying full
@@ -113,7 +113,7 @@ insert into public.chapter_generation_checkpoints (
 ) values (
   'test:v4-fn', 10, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
   (select correlation_id from public.generation_jobs where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
-  'PROSE_READY', 'Test Chapter', '["Paragraph one."]'::jsonb,
+  'RUNNING_CHOICES', 'Test Chapter', '["Paragraph one."]'::jsonb,
   'fp123456789012345678901234567890',
   '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
   2, 5, 2, 'dir1234567890123456789012345678', 'personalized', 2, 2,
@@ -147,6 +147,20 @@ insert into public.generation_leases (
   'cccccccc-cccc-cccc-cccc-cccccccccccc',
   (select claim_token from public.generation_jobs where id = 'cccccccc-cccc-cccc-cccc-cccccccccccc')
 );
+
+insert into public.chapter_generation_checkpoints (
+ story_id,chapter_number,attempt_id,correlation_id,status,title,paragraphs_json,prose_fingerprint,
+ audit_signals_json,audit_signals_version,canon_version,blueprint_version,direction_fingerprint,
+ generation_mode,generation_policy_version,prompt_contract_version,job_id,job_attempt_number,
+ checkpoint_schema_version,prose_attempt_count,choice_attempt_count,expires_at
+) values (
+ 'test:v4-std',5,'cccccccc-cccc-cccc-cccc-cccccccccccc',
+ (select correlation_id from public.generation_jobs where id='cccccccc-cccc-cccc-cccc-cccccccccccc'),
+ 'RUNNING_CHOICES','Standard Ch 5','["Standard prose."]','std-fp',null,null,1,1,'std-direction',
+ 'standard',1,1,'cccccccc-cccc-cccc-cccc-cccccccccccc',1,2,1,1,clock_timestamp()+interval '24 hours'
+);
+select is((select attempt_id from public.chapter_generation_checkpoints where story_id='test:v4-std'),'cccccccc-cccc-cccc-cccc-cccccccccccc'::uuid,'standard checkpoint attempt_id equals job ID');
+select is((select job_id from public.chapter_generation_checkpoints where story_id='test:v4-std'),'cccccccc-cccc-cccc-cccc-cccccccccccc'::uuid,'standard checkpoint job_id equals job ID');
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- V4 function exists with correct signature
@@ -275,7 +289,7 @@ select throws_ok($$
     'test:v4-std', 5, 'Title', '["P"]'::jsonb, 'Prompt?', '[]'::jsonb, '[]'::jsonb,
     null, null, '[{"debtId":"x","closureForm":"RESOLVED"}]'::jsonb
   )
-$$, '22023', null, 'standard mode rejects closures');
+$$, '22023', 'INVALID_CLOSURE_PAYLOAD', 'standard mode rejects closures');
 
 select throws_ok($$
   select public.publish_generation_job_chapter_v4(
@@ -295,7 +309,7 @@ select throws_ok($$
     'test:v4-fn', 10, 'Title', '["P"]'::jsonb, 'Prompt?', '[]'::jsonb, '[]'::jsonb,
     null, null, '[{"debtId":"main_mystery"}]'::jsonb
   )
-$$, '22023', null, 'INVALID_CLOSURE_PAYLOAD: missing closureForm');
+$$, '22023', 'INVALID_CLOSURE_PAYLOAD', 'INVALID_CLOSURE_PAYLOAD: missing closureForm');
 
 select throws_ok($$
   select public.publish_generation_job_chapter_v4(
@@ -305,7 +319,7 @@ select throws_ok($$
     'test:v4-fn', 10, 'Title', '["P"]'::jsonb, 'Prompt?', '[]'::jsonb, '[]'::jsonb,
     null, null, '[{"debtId":"d","closureForm":"RESOLVED"},{"debtId":"d","closureForm":"RESOLVED"}]'::jsonb
   )
-$$, '22023', null, 'INVALID_CLOSURE_PAYLOAD: duplicate debtId');
+$$, '22023', 'INVALID_CLOSURE_PAYLOAD', 'INVALID_CLOSURE_PAYLOAD: duplicate debtId');
 
 -- CHECKPOINT_INVALID_STATE: EXPIRED
 update public.chapter_generation_checkpoints set status = 'EXPIRED'
@@ -318,7 +332,7 @@ select throws_ok($$
     'test:v4-fn', 10, 'Title', '["P"]'::jsonb, 'Prompt?', '[]'::jsonb, '[]'::jsonb,
     null, null, '[]'::jsonb
   )
-$$, 'P0001', null, 'CHECKPOINT_INVALID_STATE: EXPIRED');
+$$, 'P0001', 'PROVENANCE_CONFLICT', 'CHECKPOINT_INVALID_STATE: EXPIRED');
 update public.chapter_generation_checkpoints set status = 'PROSE_READY'
 where story_id = 'test:v4-fn' and chapter_number = 10;
 
@@ -333,7 +347,7 @@ select throws_ok($$
     'test:v4-fn', 10, 'Title', '["P"]'::jsonb, 'Prompt?', '[]'::jsonb, '[]'::jsonb,
     null, null, '[]'::jsonb
   )
-$$, 'P0001', null, 'CHECKPOINT_ATTEMPT_AHEAD');
+$$, 'P0001', 'PROVENANCE_CONFLICT', 'CHECKPOINT_ATTEMPT_AHEAD');
 update public.chapter_generation_checkpoints set job_attempt_number = 1
 where story_id = 'test:v4-fn' and chapter_number = 10;
 
@@ -425,18 +439,134 @@ select throws_ok($$
     'test:v4-fn', 10, 'Title', '["P"]'::jsonb, 'Prompt?', '[]'::jsonb, '[]'::jsonb,
     null, null, '[]'::jsonb
   )
-$$, 'P0001', null, 'CHECKPOINT_CLOSURE_PAYLOAD_MISMATCH');
+$$, 'P0001', 'CHECKPOINT_CLOSURE_PAYLOAD_MISMATCH', 'CHECKPOINT_CLOSURE_PAYLOAD_MISMATCH');
 update public.chapter_generation_checkpoints
 set audit_signals_json = '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb
 where story_id = 'test:v4-fn' and chapter_number = 10;
 
+-- Common binding provenance rejection matrix. Each rejection must leave all publication state unchanged.
+create or replace function pg_temp.v4_state(p_story text, p_job uuid, p_lease uuid)
+returns text language sql stable as $$
+ select row(
+  (select count(*) from public.chapters where story_id=p_story),
+  (select coalesce(sum(jsonb_array_length(coalesce(choices,'[]'::jsonb))),0) from public.chapters where story_id=p_story),
+  (select count(*) from public.choice_outcomes where story_id=p_story),
+  (select count(*) from public.reader_plot_debt_closures where story_id=p_story),
+  (select status from public.chapter_generation_checkpoints where story_id=p_story),
+  (select status from public.generation_jobs where id=p_job),
+  (select status from public.generation_leases where id=p_lease)
+ )::text
+$$;
+create temporary table v4_rejection_snapshot(state text) on commit drop;
+
+-- Ending payload validation must reject before any publication mutation.
+create or replace function pg_temp.assert_v4_unchanged(p_label text)
+returns setof text language sql stable as $$
+ select is(pg_temp.v4_state('test:v4-std','cccccccc-cccc-cccc-cccc-cccccccccccc','dddddddd-dddd-dddd-dddd-dddddddddddd'),
+   (select state from v4_rejection_snapshot limit 1), p_label)
+$$;
+
+insert into v4_rejection_snapshot select pg_temp.v4_state('test:v4-std','cccccccc-cccc-cccc-cccc-cccccccccccc','dddddddd-dddd-dddd-dddd-dddddddddddd');
+select throws_ok($select$select public.publish_generation_job_chapter_v4('cccccccc-cccc-cccc-cccc-cccccccccccc','v4-test-worker',(select claim_token from public.generation_jobs where id='cccccccc-cccc-cccc-cccc-cccccccccccc'),'dddddddd-dddd-dddd-dddd-dddddddddddd','test:v4-std',5,'Title Valid','["Paragraph valid."]','What happens next?','[]','[]','ending:key','Ending Name','[]')$select$,'22023','INVALID_ENDING_LOCK_TARGET','standard ending payload rejected');
+select * from pg_temp.assert_v4_unchanged('standard ending rejection leaves all state unchanged'); truncate v4_rejection_snapshot;
+
+insert into v4_rejection_snapshot select pg_temp.v4_state('test:v4-fn','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+select throws_ok($select$select public.publish_generation_job_chapter_v4('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','v4-test-worker',(select claim_token from public.generation_jobs where id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','test:v4-fn',10,'Title Valid','["Paragraph valid."]','What happens next?','[]','[]','ending:key','Ending Name','[]')$select$,'22023','INVALID_ENDING_LOCK_TARGET','personalized non-45 ending payload rejected');
+select is(pg_temp.v4_state('test:v4-fn','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'),(select state from v4_rejection_snapshot limit 1),'personalized non-45 rejection leaves all state unchanged'); truncate v4_rejection_snapshot;
+
+insert into v4_rejection_snapshot select pg_temp.v4_state('test:v4-std','cccccccc-cccc-cccc-cccc-cccccccccccc','dddddddd-dddd-dddd-dddd-dddddddddddd');
+select throws_ok($select$select public.publish_generation_job_chapter_v4('cccccccc-cccc-cccc-cccc-cccccccccccc','v4-test-worker',(select claim_token from public.generation_jobs where id='cccccccc-cccc-cccc-cccc-cccccccccccc'),'dddddddd-dddd-dddd-dddd-dddddddddddd','test:v4-std',5,'Title Valid','["Paragraph valid."]','What happens next?','[]','[]','ending:key',null,'[]')$select$,'22023','INVALID_ENDING_LOCK_PAYLOAD','key-only ending payload rejected');
+select * from pg_temp.assert_v4_unchanged('key-only rejection leaves all state unchanged'); truncate v4_rejection_snapshot;
+
+insert into v4_rejection_snapshot select pg_temp.v4_state('test:v4-std','cccccccc-cccc-cccc-cccc-cccccccccccc','dddddddd-dddd-dddd-dddd-dddddddddddd');
+select throws_ok($select$select public.publish_generation_job_chapter_v4('cccccccc-cccc-cccc-cccc-cccccccccccc','v4-test-worker',(select claim_token from public.generation_jobs where id='cccccccc-cccc-cccc-cccc-cccccccccccc'),'dddddddd-dddd-dddd-dddd-dddddddddddd','test:v4-std',5,'Title Valid','["Paragraph valid."]','What happens next?','[]','[]',null,'Ending Name','[]')$select$,'22023','INVALID_ENDING_LOCK_PAYLOAD','name-only ending payload rejected');
+select * from pg_temp.assert_v4_unchanged('name-only rejection leaves all state unchanged'); truncate v4_rejection_snapshot;
+
+-- Foreign attempt_id.
+insert into v4_rejection_snapshot select pg_temp.v4_state('test:v4-std','cccccccc-cccc-cccc-cccc-cccccccccccc','dddddddd-dddd-dddd-dddd-dddddddddddd');
+update public.chapter_generation_checkpoints set attempt_id='99999999-9999-4999-8999-999999999999' where story_id='test:v4-std';
+select throws_ok($$select public.publish_generation_job_chapter_v4('cccccccc-cccc-cccc-cccc-cccccccccccc','v4-test-worker',(select claim_token from public.generation_jobs where id='cccccccc-cccc-cccc-cccc-cccccccccccc'),'dddddddd-dddd-dddd-dddd-dddddddddddd','test:v4-std',5,'Title Valid','["Paragraph valid."]','What happens next?','[]','[]',null,null,'[]')$$,'P0001','PROVENANCE_CONFLICT','foreign attempt_id returns PROVENANCE_CONFLICT');
+update public.chapter_generation_checkpoints set attempt_id='cccccccc-cccc-cccc-cccc-cccccccccccc' where story_id='test:v4-std';
+select is(pg_temp.v4_state('test:v4-std','cccccccc-cccc-cccc-cccc-cccccccccccc','dddddddd-dddd-dddd-dddd-dddddddddddd'),(select state from v4_rejection_snapshot limit 1),'foreign attempt rejection leaves all state unchanged'); truncate v4_rejection_snapshot;
+
+-- Foreign job_id.
+insert into v4_rejection_snapshot select pg_temp.v4_state('test:v4-std','cccccccc-cccc-cccc-cccc-cccccccccccc','dddddddd-dddd-dddd-dddd-dddddddddddd');
+update public.chapter_generation_checkpoints set job_id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' where story_id='test:v4-std';
+select throws_ok($$select public.publish_generation_job_chapter_v4('cccccccc-cccc-cccc-cccc-cccccccccccc','v4-test-worker',(select claim_token from public.generation_jobs where id='cccccccc-cccc-cccc-cccc-cccccccccccc'),'dddddddd-dddd-dddd-dddd-dddddddddddd','test:v4-std',5,'Title Valid','["Paragraph valid."]','What happens next?','[]','[]',null,null,'[]')$$,'P0001','PROVENANCE_CONFLICT','foreign job_id returns PROVENANCE_CONFLICT');
+update public.chapter_generation_checkpoints set job_id='cccccccc-cccc-cccc-cccc-cccccccccccc' where story_id='test:v4-std';
+select is(pg_temp.v4_state('test:v4-std','cccccccc-cccc-cccc-cccc-cccccccccccc','dddddddd-dddd-dddd-dddd-dddddddddddd'),(select state from v4_rejection_snapshot limit 1),'foreign job rejection leaves all state unchanged'); truncate v4_rejection_snapshot;
+
+-- Correlation, mode, and attempt-ahead provenance.
+insert into v4_rejection_snapshot select pg_temp.v4_state('test:v4-std','cccccccc-cccc-cccc-cccc-cccccccccccc','dddddddd-dddd-dddd-dddd-dddddddddddd');
+update public.chapter_generation_checkpoints set correlation_id=gen_random_uuid() where story_id='test:v4-std';
+select throws_ok($$select public.publish_generation_job_chapter_v4('cccccccc-cccc-cccc-cccc-cccccccccccc','v4-test-worker',(select claim_token from public.generation_jobs where id='cccccccc-cccc-cccc-cccc-cccccccccccc'),'dddddddd-dddd-dddd-dddd-dddddddddddd','test:v4-std',5,'Title Valid','["Paragraph valid."]','What happens next?','[]','[]',null,null,'[]')$$,'P0001','PROVENANCE_CONFLICT','correlation mismatch returns PROVENANCE_CONFLICT');
+update public.chapter_generation_checkpoints set correlation_id=(select correlation_id from public.generation_jobs where id='cccccccc-cccc-cccc-cccc-cccccccccccc') where story_id='test:v4-std';
+select is(pg_temp.v4_state('test:v4-std','cccccccc-cccc-cccc-cccc-cccccccccccc','dddddddd-dddd-dddd-dddd-dddddddddddd'),(select state from v4_rejection_snapshot limit 1),'correlation rejection leaves all state unchanged'); truncate v4_rejection_snapshot;
+
+insert into v4_rejection_snapshot select pg_temp.v4_state('test:v4-std','cccccccc-cccc-cccc-cccc-cccccccccccc','dddddddd-dddd-dddd-dddd-dddddddddddd');
+update public.chapter_generation_checkpoints set generation_mode='personalized' where story_id='test:v4-std';
+select throws_ok($$select public.publish_generation_job_chapter_v4('cccccccc-cccc-cccc-cccc-cccccccccccc','v4-test-worker',(select claim_token from public.generation_jobs where id='cccccccc-cccc-cccc-cccc-cccccccccccc'),'dddddddd-dddd-dddd-dddd-dddddddddddd','test:v4-std',5,'Title Valid','["Paragraph valid."]','What happens next?','[]','[]',null,null,'[]')$$,'P0001','PROVENANCE_CONFLICT','mode mismatch returns PROVENANCE_CONFLICT');
+update public.chapter_generation_checkpoints set generation_mode='standard' where story_id='test:v4-std';
+select is(pg_temp.v4_state('test:v4-std','cccccccc-cccc-cccc-cccc-cccccccccccc','dddddddd-dddd-dddd-dddd-dddddddddddd'),(select state from v4_rejection_snapshot limit 1),'mode rejection leaves all state unchanged'); truncate v4_rejection_snapshot;
+
+insert into v4_rejection_snapshot select pg_temp.v4_state('test:v4-std','cccccccc-cccc-cccc-cccc-cccccccccccc','dddddddd-dddd-dddd-dddd-dddddddddddd');
+update public.chapter_generation_checkpoints set job_attempt_number=99 where story_id='test:v4-std';
+select throws_ok($$select public.publish_generation_job_chapter_v4('cccccccc-cccc-cccc-cccc-cccccccccccc','v4-test-worker',(select claim_token from public.generation_jobs where id='cccccccc-cccc-cccc-cccc-cccccccccccc'),'dddddddd-dddd-dddd-dddd-dddddddddddd','test:v4-std',5,'Title Valid','["Paragraph valid."]','What happens next?','[]','[]',null,null,'[]')$$,'P0001','PROVENANCE_CONFLICT','attempt ahead returns PROVENANCE_CONFLICT');
+update public.chapter_generation_checkpoints set job_attempt_number=1 where story_id='test:v4-std';
+select is(pg_temp.v4_state('test:v4-std','cccccccc-cccc-cccc-cccc-cccccccccccc','dddddddd-dddd-dddd-dddd-dddddddddddd'),(select state from v4_rejection_snapshot limit 1),'attempt-ahead rejection leaves all state unchanged'); truncate v4_rejection_snapshot;
+
+-- Caller target mismatch rejects before mutation.
+insert into v4_rejection_snapshot select pg_temp.v4_state('test:v4-std','cccccccc-cccc-cccc-cccc-cccccccccccc','dddddddd-dddd-dddd-dddd-dddddddddddd');
+select throws_ok($$select public.publish_generation_job_chapter_v4('cccccccc-cccc-cccc-cccc-cccccccccccc','v4-test-worker',(select claim_token from public.generation_jobs where id='cccccccc-cccc-cccc-cccc-cccccccccccc'),'dddddddd-dddd-dddd-dddd-dddddddddddd','wrong-story',5,'Title Valid','["Paragraph valid."]','What happens next?','[]','[]',null,null,'[]')$$,'P0001','GENERATION_JOB_TARGET_MISMATCH','target mismatch returns GENERATION_JOB_TARGET_MISMATCH');
+select is(pg_temp.v4_state('test:v4-std','cccccccc-cccc-cccc-cccc-cccccccccccc','dddddddd-dddd-dddd-dddd-dddddddddddd'),(select state from v4_rejection_snapshot limit 1),'target rejection leaves all state unchanged'); truncate v4_rejection_snapshot;
+
 -- ═══════════════════════════════════════════════════════════════════════════════
+-- Common standard checkpoint binding.
+-- Standard accepted pre-publication states use savepoints so one exact fixture proves each state.
+update public.chapter_generation_checkpoints set status='PROSE_READY' where story_id='test:v4-std';
+savepoint standard_prose_ready;
+select lives_ok($$select public.publish_generation_job_chapter_v4('cccccccc-cccc-cccc-cccc-cccccccccccc','v4-test-worker',(select claim_token from public.generation_jobs where id='cccccccc-cccc-cccc-cccc-cccccccccccc'),'dddddddd-dddd-dddd-dddd-dddddddddddd','test:v4-std',5,'Standard Five','["Standard prose."]','What happens next?','[{"id":"a","label":"Take path A"},{"id":"b","label":"Take path B"}]','[{"choiceId":"a","consequence":["A"],"nextChapterNumber":6,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"},{"choiceId":"b","consequence":["B"],"nextChapterNumber":6,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"}]',null,null,'[]')$$,'standard PROSE_READY accepted');
+rollback to savepoint standard_prose_ready;
+update public.chapter_generation_checkpoints set status='READY_TO_PUBLISH' where story_id='test:v4-std';
+savepoint standard_ready_to_publish;
+select lives_ok($$select public.publish_generation_job_chapter_v4('cccccccc-cccc-cccc-cccc-cccccccccccc','v4-test-worker',(select claim_token from public.generation_jobs where id='cccccccc-cccc-cccc-cccc-cccccccccccc'),'dddddddd-dddd-dddd-dddd-dddddddddddd','test:v4-std',5,'Standard Five','["Standard prose."]','What happens next?','[{"id":"a","label":"Take path A"},{"id":"b","label":"Take path B"}]','[{"choiceId":"a","consequence":["A"],"nextChapterNumber":6,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"},{"choiceId":"b","consequence":["B"],"nextChapterNumber":6,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"}]',null,null,'[]')$$,'standard READY_TO_PUBLISH accepted');
+rollback to savepoint standard_ready_to_publish;
+update public.chapter_generation_checkpoints set status='RUNNING_CHOICES' where story_id='test:v4-std';
+
+update public.chapter_generation_checkpoints set audit_signals_json='{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}',audit_signals_version=2 where story_id='test:v4-std';
+select throws_ok($$select public.publish_generation_job_chapter_v4('cccccccc-cccc-cccc-cccc-cccccccccccc','v4-test-worker',(select claim_token from public.generation_jobs where id='cccccccc-cccc-cccc-cccc-cccccccccccc'),'dddddddd-dddd-dddd-dddd-dddddddddddd','test:v4-std',5,'Title Valid','["Paragraph valid."]','What happens next?','[]','[]',null,null,'[]')$$,'P0001','CHECKPOINT_INVALID_STATE','standard non-null audit returns CHECKPOINT_INVALID_STATE');
+update public.chapter_generation_checkpoints set audit_signals_json=null,audit_signals_version=null where story_id='test:v4-std';
+select lives_ok($$select public.publish_generation_job_chapter_v4('cccccccc-cccc-cccc-cccc-cccccccccccc','v4-test-worker',(select claim_token from public.generation_jobs where id='cccccccc-cccc-cccc-cccc-cccccccccccc'),'dddddddd-dddd-dddd-dddd-dddddddddddd','test:v4-std',5,'Standard Five','["Standard prose."]','What happens next?','[{"id":"a","label":"Take path A"},{"id":"b","label":"Take path B"}]','[{"choiceId":"a","consequence":["A"],"nextChapterNumber":6,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"},{"choiceId":"b","consequence":["B"],"nextChapterNumber":6,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"}]',null,null,'[]')$$,'standard RUNNING_CHOICES publication succeeds');
+select is((select count(*)::integer from public.chapters where story_id='test:v4-std'),1,'standard chapter published once');
+select is((select status from public.chapter_generation_checkpoints where story_id='test:v4-std'),'PUBLISHED','standard checkpoint PUBLISHED');
+select is((select status from public.generation_jobs where id='cccccccc-cccc-cccc-cccc-cccccccccccc'),'SUCCEEDED','standard job SUCCEEDED');
+select is((select status from public.generation_leases where id='dddddddd-dddd-dddd-dddd-dddddddddddd'),'RELEASED','standard lease RELEASED');
+select lives_ok($$select public.publish_generation_job_chapter_v4('cccccccc-cccc-cccc-cccc-cccccccccccc','v4-test-worker',(select claim_token from public.generation_jobs where id='cccccccc-cccc-cccc-cccc-cccccccccccc'),'dddddddd-dddd-dddd-dddd-dddddddddddd','test:v4-std',5,'Standard Five','["Standard prose."]','What happens next?','[{"id":"a","label":"Take path A"},{"id":"b","label":"Take path B"}]','[{"choiceId":"a","consequence":["A"],"nextChapterNumber":6,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"},{"choiceId":"b","consequence":["B"],"nextChapterNumber":6,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"}]',null,null,'[]')$$,'PUBLISHED replay succeeds');
+select is((select count(*)::integer from public.chapters where story_id='test:v4-std'),1,'standard replay keeps one chapter');
+
 -- Happy path: personalized publication + closure ledger atomicity
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 update public.chapter_generation_checkpoints
-set audit_signals_json = '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[{"debtId":"main_mystery","closureForm":"RESOLVED"}]}'::jsonb
+set audit_signals_json = '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[{"debtId":"main_mystery","closureForm":"RESOLVED"}]}'::jsonb,
+    status = 'PROSE_READY'
 where story_id = 'test:v4-fn' and chapter_number = 10;
+savepoint personalized_prose_ready;
+select lives_ok($$select public.publish_generation_job_chapter_v4(
+ 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','v4-test-worker',(select claim_token from public.generation_jobs where id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+ 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','test:v4-fn',10,'Bab Sepuluh','["Raka membuka pintu gudang dengan hati-hati."]','Apa yang Raka lakukan sekarang?',
+ '[{"id":"open-door","label":"Buka pintu arsip"},{"id":"stop-guard","label":"Hadang penjaga bertongkat"}]',
+ '[{"choiceId":"open-door","consequence":["Pintu arsip terbuka."],"nextChapterNumber":11,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"},{"choiceId":"stop-guard","consequence":["Penjaga berhenti."],"nextChapterNumber":11,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"}]',null,null,'[{"closureForm":"RESOLVED","debtId":"main_mystery"}]')$$,'personalized PROSE_READY accepted with canonical closure order');
+rollback to savepoint personalized_prose_ready;
+update public.chapter_generation_checkpoints set status='READY_TO_PUBLISH' where story_id='test:v4-fn';
+savepoint personalized_ready_to_publish;
+select lives_ok($$select public.publish_generation_job_chapter_v4(
+ 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','v4-test-worker',(select claim_token from public.generation_jobs where id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+ 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','test:v4-fn',10,'Bab Sepuluh','["Raka membuka pintu gudang dengan hati-hati."]','Apa yang Raka lakukan sekarang?',
+ '[{"id":"open-door","label":"Buka pintu arsip"},{"id":"stop-guard","label":"Hadang penjaga bertongkat"}]',
+ '[{"choiceId":"open-door","consequence":["Pintu arsip terbuka."],"nextChapterNumber":11,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"},{"choiceId":"stop-guard","consequence":["Penjaga berhenti."],"nextChapterNumber":11,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"}]',null,null,'[{"debtId":"main_mystery","closureForm":"RESOLVED"}]')$$,'personalized READY_TO_PUBLISH accepted');
+rollback to savepoint personalized_ready_to_publish;
+update public.chapter_generation_checkpoints set status='RUNNING_CHOICES' where story_id='test:v4-fn';
 
 select lives_ok($$
   select public.publish_generation_job_chapter_v4(
@@ -630,6 +760,8 @@ select is((select count(*)::integer from public.reader_plot_debt_closures where 
 select is((select status from public.chapter_generation_checkpoints where story_id = 'test:v4-atomic' and chapter_number = 20), 'PROSE_READY', 'rollback A: checkpoint still PROSE_READY');
 select is((select status from public.generation_jobs where id = 'aa000000-0000-0000-0000-0000000000aa'), 'RUNNING', 'rollback A: job still RUNNING');
 select is((select status from public.generation_leases where id = 'bb000000-0000-0000-0000-0000000000bb'), 'ACTIVE', 'rollback A: lease still ACTIVE');
+select is((select coalesce(sum(jsonb_array_length(coalesce(choices,'[]'::jsonb))),0)::integer from public.chapters where story_id='test:v4-atomic'),0,'rollback A: zero choice rows');
+select is((select count(*)::integer from public.choice_outcomes where story_id='test:v4-atomic'),0,'rollback A: zero outcome rows');
 
 drop trigger test_block_job_succeeded_trg on public.generation_jobs;
 drop function test_block_job_succeeded();
@@ -668,6 +800,8 @@ select is((select count(*)::integer from public.reader_plot_debt_closures where 
 select is((select status from public.chapter_generation_checkpoints where story_id = 'test:v4-atomic' and chapter_number = 20), 'PROSE_READY', 'rollback B: checkpoint still PROSE_READY');
 select is((select status from public.generation_jobs where id = 'aa000000-0000-0000-0000-0000000000aa'), 'RUNNING', 'rollback B: job still RUNNING');
 select is((select status from public.generation_leases where id = 'bb000000-0000-0000-0000-0000000000bb'), 'ACTIVE', 'rollback B: lease still ACTIVE');
+select is((select coalesce(sum(jsonb_array_length(coalesce(choices,'[]'::jsonb))),0)::integer from public.chapters where story_id='test:v4-atomic'),0,'rollback B: zero choice rows');
+select is((select count(*)::integer from public.choice_outcomes where story_id='test:v4-atomic'),0,'rollback B: zero outcome rows');
 
 drop trigger test_block_checkpoint_transition_trg on public.chapter_generation_checkpoints;
 drop function test_block_checkpoint_transition();

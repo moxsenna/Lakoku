@@ -28,6 +28,7 @@ import {
 
 const CONTEXT = 'plot-debt V4 race'
 const CHAPTER = 10
+const ENDING_CHAPTER = 45
 const USER_ID = '00000000-0000-0000-0000-000000000001'
 
 async function verifyAdvisoryBarrierBlocked(
@@ -66,7 +67,7 @@ function check(value: unknown, message: string): asserts value {
   checkRace(value, CONTEXT, message)
 }
 
-function insertFixture(target: RaceTarget, label: string, storyIds: string[]): {
+function insertFixture(target: RaceTarget, label: string, storyIds: string[], chapter = CHAPTER): {
   storyId: string
   jobId: string
   leaseId: string
@@ -85,7 +86,7 @@ function insertFixture(target: RaceTarget, label: string, storyIds: string[]): {
     insert into public.stories (id, title, owner_user_id, visibility, story_mode, story_contract_version)
     values (:'story_id', 'V4 race', :'user_id'::uuid, 'private', 'personalized_ai', 1);
     insert into public.reader_states (user_id, story_id, status, current_chapter)
-    values (:'user_id'::uuid, :'story_id', 'BERJALAN', ${CHAPTER});
+    values (:'user_id'::uuid, :'story_id', 'BERJALAN', ${chapter});
     insert into public.story_generation_contracts (story_id, mode, total_chapters, plot_debts_json, story_contract_version)
     values (:'story_id', 'personalized_ai', 50,
       '[{"id":"main_mystery","question":"Q","introducedAt":1,"mustProgressBy":[12,32,45],"mustCloseBy":48,"status":"open"}]'::jsonb, 1);
@@ -94,11 +95,11 @@ function insertFixture(target: RaceTarget, label: string, storyIds: string[]): {
       status, attempt_count, max_attempts, available_at, deadline_at,
       correlation_id, publication_idempotency_key, story_contract_version
     ) values (
-      :'job_id'::uuid, :'story_id', ${CHAPTER}, :'user_id'::uuid, 'personalized',
+      :'job_id'::uuid, :'story_id', ${chapter}, :'user_id'::uuid, 'personalized',
       'QUEUED', 0, 4, clock_timestamp() - interval '1 minute',
       clock_timestamp() + interval '20 minutes',
       gen_random_uuid(),
-      'generation-job:' || :'job_id'::uuid::text || ':publish:' || ${CHAPTER},
+      'generation-job:' || :'job_id'::uuid::text || ':publish:' || ${chapter},
       1
     );
     update public.generation_jobs
@@ -109,7 +110,7 @@ function insertFixture(target: RaceTarget, label: string, storyIds: string[]): {
     insert into public.generation_leases (
       id, story_id, chapter_number, status, holder, expires_at, job_id, claim_token
     ) values (
-      :'lease_id'::uuid, :'story_id', ${CHAPTER}, 'ACTIVE', 'v4-test-worker',
+      :'lease_id'::uuid, :'story_id', ${chapter}, 'ACTIVE', 'v4-test-worker',
       clock_timestamp() + interval '5 minutes', :'job_id'::uuid, :'claim_token'::uuid
     );
     insert into public.chapter_generation_checkpoints (
@@ -122,7 +123,7 @@ function insertFixture(target: RaceTarget, label: string, storyIds: string[]): {
       prose_attempt_count, choice_attempt_count, expires_at,
       story_contract_version
     ) values (
-      :'story_id', ${CHAPTER}, :'job_id'::uuid,
+      :'story_id', ${chapter}, :'job_id'::uuid,
       (select correlation_id from public.generation_jobs where id = :'job_id'::uuid),
       'PROSE_READY', 'Race Chapter', '["Race paragraph."]'::jsonb,
       'race-fp-000000000000000000000000000000',
@@ -676,7 +677,7 @@ async function runRaceTests(): Promise<void> {
     // persist_ending_lock_v1 re-enters E2 (key 130600) reentrantly — must not conflict.
     // Both must complete within lock_timeout (no SQLSTATE 40P01).
     {
-      const fixture = insertFixture(target, 'ending-lock', storyIds)
+      const fixture = insertFixture(target, 'ending-lock', storyIds, ENDING_CHAPTER)
 
       // Create job B on same story, different chapter, no ending.
       // (B does not get an ACTIVE lease, since story allows at most one ACTIVE lease;
@@ -751,11 +752,11 @@ async function runRaceTests(): Promise<void> {
         select public.publish_generation_job_chapter_v4(
           '${fixture.jobId}'::uuid, 'v4-test-worker',
           '${fixture.claimToken}'::uuid, '${fixture.leaseId}'::uuid,
-          '${fixture.storyId}', ${CHAPTER},
+          '${fixture.storyId}', ${ENDING_CHAPTER},
           'Ending Chapter', '["Ending paragraph."]'::jsonb,
           'Apa yang dilakukan?',
           '[{"id":"open-door","label":"Buka pintu arsip"},{"id":"stop-guard","label":"Hadang penjaga bertongkat"}]'::jsonb,
-          '[{"choiceId":"open-door","consequence":["Pintu terbuka."],"nextChapterNumber":11,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"},{"choiceId":"stop-guard","consequence":["Penjaga berhenti."],"nextChapterNumber":11,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"}]'::jsonb,
+          '[{"choiceId":"open-door","consequence":["Pintu terbuka."],"nextChapterNumber":46,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"},{"choiceId":"stop-guard","consequence":["Penjaga berhenti."],"nextChapterNumber":46,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"}]'::jsonb,
           'ending:happy', 'Happy Ending', null::jsonb
         );
         select pg_advisory_xact_lock(120799);
@@ -831,9 +832,9 @@ async function runRaceTests(): Promise<void> {
       // Chapter 10 (A) published (A succeeded); chapter 11 (B) NOT published (B failed).
       const ch10Count = execLocalPsql(target, `
         select count(*)::text from public.chapters
-        where story_id = '${fixture.storyId}' and number = ${CHAPTER};
+        where story_id = '${fixture.storyId}' and number = ${ENDING_CHAPTER};
       `).trim()
-      check(ch10Count === '1', `P5: chapter 10 published exactly once (got: ${ch10Count})`)
+      check(ch10Count === '1', `P5: chapter 45 published exactly once (got: ${ch10Count})`)
       const ch11Count = execLocalPsql(target, `
         select count(*)::text from public.chapters
         where story_id = '${fixture.storyId}' and number = 11;

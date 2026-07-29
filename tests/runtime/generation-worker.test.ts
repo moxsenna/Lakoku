@@ -148,6 +148,39 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
     expect(finishArg.availableAt).toBeTruthy()
   })
 
+  it('TRANSIENT publication failure finishes RETRY_WAIT with approved retry payload', async () => {
+    mocks.runChapterGenerationAttempt.mockResolvedValueOnce({
+      ok: true,
+      mode: 'standard',
+      result: { ok: false, reason: 'TRANSIENT' },
+    })
+    const { runAlreadyClaimedGenerationJob } = await import('@/lib/runtime/generation-worker')
+
+    await expect(runAlreadyClaimedGenerationJob(JOB)).resolves.toMatchObject({
+      ok: false,
+      outcome: 'RETRY_WAIT',
+      reason: 'TRANSIENT',
+    })
+    expect(mocks.finishGenerationJobAttempt).toHaveBeenCalledWith({
+      jobId: JOB.id,
+      workerId: JOB.workerId,
+      claimToken: JOB.claimToken,
+      outcome: 'RETRY_WAIT',
+      availableAt: expect.any(String),
+      errorCode: 'TRANSIENT',
+      errorClass: 'RETRYABLE',
+      workflowPhase: 'GENERATOR',
+      providerId: null,
+      modelId: null,
+      startedAt: expect.any(String),
+      endedAt: expect.any(String),
+      elapsedMs: expect.any(Number),
+      leaseAgeMs: null,
+      leaseRemainingMs: null,
+      retryDecision: 'RETRY_BACKOFF',
+    })
+  })
+
   it('terminal inner failure → finish FAILED', async () => {
     mocks.runChapterGenerationAttempt.mockResolvedValueOnce({
       ok: true,
@@ -158,9 +191,45 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
     const res = await runAlreadyClaimedGenerationJob(JOB)
     expect(res.ok).toBe(false)
     if (!res.ok) expect(res.outcome).toBe('FAILED')
-    const finishArg = mocks.finishGenerationJobAttempt.mock.calls[0][0]
-    expect(finishArg.outcome).toBe('FAILED')
+    expect(mocks.finishGenerationJobAttempt).toHaveBeenCalledWith({
+      jobId: JOB.id,
+      workerId: JOB.workerId,
+      claimToken: JOB.claimToken,
+      outcome: 'FAILED',
+      availableAt: null,
+      errorCode: 'FAILED_REVIEW_REQUIRED',
+      errorClass: 'TERMINAL',
+      workflowPhase: 'GENERATOR',
+      providerId: null,
+      modelId: null,
+      startedAt: expect.any(String),
+      endedAt: expect.any(String),
+      elapsedMs: expect.any(Number),
+      leaseAgeMs: null,
+      leaseRemainingMs: null,
+      retryDecision: 'FAILED',
+    })
   })
+
+  it.each(['standard', 'personalized'] as const)(
+    '%s publication LEASE_HELD is ownership loss and never finishes claimed job',
+    async (generationKind) => {
+      mocks.runChapterGenerationAttempt.mockResolvedValueOnce({
+        ok: true,
+        mode: generationKind === 'standard' ? 'standard' : 'personalized_ai',
+        result: { ok: false, reason: 'LEASE_HELD' },
+      })
+      const { runAlreadyClaimedGenerationJob } = await import('@/lib/runtime/generation-worker')
+
+      await expect(runAlreadyClaimedGenerationJob({ ...JOB, generationKind })).resolves.toEqual({
+        ok: false,
+        outcome: 'OWNERSHIP_LOST',
+        jobId: JOB.id,
+        reason: 'LEASE_HELD',
+      })
+      expect(mocks.finishGenerationJobAttempt).not.toHaveBeenCalled()
+    },
+  )
 
   it('personalized final CHAPTER_EXISTS → ALREADY_DONE without finish', async () => {
     mocks.runChapterGenerationAttempt.mockResolvedValueOnce({

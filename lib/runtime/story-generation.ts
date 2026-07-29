@@ -8,7 +8,8 @@ import {
   type PublishResult,
 } from './lifecycle'
 import { NO_CREATIVE_DIRECTION_FINGERPRINT } from './chapter-generation-checkpoint.pure'
-import { GenerationJobError, type FencedCheckpointMutationResult } from './generation-jobs'
+import type { FencedCheckpointMutationResult } from './generation-jobs'
+import { classifyGenerationPublicationError } from './generation-job-error'
 import { withGenerationSlot } from './generation-concurrency'
 import {
   compileContext,
@@ -107,6 +108,7 @@ export type RealGenerateResult =
         | 'CHAPTER_EXISTS'
         | 'CANON_MISSING'
         | 'FAILED_REVIEW_REQUIRED'
+        | 'TRANSIENT'
         | 'CHOICE_GENERATION_FAILED'
         | 'CAPACITY_BUSY'
         | 'CAPACITY_TIMEOUT'
@@ -533,6 +535,7 @@ async function generateNextChapterRealInner(
           | 'LEASE_HELD'
           | 'CHAPTER_EXISTS'
           | 'FAILED_REVIEW_REQUIRED'
+          | 'TRANSIENT'
           | 'CAPACITY_TIMEOUT'
       }
 
@@ -578,21 +581,23 @@ async function generateNextChapterRealInner(
           jobId: published.jobId,
         }
       } catch (err) {
+        const classification = classifyGenerationPublicationError(err)
         const info = safeErrorInfo(err)
         console.error('GENERATION_FENCED_PUBLISH_FAILED', {
           storyId,
           chapterNumber,
           jobId: jobContext.jobId,
-          errorName: info.errorName,
-          errorMessage: info.errorMessage,
+          errorCode: classification.code,
+          errorName: info.errorName.slice(0, 100),
         })
-        if (err instanceof GenerationJobError) {
-          if (err.code === 'CHAPTER_EXISTS') {
-            return { ok: false, reason: 'CHAPTER_EXISTS' }
-          }
-          if (err.code === 'GENERATION_JOB_OWNERSHIP_LOST' || err.code === 'LEASE_HELD') {
-            return { ok: false, reason: 'LEASE_HELD' }
-          }
+        if (classification.kind === 'chapter_exists') {
+          return { ok: false, reason: 'CHAPTER_EXISTS' }
+        }
+        if (classification.kind === 'ownership_lost') {
+          return { ok: false, reason: 'LEASE_HELD' }
+        }
+        if (classification.kind === 'transient') {
+          return { ok: false, reason: 'TRANSIENT' }
         }
         return { ok: false, reason: 'FAILED_REVIEW_REQUIRED' }
       }

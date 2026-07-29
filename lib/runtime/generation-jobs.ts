@@ -2,6 +2,11 @@ import 'server-only'
 import { z } from 'zod'
 import { createAdminClient } from '@lakoku/db'
 import {
+  GENERATION_JOB_RPC_ERROR_TOKENS,
+  GenerationJobError,
+  type GenerationJobErrorCode,
+} from './generation-job-error'
+import {
   FencedPublicationIdentitySchema,
   GenerationJobClaimResultSchema,
   GenerationJobFinishOutcomeSchema,
@@ -15,35 +20,8 @@ import {
   type GenerationJobRecoveryResult,
 } from './generation-jobs.contract'
 
-export type { ClaimedGenerationJob }
-
-export type GenerationJobErrorCode =
-  | 'AUTH_REQUIRED'
-  | 'STORY_NOT_FOUND'
-  | 'GENERATION_JOB_CONFLICT'
-  | 'GENERATION_JOB_OWNERSHIP_LOST'
-  | 'LEASE_HELD'
-  | 'CHAPTER_EXISTS'
-  | 'IDEMPOTENCY_CONFLICT'
-  | 'PROVENANCE_CONFLICT'
-  | 'CHECKPOINT_CONFLICT'
-  | 'CONTRACT_CONFLICT'
-  | 'PLOT_DEBT_CONFLICT'
-  | 'GENERATION_DEADLINE_EXCEEDED'
-  | 'GENERATION_RETRY_EXHAUSTED'
-  | 'GENERATION_PUBLICATION_CONFLICT'
-  | 'INVALID_GENERATION_JOB_TRANSITION'
-  | 'INTERNAL_ERROR'
-
-export class GenerationJobError extends Error {
-  constructor(
-    public readonly code: GenerationJobErrorCode,
-    public readonly rpcToken: string = code,
-  ) {
-    super(code)
-    this.name = 'GenerationJobError'
-  }
-}
+export type { ClaimedGenerationJob, GenerationJobErrorCode }
+export { GenerationJobError }
 
 const WorkerIdSchema = z.string().min(1).max(200)
   .refine((value) => value === value.trim())
@@ -306,44 +284,11 @@ export type PublishGenerationJobChapterV4Input = z.input<typeof PublicationV4Inp
 
 type RpcError = { message?: unknown; code?: unknown }
 
-const ERROR_TOKEN_MAP: ReadonlyArray<readonly [string, GenerationJobErrorCode]> = [
-  ['INVALID_GENERATION_JOB_TRANSITION', 'INVALID_GENERATION_JOB_TRANSITION'],
-  ['GENERATION_PUBLICATION_CONFLICT', 'GENERATION_PUBLICATION_CONFLICT'],
-  ['GENERATION_JOB_DEADLINE_EXCEEDED', 'GENERATION_DEADLINE_EXCEEDED'],
-  ['GENERATION_DEADLINE_EXCEEDED', 'GENERATION_DEADLINE_EXCEEDED'],
-  ['GENERATION_RETRY_EXHAUSTED', 'GENERATION_RETRY_EXHAUSTED'],
-  ['GENERATION_JOB_OWNERSHIP_LOST', 'GENERATION_JOB_OWNERSHIP_LOST'],
-  ['GENERATION_JOB_LEASE_INVALID', 'GENERATION_JOB_OWNERSHIP_LOST'],
-  ['GENERATION_JOB_TARGET_MISMATCH', 'GENERATION_JOB_OWNERSHIP_LOST'],
-  ['GENERATION_JOB_NOT_RUNNING', 'GENERATION_JOB_OWNERSHIP_LOST'],
-  ['GENERATION_JOB_TERMINAL', 'INVALID_GENERATION_JOB_TRANSITION'],
-  ['GENERATION_JOB_NOT_FOUND', 'STORY_NOT_FOUND'],
-  ['CHECKPOINT_CLOSURE_PAYLOAD_MISMATCH', 'CHECKPOINT_CONFLICT'],
-  ['CHECKPOINT_INVALID_STATE', 'CHECKPOINT_CONFLICT'],
-  ['CHECKPOINT_PUBLISH_FAILED', 'CHECKPOINT_CONFLICT'],
-  ['CONTRACT_PROVENANCE_MISSING', 'CONTRACT_CONFLICT'],
-  ['CONTRACT_VERSION_MISMATCH', 'CONTRACT_CONFLICT'],
-  ['DEBT_CONTRACT_NOT_FOUND', 'PLOT_DEBT_CONFLICT'],
-  ['DEBT_CONTRACT_INVALID', 'PLOT_DEBT_CONFLICT'],
-  ['DEBT_CLOSURE_UNKNOWN_DEBT', 'PLOT_DEBT_CONFLICT'],
-  ['DEBT_CLOSURE_NOT_INTRODUCED', 'PLOT_DEBT_CONFLICT'],
-  ['DEBT_CLOSURE_ABANDONED_MAIN_MYSTERY', 'PLOT_DEBT_CONFLICT'],
-  ['DEBT_CLOSURE_DEADLINE_VIOLATION', 'PLOT_DEBT_CONFLICT'],
-  ['DEBT_CLOSURE_CONFLICT', 'PLOT_DEBT_CONFLICT'],
-  ['OPEN_DEBT_AT_END', 'PLOT_DEBT_CONFLICT'],
-  ['MAIN_MYSTERY_UNRESOLVED', 'PLOT_DEBT_CONFLICT'],
-  ['IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT'],
-  ['PROVENANCE_CONFLICT', 'PROVENANCE_CONFLICT'],
-  ['CHAPTER_EXISTS', 'CHAPTER_EXISTS'],
-  ['GENERATION_JOB_CONFLICT', 'GENERATION_JOB_CONFLICT'],
-  ['STORY_NOT_FOUND', 'STORY_NOT_FOUND'],
-  ['AUTH_REQUIRED', 'AUTH_REQUIRED'],
-  ['LEASE_HELD', 'LEASE_HELD'],
-]
-
 function mapRpcError(error: RpcError): GenerationJobError {
   const message = typeof error.message === 'string' ? error.message : ''
-  const matched = ERROR_TOKEN_MAP.find(([token]) => message.includes(token))
+  const matched = GENERATION_JOB_RPC_ERROR_TOKENS.find(
+    ([token]) => message === token || message.startsWith(`${token}:`),
+  )
   return matched
     ? new GenerationJobError(matched[1], matched[0])
     : new GenerationJobError('INTERNAL_ERROR')

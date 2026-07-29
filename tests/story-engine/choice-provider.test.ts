@@ -649,6 +649,75 @@ describe('createGatewayProvider choice adapter', () => {
     }))
   })
 
+  it('proves candidate retries within provider A before cross-provider fallback B succeeds', async () => {
+    process.env.CUSTOM_LLM_BASE_URL = 'https://choice-a.example.test/v1'
+    streamTextMock
+      .mockImplementationOnce(() => { throw new DOMException('candidate A timed out', 'TimeoutError') })
+      .mockReturnValueOnce(observedResult('{invalid-json', 'actual-choice-a-continuation'))
+      .mockReturnValueOnce(observedResult(JSON.stringify(validBranch()), 'actual-choice-b'))
+    const choicesRoute: AiModelRoute = {
+      useCase: 'choices',
+      provider: 'custom',
+      modelId: 'choice-a-primary',
+      fallbackModels: [
+        { provider: 'custom', modelId: 'choice-a-continuation' },
+        { provider: 'gateway', modelId: 'openai/choice-b' },
+      ],
+      temperature: 0.2,
+      maxOutputTokens: 900,
+      routeVersion: 'choice-cross-provider-v1',
+    }
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, undefined, choicesRoute)
+
+    await expect(generateChoiceBranch(
+      { provider },
+      choiceInput(),
+      { telemetryContext, workflowPhase: 'CHOICES_INITIAL' },
+    )).resolves.toEqual(validBranch())
+
+    expect(streamTextMock.mock.calls.map(([request]) => ({
+      model: request.model,
+      maxRetries: request.maxRetries,
+    }))).toEqual([
+      { model: 'custom:choice-a-primary', maxRetries: 0 },
+      { model: 'custom:choice-a-continuation', maxRetries: 0 },
+      { model: 'openai/choice-b', maxRetries: 0 },
+    ])
+    expect(recordGenerationProviderCallMock).toHaveBeenCalledTimes(3)
+    const records = recordGenerationProviderCallMock.mock.calls
+    expect(new Set(records.map(([start]) => start.providerCallId)).size).toBe(3)
+    expect(records.map(([start, completion]) => ({
+      phase: start.workflowPhase,
+      providerId: start.candidate.providerId,
+      configuredModelId: start.candidate.configuredModelId,
+      fallbackIndex: start.candidate.fallbackIndex,
+      outcome: completion.outcome,
+    }))).toEqual([
+      {
+        phase: 'CHOICES_INITIAL',
+        providerId: 'custom',
+        configuredModelId: 'choice-a-primary',
+        fallbackIndex: 0,
+        outcome: 'TIMEOUT',
+      },
+      {
+        phase: 'CHOICES_INITIAL',
+        providerId: 'custom',
+        configuredModelId: 'choice-a-continuation',
+        fallbackIndex: 1,
+        outcome: 'INVALID_RESPONSE',
+      },
+      {
+        phase: 'CHOICES_INITIAL',
+        providerId: 'gateway',
+        configuredModelId: 'openai/choice-b',
+        fallbackIndex: 2,
+        outcome: 'SUCCEEDED',
+      },
+    ])
+  })
+
   it('records invalid choice consume before fallback success with unique IDs', async () => {
     const invalidBranch = { ...validBranch(), choices: 'broken' }
     streamTextMock

@@ -264,6 +264,7 @@ describe('standard worker V4 publication', () => {
     ['CHECKPOINT_CONFLICT', 'FAILED_REVIEW_REQUIRED'],
     ['CONTRACT_CONFLICT', 'FAILED_REVIEW_REQUIRED'],
     ['PLOT_DEBT_CONFLICT', 'FAILED_REVIEW_REQUIRED'],
+    ['INTERNAL_ERROR', 'TRANSIENT'],
   ] as const)('classifies typed V4 %s as %s', async (code, reason) => {
     const { GenerationJobError } = await import('@/lib/runtime/generation-jobs')
     mocks.publishGenerationJobChapterV4.mockRejectedValueOnce(new GenerationJobError(code))
@@ -276,8 +277,16 @@ describe('standard worker V4 publication', () => {
 
     await expect(run(12)).resolves.toMatchObject({
       ok: false,
-      reason: 'FAILED_REVIEW_REQUIRED',
+      reason: 'TRANSIENT',
     })
+  })
+
+  it('does not log raw publication error secret sentinel', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    mocks.publishGenerationJobChapterV4.mockRejectedValueOnce(new Error('network secret sentinel'))
+
+    await expect(run(12)).resolves.toMatchObject({ ok: false, reason: 'TRANSIENT' })
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('network secret sentinel')
   })
 
   it('provider ignoring abort cannot persist checkpoint, choices, or publish', async () => {

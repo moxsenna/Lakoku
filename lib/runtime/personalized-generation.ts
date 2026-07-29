@@ -25,6 +25,7 @@ import {
 import { selectProvider } from '@lakoku/ai-gateway/server'
 import { createAdminClient } from '@lakoku/db'
 import { recordGenerationAttempt } from '@/lib/observability/server'
+import { safeErrorInfo } from '@/lib/observability/safe-error'
 import {
   buildChapterBrief,
   type ChapterBrief,
@@ -60,7 +61,8 @@ import {
   GENERATION_PROMPT_CONTRACT_VERSION,
   type RealGenerateResult,
 } from './story-generation'
-import { GenerationJobError, type FencedCheckpointMutationResult } from './generation-jobs'
+import type { FencedCheckpointMutationResult } from './generation-jobs'
+import { classifyGenerationPublicationError } from './generation-job-error'
 import {
   draftFromCheckpoint,
   loadUsableProseCheckpoint,
@@ -1073,7 +1075,7 @@ async function generateNextPersonalizedChapterInner(
 
     type LocalPublish =
       | { ok: true; chapter_number: number; seq: number }
-      | { ok: false; reason: 'CHAPTER_EXISTS' | 'LEASE_HELD' | 'FAILED_REVIEW_REQUIRED' | 'CAPACITY_TIMEOUT' }
+      | { ok: false; reason: 'CHAPTER_EXISTS' | 'LEASE_HELD' | 'FAILED_REVIEW_REQUIRED' | 'TRANSIENT' | 'CAPACITY_TIMEOUT' }
 
     let published: LocalPublish
     if (jobContext) {
@@ -1108,15 +1110,23 @@ async function generateNextPersonalizedChapterInner(
           seq: fenced.seq,
         }
       } catch (err) {
-        if (err instanceof GenerationJobError && err.code === 'CHAPTER_EXISTS') {
+        const classification = classifyGenerationPublicationError(err)
+        const info = safeErrorInfo(err)
+        console.error('PERSONALIZED_FENCED_PUBLISH_FAILED', {
+          storyId,
+          chapterNumber,
+          jobId: jobContext.jobId,
+          errorCode: classification.code,
+          errorName: info.errorName.slice(0, 100),
+        })
+        if (classification.kind === 'chapter_exists') {
           published = { ok: false, reason: 'CHAPTER_EXISTS' }
-        } else if (
-          err instanceof GenerationJobError &&
-          (err.code === 'GENERATION_JOB_OWNERSHIP_LOST' || err.code === 'LEASE_HELD')
-        ) {
+        } else if (classification.kind === 'ownership_lost') {
           published = { ok: false, reason: 'LEASE_HELD' }
+        } else if (classification.kind === 'transient') {
+          published = { ok: false, reason: 'TRANSIENT' }
         } else {
-          throw err
+          published = { ok: false, reason: 'FAILED_REVIEW_REQUIRED' }
         }
       }
     } else {

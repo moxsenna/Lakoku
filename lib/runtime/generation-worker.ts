@@ -243,6 +243,18 @@ export async function executeClaimedJob(
       return { ok: false, outcome: 'OWNERSHIP_LOST', jobId: job.id }
     }
 
+    // Publication ownership outcomes mean this claimant must stop without finish.
+    // A retry transition would mutate job now owned by another worker.
+    if (normalized.reason === 'LEASE_HELD') {
+      console.log('GENERATION_WORKER_PUBLICATION_OWNERSHIP_LOST', { jobId: job.id })
+      return {
+        ok: false,
+        outcome: 'OWNERSHIP_LOST',
+        jobId: job.id,
+        reason: normalized.reason,
+      }
+    }
+
     // CHAPTER_EXISTS / already done — treat as success-ish (no finish needed if
     // chapter row exists; finish FAILED would be wrong). Leave job for recovery
     // or operator if still RUNNING; try finish FAILED only for real failures.

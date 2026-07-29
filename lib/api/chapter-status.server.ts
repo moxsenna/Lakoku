@@ -255,27 +255,9 @@ export async function getChapterStatusForUser(input: {
   // CHOICES_RETRY_WAIT checkpoint is only "preparing choices" when a real job is
   // still scheduled — otherwise it is a stalled retry and must surface as failed.
   const jobState = await activeJobState(storyId, chapterNumber)
-  if (jobState.kind === 'running') {
-    return {
-      status: 'generating',
-      chapterNumber,
-      progressPhase: 'writing',
-      ...(attemptId ? { attemptId } : {}),
-    }
-  }
-  if (jobState.kind === 'queued' || jobState.kind === 'retry_scheduled') {
-    // Future available_at (retry_scheduled) still counts as queued to the reader.
-    return {
-      status: 'queued',
-      chapterNumber,
-      ...(attemptId ? { attemptId } : {}),
-    }
-  }
-
-  // PROSE_READY / CHOICES_RETRY_WAIT checkpoint: prose durable; choices in flight.
-  // Only report "preparing choices" when a durable job is still active (above) OR
-  // the checkpoint is PROSE_READY / running-choices. A CHOICES_RETRY_WAIT with no
-  // active job is a stalled retry → do NOT report perpetual "preparing choices".
+  // Reusable prose takes precedence over generic durable job state: once prose is
+  // durable, QUEUED/RUNNING/RETRY_WAIT all mean choices are being prepared.
+  // CHOICES_RETRY_WAIT still requires a live/retryable job; without one it is stalled.
   try {
     const { loadUsableProseCheckpoint } = await import(
       '@/lib/runtime/chapter-generation-checkpoint'
@@ -300,6 +282,23 @@ export async function getChapterStatusForUser(input: {
     }
   } catch {
     // best-effort — missing table/module must not break status
+  }
+
+  if (jobState.kind === 'running') {
+    return {
+      status: 'generating',
+      chapterNumber,
+      progressPhase: 'writing',
+      ...(attemptId ? { attemptId } : {}),
+    }
+  }
+  if (jobState.kind === 'queued' || jobState.kind === 'retry_scheduled') {
+    // No reusable prose: job is still queued or waiting for its next retry.
+    return {
+      status: 'queued',
+      chapterNumber,
+      ...(attemptId ? { attemptId } : {}),
+    }
   }
 
   if (await latestExactFailedAttempt(storyId, chapterNumber, { attemptId })) {

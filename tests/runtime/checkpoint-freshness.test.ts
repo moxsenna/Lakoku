@@ -72,7 +72,7 @@ function v2Signals(
 
 describe('parseCheckpointAuditSignals (v1/v2)', () => {
   it('pins the stored write version and the reuse version', () => {
-    expect(CHECKPOINT_AUDIT_SIGNALS_VERSION).toBe(1)
+    expect(CHECKPOINT_AUDIT_SIGNALS_VERSION).toBe(2)
     expect(CHECKPOINT_AUDIT_SIGNALS_VERSION_V2).toBe(2)
     expect(CHECKPOINT_AUDIT_SIGNALS_REUSE_VERSION).toBe(2)
   })

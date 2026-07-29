@@ -546,7 +546,7 @@ describe('generation job worker RPC adapters', () => {
     ['GENERATION_PUBLICATION_CONFLICT', 'GENERATION_PUBLICATION_CONFLICT'],
     ['INVALID_GENERATION_JOB_TRANSITION', 'INVALID_GENERATION_JOB_TRANSITION'],
   ] as const)('maps V4 SQL token %s to stable code %s', async (token, expectedCode) => {
-    rpcError(`database operation failed: ${token}`)
+    rpcError(`${token}: database operation failed`)
     const { publishGenerationJobChapterV4, GenerationJobError } = await import('@/lib/runtime/generation-jobs')
 
     const error = await publishGenerationJobChapterV4({
@@ -566,6 +566,28 @@ describe('generation job worker RPC adapters', () => {
     }).catch((caught) => caught)
     expect(error).toBeInstanceOf(GenerationJobError)
     expect(error).toMatchObject({ code: expectedCode, message: expectedCode, rpcToken: token })
+  })
+
+  it.each([
+    ['CHAPTER_EXISTS', 'CHAPTER_EXISTS'],
+    ['GENERATION_JOB_OWNERSHIP_LOST', 'GENERATION_JOB_OWNERSHIP_LOST'],
+  ] as const)('maps raw SQL token %s to stable code %s', async (token, expectedCode) => {
+    rpcError(token)
+    const { claimGenerationJob, GenerationJobError } = await import('@/lib/runtime/generation-jobs')
+
+    const error = await claimGenerationJob({ workerId: 'worker-a' }).catch((caught) => caught)
+    expect(error).toBeInstanceOf(GenerationJobError)
+    expect(error).toMatchObject({ code: expectedCode, message: expectedCode, rpcToken: token })
+  })
+
+  it('does not map token substrings away from message boundary', async () => {
+    rpcError('wrapper GENERATION_JOB_OWNERSHIP_LOST')
+    const { claimGenerationJob } = await import('@/lib/runtime/generation-jobs')
+
+    await expect(claimGenerationJob({ workerId: 'worker-a' })).rejects.toMatchObject({
+      code: 'INTERNAL_ERROR',
+      rpcToken: 'INTERNAL_ERROR',
+    })
   })
 
   it('maps unknown database errors to INTERNAL_ERROR without raw code or message', async () => {

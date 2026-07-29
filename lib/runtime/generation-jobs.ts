@@ -2,8 +2,8 @@ import 'server-only'
 import { z } from 'zod'
 import { createAdminClient } from '@lakoku/db'
 import {
-  GENERATION_JOB_RPC_ERROR_TOKENS,
   GenerationJobError,
+  extractGenerationJobRpcError,
   type GenerationJobErrorCode,
 } from './generation-job-error'
 import {
@@ -285,12 +285,9 @@ export type PublishGenerationJobChapterV4Input = z.input<typeof PublicationV4Inp
 type RpcError = { message?: unknown; code?: unknown }
 
 function mapRpcError(error: RpcError): GenerationJobError {
-  const message = typeof error.message === 'string' ? error.message : ''
-  const matched = GENERATION_JOB_RPC_ERROR_TOKENS.find(
-    ([token]) => message === token || message.startsWith(`${token}:`),
-  )
-  return matched
-    ? new GenerationJobError(matched[1], matched[0])
+  const extracted = extractGenerationJobRpcError(error.message)
+  return extracted
+    ? new GenerationJobError(extracted.code, extracted.rpcToken)
     : new GenerationJobError('INTERNAL_ERROR')
 }
 

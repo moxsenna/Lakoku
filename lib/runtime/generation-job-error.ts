@@ -40,7 +40,7 @@ const GENERATION_JOB_ERROR_CODE_SET = new Set(GENERATION_JOB_ERROR_CODES)
 const GENERATION_JOB_RPC_ERROR_ALIASES: ReadonlyArray<readonly [string, GenerationJobErrorCode]> = [
   ['GENERATION_JOB_DEADLINE_EXCEEDED', 'GENERATION_DEADLINE_EXCEEDED'],
   ['GENERATION_JOB_LEASE_INVALID', 'GENERATION_JOB_OWNERSHIP_LOST'],
-  ['GENERATION_JOB_TARGET_MISMATCH', 'GENERATION_JOB_OWNERSHIP_LOST'],
+  ['GENERATION_JOB_TARGET_MISMATCH', 'PROVENANCE_CONFLICT'],
   ['GENERATION_JOB_NOT_RUNNING', 'GENERATION_JOB_OWNERSHIP_LOST'],
   ['GENERATION_JOB_TERMINAL', 'INVALID_GENERATION_JOB_TRANSITION'],
   ['GENERATION_JOB_NOT_FOUND', 'STORY_NOT_FOUND'],
@@ -84,25 +84,35 @@ function hasOwn(value: object, key: PropertyKey): boolean {
   return Object.prototype.hasOwnProperty.call(value, key)
 }
 
+function isGenerationJobErrorCode(value: unknown): value is GenerationJobErrorCode {
+  return typeof value === 'string' && GENERATION_JOB_ERROR_CODE_SET.has(value as GenerationJobErrorCode)
+}
+
+function isGenerationJobRpcToken(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.length >= 1
+    && value.length <= 200
+    && value === value.trim()
+    && !/[\x00-\x1F\x7F]/.test(value)
+}
+
+export function extractGenerationJobRpcError(message: unknown): AdaptedGenerationJobError | null {
+  if (typeof message !== 'string') return null
+  const trimmed = message.trim()
+  const matched = GENERATION_JOB_RPC_ERROR_TOKENS.find(
+    ([token]) => trimmed === token || trimmed.startsWith(`${token}:`),
+  )
+  return matched ? { code: matched[1], rpcToken: matched[0] } : null
+}
+
 /** Restore typed identity only at boundaries where instanceof may not survive. */
 export function adaptGenerationJobError(error: unknown): AdaptedGenerationJobError | null {
-  if (error instanceof GenerationJobError) {
-    return { code: error.code, rpcToken: error.rpcToken }
-  }
   if (typeof error !== 'object' || error === null) return null
   if (!hasOwn(error, 'name') || !hasOwn(error, 'code') || !hasOwn(error, 'rpcToken')) return null
   const candidate = error as Record<string, unknown>
   if (candidate.name !== 'GenerationJobError') return null
-  if (typeof candidate.code !== 'string' || !GENERATION_JOB_ERROR_CODE_SET.has(candidate.code as GenerationJobErrorCode)) {
-    return null
-  }
-  if (
-    typeof candidate.rpcToken !== 'string' ||
-    candidate.rpcToken.length < 1 ||
-    candidate.rpcToken.length > 200 ||
-    /[\x00-\x1F\x7F]/.test(candidate.rpcToken)
-  ) return null
-  return { code: candidate.code as GenerationJobErrorCode, rpcToken: candidate.rpcToken }
+  if (!isGenerationJobErrorCode(candidate.code) || !isGenerationJobRpcToken(candidate.rpcToken)) return null
+  return { code: candidate.code, rpcToken: candidate.rpcToken }
 }
 
 export type GenerationPublicationErrorClassification =

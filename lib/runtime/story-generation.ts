@@ -581,6 +581,7 @@ async function generateNextChapterRealInner(
           jobId: published.jobId,
         }
       } catch (err) {
+        throwIfAborted(jobContext.signal)
         const classification = classifyGenerationPublicationError(err)
         const info = safeErrorInfo(err)
         console.error('GENERATION_FENCED_PUBLISH_FAILED', {

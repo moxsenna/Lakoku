@@ -120,7 +120,7 @@ function draft(chapterNumber: number) {
   }
 }
 
-async function run(chapterNumber: number) {
+async function runWithSignal(chapterNumber: number, signal: AbortSignal = JOB_CONTEXT.signal) {
   const { buildFixtureSnapshot } = await import('@/fixtures/narrative/fixture-50')
   const snapshot = buildFixtureSnapshot()
   mocks.loadCanonSnapshot.mockResolvedValue(snapshot)
@@ -137,8 +137,12 @@ async function run(chapterNumber: number) {
     chapterNumber,
     correlationId: JOB_CONTEXT.correlationId,
     attemptId: JOB_CONTEXT.jobId,
-    jobContext: JOB_CONTEXT,
+    jobContext: { ...JOB_CONTEXT, signal },
   })
+}
+
+async function run(chapterNumber: number) {
+  return runWithSignal(chapterNumber)
 }
 
 beforeEach(() => {
@@ -279,6 +283,23 @@ describe('standard worker V4 publication', () => {
       ok: false,
       reason: 'TRANSIENT',
     })
+  })
+
+  it('checks abort before classifying or logging a deferred publication rejection', async () => {
+    const controller = new AbortController()
+    let rejectPublish: ((reason: unknown) => void) | undefined
+    mocks.publishGenerationJobChapterV4.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+      rejectPublish = reject
+    }))
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    const promise = runWithSignal(12, controller.signal)
+    await vi.waitFor(() => expect(rejectPublish).toBeTypeOf('function'))
+    controller.abort()
+    rejectPublish?.(new Error('deferred publication secret sentinel'))
+
+    await expect(promise).rejects.toMatchObject({ name: 'AbortError' })
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('deferred publication secret sentinel')
   })
 
   it('does not log raw publication error secret sentinel', async () => {

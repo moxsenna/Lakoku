@@ -181,6 +181,28 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
     })
   })
 
+  it('finishes target mismatch as terminal provenance conflict', async () => {
+    mocks.runChapterGenerationAttempt.mockResolvedValueOnce({
+      ok: true,
+      mode: 'standard',
+      result: { ok: false, reason: 'PROVENANCE_CONFLICT' },
+    })
+    const { runAlreadyClaimedGenerationJob } = await import('@/lib/runtime/generation-worker')
+
+    await expect(runAlreadyClaimedGenerationJob(JOB)).resolves.toMatchObject({
+      ok: false,
+      outcome: 'FAILED',
+      reason: 'PROVENANCE_CONFLICT',
+    })
+    expect(mocks.finishGenerationJobAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'FAILED',
+        errorCode: 'PROVENANCE_CONFLICT',
+        errorClass: 'TERMINAL',
+      }),
+    )
+  })
+
   it('terminal inner failure → finish FAILED', async () => {
     mocks.runChapterGenerationAttempt.mockResolvedValueOnce({
       ok: true,

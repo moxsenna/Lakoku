@@ -3,6 +3,7 @@ import {
   GenerationJobError,
   adaptGenerationJobError,
   classifyGenerationPublicationError,
+  extractGenerationJobRpcError,
 } from '@/lib/runtime/generation-job-error'
 
 describe('generation job publication errors', () => {
@@ -23,6 +24,28 @@ describe('generation job publication errors', () => {
       kind: 'failed_review_required',
       code: 'CHECKPOINT_CONFLICT',
     })
+  })
+
+  it('extracts a trimmed RPC token and mapped code in one pass', () => {
+    expect(extractGenerationJobRpcError('  GENERATION_JOB_TARGET_MISMATCH: story-a  ')).toEqual({
+      code: 'PROVENANCE_CONFLICT',
+      rpcToken: 'GENERATION_JOB_TARGET_MISMATCH',
+    })
+    expect(extractGenerationJobRpcError(' CHAPTER_EXISTS ')).toEqual({
+      code: 'CHAPTER_EXISTS',
+      rpcToken: 'CHAPTER_EXISTS',
+    })
+    expect(extractGenerationJobRpcError('prefix CHAPTER_EXISTS')).toBeNull()
+  })
+
+  it('validates real instances with the same private code and RPC token rules', () => {
+    const invalidCode = new GenerationJobError('CHAPTER_EXISTS')
+    Object.defineProperty(invalidCode, 'code', { value: 'UNKNOWN' })
+    expect(adaptGenerationJobError(invalidCode)).toBeNull()
+
+    const invalidToken = new GenerationJobError('CHAPTER_EXISTS')
+    Object.defineProperty(invalidToken, 'rpcToken', { value: ' bad-token ' })
+    expect(adaptGenerationJobError(invalidToken)).toBeNull()
   })
 
   it('adapts a typed error crossing a module or process boundary', () => {

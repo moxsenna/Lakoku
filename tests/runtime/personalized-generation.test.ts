@@ -1252,6 +1252,32 @@ describe('generateNextPersonalizedChapter', () => {
     expect(markIdx).toBeGreaterThan(releaseIdx)
   })
 
+  it('checks abort before classifying or logging a deferred V4 rejection', async () => {
+    const { deps } = makeDeps({ chapterNumber: 12 })
+    const controller = new AbortController()
+    let rejectPublish: ((reason: unknown) => void) | undefined
+    mocks.publishGenerationJobChapterV4.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+      rejectPublish = reject
+    }))
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    const promise = generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 12,
+      attemptId: PERSONALIZED_JOB_CONTEXT.jobId,
+      jobContext: { ...PERSONALIZED_JOB_CONTEXT, signal: controller.signal },
+    }, deps)
+    await vi.waitFor(() => expect(rejectPublish).toBeTypeOf('function'), { timeout: 10_000 })
+    controller.abort()
+    rejectPublish?.(new Error('deferred personalized secret sentinel'))
+
+    await expect(promise).rejects.toMatchObject({ name: 'AbortError' })
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('deferred personalized secret sentinel')
+  })
+
   it('classifies untyped V4 errors as TRANSIENT without logging secret sentinel', async () => {
     const { deps } = makeDeps({ chapterNumber: 12 })
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)

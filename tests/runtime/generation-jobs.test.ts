@@ -77,6 +77,15 @@ describe('generation job worker RPC adapters', () => {
     })
   })
 
+  it('maps terminal target mismatch to provenance conflict with exact RPC token', async () => {
+    rpcError('  GENERATION_JOB_TARGET_MISMATCH: story-a  ')
+    const { claimGenerationJobById, GenerationJobError } = await import('@/lib/runtime/generation-jobs')
+
+    await expect(claimGenerationJobById({ jobId: JOB_ID, workerId: 'worker-a' })).rejects.toEqual(
+      new GenerationJobError('PROVENANCE_CONFLICT', 'GENERATION_JOB_TARGET_MISMATCH'),
+    )
+  })
+
   it('maps empty claim and rejects malformed claimed data', async () => {
     rpcResult({ claimed: false, ignored_future_field: true })
     const { claimGenerationJob } = await import('@/lib/runtime/generation-jobs')

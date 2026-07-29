@@ -1110,6 +1110,7 @@ async function generateNextPersonalizedChapterInner(
           seq: fenced.seq,
         }
       } catch (err) {
+        throwIfAborted(jobContext.signal)
         const classification = classifyGenerationPublicationError(err)
         const info = safeErrorInfo(err)
         console.error('PERSONALIZED_FENCED_PUBLISH_FAILED', {

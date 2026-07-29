@@ -4,7 +4,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(40);
+select plan(45);
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- Setup: stories + reader_states + generation_jobs (minimal fixtures)
@@ -203,6 +203,33 @@ select lives_ok($$
   set closure_payload_hash = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2'
   where id = '11111111-1111-1111-1111-111111111111'
 $$, 'valid hex hash accepted');
+
+-- V4 canonical structural lock order: E1, E2, R, S, J, L, checkpoint.
+select ok(
+  position('hashtextextended(v_preflight.story_id || '':ending:''' in pg_get_functiondef('public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)'::regprocedure))
+    < position('hashtextextended(v_preflight.story_id || '':''' in pg_get_functiondef('public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)'::regprocedure)),
+  'V4 acquires E1 before E2'
+);
+select ok(
+  position('hashtextextended(v_preflight.story_id || '':''' in pg_get_functiondef('public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)'::regprocedure))
+    < position('from public.reader_states rs' in pg_get_functiondef('public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)'::regprocedure)),
+  'V4 acquires E2 before reader row'
+);
+select ok(
+  position('from public.reader_states rs' in pg_get_functiondef('public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)'::regprocedure))
+    < position('hashtextextended(v_preflight.story_id, 120712)' in pg_get_functiondef('public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)'::regprocedure)),
+  'V4 locks reader before story'
+);
+select ok(
+  position('hashtextextended(v_preflight.story_id, 120712)' in pg_get_functiondef('public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)'::regprocedure))
+    < position('select j.* into v_job' in pg_get_functiondef('public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)'::regprocedure)),
+  'V4 locks story before job'
+);
+select ok(
+  position('from public.generation_jobs j' in pg_get_functiondef('public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)'::regprocedure))
+    < position('from public.generation_leases l' in pg_get_functiondef('public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)'::regprocedure)),
+  'V4 locks job before lease'
+);
 
 select * from finish();
 rollback;

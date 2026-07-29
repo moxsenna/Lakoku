@@ -1,7 +1,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(25);
+select plan(27);
 
 insert into public.stories (id, title, visibility, story_mode) values
   ('test:audit:null', 'Audit Null', 'private', 'standard'),
@@ -23,6 +23,19 @@ select ok(exists (
     and conname = 'chapter_generation_checkpoints_audit_signals_check'
     and contype = 'c'
 ), 'strict paired audit check exists');
+select ok((
+  select convalidated
+  from pg_catalog.pg_constraint
+  where conrelid = 'public.chapter_generation_checkpoints'::regclass
+    and conname = 'chapter_generation_checkpoints_audit_signals_check'
+), 'canonical audit constraint is validated');
+select ok((
+  select pg_catalog.pg_get_constraintdef(oid, true) like '%is_valid_checkpoint_audit_signals_v1(audit_signals_json)%'
+    and pg_catalog.pg_get_constraintdef(oid, true) like '%is_valid_checkpoint_audit_signals_v2(audit_signals_json)%'
+  from pg_catalog.pg_constraint
+  where conrelid = 'public.chapter_generation_checkpoints'::regclass
+    and conname = 'chapter_generation_checkpoints_audit_signals_check'
+), 'canonical audit constraint delegates to both validators');
 select has_function('public', 'is_valid_checkpoint_audit_signals_v1', array['jsonb'], 'canonical V1 validator exists');
 select has_function('public', 'is_valid_checkpoint_audit_signals_v2', array['jsonb'], 'canonical V2 validator exists');
 select has_function('public', 'upsert_generation_checkpoint_fenced_v1', array['uuid','text','uuid','uuid','text','integer','text','jsonb','text','jsonb','integer','bigint','bigint','text','text','integer','integer','integer'], 'new upsert signature exists');

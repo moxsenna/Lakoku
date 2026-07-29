@@ -247,13 +247,13 @@ select is(
 select pg_temp.add_checkpoint_job('published');
 select pg_temp.checkpoint_upsert('published');
 insert into public.chapters (story_id, number, title, paragraphs)
-values ('test:checkpoint-fencing:published', 2, 'Published', '["published"]');
+values ('test:checkpoint-fencing:published', 2, 'Bab Fencing', '["Paragraf aman."]');
 update public.generation_leases set status = 'RELEASED'
 where id = (select lease_id from checkpoint_fencing_jobs where fixture_name = 'published');
 update public.generation_jobs
 set status = 'SUCCEEDED', publication_result = jsonb_build_object(
   'ok', true, 'jobId', id, 'chapter_number', chapter_number, 'seq', 1
-)
+), publication_payload_hash = repeat('a', 64), closure_payload_hash = repeat('b', 64)
 where id = (select job_id from checkpoint_fencing_jobs where fixture_name = 'published');
 insert into public.idempotency_keys (key, story_id, scope, result)
 select j.publication_idempotency_key, j.story_id,
@@ -266,6 +266,28 @@ select ok(
   (select expires_at between clock_timestamp() + interval '59 minutes' and clock_timestamp() + interval '61 minutes'
    from public.chapter_generation_checkpoints where story_id = 'test:checkpoint-fencing:published'),
   'PUBLISHED transition sets one-hour expiry'
+);
+
+select pg_temp.add_checkpoint_job('published-content-mismatch');
+select pg_temp.checkpoint_upsert('published-content-mismatch');
+insert into public.chapters (story_id, number, title, paragraphs)
+values ('test:checkpoint-fencing:published-content-mismatch', 2, 'Tampered', '["different"]');
+update public.generation_leases set status = 'RELEASED'
+where id = (select lease_id from checkpoint_fencing_jobs where fixture_name = 'published-content-mismatch');
+update public.generation_jobs
+set status = 'SUCCEEDED', publication_result = jsonb_build_object(
+  'ok', true, 'jobId', id, 'chapter_number', chapter_number, 'seq', 1
+), publication_payload_hash = repeat('c', 64), closure_payload_hash = repeat('d', 64)
+where id = (select job_id from checkpoint_fencing_jobs where fixture_name = 'published-content-mismatch');
+insert into public.idempotency_keys (key, story_id, scope, result)
+select j.publication_idempotency_key, j.story_id,
+       'publish_chapter_v2:' || j.chapter_number::text, j.publication_result
+from public.generation_jobs j
+where j.id = (select job_id from checkpoint_fencing_jobs where fixture_name = 'published-content-mismatch');
+select is(
+  pg_temp.checkpoint_transition('published-content-mismatch', 'PUBLISHED')->>'result',
+  'INVALID_TRANSITION',
+  'terminal reconciliation rejects chapter content that does not match persisted checkpoint payload hash'
 );
 
 select pg_temp.add_checkpoint_job('publish-proof-missing');

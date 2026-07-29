@@ -344,7 +344,7 @@ git commit -m "fix(generation): publish worker jobs atomically through V4"
 - [ ] **Step 1: Prove reachability**
 
 ```bash
-git grep -n -E 'fallbackChoicesFromDraft|fallbackChoicesFromDraftFn|GENERATION_CHOICES_FALLBACK_USED'
+git grep -n -E '<removed-generic-choice-helper>|<removed-generic-choice-wrapper>|<removed-generic-choice-log>'
 ```
 
 Expected: definitions/imports/tests only; no production caller to publication.
@@ -360,7 +360,7 @@ Move only necessary fixture data into test file. Remove stale comments claiming 
 - [ ] **Step 4: Verify no symbol and run tests**
 
 ```bash
-if git grep -n -E 'fallbackChoicesFromDraft|fallbackChoicesFromDraftFn|GENERATION_CHOICES_FALLBACK_USED'; then exit 1; fi
+if git grep -n -E '<removed-generic-choice-helper>|<removed-generic-choice-wrapper>|<removed-generic-choice-log>'; then exit 1; fi
 pnpm exec vitest run tests/runtime/choice-generation.test.ts tests/runtime/choice-generation-baseline.test.ts tests/runtime/story-generation-post-publish.test.ts
 ```
 

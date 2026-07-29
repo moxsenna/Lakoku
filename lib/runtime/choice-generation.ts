@@ -105,8 +105,6 @@ export interface ChoiceBuildDeps {
     },
   ) => Promise<ChoiceBranch | null>
   telemetry?: {
-    /** @deprecated Phase 5: production must not publish generic fallback. Kept for tests only. */
-    onChoiceFallback?: (context: { chapterNumber: number; reason: string }) => void
     onChoiceRepair?: (context: {
       chapterNumber: number
       findingCodes: string[]
@@ -170,59 +168,6 @@ export interface BuildChoiceBranchInput {
  */
 export function isFinalChapter(chapterNumber: number, totalChapters: number = TOTAL_CHAPTERS): boolean {
   return chapterNumber >= totalChapters
-}
-
-// ---- Fallback (extracted from story-generation.ts) ----
-
-/** Legacy fallback shape — matches what story-generation.ts publish flow expects. */
-export interface LegacyChoicePayload {
-  choicePrompt: string
-  choices: { id: string; label: string }[]
-  outcomes: {
-    choiceId: string
-    consequence: string[]
-    nextChapterNumber: number | null
-    isEnding: boolean
-  }[]
-}
-
-/**
- * Hard-coded fallback choices grounded in the draft prose.
- * Used by the standard flow when LLM choice generation fails.
- */
-export function fallbackChoicesFromDraft(
-  draft: ChapterDraftParsed,
-  chapterNumber: number,
-): LegacyChoicePayload {
-  const isEnding = chapterNumber >= TOTAL_CHAPTERS
-  const next = isEnding ? null : chapterNumber + 1
-  const hook = (draft.paragraphs.at(-1) ?? draft.title).slice(0, 80)
-  const choicePrompt = isEnding
-    ? 'Bagaimana kau menutup kisah ini?'
-    : `Setelah ${hook}${hook.length >= 80 ? '\u2026' : ''}, apa yang kau lakukan?`
-  const choices = [
-    { id: 'hadapi', label: 'Hadapi langsung apa yang baru terbuka' },
-    { id: 'selidiki', label: 'Selidiki dulu jejak yang tersisa' },
-  ]
-  const outcomes = [
-    {
-      choiceId: 'hadapi',
-      consequence: isEnding
-        ? ['Kau menuntaskan semuanya; kisah menemukan penutupnya.']
-        : ['Kau melangkah ke depan; konsekuensi menunggu di bab berikutnya.'],
-      nextChapterNumber: next,
-      isEnding,
-    },
-    {
-      choiceId: 'selidiki',
-      consequence: isEnding
-        ? ['Kau memilih melepaskan; kisah mengendap dalam keheningan.']
-        : ['Kau menahan nafas dan mengamati; arus cerita tetap menarikmu maju.'],
-      nextChapterNumber: next,
-      isEnding,
-    },
-  ]
-  return { choicePrompt: choicePrompt.slice(0, 120), choices, outcomes }
 }
 
 // ---- Main orchestrator ----

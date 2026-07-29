@@ -47,7 +47,6 @@ import { createSynchronousProviderContext } from './generation-provider-context'
 import type { ProviderCallContext } from '@/lib/observability/generation-provider-call.contract'
 import {
   buildChoiceBranch,
-  fallbackChoicesFromDraft,
   type BuildChoiceBranchInput,
   type ChoiceBuildDeps,
   type ChoiceNarrativeContext,
@@ -268,21 +267,9 @@ async function loadStandardNarrativeContext(
       locked_ending_key: (data as { locked_ending_key?: string | null }).locked_ending_key,
     })
   } catch {
-    // DB down or table missing: fallback silently (Phase 5 removes this).
+    // DB down or table missing leaves fresh standard/onboarding context empty.
     return emptyChoiceNarrativeContext()
   }
-}
-
-/**
- * Fallback bila LLM choices gagal: tetap grounded di draft (bukan maju/tahan generik).
- * Delegates to shared choice-generation module.
- */
-function fallbackChoicesFromDraftFn(
-  draft: ChapterDraftParsed,
-  chapterNumber: number,
-) {
-  // Test/fixture only — not used on production success path (Phase 5).
-  return fallbackChoicesFromDraft(draft, chapterNumber)
 }
 
 /** DI dependencies injected for standard choice build path. */
@@ -1282,11 +1269,8 @@ async function generateNextChapterRealInner(
   }
 }
 
-// ---- Test-only exports (Phase 0 baseline) ----
-// Exported for characterization / desired-behavior TDD tests only.
-// Must NOT be imported by production code. Logic unchanged.
+// Test seams for choice orchestration and synthetic briefs.
 export {
-  fallbackChoicesFromDraft as __testFallbackChoicesFromDraft,
   buildChoices as __testBuildChoices,
   syntheticChapterBrief as __testSyntheticChapterBrief,
 }

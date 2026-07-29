@@ -61,11 +61,10 @@
 
 ### Generic fallback reachability
 
-- `fallbackChoicesFromDraft()` exists in `lib/runtime/choice-generation.ts`.
-- Production `buildChoiceBranch()` never calls it and returns structured failure.
-- `story-generation.ts` imports it only for `fallbackChoicesFromDraftFn()` and `__testFallbackChoicesFromDraft` export.
-- Tests deliberately invoke generic helper; production publish path does not.
-- Gap: production import/wrapper still exists and regression guard relies partly on source/log assertions. Helper should move to test fixture or be removed from production module, then production import/wrapper removed.
+- Production `buildChoiceBranch()` returns structured failure after provider exhaustion.
+- Standard story generation converts that result to `CHOICE_GENERATION_FAILED`, marks `CHOICES_RETRY_WAIT`, and returns before publication.
+- Generic production helper, wrapper, telemetry hook, and test export were removed after call-graph inspection proved no production caller reached publication.
+- Production-seam regression covers structured failure, retry checkpoint, and zero publication calls.
 
 ## Executed evidence
 

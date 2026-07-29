@@ -7,7 +7,6 @@
  *
  * Production code under test:
  *  lib/runtime/story-generation.ts
- *    - fallbackChoicesFromDraft (exported as __testFallbackChoicesFromDraft)
  *    - buildChoices (exported as __testBuildChoices)
  *    - syntheticChapterBrief (exported as __testSyntheticChapterBrief)
  *  lib/runtime/lifecycle.ts (shared)
@@ -70,7 +69,6 @@ vi.mock('@/lib/observability/server', () => ({
   recordGenerationRuntimeFailed: vi.fn(async () => undefined),
 }))
 
-// Override console.log to capture GENERATION_CHOICES_FALLBACK_USED
 vi.spyOn(console, 'log').mockImplementation(mocks.mockConsoleLog)
 
 // ---- Helpers ----
@@ -174,62 +172,7 @@ function providerContext(chapterNumber = 12): ProviderCallContext {
 
 // ---- Characterization Tests (PASS now, documents current behavior) ----
 
-describe('Phase 0 — Characterization (current buggy behavior)', () => {
-  describe('fallbackChoicesFromDraft', () => {
-    it(
-      'always returns the two generic hard-coded labels',
-      async () => {
-        const { __testFallbackChoicesFromDraft: fallback } = await import(
-          '@/lib/runtime/story-generation'
-        )
-        const draft = mockDraft(12)
-        const result = fallback(draft, 12)
-
-        expect(result.choices).toHaveLength(2)
-        expect(result.choices[0]).toEqual({
-          id: 'hadapi',
-          label: 'Hadapi langsung apa yang baru terbuka',
-        })
-        expect(result.choices[1]).toEqual({
-          id: 'selidiki',
-          label: 'Selidiki dulu jejak yang tersisa',
-        })
-      },
-      15_000,
-    )
-
-    it('returns generic fallback even for last chapter (ending scenario)', async () => {
-      const { __testFallbackChoicesFromDraft: fallback } = await import(
-        '@/lib/runtime/story-generation'
-      )
-      const draft = mockDraft(50)
-      const result = fallback(draft, 50)
-
-      expect(result.choices).toHaveLength(2)
-      expect(result.choices[0].id).toBe('hadapi')
-      expect(result.outcomes[0].isEnding).toBe(true)
-      // Next chapter is null for ending
-      expect(result.outcomes[0].nextChapterNumber).toBeNull()
-    })
-
-    it('outcomes lack effect field and choiceKind', async () => {
-      const { __testFallbackChoicesFromDraft: fallback } = await import(
-        '@/lib/runtime/story-generation'
-      )
-      const draft = mockDraft(12)
-      const result = fallback(draft, 12)
-
-      for (const outcome of result.outcomes) {
-        expect(outcome).not.toHaveProperty('effect')
-        expect(outcome).not.toHaveProperty('choiceKind')
-        // Confirm shape matches legacy PublishOutcome (no effect/choiceKind)
-        expect(Object.keys(outcome).sort()).toEqual(
-          ['choiceId', 'consequence', 'isEnding', 'nextChapterNumber'].sort(),
-        )
-      }
-    })
-  })
-
+describe('Phase 0 — Characterization', () => {
   describe('mapBranchToV2Outcomes (shared, previously mapBranchToPublishOutcomes)', () => {
     it('preserves effect and choiceKind from ChoiceBranch.outcomes', async () => {
       const { __testMapBranchToV2Outcomes: mapper } = await import(
@@ -361,7 +304,9 @@ describe('Phase 0 — Characterization (current buggy behavior)', () => {
         expect(result.reason).toBeTruthy()
         expect(result.reason).not.toBe('SUCCESS')
       }
-      expect(mocks.mockConsoleLog).not.toHaveBeenCalledWith('GENERATION_CHOICES_FALLBACK_USED')
+      expect(mocks.mockConsoleLog).not.toHaveBeenCalledWith(
+        expect.stringContaining('FALLBACK'),
+      )
     })
 
     it('returns explicit failure when generateChoiceBranch returns null after repair', async () => {
@@ -383,7 +328,9 @@ describe('Phase 0 — Characterization (current buggy behavior)', () => {
         expect(result.reason).toBe('REPAIR_EXHAUSTED')
         expect(result.repairAttempts).toBe(1)
       }
-      expect(mocks.mockConsoleLog).not.toHaveBeenCalledWith('GENERATION_CHOICES_FALLBACK_USED')
+      expect(mocks.mockConsoleLog).not.toHaveBeenCalledWith(
+        expect.stringContaining('FALLBACK'),
+      )
     })
 
     it('stops structural repair after provider ignores abort and resolves null', async () => {
@@ -469,26 +416,6 @@ describe('Phase 0 — Characterization (current buggy behavior)', () => {
       // Phase 5: semantic grounding lives in choice-generation (called via buildChoiceBranch)
       expect(source).toContain('buildChoices')
       expect(source).toMatch(/CHOICE_GENERATION_FAILED|FINAL_CHAPTER/)
-    })
-
-    it('fallback outcomes have publishable legacy PublishOutcome shape (can be published)', async () => {
-      const { __testFallbackChoicesFromDraft: fallback } = await import(
-        '@/lib/runtime/story-generation'
-      )
-      const result = fallback(mockDraft(12), 12)
-
-      // generateNextChapterReal publishes whatever buildChoices returns.
-      // Fallback outcomes match legacy PublishOutcome keys accepted by publishChapter.
-      for (const outcome of result.outcomes) {
-        expect(Object.keys(outcome).sort()).toEqual(
-          ['choiceId', 'consequence', 'isEnding', 'nextChapterNumber'].sort(),
-        )
-        expect(typeof outcome.choiceId).toBe('string')
-        expect(Array.isArray(outcome.consequence)).toBe(true)
-        expect(typeof outcome.isEnding).toBe('boolean')
-      }
-      expect(typeof result.choicePrompt).toBe('string')
-      expect(result.choices).toHaveLength(2)
     })
   })
 

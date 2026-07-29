@@ -215,6 +215,47 @@ describe('standard worker V4 publication', () => {
     },
   )
 
+  it('returns structured choice failure, preserves retry checkpoint, and never publishes generic choices', async () => {
+    mocks.buildChoiceBranch.mockResolvedValueOnce({
+      ok: false,
+      reason: 'REPAIR_EXHAUSTED',
+      validationFindings: [{
+        code: 'NULL_BRANCH',
+        message: 'Choice provider returned no branch',
+        severity: 'ERROR',
+      }],
+      repairAttempts: 1,
+    })
+
+    await expect(run(12)).resolves.toEqual({
+      ok: false,
+      reason: 'CHOICE_GENERATION_FAILED',
+      detail: expect.objectContaining({
+        choiceReason: 'REPAIR_EXHAUSTED',
+        findingCodes: ['NULL_BRANCH'],
+        repairAttempts: 1,
+        fromCheckpoint: false,
+      }),
+    })
+    expect(mocks.publishGenerationJobChapterV4).not.toHaveBeenCalled()
+    expect(mocks.markCheckpointStatus).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ status: 'CHOICES_RETRY_WAIT' }),
+    )
+  })
+
+  it('does not expose production generic choice fallback', async () => {
+    const storyGeneration = await import('@/lib/runtime/story-generation')
+    const choiceGeneration = await import('@/lib/runtime/choice-generation')
+
+    expect(Object.keys(storyGeneration)).not.toEqual(
+      expect.arrayContaining([expect.stringContaining('FallbackChoices')]),
+    )
+    expect(Object.keys(choiceGeneration)).not.toEqual(
+      expect.arrayContaining([expect.stringContaining('FallbackChoices')]),
+    )
+  })
+
   it.each([
     ['CHAPTER_EXISTS', 'CHAPTER_EXISTS'],
     ['GENERATION_JOB_OWNERSHIP_LOST', 'LEASE_HELD'],

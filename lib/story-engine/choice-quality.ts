@@ -113,7 +113,7 @@ function buildProseContext(
 
 // ---- Generic / internal pattern detection ----
 
-/** Exact fallback labels from fallbackChoicesFromDraft that signal ungrounded generation. */
+/** Known generic labels that signal ungrounded generation. */
 const GENERIC_FALLBACK_LABELS = new Set([
   'hadapi langsung apa yang baru terbuka',
   'selidiki dulu jejak yang tersisa',

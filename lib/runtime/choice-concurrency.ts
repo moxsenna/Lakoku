@@ -26,6 +26,14 @@ export type ChoiceConcurrencyPolicy = {
   jitterMaxMs: number
 }
 
+export type ChoiceConcurrencyObservation = Readonly<{
+  providerId: string
+  active: number
+  queued: number
+}>
+
+export type ChoiceConcurrencyObserver = (observation: ChoiceConcurrencyObservation) => void
+
 type Waiter = {
   providerId: string
   storyId: string
@@ -85,7 +93,7 @@ export function resolveChoiceConcurrencyPolicy(providerId?: string): ChoiceConcu
   // Global default; provider-specific env overrides only when set.
   let maxActive = envInt('LAKOKU_CHOICE_MAX_ACTIVE', 2, 1, 16)
   if (provider.includes('openrouter')) {
-    maxActive = envIntOptional('LAKOKU_CHOICE_MAX_ACTIVE_OPENROUTER', 1, 16) ?? 3
+    maxActive = envIntOptional('LAKOKU_CHOICE_MAX_ACTIVE_OPENROUTER', 1, 16) ?? maxActive
   } else if (provider.includes('9router') || provider.includes('ninerouter')) {
     maxActive = envIntOptional('LAKOKU_CHOICE_MAX_ACTIVE_9ROUTER', 1, 16) ?? maxActive
   }
@@ -129,6 +137,23 @@ function snapshot(providerId: string) {
   return { active: g.active.length, queued: g.waiters.length }
 }
 
+function observe(providerId: string, observer?: ChoiceConcurrencyObserver): void {
+  if (!observer) return
+  try {
+    observer(Object.freeze({ providerId, ...snapshot(providerId) }))
+  } catch {
+    // Bounded observer must not affect scheduling or generation.
+  }
+}
+
+function logChoiceCapacity(event: string, detail: Record<string, unknown>): void {
+  try {
+    console.log(event, detail)
+  } catch {
+    // Capacity telemetry must not affect scheduling or generation.
+  }
+}
+
 function cleanupWaiter(waiter: Waiter): void {
   if (waiter.timer) {
     clearTimeout(waiter.timer)
@@ -149,7 +174,7 @@ function tryPromote(providerId: string): void {
     if (next.signal?.aborted) continue
     const waitMs = Date.now() - next.enqueuedAt
     const slotToken = reserveSlot(providerId, next.storyId, next.chapterNumber)
-    console.log('CHOICE_CAPACITY_WAIT_DONE', {
+    logChoiceCapacity('CHOICE_CAPACITY_WAIT_DONE', {
       providerId,
       storyId: next.storyId,
       chapterNumber: next.chapterNumber,
@@ -174,6 +199,7 @@ export async function acquireChoiceSlot(args: {
   chapterNumber: number
   correlationId?: string
   signal?: AbortSignal
+  observer?: ChoiceConcurrencyObserver
 }): Promise<ChoiceSlotAcquireResult> {
   args.signal?.throwIfAborted()
   const providerId = args.providerId || 'default'
@@ -185,6 +211,7 @@ export async function acquireChoiceSlot(args: {
     // Reserve the slot synchronously BEFORE awaiting jitter so concurrent
     // callers cannot all pass the capacity check and overshoot maxActive.
     const slotToken = reserveSlot(providerId, args.storyId, args.chapterNumber)
+    observe(providerId, args.observer)
     // Optional small jitter to desynchronize bursts (slot already held).
     const delay = jitterMs(policy)
     try {
@@ -203,7 +230,7 @@ export async function acquireChoiceSlot(args: {
   }
 
   if (g.waiters.length >= policy.maxQueue) {
-    console.log('CHOICE_CAPACITY_REJECTED', {
+    logChoiceCapacity('CHOICE_CAPACITY_REJECTED', {
       providerId,
       storyId: args.storyId,
       chapterNumber: args.chapterNumber,
@@ -220,7 +247,7 @@ export async function acquireChoiceSlot(args: {
   }
 
   const queuePosition = g.waiters.length + 1
-  console.log('CHOICE_CAPACITY_QUEUED', {
+  logChoiceCapacity('CHOICE_CAPACITY_QUEUED', {
     providerId,
     storyId: args.storyId,
     chapterNumber: args.chapterNumber,
@@ -251,7 +278,7 @@ export async function acquireChoiceSlot(args: {
       const idx = g.waiters.indexOf(waiter)
       if (idx >= 0) g.waiters.splice(idx, 1)
       cleanupWaiter(waiter)
-      console.log('CHOICE_CAPACITY_REJECTED', {
+      logChoiceCapacity('CHOICE_CAPACITY_REJECTED', {
         providerId,
         storyId: args.storyId,
         chapterNumber: args.chapterNumber,
@@ -268,19 +295,21 @@ export async function acquireChoiceSlot(args: {
       })
     }, policy.queueTimeoutMs)
     g.waiters.push(waiter)
+    observe(providerId, args.observer)
   })
 }
 
 export function releaseChoiceSlot(args: {
   providerId: string
   slotToken: string
+  observer?: ChoiceConcurrencyObserver
 }): void {
   const providerId = args.providerId || 'default'
   const g = gateFor(providerId)
   const idx = g.active.findIndex((a) => a.slotToken === args.slotToken)
   if (idx >= 0) {
     const [released] = g.active.splice(idx, 1)
-    console.log('CHOICE_CAPACITY_RELEASED', {
+    logChoiceCapacity('CHOICE_CAPACITY_RELEASED', {
       providerId,
       storyId: released.storyId,
       chapterNumber: released.chapterNumber,
@@ -289,13 +318,14 @@ export function releaseChoiceSlot(args: {
     })
   } else {
     // Unknown token — never touch another job's slot. Log anomaly only.
-    console.log('CHOICE_SLOT_TOKEN_ORPHAN', {
+    logChoiceCapacity('CHOICE_SLOT_TOKEN_ORPHAN', {
       providerId,
       slotToken: args.slotToken,
       ...snapshot(providerId),
     })
   }
   tryPromote(providerId)
+  observe(providerId, args.observer)
 }
 
 export async function withChoiceGenerationSlot<T>(
@@ -305,6 +335,7 @@ export async function withChoiceGenerationSlot<T>(
     chapterNumber: number
     correlationId?: string
     signal?: AbortSignal
+    observer?: ChoiceConcurrencyObserver
   },
   callback: () => Promise<T>,
 ): Promise<T> {
@@ -318,6 +349,7 @@ export async function withChoiceGenerationSlot<T>(
     releaseChoiceSlot({
       providerId: args.providerId,
       slotToken: slot.slotToken,
+      observer: args.observer,
     })
   }
 }

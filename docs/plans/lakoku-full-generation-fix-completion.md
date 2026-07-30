@@ -1,226 +1,152 @@
 # Lakoku Full Generation Fix — Completion Audit
 
 **Canonical specification:** `docs/superpowers/plans/lakoku-full-generation-fix-plan.md`
-**Base branch:** `review/durable-generation-worker`
-**Base SHA:** `21eae2eb527e093ca8cdc976ea860cd7af789a6e`
-**Completion branch:** `review/full-generation-fix-completion`
-**Audit date:** 29 July 2026 (Asia/Jakarta)
-**Production deployment / linked push:** NOT RUN
 
-## Baseline
+**Branch:** `review/full-generation-fix-completion`
 
-| Item | Result |
+**HEAD:** `822070a14d87cf21242cdc17805a376875de1c96`
+
+**Audit date:** 30 July 2026 (Asia/Jakarta)
+**Production deployment / linked DB push:** NOT RUN
+
+## Current repository state
+
+- Branch tracks `origin/review/full-generation-fix-completion` and is **ahead 6, behind 0**.
+- Working tree remains dirty with Phase B/fix changes: 17 tracked files modified and 7 untracked files at latest status verification.
+- Foreign untracked paths remain excluded: `.commandcode/` and `.omo/run-continuation/ses_05585bf83ffe1bK24eIh6YDSre.json`.
+- No commit, push, linked DB operation, deploy, or destructive local-volume command was run during this audit.
+- Remote CI was not queried or executed; this document makes no remote-CI claim.
+- All evidence below is local-only. Retained command logs are ignored files under `.local/final-gates/`; soak artifacts are ignored files under `.local/worker-soak/`.
+
+## Phase A local commits
+
+Phase A exists as six local commits, not yet on tracked remote branch:
+
+| SHA | Subject |
 |---|---|
-| `git status --short --untracked-files=all` | `?? .commandcode/taste/taste.md`; `?? .omo/run-continuation/ses_05585bf83ffe1bK24eIh6YDSre.json`; `?? docs/plans/lakoku-full-generation-fix-completion.md`; `?? docs/superpowers/plans/2026-07-29-full-generation-fix-completion.md` (all present before Task 1 edits; `.commandcode` and `.omo` are foreign and excluded from work/staging) |
-| `git rev-parse HEAD` | `21eae2eb527e093ca8cdc976ea860cd7af789a6e` |
-| `git log -1 --oneline` | `21eae2e Merge branch 'review/plot-debt-phase1' into review/durable-generation-worker` |
-| `git branch --show-current` before branch creation | `review/durable-generation-worker` |
-| `node --version` | `v24.15.0` |
-| `pnpm --version` | `11.7.0` |
-| Highest existing migration version | `20260728040000` (`supabase/migrations/20260728040000_enqueue_contract_provenance.sql`) |
-| Next unused/reserved migration version | `20260728050000` for planned additive common-checkpoint V4 redefinition; no file with this prefix exists at Task 1 baseline |
+| `92ad83b` | `test(db): classify generation aggregate failures` |
+| `97b6fa8` | `fix(db): enforce audit pairing and terminal reconciliation` |
+| `43c77c3` | `test(db): pin generation lifecycle contracts` |
+| `26bd369` | `fix(db): correct Phase A durable reconciliation` |
+| `ad3d756` | `test(db): correct V4 ending race fixture` |
+| `822070a` | `refactor(generation): add explicit provider execution seam` |
 
-## Evidence rules
+## Phase B candidate seam and production-seam evidence
 
-- **CODE EXISTS:** symbol, migration, or helper exists.
-- **TEST WRITTEN:** test asserts relevant behavior.
-- **TEST EXECUTED:** command was run in this audit and result recorded.
-- **PRODUCTION PATH WIRED:** real API/worker/generator reaches behavior or RPC.
-- `DONE` requires all four. File existence or source-text inspection alone is insufficient.
+Phase B adds programmable provider execution and local production-worker soak support across worker, gateway/provider, generation, test, and script files. Candidate artifacts under `.local/worker-soak/` are ignored local evidence, not committed release artifacts.
 
-## Canonical PR completion matrix
+Latest complete candidate pair before production-seam evidence:
 
-| PR canonical | CODE EXISTS | TEST WRITTEN | TEST EXECUTED | PRODUCTION PATH WIRED | Status | Gap |
-|---|---|---|---|---|---|---|
-| PR 1 — Safety stop | Destructive contract fallback removed in `lib/authoring/persist-creative-direction.ts`; best-effort and terminal-failure guard exist in `lib/runtime/story-generation.ts:773-780,1236-1251,1272-1278`; reconciliation migration exists at `supabase/migrations/20260724100000_reconcile_choice_routes_and_creative_direction.sql`; migration checker is registered in `package.json:11-12`; read-only contract audit exists at `scripts/sql/audit-empty-generation-contracts.sql`. | `tests/authoring/persist-creative-direction.test.ts`; `tests/runtime/story-generation-observability.test.ts`; `tests/runtime/story-generation-post-publish.test.ts`; migration uniqueness smoke. | `pnpm run check:migration-versions` exited 0. Targeted 150-test command executed only overlapping story-generation/runtime coverage; it did not execute every PR 1 test or production data audit. | Creative-direction persistence and story-generation guards are reached by production modules. Migration checker is in `pnpm test`. Read-only audit script is not a wired runtime path and was not run against linked production. | PARTIAL | Canonical safety-stop scope includes production data audit/classification. `scripts/sql/audit-empty-generation-contracts.sql` exists, but linked query and classification evidence are absent; full PR 1 test set was not executed in this audit. |
-| PR 2 — Choice Protocol V2 | Creative-only schema and deterministic finalizer exist in `lib/ai-gateway/choice-draft-v2.ts:13-46,76-85,165-278`; gateway conversion exists in `lib/ai-gateway/gateway.ts:407-483`; non-stream choice call exists in `lib/ai-gateway/gateway-provider.ts:780-851`. | `tests/ai-gateway/choice-prompt-contract.test.ts`; `tests/ai-gateway/choice-structured-output.test.ts`; `tests/runtime/choice-generation-baseline.test.ts`. | Exact targeted rerun passed `tests/runtime/choice-generation-baseline.test.ts` as part of 9 files/150 tests. Prompt-contract and structured-output suites were not executed in this Task 1 audit. | Production gateway requests V2 creative drafts, finalizes mechanical fields server-side, then applies strict branch validation. | PARTIAL | Relevant production path is wired, but this audit did not execute all named protocol suites; no all-criteria `DONE` claim. |
-| PR 3 — Provider reliability | Choice-specific fail-closed route exists in `lib/ai-gateway/gateway-provider.ts:875-915,989-1015`; candidate calls loop in `gateway-provider.ts:789-851`; choice capacity gate exists in `lib/runtime/choice-concurrency.ts:83-99,108-169,301-323`; taxonomy/budget exists in `lib/runtime/choice-error-taxonomy.ts:5-40,109-136`. | `tests/runtime/choice-concurrency.test.ts`; `tests/runtime/choice-generation-repair.test.ts`; gateway/provider suites under `tests/ai-gateway/`; production adapter proof in `tests/story-engine/choice-provider.test.ts`. | Focused provider/status/personalized/final command passed as 4 files/102 tests. | Production `buildChoiceBranch()` reaches gateway/provider and choice-capacity logic. Provider adapter behavior is executed, but required programmable provider sequence through actual worker remains blocked. | PARTIAL | Provider adapter proof exists; production-worker provider A then B sequence, bounded-call soak, and production-seam programmable injection remain unproved. |
-| PR 4 — Real repair | Findings-aware repair input exists in `lib/runtime/choice-generation.ts:384-411`; bounded repair loop exists at `choice-generation.ts:418-585`; repair notes exist in `lib/runtime/choice-error-taxonomy.ts:138-167`. | `tests/runtime/choice-generation-repair.test.ts`; repair cases in `tests/runtime/choice-generation-baseline.test.ts`. | Exact targeted rerun passed baseline repair cases; dedicated repair/taxonomy suite was not included. | Production `buildChoiceBranch()` executes bounded repair, but no executed programmable-provider vertical sequence proves timeout, malformed output, repair/fallback, then valid publication. | PARTIAL | Dedicated repair execution and production-path sequence proof remain absent. |
-| PR 5 — Durable split | Standard and personalized worker paths now call V4 publication through `lib/runtime/generation-jobs.ts`; checkpoint binding and common publication contract exist; worker claim/lease/heartbeat exists in `lib/runtime/generation-worker.ts`; V4 RPC exists in `supabase/migrations/20260728030000_publish_generation_job_chapter_v4.sql`. | Runtime checkpoint, worker, personalized, publication-contract tests; 48-assertion recovery pgTAP; recovery race script. | Focused recovery pgTAP passed 48/48. Focused provider/status/personalized/final command passed 4 files/102 tests. `node scripts/run-smoke.cjs scripts/generation-job-recovery-race.ts` passed 3/3 iterations with 2 scenarios each. Full pgTAP aggregate remains red. | Production worker publication is wired to V4 for standard and personalized paths. Recovery pgTAP proves stale worker rejection, fresh global claim/lease, same prose fingerprint, fresh V4 publication, and atomic `PUBLISHED`/`SUCCEEDED`/`RELEASED`. | PARTIAL | Vertical DB/recovery proofs complete. Programmable provider behavior through actual production worker/dispatcher remains blocked; full pgTAP aggregate has stale failures. |
-| PR 6 — Mode dispatcher and attempts | Durable enqueue, central mode dispatcher, worker dispatch, preserved `triggerChoiceId`, and checkpoint-aware status resolver exist. Current status change gives reusable prose precedence over generic queued/running/retry state. | `tests/runtime/generation-mode-dispatch.test.ts`; `tests/runtime/generation-worker.test.ts`; `tests/api/chapter-status.test.ts`; enqueue/start tests. | Focused status suite passed within 4 files/102 tests. Earlier targeted rerun passed dispatcher and worker suites. | Durable start and worker use central dispatcher; reader status now reports retained prose as choice preparation while guarding stalled `CHOICES_RETRY_WAIT`. | PARTIAL | Focused status vertical proof exists. No fresh all-entry-point/enqueue aggregate proof; no production rollout evidence. |
-| PR 7 — Full soak/release | Ops runbook exists at `docs/GENERATION_WORKER_OPS.md`; worker remains OFF by default. No required programmable 10/30-job harness artifact was found. | Existing DB/race tests and deterministic narrative soak exist; required completion soak matrix is not written. | No required local DB reset, affected pgTAP/race aggregate, or 10/30-job completion soak was executed in Task 1. | Production rollout is intentionally not wired/enabled; worker flag remains OFF and linked push/deploy were not run. | MISSING | Missing programmable failure/restart soak, exact metrics, full gates, release evidence, and production readiness review. |
+| Jobs | Run ID | Result artifact SHA-256 | Embedded evidence SHA-256 | Recorded result |
+|---:|---|---|---|---|
+| 10 | `8cc6500b-7cf0-4600-8b51-3c75e0d6be65` | `7be6a3f1bb8bcd1b87d01a055e17bde3bf648100d8e711f8e9dcbc6f43992ae2` | `7ff8b01d940c946764998e3cc45f5651acfb05fbc7b9e14f4f418d7385cc2dfd` | exit 0; published 10; recovered 2; forced `SIGKILL` recorded |
+| 30 | `2749e79c-25cc-4fc0-b847-64aafb249a4f` | `d09a1892075af3b147268128d61f6e32cda9cef3cabaa52eb94b442ce869956c` | `deace42d7c02458b865cdb78b2e63a050498ba2a82d1aae51ba53e77db437fea` | exit 0; published 30; recovered 1; forced `SIGKILL` recorded |
 
-## Production path audit
+Latest production-seam pair:
 
-### Durable start and worker
+| Jobs | Run ID | Result artifact SHA-256 | Embedded evidence SHA-256 | Recorded result |
+|---:|---|---|---|---|
+| 10 | `c028b1d0-5838-4cef-85db-176f520a8e12` | `40d510e6983f6104d4aff7abaef052eca3b750b14fbd32f91f61ed1485ee7bc5` | `180bfde187cc56a8c6873e784f794a616266773d6526401fc552571b6aff7934` | exit 0; published 10; recovered 1; forced `SIGKILL` recorded |
+| 30 | `e2b1e353-4674-484e-8dba-48a06a3b47f9` | `2cee3bd39d2e6cb0b9a533e400e09d02be613ccb2a3fadd6e94700a5790296a4` | `08e4d0c3a0b66f5937140091687572e6e26e4e9dc8775ff5da444ca5e8548125` | exit 0; published 30; recovered 7; forced `SIGKILL` recorded |
 
-1. `startOwnedChapterGeneration()` verifies owner and exact chapter readiness/lease.
-2. Worker flag ON resolves generation mode, maps kind, and commits `generation_jobs` before returning `STARTED + attemptId`.
-3. `after()` calls `claimAndRunGenerationJobById(jobId)`, so request A cannot claim request B's job.
-4. Worker acquires bound lease, heartbeats before provider work, propagates `AbortSignal`, and calls central dispatcher.
-5. Worker never calls `finish(SUCCEEDED)`; success is accepted only after generator returns fenced publication metadata.
-6. Retryable choice failure calls `finishGenerationJobAttempt(... RETRY_WAIT ...)`; terminal failure calls `FAILED`; ownership loss calls neither finish nor publish.
+All four latest production-seam files still exist. Fresh `sha256sum` verification on 30 July 2026 exactly matched all recorded hashes. These 10/30 runs **predate the cleanup fix** and were not rerun. They prove only integrity of retained prior local artifacts, not behavior after cleanup fix, remote CI, production rollout, or linked-production behavior.
 
-### Standard and personalized generation
+## Final local gates after fixes
 
-- Both modes validate prose before checkpoint creation.
-- Both modes load reusable prose checkpoint before prose provider generation.
-- Both mark `RUNNING_CHOICES`, run shared `buildChoiceBranch()`, retain checkpoint as `CHOICES_RETRY_WAIT` on exhausted choices, and avoid generic fallback publication.
-- Both publish chapter 50 with `choicePrompt = null`, `choices = null`, and `outcomes = []`.
-- Standard currently publishes via fenced V2; personalized via fenced V3. Neither production path reaches V4.
-
-### Generic fallback reachability
-
-- Production `buildChoiceBranch()` returns structured failure after provider exhaustion.
-- Standard story generation converts that result to `CHOICE_GENERATION_FAILED`, marks `CHOICES_RETRY_WAIT`, and returns before publication.
-- Generic production helper, wrapper, telemetry hook, and test export were removed after call-graph inspection proved no production caller reached publication.
-- Production-seam regression covers structured failure, retry checkpoint, and zero publication calls.
-
-## Executed evidence
-
-### Targeted baseline
-
-Initial targeted run:
+### Full unit suite
 
 ```text
-command:
-pnpm exec vitest run tests/runtime/choice-generation-baseline.test.ts tests/runtime/choice-only-resume.test.ts tests/runtime/checkpoint-persistence.test.ts tests/runtime/checkpoint-freshness.test.ts tests/runtime/generation-worker.test.ts tests/runtime/generation-job-execution.test.ts tests/runtime/generation-mode-dispatch.test.ts tests/runtime/personalized-generation.test.ts tests/api/chapter-status.test.ts
-
-exit code: 1
-test files: 8 passed, 1 failed
-tests: 149 passed, 1 failed
-diagnosis: failure was non-reproducible and likely Vitest mock/cache contamination; systematic isolated and full-runtime investigation passed.
+pnpm run test:unit
+exit: 0
+test files: 107 passed, 1 skipped (108)
+tests: 1288 passed, 1 skipped (1289)
 ```
 
-Exact targeted rerun after investigation:
+Full unit gate is green. Final-review choice-concurrency blocker is resolved: OpenRouter now inherits `LAKOKU_CHOICE_MAX_ACTIVE` unless explicit `LAKOKU_CHOICE_MAX_ACTIVE_OPENROUTER` is set; explicit 9router override behavior remains intact. TDD regression first failed at expected `3` versus global `1`, then passed 13/13 after fix, covering global OpenRouter inheritance, explicit OpenRouter override precedence, another provider using global value, and explicit 9router override preservation. Earlier focused regression was also repeated 5 times and passed 29/29 on every run. Fresh retained green full-unit evidence is `.local/final-gates/unit-full-final-20260730.log` (SHA-256 `9056c9daa49d64f8fcfae0430256e6ce93e7b7b63bfe971d5c514f60c8a523ef`); it records revision, branch, worktree diff hash, timestamps, and exit 0. Earlier `.local/final-gates/unit-full-20260730.log` remains a superseded red run.
+
+### Static and build gates
+
+| Gate | Exit | Fresh result |
+|---|---:|---|
+| `pnpm run lint` | 0 | PASS with 20 warnings, 0 errors |
+| `pnpm run typecheck` | 0 | PASS |
+| `pnpm run build` | 0 | PASS (`next build --webpack`; TypeScript config validation completed) |
+
+Fresh lint and typecheck logs include revision/status metadata. SHA-256: `.local/final-gates/lint-final-20260730.log` = `c4aa25ec51aa3b441fd19bb957160e6b96885f3e3bd69306da2eef3891c3f792`; `.local/final-gates/typecheck-final-20260730.log` = `984d1c838d1abd72296e84b1d307505e7ea53ff4a073ffcf595f0c631bc82320`. Build was not rerun: retained `.local/final-gates/build-20260730.log` (SHA-256 `8e5491dc11bc2969725e72dde10c973f7c37331016445b634c21b38d88998b83`) predates only the final concurrency-policy edit in `lib/runtime/choice-concurrency.ts`; fresh unit, typecheck, and lint gates cover that TypeScript-only change, so prior build remains relevant evidence rather than a post-edit build claim.
+
+`pnpm run check:migration-versions` was not requested in this rerun and has no fresh claim here.
+
+### Full local pgTAP
+
+Local Supabase ran at `127.0.0.1:55321`; linked DB was not used. No DB reset was performed.
 
 ```text
-command:
-pnpm exec vitest run tests/runtime/choice-generation-baseline.test.ts tests/runtime/choice-only-resume.test.ts tests/runtime/checkpoint-persistence.test.ts tests/runtime/checkpoint-freshness.test.ts tests/runtime/generation-worker.test.ts tests/runtime/generation-job-execution.test.ts tests/runtime/generation-mode-dispatch.test.ts tests/runtime/personalized-generation.test.ts tests/api/chapter-status.test.ts
-
-exit code: 0
-test files: 9 passed, 0 failed
-tests: 150 passed, 0 failed
-duration: 33.18s
-```
-
-The green rerun establishes current baseline, but the initial transient failure remains recorded and is not evidence of deterministic stability by itself.
-
-### Current focused vertical proofs
-
-```text
-command:
-pnpm exec vitest run tests/story-engine/choice-provider.test.ts tests/api/chapter-status.test.ts tests/runtime/personalized-generation.test.ts tests/runtime/story-generation-post-publish.test.ts
-
-exit code: 0
-test files: 4 passed, 0 failed
-tests: 102 passed, 0 failed
-duration: 39.74s
-coverage represented: production choice-provider adapter, chapter status, personalized generation/recovery/publication, and standard final/post-publish behavior
-```
-
-```text
-command: pnpm exec supabase test db --local supabase/tests/generation_job_recovery_test.sql
-exit code: 0
-pgTAP: 48 passed, 0 failed
-proof: stale RUNNING_CHOICES recovery; old lease expiration; same-job fresh global claim and bound lease; stale-token V4 publication rejection; unchanged prose fingerprint; fresh-token V4 publication; atomic PUBLISHED/SUCCEEDED/RELEASED terminal tuple
-```
-
-```text
-command: node scripts/run-smoke.cjs scripts/generation-job-recovery-race.ts
-exit code: 0
-result: Generation job recovery races: 3/3 iterations, 2 scenarios each PASS
-```
-
-### Latest typed publication patch evidence
-
-```text
-focused unit command: latest five-file typed publication patch selection
-exit code: 0
-test files: 5 passed, 0 failed
-tests: 120 passed, 0 failed
+pnpm exec supabase test db --local
+exit: 0
+files: 26
+tests: 1362
 result: PASS
 ```
 
-```text
-command: pnpm run typecheck
-exit code: 0
-result: PASS
-```
+All pgTAP files passed on current retained local DB state. Prior contamination failures are historical and no longer current gate status. DB was not rerun: no Supabase migration or SQL changed after retained run, and later runtime change is only TypeScript concurrency policy. Retained `.local/final-gates/pgtap-full-20260730.log` SHA-256 is `3feed8f4cb14f32f190f27df8631ff5bf77ebdb3b887b3b3c3ec5e4beac77da5`.
 
-Policy review result: **APPROVED**.
-
-### Repository gates and known aggregate failures
+### Runtime baseline sentinel
 
 ```text
-command: pnpm run build
-exit code: 0
-result: PASS
+node scripts/run-smoke.cjs scripts/runtime-baseline-sentinel.ts
+exit: 0
+Runtime baseline sentinel: PASS
 ```
 
-```text
-command: pnpm run lint
-exit code: 0
-result: 0 errors; warnings only, existing warning baseline
-```
+### Required DB races
 
-```text
-command: pnpm run test:unit
-exit code: 1
-result: FAIL — 15 tests failed under latest aggregate run
-failure scope: `tests/runtime/choice-generation-baseline.test.ts` and `tests/runtime/personalized-generation.test.ts`
-qualification: both failing files pass in isolation; choice baseline passes 21/21 and personalized passes 42/42. Isolated success narrows aggregate interaction/timing behavior but does not convert the full-unit aggregate to PASS or classify failures as unrelated.
-```
+No exact fresh retained race logs existed for post-fix state, so all races required by `test:db:generation-jobs` were rerun directly and logged separately. Running separately prevented one failure from hiding later race results.
 
-```text
-command: pnpm exec supabase test db --local
-exit code: 1
-result: prior aggregate FAIL — 12 assertions across 5 files; aggregate plan count 1350
-classification: no newer aggregate pgTAP execution is claimed. Focused recovery pgTAP remains 48/48 PASS. Aggregate remains red until expectations are reconciled.
-```
+| Race | Exit | Fresh result |
+|---|---:|---|
+| `generation-publication-lock-order-race.ts` | 0 | V2 enqueue, V3 enqueue, V3 lifecycle PASS |
+| `generation-job-enqueue-race.ts` | 0 | 3/3 PASS |
+| `generation-job-claim-race.ts` | 0 | 3/3 PASS |
+| `generation-job-recovery-race.ts` | 0 | 3/3 iterations, 2 scenarios each PASS |
+| `generation-job-fencing-race.ts` | 0 | 3/3 iterations, 2 scenarios each PASS |
+| `generation-checkpoint-fencing-race.ts` | 0 | 2/2 PASS |
 
-Production soak remains blocked and **NOT RUN**. Process-local simulation remains excluded from acceptance evidence.
+## Evidence location and scope
 
-No stronger counts are claimed where raw output was not retained in this document.
+Fresh ignored local logs:
 
-### Migration version uniqueness
+- `.local/final-gates/pgtap-full-20260730.log`
+- `.local/final-gates/unit-full-final-20260730.log` (fresh green run with revision/status metadata)
+- `.local/final-gates/lint-final-20260730.log` (fresh run with revision/status metadata)
+- `.local/final-gates/typecheck-final-20260730.log` (fresh run with revision/status metadata)
+- `.local/final-gates/unit-full-20260730.log` (superseded red run)
+- `.local/final-gates/build-20260730.log` (retained; not rerun after concurrency-policy-only edit)
+- `.local/final-gates/runtime-baseline-sentinel-20260730.log`
+- `.local/final-gates/race-*-20260730.log`
+- `.local/final-gates/production-soak-hashes-20260730.log`
 
-```text
-command: pnpm run check:migration-versions
-output: $ node scripts/run-smoke.cjs scripts/check-migration-version-uniqueness.ts
-exit code: 0
-failed checks: 0
-highest existing inventory version: 20260728040000 (`20260728040000_enqueue_contract_provenance.sql`)
-next unused/reserved version: 20260728050000 (no matching migration file exists)
-```
+These logs and soak artifacts are local-only, ignored, mutable workspace evidence. They are not committed artifacts, remote CI evidence, linked-DB evidence, or deployment evidence.
 
-## Proven implementation gaps
+## Completion classification
 
-### P0
+- Latest production-seam 10/30 artifacts: present and hash-matched, but runs predate cleanup fix.
+- Full pgTAP: PASS, 26 files / 1362 tests.
+- Runtime baseline sentinel: PASS.
+- All six required generation DB race scripts: PASS.
+- Lint: PASS with 20 warnings and 0 errors.
+- Typecheck: PASS.
+- Build: PASS.
+- Full unit suite: PASS, 107 files passed and 1 skipped; 1288 tests passed and 1 skipped.
+- Choice-concurrency final-review blocker: RESOLVED; focused TDD regression PASS, 13/13.
+- Earlier focused regression: PASS, repeated 5 times at 29/29 each run.
+- Working tree: dirty and pending rollout approval.
+- Remote CI: unknown; no claim.
+- Production: **HOLD**.
+- Production generation worker: **OFF** pending explicit rollout approval.
+- Deploy and linked DB push: **NOT RUN**.
 
-1. Add integrated programmable-provider proof through production generator/worker seams for original bug. Current process-local simulation is explicitly excluded.
-2. Reconcile prior aggregate pgTAP failures (12 assertions across 5 files; aggregate plan count 1350) and return the aggregate to green.
-3. Resolve 15 latest full-unit aggregate failures without calling them unrelated; choice baseline 21/21 and personalized 42/42 isolated passes only narrow aggregate interaction/timing behavior.
+## Verdict
 
-Completed vertical proofs removed from blocker list: V4 worker publication wiring; exhausted-choice checkpoint retention; checkpoint-aware status; restart/global-claim recovery with same prose fingerprint and stale-worker rejection; recovery race.
+**PRODUCTION HOLD — ROLLOUT APPROVAL REQUIRED.**
 
-### P1
-
-1. Prove actual gateway cross-provider calls A then B through production worker, including workflow phases.
-2. Verify all continuation/retry entry points use durable central dispatcher.
-3. Preserve current focused final-chapter zero-choice proof under full aggregate execution.
-
-## Task 10 process-local simulation and HOLD
-
-`scripts/full-generation-worker-soak.ts` is relabelled process-local simulation, not approved soak. Commands are `simulate:full-generation:10` and `simulate:full-generation:30`. It measures real process-local generation/choice capacity gates and exercises production fingerprint/error-taxonomy helpers, but provider calls and all lifecycle state are adapters/in-memory objects. Its retry, repair, fallback, recovery, publication, stale-token, and eventual-publication counters are simulation-only and are not acceptance evidence.
-
-Strongest non-invasive production-seam evidence available is split across local Supabase tests: real `generation_jobs`, `chapter_generation_checkpoints`, and `generation_leases`; `recover_stale_generation_jobs_v1`; fresh global claim and bound lease; rejected stale-token `publish_generation_job_chapter_v4`; accepted fresh-token V4 publication. Recovery/fencing race scripts exercise concurrent PostgreSQL sessions. These DB proofs do not run production worker/dispatcher or candidate provider sequence.
-
-**APPROVED PROGRAMMABLE SOAK: HOLD.** Exact blockers:
-
-1. Production worker statically imports `runChapterGenerationAttempt`; no dependency-injection seam can replace generation/provider behavior while retaining worker claim, lease, heartbeat, finish, and dispatcher code.
-2. Production choice path resolves gateway candidate chain internally; no test-only programmable candidate-provider adapter can inject timeout, malformed output, repair, fallback, then success through actual worker without invasive production DI or external provider calls.
-3. DB RPC fixtures can prove lifecycle, concurrent recovery, and V4 fencing/publication, but cannot truthfully measure production generation/choice concurrency or provider retry/repair/fallback.
-4. Process-local 10-job 1/1 and 30-job 6/2 runs therefore remain capacity simulations only. No acceptance or release-readiness claim derives from them.
-
-## Current verdict
-
-**COMPLETION HOLD — BLOCKERS REMAIN. NO PR MATRIX ROW IS GREEN.**
-
-Production worker flag: **OFF**.
-Production deployment: **NOT RUN**.
-Linked migration push: **NOT RUN**.
-Approved production-seam programmable soak: **BLOCKED / NOT RUN**.
-Process-local simulation: **excluded from acceptance evidence**.
-
-No production deployment, linked migration push, or production soak is permitted from this audit state.
+Final-review choice-concurrency issue is resolved and all requested local gates are green; no final-unit blocker remains. Keep production generation worker OFF and do not begin rollout until explicit rollout approval. Retained 10/30 production-seam artifacts remain historical local evidence only because they predate cleanup fix.

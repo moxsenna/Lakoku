@@ -7,18 +7,47 @@ import {
   __resetChoiceConcurrencyForTests,
   acquireChoiceSlot,
   releaseChoiceSlot,
+  resolveChoiceConcurrencyPolicy,
   withChoiceGenerationSlot,
 } from '@/lib/runtime/choice-concurrency'
 
 afterEach(() => {
   __resetChoiceConcurrencyForTests()
   delete process.env.LAKOKU_CHOICE_MAX_ACTIVE
+  delete process.env.LAKOKU_CHOICE_MAX_ACTIVE_OPENROUTER
+  delete process.env.LAKOKU_CHOICE_MAX_ACTIVE_9ROUTER
   delete process.env.LAKOKU_CHOICE_MAX_QUEUE
   delete process.env.LAKOKU_CHOICE_JITTER_MIN_MS
   delete process.env.LAKOKU_CHOICE_JITTER_MAX_MS
 })
 
 describe('choice concurrency gate', () => {
+  it('inherits global maxActive for OpenRouter when no provider override is set', () => {
+    process.env.LAKOKU_CHOICE_MAX_ACTIVE = '1'
+
+    expect(resolveChoiceConcurrencyPolicy('openrouter').maxActive).toBe(1)
+  })
+
+  it('uses explicit OpenRouter maxActive override over global value', () => {
+    process.env.LAKOKU_CHOICE_MAX_ACTIVE = '1'
+    process.env.LAKOKU_CHOICE_MAX_ACTIVE_OPENROUTER = '4'
+
+    expect(resolveChoiceConcurrencyPolicy('openrouter').maxActive).toBe(4)
+  })
+
+  it('uses global maxActive for another provider', () => {
+    process.env.LAKOKU_CHOICE_MAX_ACTIVE = '1'
+
+    expect(resolveChoiceConcurrencyPolicy('provider-a').maxActive).toBe(1)
+  })
+
+  it('preserves explicit 9router maxActive override over global value', () => {
+    process.env.LAKOKU_CHOICE_MAX_ACTIVE = '1'
+    process.env.LAKOKU_CHOICE_MAX_ACTIVE_9ROUTER = '5'
+
+    expect(resolveChoiceConcurrencyPolicy('9router').maxActive).toBe(5)
+  })
+
   it('allows maxActive concurrent slots per provider', async () => {
     process.env.LAKOKU_CHOICE_MAX_ACTIVE = '2'
     process.env.LAKOKU_CHOICE_JITTER_MIN_MS = '0'
@@ -56,6 +85,20 @@ describe('choice concurrency gate', () => {
     })
     expect(a.ok).toBe(true)
     expect(b.ok).toBe(true)
+  })
+
+  it('reports bounded queue and active snapshots through explicit observer', async () => {
+    process.env.LAKOKU_CHOICE_MAX_ACTIVE = '1'
+    process.env.LAKOKU_CHOICE_JITTER_MIN_MS = '0'
+    process.env.LAKOKU_CHOICE_JITTER_MAX_MS = '0'
+    const observer = vi.fn()
+    const held = await acquireChoiceSlot({ providerId: 'provider-a', storyId: 's1', chapterNumber: 1, observer })
+    const queued = acquireChoiceSlot({ providerId: 'provider-a', storyId: 's2', chapterNumber: 1, observer })
+    await vi.waitFor(() => expect(observer).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'provider-a', active: 1, queued: 1 })))
+    if (held.ok) releaseChoiceSlot({ providerId: 'provider-a', slotToken: held.slotToken, observer })
+    const promoted = await queued
+    if (promoted.ok) releaseChoiceSlot({ providerId: 'provider-a', slotToken: promoted.slotToken, observer })
+    expect(observer.mock.calls.every(([event]) => event.active <= 1 && event.queued <= 1)).toBe(true)
   })
 
   it('rejects when queue full', async () => {

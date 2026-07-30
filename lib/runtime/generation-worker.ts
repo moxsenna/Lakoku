@@ -55,10 +55,13 @@ export type WorkerRunResult =
 /**
  * Request-path entry: claim the exact job just enqueued, then execute.
  */
-export async function claimAndRunGenerationJobById(args: {
-  jobId: string
-  workerId?: string
-}): Promise<WorkerRunResult> {
+export async function claimAndRunGenerationJobById(
+  args: {
+    jobId: string
+    workerId?: string
+  },
+  options?: GenerationWorkerOptions,
+): Promise<WorkerRunResult> {
   const workerId = args.workerId ?? workerIdFor('after')
   const claim = await claimGenerationJobById({ jobId: args.jobId, workerId })
   if (!claim.claimed || !('job' in claim) || !claim.job) {
@@ -69,7 +72,7 @@ export async function claimAndRunGenerationJobById(args: {
     })
     return { ok: false, outcome: 'NOT_CLAIMED', jobId: args.jobId }
   }
-  return executeClaimedJob(claim.job)
+  return executeClaimedJob(claim.job, options)
 }
 
 /**
@@ -86,17 +89,20 @@ export async function runAlreadyClaimedGenerationJob(
  * Recovery tick: global pop up to maxJobs, run each already-claimed job.
  * Used by /api/generation/recover. Safe under concurrent ticks (skip locked).
  */
-export async function claimAndRunAvailableJobs(args: {
-  maxJobs: number
-  workerIdPrefix?: string
-}): Promise<{ ran: number; results: WorkerRunResult[] }> {
+export async function claimAndRunAvailableJobs(
+  args: {
+    maxJobs: number
+    workerIdPrefix?: string
+  },
+  options?: GenerationWorkerOptions,
+): Promise<{ ran: number; results: WorkerRunResult[] }> {
   const max = Math.min(Math.max(1, args.maxJobs), 20)
   const results: WorkerRunResult[] = []
   for (let i = 0; i < max; i++) {
     const workerId = workerIdFor(args.workerIdPrefix ?? 'recover')
     const claim = await claimGenerationJob({ workerId })
     if (!claim.claimed || !('job' in claim) || !claim.job) break
-    results.push(await runAlreadyClaimedGenerationJob(claim.job))
+    results.push(await runAlreadyClaimedGenerationJob(claim.job, options))
   }
   return { ran: results.length, results }
 }

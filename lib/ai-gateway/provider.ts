@@ -77,6 +77,7 @@ export type ProviderCandidateTransport = (input: Readonly<{
 
 export type ProviderRuntime = Readonly<{
   candidateTransport?: ProviderCandidateTransport
+  choiceConcurrencyObserver?: import('@/lib/runtime/choice-concurrency').ChoiceConcurrencyObserver
 }>
 
 export interface ModelCallExecutionOptions {

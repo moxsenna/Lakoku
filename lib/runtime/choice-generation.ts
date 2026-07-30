@@ -284,18 +284,6 @@ export async function buildChoiceBranch(
   try {
     const provider = await deps.selectProvider(input.providerContext)
     throwIfAborted(input.signal)
-    const providerId = typeof provider.name === 'string' ? provider.name : 'default'
-    const storyId = input.snapshot.storyId
-    const correlationId =
-      input.providerContext &&
-      typeof input.providerContext === 'object' &&
-      input.providerContext !== null &&
-      'correlationId' in input.providerContext
-        ? String((input.providerContext as { correlationId?: string }).correlationId ?? '')
-        : undefined
-
-    // Choice-specific capacity gate (separate from overall generation concurrency).
-    const { withChoiceGenerationSlot } = await import('@/lib/runtime/choice-concurrency')
     const {
       DEFAULT_CHOICE_RETRY_BUDGET,
       classifyChoiceProviderError,
@@ -317,18 +305,15 @@ export async function buildChoiceBranch(
       callInput: ChoiceInput,
       workflowPhase: string,
     ): Promise<ChoiceBranch | null> =>
-      withChoiceGenerationSlot(
-        { providerId, storyId, chapterNumber: input.chapterNumber, correlationId, signal: input.signal },
-        () => deps.generateChoiceBranch({ provider }, callInput, {
-          telemetryContext: input.providerContext,
-          workflowPhase,
-          signal: input.signal,
-          callBudget: providerCallBudget,
-          ...(input.providerRuntime === undefined
-            ? {}
-            : { providerRuntime: input.providerRuntime }),
-        }),
-      )
+      deps.generateChoiceBranch({ provider }, callInput, {
+        telemetryContext: input.providerContext,
+        workflowPhase,
+        signal: input.signal,
+        callBudget: providerCallBudget,
+        ...(input.providerRuntime === undefined
+          ? {}
+          : { providerRuntime: input.providerRuntime }),
+      })
 
     // Build a findings-aware repair input (creative/structural guidance only;
     // never dump diagnostic codes into narrative mustNotInclude).

@@ -371,6 +371,38 @@ describe('generation job worker RPC adapters', () => {
     })
   })
 
+  it('V4 serializes internal outcomes to publish_chapter_v2 SQL shape', async () => {
+    const rpc = rpcResult({ ok: true, chapter_number: 2, seq: 8, jobId: JOB_ID })
+    const { publishGenerationJobChapterV4 } = await import('@/lib/runtime/generation-jobs')
+    const effect = { routeDelta: {}, flagUpdates: {}, inventoryAdd: [], inventoryRemove: [], relationshipDelta: {} }
+
+    await publishGenerationJobChapterV4({
+      jobId: JOB_ID,
+      workerId: 'worker-a',
+      claimToken: CLAIM_TOKEN,
+      leaseId: LEASE_ID,
+      storyId: 'story-a',
+      chapterNumber: 2,
+      title: 'Bab Dua',
+      paragraphs: ['Paragraf pertama.'],
+      choicePrompt: 'Apa yang Maya lakukan sekarang?',
+      choices: [{ id: 'buka-arsip', label: 'Buka arsip banjir bersama jurnalis' }, { id: 'baca-buku', label: 'Baca buku debit hujan bersama ayah' }],
+      outcomes: [
+        { choiceId: 'buka-arsip', consequence: ['Maya membuka arsip.'], nextChapterNumber: 3, isEnding: false, effect, choiceKind: 'normal' },
+        { choiceId: 'baca-buku', consequence: ['Maya membaca buku.'], nextChapterNumber: 3, isEnding: false, effect, choiceKind: 'normal' },
+      ],
+      endingLock: null,
+      closures: [],
+    })
+
+    expect(rpc).toHaveBeenCalledWith('publish_generation_job_chapter_v4', expect.objectContaining({
+      p_outcomes: [
+        expect.objectContaining({ effect_json: effect, choice_kind: 'normal' }),
+        expect.objectContaining({ effect_json: effect, choice_kind: 'normal' }),
+      ],
+    }))
+  })
+
   it('V4 rejects malformed closures before RPC', async () => {
     const { publishGenerationJobChapterV4 } = await import('@/lib/runtime/generation-jobs')
 

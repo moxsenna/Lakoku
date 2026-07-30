@@ -116,6 +116,7 @@ function executeCandidate<T>(
   }) as T
 }
 
+
 // Default OpenRouter: paid model only when OPENROUTER_MODELS unset.
 // Setiap model menjadi request eksplisit agar identitas fallback bisa diamati.
 const OPENROUTER_PAID_DEFAULT = 'deepseek/deepseek-v3.2'
@@ -827,7 +828,15 @@ async function generateChoiceJson(args: {
         : 1024,
     })
     try {
-      return await executeObservedModelCall({
+      const { withChoiceGenerationSlot } = await import('@/lib/runtime/choice-concurrency')
+      return await withChoiceGenerationSlot({
+        providerId: candidate.providerId,
+        storyId: args.input.storyId,
+        chapterNumber: args.input.currentChapter,
+        correlationId: args.options.telemetryContext.correlationId,
+        signal: args.options.signal,
+        observer: args.options.providerRuntime?.choiceConcurrencyObserver,
+      }, () => executeObservedModelCall({
         context: args.options.telemetryContext,
         candidate: candidateIdentity(candidate),
         useCase: args.route?.useCase ?? 'choices',
@@ -858,7 +867,7 @@ async function generateChoiceJson(args: {
           const parsed = parseModelJson(text)
           return args.options.consume ? args.options.consume(parsed) : parsed
         },
-      })
+      }))
     } catch (error) {
       if (args.options.signal?.aborted) throw args.options.signal.reason ?? error
       if (isAbortError(error)) throw error
@@ -1012,7 +1021,8 @@ export function createGatewayProvider(
       if (!options) {
         throw new Error('gateway-provider: telemetry execution options are required.')
       }
-      if (choiceRouteNotice) {
+      const hasCandidateTransport = Boolean(options.providerRuntime?.candidateTransport)
+      if (choiceRouteNotice && !hasCandidateTransport) {
         // Best-effort observability; a throwing logger must not break generation.
         try {
           choiceRouteNotice()
@@ -1022,8 +1032,10 @@ export function createGatewayProvider(
         choiceRouteNotice = null
       }
       // P1-8: no explicit choices route and prose fallback disabled → fail loudly
-      // rather than silently generating choices with the prose model.
-      if (choiceRouteMissing) {
+      // rather than silently generating choices with the prose model. An explicit
+      // runtime transport resolves synthetic candidate identities without executing
+      // their configured network-backed models.
+      if (choiceRouteMissing && !hasCandidateTransport) {
         return Promise.reject(new Error('CHOICE_ROUTE_MISSING'))
       }
       return generateChoiceJson({

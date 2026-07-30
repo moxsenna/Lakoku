@@ -138,6 +138,42 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
     )
   })
 
+  it('forwards options through exact-job worker entry point', async () => {
+    mocks.claimGenerationJobById.mockResolvedValueOnce({ claimed: true, job: JOB })
+    mocks.runChapterGenerationAttempt.mockResolvedValueOnce({
+      ok: true,
+      mode: 'standard',
+      result: { ok: true, chapterNumber: 1, seq: 5 },
+    })
+    const { claimAndRunGenerationJobById } = await import('@/lib/runtime/generation-worker')
+    const options = Object.freeze({ providerRuntime: Object.freeze({ candidateTransport: vi.fn() }) })
+
+    await claimAndRunGenerationJobById({ jobId: JOB.id, workerId: JOB.workerId }, options)
+
+    expect(mocks.runChapterGenerationAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ options }),
+    )
+  })
+
+  it('forwards options through global claim worker entry point', async () => {
+    mocks.claimGenerationJob
+      .mockResolvedValueOnce({ claimed: true, job: JOB })
+      .mockResolvedValueOnce({ claimed: false })
+    mocks.runChapterGenerationAttempt.mockResolvedValueOnce({
+      ok: true,
+      mode: 'standard',
+      result: { ok: true, chapterNumber: 1, seq: 5 },
+    })
+    const { claimAndRunAvailableJobs } = await import('@/lib/runtime/generation-worker')
+    const options = Object.freeze({ providerRuntime: Object.freeze({ candidateTransport: vi.fn() }) })
+
+    await claimAndRunAvailableJobs({ maxJobs: 1, workerIdPrefix: 'test' }, options)
+
+    expect(mocks.runChapterGenerationAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ options }),
+    )
+  })
+
   it('preserves undefined options as the production default path', async () => {
     mocks.runChapterGenerationAttempt.mockResolvedValueOnce({
       ok: true,

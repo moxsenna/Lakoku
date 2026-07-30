@@ -125,7 +125,16 @@ const PlotDebtClosureSchema = z.object({
     .refine((value) => !/[\x00-\x1F\x7F]/.test(value)),
   closureForm: z.enum(['RESOLVED', 'SUBVERTED', 'TRANSFORMED', 'ABANDONED']),
 }).strict()
+const PublicationV4OutcomeSchema = z.object({
+  choiceId: z.string(),
+  consequence: z.array(z.string()),
+  nextChapterNumber: ChapterNumberSchema.nullable(),
+  isEnding: z.boolean(),
+  effect: JsonValueSchema,
+  choiceKind: z.string(),
+}).strict()
 const PublicationV4InputSchema = PublicationV3InputSchema.extend({
+  outcomes: z.array(PublicationV4OutcomeSchema),
   closures: z.array(PlotDebtClosureSchema).max(20),
 }).strict()
 const FencedCheckpointIdentitySchema = FencedPublicationIdentitySchema.extend({
@@ -560,6 +569,14 @@ export async function publishGenerationJobChapterV4(
   input: PublishGenerationJobChapterV4Input,
 ): Promise<PublishGenerationJobChapterResult> {
   const parsed = PublicationV4InputSchema.parse(input)
+  const outcomes = parsed.outcomes.map((outcome) => ({
+    choiceId: outcome.choiceId,
+    consequence: outcome.consequence,
+    nextChapterNumber: outcome.nextChapterNumber,
+    isEnding: outcome.isEnding,
+    effect_json: outcome.effect,
+    choice_kind: outcome.choiceKind,
+  }))
   const raw = RawPublicationResultSchema.parse(await callRpc('publish_generation_job_chapter_v4', {
     p_job_id: parsed.jobId,
     p_worker_id: parsed.workerId,
@@ -571,7 +588,7 @@ export async function publishGenerationJobChapterV4(
     p_paragraphs: parsed.paragraphs,
     p_choice_prompt: parsed.choicePrompt,
     p_choices: parsed.choices,
-    p_outcomes: parsed.outcomes,
+    p_outcomes: outcomes,
     p_ending_key: parsed.endingLock?.key ?? null,
     p_ending_name: parsed.endingLock?.name ?? null,
     p_closures: parsed.closures,

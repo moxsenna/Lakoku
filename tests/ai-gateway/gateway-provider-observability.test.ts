@@ -52,6 +52,8 @@ const envKeys = [
   'NINEROUTER_API_KEY',
   'NARRATIVE_MODEL',
   'LAKOKU_CHOICES_NATIVE_SCHEMA',
+  'LAKOKU_CHOICE_JITTER_MIN_MS',
+  'LAKOKU_CHOICE_JITTER_MAX_MS',
 ] as const
 const originalEnv = new Map<string, string | undefined>()
 
@@ -184,6 +186,8 @@ describe('createGatewayProvider prose observability', () => {
 
   it('stops native choice parsing and fallback after abort without another request', async () => {
     process.env.LAKOKU_CHOICES_NATIVE_SCHEMA = 'on'
+    process.env.LAKOKU_CHOICE_JITTER_MIN_MS = '0'
+    process.env.LAKOKU_CHOICE_JITTER_MAX_MS = '0'
     let resolveText: ((value: string) => void) | undefined
     generateTextMock.mockReturnValue({
       text: new Promise<string>((resolve) => { resolveText = resolve }),
@@ -216,7 +220,8 @@ describe('createGatewayProvider prose observability', () => {
       signal: controller.signal,
       callBudget: { used: 0, max: 5 },
     })
-    await vi.waitFor(() => expect(resolveText).toBeTypeOf('function'))
+    await vi.waitFor(() => expect(generateTextMock).toHaveBeenCalledTimes(1))
+    expect(resolveText).toBeTypeOf('function')
 
     controller.abort()
     resolveText?.('{"actions":[]}')
@@ -224,6 +229,71 @@ describe('createGatewayProvider prose observability', () => {
     await expect(run).rejects.toMatchObject({ name: 'AbortError' })
     expect(generateTextMock).toHaveBeenCalledTimes(1)
     expect(generateTextMock.mock.calls[0][0]).toHaveProperty('experimental_output')
+  })
+
+  it('uses explicit candidate transport for synthetic choice identities without a configured choices route', async () => {
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, route())
+    const candidateTransport = vi.fn(() => observedResult(JSON.stringify({
+      question: 'Apa yang harus dilakukan Maya?',
+      actions: [],
+    })))
+
+    await expect(provider.generateChoices?.({
+      storyId: 'story-a',
+      currentChapter: 12,
+      draft: { title: 'Bab 12', lastParagraphs: ['satu', 'dua', 'tiga'] },
+      chapterBrief: {
+        phase: 'rising', chapterGoal: 'Maju', mustInclude: [], mustNotInclude: [],
+        mustNotReveal: [], plotDebtsToProgress: [], plotDebtsToClose: [],
+        remainingChapters: 38, endingRunway: 'expansion',
+      },
+      routeState: { truth: 0, risk: 0, secrecy: 0, empathy: 0, trust: {}, flags: {}, endingBias: {}, evidence: [] },
+      choiceHistory: [], lockedEndingKey: null,
+      canon: { activeCharacters: [], activeThreads: [], pendingReveals: [] },
+    }, {
+      telemetryContext,
+      workflowPhase: 'CHOICES_INITIAL',
+      providerRuntime: { candidateTransport },
+    })).resolves.toEqual({
+      question: 'Apa yang harus dilakukan Maya?',
+      actions: [],
+    })
+
+    expect(candidateTransport).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'choice',
+      providerId: 'gateway',
+      modelId: 'openai/gpt-4.1-mini',
+      fallbackIndex: 0,
+      execute: expect.any(Function),
+    }))
+    expect(generateTextMock).not.toHaveBeenCalled()
+  })
+
+  it('passes malformed transport text through parsing and retries fallback after consume rejection', async () => {
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, route(), route([
+      { provider: 'gateway', modelId: 'openai/choice-fallback' },
+    ]))
+    const texts = ['{not-json', JSON.stringify({ question: 'Pilih?', actions: [] })]
+    const candidateTransport = vi.fn(() => observedResult(texts.shift()!))
+    const consume = vi.fn((value: unknown) => {
+      if (!value || typeof value !== 'object') throw new Error('DOWNSTREAM_SCHEMA_REJECTED')
+      return value
+    })
+
+    await expect(provider.generateChoices?.({
+      storyId: 'story-a', currentChapter: 12,
+      draft: { title: 'Bab 12', lastParagraphs: ['satu', 'dua', 'tiga'] },
+      chapterBrief: { phase: 'rising', chapterGoal: 'Maju', mustInclude: [], mustNotInclude: [], mustNotReveal: [], plotDebtsToProgress: [], plotDebtsToClose: [], remainingChapters: 38, endingRunway: 'expansion' },
+      routeState: { truth: 0, risk: 0, secrecy: 0, empathy: 0, trust: {}, flags: {}, endingBias: {}, evidence: [] },
+      choiceHistory: [], lockedEndingKey: null, canon: { activeCharacters: [], activeThreads: [], pendingReveals: [] },
+    }, { telemetryContext, workflowPhase: 'CHOICES_INITIAL', providerRuntime: { candidateTransport }, consume })).resolves.toEqual({ question: 'Pilih?', actions: [] })
+
+    expect(consume).toHaveBeenCalledTimes(2)
+    expect(consume.mock.calls[0]?.[0]).toBe('{not-json')
+    expect(candidateTransport).toHaveBeenNthCalledWith(1, expect.objectContaining({ fallbackIndex: 0 }))
+    expect(candidateTransport).toHaveBeenNthCalledWith(2, expect.objectContaining({ fallbackIndex: 1 }))
   })
 
   it('uses injected prose candidate transport while preserving timeout invalid fallback policy', async () => {

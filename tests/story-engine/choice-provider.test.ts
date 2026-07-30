@@ -335,6 +335,8 @@ describe('createGatewayProvider choice adapter', () => {
     'LAKOKU_CHOICES_MODEL',
     'LAKOKU_CHOICES_NATIVE_SCHEMA',
     'LAKOKU_CHOICES_NATIVE_SCHEMA_MODELS',
+    'LAKOKU_CHOICE_JITTER_MIN_MS',
+    'LAKOKU_CHOICE_JITTER_MAX_MS',
   ] as const
   const originalEnv = new Map<string, string | undefined>()
 
@@ -354,6 +356,10 @@ describe('createGatewayProvider choice adapter', () => {
     // design; enable the explicit opt-in so they keep testing that behavior.
     // A dedicated test below asserts CHOICE_ROUTE_MISSING when the opt-in is off.
     process.env.LAKOKU_ALLOW_CHOICES_PROSE_FALLBACK = 'true'
+    // Gate jitter is production burst control, not behavior under test here. Disable it
+    // so aggregate CPU load cannot reorder mock completions or hit Vitest's 5s limit.
+    process.env.LAKOKU_CHOICE_JITTER_MIN_MS = '0'
+    process.env.LAKOKU_CHOICE_JITTER_MAX_MS = '0'
   })
 
   afterEach(() => {
@@ -555,12 +561,12 @@ describe('createGatewayProvider choice adapter', () => {
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {
         if (failure === 'logging throw') throw new Error('telemetry sink unavailable')
       })
-      streamTextMock.mockReturnValue({
+      streamTextMock.mockImplementation(() => ({
         text: Promise.resolve(JSON.stringify(branch)),
         usage: failure === 'usage rejection'
           ? Promise.reject(new Error('usage unavailable'))
           : Promise.resolve({ totalTokens: 12 }),
-      })
+      }))
       const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
       const provider = createGatewayProvider()
 
@@ -576,10 +582,10 @@ describe('createGatewayProvider choice adapter', () => {
     const text = new Promise<string>((resolve) => {
       resolveText = resolve
     })
-    streamTextMock.mockReturnValue({
+    streamTextMock.mockImplementation(() => ({
       text,
       usage: Promise.reject(new Error('choice usage unavailable immediately')),
-    })
+    }))
     const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
     const provider = createGatewayProvider()
 

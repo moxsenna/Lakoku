@@ -571,7 +571,7 @@ async function generateNextChapterRealInner(
             : args.choices == null
               ? null
               : [args.choices],
-          outcomes: args.outcomes as unknown[],
+          outcomes: args.outcomes,
           endingLock: null,
           closures: [],
         })

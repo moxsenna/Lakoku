@@ -1105,7 +1105,7 @@ async function generateNextPersonalizedChapterInner(
           paragraphs: readerSafe.paragraphs,
           choicePrompt,
           choices: choices as unknown[],
-          outcomes: outcomes as unknown[],
+          outcomes,
           endingLock: endingLock ? { key: endingLock.key, name: endingLock.name } : null,
           closures: auditSignals.closesPlotDebts,
         })

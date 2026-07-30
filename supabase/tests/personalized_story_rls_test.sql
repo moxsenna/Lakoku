@@ -65,10 +65,10 @@ do $$
 begin
   if to_regclass('public.story_generation_contracts') is not null then
     execute $insert$
-      insert into public.story_generation_contracts (story_id, mode)
+      insert into public.story_generation_contracts (story_id, mode, story_contract_version)
       values
-        ('test:personalized-private-a', 'personalized_ai'),
-        ('premium:test-public-template', 'premium_template')
+        ('test:personalized-private-a', 'personalized_ai', 1),
+        ('premium:test-public-template', 'premium_template', 1)
     $insert$;
   end if;
 end
@@ -332,8 +332,8 @@ select is(
 );
 select ok(
   pg_temp.try_exec($sql$
-    insert into public.story_generation_contracts (story_id, mode)
-    values ('test:service-role-write', 'personalized_ai')
+    insert into public.story_generation_contracts (story_id, mode, story_contract_version)
+    values ('test:service-role-write', 'personalized_ai', 1)
   $sql$),
   'service_role can write generation contract internals'
 );

@@ -565,6 +565,7 @@ describe('story ownership against restored local Supabase', () => {
           route_schema_json: { sentinel: `${contractSentinel}-private` },
           plot_debts_json: [{ sentinel: `${contractSentinel}-private` }],
           ending_candidates_json: [{ sentinel: `${contractSentinel}-private` }],
+          story_contract_version: 1,
         },
         {
           story_id: premiumId,
@@ -574,6 +575,7 @@ describe('story ownership against restored local Supabase', () => {
           route_schema_json: { sentinel: `${contractSentinel}-premium` },
           plot_debts_json: [{ sentinel: `${contractSentinel}-premium` }],
           ending_candidates_json: [{ sentinel: `${contractSentinel}-premium` }],
+          story_contract_version: 1,
         },
       ])
       check(!contractInsert.error, 'cannot seed generation-contract fixtures')

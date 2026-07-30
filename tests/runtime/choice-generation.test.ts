@@ -163,41 +163,6 @@ describe('Phase 1 — choice-generation module unit tests', () => {
     })
   })
 
-  describe('fallbackChoicesFromDraft', () => {
-    it('returns the two hard-coded choice labels', async () => {
-      const { fallbackChoicesFromDraft } = await import('@/lib/runtime/choice-generation')
-      const draft = mockDraft(12)
-      const result = fallbackChoicesFromDraft(draft, 12)
-
-      expect(result.choices).toHaveLength(2)
-      expect(result.choices[0]).toEqual({
-        id: 'hadapi',
-        label: 'Hadapi langsung apa yang baru terbuka',
-      })
-      expect(result.choices[1]).toEqual({
-        id: 'selidiki',
-        label: 'Selidiki dulu jejak yang tersisa',
-      })
-    })
-
-    it('returns ending-specific fallback for chapter 50', async () => {
-      const { fallbackChoicesFromDraft } = await import('@/lib/runtime/choice-generation')
-      const draft = mockDraft(50)
-      const result = fallbackChoicesFromDraft(draft, 50)
-
-      expect(result.outcomes[0].isEnding).toBe(true)
-      expect(result.outcomes[0].nextChapterNumber).toBeNull()
-    })
-
-    it('choicePrompt is at most 120 chars', async () => {
-      const { fallbackChoicesFromDraft } = await import('@/lib/runtime/choice-generation')
-      const draft = mockDraft(12)
-      const result = fallbackChoicesFromDraft(draft, 12)
-
-      expect(result.choicePrompt.length).toBeLessThanOrEqual(120)
-    })
-  })
-
   describe('buildChoiceBranch', () => {
     it('returns result with branch when provider succeeds', async () => {
       const { buildChoiceBranch } = await import('@/lib/runtime/choice-generation')
@@ -453,17 +418,17 @@ describe('Phase 1 — choice-generation module unit tests', () => {
       expect(deps.telemetry).toBeUndefined()
     })
 
-    it('allows optional repairChoiceBranch and telemetry', () => {
+    it('allows optional repairChoiceBranch and repair telemetry', () => {
       const repairChoiceBranch = vi.fn()
-      const telemetry = { onChoiceFallback: vi.fn() }
+      const onChoiceRepair = vi.fn()
       const deps: ChoiceBuildDeps = {
         selectProvider: async () => ({ name: 'test' }) as never,
         generateChoiceBranch: async () => mockBranch() as never,
         repairChoiceBranch,
-        telemetry,
+        telemetry: { onChoiceRepair },
       }
       expect(typeof deps.repairChoiceBranch).toBe('function')
-      expect(typeof deps.telemetry!.onChoiceFallback).toBe('function')
+      expect(typeof deps.telemetry!.onChoiceRepair).toBe('function')
     })
   })
 
@@ -567,6 +532,76 @@ describe('Phase 1 — choice-generation module unit tests', () => {
       expect(ctx.choiceHistory).toHaveLength(2)
       expect(ctx.previousChoice?.choiceId).toBe('open-door')
       expect(ctx.lockedEndingKey).toBe('ending-truth')
+    })
+
+    it.each([
+      { triggerChoiceId: null, label: 'explicit null' },
+      { triggerChoiceId: 'choice-missing', label: 'unmatched explicit ID' },
+    ])('$label keeps previousChoice null instead of falling back to latest', async ({ triggerChoiceId }) => {
+      const { choiceNarrativeContextFromReader } = await import(
+        '@/lib/runtime/choice-context'
+      )
+      const ctx = choiceNarrativeContextFromReader({
+        route_state: {},
+        choice_history: [
+          {
+            chapterNumber: 2,
+            choiceId: 'choice-A',
+            label: 'Choice A',
+            consequence: [],
+            effectSummary: {
+              truth: 0,
+              risk: 0,
+              secrecy: 0,
+              empathy: 0,
+              flagsSet: [],
+            },
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+          {
+            chapterNumber: 3,
+            choiceId: 'choice-B',
+            label: 'Choice B',
+            consequence: [],
+            effectSummary: {
+              truth: 0,
+              risk: 0,
+              secrecy: 0,
+              empathy: 0,
+              flagsSet: [],
+            },
+            createdAt: '2026-01-02T00:00:00.000Z',
+          },
+        ],
+        triggerChoiceId,
+      })
+      expect(ctx.previousChoice).toBeNull()
+    })
+
+    it('omitted trigger choice retains legacy latest-history fallback', async () => {
+      const { choiceNarrativeContextFromReader } = await import(
+        '@/lib/runtime/choice-context'
+      )
+      const ctx = choiceNarrativeContextFromReader({
+        route_state: {},
+        choice_history: [
+          {
+            chapterNumber: 3,
+            choiceId: 'choice-B',
+            label: 'Choice B',
+            consequence: [],
+            effectSummary: {
+              truth: 0,
+              risk: 0,
+              secrecy: 0,
+              empathy: 0,
+              flagsSet: [],
+            },
+            createdAt: '2026-01-02T00:00:00.000Z',
+          },
+        ],
+      })
+      expect(ctx.previousChoice?.choiceId).toBe('choice-B')
     })
 
     it('buildChoiceBranch receives non-empty standard narrative context when provided', async () => {

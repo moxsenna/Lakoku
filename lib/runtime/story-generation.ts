@@ -7,6 +7,9 @@ import {
   type PublishOutcomeV2,
   type PublishResult,
 } from './lifecycle'
+import { NO_CREATIVE_DIRECTION_FINGERPRINT } from './chapter-generation-checkpoint.pure'
+import type { FencedCheckpointMutationResult } from './generation-jobs'
+import { classifyGenerationPublicationError } from './generation-job-error'
 import { withGenerationSlot } from './generation-concurrency'
 import {
   compileContext,
@@ -45,7 +48,6 @@ import { createSynchronousProviderContext } from './generation-provider-context'
 import type { ProviderCallContext } from '@/lib/observability/generation-provider-call.contract'
 import {
   buildChoiceBranch,
-  fallbackChoicesFromDraft,
   type BuildChoiceBranchInput,
   type ChoiceBuildDeps,
   type ChoiceNarrativeContext,
@@ -63,6 +65,7 @@ import {
 } from './choice-context'
 import { createAdminClient } from '@lakoku/db'
 import { resolveGenerationLeaseTtlSeconds } from './generation-lease-ttl'
+import { throwIfAborted } from './abort'
 
 /**
  * Workflow generasi bab NYATA (M2→M5 disatukan) — "jalur cerita AI end-to-end".
@@ -83,6 +86,12 @@ export function realGenerationKey(storyId: string, n: number, scope: string) {
   return `gen:real:${scope}:${storyId}:${n}`
 }
 
+/**
+ * Prompt/generation contract version. Bump when the prompt contract or generation
+ * policy changes in a way that must invalidate reuse of an earlier prose checkpoint.
+ */
+export const GENERATION_PROMPT_CONTRACT_VERSION = 2
+
 export type RealGenerateResult =
   | {
       ok: true
@@ -99,6 +108,7 @@ export type RealGenerateResult =
         | 'CHAPTER_EXISTS'
         | 'CANON_MISSING'
         | 'FAILED_REVIEW_REQUIRED'
+        | 'TRANSIENT'
         | 'CHOICE_GENERATION_FAILED'
         | 'CAPACITY_BUSY'
         | 'CAPACITY_TIMEOUT'
@@ -259,21 +269,9 @@ async function loadStandardNarrativeContext(
       locked_ending_key: (data as { locked_ending_key?: string | null }).locked_ending_key,
     })
   } catch {
-    // DB down or table missing: fallback silently (Phase 5 removes this).
+    // DB down or table missing leaves fresh standard/onboarding context empty.
     return emptyChoiceNarrativeContext()
   }
-}
-
-/**
- * Fallback bila LLM choices gagal: tetap grounded di draft (bukan maju/tahan generik).
- * Delegates to shared choice-generation module.
- */
-function fallbackChoicesFromDraftFn(
-  draft: ChapterDraftParsed,
-  chapterNumber: number,
-) {
-  // Test/fixture only — not used on production success path (Phase 5).
-  return fallbackChoicesFromDraft(draft, chapterNumber)
 }
 
 /** DI dependencies injected for standard choice build path. */
@@ -313,6 +311,8 @@ async function buildChoices(
   chapterNumber: number,
   providerContext: ProviderCallContext,
   narrativeContextOverride?: ChoiceNarrativeContext,
+  signal?: AbortSignal,
+  providerRuntime?: import('@/lib/ai-gateway/provider').ProviderRuntime,
 ): Promise<{
   ok: true
   choicePrompt: string
@@ -375,6 +375,8 @@ async function buildChoices(
     previousChoice: narrativeContext.previousChoice,
     lockedEndingKey: narrativeContext.lockedEndingKey,
     providerContext,
+    signal,
+    providerRuntime,
     activeCharacters,
     activeThreads,
     creativeDirectionHints: choiceDirection
@@ -430,6 +432,12 @@ export interface StandardGenerateInput {
   correlationId: string
   /** Durable attempt id; used for checkpoint identity. Defaults to correlationId. */
   attemptId?: string | null
+  /**
+   * Worker path: reuse job lease + fenced publish. Skip own acquireGenerationLease.
+   * Propagate signal into provider-facing work where possible.
+   */
+  jobContext?: import('@/lib/runtime/generation-job-execution').GenerationJobExecutionContext | null
+  options?: import('@/lib/runtime/generation-job-execution').GenerationWorkerOptions
 }
 
 export async function generateNextChapterReal(
@@ -464,6 +472,7 @@ export async function generateNextChapterReal(
       })
       return { ok: false, reason, detail: meta }
     },
+    input.jobContext?.signal,
   )
 }
 
@@ -472,6 +481,7 @@ async function generateNextChapterRealInner(
 ): Promise<RealGenerateResult> {
   const { storyId, userId, chapterNumber, correlationId } = input
   const attemptId = input.attemptId?.trim() || correlationId
+  const jobContext = input.jobContext ?? null
   const startedAt = Date.now()
   let stage: GenerationStage = 'ACQUIRE_LEASE'
   let leaseId: string | null = null
@@ -479,6 +489,14 @@ async function generateNextChapterRealInner(
   let fromCheckpoint = false
   let proseFingerprintUsed: string | null = null
   let checkpointAttemptId = attemptId
+
+  const checkpointMutationSucceeded = (
+    result: FencedCheckpointMutationResult | { ok: boolean } | void,
+  ): boolean => !jobContext || result?.ok === true
+
+  if (jobContext?.signal?.aborted) {
+    return { ok: false, reason: 'CAPACITY_TIMEOUT', detail: { reason: 'ABORT_SIGNAL' } }
+  }
 
   const providerContext = createSynchronousProviderContext({
     userId,
@@ -488,7 +506,13 @@ async function generateNextChapterRealInner(
     correlationId,
   })
 
+  /**
+   * On worker path the job lease is owned by the worker (heartbeat/finish).
+   * Do not release it from the generator — finish/fenced-publish handle that.
+   * Legacy path still releases its own lease on failure.
+   */
   const releaseLeaseOnce = async () => {
+    if (jobContext) return
     if (!leaseId || leaseReleased) return
     try {
       await releaseGenerationLease({ storyId, leaseId })
@@ -504,6 +528,106 @@ async function generateNextChapterRealInner(
         errorMessage: info.errorMessage,
       })
     }
+  }
+
+  type UnifiedPublishResult =
+    | { ok: true; chapter_number: number; seq: number; jobId?: string }
+    | {
+        ok: false
+        reason:
+          | 'LEASE_HELD'
+          | 'CHAPTER_EXISTS'
+          | 'FAILED_REVIEW_REQUIRED'
+          | 'TRANSIENT'
+          | 'CAPACITY_TIMEOUT'
+      }
+
+  const publishUnified = async (args: {
+    title: string
+    paragraphs: string[]
+    choicePrompt: string | null
+    choices: unknown
+    outcomes: PublishOutcomeV2[]
+    idempotencyKey: string
+  }): Promise<UnifiedPublishResult> => {
+    if (jobContext?.signal?.aborted) {
+      return { ok: false, reason: 'CAPACITY_TIMEOUT' }
+    }
+    if (jobContext) {
+      const { publishGenerationJobChapterV4 } = await import('@/lib/runtime/generation-jobs')
+      try {
+        const published = await publishGenerationJobChapterV4({
+          jobId: jobContext.jobId,
+          workerId: jobContext.workerId,
+          claimToken: jobContext.claimToken,
+          leaseId: jobContext.leaseId,
+          storyId,
+          chapterNumber,
+          title: args.title,
+          paragraphs: args.paragraphs,
+          choicePrompt: args.choicePrompt,
+          choices: Array.isArray(args.choices)
+            ? args.choices
+            : args.choices == null
+              ? null
+              : [args.choices],
+          outcomes: args.outcomes,
+          endingLock: null,
+          closures: [],
+        })
+        // Fenced publish marks job SUCCEEDED + releases bound lease.
+        leaseReleased = true
+        return {
+          ok: true,
+          chapter_number: published.chapterNumber,
+          seq: published.seq,
+          jobId: published.jobId,
+        }
+      } catch (err) {
+        throwIfAborted(jobContext.signal)
+        const classification = classifyGenerationPublicationError(err)
+        const info = safeErrorInfo(err)
+        console.error('GENERATION_FENCED_PUBLISH_FAILED', {
+          storyId,
+          chapterNumber,
+          jobId: jobContext.jobId,
+          errorCode: classification.code,
+          errorName: info.errorName.slice(0, 100),
+        })
+        if (classification.kind === 'chapter_exists') {
+          return { ok: false, reason: 'CHAPTER_EXISTS' }
+        }
+        if (classification.kind === 'ownership_lost') {
+          return { ok: false, reason: 'LEASE_HELD' }
+        }
+        if (classification.kind === 'transient') {
+          return { ok: false, reason: 'TRANSIENT' }
+        }
+        return { ok: false, reason: 'FAILED_REVIEW_REQUIRED' }
+      }
+    }
+
+    const published: PublishResult = await publishChapterV2({
+      storyId,
+      chapterNumber,
+      title: args.title,
+      paragraphs: args.paragraphs,
+      choicePrompt: args.choicePrompt,
+      choices: args.choices as never,
+      outcomes: args.outcomes,
+      leaseId: leaseId!,
+      idempotencyKey: args.idempotencyKey,
+    })
+    if (published.ok) {
+      leaseReleased = true
+      return {
+        ok: true,
+        chapter_number: published.chapter_number,
+        seq: published.seq,
+      }
+    }
+    // PublishResult failure is only CHAPTER_EXISTS today.
+    return { ok: false, reason: 'CHAPTER_EXISTS' }
   }
 
   const logRuntimeFailure = async (errorCode: string, err: unknown) => {
@@ -529,20 +653,31 @@ async function generateNextChapterRealInner(
     })
   }
 
-  // 1) Lease (idempoten). Menolak bila ada generasi lain aktif.
+  // 1) Lease. Worker path reuses job lease (no second acquire). Legacy acquires own.
   stage = 'ACQUIRE_LEASE'
-  const ttlSeconds = await resolveGenerationLeaseTtlSeconds()
-  const lease = await acquireGenerationLease({
-    storyId,
-    chapterNumber,
-    holder: 'story-generation',
-    // Multi-LLM plan→write→repair can exceed 2 minutes wall on VPS.
-    // TTL from generation_policy (clamped 60..1800).
-    ttlSeconds,
-    idempotencyKey: realGenerationKey(storyId, chapterNumber, 'lease'),
-  })
-  if (!lease.ok) return { ok: false, reason: lease.reason }
-  leaseId = lease.lease_id
+  if (jobContext) {
+    leaseId = jobContext.leaseId
+    console.log('GENERATION_JOB_LEASE_REUSED', {
+      storyId,
+      chapterNumber,
+      correlationId,
+      jobId: jobContext.jobId,
+      attemptNumber: jobContext.attemptNumber,
+    })
+  } else {
+    const ttlSeconds = await resolveGenerationLeaseTtlSeconds()
+    const lease = await acquireGenerationLease({
+      storyId,
+      chapterNumber,
+      holder: 'story-generation',
+      // Multi-LLM plan→write→repair can exceed 2 minutes wall on VPS.
+      // TTL from generation_policy (clamped 60..1800).
+      ttlSeconds,
+      idempotencyKey: realGenerationKey(storyId, chapterNumber, 'lease'),
+    })
+    if (!lease.ok) return { ok: false, reason: lease.reason }
+    leaseId = lease.lease_id
+  }
 
   try {
     // 1b) Choice-only resume: load PROSE_READY checkpoint when available.
@@ -559,7 +694,44 @@ async function generateNextChapterRealInner(
       chapterNumber,
       // Prefer any usable checkpoint for story+chapter on retry (not only this attemptId)
       attemptId: null,
+      jobContext,
     })
+
+    const reconcilePublishedCheckpoint = async () => {
+      try {
+        const mutation = await markCheckpointStatus({
+          storyId,
+          chapterNumber,
+          attemptId: checkpointAttemptId,
+          status: 'PUBLISHED',
+          jobContext,
+        })
+        if (checkpointMutationSucceeded(mutation)) return
+        console.log('CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED', {
+          storyId,
+          chapterNumber,
+          correlationId,
+          jobId: jobContext?.jobId ?? null,
+          checkpointAttemptId,
+          result: mutation && typeof mutation === 'object' && 'result' in mutation
+            ? String(mutation.result).slice(0, 64)
+            : 'NOT_UPDATED',
+        })
+      } catch (err) {
+        if (!jobContext) throw err
+        const info = safeErrorInfo(err)
+        console.log('CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED', {
+          storyId,
+          chapterNumber,
+          correlationId,
+          jobId: jobContext.jobId,
+          checkpointAttemptId,
+          result: 'THREW',
+          errorName: info.errorName?.slice(0, 100) ?? null,
+          errorMessage: info.errorMessage?.slice(0, 200) ?? null,
+        })
+      }
+    }
 
     // 2) Muat canon (read-only) resolved sampai bab target.
     stage = 'LOAD_CANON'
@@ -587,6 +759,15 @@ async function generateNextChapterRealInner(
     } catch {
       creativeDirection = null
     }
+
+    // Stable fingerprint of the creative direction that grounded this prose.
+    // Changes when direction changes → invalidates checkpoint reuse (P1-2).
+    const creativeDirectionFingerprint = creativeDirection
+      ? (await import('node:crypto')).createHash('sha256')
+          .update(JSON.stringify(creativeDirection))
+          .digest('hex')
+          .slice(0, 32)
+      : NO_CREATIVE_DIRECTION_FINGERPRINT
 
     // 3) Kompilasi konteks + catat jejak retrieval (best-effort observability).
     stage = 'COMPILE_CONTEXT'
@@ -616,7 +797,42 @@ async function generateNextChapterRealInner(
     let result: ProseResult
     let draft: ChapterDraftParsed
 
-    if (existingCheckpoint) {
+    // P1-2: verify the (early-loaded) checkpoint against current versions now that
+    // canon/blueprint/direction are resolved. Discard stale prose (regenerate).
+    let usableCheckpoint = existingCheckpoint
+    if (usableCheckpoint) {
+      const { verifyCheckpointFreshness } = await import(
+        '@/lib/runtime/chapter-generation-checkpoint'
+      )
+      const canonVersionProxyNow = snapshot.blueprints.reduce(
+        (max, b) => Math.max(max, b.version ?? 0),
+        0,
+      )
+      const verdict = verifyCheckpointFreshness(usableCheckpoint, {
+        canonVersion: canonVersionProxyNow,
+        blueprintVersion: blueprint.version ?? null,
+        directionFingerprint: creativeDirectionFingerprint,
+        generationMode: 'standard',
+        generationPolicyVersion: GENERATION_PROMPT_CONTRACT_VERSION,
+        promptContractVersion: GENERATION_PROMPT_CONTRACT_VERSION,
+        requireJobProvenance: jobContext != null,
+        jobId: jobContext?.jobId ?? null,
+        jobAttemptNumber: jobContext?.attemptNumber ?? null,
+      })
+      if (!verdict.fresh) {
+        console.log('CHECKPOINT_STALE_DISCARDED', {
+          storyId,
+          chapterNumber,
+          correlationId,
+          reason: verdict.reason,
+          schemaVersion: usableCheckpoint.schemaVersion,
+        })
+        usableCheckpoint = null
+      }
+    }
+
+    if (usableCheckpoint) {
+      const existingCheckpoint = usableCheckpoint
       fromCheckpoint = true
       proseFingerprintUsed = existingCheckpoint.proseFingerprint
       checkpointAttemptId = existingCheckpoint.attemptId
@@ -628,13 +844,21 @@ async function generateNextChapterRealInner(
         attempts: existingCheckpoint.proseAttemptCount,
         findings: [],
       }
-      await markCheckpointStatus({
+      const runningChoices = await markCheckpointStatus({
         storyId,
         chapterNumber,
         attemptId: checkpointAttemptId,
         status: 'RUNNING_CHOICES',
         choiceAttemptCount: existingCheckpoint.choiceAttemptCount + 1,
+        jobContext,
       })
+      if (!checkpointMutationSucceeded(runningChoices)) {
+        return {
+          ok: false,
+          reason: 'FAILED_REVIEW_REQUIRED',
+          detail: { checkpointMutation: runningChoices },
+        }
+      }
       console.log('GENERATION_CHOICES_ONLY_RESUME', {
         storyId,
         chapterNumber,
@@ -656,9 +880,15 @@ async function generateNextChapterRealInner(
           executionOptions: {
             telemetryContext: providerContext,
             workflowPhase: 'CHAPTER_PROSE_INITIAL',
+            signal: jobContext?.signal,
+            ...(input.options?.providerRuntime === undefined
+              ? {}
+              : { providerRuntime: input.options.providerRuntime }),
           },
         },
       )
+      // Provider may ignore abort; never persist checkpoint/choices/publish after cancel.
+      throwIfAborted(jobContext?.signal)
 
       stage = 'VALIDATE_PROSE'
       if (result.status !== 'PUBLISHED' || !result.draft) {
@@ -738,6 +968,12 @@ async function generateNextChapterRealInner(
       }
 
       // Persist PROSE_READY before choices so choice failure does not discard prose.
+      // Carry provenance so a stale checkpoint (canon/blueprint/mode changed) is
+      // not reused after the fact (P1-2).
+      const canonVersionProxy = snapshot.blueprints.reduce(
+        (max, b) => Math.max(max, b.version ?? 0),
+        0,
+      )
       const saved = await persistProseReadyCheckpoint({
         storyId,
         chapterNumber,
@@ -746,19 +982,65 @@ async function generateNextChapterRealInner(
         title: draft.title,
         paragraphs: draft.paragraphs ?? [],
         proseAttemptCount: result.attempts,
+        auditSignals: null,
+        auditSignalsVersion: null,
+        canonVersion: canonVersionProxy,
+        blueprintVersion: blueprint.version ?? null,
+        directionFingerprint: creativeDirectionFingerprint,
+        generationMode: 'standard',
+        generationPolicyVersion: GENERATION_PROMPT_CONTRACT_VERSION,
+        promptContractVersion: GENERATION_PROMPT_CONTRACT_VERSION,
+        jobId: jobContext?.jobId ?? null,
+        jobAttemptNumber: jobContext?.attemptNumber ?? null,
+        jobContext,
       })
-      if (saved.ok) {
-        proseFingerprintUsed = saved.checkpoint.proseFingerprint
-        checkpointAttemptId = saved.checkpoint.attemptId
+      if (jobContext) {
+        if (!checkpointMutationSucceeded(saved)) {
+          return {
+            ok: false,
+            reason: 'FAILED_REVIEW_REQUIRED',
+            detail: { checkpointMutation: saved },
+          }
+        }
+        proseFingerprintUsed = proseFingerprint(draft.title, draft.paragraphs ?? [])
+        checkpointAttemptId = jobContext.jobId
+      } else if (
+        'checkpoint' in saved &&
+        saved.ok &&
+        saved.checkpoint != null &&
+        'proseFingerprint' in saved.checkpoint &&
+        'attemptId' in saved.checkpoint
+      ) {
+        proseFingerprintUsed = saved.checkpoint.proseFingerprint as string
+        checkpointAttemptId = saved.checkpoint.attemptId as string
       } else {
-        // Still continue with in-memory prose; retry may regenerate if table missing.
+        // Legacy worker-off path remains best-effort when checkpoint storage is absent.
         proseFingerprintUsed = proseFingerprint(draft.title, draft.paragraphs ?? [])
         console.log('CHECKPOINT_PROSE_READY_SKIPPED', {
           storyId,
           chapterNumber,
           correlationId,
-          error: saved.error,
+          error: 'error' in saved
+            ? saved.error
+            : 'result' in saved
+              ? saved.result
+              : 'WRITE_FAILED',
         })
+      }
+
+      const runningChoices = await markCheckpointStatus({
+        storyId,
+        chapterNumber,
+        attemptId: checkpointAttemptId,
+        status: 'RUNNING_CHOICES',
+        jobContext,
+      })
+      if (!checkpointMutationSucceeded(runningChoices)) {
+        return {
+          ok: false,
+          reason: 'FAILED_REVIEW_REQUIRED',
+          detail: { checkpointMutation: runningChoices },
+        }
       }
     }
 
@@ -772,33 +1054,37 @@ async function generateNextChapterRealInner(
     stage = 'BUILD_CHOICE_CONTEXT'
     stage = 'BUILD_CHOICES'
     stage = 'GENERATE_CHOICES_INITIAL'
-    const branch = await buildChoices(snapshot, draft, chapterNumber, providerContext)
+    throwIfAborted(jobContext?.signal)
+    const branch = await buildChoices(
+      snapshot,
+      draft,
+      chapterNumber,
+      providerContext,
+      undefined,
+      jobContext?.signal,
+      input.options?.providerRuntime,
+    )
+    throwIfAborted(jobContext?.signal)
     if (!branch.ok) {
       // Final chapter: publish ending without choices (Phase 7 also covers this).
       if (branch.reason === 'FINAL_CHAPTER') {
         stage = 'PUBLISH_CHAPTER'
-        const publishedEnding: PublishResult = await publishChapterV2({
-          storyId,
-          chapterNumber,
+        const publishedEnding = await publishUnified({
           title: readerSafe.title,
           paragraphs: readerSafe.paragraphs,
           choicePrompt: null,
           choices: null,
           outcomes: [],
-          leaseId: lease.lease_id,
           idempotencyKey: realGenerationKey(storyId, chapterNumber, 'publish'),
         })
-        if (publishedEnding.ok) leaseReleased = true
         if (!publishedEnding.ok) {
           await releaseLeaseOnce()
           return { ok: false, reason: publishedEnding.reason }
         }
-        await markCheckpointStatus({
-          storyId,
-          chapterNumber,
-          attemptId: checkpointAttemptId,
-          status: 'PUBLISHED',
-        })
+        if (jobContext && publishedEnding.jobId !== jobContext.jobId) {
+          return { ok: false, reason: 'FAILED_REVIEW_REQUIRED' }
+        }
+        if (!jobContext) await reconcilePublishedCheckpoint()
         stage = 'RECORD_TERMINAL_ATTEMPT'
         await recordGenerationAttempt({
           storyId,
@@ -819,12 +1105,20 @@ async function generateNextChapterRealInner(
       }
 
       // Keep PROSE_READY so retry runs choices only.
-      await markCheckpointStatus({
+      const retryCheckpoint = await markCheckpointStatus({
         storyId,
         chapterNumber,
         attemptId: checkpointAttemptId,
         status: 'CHOICES_RETRY_WAIT',
+        jobContext,
       })
+      if (!checkpointMutationSucceeded(retryCheckpoint)) {
+        return {
+          ok: false,
+          reason: 'FAILED_REVIEW_REQUIRED',
+          detail: { checkpointMutation: retryCheckpoint },
+        }
+      }
       await releaseLeaseOnce()
       stage = 'RECORD_TERMINAL_ATTEMPT'
       const { mapChoiceFailureReasonToErrorCode } = await import(
@@ -890,7 +1184,7 @@ async function generateNextChapterRealInner(
       throw err
     }
 
-    // 8) Publish atomik (chapter + outcomes + event + release lease).
+    // 8) Publish atomik (legacy publish_chapter OR fenced job publish).
     stage = 'PUBLISH_CHAPTER'
     const publishKey = proseFingerprintUsed
       ? realGenerationKey(
@@ -899,47 +1193,48 @@ async function generateNextChapterRealInner(
           `publish:${proseFingerprintUsed.slice(0, 16)}`,
         )
       : realGenerationKey(storyId, chapterNumber, 'publish')
-    const published: PublishResult = await publishChapterV2({
-      storyId,
-      chapterNumber,
+    const published = await publishUnified({
       title: readerSafe.title,
       paragraphs: readerSafe.paragraphs,
       choicePrompt: branch.choicePrompt,
       choices: branch.choices,
       outcomes: branch.outcomes,
-      leaseId: lease.lease_id,
       idempotencyKey: publishKey,
     })
-
-    // publish_chapter releases lease transactionally on success.
-    if (published.ok) leaseReleased = true
 
     if (!published.ok) {
       await releaseLeaseOnce()
       // Keep prose checkpoint for retry after publish conflict if chapter not created.
-      await markCheckpointStatus({
+      const retryCheckpoint = await markCheckpointStatus({
         storyId,
         chapterNumber,
         attemptId: checkpointAttemptId,
         status: 'CHOICES_RETRY_WAIT',
+        jobContext,
       })
+      if (!checkpointMutationSucceeded(retryCheckpoint)) {
+        return {
+          ok: false,
+          reason: 'FAILED_REVIEW_REQUIRED',
+          detail: { checkpointMutation: retryCheckpoint },
+        }
+      }
       console.log('GENERATION_PUBLISH_CONFLICT', {
         storyId,
         chapterNumber,
         correlationId,
         reason: published.reason,
         fromCheckpoint,
+        jobId: jobContext?.jobId ?? null,
         elapsedMs: Date.now() - startedAt,
       })
       return { ok: false, reason: published.reason }
     }
 
-    await markCheckpointStatus({
-      storyId,
-      chapterNumber,
-      attemptId: checkpointAttemptId,
-      status: 'PUBLISHED',
-    })
+    if (jobContext && published.jobId !== jobContext.jobId) {
+      return { ok: false, reason: 'FAILED_REVIEW_REQUIRED' }
+    }
+    if (!jobContext) await reconcilePublishedCheckpoint()
 
     // Telemetri konsistensi (T8.1) — attempt sukses. Dipancarkan SETELAH publish.
     // Best-effort only: never convert publish success into workflow failure.
@@ -987,11 +1282,8 @@ async function generateNextChapterRealInner(
   }
 }
 
-// ---- Test-only exports (Phase 0 baseline) ----
-// Exported for characterization / desired-behavior TDD tests only.
-// Must NOT be imported by production code. Logic unchanged.
+// Test seams for choice orchestration and synthetic briefs.
 export {
-  fallbackChoicesFromDraft as __testFallbackChoicesFromDraft,
   buildChoices as __testBuildChoices,
   syntheticChapterBrief as __testSyntheticChapterBrief,
 }

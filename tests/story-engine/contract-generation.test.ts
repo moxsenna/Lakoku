@@ -68,11 +68,12 @@ describe('createResilientStoryContract', () => {
     expect(generateStoryContract).toHaveBeenCalledWith({
       storyId: contract.storyId,
       tasteJson: taste(),
-    }, {
+    }, expect.objectContaining({
       signal: expect.any(AbortSignal),
       telemetryContext: contractContext(contract.storyId),
       workflowPhase: 'STORY_CONTRACT_INITIAL',
-    })
+      consume: expect.any(Function),
+    }))
   })
 
   it('makes exactly one repair call with Zod issue strings after an invalid result', async () => {

@@ -13,7 +13,7 @@ begin
 end
 $$;
 
-select plan(34);
+select plan(48);
 
 insert into auth.users (
   id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -303,6 +303,114 @@ select is(
   'finish explicitly rejects negative metrics'
 );
 select is((select status from public.generation_jobs where id = pg_temp.job_id('finish-validation')), 'RUNNING', 'invalid finish telemetry leaves ownership unchanged');
+
+-- Drain prior intentionally capped stale fixtures through production recovery so global
+-- claim below has one eligible job and proves exact restart identity deterministically.
+do $$ begin perform public.recover_stale_generation_jobs_v1(100); end $$;
+
+-- Vertical restart proof: stale worker A leaves reusable schema-V2 prose, production
+-- recovery requeues it, global worker B claim and bound lease resume publication.
+select pg_temp.add_recovery_job('restart-running-choices', 'RUNNING', interval '90 seconds', interval '-20 minutes', 1, 4, interval '100 years');
+
+create temporary table restart_proof (
+  old_token uuid not null,
+  old_lease_id uuid not null,
+  prose_fingerprint text not null,
+  claim_result jsonb,
+  lease_result jsonb
+) on commit drop;
+
+insert into public.generation_leases (
+  story_id, chapter_number, status, holder, expires_at, job_id, claim_token
+)
+select story_id, 2, 'ACTIVE', 'worker:restart-running-choices',
+       clock_timestamp() - interval '1 second', job_id, claim_token
+from pg_temp.recovery_jobs where fixture_name = 'restart-running-choices';
+
+insert into public.chapter_generation_checkpoints (
+  story_id, chapter_number, attempt_id, correlation_id, status,
+  title, paragraphs_json, prose_fingerprint,
+  audit_signals_json, audit_signals_version,
+  canon_version, blueprint_version, direction_fingerprint,
+  generation_mode, generation_policy_version, prompt_contract_version,
+  job_id, job_attempt_number, checkpoint_schema_version,
+  prose_attempt_count, choice_attempt_count, expires_at
+)
+select j.story_id, j.chapter_number, j.id, j.correlation_id, 'RUNNING_CHOICES',
+       'Restart Chapter', '["Reusable prose survives restart."]'::jsonb,
+       'restart-fingerprint-v2', null, null,
+       1, 1, 'restart-direction-v2', 'standard', 1, 1,
+       j.id, j.attempt_count, 2, 1, 1, clock_timestamp() + interval '24 hours'
+from public.generation_jobs j
+where j.id = pg_temp.job_id('restart-running-choices');
+
+insert into restart_proof (old_token, old_lease_id, prose_fingerprint)
+select l.claim_token, l.id, c.prose_fingerprint
+from public.generation_leases l
+join public.chapter_generation_checkpoints c on c.job_id = l.job_id
+where l.job_id = pg_temp.job_id('restart-running-choices')
+  and l.status = 'ACTIVE';
+
+select is(public.recover_stale_generation_jobs_v1(1)->>'recovered_count', '1', 'restart: production recovery reclaims stale RUNNING_CHOICES worker');
+select is((select status from public.generation_jobs where id=pg_temp.job_id('restart-running-choices')), 'RETRY_WAIT', 'restart: recovered job becomes immediately claimable RETRY_WAIT');
+select is((select status from public.generation_leases where id=(select old_lease_id from restart_proof)), 'EXPIRED', 'restart: old worker lease expires');
+select is((select status from public.chapter_generation_checkpoints where job_id=pg_temp.job_id('restart-running-choices')), 'RUNNING_CHOICES', 'restart: reusable checkpoint remains RUNNING_CHOICES');
+
+do $$
+declare
+  v_claim jsonb;
+begin
+  loop
+    v_claim := public.claim_generation_job_v1('worker-b');
+    exit when coalesce((v_claim->>'claimed')::boolean, false) is false;
+    if v_claim->'job'->>'id' = pg_temp.job_id('restart-running-choices')::text then
+      update restart_proof set claim_result = v_claim;
+      exit;
+    end if;
+  end loop;
+end
+$$;
+select is((select claim_result->'job'->>'id' from restart_proof), pg_temp.job_id('restart-running-choices')::text, 'restart: global claim assigns same job to worker B');
+select isnt((select (claim_result->'job'->>'claim_token')::uuid from restart_proof), (select old_token from restart_proof), 'restart: worker B receives fresh fencing token');
+
+update restart_proof
+set lease_result = public.acquire_generation_job_lease_v1(
+  pg_temp.job_id('restart-running-choices'), 'worker-b',
+  (claim_result->'job'->>'claim_token')::uuid, 180
+);
+select ok((select (lease_result->>'ok')::boolean from restart_proof), 'restart: worker B acquires contract-bound lease');
+
+select throws_ok(format($sql$
+  select public.publish_generation_job_chapter_v4(
+    %L::uuid, 'worker-b', %L::uuid, %L::uuid,
+    %L, 2, 'Restart Chapter', '["Reusable prose survives restart."]'::jsonb,
+    'What happens next?',
+    '[{"id":"a","label":"Take path A"},{"id":"b","label":"Take path B"}]'::jsonb,
+    '[{"choiceId":"a","consequence":["A"],"nextChapterNumber":3,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"},{"choiceId":"b","consequence":["B"],"nextChapterNumber":3,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"}]'::jsonb,
+    null, null, '[]'::jsonb)
+$sql$, pg_temp.job_id('restart-running-choices'), (select old_token from restart_proof),
+      (select (lease_result->>'lease_id')::uuid from restart_proof),
+      (select story_id from pg_temp.recovery_jobs where fixture_name='restart-running-choices')),
+  'P0001', 'GENERATION_JOB_OWNERSHIP_LOST', 'restart: old worker token V4 publish is fenced');
+select is((select count(*) from public.chapters where story_id=(select story_id from pg_temp.recovery_jobs where fixture_name='restart-running-choices')), 0::bigint, 'restart: rejected old publish inserts no chapter');
+select is((select row(c.status,j.status,l.status)::text from public.chapter_generation_checkpoints c join public.generation_jobs j on j.id=c.job_id join public.generation_leases l on l.id=(select (lease_result->>'lease_id')::uuid from restart_proof) where j.id=pg_temp.job_id('restart-running-choices')), row('RUNNING_CHOICES','RUNNING','ACTIVE')::text, 'restart: rejected old publish leaves checkpoint, job, and B lease unchanged');
+
+select lives_ok(format($sql$
+  select public.publish_generation_job_chapter_v4(
+    %L::uuid, 'worker-b', %L::uuid, %L::uuid,
+    %L, 2, 'Restart Chapter', '["Reusable prose survives restart."]'::jsonb,
+    'What happens next?',
+    '[{"id":"a","label":"Take path A"},{"id":"b","label":"Take path B"}]'::jsonb,
+    '[{"choiceId":"a","consequence":["A"],"nextChapterNumber":3,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"},{"choiceId":"b","consequence":["B"],"nextChapterNumber":3,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"}]'::jsonb,
+    null, null, '[]'::jsonb)
+$sql$, pg_temp.job_id('restart-running-choices'),
+      (select claim_result->'job'->>'claim_token' from restart_proof),
+      (select lease_result->>'lease_id' from restart_proof),
+      (select story_id from pg_temp.recovery_jobs where fixture_name='restart-running-choices')),
+  'restart: worker B V4 publication succeeds');
+select is((select prose_fingerprint from public.chapter_generation_checkpoints where job_id=pg_temp.job_id('restart-running-choices')), (select prose_fingerprint from restart_proof), 'restart: prose fingerprint remains unchanged');
+select is((select count(*) from public.chapters where story_id=(select story_id from pg_temp.recovery_jobs where fixture_name='restart-running-choices') and number=2), 1::bigint, 'restart: exactly one chapter exists');
+select is((select row(c.status,j.status,l.status)::text from public.chapter_generation_checkpoints c join public.generation_jobs j on j.id=c.job_id join public.generation_leases l on l.id=(select (lease_result->>'lease_id')::uuid from restart_proof) where j.id=pg_temp.job_id('restart-running-choices')), row('PUBLISHED','SUCCEEDED','RELEASED')::text, 'restart: checkpoint, job, and B lease terminal tuple is atomic');
 
 select * from finish();
 rollback;

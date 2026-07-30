@@ -4,7 +4,11 @@ import { guardAdminToken } from '@/lib/auth/admin-guard'
 import { getSessionUser } from '@/lib/api/user-state'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
-import { runChapterGenerationAttempt } from '@/lib/runtime/generation-mode'
+import {
+  startOwnedChapterGeneration,
+  STORY_NOT_FOUND_ERROR,
+} from '@/lib/api/start-chapter.server'
+import { AUTHORING_AUTH_REQUIRED_ERROR } from '@/lib/authoring/action-auth'
 
 /**
  * Endpoint runtime: memicu workflow generasi satu bab.
@@ -16,6 +20,12 @@ import { runChapterGenerationAttempt } from '@/lib/runtime/generation-mode'
  *   - chapterNumber: number (wajib, >= 1)
  *   - mode?: 'real' | 'fake'  (default 'real' — jalur cerita AI tervalidasi;
  *     'fake' = fixture deterministik M2 untuk uji lifecycle murni)
+ *
+ * Mode 'real' memakai seam kickoff bersama `startOwnedChapterGeneration`
+ * (satu-satunya pemilik enqueue/claim/after) dan bersifat ASINKRON:
+ *   STARTED → 202, ALREADY_RUNNING → 202, ALREADY_READY → 200.
+ * Mode 'fake' tetap sinkron (201 sukses / 409 konflik) dan tidak pernah
+ * menyentuh seam kickoff.
  *
  * Idempoten: memanggil ulang untuk (story, chapter) yang sama tidak
  * menduplikasi bab (dijaga idempotency key + RPC atomik).
@@ -67,29 +77,21 @@ export async function POST(
       return NextResponse.json(result, { status: 201 })
     }
 
-    const correlationId = crypto.randomUUID()
-    const dispatched = await runChapterGenerationAttempt({
-      storyId: id,
-      userId: user.id,
-      chapterNumber: n,
-      correlationId,
-    })
-    if (!dispatched.ok) {
-      return NextResponse.json({ ok: false, reason: dispatched.reason }, { status: 422 })
-    }
-    const result = dispatched.result as { ok: boolean; reason?: string }
+    // Real mode: satu-satunya jalur adalah seam kickoff bersama. Tidak ada
+    // enqueue/claim/after lokal di route ini.
+    const result = await startOwnedChapterGeneration(id, n)
     if (!result.ok) {
-      // LEASE_HELD/CHAPTER_EXISTS/FAILED_REVIEW_REQUIRED → konflik/tak-dapat-diproses.
-      const reason = result.reason ?? 'UNKNOWN'
       const status =
-        reason === 'FAILED_REVIEW_REQUIRED' || reason === 'GENERATION_CONTRACT_INVALID'
-          ? 422
-          : reason === 'CANON_MISSING'
+        result.error === AUTHORING_AUTH_REQUIRED_ERROR
+          ? 401
+          : result.error === STORY_NOT_FOUND_ERROR
             ? 404
-            : 409
-      return NextResponse.json({ ok: false, reason }, { status })
+            : 400
+      return NextResponse.json(result, { status })
     }
-    return NextResponse.json(result, { status: 201 })
+    return NextResponse.json(result, {
+      status: result.status === 'ALREADY_READY' ? 200 : 202,
+    })
   } catch {
     console.error('GENERATION_ROUTE_FAILED')
     return NextResponse.json({ error: 'Gagal menghasilkan bab.' }, { status: 500 })

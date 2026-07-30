@@ -205,6 +205,35 @@ function meaningfulTokens(value: string, removeActions: boolean): Set<string> {
   )))
 }
 
+/**
+ * Structural-only validation of a single choice label (no grounding).
+ * Grounding/distinctness live in the domain validator that receives final prose
+ * (validateChoiceBranchQuality). The schema must NOT self-ground a label against
+ * itself — this helper avoids that misleading pattern entirely.
+ */
+export function validateChoiceLabelStructural(label: string): QualityFinding[] {
+  const trimmed = (label ?? '').trim()
+  const findings: QualityFinding[] = []
+  if (
+    trimmed.length === 0
+    || GENERIC_CHOICE_PATTERN.test(trimmed)
+    || INTERNAL_CHOICE_PATTERN.test(trimmed)
+  ) {
+    findings.push(finding(
+      'CHOICE_GENERIC_OR_INTERNAL',
+      'Choice labels must describe reader-facing concrete actions.',
+    ))
+    return findings
+  }
+  if (!ACTION_PREFIX_PATTERN.test(trimmed)) {
+    findings.push(finding(
+      'CHOICE_NOT_ACTIONABLE',
+      'Choice label must begin with a concrete action.',
+    ))
+  }
+  return findings
+}
+
 export function validateChoiceQuality(input: ValidateChoiceQualityInput): QualityFinding[] {
   const labels = stringArray(input?.labels).map((label) => label.trim())
   const lastParagraphs = stringArray(input?.lastParagraphs).slice(-3)

@@ -30,12 +30,12 @@ Dokumen ini mendokumentasikan **perilaku buggy** pada jalur generasi standard (`
 
 ```typescript
 } catch {
-    console.log('GENERATION_CHOICES_FALLBACK_USED')
-    return fallbackChoicesFromDraft(draft, chapterNumber)
+    console.log('GENERATION_CHOICES_GENERIC_PATH_USED')
+    return legacyGenericChoices(draft, chapterNumber)
 }
 ```
 
-`buildChoices` menyembunyikan kegagalan provider. Ketika `generateChoiceBranch` throw, caller (`generateNextChapterReal`) tetap menerima hasil `fallbackChoicesFromDraft` dengan label:
+`buildChoices` menyembunyikan kegagalan provider. Ketika `generateChoiceBranch` throw, caller (`generateNextChapterReal`) tetap menerima hasil generic legacy dengan label:
 - 'Hadapi langsung apa yang baru terbuka'
 - 'Selidiki dulu jejak yang tersisa'
 
@@ -68,7 +68,7 @@ Hanya 4 field yang dimapping. `effect` dan `choiceKind` dibuang. Hasilnya diguna
 
 ```typescript
 if (chapterNumber >= TOTAL_CHAPTERS) {
-    return fallbackChoicesFromDraft(draft, chapterNumber)
+    return legacyGenericChoices(draft, chapterNumber)
 }
 ```
 
@@ -148,7 +148,7 @@ RECORD_TERMINAL_ATTEMPT → recordGenerationAttempt
 2. `correlationId` tidak memengaruhi content generasi — hanya telemetry.
 3. `storyId` dan `chapterNumber` mengalir ke `loadCanonSnapshot`, `compileContext`, `generateChapter`, `buildChoices`, `publishChapter`.
 4. `workflowPhase` di-hardcode: `'CHAPTER_PROSE_INITIAL'` dan `'CHOICES_INITIAL'`.
-5. Log `GENERATION_CHOICES_FALLBACK_USED` muncul via `console.log` (bukan structured log) di catch block `buildChoices`.
+5. Generic-path log muncul via `console.log` (bukan structured log) di catch block `buildChoices`.
 6. Chapter/outcomes mapping: `mapBranchToPublishOutcomes` → `publishChapter` (legacy, no effect).
 
 ---
@@ -171,9 +171,9 @@ Pada kondisi di mana provider gagal:
 File: `tests/runtime/choice-generation-baseline.test.ts`
 
 ### Characterization tests (PASS — document current bugs)
-- `fallbackChoicesFromDraft` — hard-coded labels, ending scenario, no effect/choiceKind
+- legacy generic choice helper — hard-coded labels, ending scenario, no effect/choiceKind
 - `mapBranchToPublishOutcomes` — drops effect, only maps 4 fields
-- `buildChoices` — empty routeState, chapter 50 fallback, GENERATION_CHOICES_FALLBACK_USED log, null branch fallback
+- `buildChoices` — empty routeState, chapter 50 generic path, generic-path log, null branch fallback
 - B5 validation gap — source asserts VALIDATE_CHOICES only uses `scanForLeaks`, no `validateChoiceBranchQuality`
 - Publishability — fallback outcomes match legacy PublishOutcome shape (can be published)
 - `syntheticChapterBrief` — empty summaries, null lockedEndingKey

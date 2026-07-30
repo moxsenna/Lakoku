@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { classifyChoiceProviderError, choiceRetryAction } from '@/lib/runtime/choice-error-taxonomy'
 import {
   CHOICE_ERROR_CODES,
   GENERATION_STAGES,
@@ -23,6 +24,12 @@ describe('Phase 8 — choice observability codes', () => {
     expect(mapChoiceFailureReasonToErrorCode('UNSAFE')).toBe('CHOICE_INTERNAL_LEAK')
     expect(mapChoiceFailureReasonToErrorCode('FINAL_CHAPTER')).toBe('CHOICE_FINAL_CHAPTER')
     expect(mapChoiceFailureReasonToErrorCode('SOMETHING_ELSE')).toBe('CHOICE_GENERATION_FAILED')
+  })
+
+  it('classifies concrete quality validator finding codes for repair retry', () => {
+    expect(choiceRetryAction(classifyChoiceProviderError(new Error('CHOICE_PROMPT_UNGROUNDED')))).toBe('quality_repair')
+    expect(choiceRetryAction(classifyChoiceProviderError(new Error('CHOICE_OPTIONS_TOO_SIMILAR')))).toBe('quality_repair')
+    expect(choiceRetryAction(classifyChoiceProviderError(new Error('CHOICE_EFFECTS_IDENTICAL')))).toBe('quality_repair')
   })
 
   it('exports a stable set of choice error codes', () => {

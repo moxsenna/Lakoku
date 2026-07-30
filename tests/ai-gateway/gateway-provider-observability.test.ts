@@ -6,10 +6,12 @@ import type { AiModelRoute } from '@/lib/ops/ai-model-routes'
 
 const {
   streamTextMock,
+  generateTextMock,
   createOpenAICompatibleMock,
   recordGenerationProviderCallMock,
 } = vi.hoisted(() => ({
   streamTextMock: vi.fn(),
+  generateTextMock: vi.fn(),
   createOpenAICompatibleMock: vi.fn(),
   recordGenerationProviderCallMock: vi.fn(),
 }))
@@ -19,7 +21,11 @@ vi.mock('@lakoku/narrative-core', async () => {
   const actual = await import('@/lib/narrative/index')
   return actual
 })
-vi.mock('ai', () => ({ streamText: streamTextMock }))
+vi.mock('ai', () => ({
+  streamText: streamTextMock,
+  generateText: generateTextMock,
+  Output: { object: vi.fn((value) => value) },
+}))
 vi.mock('@ai-sdk/openai-compatible', () => ({
   createOpenAICompatible: createOpenAICompatibleMock,
 }))
@@ -45,6 +51,9 @@ const envKeys = [
   'NINEROUTER_BASE_URL',
   'NINEROUTER_API_KEY',
   'NARRATIVE_MODEL',
+  'LAKOKU_CHOICES_NATIVE_SCHEMA',
+  'LAKOKU_CHOICE_JITTER_MIN_MS',
+  'LAKOKU_CHOICE_JITTER_MAX_MS',
 ] as const
 const originalEnv = new Map<string, string | undefined>()
 
@@ -89,6 +98,7 @@ async function chapterInput() {
 
 beforeEach(() => {
   streamTextMock.mockReset()
+  generateTextMock.mockReset()
   createOpenAICompatibleMock.mockReset()
   recordGenerationProviderCallMock.mockReset()
   recordGenerationProviderCallMock.mockResolvedValue(undefined)
@@ -112,6 +122,218 @@ afterEach(() => {
 })
 
 describe('createGatewayProvider prose observability', () => {
+  it('worker ownership AbortSignal reaches the actual prose provider request', async () => {
+    const paragraphs = ['Rani membuka pintu lama.']
+    streamTextMock.mockReturnValue(observedResult(prose('Pintu Lama', paragraphs)))
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, route())
+    const input = await chapterInput()
+    const controller = new AbortController()
+
+    await provider.writeChapter({ snapshot: input.snapshot, plan: input.plan }, {
+      telemetryContext,
+      workflowPhase: 'CHAPTER_PROSE_INITIAL',
+      signal: controller.signal,
+    })
+
+    const combined = streamTextMock.mock.calls[0][0].abortSignal as AbortSignal
+    expect(combined.aborted).toBe(false)
+    controller.abort()
+    expect(combined.aborted).toBe(true)
+  })
+
+  it('does not traverse prose fallback when an abort-class request fails', async () => {
+    const abort = new DOMException('ownership lost', 'AbortError')
+    streamTextMock.mockImplementationOnce(() => { throw abort })
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, route([
+      { provider: 'gateway', modelId: 'openai/chapter-fallback' },
+    ]))
+    const input = await chapterInput()
+
+    await expect(provider.writeChapter({ snapshot: input.snapshot, plan: input.plan }, {
+      telemetryContext,
+      workflowPhase: 'CHAPTER_PROSE_INITIAL',
+    })).rejects.toBe(abort)
+
+    expect(streamTextMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops prose leak repair when provider ignores abort and resolves leaked output', async () => {
+    let resolveText: ((value: string) => void) | undefined
+    streamTextMock.mockReturnValue({
+      text: new Promise<string>((resolve) => { resolveText = resolve }),
+      usage: Promise.resolve({}),
+      finalStep: Promise.resolve({ response: {}, providerMetadata: {} }),
+    })
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, route())
+    const input = await chapterInput()
+    const controller = new AbortController()
+    const run = provider.writeChapter({ snapshot: input.snapshot, plan: input.plan }, {
+      telemetryContext,
+      workflowPhase: 'CHAPTER_PROSE_INITIAL',
+      signal: controller.signal,
+    })
+    await vi.waitFor(() => expect(resolveText).toBeTypeOf('function'))
+
+    controller.abort()
+    resolveText?.(prose('Prompt Rahasia', ['Rani membuka pintu.']))
+
+    await expect(run).rejects.toMatchObject({ name: 'AbortError' })
+    expect(streamTextMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops native choice parsing and fallback after abort without another request', async () => {
+    process.env.LAKOKU_CHOICES_NATIVE_SCHEMA = 'on'
+    process.env.LAKOKU_CHOICE_JITTER_MIN_MS = '0'
+    process.env.LAKOKU_CHOICE_JITTER_MAX_MS = '0'
+    let resolveText: ((value: string) => void) | undefined
+    generateTextMock.mockReturnValue({
+      text: new Promise<string>((resolve) => { resolveText = resolve }),
+      usage: Promise.resolve({}),
+      finalStep: Promise.resolve({ response: {}, providerMetadata: {} }),
+    })
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const choicesRoute: AiModelRoute = {
+      ...route([{ provider: 'gateway', modelId: 'openai/choice-fallback' }]),
+      useCase: 'choices',
+      modelId: 'openai/choice-primary',
+    }
+    const provider = createGatewayProvider(undefined, undefined, route(), choicesRoute)
+    const controller = new AbortController()
+    const run = provider.generateChoices?.({
+      storyId: 'story-a',
+      currentChapter: 12,
+      draft: { title: 'Bab 12', lastParagraphs: ['satu', 'dua', 'tiga'] },
+      chapterBrief: {
+        phase: 'rising', chapterGoal: 'Maju', mustInclude: [], mustNotInclude: [],
+        mustNotReveal: [], plotDebtsToProgress: [], plotDebtsToClose: [],
+        remainingChapters: 38, endingRunway: 'expansion',
+      },
+      routeState: { truth: 0, risk: 0, secrecy: 0, empathy: 0, trust: {}, flags: {}, endingBias: {}, evidence: [] },
+      choiceHistory: [], lockedEndingKey: null,
+      canon: { activeCharacters: [], activeThreads: [], pendingReveals: [] },
+    }, {
+      telemetryContext,
+      workflowPhase: 'CHOICES_INITIAL',
+      signal: controller.signal,
+      callBudget: { used: 0, max: 5 },
+    })
+    await vi.waitFor(() => expect(generateTextMock).toHaveBeenCalledTimes(1))
+    expect(resolveText).toBeTypeOf('function')
+
+    controller.abort()
+    resolveText?.('{"actions":[]}')
+
+    await expect(run).rejects.toMatchObject({ name: 'AbortError' })
+    expect(generateTextMock).toHaveBeenCalledTimes(1)
+    expect(generateTextMock.mock.calls[0][0]).toHaveProperty('experimental_output')
+  })
+
+  it('uses explicit candidate transport for synthetic choice identities without a configured choices route', async () => {
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, route())
+    const candidateTransport = vi.fn(() => observedResult(JSON.stringify({
+      question: 'Apa yang harus dilakukan Maya?',
+      actions: [],
+    })))
+
+    await expect(provider.generateChoices?.({
+      storyId: 'story-a',
+      currentChapter: 12,
+      draft: { title: 'Bab 12', lastParagraphs: ['satu', 'dua', 'tiga'] },
+      chapterBrief: {
+        phase: 'rising', chapterGoal: 'Maju', mustInclude: [], mustNotInclude: [],
+        mustNotReveal: [], plotDebtsToProgress: [], plotDebtsToClose: [],
+        remainingChapters: 38, endingRunway: 'expansion',
+      },
+      routeState: { truth: 0, risk: 0, secrecy: 0, empathy: 0, trust: {}, flags: {}, endingBias: {}, evidence: [] },
+      choiceHistory: [], lockedEndingKey: null,
+      canon: { activeCharacters: [], activeThreads: [], pendingReveals: [] },
+    }, {
+      telemetryContext,
+      workflowPhase: 'CHOICES_INITIAL',
+      providerRuntime: { candidateTransport },
+    })).resolves.toEqual({
+      question: 'Apa yang harus dilakukan Maya?',
+      actions: [],
+    })
+
+    expect(candidateTransport).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'choice',
+      providerId: 'gateway',
+      modelId: 'openai/gpt-4.1-mini',
+      fallbackIndex: 0,
+      execute: expect.any(Function),
+    }))
+    expect(generateTextMock).not.toHaveBeenCalled()
+  })
+
+  it('passes malformed transport text through parsing and retries fallback after consume rejection', async () => {
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, route(), route([
+      { provider: 'gateway', modelId: 'openai/choice-fallback' },
+    ]))
+    const texts = ['{not-json', JSON.stringify({ question: 'Pilih?', actions: [] })]
+    const candidateTransport = vi.fn(() => observedResult(texts.shift()!))
+    const consume = vi.fn((value: unknown) => {
+      if (!value || typeof value !== 'object') throw new Error('DOWNSTREAM_SCHEMA_REJECTED')
+      return value
+    })
+
+    await expect(provider.generateChoices?.({
+      storyId: 'story-a', currentChapter: 12,
+      draft: { title: 'Bab 12', lastParagraphs: ['satu', 'dua', 'tiga'] },
+      chapterBrief: { phase: 'rising', chapterGoal: 'Maju', mustInclude: [], mustNotInclude: [], mustNotReveal: [], plotDebtsToProgress: [], plotDebtsToClose: [], remainingChapters: 38, endingRunway: 'expansion' },
+      routeState: { truth: 0, risk: 0, secrecy: 0, empathy: 0, trust: {}, flags: {}, endingBias: {}, evidence: [] },
+      choiceHistory: [], lockedEndingKey: null, canon: { activeCharacters: [], activeThreads: [], pendingReveals: [] },
+    }, { telemetryContext, workflowPhase: 'CHOICES_INITIAL', providerRuntime: { candidateTransport }, consume })).resolves.toEqual({ question: 'Pilih?', actions: [] })
+
+    expect(consume).toHaveBeenCalledTimes(2)
+    expect(consume.mock.calls[0]?.[0]).toBe('{not-json')
+    expect(candidateTransport).toHaveBeenNthCalledWith(1, expect.objectContaining({ fallbackIndex: 0 }))
+    expect(candidateTransport).toHaveBeenNthCalledWith(2, expect.objectContaining({ fallbackIndex: 1 }))
+  })
+
+  it('uses injected prose candidate transport while preserving timeout invalid fallback policy', async () => {
+    const timeout = new DOMException('candidate A timed out', 'TimeoutError')
+    const invalid = new Error('candidate A invalid')
+    const paragraphs = ['Rani membuka pintu lama.', 'Udara dingin menyentuh wajahnya.']
+    streamTextMock
+      .mockImplementationOnce(() => { throw timeout })
+      .mockImplementationOnce(() => { throw invalid })
+      .mockReturnValueOnce(observedResult(prose('Pintu Lama', paragraphs)))
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, route([
+      { provider: 'gateway', modelId: 'openai/chapter-primary-invalid' },
+      { provider: 'gateway', modelId: 'openai/chapter-fallback' },
+    ]))
+    const input = await chapterInput()
+    const calls: Array<{ kind: string; modelId: string; fallbackIndex: number }> = []
+    const candidateTransport = vi.fn((candidate: {
+      kind: string
+      modelId: string
+      fallbackIndex: number
+      execute: () => unknown
+    }) => {
+      calls.push(candidate)
+      return candidate.execute()
+    })
+
+    await expect(provider.writeChapter({ snapshot: input.snapshot, plan: input.plan }, {
+      telemetryContext,
+      workflowPhase: 'CHAPTER_PROSE_INITIAL',
+      providerRuntime: { candidateTransport },
+    })).resolves.toMatchObject({ title: 'Pintu Lama', paragraphs })
+
+    expect(calls.map(({ kind, modelId, fallbackIndex }) => ({ kind, modelId, fallbackIndex }))).toEqual([
+      { kind: 'prose', modelId: 'openai/chapter-primary', fallbackIndex: 0 },
+      { kind: 'prose', modelId: 'openai/chapter-primary-invalid', fallbackIndex: 1 },
+      { kind: 'prose', modelId: 'openai/chapter-fallback', fallbackIndex: 2 },
+    ])
+  })
+
   it('records provider failure before fallback success with unique IDs and actual response model', async () => {
     const paragraphs = ['Rani membuka pintu lama.', 'Udara dingin menyentuh wajahnya.']
     streamTextMock
@@ -209,6 +431,85 @@ describe('createGatewayProvider prose observability', () => {
       { phase: 'CHAPTER_PROSE_INITIAL', fallbackIndex: 0, outcome: 'CONTENT_REJECTED' },
       { phase: 'CHAPTER_PROSE_LEAK_REPAIR', fallbackIndex: 0, outcome: 'SUCCEEDED' },
     ])
+  })
+
+  it('entry abort skips plan before generateChapter work', async () => {
+    const snapshot = buildFixtureSnapshot()
+    const chapterNumber = 12
+    const base = createDeterministicProvider()
+    const controller = new AbortController()
+    controller.abort()
+    let planCalls = 0
+    let writeCalls = 0
+    const provider: GenerationProvider = {
+      ...base,
+      async generatePlan(input) {
+        planCalls += 1
+        return base.generatePlan(input)
+      },
+      async writeChapter(input, options) {
+        writeCalls += 1
+        return base.writeChapter(input, options)
+      },
+    }
+
+    await expect(generateChapter({ provider }, {
+      snapshot,
+      blueprint: snapshot.blueprints[chapterNumber - 1],
+      chapterNumber,
+      executionOptions: {
+        telemetryContext,
+        workflowPhase: 'CHAPTER_PROSE_INITIAL',
+        signal: controller.signal,
+      },
+    })).rejects.toMatchObject({ name: 'AbortError' })
+
+    expect(planCalls).toBe(0)
+    expect(writeCalls).toBe(0)
+  })
+
+  it.each(['A', 'B'] as const)('stops before Layer %s repair after abort', async (layer) => {
+    const snapshot = buildFixtureSnapshot()
+    const chapterNumber = 12
+    const base = createDeterministicProvider()
+    const controller = new AbortController()
+    let writes = 0
+    const provider: GenerationProvider = {
+      ...base,
+      async writeChapter(input, options) {
+        writes += 1
+        const draft = await base.writeChapter(input, options)
+        if (writes === 1) controller.abort()
+        return draft
+      },
+    }
+    const finding = {
+      severity: 'MAJOR' as const,
+      code: `PERSISTENT_${layer}`,
+      message: `Persistent Layer ${layer} finding.`,
+    }
+    const narrative = await import('@lakoku/narrative-core')
+    const layerSpy = layer === 'A'
+      ? vi.spyOn(narrative, 'validateLayerA').mockReturnValue({ ok: false, findings: [finding], blocking: false })
+      : vi.spyOn(narrative, 'validateLayerB').mockReturnValue({ findings: [finding], blocking: false })
+    const bypassSpy = layer === 'B'
+      ? vi.spyOn(narrative, 'validateLayerA').mockReturnValue({ ok: true, findings: [], blocking: false })
+      : undefined
+
+    await expect(generateChapter({ provider }, {
+      snapshot,
+      blueprint: snapshot.blueprints[chapterNumber - 1],
+      chapterNumber,
+      executionOptions: {
+        telemetryContext,
+        workflowPhase: 'CHAPTER_PROSE_INITIAL',
+        signal: controller.signal,
+      },
+    })).rejects.toMatchObject({ name: 'AbortError' })
+
+    expect(writes).toBe(1)
+    bypassSpy?.mockRestore()
+    layerSpy.mockRestore()
   })
 
   it.each([

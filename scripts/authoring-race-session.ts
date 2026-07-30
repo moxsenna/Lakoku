@@ -47,6 +47,7 @@ type ProcessExit = {
 export interface RunningRacePsql {
   child: ChildProcessWithoutNullStreams
   stdout: string
+  stderr: string
   applicationName: string
   backendPid: number | null
   exit: Promise<ProcessExit>
@@ -139,7 +140,9 @@ export function execLocalPsql(
     }) as string
   } catch (error) {
     const reason = isTimeoutError(error) ? 'timed out' : 'failed'
-    throw new Error(`${target.context}: local PostgreSQL command ${reason}`)
+    const err = error as { stderr?: Buffer }
+    const stderr = err.stderr ? err.stderr.toString() : ''
+    throw new Error(`${target.context}: local PostgreSQL command ${reason}: ${stderr}`)
   }
 }
 
@@ -250,13 +253,15 @@ export function startRacePsql(
   const running: RunningRacePsql = {
     child,
     stdout: '',
+    stderr: '',
     applicationName,
     backendPid: null,
     exit: Promise.resolve({ code: null, signal: null, startFailed: false }),
   }
   child.stdout.setEncoding('utf8')
   child.stdout.on('data', (chunk: string) => { running.stdout += chunk })
-  child.stderr.resume()
+  child.stderr.setEncoding('utf8')
+  child.stderr.on('data', (chunk: string) => { running.stderr += chunk })
   running.exit = new Promise<ProcessExit>((resolve) => {
     let settled = false
     child.once('error', () => {
@@ -334,7 +339,7 @@ export async function waitForRaceSuccess(running: RunningRacePsql): Promise<void
   checkRace(result.code === 0, 'authoring race session', 'local PostgreSQL session failed')
 }
 
-async function waitForProcessExit(running: RunningRacePsql, timeoutMs: number): Promise<boolean> {
+export async function waitForProcessExit(running: RunningRacePsql, timeoutMs: number): Promise<boolean> {
   if (running.child.exitCode !== null) return true
   try {
     await awaitProcessExit(running, timeoutMs, 'local PostgreSQL process exit timed out')

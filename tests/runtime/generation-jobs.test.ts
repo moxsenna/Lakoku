@@ -77,6 +77,15 @@ describe('generation job worker RPC adapters', () => {
     })
   })
 
+  it('maps terminal target mismatch to provenance conflict with exact RPC token', async () => {
+    rpcError('  GENERATION_JOB_TARGET_MISMATCH: story-a  ')
+    const { claimGenerationJobById, GenerationJobError } = await import('@/lib/runtime/generation-jobs')
+
+    await expect(claimGenerationJobById({ jobId: JOB_ID, workerId: 'worker-a' })).rejects.toEqual(
+      new GenerationJobError('PROVENANCE_CONFLICT', 'GENERATION_JOB_TARGET_MISMATCH'),
+    )
+  })
+
   it('maps empty claim and rejects malformed claimed data', async () => {
     rpcResult({ claimed: false, ignored_future_field: true })
     const { claimGenerationJob } = await import('@/lib/runtime/generation-jobs')
@@ -279,6 +288,252 @@ describe('generation job worker RPC adapters', () => {
     })
   })
 
+  it.each([
+    [null, null],
+    [{ key: 'publish-truth', name: 'Arsip Dibuka' }, {
+      p_ending_key: 'publish-truth',
+      p_ending_name: 'Arsip Dibuka',
+    }],
+  ] as const)('V3 publishes with exact ending lock payload %j', async (endingLock, endingArgs) => {
+    const rpc = rpcResult({ ok: true, chapter_number: 45, seq: 8, jobId: JOB_ID })
+    const { publishGenerationJobChapterV3 } = await import('@/lib/runtime/generation-jobs')
+
+    await expect(publishGenerationJobChapterV3({
+      jobId: JOB_ID,
+      workerId: 'worker-a',
+      claimToken: CLAIM_TOKEN,
+      leaseId: LEASE_ID,
+      storyId: 'story-a',
+      chapterNumber: 45,
+      title: 'Bab Empat Puluh Lima',
+      paragraphs: ['Paragraf pertama.'],
+      choicePrompt: null,
+      choices: null,
+      outcomes: [],
+      endingLock,
+    })).resolves.toEqual({ ok: true, chapterNumber: 45, seq: 8, jobId: JOB_ID })
+    expect(rpc).toHaveBeenCalledWith('publish_generation_job_chapter_v3', {
+      p_job_id: JOB_ID,
+      p_worker_id: 'worker-a',
+      p_claim_token: CLAIM_TOKEN,
+      p_lease_id: LEASE_ID,
+      p_story_id: 'story-a',
+      p_chapter_number: 45,
+      p_title: 'Bab Empat Puluh Lima',
+      p_paragraphs: ['Paragraf pertama.'],
+      p_choice_prompt: null,
+      p_choices: null,
+      p_outcomes: [],
+      ...(endingArgs ?? { p_ending_key: null, p_ending_name: null }),
+    })
+  })
+
+  it.each([
+    ['standard', [], null],
+    ['personalized', [
+      { debtId: 'main_mystery', closureForm: 'RESOLVED' as const },
+      { debtId: 'rival_conflict', closureForm: 'TRANSFORMED' as const },
+    ], { key: 'publish-truth', name: 'Arsip Dibuka' }],
+  ] as const)('V4 publishes %s with exact V3 and closure payload', async (_mode, closures, endingLock) => {
+    const rpc = rpcResult({ ok: true, chapter_number: 45, seq: 8, jobId: JOB_ID })
+    const { publishGenerationJobChapterV4 } = await import('@/lib/runtime/generation-jobs')
+
+    await expect(publishGenerationJobChapterV4({
+      jobId: JOB_ID,
+      workerId: 'worker-a',
+      claimToken: CLAIM_TOKEN,
+      leaseId: LEASE_ID,
+      storyId: 'story-a',
+      chapterNumber: 45,
+      title: 'Bab Empat Puluh Lima',
+      paragraphs: ['Paragraf pertama.'],
+      choicePrompt: null,
+      choices: null,
+      outcomes: [],
+      endingLock,
+      closures: [...closures],
+    })).resolves.toEqual({ ok: true, chapterNumber: 45, seq: 8, jobId: JOB_ID })
+    expect(rpc).toHaveBeenCalledWith('publish_generation_job_chapter_v4', {
+      p_job_id: JOB_ID,
+      p_worker_id: 'worker-a',
+      p_claim_token: CLAIM_TOKEN,
+      p_lease_id: LEASE_ID,
+      p_story_id: 'story-a',
+      p_chapter_number: 45,
+      p_title: 'Bab Empat Puluh Lima',
+      p_paragraphs: ['Paragraf pertama.'],
+      p_choice_prompt: null,
+      p_choices: null,
+      p_outcomes: [],
+      p_ending_key: endingLock?.key ?? null,
+      p_ending_name: endingLock?.name ?? null,
+      p_closures: closures,
+    })
+  })
+
+  it('V4 serializes internal outcomes to publish_chapter_v2 SQL shape', async () => {
+    const rpc = rpcResult({ ok: true, chapter_number: 2, seq: 8, jobId: JOB_ID })
+    const { publishGenerationJobChapterV4 } = await import('@/lib/runtime/generation-jobs')
+    const effect = { routeDelta: {}, flagUpdates: {}, inventoryAdd: [], inventoryRemove: [], relationshipDelta: {} }
+
+    await publishGenerationJobChapterV4({
+      jobId: JOB_ID,
+      workerId: 'worker-a',
+      claimToken: CLAIM_TOKEN,
+      leaseId: LEASE_ID,
+      storyId: 'story-a',
+      chapterNumber: 2,
+      title: 'Bab Dua',
+      paragraphs: ['Paragraf pertama.'],
+      choicePrompt: 'Apa yang Maya lakukan sekarang?',
+      choices: [{ id: 'buka-arsip', label: 'Buka arsip banjir bersama jurnalis' }, { id: 'baca-buku', label: 'Baca buku debit hujan bersama ayah' }],
+      outcomes: [
+        { choiceId: 'buka-arsip', consequence: ['Maya membuka arsip.'], nextChapterNumber: 3, isEnding: false, effect, choiceKind: 'normal' },
+        { choiceId: 'baca-buku', consequence: ['Maya membaca buku.'], nextChapterNumber: 3, isEnding: false, effect, choiceKind: 'normal' },
+      ],
+      endingLock: null,
+      closures: [],
+    })
+
+    expect(rpc).toHaveBeenCalledWith('publish_generation_job_chapter_v4', expect.objectContaining({
+      p_outcomes: [
+        expect.objectContaining({ effect_json: effect, choice_kind: 'normal' }),
+        expect.objectContaining({ effect_json: effect, choice_kind: 'normal' }),
+      ],
+    }))
+  })
+
+  it('V4 rejects malformed closures before RPC', async () => {
+    const { publishGenerationJobChapterV4 } = await import('@/lib/runtime/generation-jobs')
+
+    await expect(publishGenerationJobChapterV4({
+      jobId: JOB_ID,
+      workerId: 'worker-a',
+      claimToken: CLAIM_TOKEN,
+      leaseId: LEASE_ID,
+      storyId: 'story-a',
+      chapterNumber: 2,
+      title: 'Bab Dua',
+      paragraphs: ['Paragraf pertama.'],
+      choicePrompt: null,
+      choices: null,
+      outcomes: [],
+      endingLock: null,
+      closures: [{ debtId: 'main_mystery', closureForm: 'UNKNOWN' }] as never,
+    })).rejects.toThrow()
+    expect(mocks.adminFactory).not.toHaveBeenCalled()
+  })
+
+  it('V3 rejects partial or unbounded ending locks before RPC', async () => {
+    const { publishGenerationJobChapterV3 } = await import('@/lib/runtime/generation-jobs')
+    const base = {
+      jobId: JOB_ID,
+      workerId: 'worker-a',
+      claimToken: CLAIM_TOKEN,
+      leaseId: LEASE_ID,
+      storyId: 'story-a',
+      chapterNumber: 45,
+      title: 'Bab Empat Puluh Lima',
+      paragraphs: ['Paragraf pertama.'],
+      choicePrompt: null,
+      choices: null,
+      outcomes: [],
+    }
+
+    await expect(publishGenerationJobChapterV3({
+      ...base,
+      // @ts-expect-error desired strict adapter rejects partial lock
+      endingLock: { key: 'publish-truth' },
+    })).rejects.toThrow()
+    await expect(publishGenerationJobChapterV3({
+      ...base,
+      endingLock: { key: 'x'.repeat(81), name: 'Arsip Dibuka' },
+    })).rejects.toThrow()
+    expect(mocks.adminFactory).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['standard', null, null],
+    ['personalized', {
+      opensNewThread: false,
+      opensMajorMystery: true,
+      opensNewConflict: false,
+    }, 1],
+  ] as const)('upserts %s checkpoint with exact audit payload', async (
+    generationMode,
+    auditSignals,
+    auditSignalsVersion,
+  ) => {
+    const rpc = rpcResult({ ok: true, result: 'UPDATED', changed: true })
+    const { upsertGenerationCheckpointFenced } = await import('@/lib/runtime/generation-jobs')
+
+    await upsertGenerationCheckpointFenced({
+      jobId: JOB_ID,
+      workerId: 'worker-a',
+      claimToken: CLAIM_TOKEN,
+      leaseId: LEASE_ID,
+      storyId: 'story-a',
+      chapterNumber: 2,
+      title: 'Bab Dua',
+      paragraphs: ['Paragraf pertama.'],
+      proseFingerprint: '0123456789abcdef0123456789abcdef',
+      auditSignals,
+      auditSignalsVersion,
+      canonVersion: 7,
+      blueprintVersion: 4,
+      directionFingerprint: 'direction-fingerprint',
+      generationMode,
+      generationPolicyVersion: 2,
+      promptContractVersion: 2,
+      proseAttemptCount: 1,
+    })
+
+    expect(rpc).toHaveBeenCalledWith('upsert_generation_checkpoint_fenced_v1', expect.objectContaining({
+      p_generation_mode: generationMode,
+      p_audit_signals: auditSignals,
+      p_audit_signals_version: auditSignalsVersion,
+    }))
+  })
+
+  it('rejects personalized checkpoint with missing or non-exact audit payload before RPC', async () => {
+    const { upsertGenerationCheckpointFenced } = await import('@/lib/runtime/generation-jobs')
+    const base = {
+      jobId: JOB_ID,
+      workerId: 'worker-a',
+      claimToken: CLAIM_TOKEN,
+      leaseId: LEASE_ID,
+      storyId: 'story-a',
+      chapterNumber: 2,
+      title: 'Bab Dua',
+      paragraphs: ['Paragraf pertama.'],
+      proseFingerprint: '0123456789abcdef0123456789abcdef',
+      canonVersion: 7,
+      blueprintVersion: 4,
+      directionFingerprint: 'direction-fingerprint',
+      generationMode: 'personalized' as const,
+      generationPolicyVersion: 2,
+      promptContractVersion: 2,
+      proseAttemptCount: 1,
+    }
+
+    await expect(upsertGenerationCheckpointFenced({
+      ...base,
+      auditSignals: null,
+      auditSignalsVersion: null,
+    })).rejects.toThrow()
+    await expect(upsertGenerationCheckpointFenced({
+      ...base,
+      auditSignals: {
+        opensNewThread: false,
+        opensMajorMystery: false,
+        opensNewConflict: false,
+        extra: false,
+      } as never,
+      auditSignalsVersion: 1,
+    })).rejects.toThrow()
+    expect(mocks.adminFactory).not.toHaveBeenCalled()
+  })
+
   it('rejects malformed RPC outputs instead of casting', async () => {
     rpcResult({ ok: true, status: 'SUCCEEDED' })
     const { finishGenerationJobAttempt } = await import('@/lib/runtime/generation-jobs')
@@ -312,18 +567,68 @@ describe('generation job worker RPC adapters', () => {
 
   it.each([
     ['GENERATION_JOB_OWNERSHIP_LOST', 'GENERATION_JOB_OWNERSHIP_LOST'],
+    ['GENERATION_JOB_LEASE_INVALID', 'GENERATION_JOB_OWNERSHIP_LOST'],
     ['LEASE_HELD', 'LEASE_HELD'],
+    ['CHAPTER_EXISTS', 'CHAPTER_EXISTS'],
+    ['IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT'],
+    ['PROVENANCE_CONFLICT', 'PROVENANCE_CONFLICT'],
+    ['CHECKPOINT_INVALID_STATE', 'CHECKPOINT_CONFLICT'],
+    ['CHECKPOINT_CLOSURE_PAYLOAD_MISMATCH', 'CHECKPOINT_CONFLICT'],
+    ['CHECKPOINT_PUBLISH_FAILED', 'CHECKPOINT_CONFLICT'],
+    ['CONTRACT_PROVENANCE_MISSING', 'CONTRACT_CONFLICT'],
+    ['CONTRACT_VERSION_MISMATCH', 'CONTRACT_CONFLICT'],
+    ['DEBT_CONTRACT_NOT_FOUND', 'PLOT_DEBT_CONFLICT'],
+    ['DEBT_CLOSURE_UNKNOWN_DEBT', 'PLOT_DEBT_CONFLICT'],
+    ['DEBT_CLOSURE_DEADLINE_VIOLATION', 'PLOT_DEBT_CONFLICT'],
+    ['OPEN_DEBT_AT_END', 'PLOT_DEBT_CONFLICT'],
+    ['MAIN_MYSTERY_UNRESOLVED', 'PLOT_DEBT_CONFLICT'],
     ['GENERATION_JOB_DEADLINE_EXCEEDED', 'GENERATION_DEADLINE_EXCEEDED'],
     ['GENERATION_RETRY_EXHAUSTED', 'GENERATION_RETRY_EXHAUSTED'],
     ['GENERATION_PUBLICATION_CONFLICT', 'GENERATION_PUBLICATION_CONFLICT'],
     ['INVALID_GENERATION_JOB_TRANSITION', 'INVALID_GENERATION_JOB_TRANSITION'],
-  ] as const)('maps known SQL token %s to stable code %s', async (token, expectedCode) => {
-    rpcError(`database operation failed: ${token}`)
+  ] as const)('maps V4 SQL token %s to stable code %s', async (token, expectedCode) => {
+    rpcError(`${token}: database operation failed`)
+    const { publishGenerationJobChapterV4, GenerationJobError } = await import('@/lib/runtime/generation-jobs')
+
+    const error = await publishGenerationJobChapterV4({
+      jobId: JOB_ID,
+      workerId: 'worker-a',
+      claimToken: CLAIM_TOKEN,
+      leaseId: LEASE_ID,
+      storyId: 'story-a',
+      chapterNumber: 2,
+      title: 'Bab Dua',
+      paragraphs: ['Paragraf pertama.'],
+      choicePrompt: null,
+      choices: null,
+      outcomes: [],
+      endingLock: null,
+      closures: [],
+    }).catch((caught) => caught)
+    expect(error).toBeInstanceOf(GenerationJobError)
+    expect(error).toMatchObject({ code: expectedCode, message: expectedCode, rpcToken: token })
+  })
+
+  it.each([
+    ['CHAPTER_EXISTS', 'CHAPTER_EXISTS'],
+    ['GENERATION_JOB_OWNERSHIP_LOST', 'GENERATION_JOB_OWNERSHIP_LOST'],
+  ] as const)('maps raw SQL token %s to stable code %s', async (token, expectedCode) => {
+    rpcError(token)
     const { claimGenerationJob, GenerationJobError } = await import('@/lib/runtime/generation-jobs')
 
     const error = await claimGenerationJob({ workerId: 'worker-a' }).catch((caught) => caught)
     expect(error).toBeInstanceOf(GenerationJobError)
-    expect(error).toMatchObject({ code: expectedCode, message: expectedCode })
+    expect(error).toMatchObject({ code: expectedCode, message: expectedCode, rpcToken: token })
+  })
+
+  it('does not map token substrings away from message boundary', async () => {
+    rpcError('wrapper GENERATION_JOB_OWNERSHIP_LOST')
+    const { claimGenerationJob } = await import('@/lib/runtime/generation-jobs')
+
+    await expect(claimGenerationJob({ workerId: 'worker-a' })).rejects.toMatchObject({
+      code: 'INTERNAL_ERROR',
+      rpcToken: 'INTERNAL_ERROR',
+    })
   })
 
   it('maps unknown database errors to INTERNAL_ERROR without raw code or message', async () => {

@@ -1,0 +1,261 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const mocks = vi.hoisted(() => ({ adminFactory: vi.fn() }))
+
+vi.mock('server-only', () => ({}))
+vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.adminFactory }))
+
+const JOB_ID = '11111111-1111-4111-8111-111111111111'
+const CLAIM_TOKEN = '22222222-2222-4222-8222-222222222222'
+const LEASE_ID = '33333333-3333-4333-8333-333333333333'
+const ATTEMPT_ID = '44444444-4444-4444-8444-444444444444'
+const CORRELATION_ID = '55555555-5555-4555-8555-555555555555'
+
+function jobContext() {
+  return {
+    jobId: JOB_ID,
+    workerId: 'worker-a',
+    claimToken: CLAIM_TOKEN,
+    leaseId: LEASE_ID,
+    attemptNumber: 2,
+    correlationId: CORRELATION_ID,
+    generationKind: 'standard' as const,
+    signal: new AbortController().signal,
+  }
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.resetModules()
+})
+
+describe('worker checkpoint persistence', () => {
+  it('upserts through exact fenced RPC with current ownership identity', async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: {
+        ok: true,
+        result: 'UPDATED',
+        changed: true,
+        checkpoint: { attempt_id: ATTEMPT_ID, prose_fingerprint: 'fp' },
+      },
+      error: null,
+    })
+    const from = vi.fn()
+    mocks.adminFactory.mockReturnValue({ rpc, from })
+    const { persistProseReadyCheckpoint } = await import(
+      '@/lib/runtime/chapter-generation-checkpoint'
+    )
+
+    await expect(persistProseReadyCheckpoint({
+      storyId: 'story-a',
+      chapterNumber: 3,
+      attemptId: ATTEMPT_ID,
+      correlationId: CORRELATION_ID,
+      title: 'Bab Tiga',
+      paragraphs: ['Paragraf.'],
+      proseAttemptCount: 2,
+      canonVersion: 7,
+      blueprintVersion: 4,
+      directionFingerprint: '0123456789abcdef0123456789abcdef',
+      generationMode: 'standard',
+      generationPolicyVersion: 2,
+      promptContractVersion: 2,
+      jobId: JOB_ID,
+      jobAttemptNumber: 1,
+      jobContext: jobContext(),
+    })).resolves.toEqual({
+      ok: true,
+      result: 'UPDATED',
+      changed: true,
+      checkpoint: { attempt_id: ATTEMPT_ID, prose_fingerprint: 'fp' },
+    })
+
+    expect(from).not.toHaveBeenCalled()
+    expect(rpc).toHaveBeenCalledWith('upsert_generation_checkpoint_fenced_v1', {
+      p_job_id: JOB_ID,
+      p_worker_id: 'worker-a',
+      p_claim_token: CLAIM_TOKEN,
+      p_lease_id: LEASE_ID,
+      p_story_id: 'story-a',
+      p_chapter_number: 3,
+      p_title: 'Bab Tiga',
+      p_paragraphs: ['Paragraf.'],
+      p_prose_fingerprint: expect.stringMatching(/^[a-f0-9]{32}$/),
+      p_audit_signals: null,
+      p_audit_signals_version: null,
+      p_canon_version: 7,
+      p_blueprint_version: 4,
+      p_direction_fingerprint: '0123456789abcdef0123456789abcdef',
+      p_generation_mode: 'standard',
+      p_generation_policy_version: 2,
+      p_prompt_contract_version: 2,
+      p_prose_attempt_count: 2,
+    })
+  })
+
+  it('persists personalized audit V2 closures unchanged through fenced RPC', async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: { ok: true, result: 'UPDATED', changed: true },
+      error: null,
+    })
+    mocks.adminFactory.mockReturnValue({ rpc, from: vi.fn() })
+    const { persistProseReadyCheckpoint } = await import(
+      '@/lib/runtime/chapter-generation-checkpoint'
+    )
+    const context = { ...jobContext(), generationKind: 'personalized' as const }
+    const auditSignals = {
+      opensNewThread: false,
+      opensMajorMystery: false,
+      opensNewConflict: false,
+      closesPlotDebts: [{ debtId: 'main_mystery', closureForm: 'RESOLVED' as const }],
+    }
+
+    await persistProseReadyCheckpoint({
+      storyId: 'story-a',
+      chapterNumber: 48,
+      attemptId: JOB_ID,
+      correlationId: CORRELATION_ID,
+      title: 'Bab Empat Puluh Delapan',
+      paragraphs: ['Maya menutup utang misteri utama.'],
+      auditSignals,
+      auditSignalsVersion: 2,
+      canonVersion: 7,
+      blueprintVersion: 4,
+      directionFingerprint: '0123456789abcdef0123456789abcdef',
+      generationMode: 'personalized',
+      generationPolicyVersion: 2,
+      promptContractVersion: 2,
+      jobId: JOB_ID,
+      jobAttemptNumber: 2,
+      jobContext: context,
+    })
+
+    expect(rpc).toHaveBeenCalledWith('upsert_generation_checkpoint_fenced_v1', expect.objectContaining({
+      p_audit_signals: auditSignals,
+      p_audit_signals_version: 2,
+      p_generation_mode: 'personalized',
+    }))
+  })
+
+  it.each([
+    'UPDATED',
+    'OWNERSHIP_LOST',
+    'LEASE_INVALID',
+    'ATTEMPT_AHEAD',
+    'PROVENANCE_CONFLICT',
+    'INVALID_TRANSITION',
+  ] as const)('returns bounded transition outcome %s without swallowing it', async (result) => {
+    const response = result === 'UPDATED'
+      ? { ok: true, result, changed: false, checkpoint: { status: 'RUNNING_CHOICES' } }
+      : { ok: false, result }
+    const rpc = vi.fn().mockResolvedValue({ data: response, error: null })
+    const from = vi.fn()
+    mocks.adminFactory.mockReturnValue({ rpc, from })
+    const { markCheckpointStatus } = await import(
+      '@/lib/runtime/chapter-generation-checkpoint'
+    )
+
+    await expect(markCheckpointStatus({
+      storyId: 'story-a',
+      chapterNumber: 3,
+      attemptId: ATTEMPT_ID,
+      status: 'RUNNING_CHOICES',
+      jobContext: jobContext(),
+    })).resolves.toEqual(response)
+    expect(from).not.toHaveBeenCalled()
+    expect(rpc).toHaveBeenCalledWith('transition_generation_checkpoint_fenced_v1', {
+      p_job_id: JOB_ID,
+      p_worker_id: 'worker-a',
+      p_claim_token: CLAIM_TOKEN,
+      p_lease_id: LEASE_ID,
+      p_story_id: 'story-a',
+      p_chapter_number: 3,
+      p_checkpoint_attempt_id: ATTEMPT_ID,
+      p_new_status: 'RUNNING_CHOICES',
+    })
+  })
+
+  it.each([
+    { code: 'PGRST205', message: 'table missing' },
+    { code: 'XX000', message: 'database query failed' },
+  ])('fails closed on worker checkpoint load DB error $code', async (error) => {
+    const maybeSingle = vi.fn().mockResolvedValue({ data: null, error })
+    const chain = {
+      select: vi.fn(),
+      eq: vi.fn(),
+      in: vi.fn(),
+      gt: vi.fn(),
+      order: vi.fn(),
+      limit: vi.fn(),
+      maybeSingle,
+    }
+    for (const method of ['select', 'eq', 'in', 'gt', 'order', 'limit'] as const) {
+      chain[method].mockReturnValue(chain)
+    }
+    mocks.adminFactory.mockReturnValue({ from: vi.fn().mockReturnValue(chain), rpc: vi.fn() })
+    const { loadUsableProseCheckpoint } = await import(
+      '@/lib/runtime/chapter-generation-checkpoint'
+    )
+
+    await expect(loadUsableProseCheckpoint({
+      storyId: 'story-a',
+      chapterNumber: 3,
+      jobContext: jobContext(),
+    })).rejects.toThrow('WORKER_CHECKPOINT_LOAD_FAILED')
+  })
+
+  it('keeps generic checkpoint load DB errors best-effort on legacy flow', async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: null,
+      error: { code: 'XX000', message: 'database query failed' },
+    })
+    const chain = {
+      select: vi.fn(),
+      eq: vi.fn(),
+      in: vi.fn(),
+      gt: vi.fn(),
+      order: vi.fn(),
+      limit: vi.fn(),
+      maybeSingle,
+    }
+    for (const method of ['select', 'eq', 'in', 'gt', 'order', 'limit'] as const) {
+      chain[method].mockReturnValue(chain)
+    }
+    mocks.adminFactory.mockReturnValue({ from: vi.fn().mockReturnValue(chain), rpc: vi.fn() })
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const { loadUsableProseCheckpoint } = await import(
+      '@/lib/runtime/chapter-generation-checkpoint'
+    )
+
+    await expect(loadUsableProseCheckpoint({
+      storyId: 'story-a',
+      chapterNumber: 3,
+    })).resolves.toBeNull()
+    expect(log).toHaveBeenCalledWith('CHECKPOINT_LOAD_FAILED', {
+      storyId: 'story-a',
+      chapterNumber: 3,
+      code: 'XX000',
+    })
+    log.mockRestore()
+  })
+
+  it('rejects malformed fenced outcome and RPC errors', async () => {
+    const rpc = vi.fn()
+      .mockResolvedValueOnce({ data: { ok: false, result: 'UNKNOWN' }, error: null })
+      .mockResolvedValueOnce({ data: null, error: { code: 'PGRST202', message: 'missing RPC' } })
+    mocks.adminFactory.mockReturnValue({ rpc, from: vi.fn() })
+    const { markCheckpointStatus } = await import(
+      '@/lib/runtime/chapter-generation-checkpoint'
+    )
+    const input = {
+      storyId: 'story-a',
+      chapterNumber: 3,
+      attemptId: ATTEMPT_ID,
+      status: 'RUNNING_CHOICES' as const,
+      jobContext: jobContext(),
+    }
+
+    await expect(markCheckpointStatus(input)).rejects.toThrow()
+    await expect(markCheckpointStatus(input)).rejects.toThrow('INTERNAL_ERROR')
+  })
+})

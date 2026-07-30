@@ -1,5 +1,5 @@
 import 'server-only'
-import { generateText, streamText, type LanguageModel } from 'ai'
+import { generateText, streamText, Output, type LanguageModel } from 'ai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { z } from 'zod'
 import type { CanonSnapshot, Finding } from '@lakoku/narrative-core'
@@ -13,10 +13,12 @@ import {
   type StoryContractCallOptions,
   type ModelCallExecutionOptions,
   type GenerationRuntimePolicy,
+  type ProviderCandidateKind,
+  type ProviderRuntime,
   DEFAULT_RUNTIME_POLICY,
 } from './provider'
 import { GatewayError, scanForLeaks } from './gateway'
-import { buildChoiceSystemPromptV2 } from './choice-draft-v2'
+import { buildChoiceSystemPromptV2, AiChoiceDraftSchema } from './choice-draft-v2'
 import { clampChapterParagraphs, countParagraphWords } from '@/lib/prose/clamp-chapter-prose'
 import { buildWriterPrompt } from '@/lib/prose/prompt-engine'
 import type { AiModelRoute } from '@/lib/ops/ai-model-routes'
@@ -30,6 +32,7 @@ import {
   createEmptyTasteProfile,
   type TasteProfileV2,
 } from '@/lib/taste-profile/schema'
+import { isAbortError, throwIfAborted } from '@/lib/runtime/abort'
 
 /**
  * Provider LLM NYATA via Vercel AI Gateway.
@@ -95,6 +98,24 @@ type ModelCandidate = {
 }
 
 type UnindexedModelCandidate = Omit<ModelCandidate, 'fallbackIndex'>
+
+function executeCandidate<T>(
+  runtime: ProviderRuntime | undefined,
+  kind: ProviderCandidateKind,
+  candidate: ModelCandidate,
+  execute: () => T,
+): T {
+  const transport = runtime?.candidateTransport
+  if (!transport) return execute()
+  return transport({
+    kind,
+    providerId: candidate.providerId,
+    modelId: candidate.configuredModelId,
+    fallbackIndex: candidate.fallbackIndex,
+    execute,
+  }) as T
+}
+
 
 // Default OpenRouter: paid model only when OPENROUTER_MODELS unset.
 // Setiap model menjadi request eksplisit agar identitas fallback bisa diamati.
@@ -407,9 +428,11 @@ async function generateProse(args: {
   // jaringan/HTTP maupun kebocoran istilah internal setelah repair) memicu
   // pindah ke kandidat berikutnya.
   for (const candidate of args.chain) {
+    throwIfAborted(args.options.signal)
     const { model, label } = candidate
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
+        throwIfAborted(args.options.signal)
         const workflowPhase = attempt === 0
           ? args.options.workflowPhase
           : 'CHAPTER_PROSE_LEAK_REPAIR'
@@ -426,7 +449,7 @@ async function generateProse(args: {
             candidate: candidateIdentity(candidate),
             useCase: 'chapter_prose',
             workflowPhase,
-            call: () => streamText({
+            call: () => executeCandidate(args.options.providerRuntime, 'prose', candidate, () => streamText({
               model,
               system,
               prompt:
@@ -435,10 +458,11 @@ async function generateProse(args: {
                   : `${prompt}\n\nCATATAN: revisi sebelumnya memuat istilah teknis terlarang. Tulis ulang murni sebagai narasi cerita.`,
               temperature: args.route?.temperature ?? undefined,
               maxOutputTokens,
-              abortSignal: AbortSignal.timeout(LLM_PROSE_TIMEOUT_MS),
+              abortSignal: providerAbortSignal(args.options.signal, LLM_PROSE_TIMEOUT_MS),
               maxRetries: 0,
-            }),
+            })),
             consume: (text) => {
+              throwIfAborted(args.options.signal)
               let prose
               try {
                 prose = parseProse(text)
@@ -460,11 +484,15 @@ async function generateProse(args: {
           return { ...parsed, usedModel: label }
         } catch (error) {
           lastError = error
+          if (args.options.signal?.aborted) throw args.options.signal.reason ?? error
+          if (isAbortError(error)) throw error
           if (error instanceof ContentRejectedError && attempt === 0) continue
           throw error
         }
       }
     } catch (error) {
+      if (args.options.signal?.aborted) throw args.options.signal.reason ?? error
+      if (isAbortError(error)) throw error
       lastError = error
       logCandidateFailure(args.options.workflowPhase, candidate, error)
     }
@@ -706,6 +734,7 @@ async function generateStoryContractJson(args: {
   let lastError: unknown
 
   for (const candidate of args.chain) {
+    throwIfAborted(args.options.signal)
     const { model } = candidate
     try {
       return await executeObservedModelCall({
@@ -728,12 +757,14 @@ async function generateStoryContractJson(args: {
           maxRetries: 0,
         }),
         consume: async (text) => {
+          throwIfAborted(args.options.signal)
           const parsed = parseModelJson(text)
           return args.options.consume ? args.options.consume(parsed) : parsed
         },
       })
     } catch (error) {
-      if (args.options.signal?.aborted) throw error
+      if (args.options.signal?.aborted) throw args.options.signal.reason ?? error
+      if (isAbortError(error)) throw error
       lastError = error
       logCandidateFailure(args.options.workflowPhase, candidate, error)
     }
@@ -743,6 +774,28 @@ async function generateStoryContractJson(args: {
 }
 
 // ---------- Choice generation with fallback ----------
+
+/** Combine worker ownership cancellation with per-call timeout. */
+function providerAbortSignal(parent: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs)
+  return parent ? AbortSignal.any([parent, timeout]) : timeout
+}
+
+/**
+ * P1-6: capability allowlist for native structured output (json_schema).
+ * Default OFF. Enable per-model via LAKOKU_CHOICES_NATIVE_SCHEMA_MODELS (comma
+ * list of model-id substrings) or all-on via LAKOKU_CHOICES_NATIVE_SCHEMA=on.
+ * Native attempts still count against the choice provider-call budget upstream.
+ */
+function nativeChoiceSchemaAllowed(modelId: string): boolean {
+  const all = process.env.LAKOKU_CHOICES_NATIVE_SCHEMA?.trim().toLowerCase()
+  if (all === 'on' || all === 'true' || all === '1') return true
+  const list = process.env.LAKOKU_CHOICES_NATIVE_SCHEMA_MODELS?.trim()
+  if (!list) return false
+  const needles = list.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+  const id = modelId.toLowerCase()
+  return needles.some((n) => id.includes(n))
+}
 
 async function generateChoiceJson(args: {
   chain: ModelCandidate[]
@@ -754,38 +807,70 @@ async function generateChoiceJson(args: {
   let lastError: unknown
 
   for (const candidate of args.chain) {
+    throwIfAborted(args.options.signal)
+    const callBudget = args.options.callBudget
+    if (callBudget) {
+      if (callBudget.used >= callBudget.max) {
+        throw new Error('CHOICE_PROVIDER_CALL_BUDGET_EXHAUSTED')
+      }
+      // Increment immediately before each actual candidate request.
+      callBudget.used += 1
+    }
     const { model, label } = candidate
+    const useNative = nativeChoiceSchemaAllowed(candidate.configuredModelId)
+    const maxOutputTokens = resolveMaxOutputTokens({
+      label,
+      modelId: candidate.configuredModelId,
+      routeMax: args.route?.maxOutputTokens,
+      // Choices shorter, but ag/* still needs reasoning headroom.
+      fallback: isAntigravityModelLabel(label, candidate.configuredModelId)
+        ? AG_REASONING_MAX_OUTPUT_FLOOR
+        : 1024,
+    })
     try {
-      return await executeObservedModelCall({
+      const { withChoiceGenerationSlot } = await import('@/lib/runtime/choice-concurrency')
+      return await withChoiceGenerationSlot({
+        providerId: candidate.providerId,
+        storyId: args.input.storyId,
+        chapterNumber: args.input.currentChapter,
+        correlationId: args.options.telemetryContext.correlationId,
+        signal: args.options.signal,
+        observer: args.options.providerRuntime?.choiceConcurrencyObserver,
+      }, () => executeObservedModelCall({
         context: args.options.telemetryContext,
         candidate: candidateIdentity(candidate),
         useCase: args.route?.useCase ?? 'choices',
         workflowPhase: args.options.workflowPhase,
         // Choices are small JSON — non-stream generateText reduces failure surface.
         call: () =>
-          generateText({
+          executeCandidate(args.options.providerRuntime, 'choice', candidate, () => generateText({
             model,
             system,
             prompt,
             temperature: args.route?.temperature ?? 0.1,
-            maxOutputTokens: resolveMaxOutputTokens({
-              label,
-              modelId: candidate.configuredModelId,
-              routeMax: args.route?.maxOutputTokens,
-              // Choices shorter, but ag/* still needs reasoning headroom.
-              fallback: isAntigravityModelLabel(label, candidate.configuredModelId)
-                ? AG_REASONING_MAX_OUTPUT_FLOOR
-                : 1024,
-            }),
-            abortSignal: AbortSignal.timeout(LLM_CHOICE_TIMEOUT_MS),
+            maxOutputTokens,
+            // P1-6: native json_schema when the model is allowlisted. If the
+            // provider ignores/rejects the schema, we still get .text and fall
+            // back to parseModelJson in consume.
+            ...(useNative
+              ? {
+                  experimental_output: Output.object({
+                    schema: AiChoiceDraftSchema,
+                  }),
+                }
+              : {}),
+            abortSignal: providerAbortSignal(args.options.signal, LLM_CHOICE_TIMEOUT_MS),
             maxRetries: 0,
-          }) as unknown as ReturnType<typeof streamText>,
+          }) as unknown as ReturnType<typeof streamText>),
         consume: async (text) => {
+          throwIfAborted(args.options.signal)
           const parsed = parseModelJson(text)
           return args.options.consume ? args.options.consume(parsed) : parsed
         },
-      })
+      }))
     } catch (error) {
+      if (args.options.signal?.aborted) throw args.options.signal.reason ?? error
+      if (isAbortError(error)) throw error
       lastError = error
       logCandidateFailure(args.options.workflowPhase, candidate, error)
     }
@@ -815,11 +900,47 @@ export function createGatewayProvider(
   // Build chain: DB route first if available, then env, then code fallback.
   const chain = resolveModelChain(opts.model, aiRoute)
 
-  // Route choices berdiri sendiri. Hanya bila tidak ada, pakai route chapter.
-  // Prefer dedicated choices route; do not silently share prose route identity
-  // unless caller passed choicesRoute (or selectProvider compat env).
-  const resolvedChoicesRoute = choicesRoute ?? undefined
-  const choiceChain = resolveModelChain(opts.model, resolvedChoicesRoute ?? aiRoute)
+  // P1-8: choices route must be EXPLICIT. Precedence:
+  //   1. DB choices route            → use it
+  //   2. env LAKOKU_CHOICES_MODEL     → use it (log CHOICE_ROUTE_DEGRADED)
+  //   3. prose fallback ONLY when LAKOKU_ALLOW_CHOICES_PROSE_FALLBACK=true
+  //      (default false) → log CHOICE_ROUTE_DEGRADED
+  //   4. otherwise                    → CHOICE_ROUTE_MISSING (chain stays choices-
+  //      only; provider call fails loudly rather than silently using prose model)
+  const proseFallbackAllowed =
+    process.env.LAKOKU_ALLOW_CHOICES_PROSE_FALLBACK?.trim().toLowerCase() === 'true'
+  const envChoicesModel = process.env.LAKOKU_CHOICES_MODEL?.trim() || undefined
+
+  let resolvedChoicesRoute: AiModelRoute | undefined
+  let choiceModelOverride: string | undefined
+  // choiceRouteMissing: no explicit choices route/model AND prose fallback not
+  // allowed. generateChoices then fails loudly instead of silently using prose.
+  let choiceRouteMissing = false
+  // Deferred so provider construction stays side-effect free; emitted lazily on
+  // the first generateChoices call.
+  let choiceRouteNotice: (() => void) | null = null
+  if (choicesRoute) {
+    resolvedChoicesRoute = choicesRoute
+  } else if (envChoicesModel) {
+    choiceModelOverride = envChoicesModel
+    choiceRouteNotice = () =>
+      console.log('CHOICE_ROUTE_DEGRADED', { source: 'ENV_MODEL', model: envChoicesModel })
+  } else if (proseFallbackAllowed && aiRoute) {
+    resolvedChoicesRoute = aiRoute
+    choiceRouteNotice = () => console.log('CHOICE_ROUTE_DEGRADED', { source: 'PROSE_FALLBACK' })
+  } else if (proseFallbackAllowed) {
+    // Fallback allowed but no aiRoute either — let env prose chain apply.
+    choiceRouteNotice = () =>
+      console.log('CHOICE_ROUTE_DEGRADED', { source: 'PROSE_ENV_FALLBACK' })
+  } else {
+    choiceRouteMissing = true
+    choiceRouteNotice = () =>
+      console.log('CHOICE_ROUTE_MISSING', {
+        proseFallbackAllowed,
+        hasAiRoute: Boolean(aiRoute),
+      })
+  }
+  const choiceChain = resolveModelChain(choiceModelOverride ?? opts.model, resolvedChoicesRoute)
 
   return {
     name: chain.map((c) => c.label).join(' → '),
@@ -899,6 +1020,23 @@ export function createGatewayProvider(
     ): Promise<unknown> {
       if (!options) {
         throw new Error('gateway-provider: telemetry execution options are required.')
+      }
+      const hasCandidateTransport = Boolean(options.providerRuntime?.candidateTransport)
+      if (choiceRouteNotice && !hasCandidateTransport) {
+        // Best-effort observability; a throwing logger must not break generation.
+        try {
+          choiceRouteNotice()
+        } catch {
+          // ignore
+        }
+        choiceRouteNotice = null
+      }
+      // P1-8: no explicit choices route and prose fallback disabled → fail loudly
+      // rather than silently generating choices with the prose model. An explicit
+      // runtime transport resolves synthetic candidate identities without executing
+      // their configured network-backed models.
+      if (choiceRouteMissing && !hasCandidateTransport) {
+        return Promise.reject(new Error('CHOICE_ROUTE_MISSING'))
       }
       return generateChoiceJson({
         chain: choiceChain,

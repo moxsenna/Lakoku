@@ -98,7 +98,11 @@ export function classifyChoiceProviderError(err: unknown): ChoiceProviderErrorCo
   if (message.includes('UNGROUNDED') || message.includes('CHOICE_UNRELATED')) {
     return 'QUALITY_UNGROUNDED'
   }
-  if (message.includes('NOT_DISTINCT')) return 'QUALITY_NOT_DISTINCT'
+  if (
+    message.includes('NOT_DISTINCT')
+    || message.includes('TOO_SIMILAR')
+    || message.includes('EFFECTS_IDENTICAL')
+  ) return 'QUALITY_NOT_DISTINCT'
   if (message.includes('NOT_ACTIONABLE') || message.includes('CHOICE_NOT_ACTIONABLE')) {
     return 'QUALITY_NOT_ACTIONABLE'
   }

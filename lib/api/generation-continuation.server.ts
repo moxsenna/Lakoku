@@ -72,14 +72,14 @@ export async function continuePersonalizedGeneration(input: {
   userId: string
   chapterNumber: number
   correlationId: string
-  triggerChoiceId?: string
+  triggerChoiceId?: string | null
 }): Promise<{ nextChapterReady: boolean }> {
   const generationInput: PersonalizedGenerateInput = {
     storyId: input.storyId,
     userId: input.userId,
     chapterNumber: input.chapterNumber,
     correlationId: input.correlationId,
-    triggerChoiceId: input.triggerChoiceId,
+    ...('triggerChoiceId' in input ? { triggerChoiceId: input.triggerChoiceId } : {}),
   }
 
   const key = continuationJobKey(input.storyId, input.chapterNumber)

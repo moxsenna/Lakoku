@@ -68,7 +68,8 @@ as $$
     ending_lock_json,
     quality_profile,
     created_at,
-    updated_at
+    updated_at,
+    story_contract_version
   ) values (
     p_story_id,
     'premium_template',
@@ -88,7 +89,8 @@ as $$
     '{"character":"char:hero"}'::jsonb,
     'lakoku_mobile_drama_v1',
     '2020-01-01 00:00:00+00'::timestamptz,
-    '2020-01-02 00:00:00+00'::timestamptz
+    '2020-01-02 00:00:00+00'::timestamptz,
+    1
   );
 $$;
 

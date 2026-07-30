@@ -26,6 +26,7 @@ import {
 import { generatePlan, writeChapter, type GatewayDeps } from './gateway'
 import type { ChapterDraftParsed } from './schemas'
 import type { DraftDefect, ModelCallExecutionOptions } from './provider'
+import { throwIfAborted } from '@/lib/runtime/abort'
 
 export const MAX_REPAIR_ATTEMPTS = 2 // per lapis
 
@@ -95,16 +96,19 @@ export async function generateChapter(
     executionOptions?: ModelCallExecutionOptions
   },
 ): Promise<GenerationResult> {
+  throwIfAborted(args.executionOptions?.signal)
   const { snapshot, blueprint, chapterNumber, threadContext, layerBContext } = args
   const fpBefore = canonFingerprint(snapshot)
 
   const plan = await generatePlan(deps, { snapshot, blueprint, chapterNumber })
 
+  throwIfAborted(args.executionOptions?.signal)
   let draft = await writeChapter(deps, {
     snapshot,
     plan,
     injectDefects: args.injectDefects,
   }, args.executionOptions)
+  throwIfAborted(args.executionOptions?.signal)
   let attempts = 0
 
   const fail = (
@@ -129,6 +133,7 @@ export async function generateChapter(
   let aFindings = runLayerA(snapshot, draft, chapterNumber, threadContext)
   let aAttempts = 0
   while (needsRepair(aFindings) && aAttempts < MAX_REPAIR_ATTEMPTS) {
+    throwIfAborted(args.executionOptions?.signal)
     aAttempts++
     attempts++
     draft = await writeChapter(
@@ -141,6 +146,7 @@ export async function generateChapter(
           }
         : undefined,
     )
+    throwIfAborted(args.executionOptions?.signal)
     aFindings = runLayerA(snapshot, draft, chapterNumber, threadContext)
   }
   if (needsRepair(aFindings)) return fail('A', aFindings)
@@ -149,6 +155,7 @@ export async function generateChapter(
   let bFindings = validateLayerB(snapshot, draft, layerBContext ?? {}).findings
   let bAttempts = 0
   while (needsRepair(bFindings) && bAttempts < MAX_REPAIR_ATTEMPTS) {
+    throwIfAborted(args.executionOptions?.signal)
     bAttempts++
     attempts++
     draft = await writeChapter(
@@ -161,6 +168,7 @@ export async function generateChapter(
           }
         : undefined,
     )
+    throwIfAborted(args.executionOptions?.signal)
     bFindings = validateLayerB(snapshot, draft, layerBContext ?? {}).findings
   }
   if (needsRepair(bFindings)) return fail('B', bFindings)

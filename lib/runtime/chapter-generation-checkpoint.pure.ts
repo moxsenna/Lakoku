@@ -3,6 +3,132 @@
  */
 import { createHash } from 'node:crypto'
 
+export const NO_CREATIVE_DIRECTION_FINGERPRINT = createHash('sha256')
+  .update('lakoku:creative-direction:absent:v1')
+  .digest('hex')
+  .slice(0, 32)
+
+/**
+ * Version stamped on rows written by the current writer path. Kept at 1 so
+ * already-persisted rows stay parseable; the v2 writer lands in a later phase.
+ */
+const CHECKPOINT_AUDIT_SIGNALS_VERSION_V1 = 1 as const
+
+/** Current personalized audit artifact version, including closure records. */
+export const CHECKPOINT_AUDIT_SIGNALS_VERSION = 2 as const
+export const CHECKPOINT_AUDIT_SIGNALS_VERSION_V2 = CHECKPOINT_AUDIT_SIGNALS_VERSION
+
+/**
+ * Minimum audit-signal version a personalized checkpoint must carry to be reused
+ * for choice-only retry. v1 rows remain parseable (terminal transitions, reader
+ * status) but are never reused, because they cannot prove closure provenance.
+ */
+export const CHECKPOINT_AUDIT_SIGNALS_REUSE_VERSION = CHECKPOINT_AUDIT_SIGNALS_VERSION_V2
+
+const CHECKPOINT_CLOSURE_FORMS = [
+  'RESOLVED',
+  'SUBVERTED',
+  'TRANSFORMED',
+  'ABANDONED',
+] as const
+
+const MAX_CHECKPOINT_CLOSURES = 20
+const MAX_CHECKPOINT_DEBT_ID_LENGTH = 100
+
+export type CheckpointPlotDebtClosureForm = (typeof CHECKPOINT_CLOSURE_FORMS)[number]
+
+export type CheckpointPlotDebtClosure = {
+  debtId: string
+  closureForm: CheckpointPlotDebtClosureForm
+}
+
+export type CheckpointAuditSignalsV1 = {
+  opensNewThread: boolean
+  opensMajorMystery: boolean
+  opensNewConflict: boolean
+}
+
+export type CheckpointAuditSignalsV2 = CheckpointAuditSignalsV1 & {
+  closesPlotDebts: CheckpointPlotDebtClosure[]
+}
+
+export type CheckpointAuditSignals = CheckpointAuditSignalsV1 | CheckpointAuditSignalsV2
+
+const V1_KEYS = 'opensMajorMystery,opensNewConflict,opensNewThread'
+const V2_KEYS = 'closesPlotDebts,opensMajorMystery,opensNewConflict,opensNewThread'
+
+export function isCheckpointAuditSignalsV2(
+  signals: CheckpointAuditSignals | null | undefined,
+): signals is CheckpointAuditSignalsV2 {
+  return signals != null && Array.isArray((signals as CheckpointAuditSignalsV2).closesPlotDebts)
+}
+
+function parseAuditFlags(record: Record<string, unknown>): CheckpointAuditSignalsV1 | null {
+  if (
+    typeof record.opensNewThread !== 'boolean' ||
+    typeof record.opensMajorMystery !== 'boolean' ||
+    typeof record.opensNewConflict !== 'boolean'
+  ) return null
+  return {
+    opensNewThread: record.opensNewThread,
+    opensMajorMystery: record.opensMajorMystery,
+    opensNewConflict: record.opensNewConflict,
+  }
+}
+
+function parseClosureRecords(value: unknown): CheckpointPlotDebtClosure[] | null {
+  if (!Array.isArray(value) || value.length > MAX_CHECKPOINT_CLOSURES) return null
+  const closures: CheckpointPlotDebtClosure[] = []
+  const seen = new Set<string>()
+  for (const entry of value) {
+    if (entry == null || typeof entry !== 'object' || Array.isArray(entry)) return null
+    const record = entry as Record<string, unknown>
+    if (Object.keys(record).sort().join(',') !== 'closureForm,debtId') return null
+    const { debtId, closureForm } = record
+    if (typeof debtId !== 'string' || typeof closureForm !== 'string') return null
+    const trimmed = debtId.trim()
+    if (
+      trimmed.length === 0 ||
+      trimmed.length > MAX_CHECKPOINT_DEBT_ID_LENGTH ||
+      trimmed !== debtId
+    ) return null
+    if (!(CHECKPOINT_CLOSURE_FORMS as readonly string[]).includes(closureForm)) return null
+    if (seen.has(trimmed)) return null
+    seen.add(trimmed)
+    closures.push({ debtId: trimmed, closureForm: closureForm as CheckpointPlotDebtClosureForm })
+  }
+  return closures
+}
+
+/**
+ * Strict parser for stored audit signals. Accepts exactly the v1 or v2 shape for
+ * its declared version and returns a fresh object; anything else yields null.
+ */
+export function parseCheckpointAuditSignals(
+  value: unknown,
+  version: unknown,
+): CheckpointAuditSignals | null {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  const keys = Object.keys(record).sort().join(',')
+
+  if (version === CHECKPOINT_AUDIT_SIGNALS_VERSION_V1) {
+    if (keys !== V1_KEYS) return null
+    return parseAuditFlags(record)
+  }
+
+  if (version === CHECKPOINT_AUDIT_SIGNALS_VERSION_V2) {
+    if (keys !== V2_KEYS) return null
+    const flags = parseAuditFlags(record)
+    if (!flags) return null
+    const closesPlotDebts = parseClosureRecords(record.closesPlotDebts)
+    if (!closesPlotDebts) return null
+    return { ...flags, closesPlotDebts }
+  }
+
+  return null
+}
+
 export type CheckpointStatus =
   | 'PROSE_READY'
   | 'QUEUED_CHOICES'
@@ -22,14 +148,143 @@ export type ChapterGenerationCheckpoint = {
   title: string
   paragraphs: string[]
   proseFingerprint: string
+  auditSignals: CheckpointAuditSignals | null
+  auditSignalsVersion: number | null
   canonVersion: number | null
   blueprintVersion: number | null
   directionFingerprint: string | null
+  generationMode: string | null
+  generationPolicyVersion: number | null
+  promptContractVersion: number | null
+  jobId: string | null
+  jobAttemptNumber: number | null
+  /** 1 = legacy compatibility, 2 = strict non-null versions required. */
+  schemaVersion: number
   proseAttemptCount: number
   choiceAttemptCount: number
   createdAt: string
   updatedAt: string
   expiresAt: string
+}
+
+/** Current runtime versions/fingerprints a checkpoint must match to be reused. */
+export type CheckpointFreshnessContext = {
+  canonVersion: number | null
+  blueprintVersion: number | null
+  directionFingerprint: string | null
+  generationMode: string | null
+  generationPolicyVersion: number | null
+  promptContractVersion: number | null
+  /** Require strict durable worker job provenance, even when both job ids are null. */
+  requireJobProvenance: boolean
+  /** Current durable job id (worker path); null on legacy path. */
+  jobId?: string | null
+  /** Current job attempt_count; checkpoint provenance must be <= this. */
+  jobAttemptNumber?: number | null
+}
+
+export type CheckpointFreshnessResult =
+  | { fresh: true }
+  | { fresh: false; reason: string }
+
+/**
+ * P1-2: decide whether a stored prose checkpoint may be reused for choice-only
+ * retry under the CURRENT runtime context.
+ *
+ * Rules:
+ *  - schemaVersion 2 (new): every version/fingerprint MUST be non-null AND match
+ *    current (fail closed on any null — never treat null === null as fresh).
+ *  - schemaVersion 1 (legacy): compatibility — match only the fields the legacy
+ *    row actually carried (canon/blueprint/direction), skip newer fields.
+ *  - jobAttemptNumber is PROVENANCE: checkpoint.jobAttemptNumber must be <=
+ *    current attempt (never ===) so a re-claimed same job keeps its prose.
+ *  - jobId (when both present) must match the current job.
+ */
+export function verifyCheckpointFreshness(
+  cp: ChapterGenerationCheckpoint,
+  ctx: CheckpointFreshnessContext,
+): CheckpointFreshnessResult {
+  const mismatch = (reason: string): CheckpointFreshnessResult => ({ fresh: false, reason })
+
+  // Worker schema-v2 provenance is strict. Explicit non-worker contexts retain
+  // nullable legacy compatibility below.
+  const workerV2 = cp.schemaVersion >= 2 && (
+    ctx.requireJobProvenance || cp.jobId != null || ctx.jobId != null
+  )
+  if (workerV2) {
+    if (cp.jobId == null || ctx.jobId == null) return mismatch('NULL_jobId')
+    if (cp.jobAttemptNumber == null || ctx.jobAttemptNumber == null) {
+      return mismatch('NULL_jobAttemptNumber')
+    }
+    if (cp.jobId !== ctx.jobId) return mismatch('JOB_ID_MISMATCH')
+    if (cp.jobAttemptNumber > ctx.jobAttemptNumber) return mismatch('ATTEMPT_AHEAD')
+  } else {
+    if (cp.jobId != null && ctx.jobId != null && cp.jobId !== ctx.jobId) {
+      return mismatch('JOB_ID_MISMATCH')
+    }
+    if (
+      cp.jobAttemptNumber != null &&
+      ctx.jobAttemptNumber != null &&
+      cp.jobAttemptNumber > ctx.jobAttemptNumber
+    ) {
+      return mismatch('ATTEMPT_AHEAD')
+    }
+  }
+
+  if (cp.proseFingerprint !== proseFingerprint(cp.title, cp.paragraphs)) {
+    return mismatch('MISMATCH_proseFingerprint')
+  }
+
+  if (cp.schemaVersion >= 2) {
+    // Fail closed: any null on a v2 checkpoint means it was written without full
+    // provenance and cannot be trusted for reuse.
+    const required: Array<[string, unknown, unknown]> = [
+      ['canonVersion', cp.canonVersion, ctx.canonVersion],
+      ['blueprintVersion', cp.blueprintVersion, ctx.blueprintVersion],
+      ['directionFingerprint', cp.directionFingerprint, ctx.directionFingerprint],
+      ['generationMode', cp.generationMode, ctx.generationMode],
+      ['generationPolicyVersion', cp.generationPolicyVersion, ctx.generationPolicyVersion],
+      ['promptContractVersion', cp.promptContractVersion, ctx.promptContractVersion],
+    ]
+    for (const [field, cpVal, ctxVal] of required) {
+      if (cpVal == null || ctxVal == null) return mismatch(`NULL_${field}`)
+      if (cpVal !== ctxVal) return mismatch(`MISMATCH_${field}`)
+    }
+    if (ctx.generationMode === 'personalized') {
+      const signals = parseCheckpointAuditSignals(cp.auditSignals, cp.auditSignalsVersion)
+      if (!signals) return mismatch('INVALID_auditSignals')
+      // Reuse demands closure provenance; parseable v1 rows are not enough.
+      if (
+        cp.auditSignalsVersion !== CHECKPOINT_AUDIT_SIGNALS_REUSE_VERSION ||
+        !isCheckpointAuditSignalsV2(signals)
+      ) {
+        return mismatch('STALE_auditSignalsVersion')
+      }
+    } else if (cp.auditSignals != null || cp.auditSignalsVersion != null) {
+      return mismatch('UNEXPECTED_auditSignals')
+    }
+    return { fresh: true }
+  }
+
+  // Legacy (schemaVersion 1): only compare fields legacy rows carried.
+  if (cp.canonVersion != null && ctx.canonVersion != null && cp.canonVersion !== ctx.canonVersion) {
+    return mismatch('MISMATCH_canonVersion')
+  }
+  if (
+    cp.blueprintVersion != null &&
+    ctx.blueprintVersion != null &&
+    cp.blueprintVersion !== ctx.blueprintVersion
+  ) {
+    return mismatch('MISMATCH_blueprintVersion')
+  }
+  if (
+    cp.directionFingerprint != null &&
+    ctx.directionFingerprint != null &&
+    cp.directionFingerprint !== ctx.directionFingerprint
+  ) {
+    return mismatch('MISMATCH_directionFingerprint')
+  }
+  return { fresh: true }
 }
 
 export function proseFingerprint(title: string, paragraphs: string[]): string {

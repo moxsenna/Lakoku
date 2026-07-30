@@ -92,6 +92,117 @@ describe('runChapterGenerationAttempt dispatcher', () => {
     expect(mocks.generateNextChapterReal).not.toHaveBeenCalled()
   })
 
+  it('forwards explicit choice-A only to personalized generator despite choice-B fixture history', async () => {
+    mocks.adminFactory.mockReturnValue(contractClient({ mode: 'personalized_ai' }))
+    const { runChapterGenerationAttempt } = await import('@/lib/runtime/generation-mode')
+    const jobContext = {
+      jobId: 'job-1',
+      workerId: 'w-1',
+      claimToken: 'ct-1',
+      leaseId: 'lease-1',
+      attemptNumber: 1,
+      correlationId: 'c2',
+      generationKind: 'personalized' as const,
+      triggerChoiceId: 'choice-A',
+      signal: new AbortController().signal,
+    }
+    const latestHistoryFixture = { choiceId: 'choice-B' }
+    await runChapterGenerationAttempt({
+      storyId: 'story-b',
+      userId: 'user-b',
+      chapterNumber: 2,
+      correlationId: 'c2',
+      attemptId: 'job-1',
+      triggerChoiceId: jobContext.triggerChoiceId,
+      jobContext,
+    })
+    const callArg = mocks.generateNextPersonalizedChapter.mock.calls[0][0]
+    expect(latestHistoryFixture.choiceId).toBe('choice-B')
+    expect(callArg.attemptId).toBe('job-1')
+    expect(callArg.triggerChoiceId).toBe('choice-A')
+    expect(callArg.triggerChoiceId).not.toBe(latestHistoryFixture.choiceId)
+    expect(callArg.jobContext).toBe(jobContext)
+  })
+
+  it('forwards null trigger choice to personalized generator without synthesizing latest history', async () => {
+    mocks.adminFactory.mockReturnValue(contractClient({ mode: 'personalized_ai' }))
+    const { runChapterGenerationAttempt } = await import('@/lib/runtime/generation-mode')
+    await runChapterGenerationAttempt({
+      storyId: 'story-b',
+      userId: 'user-b',
+      chapterNumber: 2,
+      correlationId: 'c2',
+      triggerChoiceId: null,
+    })
+    const callArg = mocks.generateNextPersonalizedChapter.mock.calls[0][0]
+    expect(callArg.triggerChoiceId).toBeNull()
+  })
+
+  it('standard generator receives attemptId and jobContext but not trigger choice', async () => {
+    mocks.adminFactory.mockReturnValue(contractClient(null))
+    const { runChapterGenerationAttempt } = await import('@/lib/runtime/generation-mode')
+    const jobContext = {
+      jobId: 'job-2',
+      workerId: 'w-2',
+      claimToken: 'ct-2',
+      leaseId: 'lease-2',
+      attemptNumber: 1,
+      correlationId: 'c9',
+      generationKind: 'standard' as const,
+      triggerChoiceId: 'choice-A',
+      signal: new AbortController().signal,
+    }
+    await runChapterGenerationAttempt({
+      storyId: 'story-z',
+      userId: 'user-z',
+      chapterNumber: 1,
+      correlationId: 'c9',
+      attemptId: 'job-2',
+      triggerChoiceId: 'choice-A',
+      jobContext,
+    })
+    const callArg = mocks.generateNextChapterReal.mock.calls[0][0]
+    expect(callArg.attemptId).toBe('job-2')
+    expect(callArg).not.toHaveProperty('triggerChoiceId')
+    expect(callArg.jobContext).toBe(jobContext)
+  })
+
+  it.each([
+    ['standard', null, mocks.generateNextChapterReal],
+    ['personalized_ai', { mode: 'personalized_ai' }, mocks.generateNextPersonalizedChapter],
+  ] as const)('forwards provider runtime options to %s generator', async (_mode, contract, generator) => {
+    mocks.adminFactory.mockReturnValue(contractClient(contract))
+    const { runChapterGenerationAttempt } = await import('@/lib/runtime/generation-mode')
+    const candidateTransport = vi.fn()
+    const options = Object.freeze({
+      providerRuntime: Object.freeze({ candidateTransport }),
+    })
+
+    await runChapterGenerationAttempt({
+      storyId: 'story-options',
+      userId: 'user-options',
+      chapterNumber: 3,
+      correlationId: 'options-correlation',
+      options,
+    })
+
+    expect(generator).toHaveBeenCalledWith(expect.objectContaining({ options }))
+  })
+
+  it('does not add options to either generator on the default path', async () => {
+    mocks.adminFactory.mockReturnValue(contractClient(null))
+    const { runChapterGenerationAttempt } = await import('@/lib/runtime/generation-mode')
+
+    await runChapterGenerationAttempt({
+      storyId: 'story-default',
+      userId: 'user-default',
+      chapterNumber: 1,
+      correlationId: 'default-correlation',
+    })
+
+    expect(mocks.generateNextChapterReal.mock.calls[0][0]).not.toHaveProperty('options')
+  })
+
   it('does not call either generator when contract invalid', async () => {
     mocks.adminFactory.mockReturnValue(contractClient({ mode: 'personalized_???' }))
     const { runChapterGenerationAttempt } = await import('@/lib/runtime/generation-mode')

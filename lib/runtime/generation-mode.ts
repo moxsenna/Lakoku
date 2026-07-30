@@ -81,11 +81,22 @@ export type ChapterGenerationDispatchInput = {
   chapterNumber: number
   correlationId: string
   attemptId?: string | null
+  triggerChoiceId?: string | null
+  /**
+   * When present (worker path), generators reuse the job lease and publish via
+   * fenced publishGenerationJobChapterV2. Propagates AbortSignal.
+   */
+  jobContext?: import('@/lib/runtime/generation-job-execution').GenerationJobExecutionContext | null
+  options?: import('@/lib/runtime/generation-job-execution').GenerationWorkerOptions
 }
 
 /**
  * Central dispatcher: all entry points should call this instead of picking
  * a generator directly.
+ *
+ * Note: outer `ok: true` means mode resolved and generator was invoked — NOT
+ * that the chapter was published. Workers must normalize via
+ * normalizeGenerationDispatchResult (unwraps inner result.ok).
  */
 export async function runChapterGenerationAttempt(
   input: ChapterGenerationDispatchInput,
@@ -98,6 +109,9 @@ export async function runChapterGenerationAttempt(
     return { ok: false, reason: resolved.error }
   }
 
+  const attemptId = input.attemptId ?? input.correlationId
+  const jobContext = input.jobContext ?? null
+
   if (resolved.mode === 'personalized_ai') {
     const { generateNextPersonalizedChapter } = await import(
       '@/lib/runtime/personalized-generation'
@@ -107,6 +121,10 @@ export async function runChapterGenerationAttempt(
       userId: input.userId,
       chapterNumber: input.chapterNumber,
       correlationId: input.correlationId,
+      attemptId,
+      ...('triggerChoiceId' in input ? { triggerChoiceId: input.triggerChoiceId } : {}),
+      jobContext,
+      ...(input.options === undefined ? {} : { options: input.options }),
     })
     return { ok: true, result, mode: 'personalized_ai' }
   }
@@ -117,7 +135,9 @@ export async function runChapterGenerationAttempt(
     userId: input.userId,
     chapterNumber: input.chapterNumber,
     correlationId: input.correlationId,
-    attemptId: input.attemptId ?? input.correlationId,
+    attemptId,
+    jobContext,
+    ...(input.options === undefined ? {} : { options: input.options }),
   })
   return { ok: true, result, mode: 'standard' }
 }

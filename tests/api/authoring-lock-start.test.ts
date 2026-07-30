@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   enrichOpeningVoiceSheets: vi.fn(),
   generateNextChapterReal: vi.fn(),
   runChapterGenerationAttempt: vi.fn(),
+  resolveStoryGenerationMode: vi.fn(),
+  enqueueGenerationJob: vi.fn(),
+  claimAndRunGenerationJobById: vi.fn(),
   after: vi.fn(),
   adminFactory: vi.fn(),
   proposeMystery: vi.fn(),
@@ -35,6 +38,16 @@ vi.mock('@lakoku/runtime', () => ({
 }))
 vi.mock('@/lib/runtime/generation-mode', () => ({
   runChapterGenerationAttempt: mocks.runChapterGenerationAttempt,
+  resolveStoryGenerationMode: mocks.resolveStoryGenerationMode,
+}))
+vi.mock('@/lib/api/generation-job-enqueue.server', () => ({
+  enqueueGenerationJob: mocks.enqueueGenerationJob,
+  GenerationJobError: class GenerationJobError extends Error {
+    constructor(public code: string) { super(code) }
+  },
+}))
+vi.mock('@/lib/runtime/generation-worker', () => ({
+  claimAndRunGenerationJobById: mocks.claimAndRunGenerationJobById,
 }))
 vi.mock('next/server', () => ({
   after: mocks.after,
@@ -130,6 +143,19 @@ function ownerQuery(
 
 beforeEach(() => {
   vi.clearAllMocks()
+  delete process.env.LAKOKU_GENERATION_WORKER
+  mocks.resolveStoryGenerationMode.mockResolvedValue({ ok: true, mode: 'standard' })
+  mocks.enqueueGenerationJob.mockResolvedValue({
+    alreadyComplete: false,
+    jobId: '00000000-0000-4000-8000-000000000001',
+    correlationId: '00000000-0000-4000-8000-000000000002',
+    status: 'QUEUED',
+  })
+  mocks.claimAndRunGenerationJobById.mockResolvedValue({
+    ok: true,
+    outcome: 'SUCCEEDED',
+    jobId: '00000000-0000-4000-8000-000000000001',
+  })
   mocks.after.mockImplementation((callback: () => Promise<void>) => {
     void callback()
   })
@@ -234,11 +260,13 @@ describe('POST /api/stories/[id]/start-chapter', () => {
     )
     expect(res.status).toBe(202)
     const body = await res.json()
+    // Flag OFF (default): legacy path — no durable job, honest attemptId null.
     expect(body).toEqual({
       ok: true,
       chapterNumber: 1,
       status: 'STARTED',
-      attemptId: expect.any(String),
+      attemptId: null,
+      correlationId: expect.any(String),
     })
     expect(mocks.after).toHaveBeenCalledTimes(1)
     expect(mocks.runChapterGenerationAttempt).toHaveBeenCalledWith({
@@ -246,9 +274,47 @@ describe('POST /api/stories/[id]/start-chapter', () => {
       userId: 'user-a',
       chapterNumber: 1,
       correlationId: expect.any(String),
-      attemptId: expect.any(String),
+      attemptId: null,
     })
     expect(mocks.ensureReaderStateStarted).toHaveBeenCalledWith('story-a', 1)
+    expect(mocks.enqueueGenerationJob).not.toHaveBeenCalled()
+  })
+
+  it('worker flag ON commits job before STARTED and returns durable attemptId', async () => {
+    process.env.LAKOKU_GENERATION_WORKER = 'on'
+    mocks.getSessionUser.mockResolvedValue({ id: 'user-a' })
+    mocks.adminFactory.mockReturnValue(ownerQuery(true).client)
+    const { POST } = await import('@/app/api/stories/[id]/start-chapter/route')
+    const res = await POST(
+      new Request('http://localhost/api/stories/story-a/start-chapter', {
+        method: 'POST',
+        body: JSON.stringify({ chapterNumber: 1 }),
+      }),
+      { params: Promise.resolve({ id: 'story-a' }) },
+    )
+    expect(res.status).toBe(202)
+    expect(await res.json()).toEqual({
+      ok: true,
+      chapterNumber: 1,
+      status: 'STARTED',
+      attemptId: '00000000-0000-4000-8000-000000000001',
+      correlationId: '00000000-0000-4000-8000-000000000002',
+    })
+    expect(mocks.resolveStoryGenerationMode).toHaveBeenCalledWith('story-a')
+    expect(mocks.enqueueGenerationJob).toHaveBeenCalledWith({
+      storyId: 'story-a',
+      chapterNumber: 1,
+      generationKind: 'standard',
+      triggerChoiceId: null,
+    })
+    // after() callback uses a dynamic import; allow it to settle.
+    await vi.waitFor(() => {
+      expect(mocks.claimAndRunGenerationJobById).toHaveBeenCalledTimes(1)
+    })
+    expect(mocks.claimAndRunGenerationJobById).toHaveBeenCalledWith({
+      jobId: '00000000-0000-4000-8000-000000000001',
+    })
+    expect(mocks.runChapterGenerationAttempt).not.toHaveBeenCalled()
   })
 
   it('returns ALREADY_READY without scheduling when chapter exists', async () => {
@@ -297,4 +363,39 @@ describe('POST /api/stories/[id]/start-chapter', () => {
     })
     expect(mocks.after).not.toHaveBeenCalled()
   })
+})
+
+describe('startOwnedChapterGeneration worker path enqueue failures', () => {
+  beforeEach(() => {
+    process.env.LAKOKU_GENERATION_WORKER = 'on'
+    mocks.getSessionUser.mockResolvedValue({ id: 'user-a' })
+    mocks.adminFactory.mockReturnValue(ownerQuery(true).client)
+  })
+
+  it('returns failure without scheduling when durable enqueue fails', async () => {
+    mocks.enqueueGenerationJob.mockRejectedValue(new Error('DB_UNAVAILABLE'))
+    const { startOwnedChapterGeneration } = await import('@/lib/api/start-chapter.server')
+
+    const result = await startOwnedChapterGeneration('story-a', 1)
+
+    expect(result.ok).toBe(false)
+    expect(result).toEqual({ ok: false, error: 'Terjadi kesalahan tak terduga.' })
+    expect(mocks.after).not.toHaveBeenCalled()
+    expect(mocks.claimAndRunGenerationJobById).not.toHaveBeenCalled()
+  })
+
+  it.each(['GENERATION_JOB_CONFLICT', 'LEASE_HELD'] as const)(
+    'maps %s to ALREADY_RUNNING without a second claim',
+    async (code) => {
+      const { GenerationJobError } = await import('@/lib/api/generation-job-enqueue.server')
+      mocks.enqueueGenerationJob.mockRejectedValue(new GenerationJobError(code))
+      const { startOwnedChapterGeneration } = await import('@/lib/api/start-chapter.server')
+
+      const result = await startOwnedChapterGeneration('story-a', 1)
+
+      expect(result).toMatchObject({ ok: true, status: 'ALREADY_RUNNING' })
+      expect(mocks.after).not.toHaveBeenCalled()
+      expect(mocks.claimAndRunGenerationJobById).not.toHaveBeenCalled()
+    },
+  )
 })

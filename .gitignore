@@ -9,6 +9,7 @@ __v0_jsx-dev-runtime.ts
 # Environment variables
 .env
 .env*.local
+.env.local.bak
 env
 .dev.vars
 
@@ -17,6 +18,8 @@ node_modules
 .next/
 .DS_Store
 .worktrees/
+.aionrs/
+.zcode/plans/
 
 # TestSprite intermediate artifacts (logs, raw results, config)
 testsprite_tests/tmp/
@@ -29,3 +32,7 @@ testsprite_tests/tmp/
 supabase/.temp/
 
 testsprite_tests\tmp\config.json
+
+# TypeScript incremental build cache
+tsconfig.tsbuildinfo
+*.tsbuildinfo

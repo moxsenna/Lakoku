@@ -363,6 +363,11 @@ describe('ChapterDraftSchema compatibility', () => {
       'dialogue',
       'emotionBeats',
       'softClaims',
+      // Plot-debt audit + closure proposal signals (optional, draft-scoped).
+      'opensNewThread',
+      'opensMajorMystery',
+      'opensNewConflict',
+      'closesPlotDebts',
     ])
     expect(Object.keys(ChapterDraftSchema.shape)).not.toEqual(expect.arrayContaining(['choices', 'outcomes']))
     expect(ChoiceBranchSchema).toBeDefined()

@@ -123,7 +123,7 @@ function createAdminDb(input?: {
             return {
               data: {
                 story_id: reservedStoryId,
-                request_hash: requestHashFor(1),
+                request_hash: requestHashFor(tasteProfile.version),
                 status: 'READY',
               },
               error: null,
@@ -280,7 +280,7 @@ describe('createPersonalizedStory', () => {
           owner_user_id: userId,
           request_kind: 'personalized',
           idempotency_key: idempotencyKey,
-          request_hash: requestHashFor(1),
+          request_hash: requestHashFor(tasteProfile.version),
           story_id: reservedStoryId,
           status: 'RESERVED',
           error_code: null,
@@ -391,7 +391,7 @@ describe('createPersonalizedStory', () => {
   })
 
   it('replays same key + same request hash without second shell or generation', async () => {
-    const existingHash = requestHashFor(1)
+    const existingHash = requestHashFor(tasteProfile.version)
     const fixture = createAdminDb({
       reserve: {
         data: null,
@@ -422,6 +422,9 @@ describe('createPersonalizedStory', () => {
   })
 
   it('throws IDEMPOTENCY_CONFLICT when same key has different request hash', async () => {
+    const sameHash = requestHashFor(tasteProfile.version)
+    const differentHash = requestHashFor(tasteProfile.version + 1)
+    expect(differentHash).not.toBe(sameHash)
     const fixture = createAdminDb({
       reserve: {
         data: null,
@@ -430,7 +433,7 @@ describe('createPersonalizedStory', () => {
       existing: {
         data: {
           story_id: reservedStoryId,
-          request_hash: requestHashFor(2),
+          request_hash: differentHash,
           status: 'READY',
         },
         error: null,
@@ -564,7 +567,7 @@ describe('POST /api/stories/personalized', () => {
       existing: {
         data: {
           story_id: reservedStoryId,
-          request_hash: requestHashFor(1),
+          request_hash: requestHashFor(tasteProfile.version),
           status: 'READY',
         },
         error: null,
@@ -582,6 +585,9 @@ describe('POST /api/stories/personalized', () => {
   })
 
   it('returns 409 on idempotency conflict', async () => {
+    const sameHash = requestHashFor(tasteProfile.version)
+    const differentHash = requestHashFor(tasteProfile.version + 1)
+    expect(differentHash).not.toBe(sameHash)
     const fixture = createAdminDb({
       reserve: {
         data: null,
@@ -590,7 +596,7 @@ describe('POST /api/stories/personalized', () => {
       existing: {
         data: {
           story_id: reservedStoryId,
-          request_hash: requestHashFor(99),
+          request_hash: differentHash,
           status: 'READY',
         },
         error: null,

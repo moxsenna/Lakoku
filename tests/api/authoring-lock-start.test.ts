@@ -336,6 +336,7 @@ describe('POST /api/stories/[id]/start-chapter', () => {
       chapterNumber: 1,
       status: 'ALREADY_READY',
       attemptId: null,
+      correlationId: expect.any(String),
     })
     expect(mocks.after).not.toHaveBeenCalled()
     expect(mocks.runChapterGenerationAttempt).not.toHaveBeenCalled()
@@ -360,6 +361,7 @@ describe('POST /api/stories/[id]/start-chapter', () => {
       chapterNumber: 1,
       status: 'ALREADY_RUNNING',
       attemptId: null,
+      correlationId: expect.any(String),
     })
     expect(mocks.after).not.toHaveBeenCalled()
   })

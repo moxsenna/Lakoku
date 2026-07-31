@@ -121,6 +121,40 @@ export const ChoiceOutcomeSchema = z.object({
 })
 export type ChoiceOutcome = z.infer<typeof ChoiceOutcomeSchema>
 
+export const GenerationAttemptIdentitySchema = z.object({
+  attemptId: z.string().uuid().nullable(),
+  correlationId: z.string().uuid(),
+}).strict()
+export type GenerationAttemptIdentity = z.infer<typeof GenerationAttemptIdentitySchema>
+
+export const StartChapterKickoffStatusSchema = z.enum([
+  'STARTED',
+  'ALREADY_RUNNING',
+  'ALREADY_READY',
+])
+export const StartChapterSuccessResponseSchema = z.object({
+  ok: z.literal(true),
+  chapterNumber: z.number().int().positive(),
+  status: StartChapterKickoffStatusSchema,
+  attemptId: z.string().uuid().nullable(),
+  correlationId: z.string().uuid(),
+}).strict()
+export type StartChapterSuccessResponse = z.infer<typeof StartChapterSuccessResponseSchema>
+
+export const StartChapterRequestSchema = z.object({
+  chapterNumber: z.number().int().positive().optional(),
+}).strict()
+export type StartChapterRequest = z.infer<typeof StartChapterRequestSchema>
+
+export const ChapterStatusIdentityQuerySchema = z.union([
+  z.object({}).strict(),
+  z.object({
+    correlationId: z.string().uuid(),
+    attemptId: z.string().uuid().nullable().optional(),
+  }).strict(),
+])
+export type ChapterStatusIdentityQuery = z.infer<typeof ChapterStatusIdentityQuerySchema>
+
 export const ChapterGenerationStatusSchema = z.enum([
   'ready',
   'queued',
@@ -141,7 +175,16 @@ export const ChapterStatusResponseSchema = z.object({
   status: ChapterGenerationStatusSchema,
   chapterNumber: z.number().int().positive(),
   queue: ChapterStatusQueueSchema.optional(),
-}).strict()
+  attemptId: z.string().uuid().nullable().optional(),
+  correlationId: z.string().uuid().optional(),
+}).strict().superRefine((value, context) => {
+  if ((value.attemptId !== undefined) !== (value.correlationId !== undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'attemptId and correlationId must be returned together',
+    })
+  }
+})
 export type ChapterStatusResponse = z.infer<typeof ChapterStatusResponseSchema>
 
 export const ErrorResponseSchema = z.object({
@@ -204,6 +247,10 @@ const contractSchemas = {
   StorySummary: StorySummarySchema,
   StoryDetail: StoryDetailSchema,
   ChoiceOutcome: ChoiceOutcomeSchema,
+  GenerationAttemptIdentity: GenerationAttemptIdentitySchema,
+  StartChapterSuccessResponse: StartChapterSuccessResponseSchema,
+  StartChapterRequest: StartChapterRequestSchema,
+  ChapterStatusIdentityQuery: ChapterStatusIdentityQuerySchema,
   ChapterGenerationStatus: ChapterGenerationStatusSchema,
   ChapterStatusResponse: ChapterStatusResponseSchema,
   ErrorResponse: ErrorResponseSchema,

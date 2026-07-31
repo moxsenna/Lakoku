@@ -82,8 +82,19 @@ function createAdminDb(input: {
           if (table === 'story_events') return input.events ?? { data: [], error: null }
           if (table === 'generation_leases') return input.leases ?? { data: null, error: null }
           if (table === 'chapters') return input.chapter ?? { data: null, error: null }
+          if (table === 'generation_jobs') {
+            const jobs = input.jobs ?? { data: null, error: null }
+            return {
+              data: jobs.data == null ? [] : [jobs.data],
+              error: jobs.error,
+            }
+          }
           if (table === 'chapter_generation_checkpoints') {
-            return input.checkpoint ?? { data: null, error: null }
+            const checkpoints = input.checkpoint ?? { data: null, error: null }
+            return {
+              data: checkpoints.data == null ? [] : [checkpoints.data],
+              error: checkpoints.error,
+            }
           }
           return { data: null, error: null }
         }
@@ -239,7 +250,7 @@ describe('getChapterStatusForUser', () => {
     })).resolves.toEqual(expect.objectContaining({ status: 'failed' }))
   })
 
-  it('returns generating (preparing_choices) when PROSE_READY checkpoint exists despite old failure', async () => {
+  it('returns failed when PROSE_READY checkpoint exists without live evidence', async () => {
     const attemptId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
     const fixture = createAdminDb({
       chapter: { data: null, error: null },
@@ -292,13 +303,7 @@ describe('getChapterStatusForUser', () => {
         storyId: STORY_A,
         chapterNumber: 2,
       }),
-    ).resolves.toEqual(
-      expect.objectContaining({
-        status: 'generating',
-        progressPhase: 'preparing_choices',
-        attemptId,
-      }),
-    )
+    ).resolves.toEqual({ status: 'failed', chapterNumber: 2 })
   })
 
   it('denies private story for non-owner and anon before lease/event reads', async () => {
@@ -441,7 +446,6 @@ describe('getChapterStatusForUser', () => {
       })).resolves.toEqual({
         status: 'generating',
         chapterNumber: 2,
-        attemptId,
         progressPhase: 'preparing_choices',
       })
     },
@@ -478,7 +482,7 @@ describe('getChapterStatusForUser', () => {
     })).resolves.toEqual(expect.objectContaining({ status: 'failed' }))
   })
 
-  it('P1-3: PROSE_READY checkpoint (prose durable) → generating preparing_choices', async () => {
+  it('P1-3: PROSE_READY checkpoint alone is resumability, not liveness', async () => {
     const fixture = createAdminDb({
       chapter: { data: null, error: null },
       leases: { data: null, error: null },
@@ -506,9 +510,125 @@ describe('getChapterStatusForUser', () => {
       userId: USER_A,
       storyId: STORY_A,
       chapterNumber: 2,
-    })).resolves.toEqual(
-      expect.objectContaining({ status: 'generating', progressPhase: 'preparing_choices' }),
-    )
+    })).resolves.toEqual({ status: 'failed', chapterNumber: 2 })
+  })
+
+  const REQUEST_IDENTITY = {
+    attemptId: '55555555-5555-4555-8555-555555555555',
+    correlationId: '66666666-6666-4666-8666-666666666666',
+  } as const
+
+  it.each([
+    ['attempt match plus correlation mismatch', {
+      attempt_id: REQUEST_IDENTITY.attemptId,
+      correlation_id: '77777777-7777-4777-8777-777777777777',
+    }],
+    ['correlation match plus attempt mismatch', {
+      attempt_id: '77777777-7777-4777-8777-777777777777',
+      correlation_id: REQUEST_IDENTITY.correlationId,
+    }],
+    ['identity-less terminal', {}],
+  ])('ignores %s for identity-bound terminal evidence', async (_label, eventIdentity) => {
+    const fixture = createAdminDb({
+      chapter: { data: null, error: null },
+      leases: { data: null, error: null },
+      jobs: { data: null, error: null },
+      events: {
+        data: [{
+          seq: 10,
+          type: 'GENERATION_ATTEMPT',
+          payload: {
+            chapter_number: 2,
+            outcome: 'REVIEW_REQUIRED',
+            ...eventIdentity,
+          },
+          created_at: '2026-07-31T00:00:00.000Z',
+        }],
+        error: null,
+      },
+    })
+    mocks.adminFactory.mockReturnValue(fixture.client)
+    const { getChapterStatusForUser } = await import('@/lib/api/chapter-status.server')
+
+    await expect(getChapterStatusForUser({
+      userId: USER_A,
+      storyId: STORY_A,
+      chapterNumber: 2,
+      identity: REQUEST_IDENTITY,
+    })).resolves.toEqual({
+      status: 'failed',
+      chapterNumber: 2,
+      ...REQUEST_IDENTITY,
+    })
+  })
+
+  it('keeps active identity-less lease as chapter-scoped liveness and echoes request identity', async () => {
+    const fixture = createAdminDb({
+      chapter: { data: null, error: null },
+      leases: { data: { id: 'lease-active' }, error: null },
+      events: { data: [], error: null },
+    })
+    mocks.adminFactory.mockReturnValue(fixture.client)
+    const { getChapterStatusForUser } = await import('@/lib/api/chapter-status.server')
+
+    await expect(getChapterStatusForUser({
+      userId: USER_A,
+      storyId: STORY_A,
+      chapterNumber: 2,
+      identity: REQUEST_IDENTITY,
+    })).resolves.toEqual(expect.objectContaining({
+      status: 'generating',
+      chapterNumber: 2,
+      ...REQUEST_IDENTITY,
+    }))
+  })
+
+  it('preserves no-identity terminal compatibility', async () => {
+    const fixture = createAdminDb({
+      chapter: { data: null, error: null },
+      leases: { data: null, error: null },
+      events: {
+        data: [{
+          seq: 10,
+          type: 'GENERATION_ATTEMPT',
+          payload: { chapter_number: 2, outcome: 'REVIEW_REQUIRED' },
+          created_at: '2026-07-31T00:00:00.000Z',
+        }],
+        error: null,
+      },
+    })
+    mocks.adminFactory.mockReturnValue(fixture.client)
+    const { getChapterStatusForUser } = await import('@/lib/api/chapter-status.server')
+
+    await expect(getChapterStatusForUser({
+      userId: USER_A,
+      storyId: STORY_A,
+      chapterNumber: 2,
+    })).resolves.toEqual({ status: 'failed', chapterNumber: 2 })
+  })
+
+  it.each([
+    ['ready', { chapter: { data: { number: 2 }, error: null } }],
+    ['queued', { jobs: { data: {
+      id: REQUEST_IDENTITY.attemptId,
+      correlation_id: REQUEST_IDENTITY.correlationId,
+      status: 'QUEUED',
+      available_at: null,
+    }, error: null } }],
+  ])('echoes requested identity for %s', async (expectedStatus, dbInput) => {
+    const fixture = createAdminDb(dbInput)
+    mocks.adminFactory.mockReturnValue(fixture.client)
+    const { getChapterStatusForUser } = await import('@/lib/api/chapter-status.server')
+
+    await expect(getChapterStatusForUser({
+      userId: USER_A,
+      storyId: STORY_A,
+      chapterNumber: 2,
+      identity: REQUEST_IDENTITY,
+    })).resolves.toEqual(expect.objectContaining({
+      status: expectedStatus,
+      ...REQUEST_IDENTITY,
+    }))
   })
 })
 

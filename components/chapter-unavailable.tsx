@@ -47,6 +47,7 @@ export function ChapterUnavailable({
   const inFlightRef = useRef(false)
   const mountedRef = useRef(true)
   const pollOnceRef = useRef<() => Promise<void>>(async () => {})
+  const identityRef = useRef<import('@lakoku/contracts').GenerationAttemptIdentity | null>(null)
 
   const clearTimer = useCallback(() => {
     if (timerRef.current != null) {
@@ -76,10 +77,18 @@ export function ChapterUnavailable({
       const res = await getChapterGenerationStatus(
         story.id,
         chapterNumber,
-        controller.signal,
+        { identity: identityRef.current, signal: controller.signal },
       )
       if (!mountedRef.current) return
 
+      // Keep latest validated identity for every subsequent poll. Never invent
+      // an identity; preserve nullable attemptId exactly as returned.
+      if (res.correlationId) {
+        identityRef.current = {
+          attemptId: res.attemptId ?? null,
+          correlationId: res.correlationId,
+        }
+      }
       setQueueHint(res.queue ?? null)
 
       const decision = decideAfterStatus(res.status)
@@ -158,12 +167,15 @@ export function ChapterUnavailable({
       if (!kicked.ok) {
         setRetryNote(kicked.error || 'Belum bisa memulai ulang penulisan.')
       } else if (kicked.status === 'ALREADY_READY') {
+        identityRef.current = { attemptId: kicked.attemptId, correlationId: kicked.correlationId }
         setRetryNote(noteForStartStatus('ALREADY_READY'))
         router.refresh()
       } else if (kicked.status === 'ALREADY_RUNNING') {
+        identityRef.current = { attemptId: kicked.attemptId, correlationId: kicked.correlationId }
         setRetryNote(noteForStartStatus('ALREADY_RUNNING'))
         setUiState('PREPARING')
       } else {
+        identityRef.current = { attemptId: kicked.attemptId, correlationId: kicked.correlationId }
         setRetryNote(noteForStartStatus(kicked.status ?? 'STARTED'))
         setUiState('PREPARING')
       }

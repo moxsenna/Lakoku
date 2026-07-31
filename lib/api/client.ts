@@ -23,8 +23,11 @@ import type { StoryBibleDraft } from '@/lib/authoring/schema'
 import type { Finding } from '@lakoku/narrative-core'
 import {
   ChapterStatusResponseSchema,
+  StartChapterSuccessResponseSchema,
   SubmitChoiceResponseSchema,
   type ChapterStatusResponse,
+  type GenerationAttemptIdentity,
+  type StartChapterSuccessResponse,
   type SubmitChoiceResponse,
 } from '../../packages/contracts/src/reader'
 import { buildChoiceIdempotencyKey } from './choice-idempotency'
@@ -44,7 +47,7 @@ export type StartChapterKickoffStatus =
   | 'ALREADY_READY'
 
 export type StartChapterClientResult =
-  | { ok: true; chapterNumber: number; status?: StartChapterKickoffStatus }
+  | StartChapterSuccessResponse
   | { ok: false; error: string }
 
 /** Daftar seluruh cerita (ringkasan) untuk katalog/beranda/koleksiku. */
@@ -119,12 +122,26 @@ export async function submitChoiceWithReadiness(
 export async function getChapterGenerationStatus(
   storyId: string,
   chapterNumber: number,
-  signal?: AbortSignal,
+  optionsOrSignal: {
+    identity?: GenerationAttemptIdentity | null
+    signal?: AbortSignal
+  } | AbortSignal = {},
 ): Promise<ChapterStatusResponse> {
   try {
-    const url = `${API_BASE}/stories/${encodeURIComponent(storyId)}/chapters/${chapterNumber}/status`
+    const params = new URLSearchParams()
+    const options = optionsOrSignal instanceof AbortSignal
+      ? { signal: optionsOrSignal }
+      : optionsOrSignal
+    if (options.identity) {
+      params.set('correlationId', options.identity.correlationId)
+      if (options.identity.attemptId !== null) {
+        params.set('attemptId', options.identity.attemptId)
+      }
+    }
+    const query = params.size > 0 ? `?${params.toString()}` : ''
+    const url = `${API_BASE}/stories/${encodeURIComponent(storyId)}/chapters/${chapterNumber}/status${query}`
     const res = await fetch(url, {
-      signal,
+      signal: options.signal,
       credentials: 'same-origin',
       cache: 'no-store',
     })
@@ -219,8 +236,12 @@ export async function startChapter(
         credentials: 'same-origin',
       },
     )
-    const data = (await res.json().catch(() => null)) as StartChapterClientResult | null
-    if (data && typeof data === 'object' && 'ok' in data) return data
+    const raw = await res.json().catch(() => null)
+    const parsed = StartChapterSuccessResponseSchema.safeParse(raw)
+    if (parsed.success) return parsed.data
+    if (raw && typeof raw === 'object' && 'ok' in raw && (raw as { ok?: unknown }).ok === false) {
+      return raw as { ok: false; error: string }
+    }
     if (res.status === 401) {
       return { ok: false, error: 'Masuk untuk membuat cerita.' }
     }

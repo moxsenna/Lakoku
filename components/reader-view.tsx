@@ -17,6 +17,7 @@ import {
   submitChoiceWithReadiness,
   type Chapter,
   type ChapterStatusResponse,
+  type GenerationAttemptIdentity,
   type ChoiceOutcome,
   type JejakItem,
   type PendingChoice,
@@ -52,16 +53,18 @@ export function pollChapterGenerationStatus({
   storyId,
   chapterNumber,
   signal,
+  identity = null,
   getStatus = getChapterGenerationStatus,
 }: {
   storyId: string
   chapterNumber: number
   signal: AbortSignal
-  getStatus?: (
+  identity?: GenerationAttemptIdentity | null
+  getStatus?: typeof getChapterGenerationStatus | ((
     storyId: string,
     chapterNumber: number,
     signal?: AbortSignal,
-  ) => Promise<ChapterStatusResponse>
+  ) => Promise<ChapterStatusResponse>)
 }): Promise<PollResult> {
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout> | null = null
@@ -82,7 +85,11 @@ export function pollChapterGenerationStatus({
       timer = null
       if (signal.aborted) return finish('aborted')
       try {
-        const response = await getStatus(storyId, chapterNumber, signal)
+        const response = await (getStatus as typeof getChapterGenerationStatus)(
+          storyId,
+          chapterNumber,
+          identity ? { identity, signal } : signal,
+        )
         if (signal.aborted) return finish('aborted')
         if (response.status === 'ready') return finish('ready')
         if (response.status === 'failed') return finish('failed')

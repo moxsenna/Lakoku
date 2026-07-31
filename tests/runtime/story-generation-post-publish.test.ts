@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const CORRELATION_ID = 'corr-test'
+
 const mocks = vi.hoisted(() => ({
   loadCanonSnapshot: vi.fn(),
   persistRetrievalLog: vi.fn(),
@@ -148,8 +150,8 @@ async function run(chapterNumber: number) {
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.loadCheckpoint.mockResolvedValue(null)
-  mocks.persistCheckpoint.mockResolvedValue({ ok: true, result: 'UPDATED', changed: true })
-  mocks.markCheckpointStatus.mockResolvedValue({ ok: true, result: 'UPDATED', changed: true })
+  mocks.persistCheckpoint.mockResolvedValue({ ok: true, outcome: 'CREATED', checkpointAttemptId: CORRELATION_ID })
+  mocks.markCheckpointStatus.mockResolvedValue({ ok: true, outcome: 'UPDATED', checkpointAttemptId: CORRELATION_ID })
   mocks.publishGenerationJobChapterV4.mockImplementation(async (input: { chapterNumber: number }) => ({
     jobId: JOB_CONTEXT.jobId,
     chapterNumber: input.chapterNumber,
@@ -212,10 +214,7 @@ describe('standard worker V4 publication', () => {
       expect(mocks.publishGenerationJobChapterV4).toHaveBeenCalledWith(
         expect.objectContaining({ closures: [] }),
       )
-      expect(mocks.markCheckpointStatus).toHaveBeenCalledTimes(1)
-      expect(mocks.markCheckpointStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ status: 'RUNNING_CHOICES' }),
-      )
+      expect(mocks.markCheckpointStatus).not.toHaveBeenCalled()
     },
   )
 
@@ -242,8 +241,8 @@ describe('standard worker V4 publication', () => {
       }),
     })
     expect(mocks.publishGenerationJobChapterV4).not.toHaveBeenCalled()
-    expect(mocks.markCheckpointStatus).toHaveBeenNthCalledWith(
-      2,
+    expect(mocks.markCheckpointStatus).toHaveBeenCalledTimes(1)
+    expect(mocks.markCheckpointStatus).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'CHOICES_RETRY_WAIT' }),
     )
   })

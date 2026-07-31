@@ -8,7 +8,7 @@ import {
   type PublishResult,
 } from './lifecycle'
 import { NO_CREATIVE_DIRECTION_FINGERPRINT } from './chapter-generation-checkpoint.pure'
-import type { FencedCheckpointMutationResult } from './generation-jobs'
+import type { CheckpointMutationResult } from './chapter-generation-checkpoint.pure'
 import { classifyGenerationPublicationError } from './generation-job-error'
 import { withGenerationSlot } from './generation-concurrency'
 import {
@@ -491,8 +491,8 @@ async function generateNextChapterRealInner(
   let checkpointAttemptId = attemptId
 
   const checkpointMutationSucceeded = (
-    result: FencedCheckpointMutationResult | { ok: boolean } | void,
-  ): boolean => !jobContext || result?.ok === true
+    result: CheckpointMutationResult,
+  ): boolean => result.ok === true
 
   if (jobContext?.signal?.aborted) {
     return { ok: false, reason: 'CAPACITY_TIMEOUT', detail: { reason: 'ABORT_SIGNAL' } }
@@ -994,54 +994,15 @@ async function generateNextChapterRealInner(
         jobAttemptNumber: jobContext?.attemptNumber ?? null,
         jobContext,
       })
-      if (jobContext) {
-        if (!checkpointMutationSucceeded(saved)) {
-          return {
-            ok: false,
-            reason: 'FAILED_REVIEW_REQUIRED',
-            detail: { checkpointMutation: saved },
-          }
-        }
-        proseFingerprintUsed = proseFingerprint(draft.title, draft.paragraphs ?? [])
-        checkpointAttemptId = jobContext.jobId
-      } else if (
-        'checkpoint' in saved &&
-        saved.ok &&
-        saved.checkpoint != null &&
-        'proseFingerprint' in saved.checkpoint &&
-        'attemptId' in saved.checkpoint
-      ) {
-        proseFingerprintUsed = saved.checkpoint.proseFingerprint as string
-        checkpointAttemptId = saved.checkpoint.attemptId as string
-      } else {
-        // Legacy worker-off path remains best-effort when checkpoint storage is absent.
-        proseFingerprintUsed = proseFingerprint(draft.title, draft.paragraphs ?? [])
-        console.log('CHECKPOINT_PROSE_READY_SKIPPED', {
-          storyId,
-          chapterNumber,
-          correlationId,
-          error: 'error' in saved
-            ? saved.error
-            : 'result' in saved
-              ? saved.result
-              : 'WRITE_FAILED',
-        })
-      }
-
-      const runningChoices = await markCheckpointStatus({
-        storyId,
-        chapterNumber,
-        attemptId: checkpointAttemptId,
-        status: 'RUNNING_CHOICES',
-        jobContext,
-      })
-      if (!checkpointMutationSucceeded(runningChoices)) {
+      if (saved.ok !== true) {
         return {
           ok: false,
           reason: 'FAILED_REVIEW_REQUIRED',
-          detail: { checkpointMutation: runningChoices },
+          detail: { checkpointMutation: saved },
         }
       }
+      proseFingerprintUsed = proseFingerprint(draft.title, draft.paragraphs ?? [])
+      checkpointAttemptId = saved.checkpointAttemptId
     }
 
     // 6) Boundary consumer-safe: tak ada istilah internal yang bocor ke pembaca.

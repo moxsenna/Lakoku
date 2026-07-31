@@ -61,7 +61,7 @@ import {
   GENERATION_PROMPT_CONTRACT_VERSION,
   type RealGenerateResult,
 } from './story-generation'
-import type { FencedCheckpointMutationResult } from './generation-jobs'
+import type { CheckpointMutationResult } from './chapter-generation-checkpoint.pure'
 import { classifyGenerationPublicationError } from './generation-job-error'
 import {
   draftFromCheckpoint,
@@ -212,9 +212,7 @@ export interface PersonalizedGenerationDeps {
     jobAttemptNumber?: number | null
     jobContext?: import('./generation-job-execution').GenerationJobExecutionContext | null
   }) => Promise<
-    | FencedCheckpointMutationResult
-    | { ok: true; checkpoint: ChapterGenerationCheckpoint }
-    | { ok: false; error: 'TABLE_UNAVAILABLE' | 'WRITE_FAILED' }
+    CheckpointMutationResult
   >
   markCheckpointStatus: (args: {
     storyId: string
@@ -223,7 +221,7 @@ export interface PersonalizedGenerationDeps {
     status: CheckpointStatus
     choiceAttemptCount?: number
     jobContext?: import('./generation-job-execution').GenerationJobExecutionContext | null
-  }) => Promise<FencedCheckpointMutationResult | void>
+  }) => Promise<CheckpointMutationResult>
   selectProvider: (
     context: ReturnType<typeof createSynchronousProviderContext>,
   ) => Promise<GenerationProvider>
@@ -586,8 +584,8 @@ async function generateNextPersonalizedChapterInner(
   let fromCheckpoint = false
 
   const checkpointMutationSucceeded = (
-    result: FencedCheckpointMutationResult | { ok: boolean } | void,
-  ): boolean => !jobContext || result?.ok === true
+    result: CheckpointMutationResult,
+  ): boolean => result.ok === true
   const providerContext = jobId === undefined && attemptNumber === undefined
     ? createSynchronousProviderContext({
         userId,
@@ -748,9 +746,7 @@ async function generateNextPersonalizedChapterInner(
           correlationId,
           jobId: jobContext?.jobId ?? null,
           checkpointAttemptId,
-          result: mutation && typeof mutation === 'object' && 'result' in mutation
-            ? String(mutation.result).slice(0, 64)
-            : 'NOT_UPDATED',
+          result: mutation.outcome,
           path: 'personalized',
         })
       } catch (error) {
@@ -910,14 +906,10 @@ async function generateNextPersonalizedChapterInner(
         jobAttemptNumber: jobContext?.attemptNumber ?? null,
         jobContext,
       })
-      if (!checkpointMutationSucceeded(saved)) {
+      if (saved.ok !== true) {
         return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: saved } }
       }
-      if (jobContext) checkpointAttemptId = jobContext.jobId
-      else if (
-        'checkpoint' in saved && saved.ok && saved.checkpoint &&
-        typeof saved.checkpoint.attemptId === 'string'
-      ) checkpointAttemptId = saved.checkpoint.attemptId
+      if (saved.ok === true) checkpointAttemptId = saved.checkpointAttemptId
     }
 
     const runningChoices = await d.markCheckpointStatus({

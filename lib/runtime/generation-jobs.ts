@@ -6,6 +6,7 @@ import {
   extractGenerationJobRpcError,
   type GenerationJobErrorCode,
 } from './generation-job-error'
+import type { CheckpointMutationResult } from './chapter-generation-checkpoint.pure'
 import {
   FencedPublicationIdentitySchema,
   GenerationJobClaimResultSchema,
@@ -150,6 +151,7 @@ const CheckpointAuditSignalsV2Schema = CheckpointAuditSignalsV1Schema.extend({
   closesPlotDebts: z.array(PlotDebtClosureSchema).max(20),
 }).strict()
 const UpsertCheckpointInputSchema = FencedCheckpointIdentitySchema.extend({
+  checkpointAttemptId: UuidSchema,
   title: z.string().trim().min(1),
   paragraphs: z.array(z.string()).min(1),
   proseFingerprint: z.string().regex(/^[a-f0-9]{32}$/),
@@ -190,10 +192,11 @@ const TransitionCheckpointInputSchema = FencedCheckpointIdentitySchema.extend({
   ]),
 }).strict()
 
-const FencedCheckpointResultSchema = z.object({
+const RawFencedCheckpointResultSchema = z.object({
   ok: z.boolean(),
   result: z.enum([
     'UPDATED',
+    'NOT_FOUND',
     'OWNERSHIP_LOST',
     'LEASE_INVALID',
     'ATTEMPT_AHEAD',
@@ -277,7 +280,7 @@ const PublicationResultSchema = z.object({
 export type FinishGenerationJobAttemptResult = z.infer<typeof FinishResultSchema>
 export type CancelGenerationJobResult = z.infer<typeof CancelResultSchema>
 export type PublishGenerationJobChapterResult = z.infer<typeof PublicationResultSchema>
-export type FencedCheckpointMutationResult = z.infer<typeof FencedCheckpointResultSchema>
+type RawFencedCheckpointMutationResult = z.infer<typeof RawFencedCheckpointResultSchema>
 export type UpsertGenerationCheckpointFencedInput = z.input<typeof UpsertCheckpointInputSchema>
 export type TransitionGenerationCheckpointFencedInput = z.input<typeof TransitionCheckpointInputSchema>
 export type ClaimGenerationJobInput = z.input<typeof ClaimInputSchema>
@@ -305,6 +308,90 @@ async function callRpc(name: string, payload: Record<string, unknown>): Promise<
   const { data, error } = await client.rpc(name, payload)
   if (error) throw mapRpcError(error)
   return data
+}
+
+type RawCheckpointRpcError = { message?: unknown; code?: unknown }
+
+function checkpointWriteFailure(error: RawCheckpointRpcError): CheckpointMutationResult {
+  const code = String(error.code ?? '')
+  const terminal = code === '42P01'
+    || code === '42883'
+    || code === '42501'
+    || code === 'PGRST202'
+    || code === 'PGRST204'
+    || code === 'PGRST205'
+  return {
+    ok: false,
+    outcome: 'WRITE_FAILED',
+    errorCode: 'CHECKPOINT_WRITE_FAILED',
+    disposition: terminal ? 'TERMINAL' : 'RETRYABLE',
+  }
+}
+
+function adaptFencedCheckpointResult(
+  raw: RawFencedCheckpointMutationResult,
+  successOutcome: 'CREATED' | 'UPDATED',
+  expectedCheckpointAttemptId: string,
+): CheckpointMutationResult {
+  if (raw.ok === true) {
+    const attemptId = UuidSchema.safeParse(raw.checkpoint?.attempt_id)
+    if (!attemptId.success || attemptId.data !== expectedCheckpointAttemptId) {
+      return {
+        ok: false,
+        outcome: 'WRITE_FAILED',
+        errorCode: 'CHECKPOINT_WRITE_FAILED',
+        disposition: 'TERMINAL',
+      }
+    }
+    return {
+      ok: true,
+      outcome: successOutcome,
+      checkpointAttemptId: attemptId.data,
+    }
+  }
+  if (raw.result === 'OWNERSHIP_LOST' || raw.result === 'LEASE_INVALID') {
+    return {
+      ok: false,
+      outcome: 'OWNERSHIP_LOST',
+      errorCode: 'GENERATION_JOB_OWNERSHIP_LOST',
+      disposition: 'OWNERSHIP_LOST',
+    }
+  }
+  if (raw.result === 'NOT_FOUND') {
+    return {
+      ok: false,
+      outcome: 'NOT_FOUND',
+      errorCode: 'CHECKPOINT_NOT_FOUND',
+      disposition: 'TERMINAL',
+    }
+  }
+  if (raw.result === 'INVALID_TRANSITION') {
+    return {
+      ok: false,
+      outcome: 'INVALID_TRANSITION',
+      errorCode: 'INVALID_TRANSITION',
+      disposition: 'TERMINAL',
+    }
+  }
+  return {
+    ok: false,
+    outcome: 'PROVENANCE_CONFLICT',
+    errorCode: 'PROVENANCE_CONFLICT',
+    disposition: 'TERMINAL',
+  }
+}
+
+async function callCheckpointRpc(
+  name: string,
+  payload: Record<string, unknown>,
+  successOutcome: 'CREATED' | 'UPDATED',
+  expectedCheckpointAttemptId: string,
+): Promise<CheckpointMutationResult> {
+  const client = createAdminClient()
+  const { data, error } = await client.rpc(name, payload)
+  if (error) return checkpointWriteFailure(error)
+  const raw = RawFencedCheckpointResultSchema.parse(data)
+  return adaptFencedCheckpointResult(raw, successOutcome, expectedCheckpointAttemptId)
 }
 
 export async function claimGenerationJob(input: ClaimGenerationJobInput): Promise<GenerationJobClaimResult> {
@@ -450,9 +537,9 @@ export async function recoverStaleGenerationJobs(
 
 export async function upsertGenerationCheckpointFenced(
   input: UpsertGenerationCheckpointFencedInput,
-): Promise<FencedCheckpointMutationResult> {
+): Promise<CheckpointMutationResult> {
   const parsed = UpsertCheckpointInputSchema.parse(input)
-  return FencedCheckpointResultSchema.parse(await callRpc(
+  return callCheckpointRpc(
     'upsert_generation_checkpoint_fenced_v1',
     {
       p_job_id: parsed.jobId,
@@ -474,14 +561,16 @@ export async function upsertGenerationCheckpointFenced(
       p_prompt_contract_version: parsed.promptContractVersion,
       p_prose_attempt_count: parsed.proseAttemptCount,
     },
-  ))
+    'CREATED',
+    parsed.checkpointAttemptId,
+  )
 }
 
 export async function transitionGenerationCheckpointFenced(
   input: TransitionGenerationCheckpointFencedInput,
-): Promise<FencedCheckpointMutationResult> {
+): Promise<CheckpointMutationResult> {
   const parsed = TransitionCheckpointInputSchema.parse(input)
-  return FencedCheckpointResultSchema.parse(await callRpc(
+  return callCheckpointRpc(
     'transition_generation_checkpoint_fenced_v1',
     {
       p_job_id: parsed.jobId,
@@ -493,7 +582,9 @@ export async function transitionGenerationCheckpointFenced(
       p_checkpoint_attempt_id: parsed.checkpointAttemptId,
       p_new_status: parsed.newStatus,
     },
-  ))
+    'UPDATED',
+    parsed.checkpointAttemptId,
+  )
 }
 
 async function publishGenerationJobChapter(

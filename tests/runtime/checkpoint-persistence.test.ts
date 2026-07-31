@@ -65,9 +65,8 @@ describe('worker checkpoint persistence', () => {
       jobContext: jobContext(),
     })).resolves.toEqual({
       ok: true,
-      result: 'UPDATED',
-      changed: true,
-      checkpoint: { attempt_id: ATTEMPT_ID, prose_fingerprint: 'fp' },
+      outcome: 'CREATED',
+      checkpointAttemptId: ATTEMPT_ID,
     })
 
     expect(from).not.toHaveBeenCalled()
@@ -138,15 +137,44 @@ describe('worker checkpoint persistence', () => {
   })
 
   it.each([
-    'UPDATED',
-    'OWNERSHIP_LOST',
-    'LEASE_INVALID',
-    'ATTEMPT_AHEAD',
-    'PROVENANCE_CONFLICT',
-    'INVALID_TRANSITION',
-  ] as const)('returns bounded transition outcome %s without swallowing it', async (result) => {
+    ['UPDATED', {
+      ok: true,
+      outcome: 'UPDATED',
+      checkpointAttemptId: ATTEMPT_ID,
+    }],
+    ['OWNERSHIP_LOST', {
+      ok: false,
+      outcome: 'OWNERSHIP_LOST',
+      errorCode: 'GENERATION_JOB_OWNERSHIP_LOST',
+      disposition: 'OWNERSHIP_LOST',
+    }],
+    ['LEASE_INVALID', {
+      ok: false,
+      outcome: 'OWNERSHIP_LOST',
+      errorCode: 'GENERATION_JOB_OWNERSHIP_LOST',
+      disposition: 'OWNERSHIP_LOST',
+    }],
+    ['ATTEMPT_AHEAD', {
+      ok: false,
+      outcome: 'PROVENANCE_CONFLICT',
+      errorCode: 'PROVENANCE_CONFLICT',
+      disposition: 'TERMINAL',
+    }],
+    ['PROVENANCE_CONFLICT', {
+      ok: false,
+      outcome: 'PROVENANCE_CONFLICT',
+      errorCode: 'PROVENANCE_CONFLICT',
+      disposition: 'TERMINAL',
+    }],
+    ['INVALID_TRANSITION', {
+      ok: false,
+      outcome: 'INVALID_TRANSITION',
+      errorCode: 'INVALID_TRANSITION',
+      disposition: 'TERMINAL',
+    }],
+  ] as const)('adapts fenced transition outcome %s without leaking transport vocabulary', async (result, expected) => {
     const response = result === 'UPDATED'
-      ? { ok: true, result, changed: false, checkpoint: { status: 'RUNNING_CHOICES' } }
+      ? { ok: true, result, changed: false, checkpoint: { attempt_id: ATTEMPT_ID } }
       : { ok: false, result }
     const rpc = vi.fn().mockResolvedValue({ data: response, error: null })
     const from = vi.fn()
@@ -161,7 +189,7 @@ describe('worker checkpoint persistence', () => {
       attemptId: ATTEMPT_ID,
       status: 'RUNNING_CHOICES',
       jobContext: jobContext(),
-    })).resolves.toEqual(response)
+    })).resolves.toEqual(expected)
     expect(from).not.toHaveBeenCalled()
     expect(rpc).toHaveBeenCalledWith('transition_generation_checkpoint_fenced_v1', {
       p_job_id: JOB_ID,
@@ -239,10 +267,77 @@ describe('worker checkpoint persistence', () => {
     log.mockRestore()
   })
 
-  it('rejects malformed fenced outcome and RPC errors', async () => {
+  it.each([
+    ['missing', undefined],
+    ['invalid', 'not-a-uuid'],
+    ['mismatched', '66666666-6666-4666-8666-666666666666'],
+  ] as const)('fails closed when fenced success has %s attempt_id', async (_case, attemptId) => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: {
+        ok: true,
+        result: 'UPDATED',
+        changed: true,
+        checkpoint: attemptId === undefined ? {} : { attempt_id: attemptId },
+      },
+      error: null,
+    })
+    mocks.adminFactory.mockReturnValue({ rpc, from: vi.fn() })
+    const { markCheckpointStatus } = await import(
+      '@/lib/runtime/chapter-generation-checkpoint'
+    )
+
+    await expect(markCheckpointStatus({
+      storyId: 'story-a',
+      chapterNumber: 3,
+      attemptId: ATTEMPT_ID,
+      status: 'RUNNING_CHOICES',
+      jobContext: jobContext(),
+    })).resolves.toEqual({
+      ok: false,
+      outcome: 'WRITE_FAILED',
+      errorCode: 'CHECKPOINT_WRITE_FAILED',
+      disposition: 'TERMINAL',
+    })
+  })
+
+  it.each([
+    [{ code: '08006', message: 'connection failure' }, {
+      ok: false,
+      outcome: 'WRITE_FAILED',
+      errorCode: 'CHECKPOINT_WRITE_FAILED',
+      disposition: 'RETRYABLE',
+    }],
+    [{ code: 'PGRST202', message: 'missing RPC' }, {
+      ok: false,
+      outcome: 'WRITE_FAILED',
+      errorCode: 'CHECKPOINT_WRITE_FAILED',
+      disposition: 'TERMINAL',
+    }],
+    [{ code: '42501', message: 'permission denied' }, {
+      ok: false,
+      outcome: 'WRITE_FAILED',
+      errorCode: 'CHECKPOINT_WRITE_FAILED',
+      disposition: 'TERMINAL',
+    }],
+  ] as const)('classifies fenced RPC error $0.code', async (error, expected) => {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error })
+    mocks.adminFactory.mockReturnValue({ rpc, from: vi.fn() })
+    const { markCheckpointStatus } = await import(
+      '@/lib/runtime/chapter-generation-checkpoint'
+    )
+
+    await expect(markCheckpointStatus({
+      storyId: 'story-a',
+      chapterNumber: 3,
+      attemptId: ATTEMPT_ID,
+      status: 'RUNNING_CHOICES',
+      jobContext: jobContext(),
+    })).resolves.toEqual(expected)
+  })
+
+  it('rejects malformed fenced outcome', async () => {
     const rpc = vi.fn()
       .mockResolvedValueOnce({ data: { ok: false, result: 'UNKNOWN' }, error: null })
-      .mockResolvedValueOnce({ data: null, error: { code: 'PGRST202', message: 'missing RPC' } })
     mocks.adminFactory.mockReturnValue({ rpc, from: vi.fn() })
     const { markCheckpointStatus } = await import(
       '@/lib/runtime/chapter-generation-checkpoint'
@@ -256,6 +351,5 @@ describe('worker checkpoint persistence', () => {
     }
 
     await expect(markCheckpointStatus(input)).rejects.toThrow()
-    await expect(markCheckpointStatus(input)).rejects.toThrow('INTERNAL_ERROR')
   })
 })

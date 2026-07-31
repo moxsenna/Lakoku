@@ -18,7 +18,7 @@ import {
   type CheckpointFreshnessContext,
   type CheckpointStatus,
 } from '@/lib/runtime/chapter-generation-checkpoint.pure'
-import type { FencedCheckpointMutationResult } from '@/lib/runtime/generation-jobs'
+import type { CheckpointMutationResult } from '@/lib/runtime/chapter-generation-checkpoint.pure'
 import { auditPlotDebts } from '@/lib/story-engine/plot-debt'
 
 const mocks = vi.hoisted(() => ({
@@ -279,8 +279,8 @@ function makeDeps(options: {
   routeTruth?: number
   checkpoint?: ChapterGenerationCheckpoint | null
   rejectStaleCheckpoint?: boolean
-  persistCheckpointResult?: FencedCheckpointMutationResult | { ok: false; error: 'WRITE_FAILED' }
-  checkpointStatusResult?: Partial<Record<CheckpointStatus, FencedCheckpointMutationResult>>
+  persistCheckpointResult?: CheckpointMutationResult
+  checkpointStatusResult?: Partial<Record<CheckpointStatus, CheckpointMutationResult>>
   choiceFailure?: boolean
   choiceResults?: Array<ChoiceBranch | null>
   checkpointState?: { current: ChapterGenerationCheckpoint | null }
@@ -430,9 +430,9 @@ function makeDeps(options: {
         jobAttemptNumber: PERSONALIZED_JOB_CONTEXT.attemptNumber,
       })
       return options.persistCheckpointResult ?? {
-        ok: true,
-        result: 'UPDATED' as const,
-        changed: true,
+        ok: true as const,
+        outcome: 'UPDATED' as const,
+        checkpointAttemptId: PERSONALIZED_JOB_CONTEXT.jobId,
       }
     }),
     markCheckpointStatus: vi.fn(async (args: { status: CheckpointStatus; choiceAttemptCount?: number }) => {
@@ -447,9 +447,9 @@ function makeDeps(options: {
         }
       }
       return options.checkpointStatusResult?.[args.status] ?? {
-        ok: true,
-        result: 'UPDATED' as const,
-        changed: true,
+        ok: true as const,
+        outcome: 'UPDATED' as const,
+        checkpointAttemptId: PERSONALIZED_JOB_CONTEXT.jobId,
       }
     }),
     generateChapter: vi.fn(async (
@@ -854,7 +854,7 @@ describe('generateNextPersonalizedChapter', () => {
         lockedEndingKey: chapterNumber === 50 ? 'publish-truth' : null,
         debtsStatus: chapterNumber === 50 ? 'closed' : 'progressing',
         checkpointStatusResult: {
-          PUBLISHED: { ok: false, result: 'OWNERSHIP_LOST' },
+          PUBLISHED: { ok: false, outcome: 'OWNERSHIP_LOST', errorCode: 'GENERATION_JOB_OWNERSHIP_LOST', disposition: 'OWNERSHIP_LOST' },
         },
       })
       mocks.publishGenerationJobChapterV4.mockResolvedValueOnce({
@@ -884,7 +884,7 @@ describe('generateNextPersonalizedChapter', () => {
     })
     deps.markCheckpointStatus.mockImplementation(async (args: { status: CheckpointStatus }) => {
       if (args.status === 'PUBLISHED') throw new Error('checkpoint unavailable')
-      return { ok: true, result: 'UPDATED' as const, changed: true }
+      return { ok: true, outcome: 'UPDATED' as const, checkpointAttemptId: PERSONALIZED_JOB_CONTEXT.jobId }
     })
     mocks.publishGenerationJobChapterV4.mockResolvedValueOnce({
       jobId: PERSONALIZED_JOB_CONTEXT.jobId,
@@ -956,7 +956,7 @@ describe('generateNextPersonalizedChapter', () => {
   it('stops before choices when worker checkpoint persistence loses ownership', async () => {
     const { deps } = makeDeps({
       chapterNumber: 12,
-      persistCheckpointResult: { ok: false, result: 'OWNERSHIP_LOST' },
+      persistCheckpointResult: { ok: false, outcome: 'OWNERSHIP_LOST', errorCode: 'GENERATION_JOB_OWNERSHIP_LOST', disposition: 'OWNERSHIP_LOST' },
     })
     const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
 
@@ -970,7 +970,14 @@ describe('generateNextPersonalizedChapter', () => {
     }, deps)).resolves.toMatchObject({
       ok: false,
       reason: 'FAILED_REVIEW_REQUIRED',
-      detail: { checkpointMutation: { result: 'OWNERSHIP_LOST' } },
+      detail: {
+        checkpointMutation: {
+          ok: false,
+          outcome: 'OWNERSHIP_LOST',
+          errorCode: 'GENERATION_JOB_OWNERSHIP_LOST',
+          disposition: 'OWNERSHIP_LOST',
+        },
+      },
     })
     expect(deps.generateChoiceBranch).not.toHaveBeenCalled()
     expect(mocks.publishGenerationJobChapterV4).not.toHaveBeenCalled()

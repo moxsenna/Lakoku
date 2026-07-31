@@ -5,7 +5,7 @@
 import 'server-only'
 import { createAdminClient } from '@lakoku/db'
 import type { GenerationJobExecutionContext } from './generation-job-execution'
-import type { FencedCheckpointMutationResult } from './generation-jobs'
+import type { CheckpointMutationResult } from './chapter-generation-checkpoint.pure'
 import {
   defaultCheckpointExpiry,
   draftFromCheckpoint,
@@ -27,6 +27,17 @@ function isMissingRelation(error: { code?: string; message?: string } | null | u
   if (message.includes('does not exist')) return true
   if (message.includes('could not find the table')) return true
   return false
+}
+
+function checkpointWriteFailure(
+  disposition: 'RETRYABLE' | 'TERMINAL',
+): CheckpointMutationResult {
+  return {
+    ok: false,
+    outcome: 'WRITE_FAILED',
+    errorCode: 'CHECKPOINT_WRITE_FAILED',
+    disposition,
+  }
 }
 
 function rowToCheckpoint(row: Record<string, unknown>): ChapterGenerationCheckpoint | null {
@@ -189,13 +200,9 @@ export async function persistProseReadyCheckpoint(args: {
   jobId?: string | null
   jobAttemptNumber?: number | null
   jobContext?: GenerationJobExecutionContext | null
-}): Promise<
-  | FencedCheckpointMutationResult
-  | { ok: true; checkpoint: ChapterGenerationCheckpoint }
-  | { ok: false; error: 'TABLE_UNAVAILABLE' | 'WRITE_FAILED' }
-> {
+}): Promise<CheckpointMutationResult> {
   if (!isChoiceDurableCheckpointEnabled()) {
-    return { ok: false, error: 'WRITE_FAILED' }
+    return checkpointWriteFailure('TERMINAL')
   }
 
   const fingerprint = proseFingerprint(args.title, args.paragraphs)
@@ -229,6 +236,7 @@ export async function persistProseReadyCheckpoint(args: {
       leaseId: args.jobContext.leaseId,
       storyId: args.storyId,
       chapterNumber: args.chapterNumber,
+      checkpointAttemptId: args.attemptId,
       title: args.title,
       paragraphs: args.paragraphs,
       proseFingerprint: fingerprint,
@@ -289,14 +297,14 @@ export async function persistProseReadyCheckpoint(args: {
           storyId: args.storyId,
           chapterNumber: args.chapterNumber,
         })
-        return { ok: false, error: 'TABLE_UNAVAILABLE' }
+        return checkpointWriteFailure('TERMINAL')
       }
       console.log('CHECKPOINT_WRITE_FAILED', {
         storyId: args.storyId,
         chapterNumber: args.chapterNumber,
         code: error.code,
       })
-      return { ok: false, error: 'WRITE_FAILED' }
+      return checkpointWriteFailure('RETRYABLE')
     }
 
     console.log('CHECKPOINT_PROSE_READY', {
@@ -307,37 +315,10 @@ export async function persistProseReadyCheckpoint(args: {
       proseFingerprint: fingerprint,
     })
 
-    return {
-      ok: true,
-      checkpoint: {
-        storyId: args.storyId,
-        chapterNumber: args.chapterNumber,
-        attemptId: args.attemptId,
-        correlationId: args.correlationId,
-        status: 'PROSE_READY',
-        title: args.title,
-        paragraphs: args.paragraphs,
-        proseFingerprint: fingerprint,
-        auditSignals: args.auditSignals ?? null,
-        auditSignalsVersion: args.auditSignalsVersion ?? null,
-        canonVersion,
-        blueprintVersion,
-        directionFingerprint: args.directionFingerprint ?? null,
-        generationMode,
-        generationPolicyVersion,
-        promptContractVersion,
-        jobId,
-        jobAttemptNumber,
-        schemaVersion: 2,
-        proseAttemptCount: args.proseAttemptCount ?? 1,
-        choiceAttemptCount: 0,
-        createdAt: now.toISOString(),
-        updatedAt: now.toISOString(),
-        expiresAt: row.expires_at,
-      },
-    }
+    return { ok: true, outcome: 'CREATED', checkpointAttemptId: args.attemptId }
+
   } catch {
-    return { ok: false, error: 'WRITE_FAILED' }
+    return checkpointWriteFailure('RETRYABLE')
   }
 }
 
@@ -348,8 +329,8 @@ export async function markCheckpointStatus(args: {
   status: CheckpointStatus
   choiceAttemptCount?: number
   jobContext?: GenerationJobExecutionContext | null
-}): Promise<FencedCheckpointMutationResult | void> {
-  if (!isChoiceDurableCheckpointEnabled()) return
+}): Promise<CheckpointMutationResult> {
+  if (!isChoiceDurableCheckpointEnabled()) return checkpointWriteFailure('TERMINAL')
   if (args.jobContext) {
     const { transitionGenerationCheckpointFenced } = await import('./generation-jobs')
     return transitionGenerationCheckpointFenced({
@@ -381,23 +362,24 @@ export async function markCheckpointStatus(args: {
       .eq('story_id', args.storyId)
       .eq('chapter_number', args.chapterNumber)
       .eq('attempt_id', args.attemptId)
-    if (error && !isMissingRelation(error)) {
+    if (error) {
       console.log('CHECKPOINT_STATUS_UPDATE_FAILED', {
         storyId: args.storyId,
         chapterNumber: args.chapterNumber,
         status: args.status,
         code: error.code,
       })
-    } else if (!error) {
-      console.log('CHECKPOINT_STATUS', {
-        storyId: args.storyId,
-        chapterNumber: args.chapterNumber,
-        attemptId: args.attemptId,
-        status: args.status,
-      })
+      return checkpointWriteFailure(isMissingRelation(error) ? 'TERMINAL' : 'RETRYABLE')
     }
+    console.log('CHECKPOINT_STATUS', {
+      storyId: args.storyId,
+      chapterNumber: args.chapterNumber,
+      attemptId: args.attemptId,
+      status: args.status,
+    })
+    return { ok: true, outcome: 'UPDATED', checkpointAttemptId: args.attemptId }
   } catch {
-    // best-effort
+    return checkpointWriteFailure('RETRYABLE')
   }
 }
 

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MAX_TRANSIENT_ATTEMPTS,
+  TRANSIENT_DEADLINE_MS,
+  classifyStatusError,
+  consumeSuccessfulBudget,
+  consumeTransientBudget,
+  createPollBudget,
   decideAfterNetworkError,
   decideAfterStatus,
   formatEstimatedWait,
@@ -35,6 +41,50 @@ describe('chapter-status-poller', () => {
       action: 'retry_later',
       nextDelayMs: 5000,
     })
+  })
+
+  it.each([
+    [401, 'AUTH_REQUIRED'],
+    [403, 'AUTH_REQUIRED'],
+    [404, 'NOT_FOUND'],
+    [400, 'INVALID_REQUEST'],
+  ] as const)('classifies HTTP %i as STATUS_UNKNOWN issue %s', (status, issue) => {
+    expect(classifyStatusError({ status })).toBe(issue)
+    expect(decideAfterNetworkError({ status }, createPollBudget(0))).toEqual({
+      action: 'unknown',
+      issue,
+    })
+  })
+
+  it('does not classify transient or malformed errors as permanent status issues', () => {
+    expect(classifyStatusError({ status: 500 })).toBeNull()
+    expect(classifyStatusError(new Error('offline'))).toBeNull()
+    expect(classifyStatusError(null)).toBeNull()
+  })
+
+  it('exhausts transient failures after bounded attempts', () => {
+    const budget = createPollBudget(1_000)
+    for (let attempt = 0; attempt < MAX_TRANSIENT_ATTEMPTS; attempt += 1) {
+      expect(consumeTransientBudget(budget, 1_000)).toMatchObject({ action: 'retry_later' })
+    }
+    expect(consumeTransientBudget(budget, 1_000)).toEqual({
+      action: 'unknown',
+      issue: 'TRANSIENT_EXHAUSTED',
+    })
+  })
+
+  it('exhausts successful polling and transient failures at deadline', () => {
+    const successfulBudget = createPollBudget(1_000)
+    expect(consumeSuccessfulBudget(
+      successfulBudget,
+      1_000 + TRANSIENT_DEADLINE_MS,
+    )).toBe('unknown')
+
+    const transientBudget = createPollBudget(1_000)
+    expect(consumeTransientBudget(
+      transientBudget,
+      1_000 + TRANSIENT_DEADLINE_MS,
+    )).toEqual({ action: 'unknown', issue: 'TRANSIENT_EXHAUSTED' })
   })
 
   it('preparing copy is casual and avoids internals', () => {
@@ -75,6 +125,19 @@ describe('chapter-status-poller', () => {
     const copy = readerCopy('UNAVAILABLE', 2)
     expect(copy.primaryCta).toBe('Coba tulis ulang')
     expect(copy.title).toMatch(/belum berhasil/i)
+  })
+
+  it('STATUS_UNKNOWN copy asks reader to check again without claiming generation failed', () => {
+    const copy = readerCopy('STATUS_UNKNOWN', 7)
+    expect(copy).toEqual({
+      title: 'Status bab belum bisa diperiksa.',
+      description: 'Bab 7 belum bisa ditampilkan sekarang. Coba periksa lagi atau kembali ke cerita.',
+      primaryCta: 'Cek lagi',
+      queueLine: null,
+    })
+    expect(copy.title + copy.description + copy.primaryCta).not.toMatch(
+      /belum berhasil|tulis ulang|provider|LLM|HTTP|database/i,
+    )
   })
 
   it('start status notes are honest', () => {

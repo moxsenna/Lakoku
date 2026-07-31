@@ -1007,26 +1007,50 @@ describe('generateNextPersonalizedChapter', () => {
 
     const first = await generateNextPersonalizedChapter(input, deps)
     expect(first).toMatchObject({ ok: false, reason: 'CHOICE_GENERATION_FAILED' })
+    expect(deps.persistProseReadyCheckpoint).toHaveBeenCalledTimes(1)
+    const persistedProse = (deps.persistProseReadyCheckpoint.mock.calls as unknown as Array<[{
+      title: string
+      paragraphs: string[]
+    }]>)[0]?.[0]
+    expect(persistedProse).toBeDefined()
+    const savedFingerprint = proseFingerprint(persistedProse.title, persistedProse.paragraphs)
     expect(checkpointState.current).toMatchObject({
       status: 'CHOICES_RETRY_WAIT',
+      title: persistedProse.title,
+      paragraphs: persistedProse.paragraphs,
+      proseFingerprint: savedFingerprint,
       proseAttemptCount: 0,
     })
-    const savedFingerprint = checkpointState.current?.proseFingerprint
-    expect(savedFingerprint).toBeTruthy()
+    expect(deps.markCheckpointStatus).toHaveBeenLastCalledWith(expect.objectContaining({
+      status: 'CHOICES_RETRY_WAIT',
+    }))
     expect(deps.generateChapter).toHaveBeenCalledTimes(1)
     expect(mocks.publishGenerationJobChapterV4).not.toHaveBeenCalled()
 
     const retry = await generateNextPersonalizedChapter(input, deps)
     expect(retry).toMatchObject({ ok: true, fromCheckpoint: true, chapterNumber: 12, seq: 9 })
+    expect(deps.loadUsableProseCheckpoint).toHaveBeenCalledTimes(2)
     expect(deps.generateChapter).toHaveBeenCalledTimes(1)
+    expect(deps.persistProseReadyCheckpoint).toHaveBeenCalledTimes(1)
     expect(deps.generateChoiceBranch).toHaveBeenCalledTimes(3)
-    expect(checkpointState.current?.proseFingerprint).toBe(savedFingerprint)
+    expect(checkpointState.current).toMatchObject({
+      title: persistedProse.title,
+      paragraphs: persistedProse.paragraphs,
+      proseFingerprint: savedFingerprint,
+    })
     expect(mocks.publishGenerationJobChapterV4).toHaveBeenCalledTimes(1)
     expect(mocks.publishGenerationJobChapterV4).toHaveBeenCalledWith(expect.objectContaining({
       jobId: PERSONALIZED_JOB_CONTEXT.jobId,
       storyId: STORY_A,
       chapterNumber: 12,
+      title: persistedProse.title,
+      paragraphs: persistedProse.paragraphs,
     }))
+    const published = mocks.publishGenerationJobChapterV4.mock.calls[0]?.[0] as {
+      title: string
+      paragraphs: string[]
+    }
+    expect(proseFingerprint(published.title, published.paragraphs)).toBe(savedFingerprint)
   }, 15_000)
 
   it('retains checkpoint as CHOICES_RETRY_WAIT when choices fail', async () => {

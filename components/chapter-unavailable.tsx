@@ -7,6 +7,7 @@ import { ArrowLeft, RefreshCw } from 'lucide-react'
 import type { StoryDetail } from '@/lib/api'
 import { getChapterGenerationStatus, startChapter } from '@/lib/api/client'
 import {
+  consumeSuccessfulBudget,
   decideAfterStatus,
   noteForStartStatus,
   readerCopy,
@@ -87,10 +88,19 @@ export function ChapterUnavailable({
       // Keep latest validated identity for every subsequent poll. Never invent
       // an identity; preserve nullable attemptId exactly as returned.
       if (res.correlationId) {
-        identityRef.current = {
+        const nextIdentity = {
           attemptId: res.attemptId ?? null,
           correlationId: res.correlationId,
         }
+        const previousIdentity = identityRef.current
+        if (
+          previousIdentity !== null &&
+          (previousIdentity.attemptId !== nextIdentity.attemptId ||
+            previousIdentity.correlationId !== nextIdentity.correlationId)
+        ) {
+          budgetRef.current = createPollBudget()
+        }
+        identityRef.current = nextIdentity
       }
       setQueueHint(res.queue ?? null)
 
@@ -108,8 +118,13 @@ export function ChapterUnavailable({
         setUiState('UNAVAILABLE')
         return
       }
-      // queued | generating
-      budgetRef.current = createPollBudget()
+      // queued | generating: reset only consecutive transient failures. Keep
+      // session start so successful responses cannot extend polling forever.
+      if (consumeSuccessfulBudget(budgetRef.current) === 'unknown') {
+        clearTimer()
+        setUiState('STATUS_UNKNOWN')
+        return
+      }
       setUiState('PREPARING')
       if (decision.action === 'continue') {
         schedule(decision.nextDelayMs, () => {
@@ -152,6 +167,17 @@ export function ChapterUnavailable({
     return () => window.clearTimeout(timer)
   }, [initialState])
 
+  // Reset polling session before starting polling for a new story/chapter.
+  // Ref-only reset avoids synchronous setState-in-effect while preventing
+  // stale identity and budget from leaking across reader targets.
+  useEffect(() => {
+    identityRef.current = null
+    budgetRef.current = createPollBudget()
+    clearTimer()
+    abortRef.current?.abort()
+    inFlightRef.current = false
+  }, [story.id, chapterNumber, clearTimer])
+
   // Immediate check + recursive polling while PREPARING.
   useEffect(() => {
     if (uiState !== 'PREPARING') {
@@ -163,7 +189,7 @@ export function ChapterUnavailable({
       clearTimer()
       abortRef.current?.abort()
     }
-  }, [uiState, clearTimer])
+  }, [uiState, story.id, chapterNumber, clearTimer])
 
   async function retry() {
     setRetrying(true)

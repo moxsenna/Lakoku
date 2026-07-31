@@ -209,6 +209,27 @@ describe('chapter status polling', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
+  it.each(['queued', 'generating'] as const)(
+    'terminates unknown when successful %s responses reach session deadline',
+    async (status) => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-07-31T00:00:00.000Z'))
+      const getStatus = vi.fn(async () => ({ status, chapterNumber: 5 }))
+
+      const result = pollChapterGenerationStatus({
+        storyId: story.id,
+        chapterNumber: 5,
+        signal: new AbortController().signal,
+        getStatus,
+      })
+      await vi.advanceTimersByTimeAsync(60_000)
+
+      await expect(result).resolves.toBe('unknown')
+      expect(getStatus).toHaveBeenCalledTimes(40)
+      expect(vi.getTimerCount()).toBe(0)
+    },
+  )
+
   it('stops on failed and leaves no scheduled poll', async () => {
     vi.useFakeTimers()
     const getStatus = vi.fn(async () => ({

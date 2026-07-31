@@ -29,7 +29,12 @@ import { ChapterUnavailableBanner } from '@/components/chapter-unavailable-banne
 import { ChapterListDialog } from '@/components/chapter-list-dialog'
 import { useReaderFontSize } from '@/components/font-size-provider'
 import { PoetryLottie } from '@/components/mulai/poetry-lottie'
-import { createPollBudget, decideAfterNetworkError, decideAfterStatus } from '@/lib/reader/chapter-status-poller'
+import {
+  consumeSuccessfulBudget,
+  createPollBudget,
+  decideAfterNetworkError,
+  decideAfterStatus,
+} from '@/lib/reader/chapter-status-poller'
 
 type ReaderTheme = 'ink' | 'cream'
 type Phase = 'reading' | 'processing' | 'pending' | 'generation-failed' | 'status-unknown'
@@ -70,7 +75,7 @@ export function pollChapterGenerationStatus({
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout> | null = null
     let settled = false
-    const budget = createPollBudget()
+    let budget = createPollBudget()
     let currentIdentity = identity
 
     const finish = (result: PollResult) => {
@@ -95,16 +100,23 @@ export function pollChapterGenerationStatus({
         )
         if (signal.aborted) return finish('aborted')
         if (response.correlationId) {
-          currentIdentity = {
+          const nextIdentity = {
             attemptId: response.attemptId ?? null,
             correlationId: response.correlationId,
           }
+          if (
+            currentIdentity !== null &&
+            (currentIdentity.attemptId !== nextIdentity.attemptId ||
+              currentIdentity.correlationId !== nextIdentity.correlationId)
+          ) {
+            budget = createPollBudget()
+          }
+          currentIdentity = nextIdentity
         }
         const decision = decideAfterStatus(response.status)
         if (decision.action === 'refresh') return finish('ready')
         if (decision.action === 'failed') return finish('failed')
-        budget.attempts = 0
-        budget.startedAt = Date.now()
+        if (consumeSuccessfulBudget(budget) === 'unknown') return finish('unknown')
       } catch (error) {
         if (signal.aborted) return finish('aborted')
         const decision = decideAfterNetworkError(error, budget)

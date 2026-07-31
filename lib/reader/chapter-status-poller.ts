@@ -32,10 +32,10 @@ export type PollDecision =
   | { action: 'unknown'; issue: ReaderStatusIssue }
   | { action: 'retry_later'; nextDelayMs: number }
 
-export type PollBudget = { attempts: number; startedAt: number }
+export type PollBudget = { transientAttempts: number; startedAt: number }
 
 export function createPollBudget(now = Date.now()): PollBudget {
-  return { attempts: 0, startedAt: now }
+  return { transientAttempts: 0, startedAt: now }
 }
 
 export function resetPollBudget(now = Date.now()): PollBudget {
@@ -53,15 +53,13 @@ export function classifyStatusError(error: unknown): ReaderStatusIssue | null {
 }
 
 export function consumeSuccessfulBudget(budget: PollBudget, now = Date.now()): 'continue' | 'unknown' {
-  budget.attempts += 1
-  return budget.attempts > MAX_TRANSIENT_ATTEMPTS || now - budget.startedAt >= TRANSIENT_DEADLINE_MS
-    ? 'unknown'
-    : 'continue'
+  budget.transientAttempts = 0
+  return now - budget.startedAt >= TRANSIENT_DEADLINE_MS ? 'unknown' : 'continue'
 }
 
 export function consumeTransientBudget(budget: PollBudget, now = Date.now()): PollDecision {
-  const attempts = budget.attempts + 1
-  budget.attempts = attempts
+  const attempts = budget.transientAttempts + 1
+  budget.transientAttempts = attempts
   if (attempts > MAX_TRANSIENT_ATTEMPTS || now - budget.startedAt >= TRANSIENT_DEADLINE_MS) {
     return { action: 'unknown', issue: 'TRANSIENT_EXHAUSTED' }
   }

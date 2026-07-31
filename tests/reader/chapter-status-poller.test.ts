@@ -73,8 +73,15 @@ describe('chapter-status-poller', () => {
     })
   })
 
-  it('exhausts successful polling and transient failures at deadline', () => {
+  it('successful status resets transient streak without extending session deadline', () => {
     const successfulBudget = createPollBudget(1_000)
+    expect(consumeTransientBudget(successfulBudget, 1_000)).toMatchObject({
+      action: 'retry_later',
+    })
+    expect(successfulBudget.transientAttempts).toBe(1)
+    expect(consumeSuccessfulBudget(successfulBudget, 2_000)).toBe('continue')
+    expect(successfulBudget.transientAttempts).toBe(0)
+    expect(successfulBudget.startedAt).toBe(1_000)
     expect(consumeSuccessfulBudget(
       successfulBudget,
       1_000 + TRANSIENT_DEADLINE_MS,

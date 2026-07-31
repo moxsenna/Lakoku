@@ -1344,7 +1344,7 @@ describe('generateNextPersonalizedChapter', () => {
     expect(deps.releaseGenerationLease).not.toHaveBeenCalled()
   })
 
-  it('recovers chapter 50 when first mark SELESAI throws after publish ok', async () => {
+  it('keeps chapter 50 publish successful when mark SELESAI throws after publish ok', async () => {
     const firstCapture = {
       publishInputs: [] as PublishChapterV2Input[],
       calls: [] as CallName[],
@@ -1366,13 +1366,18 @@ describe('generateNextPersonalizedChapter', () => {
     })
     const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
 
-    await expect(generateNextPersonalizedChapter({
+    // Publikasi sudah commit: kegagalan rekonsiliasi pasca-publish tidak boleh
+    // mengubah hasil menjadi gagal atau melempar ke pemanggil.
+    const firstResult = await generateNextPersonalizedChapter({
       storyId: STORY_A,
       userId: USER_A,
       correlationId: CORRELATION_ID,
       chapterNumber: 50,
-    }, first.deps)).rejects.toThrow(/transient write failure/)
+    }, first.deps)
+
+    expect(firstResult.ok).toBe(true)
     expect(first.deps.publishChapterV2).toHaveBeenCalledTimes(1)
+    expect(first.deps.markReaderStateSelesai).toHaveBeenCalledTimes(1)
     expect(first.deps.releaseGenerationLease).not.toHaveBeenCalled()
 
     // Retry: chapter already published → CHAPTER_EXISTS; must still mark SELESAI.

@@ -40,6 +40,16 @@ function checkpointWriteFailure(
   }
 }
 
+/** Baris checkpoint wajib ada; nol baris berarti target mutasi tidak ditemukan. */
+function checkpointNotFound(): CheckpointMutationResult {
+  return {
+    ok: false,
+    outcome: 'NOT_FOUND',
+    errorCode: 'CHECKPOINT_NOT_FOUND',
+    disposition: 'TERMINAL',
+  }
+}
+
 function rowToCheckpoint(row: Record<string, unknown>): ChapterGenerationCheckpoint | null {
   const paragraphs = row.paragraphs_json
   if (!Array.isArray(paragraphs)) return null
@@ -288,9 +298,11 @@ export async function persistProseReadyCheckpoint(args: {
 
   try {
     const db = createAdminClient()
-    const { error } = await db.from('chapter_generation_checkpoints').upsert(row, {
-      onConflict: 'story_id,chapter_number,attempt_id',
-    })
+    const { data, error } = await db
+      .from('chapter_generation_checkpoints')
+      .upsert(row, { onConflict: 'story_id,chapter_number,attempt_id' })
+      .select('story_id, chapter_number, attempt_id, correlation_id, status')
+      .maybeSingle()
     if (error) {
       if (isMissingRelation(error)) {
         console.log('CHECKPOINT_TABLE_UNAVAILABLE', {
@@ -305,6 +317,23 @@ export async function persistProseReadyCheckpoint(args: {
         code: error.code,
       })
       return checkpointWriteFailure('RETRYABLE')
+    }
+
+    // Upsert wajib mengembalikan baris dengan identitas persis seperti yang ditulis.
+    if (!data || typeof data !== 'object') return checkpointNotFound()
+    const written = data as Record<string, unknown>
+    const identityMatches = String(written.story_id ?? '') === args.storyId
+      && Number(written.chapter_number) === args.chapterNumber
+      && String(written.attempt_id ?? '') === args.attemptId
+      && String(written.correlation_id ?? '') === args.correlationId
+      && String(written.status ?? '') === 'PROSE_READY'
+    if (!identityMatches) {
+      console.log('CHECKPOINT_WRITE_UNVERIFIED', {
+        storyId: args.storyId,
+        chapterNumber: args.chapterNumber,
+        status: 'PROSE_READY',
+      })
+      return checkpointWriteFailure('TERMINAL')
     }
 
     console.log('CHECKPOINT_PROSE_READY', {
@@ -356,12 +385,14 @@ export async function markCheckpointStatus(args: {
     if (args.status === 'PUBLISHED' || args.status === 'EXPIRED') {
       patch.expires_at = new Date(Date.now() + 60 * 60 * 1000).toISOString()
     }
-    const { error } = await db
+    const { data, error } = await db
       .from('chapter_generation_checkpoints')
       .update(patch)
       .eq('story_id', args.storyId)
       .eq('chapter_number', args.chapterNumber)
       .eq('attempt_id', args.attemptId)
+      .select('attempt_id, status')
+      .maybeSingle()
     if (error) {
       console.log('CHECKPOINT_STATUS_UPDATE_FAILED', {
         storyId: args.storyId,
@@ -370,6 +401,20 @@ export async function markCheckpointStatus(args: {
         code: error.code,
       })
       return checkpointWriteFailure(isMissingRelation(error) ? 'TERMINAL' : 'RETRYABLE')
+    }
+    // Nol baris terupdate bukan sukses: checkpoint target tidak ada.
+    if (!data || typeof data !== 'object') return checkpointNotFound()
+    const updated = data as Record<string, unknown>
+    if (
+      String(updated.attempt_id ?? '') !== args.attemptId
+      || String(updated.status ?? '') !== args.status
+    ) {
+      console.log('CHECKPOINT_STATUS_UNVERIFIED', {
+        storyId: args.storyId,
+        chapterNumber: args.chapterNumber,
+        status: args.status,
+      })
+      return checkpointWriteFailure('TERMINAL')
     }
     console.log('CHECKPOINT_STATUS', {
       storyId: args.storyId,

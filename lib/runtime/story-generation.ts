@@ -40,7 +40,7 @@ import {
   markFailureRecorded,
 } from '@/lib/observability/generation-stage-error'
 import type { GenerationStage } from '@/lib/observability/generation-stages'
-import { safeErrorInfo } from '@/lib/observability/safe-error'
+import { boundedLogId, safeErrorInfo } from '@/lib/observability/safe-error'
 import type { ChapterBrief, ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
 import { normalizeRouteState, type RouteState } from '@/lib/story-engine/route-state'
 import { summarizeRouteStateForPrompt } from '@/lib/story-engine/route-state'
@@ -708,27 +708,23 @@ async function generateNextChapterRealInner(
         })
         if (checkpointMutationSucceeded(mutation)) return
         console.log('CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED', {
-          storyId,
+          storyId: boundedLogId(storyId),
           chapterNumber,
-          correlationId,
-          jobId: jobContext?.jobId ?? null,
-          checkpointAttemptId,
-          result: mutation && typeof mutation === 'object' && 'result' in mutation
-            ? String(mutation.result).slice(0, 64)
-            : 'NOT_UPDATED',
+          correlationId: boundedLogId(correlationId),
+          jobId: boundedLogId(jobContext?.jobId),
+          checkpointAttemptId: boundedLogId(checkpointAttemptId),
+          result: 'NOT_UPDATED',
+          errorCode: 'CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED',
         })
-      } catch (err) {
-        if (!jobContext) throw err
-        const info = safeErrorInfo(err)
+      } catch {
         console.log('CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED', {
-          storyId,
+          storyId: boundedLogId(storyId),
           chapterNumber,
-          correlationId,
-          jobId: jobContext.jobId,
-          checkpointAttemptId,
+          correlationId: boundedLogId(correlationId),
+          jobId: boundedLogId(jobContext?.jobId),
+          checkpointAttemptId: boundedLogId(checkpointAttemptId),
           result: 'THREW',
-          errorName: info.errorName?.slice(0, 100) ?? null,
-          errorMessage: info.errorMessage?.slice(0, 200) ?? null,
+          errorCode: 'CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED',
         })
       }
     }
@@ -853,11 +849,12 @@ async function generateNextChapterRealInner(
         jobContext,
       })
       if (!checkpointMutationSucceeded(runningChoices)) {
-        return {
-          ok: false,
-          reason: 'FAILED_REVIEW_REQUIRED',
-          detail: { checkpointMutation: runningChoices },
-        }
+        await releaseLeaseOnce()
+        console.error('CHECKPOINT_STATUS_UPDATE_FAILED', {
+          storyId, chapterNumber, correlationId, attemptId: checkpointAttemptId,
+          status: 'RUNNING_CHOICES', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED',
+        })
+        return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: runningChoices } }
       }
       console.log('GENERATION_CHOICES_ONLY_RESUME', {
         storyId,
@@ -995,14 +992,32 @@ async function generateNextChapterRealInner(
         jobContext,
       })
       if (saved.ok !== true) {
-        return {
-          ok: false,
-          reason: 'FAILED_REVIEW_REQUIRED',
-          detail: { checkpointMutation: saved },
-        }
+        await releaseLeaseOnce()
+        console.error('CHECKPOINT_STATUS_UPDATE_FAILED', {
+          storyId, chapterNumber, correlationId, attemptId,
+          status: 'PROSE_READY', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED',
+        })
+        return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: saved } }
       }
       proseFingerprintUsed = proseFingerprint(draft.title, draft.paragraphs ?? [])
       checkpointAttemptId = saved.checkpointAttemptId
+
+      const runningChoices = await markCheckpointStatus({
+        storyId,
+        chapterNumber,
+        attemptId: checkpointAttemptId,
+        status: 'RUNNING_CHOICES',
+        choiceAttemptCount: 1,
+        jobContext,
+      })
+      if (!checkpointMutationSucceeded(runningChoices)) {
+        await releaseLeaseOnce()
+        console.error('CHECKPOINT_STATUS_UPDATE_FAILED', {
+          storyId, chapterNumber, correlationId, attemptId: checkpointAttemptId,
+          status: 'RUNNING_CHOICES', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED',
+        })
+        return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: runningChoices } }
+      }
     }
 
     // 6) Boundary consumer-safe: tak ada istilah internal yang bocor ke pembaca.
@@ -1074,11 +1089,12 @@ async function generateNextChapterRealInner(
         jobContext,
       })
       if (!checkpointMutationSucceeded(retryCheckpoint)) {
-        return {
-          ok: false,
-          reason: 'FAILED_REVIEW_REQUIRED',
-          detail: { checkpointMutation: retryCheckpoint },
-        }
+        await releaseLeaseOnce()
+        console.error('CHECKPOINT_STATUS_UPDATE_FAILED', {
+          storyId, chapterNumber, correlationId, attemptId: checkpointAttemptId,
+          status: 'CHOICES_RETRY_WAIT', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED',
+        })
+        return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: retryCheckpoint } }
       }
       await releaseLeaseOnce()
       stage = 'RECORD_TERMINAL_ATTEMPT'

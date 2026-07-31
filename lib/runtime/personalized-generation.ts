@@ -25,7 +25,7 @@ import {
 import { selectProvider } from '@lakoku/ai-gateway/server'
 import { createAdminClient } from '@lakoku/db'
 import { recordGenerationAttempt } from '@/lib/observability/server'
-import { safeErrorInfo } from '@/lib/observability/safe-error'
+import { boundedLogId, safeErrorInfo } from '@/lib/observability/safe-error'
 import {
   buildChapterBrief,
   type ChapterBrief,
@@ -741,25 +741,23 @@ async function generateNextPersonalizedChapterInner(
         })
         if (checkpointMutationSucceeded(mutation)) return
         console.log('CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED', {
-          storyId,
+          storyId: boundedLogId(storyId),
           chapterNumber,
-          correlationId,
-          jobId: jobContext?.jobId ?? null,
-          checkpointAttemptId,
-          result: mutation.outcome,
-          path: 'personalized',
+          correlationId: boundedLogId(correlationId),
+          jobId: boundedLogId(jobContext?.jobId),
+          checkpointAttemptId: boundedLogId(checkpointAttemptId),
+          result: 'NOT_UPDATED',
+          errorCode: 'CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED',
         })
-      } catch (error) {
-        if (!jobContext) throw error
+      } catch {
         console.log('CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED', {
-          storyId,
+          storyId: boundedLogId(storyId),
           chapterNumber,
-          correlationId,
-          jobId: jobContext.jobId,
-          checkpointAttemptId,
+          correlationId: boundedLogId(correlationId),
+          jobId: boundedLogId(jobContext?.jobId),
+          checkpointAttemptId: boundedLogId(checkpointAttemptId),
           result: 'THREW',
-          errorName: error instanceof Error ? error.name.slice(0, 100) : 'unknown',
-          path: 'personalized',
+          errorCode: 'CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED',
         })
       }
     }
@@ -907,6 +905,11 @@ async function generateNextPersonalizedChapterInner(
         jobContext,
       })
       if (saved.ok !== true) {
+        await releaseOwnLease()
+        console.error('CHECKPOINT_STATUS_UPDATE_FAILED', {
+          storyId, chapterNumber, correlationId, attemptId,
+          status: 'PROSE_READY', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED', path: 'personalized',
+        })
         return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: saved } }
       }
       if (saved.ok === true) checkpointAttemptId = saved.checkpointAttemptId
@@ -921,6 +924,11 @@ async function generateNextPersonalizedChapterInner(
       jobContext,
     })
     if (!checkpointMutationSucceeded(runningChoices)) {
+      await releaseOwnLease()
+      console.error('CHECKPOINT_STATUS_UPDATE_FAILED', {
+        storyId, chapterNumber, correlationId, attemptId: checkpointAttemptId,
+        status: 'RUNNING_CHOICES', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED', path: 'personalized',
+      })
       return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: runningChoices } }
     }
 
@@ -975,11 +983,12 @@ async function generateNextPersonalizedChapterInner(
           jobContext,
         })
         if (!checkpointMutationSucceeded(retryCheckpoint)) {
-          return {
-            ok: false,
-            reason: 'FAILED_REVIEW_REQUIRED',
-            detail: { checkpointMutation: retryCheckpoint },
-          }
+          await releaseOwnLease()
+          console.error('CHECKPOINT_STATUS_UPDATE_FAILED', {
+            storyId, chapterNumber, correlationId, attemptId: checkpointAttemptId,
+            status: 'CHOICES_RETRY_WAIT', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED', path: 'personalized',
+          })
+          return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: retryCheckpoint } }
         }
         await releaseOwnLease()
         await d.recordGenerationAttempt({
@@ -1191,29 +1200,32 @@ async function generateNextPersonalizedChapterInner(
         })
       }
 
-      if (jobContext && published.ok) {
+      // Publikasi sudah commit: kegagalan rekonsiliasi tidak boleh membatalkan sukses.
+      if (published.ok) {
         try {
           await reconcileReaderState()
-        } catch (error) {
+        } catch {
           console.log('POST_PUBLISH_RECONCILIATION_NEEDED', {
-            storyId,
+            storyId: boundedLogId(storyId),
             chapterNumber,
-            correlationId,
-            jobId: jobContext.jobId,
+            correlationId: boundedLogId(correlationId),
+            jobId: boundedLogId(jobContext?.jobId),
             operation: 'MARK_READER_STATE_SELESAI',
-            errorName: error instanceof Error ? error.name.slice(0, 100) : 'unknown',
+            result: 'THREW',
+            errorCode: 'POST_PUBLISH_MARK_READER_STATE_FAILED',
           })
         }
         try {
           await reconcileGenerationAttempt()
-        } catch (error) {
+        } catch {
           console.log('POST_PUBLISH_RECONCILIATION_NEEDED', {
-            storyId,
+            storyId: boundedLogId(storyId),
             chapterNumber,
-            correlationId,
-            jobId: jobContext.jobId,
+            correlationId: boundedLogId(correlationId),
+            jobId: boundedLogId(jobContext?.jobId),
             operation: 'RECORD_GENERATION_ATTEMPT',
-            errorName: error instanceof Error ? error.name.slice(0, 100) : 'unknown',
+            result: 'THREW',
+            errorCode: 'POST_PUBLISH_RECORD_GENERATION_ATTEMPT_FAILED',
           })
         }
       } else {

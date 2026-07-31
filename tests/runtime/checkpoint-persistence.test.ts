@@ -353,3 +353,161 @@ describe('worker checkpoint persistence', () => {
     await expect(markCheckpointStatus(input)).rejects.toThrow()
   })
 })
+
+describe('legacy checkpoint persistence verifies written rows', () => {
+  const LEGACY_ARGS = {
+    storyId: 'story-a',
+    chapterNumber: 3,
+    attemptId: ATTEMPT_ID,
+    correlationId: CORRELATION_ID,
+  }
+
+  function legacyUpsertClient(response: { data: unknown; error: unknown }) {
+    const maybeSingle = vi.fn().mockResolvedValue(response)
+    const select = vi.fn(() => ({ maybeSingle }))
+    const upsert = vi.fn(() => ({ select }))
+    const from = vi.fn(() => ({ upsert }))
+    return { client: { from, rpc: vi.fn() }, upsert, select }
+  }
+
+  function legacyUpdateClient(response: { data: unknown; error: unknown }) {
+    const maybeSingle = vi.fn().mockResolvedValue(response)
+    const select = vi.fn(() => ({ maybeSingle }))
+    const eq3 = vi.fn(() => ({ select }))
+    const eq2 = vi.fn(() => ({ eq: eq3 }))
+    const eq1 = vi.fn(() => ({ eq: eq2 }))
+    const update = vi.fn(() => ({ eq: eq1 }))
+    const from = vi.fn(() => ({ update }))
+    return { client: { from, rpc: vi.fn() }, update, select }
+  }
+
+  async function persistLegacyProse() {
+    const { persistProseReadyCheckpoint } = await import(
+      '@/lib/runtime/chapter-generation-checkpoint'
+    )
+    return persistProseReadyCheckpoint({
+      ...LEGACY_ARGS,
+      title: 'Bab Tiga',
+      paragraphs: ['Paragraf.'],
+      proseAttemptCount: 1,
+      canonVersion: 7,
+      blueprintVersion: 4,
+      directionFingerprint: '0123456789abcdef0123456789abcdef',
+      generationMode: 'standard',
+      generationPolicyVersion: 2,
+      promptContractVersion: 2,
+      jobId: null,
+      jobAttemptNumber: null,
+      jobContext: null,
+    })
+  }
+
+  async function markLegacyStatus(status: 'RUNNING_CHOICES' | 'CHOICES_RETRY_WAIT') {
+    const { markCheckpointStatus } = await import(
+      '@/lib/runtime/chapter-generation-checkpoint'
+    )
+    return markCheckpointStatus({
+      storyId: LEGACY_ARGS.storyId,
+      chapterNumber: LEGACY_ARGS.chapterNumber,
+      attemptId: ATTEMPT_ID,
+      status,
+      jobContext: null,
+    })
+  }
+
+  it('treats zero-row legacy status update as terminal NOT_FOUND', async () => {
+    const { client, select } = legacyUpdateClient({ data: null, error: null })
+    mocks.adminFactory.mockReturnValue(client)
+
+    await expect(markLegacyStatus('RUNNING_CHOICES')).resolves.toEqual({
+      ok: false,
+      outcome: 'NOT_FOUND',
+      errorCode: 'CHECKPOINT_NOT_FOUND',
+      disposition: 'TERMINAL',
+    })
+    expect(select).toHaveBeenCalled()
+  })
+
+  it('rejects legacy status update whose returned row does not match request', async () => {
+    const { client } = legacyUpdateClient({
+      data: { attempt_id: ATTEMPT_ID, status: 'PROSE_READY' },
+      error: null,
+    })
+    mocks.adminFactory.mockReturnValue(client)
+
+    await expect(markLegacyStatus('CHOICES_RETRY_WAIT')).resolves.toEqual({
+      ok: false,
+      outcome: 'WRITE_FAILED',
+      errorCode: 'CHECKPOINT_WRITE_FAILED',
+      disposition: 'TERMINAL',
+    })
+  })
+
+  it('accepts legacy status update only when returned row matches exactly', async () => {
+    const { client } = legacyUpdateClient({
+      data: { attempt_id: ATTEMPT_ID, status: 'RUNNING_CHOICES' },
+      error: null,
+    })
+    mocks.adminFactory.mockReturnValue(client)
+
+    await expect(markLegacyStatus('RUNNING_CHOICES')).resolves.toEqual({
+      ok: true,
+      outcome: 'UPDATED',
+      checkpointAttemptId: ATTEMPT_ID,
+    })
+  })
+
+  it('treats legacy PROSE_READY upsert returning no row as terminal NOT_FOUND', async () => {
+    const { client, select } = legacyUpsertClient({ data: null, error: null })
+    mocks.adminFactory.mockReturnValue(client)
+
+    await expect(persistLegacyProse()).resolves.toEqual({
+      ok: false,
+      outcome: 'NOT_FOUND',
+      errorCode: 'CHECKPOINT_NOT_FOUND',
+      disposition: 'TERMINAL',
+    })
+    expect(select).toHaveBeenCalled()
+  })
+
+  it('rejects legacy PROSE_READY upsert whose returned identity differs', async () => {
+    const { client } = legacyUpsertClient({
+      data: {
+        story_id: LEGACY_ARGS.storyId,
+        chapter_number: LEGACY_ARGS.chapterNumber,
+        attempt_id: JOB_ID,
+        correlation_id: CORRELATION_ID,
+        status: 'PROSE_READY',
+      },
+      error: null,
+    })
+    mocks.adminFactory.mockReturnValue(client)
+
+    await expect(persistLegacyProse()).resolves.toEqual({
+      ok: false,
+      outcome: 'WRITE_FAILED',
+      errorCode: 'CHECKPOINT_WRITE_FAILED',
+      disposition: 'TERMINAL',
+    })
+  })
+
+  it('accepts legacy PROSE_READY upsert only when returned identity matches exactly', async () => {
+    const { client } = legacyUpsertClient({
+      data: {
+        story_id: LEGACY_ARGS.storyId,
+        chapter_number: LEGACY_ARGS.chapterNumber,
+        attempt_id: ATTEMPT_ID,
+        correlation_id: CORRELATION_ID,
+        status: 'PROSE_READY',
+      },
+      error: null,
+    })
+    mocks.adminFactory.mockReturnValue(client)
+
+    await expect(persistLegacyProse()).resolves.toEqual({
+      ok: true,
+      outcome: 'CREATED',
+      checkpointAttemptId: ATTEMPT_ID,
+    })
+  })
+})

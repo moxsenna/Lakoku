@@ -7,11 +7,13 @@ import { ArrowLeft, RefreshCw } from 'lucide-react'
 import type { StoryDetail } from '@/lib/api'
 import { getChapterGenerationStatus, startChapter } from '@/lib/api/client'
 import {
-  decideAfterNetworkError,
   decideAfterStatus,
   noteForStartStatus,
   readerCopy,
   type ReaderChapterUiState,
+  createPollBudget,
+  decideAfterNetworkError,
+  type PollBudget,
 } from '@/lib/reader/chapter-status-poller'
 
 /**
@@ -48,6 +50,7 @@ export function ChapterUnavailable({
   const mountedRef = useRef(true)
   const pollOnceRef = useRef<() => Promise<void>>(async () => {})
   const identityRef = useRef<import('@lakoku/contracts').GenerationAttemptIdentity | null>(null)
+  const budgetRef = useRef<PollBudget>(createPollBudget())
 
   const clearTimer = useCallback(() => {
     if (timerRef.current != null) {
@@ -93,6 +96,8 @@ export function ChapterUnavailable({
 
       const decision = decideAfterStatus(res.status)
       if (decision.action === 'refresh') {
+        budgetRef.current = createPollBudget()
+
         clearTimer()
         router.refresh()
         return
@@ -104,20 +109,21 @@ export function ChapterUnavailable({
         return
       }
       // queued | generating
+      budgetRef.current = createPollBudget()
       setUiState('PREPARING')
       if (decision.action === 'continue') {
         schedule(decision.nextDelayMs, () => {
           void pollOnceRef.current()
         })
       }
-    } catch {
+    } catch (error) {
       if (!mountedRef.current || controller.signal.aborted) return
-      // Network/transient: keep reader-safe state, retry later — do NOT flip to failed.
-      const decision = decideAfterNetworkError()
-      if (decision.action === 'retry_later') {
-        schedule(decision.nextDelayMs, () => {
-          void pollOnceRef.current()
-        })
+      const decision = decideAfterNetworkError(error, budgetRef.current)
+      if (decision.action === 'unknown') {
+        clearTimer()
+        setUiState('STATUS_UNKNOWN')
+      } else if (decision.action === 'retry_later') {
+        schedule(decision.nextDelayMs, () => void pollOnceRef.current())
       }
     } finally {
       inFlightRef.current = false
@@ -168,14 +174,17 @@ export function ChapterUnavailable({
         setRetryNote(kicked.error || 'Belum bisa memulai ulang penulisan.')
       } else if (kicked.status === 'ALREADY_READY') {
         identityRef.current = { attemptId: kicked.attemptId, correlationId: kicked.correlationId }
+        budgetRef.current = createPollBudget()
         setRetryNote(noteForStartStatus('ALREADY_READY'))
         router.refresh()
       } else if (kicked.status === 'ALREADY_RUNNING') {
         identityRef.current = { attemptId: kicked.attemptId, correlationId: kicked.correlationId }
+        budgetRef.current = createPollBudget()
         setRetryNote(noteForStartStatus('ALREADY_RUNNING'))
         setUiState('PREPARING')
       } else {
         identityRef.current = { attemptId: kicked.attemptId, correlationId: kicked.correlationId }
+        budgetRef.current = createPollBudget()
         setRetryNote(noteForStartStatus(kicked.status ?? 'STARTED'))
         setUiState('PREPARING')
       }
@@ -258,6 +267,19 @@ export function ChapterUnavailable({
               {checking ? 'Memeriksa…' : copy.primaryCta}
             </button>
           </div>
+        ) : uiState === 'STATUS_UNKNOWN' ? (
+          <button
+            type="button"
+            onClick={() => void checkNow()}
+            disabled={checking}
+            className="flex min-h-13 w-full items-center justify-center gap-2 rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+          >
+            <RefreshCw
+              className={checking ? 'lk-pulse-soft size-4' : 'size-4'}
+              aria-hidden="true"
+            />
+            {checking ? 'Memeriksa…' : copy.primaryCta}
+          </button>
         ) : (
           <button
             type="button"

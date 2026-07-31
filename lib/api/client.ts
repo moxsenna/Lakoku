@@ -34,6 +34,16 @@ import { buildChoiceIdempotencyKey } from './choice-idempotency'
 
 const API_BASE = '/api'
 
+export class ReaderStatusHttpError extends Error {
+  readonly status: number
+
+  constructor(status: number) {
+    super('Status bab belum berhasil diperiksa.')
+    this.name = 'ReaderStatusHttpError'
+    this.status = status
+  }
+}
+
 /** Result of POST /api/stories/authoring/lock (Android/web shared). */
 export type LockStoryBibleClientResult =
   | { ok: true; storyId: string; resolvedBy: string; transforms: string[] }
@@ -145,9 +155,10 @@ export async function getChapterGenerationStatus(
       credentials: 'same-origin',
       cache: 'no-store',
     })
-    if (!res.ok) throw new Error()
+    if (!res.ok) throw new ReaderStatusHttpError(res.status)
     return ChapterStatusResponseSchema.parse(await res.json())
-  } catch {
+  } catch (error) {
+    if (error instanceof ReaderStatusHttpError) throw error
     throw new Error('Status bab belum berhasil diperiksa.')
   }
 }

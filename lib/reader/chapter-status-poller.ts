@@ -5,7 +5,13 @@
 
 import { formatEstimatedWait } from '@/lib/runtime/generation-latency-estimate'
 
-export type ReaderChapterUiState = 'PREPARING' | 'UNAVAILABLE'
+export type ReaderChapterUiState = 'PREPARING' | 'UNAVAILABLE' | 'STATUS_UNKNOWN'
+
+export type ReaderStatusIssue =
+  | 'AUTH_REQUIRED'
+  | 'NOT_FOUND'
+  | 'INVALID_REQUEST'
+  | 'TRANSIENT_EXHAUSTED'
 
 export type ChapterPollStatus = 'ready' | 'queued' | 'generating' | 'failed'
 
@@ -16,12 +22,52 @@ export type ChapterQueueHint = {
 }
 
 export const CHAPTER_STATUS_POLL_MS = 5_000
+export const MAX_TRANSIENT_ATTEMPTS = 5
+export const TRANSIENT_DEADLINE_MS = 60_000
 
 export type PollDecision =
   | { action: 'refresh' }
   | { action: 'continue'; nextDelayMs: number }
   | { action: 'failed' }
+  | { action: 'unknown'; issue: ReaderStatusIssue }
   | { action: 'retry_later'; nextDelayMs: number }
+
+export type PollBudget = { attempts: number; startedAt: number }
+
+export function createPollBudget(now = Date.now()): PollBudget {
+  return { attempts: 0, startedAt: now }
+}
+
+export function resetPollBudget(now = Date.now()): PollBudget {
+  return createPollBudget(now)
+}
+
+export function classifyStatusError(error: unknown): ReaderStatusIssue | null {
+  const status = typeof error === 'object' && error !== null && 'status' in error
+    ? Number((error as { status?: unknown }).status)
+    : NaN
+  if (status === 401 || status === 403) return 'AUTH_REQUIRED'
+  if (status === 404) return 'NOT_FOUND'
+  if (status === 400) return 'INVALID_REQUEST'
+  return null
+}
+
+export function consumeSuccessfulBudget(budget: PollBudget, now = Date.now()): 'continue' | 'unknown' {
+  budget.attempts += 1
+  return budget.attempts > MAX_TRANSIENT_ATTEMPTS || now - budget.startedAt >= TRANSIENT_DEADLINE_MS
+    ? 'unknown'
+    : 'continue'
+}
+
+export function consumeTransientBudget(budget: PollBudget, now = Date.now()): PollDecision {
+  const attempts = budget.attempts + 1
+  budget.attempts = attempts
+  if (attempts > MAX_TRANSIENT_ATTEMPTS || now - budget.startedAt >= TRANSIENT_DEADLINE_MS) {
+    return { action: 'unknown', issue: 'TRANSIENT_EXHAUSTED' }
+  }
+  const base = Math.min(CHAPTER_STATUS_POLL_MS * 2 ** (attempts - 1), 30_000)
+  return { action: 'retry_later', nextDelayMs: Math.round(base * (0.8 + Math.random() * 0.4)) }
+}
 
 /**
  * Map a successful status API response to UI action.
@@ -33,14 +79,17 @@ export function decideAfterStatus(
 ): PollDecision {
   if (status === 'ready') return { action: 'refresh' }
   if (status === 'failed') return { action: 'failed' }
-  // queued + generating keep polling
   return { action: 'continue', nextDelayMs: pollMs }
 }
 
 export function decideAfterNetworkError(
-  pollMs = CHAPTER_STATUS_POLL_MS,
+  error: unknown,
+  budget?: PollBudget,
 ): PollDecision {
-  return { action: 'retry_later', nextDelayMs: pollMs }
+  // Legacy callers may pass poll interval; bounded callers pass budget.
+  if (typeof error === 'number') return { action: 'retry_later', nextDelayMs: error }
+  const issue = classifyStatusError(error)
+  return issue ? { action: 'unknown', issue } : consumeTransientBudget(budget ?? createPollBudget())
 }
 
 export { formatEstimatedWait }
@@ -50,6 +99,14 @@ export function readerCopy(
   chapterNumber: number,
   queue?: ChapterQueueHint | null,
 ): { title: string; description: string; primaryCta: string; queueLine: string | null } {
+  if (state === 'STATUS_UNKNOWN') {
+    return {
+      title: 'Status bab belum bisa diperiksa.',
+      description: `Bab ${chapterNumber} belum bisa ditampilkan sekarang. Coba periksa lagi atau kembali ke cerita.`,
+      primaryCta: 'Cek lagi',
+      queueLine: null,
+    }
+  }
   if (state === 'PREPARING') {
     if (queue?.phase === 'queued') {
       const pos = queue.position

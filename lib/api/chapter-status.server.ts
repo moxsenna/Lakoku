@@ -139,6 +139,7 @@ async function activeJobState(
     .select('status, available_at, id, correlation_id')
     .eq('story_id', storyId)
     .eq('chapter_number', chapterNumber)
+    .eq('generation_kind', 'personalized')
     .in('status', ['QUEUED', 'RUNNING', 'RETRY_WAIT'])
     .order('updated_at', { ascending: false })
     .limit(5)

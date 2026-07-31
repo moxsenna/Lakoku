@@ -279,6 +279,7 @@ describe('chapter status polling', () => {
 
   it('retries a transient status request error until an explicit terminal status', async () => {
     vi.useFakeTimers()
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
     const getStatus = vi.fn()
       .mockRejectedValueOnce(new Error('private status detail'))
       .mockResolvedValueOnce({ status: 'ready', chapterNumber: 2 })
@@ -292,7 +293,8 @@ describe('chapter status polling', () => {
     await vi.advanceTimersByTimeAsync(1500)
     expect(getStatus).toHaveBeenCalledOnce()
     expect(vi.getTimerCount()).toBe(1)
-    await vi.advanceTimersByTimeAsync(1500)
+    // Transient retry uses shared bounded backoff (5s after first failure).
+    await vi.advanceTimersByTimeAsync(5000)
 
     await expect(result).resolves.toBe('ready')
     expect(getStatus).toHaveBeenCalledTimes(2)

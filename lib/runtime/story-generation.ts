@@ -689,14 +689,6 @@ async function generateNextChapterRealInner(
       proseFingerprint,
     } = await import('@/lib/runtime/chapter-generation-checkpoint')
 
-    const existingCheckpoint = await loadUsableProseCheckpoint({
-      storyId,
-      chapterNumber,
-      // Prefer any usable checkpoint for story+chapter on retry (not only this attemptId)
-      attemptId: null,
-      jobContext,
-    })
-
     const reconcilePublishedCheckpoint = async () => {
       try {
         const mutation = await markCheckpointStatus({
@@ -781,6 +773,29 @@ async function generateNextChapterRealInner(
       opensNewThread: false,
     }
 
+    const canonVersionProxyNow = snapshot.blueprints.reduce(
+      (max, b) => Math.max(max, b.version ?? 0),
+      0,
+    )
+    const existingCheckpoint = await loadUsableProseCheckpoint({
+      storyId,
+      chapterNumber,
+      // Prefer any fully compatible checkpoint for story+chapter on explicit retry.
+      attemptId: null,
+      freshness: {
+        canonVersion: canonVersionProxyNow,
+        blueprintVersion: blueprint.version ?? null,
+        directionFingerprint: creativeDirectionFingerprint,
+        generationMode: 'standard',
+        generationPolicyVersion: GENERATION_PROMPT_CONTRACT_VERSION,
+        promptContractVersion: GENERATION_PROMPT_CONTRACT_VERSION,
+        requireJobProvenance: jobContext != null,
+        jobId: jobContext?.jobId ?? null,
+        jobAttemptNumber: jobContext?.attemptNumber ?? null,
+      },
+      jobContext,
+    })
+
     // 5) Prose: resume from checkpoint OR generate + validate.
     type ProseResult = {
       status: string
@@ -793,39 +808,7 @@ async function generateNextChapterRealInner(
     let result: ProseResult
     let draft: ChapterDraftParsed
 
-    // P1-2: verify the (early-loaded) checkpoint against current versions now that
-    // canon/blueprint/direction are resolved. Discard stale prose (regenerate).
-    let usableCheckpoint = existingCheckpoint
-    if (usableCheckpoint) {
-      const { verifyCheckpointFreshness } = await import(
-        '@/lib/runtime/chapter-generation-checkpoint'
-      )
-      const canonVersionProxyNow = snapshot.blueprints.reduce(
-        (max, b) => Math.max(max, b.version ?? 0),
-        0,
-      )
-      const verdict = verifyCheckpointFreshness(usableCheckpoint, {
-        canonVersion: canonVersionProxyNow,
-        blueprintVersion: blueprint.version ?? null,
-        directionFingerprint: creativeDirectionFingerprint,
-        generationMode: 'standard',
-        generationPolicyVersion: GENERATION_PROMPT_CONTRACT_VERSION,
-        promptContractVersion: GENERATION_PROMPT_CONTRACT_VERSION,
-        requireJobProvenance: jobContext != null,
-        jobId: jobContext?.jobId ?? null,
-        jobAttemptNumber: jobContext?.attemptNumber ?? null,
-      })
-      if (!verdict.fresh) {
-        console.log('CHECKPOINT_STALE_DISCARDED', {
-          storyId,
-          chapterNumber,
-          correlationId,
-          reason: verdict.reason,
-          schemaVersion: usableCheckpoint.schemaVersion,
-        })
-        usableCheckpoint = null
-      }
-    }
+    const usableCheckpoint = existingCheckpoint
 
     if (usableCheckpoint) {
       const existingCheckpoint = usableCheckpoint

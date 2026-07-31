@@ -207,7 +207,6 @@ describe('worker checkpoint persistence', () => {
     { code: 'PGRST205', message: 'table missing' },
     { code: 'XX000', message: 'database query failed' },
   ])('fails closed on worker checkpoint load DB error $code', async (error) => {
-    const maybeSingle = vi.fn().mockResolvedValue({ data: null, error })
     const chain = {
       select: vi.fn(),
       eq: vi.fn(),
@@ -215,7 +214,7 @@ describe('worker checkpoint persistence', () => {
       gt: vi.fn(),
       order: vi.fn(),
       limit: vi.fn(),
-      maybeSingle,
+      then: vi.fn((resolve: (value: unknown) => unknown) => resolve({ data: null, error })),
     }
     for (const method of ['select', 'eq', 'in', 'gt', 'order', 'limit'] as const) {
       chain[method].mockReturnValue(chain)
@@ -233,10 +232,7 @@ describe('worker checkpoint persistence', () => {
   })
 
   it('keeps generic checkpoint load DB errors best-effort on legacy flow', async () => {
-    const maybeSingle = vi.fn().mockResolvedValue({
-      data: null,
-      error: { code: 'XX000', message: 'database query failed' },
-    })
+    const error = { code: 'XX000', message: 'database query failed' }
     const chain = {
       select: vi.fn(),
       eq: vi.fn(),
@@ -244,7 +240,7 @@ describe('worker checkpoint persistence', () => {
       gt: vi.fn(),
       order: vi.fn(),
       limit: vi.fn(),
-      maybeSingle,
+      then: vi.fn((resolve: (value: unknown) => unknown) => resolve({ data: null, error })),
     }
     for (const method of ['select', 'eq', 'in', 'gt', 'order', 'limit'] as const) {
       chain[method].mockReturnValue(chain)

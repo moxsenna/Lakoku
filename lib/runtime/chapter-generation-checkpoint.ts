@@ -13,6 +13,7 @@ import {
   isCheckpointUsableForChoiceRetry,
   isChoiceDurableCheckpointEnabled,
   proseFingerprint,
+  verifyCheckpointFreshness,
   type ChapterGenerationCheckpoint,
   type CheckpointStatus,
 } from './chapter-generation-checkpoint.pure'
@@ -95,20 +96,19 @@ function rowToCheckpoint(row: Record<string, unknown>): ChapterGenerationCheckpo
  * Load latest usable checkpoint for story+chapter (choice-only resume).
  * Prefer matching attemptId when provided.
  */
+export const MAX_CHECKPOINT_LOOKUP_CANDIDATES = 5
+
 export async function loadUsableProseCheckpoint(args: {
   storyId: string
   chapterNumber: number
   attemptId?: string | null
-  /**
-   * P1-2: when provided, the loaded checkpoint must pass verifyCheckpointFreshness
-   * against the current runtime versions or it is rejected (stale prose not reused).
-   */
   freshness?: import('./chapter-generation-checkpoint.pure').CheckpointFreshnessContext
   jobContext?: GenerationJobExecutionContext | null
 }): Promise<ChapterGenerationCheckpoint | null> {
   if (!isChoiceDurableCheckpointEnabled()) return null
   try {
     const db = createAdminClient()
+    const nowIso = new Date().toISOString()
     let query = db
       .from('chapter_generation_checkpoints')
       .select('*')
@@ -120,9 +120,9 @@ export async function loadUsableProseCheckpoint(args: {
         'QUEUED_CHOICES',
         'RUNNING_CHOICES',
       ])
-      .gt('expires_at', new Date().toISOString())
+      .gt('expires_at', nowIso)
       .order('updated_at', { ascending: false })
-      .limit(1)
+      .limit(MAX_CHECKPOINT_LOOKUP_CANDIDATES)
 
     if (args.attemptId) {
       query = db
@@ -137,11 +137,12 @@ export async function loadUsableProseCheckpoint(args: {
           'QUEUED_CHOICES',
           'RUNNING_CHOICES',
         ])
-        .gt('expires_at', new Date().toISOString())
-        .limit(1)
+        .gt('expires_at', nowIso)
+        .order('updated_at', { ascending: false })
+        .limit(MAX_CHECKPOINT_LOOKUP_CANDIDATES)
     }
 
-    const { data, error } = await query.maybeSingle()
+    const { data, error } = await query
     if (error) {
       if (args.jobContext) throw new Error('WORKER_CHECKPOINT_LOAD_FAILED', { cause: error })
       if (isMissingRelation(error)) {
@@ -158,25 +159,68 @@ export async function loadUsableProseCheckpoint(args: {
       })
       return null
     }
-    if (!data) return null
-    const cp = rowToCheckpoint(data as Record<string, unknown>)
-    if (!cp || !isCheckpointUsableForChoiceRetry(cp)) return null
-    if (args.freshness) {
-      const { verifyCheckpointFreshness } = await import(
-        './chapter-generation-checkpoint.pure'
-      )
-      const verdict = verifyCheckpointFreshness(cp, args.freshness)
-      if (!verdict.fresh) {
-        console.log('CHECKPOINT_STALE_REJECTED', {
-          storyId: args.storyId,
-          chapterNumber: args.chapterNumber,
-          reason: verdict.reason,
-          schemaVersion: cp.schemaVersion,
-        })
-        return null
+    if (!Array.isArray(data) || data.length === 0) return null
+
+    const candidates = data.slice(0, MAX_CHECKPOINT_LOOKUP_CANDIDATES)
+    for (const row of candidates) {
+      const cp = rowToCheckpoint(row as Record<string, unknown>)
+      if (!cp || !isCheckpointUsableForChoiceRetry(cp)) continue
+
+      // Reuse for generation always needs full current provenance. Callers that
+      // only inspect chapter status must use status evidence, not reusable prose.
+      if (!args.freshness) continue
+      {
+        // Candidate reuse requires current strict schema; legacy rows remain
+        // readable for status/recovery but cannot seed new choice generation.
+        if (cp.schemaVersion < 2) {
+          console.log('CHECKPOINT_STALE_REJECTED', {
+            storyId: args.storyId,
+            chapterNumber: args.chapterNumber,
+            reason: 'STALE_SCHEMA_VERSION',
+            schemaVersion: cp.schemaVersion,
+          })
+          continue
+        }
+        const verdict = verifyCheckpointFreshness(cp, args.freshness)
+        if (!verdict.fresh) {
+          console.log('CHECKPOINT_STALE_REJECTED', {
+            storyId: args.storyId,
+            chapterNumber: args.chapterNumber,
+            reason: verdict.reason,
+            schemaVersion: cp.schemaVersion,
+          })
+          continue
+        }
       }
+
+      if (args.jobContext) {
+        if (cp.jobId == null || cp.jobId !== args.jobContext.jobId) {
+          console.log('CHECKPOINT_FOREIGN_JOB_REJECTED', {
+            storyId: args.storyId,
+            chapterNumber: args.chapterNumber,
+            cpJobId: cp.jobId,
+            ctxJobId: args.jobContext.jobId,
+          })
+          continue
+        }
+        if (
+          cp.jobAttemptNumber == null
+          || cp.jobAttemptNumber > args.jobContext.attemptNumber
+        ) {
+          console.log('CHECKPOINT_FUTURE_ATTEMPT_REJECTED', {
+            storyId: args.storyId,
+            chapterNumber: args.chapterNumber,
+            cpAttempt: cp.jobAttemptNumber,
+            ctxAttempt: args.jobContext.attemptNumber,
+          })
+          continue
+        }
+      }
+
+      return cp
     }
-    return cp
+
+    return null
   } catch (err) {
     if (args.jobContext) {
       if (err instanceof Error && err.message === 'WORKER_CHECKPOINT_LOAD_FAILED') throw err

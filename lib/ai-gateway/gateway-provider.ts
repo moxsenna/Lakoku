@@ -128,24 +128,35 @@ function executeCandidate<T>(
 const OPENROUTER_PAID_DEFAULT = 'deepseek/deepseek-v3.2'
 
 /**
- * Custom fetch yang menyuntik `reasoning_effort` ke body request OpenAI-compatible.
- * KENAPA: AI SDK TIDAK meneruskan `providerOptions` ke body untuk provider
- * openai-compatible, jadi reasoning model (ag/* Gemini) tetap ON dan menghabiskan
- * token untuk berpikir → prosa bab kelaparan kata (<500). Injeksi di sini dijamin
- * sampai ke body. Nilai berasal dari route.reasoningEffort (tetap tunable via DB).
+ * Custom fetch untuk provider OpenAI-compatible. Dua injeksi ke body request:
+ * 1. `reasoning_effort` dari route.reasoningEffort — AI SDK TIDAK meneruskan
+ *    `providerOptions` ke body untuk provider openai-compatible, jadi reasoning
+ *    model (ag/* Gemini) tetap ON dan menghabiskan token untuk berpikir → prosa
+ *    bab kelaparan kata (<500). Injeksi di sini dijamin sampai ke body.
+ * 2. `stream: false` saat field stream TIDAK ada. KENAPA: 9router mengembalikan
+ *    framing SSE (`text/event-stream`) bila `stream` tidak eksplisit, padahal AI
+ *    SDK `generateText` memakai handler JSON non-stream (`doGenerate` →
+ *    `createJsonResponseHandler`). Akibatnya respons SSE gagal diparse → seluruh
+ *    kandidat choices gagal. `stream: false` eksplisit memaksa respons JSON
+ *    mentah; request streaming (`streamText`, body ber-`stream: true`) tak tersentuh.
  */
-function reasoningInjectingFetch(
-  effort?: string | null,
-): typeof globalThis.fetch | undefined {
+function openAICompatibleFetch(effort?: string | null): typeof globalThis.fetch {
   const value = effort?.trim()
-  if (!value) return undefined
   return async (input, init) => {
     if (init && typeof init.body === 'string') {
       try {
         const body = JSON.parse(init.body) as Record<string, unknown>
-        if (body && typeof body === 'object' && body.reasoning_effort === undefined) {
-          body.reasoning_effort = value
-          init = { ...init, body: JSON.stringify(body) }
+        if (body && typeof body === 'object') {
+          let changed = false
+          if (body.reasoning_effort === undefined && value) {
+            body.reasoning_effort = value
+            changed = true
+          }
+          if (body.stream === undefined) {
+            body.stream = false
+            changed = true
+          }
+          if (changed) init = { ...init, body: JSON.stringify(body) }
         }
       } catch {
         // Biarkan body apa adanya bila gagal parse.
@@ -167,7 +178,7 @@ function customCandidate(optModel?: string, effort?: string | null): UnindexedMo
     name: 'custom',
     baseURL,
     apiKey: process.env.CUSTOM_LLM_API_KEY,
-    fetch: reasoningInjectingFetch(effort),
+    fetch: openAICompatibleFetch(effort),
   })
   return {
     model: custom(modelId),
@@ -194,7 +205,7 @@ function nineRouterCandidate(optModel?: string, effort?: string | null): Unindex
     name: '9router',
     baseURL,
     apiKey,
-    fetch: reasoningInjectingFetch(effort),
+    fetch: openAICompatibleFetch(effort),
   })
   return {
     model: nine(modelId),
@@ -217,7 +228,7 @@ function openRouterCandidates(effort?: string | null): UnindexedModelCandidate[]
     name: 'openrouter',
     baseURL: 'https://openrouter.ai/api/v1',
     apiKey,
-    fetch: reasoningInjectingFetch(effort),
+    fetch: openAICompatibleFetch(effort),
   })
 
   return modelIds.map((modelId) => ({
@@ -1125,7 +1136,7 @@ function toModelCandidate(route: AiModelRoute | undefined): UnindexedModelCandid
       name: 'custom',
       baseURL,
       apiKey: process.env.CUSTOM_LLM_API_KEY,
-      fetch: reasoningInjectingFetch(route.reasoningEffort),
+      fetch: openAICompatibleFetch(route.reasoningEffort),
     })
     return {
       model: custom(route.modelId),
@@ -1142,7 +1153,7 @@ function toModelCandidate(route: AiModelRoute | undefined): UnindexedModelCandid
       name: 'openrouter',
       baseURL: 'https://openrouter.ai/api/v1',
       apiKey,
-      fetch: reasoningInjectingFetch(route.reasoningEffort),
+      fetch: openAICompatibleFetch(route.reasoningEffort),
     })
     return {
       model: openrouter(route.modelId),
@@ -1160,7 +1171,7 @@ function toModelCandidate(route: AiModelRoute | undefined): UnindexedModelCandid
       name: '9router',
       baseURL,
       apiKey,
-      fetch: reasoningInjectingFetch(route.reasoningEffort),
+      fetch: openAICompatibleFetch(route.reasoningEffort),
     })
     return {
       model: nine(route.modelId),

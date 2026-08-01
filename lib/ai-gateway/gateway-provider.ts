@@ -1,5 +1,5 @@
 import 'server-only'
-import { generateText, streamText, Output, type LanguageModel } from 'ai'
+import { streamText, Output, type LanguageModel } from 'ai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { z } from 'zod'
 import type { CanonSnapshot, Finding } from '@lakoku/narrative-core'
@@ -914,9 +914,13 @@ async function generateChoiceJson(args: {
           parentSignal: args.options.signal,
           candidateTimeoutSignal,
         }),
-        // Choices are small JSON — non-stream generateText reduces failure surface.
+        // Choices are small JSON, but STREAM mode (streamText) is the only
+        // reliable transport on the VPS 9router: generateText + explicit
+        // `stream: false` returns EMPTY content for ag/* on the VPS instance
+        // (IN 0 OUT 0), while streamText works 100% for every model. Same
+        // `.text` consumption path (executeObservedModelCall awaits result.text).
         call: () =>
-          executeCandidate(args.options.providerRuntime, 'choice', candidate, () => generateText({
+          executeCandidate(args.options.providerRuntime, 'choice', candidate, () => streamText({
             model,
             system,
             prompt,
@@ -927,14 +931,14 @@ async function generateChoiceJson(args: {
             // back to parseModelJson in consume.
             ...(useNative
               ? {
-                  experimental_output: Output.object({
+                  output: Output.object({
                     schema: AiChoiceDraftSchema,
                   }),
                 }
               : {}),
             abortSignal: requestSignal,
             maxRetries: 0,
-          }) as unknown as ReturnType<typeof streamText>),
+          })),
         consume: async (text) => {
           throwIfAborted(args.options.signal)
           const parsed = parseModelJson(text)

@@ -28,8 +28,8 @@ const {
 
 vi.mock('server-only', () => ({}))
 vi.mock('ai', () => ({
-  // Choices use generateText (non-stream); prose uses streamText. Both are
-  // driven by the same mock so existing streamTextMock assertions still apply.
+  // Choices and prose both stream via streamText (STREAM is the only reliable
+  // transport on the VPS 9router). One mock drives both paths.
   streamText: streamTextMock,
   generateText: streamTextMock,
   // P1-6: minimal Output.object stub so native-schema path can be constructed.
@@ -862,7 +862,7 @@ describe('createGatewayProvider choice adapter', () => {
     expect(callBudget.used).toBe(1)
   })
 
-  it('P1-6: native schema enabled via allowlist → experimental_output present, parse fallback still consumes text', async () => {
+  it('P1-6: native schema enabled via allowlist → output present, parse fallback still consumes text', async () => {
     process.env.LAKOKU_CHOICES_NATIVE_SCHEMA_MODELS = 'choice-model'
     streamTextMock.mockReturnValue({ text: Promise.resolve(JSON.stringify(validBranch())) })
     const choicesRoute: AiModelRoute = {
@@ -880,7 +880,7 @@ describe('createGatewayProvider choice adapter', () => {
     await expect(
       generateChoiceBranch({ provider }, choiceInput(), executionOptions),
     ).resolves.toEqual(validBranch())
-    expect(streamTextMock.mock.calls[0][0].experimental_output).toBeDefined()
+    expect(streamTextMock.mock.calls[0][0].output).toBeDefined()
     delete process.env.LAKOKU_CHOICES_NATIVE_SCHEMA_MODELS
   })
 })

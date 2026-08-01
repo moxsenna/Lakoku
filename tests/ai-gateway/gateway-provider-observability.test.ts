@@ -189,7 +189,7 @@ describe('createGatewayProvider prose observability', () => {
     process.env.LAKOKU_CHOICE_JITTER_MIN_MS = '0'
     process.env.LAKOKU_CHOICE_JITTER_MAX_MS = '0'
     let resolveText: ((value: string) => void) | undefined
-    generateTextMock.mockReturnValue({
+    streamTextMock.mockReturnValue({
       text: new Promise<string>((resolve) => { resolveText = resolve }),
       usage: Promise.resolve({}),
       finalStep: Promise.resolve({ response: {}, providerMetadata: {} }),
@@ -220,15 +220,57 @@ describe('createGatewayProvider prose observability', () => {
       signal: controller.signal,
       callBudget: { used: 0, max: 5 },
     })
-    await vi.waitFor(() => expect(generateTextMock).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(1))
     expect(resolveText).toBeTypeOf('function')
 
     controller.abort()
     resolveText?.('{"actions":[]}')
 
     await expect(run).rejects.toMatchObject({ name: 'AbortError' })
-    expect(generateTextMock).toHaveBeenCalledTimes(1)
-    expect(generateTextMock.mock.calls[0][0]).toHaveProperty('experimental_output')
+    expect(streamTextMock).toHaveBeenCalledTimes(1)
+    expect(streamTextMock.mock.calls[0][0]).toHaveProperty('output')
+  })
+
+  it('generates choices via streamText (STREAM) — non-stream generateText is not used for choices', async () => {
+    process.env.LAKOKU_CHOICE_JITTER_MIN_MS = '0'
+    process.env.LAKOKU_CHOICE_JITTER_MAX_MS = '0'
+    streamTextMock.mockReturnValue(observedResult(JSON.stringify({
+      question: 'Apa yang harus dilakukan Maya?',
+      actions: [],
+    })))
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, route(), {
+      ...route([{ provider: 'gateway', modelId: 'openai/choice-fallback' }]),
+      useCase: 'choices',
+      modelId: 'openai/choice-primary',
+    })
+
+    await expect(provider.generateChoices?.({
+      storyId: 'story-a',
+      currentChapter: 12,
+      draft: { title: 'Bab 12', lastParagraphs: ['satu', 'dua', 'tiga'] },
+      chapterBrief: {
+        phase: 'rising', chapterGoal: 'Maju', mustInclude: [], mustNotInclude: [],
+        mustNotReveal: [], plotDebtsToProgress: [], plotDebtsToClose: [],
+        remainingChapters: 38, endingRunway: 'expansion',
+      },
+      routeState: { truth: 0, risk: 0, secrecy: 0, empathy: 0, trust: {}, flags: {}, endingBias: {}, evidence: [] },
+      choiceHistory: [], lockedEndingKey: null,
+      canon: { activeCharacters: [], activeThreads: [], pendingReveals: [] },
+    }, {
+      telemetryContext,
+      workflowPhase: 'CHOICES_INITIAL',
+    })).resolves.toEqual({
+      question: 'Apa yang harus dilakukan Maya?',
+      actions: [],
+    })
+
+    expect(streamTextMock).toHaveBeenCalledTimes(1)
+    expect(streamTextMock.mock.calls[0][0]).toMatchObject({
+      maxRetries: 0,
+      temperature: expect.any(Number),
+    })
+    expect(generateTextMock).not.toHaveBeenCalled()
   })
 
   it('uses explicit candidate transport for synthetic choice identities without a configured choices route', async () => {

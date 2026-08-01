@@ -37,8 +37,8 @@ export type GenerationJobExecutionContext = {
   correlationId: string
   generationKind: 'standard' | 'personalized'
   triggerChoiceId?: string | null
-  deadlineAt?: string
-  deadlineAtMs?: number
+  deadlineAt: string
+  deadlineAtMs: number
   signal: AbortSignal
 }
 
@@ -112,6 +112,8 @@ const RETRYABLE_REASONS = new Set([
   'INVALID_RESPONSE',
   'SCHEMA_REJECTED',
   'REPAIR_EXHAUSTED',
+  'CHOICE_WORKFLOW_TIMEOUT',
+  'GENERATION_JOB_DEADLINE_EXCEEDED',
   'TIMEOUT',
   'RATE_LIMITED',
   'TRANSIENT',
@@ -125,6 +127,7 @@ const TERMINAL_REASONS = new Set([
   'GENERATION_CONTRACT_INVALID',
   'FINAL_CHAPTER',
   'UNSAFE',
+  'CHOICE_PARENT_CANCELLED',
 ])
 
 export function isRetryableGenerationReason(reason: string): boolean {

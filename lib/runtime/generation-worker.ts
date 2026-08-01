@@ -27,6 +27,7 @@ import {
 import { resolveGenerationLeaseTtlSeconds } from '@/lib/runtime/generation-lease-ttl'
 import { runChapterGenerationAttempt } from '@/lib/runtime/generation-mode'
 import { safeErrorInfo } from '@/lib/observability/safe-error'
+import { retryWindowFitsJobDeadline } from '@/lib/runtime/choice-execution-budget'
 
 // Re-export ClaimedGenerationJob type for callers (recovery route).
 export type { ClaimedGenerationJob }
@@ -300,12 +301,12 @@ export async function executeClaimedJob(
     }
 
     const endedAt = new Date()
-    const jobDeadlineAtMs = Date.parse(job.deadlineAt)
     const backoffSec = choiceRetryBackoffSeconds(job.attemptCount)
     const availableAtMs = Date.now() + backoffSec * 1000
-    const minimumRetryWindowMs = 46_000
-    const retryFitsDeadline = Number.isFinite(jobDeadlineAtMs)
-      && availableAtMs + minimumRetryWindowMs < jobDeadlineAtMs
+    const retryFitsDeadline = retryWindowFitsJobDeadline({
+      availableAtMs,
+      jobDeadlineAtMs: jobContext.deadlineAtMs,
+    })
     if (normalized.retryable && retryFitsDeadline) {
       const availableAt = new Date(availableAtMs).toISOString()
       const finish = await finishGenerationJobAttempt({

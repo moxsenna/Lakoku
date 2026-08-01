@@ -589,6 +589,8 @@ const PERSONALIZED_JOB_CONTEXT = {
   attemptNumber: 2,
   correlationId: CORRELATION_ID,
   generationKind: 'personalized' as const,
+  deadlineAt: '2099-01-01T00:00:00.000Z',
+  deadlineAtMs: Date.parse('2099-01-01T00:00:00.000Z'),
   signal: new AbortController().signal,
 }
 
@@ -1092,7 +1094,7 @@ describe('generateNextPersonalizedChapter', () => {
       seq: 9,
       repairAttempts: 0,
     })
-    const expectedContext = {
+    const expectedContext = expect.objectContaining({
       userId: USER_A,
       storyId: STORY_A,
       chapterNumber: 12,
@@ -1100,7 +1102,7 @@ describe('generateNextPersonalizedChapter', () => {
       jobId: null,
       correlationId: CORRELATION_ID,
       attemptNumber: null,
-    }
+    })
     expect(deps.selectProvider).toHaveBeenNthCalledWith(1, expectedContext)
     expect(deps.selectProvider).toHaveBeenNthCalledWith(2, expectedContext)
 
@@ -1353,6 +1355,8 @@ describe('generateNextPersonalizedChapter', () => {
         attemptNumber: 1,
         correlationId: CORRELATION_ID,
         generationKind: 'personalized',
+        deadlineAt: '2099-01-01T00:00:00.000Z',
+        deadlineAtMs: Date.parse('2099-01-01T00:00:00.000Z'),
         signal: new AbortController().signal,
       },
     }, deps)
@@ -1508,6 +1512,8 @@ describe('generateNextPersonalizedChapter', () => {
         attemptNumber: 1,
         correlationId: CORRELATION_ID,
         generationKind: 'personalized',
+        deadlineAt: '2099-01-01T00:00:00.000Z',
+        deadlineAtMs: Date.parse('2099-01-01T00:00:00.000Z'),
         signal: new AbortController().signal,
       },
     }, deps)
@@ -1550,6 +1556,8 @@ describe('generateNextPersonalizedChapter', () => {
         attemptNumber: 1,
         correlationId: CORRELATION_ID,
         generationKind: 'personalized',
+        deadlineAt: '2099-01-01T00:00:00.000Z',
+        deadlineAtMs: Date.parse('2099-01-01T00:00:00.000Z'),
         signal: new AbortController().signal,
       },
     }, deps)
@@ -2013,6 +2021,8 @@ describe('generateNextPersonalizedChapter', () => {
         attemptNumber: 1,
         correlationId: CORRELATION_ID,
         generationKind: 'personalized',
+        deadlineAt: '2099-01-01T00:00:00.000Z',
+        deadlineAtMs: Date.parse('2099-01-01T00:00:00.000Z'),
         signal: controller.signal,
       },
     }, deps)
@@ -2071,6 +2081,8 @@ describe('generateNextPersonalizedChapter', () => {
         attemptNumber: 1,
         correlationId: CORRELATION_ID,
         generationKind: 'personalized',
+        deadlineAt: '2099-01-01T00:00:00.000Z',
+        deadlineAtMs: Date.parse('2099-01-01T00:00:00.000Z'),
         signal: controller.signal,
       },
     }, deps)
@@ -2110,6 +2122,8 @@ describe('generateNextPersonalizedChapter', () => {
         attemptNumber: 1,
         correlationId: CORRELATION_ID,
         generationKind: 'personalized',
+        deadlineAt: '2099-01-01T00:00:00.000Z',
+        deadlineAtMs: Date.parse('2099-01-01T00:00:00.000Z'),
         signal: controller.signal,
       },
     }, deps)

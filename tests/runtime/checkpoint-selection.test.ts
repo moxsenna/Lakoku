@@ -70,6 +70,8 @@ function makeJobContext(overrides: Record<string, unknown> = {}) {
     attemptNumber: 2,
     correlationId: CORRELATION_ID,
     generationKind: 'standard' as const,
+    deadlineAt: '2099-01-01T00:00:00.000Z',
+    deadlineAtMs: Date.parse('2099-01-01T00:00:00.000Z'),
     signal: new AbortController().signal,
     ...overrides,
   }

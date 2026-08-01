@@ -87,6 +87,10 @@ import {
   type ChoiceBuildDeps,
 } from './choice-generation'
 import {
+  DEFAULT_CHOICE_CANDIDATE_TIMEOUT_MS,
+  resolveChoiceDeadlineAt,
+} from './choice-execution-budget'
+import {
   groundedChoiceProseFromFinalDraft,
   choiceNarrativeContextFromReader,
 } from './choice-context'
@@ -952,6 +956,12 @@ async function generateNextPersonalizedChapterInner(
           id: th.id,
           summary: ('title' in th && typeof th.title === 'string' ? th.title : th.id),
         }))
+      const resolvedChoiceDeadline = jobContext
+        ? resolveChoiceDeadlineAt({
+            nowMs: Date.now(),
+            parentDeadlineAtMs: jobContext.deadlineAtMs,
+          })
+        : null
       const choiceInput: BuildChoiceBranchInput = {
         snapshot,
         draft,
@@ -967,6 +977,14 @@ async function generateNextPersonalizedChapterInner(
         providerContext,
         signal: jobContext?.signal,
         providerRuntime: input.options?.providerRuntime,
+        choiceExecutionBudget: jobContext && resolvedChoiceDeadline ? {
+          usedCalls: 0,
+          maxCalls: 5,
+          maxCandidates: 3,
+          perCandidateTimeoutMs: DEFAULT_CHOICE_CANDIDATE_TIMEOUT_MS,
+          deadlineAtMs: resolvedChoiceDeadline.deadlineAtMs,
+          deadlineSource: resolvedChoiceDeadline.source,
+        } : undefined,
         activeCharacters,
         activeThreads,
       }
@@ -1000,7 +1018,11 @@ async function generateNextPersonalizedChapterInner(
         }).catch(() => undefined)
         return {
           ok: false,
-          reason: 'CHOICE_GENERATION_FAILED',
+          reason: choiceResult.reason === 'CHOICE_WORKFLOW_TIMEOUT'
+            || choiceResult.reason === 'GENERATION_JOB_DEADLINE_EXCEEDED'
+            || choiceResult.reason === 'CHOICE_PARENT_CANCELLED'
+            ? choiceResult.reason
+            : 'CHOICE_GENERATION_FAILED',
           detail: {
             choiceReason: choiceResult.reason,
             findingCodes: choiceResult.validationFindings.map((f) => f.code),

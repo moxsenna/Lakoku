@@ -52,6 +52,10 @@ import {
   type ChoiceBuildDeps,
   type ChoiceNarrativeContext,
 } from './choice-generation'
+import {
+  DEFAULT_CHOICE_CANDIDATE_TIMEOUT_MS,
+  resolveChoiceDeadlineAt,
+} from './choice-execution-budget'
 import { loadStoryCreativeDirection } from '@/lib/authoring/persist-creative-direction'
 import {
   boundaryMustNotInclude,
@@ -110,6 +114,7 @@ export type RealGenerateResult =
         | 'FAILED_REVIEW_REQUIRED'
         | 'TRANSIENT'
         | 'CHOICE_GENERATION_FAILED'
+        | import('@/lib/runtime/choice-generation').ChoiceBuildFailureReason
         | 'CAPACITY_BUSY'
         | 'CAPACITY_TIMEOUT'
       detail?: unknown
@@ -313,6 +318,7 @@ async function buildChoices(
   narrativeContextOverride?: ChoiceNarrativeContext,
   signal?: AbortSignal,
   providerRuntime?: import('@/lib/ai-gateway/provider').ProviderRuntime,
+  choiceExecutionBudget?: import('@/lib/runtime/choice-execution-budget').ChoiceExecutionBudget,
 ): Promise<{
   ok: true
   choicePrompt: string
@@ -322,7 +328,7 @@ async function buildChoices(
   source: 'INITIAL' | 'REPAIRED'
 } | {
   ok: false
-  reason: string
+  reason: import('@/lib/runtime/choice-generation').ChoiceBuildFailureReason
   validationFindings: Array<{ code: string; message: string; severity: string }>
   repairAttempts: number
 }> {
@@ -377,6 +383,7 @@ async function buildChoices(
     providerContext,
     signal,
     providerRuntime,
+    choiceExecutionBudget,
     activeCharacters,
     activeThreads,
     creativeDirectionHints: choiceDirection
@@ -1014,6 +1021,12 @@ async function generateNextChapterRealInner(
     stage = 'BUILD_CHOICES'
     stage = 'GENERATE_CHOICES_INITIAL'
     throwIfAborted(jobContext?.signal)
+    const resolvedChoiceDeadline = jobContext
+      ? resolveChoiceDeadlineAt({
+          nowMs: Date.now(),
+          parentDeadlineAtMs: jobContext.deadlineAtMs,
+        })
+      : null
     const branch = await buildChoices(
       snapshot,
       draft,
@@ -1022,6 +1035,14 @@ async function generateNextChapterRealInner(
       undefined,
       jobContext?.signal,
       input.options?.providerRuntime,
+      jobContext && resolvedChoiceDeadline ? {
+        usedCalls: 0,
+        maxCalls: 5,
+        maxCandidates: 3,
+        perCandidateTimeoutMs: DEFAULT_CHOICE_CANDIDATE_TIMEOUT_MS,
+        deadlineAtMs: resolvedChoiceDeadline.deadlineAtMs,
+        deadlineSource: resolvedChoiceDeadline.source,
+      } : undefined,
     )
     throwIfAborted(jobContext?.signal)
     if (!branch.ok) {
@@ -1109,7 +1130,11 @@ async function generateNextChapterRealInner(
       }).catch(() => undefined)
       return {
         ok: false,
-        reason: 'CHOICE_GENERATION_FAILED',
+        reason: branch.reason === 'CHOICE_WORKFLOW_TIMEOUT'
+          || branch.reason === 'GENERATION_JOB_DEADLINE_EXCEEDED'
+          || branch.reason === 'CHOICE_PARENT_CANCELLED'
+          ? branch.reason
+          : 'CHOICE_GENERATION_FAILED',
         detail: {
           choiceReason: branch.reason,
           findingCodes: branch.validationFindings.map((f) => f.code),

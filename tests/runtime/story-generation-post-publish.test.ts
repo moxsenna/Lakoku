@@ -99,6 +99,8 @@ const JOB_CONTEXT = {
   attemptNumber: 1,
   correlationId: '44444444-4444-4444-8444-444444444444',
   generationKind: 'standard' as const,
+  deadlineAt: '2099-01-01T00:00:00.000Z',
+  deadlineAtMs: Date.parse('2099-01-01T00:00:00.000Z'),
   signal: new AbortController().signal,
 }
 

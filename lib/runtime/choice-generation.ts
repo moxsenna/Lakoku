@@ -67,6 +67,9 @@ export type ChoiceBuildFailureReason =
   | 'NOT_DISTINCT'
   | 'UNSAFE'
   | 'REPAIR_EXHAUSTED'
+  | 'CHOICE_WORKFLOW_TIMEOUT'
+  | 'GENERATION_JOB_DEADLINE_EXCEEDED'
+  | 'CHOICE_PARENT_CANCELLED'
 
 export type ChoiceBuildFailure = {
   ok: false
@@ -96,7 +99,10 @@ export interface ChoiceBuildDeps {
       signal?: AbortSignal
       callBudget?: { used: number; max: number }
       choiceDeadlineAtMs?: number
+      choiceDeadlineSource?: 'LOCAL_POLICY' | 'PARENT_JOB'
       choicePerCandidateTimeoutMs?: number
+      choiceMaxCandidates?: number
+      providerRuntime?: import('@/lib/ai-gateway/provider').ProviderRuntime
     },
   ) => Promise<ChoiceBranch | null>
   /** Optional repair function — placeholder/no-op in Phase 1. */
@@ -110,7 +116,10 @@ export interface ChoiceBuildDeps {
       signal?: AbortSignal
       callBudget?: { used: number; max: number }
       choiceDeadlineAtMs?: number
+      choiceDeadlineSource?: 'LOCAL_POLICY' | 'PARENT_JOB'
       choicePerCandidateTimeoutMs?: number
+      choiceMaxCandidates?: number
+      providerRuntime?: import('@/lib/ai-gateway/provider').ProviderRuntime
     },
   ) => Promise<ChoiceBranch | null>
   telemetry?: {
@@ -258,7 +267,15 @@ export async function buildChoiceBranch(
   input: BuildChoiceBranchInput,
 ): Promise<ChoiceBuildResult> {
   const total = input.totalChapters ?? TOTAL_CHAPTERS
-  throwIfAborted(input.signal)
+  if (input.signal?.aborted) {
+    return {
+      ok: false,
+      reason: 'CHOICE_PARENT_CANCELLED',
+      validationFindings: [],
+      repairAttempts: 0,
+      cause: input.signal.reason,
+    }
+  }
 
   // Ending policy guard — no provider call
   if (isFinalChapter(input.chapterNumber, total)) {
@@ -318,6 +335,16 @@ export async function buildChoiceBranch(
     }
     // Shared with gateway-provider: incremented once per ACTUAL candidate request.
     const providerCallBudget = { used: choiceBudget.usedCalls, max: choiceBudget.maxCalls }
+    const syncUsedCalls = () => { choiceBudget.usedCalls = providerCallBudget.used }
+    const workflowFailureReason = (err: unknown): ChoiceBuildFailureReason | null => {
+      if (input.signal?.aborted) return 'CHOICE_PARENT_CANCELLED'
+      const code = err && typeof err === 'object' && 'code' in err
+        ? (err as { code?: unknown }).code
+        : err instanceof Error ? err.message : undefined
+      if (code === 'GENERATION_JOB_DEADLINE_EXCEEDED') return 'GENERATION_JOB_DEADLINE_EXCEEDED'
+      if (code === 'CHOICE_WORKFLOW_TIMEOUT') return 'CHOICE_WORKFLOW_TIMEOUT'
+      return null
+    }
     let totalCalls = 0
     let structuralRepairs = 0
     let qualityRepairs = 0
@@ -332,7 +359,9 @@ export async function buildChoiceBranch(
         signal: input.signal,
         callBudget: providerCallBudget,
         choiceDeadlineAtMs: choiceBudget.deadlineAtMs,
+        choiceDeadlineSource: choiceBudget.deadlineSource,
         choicePerCandidateTimeoutMs: choiceBudget.perCandidateTimeoutMs,
+        choiceMaxCandidates: choiceBudget.maxCandidates,
         ...(input.providerRuntime === undefined
           ? {}
           : { providerRuntime: input.providerRuntime }),
@@ -376,8 +405,10 @@ export async function buildChoiceBranch(
     while (choiceBudget.usedCalls < choiceBudget.maxCalls) {
       throwIfAborted(input.signal)
       if (Date.now() >= choiceBudget.deadlineAtMs) {
-        lastReason = 'PROVIDER_FAILED'
-        lastCause = new Error('CHOICE_WORKFLOW_TIMEOUT')
+        lastReason = choiceBudget.deadlineSource === 'PARENT_JOB'
+          ? 'GENERATION_JOB_DEADLINE_EXCEEDED'
+          : 'CHOICE_WORKFLOW_TIMEOUT'
+        lastCause = new Error(lastReason)
         break
       }
       totalCalls += 1
@@ -385,12 +416,12 @@ export async function buildChoiceBranch(
       let transientErr = false
       try {
         called = await runProviderCall(currentInput, phase)
-        choiceBudget.usedCalls = providerCallBudget.used
+        syncUsedCalls()
       } catch (err) {
-        choiceBudget.usedCalls = providerCallBudget.used
-        if (input.signal?.aborted) throw input.signal.reason ?? err
-        if (err instanceof Error && err.message === 'CHOICE_WORKFLOW_TIMEOUT') {
-          lastReason = 'PROVIDER_FAILED'
+        syncUsedCalls()
+        const workflowReason = workflowFailureReason(err)
+        if (workflowReason) {
+          lastReason = workflowReason
           lastCause = err
           break
         }
@@ -473,8 +504,13 @@ export async function buildChoiceBranch(
                   workflowPhase: 'CHOICES_REPAIR_1',
                   signal: input.signal,
                   callBudget: providerCallBudget,
+                  choiceDeadlineAtMs: choiceBudget.deadlineAtMs,
+                  choiceDeadlineSource: choiceBudget.deadlineSource,
+                  choicePerCandidateTimeoutMs: choiceBudget.perCandidateTimeoutMs,
+                  choiceMaxCandidates: choiceBudget.maxCandidates,
                 },
               )
+              syncUsedCalls()
               if (repaired) {
                 const rq = validateChoiceBranchQuality(
                   qualityInputFor(repaired, finalChapter, endingParagraphs, input),
@@ -492,7 +528,13 @@ export async function buildChoiceBranch(
                 lastReason = 'REPAIR_EXHAUSTED'
               }
             } catch (err) {
-              if (input.signal?.aborted) throw input.signal.reason ?? err
+              syncUsedCalls()
+              const workflowReason = workflowFailureReason(err)
+              if (workflowReason) {
+                lastReason = workflowReason
+                lastCause = err
+                break
+              }
               if (isAbortError(err)) throw err
               lastCause = err
               lastFindings = [...lastFindings, {
@@ -553,17 +595,25 @@ export async function buildChoiceBranch(
       cause: lastCause,
     }
   } catch (err) {
-    if (input.signal?.aborted) throw input.signal.reason ?? err
-    if (isAbortError(err)) throw err
+    const reason: ChoiceBuildFailureReason = input.signal?.aborted
+      ? 'CHOICE_PARENT_CANCELLED'
+      : err && typeof err === 'object' && 'code' in err
+        && (err as { code?: unknown }).code === 'GENERATION_JOB_DEADLINE_EXCEEDED'
+        ? 'GENERATION_JOB_DEADLINE_EXCEEDED'
+        : err && typeof err === 'object' && 'code' in err
+          && (err as { code?: unknown }).code === 'CHOICE_WORKFLOW_TIMEOUT'
+          ? 'CHOICE_WORKFLOW_TIMEOUT'
+          : 'PROVIDER_FAILED'
+    if (isAbortError(err) && reason === 'PROVIDER_FAILED') throw err
     deps.telemetry?.onChoiceFailed?.({
       chapterNumber: input.chapterNumber,
-      reason: 'PROVIDER_FAILED',
+      reason,
       findingCodes: ['PROVIDER_ERROR'],
       repairAttempts,
     })
     return {
       ok: false,
-      reason: 'PROVIDER_FAILED',
+      reason,
       validationFindings: [
         {
           code: 'PROVIDER_ERROR',

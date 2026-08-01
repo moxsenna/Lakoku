@@ -90,7 +90,7 @@ function shellMetadata(contractTitle: string, contractGenre: string, tropes: str
   const tagline = contractGenre.trim() || 'Drama interaktif personal'
   return {
     title: title.slice(0, 160),
-    cover: '/placeholder.svg?height=400&width=300',
+    cover: '/covers/default-cover.webp',
     tagline: tagline.slice(0, 200),
     role: 'Pembaca sebagai tokoh utama',
     tropes: tropes.slice(0, 8),

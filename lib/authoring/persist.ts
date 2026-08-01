@@ -22,7 +22,7 @@ export async function persistStoryBible(
     p_story_id: storyId,
     p_owner_user_id: ownerUserId,
     p_title: meta.title,
-    p_cover: '/placeholder.svg?height=400&width=300',
+    p_cover: '/covers/default-cover.webp',
     p_tagline: meta.tagline,
     p_role: meta.role,
     p_tropes: meta.tropes,

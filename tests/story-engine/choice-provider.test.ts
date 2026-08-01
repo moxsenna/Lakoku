@@ -15,6 +15,8 @@ import {
 } from '@/lib/ai-gateway/gateway'
 import type { ChapterDraftParsed, ChoiceBranch } from '@/lib/ai-gateway/schemas'
 import type { AiModelRoute } from '@/lib/ops/ai-model-routes'
+import { parseChoiceModelJson } from '@/lib/ai-gateway/choice-response-validation'
+import { InvalidModelResponseError } from '@/lib/ai-gateway/model-call-errors'
 
 const {
   streamTextMock,
@@ -186,6 +188,75 @@ function expectGatewayError(error: unknown, code: string): void {
 }
 
 describe('generateChoiceBranch', () => {
+  it('classifies invalid choice JSON explicitly before schema validation', () => {
+    expect(parseChoiceModelJson('{reader raw text')).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        validationStage: 'PARSE_JSON',
+        validationCodes: ['CHOICE_RESPONSE_INVALID_JSON'],
+      }),
+    })
+  })
+
+  it.each(['42', '[]', 'null'])(
+    'classifies valid JSON non-object root %s before V2 shape detection',
+    (text) => {
+      expect(parseChoiceModelJson(text)).toEqual({
+        ok: false,
+        error: expect.objectContaining({
+          validationStage: 'DRAFT_SCHEMA',
+          validationCodes: ['CHOICE_RESPONSE_NOT_JSON_OBJECT'],
+        }),
+      })
+    },
+  )
+
+  it('carries DRAFT_SCHEMA for an object targeting V2 that fails draft validation', async () => {
+    let observed: InvalidModelResponseError | undefined
+    const provider: GenerationProvider = {
+      ...createDeterministicProvider(),
+      generateChoices: async (_input, options) => {
+        try {
+          return await options?.consume?.({ question: 'Pilihan Rani?', actions: [] })
+        } catch (error) {
+          if (error instanceof InvalidModelResponseError) observed = error
+          throw error
+        }
+      },
+    }
+
+    await expect(generateChoiceBranch({ provider }, choiceInput(), executionOptions))
+      .rejects.toMatchObject({ code: 'CHOICE_INVALID' })
+    expect(observed).toMatchObject({
+      validationStage: 'DRAFT_SCHEMA',
+      validationCodes: ['CHOICE_DRAFT_INVALID'],
+    })
+  })
+
+  it('carries FINAL_BRANCH_SCHEMA and known application codes for finalized branch failures', async () => {
+    let observed: InvalidModelResponseError | undefined
+    const invalid = validBranch()
+    invalid.outcomes[0].nextChapterNumber = 14
+    const provider: GenerationProvider = {
+      ...createDeterministicProvider(),
+      generateChoices: async (_input, options) => {
+        try {
+          return await options?.consume?.(invalid)
+        } catch (error) {
+          if (error instanceof InvalidModelResponseError) observed = error
+          throw error
+        }
+      },
+    }
+
+    await expect(generateChoiceBranch({ provider }, choiceInput(), executionOptions))
+      .rejects.toMatchObject({ code: 'CHOICE_INVALID' })
+    expect(observed).toMatchObject({
+      validationStage: 'FINAL_BRANCH_SCHEMA',
+      validationCodes: ['NEXT_CHAPTER_MISMATCH'],
+    })
+  })
+
   it('keeps legacy plan/write-only providers compatible', async () => {
     const base = createDeterministicProvider()
     const legacyProvider: GenerationProvider = {

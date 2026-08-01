@@ -27,6 +27,8 @@ import {
   InvalidModelResponseError,
   executeObservedModelCall,
 } from './observed-model-call.server'
+import { sanitizeChoiceValidationCodes } from './model-call-errors'
+import { parseChoiceModelJson } from './choice-response-validation'
 import {
   asV1Compat,
   createEmptyTasteProfile,
@@ -725,6 +727,13 @@ function logCandidateFailure(
     const name = error && typeof error === 'object'
       ? (error as { name?: unknown }).name
       : undefined
+    const choiceValidation = error instanceof InvalidModelResponseError
+      && error.validationStage !== undefined
+      ? {
+          validationStage: error.validationStage,
+          validationCodes: sanitizeChoiceValidationCodes(error.validationCodes),
+        }
+      : {}
     console.log('[v0] gateway-provider fallback', {
       workflowPhase,
       providerId: candidate.providerId,
@@ -733,6 +742,7 @@ function logCandidateFailure(
       // Class name only — raw error text/message may embed provider secrets
       // and must never reach logs.
       errorName: typeof name === 'string' ? name : undefined,
+      ...choiceValidation,
     })
   } catch {
     // Bounded diagnostics must not affect generation.
@@ -941,8 +951,9 @@ async function generateChoiceJson(args: {
           })),
         consume: async (text) => {
           throwIfAborted(args.options.signal)
-          const parsed = parseModelJson(text)
-          return args.options.consume ? args.options.consume(parsed) : parsed
+          const parsed = parseChoiceModelJson(text)
+          if (!parsed.ok) throw parsed.error
+          return args.options.consume ? args.options.consume(parsed.data) : parsed.data
         },
       })
       })

@@ -3,6 +3,10 @@ import { buildFixtureSnapshot } from '@/fixtures/narrative/fixture-50'
 import { createDeterministicProvider, type GenerationProvider } from '@/lib/ai-gateway/provider'
 import { generateChapter } from '@/lib/ai-gateway/generate'
 import type { AiModelRoute } from '@/lib/ops/ai-model-routes'
+import {
+  InvalidModelResponseError,
+  sanitizeChoiceValidationCodes,
+} from '@/lib/ai-gateway/model-call-errors'
 
 const {
   streamTextMock,
@@ -312,7 +316,7 @@ describe('createGatewayProvider prose observability', () => {
     expect(generateTextMock).not.toHaveBeenCalled()
   })
 
-  it('passes malformed transport text through parsing and retries fallback after consume rejection', async () => {
+  it('rejects malformed choice JSON before downstream consume and retries fallback', async () => {
     const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
     const provider = createGatewayProvider(undefined, undefined, route(), route([
       { provider: 'gateway', modelId: 'openai/choice-fallback' },
@@ -332,8 +336,8 @@ describe('createGatewayProvider prose observability', () => {
       choiceHistory: [], lockedEndingKey: null, canon: { activeCharacters: [], activeThreads: [], pendingReveals: [] },
     }, { telemetryContext, workflowPhase: 'CHOICES_INITIAL', providerRuntime: { candidateTransport }, consume })).resolves.toEqual({ question: 'Pilih?', actions: [] })
 
-    expect(consume).toHaveBeenCalledTimes(2)
-    expect(consume.mock.calls[0]?.[0]).toBe('{not-json')
+    expect(consume).toHaveBeenCalledOnce()
+    expect(consume.mock.calls[0]?.[0]).toEqual({ question: 'Pilih?', actions: [] })
     expect(candidateTransport).toHaveBeenNthCalledWith(1, expect.objectContaining({ fallbackIndex: 0 }))
     expect(candidateTransport).toHaveBeenNthCalledWith(2, expect.objectContaining({ fallbackIndex: 1 }))
   })
@@ -447,6 +451,81 @@ describe('createGatewayProvider prose observability', () => {
       // Class name only — raw messages/stacks must never reach logs.
       errorName: 'Error',
     })
+  })
+
+  it('sanitizes choice validation codes with exact allowlist, unknown mapping, sorting, dedupe, and max 8', () => {
+    expect(sanitizeChoiceValidationCodes([
+      'NEXT_CHAPTER_MISMATCH',
+      'INVALID_ANYTHING',
+      'CHOICE_DRAFT_INVALID',
+      'NEXT_CHAPTER_MISMATCH',
+      'lowercase_code',
+      `A${'B'.repeat(64)}`,
+      'ENDING_NOT_ALLOWED',
+      'RUTE_NOT_ALLOWED',
+      'DUPLICATE_CHOICE_ID',
+      'DUPLICATE_OUTCOME_CHOICE_ID',
+      'OUTCOME_CHOICE_ID_MISMATCH',
+      'CHAPTER_49_OUTCOME_INVALID',
+      'INTERNAL_LANGUAGE_LEAK',
+      'CHOICE_NOT_ACTIONABLE',
+    ])).toEqual([
+      'CHAPTER_49_OUTCOME_INVALID',
+      'CHOICE_DRAFT_INVALID',
+      'CHOICE_NOT_ACTIONABLE',
+      'DUPLICATE_CHOICE_ID',
+      'DUPLICATE_OUTCOME_CHOICE_ID',
+      'ENDING_NOT_ALLOWED',
+      'INTERNAL_LANGUAGE_LEAK',
+      'UNKNOWN_VALIDATION_FAILURE',
+    ])
+
+    expect(sanitizeChoiceValidationCodes(['INVALID_ANYTHING']))
+      .toEqual(['UNKNOWN_VALIDATION_FAILURE'])
+  })
+
+  it('logs only safe validation stage and exact sanitized codes without rejected content', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const rejectedValue = {
+      readerText: 'RAW_READER_TEXT_SECRET',
+      prompt: 'RAW_PROMPT_SECRET',
+      response: 'RAW_RESPONSE_SECRET',
+    }
+    const error = new InvalidModelResponseError(
+      'RAW_MESSAGE_SECRET',
+      ['RAW_VALIDATION_DETAIL_SECRET'],
+      rejectedValue,
+      'FINAL_BRANCH_SCHEMA',
+      ['NEXT_CHAPTER_MISMATCH', 'INVALID_ANYTHING'],
+    )
+    streamTextMock.mockReturnValueOnce({
+      text: Promise.reject(error),
+      usage: Promise.resolve({}),
+      finalStep: Promise.resolve({ response: {}, providerMetadata: {} }),
+    })
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, route())
+    const input = await chapterInput()
+
+    await expect(provider.writeChapter({ snapshot: input.snapshot, plan: input.plan }, {
+      telemetryContext,
+      workflowPhase: 'CHAPTER_PROSE_INITIAL',
+    })).rejects.toThrow()
+
+    expect(log).toHaveBeenCalledWith('[v0] gateway-provider fallback', expect.objectContaining({
+      validationStage: 'FINAL_BRANCH_SCHEMA',
+      validationCodes: ['NEXT_CHAPTER_MISMATCH', 'UNKNOWN_VALIDATION_FAILURE'],
+    }))
+    const serialized = JSON.stringify(log.mock.calls)
+    for (const secret of [
+      'RAW_READER_TEXT_SECRET',
+      'RAW_PROMPT_SECRET',
+      'RAW_RESPONSE_SECRET',
+      'RAW_MESSAGE_SECRET',
+      'RAW_VALIDATION_DETAIL_SECRET',
+    ]) {
+      expect(serialized).not.toContain(secret)
+    }
   })
 
   it('records leak repair on same fallback index with new ID', async () => {

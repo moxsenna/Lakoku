@@ -42,6 +42,7 @@ import { GatewayError, scanForLeaks } from './safety'
 import {
   ContentRejectedError,
   InvalidModelResponseError,
+  choiceValidationCodesFromErrors,
 } from './model-call-errors'
 import { throwIfAborted } from '@/lib/runtime/abort'
 
@@ -427,13 +428,19 @@ export async function generateChoiceBranch(
     try {
       // Protocol V2: creative draft → deterministic finalizer → existing ChoiceBranch.
       let branchInput: unknown = raw
-      if (isAiChoiceDraftShape(raw)) {
+      const targetsV2 = isAiChoiceDraftShape(raw)
+        || Boolean(raw && typeof raw === 'object' && !Array.isArray(raw) && (
+          'question' in raw || 'actions' in raw
+        ))
+      if (targetsV2) {
         const draftParsed = parseAiChoiceDraft(raw)
         if (!draftParsed.ok) {
-          throw new GatewayError(
+          throw new InvalidModelResponseError(
             'Cabang pilihan tidak valid.',
-            'CHOICE_INVALID',
             draftParsed.errors,
+            undefined,
+            'DRAFT_SCHEMA',
+            ['CHOICE_DRAFT_INVALID'],
           )
         }
         branchInput = finalizeAiChoiceDraft({
@@ -452,12 +459,19 @@ export async function generateChoiceBranch(
         providerInput.currentChapter,
       )
     } catch (error) {
+      if (error instanceof InvalidModelResponseError) throw error
       if (error instanceof GatewayError && error.code === 'CHOICE_INVALID') {
         const contentRejected = error.errors?.some((item) => (
           item.includes('INTERNAL_LANGUAGE_LEAK') || item.includes('RUTE_NOT_ALLOWED')
         ))
-        const ObservedError = contentRejected ? ContentRejectedError : InvalidModelResponseError
-        throw new ObservedError(error.message, error.errors)
+        if (contentRejected) throw new ContentRejectedError(error.message, error.errors)
+        throw new InvalidModelResponseError(
+          error.message,
+          error.errors,
+          undefined,
+          'FINAL_BRANCH_SCHEMA',
+          choiceValidationCodesFromErrors(error.errors ?? []),
+        )
       }
       throw error
     }

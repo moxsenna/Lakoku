@@ -13,7 +13,7 @@ begin
 end
 $$;
 
-select plan(74);
+select plan(82);
 
 create or replace function pg_temp.effect_fixture()
 returns jsonb
@@ -121,6 +121,33 @@ as $$
     case when p_lease_fixture is null then null else pg_temp.lease_id(p_lease_fixture) end,
     p_idempotency_key
   );
+$$;
+
+create or replace function pg_temp.publish_label(
+  p_fixture_name text,
+  p_label text
+)
+returns jsonb
+language plpgsql
+as $$
+declare
+  v_story_id text := 'test:v2-action:' || p_fixture_name;
+begin
+  insert into public.stories (id, title)
+  values (v_story_id, 'Actionability ' || p_fixture_name);
+
+  perform pg_temp.add_lease(p_fixture_name, v_story_id, 12);
+
+  return pg_temp.publish_fixture(
+    v_story_id,
+    12,
+    p_fixture_name,
+    'idem:v2-action:' || p_fixture_name,
+    'Apa yang Raka lakukan sekarang?',
+    jsonb_set(pg_temp.choices_fixture(), '{0,label}', to_jsonb(p_label)),
+    pg_temp.outcomes_fixture(12)
+  );
+end;
 $$;
 
 -- Structural security and exact runtime identity.
@@ -341,8 +368,79 @@ select pg_temp.add_lease('transition', 'test:v2-transition', 12);
 select throws_ok($$select pg_temp.publish_fixture('test:v2-transition',12,'transition','idem:transition','Apa yang Raka lakukan sekarang?',pg_temp.choices_fixture(),jsonb_set(pg_temp.outcomes_fixture(12),'{0,nextChapterNumber}','14'))$$, '22023', null, 'chapters 1 through 48 require exact next chapter transition');
 select pg_temp.add_lease('kind', 'test:v2-kind', 12);
 select throws_ok($$select pg_temp.publish_fixture('test:v2-kind',12,'kind','idem:kind','Apa yang Raka lakukan sekarang?',pg_temp.choices_fixture(),jsonb_set(pg_temp.outcomes_fixture(12),'{0,choice_kind}','"internal"'))$$, '22023', null, 'unknown choice kind rejects');
-select pg_temp.add_lease('generic', 'test:v2-generic', 12);
-select throws_ok($$select pg_temp.publish_fixture('test:v2-generic',12,'generic','idem:generic','Apa yang Raka lakukan sekarang?',jsonb_set(pg_temp.choices_fixture(),'{0,label}','"Lanjutkan"'),pg_temp.outcomes_fixture(12))$$, '22023', null, 'generic reader choice label rejects');
+select is(
+  pg_temp.publish_label(
+    'production-label',
+    'Tarik Arga bersembunyi dan amankan kotak kayu rahasia'
+  )->>'ok',
+  'true',
+  'exact production action label publishes'
+);
+select results_eq(
+  $$
+    select pg_temp.publish_label(
+      'root-' || ordinality::text,
+      label
+    )->>'ok'
+    from unnest(array[
+      'Tarik Arga masuk ke dalam saung',
+      'Bawa Arga menjauh dari para penagih utang',
+      'Dorong meja untuk menghalangi pintu saung',
+      'Pegang tangan Arga dan tenangkan dia',
+      'Amankan kotak kayu rahasia sebelum mereka datang'
+    ]) with ordinality as root_labels(label, ordinality)
+    order by ordinality
+  $$,
+  $$values ('true'::text), ('true'::text), ('true'::text), ('true'::text), ('true'::text)$$,
+  'Tarik, Bawa, Dorong, Pegang, and Amankan root imperative matrix publishes'
+);
+select is(
+  pg_temp.publish_label('modifier', 'Segera amankan kotak kayu rahasia')->>'ok',
+  'true',
+  'one optional leading action modifier publishes'
+);
+select results_eq(
+  $$
+    select pg_temp.publish_label(
+      'prefix-' || ordinality::text,
+      label
+    )->>'ok'
+    from unnest(array[
+      'Membawa Arga menjauh dari pintu saung',
+      'Bersembunyi di balik dinding saung',
+      'Dibuka pintu saung sebelum mereka masuk',
+      'Terobos kepungan para penagih utang'
+    ]) with ordinality as prefixed_labels(label, ordinality)
+    order by ordinality
+  $$,
+  $$values ('true'::text), ('true'::text), ('true'::text), ('true'::text)$$,
+  'meN-, ber-, di-, and ter- action forms publish'
+);
+select throws_ok(
+  $$select pg_temp.publish_label('non-actionable', 'Pikirkan pilihan terbaik')$$,
+  '22023', 'CHOICE_GENERIC_OR_INTERNAL',
+  'non-actionable reader choice remains CHOICE_GENERIC_OR_INTERNAL'
+);
+select throws_ok(
+  $$select pg_temp.publish_label('abstract-memikirkan', 'Memikirkan pilihan terbaik')$$,
+  '22023', 'CHOICE_GENERIC_OR_INTERNAL',
+  'abstract Memikirkan choice remains CHOICE_GENERIC_OR_INTERNAL'
+);
+select throws_ok(
+  $$select pg_temp.publish_label('abstract-membayangkan', 'Membayangkan kemungkinan')$$,
+  '22023', 'CHOICE_GENERIC_OR_INTERNAL',
+  'abstract Membayangkan choice remains CHOICE_GENERIC_OR_INTERNAL'
+);
+select throws_ok(
+  $$select pg_temp.publish_label('abstract-mengkhawatirkan', 'Mengkhawatirkan ancaman')$$,
+  '22023', 'CHOICE_GENERIC_OR_INTERNAL',
+  'abstract Mengkhawatirkan choice remains CHOICE_GENERIC_OR_INTERNAL'
+);
+select throws_ok(
+  $$select pg_temp.publish_label('generic-exact', 'Lanjutkan')$$,
+  '22023', 'CHOICE_GENERIC_OR_INTERNAL',
+  'exact generic Lanjutkan remains CHOICE_GENERIC_OR_INTERNAL'
+);
 select pg_temp.add_lease('rute', 'test:v2-rute', 12);
 select throws_ok($$select pg_temp.publish_fixture('test:v2-rute',12,'rute','idem:rute','Apa yang Raka lakukan sekarang?',jsonb_set(pg_temp.choices_fixture(),'{0,label}','"Buka rute rahasia"'),pg_temp.outcomes_fixture(12))$$, '22023', null, 'reader-facing rute term rejects');
 select pg_temp.add_lease('leak', 'test:v2-leak', 12);

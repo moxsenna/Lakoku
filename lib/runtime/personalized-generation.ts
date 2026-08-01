@@ -280,6 +280,16 @@ export function personalizedGenerationKey(
   return `gen:personalized:${scope}:${storyId}:${chapterNumber}`
 }
 
+function personalizedLegacyLeaseKey(
+  storyId: string,
+  chapterNumber: number,
+  attemptId: string,
+): string {
+  const attemptDigest = createHash('sha256').update(attemptId).digest('hex')
+  const storyDigest = createHash('sha256').update(storyId).digest('hex')
+  return `gen:personalized:lease-attempt:${storyDigest}:${chapterNumber}:${attemptDigest}`
+}
+
 function resolveBlueprint(
   snapshot: CanonSnapshot,
   chapterNumber: number,
@@ -642,7 +652,7 @@ async function generateNextPersonalizedChapterInner(
       // Multi-LLM can exceed default 120s wall before publish.
       // TTL from generation_policy (clamped 60..1800).
       ttlSeconds,
-      idempotencyKey: personalizedGenerationKey(storyId, chapterNumber, 'lease'),
+      idempotencyKey: personalizedLegacyLeaseKey(storyId, chapterNumber, attemptId),
     })
     if (!lease.ok) return { ok: false, reason: lease.reason }
     leaseId = lease.lease_id
@@ -1171,8 +1181,7 @@ async function generateNextPersonalizedChapterInner(
         idempotencyKey: personalizedGenerationKey(storyId, chapterNumber, 'publish'),
       })
       if (legacy.ok) {
-        // Publish RPC atomically released its lease; caller no longer owns it.
-        ownLease = false
+        await releaseOwnLease()
         published = {
           ok: true,
           chapter_number: legacy.chapter_number,
@@ -1183,8 +1192,8 @@ async function generateNextPersonalizedChapterInner(
       }
     }
 
-    // Legacy publish RPC owns lease release on success. Any failed legacy publish
-    // leaves the caller-owned lease to release before reconciliation or return.
+    // Legacy caller releases exact owned lease after success or failure. Helper guard
+    // keeps cleanup exactly once even when publish already removed the DB row.
     if (!published.ok) await releaseOwnLease()
 
     if (published.ok && !jobContext) {

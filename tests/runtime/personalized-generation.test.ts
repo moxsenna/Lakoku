@@ -327,7 +327,11 @@ function makeDeps(options: {
   }
 
   const deps = {
-    acquireGenerationLease: vi.fn(async (args: { storyId: string; chapterNumber: number }) => {
+    acquireGenerationLease: vi.fn(async (args: {
+      storyId: string
+      chapterNumber: number
+      idempotencyKey: string
+    }) => {
       push('lease')
       capture.storyIdsSeen.push(args.storyId)
       return { ok: true as const, lease_id: `lease-${args.storyId}-${args.chapterNumber}`, chapter_number: args.chapterNumber }
@@ -1122,6 +1126,7 @@ describe('generateNextPersonalizedChapter', () => {
       'assertConsumerSafe',
       'choices',
       'publishV2',
+      'releaseLease',
       'markPublished',
       'telemetry',
     ])
@@ -1146,6 +1151,63 @@ describe('generateNextPersonalizedChapter', () => {
     })
   })
 
+  it('uses deterministic bounded lease keys from current attempt A/B, not reused checkpoint prose identity', async () => {
+    const checkpoint = personalizedCheckpoint({
+      attemptId: 'checkpoint-prose-attempt',
+      correlationId: 'checkpoint-prose-correlation',
+      status: 'PROSE_READY',
+    })
+    const attemptA = '  execution-attempt-A  '
+    const attemptB = 'execution-attempt-B'
+    const first = makeDeps({ chapterNumber: 12, checkpoint })
+    const second = makeDeps({ chapterNumber: 12, checkpoint })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 12,
+      attemptId: attemptA,
+    }, first.deps)
+    await generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 12,
+      attemptId: attemptB,
+    }, second.deps)
+
+    const keyA = first.deps.acquireGenerationLease.mock.calls[0]?.[0].idempotencyKey
+    const keyB = second.deps.acquireGenerationLease.mock.calls[0]?.[0].idempotencyKey
+    expect(keyA).toBeTypeOf('string')
+    expect(keyB).toBeTypeOf('string')
+    expect(keyA).not.toBe(keyB)
+    expect(keyA?.length).toBeLessThanOrEqual(200)
+    expect(keyB?.length).toBeLessThanOrEqual(200)
+    expect(keyA).not.toContain('checkpoint-prose-attempt')
+    expect(keyB).not.toContain('checkpoint-prose-attempt')
+    expect(first.deps.generateChapter).not.toHaveBeenCalled()
+    expect(second.deps.generateChapter).not.toHaveBeenCalled()
+  })
+
+  it('passes freshly acquired owned lease to legacy publish', async () => {
+    const { deps } = makeDeps({ chapterNumber: 12 })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 12,
+      attemptId: 'execution-attempt-fresh',
+    }, deps)
+
+    expect(deps.publishChapterV2).toHaveBeenCalledWith(expect.objectContaining({
+      leaseId: `lease-${STORY_A}-12`,
+    }))
+  })
+
   it('releases owned lease once when non-final legacy publish returns CHAPTER_EXISTS', async () => {
     const { deps } = makeDeps({ chapterNumber: 12, publishOk: false })
     const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
@@ -1165,7 +1227,7 @@ describe('generateNextPersonalizedChapter', () => {
     })
   })
 
-  it('does not manually release owned lease after successful legacy publish', async () => {
+  it('cleans owned lease exactly once after successful legacy publish', async () => {
     const { deps } = makeDeps({ chapterNumber: 12 })
     const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
 
@@ -1178,7 +1240,11 @@ describe('generateNextPersonalizedChapter', () => {
 
     expect(result.ok).toBe(true)
     expect(deps.publishChapterV2).toHaveBeenCalledTimes(1)
-    expect(deps.releaseGenerationLease).not.toHaveBeenCalled()
+    expect(deps.releaseGenerationLease).toHaveBeenCalledTimes(1)
+    expect(deps.releaseGenerationLease).toHaveBeenCalledWith({
+      storyId: STORY_A,
+      leaseId: `lease-${STORY_A}-12`,
+    })
   })
 
   it('worker-ON chapter 50 skips choice providers and publishes null/empty choices through V4 exactly once', async () => {
@@ -1406,7 +1472,7 @@ describe('generateNextPersonalizedChapter', () => {
     expect(firstResult.ok).toBe(true)
     expect(first.deps.publishChapterV2).toHaveBeenCalledTimes(1)
     expect(first.deps.markReaderStateSelesai).toHaveBeenCalledTimes(1)
-    expect(first.deps.releaseGenerationLease).not.toHaveBeenCalled()
+    expect(first.deps.releaseGenerationLease).toHaveBeenCalledTimes(1)
 
     // Retry: chapter already published → CHAPTER_EXISTS; must still mark SELESAI.
     const secondCapture = {

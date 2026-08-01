@@ -724,17 +724,15 @@ function logCandidateFailure(
   try {
     const name = error && typeof error === 'object'
       ? (error as { name?: unknown }).name
-      : typeof error
-    const message = error && typeof error === 'object' && error instanceof Error
-      ? error.message
-      : String(error)
+      : undefined
     console.log('[v0] gateway-provider fallback', {
       workflowPhase,
       providerId: candidate.providerId,
       configuredModelId: candidate.configuredModelId,
       errorCode: controlledErrorCode(error),
-      errorName: name,
-      errorMessage: message.slice(0, 200),
+      // Class name only — raw error text/message may embed provider secrets
+      // and must never reach logs.
+      errorName: typeof name === 'string' ? name : undefined,
     })
   } catch {
     // Bounded diagnostics must not affect generation.

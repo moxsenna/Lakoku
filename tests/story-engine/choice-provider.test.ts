@@ -513,6 +513,7 @@ describe('createGatewayProvider choice adapter', () => {
       providerId: 'gateway',
       configuredModelId: 'openai/choice-primary',
       errorCode: 'PROVIDER_REQUEST_FAILED',
+      errorName: 'Error',
     })
     expect(JSON.stringify(logSpy.mock.calls)).not.toContain('primary unavailable')
     logSpy.mockRestore()
@@ -544,6 +545,7 @@ describe('createGatewayProvider choice adapter', () => {
       providerId: 'openrouter',
       configuredModelId: 'model-a',
       errorCode: 'PROVIDER_REQUEST_FAILED',
+      errorName: 'Error',
     })
     expect(recordGenerationProviderCallMock.mock.calls.at(-1)?.[0].candidate).toMatchObject({
       providerId: 'openrouter',

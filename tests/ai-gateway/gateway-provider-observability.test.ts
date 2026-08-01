@@ -402,6 +402,8 @@ describe('createGatewayProvider prose observability', () => {
       providerId: 'gateway',
       configuredModelId: 'openai/chapter-primary',
       errorCode: 'PROVIDER_REQUEST_FAILED',
+      // Class name only — raw messages/stacks must never reach logs.
+      errorName: 'Error',
     })
   })
 

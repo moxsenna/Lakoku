@@ -180,6 +180,31 @@ describe('executeObservedModelCall', () => {
     }
   })
 
+  it('awaits async call results (generateText resolves a promise, not a result object)', async () => {
+    const record = vi.fn().mockResolvedValue(undefined)
+    const observedDeps = deps({ record })
+
+    // generateText returns a Promise; executeObservedModelCall must await the
+    // call itself before touching `.text`/`.usage`/`.finalStep`.
+    await expect(executeObservedModelCall(input({
+      call: (async () => ({
+        text: 'async model text',
+        usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+        finalStep: { response: { modelId: 'async-model' } },
+      })) as never,
+      consume: (text) => ({ parsed: text }),
+    }), observedDeps)).resolves.toEqual({ parsed: 'async model text' })
+
+    expect(record).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
+      actualModelId: 'async-model',
+      actualModelResolved: true,
+      outcome: 'SUCCEEDED',
+      inputTokenCount: 1,
+      outputTokenCount: 2,
+      totalTokenCount: 3,
+    }))
+  })
+
   it('falls back to configured model and rejects unknown token and cost shapes', async () => {
     const record = vi.fn().mockResolvedValue(undefined)
     const observedDeps = deps({ record })

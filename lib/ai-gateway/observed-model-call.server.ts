@@ -256,7 +256,10 @@ export async function executeObservedModelCall<T>(
   let observation: Partial<ResolvedObservation> = {}
 
   try {
-    const result = input.call()
+    // Await the call itself first: streamText returns a result object whose
+    // fields are promises, but generateText returns a Promise. Reading `.text`
+    // off the raw call result is `undefined` for async calls.
+    const result = await input.call()
     // Attach rejection handlers immediately. Usage/final-step promises may reject
     // before slower model text settles, but remain best-effort telemetry only.
     const usagePromise = Promise.resolve()

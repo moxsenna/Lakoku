@@ -238,6 +238,7 @@ describe('createGatewayProvider story-contract adapter', () => {
       providerId: 'gateway',
       configuredModelId: 'openai/contract-primary',
       errorCode: 'PROVIDER_REQUEST_FAILED',
+      errorName: 'Error',
     })
     expect(JSON.stringify(logSpy.mock.calls)).not.toContain('primary unavailable')
   })

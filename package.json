@@ -30,6 +30,7 @@
     "smoke:web-release": "node scripts/run-smoke.cjs scripts/web-release-smoke.ts",
     "smoke:onboarding-shimmer": "node scripts/run-smoke.cjs scripts/onboarding-shimmer-smoke.ts",
     "smoke:auth-config": "node scripts/run-smoke.cjs scripts/auth-config-smoke.ts",
+    "smoke:password-recovery": "node scripts/run-smoke.cjs scripts/password-recovery-smoke.ts",
     "smoke:admin-guard": "node scripts/run-smoke.cjs scripts/admin-guard-smoke.ts",
     "smoke:m4": "node scripts/run-smoke.cjs scripts/m4-generation.ts",
     "smoke:m5": "node scripts/run-smoke.cjs scripts/m5-soak.ts",

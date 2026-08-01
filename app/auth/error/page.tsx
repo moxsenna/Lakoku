@@ -1,29 +1,5 @@
 import Link from 'next/link'
-
-function publicErrorMessage(raw: string | undefined): string {
-  if (!raw) {
-    return 'Tautan masuk tidak valid atau sudah kedaluwarsa. Coba masuk kembali.'
-  }
-  const lower = raw.toLowerCase()
-  if (lower.includes('access_denied') || lower.includes('denied')) {
-    return 'Login Google dibatalkan. Kamu bisa coba lagi kapan saja.'
-  }
-  if (lower.includes('missing_code')) {
-    return 'Kode login tidak diterima. Coba masuk dengan Google sekali lagi.'
-  }
-  if (
-    lower.includes('code verifier') ||
-    lower.includes('pkce') ||
-    lower.includes('both auth code and code verifier')
-  ) {
-    return 'Sesi login Google tidak lengkap (cookie). Coba lagi dari halaman masuk, atau nonaktifkan pemblokir cookie untuk situs ini.'
-  }
-  if (lower.includes('expired') || lower.includes('invalid')) {
-    return 'Tautan masuk tidak valid atau sudah kedaluwarsa. Coba masuk kembali.'
-  }
-  // Generic fallback — still show a short technical hint for support.
-  return `Login gagal. Coba masuk kembali. (${raw.slice(0, 80)})`
-}
+import { publicErrorMessage } from '@/lib/auth/public-error'
 
 export default async function AuthErrorPage({
   searchParams,

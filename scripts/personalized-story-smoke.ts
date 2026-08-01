@@ -370,12 +370,10 @@ check(
 
 const generationRoute = source('app/api/stories/[id]/generate/route.ts')
 check(
-  'existing generation route still selects generateNextChapterReal',
-  generationRoute.includes("from '@lakoku/runtime'")
-    && generationRoute.includes('generateNextChapterReal')
-    && generationRoute.includes('await generateNextChapterReal({')
-    && generationRoute.includes('userId: user.id')
-    && generationRoute.includes('correlationId: crypto.randomUUID()'),
+  'existing generation route uses shared owner kickoff seam',
+  generationRoute.includes("from '@/lib/api/start-chapter.server'")
+    && generationRoute.includes('startOwnedChapterGeneration')
+    && generationRoute.includes('await startOwnedChapterGeneration(id, n)'),
 )
 
 const personalizedSourcePaths = [

@@ -718,6 +718,34 @@ function controlledErrorCode(error: unknown): string {
   return 'PROVIDER_REQUEST_FAILED'
 }
 
+const CHOICE_INVALID_CAPTURE_TIMEOUT_MS = 75
+
+async function captureChoiceInvalidBestEffort(
+  context: import('../observability/generation-provider-call.contract').ProviderCallContext,
+  writer: import('../observability/choice-invalid-capture.server').ChoiceInvalidCaptureWriter | undefined,
+  error: unknown,
+): Promise<void> {
+  if (!(error instanceof InvalidModelResponseError)) return
+  const evidence = error.getChoiceLexicalEvidence()
+  if (!evidence || evidence.choices.length === 0) return
+
+  const capture = Promise.resolve()
+    .then(async () => {
+      const { captureChoiceInvalidEvidence } = await import('../observability/choice-invalid-capture.server')
+      await captureChoiceInvalidEvidence(context, evidence, { writer })
+    })
+    .catch(() => undefined)
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<void>((resolve) => {
+    timeout = setTimeout(resolve, CHOICE_INVALID_CAPTURE_TIMEOUT_MS)
+  })
+  try {
+    await Promise.race([capture, deadline])
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout)
+  }
+}
+
 function logCandidateFailure(
   workflowPhase: string,
   candidate: ModelCandidate,
@@ -966,6 +994,16 @@ async function generateChoiceJson(args: {
       }
       lastError = error
       logCandidateFailure(args.options.workflowPhase, candidate, error)
+      if (controlledErrorCode(error) === 'PROVIDER_INVALID_RESPONSE'
+        && error instanceof InvalidModelResponseError
+        && error.validationStage === 'FINAL_BRANCH_SCHEMA'
+        && error.validationCodes.includes('CHOICE_NOT_ACTIONABLE')) {
+        await captureChoiceInvalidBestEffort(
+          args.options.telemetryContext,
+          args.options.providerRuntime?.choiceInvalidCaptureWriter,
+          error,
+        )
+      }
     }
   }
 

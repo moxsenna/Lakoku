@@ -12,6 +12,7 @@ import type { CanonSnapshot, ChapterBlueprint, Finding } from '@lakoku/narrative
 import { z } from 'zod'
 import {
   ChapterDraftSchema,
+  ChoiceBranchSchema,
   parsePlan,
   parseDraft,
   validateChoiceBranch,
@@ -423,8 +424,10 @@ export async function generateChoiceBranch(
     )
   }
 
+  let consumedValue: ChoiceBranch | undefined
   const validate = (raw: unknown): ChoiceBranch => {
     throwIfAborted(options?.signal)
+    let normalizedBranch: unknown
     try {
       // Protocol V2: creative draft → deterministic finalizer → existing ChoiceBranch.
       let branchInput: unknown = raw
@@ -454,10 +457,13 @@ export async function generateChoiceBranch(
           lockedEndingKey: providerInput.lockedEndingKey,
         })
       }
-      return validateChoiceBranch(
-        normalizeChoiceReaderText(branchInput),
+      normalizedBranch = normalizeChoiceReaderText(branchInput)
+      const validated = validateChoiceBranch(
+        normalizedBranch,
         providerInput.currentChapter,
       )
+      consumedValue = validated
+      return validated
     } catch (error) {
       if (error instanceof InvalidModelResponseError) throw error
       if (error instanceof GatewayError && error.code === 'CHOICE_INVALID') {
@@ -465,12 +471,40 @@ export async function generateChoiceBranch(
           item.includes('INTERNAL_LANGUAGE_LEAK') || item.includes('RUTE_NOT_ALLOWED')
         ))
         if (contentRejected) throw new ContentRejectedError(error.message, error.errors)
+        const evidenceParse = ChoiceBranchSchema.safeParse(normalizedBranch)
+        const actionableIndexes = evidenceParse.success
+          ? []
+          : [...new Set(evidenceParse.error.issues.flatMap((issue) => {
+              const [choices, index, label] = issue.path
+              return choices === 'choices'
+                && typeof index === 'number'
+                && Number.isInteger(index)
+                && label === 'label'
+                && issue.message.startsWith('CHOICE_NOT_ACTIONABLE')
+                ? [index]
+                : []
+            }))]
+        const choiceLexicalEvidence = actionableIndexes.length > 0
+          && normalizedBranch
+          && typeof normalizedBranch === 'object'
+          && Array.isArray((normalizedBranch as { choices?: unknown }).choices)
+          ? {
+              choices: actionableIndexes.flatMap((index) => {
+                const choice = (normalizedBranch as { choices: unknown[] }).choices[index]
+                return choice && typeof choice === 'object'
+                  && typeof (choice as { label?: unknown }).label === 'string'
+                  ? [{ index, label: (choice as { label: string }).label }]
+                  : []
+              }),
+            }
+          : undefined
         throw new InvalidModelResponseError(
           error.message,
           error.errors,
           undefined,
           'FINAL_BRANCH_SCHEMA',
           choiceValidationCodesFromErrors(error.errors ?? []),
+          choiceLexicalEvidence?.choices.length ? choiceLexicalEvidence : undefined,
         )
       }
       throw error
@@ -484,7 +518,7 @@ export async function generateChoiceBranch(
       options ? { ...options, consume: validate } : options,
     )
     throwIfAborted(options?.signal)
-    return validate(raw)
+    return consumedValue ?? validate(raw)
   } catch (error) {
     if (error instanceof ContentRejectedError || error instanceof InvalidModelResponseError) {
       throw new GatewayError(

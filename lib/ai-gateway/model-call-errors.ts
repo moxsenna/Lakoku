@@ -3,6 +3,13 @@ export type ChoiceValidationStage =
   | 'DRAFT_SCHEMA'
   | 'FINAL_BRANCH_SCHEMA'
 
+export type ChoiceLexicalEvidence = Readonly<{
+  choices: readonly Readonly<{
+    index: number
+    label: string
+  }>[]
+}>
+
 const CHOICE_VALIDATION_CODE_PATTERN = /^[A-Z][A-Z0-9_]{2,63}$/
 const UNKNOWN_VALIDATION_FAILURE = 'UNKNOWN_VALIDATION_FAILURE'
 const ALLOWED_CHOICE_VALIDATION_CODES = new Set([
@@ -54,15 +61,23 @@ export function choiceValidationCodesFromErrors(errors: readonly string[]): stri
 }
 
 export class InvalidModelResponseError extends Error {
+  readonly #choiceLexicalEvidence?: ChoiceLexicalEvidence
+
   constructor(
     message = 'Model response failed validation.',
     readonly validationErrors: string[] = [],
     readonly rejectedValue?: unknown,
     readonly validationStage?: ChoiceValidationStage,
     readonly validationCodes: string[] = [],
+    choiceLexicalEvidence?: ChoiceLexicalEvidence,
   ) {
     super(message)
     this.name = 'InvalidModelResponseError'
+    this.#choiceLexicalEvidence = choiceLexicalEvidence
+  }
+
+  getChoiceLexicalEvidence(): ChoiceLexicalEvidence | undefined {
+    return this.#choiceLexicalEvidence
   }
 }
 

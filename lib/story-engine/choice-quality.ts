@@ -188,8 +188,13 @@ function isPromptGenericWithoutConcreteNouns(
 
 // ---- Actionability ----
 
-/** Known Indonesian root imperatives (expanded beyond Phase 1 whitelist). */
-const INDO_ROOT_IMPERATIVES = new Set([
+/**
+ * Known Indonesian root imperatives (expanded beyond Phase 1 whitelist).
+ * Satu sumber kebenaran: schema validator (ACTION_PREFIX_PATTERN di quality.ts)
+ * dibangun dari set ini agar tidak tertinggal — drift di sini memblokir SEMUA
+ * cabang pilihan di schema (akar CHOICE_REPAIR_EXHAUSTED produksi).
+ */
+export const INDO_ROOT_IMPERATIVES = new Set([
   'hadapi', 'selidiki', 'buka', 'tutup', 'ambil', 'tinggalkan', 'ikuti',
   'hadang', 'tanya', 'tolong', 'selamatkan', 'lawan', 'kejar', 'periksa',
   'baca', 'sembunyikan', 'ungkapkan', 'masuk', 'keluar', 'lari', 'panggil',
@@ -231,7 +236,7 @@ const INTERNAL_MECHANISM_PATTERNS: RegExp[] = [
 /** Modifier aspek/cara yang boleh mendahului verba dalam frasa aksi. */
 const LEADING_ACTION_MODIFIERS = new Set([
   'tetap', 'terus', 'segera', 'langsung', 'perlahan', 'cepat', 'coba',
-  'kembali', 'maju', 'mundur', 'pura-pura', 'tiba-tiba',
+  'kembali', 'maju', 'mundur', 'pura-pura', 'tiba-tiba', 'diam-diam',
 ])
 
 function startsWithVerb(label: string): boolean {

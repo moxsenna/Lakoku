@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import {
   ChapterGenerationStatusSchema,
   ChapterStatusResponseSchema,
+  GenerationAttemptIdentitySchema,
+  StartChapterSuccessResponseSchema,
   SubmitChoiceResponseSchema,
   type ChoiceOutcome,
 } from '../../packages/contracts/src/reader'
@@ -48,6 +50,28 @@ describe('reader chapter status contracts', () => {
     ])
     expect(ChapterGenerationStatusSchema.safeParse('queued').success).toBe(true)
     expect(ChapterGenerationStatusSchema.safeParse('lease_held').success).toBe(false)
+  })
+
+  it('requires strict UUID generation identity and kickoff response', () => {
+    const identity = {
+      attemptId: null,
+      correlationId: '11111111-1111-4111-8111-111111111111',
+    }
+    expect(GenerationAttemptIdentitySchema.parse(identity)).toEqual(identity)
+    expect(GenerationAttemptIdentitySchema.safeParse({ ...identity, extra: true }).success).toBe(false)
+    expect(GenerationAttemptIdentitySchema.safeParse({ ...identity, correlationId: 'bad' }).success).toBe(false)
+    expect(StartChapterSuccessResponseSchema.safeParse({
+      ok: true,
+      chapterNumber: 1,
+      status: 'STARTED',
+      ...identity,
+    }).success).toBe(true)
+    expect(StartChapterSuccessResponseSchema.safeParse({
+      ok: true,
+      chapterNumber: 1,
+      status: 'STARTED',
+      attemptId: null,
+    }).success).toBe(false)
   })
 
   it('requires exact public status fields', () => {

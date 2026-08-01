@@ -12,6 +12,18 @@ export type SafeErrorInfo = {
 const MAX_MESSAGE = 400
 const MAX_STACK = 2_000
 
+/** Batas panjang identifier pada log (storyId/correlationId/jobId/attemptId). */
+export const MAX_LOG_ID_LENGTH = 64
+
+/**
+ * Proyeksi identifier untuk log: selalu bounded, tanpa isi bebas.
+ * Non-string (null/undefined) dinormalisasi ke null.
+ */
+export function boundedLogId(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null
+  return value.slice(0, MAX_LOG_ID_LENGTH)
+}
+
 function scrub(text: string): string {
   return text
     .replace(/postgresql:\/\/[^\s"']+/gi, 'postgresql://[redacted]')

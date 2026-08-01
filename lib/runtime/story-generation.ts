@@ -8,7 +8,7 @@ import {
   type PublishResult,
 } from './lifecycle'
 import { NO_CREATIVE_DIRECTION_FINGERPRINT } from './chapter-generation-checkpoint.pure'
-import type { FencedCheckpointMutationResult } from './generation-jobs'
+import type { CheckpointMutationResult } from './chapter-generation-checkpoint.pure'
 import { classifyGenerationPublicationError } from './generation-job-error'
 import { withGenerationSlot } from './generation-concurrency'
 import {
@@ -40,7 +40,7 @@ import {
   markFailureRecorded,
 } from '@/lib/observability/generation-stage-error'
 import type { GenerationStage } from '@/lib/observability/generation-stages'
-import { safeErrorInfo } from '@/lib/observability/safe-error'
+import { boundedLogId, safeErrorInfo } from '@/lib/observability/safe-error'
 import type { ChapterBrief, ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
 import { normalizeRouteState, type RouteState } from '@/lib/story-engine/route-state'
 import { summarizeRouteStateForPrompt } from '@/lib/story-engine/route-state'
@@ -52,6 +52,10 @@ import {
   type ChoiceBuildDeps,
   type ChoiceNarrativeContext,
 } from './choice-generation'
+import {
+  DEFAULT_CHOICE_CANDIDATE_TIMEOUT_MS,
+  resolveChoiceDeadlineAt,
+} from './choice-execution-budget'
 import { loadStoryCreativeDirection } from '@/lib/authoring/persist-creative-direction'
 import {
   boundaryMustNotInclude,
@@ -110,6 +114,7 @@ export type RealGenerateResult =
         | 'FAILED_REVIEW_REQUIRED'
         | 'TRANSIENT'
         | 'CHOICE_GENERATION_FAILED'
+        | import('@/lib/runtime/choice-generation').ChoiceBuildFailureReason
         | 'CAPACITY_BUSY'
         | 'CAPACITY_TIMEOUT'
       detail?: unknown
@@ -313,6 +318,7 @@ async function buildChoices(
   narrativeContextOverride?: ChoiceNarrativeContext,
   signal?: AbortSignal,
   providerRuntime?: import('@/lib/ai-gateway/provider').ProviderRuntime,
+  choiceExecutionBudget?: import('@/lib/runtime/choice-execution-budget').ChoiceExecutionBudget,
 ): Promise<{
   ok: true
   choicePrompt: string
@@ -322,7 +328,7 @@ async function buildChoices(
   source: 'INITIAL' | 'REPAIRED'
 } | {
   ok: false
-  reason: string
+  reason: import('@/lib/runtime/choice-generation').ChoiceBuildFailureReason
   validationFindings: Array<{ code: string; message: string; severity: string }>
   repairAttempts: number
 }> {
@@ -377,6 +383,7 @@ async function buildChoices(
     providerContext,
     signal,
     providerRuntime,
+    choiceExecutionBudget,
     activeCharacters,
     activeThreads,
     creativeDirectionHints: choiceDirection
@@ -491,8 +498,8 @@ async function generateNextChapterRealInner(
   let checkpointAttemptId = attemptId
 
   const checkpointMutationSucceeded = (
-    result: FencedCheckpointMutationResult | { ok: boolean } | void,
-  ): boolean => !jobContext || result?.ok === true
+    result: CheckpointMutationResult,
+  ): boolean => result.ok === true
 
   if (jobContext?.signal?.aborted) {
     return { ok: false, reason: 'CAPACITY_TIMEOUT', detail: { reason: 'ABORT_SIGNAL' } }
@@ -689,14 +696,6 @@ async function generateNextChapterRealInner(
       proseFingerprint,
     } = await import('@/lib/runtime/chapter-generation-checkpoint')
 
-    const existingCheckpoint = await loadUsableProseCheckpoint({
-      storyId,
-      chapterNumber,
-      // Prefer any usable checkpoint for story+chapter on retry (not only this attemptId)
-      attemptId: null,
-      jobContext,
-    })
-
     const reconcilePublishedCheckpoint = async () => {
       try {
         const mutation = await markCheckpointStatus({
@@ -708,27 +707,23 @@ async function generateNextChapterRealInner(
         })
         if (checkpointMutationSucceeded(mutation)) return
         console.log('CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED', {
-          storyId,
+          storyId: boundedLogId(storyId),
           chapterNumber,
-          correlationId,
-          jobId: jobContext?.jobId ?? null,
-          checkpointAttemptId,
-          result: mutation && typeof mutation === 'object' && 'result' in mutation
-            ? String(mutation.result).slice(0, 64)
-            : 'NOT_UPDATED',
+          correlationId: boundedLogId(correlationId),
+          jobId: boundedLogId(jobContext?.jobId),
+          checkpointAttemptId: boundedLogId(checkpointAttemptId),
+          result: 'NOT_UPDATED',
+          errorCode: 'CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED',
         })
-      } catch (err) {
-        if (!jobContext) throw err
-        const info = safeErrorInfo(err)
+      } catch {
         console.log('CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED', {
-          storyId,
+          storyId: boundedLogId(storyId),
           chapterNumber,
-          correlationId,
-          jobId: jobContext.jobId,
-          checkpointAttemptId,
+          correlationId: boundedLogId(correlationId),
+          jobId: boundedLogId(jobContext?.jobId),
+          checkpointAttemptId: boundedLogId(checkpointAttemptId),
           result: 'THREW',
-          errorName: info.errorName?.slice(0, 100) ?? null,
-          errorMessage: info.errorMessage?.slice(0, 200) ?? null,
+          errorCode: 'CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED',
         })
       }
     }
@@ -785,6 +780,29 @@ async function generateNextChapterRealInner(
       opensNewThread: false,
     }
 
+    const canonVersionProxyNow = snapshot.blueprints.reduce(
+      (max, b) => Math.max(max, b.version ?? 0),
+      0,
+    )
+    const existingCheckpoint = await loadUsableProseCheckpoint({
+      storyId,
+      chapterNumber,
+      // Prefer any fully compatible checkpoint for story+chapter on explicit retry.
+      attemptId: null,
+      freshness: {
+        canonVersion: canonVersionProxyNow,
+        blueprintVersion: blueprint.version ?? null,
+        directionFingerprint: creativeDirectionFingerprint,
+        generationMode: 'standard',
+        generationPolicyVersion: GENERATION_PROMPT_CONTRACT_VERSION,
+        promptContractVersion: GENERATION_PROMPT_CONTRACT_VERSION,
+        requireJobProvenance: jobContext != null,
+        jobId: jobContext?.jobId ?? null,
+        jobAttemptNumber: jobContext?.attemptNumber ?? null,
+      },
+      jobContext,
+    })
+
     // 5) Prose: resume from checkpoint OR generate + validate.
     type ProseResult = {
       status: string
@@ -797,39 +815,7 @@ async function generateNextChapterRealInner(
     let result: ProseResult
     let draft: ChapterDraftParsed
 
-    // P1-2: verify the (early-loaded) checkpoint against current versions now that
-    // canon/blueprint/direction are resolved. Discard stale prose (regenerate).
-    let usableCheckpoint = existingCheckpoint
-    if (usableCheckpoint) {
-      const { verifyCheckpointFreshness } = await import(
-        '@/lib/runtime/chapter-generation-checkpoint'
-      )
-      const canonVersionProxyNow = snapshot.blueprints.reduce(
-        (max, b) => Math.max(max, b.version ?? 0),
-        0,
-      )
-      const verdict = verifyCheckpointFreshness(usableCheckpoint, {
-        canonVersion: canonVersionProxyNow,
-        blueprintVersion: blueprint.version ?? null,
-        directionFingerprint: creativeDirectionFingerprint,
-        generationMode: 'standard',
-        generationPolicyVersion: GENERATION_PROMPT_CONTRACT_VERSION,
-        promptContractVersion: GENERATION_PROMPT_CONTRACT_VERSION,
-        requireJobProvenance: jobContext != null,
-        jobId: jobContext?.jobId ?? null,
-        jobAttemptNumber: jobContext?.attemptNumber ?? null,
-      })
-      if (!verdict.fresh) {
-        console.log('CHECKPOINT_STALE_DISCARDED', {
-          storyId,
-          chapterNumber,
-          correlationId,
-          reason: verdict.reason,
-          schemaVersion: usableCheckpoint.schemaVersion,
-        })
-        usableCheckpoint = null
-      }
-    }
+    const usableCheckpoint = existingCheckpoint
 
     if (usableCheckpoint) {
       const existingCheckpoint = usableCheckpoint
@@ -853,11 +839,12 @@ async function generateNextChapterRealInner(
         jobContext,
       })
       if (!checkpointMutationSucceeded(runningChoices)) {
-        return {
-          ok: false,
-          reason: 'FAILED_REVIEW_REQUIRED',
-          detail: { checkpointMutation: runningChoices },
-        }
+        await releaseLeaseOnce()
+        console.error('CHECKPOINT_STATUS_UPDATE_FAILED', {
+          storyId, chapterNumber, correlationId, attemptId: checkpointAttemptId,
+          status: 'RUNNING_CHOICES', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED',
+        })
+        return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: runningChoices } }
       }
       console.log('GENERATION_CHOICES_ONLY_RESUME', {
         storyId,
@@ -994,53 +981,32 @@ async function generateNextChapterRealInner(
         jobAttemptNumber: jobContext?.attemptNumber ?? null,
         jobContext,
       })
-      if (jobContext) {
-        if (!checkpointMutationSucceeded(saved)) {
-          return {
-            ok: false,
-            reason: 'FAILED_REVIEW_REQUIRED',
-            detail: { checkpointMutation: saved },
-          }
-        }
-        proseFingerprintUsed = proseFingerprint(draft.title, draft.paragraphs ?? [])
-        checkpointAttemptId = jobContext.jobId
-      } else if (
-        'checkpoint' in saved &&
-        saved.ok &&
-        saved.checkpoint != null &&
-        'proseFingerprint' in saved.checkpoint &&
-        'attemptId' in saved.checkpoint
-      ) {
-        proseFingerprintUsed = saved.checkpoint.proseFingerprint as string
-        checkpointAttemptId = saved.checkpoint.attemptId as string
-      } else {
-        // Legacy worker-off path remains best-effort when checkpoint storage is absent.
-        proseFingerprintUsed = proseFingerprint(draft.title, draft.paragraphs ?? [])
-        console.log('CHECKPOINT_PROSE_READY_SKIPPED', {
-          storyId,
-          chapterNumber,
-          correlationId,
-          error: 'error' in saved
-            ? saved.error
-            : 'result' in saved
-              ? saved.result
-              : 'WRITE_FAILED',
+      if (saved.ok !== true) {
+        await releaseLeaseOnce()
+        console.error('CHECKPOINT_STATUS_UPDATE_FAILED', {
+          storyId, chapterNumber, correlationId, attemptId,
+          status: 'PROSE_READY', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED',
         })
+        return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: saved } }
       }
+      proseFingerprintUsed = proseFingerprint(draft.title, draft.paragraphs ?? [])
+      checkpointAttemptId = saved.checkpointAttemptId
 
       const runningChoices = await markCheckpointStatus({
         storyId,
         chapterNumber,
         attemptId: checkpointAttemptId,
         status: 'RUNNING_CHOICES',
+        choiceAttemptCount: 1,
         jobContext,
       })
       if (!checkpointMutationSucceeded(runningChoices)) {
-        return {
-          ok: false,
-          reason: 'FAILED_REVIEW_REQUIRED',
-          detail: { checkpointMutation: runningChoices },
-        }
+        await releaseLeaseOnce()
+        console.error('CHECKPOINT_STATUS_UPDATE_FAILED', {
+          storyId, chapterNumber, correlationId, attemptId: checkpointAttemptId,
+          status: 'RUNNING_CHOICES', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED',
+        })
+        return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: runningChoices } }
       }
     }
 
@@ -1055,6 +1021,12 @@ async function generateNextChapterRealInner(
     stage = 'BUILD_CHOICES'
     stage = 'GENERATE_CHOICES_INITIAL'
     throwIfAborted(jobContext?.signal)
+    const resolvedChoiceDeadline = jobContext
+      ? resolveChoiceDeadlineAt({
+          nowMs: Date.now(),
+          parentDeadlineAtMs: jobContext.deadlineAtMs,
+        })
+      : null
     const branch = await buildChoices(
       snapshot,
       draft,
@@ -1063,6 +1035,14 @@ async function generateNextChapterRealInner(
       undefined,
       jobContext?.signal,
       input.options?.providerRuntime,
+      jobContext && resolvedChoiceDeadline ? {
+        usedCalls: 0,
+        maxCalls: 5,
+        maxCandidates: 3,
+        perCandidateTimeoutMs: DEFAULT_CHOICE_CANDIDATE_TIMEOUT_MS,
+        deadlineAtMs: resolvedChoiceDeadline.deadlineAtMs,
+        deadlineSource: resolvedChoiceDeadline.source,
+      } : undefined,
     )
     throwIfAborted(jobContext?.signal)
     if (!branch.ok) {
@@ -1113,11 +1093,12 @@ async function generateNextChapterRealInner(
         jobContext,
       })
       if (!checkpointMutationSucceeded(retryCheckpoint)) {
-        return {
-          ok: false,
-          reason: 'FAILED_REVIEW_REQUIRED',
-          detail: { checkpointMutation: retryCheckpoint },
-        }
+        await releaseLeaseOnce()
+        console.error('CHECKPOINT_STATUS_UPDATE_FAILED', {
+          storyId, chapterNumber, correlationId, attemptId: checkpointAttemptId,
+          status: 'CHOICES_RETRY_WAIT', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED',
+        })
+        return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: retryCheckpoint } }
       }
       await releaseLeaseOnce()
       stage = 'RECORD_TERMINAL_ATTEMPT'
@@ -1149,7 +1130,11 @@ async function generateNextChapterRealInner(
       }).catch(() => undefined)
       return {
         ok: false,
-        reason: 'CHOICE_GENERATION_FAILED',
+        reason: branch.reason === 'CHOICE_WORKFLOW_TIMEOUT'
+          || branch.reason === 'GENERATION_JOB_DEADLINE_EXCEEDED'
+          || branch.reason === 'CHOICE_PARENT_CANCELLED'
+          ? branch.reason
+          : 'CHOICE_GENERATION_FAILED',
         detail: {
           choiceReason: branch.reason,
           findingCodes: branch.validationFindings.map((f) => f.code),

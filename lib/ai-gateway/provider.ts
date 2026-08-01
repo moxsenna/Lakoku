@@ -65,6 +65,11 @@ export type ProviderCallBudget = {
   max: number
 }
 
+export type ChoiceAbortCause =
+  | 'PARENT_CANCELLED'
+  | 'WORKFLOW_DEADLINE'
+  | 'CANDIDATE_TIMEOUT'
+
 export type ProviderCandidateKind = 'prose' | 'choice'
 
 export type ProviderCandidateTransport = (input: Readonly<{
@@ -87,6 +92,11 @@ export interface ModelCallExecutionOptions {
   signal?: AbortSignal
   /** Shared across retries so every actual model candidate counts toward cap. */
   callBudget?: ProviderCallBudget
+  choiceDeadlineAtMs?: number
+  choiceDeadlineSource?: 'LOCAL_POLICY' | 'PARENT_JOB'
+  choicePerCandidateTimeoutMs?: number
+  /** Maximum effective deduped candidates traversed by this gateway invocation. */
+  choiceMaxCandidates?: number
   providerRuntime?: ProviderRuntime
   consume?: (raw: unknown) => unknown | Promise<unknown>
 }

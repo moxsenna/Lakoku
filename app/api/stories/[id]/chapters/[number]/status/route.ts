@@ -4,6 +4,11 @@ import {
   ChapterStatusError,
   getChapterStatusForUser,
 } from '@/lib/api/chapter-status.server'
+import {
+  ChapterStatusIdentityQuerySchema,
+  GenerationAttemptIdentitySchema,
+  ChapterStatusResponseSchema,
+} from '../../../../../../../packages/contracts/src/reader'
 
 /**
  * GET /api/stories/[id]/chapters/[number]/status
@@ -16,7 +21,7 @@ import {
  * the same path tree. Response field remains `chapterNumber`.
  */
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string; number: string }> },
 ) {
   try {
@@ -31,17 +36,28 @@ export async function GET(
       return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 401 })
     }
 
+    const url = new URL(req.url)
+    const rawQuery = Object.fromEntries(url.searchParams.entries())
+    const parsedQuery = ChapterStatusIdentityQuerySchema.safeParse(rawQuery)
+    if (!parsedQuery.success) {
+      return NextResponse.json({ error: 'Identitas generasi tidak valid.' }, { status: 400 })
+    }
+    const hasIdentity = 'correlationId' in parsedQuery.data
+    const identity = hasIdentity
+      ? GenerationAttemptIdentitySchema.parse({
+          correlationId: parsedQuery.data.correlationId,
+          attemptId: parsedQuery.data.attemptId ?? null,
+        })
+      : null
+
     const result = await getChapterStatusForUser({
       userId: user.id,
       storyId: id,
       chapterNumber,
+      identity,
     })
 
-    return NextResponse.json({
-      status: result.status,
-      chapterNumber: result.chapterNumber,
-      ...(result.queue ? { queue: result.queue } : {}),
-    })
+    return NextResponse.json(ChapterStatusResponseSchema.parse(result))
   } catch (error) {
     if (error instanceof ChapterStatusError) {
       if (error.code === 'NOT_FOUND') {

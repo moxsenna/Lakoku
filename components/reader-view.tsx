@@ -17,6 +17,7 @@ import {
   submitChoiceWithReadiness,
   type Chapter,
   type ChapterStatusResponse,
+  type GenerationAttemptIdentity,
   type ChoiceOutcome,
   type JejakItem,
   type PendingChoice,
@@ -28,11 +29,17 @@ import { ChapterUnavailableBanner } from '@/components/chapter-unavailable-banne
 import { ChapterListDialog } from '@/components/chapter-list-dialog'
 import { useReaderFontSize } from '@/components/font-size-provider'
 import { PoetryLottie } from '@/components/mulai/poetry-lottie'
+import {
+  consumeSuccessfulBudget,
+  createPollBudget,
+  decideAfterNetworkError,
+  decideAfterStatus,
+} from '@/lib/reader/chapter-status-poller'
 
 type ReaderTheme = 'ink' | 'cream'
-type Phase = 'reading' | 'processing' | 'pending' | 'generation-failed'
+type Phase = 'reading' | 'processing' | 'pending' | 'generation-failed' | 'status-unknown'
 type ChoiceAdvanceAction = 'ending' | 'navigate' | 'poll'
-type PollResult = 'ready' | 'failed' | 'aborted'
+type PollResult = 'ready' | 'failed' | 'unknown' | 'aborted'
 const SELECTED_FEEDBACK_MS = 180
 const MIN_PROCESSING_MS = 1200
 export const CHAPTER_STATUS_POLL_MS = 1500
@@ -52,20 +59,24 @@ export function pollChapterGenerationStatus({
   storyId,
   chapterNumber,
   signal,
+  identity = null,
   getStatus = getChapterGenerationStatus,
 }: {
   storyId: string
   chapterNumber: number
   signal: AbortSignal
-  getStatus?: (
+  identity?: GenerationAttemptIdentity | null
+  getStatus?: typeof getChapterGenerationStatus | ((
     storyId: string,
     chapterNumber: number,
     signal?: AbortSignal,
-  ) => Promise<ChapterStatusResponse>
+  ) => Promise<ChapterStatusResponse>)
 }): Promise<PollResult> {
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout> | null = null
     let settled = false
+    let budget = createPollBudget()
+    let currentIdentity = identity
 
     const finish = (result: PollResult) => {
       if (settled) return
@@ -82,12 +93,38 @@ export function pollChapterGenerationStatus({
       timer = null
       if (signal.aborted) return finish('aborted')
       try {
-        const response = await getStatus(storyId, chapterNumber, signal)
+        const response = await (getStatus as typeof getChapterGenerationStatus)(
+          storyId,
+          chapterNumber,
+          currentIdentity ? { identity: currentIdentity, signal } : signal,
+        )
         if (signal.aborted) return finish('aborted')
-        if (response.status === 'ready') return finish('ready')
-        if (response.status === 'failed') return finish('failed')
-      } catch {
+        if (response.correlationId) {
+          const nextIdentity = {
+            attemptId: response.attemptId ?? null,
+            correlationId: response.correlationId,
+          }
+          if (
+            currentIdentity !== null &&
+            (currentIdentity.attemptId !== nextIdentity.attemptId ||
+              currentIdentity.correlationId !== nextIdentity.correlationId)
+          ) {
+            budget = createPollBudget()
+          }
+          currentIdentity = nextIdentity
+        }
+        const decision = decideAfterStatus(response.status)
+        if (decision.action === 'refresh') return finish('ready')
+        if (decision.action === 'failed') return finish('failed')
+        if (consumeSuccessfulBudget(budget) === 'unknown') return finish('unknown')
+      } catch (error) {
         if (signal.aborted) return finish('aborted')
+        const decision = decideAfterNetworkError(error, budget)
+        if (decision.action === 'unknown') return finish('unknown')
+        if (decision.action === 'retry_later') {
+          timer = setTimeout(check, decision.nextDelayMs)
+          return
+        }
       }
       schedule()
     }
@@ -208,7 +245,7 @@ export function ReaderView({
         router.push(`/baca/${story.id}?bab=${pollingChapterNumber}`)
         return
       }
-      setPhase('generation-failed')
+      setPhase(result === 'unknown' ? 'status-unknown' : 'generation-failed')
     })
 
     return () => controller.abort()
@@ -331,6 +368,17 @@ export function ReaderView({
           </p>
         </div>
         <PoetryLottie className="h-32 w-32" />
+      </main>
+    )
+  }
+
+  if (phase === 'status-unknown') {
+    return (
+      <main className="mx-auto flex min-h-svh w-full max-w-md flex-col items-center justify-center gap-6 bg-background px-8 text-center">
+        <span className="font-serif text-2xl text-foreground">lakoku</span>
+        <h1 className="font-serif text-2xl text-foreground">Status bab belum bisa diperiksa.</h1>
+        <p className="text-sm text-muted-foreground">Coba periksa lagi nanti atau kembali ke cerita.</p>
+        <Link href={`/cerita/${story.id}`} className="flex min-h-13 w-full items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground">Kembali ke cerita</Link>
       </main>
     )
   }

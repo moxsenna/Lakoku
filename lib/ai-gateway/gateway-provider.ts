@@ -33,6 +33,12 @@ import {
   type TasteProfileV2,
 } from '@/lib/taste-profile/schema'
 import { isAbortError, throwIfAborted } from '@/lib/runtime/abort'
+// Gateway execution consumes server runtime deadline policy at this explicit boundary.
+// eslint-disable-next-line no-restricted-imports
+import {
+  candidateTimeoutMs,
+  ChoiceWorkflowError,
+} from '@/lib/runtime/choice-execution-budget'
 
 /**
  * Provider LLM NYATA via Vercel AI Gateway.
@@ -684,6 +690,10 @@ function candidateIdentity(candidate: ModelCandidate): Omit<ModelCandidate, 'mod
 }
 
 function controlledErrorCode(error: unknown): string {
+  if (error && typeof error === 'object' && 'code' in error) {
+    const code = (error as { code?: unknown }).code
+    if (typeof code === 'string' && /^[A-Z][A-Z0-9_]{2,63}$/.test(code)) return code
+  }
   if (error instanceof ContentRejectedError) return 'PROVIDER_CONTENT_REJECTED'
   if (error instanceof InvalidModelResponseError) return 'PROVIDER_INVALID_RESPONSE'
   const name = error && typeof error === 'object'
@@ -781,6 +791,36 @@ function providerAbortSignal(parent: AbortSignal | undefined, timeoutMs: number)
   return parent ? AbortSignal.any([parent, timeout]) : timeout
 }
 
+function workflowDeadlineError(options: ModelCallExecutionOptions): ChoiceWorkflowError {
+  return new ChoiceWorkflowError(
+    options.choiceDeadlineSource === 'PARENT_JOB'
+      ? 'GENERATION_JOB_DEADLINE_EXCEEDED'
+      : 'CHOICE_WORKFLOW_TIMEOUT',
+    'WORKFLOW_DEADLINE',
+  )
+}
+
+function classifyChoiceAbort(args: {
+  error: unknown
+  parentSignal: AbortSignal | undefined
+  candidateTimeoutSignal: AbortSignal
+}): import('./observed-model-call.server').FailureClassification | null {
+  // Ownership cancellation wins when both signals become aborted together.
+  if (args.parentSignal?.aborted) {
+    return { outcome: 'ABORTED', errorCode: 'PROVIDER_ABORTED' }
+  }
+  if (args.candidateTimeoutSignal.aborted) {
+    return { outcome: 'TIMEOUT', errorCode: 'PROVIDER_TIMEOUT' }
+  }
+  if (args.error && typeof args.error === 'object' && 'code' in args.error) {
+    const code = (args.error as { code?: unknown }).code
+    if (code === 'CHOICE_CANDIDATE_TIMEOUT') {
+      return { outcome: 'TIMEOUT', errorCode: 'PROVIDER_TIMEOUT' }
+    }
+  }
+  return null
+}
+
 /**
  * P1-6: capability allowlist for native structured output (json_schema).
  * Default OFF. Enable per-model via LAKOKU_CHOICES_NATIVE_SCHEMA_MODELS (comma
@@ -806,16 +846,10 @@ async function generateChoiceJson(args: {
   const { system, prompt } = buildChoicePrompt(args.input)
   let lastError: unknown
 
-  for (const candidate of args.chain) {
+  const effectiveChain = args.chain.slice(0, args.options.choiceMaxCandidates ?? args.chain.length)
+  for (const candidate of effectiveChain) {
     throwIfAborted(args.options.signal)
     const callBudget = args.options.callBudget
-    if (callBudget) {
-      if (callBudget.used >= callBudget.max) {
-        throw new Error('CHOICE_PROVIDER_CALL_BUDGET_EXHAUSTED')
-      }
-      // Increment immediately before each actual candidate request.
-      callBudget.used += 1
-    }
     const { model, label } = candidate
     const useNative = nativeChoiceSchemaAllowed(candidate.configuredModelId)
     const maxOutputTokens = resolveMaxOutputTokens({
@@ -836,11 +870,33 @@ async function generateChoiceJson(args: {
         correlationId: args.options.telemetryContext.correlationId,
         signal: args.options.signal,
         observer: args.options.providerRuntime?.choiceConcurrencyObserver,
-      }, () => executeObservedModelCall({
+      }, () => {
+        throwIfAborted(args.options.signal)
+        if (callBudget?.used !== undefined && callBudget.used >= callBudget.max) {
+          throw new Error('CHOICE_PROVIDER_CALL_BUDGET_EXHAUSTED')
+        }
+        const timeoutMs = args.options.choiceDeadlineAtMs === undefined
+          ? LLM_CHOICE_TIMEOUT_MS
+          : candidateTimeoutMs({
+              deadlineAtMs: args.options.choiceDeadlineAtMs,
+              perCandidateTimeoutMs: args.options.choicePerCandidateTimeoutMs ?? LLM_CHOICE_TIMEOUT_MS,
+            }, Date.now())
+        if (timeoutMs === null) throw workflowDeadlineError(args.options)
+        const candidateTimeoutSignal = AbortSignal.timeout(timeoutMs)
+        const requestSignal = args.options.signal
+          ? AbortSignal.any([args.options.signal, candidateTimeoutSignal])
+          : candidateTimeoutSignal
+        if (callBudget) callBudget.used += 1
+        return executeObservedModelCall({
         context: args.options.telemetryContext,
         candidate: candidateIdentity(candidate),
         useCase: args.route?.useCase ?? 'choices',
         workflowPhase: args.options.workflowPhase,
+        classifyFailure: (error) => classifyChoiceAbort({
+          error,
+          parentSignal: args.options.signal,
+          candidateTimeoutSignal,
+        }),
         // Choices are small JSON — non-stream generateText reduces failure surface.
         call: () =>
           executeCandidate(args.options.providerRuntime, 'choice', candidate, () => generateText({
@@ -859,7 +915,7 @@ async function generateChoiceJson(args: {
                   }),
                 }
               : {}),
-            abortSignal: providerAbortSignal(args.options.signal, LLM_CHOICE_TIMEOUT_MS),
+            abortSignal: requestSignal,
             maxRetries: 0,
           }) as unknown as ReturnType<typeof streamText>),
         consume: async (text) => {
@@ -867,10 +923,15 @@ async function generateChoiceJson(args: {
           const parsed = parseModelJson(text)
           return args.options.consume ? args.options.consume(parsed) : parsed
         },
-      }))
+      })
+      })
     } catch (error) {
       if (args.options.signal?.aborted) throw args.options.signal.reason ?? error
-      if (isAbortError(error)) throw error
+      if (isAbortError(error) || error instanceof Error && error.name === 'TimeoutError') {
+        lastError = error
+        logCandidateFailure(args.options.workflowPhase, candidate, error)
+        continue
+      }
       lastError = error
       logCandidateFailure(args.options.workflowPhase, candidate, error)
     }

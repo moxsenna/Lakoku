@@ -48,7 +48,6 @@ export function classifyChoiceProviderError(err: unknown): ChoiceProviderErrorCo
   if (
     name === 'TimeoutError' ||
     lower.includes('timeout') ||
-    lower.includes('aborted') ||
     lower.includes('deadline')
   ) {
     return 'TIMEOUT'

@@ -25,7 +25,7 @@ import {
 import { selectProvider } from '@lakoku/ai-gateway/server'
 import { createAdminClient } from '@lakoku/db'
 import { recordGenerationAttempt } from '@/lib/observability/server'
-import { safeErrorInfo } from '@/lib/observability/safe-error'
+import { boundedLogId, safeErrorInfo } from '@/lib/observability/safe-error'
 import {
   buildChapterBrief,
   type ChapterBrief,
@@ -61,7 +61,7 @@ import {
   GENERATION_PROMPT_CONTRACT_VERSION,
   type RealGenerateResult,
 } from './story-generation'
-import type { FencedCheckpointMutationResult } from './generation-jobs'
+import type { CheckpointMutationResult } from './chapter-generation-checkpoint.pure'
 import { classifyGenerationPublicationError } from './generation-job-error'
 import {
   draftFromCheckpoint,
@@ -86,6 +86,10 @@ import {
   type BuildChoiceBranchInput,
   type ChoiceBuildDeps,
 } from './choice-generation'
+import {
+  DEFAULT_CHOICE_CANDIDATE_TIMEOUT_MS,
+  resolveChoiceDeadlineAt,
+} from './choice-execution-budget'
 import {
   groundedChoiceProseFromFinalDraft,
   choiceNarrativeContextFromReader,
@@ -212,9 +216,7 @@ export interface PersonalizedGenerationDeps {
     jobAttemptNumber?: number | null
     jobContext?: import('./generation-job-execution').GenerationJobExecutionContext | null
   }) => Promise<
-    | FencedCheckpointMutationResult
-    | { ok: true; checkpoint: ChapterGenerationCheckpoint }
-    | { ok: false; error: 'TABLE_UNAVAILABLE' | 'WRITE_FAILED' }
+    CheckpointMutationResult
   >
   markCheckpointStatus: (args: {
     storyId: string
@@ -223,7 +225,7 @@ export interface PersonalizedGenerationDeps {
     status: CheckpointStatus
     choiceAttemptCount?: number
     jobContext?: import('./generation-job-execution').GenerationJobExecutionContext | null
-  }) => Promise<FencedCheckpointMutationResult | void>
+  }) => Promise<CheckpointMutationResult>
   selectProvider: (
     context: ReturnType<typeof createSynchronousProviderContext>,
   ) => Promise<GenerationProvider>
@@ -586,8 +588,8 @@ async function generateNextPersonalizedChapterInner(
   let fromCheckpoint = false
 
   const checkpointMutationSucceeded = (
-    result: FencedCheckpointMutationResult | { ok: boolean } | void,
-  ): boolean => !jobContext || result?.ok === true
+    result: CheckpointMutationResult,
+  ): boolean => result.ok === true
   const providerContext = jobId === undefined && attemptNumber === undefined
     ? createSynchronousProviderContext({
         userId,
@@ -743,27 +745,23 @@ async function generateNextPersonalizedChapterInner(
         })
         if (checkpointMutationSucceeded(mutation)) return
         console.log('CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED', {
-          storyId,
+          storyId: boundedLogId(storyId),
           chapterNumber,
-          correlationId,
-          jobId: jobContext?.jobId ?? null,
-          checkpointAttemptId,
-          result: mutation && typeof mutation === 'object' && 'result' in mutation
-            ? String(mutation.result).slice(0, 64)
-            : 'NOT_UPDATED',
-          path: 'personalized',
+          correlationId: boundedLogId(correlationId),
+          jobId: boundedLogId(jobContext?.jobId),
+          checkpointAttemptId: boundedLogId(checkpointAttemptId),
+          result: 'NOT_UPDATED',
+          errorCode: 'CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED',
         })
-      } catch (error) {
-        if (!jobContext) throw error
+      } catch {
         console.log('CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED', {
-          storyId,
+          storyId: boundedLogId(storyId),
           chapterNumber,
-          correlationId,
-          jobId: jobContext.jobId,
-          checkpointAttemptId,
+          correlationId: boundedLogId(correlationId),
+          jobId: boundedLogId(jobContext?.jobId),
+          checkpointAttemptId: boundedLogId(checkpointAttemptId),
           result: 'THREW',
-          errorName: error instanceof Error ? error.name.slice(0, 100) : 'unknown',
-          path: 'personalized',
+          errorCode: 'CHECKPOINT_PUBLISHED_RECONCILIATION_NEEDED',
         })
       }
     }
@@ -910,14 +908,15 @@ async function generateNextPersonalizedChapterInner(
         jobAttemptNumber: jobContext?.attemptNumber ?? null,
         jobContext,
       })
-      if (!checkpointMutationSucceeded(saved)) {
+      if (saved.ok !== true) {
+        await releaseOwnLease()
+        console.error('CHECKPOINT_STATUS_UPDATE_FAILED', {
+          storyId, chapterNumber, correlationId, attemptId,
+          status: 'PROSE_READY', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED', path: 'personalized',
+        })
         return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: saved } }
       }
-      if (jobContext) checkpointAttemptId = jobContext.jobId
-      else if (
-        'checkpoint' in saved && saved.ok && saved.checkpoint &&
-        typeof saved.checkpoint.attemptId === 'string'
-      ) checkpointAttemptId = saved.checkpoint.attemptId
+      if (saved.ok === true) checkpointAttemptId = saved.checkpointAttemptId
     }
 
     const runningChoices = await d.markCheckpointStatus({
@@ -929,6 +928,11 @@ async function generateNextPersonalizedChapterInner(
       jobContext,
     })
     if (!checkpointMutationSucceeded(runningChoices)) {
+      await releaseOwnLease()
+      console.error('CHECKPOINT_STATUS_UPDATE_FAILED', {
+        storyId, chapterNumber, correlationId, attemptId: checkpointAttemptId,
+        status: 'RUNNING_CHOICES', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED', path: 'personalized',
+      })
       return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: runningChoices } }
     }
 
@@ -952,6 +956,12 @@ async function generateNextPersonalizedChapterInner(
           id: th.id,
           summary: ('title' in th && typeof th.title === 'string' ? th.title : th.id),
         }))
+      const resolvedChoiceDeadline = jobContext
+        ? resolveChoiceDeadlineAt({
+            nowMs: Date.now(),
+            parentDeadlineAtMs: jobContext.deadlineAtMs,
+          })
+        : null
       const choiceInput: BuildChoiceBranchInput = {
         snapshot,
         draft,
@@ -967,6 +977,14 @@ async function generateNextPersonalizedChapterInner(
         providerContext,
         signal: jobContext?.signal,
         providerRuntime: input.options?.providerRuntime,
+        choiceExecutionBudget: jobContext && resolvedChoiceDeadline ? {
+          usedCalls: 0,
+          maxCalls: 5,
+          maxCandidates: 3,
+          perCandidateTimeoutMs: DEFAULT_CHOICE_CANDIDATE_TIMEOUT_MS,
+          deadlineAtMs: resolvedChoiceDeadline.deadlineAtMs,
+          deadlineSource: resolvedChoiceDeadline.source,
+        } : undefined,
         activeCharacters,
         activeThreads,
       }
@@ -983,11 +1001,12 @@ async function generateNextPersonalizedChapterInner(
           jobContext,
         })
         if (!checkpointMutationSucceeded(retryCheckpoint)) {
-          return {
-            ok: false,
-            reason: 'FAILED_REVIEW_REQUIRED',
-            detail: { checkpointMutation: retryCheckpoint },
-          }
+          await releaseOwnLease()
+          console.error('CHECKPOINT_STATUS_UPDATE_FAILED', {
+            storyId, chapterNumber, correlationId, attemptId: checkpointAttemptId,
+            status: 'CHOICES_RETRY_WAIT', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED', path: 'personalized',
+          })
+          return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: retryCheckpoint } }
         }
         await releaseOwnLease()
         await d.recordGenerationAttempt({
@@ -999,7 +1018,11 @@ async function generateNextPersonalizedChapterInner(
         }).catch(() => undefined)
         return {
           ok: false,
-          reason: 'CHOICE_GENERATION_FAILED',
+          reason: choiceResult.reason === 'CHOICE_WORKFLOW_TIMEOUT'
+            || choiceResult.reason === 'GENERATION_JOB_DEADLINE_EXCEEDED'
+            || choiceResult.reason === 'CHOICE_PARENT_CANCELLED'
+            ? choiceResult.reason
+            : 'CHOICE_GENERATION_FAILED',
           detail: {
             choiceReason: choiceResult.reason,
             findingCodes: choiceResult.validationFindings.map((f) => f.code),
@@ -1199,29 +1222,32 @@ async function generateNextPersonalizedChapterInner(
         })
       }
 
-      if (jobContext && published.ok) {
+      // Publikasi sudah commit: kegagalan rekonsiliasi tidak boleh membatalkan sukses.
+      if (published.ok) {
         try {
           await reconcileReaderState()
-        } catch (error) {
+        } catch {
           console.log('POST_PUBLISH_RECONCILIATION_NEEDED', {
-            storyId,
+            storyId: boundedLogId(storyId),
             chapterNumber,
-            correlationId,
-            jobId: jobContext.jobId,
+            correlationId: boundedLogId(correlationId),
+            jobId: boundedLogId(jobContext?.jobId),
             operation: 'MARK_READER_STATE_SELESAI',
-            errorName: error instanceof Error ? error.name.slice(0, 100) : 'unknown',
+            result: 'THREW',
+            errorCode: 'POST_PUBLISH_MARK_READER_STATE_FAILED',
           })
         }
         try {
           await reconcileGenerationAttempt()
-        } catch (error) {
+        } catch {
           console.log('POST_PUBLISH_RECONCILIATION_NEEDED', {
-            storyId,
+            storyId: boundedLogId(storyId),
             chapterNumber,
-            correlationId,
-            jobId: jobContext.jobId,
+            correlationId: boundedLogId(correlationId),
+            jobId: boundedLogId(jobContext?.jobId),
             operation: 'RECORD_GENERATION_ATTEMPT',
-            errorName: error instanceof Error ? error.name.slice(0, 100) : 'unknown',
+            result: 'THREW',
+            errorCode: 'POST_PUBLISH_RECORD_GENERATION_ATTEMPT_FAILED',
           })
         }
       } else {

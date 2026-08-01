@@ -10,6 +10,7 @@ const USER_ID = '22222222-2222-4222-8222-222222222222'
 const CORRELATION_ID = '33333333-3333-4333-8333-333333333333'
 const CLAIM_TOKEN = '44444444-4444-4444-8444-444444444444'
 const LEASE_ID = '55555555-5555-4555-8555-555555555555'
+const ATTEMPT_ID = '66666666-6666-4666-8666-666666666666'
 const DEADLINE_AT = '2026-07-18T12:00:00+07:00'
 const STARTED_AT = '2026-07-18T04:00:00Z'
 const ENDED_AT = '2026-07-18T04:01:00Z'
@@ -474,6 +475,7 @@ describe('generation job worker RPC adapters', () => {
       leaseId: LEASE_ID,
       storyId: 'story-a',
       chapterNumber: 2,
+      checkpointAttemptId: ATTEMPT_ID,
       title: 'Bab Dua',
       paragraphs: ['Paragraf pertama.'],
       proseFingerprint: '0123456789abcdef0123456789abcdef',
@@ -504,6 +506,7 @@ describe('generation job worker RPC adapters', () => {
       leaseId: LEASE_ID,
       storyId: 'story-a',
       chapterNumber: 2,
+      checkpointAttemptId: ATTEMPT_ID,
       title: 'Bab Dua',
       paragraphs: ['Paragraf pertama.'],
       proseFingerprint: '0123456789abcdef0123456789abcdef',

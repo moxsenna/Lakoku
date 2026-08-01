@@ -24,6 +24,7 @@ export interface ObservedModelCallInput<T> {
   workflowPhase: string
   call: () => ReturnType<typeof streamText>
   consume: (text: string) => T | Promise<T>
+  classifyFailure?: (error: unknown) => FailureClassification | null
 }
 
 export interface ObservedModelCallDeps {
@@ -55,7 +56,7 @@ type ResolvedObservation = {
   finalStep: ObservedFinalStep
 }
 
-type FailureClassification = {
+export type FailureClassification = {
   outcome: Exclude<ProviderCallOutcome, 'SUCCEEDED'>
   errorCode: string
 }
@@ -287,7 +288,7 @@ export async function executeObservedModelCall<T>(
     await recordBestEffort(start, completion, deps)
     return value
   } catch (error) {
-    const classification = classifyFailure(error)
+    const classification = input.classifyFailure?.(error) ?? classifyFailure(error)
     const completion: ProviderCallCompletion = {
       ...completionBase(
         input as ObservedModelCallInput<unknown>,

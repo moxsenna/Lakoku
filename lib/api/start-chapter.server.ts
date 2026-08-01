@@ -30,6 +30,7 @@ import {
   enqueueGenerationJob,
   GenerationJobError,
 } from '@/lib/api/generation-job-enqueue.server'
+import type { StartChapterSuccessResponse } from '../../packages/contracts/src/reader'
 
 export const STORY_NOT_FOUND_ERROR = 'Cerita tidak ditemukan.'
 
@@ -38,18 +39,7 @@ export type StartChapterKickoffStatus =
   | 'ALREADY_RUNNING'
   | 'ALREADY_READY'
 
-export type StartChapterSuccess = {
-  ok: true
-  chapterNumber: number
-  status: StartChapterKickoffStatus
-  /**
-   * Durable attempt id = generation_jobs.id when worker flag ON.
-   * null on legacy path (flag OFF) — never a fake in-memory UUID.
-   */
-  attemptId: string | null
-  /** Correlation for logs; always present when STARTED. */
-  correlationId?: string | null
-}
+export type StartChapterSuccess = StartChapterSuccessResponse
 export type StartChapterFailure = { ok: false; error: string }
 export type StartChapterResult = StartChapterSuccess | StartChapterFailure
 
@@ -125,11 +115,23 @@ export async function startOwnedChapterGeneration(
     // Preflight — avoid useless after() when chapter already ready / in flight.
     if (await chapterExists(storyId, chapterNumber)) {
       await ensureReaderStateStarted(storyId, chapterNumber)
-      return { ok: true, chapterNumber, status: 'ALREADY_READY', attemptId: null }
+      return {
+        ok: true,
+        chapterNumber,
+        status: 'ALREADY_READY',
+        attemptId: null,
+        correlationId: crypto.randomUUID(),
+      }
     }
     if (await hasActiveLease(storyId, chapterNumber)) {
       await ensureReaderStateStarted(storyId, chapterNumber)
-      return { ok: true, chapterNumber, status: 'ALREADY_RUNNING', attemptId: null }
+      return {
+        ok: true,
+        chapterNumber,
+        status: 'ALREADY_RUNNING',
+        attemptId: null,
+        correlationId: crypto.randomUUID(),
+      }
     }
 
     const workerEnabled = isGenerationWorkerEnabled()
@@ -226,6 +228,7 @@ export async function startOwnedChapterGeneration(
             chapterNumber,
             status: 'ALREADY_RUNNING',
             attemptId: null,
+            correlationId: crypto.randomUUID(),
           }
         }
         if (err.code === 'STORY_NOT_FOUND') {
@@ -244,8 +247,8 @@ export async function startOwnedChapterGeneration(
         ok: true,
         chapterNumber,
         status: 'ALREADY_READY',
-        attemptId: enqueued.jobId,
-        correlationId: enqueued.correlationId,
+        attemptId: enqueued.jobId ?? null,
+        correlationId: enqueued.correlationId ?? crypto.randomUUID(),
       }
     }
 

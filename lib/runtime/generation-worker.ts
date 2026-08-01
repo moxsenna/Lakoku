@@ -27,6 +27,7 @@ import {
 import { resolveGenerationLeaseTtlSeconds } from '@/lib/runtime/generation-lease-ttl'
 import { runChapterGenerationAttempt } from '@/lib/runtime/generation-mode'
 import { safeErrorInfo } from '@/lib/observability/safe-error'
+import { retryWindowFitsJobDeadline } from '@/lib/runtime/choice-execution-budget'
 
 // Re-export ClaimedGenerationJob type for callers (recovery route).
 export type { ClaimedGenerationJob }
@@ -198,11 +199,35 @@ export async function executeClaimedJob(
     }, DEFAULT_HEARTBEAT_INTERVAL_MS)
 
     // 4) Build execution context + run generator.
-    const jobContext: GenerationJobExecutionContext = claimedJobToPartialContext(
-      job,
-      leaseId,
-      controller.signal,
-    )
+    let jobContext: GenerationJobExecutionContext
+    try {
+      jobContext = claimedJobToPartialContext(job, leaseId, controller.signal)
+    } catch (err) {
+      if (err instanceof Error && err.name === 'GenerationDeadlineError') {
+        const finish = await finishGenerationJobAttempt({
+          jobId: job.id,
+          workerId: job.workerId,
+          claimToken: job.claimToken,
+          outcome: 'FAILED',
+          availableAt: null,
+          errorCode: 'GENERATION_JOB_DEADLINE_INVALID',
+          errorClass: 'TERMINAL',
+          workflowPhase: 'CONTEXT',
+          providerId: null,
+          modelId: null,
+          startedAt: startedAt.toISOString(),
+          endedAt: new Date().toISOString(),
+          elapsedMs: Date.now() - startedAt.getTime(),
+          leaseAgeMs: null,
+          leaseRemainingMs: null,
+          retryDecision: 'FAILED',
+        })
+        return finish.ok
+          ? { ok: false, outcome: 'FAILED', jobId: job.id, reason: 'GENERATION_JOB_DEADLINE_INVALID' }
+          : { ok: false, outcome: 'OWNERSHIP_LOST', jobId: job.id }
+      }
+      throw err
+    }
 
     let dispatchResult: Awaited<ReturnType<typeof runChapterGenerationAttempt>>
     try {
@@ -276,9 +301,14 @@ export async function executeClaimedJob(
     }
 
     const endedAt = new Date()
-    if (normalized.retryable) {
-      const backoffSec = choiceRetryBackoffSeconds(job.attemptCount)
-      const availableAt = new Date(Date.now() + backoffSec * 1000).toISOString()
+    const backoffSec = choiceRetryBackoffSeconds(job.attemptCount)
+    const availableAtMs = Date.now() + backoffSec * 1000
+    const retryFitsDeadline = retryWindowFitsJobDeadline({
+      availableAtMs,
+      jobDeadlineAtMs: jobContext.deadlineAtMs,
+    })
+    if (normalized.retryable && retryFitsDeadline) {
+      const availableAt = new Date(availableAtMs).toISOString()
       const finish = await finishGenerationJobAttempt({
         jobId: job.id,
         workerId: job.workerId,

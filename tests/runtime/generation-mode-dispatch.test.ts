@@ -103,6 +103,8 @@ describe('runChapterGenerationAttempt dispatcher', () => {
       attemptNumber: 1,
       correlationId: 'c2',
       generationKind: 'personalized' as const,
+      deadlineAt: '2099-01-01T00:00:00.000Z',
+      deadlineAtMs: Date.parse('2099-01-01T00:00:00.000Z'),
       triggerChoiceId: 'choice-A',
       signal: new AbortController().signal,
     }
@@ -149,6 +151,8 @@ describe('runChapterGenerationAttempt dispatcher', () => {
       attemptNumber: 1,
       correlationId: 'c9',
       generationKind: 'standard' as const,
+      deadlineAt: '2099-01-01T00:00:00.000Z',
+      deadlineAtMs: Date.parse('2099-01-01T00:00:00.000Z'),
       triggerChoiceId: 'choice-A',
       signal: new AbortController().signal,
     }

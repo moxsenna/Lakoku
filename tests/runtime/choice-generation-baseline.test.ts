@@ -351,7 +351,11 @@ describe('Phase 0 — Characterization', () => {
       controller.abort()
       resolveProvider?.(null)
 
-      await expect(run).rejects.toMatchObject({ name: 'AbortError' })
+      const result = await run
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.reason).toBe('CHOICE_PARENT_CANCELLED')
+      }
       expect(mocks.generateChoiceBranch).toHaveBeenCalledTimes(1)
     })
 
@@ -369,7 +373,11 @@ describe('Phase 0 — Characterization', () => {
       const snapshot = (await import('@/fixtures/narrative/fixture-50')).buildFixtureSnapshot()
       const run = buildChoices(snapshot, mockDraft(12), 12, providerContext(), undefined, controller.signal)
 
-      await expect(run).rejects.toMatchObject({ name: 'AbortError' })
+      const result = await run
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.reason).toBe('CHOICE_PARENT_CANCELLED')
+      }
       expect(mocks.generateChoiceBranch).toHaveBeenCalledTimes(1)
     })
 

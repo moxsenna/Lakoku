@@ -7,11 +7,14 @@ import { ArrowLeft, RefreshCw } from 'lucide-react'
 import type { StoryDetail } from '@/lib/api'
 import { getChapterGenerationStatus, startChapter } from '@/lib/api/client'
 import {
-  decideAfterNetworkError,
+  consumeSuccessfulBudget,
   decideAfterStatus,
   noteForStartStatus,
   readerCopy,
   type ReaderChapterUiState,
+  createPollBudget,
+  decideAfterNetworkError,
+  type PollBudget,
 } from '@/lib/reader/chapter-status-poller'
 
 /**
@@ -47,6 +50,8 @@ export function ChapterUnavailable({
   const inFlightRef = useRef(false)
   const mountedRef = useRef(true)
   const pollOnceRef = useRef<() => Promise<void>>(async () => {})
+  const identityRef = useRef<import('@lakoku/contracts').GenerationAttemptIdentity | null>(null)
+  const budgetRef = useRef<PollBudget>(createPollBudget())
 
   const clearTimer = useCallback(() => {
     if (timerRef.current != null) {
@@ -76,14 +81,33 @@ export function ChapterUnavailable({
       const res = await getChapterGenerationStatus(
         story.id,
         chapterNumber,
-        controller.signal,
+        { identity: identityRef.current, signal: controller.signal },
       )
       if (!mountedRef.current) return
 
+      // Keep latest validated identity for every subsequent poll. Never invent
+      // an identity; preserve nullable attemptId exactly as returned.
+      if (res.correlationId) {
+        const nextIdentity = {
+          attemptId: res.attemptId ?? null,
+          correlationId: res.correlationId,
+        }
+        const previousIdentity = identityRef.current
+        if (
+          previousIdentity !== null &&
+          (previousIdentity.attemptId !== nextIdentity.attemptId ||
+            previousIdentity.correlationId !== nextIdentity.correlationId)
+        ) {
+          budgetRef.current = createPollBudget()
+        }
+        identityRef.current = nextIdentity
+      }
       setQueueHint(res.queue ?? null)
 
       const decision = decideAfterStatus(res.status)
       if (decision.action === 'refresh') {
+        budgetRef.current = createPollBudget()
+
         clearTimer()
         router.refresh()
         return
@@ -94,21 +118,27 @@ export function ChapterUnavailable({
         setUiState('UNAVAILABLE')
         return
       }
-      // queued | generating
+      // queued | generating: reset only consecutive transient failures. Keep
+      // session start so successful responses cannot extend polling forever.
+      if (consumeSuccessfulBudget(budgetRef.current) === 'unknown') {
+        clearTimer()
+        setUiState('STATUS_UNKNOWN')
+        return
+      }
       setUiState('PREPARING')
       if (decision.action === 'continue') {
         schedule(decision.nextDelayMs, () => {
           void pollOnceRef.current()
         })
       }
-    } catch {
+    } catch (error) {
       if (!mountedRef.current || controller.signal.aborted) return
-      // Network/transient: keep reader-safe state, retry later — do NOT flip to failed.
-      const decision = decideAfterNetworkError()
-      if (decision.action === 'retry_later') {
-        schedule(decision.nextDelayMs, () => {
-          void pollOnceRef.current()
-        })
+      const decision = decideAfterNetworkError(error, budgetRef.current)
+      if (decision.action === 'unknown') {
+        clearTimer()
+        setUiState('STATUS_UNKNOWN')
+      } else if (decision.action === 'retry_later') {
+        schedule(decision.nextDelayMs, () => void pollOnceRef.current())
       }
     } finally {
       inFlightRef.current = false
@@ -137,6 +167,17 @@ export function ChapterUnavailable({
     return () => window.clearTimeout(timer)
   }, [initialState])
 
+  // Reset polling session before starting polling for a new story/chapter.
+  // Ref-only reset avoids synchronous setState-in-effect while preventing
+  // stale identity and budget from leaking across reader targets.
+  useEffect(() => {
+    identityRef.current = null
+    budgetRef.current = createPollBudget()
+    clearTimer()
+    abortRef.current?.abort()
+    inFlightRef.current = false
+  }, [story.id, chapterNumber, clearTimer])
+
   // Immediate check + recursive polling while PREPARING.
   useEffect(() => {
     if (uiState !== 'PREPARING') {
@@ -148,7 +189,7 @@ export function ChapterUnavailable({
       clearTimer()
       abortRef.current?.abort()
     }
-  }, [uiState, clearTimer])
+  }, [uiState, story.id, chapterNumber, clearTimer])
 
   async function retry() {
     setRetrying(true)
@@ -158,12 +199,18 @@ export function ChapterUnavailable({
       if (!kicked.ok) {
         setRetryNote(kicked.error || 'Belum bisa memulai ulang penulisan.')
       } else if (kicked.status === 'ALREADY_READY') {
+        identityRef.current = { attemptId: kicked.attemptId, correlationId: kicked.correlationId }
+        budgetRef.current = createPollBudget()
         setRetryNote(noteForStartStatus('ALREADY_READY'))
         router.refresh()
       } else if (kicked.status === 'ALREADY_RUNNING') {
+        identityRef.current = { attemptId: kicked.attemptId, correlationId: kicked.correlationId }
+        budgetRef.current = createPollBudget()
         setRetryNote(noteForStartStatus('ALREADY_RUNNING'))
         setUiState('PREPARING')
       } else {
+        identityRef.current = { attemptId: kicked.attemptId, correlationId: kicked.correlationId }
+        budgetRef.current = createPollBudget()
         setRetryNote(noteForStartStatus(kicked.status ?? 'STARTED'))
         setUiState('PREPARING')
       }
@@ -246,6 +293,19 @@ export function ChapterUnavailable({
               {checking ? 'Memeriksa…' : copy.primaryCta}
             </button>
           </div>
+        ) : uiState === 'STATUS_UNKNOWN' ? (
+          <button
+            type="button"
+            onClick={() => void checkNow()}
+            disabled={checking}
+            className="flex min-h-13 w-full items-center justify-center gap-2 rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+          >
+            <RefreshCw
+              className={checking ? 'lk-pulse-soft size-4' : 'size-4'}
+              aria-hidden="true"
+            />
+            {checking ? 'Memeriksa…' : copy.primaryCta}
+          </button>
         ) : (
           <button
             type="button"

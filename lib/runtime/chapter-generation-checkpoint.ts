@@ -5,7 +5,7 @@
 import 'server-only'
 import { createAdminClient } from '@lakoku/db'
 import type { GenerationJobExecutionContext } from './generation-job-execution'
-import type { FencedCheckpointMutationResult } from './generation-jobs'
+import type { CheckpointMutationResult } from './chapter-generation-checkpoint.pure'
 import {
   defaultCheckpointExpiry,
   draftFromCheckpoint,
@@ -13,6 +13,7 @@ import {
   isCheckpointUsableForChoiceRetry,
   isChoiceDurableCheckpointEnabled,
   proseFingerprint,
+  verifyCheckpointFreshness,
   type ChapterGenerationCheckpoint,
   type CheckpointStatus,
 } from './chapter-generation-checkpoint.pure'
@@ -27,6 +28,27 @@ function isMissingRelation(error: { code?: string; message?: string } | null | u
   if (message.includes('does not exist')) return true
   if (message.includes('could not find the table')) return true
   return false
+}
+
+function checkpointWriteFailure(
+  disposition: 'RETRYABLE' | 'TERMINAL',
+): CheckpointMutationResult {
+  return {
+    ok: false,
+    outcome: 'WRITE_FAILED',
+    errorCode: 'CHECKPOINT_WRITE_FAILED',
+    disposition,
+  }
+}
+
+/** Baris checkpoint wajib ada; nol baris berarti target mutasi tidak ditemukan. */
+function checkpointNotFound(): CheckpointMutationResult {
+  return {
+    ok: false,
+    outcome: 'NOT_FOUND',
+    errorCode: 'CHECKPOINT_NOT_FOUND',
+    disposition: 'TERMINAL',
+  }
 }
 
 function rowToCheckpoint(row: Record<string, unknown>): ChapterGenerationCheckpoint | null {
@@ -74,20 +96,19 @@ function rowToCheckpoint(row: Record<string, unknown>): ChapterGenerationCheckpo
  * Load latest usable checkpoint for story+chapter (choice-only resume).
  * Prefer matching attemptId when provided.
  */
+export const MAX_CHECKPOINT_LOOKUP_CANDIDATES = 5
+
 export async function loadUsableProseCheckpoint(args: {
   storyId: string
   chapterNumber: number
   attemptId?: string | null
-  /**
-   * P1-2: when provided, the loaded checkpoint must pass verifyCheckpointFreshness
-   * against the current runtime versions or it is rejected (stale prose not reused).
-   */
   freshness?: import('./chapter-generation-checkpoint.pure').CheckpointFreshnessContext
   jobContext?: GenerationJobExecutionContext | null
 }): Promise<ChapterGenerationCheckpoint | null> {
   if (!isChoiceDurableCheckpointEnabled()) return null
   try {
     const db = createAdminClient()
+    const nowIso = new Date().toISOString()
     let query = db
       .from('chapter_generation_checkpoints')
       .select('*')
@@ -99,9 +120,9 @@ export async function loadUsableProseCheckpoint(args: {
         'QUEUED_CHOICES',
         'RUNNING_CHOICES',
       ])
-      .gt('expires_at', new Date().toISOString())
+      .gt('expires_at', nowIso)
       .order('updated_at', { ascending: false })
-      .limit(1)
+      .limit(MAX_CHECKPOINT_LOOKUP_CANDIDATES)
 
     if (args.attemptId) {
       query = db
@@ -116,11 +137,12 @@ export async function loadUsableProseCheckpoint(args: {
           'QUEUED_CHOICES',
           'RUNNING_CHOICES',
         ])
-        .gt('expires_at', new Date().toISOString())
-        .limit(1)
+        .gt('expires_at', nowIso)
+        .order('updated_at', { ascending: false })
+        .limit(MAX_CHECKPOINT_LOOKUP_CANDIDATES)
     }
 
-    const { data, error } = await query.maybeSingle()
+    const { data, error } = await query
     if (error) {
       if (args.jobContext) throw new Error('WORKER_CHECKPOINT_LOAD_FAILED', { cause: error })
       if (isMissingRelation(error)) {
@@ -137,25 +159,68 @@ export async function loadUsableProseCheckpoint(args: {
       })
       return null
     }
-    if (!data) return null
-    const cp = rowToCheckpoint(data as Record<string, unknown>)
-    if (!cp || !isCheckpointUsableForChoiceRetry(cp)) return null
-    if (args.freshness) {
-      const { verifyCheckpointFreshness } = await import(
-        './chapter-generation-checkpoint.pure'
-      )
-      const verdict = verifyCheckpointFreshness(cp, args.freshness)
-      if (!verdict.fresh) {
-        console.log('CHECKPOINT_STALE_REJECTED', {
-          storyId: args.storyId,
-          chapterNumber: args.chapterNumber,
-          reason: verdict.reason,
-          schemaVersion: cp.schemaVersion,
-        })
-        return null
+    if (!Array.isArray(data) || data.length === 0) return null
+
+    const candidates = data.slice(0, MAX_CHECKPOINT_LOOKUP_CANDIDATES)
+    for (const row of candidates) {
+      const cp = rowToCheckpoint(row as Record<string, unknown>)
+      if (!cp || !isCheckpointUsableForChoiceRetry(cp)) continue
+
+      // Reuse for generation always needs full current provenance. Callers that
+      // only inspect chapter status must use status evidence, not reusable prose.
+      if (!args.freshness) continue
+      {
+        // Candidate reuse requires current strict schema; legacy rows remain
+        // readable for status/recovery but cannot seed new choice generation.
+        if (cp.schemaVersion < 2) {
+          console.log('CHECKPOINT_STALE_REJECTED', {
+            storyId: args.storyId,
+            chapterNumber: args.chapterNumber,
+            reason: 'STALE_SCHEMA_VERSION',
+            schemaVersion: cp.schemaVersion,
+          })
+          continue
+        }
+        const verdict = verifyCheckpointFreshness(cp, args.freshness)
+        if (!verdict.fresh) {
+          console.log('CHECKPOINT_STALE_REJECTED', {
+            storyId: args.storyId,
+            chapterNumber: args.chapterNumber,
+            reason: verdict.reason,
+            schemaVersion: cp.schemaVersion,
+          })
+          continue
+        }
       }
+
+      if (args.jobContext) {
+        if (cp.jobId == null || cp.jobId !== args.jobContext.jobId) {
+          console.log('CHECKPOINT_FOREIGN_JOB_REJECTED', {
+            storyId: args.storyId,
+            chapterNumber: args.chapterNumber,
+            cpJobId: cp.jobId,
+            ctxJobId: args.jobContext.jobId,
+          })
+          continue
+        }
+        if (
+          cp.jobAttemptNumber == null
+          || cp.jobAttemptNumber > args.jobContext.attemptNumber
+        ) {
+          console.log('CHECKPOINT_FUTURE_ATTEMPT_REJECTED', {
+            storyId: args.storyId,
+            chapterNumber: args.chapterNumber,
+            cpAttempt: cp.jobAttemptNumber,
+            ctxAttempt: args.jobContext.attemptNumber,
+          })
+          continue
+        }
+      }
+
+      return cp
     }
-    return cp
+
+    return null
   } catch (err) {
     if (args.jobContext) {
       if (err instanceof Error && err.message === 'WORKER_CHECKPOINT_LOAD_FAILED') throw err
@@ -189,13 +254,9 @@ export async function persistProseReadyCheckpoint(args: {
   jobId?: string | null
   jobAttemptNumber?: number | null
   jobContext?: GenerationJobExecutionContext | null
-}): Promise<
-  | FencedCheckpointMutationResult
-  | { ok: true; checkpoint: ChapterGenerationCheckpoint }
-  | { ok: false; error: 'TABLE_UNAVAILABLE' | 'WRITE_FAILED' }
-> {
+}): Promise<CheckpointMutationResult> {
   if (!isChoiceDurableCheckpointEnabled()) {
-    return { ok: false, error: 'WRITE_FAILED' }
+    return checkpointWriteFailure('TERMINAL')
   }
 
   const fingerprint = proseFingerprint(args.title, args.paragraphs)
@@ -229,6 +290,7 @@ export async function persistProseReadyCheckpoint(args: {
       leaseId: args.jobContext.leaseId,
       storyId: args.storyId,
       chapterNumber: args.chapterNumber,
+      checkpointAttemptId: args.attemptId,
       title: args.title,
       paragraphs: args.paragraphs,
       proseFingerprint: fingerprint,
@@ -280,23 +342,42 @@ export async function persistProseReadyCheckpoint(args: {
 
   try {
     const db = createAdminClient()
-    const { error } = await db.from('chapter_generation_checkpoints').upsert(row, {
-      onConflict: 'story_id,chapter_number,attempt_id',
-    })
+    const { data, error } = await db
+      .from('chapter_generation_checkpoints')
+      .upsert(row, { onConflict: 'story_id,chapter_number,attempt_id' })
+      .select('story_id, chapter_number, attempt_id, correlation_id, status')
+      .maybeSingle()
     if (error) {
       if (isMissingRelation(error)) {
         console.log('CHECKPOINT_TABLE_UNAVAILABLE', {
           storyId: args.storyId,
           chapterNumber: args.chapterNumber,
         })
-        return { ok: false, error: 'TABLE_UNAVAILABLE' }
+        return checkpointWriteFailure('TERMINAL')
       }
       console.log('CHECKPOINT_WRITE_FAILED', {
         storyId: args.storyId,
         chapterNumber: args.chapterNumber,
         code: error.code,
       })
-      return { ok: false, error: 'WRITE_FAILED' }
+      return checkpointWriteFailure('RETRYABLE')
+    }
+
+    // Upsert wajib mengembalikan baris dengan identitas persis seperti yang ditulis.
+    if (!data || typeof data !== 'object') return checkpointNotFound()
+    const written = data as Record<string, unknown>
+    const identityMatches = String(written.story_id ?? '') === args.storyId
+      && Number(written.chapter_number) === args.chapterNumber
+      && String(written.attempt_id ?? '') === args.attemptId
+      && String(written.correlation_id ?? '') === args.correlationId
+      && String(written.status ?? '') === 'PROSE_READY'
+    if (!identityMatches) {
+      console.log('CHECKPOINT_WRITE_UNVERIFIED', {
+        storyId: args.storyId,
+        chapterNumber: args.chapterNumber,
+        status: 'PROSE_READY',
+      })
+      return checkpointWriteFailure('TERMINAL')
     }
 
     console.log('CHECKPOINT_PROSE_READY', {
@@ -307,37 +388,10 @@ export async function persistProseReadyCheckpoint(args: {
       proseFingerprint: fingerprint,
     })
 
-    return {
-      ok: true,
-      checkpoint: {
-        storyId: args.storyId,
-        chapterNumber: args.chapterNumber,
-        attemptId: args.attemptId,
-        correlationId: args.correlationId,
-        status: 'PROSE_READY',
-        title: args.title,
-        paragraphs: args.paragraphs,
-        proseFingerprint: fingerprint,
-        auditSignals: args.auditSignals ?? null,
-        auditSignalsVersion: args.auditSignalsVersion ?? null,
-        canonVersion,
-        blueprintVersion,
-        directionFingerprint: args.directionFingerprint ?? null,
-        generationMode,
-        generationPolicyVersion,
-        promptContractVersion,
-        jobId,
-        jobAttemptNumber,
-        schemaVersion: 2,
-        proseAttemptCount: args.proseAttemptCount ?? 1,
-        choiceAttemptCount: 0,
-        createdAt: now.toISOString(),
-        updatedAt: now.toISOString(),
-        expiresAt: row.expires_at,
-      },
-    }
+    return { ok: true, outcome: 'CREATED', checkpointAttemptId: args.attemptId }
+
   } catch {
-    return { ok: false, error: 'WRITE_FAILED' }
+    return checkpointWriteFailure('RETRYABLE')
   }
 }
 
@@ -348,8 +402,8 @@ export async function markCheckpointStatus(args: {
   status: CheckpointStatus
   choiceAttemptCount?: number
   jobContext?: GenerationJobExecutionContext | null
-}): Promise<FencedCheckpointMutationResult | void> {
-  if (!isChoiceDurableCheckpointEnabled()) return
+}): Promise<CheckpointMutationResult> {
+  if (!isChoiceDurableCheckpointEnabled()) return checkpointWriteFailure('TERMINAL')
   if (args.jobContext) {
     const { transitionGenerationCheckpointFenced } = await import('./generation-jobs')
     return transitionGenerationCheckpointFenced({
@@ -375,29 +429,46 @@ export async function markCheckpointStatus(args: {
     if (args.status === 'PUBLISHED' || args.status === 'EXPIRED') {
       patch.expires_at = new Date(Date.now() + 60 * 60 * 1000).toISOString()
     }
-    const { error } = await db
+    const { data, error } = await db
       .from('chapter_generation_checkpoints')
       .update(patch)
       .eq('story_id', args.storyId)
       .eq('chapter_number', args.chapterNumber)
       .eq('attempt_id', args.attemptId)
-    if (error && !isMissingRelation(error)) {
+      .select('attempt_id, status')
+      .maybeSingle()
+    if (error) {
       console.log('CHECKPOINT_STATUS_UPDATE_FAILED', {
         storyId: args.storyId,
         chapterNumber: args.chapterNumber,
         status: args.status,
         code: error.code,
       })
-    } else if (!error) {
-      console.log('CHECKPOINT_STATUS', {
+      return checkpointWriteFailure(isMissingRelation(error) ? 'TERMINAL' : 'RETRYABLE')
+    }
+    // Nol baris terupdate bukan sukses: checkpoint target tidak ada.
+    if (!data || typeof data !== 'object') return checkpointNotFound()
+    const updated = data as Record<string, unknown>
+    if (
+      String(updated.attempt_id ?? '') !== args.attemptId
+      || String(updated.status ?? '') !== args.status
+    ) {
+      console.log('CHECKPOINT_STATUS_UNVERIFIED', {
         storyId: args.storyId,
         chapterNumber: args.chapterNumber,
-        attemptId: args.attemptId,
         status: args.status,
       })
+      return checkpointWriteFailure('TERMINAL')
     }
+    console.log('CHECKPOINT_STATUS', {
+      storyId: args.storyId,
+      chapterNumber: args.chapterNumber,
+      attemptId: args.attemptId,
+      status: args.status,
+    })
+    return { ok: true, outcome: 'UPDATED', checkpointAttemptId: args.attemptId }
   } catch {
-    // best-effort
+    return checkpointWriteFailure('RETRYABLE')
   }
 }
 

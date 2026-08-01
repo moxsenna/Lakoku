@@ -18,7 +18,7 @@ import {
   type CheckpointFreshnessContext,
   type CheckpointStatus,
 } from '@/lib/runtime/chapter-generation-checkpoint.pure'
-import type { FencedCheckpointMutationResult } from '@/lib/runtime/generation-jobs'
+import type { CheckpointMutationResult } from '@/lib/runtime/chapter-generation-checkpoint.pure'
 import { auditPlotDebts } from '@/lib/story-engine/plot-debt'
 
 const mocks = vi.hoisted(() => ({
@@ -279,8 +279,8 @@ function makeDeps(options: {
   routeTruth?: number
   checkpoint?: ChapterGenerationCheckpoint | null
   rejectStaleCheckpoint?: boolean
-  persistCheckpointResult?: FencedCheckpointMutationResult | { ok: false; error: 'WRITE_FAILED' }
-  checkpointStatusResult?: Partial<Record<CheckpointStatus, FencedCheckpointMutationResult>>
+  persistCheckpointResult?: CheckpointMutationResult
+  checkpointStatusResult?: Partial<Record<CheckpointStatus, CheckpointMutationResult>>
   choiceFailure?: boolean
   choiceResults?: Array<ChoiceBranch | null>
   checkpointState?: { current: ChapterGenerationCheckpoint | null }
@@ -430,9 +430,9 @@ function makeDeps(options: {
         jobAttemptNumber: PERSONALIZED_JOB_CONTEXT.attemptNumber,
       })
       return options.persistCheckpointResult ?? {
-        ok: true,
-        result: 'UPDATED' as const,
-        changed: true,
+        ok: true as const,
+        outcome: 'UPDATED' as const,
+        checkpointAttemptId: PERSONALIZED_JOB_CONTEXT.jobId,
       }
     }),
     markCheckpointStatus: vi.fn(async (args: { status: CheckpointStatus; choiceAttemptCount?: number }) => {
@@ -447,9 +447,9 @@ function makeDeps(options: {
         }
       }
       return options.checkpointStatusResult?.[args.status] ?? {
-        ok: true,
-        result: 'UPDATED' as const,
-        changed: true,
+        ok: true as const,
+        outcome: 'UPDATED' as const,
+        checkpointAttemptId: PERSONALIZED_JOB_CONTEXT.jobId,
       }
     }),
     generateChapter: vi.fn(async (
@@ -589,6 +589,8 @@ const PERSONALIZED_JOB_CONTEXT = {
   attemptNumber: 2,
   correlationId: CORRELATION_ID,
   generationKind: 'personalized' as const,
+  deadlineAt: '2099-01-01T00:00:00.000Z',
+  deadlineAtMs: Date.parse('2099-01-01T00:00:00.000Z'),
   signal: new AbortController().signal,
 }
 
@@ -854,7 +856,7 @@ describe('generateNextPersonalizedChapter', () => {
         lockedEndingKey: chapterNumber === 50 ? 'publish-truth' : null,
         debtsStatus: chapterNumber === 50 ? 'closed' : 'progressing',
         checkpointStatusResult: {
-          PUBLISHED: { ok: false, result: 'OWNERSHIP_LOST' },
+          PUBLISHED: { ok: false, outcome: 'OWNERSHIP_LOST', errorCode: 'GENERATION_JOB_OWNERSHIP_LOST', disposition: 'OWNERSHIP_LOST' },
         },
       })
       mocks.publishGenerationJobChapterV4.mockResolvedValueOnce({
@@ -884,7 +886,7 @@ describe('generateNextPersonalizedChapter', () => {
     })
     deps.markCheckpointStatus.mockImplementation(async (args: { status: CheckpointStatus }) => {
       if (args.status === 'PUBLISHED') throw new Error('checkpoint unavailable')
-      return { ok: true, result: 'UPDATED' as const, changed: true }
+      return { ok: true, outcome: 'UPDATED' as const, checkpointAttemptId: PERSONALIZED_JOB_CONTEXT.jobId }
     })
     mocks.publishGenerationJobChapterV4.mockResolvedValueOnce({
       jobId: PERSONALIZED_JOB_CONTEXT.jobId,
@@ -956,7 +958,7 @@ describe('generateNextPersonalizedChapter', () => {
   it('stops before choices when worker checkpoint persistence loses ownership', async () => {
     const { deps } = makeDeps({
       chapterNumber: 12,
-      persistCheckpointResult: { ok: false, result: 'OWNERSHIP_LOST' },
+      persistCheckpointResult: { ok: false, outcome: 'OWNERSHIP_LOST', errorCode: 'GENERATION_JOB_OWNERSHIP_LOST', disposition: 'OWNERSHIP_LOST' },
     })
     const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
 
@@ -970,7 +972,14 @@ describe('generateNextPersonalizedChapter', () => {
     }, deps)).resolves.toMatchObject({
       ok: false,
       reason: 'FAILED_REVIEW_REQUIRED',
-      detail: { checkpointMutation: { result: 'OWNERSHIP_LOST' } },
+      detail: {
+        checkpointMutation: {
+          ok: false,
+          outcome: 'OWNERSHIP_LOST',
+          errorCode: 'GENERATION_JOB_OWNERSHIP_LOST',
+          disposition: 'OWNERSHIP_LOST',
+        },
+      },
     })
     expect(deps.generateChoiceBranch).not.toHaveBeenCalled()
     expect(mocks.publishGenerationJobChapterV4).not.toHaveBeenCalled()
@@ -1000,26 +1009,50 @@ describe('generateNextPersonalizedChapter', () => {
 
     const first = await generateNextPersonalizedChapter(input, deps)
     expect(first).toMatchObject({ ok: false, reason: 'CHOICE_GENERATION_FAILED' })
+    expect(deps.persistProseReadyCheckpoint).toHaveBeenCalledTimes(1)
+    const persistedProse = (deps.persistProseReadyCheckpoint.mock.calls as unknown as Array<[{
+      title: string
+      paragraphs: string[]
+    }]>)[0]?.[0]
+    expect(persistedProse).toBeDefined()
+    const savedFingerprint = proseFingerprint(persistedProse.title, persistedProse.paragraphs)
     expect(checkpointState.current).toMatchObject({
       status: 'CHOICES_RETRY_WAIT',
+      title: persistedProse.title,
+      paragraphs: persistedProse.paragraphs,
+      proseFingerprint: savedFingerprint,
       proseAttemptCount: 0,
     })
-    const savedFingerprint = checkpointState.current?.proseFingerprint
-    expect(savedFingerprint).toBeTruthy()
+    expect(deps.markCheckpointStatus).toHaveBeenLastCalledWith(expect.objectContaining({
+      status: 'CHOICES_RETRY_WAIT',
+    }))
     expect(deps.generateChapter).toHaveBeenCalledTimes(1)
     expect(mocks.publishGenerationJobChapterV4).not.toHaveBeenCalled()
 
     const retry = await generateNextPersonalizedChapter(input, deps)
     expect(retry).toMatchObject({ ok: true, fromCheckpoint: true, chapterNumber: 12, seq: 9 })
+    expect(deps.loadUsableProseCheckpoint).toHaveBeenCalledTimes(2)
     expect(deps.generateChapter).toHaveBeenCalledTimes(1)
+    expect(deps.persistProseReadyCheckpoint).toHaveBeenCalledTimes(1)
     expect(deps.generateChoiceBranch).toHaveBeenCalledTimes(3)
-    expect(checkpointState.current?.proseFingerprint).toBe(savedFingerprint)
+    expect(checkpointState.current).toMatchObject({
+      title: persistedProse.title,
+      paragraphs: persistedProse.paragraphs,
+      proseFingerprint: savedFingerprint,
+    })
     expect(mocks.publishGenerationJobChapterV4).toHaveBeenCalledTimes(1)
     expect(mocks.publishGenerationJobChapterV4).toHaveBeenCalledWith(expect.objectContaining({
       jobId: PERSONALIZED_JOB_CONTEXT.jobId,
       storyId: STORY_A,
       chapterNumber: 12,
+      title: persistedProse.title,
+      paragraphs: persistedProse.paragraphs,
     }))
+    const published = mocks.publishGenerationJobChapterV4.mock.calls[0]?.[0] as {
+      title: string
+      paragraphs: string[]
+    }
+    expect(proseFingerprint(published.title, published.paragraphs)).toBe(savedFingerprint)
   }, 15_000)
 
   it('retains checkpoint as CHOICES_RETRY_WAIT when choices fail', async () => {
@@ -1061,7 +1094,7 @@ describe('generateNextPersonalizedChapter', () => {
       seq: 9,
       repairAttempts: 0,
     })
-    const expectedContext = {
+    const expectedContext = expect.objectContaining({
       userId: USER_A,
       storyId: STORY_A,
       chapterNumber: 12,
@@ -1069,7 +1102,7 @@ describe('generateNextPersonalizedChapter', () => {
       jobId: null,
       correlationId: CORRELATION_ID,
       attemptNumber: null,
-    }
+    })
     expect(deps.selectProvider).toHaveBeenNthCalledWith(1, expectedContext)
     expect(deps.selectProvider).toHaveBeenNthCalledWith(2, expectedContext)
 
@@ -1322,6 +1355,8 @@ describe('generateNextPersonalizedChapter', () => {
         attemptNumber: 1,
         correlationId: CORRELATION_ID,
         generationKind: 'personalized',
+        deadlineAt: '2099-01-01T00:00:00.000Z',
+        deadlineAtMs: Date.parse('2099-01-01T00:00:00.000Z'),
         signal: new AbortController().signal,
       },
     }, deps)
@@ -1337,7 +1372,7 @@ describe('generateNextPersonalizedChapter', () => {
     expect(deps.releaseGenerationLease).not.toHaveBeenCalled()
   })
 
-  it('recovers chapter 50 when first mark SELESAI throws after publish ok', async () => {
+  it('keeps chapter 50 publish successful when mark SELESAI throws after publish ok', async () => {
     const firstCapture = {
       publishInputs: [] as PublishChapterV2Input[],
       calls: [] as CallName[],
@@ -1359,13 +1394,18 @@ describe('generateNextPersonalizedChapter', () => {
     })
     const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
 
-    await expect(generateNextPersonalizedChapter({
+    // Publikasi sudah commit: kegagalan rekonsiliasi pasca-publish tidak boleh
+    // mengubah hasil menjadi gagal atau melempar ke pemanggil.
+    const firstResult = await generateNextPersonalizedChapter({
       storyId: STORY_A,
       userId: USER_A,
       correlationId: CORRELATION_ID,
       chapterNumber: 50,
-    }, first.deps)).rejects.toThrow(/transient write failure/)
+    }, first.deps)
+
+    expect(firstResult.ok).toBe(true)
     expect(first.deps.publishChapterV2).toHaveBeenCalledTimes(1)
+    expect(first.deps.markReaderStateSelesai).toHaveBeenCalledTimes(1)
     expect(first.deps.releaseGenerationLease).not.toHaveBeenCalled()
 
     // Retry: chapter already published → CHAPTER_EXISTS; must still mark SELESAI.
@@ -1472,6 +1512,8 @@ describe('generateNextPersonalizedChapter', () => {
         attemptNumber: 1,
         correlationId: CORRELATION_ID,
         generationKind: 'personalized',
+        deadlineAt: '2099-01-01T00:00:00.000Z',
+        deadlineAtMs: Date.parse('2099-01-01T00:00:00.000Z'),
         signal: new AbortController().signal,
       },
     }, deps)
@@ -1514,6 +1556,8 @@ describe('generateNextPersonalizedChapter', () => {
         attemptNumber: 1,
         correlationId: CORRELATION_ID,
         generationKind: 'personalized',
+        deadlineAt: '2099-01-01T00:00:00.000Z',
+        deadlineAtMs: Date.parse('2099-01-01T00:00:00.000Z'),
         signal: new AbortController().signal,
       },
     }, deps)
@@ -1977,6 +2021,8 @@ describe('generateNextPersonalizedChapter', () => {
         attemptNumber: 1,
         correlationId: CORRELATION_ID,
         generationKind: 'personalized',
+        deadlineAt: '2099-01-01T00:00:00.000Z',
+        deadlineAtMs: Date.parse('2099-01-01T00:00:00.000Z'),
         signal: controller.signal,
       },
     }, deps)
@@ -2035,6 +2081,8 @@ describe('generateNextPersonalizedChapter', () => {
         attemptNumber: 1,
         correlationId: CORRELATION_ID,
         generationKind: 'personalized',
+        deadlineAt: '2099-01-01T00:00:00.000Z',
+        deadlineAtMs: Date.parse('2099-01-01T00:00:00.000Z'),
         signal: controller.signal,
       },
     }, deps)
@@ -2074,6 +2122,8 @@ describe('generateNextPersonalizedChapter', () => {
         attemptNumber: 1,
         correlationId: CORRELATION_ID,
         generationKind: 'personalized',
+        deadlineAt: '2099-01-01T00:00:00.000Z',
+        deadlineAtMs: Date.parse('2099-01-01T00:00:00.000Z'),
         signal: controller.signal,
       },
     }, deps)

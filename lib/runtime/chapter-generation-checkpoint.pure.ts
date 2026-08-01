@@ -129,6 +129,34 @@ export function parseCheckpointAuditSignals(
   return null
 }
 
+export type CheckpointMutationFailureDisposition = 'RETRYABLE' | 'TERMINAL' | 'OWNERSHIP_LOST'
+
+export type CheckpointMutationErrorCode =
+  | 'CHECKPOINT_NOT_FOUND'
+  | 'CHECKPOINT_WRITE_FAILED'
+  | 'GENERATION_JOB_OWNERSHIP_LOST'
+  | 'PROVENANCE_CONFLICT'
+  | 'INVALID_TRANSITION'
+
+export type CheckpointMutationResult =
+  | Readonly<{
+    ok: true
+    outcome: 'CREATED' | 'UPDATED'
+    checkpointAttemptId: string
+  }>
+  | Readonly<{
+    ok: false
+    outcome: 'NOT_FOUND' | 'WRITE_FAILED' | 'OWNERSHIP_LOST' | 'PROVENANCE_CONFLICT' | 'INVALID_TRANSITION'
+    errorCode: CheckpointMutationErrorCode
+    disposition: CheckpointMutationFailureDisposition
+  }>
+
+export function isCheckpointMutationSuccess(
+  result: CheckpointMutationResult,
+): result is Extract<CheckpointMutationResult, { ok: true }> {
+  return result.ok === true
+}
+
 export type CheckpointStatus =
   | 'PROSE_READY'
   | 'QUEUED_CHOICES'

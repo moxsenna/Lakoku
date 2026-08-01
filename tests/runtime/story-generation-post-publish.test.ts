@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const CORRELATION_ID = 'corr-test'
+
 const mocks = vi.hoisted(() => ({
   loadCanonSnapshot: vi.fn(),
   persistRetrievalLog: vi.fn(),
@@ -97,6 +99,8 @@ const JOB_CONTEXT = {
   attemptNumber: 1,
   correlationId: '44444444-4444-4444-8444-444444444444',
   generationKind: 'standard' as const,
+  deadlineAt: '2099-01-01T00:00:00.000Z',
+  deadlineAtMs: Date.parse('2099-01-01T00:00:00.000Z'),
   signal: new AbortController().signal,
 }
 
@@ -145,11 +149,38 @@ async function run(chapterNumber: number) {
   return runWithSignal(chapterNumber)
 }
 
+function standardCheckpoint(chapterNumber: number, status: 'PROSE_READY' | 'CHOICES_RETRY_WAIT' = 'PROSE_READY') {
+  return {
+    storyId: 'story-test',
+    chapterNumber,
+    attemptId: CORRELATION_ID,
+    correlationId: JOB_CONTEXT.correlationId,
+    status,
+    title: `Bab ${chapterNumber}`,
+    paragraphs: ['Maya membuka pintu dan menemukan surat lama.'],
+    proseFingerprint: 'fingerprint-test',
+    canonVersion: 1,
+    blueprintVersion: 1,
+    directionFingerprint: 'none',
+    generationMode: 'standard' as const,
+    generationPolicyVersion: 2,
+    promptContractVersion: 2,
+    jobId: JOB_CONTEXT.jobId,
+    jobAttemptNumber: JOB_CONTEXT.attemptNumber,
+    schemaVersion: 2,
+    proseAttemptCount: 1,
+    choiceAttemptCount: 1,
+    createdAt: '2026-07-26T00:00:00.000Z',
+    updatedAt: '2026-07-26T00:01:00.000Z',
+    expiresAt: '2099-07-26T00:00:00.000Z',
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.loadCheckpoint.mockResolvedValue(null)
-  mocks.persistCheckpoint.mockResolvedValue({ ok: true, result: 'UPDATED', changed: true })
-  mocks.markCheckpointStatus.mockResolvedValue({ ok: true, result: 'UPDATED', changed: true })
+  mocks.persistCheckpoint.mockResolvedValue({ ok: true, outcome: 'CREATED', checkpointAttemptId: CORRELATION_ID })
+  mocks.markCheckpointStatus.mockResolvedValue({ ok: true, outcome: 'UPDATED', checkpointAttemptId: CORRELATION_ID })
   mocks.publishGenerationJobChapterV4.mockImplementation(async (input: { chapterNumber: number }) => ({
     jobId: JOB_CONTEXT.jobId,
     chapterNumber: input.chapterNumber,
@@ -219,6 +250,41 @@ describe('standard worker V4 publication', () => {
     },
   )
 
+  it('stops before choices and publish when fresh PROSE_READY persistence fails', async () => {
+    mocks.persistCheckpoint.mockResolvedValueOnce({
+      ok: false,
+      outcome: 'OWNERSHIP_LOST',
+      errorCode: 'GENERATION_JOB_OWNERSHIP_LOST',
+      disposition: 'OWNERSHIP_LOST',
+    })
+
+    await expect(run(12)).resolves.toMatchObject({
+      ok: false,
+      reason: 'FAILED_REVIEW_REQUIRED',
+      detail: { checkpointMutation: expect.objectContaining({ ok: false }) },
+    })
+    expect(mocks.buildChoiceBranch).not.toHaveBeenCalled()
+    expect(mocks.publishGenerationJobChapterV4).not.toHaveBeenCalled()
+  })
+
+  it('stops before choices and publish when fresh RUNNING_CHOICES mutation fails', async () => {
+    mocks.markCheckpointStatus.mockResolvedValueOnce({
+      ok: false,
+      outcome: 'OWNERSHIP_LOST',
+      errorCode: 'GENERATION_JOB_OWNERSHIP_LOST',
+      disposition: 'OWNERSHIP_LOST',
+    })
+
+    await expect(run(12)).resolves.toMatchObject({
+      ok: false,
+      reason: 'FAILED_REVIEW_REQUIRED',
+      detail: { checkpointMutation: expect.objectContaining({ ok: false }) },
+    })
+    expect(mocks.markCheckpointStatus).toHaveBeenCalledWith(expect.objectContaining({ status: 'RUNNING_CHOICES' }))
+    expect(mocks.buildChoiceBranch).not.toHaveBeenCalled()
+    expect(mocks.publishGenerationJobChapterV4).not.toHaveBeenCalled()
+  })
+
   it('returns structured choice failure, preserves retry checkpoint, and never publishes generic choices', async () => {
     mocks.buildChoiceBranch.mockResolvedValueOnce({
       ok: false,
@@ -242,10 +308,63 @@ describe('standard worker V4 publication', () => {
       }),
     })
     expect(mocks.publishGenerationJobChapterV4).not.toHaveBeenCalled()
+    expect(mocks.markCheckpointStatus).toHaveBeenCalledTimes(2)
+    expect(mocks.markCheckpointStatus).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ status: 'RUNNING_CHOICES' }),
+    )
     expect(mocks.markCheckpointStatus).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({ status: 'CHOICES_RETRY_WAIT' }),
     )
+  })
+
+  it('stops resumed RUNNING_CHOICES before choices and publish when mutation fails', async () => {
+    mocks.loadCheckpoint.mockResolvedValueOnce(standardCheckpoint(12))
+    mocks.markCheckpointStatus.mockResolvedValueOnce({
+      ok: false,
+      outcome: 'OWNERSHIP_LOST',
+      errorCode: 'GENERATION_JOB_OWNERSHIP_LOST',
+      disposition: 'OWNERSHIP_LOST',
+    })
+
+    await expect(run(12)).resolves.toMatchObject({ ok: false, reason: 'FAILED_REVIEW_REQUIRED' })
+    expect(mocks.buildChoiceBranch).not.toHaveBeenCalled()
+    expect(mocks.publishGenerationJobChapterV4).not.toHaveBeenCalled()
+  })
+
+  it('runs fresh RUNNING_CHOICES mutation before choice provider', async () => {
+    const order: string[] = []
+    mocks.markCheckpointStatus.mockImplementationOnce(async (input: { status: string }) => {
+      order.push(input.status)
+      return { ok: true, outcome: 'UPDATED', checkpointAttemptId: CORRELATION_ID }
+    })
+    mocks.buildChoiceBranch.mockImplementationOnce(async () => {
+      order.push('choices')
+      return { ok: false, reason: 'REPAIR_EXHAUSTED', validationFindings: [], repairAttempts: 1 }
+    })
+
+    await run(12)
+    expect(order.indexOf('RUNNING_CHOICES')).toBeLessThan(order.indexOf('choices'))
+  })
+
+  it('transitions CHOICES_RETRY_WAIT failure to terminal and does not publish', async () => {
+    mocks.buildChoiceBranch.mockResolvedValueOnce({
+      ok: false,
+      reason: 'REPAIR_EXHAUSTED',
+      validationFindings: [],
+      repairAttempts: 1,
+    })
+    mocks.markCheckpointStatus.mockResolvedValueOnce({ ok: true, outcome: 'UPDATED', checkpointAttemptId: CORRELATION_ID })
+      .mockResolvedValueOnce({
+        ok: false,
+        outcome: 'OWNERSHIP_LOST',
+        errorCode: 'GENERATION_JOB_OWNERSHIP_LOST',
+        disposition: 'OWNERSHIP_LOST',
+      })
+
+    await expect(run(12)).resolves.toMatchObject({ ok: false, reason: 'FAILED_REVIEW_REQUIRED' })
+    expect(mocks.publishGenerationJobChapterV4).not.toHaveBeenCalled()
   })
 
   it('does not expose production generic choice fallback', async () => {

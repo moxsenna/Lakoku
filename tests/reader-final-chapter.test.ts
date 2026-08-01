@@ -209,6 +209,27 @@ describe('chapter status polling', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
+  it.each(['queued', 'generating'] as const)(
+    'terminates unknown when successful %s responses reach session deadline',
+    async (status) => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-07-31T00:00:00.000Z'))
+      const getStatus = vi.fn(async () => ({ status, chapterNumber: 5 }))
+
+      const result = pollChapterGenerationStatus({
+        storyId: story.id,
+        chapterNumber: 5,
+        signal: new AbortController().signal,
+        getStatus,
+      })
+      await vi.advanceTimersByTimeAsync(60_000)
+
+      await expect(result).resolves.toBe('unknown')
+      expect(getStatus).toHaveBeenCalledTimes(40)
+      expect(vi.getTimerCount()).toBe(0)
+    },
+  )
+
   it('stops on failed and leaves no scheduled poll', async () => {
     vi.useFakeTimers()
     const getStatus = vi.fn(async () => ({
@@ -279,6 +300,7 @@ describe('chapter status polling', () => {
 
   it('retries a transient status request error until an explicit terminal status', async () => {
     vi.useFakeTimers()
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
     const getStatus = vi.fn()
       .mockRejectedValueOnce(new Error('private status detail'))
       .mockResolvedValueOnce({ status: 'ready', chapterNumber: 2 })
@@ -292,7 +314,8 @@ describe('chapter status polling', () => {
     await vi.advanceTimersByTimeAsync(1500)
     expect(getStatus).toHaveBeenCalledOnce()
     expect(vi.getTimerCount()).toBe(1)
-    await vi.advanceTimersByTimeAsync(1500)
+    // Transient retry uses shared bounded backoff (5s after first failure).
+    await vi.advanceTimersByTimeAsync(5000)
 
     await expect(result).resolves.toBe('ready')
     expect(getStatus).toHaveBeenCalledTimes(2)

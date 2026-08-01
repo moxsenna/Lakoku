@@ -8,15 +8,11 @@ export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl
   const code = searchParams.get('code')
   const oauthError = searchParams.get('error')
-  const oauthErrorDescription = searchParams.get('error_description')
   const next = sanitizeNextPath(searchParams.get('next'))
   const origin = getPublicOrigin(request)
 
   if (oauthError) {
-    return redirectAuthError(
-      origin,
-      oauthErrorDescription || oauthError || 'oauth_error',
-    )
+    return redirectAuthError(origin, oauthError === 'access_denied' ? 'access_denied' : 'oauth_error')
   }
 
   if (!code) {
@@ -44,16 +40,15 @@ export async function GET(request: NextRequest) {
 
   const { error } = await supabase.auth.exchangeCodeForSession(code)
   if (error) {
-    return redirectAuthError(origin, error.message || 'exchange_failed')
+    return redirectAuthError(origin, 'oauth_error')
   }
 
   return successResponse
 }
 
-function redirectAuthError(origin: string, reason: string) {
+function redirectAuthError(origin: string, reason: 'access_denied' | 'missing_code' | 'oauth_error') {
   const url = new URL('/auth/error', origin)
-  // Keep short, no secrets; helps distinguish cancel vs PKCE vs config.
-  url.searchParams.set('error', reason.slice(0, 180))
+  url.searchParams.set('error', reason)
   return NextResponse.redirect(url)
 }
 

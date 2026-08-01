@@ -18,7 +18,13 @@ function readSafeNextFromWindow(): string {
   return sanitizeNextPath(new URLSearchParams(window.location.search).get('next'))
 }
 
-export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicConfig }) {
+export function LoginForm({
+  supabaseConfig,
+  resetSuccess = false,
+}: {
+  supabaseConfig: SupabasePublicConfig
+  resetSuccess?: boolean
+}) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -132,6 +138,12 @@ export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicCo
             : 'Jejak pilihan dan bab yang kamu capai akan tersimpan di akunmu.'}
         </p>
 
+        {resetSuccess && (
+          <p role="status" className="mt-6 rounded-2xl border border-primary/30 bg-primary/10 p-4 text-sm text-foreground">
+            Kata sandi berhasil diubah. Silakan masuk dengan kata sandi baru.
+          </p>
+        )}
+
         <form onSubmit={handleSubmit} className="mt-8 flex flex-col gap-4">
           <label className="flex flex-col gap-1.5">
             <span className="text-xs font-semibold tracking-wide text-muted-foreground">EMAIL</span>
@@ -155,6 +167,9 @@ export function LoginForm({ supabaseConfig }: { supabaseConfig: SupabasePublicCo
               className="min-h-13 rounded-2xl border border-border bg-card px-4 text-sm text-foreground outline-none transition-colors focus:border-primary"
             />
           </label>
+          <Link href="/auth/forgot-password" className="self-end text-sm font-semibold text-primary">
+            Lupa kata sandi?
+          </Link>
 
           {error && (
             <p role="alert" className="text-sm text-destructive">

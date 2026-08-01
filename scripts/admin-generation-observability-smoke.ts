@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { extname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import ts from 'typescript'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 let pass = 0
@@ -24,48 +25,198 @@ function sourceFiles(directory: string): string[] {
   })
 }
 
-function countMatches(source: string, pattern: RegExp): number {
-  return Array.from(source.matchAll(pattern)).length
+function sourceFile(file: string): ts.SourceFile {
+  return ts.createSourceFile(
+    file,
+    readFileSync(file, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  )
+}
+
+function walk(node: ts.Node, visit: (node: ts.Node) => void): void {
+  visit(node)
+  ts.forEachChild(node, (child) => walk(child, visit))
+}
+
+function terminalCallName(call: ts.CallExpression): string | null {
+  if (ts.isIdentifier(call.expression)) return call.expression.text
+  if (ts.isPropertyAccessExpression(call.expression)) return call.expression.name.text
+  return null
+}
+
+function propertyNameText(name: ts.PropertyName): string | null {
+  if (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) return name.text
+  return null
+}
+
+function location(file: ts.SourceFile, node: ts.Node): string {
+  const position = file.getLineAndCharacterOfPosition(node.getStart(file))
+  return `${relative(root, file.fileName)}:${position.line + 1}:${position.character + 1}`
+}
+
+function observedCallOwner(call: ts.CallExpression): ts.CallExpression | null {
+  let node: ts.Node | undefined = call.parent
+  while (node) {
+    if (ts.isPropertyAssignment(node) && propertyNameText(node.name) === 'call') {
+      const owner = node.parent
+      if (!ts.isObjectLiteralExpression(owner)) return null
+      const execution = owner.parent
+      return ts.isCallExpression(execution)
+        && terminalCallName(execution) === 'executeObservedModelCall'
+        && execution.arguments[0] === owner
+        ? execution
+        : null
+    }
+    node = node.parent
+  }
+  return null
+}
+
+function streamRetryViolation(call: ts.CallExpression): string | null {
+  const options = call.arguments[0]
+  if (!options || !ts.isObjectLiteralExpression(options)) {
+    return 'streamText first argument must be an object literal'
+  }
+
+  let maxRetriesZeroIndex = -1
+  let maxRetriesCount = 0
+  for (const [index, property] of options.properties.entries()) {
+    if (ts.isSpreadAssignment(property)) {
+      if (maxRetriesZeroIndex >= 0) {
+        return 'spread after maxRetries: 0 can overwrite retry lock'
+      }
+      continue
+    }
+    if (!('name' in property) || !property.name || propertyNameText(property.name) !== 'maxRetries') {
+      continue
+    }
+    maxRetriesCount++
+    if (!ts.isPropertyAssignment(property)) {
+      return 'maxRetries must be an explicit property assignment'
+    }
+    if (!ts.isNumericLiteral(property.initializer) || property.initializer.text !== '0') {
+      return `maxRetries must be numeric literal 0, received ${property.initializer.getText()}`
+    }
+    maxRetriesZeroIndex = index
+  }
+
+  if (maxRetriesCount === 0) return 'missing maxRetries: 0'
+  if (maxRetriesCount > 1) return 'duplicate maxRetries properties can overwrite retry lock'
+  return null
+}
+
+function analyzeStreamFixture(source: string): {
+  observed: boolean
+  retryViolation: string | null
+} {
+  const parsed = ts.createSourceFile(
+    'stream-boundary-fixture.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  )
+  let streamCall: ts.CallExpression | null = null
+  walk(parsed, (node) => {
+    if (streamCall || !ts.isCallExpression(node) || terminalCallName(node) !== 'streamText') return
+    streamCall = node
+  })
+  if (!streamCall) return { observed: false, retryViolation: 'missing streamText fixture call' }
+  const call: ts.CallExpression = streamCall
+  return {
+    observed: observedCallOwner(call) !== null,
+    retryViolation: streamRetryViolation(call),
+  }
 }
 
 console.log('generation provider boundary inventory:')
 
 const gatewayRoot = resolve(root, 'lib/ai-gateway')
 const gatewayProvider = resolve(gatewayRoot, 'gateway-provider.ts')
-const observedWrapper = resolve(gatewayRoot, 'observed-model-call.server.ts')
-const streamCallPattern = /\bstreamText\s*\(/g
-const observedClosurePattern = /\bcall\s*:\s*\(\s*\)\s*=>\s*streamText\s*\(/g
 const unaccountedStreamCalls: string[] = []
+const retryLockViolations: string[] = []
 let streamCallCount = 0
 
 for (const file of sourceFiles(gatewayRoot)) {
-  const source = readFileSync(file, 'utf8')
-  const calls = countMatches(source, streamCallPattern)
-  if (calls === 0) continue
-  streamCallCount += calls
+  const parsed = sourceFile(file)
+  walk(parsed, (node) => {
+    if (!ts.isCallExpression(node) || terminalCallName(node) !== 'streamText') return
+    streamCallCount++
+    const callLocation = location(parsed, node)
 
-  if (file === observedWrapper) continue
-  if (file === gatewayProvider) {
-    const observedClosures = countMatches(source, observedClosurePattern)
-    if (observedClosures === calls) continue
-    unaccountedStreamCalls.push(
-      `${relative(root, file)} has ${calls} streamText call(s), ${observedClosures} observed call closure(s)`,
-    )
-    continue
-  }
-  unaccountedStreamCalls.push(`${relative(root, file)} has ${calls} streamText call(s)`)
+    if (file !== gatewayProvider) {
+      unaccountedStreamCalls.push(`${callLocation} streamText call is outside gateway-provider.ts`)
+      return
+    }
+    if (!observedCallOwner(node)) {
+      unaccountedStreamCalls.push(
+        `${callLocation} streamText call is not owned by executeObservedModelCall({ call: ... })`,
+      )
+    }
+    const retryViolation = streamRetryViolation(node)
+    if (retryViolation) retryLockViolations.push(`${callLocation} ${retryViolation}`)
+  })
 }
 
 check('gateway has actual streamText provider calls to inventory', streamCallCount > 0)
 check(
-  'every gateway streamText call is an executeObservedModelCall call closure',
+  'every gateway streamText call is an executeObservedModelCall call closure (TypeScript AST)',
   unaccountedStreamCalls.length === 0,
   unaccountedStreamCalls.join('; '),
 )
 check(
-  'every observed streamText call disables hidden SDK retries',
-  countMatches(readFileSync(gatewayProvider, 'utf8'), /\bmaxRetries\s*:\s*0\b/g)
-    === countMatches(readFileSync(gatewayProvider, 'utf8'), observedClosurePattern),
+  'every observed streamText call safely disables hidden SDK retries (TypeScript AST)',
+  retryLockViolations.length === 0,
+  retryLockViolations.join('; '),
+)
+
+const directFixture = analyzeStreamFixture('streamText({ maxRetries: 0 })')
+const consumeFixture = analyzeStreamFixture(`executeObservedModelCall({
+  call: () => Promise.resolve('not a provider call'),
+  consume: () => streamText({ maxRetries: 0 }),
+})`)
+const missingRetryFixture = analyzeStreamFixture(`executeObservedModelCall({
+  call: () => streamText({ model }),
+})`)
+const nonzeroRetryFixture = analyzeStreamFixture(`executeObservedModelCall({
+  call: () => streamText({ model, maxRetries: 1 }),
+})`)
+const postZeroSpreadFixture = analyzeStreamFixture(`executeObservedModelCall({
+  call: () => executeCandidate(() => streamText({ maxRetries: 0, ...options })),
+})`)
+const safeCandidateFixture = analyzeStreamFixture(`executeObservedModelCall({
+  call: () => executeCandidate(() => streamText({ ...options, maxRetries: 0 })),
+})`)
+
+check(
+  'AST boundary regression rejects direct unobserved streamText fixture',
+  !directFixture.observed,
+)
+check(
+  'AST boundary regression rejects streamText nested under consume property',
+  !consumeFixture.observed,
+)
+check(
+  'AST retry regression rejects missing maxRetries fixture',
+  missingRetryFixture.retryViolation === 'missing maxRetries: 0',
+  missingRetryFixture.retryViolation ?? undefined,
+)
+check(
+  'AST retry regression rejects nonzero maxRetries fixture',
+  nonzeroRetryFixture.retryViolation?.startsWith('maxRetries must be numeric literal 0') === true,
+  nonzeroRetryFixture.retryViolation ?? undefined,
+)
+check(
+  'AST retry regression rejects spread after maxRetries: 0 fixture',
+  postZeroSpreadFixture.retryViolation === 'spread after maxRetries: 0 can overwrite retry lock',
+  postZeroSpreadFixture.retryViolation ?? undefined,
+)
+check(
+  'AST boundary regression allows executeCandidate and pre-lock spread fixture',
+  safeCandidateFixture.observed && safeCandidateFixture.retryViolation === null,
+  safeCandidateFixture.retryViolation ?? undefined,
 )
 
 const generationLogFiles = [

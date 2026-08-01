@@ -233,6 +233,33 @@ describe('generateChoiceBranch', () => {
     })
   })
 
+  it('captures structured lexical evidence from normalized final-branch issue paths only', async () => {
+    let observed: InvalidModelResponseError | undefined
+    const invalid = validBranch()
+    invalid.choices[0].label = 'Pikirkan pilihan terbaik'
+    const provider: GenerationProvider = {
+      ...createDeterministicProvider(),
+      generateChoices: async (_input, options) => {
+        try {
+          return await options?.consume?.(invalid)
+        } catch (error) {
+          if (error instanceof InvalidModelResponseError) observed = error
+          throw error
+        }
+      },
+    }
+
+    await expect(generateChoiceBranch({ provider }, choiceInput(), executionOptions))
+      .rejects.toMatchObject({ code: 'CHOICE_INVALID' })
+    expect(observed?.rejectedValue).toBeUndefined()
+    expect(observed?.getChoiceLexicalEvidence()).toEqual({
+      choices: [{
+        index: 0,
+        label: 'Pikirkan pilihan terbaik',
+      }],
+    })
+  })
+
   it('carries FINAL_BRANCH_SCHEMA and known application codes for finalized branch failures', async () => {
     let observed: InvalidModelResponseError | undefined
     const invalid = validBranch()

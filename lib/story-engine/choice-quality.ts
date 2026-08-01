@@ -195,7 +195,7 @@ function isPromptGenericWithoutConcreteNouns(
  * cabang pilihan di schema (akar CHOICE_REPAIR_EXHAUSTED produksi).
  */
 export const INDO_ROOT_IMPERATIVES = new Set([
-  'hadapi', 'selidiki', 'buka', 'tutup', 'ambil', 'tinggalkan', 'ikuti',
+  'hadapi', 'selidiki', 'buka', 'tutup', 'ambil', 'amankan', 'tinggalkan', 'ikuti',
   'hadang', 'tanya', 'tolong', 'selamatkan', 'lawan', 'kejar', 'periksa',
   'baca', 'sembunyikan', 'ungkapkan', 'masuk', 'keluar', 'lari', 'panggil',
   'cari', 'pilih', 'tolak', 'terima', 'kirim', 'hancurkan', 'jaga', 'dekati',

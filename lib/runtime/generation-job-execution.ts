@@ -37,6 +37,8 @@ export type GenerationJobExecutionContext = {
   correlationId: string
   generationKind: 'standard' | 'personalized'
   triggerChoiceId?: string | null
+  deadlineAt?: string
+  deadlineAtMs?: number
   signal: AbortSignal
 }
 
@@ -45,6 +47,10 @@ export function claimedJobToPartialContext(
   leaseId: string,
   signal: AbortSignal,
 ): GenerationJobExecutionContext {
+  const deadlineAtMs = Date.parse(job.deadlineAt)
+  if (!Number.isFinite(deadlineAtMs)) {
+    throw new GenerationDeadlineError('GENERATION_JOB_DEADLINE_INVALID')
+  }
   return {
     jobId: job.id,
     workerId: job.workerId,
@@ -54,7 +60,19 @@ export function claimedJobToPartialContext(
     correlationId: job.correlationId,
     generationKind: job.generationKind,
     triggerChoiceId: job.triggerChoiceId,
+    deadlineAt: job.deadlineAt,
+    deadlineAtMs,
     signal,
+  }
+}
+
+export class GenerationDeadlineError extends Error {
+  readonly code: 'GENERATION_JOB_DEADLINE_INVALID'
+
+  constructor(code: 'GENERATION_JOB_DEADLINE_INVALID') {
+    super(code)
+    this.name = 'GenerationDeadlineError'
+    this.code = code
   }
 }
 

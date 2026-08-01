@@ -81,6 +81,10 @@ describe('choice invalid capture crypto', () => {
       .toBe('Pikirkan pilihan terbaik')
     expect(decryptChoiceLexicalEvidence({
       masterKey,
+      record: { ...encrypted, expiresAt: '2026-07-31T12:30:00+00:00' },
+    })).toBe('Pikirkan pilihan terbaik')
+    expect(decryptChoiceLexicalEvidence({
+      masterKey,
       record: { ...encrypted, labelFingerprint: Buffer.alloc(32).toString('base64') },
     })).toBeNull()
 

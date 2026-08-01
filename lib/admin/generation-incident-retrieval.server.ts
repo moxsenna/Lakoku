@@ -1,4 +1,5 @@
 import 'server-only'
+import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import {
@@ -29,16 +30,34 @@ const EncryptedIncidentRowSchema = z.object({
   auth_tag: z.string().min(16).max(64),
 }).strict()
 
+const ClaimedIncidentRowSchema = EncryptedIncidentRowSchema.extend({
+  claim_expires_at: z.string().datetime({ offset: true }),
+}).strict()
+
 export type EncryptedGenerationIncident = z.infer<typeof EncryptedIncidentRowSchema>
 
 export interface GenerationIncidentDecryptor {
   decryptLabel: (incident: EncryptedGenerationIncident) => Promise<string>
 }
 
+type IncidentRpcName =
+  | 'claim_generation_incident_v1'
+  | 'finalize_generation_incident_v1'
+  | 'release_generation_incident_claim_v1'
+
+type IncidentLookupRpcArgs = {
+  p_capture_id: string
+  p_correlation_id: string
+}
+
+type IncidentClaimMutationRpcArgs = IncidentLookupRpcArgs & {
+  p_claim_token: string
+}
+
 type IncidentRpcClient = {
   rpc: (
-    name: 'consume_generation_incident_v1',
-    args: { p_capture_id: string; p_correlation_id: string },
+    name: IncidentRpcName,
+    args: IncidentLookupRpcArgs | IncidentClaimMutationRpcArgs,
   ) => Promise<{ data: unknown; error: unknown }>
 }
 
@@ -84,41 +103,90 @@ function isOwnerRequiredError(error: unknown): boolean {
     || candidate.code === 'OWNER_REQUIRED'
 }
 
+async function releaseClaimBestEffort(
+  client: IncidentRpcClient,
+  args: IncidentClaimMutationRpcArgs,
+): Promise<void> {
+  try {
+    await client.rpc('release_generation_incident_claim_v1', args)
+  } catch {
+    // Release is best-effort; retrieval still fails closed.
+  }
+}
+
 export async function retrieveGenerationIncidentLabel(
   lookup: z.infer<typeof GenerationIncidentLookupSchema>,
   deps: {
     client?: IncidentRpcClient
     decryptor?: GenerationIncidentDecryptor
+    createClaimToken?: () => string
   } = {},
 ): Promise<GenerationIncidentRetrievalResult> {
   const parsedLookup = GenerationIncidentLookupSchema.parse(lookup)
   const client = deps.client ?? await createClient() as unknown as IncidentRpcClient
+  const lookupArgs: IncidentLookupRpcArgs = {
+    p_capture_id: parsedLookup.captureId,
+    p_correlation_id: parsedLookup.correlationId,
+  }
 
-  let result: { data: unknown; error: unknown }
+  const claimToken = z.string().uuid().parse((deps.createClaimToken ?? randomUUID)())
+  const mutationArgs: IncidentClaimMutationRpcArgs = {
+    ...lookupArgs,
+    p_claim_token: claimToken,
+  }
+
+  let claimResult: { data: unknown; error: unknown }
   try {
-    result = await client.rpc('consume_generation_incident_v1', {
-      p_capture_id: parsedLookup.captureId,
-      p_correlation_id: parsedLookup.correlationId,
-    })
+    claimResult = await client.rpc('claim_generation_incident_v1', mutationArgs)
   } catch {
     return { status: 'unavailable' }
   }
 
-  if (result.error) {
-    return { status: isOwnerRequiredError(result.error) ? 'forbidden' : 'unavailable' }
+  if (claimResult.error) {
+    return { status: isOwnerRequiredError(claimResult.error) ? 'forbidden' : 'unavailable' }
   }
 
-  const parsedRows = z.array(EncryptedIncidentRowSchema).safeParse(result.data)
-  if (!parsedRows.success) return { status: 'unavailable' }
+  const parsedRows = z.array(ClaimedIncidentRowSchema).safeParse(claimResult.data)
+  if (!parsedRows.success) {
+    if (Array.isArray(claimResult.data) && claimResult.data.length > 0) {
+      await releaseClaimBestEffort(client, mutationArgs)
+    }
+    return { status: 'unavailable' }
+  }
   if (parsedRows.data.length === 0) return { status: 'not_found' }
-  if (parsedRows.data.length !== 1) return { status: 'unavailable' }
-
-  try {
-    const label = await (deps.decryptor ?? productionDecryptor).decryptLabel(parsedRows.data[0])
-    const parsedLabel = z.string().trim().min(1).max(90).safeParse(label)
-    if (!parsedLabel.success) return { status: 'unavailable' }
-    return { status: 'found', label: parsedLabel.data }
-  } catch {
+  if (parsedRows.data.length !== 1) {
+    await releaseClaimBestEffort(client, mutationArgs)
     return { status: 'unavailable' }
   }
+
+  const { claim_expires_at: _claimExpiresAt, ...incident } = parsedRows.data[0]
+
+  let label: string
+  try {
+    const decryptedLabel = await (deps.decryptor ?? productionDecryptor).decryptLabel(incident)
+    const parsedLabel = z.string().trim().min(1).max(90).safeParse(decryptedLabel)
+    if (!parsedLabel.success) throw new Error('GENERATION_INCIDENT_LABEL_INVALID')
+    label = parsedLabel.data
+  } catch {
+    await releaseClaimBestEffort(client, mutationArgs)
+    return { status: 'unavailable' }
+  }
+
+  let finalizeResult: { data: unknown; error: unknown }
+  try {
+    finalizeResult = await client.rpc('finalize_generation_incident_v1', mutationArgs)
+  } catch {
+    await releaseClaimBestEffort(client, mutationArgs)
+    return { status: 'unavailable' }
+  }
+
+  if (finalizeResult.error || finalizeResult.data !== true) {
+    await releaseClaimBestEffort(client, mutationArgs)
+    if (finalizeResult.error && isOwnerRequiredError(finalizeResult.error)) {
+      return { status: 'forbidden' }
+    }
+    return { status: 'unavailable' }
+  }
+
+  return { status: 'found', label }
 }

@@ -7,6 +7,7 @@ import {
   type EncryptedGenerationIncident,
 } from '@/lib/admin/generation-incident-retrieval.server'
 
+const claimToken = '84000000-0000-4000-8000-000000000001'
 const incident: EncryptedGenerationIncident = {
   capture_id: '82000000-0000-4000-8000-000000000001',
   correlation_id: '83000000-0000-4000-8000-000000000001',
@@ -23,30 +24,143 @@ const incident: EncryptedGenerationIncident = {
   nonce: 'bm9uY2UxMjM0NTY=',
   auth_tag: 'YXV0aHRhZzEyMzQ1Ng==',
 }
+const claimedIncident = {
+  ...incident,
+  claim_expires_at: '2026-07-31T00:02:00.000Z',
+}
 
 const lookup = {
   captureId: incident.capture_id,
   correlationId: incident.correlation_id,
 }
 
+const lookupArgs = {
+  p_capture_id: lookup.captureId,
+  p_correlation_id: lookup.correlationId,
+}
+const claimedMutationArgs = {
+  ...lookupArgs,
+  p_claim_token: claimToken,
+}
+
 describe('retrieveGenerationIncidentLabel', () => {
-  it('uses cookie-scoped consume RPC and returns only decrypted label', async () => {
-    const rpc = vi.fn().mockResolvedValue({ data: [incident], error: null })
-    const decryptLabel = vi.fn().mockResolvedValue('Buka pintu terkunci')
+  it('claims, decrypts, then finalizes exactly once before returning label', async () => {
+    const events: string[] = []
+    const rpc = vi.fn(async (name: string) => {
+      events.push(name)
+      if (name === 'claim_generation_incident_v1') return { data: [claimedIncident], error: null }
+      if (name === 'finalize_generation_incident_v1') return { data: true, error: null }
+      throw new Error(`unexpected RPC: ${name}`)
+    })
+    const decryptLabel = vi.fn(async () => {
+      events.push('decrypt')
+      return 'Buka pintu terkunci'
+    })
 
     await expect(retrieveGenerationIncidentLabel(lookup, {
       client: { rpc },
+      createClaimToken: () => claimToken,
       decryptor: { decryptLabel },
     })).resolves.toEqual({ status: 'found', label: 'Buka pintu terkunci' })
 
-    expect(rpc).toHaveBeenCalledWith('consume_generation_incident_v1', {
-      p_capture_id: lookup.captureId,
-      p_correlation_id: lookup.correlationId,
-    })
+    expect(events).toEqual([
+      'claim_generation_incident_v1',
+      'decrypt',
+      'finalize_generation_incident_v1',
+    ])
+    expect(rpc).toHaveBeenCalledWith('claim_generation_incident_v1', claimedMutationArgs)
+    expect(rpc).toHaveBeenCalledWith('finalize_generation_incident_v1', claimedMutationArgs)
+    expect(rpc.mock.calls.filter(([name]) => name === 'finalize_generation_incident_v1')).toHaveLength(1)
     expect(decryptLabel).toHaveBeenCalledWith(incident)
   })
 
-  it('maps empty atomic consume to not found', async () => {
+  it('releases wrong-key or tampered decrypt failure so a later attempt can retry', async () => {
+    let claimed = false
+    const rpc = vi.fn(async (name: string) => {
+      if (name === 'claim_generation_incident_v1') {
+        if (claimed) return { data: [], error: null }
+        claimed = true
+        return { data: [claimedIncident], error: null }
+      }
+      if (name === 'release_generation_incident_claim_v1') {
+        claimed = false
+        return { data: true, error: null }
+      }
+      if (name === 'finalize_generation_incident_v1') return { data: true, error: null }
+      throw new Error(`unexpected RPC: ${name}`)
+    })
+    const decryptLabel = vi.fn()
+      .mockRejectedValueOnce(new Error('GENERATION_INCIDENT_DECRYPT_FAILED'))
+      .mockResolvedValueOnce('Buka pintu terkunci')
+
+    await expect(retrieveGenerationIncidentLabel(lookup, {
+      client: { rpc },
+      createClaimToken: () => claimToken,
+      decryptor: { decryptLabel },
+    })).resolves.toEqual({ status: 'unavailable' })
+    expect(rpc).toHaveBeenCalledWith('release_generation_incident_claim_v1', claimedMutationArgs)
+
+    await expect(retrieveGenerationIncidentLabel(lookup, {
+      client: { rpc },
+      createClaimToken: () => claimToken,
+      decryptor: { decryptLabel },
+    })).resolves.toEqual({ status: 'found', label: 'Buka pintu terkunci' })
+    expect(decryptLabel).toHaveBeenCalledTimes(2)
+    expect(rpc.mock.calls.filter(([name]) => name === 'finalize_generation_incident_v1')).toHaveLength(1)
+  })
+
+  it('returns no label and best-effort releases when finalize fails', async () => {
+    const rpc = vi.fn(async (name: string) => {
+      if (name === 'claim_generation_incident_v1') return { data: [claimedIncident], error: null }
+      if (name === 'finalize_generation_incident_v1') {
+        return { data: null, error: { message: 'FINALIZE_FAILED' } }
+      }
+      if (name === 'release_generation_incident_claim_v1') return { data: true, error: null }
+      throw new Error(`unexpected RPC: ${name}`)
+    })
+
+    await expect(retrieveGenerationIncidentLabel(lookup, {
+      client: { rpc },
+      createClaimToken: () => claimToken,
+      decryptor: { decryptLabel: async () => 'Buka pintu terkunci' },
+    })).resolves.toEqual({ status: 'unavailable' })
+
+    expect(rpc.mock.calls.filter(([name]) => name === 'finalize_generation_incident_v1')).toHaveLength(1)
+    expect(rpc).toHaveBeenCalledWith('release_generation_incident_claim_v1', claimedMutationArgs)
+  })
+
+  it('returns no label and releases when finalize does not confirm success', async () => {
+    const rpc = vi.fn(async (name: string) => {
+      if (name === 'claim_generation_incident_v1') return { data: [claimedIncident], error: null }
+      if (name === 'finalize_generation_incident_v1') return { data: false, error: null }
+      if (name === 'release_generation_incident_claim_v1') return { data: true, error: null }
+      throw new Error(`unexpected RPC: ${name}`)
+    })
+
+    await expect(retrieveGenerationIncidentLabel(lookup, {
+      client: { rpc },
+      createClaimToken: () => claimToken,
+      decryptor: { decryptLabel: async () => 'Buka pintu terkunci' },
+    })).resolves.toEqual({ status: 'unavailable' })
+
+    expect(rpc).toHaveBeenCalledWith('release_generation_incident_claim_v1', claimedMutationArgs)
+  })
+
+  it('still fails closed when best-effort release fails', async () => {
+    const rpc = vi.fn(async (name: string) => {
+      if (name === 'claim_generation_incident_v1') return { data: [claimedIncident], error: null }
+      if (name === 'release_generation_incident_claim_v1') throw new Error('RELEASE_FAILED')
+      throw new Error(`unexpected RPC: ${name}`)
+    })
+
+    await expect(retrieveGenerationIncidentLabel(lookup, {
+      client: { rpc },
+      createClaimToken: () => claimToken,
+      decryptor: { decryptLabel: async () => { throw new Error('DECRYPT_FAILED') } },
+    })).resolves.toEqual({ status: 'unavailable' })
+  })
+
+  it('maps empty atomic claim to not found', async () => {
     await expect(retrieveGenerationIncidentLabel(lookup, {
       client: { rpc: async () => ({ data: [], error: null }) },
       decryptor: { decryptLabel: vi.fn() },
@@ -61,28 +175,33 @@ describe('retrieveGenerationIncidentLabel', () => {
     })).resolves.toEqual({ status: 'forbidden' })
   })
 
-  it('fails closed when decryptor integration is unavailable', async () => {
-    await expect(retrieveGenerationIncidentLabel(lookup, {
-      client: { rpc: async () => ({ data: [incident], error: null }) },
-    })).resolves.toEqual({ status: 'unavailable' })
-  })
+  it('rejects plaintext or generic fields in claimed DB response', async () => {
+    const rpc = vi.fn(async (name: string) => {
+      if (name === 'claim_generation_incident_v1') {
+        return { data: [{ ...claimedIncident, label: 'plaintext must not pass' }], error: null }
+      }
+      throw new Error(`unexpected RPC: ${name}`)
+    })
 
-  it('rejects plaintext or generic fields in DB response', async () => {
     await expect(retrieveGenerationIncidentLabel(lookup, {
-      client: {
-        rpc: async () => ({
-          data: [{ ...incident, label: 'plaintext must not pass' }],
-          error: null,
-        }),
-      },
+      client: { rpc },
+      createClaimToken: () => claimToken,
       decryptor: { decryptLabel: vi.fn() },
     })).resolves.toEqual({ status: 'unavailable' })
   })
 
-  it('rejects decrypted labels outside bounded reader label contract', async () => {
+  it('rejects decrypted labels outside bounded label contract and releases claim', async () => {
+    const rpc = vi.fn(async (name: string) => {
+      if (name === 'claim_generation_incident_v1') return { data: [claimedIncident], error: null }
+      if (name === 'release_generation_incident_claim_v1') return { data: true, error: null }
+      throw new Error(`unexpected RPC: ${name}`)
+    })
+
     await expect(retrieveGenerationIncidentLabel(lookup, {
-      client: { rpc: async () => ({ data: [incident], error: null }) },
+      client: { rpc },
+      createClaimToken: () => claimToken,
       decryptor: { decryptLabel: async () => 'x'.repeat(91) },
     })).resolves.toEqual({ status: 'unavailable' })
+    expect(rpc).toHaveBeenCalledWith('release_generation_incident_claim_v1', claimedMutationArgs)
   })
 })

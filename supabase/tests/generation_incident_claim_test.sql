@@ -1,0 +1,14 @@
+begin;
+create extension if not exists pgtap with schema extensions;
+set local search_path = public, extensions;
+select no_plan();
+select hasnt_function('public', 'consume_generation_incident_v1', array['uuid','uuid'], 'legacy consume RPC removed');
+select has_function('public', 'claim_generation_incident_v1', array['uuid','uuid','uuid'], 'claim RPC exists');
+select has_function('public', 'finalize_generation_incident_v1', array['uuid','uuid','uuid'], 'finalize RPC exists');
+select has_function('public', 'release_generation_incident_claim_v1', array['uuid','uuid','uuid'], 'release RPC exists');
+select ok((select count(*) from information_schema.columns where table_schema='private' and table_name='generation_incident_captures' and column_name in ('claim_token','claimed_by','claimed_at','claim_expires_at')) = 4, 'claim columns exist');
+select ok((select count(*) from pg_constraint where conrelid='private.generation_incident_captures'::regclass and conname in ('generation_incident_captures_claim_token_check','generation_incident_captures_claim_owner_check','generation_incident_captures_claim_ttl_check')) = 3, 'claim constraints exist');
+select ok((select count(*) from pg_proc where proname='cleanup_generation_incidents_scheduled_v1') = 1, 'bounded scheduler wrapper exists');
+select ok((select count(*) from pg_proc where proname='consume_generation_incident_v1') = 0, 'legacy consume absent');
+select * from finish();
+rollback;

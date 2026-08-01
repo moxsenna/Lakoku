@@ -27,6 +27,10 @@ export type EncryptedChoiceLexicalEvidence = ChoiceInvalidCaptureIdentity & Read
   labelFingerprint: string
 }>
 
+function canonicalTimestamp(value: string): string {
+  return new Date(value).toISOString()
+}
+
 function aad(identity: ChoiceInvalidCaptureIdentity): Buffer {
   return Buffer.from(JSON.stringify({
     version: VERSION,
@@ -37,7 +41,7 @@ function aad(identity: ChoiceInvalidCaptureIdentity): Buffer {
     index: identity.index,
     stage: identity.stage,
     code: identity.code,
-    expiresAt: identity.expiresAt,
+    expiresAt: canonicalTimestamp(identity.expiresAt),
   }), 'utf8')
 }
 

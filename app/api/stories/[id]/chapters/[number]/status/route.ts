@@ -57,7 +57,19 @@ export async function GET(
       identity,
     })
 
-    return NextResponse.json(ChapterStatusResponseSchema.parse(result))
+    const response = {
+      status: result.status,
+      chapterNumber: result.chapterNumber,
+      ...(result.queue === undefined ? {} : { queue: result.queue }),
+      ...(result.correlationId === undefined
+        ? {}
+        : {
+            correlationId: result.correlationId,
+            attemptId: result.attemptId ?? null,
+          }),
+    }
+
+    return NextResponse.json(ChapterStatusResponseSchema.parse(response))
   } catch (error) {
     if (error instanceof ChapterStatusError) {
       if (error.code === 'NOT_FOUND') {

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   adminFactory: vi.fn(),
   queryStoryForUser: vi.fn(),
   getGenerationProgress: vi.fn(),
+  getChapterStatusForUser: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
@@ -14,6 +15,15 @@ vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.adminFactory }))
 vi.mock('@/lib/runtime/generation-concurrency', () => ({
   getGenerationProgress: mocks.getGenerationProgress,
 }))
+vi.mock('@/lib/api/chapter-status.server', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/api/chapter-status.server')>(
+    '@/lib/api/chapter-status.server',
+  )
+  return {
+    ...actual,
+    getChapterStatusForUser: mocks.getChapterStatusForUser,
+  }
+})
 vi.mock('@/lib/api/queries', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api/queries')>('@/lib/api/queries')
   return {
@@ -125,8 +135,14 @@ function request(storyId = STORY_A, chapterNumber = 2) {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  vi.resetModules()
   mocks.cookieFactory.mockResolvedValue(createCookieDb())
+  mocks.getChapterStatusForUser.mockReset()
+  mocks.getChapterStatusForUser.mockImplementation(async (input) => {
+    const actual = await vi.importActual<typeof import('@/lib/api/chapter-status.server')>(
+      '@/lib/api/chapter-status.server',
+    )
+    return actual.getChapterStatusForUser(input)
+  })
   mocks.getGenerationProgress.mockReturnValue(null)
   mocks.queryStoryForUser.mockResolvedValue({
     id: STORY_A,
@@ -822,6 +838,51 @@ describe('GET /api/stories/[id]/chapters/[number]/status', () => {
 
     expect(response.status).toBe(400)
     expect(await response.json()).toEqual({ error: 'Identitas generasi tidak valid.' })
+  })
+
+  it.each([
+    ['full UUID identity pair', {
+      status: 'queued',
+      chapterNumber: 2,
+      queue: { position: 3, estimatedWaitSeconds: 120, phase: 'queued' },
+      ...REQUEST_IDENTITY,
+    }, {
+      status: 'queued',
+      chapterNumber: 2,
+      queue: { position: 3, estimatedWaitSeconds: 120, phase: 'queued' },
+      ...REQUEST_IDENTITY,
+    }],
+    ['legacy correlation-only identity with null attempt', {
+      status: 'generating',
+      chapterNumber: 2,
+      attemptId: null,
+      correlationId: REQUEST_IDENTITY.correlationId,
+    }, {
+      status: 'generating',
+      chapterNumber: 2,
+      attemptId: null,
+      correlationId: REQUEST_IDENTITY.correlationId,
+    }],
+    ['no identity', {
+      status: 'ready',
+      chapterNumber: 2,
+    }, {
+      status: 'ready',
+      chapterNumber: 2,
+    }],
+  ])('projects public status response for %s and removes internal fields', async (_label, result, expected) => {
+    mocks.getChapterStatusForUser.mockResolvedValue({
+      ...result,
+      progressPhase: 'preparing_choices',
+      internalDiagnostic: { lease: 'private' },
+    } as never)
+    const { GET } = await import('@/app/api/stories/[id]/chapters/[number]/status/route')
+    const response = await GET(request(), {
+      params: Promise.resolve({ id: STORY_A, number: '2' }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual(expected)
   })
 
   it('returns reader-safe ready payload only', async () => {

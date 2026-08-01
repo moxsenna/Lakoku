@@ -1,4 +1,5 @@
 import 'server-only'
+import { createHash } from 'node:crypto'
 import {
   acquireGenerationLease,
   publishChapterV2,
@@ -88,6 +89,17 @@ import { throwIfAborted } from './abort'
 /** Idempotency key stabil per (story, chapter, scope) untuk jalur nyata. */
 export function realGenerationKey(storyId: string, n: number, scope: string) {
   return `gen:real:${scope}:${storyId}:${n}`
+}
+
+function legacyLeaseKey(
+  path: 'real' | 'personalized',
+  storyId: string,
+  chapterNumber: number,
+  attemptId: string,
+): string {
+  const attemptDigest = createHash('sha256').update(attemptId).digest('hex')
+  const storyDigest = createHash('sha256').update(storyId).digest('hex')
+  return `gen:${path}:lease-attempt:${storyDigest}:${chapterNumber}:${attemptDigest}`
 }
 
 /**
@@ -626,7 +638,7 @@ async function generateNextChapterRealInner(
       idempotencyKey: args.idempotencyKey,
     })
     if (published.ok) {
-      leaseReleased = true
+      await releaseLeaseOnce()
       return {
         ok: true,
         chapter_number: published.chapter_number,
@@ -680,7 +692,7 @@ async function generateNextChapterRealInner(
       // Multi-LLM plan→write→repair can exceed 2 minutes wall on VPS.
       // TTL from generation_policy (clamped 60..1800).
       ttlSeconds,
-      idempotencyKey: realGenerationKey(storyId, chapterNumber, 'lease'),
+      idempotencyKey: legacyLeaseKey('real', storyId, chapterNumber, attemptId),
     })
     if (!lease.ok) return { ok: false, reason: lease.reason }
     leaseId = lease.lease_id

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ChapterGenerationCheckpoint } from '@/lib/runtime/chapter-generation-checkpoint.pure'
 
-const CORRELATION_ID = 'corr-test'
+const CORRELATION_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 
 const mocks = vi.hoisted(() => ({
   loadCanonSnapshot: vi.fn(),
@@ -10,6 +11,9 @@ const mocks = vi.hoisted(() => ({
   loadCheckpoint: vi.fn(),
   persistCheckpoint: vi.fn(),
   markCheckpointStatus: vi.fn(),
+  acquireGenerationLease: vi.fn(),
+  releaseGenerationLease: vi.fn(),
+  publishChapterV2: vi.fn(),
   publishGenerationJobChapterV4: vi.fn(),
   recordGenerationAttempt: vi.fn(),
   recordGenerationRuntimeFailed: vi.fn(),
@@ -50,6 +54,17 @@ vi.mock('@/lib/runtime/chapter-generation-checkpoint', async () => {
     loadUsableProseCheckpoint: mocks.loadCheckpoint,
     persistProseReadyCheckpoint: mocks.persistCheckpoint,
     markCheckpointStatus: mocks.markCheckpointStatus,
+  }
+})
+vi.mock('@/lib/runtime/lifecycle', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/runtime/lifecycle')>(
+    '@/lib/runtime/lifecycle',
+  )
+  return {
+    ...actual,
+    acquireGenerationLease: mocks.acquireGenerationLease,
+    releaseGenerationLease: mocks.releaseGenerationLease,
+    publishChapterV2: mocks.publishChapterV2,
   }
 })
 vi.mock('@/lib/runtime/generation-jobs', async () => {
@@ -149,6 +164,27 @@ async function run(chapterNumber: number) {
   return runWithSignal(chapterNumber)
 }
 
+async function runLegacy(attemptId: string, checkpoint: ChapterGenerationCheckpoint | null = null) {
+  const { buildFixtureSnapshot } = await import('@/fixtures/narrative/fixture-50')
+  const snapshot = buildFixtureSnapshot()
+  mocks.loadCanonSnapshot.mockResolvedValue(snapshot)
+  mocks.loadCheckpoint.mockResolvedValue(checkpoint)
+  mocks.generateChapter.mockResolvedValue({
+    status: 'PUBLISHED',
+    draft: draft(12),
+    attempts: 1,
+    findings: [],
+  })
+
+  return (await import('@/lib/runtime/story-generation')).generateNextChapterReal({
+    storyId: snapshot.storyId,
+    userId: '55555555-5555-4555-8555-555555555555',
+    chapterNumber: 12,
+    correlationId: CORRELATION_ID,
+    attemptId,
+  })
+}
+
 function standardCheckpoint(chapterNumber: number, status: 'PROSE_READY' | 'CHOICES_RETRY_WAIT' = 'PROSE_READY') {
   return {
     storyId: 'story-test',
@@ -159,6 +195,8 @@ function standardCheckpoint(chapterNumber: number, status: 'PROSE_READY' | 'CHOI
     title: `Bab ${chapterNumber}`,
     paragraphs: ['Maya membuka pintu dan menemukan surat lama.'],
     proseFingerprint: 'fingerprint-test',
+    auditSignals: null,
+    auditSignalsVersion: null,
     canonVersion: 1,
     blueprintVersion: 1,
     directionFingerprint: 'none',
@@ -181,6 +219,17 @@ beforeEach(() => {
   mocks.loadCheckpoint.mockResolvedValue(null)
   mocks.persistCheckpoint.mockResolvedValue({ ok: true, outcome: 'CREATED', checkpointAttemptId: CORRELATION_ID })
   mocks.markCheckpointStatus.mockResolvedValue({ ok: true, outcome: 'UPDATED', checkpointAttemptId: CORRELATION_ID })
+  mocks.acquireGenerationLease.mockResolvedValue({
+    ok: true,
+    lease_id: 'legacy-lease-fresh',
+    chapter_number: 12,
+  })
+  mocks.releaseGenerationLease.mockResolvedValue(undefined)
+  mocks.publishChapterV2.mockImplementation(async (input: { chapterNumber: number }) => ({
+    ok: true,
+    chapter_number: input.chapterNumber,
+    seq: 17,
+  }))
   mocks.publishGenerationJobChapterV4.mockImplementation(async (input: { chapterNumber: number }) => ({
     jobId: JOB_CONTEXT.jobId,
     chapterNumber: input.chapterNumber,
@@ -230,6 +279,64 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(mocks.consoleLog)
 })
 
+describe('standard legacy lease ownership', () => {
+  it('uses deterministic bounded lease keys from current attempt A/B, not reused checkpoint prose identity', async () => {
+    const checkpoint = {
+      ...standardCheckpoint(12),
+      attemptId: 'checkpoint-prose-attempt',
+      correlationId: 'checkpoint-prose-correlation',
+      jobId: null,
+      jobAttemptNumber: null,
+    }
+
+    await runLegacy('  execution-attempt-A  ', checkpoint)
+    const keyA = mocks.acquireGenerationLease.mock.calls[0]?.[0].idempotencyKey
+    vi.clearAllMocks()
+    mocks.acquireGenerationLease.mockResolvedValue({ ok: true, lease_id: 'legacy-lease-fresh', chapter_number: 12 })
+    mocks.releaseGenerationLease.mockResolvedValue(undefined)
+    mocks.publishChapterV2.mockResolvedValue({ ok: true, chapter_number: 12, seq: 17 })
+    mocks.markCheckpointStatus.mockResolvedValue({ ok: true, outcome: 'UPDATED', checkpointAttemptId: 'checkpoint-prose-attempt' })
+    await runLegacy('execution-attempt-A', checkpoint)
+    const repeatedKeyA = mocks.acquireGenerationLease.mock.calls[0]?.[0].idempotencyKey
+    vi.clearAllMocks()
+    mocks.acquireGenerationLease.mockResolvedValue({ ok: true, lease_id: 'legacy-lease-fresh', chapter_number: 12 })
+    mocks.releaseGenerationLease.mockResolvedValue(undefined)
+    mocks.publishChapterV2.mockResolvedValue({ ok: true, chapter_number: 12, seq: 17 })
+    mocks.markCheckpointStatus.mockResolvedValue({ ok: true, outcome: 'UPDATED', checkpointAttemptId: 'checkpoint-prose-attempt' })
+    await runLegacy('execution-attempt-B', checkpoint)
+    const keyB = mocks.acquireGenerationLease.mock.calls[0]?.[0].idempotencyKey
+
+    expect(keyA).toBe(repeatedKeyA)
+    expect(keyA).not.toBe(keyB)
+    expect(keyA?.length).toBeLessThanOrEqual(200)
+    expect(keyB?.length).toBeLessThanOrEqual(200)
+    expect(keyA).not.toContain('checkpoint-prose-attempt')
+    expect(keyB).not.toContain('checkpoint-prose-attempt')
+  })
+
+  it('passes fresh lease to publish and cleans cached replay ownership exactly once', async () => {
+    const checkpoint = {
+      ...standardCheckpoint(12),
+      attemptId: 'checkpoint-prose-attempt',
+      jobId: null,
+      jobAttemptNumber: null,
+    }
+
+    await expect(runLegacy('execution-attempt-fresh', checkpoint)).resolves.toMatchObject({
+      ok: true,
+      fromCheckpoint: true,
+    })
+    expect(mocks.publishChapterV2).toHaveBeenCalledWith(expect.objectContaining({
+      leaseId: 'legacy-lease-fresh',
+    }))
+    expect(mocks.releaseGenerationLease).toHaveBeenCalledTimes(1)
+    expect(mocks.releaseGenerationLease).toHaveBeenCalledWith({
+      storyId: expect.any(String),
+      leaseId: 'legacy-lease-fresh',
+    })
+  })
+})
+
 describe('standard worker V4 publication', () => {
   it.each([12, 50])(
     'publishes chapter %i through V4 exactly once with empty closures and no post-publish checkpoint write',
@@ -240,6 +347,9 @@ describe('standard worker V4 publication', () => {
         seq: 17,
       })
       expect(mocks.publishGenerationJobChapterV4).toHaveBeenCalledTimes(1)
+      expect(mocks.acquireGenerationLease).not.toHaveBeenCalled()
+      expect(mocks.releaseGenerationLease).not.toHaveBeenCalled()
+      expect(mocks.publishChapterV2).not.toHaveBeenCalled()
       expect(mocks.publishGenerationJobChapterV4).toHaveBeenCalledWith(
         expect.objectContaining({ closures: [] }),
       )

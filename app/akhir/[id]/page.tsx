@@ -30,7 +30,7 @@ export default async function AkhirCeritaPage({
     <main className="mx-auto flex min-h-svh w-full max-w-md flex-col bg-background">
       <div className="relative h-[44svh] w-full overflow-hidden">
         <Image
-          src={story.cover || '/placeholder.svg'}
+          src={story.cover && story.cover !== '/placeholder.svg' ? story.cover : '/covers/default-cover.webp'}
           alt={`Sampul cerita ${story.title}`}
           fill
           priority

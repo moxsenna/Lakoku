@@ -20,7 +20,7 @@ export default async function CeritaDetailPage({
     <main className="flex flex-col">
         <div className="relative h-[52svh] w-full overflow-hidden">
           <Image
-            src={story.cover || '/placeholder.svg'}
+            src={story.cover && story.cover !== '/placeholder.svg' ? story.cover : '/covers/default-cover.webp'}
             alt={`Sampul cerita ${story.title}`}
             fill
             sizes="448px"

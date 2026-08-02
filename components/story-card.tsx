@@ -12,7 +12,7 @@ export function StoryCard({ story }: { story: StorySummary }) {
     >
       <div className="relative aspect-[2/3] w-20 shrink-0 overflow-hidden rounded-xl">
         <Image
-          src={story.cover || '/placeholder.svg'}
+          src={story.cover && story.cover !== '/placeholder.svg' ? story.cover : '/covers/default-cover.webp'}
           alt={`Sampul cerita ${story.title}`}
           fill
           sizes="80px"

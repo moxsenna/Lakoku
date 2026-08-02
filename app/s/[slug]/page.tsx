@@ -25,7 +25,7 @@ export default async function ShareLandingPage({
     <main className="mx-auto flex min-h-svh w-full max-w-md flex-col bg-background">
       <div className="relative h-[40svh] w-full overflow-hidden">
         <Image
-          src={t.cover || '/placeholder.svg'}
+          src={t.cover && t.cover !== '/placeholder.svg' ? t.cover : '/covers/default-cover.webp'}
           alt={`Sampul ${t.title}`}
           fill
           priority

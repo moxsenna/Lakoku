@@ -41,7 +41,7 @@ export default async function BerandaPage() {
             >
               <div className="relative aspect-[4/5] w-full">
                 <Image
-                  src={berjalan.cover || '/placeholder.svg'}
+                  src={berjalan.cover && berjalan.cover !== '/placeholder.svg' ? berjalan.cover : '/covers/default-cover.webp'}
                   alt={`Sampul cerita ${berjalan.title}`}
                   fill
                   priority

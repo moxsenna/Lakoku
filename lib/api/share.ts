@@ -7,6 +7,7 @@ import { cache } from 'react'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getSessionUser } from '@/lib/api/user-state'
+import { resolveStoryCover } from '@/lib/api/queries'
 import type { JejakItem } from '@/lib/api/types'
 
 export type ShareVisibility = 'unlisted' | 'public'
@@ -101,7 +102,7 @@ function toPublicLink(
       title: teaser.title ?? row.title,
       tagline: teaser.tagline,
       tropes: Array.isArray(teaser.tropes) ? teaser.tropes : [],
-      cover: teaser.cover,
+      cover: resolveStoryCover(teaser.cover),
       endingName: teaser.endingName,
       bigChoices: Array.isArray(teaser.bigChoices) ? teaser.bigChoices : [],
       cta: teaser.cta ?? 'Coba jalurmu sendiri',

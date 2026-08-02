@@ -26,6 +26,17 @@ export const CHAPTER_READER_COLUMNS = 'story_id,number,title,paragraphs,choice_p
 export const OUTCOME_READER_COLUMNS = 'story_id,chapter_number,choice_id,consequence,next_chapter_number,is_ending' as const
 export const EXPLORE_STORY_FILTER = 'id.like.demo:%,id.like.premium:%' as const
 
+/** Sampul default untuk cerita tanpa cover (ringan, WebP untuk mobile). */
+export const DEFAULT_STORY_COVER = '/covers/default-cover.webp'
+
+/**
+ * Legacy stories may store '/placeholder.svg' (with or without query params)
+ * or null cover. Resolve ke sampul default sebelum sampai ke UI.
+ */
+export function resolveStoryCover(cover: string | null | undefined): string {
+  return cover && !cover.startsWith('/placeholder.svg') ? cover : DEFAULT_STORY_COVER
+}
+
 type StoryRow = {
   id: string
   title: string
@@ -74,7 +85,7 @@ function toDetail(r: StoryRow): StoryDetail {
   return {
     id: r.id,
     title: r.title,
-    cover: r.cover,
+    cover: resolveStoryCover(r.cover),
     tagline: r.tagline,
     role: r.role,
     tropes: r.tropes,

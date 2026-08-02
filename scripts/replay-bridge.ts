@@ -32,13 +32,23 @@
  * mencegah result kedua dipublish; guard slot inilah yang mencegah eksekusi
  * replay ganda. Replay berjalan maksimal satu kali per bridge.
  *
+ * TIMEOUT MEMBATALKAN REQUEST AKTIF: timer yang fire saat request sedang
+ * memegang slot TIDAK boleh membiarkan replay berjalan diam-diam setelah
+ * result TIMEOUT dipublish. Sebelum `resolveOnce(TIMEOUT)`, timer memanggil
+ * cancel callback request aktif (bridge-scope `cancelActiveRequest`) yang:
+ * menandai `failed = true`, meng-zero seluruh chunk buffered seketika, dan
+ * menutup response. Handler `end` memeriksa `failed || settled` sebagai
+ * defense-in-depth — replayChoiceLabel TIDAK PERNAH dijalankan setelah
+ * bridge settled (TIMEOUT/INTERNAL/delivered). Sisa body yang masih tiba
+ * di-zero per chunk dan dibuang.
+ *
  * CLEANUP DETERMINISTIK: seluruh chunk body yang pernah disimpan di-zero
  * pada SEMUA jalur — success, empty, oversize (termasuk chunk yang datang
- * setelah tooLarge), invalid UTF-8, request aborted, dan request error.
- * Handler `req.on('aborted')` / `req.on('error')` menjamin partial sensitive
- * bytes tidak menunggu GC; koneksi yang mati tengah jalan tidak meninggalkan
- * cleanup nondeterministik. Kegagalan aborted/error → fail closed INTERNAL
- * (slot tetap terpakai; server tutup).
+ * setelah tooLarge), invalid UTF-8, request aborted, request error, dan
+ * timeout-cancel. Handler `req.on('aborted')` / `req.on('error')` menjamin
+ * partial sensitive bytes tidak menunggu GC; koneksi yang mati tengah jalan
+ * tidak meninggalkan cleanup nondeterministik. Kegagalan aborted/error →
+ * fail closed INTERNAL (slot tetap terpakai; server tutup).
  *
  * SHUTDOWN FINISH-AWARE: semua response memakai `Connection: close`, dan
  * resolve + close hanya terjadi setelah event `finish` response (data sudah
@@ -119,6 +129,12 @@ export interface ReplayBridgeOptions {
   maxBodyBytes?: number
   /** Berapa lama menunggu accept valid setelah listen sebelum TIMEOUT. */
   timeoutMs?: number
+  /**
+   * Seam deterministic testing SAJA (mis. menghitung invocation). Default
+   * path produksi/tooling tetap memanggil core harness langsung:
+   * `replay ?? replayChoiceLabel`.
+   */
+  replay?: (label: string) => ReplayOutput
 }
 
 export type BridgeResult =
@@ -145,6 +161,7 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
   const allowedOrigin = options.allowedOrigin ?? BRIDGE_DEFAULT_ALLOWED_ORIGIN
   const maxBodyBytes = options.maxBodyBytes ?? BRIDGE_DEFAULT_MAX_BODY_BYTES
   const timeoutMs = options.timeoutMs ?? BRIDGE_DEFAULT_TIMEOUT_MS
+  const replay = options.replay ?? replayChoiceLabel
   const capabilityPath = `/bridge/${randomBytes(16).toString('hex')}`
 
   /** MIME essence text/plain + parameter optional charset=utf-8, case-insensitive. */
@@ -161,6 +178,12 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
   let timer: NodeJS.Timeout | null = null
   /** Processing slot one-shot: tepat satu request valid boleh memproses body. */
   let processing = false
+  /**
+   * Cancel callback request yang sedang memegang slot. Dipanggil saat bridge
+   * settle karena TIMEOUT/INTERNAL agar request aktif TIDAK pernah sampai
+   * ke replay setelah result dipublish, dan byte buffered di-zero seketika.
+   */
+  let cancelActiveRequest: (() => void) | null = null
   let settled = false
   let settleResult!: (result: BridgeResult) => void
   const resultPromise = new Promise<BridgeResult>((resolve) => {
@@ -175,6 +198,19 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
       timer = null
     }
     settleResult(result)
+  }
+
+  /** Settle gagal + batalkan request aktif LEBIH DULU (urutan penting). */
+  const abortAndResolve = (
+    reason: 'TIMEOUT' | 'INTERNAL' | 'BODY_TOO_LARGE' | 'INVALID_UTF8',
+  ): void => {
+    if (settled) return
+    const cancel = cancelActiveRequest
+    cancelActiveRequest = null
+    // batalkan dulu: request aktif ditandai failed + buffer di-zero sebelum
+    // result dipublish, sehingga tidak ada replay diam-diam setelah settle.
+    if (cancel !== null) cancel()
+    resolveOnce({ status: 'unavailable', reason })
   }
 
   const close = async (): Promise<void> => {
@@ -246,11 +282,33 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
       chunks.length = 0
     }
 
+    /**
+     * Dibatalkan dari luar (timeout/internal settle): tandai failed, zero
+     * buffer seketika, tutup response. Setelah ini `end` tidak akan pernah
+     * mencapai replay dan sisa chunk yang tiba di-zero lalu dibuang.
+     */
+    cancelActiveRequest = (): void => {
+      failed = true
+      zeroBuffered()
+      if (!res.writableEnded && !res.destroyed) {
+        res.statusCode = 503
+        res.end()
+      }
+      req.destroy()
+    }
+
+    /** Lepas slot + cancel hook milik request ini (jalur non-consuming). */
+    const releaseSlot = (): void => {
+      processing = false
+      cancelActiveRequest = null
+    }
+
     // Fail closed tanpa response penuh (socket client sudah mati): tidak ada
     // 'finish' yang akan datang — resolve + close langsung.
     const failClosed = (reason: 'INVALID_UTF8' | 'INTERNAL'): void => {
       if (failed) return
       failed = true
+      cancelActiveRequest = null
       zeroBuffered()
       if (!res.writableEnded && !res.destroyed) {
         res.statusCode = 400
@@ -261,8 +319,8 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
     }
 
     req.on('data', (chunk: Buffer) => {
-      if (tooLarge) {
-        // byte sensitif di luar batas: zero segera, jangan tunggu 'end'
+      // sisa body setelah cancel/oversize: zero seketika, jangan simpan
+      if (failed || tooLarge) {
         chunk.fill(0)
         return
       }
@@ -277,18 +335,32 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
     })
 
     req.on('aborted', () => {
+      if (failed) {
+        zeroBuffered()
+        return
+      }
       failClosed('INTERNAL')
     })
 
     req.on('error', () => {
+      if (failed) {
+        zeroBuffered()
+        return
+      }
       failClosed('INTERNAL')
     })
 
     req.on('end', () => {
-      if (failed) return
+      // defense-in-depth: bridge sudah settled (TIMEOUT/INTERNAL/delivered)
+      // atau request dibatalkan → JANGAN pernah jalankan replay.
+      if (failed || settled) {
+        zeroBuffered()
+        return
+      }
 
       if (tooLarge) {
         zeroBuffered() // safety; sudah di-zero saat flag diangkat
+        cancelActiveRequest = null
         res.statusCode = 413
         res.on('finish', () => {
           resolveOnce({ status: 'unavailable', reason: 'BODY_TOO_LARGE' })
@@ -301,10 +373,7 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
       // Body kosong → malformed, TIDAK mengonsumsi one-shot; tetap menunggu.
       if (total === 0) {
         res.statusCode = 400
-        res.on('finish', () => {
-          // lepas slot: request non-consuming ini tidak memakai accept valid
-          processing = false
-        })
+        res.on('finish', releaseSlot)
         res.end()
         return
       }
@@ -318,6 +387,7 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
         label = new TextDecoder('utf-8', { fatal: true }).decode(body)
       } catch {
         body.fill(0)
+        cancelActiveRequest = null
         res.statusCode = 400
         res.on('finish', () => {
           resolveOnce({ status: 'unavailable', reason: 'INVALID_UTF8' })
@@ -334,15 +404,21 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
       if (label.trim().length === 0) {
         label = null
         res.statusCode = 400
-        res.on('finish', () => {
-          processing = false
-        })
+        res.on('finish', releaseSlot)
         res.end()
         return
       }
 
-      const output = replayChoiceLabel(label)
+      // guard terakhir tepat sebelum eksekusi: settle apa pun yang terjadi
+      // selama decode membatalkan replay.
+      if (failed || settled) {
+        label = null
+        return
+      }
+
+      const output = replay(label)
       label = null
+      cancelActiveRequest = null
 
       res.statusCode = 200
       res.on('finish', () => {
@@ -357,7 +433,7 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
   server = createServer(handleRequest)
   server.on('error', () => {
     // tanpa log raw error — output hanya reason generic
-    resolveOnce({ status: 'unavailable', reason: 'INTERNAL' })
+    abortAndResolve('INTERNAL')
     void close()
   })
 
@@ -377,7 +453,9 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
           // timer dimulai SETELAH listener aktif — instance yang hanya
           // dibuat untuk inspeksi capability tidak menyalakan timeout.
           timer = setTimeout(() => {
-            resolveOnce({ status: 'unavailable', reason: 'TIMEOUT' })
+            // batalkan request aktif lebih dulu: tidak boleh ada replay
+            // diam-diam setelah TIMEOUT dipublish.
+            abortAndResolve('TIMEOUT')
             void close()
           }, timeoutMs)
           resolve(address?.port ?? 0)

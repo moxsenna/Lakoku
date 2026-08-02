@@ -96,6 +96,9 @@ function openPartialPost(
 ): { socket: net.Socket; complete: () => void } {
   const socket = net.connect(port, '127.0.0.1')
   let completed = false
+  // server dapat reset koneksi (cancel/close); ECONNRESET di sisi test
+  // bukan kegagalan produk — jangan biarkan menjadi uncaught exception.
+  socket.on('error', () => {})
   socket.on('connect', () => {
     socket.write(
       `POST ${path} HTTP/1.1\r\n`
@@ -113,6 +116,7 @@ function openPartialPost(
     complete: () => {
       if (completed) return
       completed = true
+      if (socket.destroyed || socket.writableEnded) return
       socket.write(body.slice(firstChunkLength))
       socket.end()
     },
@@ -365,6 +369,49 @@ describe('replay bridge (capability-bound one-shot, tanpa kebocoran label)', () 
     expect(Date.now() - started).toBeGreaterThanOrEqual(100)
     expect(port).toBeGreaterThan(0)
   })
+
+  it('timeout membatalkan request aktif: TIMEOUT + replay invocation count 0', async () => {
+    // seam deterministic testing SAJA — default path tetap replayChoiceLabel
+    let invocations = 0
+    const seenLabels: string[] = []
+    const bridge = createReplayBridge({
+      timeoutMs: 150,
+      replay: (label) => {
+        invocations += 1
+        seenLabels.push(label)
+        return {
+          replay_reproduced: 'no',
+          stage: 'FINAL_BRANCH_SCHEMA',
+          code: 'SEAM_SHOULD_NOT_RUN',
+          validator_path: 'seam',
+          production_action: 'none',
+          label_exposed: 'no',
+        }
+      },
+    })
+    const port = await bridge.listen()
+    const resultPromise = bridge.result()
+
+    // request valid claim slot dengan body SEBAGIAN (SECRET_LABEL, belum end)
+    const pending = openPartialPost(port, bridge.capabilityPath, SECRET_LABEL, 10)
+    await new Promise((resolve) => setTimeout(resolve, 60))
+
+    // timer fires saat slot masih dipegang
+    const result = await resultPromise
+    expect(result).toEqual({ status: 'unavailable', reason: 'TIMEOUT' })
+
+    // sisa body tiba SETELAH settle — tidak boleh memicu replay
+    pending.complete()
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(invocations).toBe(0)
+    expect(seenLabels).toEqual([])
+    pending.socket.destroy()
+
+    // server tutup: POST berikutnya gagal, replay tetap 0
+    const after = await postToBridge(port, bridge.capabilityPath, PROBE_LABEL)
+    expect(after.status).toBe(0)
+    expect(invocations).toBe(0)
+  }, 10_000)
 
   it('CLI one-shot: startup metadata, synthetic probe delivered, exit 0, no leak', async () => {
     const child = spawn(process.execPath, [RUNNER, BRIDGE_CLI], {

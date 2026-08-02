@@ -383,7 +383,8 @@ insert into public.generation_provider_calls (
   provider_id, model_id, route_version, fallback_index, actual_model_resolved,
   started_at, ended_at, elapsed_ms, outcome, error_code,
   input_token_count, output_token_count, total_token_count,
-  cost_amount, cost_currency, cost_source, pricing_version_id, created_at
+  cost_amount, cost_currency, cost_source, pricing_version_id, created_at,
+  validation_stage, validation_codes
 ) values
   (
     '75000000-0000-4000-8000-000000000101', 'admin-observe-current-1',
@@ -393,8 +394,9 @@ insert into public.generation_provider_calls (
     'CHAPTER_PROSE_INITIAL', 'provider-a', 'model-a', 'route-a', 0, true,
     pg_catalog.clock_timestamp() - interval '3 hours',
     pg_catalog.clock_timestamp() - interval '3 hours' + interval '10 milliseconds',
-    10, 'SUCCEEDED', null, 100, 50, 150, 1.00000000, 'USD',
-    'provider_actual', null, pg_catalog.clock_timestamp() - interval '3 hours'
+    10, 'INVALID_RESPONSE', 'PROVIDER_INVALID_RESPONSE', 100, 50, 150, 1.00000000, 'USD',
+    'provider_actual', null, pg_catalog.clock_timestamp() - interval '3 hours',
+    'FINAL_BRANCH_SCHEMA', array['CHOICE_NOT_ACTIONABLE']
   ),
   (
     '75000000-0000-4000-8000-000000000102', 'admin-observe-current-2',
@@ -405,7 +407,7 @@ insert into public.generation_provider_calls (
     pg_catalog.clock_timestamp() - interval '2 hours',
     pg_catalog.clock_timestamp() - interval '2 hours' + interval '20 milliseconds',
     20, 'TIMEOUT', 'PROVIDER_TIMEOUT', null, null, null, null, null,
-    'unavailable', null, pg_catalog.clock_timestamp() - interval '2 hours'
+    'unavailable', null, pg_catalog.clock_timestamp() - interval '2 hours', null, null
   ),
   (
     '75000000-0000-4000-8000-000000000103', 'admin-observe-current-3',
@@ -416,7 +418,7 @@ insert into public.generation_provider_calls (
     pg_catalog.clock_timestamp() - interval '1 hour' + interval '30 milliseconds',
     30, 'SUCCEEDED', null, 200, 100, 300, 2.00000000, 'EUR',
     'price_estimate', '76000000-0000-4000-8000-000000000002',
-    pg_catalog.clock_timestamp() - interval '1 hour'
+    pg_catalog.clock_timestamp() - interval '1 hour', null, null
   ),
   (
     '75000000-0000-4000-8000-000000000104', 'admin-observe-current-4',
@@ -427,7 +429,7 @@ insert into public.generation_provider_calls (
     pg_catalog.clock_timestamp() - interval '30 minutes' + interval '40 milliseconds',
     40, 'SUCCEEDED', null, 300, 150, 450, 3.00000000, 'USD',
     'price_estimate', '76000000-0000-4000-8000-000000000001',
-    pg_catalog.clock_timestamp() - interval '30 minutes'
+    pg_catalog.clock_timestamp() - interval '30 minutes', null, null
   ),
   (
     '75000000-0000-4000-8000-000000000105', 'admin-observe-previous-1',
@@ -437,7 +439,7 @@ insert into public.generation_provider_calls (
     'route-a', 0, true, pg_catalog.clock_timestamp() - interval '25 hours',
     pg_catalog.clock_timestamp() - interval '25 hours' + interval '50 milliseconds',
     50, 'SUCCEEDED', null, 50, 25, 75, 4.00000000, 'USD',
-    'provider_actual', null, pg_catalog.clock_timestamp() - interval '25 hours'
+    'provider_actual', null, pg_catalog.clock_timestamp() - interval '25 hours', null, null
   );
 
 set local session_replication_role = origin;
@@ -570,6 +572,22 @@ select is(
   'provider ledger applies every explicit filter together'
 );
 select is(
+  (select row(validation_stage, validation_codes)::text
+   from admin_observe_page_two
+   where provider_call_id = 'admin-observe-current-1'),
+  row('FINAL_BRANCH_SCHEMA', array['CHOICE_NOT_ACTIONABLE']::text[])::text,
+  'provider ledger returns controlled validation diagnostics'
+);
+select ok(
+  not exists (
+    select 1 from admin_observe_page_one
+    where validation_codes is not null
+      and (outcome <> 'INVALID_RESPONSE' or error_code <> 'PROVIDER_INVALID_RESPONSE')
+  ),
+  'provider ledger diagnostics preserve outcome coupling'
+);
+
+select is(
   (select masked_user_email from admin_observe_page_two
    where user_id = '71000000-0000-4000-8000-000000000001'
    order by started_at desc limit 1),
@@ -593,7 +611,7 @@ select is(
    where period_name = 'current' and cost_currency = 'USD'),
   row(
     4::bigint, 900::numeric,
-    (3::numeric / 4), (1::numeric / 4), (2::numeric / 4),
+    (2::numeric / 4), (2::numeric / 4), (2::numeric / 4),
     25::numeric, 38.5::numeric,
     2::bigint, 1::bigint, 1::bigint, 1::bigint
   )::text,
@@ -671,7 +689,7 @@ select is(
    from admin_observe_models
    where provider_id = 'provider-a' and model_id = 'model-a'
      and cost_currency = 'USD'),
-  row(3::bigint, (2::numeric / 3), (1::numeric / 3), 38::numeric)::text,
+  row(3::bigint, (1::numeric / 3), (1::numeric / 3), 38::numeric)::text,
   'model performance reports exact calls, rates, and P95'
 );
 select is(

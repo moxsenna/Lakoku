@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { sanitizeChoiceValidationCodes } from '@/lib/observability/choice-validation-diagnostics.pure'
 import {
   ModelCandidateIdentitySchema,
   ProviderCallCompletionSchema,
@@ -32,6 +33,8 @@ const successfulCompletion = {
   providerActualCostAmount: null,
   providerActualCostCurrency: null,
   actualModelResolved: true,
+  validationStage: null,
+  validationCodes: null,
 } as const
 
 describe('ProviderCallContextSchema', () => {
@@ -169,6 +172,61 @@ describe('provider result contracts', () => {
       outcome: 'PROVIDER_ERROR',
       errorCode: 'PROVIDER_FAILED',
     }).outcome).toBe('PROVIDER_ERROR')
+  })
+
+  it('requires canonical validation diagnostics only for staged validation failures', () => {
+    expect(ProviderCallCompletionSchema.safeParse({
+      ...successfulCompletion,
+      outcome: 'INVALID_RESPONSE',
+      errorCode: 'PROVIDER_INVALID_RESPONSE',
+      validationStage: 'FINAL_BRANCH_SCHEMA',
+      validationCodes: ['CHOICE_NOT_ACTIONABLE', 'NEXT_CHAPTER_MISMATCH'],
+    }).success).toBe(true)
+    expect(ProviderCallCompletionSchema.safeParse({
+      ...successfulCompletion,
+      validationStage: 'FINAL_BRANCH_SCHEMA',
+      validationCodes: null,
+    }).success).toBe(false)
+    expect(ProviderCallCompletionSchema.safeParse({
+      ...successfulCompletion,
+      validationCodes: ['NEXT_CHAPTER_MISMATCH'],
+    }).success).toBe(false)
+    expect(ProviderCallCompletionSchema.safeParse({
+      ...successfulCompletion,
+      outcome: 'INVALID_RESPONSE',
+      errorCode: 'PROVIDER_INVALID_RESPONSE',
+      validationStage: 'FINAL_BRANCH_SCHEMA',
+      validationCodes: ['NEXT_CHAPTER_MISMATCH', 'CHOICE_NOT_ACTIONABLE'],
+    }).success).toBe(false)
+    expect(ProviderCallCompletionSchema.safeParse({
+      ...successfulCompletion,
+      outcome: 'TIMEOUT',
+      errorCode: 'PROVIDER_TIMEOUT',
+      validationStage: 'FINAL_BRANCH_SCHEMA',
+      validationCodes: ['CHOICE_NOT_ACTIONABLE'],
+    }).success).toBe(false)
+    for (const codes of [
+      [],
+      ['NOT_ALLOWED'],
+      ['CHOICE_NOT_ACTIONABLE', 'NOT_ALLOWED'],
+      Array.from({ length: 9 }, (_, index) => `UNKNOWN_${index}`),
+    ]) {
+      const canonical = sanitizeChoiceValidationCodes(codes)
+      expect(ProviderCallCompletionSchema.safeParse({
+        ...successfulCompletion,
+        outcome: 'INVALID_RESPONSE',
+        errorCode: 'PROVIDER_INVALID_RESPONSE',
+        validationStage: 'FINAL_BRANCH_SCHEMA',
+        validationCodes: canonical,
+      }).success).toBe(true)
+    }
+    expect(ProviderCallCompletionSchema.safeParse({
+      ...successfulCompletion,
+      outcome: 'INVALID_RESPONSE',
+      errorCode: 'PROVIDER_INVALID_RESPONSE',
+      validationStage: 'FINAL_BRANCH_SCHEMA',
+      validationCodes: [],
+    }).success).toBe(false)
   })
 
   it('requires provider actual cost amount and currency together', () => {

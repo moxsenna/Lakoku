@@ -42,6 +42,8 @@ const completion = {
   providerActualCostAmount: '0.12345678',
   providerActualCostCurrency: 'USD',
   actualModelResolved: true,
+  validationStage: null,
+  validationCodes: null,
 } as const
 
 beforeEach(() => vi.clearAllMocks())
@@ -82,6 +84,8 @@ describe('recordGenerationProviderCall', () => {
       p_total_token_count: 30,
       p_provider_cost_amount: '0.12345678',
       p_provider_cost_currency: 'USD',
+      p_validation_stage: null,
+      p_validation_codes: null,
     })
   })
 

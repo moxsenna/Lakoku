@@ -141,7 +141,7 @@ select has_function(
     'text', 'uuid', 'text', 'integer', 'text', 'uuid', 'uuid', 'integer',
     'text', 'text', 'text', 'text', 'text', 'integer', 'boolean',
     'timestamp with time zone', 'timestamp with time zone', 'bigint', 'text',
-    'text', 'bigint', 'bigint', 'bigint', 'numeric', 'text'
+    'text', 'bigint', 'bigint', 'bigint', 'numeric', 'text', 'text', 'text[]'
   ],
   'recorder RPC has exact scalar-only signature'
 );
@@ -152,7 +152,7 @@ select function_returns(
     'text', 'uuid', 'text', 'integer', 'text', 'uuid', 'uuid', 'integer',
     'text', 'text', 'text', 'text', 'text', 'integer', 'boolean',
     'timestamp with time zone', 'timestamp with time zone', 'bigint', 'text',
-    'text', 'bigint', 'bigint', 'bigint', 'numeric', 'text'
+    'text', 'bigint', 'bigint', 'bigint', 'numeric', 'text', 'text', 'text[]'
   ],
   'jsonb',
   'recorder RPC returns jsonb'
@@ -160,14 +160,14 @@ select function_returns(
 select ok(
   coalesce((select prosecdef from pg_proc
     where oid = to_regprocedure(
-      'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text)'
+      'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[])'
     )), false),
   'recorder RPC is SECURITY DEFINER'
 );
 select is(
   (select proconfig from pg_proc
    where oid = to_regprocedure(
-     'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text)'
+     'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[])'
    )),
   array['search_path=""']::text[],
   'recorder RPC fixes empty search_path'
@@ -175,17 +175,17 @@ select is(
 select ok(
   not has_function_privilege(
     'public',
-    'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text)',
+    'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[])',
     'EXECUTE'
   )
   and not has_function_privilege(
     'anon',
-    'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text)',
+    'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[])',
     'EXECUTE'
   )
   and not has_function_privilege(
     'authenticated',
-    'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text)',
+    'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[])',
     'EXECUTE'
   ),
   'PUBLIC, anon, and authenticated cannot execute recorder RPC'
@@ -193,7 +193,7 @@ select ok(
 select ok(
   has_function_privilege(
     'service_role',
-    'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text)',
+    'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[])',
     'EXECUTE'
   ),
   'service_role can execute recorder RPC'

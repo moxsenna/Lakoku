@@ -165,6 +165,8 @@ describe('executeObservedModelCall', () => {
       providerActualCostAmount: '0.12345678',
       providerActualCostCurrency: 'USD',
       actualModelResolved: true,
+      validationStage: null,
+      validationCodes: null,
     })
     const recorded = JSON.stringify(record.mock.calls)
     for (const secret of [
@@ -277,6 +279,44 @@ describe('executeObservedModelCall', () => {
       totalTokenCount: 30,
       outcome,
       errorCode,
+    }))
+  })
+
+  it('records canonical validation diagnostics after consume rejects', async () => {
+    const record = vi.fn().mockResolvedValue(undefined)
+    const error = new InvalidModelResponseError(
+      'validation failed',
+      [],
+      undefined,
+      'FINAL_BRANCH_SCHEMA',
+      ['CHOICE_NOT_ACTIONABLE', 'NEXT_CHAPTER_MISMATCH'],
+    )
+
+    await expect(executeObservedModelCall(input({
+      consume: () => { throw error },
+    }), deps({ record }))).rejects.toBe(error)
+
+    expect(record).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
+      outcome: 'INVALID_RESPONSE',
+      validationStage: 'FINAL_BRANCH_SCHEMA',
+      validationCodes: ['CHOICE_NOT_ACTIONABLE', 'NEXT_CHAPTER_MISMATCH'],
+    }))
+  })
+
+  it('records null diagnostics when custom classification overrides typed validation', async () => {
+    const record = vi.fn().mockResolvedValue(undefined)
+    const error = new InvalidModelResponseError(
+      'validation failed', [], undefined, 'FINAL_BRANCH_SCHEMA', ['CHOICE_NOT_ACTIONABLE'],
+    )
+    await expect(executeObservedModelCall(input({
+      consume: () => { throw error },
+      classifyFailure: () => ({ outcome: 'TIMEOUT', errorCode: 'PROVIDER_TIMEOUT' }),
+    }), deps({ record }))).rejects.toBe(error)
+    expect(record).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
+      outcome: 'TIMEOUT',
+      errorCode: 'PROVIDER_TIMEOUT',
+      validationStage: null,
+      validationCodes: null,
     }))
   })
 

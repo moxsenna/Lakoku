@@ -13,7 +13,7 @@ begin
 end
 $$;
 
-select plan(54);
+select plan(58);
 
 select has_table('public', 'generation_provider_calls', 'generation_provider_calls exists');
 select has_pk('public', 'generation_provider_calls', 'generation_provider_calls has primary key');
@@ -55,7 +55,8 @@ select columns_are(
     'workflow_phase', 'provider_id', 'model_id', 'route_version', 'fallback_index',
     'actual_model_resolved', 'started_at', 'ended_at', 'elapsed_ms', 'outcome',
     'error_code', 'input_token_count', 'output_token_count', 'total_token_count',
-    'cost_amount', 'cost_currency', 'cost_source', 'pricing_version_id', 'created_at'
+    'cost_amount', 'cost_currency', 'cost_source', 'pricing_version_id', 'created_at',
+    'validation_stage', 'validation_codes'
   ],
   'generation_provider_calls has exact sanitized columns'
 );
@@ -102,8 +103,20 @@ select set_eq(
     ('generation_provider_calls_cost_amount_check'),
     ('generation_provider_calls_cost_currency_check'),
     ('generation_provider_calls_cost_source_check'),
-    ('generation_provider_calls_cost_shape_check')$$,
+    ('generation_provider_calls_cost_shape_check'),
+    ('generation_provider_calls_validation_stage_check'),
+    ('generation_provider_calls_validation_codes_check'),
+    ('generation_provider_calls_validation_shape_check'),
+    ('generation_provider_calls_validation_outcome_check')$$,
   'all validation checks have stable names'
+);
+
+select ok(
+  not has_function_privilege('public', 'private.canonical_generation_provider_validation_codes_v1(text[])', 'EXECUTE')
+  and not has_function_privilege('anon', 'private.canonical_generation_provider_validation_codes_v1(text[])', 'EXECUTE')
+  and not has_function_privilege('authenticated', 'private.canonical_generation_provider_validation_codes_v1(text[])', 'EXECUTE')
+  and has_function_privilege('service_role', 'private.canonical_generation_provider_validation_codes_v1(text[])', 'EXECUTE'),
+  'validation canonical helper is service-role-only'
 );
 
 select has_index('public', 'generation_provider_calls', 'generation_provider_calls_started_idx', 'started timeline index exists');
@@ -623,6 +636,48 @@ select lives_ok(
     select pg_temp.insert_sync_call('cost-estimate-valid','price_estimate',1.25,'USD','45000000-0000-4000-8000-000000000001')$$,
   'all valid generic pre-pricing cost shapes are accepted'
 );
+
+set local role service_role;
+select lives_ok(
+  $$insert into public.generation_provider_calls (
+      provider_call_id,user_id,story_id,correlation_id,use_case,workflow_phase,
+      provider_id,model_id,fallback_index,actual_model_resolved,started_at,ended_at,
+      elapsed_ms,outcome,error_code,cost_source,validation_stage,validation_codes
+    ) values (
+      'validation-canonical','41000000-0000-4000-8000-000000000001','test:generation-provider-call',
+      gen_random_uuid(),'chapter_generation','provider_call','openrouter','model-v1',0,true,
+      clock_timestamp(),clock_timestamp(),0,'INVALID_RESPONSE','PROVIDER_INVALID_RESPONSE',
+      'unavailable','FINAL_BRANCH_SCHEMA',array['CHOICE_NOT_ACTIONABLE','NEXT_CHAPTER_MISMATCH']
+    )$$,
+  'service_role direct canonical validation diagnostics insert succeeds'
+);
+select throws_ok(
+  $$insert into public.generation_provider_calls (
+      provider_call_id,user_id,story_id,correlation_id,use_case,workflow_phase,
+      provider_id,model_id,fallback_index,actual_model_resolved,started_at,ended_at,
+      elapsed_ms,outcome,error_code,cost_source,validation_stage,validation_codes
+    ) values (
+      'validation-noncanonical','41000000-0000-4000-8000-000000000001','test:generation-provider-call',
+      gen_random_uuid(),'chapter_generation','provider_call','openrouter','model-v1',0,true,
+      clock_timestamp(),clock_timestamp(),0,'INVALID_RESPONSE','PROVIDER_INVALID_RESPONSE',
+      'unavailable','FINAL_BRANCH_SCHEMA',array['NEXT_CHAPTER_MISMATCH','CHOICE_NOT_ACTIONABLE']
+    )$$,
+  '23514', null, 'service_role direct noncanonical validation diagnostics insert rejects'
+);
+select throws_ok(
+  $$insert into public.generation_provider_calls (
+      provider_call_id,user_id,story_id,correlation_id,use_case,workflow_phase,
+      provider_id,model_id,fallback_index,actual_model_resolved,started_at,ended_at,
+      elapsed_ms,outcome,error_code,cost_source,validation_stage,validation_codes
+    ) values (
+      'validation-wrong-outcome','41000000-0000-4000-8000-000000000001','test:generation-provider-call',
+      gen_random_uuid(),'chapter_generation','provider_call','openrouter','model-v1',0,true,
+      clock_timestamp(),clock_timestamp(),0,'TIMEOUT','PROVIDER_TIMEOUT',
+      'unavailable','FINAL_BRANCH_SCHEMA',array['CHOICE_NOT_ACTIONABLE']
+    )$$,
+  '23514', null, 'validation diagnostics reject non-invalid-response outcome'
+);
+reset role;
 
 select * from finish();
 rollback;

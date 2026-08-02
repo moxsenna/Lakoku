@@ -4,7 +4,7 @@
  * Jalur label (evidence produksi → harness), TIDAK PERNAH lewat DOM:
  *
  *   browser JS memory: const label = result.label   (dari retrieve response JSON)
- *       │  POST text/plain (mode no-cors, origin produksi)
+ *       │  POST text/plain (mode cors, origin produksi)
  *       ▼
  *   127.0.0.1:<random-port>/bridge/<128-bit nonce>
  *       │  validasi: path / method / origin / content-type / ukuran ≤ 512 B
@@ -12,6 +12,16 @@
  *   replayChoiceLabel(label)   ← dipanggil LANGSUNG (tanpa child process/IPC)
  *       ▼
  *   metadata aman 6 baris → stdout
+ *
+ * CORS EXACT-ORIGIN (konfirmasi dua sisi): response memuat
+ * `Access-Control-Allow-Origin: <allowedOrigin>` + `Vary: Origin` sehingga
+ * `fetch()` mode `cors` dari halaman produksi RESOLVE dan skrip browser dapat
+ * membuktikan `forward.ok === true` / `forward.status === 200`. Tanpa ini
+ * fetch reject TypeError walau bridge sudah memproses request sampai tuntas,
+ * sehingga forward sukses tidak dapat dibedakan dari forward gagal di sisi
+ * browser. ACAO tidak pernah wildcard dan tidak pernah memantulkan origin
+ * sembarang; origin lain tetap 403 tanpa ACAO. POST `text/plain` adalah
+ * simple CORS request → tidak ada preflight, gate method tetap POST-only.
  *
  * Content-Type diterima browser-realistic: essence `text/plain` dengan
  * parameter optional `charset=utf-8`, case-insensitive (fetch() browser dapat
@@ -85,8 +95,17 @@
  *
  * STOP GATE (mandatory, sebelum retrieve asli): probe loopback dari ORIGIN
  * PRODUKSI dengan data sintetis harus lulus lebih dulu — Local Network
- * Access (Chrome 142+) dapat meminta permission dan memblokir 127.0.0.1 dari
- * halaman https. Jangan retrieve evidence nyata sebelum probe PASS.
+ * Access (Chrome 142+; sejak Chrome 145 permission loopback dipisah menjadi
+ * `loopback-network`, nama lama `local-network-access` tetap alias) meminta
+ * permission dan menahan request 127.0.0.1 dari halaman https sampai user
+ * menekan Allow. Gejala saat tertahan: `fetch()` menggantung TANPA reject dan
+ * bridge menerima NOL byte. Cek state read-only lebih dulu:
+ *
+ *   await navigator.permissions.query({ name: 'loopback-network' })  // granted?
+ *
+ * Probe PASS hanya sah bila DUA sisi konfirmasi:
+ *   browser: forward resolved + status 200   DAN   bridge: delivered
+ * Jangan retrieve evidence nyata sebelum probe PASS.
  *
  * Browser evaluate final (atomic metadata→retrieve→forward, tanpa DOM).
  * Body metadata sukses adalah `{ captureId, correlationId }` (bukan status);
@@ -113,11 +132,21 @@
  *       return { metadataStatus: metaRes.status, retrieveStatus: retr.status, forwardAttempted: false }
  *     }
  *     const forward = await fetch('http://127.0.0.1:<port>' + '<capability>', {
- *       method: 'POST', mode: 'no-cors', body: result.label,
+ *       method: 'POST',
+ *       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+ *       body: result.label,
  *     })
- *     return { metadataStatus: metaRes.status, retrieveStatus: retr.status, forwardAttempted: true }
+ *     return {
+ *       metadataStatus: metaRes.status,
+ *       retrieveStatus: retr.status,
+ *       forwardAttempted: true,
+ *       forwardOk: forward.ok,          // readable berkat ACAO exact-origin
+ *       forwardStatus: forward.status,  // 200 = bridge terima & proses
+ *     }
  *   })
- *   — captureId/correlationId/label tidak pernah jadi return value.
+ *   — captureId/correlationId/label tidak pernah jadi return value. Hanya
+ *   status HTTP dan boolean; `forward.ok` memberi konfirmasi sisi browser
+ *   yang independen dari exit code bridge.
  */
 
 import { randomBytes } from 'node:crypto'
@@ -262,6 +291,25 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
     // semua response: socket ditutup server setelah response selesai — tidak
     // ada keep-alive yang menggantung; client await fetch dapat body utuh.
     res.setHeader('Connection', 'close')
+
+    // CORS EXACT-ORIGIN. Tanpa header ini `fetch()` mode `cors` dari halaman
+    // produksi REJECT dengan TypeError meskipun bridge sudah menerima dan
+    // memproses request sampai tuntas — forward tidak dapat dikonfirmasi dari
+    // sisi browser, dan konfirmasi hanya bergantung exit code bridge.
+    //
+    // `Vary: Origin` selalu diset (bahkan saat origin tidak cocok) supaya cache
+    // perantara tidak pernah menyilangkan response antar origin.
+    // ACAO HANYA diemit untuk origin yang diizinkan — TIDAK PERNAH wildcard
+    // `*`, dan tidak pernah memantulkan Origin sembarang. Origin lain tetap
+    // menerima 403 tanpa ACAO sehingga tidak dapat membaca response.
+    //
+    // Tidak ada penanganan preflight: POST `text/plain` tanpa custom header
+    // adalah simple CORS request, jadi browser tidak mengirim OPTIONS. Method
+    // selain POST tetap ditolak 405 (gate method tidak dilonggarkan).
+    res.setHeader('Vary', 'Origin')
+    if (req.headers.origin === allowedOrigin) {
+      res.setHeader('Access-Control-Allow-Origin', allowedOrigin)
+    }
     // socket reset oleh client tidak boleh menjadi unhandled 'error' → crash.
     res.on('error', () => {
       // cleanup byte sensitif sudah ditangani handler req (aborted/error)

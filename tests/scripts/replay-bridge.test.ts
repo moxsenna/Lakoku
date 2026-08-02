@@ -43,7 +43,7 @@ function postToBridge(
   path: string,
   body: string | Buffer,
   opts: { origin?: string; contentType?: string; method?: string } = {},
-): Promise<{ status: number; body: string }> {
+): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve) => {
     const req = http.request(
       {
@@ -61,10 +61,12 @@ function postToBridge(
         res.on('data', (chunk: Buffer) => {
           data += chunk.toString('utf8')
         })
-        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: data }))
+        res.on('end', () =>
+          resolve({ status: res.statusCode ?? 0, body: data, headers: res.headers }),
+        )
       },
     )
-    req.on('error', () => resolve({ status: 0, body: '' })) // koneksi tertutup
+    req.on('error', () => resolve({ status: 0, body: '', headers: {} })) // koneksi tertutup
     req.end(body)
   })
 }
@@ -308,6 +310,58 @@ describe('replay bridge (capability-bound one-shot, tanpa kebocoran label)', () 
     const result = await resultPromise
     if (result.status !== 'delivered') throw new Error(`unexpected: ${result.reason}`)
     expect(result.replayOutput.code).toBe('CHOICE_GENERIC_OR_INTERNAL')
+  })
+
+  // CORS exact-origin: tanpa ACAO, `fetch()` mode `cors` dari halaman produksi
+  // REJECT TypeError walau bridge sudah memproses request sampai tuntas —
+  // forward sukses tidak bisa dibedakan dari gagal di sisi browser.
+  it('returns exact-origin ACAO + Vary on success so browser fetch can confirm forward', async () => {
+    const bridge = createReplayBridge()
+    const port = await bridge.listen()
+    const resultPromise = bridge.result()
+    const res = await postToBridge(port, bridge.capabilityPath, PROBE_LABEL)
+    expect(res.status).toBe(200)
+    expect(res.body).toBe('ok')
+    expect(res.headers['access-control-allow-origin']).toBe(BRIDGE_DEFAULT_ALLOWED_ORIGIN)
+    expect(res.headers['vary']).toBe('Origin')
+    const result = await resultPromise
+    expect(result.status).toBe('delivered')
+  })
+
+  it('never emits wildcard ACAO and never reflects a foreign origin', async () => {
+    const bridge = createReplayBridge()
+    const port = await bridge.listen()
+    const resultPromise = bridge.result()
+    const bad = await postToBridge(port, bridge.capabilityPath, 'x', {
+      origin: 'https://evil.example',
+    })
+    expect(bad.status).toBe(403)
+    // origin asing TIDAK boleh bisa membaca response bridge
+    expect(bad.headers['access-control-allow-origin']).toBeUndefined()
+    // Vary tetap ada agar cache tidak menyilangkan response antar origin
+    expect(bad.headers['vary']).toBe('Origin')
+
+    const good = await postToBridge(port, bridge.capabilityPath, PROBE_LABEL)
+    expect(good.headers['access-control-allow-origin']).toBe(BRIDGE_DEFAULT_ALLOWED_ORIGIN)
+    expect(good.headers['access-control-allow-origin']).not.toBe('*')
+    await resultPromise
+  })
+
+  it('honours a custom allowedOrigin in ACAO instead of hardcoding production', async () => {
+    const custom = 'https://staging.example'
+    const bridge = createReplayBridge({ allowedOrigin: custom })
+    const port = await bridge.listen()
+    const resultPromise = bridge.result()
+    const prod = await postToBridge(port, bridge.capabilityPath, 'x', {
+      origin: BRIDGE_DEFAULT_ALLOWED_ORIGIN,
+    })
+    expect(prod.status).toBe(403)
+    expect(prod.headers['access-control-allow-origin']).toBeUndefined()
+
+    const res = await postToBridge(port, bridge.capabilityPath, PROBE_LABEL, { origin: custom })
+    expect(res.status).toBe(200)
+    expect(res.headers['access-control-allow-origin']).toBe(custom)
+    await resultPromise
   })
 
   it('rejects non-POST method (405) and keeps waiting for a valid accept', async () => {

@@ -114,6 +114,8 @@ function providerCall(overrides: Partial<AdminGenerationProviderCall> = {}): Adm
     cost_currency: 'USD',
     cost_source: 'price_estimate',
     pricing_version_id: UUID_B,
+    validation_stage: null,
+    validation_codes: null,
     ...overrides,
   }
 }

@@ -1,4 +1,8 @@
 import { z } from 'zod'
+import {
+  ChoiceValidationStageValues,
+  sanitizeChoiceValidationCodes,
+} from './choice-validation-diagnostics.pure'
 
 export const ProviderCallOutcomeSchema = z.enum([
   'SUCCEEDED',
@@ -53,6 +57,8 @@ export const ProviderCallCompletionSchema = z.object({
   providerActualCostAmount: z.string().regex(/^\d{1,12}(?:\.\d{1,8})?$/).nullable(),
   providerActualCostCurrency: z.string().regex(/^[A-Z]{3}$/).nullable(),
   actualModelResolved: z.boolean(),
+  validationStage: z.enum(ChoiceValidationStageValues).nullable(),
+  validationCodes: z.array(z.string()).max(8).readonly().nullable(),
 }).strict().superRefine((value, context) => {
   if ((value.outcome === 'SUCCEEDED') !== (value.errorCode === null)) {
     context.addIssue({
@@ -60,6 +66,34 @@ export const ProviderCallCompletionSchema = z.object({
       path: ['errorCode'],
       message: 'errorCode must be null exactly for SUCCEEDED',
     })
+  }
+
+  if ((value.validationStage === null) !== (value.validationCodes === null)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['validationCodes'],
+      message: 'validationStage and validationCodes must be supplied together',
+    })
+  }
+  if (value.validationCodes !== null && (
+    value.outcome !== 'INVALID_RESPONSE' || value.errorCode !== 'PROVIDER_INVALID_RESPONSE'
+  )) {
+    context.addIssue({
+      code: 'custom',
+      path: ['validationCodes'],
+      message: 'validation diagnostics require provider invalid response classification',
+    })
+  }
+  if (value.validationCodes !== null) {
+    const canonicalCodes = sanitizeChoiceValidationCodes(value.validationCodes)
+    if (canonicalCodes.length !== value.validationCodes.length
+      || canonicalCodes.some((code, index) => code !== value.validationCodes![index])) {
+      context.addIssue({
+        code: 'custom',
+        path: ['validationCodes'],
+        message: 'validationCodes must be canonical controlled diagnostics',
+      })
+    }
   }
 
   if ((value.providerActualCostAmount === null) !== (value.providerActualCostCurrency === null)) {

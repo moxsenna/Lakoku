@@ -95,6 +95,8 @@ export async function recordGenerationProviderCall(
       p_total_token_count: parsedCompletion.totalTokenCount,
       p_provider_cost_amount: parsedCompletion.providerActualCostAmount,
       p_provider_cost_currency: parsedCompletion.providerActualCostCurrency,
+      p_validation_stage: parsedCompletion.validationStage,
+      p_validation_codes: parsedCompletion.validationCodes,
     })
 
     if (error) {

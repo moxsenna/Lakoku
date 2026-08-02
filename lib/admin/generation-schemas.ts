@@ -3,6 +3,7 @@ import {
   ProviderCallCostSourceSchema,
   ProviderCallOutcomeSchema,
 } from '@/lib/observability/generation-provider-call.contract'
+import { sanitizeChoiceValidationCodes } from '@/lib/observability/choice-validation-diagnostics.pure'
 
 // PostgREST may return timestamptz / numeric / bigint as string or number.
 const TimestampSchema = z.union([
@@ -140,7 +141,25 @@ export const AdminGenerationProviderCallRowSchema = z.object({
   cost_currency: CurrencySchema.nullable(),
   cost_source: ProviderCallCostSourceSchema,
   pricing_version_id: z.string().uuid().nullable(),
-}).strict()
+  validation_stage: z.enum(['PARSE_JSON', 'DRAFT_SCHEMA', 'FINAL_BRANCH_SCHEMA']).nullable(),
+  validation_codes: z.array(z.string()).min(1).max(8).nullable(),
+}).strict().superRefine((value, context) => {
+  if ((value.validation_stage === null) !== (value.validation_codes === null)) {
+    context.addIssue({ code: 'custom', path: ['validation_codes'], message: 'validation diagnostics must pair' })
+  }
+  if (value.validation_codes !== null && (
+    value.outcome !== 'INVALID_RESPONSE' || value.error_code !== 'PROVIDER_INVALID_RESPONSE'
+  )) {
+    context.addIssue({ code: 'custom', path: ['validation_codes'], message: 'validation diagnostics require provider invalid response classification' })
+  }
+  if (value.validation_codes !== null) {
+    const canonical = sanitizeChoiceValidationCodes(value.validation_codes)
+    if (canonical.length !== value.validation_codes.length
+      || canonical.some((code, index) => code !== value.validation_codes![index])) {
+      context.addIssue({ code: 'custom', path: ['validation_codes'], message: 'validation diagnostics must be canonical' })
+    }
+  }
+})
 
 export const AdminGenerationProviderCallPageSchema = z.array(AdminGenerationProviderCallRowSchema)
 

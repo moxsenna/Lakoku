@@ -1,5 +1,8 @@
 import 'server-only'
 import type { streamText } from 'ai'
+import {
+  ChoiceValidationStageValues,
+} from '@/lib/observability/choice-validation-diagnostics.pure'
 import type {
   ModelCandidateIdentity,
   ProviderCallCompletion,
@@ -13,6 +16,7 @@ import {
 import {
   ContentRejectedError,
   InvalidModelResponseError,
+  sanitizeChoiceValidationCodes,
 } from './model-call-errors'
 
 export { ContentRejectedError, InvalidModelResponseError } from './model-call-errors'
@@ -167,19 +171,10 @@ function elapsedMs(monotonicStart: number, monotonicEnd: number): number {
 
 function classifyFailure(error: unknown): FailureClassification {
   if (error instanceof ContentRejectedError) {
-    return {
-      outcome: 'CONTENT_REJECTED',
-      errorCode: 'PROVIDER_CONTENT_REJECTED',
-    }
+    return { outcome: 'CONTENT_REJECTED', errorCode: 'PROVIDER_CONTENT_REJECTED' }
   }
-  if (
-    error instanceof InvalidModelResponseError
-    || errorName(error) === 'AI_InvalidResponseDataError'
-  ) {
-    return {
-      outcome: 'INVALID_RESPONSE',
-      errorCode: 'PROVIDER_INVALID_RESPONSE',
-    }
+  if (error instanceof InvalidModelResponseError || errorName(error) === 'AI_InvalidResponseDataError') {
+    return { outcome: 'INVALID_RESPONSE', errorCode: 'PROVIDER_INVALID_RESPONSE' }
   }
   if (errorName(error) === 'TimeoutError') {
     return { outcome: 'TIMEOUT', errorCode: 'PROVIDER_TIMEOUT' }
@@ -187,9 +182,25 @@ function classifyFailure(error: unknown): FailureClassification {
   if (errorName(error) === 'AbortError') {
     return { outcome: 'ABORTED', errorCode: 'PROVIDER_ABORTED' }
   }
+  return { outcome: 'PROVIDER_ERROR', errorCode: 'PROVIDER_REQUEST_FAILED' }
+}
+
+function validationDiagnostics(
+  classification: FailureClassification,
+  error: unknown,
+): Pick<ProviderCallCompletion, 'validationStage' | 'validationCodes'> {
+  if (
+    classification.outcome !== 'INVALID_RESPONSE'
+    || classification.errorCode !== 'PROVIDER_INVALID_RESPONSE'
+    || !(error instanceof InvalidModelResponseError)
+    || error.validationStage === undefined
+    || !ChoiceValidationStageValues.includes(error.validationStage)
+  ) {
+    return { validationStage: null, validationCodes: null }
+  }
   return {
-    outcome: 'PROVIDER_ERROR',
-    errorCode: 'PROVIDER_REQUEST_FAILED',
+    validationStage: error.validationStage,
+    validationCodes: sanitizeChoiceValidationCodes(error.validationCodes),
   }
 }
 
@@ -235,6 +246,8 @@ function completionBase(
       observation.finalStep?.providerMetadata,
       input.candidate.providerId,
     ),
+    validationStage: null,
+    validationCodes: null,
   }
 }
 
@@ -287,6 +300,8 @@ export async function executeObservedModelCall<T>(
       ),
       outcome: 'SUCCEEDED',
       errorCode: null,
+      validationStage: null,
+      validationCodes: null,
     }
     await recordBestEffort(start, completion, deps)
     return value
@@ -300,6 +315,7 @@ export async function executeObservedModelCall<T>(
         elapsedMs(monotonicStart, deps.monotonicNow()),
       ),
       ...classification,
+      ...validationDiagnostics(classification, error),
     }
     await recordBestEffort(start, completion, deps)
     throw error

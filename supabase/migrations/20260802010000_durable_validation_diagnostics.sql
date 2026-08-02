@@ -1,4 +1,6 @@
 -- Durable, controlled validation diagnostics for provider-call observability.
+-- Expand-only: legacy v1 RPCs (recorder and admin ledger) are untouched so old
+-- and new app versions coexist against the expanded schema.
 -- No rejected text, prompts, provider payloads, or free-form error details are accepted.
 
 create function private.canonical_generation_provider_validation_codes_v1(p_codes text[])
@@ -32,27 +34,31 @@ alter table public.generation_provider_calls
   add column validation_stage text,
   add column validation_codes text[];
 
+-- NOT VALID: new rows are enforced immediately without scanning historical rows.
+-- Existing rows are all NULL for both new columns, so they are trivially valid;
+-- production VALIDATE runs as a separate later step once table size is known.
 alter table public.generation_provider_calls
   add constraint generation_provider_calls_validation_stage_check check (
     validation_stage is null or validation_stage in ('PARSE_JSON', 'DRAFT_SCHEMA', 'FINAL_BRANCH_SCHEMA')
-  ),
+  ) not valid,
   add constraint generation_provider_calls_validation_codes_check check (
     validation_codes is null or (
       cardinality(validation_codes) between 1 and 8
       and validation_codes = private.canonical_generation_provider_validation_codes_v1(validation_codes)
     )
-  ),
+  ) not valid,
   add constraint generation_provider_calls_validation_shape_check check (
     (validation_stage is null) = (validation_codes is null)
-  ),
+  ) not valid,
   add constraint generation_provider_calls_validation_outcome_check check (
     validation_codes is null
     or (outcome = 'INVALID_RESPONSE' and error_code = 'PROVIDER_INVALID_RESPONSE')
-  );
+  ) not valid;
 
-drop function public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text);
-
-create function public.record_generation_provider_call_v1(
+-- Legacy recorder v1 stays exactly as defined in 20260718100000. New recorder v2
+-- accepts diagnostics and keeps the same idempotency semantics, including the
+-- diagnostics fields in the duplicate comparison.
+create function public.record_generation_provider_call_v2(
   p_provider_call_id text, p_user_id uuid, p_story_id text, p_chapter_number integer,
   p_generation_kind text, p_job_id uuid, p_correlation_id uuid, p_attempt_number integer,
   p_use_case text, p_workflow_phase text, p_provider_id text, p_model_id text,
@@ -95,12 +101,13 @@ begin
   raise exception using errcode = 'P0001', message = 'GENERATION_PROVIDER_CALL_IDEMPOTENCY_CONFLICT';
 end $$;
 
-revoke all on function public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[]) from public, anon, authenticated, service_role;
-grant execute on function public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[]) to service_role;
+revoke all on function public.record_generation_provider_call_v2(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[]) from public, anon, authenticated, service_role;
+grant execute on function public.record_generation_provider_call_v2(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[]) to service_role;
 
--- Replace ledger reader so owner/admin results expose only controlled diagnostics.
-drop function public.admin_generation_provider_calls_v1(timestamptz,timestamptz,text,text,text,text,text,text,text,uuid,text,text,uuid,uuid,integer,timestamptz,uuid,integer);
-create function public.admin_generation_provider_calls_v1(
+-- Legacy admin ledger v1 stays exactly as defined in 20260718110000. New v2
+-- returns the same columns plus the two controlled diagnostics fields, with the
+-- same filtering, cursor ordering, audit, masking, and internal owner/admin RBAC.
+create function public.admin_generation_provider_calls_v2(
   p_from timestamptz,p_to timestamptz,p_provider_id text,p_model_id text,p_use_case text,p_workflow_phase text,p_outcome text,p_error_code text,p_cost_source text,p_user_id uuid,p_story_id text,p_generation_kind text,p_job_id uuid,p_correlation_id uuid,p_chapter_number integer,p_cursor_started_at timestamptz,p_cursor_id uuid,p_page_size integer
 ) returns table (
   id uuid,provider_call_id text,started_at timestamptz,ended_at timestamptz,elapsed_ms bigint,user_id uuid,masked_user_email text,story_id text,story_title text,chapter_number integer,generation_kind text,job_id uuid,correlation_id uuid,attempt_number integer,use_case text,workflow_phase text,provider_id text,model_id text,route_version text,fallback_index integer,actual_model_resolved boolean,outcome text,error_code text,input_token_count bigint,output_token_count bigint,total_token_count bigint,cost_amount numeric,cost_currency text,cost_source text,pricing_version_id uuid,validation_stage text,validation_codes text[]
@@ -116,5 +123,5 @@ begin
   insert into public.admin_generation_access_audit(actor_user_id,action,target_provider_call_id,filter_fingerprint) values (v_actor,'VIEW_CALL_DETAIL',null,v_filter_fingerprint);
   return query select c.id,c.provider_call_id,c.started_at,c.ended_at,c.elapsed_ms,c.user_id,private.mask_email_v1(u.email::text),c.story_id,s.title,c.chapter_number,c.generation_kind,c.job_id,c.correlation_id,c.attempt_number,c.use_case,c.workflow_phase,c.provider_id,c.model_id,c.route_version,c.fallback_index,c.actual_model_resolved,c.outcome,c.error_code,c.input_token_count,c.output_token_count,c.total_token_count,c.cost_amount,c.cost_currency,c.cost_source,c.pricing_version_id,c.validation_stage,c.validation_codes from public.generation_provider_calls c left join auth.users u on u.id=c.user_id left join public.stories s on s.id=c.story_id where c.started_at >= p_from and c.started_at < p_to and (p_provider_id is null or c.provider_id=p_provider_id) and (p_model_id is null or c.model_id=p_model_id) and (p_use_case is null or c.use_case=p_use_case) and (p_workflow_phase is null or c.workflow_phase=p_workflow_phase) and (p_outcome is null or c.outcome=p_outcome) and (p_error_code is null or c.error_code=p_error_code) and (p_cost_source is null or c.cost_source=p_cost_source) and (p_user_id is null or c.user_id=p_user_id) and (p_story_id is null or c.story_id=p_story_id) and (p_generation_kind is null or c.generation_kind=p_generation_kind) and (p_job_id is null or c.job_id=p_job_id) and (p_correlation_id is null or c.correlation_id=p_correlation_id) and (p_chapter_number is null or c.chapter_number=p_chapter_number) and (p_cursor_started_at is null or (c.started_at,c.id)<(p_cursor_started_at,p_cursor_id)) order by c.started_at desc,c.id desc limit p_page_size;
 end $$;
-revoke all on function public.admin_generation_provider_calls_v1(timestamptz,timestamptz,text,text,text,text,text,text,text,uuid,text,text,uuid,uuid,integer,timestamptz,uuid,integer) from public, anon, authenticated, service_role;
-grant execute on function public.admin_generation_provider_calls_v1(timestamptz,timestamptz,text,text,text,text,text,text,text,uuid,text,text,uuid,uuid,integer,timestamptz,uuid,integer) to authenticated;
+revoke all on function public.admin_generation_provider_calls_v2(timestamptz,timestamptz,text,text,text,text,text,text,text,uuid,text,text,uuid,uuid,integer,timestamptz,uuid,integer) from public, anon, authenticated, service_role;
+grant execute on function public.admin_generation_provider_calls_v2(timestamptz,timestamptz,text,text,text,text,text,text,text,uuid,text,text,uuid,uuid,integer,timestamptz,uuid,integer) to authenticated;

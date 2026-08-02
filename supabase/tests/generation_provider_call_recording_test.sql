@@ -13,7 +13,7 @@ begin
 end
 $$;
 
-select plan(47);
+select plan(59);
 
 select has_table(
   'public', 'generation_model_pricing_versions',
@@ -141,9 +141,9 @@ select has_function(
     'text', 'uuid', 'text', 'integer', 'text', 'uuid', 'uuid', 'integer',
     'text', 'text', 'text', 'text', 'text', 'integer', 'boolean',
     'timestamp with time zone', 'timestamp with time zone', 'bigint', 'text',
-    'text', 'bigint', 'bigint', 'bigint', 'numeric', 'text', 'text', 'text[]'
+    'text', 'bigint', 'bigint', 'bigint', 'numeric', 'text'
   ],
-  'recorder RPC has exact scalar-only signature'
+  'legacy recorder v1 keeps exact 25-argument signature'
 );
 select function_returns(
   'public',
@@ -152,51 +152,116 @@ select function_returns(
     'text', 'uuid', 'text', 'integer', 'text', 'uuid', 'uuid', 'integer',
     'text', 'text', 'text', 'text', 'text', 'integer', 'boolean',
     'timestamp with time zone', 'timestamp with time zone', 'bigint', 'text',
-    'text', 'bigint', 'bigint', 'bigint', 'numeric', 'text', 'text', 'text[]'
+    'text', 'bigint', 'bigint', 'bigint', 'numeric', 'text'
   ],
   'jsonb',
-  'recorder RPC returns jsonb'
+  'legacy recorder v1 returns jsonb'
 );
 select ok(
   coalesce((select prosecdef from pg_proc
     where oid = to_regprocedure(
-      'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[])'
+      'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text)'
     )), false),
-  'recorder RPC is SECURITY DEFINER'
+  'legacy recorder v1 is SECURITY DEFINER'
 );
 select is(
   (select proconfig from pg_proc
    where oid = to_regprocedure(
-     'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[])'
+     'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text)'
    )),
   array['search_path=""']::text[],
-  'recorder RPC fixes empty search_path'
+  'legacy recorder v1 fixes empty search_path'
 );
 select ok(
   not has_function_privilege(
     'public',
-    'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[])',
+    'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text)',
     'EXECUTE'
   )
   and not has_function_privilege(
     'anon',
-    'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[])',
+    'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text)',
     'EXECUTE'
   )
   and not has_function_privilege(
     'authenticated',
-    'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[])',
+    'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text)',
     'EXECUTE'
   ),
-  'PUBLIC, anon, and authenticated cannot execute recorder RPC'
+  'PUBLIC, anon, and authenticated cannot execute legacy recorder v1'
 );
 select ok(
   has_function_privilege(
     'service_role',
-    'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[])',
+    'public.record_generation_provider_call_v1(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text)',
     'EXECUTE'
   ),
-  'service_role can execute recorder RPC'
+  'service_role can execute legacy recorder v1'
+);
+
+select has_function(
+  'public',
+  'record_generation_provider_call_v2',
+  array[
+    'text', 'uuid', 'text', 'integer', 'text', 'uuid', 'uuid', 'integer',
+    'text', 'text', 'text', 'text', 'text', 'integer', 'boolean',
+    'timestamp with time zone', 'timestamp with time zone', 'bigint', 'text',
+    'text', 'bigint', 'bigint', 'bigint', 'numeric', 'text', 'text', 'text[]'
+  ],
+  'recorder v2 has exact diagnostics signature'
+);
+select function_returns(
+  'public',
+  'record_generation_provider_call_v2',
+  array[
+    'text', 'uuid', 'text', 'integer', 'text', 'uuid', 'uuid', 'integer',
+    'text', 'text', 'text', 'text', 'text', 'integer', 'boolean',
+    'timestamp with time zone', 'timestamp with time zone', 'bigint', 'text',
+    'text', 'bigint', 'bigint', 'bigint', 'numeric', 'text', 'text', 'text[]'
+  ],
+  'jsonb',
+  'recorder v2 returns jsonb'
+);
+select ok(
+  coalesce((select prosecdef from pg_proc
+    where oid = to_regprocedure(
+      'public.record_generation_provider_call_v2(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[])'
+    )), false),
+  'recorder v2 is SECURITY DEFINER'
+);
+select is(
+  (select proconfig from pg_proc
+   where oid = to_regprocedure(
+     'public.record_generation_provider_call_v2(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[])'
+   )),
+  array['search_path=""']::text[],
+  'recorder v2 fixes empty search_path'
+);
+select ok(
+  not has_function_privilege(
+    'public',
+    'public.record_generation_provider_call_v2(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[])',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'anon',
+    'public.record_generation_provider_call_v2(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[])',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'authenticated',
+    'public.record_generation_provider_call_v2(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[])',
+    'EXECUTE'
+  ),
+  'PUBLIC, anon, and authenticated cannot execute recorder v2'
+);
+select ok(
+  has_function_privilege(
+    'service_role',
+    'public.record_generation_provider_call_v2(text,uuid,text,integer,text,uuid,uuid,integer,text,text,text,text,text,integer,boolean,timestamptz,timestamptz,bigint,text,text,bigint,bigint,bigint,numeric,text,text,text[])',
+    'EXECUTE'
+  ),
+  'service_role can execute recorder v2'
 );
 
 create or replace function pg_temp.assert_invalid_pricing_rows()
@@ -459,6 +524,92 @@ select throws_ok(
       '2026-07-18 12:00:00+00', 1000, 2000, 3000, null, null, 1001)$$,
   'P0001', 'GENERATION_PROVIDER_CALL_IDEMPOTENCY_CONFLICT',
   'same provider_call_id with mismatched supplied result rejects'
+);
+
+create or replace function pg_temp.record_call_v2(
+  p_provider_call_id text,
+  p_validation_stage text,
+  p_validation_codes text[]
+)
+returns jsonb
+language sql
+as $$
+  select public.record_generation_provider_call_v2(
+    p_provider_call_id,
+    '51000000-0000-4000-8000-000000000010'::uuid,
+    'test:generation-provider-recording',
+    3,
+    'standard',
+    null,
+    '53000000-0000-4000-8000-000000000001'::uuid,
+    null,
+    'chapter_generation',
+    'CHOICES_INITIAL',
+    'openrouter',
+    'priced-model',
+    'chapter-v1',
+    0,
+    true,
+    '2026-07-18 12:00:00+00',
+    '2026-07-18 12:00:01+00',
+    1000,
+    'INVALID_RESPONSE',
+    'PROVIDER_INVALID_RESPONSE',
+    1000,
+    2000,
+    3000,
+    null,
+    null,
+    p_validation_stage,
+    p_validation_codes
+  )
+$$;
+grant execute on function pg_temp.record_call_v2(
+  text, text, text[]
+) to service_role;
+
+select lives_ok(
+  $$select pg_temp.record_call_v2('v2-diag',
+      'FINAL_BRANCH_SCHEMA', array['CHOICE_NOT_ACTIONABLE','NEXT_CHAPTER_MISMATCH'])$$,
+  'recorder v2 records canonical diagnostics'
+);
+select is(
+  (select row(validation_stage, validation_codes)::text
+   from public.generation_provider_calls
+   where provider_call_id = 'v2-diag'),
+  row('FINAL_BRANCH_SCHEMA', array['CHOICE_NOT_ACTIONABLE','NEXT_CHAPTER_MISMATCH']::text[])::text,
+  'recorder v2 persists exact canonical diagnostics'
+);
+select is(
+  pg_temp.record_call_v2('v2-diag',
+    'FINAL_BRANCH_SCHEMA', array['CHOICE_NOT_ACTIONABLE','NEXT_CHAPTER_MISMATCH']),
+  '{"recorded":false,"duplicate":true}'::jsonb,
+  'recorder v2 exact duplicate with identical diagnostics reports duplicate'
+);
+select throws_ok(
+  $$select pg_temp.record_call_v2('v2-diag',
+      'FINAL_BRANCH_SCHEMA', array['NEXT_CHAPTER_MISMATCH'])$$,
+  'P0001', 'GENERATION_PROVIDER_CALL_IDEMPOTENCY_CONFLICT',
+  'recorder v2 duplicate with different diagnostics rejects'
+);
+select throws_ok(
+  $$select pg_temp.record_call_v2('v2-noncanonical',
+      'FINAL_BRANCH_SCHEMA', array['NEXT_CHAPTER_MISMATCH','CHOICE_NOT_ACTIONABLE'])$$,
+  '23514', null,
+  'recorder v2 noncanonical diagnostics rejects'
+);
+select throws_ok(
+  $$select public.record_generation_provider_call_v2(
+      'v2-wrong-outcome',
+      '51000000-0000-4000-8000-000000000010'::uuid,
+      'test:generation-provider-recording', 3, 'standard', null,
+      '53000000-0000-4000-8000-000000000001'::uuid, null,
+      'chapter_generation', 'CHOICES_INITIAL', 'openrouter', 'priced-model',
+      'chapter-v1', 0, true, '2026-07-18 12:00:00+00', '2026-07-18 12:00:01+00',
+      1000, 'TIMEOUT', 'PROVIDER_TIMEOUT', 1000, 2000, 3000, null, null,
+      'FINAL_BRANCH_SCHEMA', array['CHOICE_NOT_ACTIONABLE'])$$,
+  '23514', null,
+  'recorder v2 diagnostics reject non-invalid-response outcome'
 );
 
 reset role;

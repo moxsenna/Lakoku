@@ -57,7 +57,10 @@ afterEach(() => {
   }
 })
 
-function createProductionIncident(masterKey: Uint8Array): EncryptedGenerationIncident {
+function createProductionIncident(
+  masterKey: Uint8Array,
+  label = 'Buka pintu terkunci',
+): EncryptedGenerationIncident {
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString()
   const record = encryptChoiceLexicalEvidence({
     masterKey,
@@ -71,7 +74,7 @@ function createProductionIncident(masterKey: Uint8Array): EncryptedGenerationInc
       code: incident.code,
       expiresAt,
     },
-    label: 'Buka pintu terkunci',
+    label,
   })
   return {
     capture_id: record.id,
@@ -155,6 +158,54 @@ describe('retrieveGenerationIncidentLabel', () => {
     ])
   })
 
+  it('returns not found after a successful retrieval is consumed', async () => {
+    let consumed = false
+    const rpc = vi.fn(async (name: string) => {
+      if (name === 'claim_generation_incident_v1') {
+        return { data: consumed ? [] : [claimedIncident], error: null }
+      }
+      if (name === 'finalize_generation_incident_v1') {
+        consumed = true
+        return { data: true, error: null }
+      }
+      throw new Error(`unexpected RPC: ${name}`)
+    })
+    const decryptor = { decryptLabel: async () => 'Buka pintu terkunci' }
+
+    await expect(retrieveGenerationIncidentLabel(lookup, {
+      client: { rpc }, createClaimToken: () => claimToken, decryptor,
+    })).resolves.toEqual({ status: 'found', label: 'Buka pintu terkunci' })
+    await expect(retrieveGenerationIncidentLabel(lookup, {
+      client: { rpc }, createClaimToken: () => claimToken, decryptor,
+    })).resolves.toEqual({ status: 'not_found' })
+  })
+
+  it('emits only decrypt unavailable for invalid production label after decryption', async () => {
+    const masterKey = randomBytes(32)
+    const productionIncident = createProductionIncident(masterKey, 'x'.repeat(91))
+    setSoftDisarmedDecryptMaterial(masterKey, productionIncident.expires_at)
+    const telemetry = vi.fn()
+    const rpc = vi.fn(async (name: string) => {
+      if (name === 'claim_generation_incident_v1') {
+        return { data: [{ ...productionIncident, claim_expires_at: new Date(Date.now() + 120_000).toISOString() }], error: null }
+      }
+      if (name === 'release_generation_incident_claim_v1') return { data: true, error: null }
+      throw new Error(`unexpected RPC: ${name}`)
+    })
+
+    await expect(retrieveGenerationIncidentLabel(lookup, {
+      client: { rpc }, createClaimToken: () => claimToken, telemetry,
+    })).resolves.toEqual({ status: 'unavailable' })
+
+    expect(telemetry.mock.calls.map(([event]) => event)).toEqual([
+      { stage: 'CLAIM', outcome: 'SUCCESS' },
+      { stage: 'ROW_SCHEMA', outcome: 'SUCCESS' },
+      { stage: 'DECRYPT_CONFIG', outcome: 'SUCCESS' },
+      { stage: 'DECRYPT', outcome: 'UNAVAILABLE' },
+      { stage: 'RELEASE', outcome: 'SUCCESS' },
+    ])
+  })
+
   it('releases wrong production decrypt material without finalizing', async () => {
     const productionIncident = createProductionIncident(randomBytes(32))
     setSoftDisarmedDecryptMaterial(randomBytes(32), productionIncident.expires_at)
@@ -235,9 +286,15 @@ describe('retrieveGenerationIncidentLabel', () => {
     ])
   })
 
-  it('keeps retrieval result when telemetry sink throws', async () => {
+  it('keeps successful claim decrypt finalize behavior when telemetry sink throws', async () => {
+    const masterKey = randomBytes(32)
+    const productionIncident = createProductionIncident(masterKey)
+    setSoftDisarmedDecryptMaterial(masterKey, productionIncident.expires_at)
     const rpc = vi.fn(async (name: string) => {
-      if (name === 'claim_generation_incident_v1') return { data: [], error: null }
+      if (name === 'claim_generation_incident_v1') {
+        return { data: [{ ...productionIncident, claim_expires_at: new Date(Date.now() + 120_000).toISOString() }], error: null }
+      }
+      if (name === 'finalize_generation_incident_v1') return { data: true, error: null }
       throw new Error(`unexpected RPC: ${name}`)
     })
 
@@ -245,8 +302,64 @@ describe('retrieveGenerationIncidentLabel', () => {
       client: { rpc },
       createClaimToken: () => claimToken,
       telemetry: () => { throw new Error('TELEMETRY_FAILED') },
-    })).resolves.toEqual({ status: 'not_found' })
-    expect(rpc).toHaveBeenCalledTimes(1)
+    })).resolves.toEqual({ status: 'found', label: 'Buka pintu terkunci' })
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual([
+      'claim_generation_incident_v1',
+      'finalize_generation_incident_v1',
+    ])
+  })
+
+  it('emits decrypt unavailable then release for wrong production key', async () => {
+    const productionIncident = createProductionIncident(randomBytes(32))
+    setSoftDisarmedDecryptMaterial(randomBytes(32), productionIncident.expires_at)
+    const telemetry = vi.fn()
+    const rpc = vi.fn(async (name: string) => {
+      if (name === 'claim_generation_incident_v1') {
+        return { data: [{ ...productionIncident, claim_expires_at: new Date(Date.now() + 120_000).toISOString() }], error: null }
+      }
+      if (name === 'release_generation_incident_claim_v1') return { data: true, error: null }
+      throw new Error(`unexpected RPC: ${name}`)
+    })
+
+    await expect(retrieveGenerationIncidentLabel(lookup, {
+      client: { rpc }, createClaimToken: () => claimToken, telemetry,
+    })).resolves.toEqual({ status: 'unavailable' })
+
+    expect(telemetry.mock.calls.map(([event]) => event)).toEqual([
+      { stage: 'CLAIM', outcome: 'SUCCESS' },
+      { stage: 'ROW_SCHEMA', outcome: 'SUCCESS' },
+      { stage: 'DECRYPT_CONFIG', outcome: 'SUCCESS' },
+      { stage: 'DECRYPT', outcome: 'UNAVAILABLE' },
+      { stage: 'RELEASE', outcome: 'SUCCESS' },
+    ])
+  })
+
+  it('releases when production decrypt material is expired without finalizing', async () => {
+    const productionIncident = createProductionIncident(randomBytes(32))
+    setSoftDisarmedDecryptMaterial(randomBytes(32), new Date(Date.now() - 1_000).toISOString())
+    const telemetry = vi.fn()
+    const rpc = vi.fn(async (name: string) => {
+      if (name === 'claim_generation_incident_v1') {
+        return { data: [{ ...productionIncident, claim_expires_at: new Date(Date.now() + 120_000).toISOString() }], error: null }
+      }
+      if (name === 'release_generation_incident_claim_v1') return { data: true, error: null }
+      throw new Error(`unexpected RPC: ${name}`)
+    })
+
+    await expect(retrieveGenerationIncidentLabel(lookup, {
+      client: { rpc }, createClaimToken: () => claimToken, telemetry,
+    })).resolves.toEqual({ status: 'unavailable' })
+
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual([
+      'claim_generation_incident_v1',
+      'release_generation_incident_claim_v1',
+    ])
+    expect(telemetry.mock.calls.map(([event]) => event)).toEqual([
+      { stage: 'CLAIM', outcome: 'SUCCESS' },
+      { stage: 'ROW_SCHEMA', outcome: 'SUCCESS' },
+      { stage: 'DECRYPT_CONFIG', outcome: 'UNAVAILABLE' },
+      { stage: 'RELEASE', outcome: 'SUCCESS' },
+    ])
   })
 
   it('releases wrong-key or tampered decrypt failure so a later attempt can retry', async () => {
@@ -282,6 +395,31 @@ describe('retrieveGenerationIncidentLabel', () => {
     })).resolves.toEqual({ status: 'found', label: 'Buka pintu terkunci' })
     expect(decryptLabel).toHaveBeenCalledTimes(2)
     expect(rpc.mock.calls.filter(([name]) => name === 'finalize_generation_incident_v1')).toHaveLength(1)
+  })
+
+  it('emits finalize unavailable then release when finalization fails', async () => {
+    const telemetry = vi.fn()
+    const rpc = vi.fn(async (name: string) => {
+      if (name === 'claim_generation_incident_v1') return { data: [claimedIncident], error: null }
+      if (name === 'finalize_generation_incident_v1') return { data: null, error: { message: 'FINALIZE_FAILED' } }
+      if (name === 'release_generation_incident_claim_v1') return { data: true, error: null }
+      throw new Error(`unexpected RPC: ${name}`)
+    })
+
+    await expect(retrieveGenerationIncidentLabel(lookup, {
+      client: { rpc },
+      createClaimToken: () => claimToken,
+      decryptor: { decryptLabel: async () => 'Buka pintu terkunci' },
+      telemetry,
+    })).resolves.toEqual({ status: 'unavailable' })
+
+    expect(telemetry.mock.calls.map(([event]) => event)).toEqual([
+      { stage: 'CLAIM', outcome: 'SUCCESS' },
+      { stage: 'ROW_SCHEMA', outcome: 'SUCCESS' },
+      { stage: 'DECRYPT', outcome: 'SUCCESS' },
+      { stage: 'FINALIZE', outcome: 'UNAVAILABLE' },
+      { stage: 'RELEASE', outcome: 'SUCCESS' },
+    ])
   })
 
   it('returns no label and best-effort releases when finalize fails', async () => {
@@ -321,6 +459,29 @@ describe('retrieveGenerationIncidentLabel', () => {
     expect(rpc).toHaveBeenCalledWith('release_generation_incident_claim_v1', claimedMutationArgs)
   })
 
+  it('emits release unavailable when release RPC throws', async () => {
+    const telemetry = vi.fn()
+    const rpc = vi.fn(async (name: string) => {
+      if (name === 'claim_generation_incident_v1') return { data: [claimedIncident], error: null }
+      if (name === 'release_generation_incident_claim_v1') throw new Error('RELEASE_FAILED')
+      throw new Error(`unexpected RPC: ${name}`)
+    })
+
+    await expect(retrieveGenerationIncidentLabel(lookup, {
+      client: { rpc },
+      createClaimToken: () => claimToken,
+      decryptor: { decryptLabel: async () => { throw new Error('DECRYPT_FAILED') } },
+      telemetry,
+    })).resolves.toEqual({ status: 'unavailable' })
+
+    expect(telemetry.mock.calls.map(([event]) => event)).toEqual([
+      { stage: 'CLAIM', outcome: 'SUCCESS' },
+      { stage: 'ROW_SCHEMA', outcome: 'SUCCESS' },
+      { stage: 'DECRYPT', outcome: 'UNAVAILABLE' },
+      { stage: 'RELEASE', outcome: 'UNAVAILABLE' },
+    ])
+  })
+
   it('still fails closed when best-effort release fails', async () => {
     const rpc = vi.fn(async (name: string) => {
       if (name === 'claim_generation_incident_v1') return { data: [claimedIncident], error: null }
@@ -358,19 +519,29 @@ describe('retrieveGenerationIncidentLabel', () => {
     ])
   })
 
-  it('maps empty atomic claim to not found', async () => {
+  it('emits claim not found for empty atomic claim', async () => {
+    const telemetry = vi.fn()
     await expect(retrieveGenerationIncidentLabel(lookup, {
       client: { rpc: async () => ({ data: [], error: null }) },
       decryptor: { decryptLabel: vi.fn() },
+      telemetry,
     })).resolves.toEqual({ status: 'not_found' })
+    expect(telemetry.mock.calls.map(([event]) => event)).toEqual([
+      { stage: 'CLAIM', outcome: 'NOT_FOUND' },
+    ])
   })
 
-  it('maps exact DB owner denial to forbidden', async () => {
+  it('emits claim forbidden for exact DB owner denial', async () => {
+    const telemetry = vi.fn()
     await expect(retrieveGenerationIncidentLabel(lookup, {
       client: {
         rpc: async () => ({ data: null, error: { message: 'OWNER_REQUIRED' } }),
       },
+      telemetry,
     })).resolves.toEqual({ status: 'forbidden' })
+    expect(telemetry.mock.calls.map(([event]) => event)).toEqual([
+      { stage: 'CLAIM', outcome: 'FORBIDDEN' },
+    ])
   })
 
   it('rejects plaintext or generic fields in claimed DB response', async () => {

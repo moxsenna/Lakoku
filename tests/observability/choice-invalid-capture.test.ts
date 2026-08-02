@@ -65,6 +65,18 @@ describe('choice invalid capture config', () => {
     }, now)).toBeNull()
   })
 
+  it.each([
+    [undefined],
+    [Buffer.alloc(31).toString('base64')],
+    ['not-base64'],
+    [`${encodedKey}\n`],
+  ])('rejects decrypt config with missing or noncanonical key: %s', (key) => {
+    expect(loadChoiceInvalidCaptureDecryptConfig({
+      [CHOICE_INVALID_CAPTURE_ENV.until]: '2026-07-31T12:30:00.000Z',
+      [CHOICE_INVALID_CAPTURE_ENV.key]: key,
+    }, now)).toBeNull()
+  })
+
   it('keeps legacy loader as write loader alias', () => {
     expect(loadChoiceInvalidCaptureConfig).toBe(loadChoiceInvalidCaptureWriteConfig)
   })
@@ -163,5 +175,31 @@ describe('choice invalid capture crypto', () => {
       choices: [{ index: 0, label: 'Rahasia' }],
     }, { writer, loadConfig: () => config })
     expect(writer).toHaveBeenCalledOnce()
+  })
+
+  it('does not write when gate is off despite valid decrypt material', async () => {
+    const writer = vi.fn()
+    const originalEnv = new Map(Object.values(CHOICE_INVALID_CAPTURE_ENV).map((key) => [key, process.env[key]]))
+    try {
+      process.env[CHOICE_INVALID_CAPTURE_ENV.enabled] = 'off'
+      delete process.env[CHOICE_INVALID_CAPTURE_ENV.storyId]
+      delete process.env[CHOICE_INVALID_CAPTURE_ENV.chapterNumber]
+      process.env[CHOICE_INVALID_CAPTURE_ENV.until] = new Date(Date.now() + 30 * 60 * 1000).toISOString()
+      process.env[CHOICE_INVALID_CAPTURE_ENV.key] = encodedKey
+
+      await captureChoiceInvalidEvidence({
+        userId: '10000000-0000-4000-8000-000000000001', storyId: 'story-exact', chapterNumber: 12,
+        generationKind: 'standard', jobId: null,
+        correlationId: '20000000-0000-4000-8000-000000000002', attemptNumber: null,
+      }, { choices: [{ index: 0, label: 'Pikirkan pilihan terbaik' }] }, { writer })
+
+      expect(writer).not.toHaveBeenCalled()
+    } finally {
+      for (const key of Object.values(CHOICE_INVALID_CAPTURE_ENV)) {
+        const previous = originalEnv.get(key)
+        if (previous === undefined) delete process.env[key]
+        else process.env[key] = previous
+      }
+    }
   })
 })

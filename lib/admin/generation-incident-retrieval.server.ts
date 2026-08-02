@@ -232,7 +232,6 @@ export async function retrieveGenerationIncidentLabel(
       const label = decryptChoiceLexicalEvidence({ masterKey: config.masterKey, record: asEncryptedRecord(incident) })
       if (label === null) throw new Error('GENERATION_INCIDENT_DECRYPT_FAILED')
       decryptedLabel = label
-      emitTelemetry(telemetry, 'DECRYPT', 'SUCCESS')
     } catch {
       emitTelemetry(telemetry, 'DECRYPT', 'UNAVAILABLE')
       await releaseAndEmit(client, mutationArgs, telemetry)
@@ -246,7 +245,7 @@ export async function retrieveGenerationIncidentLabel(
     await releaseAndEmit(client, mutationArgs, telemetry)
     return { status: 'unavailable' }
   }
-  if (deps.decryptor) emitTelemetry(telemetry, 'DECRYPT', 'SUCCESS')
+  emitTelemetry(telemetry, 'DECRYPT', 'SUCCESS')
 
   let finalizeResult: { data: unknown; error: unknown }
   try {

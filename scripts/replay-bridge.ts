@@ -42,6 +42,19 @@
  * bridge settled (TIMEOUT/INTERNAL/delivered). Sisa body yang masih tiba
  * di-zero per chunk dan dibuang.
  *
+ * COMMIT POINT IRREVERSIBLE (arah sebaliknya): tepat sebelum replay
+ * dieksekusi, `committed = true` diangkat dan timer dilucuti
+ * (`disarmTimeout()`). Setelah titik ini `abortAndResolve()`/`failClosed()`
+ * menjadi no-op, sehingga TIMEOUT/INTERNAL tidak bisa menang di celah antara
+ * eksekusi replay dan flush response. Delivered dipublish pada `finish`
+ * maupun `close` response, jadi socket client yang mati sebelum flush pun
+ * tidak menghilangkan hasil replay.
+ *
+ * INVARIANT TERKUNCI (dua arah):
+ *   bridge settled unavailable ⇒ replay invocation count == 0
+ *   replay invocation count > 0 ⇒ result SELALU delivered
+ *     (tidak pernah TIMEOUT / INTERNAL)
+ *
  * CLEANUP DETERMINISTIK: seluruh chunk body yang pernah disimpan di-zero
  * pada SEMUA jalur — success, empty, oversize (termasuk chunk yang datang
  * setelah tooLarge), invalid UTF-8, request aborted, request error, dan
@@ -184,27 +197,42 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
    * ke replay setelah result dipublish, dan byte buffered di-zero seketika.
    */
   let cancelActiveRequest: (() => void) | null = null
+  /**
+   * Commit point IRREVERSIBLE. Diangkat tepat SEBELUM replay dieksekusi.
+   * Setelah ini result unavailable (TIMEOUT/INTERNAL) tidak boleh menang —
+   * delivery sudah dijanjikan dan hanya menunggu response flush.
+   */
+  let committed = false
   let settled = false
   let settleResult!: (result: BridgeResult) => void
   const resultPromise = new Promise<BridgeResult>((resolve) => {
     settleResult = resolve
   })
 
-  const resolveOnce = (result: BridgeResult): void => {
-    if (settled) return
-    settled = true
+  const disarmTimeout = (): void => {
     if (timer !== null) {
       clearTimeout(timer)
       timer = null
     }
+  }
+
+  const resolveOnce = (result: BridgeResult): void => {
+    if (settled) return
+    settled = true
+    disarmTimeout()
     settleResult(result)
   }
 
-  /** Settle gagal + batalkan request aktif LEBIH DULU (urutan penting). */
+  /**
+   * Settle gagal + batalkan request aktif LEBIH DULU (urutan penting).
+   * INVARIANT: setelah `committed` (replay mungkin/sudah dieksekusi), jalur
+   * ini menjadi no-op — result TIDAK PERNAH menjadi TIMEOUT/INTERNAL saat
+   * replay invocation count > 0.
+   */
   const abortAndResolve = (
     reason: 'TIMEOUT' | 'INTERNAL' | 'BODY_TOO_LARGE' | 'INVALID_UTF8',
   ): void => {
-    if (settled) return
+    if (settled || committed) return
     const cancel = cancelActiveRequest
     cancelActiveRequest = null
     // batalkan dulu: request aktif ditandai failed + buffer di-zero sebelum
@@ -304,9 +332,10 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
     }
 
     // Fail closed tanpa response penuh (socket client sudah mati): tidak ada
-    // 'finish' yang akan datang — resolve + close langsung.
+    // 'finish' yang akan datang — resolve + close langsung. Setelah commit
+    // point, jalur ini TIDAK boleh mengubah result menjadi unavailable.
     const failClosed = (reason: 'INVALID_UTF8' | 'INTERNAL'): void => {
-      if (failed) return
+      if (failed || committed) return
       failed = true
       cancelActiveRequest = null
       zeroBuffered()
@@ -416,16 +445,26 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
         return
       }
 
-      const output = replay(label)
-      label = null
+      // COMMIT POINT IRREVERSIBLE — mulai di sini delivery dijanjikan:
+      // timeout dilucuti dan unavailable tidak boleh menang lagi, sehingga
+      // hasil replay tidak pernah hilang di balik TIMEOUT/INTERNAL.
+      // INVARIANT: replay invocation count > 0 ⇒ result selalu delivered.
+      committed = true
+      disarmTimeout()
       cancelActiveRequest = null
 
+      const output = replay(label)
+      label = null
+
       res.statusCode = 200
-      res.on('finish', () => {
-        // response sukses sudah ter-flush ke socket — baru resolve + tutup
+      // publikasi delivered tidak boleh bergantung pada 'finish' semata:
+      // jika socket client mati sebelum flush, hasil replay tetap dipublish.
+      const publishDelivered = (): void => {
         resolveOnce({ status: 'delivered', replayOutput: output })
         void close()
-      })
+      }
+      res.on('finish', publishDelivered)
+      res.on('close', publishDelivered)
       res.end('ok')
     })
   }

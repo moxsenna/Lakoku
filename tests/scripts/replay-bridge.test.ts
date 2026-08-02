@@ -413,6 +413,96 @@ describe('replay bridge (capability-bound one-shot, tanpa kebocoran label)', () 
     expect(invocations).toBe(0)
   }, 10_000)
 
+  it('commit point: body selesai menjelang deadline → replay 1x → delivered, bukan TIMEOUT', async () => {
+    // seam deterministic: replay lambat menahan eksekusi melewati deadline
+    // timer, membuktikan commit point melucuti TIMEOUT sebelum replay jalan.
+    let invocations = 0
+    const bridge = createReplayBridge({
+      timeoutMs: 150,
+      replay: (label) => {
+        invocations += 1
+        // blok synchronous melewati deadline (150ms) — timer tidak boleh menang
+        const until = Date.now() + 260
+        while (Date.now() < until) { /* spin: tahan event loop lewat deadline */ }
+        return {
+          replay_reproduced: label.length > 0 ? 'yes' : 'no',
+          stage: 'FINAL_BRANCH_SCHEMA',
+          code: 'COMMITTED_SEAM',
+          validator_path: 'seam',
+          production_action: 'none',
+          label_exposed: 'no',
+        }
+      },
+    })
+    const port = await bridge.listen()
+    const resultPromise = bridge.result()
+
+    // body lengkap tiba persis menjelang deadline
+    const pending = openPartialPost(port, bridge.capabilityPath, PROBE_LABEL, 6)
+    await new Promise((resolve) => setTimeout(resolve, 110))
+    pending.complete()
+
+    const result = await resultPromise
+    // INVARIANT: replay sudah jalan ⇒ result TIDAK PERNAH TIMEOUT/INTERNAL
+    expect(invocations).toBe(1)
+    if (result.status !== 'delivered') throw new Error(`unexpected: ${result.reason}`)
+    expect(result.replayOutput.code).toBe('COMMITTED_SEAM')
+    expect(result.replayOutput.replay_reproduced).toBe('yes')
+    pending.socket.destroy()
+
+    // tidak ada result kedua / replay kedua setelah commit
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(invocations).toBe(1)
+  }, 10_000)
+
+  it('commit point: socket mati SAAT replay berjalan → tetap delivered, bukan INTERNAL', async () => {
+    // Client menghancurkan socket selagi replay dieksekusi. Tanpa commit
+    // guard, abort/error handler akan settle INTERNAL dan hasil replay yang
+    // sudah dihitung hilang. INVARIANT: replay jalan ⇒ delivered.
+    let invocations = 0
+    const bridge = createReplayBridge({
+      timeoutMs: 5_000,
+      replay: () => {
+        invocations += 1
+        // tahan event loop agar socket-destroy client tiba setelah commit
+        const until = Date.now() + 200
+        while (Date.now() < until) { /* spin */ }
+        return {
+          replay_reproduced: 'yes',
+          stage: 'FINAL_BRANCH_SCHEMA',
+          code: 'COMMITTED_SEAM',
+          validator_path: 'seam',
+          production_action: 'none',
+          label_exposed: 'no',
+        }
+      },
+    })
+    const port = await bridge.listen()
+    const resultPromise = bridge.result()
+
+    const socket = net.connect(port, '127.0.0.1')
+    socket.on('error', () => {})
+    socket.on('connect', () => {
+      socket.write(
+        `POST ${bridge.capabilityPath} HTTP/1.1\r\n`
+          + `Host: 127.0.0.1:${port}\r\n`
+          + `Origin: ${BRIDGE_DEFAULT_ALLOWED_ORIGIN}\r\n`
+          + 'Content-Type: text/plain\r\n'
+          + `Content-Length: ${Buffer.byteLength(PROBE_LABEL)}\r\n`
+          + 'Connection: close\r\n'
+          + '\r\n'
+          + PROBE_LABEL,
+      )
+      // destroy dijadwalkan saat server masih men-spin di dalam replay
+      setTimeout(() => socket.destroy(), 20)
+    })
+
+    const result = await resultPromise
+    expect(invocations).toBe(1)
+    if (result.status !== 'delivered') throw new Error(`unexpected: ${result.reason}`)
+    expect(result.replayOutput.code).toBe('COMMITTED_SEAM')
+  }, 10_000)
+
   it('CLI one-shot: startup metadata, synthetic probe delivered, exit 0, no leak', async () => {
     const child = spawn(process.execPath, [RUNNER, BRIDGE_CLI], {
       cwd: ROOT,

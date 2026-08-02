@@ -6,7 +6,7 @@ import {
   decryptChoiceLexicalEvidence,
   type EncryptedChoiceLexicalEvidence,
 } from '@/lib/observability/choice-invalid-capture-crypto.server'
-import { loadChoiceInvalidCaptureConfig } from '@/lib/observability/choice-invalid-capture-config.server'
+import { loadChoiceInvalidCaptureDecryptConfig } from '@/lib/observability/choice-invalid-capture-config.server'
 
 export const GenerationIncidentLookupSchema = z.object({
   captureId: z.string().uuid(),
@@ -40,6 +40,25 @@ export interface GenerationIncidentDecryptor {
   decryptLabel: (incident: EncryptedGenerationIncident) => Promise<string>
 }
 
+export type RetrievalStage =
+  | 'CLAIM'
+  | 'ROW_SCHEMA'
+  | 'DECRYPT_CONFIG'
+  | 'DECRYPT'
+  | 'FINALIZE'
+  | 'RELEASE'
+
+export type RetrievalOutcome =
+  | 'SUCCESS'
+  | 'NOT_FOUND'
+  | 'FORBIDDEN'
+  | 'UNAVAILABLE'
+
+export type GenerationIncidentRetrievalTelemetry = (event: Readonly<{
+  stage: RetrievalStage
+  outcome: RetrievalOutcome
+}>) => void
+
 type IncidentRpcName =
   | 'claim_generation_incident_v1'
   | 'finalize_generation_incident_v1'
@@ -67,32 +86,20 @@ export type GenerationIncidentRetrievalResult =
   | { status: 'forbidden' }
   | { status: 'unavailable' }
 
-const productionDecryptor: GenerationIncidentDecryptor = {
-  async decryptLabel(incident): Promise<string> {
-    const config = loadChoiceInvalidCaptureConfig()
-    if (!config) throw new Error('GENERATION_INCIDENT_DECRYPTOR_UNAVAILABLE')
-    const label = decryptChoiceLexicalEvidence({
-      masterKey: config.masterKey,
-      record: {
-        incidentKey: incident.incident_key,
-        version: incident.version,
-        id: incident.capture_id,
-        correlationId: incident.correlation_id,
-        storyId: incident.story_id,
-        chapterNumber: incident.chapter_number,
-        index: incident.choice_index,
-        stage: incident.stage,
-        code: incident.code,
-        expiresAt: incident.expires_at,
-        nonce: incident.nonce,
-        ciphertext: incident.ciphertext,
-        authTag: incident.auth_tag,
-        labelFingerprint: incident.label_fingerprint,
-      } satisfies EncryptedChoiceLexicalEvidence,
-    })
-    if (label === null) throw new Error('GENERATION_INCIDENT_DECRYPT_FAILED')
-    return label
-  },
+const defaultTelemetry: GenerationIncidentRetrievalTelemetry = (event) => {
+  console.info('generation_incident_retrieval_stage', event)
+}
+
+function emitTelemetry(
+  telemetry: GenerationIncidentRetrievalTelemetry,
+  stage: RetrievalStage,
+  outcome: RetrievalOutcome,
+): void {
+  try {
+    telemetry({ stage, outcome })
+  } catch {
+    // Telemetry must never alter one-time evidence retrieval behavior.
+  }
 }
 
 function isOwnerRequiredError(error: unknown): boolean {
@@ -106,11 +113,40 @@ function isOwnerRequiredError(error: unknown): boolean {
 async function releaseClaimBestEffort(
   client: IncidentRpcClient,
   args: IncidentClaimMutationRpcArgs,
-): Promise<void> {
+): Promise<boolean> {
   try {
-    await client.rpc('release_generation_incident_claim_v1', args)
+    const result = await client.rpc('release_generation_incident_claim_v1', args)
+    return result.error === null && result.data === true
   } catch {
-    // Release is best-effort; retrieval still fails closed.
+    return false
+  }
+}
+
+async function releaseAndEmit(
+  client: IncidentRpcClient,
+  args: IncidentClaimMutationRpcArgs,
+  telemetry: GenerationIncidentRetrievalTelemetry,
+): Promise<void> {
+  const released = await releaseClaimBestEffort(client, args)
+  emitTelemetry(telemetry, 'RELEASE', released ? 'SUCCESS' : 'UNAVAILABLE')
+}
+
+function asEncryptedRecord(incident: EncryptedGenerationIncident): EncryptedChoiceLexicalEvidence {
+  return {
+    incidentKey: incident.incident_key,
+    version: incident.version,
+    id: incident.capture_id,
+    correlationId: incident.correlation_id,
+    storyId: incident.story_id,
+    chapterNumber: incident.chapter_number,
+    index: incident.choice_index,
+    stage: incident.stage,
+    code: incident.code,
+    expiresAt: incident.expires_at,
+    nonce: incident.nonce,
+    ciphertext: incident.ciphertext,
+    authTag: incident.auth_tag,
+    labelFingerprint: incident.label_fingerprint,
   }
 }
 
@@ -120,10 +156,12 @@ export async function retrieveGenerationIncidentLabel(
     client?: IncidentRpcClient
     decryptor?: GenerationIncidentDecryptor
     createClaimToken?: () => string
+    telemetry?: GenerationIncidentRetrievalTelemetry
   } = {},
 ): Promise<GenerationIncidentRetrievalResult> {
   const parsedLookup = GenerationIncidentLookupSchema.parse(lookup)
   const client = deps.client ?? await createClient() as unknown as IncidentRpcClient
+  const telemetry = deps.telemetry ?? defaultTelemetry
   const lookupArgs: IncidentLookupRpcArgs = {
     p_capture_id: parsedLookup.captureId,
     p_correlation_id: parsedLookup.correlationId,
@@ -139,54 +177,94 @@ export async function retrieveGenerationIncidentLabel(
   try {
     claimResult = await client.rpc('claim_generation_incident_v1', mutationArgs)
   } catch {
+    emitTelemetry(telemetry, 'CLAIM', 'UNAVAILABLE')
     return { status: 'unavailable' }
   }
 
   if (claimResult.error) {
-    return { status: isOwnerRequiredError(claimResult.error) ? 'forbidden' : 'unavailable' }
+    const outcome = isOwnerRequiredError(claimResult.error) ? 'FORBIDDEN' : 'UNAVAILABLE'
+    emitTelemetry(telemetry, 'CLAIM', outcome)
+    return outcome === 'FORBIDDEN' ? { status: 'forbidden' } : { status: 'unavailable' }
   }
 
   const parsedRows = z.array(ClaimedIncidentRowSchema).safeParse(claimResult.data)
   if (!parsedRows.success) {
+    emitTelemetry(telemetry, 'CLAIM', 'SUCCESS')
+    emitTelemetry(telemetry, 'ROW_SCHEMA', 'UNAVAILABLE')
     if (Array.isArray(claimResult.data) && claimResult.data.length > 0) {
-      await releaseClaimBestEffort(client, mutationArgs)
+      await releaseAndEmit(client, mutationArgs, telemetry)
     }
     return { status: 'unavailable' }
   }
-  if (parsedRows.data.length === 0) return { status: 'not_found' }
+  if (parsedRows.data.length === 0) {
+    emitTelemetry(telemetry, 'CLAIM', 'NOT_FOUND')
+    return { status: 'not_found' }
+  }
   if (parsedRows.data.length !== 1) {
-    await releaseClaimBestEffort(client, mutationArgs)
+    emitTelemetry(telemetry, 'CLAIM', 'SUCCESS')
+    emitTelemetry(telemetry, 'ROW_SCHEMA', 'UNAVAILABLE')
+    await releaseAndEmit(client, mutationArgs, telemetry)
     return { status: 'unavailable' }
   }
 
+  emitTelemetry(telemetry, 'CLAIM', 'SUCCESS')
+  emitTelemetry(telemetry, 'ROW_SCHEMA', 'SUCCESS')
   const { claim_expires_at: _claimExpiresAt, ...incident } = parsedRows.data[0]
 
-  let label: string
-  try {
-    const decryptedLabel = await (deps.decryptor ?? productionDecryptor).decryptLabel(incident)
-    const parsedLabel = z.string().trim().min(1).max(90).safeParse(decryptedLabel)
-    if (!parsedLabel.success) throw new Error('GENERATION_INCIDENT_LABEL_INVALID')
-    label = parsedLabel.data
-  } catch {
-    await releaseClaimBestEffort(client, mutationArgs)
+  let decryptedLabel: string
+  if (deps.decryptor) {
+    try {
+      decryptedLabel = await deps.decryptor.decryptLabel(incident)
+    } catch {
+      emitTelemetry(telemetry, 'DECRYPT', 'UNAVAILABLE')
+      await releaseAndEmit(client, mutationArgs, telemetry)
+      return { status: 'unavailable' }
+    }
+  } else {
+    const config = loadChoiceInvalidCaptureDecryptConfig()
+    if (!config) {
+      emitTelemetry(telemetry, 'DECRYPT_CONFIG', 'UNAVAILABLE')
+      await releaseAndEmit(client, mutationArgs, telemetry)
+      return { status: 'unavailable' }
+    }
+    emitTelemetry(telemetry, 'DECRYPT_CONFIG', 'SUCCESS')
+    try {
+      const label = decryptChoiceLexicalEvidence({ masterKey: config.masterKey, record: asEncryptedRecord(incident) })
+      if (label === null) throw new Error('GENERATION_INCIDENT_DECRYPT_FAILED')
+      decryptedLabel = label
+    } catch {
+      emitTelemetry(telemetry, 'DECRYPT', 'UNAVAILABLE')
+      await releaseAndEmit(client, mutationArgs, telemetry)
+      return { status: 'unavailable' }
+    }
+  }
+
+  const parsedLabel = z.string().trim().min(1).max(90).safeParse(decryptedLabel)
+  if (!parsedLabel.success) {
+    emitTelemetry(telemetry, 'DECRYPT', 'UNAVAILABLE')
+    await releaseAndEmit(client, mutationArgs, telemetry)
     return { status: 'unavailable' }
   }
+  emitTelemetry(telemetry, 'DECRYPT', 'SUCCESS')
 
   let finalizeResult: { data: unknown; error: unknown }
   try {
     finalizeResult = await client.rpc('finalize_generation_incident_v1', mutationArgs)
   } catch {
-    await releaseClaimBestEffort(client, mutationArgs)
+    emitTelemetry(telemetry, 'FINALIZE', 'UNAVAILABLE')
+    await releaseAndEmit(client, mutationArgs, telemetry)
     return { status: 'unavailable' }
   }
 
   if (finalizeResult.error || finalizeResult.data !== true) {
-    await releaseClaimBestEffort(client, mutationArgs)
-    if (finalizeResult.error && isOwnerRequiredError(finalizeResult.error)) {
-      return { status: 'forbidden' }
-    }
-    return { status: 'unavailable' }
+    const outcome = finalizeResult.error && isOwnerRequiredError(finalizeResult.error)
+      ? 'FORBIDDEN'
+      : 'UNAVAILABLE'
+    emitTelemetry(telemetry, 'FINALIZE', outcome)
+    await releaseAndEmit(client, mutationArgs, telemetry)
+    return outcome === 'FORBIDDEN' ? { status: 'forbidden' } : { status: 'unavailable' }
   }
 
-  return { status: 'found', label }
+  emitTelemetry(telemetry, 'FINALIZE', 'SUCCESS')
+  return { status: 'found', label: parsedLabel.data }
 }

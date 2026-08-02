@@ -9,6 +9,8 @@ vi.mock('@/lib/observability/choice-invalid-capture-db.server', () => ({
 import {
   CHOICE_INVALID_CAPTURE_ENV,
   loadChoiceInvalidCaptureConfig,
+  loadChoiceInvalidCaptureDecryptConfig,
+  loadChoiceInvalidCaptureWriteConfig,
 } from '@/lib/observability/choice-invalid-capture-config.server'
 import {
   decryptChoiceLexicalEvidence,
@@ -38,6 +40,45 @@ describe('choice invalid capture config', () => {
       expiresAt: '2026-07-31T12:30:00.000Z',
       masterKey,
     })
+  })
+
+  it('loads decrypt config from canonical key and bounded expiry without write gate or target', () => {
+    const env = {
+      [CHOICE_INVALID_CAPTURE_ENV.until]: '2026-07-31T12:30:00.000Z',
+      [CHOICE_INVALID_CAPTURE_ENV.key]: encodedKey,
+    }
+    expect(loadChoiceInvalidCaptureDecryptConfig(env, now)).toEqual({
+      expiresAt: '2026-07-31T12:30:00.000Z',
+      masterKey,
+    })
+    expect(loadChoiceInvalidCaptureWriteConfig(env, now)).toBeNull()
+  })
+
+  it.each([
+    [undefined],
+    ['2026-07-31T13:00:00.001Z'],
+    ['2026-07-31T12:00:00.000Z'],
+  ])('rejects decrypt config without valid bounded expiry: %s', (until) => {
+    expect(loadChoiceInvalidCaptureDecryptConfig({
+      [CHOICE_INVALID_CAPTURE_ENV.until]: until,
+      [CHOICE_INVALID_CAPTURE_ENV.key]: encodedKey,
+    }, now)).toBeNull()
+  })
+
+  it.each([
+    [undefined],
+    [Buffer.alloc(31).toString('base64')],
+    ['not-base64'],
+    [`${encodedKey}\n`],
+  ])('rejects decrypt config with missing or noncanonical key: %s', (key) => {
+    expect(loadChoiceInvalidCaptureDecryptConfig({
+      [CHOICE_INVALID_CAPTURE_ENV.until]: '2026-07-31T12:30:00.000Z',
+      [CHOICE_INVALID_CAPTURE_ENV.key]: key,
+    }, now)).toBeNull()
+  })
+
+  it('keeps legacy loader as write loader alias', () => {
+    expect(loadChoiceInvalidCaptureConfig).toBe(loadChoiceInvalidCaptureWriteConfig)
   })
 
   it.each([
@@ -134,5 +175,31 @@ describe('choice invalid capture crypto', () => {
       choices: [{ index: 0, label: 'Rahasia' }],
     }, { writer, loadConfig: () => config })
     expect(writer).toHaveBeenCalledOnce()
+  })
+
+  it('does not write when gate is off despite valid decrypt material', async () => {
+    const writer = vi.fn()
+    const originalEnv = new Map(Object.values(CHOICE_INVALID_CAPTURE_ENV).map((key) => [key, process.env[key]]))
+    try {
+      process.env[CHOICE_INVALID_CAPTURE_ENV.enabled] = 'off'
+      delete process.env[CHOICE_INVALID_CAPTURE_ENV.storyId]
+      delete process.env[CHOICE_INVALID_CAPTURE_ENV.chapterNumber]
+      process.env[CHOICE_INVALID_CAPTURE_ENV.until] = new Date(Date.now() + 30 * 60 * 1000).toISOString()
+      process.env[CHOICE_INVALID_CAPTURE_ENV.key] = encodedKey
+
+      await captureChoiceInvalidEvidence({
+        userId: '10000000-0000-4000-8000-000000000001', storyId: 'story-exact', chapterNumber: 12,
+        generationKind: 'standard', jobId: null,
+        correlationId: '20000000-0000-4000-8000-000000000002', attemptNumber: null,
+      }, { choices: [{ index: 0, label: 'Pikirkan pilihan terbaik' }] }, { writer })
+
+      expect(writer).not.toHaveBeenCalled()
+    } finally {
+      for (const key of Object.values(CHOICE_INVALID_CAPTURE_ENV)) {
+        const previous = originalEnv.get(key)
+        if (previous === undefined) delete process.env[key]
+        else process.env[key] = previous
+      }
+    }
   })
 })

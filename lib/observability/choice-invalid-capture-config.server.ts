@@ -10,31 +10,23 @@ export const CHOICE_INVALID_CAPTURE_ENV = {
   key: 'LAKOKU_CHOICE_INVALID_CAPTURE_KEY',
 } as const
 
-export type ChoiceInvalidCaptureConfig = Readonly<{
-  storyId: string
-  chapterNumber: number
+export type ChoiceInvalidCaptureDecryptConfig = Readonly<{
   expiresAt: string
   masterKey: Uint8Array
 }>
 
-export function loadChoiceInvalidCaptureConfig(
-  env: Readonly<Record<string, string | undefined>> = process.env,
-  now: Date = new Date(),
-): ChoiceInvalidCaptureConfig | null {
-  if (env[CHOICE_INVALID_CAPTURE_ENV.enabled] !== 'on') return null
+export type ChoiceInvalidCaptureWriteConfig = ChoiceInvalidCaptureDecryptConfig & Readonly<{
+  storyId: string
+  chapterNumber: number
+}>
 
-  const storyId = env[CHOICE_INVALID_CAPTURE_ENV.storyId]
-  const rawChapter = env[CHOICE_INVALID_CAPTURE_ENV.chapterNumber]
-  const rawUntil = env[CHOICE_INVALID_CAPTURE_ENV.until]
+export type ChoiceInvalidCaptureConfig = ChoiceInvalidCaptureWriteConfig
+
+function loadMasterKey(
+  env: Readonly<Record<string, string | undefined>>,
+): Uint8Array | null {
   const rawKey = env[CHOICE_INVALID_CAPTURE_ENV.key]
-  if (!storyId || !rawChapter || !rawUntil || !rawKey) return null
-  if (storyId.trim() !== storyId || storyId.length > 200) return null
-  if (!/^(?:[1-9]|[1-4][0-9])$/.test(rawChapter)) return null
-
-  const chapterNumber = Number(rawChapter)
-  const expiresAtMs = Date.parse(rawUntil)
-  const remainingMs = expiresAtMs - now.getTime()
-  if (!Number.isFinite(expiresAtMs) || remainingMs <= 0 || remainingMs > MAX_CAPTURE_WINDOW_MS) return null
+  if (!rawKey) return null
 
   let masterKey: Buffer
   try {
@@ -44,13 +36,52 @@ export function loadChoiceInvalidCaptureConfig(
   }
   if (masterKey.length !== 32 || masterKey.toString('base64') !== rawKey) return null
 
+  return new Uint8Array(masterKey)
+}
+
+export function loadChoiceInvalidCaptureDecryptConfig(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  now: Date = new Date(),
+): ChoiceInvalidCaptureDecryptConfig | null {
+  const rawUntil = env[CHOICE_INVALID_CAPTURE_ENV.until]
+  if (!rawUntil) return null
+
+  const expiresAtMs = Date.parse(rawUntil)
+  const remainingMs = expiresAtMs - now.getTime()
+  if (!Number.isFinite(expiresAtMs) || remainingMs <= 0 || remainingMs > MAX_CAPTURE_WINDOW_MS) return null
+
+  const masterKey = loadMasterKey(env)
+  if (!masterKey) return null
+
   return {
-    storyId,
-    chapterNumber,
     expiresAt: new Date(expiresAtMs).toISOString(),
-    masterKey: new Uint8Array(masterKey),
+    masterKey,
   }
 }
+
+export function loadChoiceInvalidCaptureWriteConfig(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  now: Date = new Date(),
+): ChoiceInvalidCaptureWriteConfig | null {
+  if (env[CHOICE_INVALID_CAPTURE_ENV.enabled] !== 'on') return null
+
+  const storyId = env[CHOICE_INVALID_CAPTURE_ENV.storyId]
+  const rawChapter = env[CHOICE_INVALID_CAPTURE_ENV.chapterNumber]
+  if (!storyId || !rawChapter) return null
+  if (storyId.trim() !== storyId || storyId.length > 200) return null
+  if (!/^(?:[1-9]|[1-4][0-9])$/.test(rawChapter)) return null
+
+  const decryptConfig = loadChoiceInvalidCaptureDecryptConfig(env, now)
+  if (!decryptConfig) return null
+
+  return {
+    storyId,
+    chapterNumber: Number(rawChapter),
+    ...decryptConfig,
+  }
+}
+
+export const loadChoiceInvalidCaptureConfig = loadChoiceInvalidCaptureWriteConfig
 
 export function choiceInvalidCaptureMatches(
   config: ChoiceInvalidCaptureConfig,

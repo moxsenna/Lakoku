@@ -1,0 +1,10 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`choice replay harness (validator produksi, tanpa kebocoran label) > formatted output is safe metadata only (snapshot) 1`] = `
+"replay_reproduced: yes
+stage: FINAL_BRANCH_SCHEMA
+code: CHOICE_NOT_ACTIONABLE
+validator_path: lib/story-engine/quality.ts:validateChoiceLabelStructural (via lib/ai-gateway/schemas.ts:ChoiceBranchSchema.superRefine; ACTION_PREFIX_PATTERN)
+production_action: none
+label_exposed: no"
+`;

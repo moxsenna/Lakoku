@@ -270,7 +270,7 @@ for (const rpc of [
   'admin_generation_overview_v1',
   'admin_generation_timeseries_v1',
   'admin_model_performance_v1',
-  'admin_generation_provider_calls_v1',
+  'admin_generation_provider_calls_v2',
   'admin_generation_job_detail_v1',
   'admin_generation_data_quality_v1',
   'admin_generation_error_distribution_v1',

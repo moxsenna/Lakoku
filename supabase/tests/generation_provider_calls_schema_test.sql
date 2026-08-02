@@ -13,7 +13,7 @@ begin
 end
 $$;
 
-select plan(58);
+select plan(62);
 
 select has_table('public', 'generation_provider_calls', 'generation_provider_calls exists');
 select has_pk('public', 'generation_provider_calls', 'generation_provider_calls has primary key');
@@ -109,6 +109,34 @@ select set_eq(
     ('generation_provider_calls_validation_shape_check'),
     ('generation_provider_calls_validation_outcome_check')$$,
   'all validation checks have stable names'
+);
+select is(
+  (select convalidated from pg_constraint
+   where conrelid = 'public.generation_provider_calls'::regclass
+     and conname = 'generation_provider_calls_validation_stage_check'),
+  false,
+  'validation_stage check starts NOT VALID'
+);
+select is(
+  (select convalidated from pg_constraint
+   where conrelid = 'public.generation_provider_calls'::regclass
+     and conname = 'generation_provider_calls_validation_codes_check'),
+  false,
+  'validation_codes check starts NOT VALID'
+);
+select is(
+  (select convalidated from pg_constraint
+   where conrelid = 'public.generation_provider_calls'::regclass
+     and conname = 'generation_provider_calls_validation_shape_check'),
+  false,
+  'validation_shape check starts NOT VALID'
+);
+select is(
+  (select convalidated from pg_constraint
+   where conrelid = 'public.generation_provider_calls'::regclass
+     and conname = 'generation_provider_calls_validation_outcome_check'),
+  false,
+  'validation_outcome check starts NOT VALID'
 );
 
 select ok(

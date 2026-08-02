@@ -132,7 +132,7 @@ describe('admin generation RPC loaders', () => {
       ['admin_generation_overview_v1', commonArgs],
       ['admin_generation_timeseries_v1', commonArgs],
       ['admin_model_performance_v1', commonArgs],
-      ['admin_generation_provider_calls_v1', {
+      ['admin_generation_provider_calls_v2', {
         ...commonArgs,
         p_cursor_started_at: null,
         p_cursor_id: null,

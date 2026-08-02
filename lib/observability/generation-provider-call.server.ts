@@ -69,7 +69,7 @@ export async function recordGenerationProviderCall(
     const rpc: ProviderCallRpc = deps.rpc ?? ((name, args) => (
       createAdminClient().rpc(name, args) as unknown as Promise<RpcResult>
     ))
-    const { error } = await rpc('record_generation_provider_call_v1', {
+    const { error } = await rpc('record_generation_provider_call_v2', {
       p_provider_call_id: parsedStart.providerCallId,
       p_user_id: parsedStart.context.userId,
       p_story_id: parsedStart.context.storyId,

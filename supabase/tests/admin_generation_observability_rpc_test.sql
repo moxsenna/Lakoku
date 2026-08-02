@@ -146,6 +146,16 @@ insert into observability_rpc_signatures values
     'public.admin_generation_provider_calls_v1(timestamptz,timestamptz,text,text,text,text,text,text,text,uuid,text,text,uuid,uuid,integer,timestamptz,uuid,integer)'
   ),
   (
+    'admin_generation_provider_calls_v2',
+    array[
+      'timestamp with time zone', 'timestamp with time zone',
+      'text', 'text', 'text', 'text', 'text', 'text', 'text',
+      'uuid', 'text', 'text', 'uuid', 'uuid', 'integer',
+      'timestamp with time zone', 'uuid', 'integer'
+    ],
+    'public.admin_generation_provider_calls_v2(timestamptz,timestamptz,text,text,text,text,text,text,text,uuid,text,text,uuid,uuid,integer,timestamptz,uuid,integer)'
+  ),
+  (
     'admin_generation_job_detail_v1',
     array['uuid'],
     'public.admin_generation_job_detail_v1(uuid)'
@@ -515,6 +525,31 @@ select * from public.admin_generation_provider_calls_v1(
   'test:admin-observability-b','personalized',null,
   '73000000-0000-4000-8000-000000000005',4,null,null,100
 );
+create temporary table admin_observe_page_one_v2 as
+select * from public.admin_generation_provider_calls_v2(
+  pg_catalog.clock_timestamp() - interval '24 hours',
+  pg_catalog.clock_timestamp() + interval '1 minute',
+  null,null,null,null,null,null,null,null,null,null,null,null,null,
+  null,null,2
+);
+create temporary table admin_observe_page_two_v2 as
+select * from public.admin_generation_provider_calls_v2(
+  pg_catalog.clock_timestamp() - interval '24 hours',
+  pg_catalog.clock_timestamp() + interval '1 minute',
+  null,null,null,null,null,null,null,null,null,null,null,null,null,
+  (select started_at from admin_observe_page_one_v2 order by started_at, id limit 1),
+  (select id from admin_observe_page_one_v2 order by started_at, id limit 1),
+  100
+);
+create temporary table admin_observe_filtered_v2 as
+select * from public.admin_generation_provider_calls_v2(
+  pg_catalog.clock_timestamp() - interval '24 hours',
+  pg_catalog.clock_timestamp() + interval '1 minute',
+  'provider-b','model-b','choice_generation','CHOICE_OPTIONS','SUCCEEDED',null,
+  'price_estimate','71000000-0000-4000-8000-000000000002',
+  'test:admin-observability-b','personalized',null,
+  '73000000-0000-4000-8000-000000000005',4,null,null,100
+);
 create temporary table admin_observe_timeseries as
 select * from public.admin_generation_timeseries_v1(
   pg_catalog.clock_timestamp() - interval '24 hours',
@@ -572,19 +607,77 @@ select is(
   'provider ledger applies every explicit filter together'
 );
 select is(
+  (select array_agg(column_name order by ordinal_position)::text
+   from information_schema.columns
+   where table_schema like 'pg_temp%'
+     and table_name = 'admin_observe_page_one'),
+  array[
+    'id','provider_call_id','started_at','ended_at','elapsed_ms','user_id',
+    'masked_user_email','story_id','story_title','chapter_number','generation_kind',
+    'job_id','correlation_id','attempt_number','use_case','workflow_phase',
+    'provider_id','model_id','route_version','fallback_index','actual_model_resolved',
+    'outcome','error_code','input_token_count','output_token_count','total_token_count',
+    'cost_amount','cost_currency','cost_source','pricing_version_id'
+  ]::text,
+  'legacy ledger v1 keeps exact 30-column output without diagnostics'
+);
+select is(
+  (select array_agg(column_name order by ordinal_position)::text
+   from information_schema.columns
+   where table_schema like 'pg_temp%'
+     and table_name = 'admin_observe_page_one_v2'),
+  array[
+    'id','provider_call_id','started_at','ended_at','elapsed_ms','user_id',
+    'masked_user_email','story_id','story_title','chapter_number','generation_kind',
+    'job_id','correlation_id','attempt_number','use_case','workflow_phase',
+    'provider_id','model_id','route_version','fallback_index','actual_model_resolved',
+    'outcome','error_code','input_token_count','output_token_count','total_token_count',
+    'cost_amount','cost_currency','cost_source','pricing_version_id',
+    'validation_stage','validation_codes'
+  ]::text,
+  'ledger v2 adds exactly validation_stage and validation_codes columns'
+);
+select is(
   (select row(validation_stage, validation_codes)::text
-   from admin_observe_page_two
+   from admin_observe_page_two_v2
    where provider_call_id = 'admin-observe-current-1'),
   row('FINAL_BRANCH_SCHEMA', array['CHOICE_NOT_ACTIONABLE']::text[])::text,
-  'provider ledger returns controlled validation diagnostics'
+  'ledger v2 returns controlled validation diagnostics'
 );
 select ok(
   not exists (
-    select 1 from admin_observe_page_one
+    select 1 from admin_observe_page_one_v2
     where validation_codes is not null
       and (outcome <> 'INVALID_RESPONSE' or error_code <> 'PROVIDER_INVALID_RESPONSE')
   ),
-  'provider ledger diagnostics preserve outcome coupling'
+  'ledger v2 diagnostics preserve outcome coupling'
+);
+select is(
+  (select array_agg(id order by started_at desc, id desc)
+   from admin_observe_page_one_v2),
+  array[
+    '75000000-0000-4000-8000-000000000104'::uuid,
+    '75000000-0000-4000-8000-000000000103'::uuid
+  ],
+  'ledger v2 orders by started_at DESC and id DESC like v1'
+);
+select is(
+  (select count(*) from admin_observe_page_one_v2 p1
+   join admin_observe_page_two_v2 p2 using (id)),
+  0::bigint,
+  'ledger v2 cursor pages contain no duplicate IDs'
+);
+select is(
+  (select count(*) from admin_observe_filtered_v2),
+  1::bigint,
+  'ledger v2 applies every explicit filter together like v1'
+);
+select is(
+  (select masked_user_email from admin_observe_page_two_v2
+   where user_id = '71000000-0000-4000-8000-000000000001'
+   order by started_at desc limit 1),
+  'a***@example.com',
+  'ledger v2 masks email inside DB output like v1'
 );
 
 select is(
@@ -694,15 +787,15 @@ select is(
 );
 select is(
   (select count(*) from public.admin_generation_access_audit),
-  3::bigint,
+  6::bigint,
   'successful provider ledger reads create one VIEW_CALL_DETAIL audit row each'
 );
 select is(
   (select count(distinct filter_fingerprint)
    from public.admin_generation_access_audit
    where action = 'VIEW_CALL_DETAIL'),
-  3::bigint,
-  'provider ledger audit stores stable non-sensitive filter fingerprints'
+  6::bigint,
+  'provider ledger audit stores non-sensitive filter fingerprints per successful read'
 );
 select ok(
   (select issue_count = 1 from admin_observe_quality

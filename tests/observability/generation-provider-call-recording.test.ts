@@ -58,7 +58,7 @@ describe('recordGenerationProviderCall', () => {
     await recordGenerationProviderCall(start, completion, { rpc })
 
     expect(rpc).toHaveBeenCalledOnce()
-    expect(rpc).toHaveBeenCalledWith('record_generation_provider_call_v1', {
+    expect(rpc).toHaveBeenCalledWith('record_generation_provider_call_v2', {
       p_provider_call_id: 'provider-call-1',
       p_user_id: '10000000-0000-4000-8000-000000000001',
       p_story_id: 'story-1',

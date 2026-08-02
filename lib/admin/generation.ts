@@ -130,7 +130,7 @@ export async function loadAdminGenerationProviderCalls(
 ): Promise<AdminGenerationProviderCall[]> {
   return queryRpc(
     client ?? await cookieClient(),
-    'admin_generation_provider_calls_v1',
+    'admin_generation_provider_calls_v2',
     {
       ...commonArgs(filters),
       p_cursor_started_at: filters.cursorStartedAt,

@@ -9,6 +9,8 @@ vi.mock('@/lib/observability/choice-invalid-capture-db.server', () => ({
 import {
   CHOICE_INVALID_CAPTURE_ENV,
   loadChoiceInvalidCaptureConfig,
+  loadChoiceInvalidCaptureDecryptConfig,
+  loadChoiceInvalidCaptureWriteConfig,
 } from '@/lib/observability/choice-invalid-capture-config.server'
 import {
   decryptChoiceLexicalEvidence,
@@ -38,6 +40,33 @@ describe('choice invalid capture config', () => {
       expiresAt: '2026-07-31T12:30:00.000Z',
       masterKey,
     })
+  })
+
+  it('loads decrypt config from canonical key and bounded expiry without write gate or target', () => {
+    const env = {
+      [CHOICE_INVALID_CAPTURE_ENV.until]: '2026-07-31T12:30:00.000Z',
+      [CHOICE_INVALID_CAPTURE_ENV.key]: encodedKey,
+    }
+    expect(loadChoiceInvalidCaptureDecryptConfig(env, now)).toEqual({
+      expiresAt: '2026-07-31T12:30:00.000Z',
+      masterKey,
+    })
+    expect(loadChoiceInvalidCaptureWriteConfig(env, now)).toBeNull()
+  })
+
+  it.each([
+    [undefined],
+    ['2026-07-31T13:00:00.001Z'],
+    ['2026-07-31T12:00:00.000Z'],
+  ])('rejects decrypt config without valid bounded expiry: %s', (until) => {
+    expect(loadChoiceInvalidCaptureDecryptConfig({
+      [CHOICE_INVALID_CAPTURE_ENV.until]: until,
+      [CHOICE_INVALID_CAPTURE_ENV.key]: encodedKey,
+    }, now)).toBeNull()
+  })
+
+  it('keeps legacy loader as write loader alias', () => {
+    expect(loadChoiceInvalidCaptureConfig).toBe(loadChoiceInvalidCaptureWriteConfig)
   })
 
   it.each([

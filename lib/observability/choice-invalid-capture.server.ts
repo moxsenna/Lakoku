@@ -5,8 +5,8 @@ import type { ChoiceLexicalEvidence } from '@/lib/ai-gateway/model-call-errors'
 import type { ProviderCallContext } from './generation-provider-call.contract'
 import {
   choiceInvalidCaptureMatches,
-  loadChoiceInvalidCaptureConfig,
-  type ChoiceInvalidCaptureConfig,
+  loadChoiceInvalidCaptureWriteConfig,
+  type ChoiceInvalidCaptureWriteConfig,
 } from './choice-invalid-capture-config.server'
 import {
   encryptChoiceLexicalEvidence,
@@ -20,7 +20,7 @@ export type ChoiceInvalidCaptureWriter = (
 
 export type CaptureChoiceInvalidEvidenceDeps = Readonly<{
   writer?: ChoiceInvalidCaptureWriter
-  loadConfig?: () => ChoiceInvalidCaptureConfig | null
+  loadConfig?: () => ChoiceInvalidCaptureWriteConfig | null
   createId?: () => string
 }>
 
@@ -29,7 +29,7 @@ export async function captureChoiceInvalidEvidence(
   evidence: ChoiceLexicalEvidence,
   deps: CaptureChoiceInvalidEvidenceDeps = {},
 ): Promise<void> {
-  const config = (deps.loadConfig ?? loadChoiceInvalidCaptureConfig)()
+  const config = (deps.loadConfig ?? loadChoiceInvalidCaptureWriteConfig)()
   const writer = deps.writer ?? writeEncryptedChoiceInvalidCapture
   if (!config || context.chapterNumber === null) return
   if (!choiceInvalidCaptureMatches(config, context.storyId, context.chapterNumber)) return

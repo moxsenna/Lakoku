@@ -19,10 +19,33 @@
  *
  * Body kosong/whitespace → 400 (malformed), TIDAK mengonsumsi one-shot —
  * bridge tetap menunggu POST valid. Label produksi guaranteed non-empty.
+ * Slot diproses dilepas setelah 400 ini (non-consuming); POST valid berikutnya
+ * tetap bisa diterima.
  *
  * Decode UTF-8 STRICT/fatal: byte invalid → fail closed `INVALID_UTF8`,
  * bukan mengganti diam-diam dengan U+FFFD. Browser JS string selalu UTF-8
  * valid; malformed transport = korup, stop.
+ *
+ * ONE-SHOT ATOMIC (claim state): tepat SATU request valid boleh memegang
+ * processing slot. Request valid kedua yang datang saat slot terisi → 409
+ * tanpa membaca body dan tanpa menjalankan replay. `resolveOnce()` hanya
+ * mencegah result kedua dipublish; guard slot inilah yang mencegah eksekusi
+ * replay ganda. Replay berjalan maksimal satu kali per bridge.
+ *
+ * CLEANUP DETERMINISTIK: seluruh chunk body yang pernah disimpan di-zero
+ * pada SEMUA jalur — success, empty, oversize (termasuk chunk yang datang
+ * setelah tooLarge), invalid UTF-8, request aborted, dan request error.
+ * Handler `req.on('aborted')` / `req.on('error')` menjamin partial sensitive
+ * bytes tidak menunggu GC; koneksi yang mati tengah jalan tidak meninggalkan
+ * cleanup nondeterministik. Kegagalan aborted/error → fail closed INTERNAL
+ * (slot tetap terpakai; server tutup).
+ *
+ * SHUTDOWN FINISH-AWARE: semua response memakai `Connection: close`, dan
+ * resolve + close hanya terjadi setelah event `finish` response (data sudah
+ * sampai ke socket). Tidak ada `closeAllConnections()` yang memutus socket
+ * sebelum response sukses ter-flush — client `await fetch(loopback)` selalu
+ * menerima body 200 utuh. Force-close hanya fallback untuk koneksi membandel
+ * yang mengabaikan `Connection: close`.
  *
  * Label tidak pernah menjadi: textContent/DOM, console output, clipboard,
  * file, shell argv, env var, Playwright result serialization, atau output
@@ -34,25 +57,42 @@
  * Capability path random (bukan sekadar /bridge) mencegah website/tab lain
  * menembak listener lokal secara kebetulan. Server one-shot: tepat SATU
  * accept valid, lalu tutup. Request invalid ditolak diam-diam (403/404/405/
- * 415) dan server tetap menunggu accept valid hingga timeout.
+ * 409/415) dan server tetap menunggu accept valid hingga timeout. Timeout
+ * 90 detik dimulai saat `listen()` berhasil (bukan saat instance dibuat).
  *
  * STOP GATE (mandatory, sebelum retrieve asli): probe loopback dari ORIGIN
  * PRODUKSI dengan data sintetis harus lulus lebih dulu — Local Network
  * Access (Chrome 142+) dapat meminta permission dan memblokir 127.0.0.1 dari
  * halaman https. Jangan retrieve evidence nyata sebelum probe PASS.
  *
- * Browser evaluate final (atomic metadata→retrieve→forward, tanpa DOM):
+ * Browser evaluate final (atomic metadata→retrieve→forward, tanpa DOM).
+ * Body metadata sukses adalah `{ captureId, correlationId }` (bukan status);
+ * URL retrieve WAJIB dibangun di JS memory dari captureId + correlationId
+ * yang baru didapat. IDs dan label tidak pernah menjadi return value —
+ * return hanya status HTTP dan boolean:
+ *
  *   () => fetch(metaUrl, ...).then(async (metaRes) => {
+ *     if (!metaRes.ok) {
+ *       return { metadataStatus: metaRes.status, retrieveStatus: 0, forwardAttempted: false }
+ *     }
  *     const meta = await metaRes.json()
+ *     const captureId = meta.captureId          // tetap di JS memory
+ *     const correlationId = meta.correlationId  // tetap di JS memory
+ *     const retrieveUrl = '<origin>/api/admin/generation/incidents/retrieve'
+ *       + '?captureId=' + encodeURIComponent(captureId)
+ *       + '&correlationId=' + encodeURIComponent(correlationId)
  *     const retr = await fetch(retrieveUrl, ...)
  *     if (!retr.ok) {
- *       return { metadataStatus: meta.status, retrieveStatus: retr.status, forwardAttempted: false }
+ *       return { metadataStatus: metaRes.status, retrieveStatus: retr.status, forwardAttempted: false }
  *     }
  *     const result = await retr.json()
- *     await fetch('http://127.0.0.1:<port>' + '<capability>', {
+ *     if (typeof result.label !== 'string' || result.label.length === 0) {
+ *       return { metadataStatus: metaRes.status, retrieveStatus: retr.status, forwardAttempted: false }
+ *     }
+ *     const forward = await fetch('http://127.0.0.1:<port>' + '<capability>', {
  *       method: 'POST', mode: 'no-cors', body: result.label,
  *     })
- *     return { metadataStatus: meta.status, retrieveStatus: 200, forwardAttempted: true }
+ *     return { metadataStatus: metaRes.status, retrieveStatus: retr.status, forwardAttempted: true }
  *   })
  *   — captureId/correlationId/label tidak pernah jadi return value.
  */
@@ -69,12 +109,15 @@ export const BRIDGE_DEFAULT_ALLOWED_ORIGIN = 'https://lakoku.biz.id'
 export const BRIDGE_DEFAULT_MAX_BODY_BYTES = 512
 export const BRIDGE_DEFAULT_TIMEOUT_MS = 90_000
 
+/** Grace sebelum koneksi membandel dipaksa tutup (mengabaikan Connection: close). */
+const FORCE_CLOSE_GRACE_MS = 500
+
 export interface ReplayBridgeOptions {
   /** Origin halaman produksi yang diizinkan mengirim label. */
   allowedOrigin?: string
   /** Batas ukuran body dalam byte; lebih besar → BODY_TOO_LARGE. */
   maxBodyBytes?: number
-  /** Berapa lama menunggu accept valid sebelum TIMEOUT. */
+  /** Berapa lama menunggu accept valid setelah listen sebelum TIMEOUT. */
   timeoutMs?: number
 }
 
@@ -90,7 +133,7 @@ export interface ReplayBridge {
   readonly capabilityPath: string
   readonly allowedOrigin: string
   readonly timeoutMs: number
-  /** Bind 127.0.0.1, port OS-assigned. Resolve dengan port aktual. */
+  /** Bind 127.0.0.1, port OS-assigned. Timer timeout dimulai di sini. */
   listen(): Promise<number>
   /** Resolve TEPAT SATU KALI: accept valid → delivered, atau timeout/error. */
   result(): Promise<BridgeResult>
@@ -116,6 +159,8 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
 
   let server: Server | null = null
   let timer: NodeJS.Timeout | null = null
+  /** Processing slot one-shot: tepat satu request valid boleh memproses body. */
+  let processing = false
   let settled = false
   let settleResult!: (result: BridgeResult) => void
   const resultPromise = new Promise<BridgeResult>((resolve) => {
@@ -137,13 +182,27 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
     const s = server
     server = null
     await new Promise<void>((resolveClosed) => {
-      s.close(() => resolveClosed())
-      // paksa tutup koneksi keep-alive yang tersisa agar one-shot cepat bersih
-      s.closeAllConnections?.()
+      // stop terima koneksi baru; koneksi lama menutup natural (Connection: close)
+      // setelah response finish. Grace hanya untuk klien yang mengabaikan header.
+      const grace = setTimeout(() => {
+        s.closeAllConnections?.()
+      }, FORCE_CLOSE_GRACE_MS)
+      s.close(() => {
+        clearTimeout(grace)
+        resolveClosed()
+      })
     })
   }
 
   const handleRequest = (req: IncomingMessage, res: ServerResponse): void => {
+    // semua response: socket ditutup server setelah response selesai — tidak
+    // ada keep-alive yang menggantung; client await fetch dapat body utuh.
+    res.setHeader('Connection', 'close')
+    // socket reset oleh client tidak boleh menjadi unhandled 'error' → crash.
+    res.on('error', () => {
+      // cleanup byte sensitif sudah ditangani handler req (aborted/error)
+    })
+
     if (req.url !== capabilityPath) {
       res.statusCode = 404
       res.end()
@@ -166,40 +225,92 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
       return
     }
 
+    // Claim processing slot ATOMIC: dua request valid yang nyaris bersamaan
+    // tidak boleh sama-sama membaca body / menjalankan replay.
+    if (processing) {
+      res.statusCode = 409
+      res.end()
+      return
+    }
+    processing = true
+
     // Body bounded: simpan sampai maxBodyBytes; sisanya drain tanpa disimpan.
+    // SELURUH chunk yang pernah disimpan di-zero pada setiap jalur keluar.
     const chunks: Buffer[] = []
     let total = 0
     let tooLarge = false
+    let failed = false
+
+    const zeroBuffered = (): void => {
+      for (const chunk of chunks) chunk.fill(0)
+      chunks.length = 0
+    }
+
+    // Fail closed tanpa response penuh (socket client sudah mati): tidak ada
+    // 'finish' yang akan datang — resolve + close langsung.
+    const failClosed = (reason: 'INVALID_UTF8' | 'INTERNAL'): void => {
+      if (failed) return
+      failed = true
+      zeroBuffered()
+      if (!res.writableEnded && !res.destroyed) {
+        res.statusCode = 400
+        res.end()
+      }
+      resolveOnce({ status: 'unavailable', reason })
+      void close()
+    }
 
     req.on('data', (chunk: Buffer) => {
-      if (tooLarge) return
+      if (tooLarge) {
+        // byte sensitif di luar batas: zero segera, jangan tunggu 'end'
+        chunk.fill(0)
+        return
+      }
       total += chunk.length
       if (total > maxBodyBytes) {
         tooLarge = true
+        chunk.fill(0)
+        zeroBuffered()
         return
       }
       chunks.push(chunk)
     })
 
+    req.on('aborted', () => {
+      failClosed('INTERNAL')
+    })
+
+    req.on('error', () => {
+      failClosed('INTERNAL')
+    })
+
     req.on('end', () => {
+      if (failed) return
+
       if (tooLarge) {
+        zeroBuffered() // safety; sudah di-zero saat flag diangkat
         res.statusCode = 413
+        res.on('finish', () => {
+          resolveOnce({ status: 'unavailable', reason: 'BODY_TOO_LARGE' })
+          void close()
+        })
         res.end()
-        resolveOnce({ status: 'unavailable', reason: 'BODY_TOO_LARGE' })
-        void close()
         return
       }
 
       // Body kosong → malformed, TIDAK mengonsumsi one-shot; tetap menunggu.
       if (total === 0) {
         res.statusCode = 400
+        res.on('finish', () => {
+          // lepas slot: request non-consuming ini tidak memakai accept valid
+          processing = false
+        })
         res.end()
         return
       }
 
       const body = Buffer.concat(chunks, total)
-      for (const chunk of chunks) chunk.fill(0)
-      chunks.length = 0
+      zeroBuffered()
 
       // Decode UTF-8 STRICT/fatal: byte invalid → fail closed INVALID_UTF8.
       let label: string | null
@@ -208,9 +319,11 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
       } catch {
         body.fill(0)
         res.statusCode = 400
+        res.on('finish', () => {
+          resolveOnce({ status: 'unavailable', reason: 'INVALID_UTF8' })
+          void close()
+        })
         res.end()
-        resolveOnce({ status: 'unavailable', reason: 'INVALID_UTF8' })
-        void close()
         return
       }
       // salinan string sudah dibuat; zero buffer segera agar byte sensitif
@@ -221,6 +334,9 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
       if (label.trim().length === 0) {
         label = null
         res.statusCode = 400
+        res.on('finish', () => {
+          processing = false
+        })
         res.end()
         return
       }
@@ -229,9 +345,12 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
       label = null
 
       res.statusCode = 200
+      res.on('finish', () => {
+        // response sukses sudah ter-flush ke socket — baru resolve + tutup
+        resolveOnce({ status: 'delivered', replayOutput: output })
+        void close()
+      })
       res.end('ok')
-      resolveOnce({ status: 'delivered', replayOutput: output })
-      void close()
     })
   }
 
@@ -241,10 +360,6 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
     resolveOnce({ status: 'unavailable', reason: 'INTERNAL' })
     void close()
   })
-  timer = setTimeout(() => {
-    resolveOnce({ status: 'unavailable', reason: 'TIMEOUT' })
-    void close()
-  }, timeoutMs)
 
   const bridge: ReplayBridge = {
     capabilityPath,
@@ -259,6 +374,12 @@ export function createReplayBridge(options: ReplayBridgeOptions = {}): ReplayBri
         const onListening = (): void => {
           server?.off('error', onError)
           const address = server?.address() as AddressInfo | null
+          // timer dimulai SETELAH listener aktif — instance yang hanya
+          // dibuat untuk inspeksi capability tidak menyalakan timeout.
+          timer = setTimeout(() => {
+            resolveOnce({ status: 'unavailable', reason: 'TIMEOUT' })
+            void close()
+          }, timeoutMs)
           resolve(address?.port ?? 0)
         }
         server?.once('error', onError)

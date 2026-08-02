@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import http from 'node:http'
+import net from 'node:net'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -12,9 +13,12 @@ import {
 /**
  * Bridge lokal retrieve→replay: validasi bahwa (a) label TIDAK PERNAH menjadi
  * output/log bridge (hanya metadata aman), (b) gate path/method/origin/
- * content-type/ukuran berlaku, (c) one-shot: tepat satu accept valid lalu
- * tutup, (d) body Buffer di-zero setelah decode, dan (e) CLI satu-shot
- * bekerja end-to-end dengan POST dari process memory.
+ * content-type/ukuran berlaku, (c) one-shot atomic: slot diproses tunggal —
+ * request valid saat slot terisi → 409 tanpa replay ganda, (d) body Buffer
+ * di-zero pada semua jalur termasuk oversize/aborted, (e) response 200 utuh
+ * ter-flush sebelum close (finish-aware shutdown), (f) timer timeout baru
+ * menyala setelah listen(), dan (g) CLI satu-shot bekerja end-to-end dengan
+ * POST dari process memory.
  *
  * SECRET_LABEL sengaja unik agar kebocoran apa pun terdeteksi.
  */
@@ -83,6 +87,61 @@ async function waitForStartup(
   throw new Error('bridge CLI startup timeout')
 }
 
+/** Buka POST via raw socket, kirim header + body SEBAGIAN, lalu biarkan menggantung. */
+function openPartialPost(
+  port: number,
+  path: string,
+  body: string,
+  firstChunkLength: number,
+): { socket: net.Socket; complete: () => void } {
+  const socket = net.connect(port, '127.0.0.1')
+  let completed = false
+  socket.on('connect', () => {
+    socket.write(
+      `POST ${path} HTTP/1.1\r\n`
+        + `Host: 127.0.0.1:${port}\r\n`
+        + `Origin: ${BRIDGE_DEFAULT_ALLOWED_ORIGIN}\r\n`
+        + 'Content-Type: text/plain\r\n'
+        + `Content-Length: ${body.length}\r\n`
+        + 'Connection: close\r\n'
+        + '\r\n',
+    )
+    socket.write(body.slice(0, firstChunkLength))
+  })
+  return {
+    socket,
+    complete: () => {
+      if (completed) return
+      completed = true
+      socket.write(body.slice(firstChunkLength))
+      socket.end()
+    },
+  }
+}
+
+/** POST body SEBAGIAN lalu hancurkan socket di tengah jalan (abort). */
+function abortMidBody(port: number, path: string, partial: string): Promise<void> {
+  return new Promise((resolve) => {
+    const socket = net.connect(port, '127.0.0.1')
+    socket.on('connect', () => {
+      socket.write(
+        `POST ${path} HTTP/1.1\r\n`
+          + `Host: 127.0.0.1:${port}\r\n`
+          + `Origin: ${BRIDGE_DEFAULT_ALLOWED_ORIGIN}\r\n`
+          + 'Content-Type: text/plain\r\n'
+          + 'Content-Length: 200\r\n'
+          + 'Connection: close\r\n'
+          + '\r\n',
+      )
+      socket.write(partial)
+      // hancurkan sebelum Content-Length terpenuhi → request aborted/error
+      setTimeout(() => socket.destroy(), 40)
+    })
+    socket.on('close', () => resolve())
+    socket.on('error', () => resolve())
+  })
+}
+
 describe('replay bridge (capability-bound one-shot, tanpa kebocoran label)', () => {
   it('capability path is /bridge/<32 hex> and unique per instance', () => {
     const a = createReplayBridge()
@@ -99,6 +158,8 @@ describe('replay bridge (capability-bound one-shot, tanpa kebocoran label)', () 
     const resultPromise = bridge.result()
     const res = await postToBridge(port, bridge.capabilityPath, PROBE_LABEL)
     expect(res.status).toBe(200)
+    // flush regression: body 200 utuh diterima sebelum close
+    expect(res.body).toBe('ok')
     const result = await resultPromise
     if (result.status !== 'delivered') throw new Error(`unexpected: ${result.reason}`)
     expect(result.replayOutput.replay_reproduced).toBe('yes')
@@ -106,6 +167,54 @@ describe('replay bridge (capability-bound one-shot, tanpa kebocoran label)', () 
     // one-shot: server sudah tutup, POST kedua gagal
     const second = await postToBridge(port, bridge.capabilityPath, 'Lanjutkan')
     expect(second.status).toBe(0)
+  })
+
+  it('atomic slot: concurrent valid POST saat slot terisi → 409, replay jalan sekali', async () => {
+    const bridge = createReplayBridge()
+    const port = await bridge.listen()
+    const resultPromise = bridge.result()
+    // request A memegang slot: header valid + body sebagian, belum selesai
+    const a = openPartialPost(port, bridge.capabilityPath, PROBE_LABEL, 8)
+    // pastikan A sudah diproses server (slot ter-claim) sebelum B datang
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    // request B valid penuh saat slot terisi → ditolak tanpa replay
+    const b = await postToBridge(port, bridge.capabilityPath, PROBE_LABEL)
+    expect(b.status).toBe(409)
+    // selesaikan A → satu-satunya replay yang boleh jalan
+    a.complete()
+    a.socket.destroy()
+    const result = await resultPromise
+    if (result.status !== 'delivered') throw new Error(`unexpected: ${result.reason}`)
+    expect(result.replayOutput.replay_reproduced).toBe('yes')
+    expect(result.replayOutput.code).toBe('CHOICE_NOT_ACTIONABLE')
+  })
+
+  it('partial-body abort: fail closed INTERNAL, chunk di-zero, tidak ada replay, server tutup', async () => {
+    const bridge = createReplayBridge()
+    const port = await bridge.listen()
+    const resultPromise = bridge.result()
+    // body sebagian berisi SECRET_LABEL → harus di-zero, tidak pernah direplay
+    await abortMidBody(port, bridge.capabilityPath, SECRET_LABEL)
+    const result = await resultPromise
+    expect(result).toEqual({ status: 'unavailable', reason: 'INTERNAL' })
+    // fail closed: server tutup, POST berikutnya gagal
+    const second = await postToBridge(port, bridge.capabilityPath, PROBE_LABEL)
+    expect(second.status).toBe(0)
+  })
+
+  it('timer starts only after listen() — instance tanpa listen tidak ber-timeout', async () => {
+    const bridge = createReplayBridge({ timeoutMs: 60 })
+    let settled = false
+    bridge.result().then(() => {
+      settled = true
+    })
+    // tidak pernah listen: timer tidak boleh menyala
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(settled).toBe(false)
+    const port = await bridge.listen()
+    expect(port).toBeGreaterThan(0)
+    const result = await bridge.result()
+    expect(result).toEqual({ status: 'unavailable', reason: 'TIMEOUT' })
   })
 
   it('empty or whitespace-only body → 400 malformed, does NOT consume one-shot', async () => {

@@ -30,9 +30,14 @@ function parseLookup(request: Request): unknown | null {
     return null
   }
 
+  const chapterNumber = params.get('chapterNumber')
+  if (chapterNumber === null || !/^(?:[1-9]|[1-4][0-9])$/.test(chapterNumber)) {
+    return null
+  }
+
   return {
     storyId: params.get('storyId'),
-    chapterNumber: Number(params.get('chapterNumber')),
+    chapterNumber: Number(chapterNumber),
     from: params.get('from'),
     to: params.get('to'),
   }

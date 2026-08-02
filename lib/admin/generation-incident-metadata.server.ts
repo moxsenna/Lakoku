@@ -7,7 +7,10 @@ const MAX_WINDOW_MS = 60 * 60 * 1000
 const TimestampSchema = z.string().datetime({ offset: true })
 
 export const GenerationIncidentMetadataLookupSchema = z.object({
-  storyId: z.string().trim().min(1).max(200).regex(/^\S(?:.*\S)?$/).refine(
+  storyId: z.string().min(1).max(200).refine(
+    (value) => value === value.trim(),
+    'storyId must be trimmed',
+  ).refine(
     (value) => !/[\u0000-\u001F\u007F]/.test(value),
     'storyId must not contain controls',
   ),

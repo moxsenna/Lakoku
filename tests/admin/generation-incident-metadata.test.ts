@@ -21,10 +21,15 @@ const ROW = {
 } as const
 
 describe('generation incident metadata discovery', () => {
-  it('rejects invalid lookup before RPC', async () => {
+  it.each([
+    { ...INPUT, chapterNumber: 50 },
+    { ...INPUT, storyId: ` ${INPUT.storyId}` },
+    { ...INPUT, storyId: `${INPUT.storyId} ` },
+    { ...INPUT, storyId: '   ' },
+  ])('rejects invalid lookup before RPC', async (lookup) => {
     const rpc = vi.fn()
-    expect(() => GenerationIncidentMetadataLookupSchema.parse({ ...INPUT, chapterNumber: 50 })).toThrow()
-    await expect(findGenerationIncidentMetadata({ ...INPUT, chapterNumber: 50 }, { client: { rpc } })).rejects.toThrow()
+    expect(() => GenerationIncidentMetadataLookupSchema.parse(lookup)).toThrow()
+    await expect(findGenerationIncidentMetadata(lookup, { client: { rpc } })).rejects.toThrow()
     expect(rpc).not.toHaveBeenCalled()
   })
 

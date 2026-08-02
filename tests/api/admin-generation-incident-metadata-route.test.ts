@@ -53,6 +53,11 @@ describe('admin generation incident metadata route', () => {
     `${URL}&chapterNumber=1`,
     `${URL}&from=2026-07-31T10%3A01%3A00.000Z`,
     `${URL}&to=2026-07-31T10%3A21%3A00.000Z`,
+    URL.replace('storyId=jejak-yang-terlupakan-lyht91', 'storyId=%20jejak-yang-terlupakan-lyht91'),
+    URL.replace('storyId=jejak-yang-terlupakan-lyht91', 'storyId=jejak-yang-terlupakan-lyht91%20'),
+    ...['01', '1.0', '1e0', '+1', '%201', '1%20', '0', '50'].map((chapterNumber) => (
+      URL.replace('chapterNumber=1', `chapterNumber=${chapterNumber}`)
+    )),
   ])('rejects malformed or duplicate query %s', async (url) => {
     const response = await GET(request(url))
     expect(response.status).toBe(400)

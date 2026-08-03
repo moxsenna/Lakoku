@@ -77,4 +77,27 @@ describe('buildWriterPrompt - Prompt Hierarchy & Continuation Context', () => {
     expect(prompt.user).toContain('Paragraf 2 Nadia menatap Raka.')
     expect(prompt.user).toContain('Pilihan Pembaca di Bab 1 [choice-1]: "Konfrontasi Raka"')
   })
+
+  it('menuliskan isi fakta & kronologi, bukan objek yang ter-stringify', () => {
+    const prompt = buildWriterPrompt({
+      chapterNumber: 2,
+      characterNames: ['Nadia', 'Raka'],
+      continuation: mockContinuation,
+    })
+
+    expect(prompt.user).not.toContain('[object Object]')
+    expect(prompt.user).toContain('Fakta 1: Lukisan hilang')
+    expect(prompt.user).toContain('Nadia masuk galeri')
+  })
+
+  it('menyatakan konsekuensi pilihan sebagai mengikat, bukan saran', () => {
+    const prompt = buildWriterPrompt({
+      chapterNumber: 2,
+      characterNames: ['Nadia', 'Raka'],
+      continuation: mockContinuation,
+    })
+
+    expect(prompt.user).toContain('KONSEKUENSI DI ATAS SUDAH TERJADI DAN MENGIKAT')
+    expect(prompt.user).toContain('DILARANG membatalkan, menunda, atau membalik pilihan itu')
+  })
 })

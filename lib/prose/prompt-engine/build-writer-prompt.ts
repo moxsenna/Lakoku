@@ -62,6 +62,12 @@ export function buildWriterPrompt(input: BuildWriterPromptInput): WriterPromptPa
           `- Pilihan Pembaca di Bab ${cc.previousChapter.number} [${cc.previousChoice.choiceId}]: "${cc.previousChoice.label}"`,
           `- Konsekuensi Kanonik Pilihan: ${cc.previousChoice.consequence.join(' / ')}`,
           cc.previousChoice.effectSummary ? `- Ringkasan Efek: ${JSON.stringify(cc.previousChoice.effectSummary)}` : '',
+          // Tanpa ini model memperlakukan konsekuensi sebagai saran dan sering
+          // MEMBATALKAN pilihan pembaca di paragraf awal (mis. "tunda laporan"),
+          // sehingga cabang A dan B menyatu kembali.
+          '- KONSEKUENSI DI ATAS SUDAH TERJADI DAN MENGIKAT. Bab ini menuliskan AKIBATNYA.',
+          '  DILARANG membatalkan, menunda, atau membalik pilihan itu. DILARANG membuat tokoh',
+          '  berubah pikiran sehingga cerita kembali ke jalur pilihan yang TIDAK diambil.',
         ].filter(Boolean).join('\n')
       : `- (Bab ${cc.previousChapter.number} tidak memiliki pilihan pembaca / linear)`
 
@@ -78,8 +84,14 @@ export function buildWriterPrompt(input: BuildWriterPromptInput): WriterPromptPa
   let layer3StoryState = ''
   if (cc) {
     let threads = cc.openThreads.map((t) => `- Thread Aktif: ${t.id} (${t.status})`).join('\n')
-    let facts = cc.anchorFacts.map((f) => `- Fakta Mapan: ${f}`).join('\n')
-    let timeline = cc.recentTimeline.map((t) => `- Kronologi Pasti: ${t}`).join('\n')
+    // Field spesifik, bukan objeknya: interpolasi objek menghasilkan
+    // "[object Object]" dan menghapus seluruh fakta/kronologi dari prompt.
+    let facts = cc.anchorFacts
+      .map((f) => `- Fakta Mapan (Bab ${f.establishedChapter}): ${f.statement}`)
+      .join('\n')
+    let timeline = cc.recentTimeline
+      .map((t) => `- Kronologi Pasti (Bab ${t.chapterNumber}): ${t.description}`)
+      .join('\n')
 
     let blockContent = [
       '=== [3] KEADAAN CERITA ===',

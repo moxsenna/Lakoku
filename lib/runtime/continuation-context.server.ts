@@ -18,8 +18,8 @@ import { summarizeRouteStateForPrompt } from '@/lib/story-engine/route-state'
  *                              → { ok: false, kind: 'REVIEW_REQUIRED' }
  *  - N>1, triggerChoiceId null DAN Bab N-1 terbukti tanpa choices
  *                              → { ok: true, continuation } (legal, tanpa previousChoice)
- *  - N>1, triggerChoiceId null DAN Bab N-1 punya choices
- *                              → { ok: false, kind: 'REVIEW_REQUIRED' }
+ *  - N>1, Bab N-1 punya choices DAN triggerChoiceId null ATAU property-nya
+ *    tidak dikirim sama sekali → { ok: false, kind: 'REVIEW_REQUIRED' }
  *
  * reader_states.choice_history adalah SUMBER KEBENARAN.
  * choice_outcomes hanya dipakai untuk consistency check (log drift),
@@ -171,9 +171,17 @@ export async function loadContinuationContextForChapter(input: {
   const prevHasChoices = hasChoices(prevRow.choices)
 
   // 4) Pilih entry pilihan via triggerChoiceId (historical truth).
+  // Fail-closed dikunci pada bentuk data, bukan pada bentuk pemanggilan:
+  // Bab N-1 punya choices => trigger WAJIB. Property yang hilang sama saja
+  // dengan null, sehingga caller baru tak bisa melewati gate hanya dengan
+  // tidak menuliskan field-nya.
   const hasExplicitTrigger = 'triggerChoiceId' in input
-  if (hasExplicitTrigger && input.triggerChoiceId == null && prevHasChoices) {
-    console.log('CONTINUATION_MISSING_TRIGGER', { storyId: input.storyId, chapter: n })
+  if (prevHasChoices && (!hasExplicitTrigger || input.triggerChoiceId == null)) {
+    console.log('CONTINUATION_MISSING_TRIGGER', {
+      storyId: input.storyId,
+      chapter: n,
+      triggerPropertyPresent: hasExplicitTrigger,
+    })
     return {
       ok: false,
       kind: 'REVIEW_REQUIRED',
@@ -181,14 +189,17 @@ export async function loadContinuationContextForChapter(input: {
     }
   }
 
+  // Trigger selalu dikirim eksplisit. Tanpa ini, helper jatuh ke
+  // history[last] — bisa menempelkan pilihan bab lama pada Bab N-1 yang
+  // terbukti tanpa choices. Kontrak: branch itu harus tanpa previousChoice.
   const narrative = choiceNarrativeContextFromReader({
     route_state: reader.route_state,
     choice_history: Array.isArray(reader.choice_history) ? reader.choice_history : [],
     locked_ending_key: reader.locked_ending_key,
-    ...(hasExplicitTrigger ? { triggerChoiceId: input.triggerChoiceId ?? null } : {}),
+    triggerChoiceId: input.triggerChoiceId ?? null,
   })
 
-  if (hasExplicitTrigger && typeof input.triggerChoiceId === 'string' && !narrative.previousChoice) {
+  if (typeof input.triggerChoiceId === 'string' && !narrative.previousChoice) {
     console.log('CONTINUATION_TRIGGER_CHOICE_NOT_FOUND', {
       storyId: input.storyId,
       chapter: n,
@@ -201,7 +212,7 @@ export async function loadContinuationContextForChapter(input: {
     }
   }
 
-  if (!hasExplicitTrigger || input.triggerChoiceId == null) {
+  if (input.triggerChoiceId == null) {
     // Tidak ada trigger. Sah hanya bila Bab N-1 memang tanpa choices.
     if (!prevHasChoices) {
       console.log('CONTINUATION_NO_PRIOR_CHOICE', { storyId: input.storyId, chapter: n })

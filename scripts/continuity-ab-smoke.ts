@@ -4,9 +4,23 @@
  * MODE (LAKOKU_CONTINUITY_SMOKE_MODE):
  *
  *   provider-only (default)
- *     NOL DB IO. Snapshot/continuation/brief dibangun in-memory dari fixture
- *     Nadia/Raka. Tidak butuh Supabase sama sekali, jadi TIDAK ada guard
- *     produksi di sini — tidak ada yang bisa ditulis ke DB mana pun.
+ *     NOL DB IO, ditegakkan secara konstruksi. Snapshot/continuation/brief
+ *     dibangun in-memory dari fixture Nadia/Raka.
+ *
+ *     PENTING: "tidak menyentuh tabel story/chapter" saja TIDAK cukup.
+ *     `executeObservedModelCall()` selalu menjalankan telemetry recorder —
+ *     sukses maupun gagal — dan `recordGenerationProviderCall` membuat
+ *     `createAdminClient()` lalu memanggil RPC `record_generation_provider_call_v2`
+ *     yang langsung insert ke `generation_provider_calls`. Dengan env production
+ *     di shell, real-model smoke IKUT MENULIS baris telemetry sintetis ke
+ *     production meski tidak ada generasi cerita.
+ *
+ *     Karena itu mode ini MENGHAPUS kredensial DB dari process sebelum provider
+ *     dibuat, lalu memverifikasi ketiadaannya. `createAdminClient()` membaca env
+ *     saat dipanggil, jadi ia throw sebelum client/network terbentuk dan recorder
+ *     gagal best-effort di dalam try/catch-nya sendiri. Tidak ada perubahan pada
+ *     kontrak observability produksi.
+ *
  *     Inilah gate wajib sebelum merge.
  *
  *   db-e2e (BELUM DIIMPLEMENTASI)
@@ -32,6 +46,7 @@ import { createGatewayProvider } from '@lakoku/ai-gateway/server'
 import { createSynchronousProviderContext } from '@lakoku/runtime'
 import type { ContinuationContext, Finding } from '@lakoku/narrative-core'
 import type { PreProseChapterBrief } from '../lib/story-engine/pre-prose-brief'
+import { assertNoDbCredentials, stripDbCredentials } from './smoke-db-isolation'
 import {
   NADIA_RAKA_BLUEPRINT,
   NADIA_RAKA_BRIEF_A,
@@ -90,9 +105,20 @@ function printBranch(
 async function runProviderOnly(): Promise<void> {
   const snapshot = nadiaRakaSnapshot()
   const useGateway = process.env.NARRATIVE_PROVIDER === 'gateway'
+
+  // Lucuti kredensial DB SEBELUM provider dibuat. Telemetry recorder di
+  // executeObservedModelCall() memanggil createAdminClient() yang membaca env
+  // saat dipanggil; tanpa URL/key ia throw sebelum client/network terbentuk.
+  const removed = stripDbCredentials(process.env)
+  assertNoDbCredentials(process.env)
+
   const provider = useGateway ? createGatewayProvider() : createDeterministicProvider()
 
   console.log('=== CONTINUITY A/B SMOKE (mode: provider-only, tanpa DB IO) ===')
+  console.log(
+    `isolasi DB     : kredensial dilucuti${removed.length ? ` (${removed.join(', ')})` : ' (env memang kosong)'}; ` +
+      'createAdminClient() dijamin throw',
+  )
   console.log(`provider kind  : ${useGateway ? 'gateway (LLM NYATA)' : 'deterministic (harness-only)'}`)
   console.log(`provider chain : ${provider.name}`)
   console.log(`NARRATIVE_MODEL: ${process.env.NARRATIVE_MODEL ?? '(unset)'}`)

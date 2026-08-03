@@ -1078,8 +1078,9 @@ async function generateSemanticJudgeJson(args: {
     }
   }
 
-  // Jika semua kandidat gagal teknis / malformed, lemparkan controlled error
-  throw new Error(SEMANTIC_JUDGE_UNAVAILABLE)
+  // Jika semua kandidat gagal teknis / malformed, lemparkan controlled error.
+  // cause dipertahankan untuk debugging; message tetap kode kontrak (retryable).
+  throw new Error(SEMANTIC_JUDGE_UNAVAILABLE, { cause: lastError })
 }
 
 /**

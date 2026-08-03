@@ -22,6 +22,12 @@ const SMOKE_USER_ID = '00000000-0000-4000-8000-00000000ab01'
 const SMOKE_STORY_IDS = ['story-ab-test-a', 'story-ab-test-b']
 const SMOKE_WORKFLOW_PHASE = 'CONTINUITY_AB_SMOKE'
 
+/**
+ * Project ref Lakoku di Supabase hosted — identitas POSITIF target audit.
+ * Subdomain URL harus cocok persis, atau target ditolak.
+ */
+const LAKOKU_PROJECT_REF = 'lakoku-v2'
+
 /** Identitas DB yang diaudit, ditegaskan sebelum query apa pun. */
 function attestTarget(): { url: string; isProduction: boolean } {
   const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -29,8 +35,29 @@ function attestTarget(): { url: string; isProduction: boolean } {
     console.error('SUPABASE_URL / NEXT_PUBLIC_SUPABASE_URL tidak diset. Audit butuh target eksplisit.')
     process.exit(1)
   }
-  const nonProduction = /(^|[.\-/])(local|localhost|127\.0\.0\.1|staging|stg|dev)([.\-/:]|$)/i
-  const isProduction = !nonProduction.test(url) && (url.includes('supabase.co') || url.includes('prod'))
+  const normalized = url.replace(/\/+$/, '')
+
+  // Positive identity: URL harus menyebut project ini ATAU host dev lokal.
+  // Menolak project Supabase lain / target tak dikenal daripada menebak.
+  const hostedMatch = normalized.match(/^https?:\/\/([a-z0-9-]+)\.supabase\.co/i)
+  const isLocal = /(^|[.\-/])(localhost|127\.0\.0\.1)([.\-/:]|$)/i.test(normalized)
+
+  if (hostedMatch && hostedMatch[1] !== LAKOKU_PROJECT_REF) {
+    console.error(
+      `REFUSING_WRONG_PROJECT: URL menunjuk project "${hostedMatch[1]}", ` +
+        `bukan "${LAKOKU_PROJECT_REF}". Audit dibatalkan.`,
+    )
+    process.exit(1)
+  }
+  if (!hostedMatch && !isLocal) {
+    console.error(
+      `REFUSING_UNRECOGNIZED_TARGET: URL "${url}" bukan Supabase ${LAKOKU_PROJECT_REF} ` +
+        'maupun host lokal. Audit dibatalkan.',
+    )
+    process.exit(1)
+  }
+
+  const isProduction = hostedMatch !== null
   return { url, isProduction }
 }
 

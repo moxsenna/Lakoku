@@ -30,6 +30,13 @@ import {
 import { sanitizeChoiceValidationCodes } from './model-call-errors'
 import { parseChoiceModelJson } from './choice-response-validation'
 import {
+  buildSemanticJudgePrompt,
+  SemanticJudgeResultSchema,
+  SEMANTIC_JUDGE_UNAVAILABLE,
+  type SemanticJudgeInput,
+  type SemanticJudgeResult,
+} from './semantic-continuation-judge'
+import {
   asV1Compat,
   createEmptyTasteProfile,
   type TasteProfileV2,
@@ -1013,6 +1020,68 @@ async function generateChoiceJson(args: {
   throw lastError ?? new Error('gateway-provider: semua kandidat model choices gagal.')
 }
 
+async function generateSemanticJudgeJson(args: {
+  chain: ModelCandidate[]
+  input: SemanticJudgeInput
+  route?: AiModelRoute
+  options: ModelCallExecutionOptions
+}): Promise<SemanticJudgeResult> {
+  const { system, user } = buildSemanticJudgePrompt(args.input)
+  let lastError: unknown
+
+  // Bounded candidates: maksimal 2 (1 primary + 1 fallback)
+  const effectiveChain = args.chain.slice(0, 2)
+  for (const candidate of effectiveChain) {
+    throwIfAborted(args.options.signal)
+    const { model } = candidate
+    const timeoutMs = 30_000
+    const candidateTimeoutSignal = AbortSignal.timeout(timeoutMs)
+    const requestSignal = args.options.signal
+      ? AbortSignal.any([args.options.signal, candidateTimeoutSignal])
+      : candidateTimeoutSignal
+
+    try {
+      return (await executeObservedModelCall({
+        context: args.options.telemetryContext,
+        candidate: candidateIdentity(candidate),
+        useCase: args.route?.useCase ?? 'continuity_judge',
+        workflowPhase: args.options.workflowPhase,
+        call: () =>
+          streamText({
+            model,
+            system,
+            prompt: user,
+            temperature: 0.0,
+            maxOutputTokens: 512,
+            abortSignal: requestSignal,
+            maxRetries: 0,
+          }),
+        consume: async (text) => {
+          throwIfAborted(args.options.signal)
+          let jsonText = text.trim()
+          const codeFenceMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
+          if (codeFenceMatch?.[1]) {
+            jsonText = codeFenceMatch[1].trim()
+          }
+          const rawParsed = JSON.parse(jsonText)
+          const parsed = SemanticJudgeResultSchema.safeParse(rawParsed)
+          if (!parsed.success) {
+            throw new Error('MALFORMED_SEMANTIC_JUDGE_RESPONSE')
+          }
+          return parsed.data
+        },
+      })) as SemanticJudgeResult
+    } catch (error) {
+      if (args.options.signal?.aborted) throw args.options.signal.reason ?? error
+      lastError = error
+      continue
+    }
+  }
+
+  // Jika semua kandidat gagal teknis / malformed, lemparkan controlled error
+  throw new Error(SEMANTIC_JUDGE_UNAVAILABLE)
+}
+
 /**
  * Provider LLM nyata. `generatePlan` & scaffold metadata memakai provider
  * deterministik (canon-safe); hanya prosa yang berasal dari model.
@@ -1022,12 +1091,14 @@ async function generateChoiceJson(args: {
  * @param aiRoute — route model dari DB ai_model_routes (opsional). Bila ada,
  *   digunakan sebagai prioritas pertama sebelum env/code fallback.
  * @param choicesRoute — route khusus choices (opsional). Fallback ke aiRoute bila kosong.
+ * @param judgeRoute — route khusus continuity judge (opsional). Fallback ke aiRoute bila kosong.
  */
 export function createGatewayProvider(
   opts: ProseModel = {},
   genPolicy: GenerationRuntimePolicy = DEFAULT_RUNTIME_POLICY,
   aiRoute?: AiModelRoute,
   choicesRoute?: AiModelRoute,
+  judgeRoute?: AiModelRoute,
 ): GenerationProvider {
   const base = createDeterministicProvider(genPolicy)
 
@@ -1075,6 +1146,9 @@ export function createGatewayProvider(
       })
   }
   const choiceChain = resolveModelChain(choiceModelOverride ?? opts.model, resolvedChoicesRoute)
+
+  const resolvedJudgeRoute = judgeRoute ?? aiRoute
+  const judgeChain = resolveModelChain(opts.model, resolvedJudgeRoute)
 
   return {
     name: chain.map((c) => c.label).join(' → '),
@@ -1177,6 +1251,21 @@ export function createGatewayProvider(
         chain: choiceChain,
         input,
         route: resolvedChoicesRoute,
+        options,
+      })
+    },
+
+    evaluateSemanticContinuity(
+      input: SemanticJudgeInput,
+      options?: ModelCallExecutionOptions,
+    ): Promise<SemanticJudgeResult> {
+      if (!options) {
+        throw new Error('gateway-provider: telemetry execution options are required.')
+      }
+      return generateSemanticJudgeJson({
+        chain: judgeChain,
+        input,
+        route: resolvedJudgeRoute,
         options,
       })
     },

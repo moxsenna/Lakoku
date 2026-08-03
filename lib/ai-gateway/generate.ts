@@ -24,7 +24,12 @@ import {
   checkChapter48Block,
   runContinuityChecks,
 } from '@lakoku/narrative-core'
-import { generatePlan, writeChapter, type GatewayDeps } from './gateway'
+import { generatePlan, writeChapter, evaluateSemanticContinuity, type GatewayDeps } from './gateway'
+import {
+  extractJudgeInput,
+  mapSemanticCodesToFindings,
+  SEMANTIC_JUDGE_UNAVAILABLE,
+} from './semantic-continuation-judge'
 import type { ChapterDraftParsed } from './schemas'
 import type { DraftDefect, ModelCallExecutionOptions } from './provider'
 import { throwIfAborted } from '@/lib/runtime/abort'
@@ -178,7 +183,7 @@ export async function generateChapter(
     attempts++
     draft = await writeChapter(
       deps,
-      { snapshot, plan, repairFindings: bFindings },
+      { snapshot, plan, continuation, brief, repairFindings: bFindings },
       args.executionOptions
         ? {
             ...args.executionOptions,
@@ -191,6 +196,100 @@ export async function generateChapter(
   }
   if (needsRepair(bFindings)) return fail('B', bFindings)
 
+  // Re-check Layer A setelah Layer B repair untuk memastikan tidak ada regresi Layer A
+  aFindings = runLayerA(snapshot, draft, chapterNumber, continuation, threadContext)
+  if (needsRepair(aFindings)) return fail('A', aFindings)
+
+  // ---- Lapis C (Semantic Continuation Judge) ----
+  // WAJIB dijalankan jika Bab N>1 memiliki previousChoice.
+  let semanticFindings: Finding[] = []
+  if (continuation?.previousChoice != null) {
+    const judgeInput = extractJudgeInput(
+      continuation,
+      draft.title,
+      draft.paragraphs.join('\n\n'),
+    )
+    if (!judgeInput) {
+      throw new Error(SEMANTIC_JUDGE_UNAVAILABLE)
+    }
+
+    let judgeResult
+    try {
+      judgeResult = await evaluateSemanticContinuity(
+        deps,
+        judgeInput,
+        args.executionOptions
+          ? {
+              ...args.executionOptions,
+              workflowPhase: 'CHAPTER_CONTINUITY_JUDGE_INITIAL',
+            }
+          : undefined,
+      )
+    } catch (err) {
+      // Missing evaluator atau technical failure -> throw SEMANTIC_JUDGE_UNAVAILABLE (retryable, NO publish)
+      throw new Error(SEMANTIC_JUDGE_UNAVAILABLE, { cause: err })
+    }
+
+    if (judgeResult.verdict === 'FAIL') {
+      semanticFindings = mapSemanticCodesToFindings(judgeResult.codes)
+
+      // Bounded Semantic Rewrite #1 (maksimal 1x rewrite)
+      throwIfAborted(args.executionOptions?.signal)
+      attempts++
+      draft = await writeChapter(
+        deps,
+        { snapshot, plan, continuation, brief, repairFindings: semanticFindings },
+        args.executionOptions
+          ? {
+              ...args.executionOptions,
+              workflowPhase: 'CHAPTER_PROSE_SEMANTIC_REPAIR_1',
+            }
+          : undefined,
+      )
+      throwIfAborted(args.executionOptions?.signal)
+
+      // Post-semantic rewrite: VALIDATION-ONLY (tanpa repair loop tambahan)
+      const postAFindings = runLayerA(
+        snapshot,
+        draft,
+        chapterNumber,
+        continuation,
+        threadContext,
+      )
+      if (needsRepair(postAFindings)) return fail('A', postAFindings)
+
+      const postBFindings = validateLayerB(snapshot, draft, layerBContext ?? {}).findings
+      if (needsRepair(postBFindings)) return fail('B', postBFindings)
+
+      const judgeInput2 = extractJudgeInput(
+        continuation,
+        draft.title,
+        draft.paragraphs.join('\n\n'),
+      )
+      if (!judgeInput2) throw new Error(SEMANTIC_JUDGE_UNAVAILABLE)
+
+      let judgeResult2
+      try {
+        judgeResult2 = await evaluateSemanticContinuity(
+          deps,
+          judgeInput2,
+          args.executionOptions
+            ? {
+                ...args.executionOptions,
+                workflowPhase: 'CHAPTER_CONTINUITY_JUDGE_AFTER_REPAIR_1',
+              }
+            : undefined,
+        )
+      } catch (err) {
+        throw new Error(SEMANTIC_JUDGE_UNAVAILABLE, { cause: err })
+      }
+
+      if (judgeResult2.verdict === 'FAIL') {
+        return fail('B', mapSemanticCodesToFindings(judgeResult2.codes))
+      }
+    }
+  }
+
   // Jaminan: canon tidak berubah selama generasi/repair.
   if (canonFingerprint(snapshot) !== fpBefore) {
     throw new Error('Invariant dilanggar: canon berubah selama generasi.')
@@ -201,6 +300,6 @@ export async function generateChapter(
     chapterNumber,
     draft,
     attempts,
-    findings: [...aFindings, ...bFindings], // mungkin berisi MINOR
+    findings: [...aFindings, ...bFindings, ...semanticFindings], // mungkin berisi MINOR/MAJOR yang berhasil diperbaiki
   }
 }

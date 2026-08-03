@@ -35,6 +35,12 @@
  * Gate programatik di sini PERLU tapi TIDAK CUKUP. Keputusan rilis butuh
  * pembacaan manusia atas prosa penuh terhadap rubrik semantik 5 poin yang
  * dicetak di akhir run.
+ *
+ * SOAK (LAKOKU_CONTINUITY_SOAK_PAIRS):
+ *   Jumlah pasangan A/B berturut-turut dalam satu proses, default 5
+ *   (10 cabang total). Setiap pasangan memakai fixture yang sama; prosa
+ *   penuh tiap cabang ditulis ke .zcode/artifacts/continuity-ab/run-<ts>/
+ *   soak-<i>/. Ringkasan akhir mencetak tabel 2×N cabang untuk human rubric.
  */
 
 import { randomUUID } from 'node:crypto'
@@ -67,6 +73,17 @@ function resolveMode(): SmokeMode {
   if (raw === 'provider-only' || raw === 'db-e2e') return raw
   console.error(`LAKOKU_CONTINUITY_SMOKE_MODE tidak dikenal: ${raw} (provider-only|db-e2e)`)
   process.exit(1)
+}
+
+function resolveSoakPairs(): number {
+  const raw = process.env.LAKOKU_CONTINUITY_SOAK_PAIRS?.trim()
+  if (!raw) return 5
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n < 1 || n > 10) {
+    console.error(`LAKOKU_CONTINUITY_SOAK_PAIRS tidak valid: ${raw} (integer 1..10)`)
+    process.exit(1)
+  }
+  return n
 }
 
 function isProductionSupabaseUrl(url: string | undefined): boolean {
@@ -140,97 +157,130 @@ async function runProviderOnly(): Promise<void> {
     { label: 'B', storyId: 'story-ab-test-b', continuation: NADIA_RAKA_CONTINUATION_B, brief: NADIA_RAKA_BRIEF_B },
   ]
 
-  const results: Array<{ label: string; pass: boolean }> = []
+  const soakPairs = resolveSoakPairs()
+  const results: Array<{
+    soak: number
+    label: string
+    status: string
+    title: string
+    kata: number
+    pass: boolean
+  }> = []
   // Prosa PENUH ditulis ke artefak: rubrik #3 (konflik diteruskan, bukan
   // disebut sekali) tidak bisa dinilai dari excerpt saja.
   const runDir = path.join(process.cwd(), '.zcode/artifacts/continuity-ab', `run-${Date.now()}`)
   mkdirSync(runDir, { recursive: true })
+  console.log(`soak pairs     : ${soakPairs} (${soakPairs * 2} cabang)`)
+  console.log(`artefak dir    : ${runDir}`)
 
-  for (const branch of branches) {
-    // Telemetry context wajib: gateway-provider menolak panggilan tanpa ini.
-    const telemetryContext = createSynchronousProviderContext({
-      userId: SMOKE_USER_ID,
-      storyId: branch.storyId,
-      chapterNumber: 2,
-      generationKind: 'personalized',
-      correlationId: randomUUID(),
-    })
+  for (let soak = 1; soak <= soakPairs; soak++) {
+    const soakDir = path.join(runDir, `soak-${soak}`)
+    mkdirSync(soakDir, { recursive: true })
 
-    const result = await generateChapter(
-      { provider },
-      {
-        snapshot,
-        blueprint: NADIA_RAKA_BLUEPRINT,
+    for (const branch of branches) {
+      // Telemetry context wajib: gateway-provider menolak panggilan tanpa ini.
+      const telemetryContext = createSynchronousProviderContext({
+        userId: SMOKE_USER_ID,
+        storyId: branch.storyId,
         chapterNumber: 2,
-        continuation: branch.continuation,
-        brief: branch.brief,
-        executionOptions: {
-          telemetryContext,
-          workflowPhase: 'CONTINUITY_AB_SMOKE',
+        generationKind: 'personalized',
+        correlationId: randomUUID(),
+      })
+
+      const result = await generateChapter(
+        { provider },
+        {
+          snapshot,
+          blueprint: NADIA_RAKA_BLUEPRINT,
+          chapterNumber: 2,
+          continuation: branch.continuation,
+          brief: branch.brief,
+          executionOptions: {
+            telemetryContext,
+            workflowPhase: 'CONTINUITY_AB_SMOKE',
+          },
         },
-      },
-    )
+      )
 
-    if (!result.draft) {
-      console.error(`\nCABANG ${branch.label}: generasi gagal (status ${result.status}).`)
-      console.error(JSON.stringify(result.findings, null, 2))
-      process.exit(1)
+      if (!result.draft) {
+        console.error(`\nCABANG soak ${soak} · ${branch.label}: generasi gagal (status ${result.status}).`)
+        console.error(JSON.stringify(result.findings, null, 2))
+        process.exit(1)
+      }
+
+      const paragraphs = result.draft.paragraphs
+      const findings = runContinuityChecks(
+        snapshot,
+        { chapterNumber: 2, paragraphs },
+        branch.continuation,
+      )
+      printBranch(
+        `${soak}:${branch.label}`,
+        branch.continuation.previousChoice?.label ?? '(tanpa pilihan)',
+        result.status,
+        paragraphs,
+        findings,
+      )
+
+      const artifact = path.join(soakDir, `cabang-${branch.label}.md`)
+      writeFileSync(
+        artifact,
+        [
+          `# Cabang ${soak}:${branch.label}`,
+          ``,
+          `- provider chain: ${provider.name}`,
+          `- pilihan Bab 1: ${branch.continuation.previousChoice?.label ?? '-'}`,
+          `- konsekuensi: ${(branch.continuation.previousChoice?.consequence ?? []).join(' | ')}`,
+          `- status: ${result.status}`,
+          `- judul: ${result.draft.title}`,
+          ``,
+          `## Ending Bab 1 (jangkar)`,
+          ``,
+          ...(branch.continuation.previousChapter?.endingParagraphs ?? []).map((p) => `> ${p}`),
+          ``,
+          `## Prosa Bab 2 (PENUH)`,
+          ``,
+          ...paragraphs,
+          ``,
+          `## Findings`,
+          ``,
+          ...(findings.length === 0
+            ? ['(kosong)']
+            : findings.map((f) => `- [${f.severity}] ${f.code} — ${f.message}`)),
+          ``,
+        ].join('\n'),
+        'utf8',
+      )
+      console.log(`\nprosa penuh   : ${artifact}`)
+
+      const blocking = findings.filter((f) => f.severity === 'CRITICAL' || f.severity === 'MAJOR')
+      results.push({
+        soak,
+        label: branch.label,
+        status: result.status,
+        title: result.draft.title,
+        kata: paragraphs.join(' ').split(/\s+/).filter(Boolean).length,
+        pass: blocking.length === 0,
+      })
     }
-
-    const paragraphs = result.draft.paragraphs
-    const findings = runContinuityChecks(
-      snapshot,
-      { chapterNumber: 2, paragraphs },
-      branch.continuation,
-    )
-    printBranch(
-      branch.label,
-      branch.continuation.previousChoice?.label ?? '(tanpa pilihan)',
-      result.status,
-      paragraphs,
-      findings,
-    )
-
-    const artifact = path.join(runDir, `cabang-${branch.label}.md`)
-    writeFileSync(
-      artifact,
-      [
-        `# Cabang ${branch.label}`,
-        ``,
-        `- provider chain: ${provider.name}`,
-        `- pilihan Bab 1: ${branch.continuation.previousChoice?.label ?? '-'}`,
-        `- konsekuensi: ${(branch.continuation.previousChoice?.consequence ?? []).join(' | ')}`,
-        `- status: ${result.status}`,
-        `- judul: ${result.draft.title}`,
-        ``,
-        `## Ending Bab 1 (jangkar)`,
-        ``,
-        ...(branch.continuation.previousChapter?.endingParagraphs ?? []).map((p) => `> ${p}`),
-        ``,
-        `## Prosa Bab 2 (PENUH)`,
-        ``,
-        ...paragraphs,
-        ``,
-        `## Findings`,
-        ``,
-        ...(findings.length === 0
-          ? ['(kosong)']
-          : findings.map((f) => `- [${f.severity}] ${f.code} — ${f.message}`)),
-        ``,
-      ].join('\n'),
-      'utf8',
-    )
-    console.log(`\nprosa penuh   : ${artifact}`)
-
-    const blocking = findings.filter((f) => f.severity === 'CRITICAL' || f.severity === 'MAJOR')
-    results.push({ label: branch.label, pass: blocking.length === 0 })
   }
 
   console.log(`\n${'='.repeat(72)}`)
-  console.log('GATE PROGRAMATIK (perlu, TIDAK cukup)')
+  console.log('GATE PROGRAMATIK (perlu, TIDAK cukup) — 2×N cabang')
   console.log('='.repeat(72))
+  console.log('soak | cabang | status | kata | judul | PASS programatik')
+  console.log('-'.repeat(72))
   for (const r of results) {
-    console.log(`  cabang ${r.label}: ${r.pass ? 'PASS' : 'FAIL'} (bebas CRITICAL/MAJOR)`)
+    console.log(
+      `  ${String(r.soak).padStart(2)}  |   ${r.label}    | ${r.status.padEnd(9)} | ${String(r.kata).padStart(4)} | ${r.title} | ${r.pass ? 'PASS' : 'FAIL'}`,
+    )
+  }
+  const passCount = results.filter((r) => r.pass).length
+  console.log('-'.repeat(72))
+  console.log(`TOTAL: ${passCount}/${results.length} cabang bebas CRITICAL/MAJOR`)
+  if (passCount !== results.length) {
+    console.error('ADA CABANG GAGAL GATE PROGRAMATIK — tidak boleh dianggap siap rilis.')
+    process.exit(1)
   }
 
   console.log(`\n${'='.repeat(72)}`)
@@ -242,9 +292,8 @@ async function runProviderOnly(): Promise<void> {
   console.log('  3. Konflik lama DITERUSKAN, bukan hanya disebut sekali lalu ditinggal?')
   console.log('  4. Perpindahan waktu/lokasi dijembatani secara eksplisit?')
   console.log('  5. Cabang A vs B berbeda SECARA KAUSAL, bukan hanya beda kata?')
-  console.log('Tanpa kelimanya PASS di kedua cabang: tidak merge, tidak deploy, tidak canary.')
-
-  if (!results.every((r) => r.pass)) process.exit(1)
+  console.log('Tanpa kelimanya PASS di kedua cabang tiap soak: tidak merge, tidak deploy, tidak canary.')
+  console.log(`Semua prosa penuh: ${runDir}`)
 }
 
 function runDbE2E(): never {

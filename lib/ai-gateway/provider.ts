@@ -158,6 +158,8 @@ export type DraftDefect =
   | 'SOFT_CONTRA'
   | 'EMOTION_BAD'
 
+import type { SemanticJudgeInput, SemanticJudgeResult } from './semantic-continuation-judge'
+
 export interface GenerationProvider {
   /** Nama internal — untuk log/korelasi, tak pernah ke pembaca. */
   readonly name: string
@@ -171,6 +173,10 @@ export interface GenerationProvider {
     input: StoryContractInput,
     options?: StoryContractCallOptions,
   ): Promise<unknown>
+  evaluateSemanticContinuity?(
+    input: SemanticJudgeInput,
+    options?: ModelCallExecutionOptions,
+  ): Promise<SemanticJudgeResult>
 }
 
 /** Policy runtime generasi (target kata & scene). Diambil dari generation_policy DB. */
@@ -418,6 +424,10 @@ export function createDeterministicProvider(
         emotionBeats,
         softClaims,
       }
+    },
+
+    async evaluateSemanticContinuity(): Promise<SemanticJudgeResult> {
+      return { verdict: 'PASS', codes: [] }
     },
 
     async generateChoices(input: ChoiceProviderInput, _options): Promise<unknown> {

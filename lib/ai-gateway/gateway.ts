@@ -71,6 +71,18 @@ export async function generateStoryContractRaw(
   return generateStoryContract.call(deps.provider, input, options)
 }
 
+export async function evaluateSemanticContinuity(
+  deps: GatewayDeps,
+  input: import('./semantic-continuation-judge').SemanticJudgeInput,
+  options?: ModelCallExecutionOptions,
+): Promise<import('./semantic-continuation-judge').SemanticJudgeResult> {
+  const evaluator = deps.provider.evaluateSemanticContinuity
+  if (!evaluator) {
+    throw new Error('SEMANTIC_JUDGE_UNAVAILABLE')
+  }
+  return evaluator.call(deps.provider, input, options)
+}
+
 export async function generatePlan(
   deps: GatewayDeps,
   args: {

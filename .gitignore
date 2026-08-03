@@ -19,7 +19,9 @@ node_modules
 .DS_Store
 .worktrees/
 .aionrs/
-.zcode/plans/
+.zcode/
+.commandcode/
+.omo/
 
 # TestSprite intermediate artifacts (logs, raw results, config)
 testsprite_tests/tmp/

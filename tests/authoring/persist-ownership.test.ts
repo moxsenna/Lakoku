@@ -74,7 +74,7 @@ describe('persistStoryBible transactional replacement', () => {
       p_story_id: 'story-a',
       p_owner_user_id: 'a1000000-0000-4000-8000-000000000001',
       p_title: 'Owner A Story',
-      p_cover: '/placeholder.svg?height=400&width=300',
+      p_cover: '/covers/default-cover.webp',
       p_tagline: 'Tagline valid panjang',
       p_role: 'Main Role',
       p_tropes: ['Found family', 'Hidden truth'],

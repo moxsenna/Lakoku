@@ -140,7 +140,7 @@ describe('runChapterGenerationAttempt dispatcher', () => {
     expect(callArg.triggerChoiceId).toBeNull()
   })
 
-  it('standard generator receives attemptId and jobContext but not trigger choice', async () => {
+  it('standard generator receives attemptId, jobContext, and trigger choice', async () => {
     mocks.adminFactory.mockReturnValue(contractClient(null))
     const { runChapterGenerationAttempt } = await import('@/lib/runtime/generation-mode')
     const jobContext = {
@@ -167,7 +167,7 @@ describe('runChapterGenerationAttempt dispatcher', () => {
     })
     const callArg = mocks.generateNextChapterReal.mock.calls[0][0]
     expect(callArg.attemptId).toBe('job-2')
-    expect(callArg).not.toHaveProperty('triggerChoiceId')
+    expect(callArg.triggerChoiceId).toBe('choice-A')
     expect(callArg.jobContext).toBe(jobContext)
   })
 

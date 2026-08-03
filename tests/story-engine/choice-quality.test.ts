@@ -21,10 +21,6 @@ import {
 
 // ---- Helpers ----
 
-function codes(findings: ChoiceFinding[]): string[] {
-  return findings.map((f) => f.code)
-}
-
 function hasCode(findings: ChoiceFinding[], code: string): boolean {
   return findings.some((f) => f.code === code)
 }

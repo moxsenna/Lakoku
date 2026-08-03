@@ -9,6 +9,8 @@
  */
 
 import type { CanonSnapshot, ChapterBlueprint, Finding } from '@lakoku/narrative-core'
+import type { ContinuationContext } from '@lakoku/narrative-core'
+import type { PreProseChapterBrief } from '../story-engine/pre-prose-brief'
 import { z } from 'zod'
 import {
   ChapterDraftSchema,
@@ -69,9 +71,27 @@ export async function generateStoryContractRaw(
   return generateStoryContract.call(deps.provider, input, options)
 }
 
+export async function evaluateSemanticContinuity(
+  deps: GatewayDeps,
+  input: import('./semantic-continuation-judge').SemanticJudgeInput,
+  options?: ModelCallExecutionOptions,
+): Promise<import('./semantic-continuation-judge').SemanticJudgeResult> {
+  const evaluator = deps.provider.evaluateSemanticContinuity
+  if (!evaluator) {
+    throw new Error('SEMANTIC_JUDGE_UNAVAILABLE')
+  }
+  return evaluator.call(deps.provider, input, options)
+}
+
 export async function generatePlan(
   deps: GatewayDeps,
-  args: { snapshot: CanonSnapshot; blueprint: ChapterBlueprint; chapterNumber: number },
+  args: {
+    snapshot: CanonSnapshot
+    blueprint: ChapterBlueprint
+    chapterNumber: number
+    continuation?: ContinuationContext | null
+    brief?: PreProseChapterBrief | null
+  },
 ): Promise<ChapterPlan> {
   const raw = await deps.provider.generatePlan(args)
   const parsed = parsePlan(raw)
@@ -86,6 +106,8 @@ export async function writeChapter(
   args: {
     snapshot: CanonSnapshot
     plan: ChapterPlan
+    continuation?: ContinuationContext | null
+    brief?: PreProseChapterBrief | null
     repairFindings?: Finding[]
     injectDefects?: DraftDefect[]
   },
@@ -95,6 +117,8 @@ export async function writeChapter(
   const raw = await deps.provider.writeChapter({
     snapshot: args.snapshot,
     plan: args.plan,
+    continuation: args.continuation,
+    brief: args.brief,
     repairFindings: args.repairFindings,
     injectDefects: args.injectDefects,
   }, options)

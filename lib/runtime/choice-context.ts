@@ -1,7 +1,8 @@
 import 'server-only'
 import type { ChapterDraftParsed, ChoiceInput } from '@lakoku/ai-gateway'
-import type { ChoiceHistoryEntry, ChapterBrief } from '@/lib/story-engine/chapter-brief'
+import type { ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
 import { normalizeRouteState, type RouteState } from '@/lib/story-engine/route-state'
+import { buildEndingParagraphs as buildEndingParagraphsPure } from '@lakoku/narrative-core'
 
 /** 3–5 ending paragraphs from final repaired prose only. */
 export type EndingParagraphs = ChoiceInput['lastParagraphs']
@@ -14,17 +15,13 @@ export type FinalChapterProse = {
 /**
  * Build ending paragraphs from final repaired draft paragraphs only.
  * Never use blueprint, synopsis, pre-repair draft, or previous chapter.
+ * Pure sumber kebenaran: lib/narrative/ending-excerpt.ts.
  */
 export function buildEndingParagraphs(
   finalParagraphs: string[],
   titleFallback = '',
 ): EndingParagraphs {
-  const paragraphs = finalParagraphs.filter((p) => p.trim().length > 0)
-  const slice = paragraphs.slice(-5)
-  while (slice.length < 3) {
-    slice.unshift(paragraphs[0] ?? titleFallback)
-  }
-  return slice as EndingParagraphs
+  return buildEndingParagraphsPure(finalParagraphs, titleFallback) as EndingParagraphs
 }
 
 /** Explicit final-chapter view used as choice grounding source of truth. */

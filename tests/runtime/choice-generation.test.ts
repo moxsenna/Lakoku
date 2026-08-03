@@ -21,10 +21,11 @@ vi.mock('@lakoku/narrative-core', async () => {
   const actual = await import('@/lib/narrative/index')
   return actual
 })
-vi.mock('@lakoku/narrative-core/server', async () => {
-  const actual = await import('@/lib/narrative/server')
-  return actual
-})
+vi.mock('@lakoku/narrative-core/server', () => ({
+  loadCanonSnapshot: vi.fn(),
+  persistRetrievalLog: vi.fn(),
+  loadContinuationContextForChapter: vi.fn().mockResolvedValue({ ok: true, continuation: null }),
+}))
 vi.mock('@lakoku/ai-gateway', async () => {
   const actual = await import('@/lib/ai-gateway/index')
   return actual
@@ -35,17 +36,6 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
 })
 
 // ---- Helpers ----
-
-function emptyEffect() {
-  return {
-    routeDeltas: {},
-    trustDeltas: {},
-    flagsSet: {},
-    evidenceAdded: [],
-    endingBiasDeltas: {},
-    threadTouches: [],
-  }
-}
 
 function distinctEffect(index: number) {
   return {

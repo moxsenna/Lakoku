@@ -96,8 +96,16 @@ export async function continueStandardGeneration(input: {
   userId: string
   chapterNumber: number
   correlationId: string
+  triggerChoiceId?: string | null
 }): Promise<{ nextChapterReady: boolean }> {
+  const generationInput = {
+    storyId: input.storyId,
+    userId: input.userId,
+    chapterNumber: input.chapterNumber,
+    correlationId: input.correlationId,
+    ...('triggerChoiceId' in input ? { triggerChoiceId: input.triggerChoiceId } : {}),
+  }
   const key = continuationJobKey(input.storyId, input.chapterNumber)
-  const promise = startOrReuseJob(key, () => generateNextChapterReal(input))
+  const promise = startOrReuseJob(key, () => generateNextChapterReal(generationInput))
   return raceContinuation(promise)
 }

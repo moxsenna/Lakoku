@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { SEMANTIC_JUDGE_UNAVAILABLE } from '@/lib/ai-gateway/semantic-continuation-judge'
 
 const mocks = vi.hoisted(() => ({
   claimGenerationJob: vi.fn(),
@@ -214,6 +215,42 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
     const finishArg = mocks.finishGenerationJobAttempt.mock.calls[0][0]
     expect(finishArg.outcome).toBe('RETRY_WAIT')
     expect(finishArg.availableAt).toBeTruthy()
+  })
+
+  it('judge technical failure (thrown SEMANTIC_JUDGE_UNAVAILABLE) → RETRY_WAIT with exact reason', async () => {
+    mocks.runChapterGenerationAttempt.mockRejectedValueOnce(
+      new Error(SEMANTIC_JUDGE_UNAVAILABLE),
+    )
+    const { runAlreadyClaimedGenerationJob } = await import('@/lib/runtime/generation-worker')
+
+    await expect(runAlreadyClaimedGenerationJob(JOB)).resolves.toMatchObject({
+      ok: false,
+      outcome: 'RETRY_WAIT',
+      reason: SEMANTIC_JUDGE_UNAVAILABLE,
+    })
+    expect(mocks.finishGenerationJobAttempt).toHaveBeenCalledTimes(1)
+    expect(mocks.finishGenerationJobAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'RETRY_WAIT',
+        errorCode: SEMANTIC_JUDGE_UNAVAILABLE,
+        errorClass: 'RETRYABLE',
+      }),
+    )
+  })
+
+  it('generic generator throw → RETRY_WAIT with GENERATOR_EXCEPTION reason', async () => {
+    mocks.runChapterGenerationAttempt.mockRejectedValueOnce(new Error('boom'))
+    const { runAlreadyClaimedGenerationJob } = await import('@/lib/runtime/generation-worker')
+    const res = await runAlreadyClaimedGenerationJob(JOB)
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.outcome).toBe('RETRY_WAIT')
+    expect(mocks.finishGenerationJobAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'RETRY_WAIT',
+        errorCode: 'GENERATOR_EXCEPTION',
+        errorClass: 'RETRYABLE',
+      }),
+    )
   })
 
   it('TRANSIENT publication failure finishes RETRY_WAIT with approved retry payload', async () => {

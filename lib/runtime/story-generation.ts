@@ -13,13 +13,14 @@ import type { CheckpointMutationResult } from './chapter-generation-checkpoint.p
 import { classifyGenerationPublicationError } from './generation-job-error'
 import { withGenerationSlot } from './generation-concurrency'
 import {
-  compileContext,
   buildBlueprints,
   TOTAL_CHAPTERS,
   type CanonSnapshot,
   type ChapterBlueprint,
 } from '@lakoku/narrative-core'
-import { loadCanonSnapshot, persistRetrievalLog } from '@lakoku/narrative-core/server'
+import { loadCanonSnapshot } from '@lakoku/narrative-core/server'
+import { loadContinuationContextForChapter } from './continuation-context.server'
+import { buildPreProseChapterBrief } from '../story-engine/pre-prose-brief'
 import {
   generateChapter,
   generateChoiceBranch,
@@ -43,7 +44,7 @@ import {
 import type { GenerationStage } from '@/lib/observability/generation-stages'
 import { boundedLogId, safeErrorInfo } from '@/lib/observability/safe-error'
 import type { ChapterBrief, ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
-import { normalizeRouteState, type RouteState } from '@/lib/story-engine/route-state'
+import { type RouteState } from '@/lib/story-engine/route-state'
 import { summarizeRouteStateForPrompt } from '@/lib/story-engine/route-state'
 import { createSynchronousProviderContext } from './generation-provider-context'
 import type { ProviderCallContext } from '@/lib/observability/generation-provider-call.contract'
@@ -106,7 +107,7 @@ function legacyLeaseKey(
  * Prompt/generation contract version. Bump when the prompt contract or generation
  * policy changes in a way that must invalidate reuse of an earlier prose checkpoint.
  */
-export const GENERATION_PROMPT_CONTRACT_VERSION = 2
+export const GENERATION_PROMPT_CONTRACT_VERSION = 3
 
 export type RealGenerateResult =
   | {
@@ -452,6 +453,11 @@ export interface StandardGenerateInput {
   /** Durable attempt id; used for checkpoint identity. Defaults to correlationId. */
   attemptId?: string | null
   /**
+   * Pilihan di Bab N−1 yang memicu generasi Bab N. Sumber kebenaran untuk
+   * memilih entry reader_states.choice_history yang tepat (bukan history[last]).
+   */
+  triggerChoiceId?: string | null
+  /**
    * Worker path: reuse job lease + fenced publish. Skip own acquireGenerationLease.
    * Propagate signal into provider-facing work where possible.
    */
@@ -776,14 +782,36 @@ async function generateNextChapterRealInner(
           .slice(0, 32)
       : NO_CREATIVE_DIRECTION_FINGERPRINT
 
-    // 3) Kompilasi konteks + catat jejak retrieval (best-effort observability).
-    stage = 'COMPILE_CONTEXT'
-    const packet = compileContext(snapshot, chapterNumber)
-    await bestEffort(
-      'RETRIEVAL_LOG_PERSIST_FAILED',
-      { storyId, chapterNumber, correlationId, stage },
-      () => persistRetrievalLog(storyId, chapterNumber, packet),
-    )
+    // 3.5) Load continuation context & build pre-prose brief (fail-closed for N > 1)
+    const contRes = await loadContinuationContextForChapter({
+      storyId,
+      chapterNumber,
+      triggerChoiceId: input.triggerChoiceId,
+    })
+
+    if (!contRes.ok) {
+      await releaseLeaseOnce()
+      console.error('CONTINUATION_CONTEXT_LOAD_FAILED', {
+        storyId,
+        chapterNumber,
+        kind: contRes.kind,
+        detail: contRes.detail,
+      })
+      if (contRes.kind === 'TRANSIENT') {
+        return { ok: false, reason: 'TRANSIENT', detail: contRes.detail }
+      }
+      return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: contRes.detail }
+    }
+
+    const continuation = contRes.continuation
+    const preProseBrief = buildPreProseChapterBrief({
+      storyId,
+      chapterNumber,
+      snapshot,
+      blueprint,
+      continuation,
+      chapterBrief: null,
+    })
 
     // 4) Konteks thread untuk lifecycle check (state hidup di canon, bukan draft).
     const threadContext: ThreadContext = {
@@ -875,6 +903,8 @@ async function generateNextChapterRealInner(
           snapshot,
           blueprint,
           chapterNumber,
+          continuation,
+          brief: preProseBrief,
           threadContext,
           executionOptions: {
             telemetryContext: providerContext,

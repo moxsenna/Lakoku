@@ -37,6 +37,9 @@ vi.mock('@/lib/api/user-state', () => ({
 }))
 vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.cookieFactory }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@/lib/api/story-ownership.server', () => ({
+  isStoryOwnedBy: vi.fn(async () => true),
+}))
 
 const userId = '10000000-0000-4000-8000-000000000001'
 const correlationId = '20000000-0000-4000-8000-000000000002'
@@ -503,6 +506,7 @@ describe('choice route generation continuation', () => {
       userId,
       chapterNumber: 2,
       correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      triggerChoiceId: 'standard-choice',
     })
     expect(mocks.generateNextPersonalizedChapter).not.toHaveBeenCalled()
   })

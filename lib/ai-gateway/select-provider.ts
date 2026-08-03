@@ -34,9 +34,10 @@ export async function selectProvider(
   ProviderCallContextSchema.parse(context)
   const genPolicy = await getGenerationPolicy()
   if (process.env.NARRATIVE_PROVIDER === 'gateway') {
-    const [aiRoute, choicesRoute] = await Promise.all([
+    const [aiRoute, choicesRoute, judgeRoute] = await Promise.all([
       getAiModelRoute('chapter_prose'),
       getAiModelRoute('choices'),
+      getAiModelRoute('continuity_judge'),
     ])
     // Choices route must resolve independently. Only fall back to prose when
     // explicit compatibility env is set; otherwise leave choicesRoute undefined
@@ -52,11 +53,21 @@ export async function selectProvider(
         reason: 'no_db_choices_route_using_env_or_code_fallback',
       })
     }
+
+    let resolvedJudge = judgeRoute ?? undefined
+    if (!resolvedJudge) {
+      console.log('CONTINUITY_JUDGE_ROUTE_DEGRADED', {
+        reason: 'no_db_continuity_judge_route_using_prose_fallback',
+      })
+      resolvedJudge = aiRoute ?? undefined
+    }
+
     return createGatewayProvider(
       undefined,
       genPolicy,
       aiRoute ?? undefined,
       resolvedChoices,
+      resolvedJudge,
     )
   }
   return createDeterministicProvider(genPolicy)

@@ -20,9 +20,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import type { ChoiceBranch, ChapterDraftParsed } from '@/lib/ai-gateway/schemas'
-import type { PublishOutcome } from '@/lib/runtime/lifecycle'
 import type { ProviderCallContext } from '@/lib/observability/generation-provider-call.contract'
-import { TOTAL_CHAPTERS } from '@/lib/narrative/template'
 
 // ---- Mocks ----
 const mocks = vi.hoisted(() => ({
@@ -46,10 +44,11 @@ vi.mock('@lakoku/narrative-core', async () => {
   const actual = await import('@/lib/narrative/index')
   return actual
 })
-vi.mock('@lakoku/narrative-core/server', async () => {
-  const actual = await import('@/lib/narrative/server')
-  return actual
-})
+vi.mock('@lakoku/narrative-core/server', () => ({
+  loadCanonSnapshot: vi.fn(),
+  persistRetrievalLog: vi.fn(),
+  loadContinuationContextForChapter: vi.fn().mockResolvedValue({ ok: true, continuation: null }),
+}))
 vi.mock('@lakoku/ai-gateway', async () => {
   const actual = await import('@/lib/ai-gateway/index')
   return {

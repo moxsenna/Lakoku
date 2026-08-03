@@ -27,6 +27,10 @@ import {
 import { resolveGenerationLeaseTtlSeconds } from '@/lib/runtime/generation-lease-ttl'
 import { runChapterGenerationAttempt } from '@/lib/runtime/generation-mode'
 import { safeErrorInfo } from '@/lib/observability/safe-error'
+import {
+  isSemanticJudgeUnavailableError,
+  SEMANTIC_JUDGE_UNAVAILABLE,
+} from '@lakoku/ai-gateway'
 import { retryWindowFitsJobDeadline } from '@/lib/runtime/choice-execution-budget'
 
 // Re-export ClaimedGenerationJob type for callers (recovery route).
@@ -251,10 +255,13 @@ export async function executeClaimedJob(
         errorName: info.errorName,
         errorMessage: info.errorMessage,
       })
-      // Fall through to finish FAILED below via synthetic result.
+      // Controlled semantic-judge outage (timeout/429/network/malformed) keeps
+      // its own reason so telemetry/retry classification is exact, not generic.
       dispatchResult = {
         ok: false,
-        reason: 'GENERATOR_EXCEPTION',
+        reason: isSemanticJudgeUnavailableError(err)
+          ? SEMANTIC_JUDGE_UNAVAILABLE
+          : 'GENERATOR_EXCEPTION',
       }
     }
 

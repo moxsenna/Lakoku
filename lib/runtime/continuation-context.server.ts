@@ -111,13 +111,28 @@ function hasChoices(value: unknown): boolean {
 }
 
 export async function loadContinuationContextForChapter(input: {
-  userId: string
+  userId?: string
   storyId: string
   chapterNumber: number
   triggerChoiceId?: string | null
 }): Promise<LoadContinuationResult> {
   const n = input.chapterNumber
   if (n <= 1) return { ok: true, continuation: null }
+
+  let targetUserId = input.userId
+  if (!targetUserId) {
+    const db = createAdminClient()
+    const { data: storyRow, error } = await db
+      .from('stories')
+      .select('owner_user_id')
+      .eq('id', input.storyId)
+      .maybeSingle()
+
+    if (error || !storyRow?.owner_user_id) {
+      return { ok: false, kind: 'TRANSIENT', detail: 'STORY_OWNER_NOT_FOUND' }
+    }
+    targetUserId = storyRow.owner_user_id
+  }
 
   // 1) Canon snapshot + compileContext (packet projection).
   let snapshot
@@ -136,7 +151,7 @@ export async function loadContinuationContextForChapter(input: {
   }
 
   // 2) Reader state (truth untuk pilihan & route).
-  const reader = await loadReaderRow(input.userId, input.storyId)
+  const reader = await loadReaderRow(targetUserId!, input.storyId)
   if (reader === 'TRANSIENT') {
     return { ok: false, kind: 'TRANSIENT', detail: 'READER_STATE_LOAD_FAILED' }
   }

@@ -27,6 +27,7 @@ const routeMocks = vi.hoisted(() => ({
   clonePremiumStoryForUser: vi.fn(),
 }))
 
+vi.mock('server-only', () => ({}))
 vi.mock('@/lib/api/server', () => ({
   listExploreStories: routeMocks.listExploreStories,
   getStory: routeMocks.getStory,

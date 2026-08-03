@@ -35,10 +35,11 @@ vi.mock('@lakoku/narrative-core', async () => {
   const actual = await import('@/lib/narrative/index')
   return actual
 })
-vi.mock('@lakoku/narrative-core/server', async () => {
-  const actual = await import('@/lib/narrative/server')
-  return actual
-})
+vi.mock('@lakoku/narrative-core/server', () => ({
+  loadCanonSnapshot: vi.fn(),
+  persistRetrievalLog: vi.fn(),
+  loadContinuationContextForChapter: vi.fn().mockResolvedValue({ ok: true, continuation: null }),
+}))
 vi.mock('@lakoku/ai-gateway', async () => {
   const actual = await import('@/lib/ai-gateway/index')
   return actual
@@ -400,6 +401,7 @@ function makeDeps(options: {
       }
     }),
     persistRetrievalLog: vi.fn(async () => undefined),
+    loadContinuationContextForChapter: vi.fn(async () => ({ ok: true as const, continuation: null })),
     selectProvider: vi.fn(async () => provider),
     loadUsableProseCheckpoint: vi.fn(async (args: { freshness?: CheckpointFreshnessContext }) => {
       push('loadCheckpoint')
@@ -633,8 +635,8 @@ function personalizedCheckpoint(
     blueprintVersion: 1,
     directionFingerprint: personalizedDirectionFingerprint(),
     generationMode: 'personalized',
-    generationPolicyVersion: 2,
-    promptContractVersion: 2,
+    generationPolicyVersion: 3,
+    promptContractVersion: 3,
     jobId: PERSONALIZED_JOB_CONTEXT.jobId,
     jobAttemptNumber: 1,
     schemaVersion: 2,
@@ -760,8 +762,8 @@ describe('generateNextPersonalizedChapter', () => {
         blueprintVersion: 1,
         directionFingerprint: personalizedDirectionFingerprint(),
         generationMode: 'personalized',
-        generationPolicyVersion: 2,
-        promptContractVersion: 2,
+        generationPolicyVersion: 3,
+        promptContractVersion: 3,
         requireJobProvenance: true,
         jobId: PERSONALIZED_JOB_CONTEXT.jobId,
         jobAttemptNumber: 2,
@@ -841,8 +843,8 @@ describe('generateNextPersonalizedChapter', () => {
       blueprintVersion: 1,
       directionFingerprint: personalizedDirectionFingerprint(),
       generationMode: 'personalized',
-      generationPolicyVersion: 2,
-      promptContractVersion: 2,
+      generationPolicyVersion: 3,
+      promptContractVersion: 3,
       jobId: PERSONALIZED_JOB_CONTEXT.jobId,
       jobAttemptNumber: 2,
       jobContext: PERSONALIZED_JOB_CONTEXT,
@@ -1081,7 +1083,7 @@ describe('generateNextPersonalizedChapter', () => {
     expect(mocks.publishGenerationJobChapterV4).not.toHaveBeenCalled()
   })
 
-  it('runs lease → canon → contract → reader → brief → compile → generate → safe → choices → publishV2 → telemetry for chapter < 50', async () => {
+  it('runs lease → canon → contract → reader → brief → generate → safe → choices → publishV2 → telemetry for chapter < 50', async () => {
     const { deps, capture } = makeDeps({ chapterNumber: 12 })
     const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
 
@@ -1116,7 +1118,6 @@ describe('generateNextPersonalizedChapter', () => {
       'contract',
       'reader',
       'brief',
-      'compile',
       'loadCheckpoint',
       'generateChapter',
       'auditPlotDebts',

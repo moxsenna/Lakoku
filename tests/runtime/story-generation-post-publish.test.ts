@@ -30,6 +30,12 @@ vi.mock('@lakoku/narrative-core/server', () => ({
   loadCanonSnapshot: mocks.loadCanonSnapshot,
   persistRetrievalLog: mocks.persistRetrievalLog,
 }))
+// story-generation.ts imports the loader from its own package (runtime), not the
+// narrative-core barrel — mock the real module path so the fail-closed loader
+// never touches the DB in unit tests.
+vi.mock('@/lib/runtime/continuation-context.server', () => ({
+  loadContinuationContextForChapter: vi.fn().mockResolvedValue({ ok: true, continuation: null }),
+}))
 vi.mock('@lakoku/ai-gateway', () => ({
   generateChapter: mocks.generateChapter,
   generateChoiceBranch: vi.fn(),

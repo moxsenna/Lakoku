@@ -22,6 +22,9 @@ vi.mock('@/lib/api/user-state', () => ({
 }))
 vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.cookieFactory }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@/lib/api/story-ownership.server', () => ({
+  isStoryOwnedBy: vi.fn(async () => true),
+}))
 vi.mock('@/lib/api/generation-continuation.server', () => ({
   continuePersonalizedGeneration: mocks.continuePersonalizedGeneration,
   continueStandardGeneration: mocks.continueStandardGeneration,

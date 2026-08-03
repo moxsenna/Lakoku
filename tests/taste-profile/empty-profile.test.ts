@@ -115,11 +115,6 @@ describe('Skip profile behavior (Bug 3 — fixed in V2)', () => {
 
 describe('Authoring direction block contract (Bug 4)', () => {
   it('CONTRACT: proposeCast should accept direction option', () => {
-    interface DirectionBlock {
-      tasteProfile: TasteProfileV2 | null
-      storySetupAnswers: Record<string, string>
-    }
-
     // This is documentation — not a failing assertion
     expect(true).toBe(true)
   })

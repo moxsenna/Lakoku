@@ -22,6 +22,7 @@ import {
   validateLayerB,
   validateThreadLifecycle,
   checkChapter48Block,
+  runContinuityChecks,
 } from '@lakoku/narrative-core'
 import { generatePlan, writeChapter, type GatewayDeps } from './gateway'
 import type { ChapterDraftParsed } from './schemas'
@@ -62,14 +63,18 @@ function canonFingerprint(s: CanonSnapshot): string {
   })
 }
 
-/** Lapis A deterministik: Layer A + thread lifecycle + gate Bab 48. */
+/** Lapis A deterministik: Layer A + thread lifecycle + gate Bab 48 + continuity checks. */
 function runLayerA(
   snapshot: CanonSnapshot,
   draft: ChapterDraftParsed,
   chapterNumber: number,
+  continuation?: ContinuationContext | null,
   threadCtx?: ThreadContext,
 ): Finding[] {
   const findings = [...validateLayerA(snapshot, draft).findings]
+  if (continuation) {
+    findings.push(...runContinuityChecks(snapshot, draft, continuation))
+  }
   if (threadCtx) {
     findings.push(
       ...validateThreadLifecycle({
@@ -117,6 +122,8 @@ export async function generateChapter(
   let draft = await writeChapter(deps, {
     snapshot,
     plan,
+    continuation,
+    brief,
     injectDefects: args.injectDefects,
   }, args.executionOptions)
   throwIfAborted(args.executionOptions?.signal)
@@ -141,7 +148,7 @@ export async function generateChapter(
   }
 
   // ---- Lapis A (deterministik) ----
-  let aFindings = runLayerA(snapshot, draft, chapterNumber, threadContext)
+  let aFindings = runLayerA(snapshot, draft, chapterNumber, continuation, threadContext)
   let aAttempts = 0
   while (needsRepair(aFindings) && aAttempts < MAX_REPAIR_ATTEMPTS) {
     throwIfAborted(args.executionOptions?.signal)
@@ -149,7 +156,7 @@ export async function generateChapter(
     attempts++
     draft = await writeChapter(
       deps,
-      { snapshot, plan, repairFindings: aFindings },
+      { snapshot, plan, continuation, brief, repairFindings: aFindings },
       args.executionOptions
         ? {
             ...args.executionOptions,
@@ -158,7 +165,7 @@ export async function generateChapter(
         : undefined,
     )
     throwIfAborted(args.executionOptions?.signal)
-    aFindings = runLayerA(snapshot, draft, chapterNumber, threadContext)
+    aFindings = runLayerA(snapshot, draft, chapterNumber, continuation, threadContext)
   }
   if (needsRepair(aFindings)) return fail('A', aFindings)
 

@@ -36,6 +36,8 @@ export interface PlanInput {
 export interface WriteInput {
   snapshot: CanonSnapshot
   plan: unknown // ChapterPlan tervalidasi (gateway sudah cek), diteruskan apa adanya
+  continuation?: ContinuationContext | null
+  brief?: PreProseChapterBrief | null
   /** Findings dari validasi sebelumnya (repair). Kosong = attempt pertama. */
   repairFindings?: Finding[]
   /** Simulasikan cacat awal (untuk uji repair). Dihapus saat repair. */

@@ -9,6 +9,8 @@ import {
   type ChapterContextPacket,
 } from '@lakoku/narrative-core'
 import { loadCanonSnapshot, persistRetrievalLog } from '@lakoku/narrative-core/server'
+import { loadContinuationContextForChapter } from './continuation-context.server'
+import { buildPreProseChapterBrief } from '../story-engine/pre-prose-brief'
 import {
   generateChapter,
   generateChoiceBranch,
@@ -29,7 +31,6 @@ import { boundedLogId, safeErrorInfo } from '@/lib/observability/safe-error'
 import {
   buildChapterBrief,
   type ChapterBrief,
-  type ChoiceHistoryEntry,
   ChoiceHistoryEntrySchema,
 } from '@/lib/story-engine/chapter-brief'
 import {
@@ -226,6 +227,7 @@ export interface PersonalizedGenerationDeps {
     choiceAttemptCount?: number
     jobContext?: import('./generation-job-execution').GenerationJobExecutionContext | null
   }) => Promise<CheckpointMutationResult>
+  loadContinuationContextForChapter: typeof import('./continuation-context.server').loadContinuationContextForChapter
   selectProvider: (
     context: ReturnType<typeof createSynchronousProviderContext>,
   ) => Promise<GenerationProvider>
@@ -235,6 +237,8 @@ export interface PersonalizedGenerationDeps {
       snapshot: CanonSnapshot
       blueprint: ChapterBlueprint
       chapterNumber: number
+      continuation?: import('@lakoku/narrative-core').ContinuationContext | null
+      brief?: import('@/lib/story-engine/pre-prose-brief').PreProseChapterBrief | null
       threadContext?: ThreadContext
       executionOptions?: Parameters<GenerationProvider['writeChapter']>[1]
     },
@@ -512,6 +516,7 @@ function defaultDeps(): PersonalizedGenerationDeps {
     loadUsableProseCheckpoint,
     persistProseReadyCheckpoint,
     markCheckpointStatus,
+    loadContinuationContextForChapter,
     selectProvider,
     generateChapter,
     toReaderSafe,
@@ -709,12 +714,36 @@ async function generateNextPersonalizedChapterInner(
       previousChoice,
     })
 
-    const packet = d.compileContext(snapshot, chapterNumber, { brief })
-    try {
-      await d.persistRetrievalLog(storyId, chapterNumber, packet)
-    } catch {
-      // best-effort observability — never fail generation
+    const contRes = await d.loadContinuationContextForChapter({
+      userId,
+      storyId,
+      chapterNumber,
+      triggerChoiceId: triggerChoiceId ?? null,
+    })
+
+    if (!contRes.ok) {
+      await releaseOwnLease()
+      console.error('PERSONALIZED_CONTINUATION_CONTEXT_LOAD_FAILED', {
+        storyId,
+        chapterNumber,
+        kind: contRes.kind,
+        detail: contRes.detail,
+      })
+      if (contRes.kind === 'TRANSIENT') {
+        return { ok: false, reason: 'TRANSIENT', detail: contRes.detail }
+      }
+      return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: contRes.detail }
     }
+
+    const continuation = contRes.continuation
+    const preProseBrief = buildPreProseChapterBrief({
+      storyId,
+      chapterNumber,
+      snapshot,
+      blueprint,
+      continuation,
+      chapterBrief: brief,
+    })
 
     const canonVersion = snapshot.blueprints.reduce(
       (max, candidate) => Math.max(max, candidate.version ?? 0),
@@ -803,6 +832,8 @@ async function generateNextPersonalizedChapterInner(
           snapshot,
           blueprint,
           chapterNumber,
+          continuation,
+          brief: preProseBrief,
           threadContext,
           executionOptions: {
             telemetryContext: providerContext,

@@ -18,11 +18,8 @@ import {
 } from '@/lib/story-engine/choice-quality'
 import {
   groundedChoiceProseFromFinalDraft,
-  emptyChoiceNarrativeContext,
-  choiceNarrativeContextFromReader,
   type EndingParagraphs,
   type FinalChapterProse,
-  type ChoiceNarrativeContext,
 } from '@/lib/runtime/choice-context'
 import { abortableSleep, isAbortError, throwIfAborted } from '@/lib/runtime/abort'
 import {

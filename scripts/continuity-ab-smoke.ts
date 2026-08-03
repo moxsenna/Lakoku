@@ -1,6 +1,8 @@
-import { createAdminClient } from '@lakoku/db'
-import { runContinuityChecks } from '../lib/narrative/continuity-checks'
-import type { ContinuationContext } from '@lakoku/narrative-core'
+import { runContinuityChecks } from '@lakoku/narrative-core'
+import { generateChapter, createDeterministicProvider } from '@lakoku/ai-gateway'
+import { createGatewayProvider } from '@lakoku/ai-gateway/server'
+import type { CanonSnapshot, ChapterBlueprint, ContinuationContext } from '@lakoku/narrative-core'
+import type { PreProseChapterBrief } from '../lib/story-engine/pre-prose-brief'
 
 function isProductionSupabaseUrl(url: string | undefined): boolean {
   if (!url) return false
@@ -22,11 +24,37 @@ async function runABSmoke() {
 
   console.log(`=== STARTING CONTINUITY A/B SMOKE (ENV: ${envTarget}) ===`)
 
-  // Simulasi dua cabang cerita terisolasi: Cabang A ("hadapi-pengadilan") & Cabang B ("cari-bukti")
-  const mockSnapshot = {
+  const mockSnapshot: CanonSnapshot = {
     storyId: 'story-ab-test',
-    characters: [{ id: 'nadia', canonicalName: 'Nadia' }, { id: 'raka', canonicalName: 'Raka' }],
-  } as any
+    characters: [
+      { id: 'nadia', storyId: 'story-ab-test', canonicalName: 'Nadia', role: 'Protagonis', motivation: 'Mencari kebenaran', introducedChapter: 1, status: 'ALIVE' },
+      { id: 'raka', storyId: 'story-ab-test', canonicalName: 'Raka', role: 'Antagonis', motivation: 'Menyembunyikan rahasia', introducedChapter: 1, status: 'ALIVE' },
+    ],
+    aliases: [],
+    voiceSheets: [],
+    facts: [],
+    knowledge: [],
+    secrets: [],
+    timeline: [],
+    threads: [],
+    actRollups: [],
+    blueprints: [
+      {
+        chapterNumber: 2,
+        phase: 'Fase 2',
+        chapterGoal: 'Konfrontasi atau Pelarian',
+        mandatoryBeats: ['Lanjutkan konflik dari galeri seni'],
+        introducesCharacters: [],
+        forbiddenReveals: [],
+        allowedStateDelta: {},
+        version: 1,
+        reconciledFromVersion: null,
+        reconciliationReason: null,
+      },
+    ],
+  }
+
+  const blueprint: ChapterBlueprint = mockSnapshot.blueprints[0]
 
   const contextA: ContinuationContext = {
     storyId: 'story-ab-test',
@@ -34,7 +62,11 @@ async function runABSmoke() {
     previousChapter: {
       number: 1,
       title: 'Galeri Seni Malam Hari',
-      endingParagraphs: ['Nadia menatap Raka dengan tajam di galeri seni malam itu.'],
+      endingParagraphs: [
+        'Nadia menatap Raka dengan tajam di galeri seni malam itu.',
+        'Lukisan tua yang hancur tergeletak di lantai.',
+        'Keputusan harus diambil sekarang juga.',
+      ],
     },
     previousChoice: {
       chapterNumber: 1,
@@ -46,9 +78,23 @@ async function runABSmoke() {
     },
     routeStateSummary: 'Rute pengadilan',
     openThreads: [],
-    anchorFacts: [],
-    recentTimeline: [],
+    anchorFacts: [{ id: 'f1', statement: 'Lukisan galeri rusak', establishedChapter: 1, loadBearing: true }],
+    recentTimeline: [{ chapterNumber: 1, ordinal: 1, description: 'Nadia menemui Raka di galeri' }],
     mustNotReveal: [],
+  }
+
+  const briefA: PreProseChapterBrief = {
+    storyId: 'story-ab-test',
+    chapterNumber: 2,
+    phase: 'Fase 2',
+    lockedEndingKey: null,
+    chapterGoal: 'Hadapi pengadilan secara terbuka',
+    mustInclude: ['Lanjutkan konflik dari galeri seni'],
+    mustNotInclude: [],
+    mustNotReveal: [],
+    routeStateSummary: 'Rute pengadilan',
+    previousChoiceSummary: 'Pilihan Bab 1: Konfrontasi dan hadapi pengadilan',
+    previousChoiceApplied: true,
   }
 
   const contextB: ContinuationContext = {
@@ -57,7 +103,11 @@ async function runABSmoke() {
     previousChapter: {
       number: 1,
       title: 'Galeri Seni Malam Hari',
-      endingParagraphs: ['Nadia menatap Raka dengan tajam di galeri seni malam itu.'],
+      endingParagraphs: [
+        'Nadia menatap Raka dengan tajam di galeri seni malam itu.',
+        'Lukisan tua yang hancur tergeletak di lantai.',
+        'Keputusan harus diambil sekarang juga.',
+      ],
     },
     previousChoice: {
       chapterNumber: 1,
@@ -69,42 +119,84 @@ async function runABSmoke() {
     },
     routeStateSummary: 'Rute pencarian bukti',
     openThreads: [],
-    anchorFacts: [],
-    recentTimeline: [],
+    anchorFacts: [{ id: 'f1', statement: 'Lukisan galeri rusak', establishedChapter: 1, loadBearing: true }],
+    recentTimeline: [{ chapterNumber: 1, ordinal: 1, description: 'Nadia menemui Raka di galeri' }],
     mustNotReveal: [],
   }
 
-  const outputA = [
-    'Nadia melangkah tegas menuju ruang sidang pengadilan.',
-    'Konfrontasi dengan Raka di galeri seni malam itu membawanya ke keputusan berat ini.',
-    'Di hadapan hakim, tuduhan membawa kasus ke pengadilan tidak bisa ditawar lagi.',
-  ]
+  const briefB: PreProseChapterBrief = {
+    storyId: 'story-ab-test',
+    chapterNumber: 2,
+    phase: 'Fase 2',
+    lockedEndingKey: null,
+    chapterGoal: 'Melarikan diri ke gudang tua',
+    mustInclude: ['Lanjutkan konflik dari galeri seni'],
+    mustNotInclude: [],
+    mustNotReveal: [],
+    routeStateSummary: 'Rute pencarian bukti',
+    previousChoiceSummary: 'Pilihan Bab 1: Melarikan diri dan cari bukti rahasia',
+    previousChoiceApplied: true,
+  }
 
-  const outputB = [
-    'Nadia berlari menembus kegelapan malam menuju gudang tua.',
-    'Setelah melarikan diri dari galeri seni malam itu, ia butuh bukti rahasia.',
-    'Di dalam gudang tua, mencari bukti rahasia menjadi satu-satunya jalan menyelamatkan diri.',
-  ]
+  // Real-model A/B only when NARRATIVE_PROVIDER=gateway; default stays
+  // deterministic (gratis, harness-only) agar dry-run tanpa LLM tetap jalan.
+  const provider =
+    process.env.NARRATIVE_PROVIDER === 'gateway'
+      ? createGatewayProvider()
+      : createDeterministicProvider()
 
-  const findingsA = runContinuityChecks(mockSnapshot, { chapterNumber: 2, paragraphs: outputA }, contextA)
-  const findingsB = runContinuityChecks(mockSnapshot, { chapterNumber: 2, paragraphs: outputB }, contextB)
+  const genResultA = await generateChapter(
+    { provider },
+    {
+      snapshot: mockSnapshot,
+      blueprint,
+      chapterNumber: 2,
+      continuation: contextA,
+      brief: briefA,
+    },
+  )
 
-  console.log('Findings Cabang A:', findingsA)
-  console.log('Findings Cabang B:', findingsB)
+  const genResultB = await generateChapter(
+    { provider },
+    {
+      snapshot: mockSnapshot,
+      blueprint,
+      chapterNumber: 2,
+      continuation: contextB,
+      brief: briefB,
+    },
+  )
+
+  console.log('Result Status Cabang A:', genResultA.status)
+  console.log('Result Status Cabang B:', genResultB.status)
+
+  if (!genResultA.draft || !genResultB.draft) {
+    console.error('Generasi draft gagal pada salah satu cabang!')
+    process.exit(1)
+  }
+
+  const paragraphsA = genResultA.draft.paragraphs
+  const paragraphsB = genResultB.draft.paragraphs
+
+  console.log('\n--- HASIL GENERASI NYATA CABANG A (Pengadilan) ---')
+  console.log(paragraphsA.slice(0, 3).join('\n'))
+
+  console.log('\n--- HASIL GENERASI NYATA CABANG B (Pencarian Bukti) ---')
+  console.log(paragraphsB.slice(0, 3).join('\n'))
+
+  const findingsA = runContinuityChecks(mockSnapshot, { chapterNumber: 2, paragraphs: paragraphsA }, contextA)
+  const findingsB = runContinuityChecks(mockSnapshot, { chapterNumber: 2, paragraphs: paragraphsB }, contextB)
+
+  console.log('\nFindings Continuity Cabang A:', findingsA)
+  console.log('Findings Continuity Cabang B:', findingsB)
 
   const passA = !findingsA.some((f) => f.severity === 'CRITICAL' || f.severity === 'MAJOR')
   const passB = !findingsB.some((f) => f.severity === 'CRITICAL' || f.severity === 'MAJOR')
 
   if (passA && passB) {
-    console.log('PROGRAMMATIC GATE: PASS')
-    console.log('\n--- RUBRIK SEMANTIK 5 POIN (HUMAN/LLM JUDGE) ---')
-    console.log('1. Opening lahir dari ending Bab 1? PASS')
-    console.log('2. Aksi pilihan menjadi penyebab peristiwa Bab 2? PASS')
-    console.log('3. Konflik lama diteruskan, bukan sekadar disebut? PASS')
-    console.log('4. Perubahan waktu/lokasi dijembatani? PASS')
-    console.log('5. Cabang A vs B berbeda secara kausal? PASS')
+    console.log('\nPROGRAMMATIC GATE: PASS')
   } else {
-    console.error('PROGRAMMATIC GATE: FAILED')
+    console.error('\nPROGRAMMATIC GATE: FAILED')
     process.exit(1)
   }
 }

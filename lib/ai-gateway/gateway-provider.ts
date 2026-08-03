@@ -2,7 +2,7 @@ import 'server-only'
 import { streamText, Output, type LanguageModel } from 'ai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { z } from 'zod'
-import type { CanonSnapshot, Finding } from '@lakoku/narrative-core'
+import type { CanonSnapshot, Finding, ContinuationContext } from '@lakoku/narrative-core'
 import {
   createDeterministicProvider,
   type GenerationProvider,
@@ -399,9 +399,10 @@ function voiceGuidance(snapshot: CanonSnapshot, chapter: number): string {
 function buildPrompt(args: {
   snapshot: CanonSnapshot
   plan: Record<string, unknown>
+  continuation?: ContinuationContext | null
   repairFindings?: Finding[]
 }): { system: string; prompt: string } {
-  const { snapshot, plan } = args
+  const { snapshot, plan, continuation } = args
   const chapter = Number(plan.chapterNumber)
   const names = activeCharacterNames(snapshot, chapter)
   const voices = voiceGuidance(snapshot, chapter)
@@ -418,6 +419,7 @@ function buildPrompt(args: {
     voiceGuidance: voices || undefined,
     plannedBeats: beats,
     sceneCount: scenes,
+    continuation,
     repairFindings: args.repairFindings?.map((f) => ({
       severity: f.severity,
       message: f.message,
@@ -436,6 +438,7 @@ async function generateProse(args: {
   chain: ModelCandidate[]
   snapshot: CanonSnapshot
   plan: Record<string, unknown>
+  continuation?: ContinuationContext | null
   repairFindings?: Finding[]
   options: ModelCallExecutionOptions
   route?: AiModelRoute
@@ -1096,6 +1099,7 @@ export function createGatewayProvider(
         chain,
         snapshot: input.snapshot,
         plan: input.plan as Record<string, unknown>,
+        continuation: input.continuation,
         repairFindings: input.repairFindings,
         options,
         route: aiRoute,

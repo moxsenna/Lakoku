@@ -94,6 +94,8 @@ export async function writeChapter(
   args: {
     snapshot: CanonSnapshot
     plan: ChapterPlan
+    continuation?: ContinuationContext | null
+    brief?: PreProseChapterBrief | null
     repairFindings?: Finding[]
     injectDefects?: DraftDefect[]
   },
@@ -103,6 +105,8 @@ export async function writeChapter(
   const raw = await deps.provider.writeChapter({
     snapshot: args.snapshot,
     plan: args.plan,
+    continuation: args.continuation,
+    brief: args.brief,
     repairFindings: args.repairFindings,
     injectDefects: args.injectDefects,
   }, options)

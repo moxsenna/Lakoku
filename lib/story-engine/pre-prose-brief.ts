@@ -84,7 +84,8 @@ function composeGoal(input: {
     return { goal: input.chapterBrief.chapterGoal.slice(0, MAX_GOAL_LENGTH), applied: false }
   }
   // Hierarki 3: blueprint generik (fallback, Bab 1 atau tanpa continuation).
-  return { goal: input.blueprint.chapterGoal ?? '', applied: false }
+  const rawGoal = input.blueprint.chapterGoal || input.blueprint.phase || `Selesaikan Bab ${input.blueprint.chapterNumber}`
+  return { goal: rawGoal.slice(0, MAX_GOAL_LENGTH), applied: false }
 }
 
 function buildPreviousChoiceSummary(continuation: ContinuationContext | null): string {

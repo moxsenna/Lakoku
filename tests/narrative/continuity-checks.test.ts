@@ -1,12 +1,24 @@
 import { describe, expect, it } from 'vitest'
 import { runContinuityChecks } from '../../lib/narrative/continuity-checks'
-import type { ContinuationContext } from '@lakoku/narrative-core'
+import type { CanonSnapshot, ContinuationContext } from '@lakoku/narrative-core'
 
 describe('runContinuityChecks', () => {
-  const mockSnapshot = {
+  const mockSnapshot: CanonSnapshot = {
     storyId: 'story-1',
-    characters: [{ id: 'nadia', name: 'Nadia' }, { id: 'raka', name: 'Raka' }],
-  } as any
+    characters: [
+      { id: 'nadia', storyId: 'story-1', canonicalName: 'Nadia', role: 'Protagonis', motivation: 'Mencari kebenaran', introducedChapter: 1, status: 'ALIVE' },
+      { id: 'raka', storyId: 'story-1', canonicalName: 'Raka', role: 'Antagonis', motivation: 'Menyembunyikan rahasia', introducedChapter: 1, status: 'ALIVE' },
+    ],
+    aliases: [],
+    voiceSheets: [],
+    facts: [],
+    knowledge: [],
+    secrets: [],
+    timeline: [],
+    threads: [],
+    actRollups: [],
+    blueprints: [],
+  }
 
   const mockContinuation: ContinuationContext = {
     storyId: 'story-1',

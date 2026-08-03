@@ -1,6 +1,6 @@
 import 'server-only'
 import type { ChapterDraftParsed, ChoiceInput } from '@lakoku/ai-gateway'
-import type { ChoiceHistoryEntry, ChapterBrief } from '@/lib/story-engine/chapter-brief'
+import type { ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
 import { normalizeRouteState, type RouteState } from '@/lib/story-engine/route-state'
 import { buildEndingParagraphs as buildEndingParagraphsPure } from '@lakoku/narrative-core'
 

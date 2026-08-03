@@ -1,4 +1,4 @@
-import { describe, expect, it, afterEach } from 'vitest'
+import { describe, expect, it, afterEach, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 import { getPublicOrigin } from '@/lib/auth/public-origin'
 
@@ -11,6 +11,7 @@ describe('getPublicOrigin', () => {
   const prevDev = process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL
 
   afterEach(() => {
+    vi.unstubAllEnvs()
     if (prevSite === undefined) delete process.env.NEXT_PUBLIC_SITE_URL
     else process.env.NEXT_PUBLIC_SITE_URL = prevSite
     if (prevDev === undefined) delete process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL
@@ -44,6 +45,7 @@ describe('getPublicOrigin', () => {
   it('uses localhost public host for local dev', () => {
     delete process.env.NEXT_PUBLIC_SITE_URL
     delete process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL
+    vi.stubEnv('NODE_ENV', 'development')
     const origin = getPublicOrigin(
       req('http://localhost:3000/auth/callback', {
         host: 'localhost:3000',

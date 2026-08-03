@@ -1,33 +1,36 @@
 import { describe, expect, it } from 'vitest'
 import { createDeterministicProvider } from '../../lib/ai-gateway/provider'
-import type { ContinuationContext } from '@lakoku/narrative-core'
+import type { CanonSnapshot, ContinuationContext } from '@lakoku/narrative-core'
+import type { ChapterPlan } from '@lakoku/ai-gateway'
 import type { PreProseChapterBrief } from '../../lib/story-engine/pre-prose-brief'
 
 describe('planWithContinuation / CC-aware planner', () => {
-  const mockSnapshot = {
+  const mockSnapshot: CanonSnapshot = {
     storyId: 'story-1',
-    title: 'Test Story',
-    premise: 'Premise test',
-    tone: 'Tone test',
     blueprints: [
       {
         chapterNumber: 2,
+        version: 1,
         phase: 'Fase 2',
         chapterGoal: 'Tujuan Bab 2 dari Blueprint',
         mandatoryBeats: ['Beat 1', 'Beat 2'],
         introducesCharacters: [],
         forbiddenReveals: [],
         allowedStateDelta: {},
+        reconciledFromVersion: null,
+        reconciliationReason: null,
       },
     ],
     characters: [],
-    locations: [],
-    items: [],
-    threads: [],
+    aliases: [],
+    voiceSheets: [],
+    facts: [],
+    knowledge: [],
     secrets: [],
     timeline: [],
-    establishedFacts: [],
-  } as any
+    threads: [],
+    actRollups: [],
+  }
 
   const mockBlueprint = mockSnapshot.blueprints[0]
 
@@ -80,7 +83,7 @@ describe('planWithContinuation / CC-aware planner', () => {
       chapterNumber: 2,
       continuation: mockContinuation,
       brief: mockPreProseBrief,
-    })) as any
+    })) as ChapterPlan
 
     expect(plan.chapterGoal).toContain('Teruskan langsung dari Bab 1: "Konfrontasi Raka di galeri"')
     expect(plan.chapterGoal).toContain('Konsekuensi kanonik: Nadia menuduh Raka mencuri lukisan / Raka terpojok')
@@ -99,7 +102,7 @@ describe('planWithContinuation / CC-aware planner', () => {
       chapterNumber: 1,
       continuation: null,
       brief: null,
-    })) as any
+    })) as ChapterPlan
 
     expect(plan.chapterGoal).toBe('Tujuan Bab 2 dari Blueprint')
     expect(plan.plannedBeats).toEqual(['Beat 1', 'Beat 2'])

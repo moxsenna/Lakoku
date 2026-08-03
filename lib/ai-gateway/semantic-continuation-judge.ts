@@ -8,6 +8,16 @@ import type { ContinuationContext } from '@lakoku/narrative-core'
  */
 export const SEMANTIC_JUDGE_UNAVAILABLE = 'SEMANTIC_JUDGE_UNAVAILABLE' as const
 
+/** True jika error adalah controlled semantic-judge outage (timeout/429/network/malformed). */
+export function isSemanticJudgeUnavailableError(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'message' in err &&
+    (err as { message?: unknown }).message === SEMANTIC_JUDGE_UNAVAILABLE
+  )
+}
+
 export const ALLOWED_SEMANTIC_CODES = [
   'CHOICE_CONSEQUENCE_REVERSED',
   'CHOICE_NOT_CAUSAL',
@@ -49,6 +59,10 @@ export interface SemanticJudgeInput {
   routeSummary: string
   chapterTitle: string
   chapterProse: string
+  /** Narator Bab N (karakter POV), mis. "Nadia". Bounded context anti POV-slip. */
+  povCharacter?: string
+  /** Mode POV, default first-person. */
+  povMode?: string
 }
 
 /** Sanitize & bound input agar untrusted story data tidak menjadi injection. */
@@ -61,6 +75,8 @@ export function sanitizeJudgeInput(input: SemanticJudgeInput): SemanticJudgeInpu
     routeSummary: input.routeSummary.slice(0, 500),
     chapterTitle: input.chapterTitle.slice(0, 200),
     chapterProse: input.chapterProse.slice(0, 32000),
+    povCharacter: input.povCharacter ? input.povCharacter.slice(0, 100) : undefined,
+    povMode: input.povMode ? input.povMode.slice(0, 50) : undefined,
   }
 }
 
@@ -82,6 +98,10 @@ export function buildSemanticJudgePrompt(input: SemanticJudgeInput): {
     bounded.effectSummary ? `Ringkasan Efek: ${bounded.effectSummary}` : '',
     `Rute & Status: ${bounded.routeSummary}`,
     '',
+    '=== KONTEKS POV (SUDUT PANDANG BAB N) ===',
+    `Narator: ${bounded.povCharacter ?? '(tidak disebutkan)'}`,
+    `Mode: ${bounded.povMode ?? 'first-person'}`,
+    '',
     '=== PROSA BAB N (EVALUASI) ===',
     `Judul: ${bounded.chapterTitle}`,
     bounded.chapterProse,
@@ -96,7 +116,7 @@ export function buildSemanticJudgePrompt(input: SemanticJudgeInput): {
     '- CHOICE_NOT_CAUSAL: Peristiwa Bab N terjadi tanpa dipicu/disebabkan oleh aksi pilihan.',
     '- CONFLICT_RESET: Konflik Bab N-1 hilang/di-reset tanpa penyelesaian atau kelanjutan.',
     '- UNEXPLAINED_TRANSITION: Lompatan lokasi/waktu tanpa jembatan naratif.',
-    '- PREVIOUS_EVENT_CONTRADICTION: Bab N mendistorsi fakta yang sudah terjadi di Bab N-1.',
+    '- PREVIOUS_EVENT_CONTRADICTION: Bab N mendistorsi fakta yang sudah terjadi di Bab N-1; ATAU narator first-person memperlakukan dirinya sendiri sebagai karakter ketiga yang terpisah (identitas POV terbelah — protagonis muncul sebagai orang lain).',
     '',
     'Jika PASS, codes HARUS array kosong [].',
   ]
@@ -134,6 +154,7 @@ export function extractJudgeInput(
   continuation: ContinuationContext,
   chapterTitle: string,
   chapterProse: string,
+  pov?: { character?: string; mode?: string },
 ): SemanticJudgeInput | null {
   if (!continuation.previousChoice || !continuation.previousChapter) return null
 
@@ -147,5 +168,7 @@ export function extractJudgeInput(
     routeSummary: continuation.routeStateSummary,
     chapterTitle,
     chapterProse,
+    povCharacter: pov?.character,
+    povMode: pov?.mode,
   }
 }

@@ -204,10 +204,14 @@ export async function generateChapter(
   // WAJIB dijalankan jika Bab N>1 memiliki previousChoice.
   let semanticFindings: Finding[] = []
   if (continuation?.previousChoice != null) {
+    // Narator Bab N: karakter Protagonis canon (bounded POV context untuk judge).
+    const povCharacter = snapshot.characters.find((c) => c.role === 'Protagonis')
+    const pov = { character: povCharacter?.canonicalName, mode: 'first-person' }
     const judgeInput = extractJudgeInput(
       continuation,
       draft.title,
       draft.paragraphs.join('\n\n'),
+      pov,
     )
     if (!judgeInput) {
       throw new Error(SEMANTIC_JUDGE_UNAVAILABLE)
@@ -265,6 +269,7 @@ export async function generateChapter(
         continuation,
         draft.title,
         draft.paragraphs.join('\n\n'),
+        pov,
       )
       if (!judgeInput2) throw new Error(SEMANTIC_JUDGE_UNAVAILABLE)
 
@@ -287,6 +292,9 @@ export async function generateChapter(
       if (judgeResult2.verdict === 'FAIL') {
         return fail('B', mapSemanticCodesToFindings(judgeResult2.codes))
       }
+      // Judge #2 PASS: MAJOR semantic dari draft pra-rewrite sudah direpair.
+      // Final findings hanya berisi findings draft final — jangan rekam yang lama.
+      semanticFindings = []
     }
   }
 

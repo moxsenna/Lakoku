@@ -207,11 +207,24 @@ describe('generateChapter — Layer B repair seam & Layer C publish gate', () =>
     expect(writeChapterMock).toHaveBeenCalledTimes(2) // 1 initial + 1 semantic rewrite
     expect(evaluateSemanticContinuityMock).toHaveBeenCalledTimes(2)
 
+    // Judge menerima bounded POV context (Nadia, first-person) dari canon.
+    const judgeArg = evaluateSemanticContinuityMock.mock.calls[0][1] as {
+      povCharacter?: string
+      povMode?: string
+    }
+    expect(judgeArg.povCharacter).toBe('Nadia')
+    expect(judgeArg.povMode).toBe('first-person')
+
     const rewriteArgs = writeChapterMock.mock.calls[1][1]
     expect(rewriteArgs.continuation).toEqual(NADIA_RAKA_CONTINUATION_A)
     expect(rewriteArgs.brief).toEqual(NADIA_RAKA_BRIEF_A)
     const semanticCodes = (rewriteArgs.repairFindings ?? []).map((f) => f.code)
     expect(semanticCodes).toContain('SEMANTIC_CHOICE_CONSEQUENCE_REVERSED')
+
+    // Cleanup: MAJOR semantic dari draft pra-rewrite TIDAK boleh masuk findings
+    // final — sudah direpair dan diverifikasi judge #2 PASS.
+    const finalCodes = result.findings.map((f) => f.code)
+    expect(finalCodes).not.toContain('SEMANTIC_CHOICE_CONSEQUENCE_REVERSED')
   })
 
   it('post-semantic rewrite is VALIDATION-ONLY — Layer B fail → FAILED_REVIEW_REQUIRED, no extra loop', async () => {

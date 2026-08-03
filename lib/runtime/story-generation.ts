@@ -106,7 +106,7 @@ function legacyLeaseKey(
  * Prompt/generation contract version. Bump when the prompt contract or generation
  * policy changes in a way that must invalidate reuse of an earlier prose checkpoint.
  */
-export const GENERATION_PROMPT_CONTRACT_VERSION = 2
+export const GENERATION_PROMPT_CONTRACT_VERSION = 3
 
 export type RealGenerateResult =
   | {
@@ -451,6 +451,11 @@ export interface StandardGenerateInput {
   correlationId: string
   /** Durable attempt id; used for checkpoint identity. Defaults to correlationId. */
   attemptId?: string | null
+  /**
+   * Pilihan di Bab N−1 yang memicu generasi Bab N. Sumber kebenaran untuk
+   * memilih entry reader_states.choice_history yang tepat (bukan history[last]).
+   */
+  triggerChoiceId?: string | null
   /**
    * Worker path: reuse job lease + fenced publish. Skip own acquireGenerationLease.
    * Propagate signal into provider-facing work where possible.

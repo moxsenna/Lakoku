@@ -136,6 +136,7 @@ export async function runChapterGenerationAttempt(
     chapterNumber: input.chapterNumber,
     correlationId: input.correlationId,
     attemptId,
+    ...('triggerChoiceId' in input ? { triggerChoiceId: input.triggerChoiceId } : {}),
     jobContext,
     ...(input.options === undefined ? {} : { options: input.options }),
   })

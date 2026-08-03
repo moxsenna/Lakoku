@@ -10,6 +10,7 @@ import {
   continuePersonalizedGeneration,
   continueStandardGeneration,
 } from '@/lib/api/generation-continuation.server'
+import { isStoryOwnedBy } from '@/lib/api/story-ownership.server'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
 
 /**
@@ -106,8 +107,10 @@ export async function POST(
       chapter?.choices?.find((c) => c.id === choiceId)?.label ?? choiceId
     await applyChoiceToUserState(id, chapterNumber, decision, outcome)
 
-    // Standard path (auth owner): kick off next chapter (same poll UX as personalized).
-    // Guests on public demos skip — chapters usually pre-seeded; no session gen budget.
+    // Standard path: kick off next chapter hanya untuk pemilik story.
+    // Topologi: chapters PK (story_id, number) — 1 bab per story tanpa dimensi reader.
+    // Story publik/berbagi = shared-linear (pre-generated); non-owner tidak boleh
+    // memicu generasi personal karena hasilnya dipublikasi global ke story_id sama.
     const nextChapterNumber = outcome.nextChapterNumber
     if (
       user
@@ -116,11 +119,15 @@ export async function POST(
       && Number.isInteger(nextChapterNumber)
       && nextChapterNumber > 0
     ) {
+      if (!(await isStoryOwnedBy(id, user.id))) {
+        return NextResponse.json({ outcome })
+      }
       const { nextChapterReady } = await continueStandardGeneration({
         storyId: id,
         userId: user.id,
         chapterNumber: nextChapterNumber,
         correlationId: crypto.randomUUID(),
+        triggerChoiceId: choiceId,
       })
       return NextResponse.json({ outcome, nextChapterReady })
     }

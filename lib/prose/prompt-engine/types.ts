@@ -1,3 +1,4 @@
+import type { ContinuationContext } from '@lakoku/narrative-core'
 import type { ChapterMode } from '@/lib/prose/mobile-drama-style'
 
 export type { ChapterMode }
@@ -30,6 +31,7 @@ export interface BuildWriterPromptInput {
   sceneCount?: number
   chapterMode?: ChapterMode
   repairFindings?: Array<{ severity?: string; message: string }>
+  continuation?: ContinuationContext | null
 }
 
 export type EvalSeverity = 'pass' | 'warn' | 'fail'

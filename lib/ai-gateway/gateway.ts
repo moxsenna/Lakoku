@@ -9,6 +9,8 @@
  */
 
 import type { CanonSnapshot, ChapterBlueprint, Finding } from '@lakoku/narrative-core'
+import type { ContinuationContext } from '@lakoku/narrative-core'
+import type { PreProseChapterBrief } from '../story-engine/pre-prose-brief'
 import { z } from 'zod'
 import {
   ChapterDraftSchema,
@@ -71,7 +73,13 @@ export async function generateStoryContractRaw(
 
 export async function generatePlan(
   deps: GatewayDeps,
-  args: { snapshot: CanonSnapshot; blueprint: ChapterBlueprint; chapterNumber: number },
+  args: {
+    snapshot: CanonSnapshot
+    blueprint: ChapterBlueprint
+    chapterNumber: number
+    continuation?: ContinuationContext | null
+    brief?: PreProseChapterBrief | null
+  },
 ): Promise<ChapterPlan> {
   const raw = await deps.provider.generatePlan(args)
   const parsed = parsePlan(raw)

@@ -16,11 +16,21 @@ import type { RouteState } from '../story-engine/route-state'
 import type { TasteProfile } from '../taste-profile/schema'
 import type { ProviderCallContext } from '../observability/generation-provider-call.contract'
 import type { ChapterDraftParsed } from './schemas'
+import type { ContinuationContext } from '@lakoku/narrative-core'
+import type { PreProseChapterBrief } from '../story-engine/pre-prose-brief'
+import {
+  composeChapterGoal,
+  continuityBeats,
+} from './plan-continuation'
 
 export interface PlanInput {
   snapshot: CanonSnapshot
   blueprint: ChapterBlueprint
   chapterNumber: number
+  /** Konteks kelanjutan aktual (rute nyata). Opsional agar Bab 1 tidak berubah. */
+  continuation?: ContinuationContext | null
+  /** Pre-prose brief (bila mode personalized/ber-contract). */
+  brief?: PreProseChapterBrief | null
 }
 
 export interface WriteInput {
@@ -268,7 +278,8 @@ export function createDeterministicProvider(
   return {
     name: 'deterministic-fake-v1',
 
-    async generatePlan({ blueprint, chapterNumber, snapshot }): Promise<unknown> {
+    async generatePlan(input: PlanInput): Promise<unknown> {
+      const { blueprint, chapterNumber, snapshot, continuation, brief } = input
       const revealsNow = snapshot.secrets
         .filter((s) => s.revealGateChapter === chapterNumber)
         .map((s) => s.id)
@@ -277,14 +288,27 @@ export function createDeterministicProvider(
       const proposedStateDelta: Record<string, unknown> = {}
       if (allowedKeys.length) proposedStateDelta[allowedKeys[0]] = true
 
+      const chapterGoal = composeChapterGoal({
+        continuation: continuation ?? null,
+        brief: brief ?? null,
+        blueprint,
+      })
+
+      const beats = [
+        ...continuityBeats({ continuation: continuation ?? null, brief: brief ?? null }),
+        ...(brief?.mustInclude ?? []),
+        ...blueprint.mandatoryBeats,
+      ]
+      const plannedBeats = beats.length
+        ? beats.slice(0, 8)
+        : [`Kembangkan fase "${blueprint.phase}".`]
+
       return {
         storyId: snapshot.storyId,
         chapterNumber,
         phase: blueprint.phase,
-        chapterGoal: blueprint.chapterGoal,
-        plannedBeats: blueprint.mandatoryBeats.length
-          ? blueprint.mandatoryBeats
-          : [`Kembangkan fase "${blueprint.phase}".`],
+        chapterGoal,
+        plannedBeats,
         targetWordCount,
         targetSceneCount: targetScenes,
         opensThreadId: null,

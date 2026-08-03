@@ -84,12 +84,17 @@ function runLayerA(
   return findings
 }
 
+import type { ContinuationContext } from '@lakoku/narrative-core'
+import type { PreProseChapterBrief } from '../story-engine/pre-prose-brief'
+
 export async function generateChapter(
   deps: GatewayDeps,
   args: {
     snapshot: CanonSnapshot
     blueprint: ChapterBlueprint
     chapterNumber: number
+    continuation?: ContinuationContext | null
+    brief?: PreProseChapterBrief | null
     injectDefects?: DraftDefect[]
     threadContext?: ThreadContext
     layerBContext?: LayerBContext
@@ -97,10 +102,16 @@ export async function generateChapter(
   },
 ): Promise<GenerationResult> {
   throwIfAborted(args.executionOptions?.signal)
-  const { snapshot, blueprint, chapterNumber, threadContext, layerBContext } = args
+  const { snapshot, blueprint, chapterNumber, continuation, brief, threadContext, layerBContext } = args
   const fpBefore = canonFingerprint(snapshot)
 
-  const plan = await generatePlan(deps, { snapshot, blueprint, chapterNumber })
+  const plan = await generatePlan(deps, {
+    snapshot,
+    blueprint,
+    chapterNumber,
+    continuation,
+    brief,
+  })
 
   throwIfAborted(args.executionOptions?.signal)
   let draft = await writeChapter(deps, {

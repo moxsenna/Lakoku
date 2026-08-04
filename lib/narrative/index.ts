@@ -12,6 +12,11 @@
  */
 export * from './types'
 export * from './alias'
+export * from './canon-id'
+export * from './chapter-state-delta'
+export * from './chapter-state-policy'
+export * from './chapter-state-apply'
+export * from './plot-debt-effective-state'
 export * from './compiler'
 export * from './continuation-context'
 export * from './ending-excerpt'

@@ -16,7 +16,7 @@ export interface ReadingPolicy {
 
 export const DEFAULT_READING_POLICY: ReadingPolicy = {
   freeChapters: 3,
-  creditsPerChapter: 5,
+  creditsPerChapter: 8,
 }
 
 /** true bila bab `n` gratis (tak perlu kredit). */

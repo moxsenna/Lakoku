@@ -12,6 +12,12 @@
  *  - Fail-closed ledger validation: unknown debt ID atau milestone di luar
  *    contract `mustProgressBy` melempar `EffectivePlotDebtStateError`.
  *  - `closedDebtIds` diurutkan kanonik & divalidasi vs contract.
+ *
+ * Point R2:
+ *  - Milestone ledger di masa depan (belum tiba saat proyeksi) ditolak
+ *    (`FUTURE_MILESTONE_CHAPTER`) — canonical state masa depan tidak valid.
+ *  - `EffectivePlotDebtState.chapterNumber` membind proyeksi ke bab yang
+ *    sedang divalidasi resolver.
  */
 
 import { z } from 'zod'
@@ -33,6 +39,8 @@ export interface EffectiveDebtProjection {
 export interface EffectivePlotDebtState {
   /** Kunci: debtId. */
   debts: Record<string, EffectiveDebtProjection>
+  /** Bab tempat proyeksi dibuat (harus cocok dengan bab yang divalidasi resolver). */
+  chapterNumber: number
   /** Debt terbuka yang wajib menunjukkan progress TEPAT bab ini (milestone belum lunas). */
   debtsDueToProgress: string[]
   /** Debt terbuka yang deadline closure-nya TEPAT bab ini. */
@@ -108,6 +116,14 @@ export function projectEffectivePlotDebtState(
           `Milestone chapter ${ch} tidak terdaftar di mustProgressBy untuk debt "${debtId}".`,
         )
       }
+      // Point R2: milestone masa depan (belum tiba saat proyeksi) = canonical
+      // state masa depan — fail-closed.
+      if (ch > chapterNumber) {
+        throw new EffectivePlotDebtStateError(
+          'FUTURE_MILESTONE_CHAPTER',
+          `Milestone chapter ${ch} untuk debt "${debtId}" berada di masa depan proyeksi Bab ${chapterNumber}.`,
+        )
+      }
     }
     if (uniqueChapters.length > 0) {
       milestones[debtId] = uniqueChapters
@@ -153,6 +169,7 @@ export function projectEffectivePlotDebtState(
 
   return {
     debts,
+    chapterNumber,
     debtsDueToProgress: debtsDueToProgress.sort(compareIds),
     debtsDueToClose: debtsDueToClose.sort(compareIds),
     closedDebtIds,

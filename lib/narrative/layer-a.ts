@@ -26,9 +26,9 @@ import type {
   CanonSnapshot,
   ChapterDraft,
   Finding,
-  ChapterBlueprint,
 } from './types'
 import { buildAliasResolver, resolveMentions } from './alias'
+import { latestBlueprintForChapter } from './blueprint'
 
 export interface LayerAResult {
   ok: boolean
@@ -45,17 +45,6 @@ const WORD_SOFT_MAX = 1000
 const SCENE_MIN = 2
 const SCENE_MAX = 4
 const NEW_CHARACTER_GATE = 30
-
-function latestBlueprint(
-  snapshot: CanonSnapshot,
-  chapter: number,
-): ChapterBlueprint | null {
-  return (
-    snapshot.blueprints
-      .filter((b) => b.chapterNumber === chapter)
-      .sort((a, b) => b.version - a.version)[0] ?? null
-  )
-}
 
 /** Flatten nested key jadi dot-path untuk perbandingan subset state delta. */
 function flattenKeys(obj: Record<string, unknown>, prefix = ''): string[] {
@@ -165,7 +154,7 @@ export function validateLayerA(
   }
 
   // --- Cek 4: state delta ⊆ allowed_state_delta.
-  const blueprint = latestBlueprint(snapshot, target)
+  const blueprint = latestBlueprintForChapter(snapshot, target)
   if (blueprint) {
     const allowed = new Set(flattenKeys(blueprint.allowedStateDelta))
     const proposed = flattenKeys(draft.proposedStateDelta)

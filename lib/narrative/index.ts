@@ -12,6 +12,7 @@
  */
 export * from './types'
 export * from './alias'
+export * from './blueprint'
 export * from './canon-id'
 export * from './chapter-state-delta'
 export * from './chapter-state-policy'

@@ -79,5 +79,15 @@ describe('projectEffectivePlotDebtState — Point 6 R1 fail-closed ledger valida
     const state = project(13, { main_mystery: [12] })
     expect(state.debts['main_mystery'].effectiveStatus).toBe('progressing')
     expect(state.debts['main_mystery'].completedMilestones).toEqual([12])
+    expect(state.chapterNumber).toBe(13)
+  })
+
+  it('milestone ledger di masa depan (belum tiba saat proyeksi) → throw FUTURE_MILESTONE_CHAPTER', () => {
+    expect(() => project(12, { main_mystery: [45] })).toThrow(EffectivePlotDebtStateError)
+    try {
+      project(12, { main_mystery: [45] })
+    } catch (err) {
+      expect((err as EffectivePlotDebtStateError).code).toBe('FUTURE_MILESTONE_CHAPTER')
+    }
   })
 })

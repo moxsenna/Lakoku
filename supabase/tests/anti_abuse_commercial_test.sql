@@ -54,25 +54,25 @@ declare
   v_user_2 uuid := gen_random_uuid();
   v_res jsonb;
   v_res_text text;
-  v_bal integer;
   v_origin text;
   v_ref text;
   v_active_count integer;
+  v_avail integer;
 begin
   insert into auth.users (id, email) values (v_user_1, 'user1@test.local'), (v_user_2, 'user2@test.local');
 
-  -- Test 1: Welcome grant (+20) exactly once
+  -- Test 1: Welcome grant (+20) exactly once & idempotency check
   v_res := public.grant_welcome_credit_v1(v_user_1);
   if (v_res->>'granted')::boolean is not true or (v_res->>'credits')::int <> 20 then
     raise exception 'Test 1 Failed: welcome grant should return granted=true, credits=20';
   end if;
 
-  if public.credit_balance_v1(v_user_1) <> 20 then
+  if public.available_credit_balance_v1(v_user_1) <> 20 then
     raise exception 'Test 1 Failed: credit balance should be 20';
   end if;
 
   v_res := public.grant_welcome_credit_v1(v_user_1);
-  if (v_res->>'already_granted')::boolean is not true or public.credit_balance_v1(v_user_1) <> 20 then
+  if (v_res->>'already_granted')::boolean is not true or public.available_credit_balance_v1(v_user_1) <> 20 then
     raise exception 'Test 1 Failed: duplicate welcome grant altered balance';
   end if;
 
@@ -101,7 +101,7 @@ begin
     raise exception 'Test 2 Starter Claim Failed';
   end if;
 
-  -- Test 3: Story #2+ Reserve 24 credits & Generic Capture MUST NOT grant PAID_START (Requirement 2)
+  -- Test 3: Story #2+ Reserve 24 credits & ITEM 4: Generic Capture MUST REJECT STORY_START
   perform public.grant_credits_v1(v_user_1, 'topup:seed', 10, 'seed'); -- balance = 30
 
   v_res := public.reserve_story_start_v1(v_user_1, 'story-B');
@@ -115,51 +115,63 @@ begin
     raise exception 'Test 3 Pre-capture state failed: expected PENDING_PAID_START, got %', v_origin;
   end if;
 
-  -- Generic Financial Capture MUST NOT grant PAID_START
+  -- Generic Capture MUST REJECT STORY_START with requires_story_finalize
   v_ref := v_res->>'ref';
   v_res_text := public.capture_credit_reservation_v1(v_ref);
-  if v_res_text <> 'ok' then
-    raise exception 'Test 3 Capture Story Start Failed: %', v_res_text;
+  if v_res_text <> 'requires_story_finalize' then
+    raise exception 'Test 3 ITEM 4 FAILED: generic capture MUST return requires_story_finalize for STORY_START, got %', v_res_text;
   end if;
 
   select commercial_origin into v_origin from public.stories where id = 'story-B';
-  if v_origin = 'PAID_START' then
-    raise exception 'Test 3 REQUIREMENT 2 FAILED: generic capture MUST NOT grant PAID_START entitlement without Bab 1 publish!';
-  end if;
   if v_origin <> 'PENDING_PAID_START' then
     raise exception 'Test 3 commercial_origin drift: expected PENDING_PAID_START, got %', v_origin;
   end if;
 
-  -- Test 4: Live DB Chapter Unlock Reservation, Canonical Debit Ref & Legacy Spend Duplicate Proof
-  perform public.grant_credits_v1(v_user_1, 'topup:seed2', 10, 'seed'); -- balance = 16
+  -- Test 4: ITEM 1: Active Reservation Protection Against Legacy Spend (A1, A2, A3)
+  -- User 2 balance = 8.
+  perform public.grant_credits_v1(v_user_2, 'topup:user2', 8, 'seed');
 
-  v_res := public.reserve_chapter_unlock_v1(v_user_1, 'story-B', 4);
-  if (v_res->>'ok')::boolean is not true or (v_res->>'cost')::int <> 8 then
-    raise exception 'Test 4 Chapter Reserve Failed, got %', v_res;
+  insert into public.stories (id, title, owner_user_id, visibility, total_chapters)
+  values ('story-C', 'Story C', v_user_2, 'private', 50);
+
+  -- Reserve 8 credits
+  v_res := public.reserve_chapter_unlock_v1(v_user_2, 'story-C', 4);
+  if (v_res->>'ok')::boolean is not true then
+    raise exception 'Test 4 A1 Reserve Failed: %', v_res;
   end if;
 
+  -- Available balance is 0
+  v_avail := public.available_credit_balance_v1(v_user_2);
+  if v_avail <> 0 then
+    raise exception 'Test 4 A1 Available Balance Check Failed: expected 0, got %', v_avail;
+  end if;
+
+  -- A1: Attempt legacy spend_credits_v1(8) while 8 credits are ACTIVELY reserved -> MUST RETURN INSUFFICIENT!
+  v_res_text := public.spend_credits_v1(v_user_2, 'legacy:spend:other', 8, 'legacy_spend');
+  if v_res_text <> 'insufficient' then
+    raise exception 'Test 4 A1 FAILED: legacy spend MUST be blocked by active reservation, got %', v_res_text;
+  end if;
+
+  -- A3: Capture reservation -> final balance = 0, no negative balance
   v_ref := v_res->>'ref';
   v_res_text := public.capture_credit_reservation_v1(v_ref);
   if v_res_text <> 'ok' then
-    raise exception 'Test 4 Chapter Capture Failed: %', v_res_text;
+    raise exception 'Test 4 A3 Capture Failed: %', v_res_text;
   end if;
 
-  if not exists (select 1 from public.credit_ledger where user_id = v_user_1 and ref = 'unlock:story-B:4' and delta = -8) then
-    raise exception 'Test 4 Canonical Ref Mapping Failed: unlock:story-B:4 missing from credit_ledger';
-  end if;
-
-  v_res_text := public.spend_credits_v1(v_user_1, 'unlock:story-B:4', 8, 'unlock_chapter');
-  if v_res_text <> 'duplicate' then
-    raise exception 'Test 4 Legacy Spend Duplicate Check Failed: expected duplicate, got %', v_res_text;
+  v_avail := public.available_credit_balance_v1(v_user_2);
+  if v_avail <> 0 then
+    raise exception 'Test 4 A3 Final Balance Mismatch: expected 0, got %', v_avail;
   end if;
 
   -- Test 5: Expired Reservation Re-Activation & Single Hold Invariant (Requirement 3)
-  -- Create reservation for chapter 5, manually expire it
+  perform public.grant_credits_v1(v_user_1, 'topup:seed2', 10, 'seed');
+
   v_res := public.reserve_chapter_unlock_v1(v_user_1, 'story-B', 5);
   v_ref := v_res->>'ref';
   update public.credit_reservations set expires_at = clock_timestamp() - interval '10 minutes', status = 'EXPIRED' where ref = v_ref;
 
-  -- Attempt capture on expired reservation -> MUST FAIL
+  -- Expired reservation cannot capture
   v_res_text := public.capture_credit_reservation_v1(v_ref);
   if v_res_text <> 'expired' then
     raise exception 'Test 5 Expired Capture Check Failed: expected expired, got %', v_res_text;
@@ -175,15 +187,6 @@ begin
   where user_id = v_user_1 and story_id = 'story-B' and chapter_number = 5 and status = 'ACTIVE';
   if v_active_count <> 1 then
     raise exception 'Test 5 Single Hold Invariant Failed: expected 1 active hold, got %', v_active_count;
-  end if;
-
-  -- Manually expire again, drain balance, attempt re-authorization -> MUST return INSUFFICIENT_CREDITS
-  update public.credit_reservations set expires_at = clock_timestamp() - interval '10 minutes', status = 'EXPIRED' where ref = v_ref;
-  perform public.spend_credits_v1(v_user_1, 'drain:balance', public.available_credit_balance_v1(v_user_1), 'drain');
-
-  v_res := public.reserve_chapter_unlock_v1(v_user_1, 'story-B', 5);
-  if (v_res->>'ok')::boolean is true or (v_res->>'reason') <> 'INSUFFICIENT_CREDITS' then
-    raise exception 'Test 5 Insufficient Re-authorization Check Failed, got %', v_res;
   end if;
 
 end

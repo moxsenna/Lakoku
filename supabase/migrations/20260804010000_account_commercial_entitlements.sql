@@ -1,6 +1,7 @@
 -- Migration 20260804010000_account_commercial_entitlements.sql
--- Account commercial states, starter story claim (concurrency-safe, ownership & story mode checked), welcome grant (exactly-once),
--- explicit commercial_origin column without unsafe permanent default, and strict ACL hardening.
+-- Account commercial states, starter story claim, welcome grant (with strict idempotency validation),
+-- explicit commercial_origin column without unsafe permanent default, hardened spend_credits_v1 (reservation-aware),
+-- and strict ACL hardening.
 
 -- 1) Account Commercial States table (INTERNAL ONLY - NO READER RLS ACCESS)
 create table if not exists public.account_commercial_states (
@@ -22,10 +23,13 @@ alter table public.stories
   add column if not exists commercial_origin text
   check (commercial_origin in ('STARTER_FREE', 'PENDING_PAID_START', 'PAID_START', 'LEGACY_GRANDFATHERED', 'ADMIN_GRANTED'));
 
--- Explicit deterministic one-time backfill for pre-existing historical stories to LEGACY_GRANDFATHERED
+-- Explicit deterministic backfill ONLY for pre-existing owned private/personalized story instances
 update public.stories
 set commercial_origin = 'LEGACY_GRANDFATHERED'
-where commercial_origin is null;
+where owner_user_id is not null
+  and id not like 'demo:%'
+  and visibility in ('private', 'unlisted')
+  and commercial_origin is null;
 
 -- 3) Seed/update canonical DB pricing in feature_credit_costs (chapter_unlock = 8, story_start = 24)
 insert into public.feature_credit_costs (feature_key, credits_required, is_active, pricing_version)
@@ -37,7 +41,55 @@ set credits_required = excluded.credits_required,
     is_active = true,
     updated_at = clock_timestamp();
 
--- 4) RPC: claim_starter_story_v1
+-- 4) RPC: spend_credits_v1 (HARDENED: Reservation-Aware Spend)
+-- Normal spend MUST exclude ACTIVE, unexpired reservations so reservations cannot be bypassed by legacy spend.
+create or replace function public.spend_credits_v1(
+  p_user_id uuid,
+  p_ref     text,
+  p_credits integer,
+  p_reason  text
+) returns text
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_available integer;
+  v_rows      integer;
+begin
+  if p_user_id is null or p_ref is null or trim(p_ref) = '' or p_credits is null or p_credits <= 0 then
+    raise exception 'spend_credits_v1: invalid arguments';
+  end if;
+
+  -- Uniform Advisory User Lock
+  perform pg_advisory_xact_lock(hashtext(p_user_id::text));
+
+  -- Idempotency Check
+  if exists (select 1 from public.credit_ledger where ref = p_ref) then
+    return 'duplicate';
+  end if;
+
+  -- Lazy cleanup of expired reservations under advisory lock
+  perform public.expire_user_reservations_lazy_v1(p_user_id);
+
+  -- Available balance excludes ACTIVE unexpired reservations
+  v_available := public.available_credit_balance_v1(p_user_id);
+  if v_available < p_credits then
+    return 'insufficient';
+  end if;
+
+  insert into public.credit_ledger (user_id, delta, reason, ref)
+  values (p_user_id, -p_credits, p_reason, p_ref)
+  on conflict (ref) do nothing;
+
+  get diagnostics v_rows = row_count;
+  if v_rows = 0 then
+    return 'duplicate';
+  end if;
+
+  return 'ok';
+end;
+$$;
+
+-- 5) RPC: claim_starter_story_v1
 -- Concurrency-safe via pg_advisory_xact_lock. Authority is starter_claimed_at IS NOT NULL (durable even if story deleted).
 -- Checks DB story ownership AND eligible story mode (reader-owned private/unlisted, not demo).
 create or replace function public.claim_starter_story_v1(
@@ -113,17 +165,18 @@ begin
 end;
 $$;
 
--- 5) RPC: grant_welcome_credit_v1
--- Server-authoritative exactly-once welcome grant (+20 credits). Amount is NOT configurable by caller.
+-- 6) RPC: grant_welcome_credit_v1
+-- Server-authoritative exactly-once welcome grant (+20 credits). Validates idempotency conflict.
 create or replace function public.grant_welcome_credit_v1(
   p_user_id uuid
 ) returns jsonb
 language plpgsql security definer set search_path = public
 as $$
 declare
-  v_state public.account_commercial_states%rowtype;
-  v_ref   text;
-  v_granted boolean;
+  v_state        public.account_commercial_states%rowtype;
+  v_ref          text;
+  v_granted      boolean;
+  v_ledger_row   public.credit_ledger%rowtype;
   c_welcome_amount constant integer := 20;
 begin
   if p_user_id is null then
@@ -153,21 +206,32 @@ begin
   v_ref := 'welcome:' || p_user_id::text;
   v_granted := public.grant_credits_v1(p_user_id, v_ref, c_welcome_amount, 'welcome_grant');
 
+  if not v_granted then
+    -- Verify existing ledger row matches exact welcome parameters
+    select * into v_ledger_row from public.credit_ledger where ref = v_ref;
+    if not found or v_ledger_row.user_id <> p_user_id or v_ledger_row.delta <> c_welcome_amount or v_ledger_row.reason <> 'welcome_grant' then
+      raise exception 'IDEMPOTENCY_CONFLICT: welcome credit ref conflict for user %', p_user_id;
+    end if;
+  else
+    select * into v_ledger_row from public.credit_ledger where ref = v_ref;
+  end if;
+
   update public.account_commercial_states
   set welcome_credit_granted_at = clock_timestamp(),
+      welcome_credit_event_id = v_ledger_row.id,
       updated_at = clock_timestamp()
   where user_id = p_user_id;
 
   return jsonb_build_object(
     'ok', true,
-    'granted', true,
+    'granted', v_granted,
+    'already_granted', not v_granted,
     'credits', c_welcome_amount
   );
 end;
 $$;
 
--- 6) SECURITY & ACL HARDENING (P0 SECURITY DEFECT FIX)
--- Explicitly revoke execute from PUBLIC, anon, authenticated to prevent unauthorized direct client invocation.
+-- 7) SECURITY & ACL HARDENING
 REVOKE ALL ON FUNCTION public.credit_balance_v1(uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.grant_credits_v1(uuid, text, integer, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.spend_credits_v1(uuid, text, integer, text) FROM PUBLIC, anon, authenticated;

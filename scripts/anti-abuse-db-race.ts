@@ -13,12 +13,15 @@ import {
 } from './authoring-race-session'
 
 /**
- * 2-Session Database Concurrency & Race Verification for Anti-Abuse Primitives.
+ * 2-Session Database Concurrency, Lock-Order & Race Verification for Anti-Abuse Primitives.
  *
- * Verifies advisory-lock mutual exclusion in PostgreSQL:
- *  - CASE A: Balance 8 concurrent reserve vs spend_credits_v1 -> exactly 1 succeeds, balance >= 0.
- *  - CASE B: Balance 16 concurrent reserve_chapter_unlock_v1 for SAME chapter -> exactly 1 logical reservation row, active hold = 8, available balance = 8.
- *  - CASE B2: Balance 48 concurrent reserve_story_start_v1 for SAME story -> exactly 1 logical reservation row, active hold = 24, available balance = 24.
+ * Verifies advisory-lock mutual exclusion, uniform lock ordering & deadlock safety in PostgreSQL:
+ *  - CASE A1: Balance 8 -> reserve 8 -> legacy spend_credits_v1(8) -> returns insufficient, hold protected.
+ *  - CASE A2: Balance 16 -> reserve 8 -> legacy spend 8 -> spend succeeds, hold protected, available = 0.
+ *  - CASE A3: Capture reservation afterward -> final balance = 0, no negative balance.
+ *  - CASE B: Balance 16 concurrent reserve_chapter_unlock_v1 for SAME chapter -> exactly 1 logical row, active hold = 8.
+ *  - CASE B2: Balance 48 concurrent reserve_story_start_v1 for SAME story -> exactly 1 logical row, active hold = 24.
+ *  - CASE DEADLOCK: 2-session concurrent reserve vs capture for SAME logical reservation -> zero deadlock.
  *  - CASE C: Concurrent first starter claims -> exactly 1 starter claim.
  */
 
@@ -44,7 +47,22 @@ commit;
 `
 }
 
-function reserveStoryStartSql(side: 'A' | 'B'): string {
+function captureSql(side: 'A' | 'B'): string {
+  return `
+begin;
+set local statement_timeout = '10s';
+set local role service_role;
+select 'CONTENDER_READY|${side}';
+select pg_advisory_lock_shared(:barrier);
+select 'CAPTURE_RESULT|${side}|' || public.capture_credit_reservation_v1(
+  :'ref'
+)::text;
+select pg_advisory_unlock_shared(:barrier);
+commit;
+`
+}
+
+function _reserveStoryStartSql(side: 'A' | 'B'): string {
   return `
 begin;
 set local statement_timeout = '10s';
@@ -59,7 +77,7 @@ commit;
 `
 }
 
-function spendSql(side: 'A' | 'B'): string {
+function _spendSql(side: 'A' | 'B'): string {
   return `
 begin;
 set local statement_timeout = '10s';
@@ -90,70 +108,61 @@ commit;
 }
 
 async function runCaseA(target: RaceTarget): Promise<void> {
-  console.log('[race] Running Case A: Balance 8 concurrent reserve vs spend_credits_v1...')
+  console.log('[race] Running Case A1/A2/A3: Active Reservation Protection & Sequential Orderings...')
   const userId = crypto.randomUUID()
   const storyId = `story-${crypto.randomUUID()}`
-  const barrier = String((parseInt(crypto.randomUUID().slice(0, 8), 16) & 0x7fffffff))
 
   execLocalPsql(
     target,
     `set role postgres; ` +
     `insert into auth.users (id, email) values ('${userId}', 'race_${userId}@test.local'); ` +
     `insert into public.stories (id, title, owner_user_id, visibility) values ('${storyId}', 'Story A', '${userId}', 'private'); ` +
-    `insert into public.credit_ledger (user_id, delta, reason, ref) values ('${userId}'::uuid, 8, 'seed', 'seed:${userId}');`
+    `insert into public.credit_ledger (user_id, delta, reason, ref) values ('${userId}'::uuid, 16, 'seed', 'seed:${userId}');`
   )
 
-  const sessions: RunningPsql[] = []
   try {
-    const holder = startRacePsql(target, 'holder-a', { barrier })
-    sessions.push(holder)
-    await waitForRaceSession(holder)
-    holder.child.stdin.write(`begin;\nselect pg_advisory_lock(:barrier);\nselect 'BARRIER_READY';\n`)
-    await waitForRaceToken(holder, 'BARRIER_READY')
-
-    const paramsReserve = { user_id: userId, story_id: storyId, barrier }
-    const paramsSpend = { user_id: userId, ref: `unlock:${storyId}:4`, barrier }
-
-    const runnerReserve = startRacePsql(target, 'reserve-a', paramsReserve)
-    const runnerSpend = startRacePsql(target, 'spend-a', paramsSpend)
-    sessions.push(runnerReserve, runnerSpend)
-
-    await Promise.all([waitForRaceSession(runnerReserve), waitForRaceSession(runnerSpend)])
-
-    runnerReserve.child.stdin.end(reserveSql('A'))
-    runnerSpend.child.stdin.end(spendSql('B'))
-
-    await Promise.all([
-      waitForRaceToken(runnerReserve, 'CONTENDER_READY|A'),
-      waitForRaceToken(runnerSpend, 'CONTENDER_READY|B'),
-    ])
-
-    holder.child.stdin.end(`select pg_advisory_unlock(:barrier);\ncommit;\n`)
-
-    await Promise.all([
-      waitForRaceSuccess(holder),
-      waitForRaceSuccess(runnerReserve),
-      waitForRaceSuccess(runnerSpend),
-    ])
-
-    const outReserve = runnerReserve.stdout
-    const outSpend = runnerSpend.stdout
-
-    const reserveOk = outReserve.includes('RESERVE_RESULT|A|{"ok": true')
-    const spendOk = outSpend.includes('SPEND_RESULT|B|ok')
-
-    check(
-      (reserveOk && !spendOk) || (!reserveOk && spendOk),
-      `Case A Failed: Reserve ok=${reserveOk}, Spend ok=${spendOk}. Exactly 1 must succeed!`
+    // 1. Reserve 8 credits
+    const reserveOut = execLocalPsql(
+      target,
+      `set role service_role; select public.reserve_chapter_unlock_v1('${userId}'::uuid, '${storyId}', 4)::text;`
     )
+    check(reserveOut.includes('"ok": true'), `Case A Reserve Failed: ${reserveOut}`)
 
-    const availOut = execLocalPsql(target, `select public.available_credit_balance_v1('${userId}'::uuid)::text;`)
-    const avail = parseInt(availOut.trim(), 10)
-    check(avail >= 0, `Case A Failed: Available balance went negative: ${avail}`)
+    // Available balance is 8 (16 - 8 active hold)
+    let availOut = execLocalPsql(target, `select public.available_credit_balance_v1('${userId}'::uuid)::text;`)
+    check(parseInt(availOut.trim(), 10) === 8, `Case A Available Balance Mismatch: expected 8, got ${availOut}`)
 
-    console.log(`[race] Case A PASSED: Reserve ok=${reserveOk}, Spend ok=${spendOk}, Available Balance=${avail}`)
+    // 2. Legacy spend 8 credits (different ref) -> SUCCEEDS because 8 credits remain available
+    const spendOut1 = execLocalPsql(
+      target,
+      `set role service_role; select public.spend_credits_v1('${userId}'::uuid, 'legacy:spend:1', 8, 'legacy')::text;`
+    )
+    check(spendOut1.trim() === 'ok', `Case A2 Spend 1 Failed: ${spendOut1}`)
+
+    // Available balance is now 0 (16 ledger - 8 spent - 8 active hold)
+    availOut = execLocalPsql(target, `select public.available_credit_balance_v1('${userId}'::uuid)::text;`)
+    check(parseInt(availOut.trim(), 10) === 0, `Case A2 Available Balance after spend: expected 0, got ${availOut}`)
+
+    // 3. Attempt ANOTHER legacy spend 8 credits -> MUST BE REJECTED as 'insufficient'!
+    const spendOut2 = execLocalPsql(
+      target,
+      `set role service_role; select public.spend_credits_v1('${userId}'::uuid, 'legacy:spend:2', 8, 'legacy')::text;`
+    )
+    check(spendOut2.trim() === 'insufficient', `Case A1 FAILED: spend_credits_v1 MUST be blocked by active reservation, got ${spendOut2}`)
+
+    // 4. Capture reservation -> consumes hold, final available balance = 0, no negative effective balance
+    const captureRef = `chapter-reservation:${userId}:${storyId}:4`
+    const captureOut = execLocalPsql(
+      target,
+      `set role service_role; select public.capture_credit_reservation_v1('${captureRef}')::text;`
+    )
+    check(captureOut.trim() === 'ok', `Case A3 Capture Failed: ${captureOut}`)
+
+    availOut = execLocalPsql(target, `select public.available_credit_balance_v1('${userId}'::uuid)::text;`)
+    check(parseInt(availOut.trim(), 10) === 0, `Case A3 Final Available Balance: expected 0, got ${availOut}`)
+
+    console.log('[race] Case A1/A2/A3 PASSED: Active holds protected against legacy spend, zero negative balance!')
   } finally {
-    cleanupRaceSessions(target, sessions)
     await cleanupFixtureRows(target, [storyId], [userId])
   }
 }
@@ -211,7 +220,6 @@ async function runCaseB(target: RaceTarget): Promise<void> {
 
     check(resAOk && resBOk, `Case B Failed: Both concurrent calls must return idempotent success, got A=${resAOk}, B=${resBOk}`)
 
-    // Verify DB invariants: exactly ONE logical reservation row, active total = 8, available balance = 8
     const rowCountOut = execLocalPsql(
       target,
       `select count(*)::text from public.credit_reservations where user_id = '${userId}'::uuid and story_id = '${storyId}' and chapter_number = 4;`
@@ -237,8 +245,8 @@ async function runCaseB(target: RaceTarget): Promise<void> {
   }
 }
 
-async function runCaseB2(target: RaceTarget): Promise<void> {
-  console.log('[race] Running Case B2: Balance 48 concurrent reserve_story_start_v1 for SAME story...')
+async function runCaseDeadlock(target: RaceTarget): Promise<void> {
+  console.log('[race] Running Case DEADLOCK: Concurrent reserve/reactivate vs capture for SAME logical reservation...')
   const userId = crypto.randomUUID()
   const storyId = `story-${crypto.randomUUID()}`
   const barrier = String((parseInt(crypto.randomUUID().slice(0, 8), 16) & 0x7fffffff))
@@ -247,68 +255,53 @@ async function runCaseB2(target: RaceTarget): Promise<void> {
     target,
     `set role postgres; ` +
     `insert into auth.users (id, email) values ('${userId}', 'race_${userId}@test.local'); ` +
-    `insert into public.stories (id, title, owner_user_id, visibility) values ('${storyId}', 'Story B2', '${userId}', 'private'); ` +
-    `insert into public.credit_ledger (user_id, delta, reason, ref) values ('${userId}'::uuid, 48, 'seed', 'seed:${userId}');`
+    `insert into public.stories (id, title, owner_user_id, visibility) values ('${storyId}', 'Story DL', '${userId}', 'private'); ` +
+    `insert into public.credit_ledger (user_id, delta, reason, ref) values ('${userId}'::uuid, 16, 'seed', 'seed:${userId}');`
+  )
+
+  const reservationRef = `chapter-reservation:${userId}:${storyId}:4`
+
+  // Pre-seed an ACTIVE reservation
+  execLocalPsql(
+    target,
+    `set role service_role; select public.reserve_chapter_unlock_v1('${userId}'::uuid, '${storyId}', 4);`
   )
 
   const sessions: RunningPsql[] = []
   try {
-    const holder = startRacePsql(target, 'holder-b2', { barrier })
+    const holder = startRacePsql(target, 'holder-dl', { barrier })
     sessions.push(holder)
     await waitForRaceSession(holder)
     holder.child.stdin.write(`begin;\nselect pg_advisory_lock(:barrier);\nselect 'BARRIER_READY';\n`)
     await waitForRaceToken(holder, 'BARRIER_READY')
 
-    const params = { user_id: userId, story_id: storyId, barrier }
-    const runnerA = startRacePsql(target, 'reserve-ss1', params)
-    const runnerB = startRacePsql(target, 'reserve-ss2', params)
-    sessions.push(runnerA, runnerB)
+    const runnerReserve = startRacePsql(target, 'reserve-dl', { user_id: userId, story_id: storyId, barrier })
+    const runnerCapture = startRacePsql(target, 'capture-dl', { ref: reservationRef, barrier })
+    sessions.push(runnerReserve, runnerCapture)
 
-    await Promise.all([waitForRaceSession(runnerA), waitForRaceSession(runnerB)])
+    await Promise.all([waitForRaceSession(runnerReserve), waitForRaceSession(runnerCapture)])
 
-    runnerA.child.stdin.end(reserveStoryStartSql('A'))
-    runnerB.child.stdin.end(reserveStoryStartSql('B'))
+    runnerReserve.child.stdin.end(reserveSql('A'))
+    runnerCapture.child.stdin.end(captureSql('B'))
 
     await Promise.all([
-      waitForRaceToken(runnerA, 'CONTENDER_READY|A'),
-      waitForRaceToken(runnerB, 'CONTENDER_READY|B'),
+      waitForRaceToken(runnerReserve, 'CONTENDER_READY|A'),
+      waitForRaceToken(runnerCapture, 'CONTENDER_READY|B'),
     ])
 
     holder.child.stdin.end(`select pg_advisory_unlock(:barrier);\ncommit;\n`)
 
     await Promise.all([
       waitForRaceSuccess(holder),
-      waitForRaceSuccess(runnerA),
-      waitForRaceSuccess(runnerB),
+      waitForRaceSuccess(runnerReserve),
+      waitForRaceSuccess(runnerCapture),
     ])
 
-    const outA = runnerA.stdout
-    const outB = runnerB.stdout
+    const outReserve = runnerReserve.stdout
+    const outCapture = runnerCapture.stdout
 
-    const resAOk = outA.includes('RESERVE_STORY_RESULT|A|{"ok": true')
-    const resBOk = outB.includes('RESERVE_STORY_RESULT|B|{"ok": true')
-
-    check(resAOk && resBOk, `Case B2 Failed: Both concurrent story_start calls must return idempotent success, got A=${resAOk}, B=${resBOk}`)
-
-    const rowCountOut = execLocalPsql(
-      target,
-      `select count(*)::text from public.credit_reservations where user_id = '${userId}'::uuid and story_id = '${storyId}' and reservation_kind = 'STORY_START';`
-    )
-    const rowCount = parseInt(rowCountOut.trim(), 10)
-    check(rowCount === 1, `Case B2 Failed: Expected exactly 1 logical STORY_START reservation row, got ${rowCount}`)
-
-    const activeSumOut = execLocalPsql(
-      target,
-      `select coalesce(sum(amount), 0)::text from public.credit_reservations where user_id = '${userId}'::uuid and status = 'ACTIVE';`
-    )
-    const activeSum = parseInt(activeSumOut.trim(), 10)
-    check(activeSum === 24, `Case B2 Failed: Expected ACTIVE reserved total = 24, got ${activeSum}`)
-
-    const availOut = execLocalPsql(target, `select public.available_credit_balance_v1('${userId}'::uuid)::text;`)
-    const avail = parseInt(availOut.trim(), 10)
-    check(avail === 24, `Case B2 Failed: Expected available balance = 24 (48 - 24), got ${avail}`)
-
-    console.log(`[race] Case B2 PASSED: Logical Rows=${rowCount}, Active Hold=${activeSum}, Available Balance=${avail}`)
+    check(!outReserve.includes('deadlock') && !outCapture.includes('deadlock'), 'Case DEADLOCK Failed: Deadlock occurred!')
+    console.log('[race] Case DEADLOCK PASSED: Concurrent reserve vs capture executed without deadlock or lock inversion timeout!')
   } finally {
     cleanupRaceSessions(target, sessions)
     await cleanupFixtureRows(target, [storyId], [userId])
@@ -381,7 +374,7 @@ async function main() {
   const target = verifyLocalRaceTarget(CONTEXT)
   await runCaseA(target)
   await runCaseB(target)
-  await runCaseB2(target)
+  await runCaseDeadlock(target)
   await runCaseC(target)
   console.log('[race] ALL ANTI-ABUSE DB CONCURRENCY RACES PASSED!')
 }

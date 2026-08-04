@@ -10,7 +10,7 @@ export interface GenerationAuthorizationInput {
   hasActiveReservation?: boolean
 }
 
-export type CommercialAuthStatus = 'AUTHORIZED' | 'WAITING_FOR_CREDITS'
+export type CommercialAuthStatus = 'AUTHORIZED' | 'NEEDS_RESERVATION' | 'WAITING_FOR_CREDITS'
 
 export interface GenerationAuthorizationResult {
   authorized: boolean
@@ -24,13 +24,13 @@ export interface GenerationAuthorizationResult {
  * Commercial Authorization Seam for AI Generation (P0).
  *
  * MUST be asserted before starting any AI provider call (standard, personalized, or worker recovery).
- * Returns `authorized: true` if:
+ * Returns `authorized: true` ONLY IF:
  *  - Chapter is a free starter chapter (Chapters 1-3 on user's Starter Story)
  *  - Story has paid start included (Chapters 1-3 on a 24-credit paid story)
- *  - An active credit reservation is held for this chapter/job
- *  - Or user has availableBalance >= requiredCredits (8 credits for chapter unlock)
+ *  - An ACTIVE credit reservation is held for this chapter/job
  *
- * Otherwise returns `authorized: false` with `status: 'WAITING_FOR_CREDITS'`.
+ * Balance sufficiency ALONE does NOT grant AI provider authorization.
+ * Balance sufficiency only means a reservation may be attempted (`NEEDS_RESERVATION`).
  */
 export async function assertGenerationCommercialAuthorization(
   input: GenerationAuthorizationInput,
@@ -76,19 +76,19 @@ export async function assertGenerationCommercialAuthorization(
     }
   }
 
-  // 4. Paid Chapter Unlock (8 credits)
+  // 4. No ACTIVE reservation held -> CANNOT authorize provider generation directly.
   const requiredCredits = CHAPTER_UNLOCK_COST
   if (availableBalance >= requiredCredits) {
     return {
-      authorized: true,
-      status: 'AUTHORIZED',
+      authorized: false,
+      status: 'NEEDS_RESERVATION',
       requiredCredits,
       availableBalance,
-      reason: 'SUFFICIENT_CREDITS',
+      reason: 'NEEDS_RESERVATION',
     }
   }
 
-  // 5. Insufficient credits -> Block provider call, persist choice, return WAITING_FOR_CREDITS
+  // 5. Insufficient credits -> Block provider call, return WAITING_FOR_CREDITS
   return {
     authorized: false,
     status: 'WAITING_FOR_CREDITS',

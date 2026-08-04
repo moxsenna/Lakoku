@@ -74,7 +74,60 @@ describe('P0 Anti-Abuse Commercial Policy & Entitlements', () => {
     })
   })
 
-  describe('Rule F: Insufficient Chapter Credit Gate (balance=4, required=8)', () => {
+  describe('Rule F & Item 3: Generation Authorization Requires Active Reservation (Balance Alone Cannot Authorize)', () => {
+    it('returns NEEDS_RESERVATION and authorized=false when balance=100 and hasActiveReservation=false', async () => {
+      const mockProviderCall = vi.fn()
+
+      const input: GenerationAuthorizationInput = {
+        userId: 'user-high-balance',
+        storyId: 'story-paid-1',
+        chapterNumber: 4,
+        availableBalance: 100,
+        isStarterStory: false,
+        hasPaidStartIncluded: false,
+        hasActiveReservation: false,
+      }
+
+      const authResult = await assertGenerationCommercialAuthorization(input)
+
+      expect(authResult.authorized).toBe(false)
+      expect(authResult.status).toBe('NEEDS_RESERVATION')
+      expect(authResult.requiredCredits).toBe(8)
+      expect(authResult.availableBalance).toBe(100)
+
+      if (authResult.authorized) {
+        await mockProviderCall()
+      }
+
+      expect(mockProviderCall).not.toHaveBeenCalled()
+    })
+
+    it('returns AUTHORIZED and authorized=true when hasActiveReservation=true', async () => {
+      const mockProviderCall = vi.fn()
+
+      const input: GenerationAuthorizationInput = {
+        userId: 'user-reserved',
+        storyId: 'story-paid-1',
+        chapterNumber: 4,
+        availableBalance: 0,
+        isStarterStory: false,
+        hasPaidStartIncluded: false,
+        hasActiveReservation: true,
+      }
+
+      const authResult = await assertGenerationCommercialAuthorization(input)
+
+      expect(authResult.authorized).toBe(true)
+      expect(authResult.status).toBe('AUTHORIZED')
+      expect(authResult.reason).toBe('ACTIVE_CREDIT_RESERVATION')
+
+      if (authResult.authorized) {
+        await mockProviderCall()
+      }
+
+      expect(mockProviderCall).toHaveBeenCalledTimes(1)
+    })
+
     it('returns WAITING_FOR_CREDITS and makes ZERO provider calls when balance=4 and chapter costs 8', async () => {
       const mockProviderWrite = vi.fn()
 

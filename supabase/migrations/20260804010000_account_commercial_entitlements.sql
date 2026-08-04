@@ -1,6 +1,6 @@
 -- Migration 20260804010000_account_commercial_entitlements.sql
 -- Account commercial states, legacy starter account backfill, server-authoritative configurable welcome cutoff,
--- explicit commercial_origin column without unsafe permanent default, pricing_version updates, and strict ACL hardening.
+-- fail-closed default welcome credit policy (is_active = false), pricing_version updates, and strict ACL hardening.
 
 -- 1) Account Commercial States table (INTERNAL ONLY - NO READER RLS ACCESS)
 create table if not exists public.account_commercial_states (
@@ -49,17 +49,17 @@ on conflict (user_id) do update set
   starter_claimed_at = coalesce(account_commercial_states.starter_claimed_at, excluded.starter_claimed_at),
   updated_at = clock_timestamp();
 
--- 3) Seed/update canonical DB pricing in feature_credit_costs (chapter_unlock = 8, story_start = 24, welcome_credit = 20 with updated pricing_version)
+-- 3) Seed/update canonical DB pricing in feature_credit_costs (chapter_unlock = 8, story_start = 24, with updated pricing_version)
+-- NOTE: welcome_credit is seeded FAIL-CLOSED (is_active = false, metadata = '{}') in Phase 1 migration.
+-- Phase 2 / release procedure will set is_active = true and configure welcome_eligible_from.
 insert into public.feature_credit_costs (feature_key, credits_required, is_active, pricing_version, metadata)
 values
   ('chapter_unlock', 8, true, 'v1.1-202608', '{}'::jsonb),
   ('story_start', 24, true, 'v1.1-202608', '{}'::jsonb),
-  ('welcome_credit', 20, true, 'v1.1-202608', jsonb_build_object('welcome_eligible_from', '2026-08-04T00:00:00+00'))
+  ('welcome_credit', 20, false, 'v1.1-202608', '{}'::jsonb)
 on conflict (feature_key) do update
 set credits_required = excluded.credits_required,
     pricing_version = excluded.pricing_version,
-    is_active = true,
-    metadata = case when excluded.metadata <> '{}'::jsonb then excluded.metadata else feature_credit_costs.metadata end,
     updated_at = clock_timestamp();
 
 -- 4) RPC: claim_starter_story_v1
@@ -142,7 +142,10 @@ $$;
 -- 5) RPC: grant_welcome_credit_v1
 -- Server-authoritative welcome bonus (+20 credits).
 -- Reads configurable welcome cutoff from feature_credit_costs (welcome_credit -> metadata -> welcome_eligible_from).
--- Fail-closed: returns WELCOME_POLICY_NOT_ACTIVE / WELCOME_POLICY_NOT_CONFIGURED if unconfigured.
+-- Fail-closed:
+--   - returns WELCOME_POLICY_NOT_ACTIVE if missing or is_active is false.
+--   - returns WELCOME_POLICY_CONFIG_INVALID if credits_required <> 20.
+--   - returns WELCOME_POLICY_NOT_CONFIGURED if welcome_eligible_from metadata is missing/blank.
 create or replace function public.grant_welcome_credit_v1(
   p_user_id uuid
 ) returns jsonb
@@ -157,7 +160,7 @@ declare
   v_ref             text;
   v_granted         boolean;
   v_ledger_row      public.credit_ledger%rowtype;
-  c_welcome_amount  constant integer := 20;
+  c_locked_amount   constant integer := 20;
 begin
   if p_user_id is null then
     raise exception 'grant_welcome_credit_v1: invalid arguments';
@@ -169,13 +172,21 @@ begin
   -- Query configurable welcome credit setting from feature_credit_costs
   select * into v_cost_row
   from public.feature_credit_costs
-  where feature_key = 'welcome_credit' and is_active = true;
+  where feature_key = 'welcome_credit';
 
-  if not found or v_cost_row.credits_required <= 0 then
+  if not found or not v_cost_row.is_active then
     return jsonb_build_object(
       'ok', false,
       'granted', false,
       'reason', 'WELCOME_POLICY_NOT_ACTIVE'
+    );
+  end if;
+
+  if v_cost_row.credits_required <> c_locked_amount then
+    return jsonb_build_object(
+      'ok', false,
+      'granted', false,
+      'reason', 'WELCOME_POLICY_CONFIG_INVALID'
     );
   end if;
 
@@ -188,7 +199,15 @@ begin
     );
   end if;
 
-  v_welcome_cutoff := v_cutoff_str::timestamptz;
+  begin
+    v_welcome_cutoff := v_cutoff_str::timestamptz;
+  exception when others then
+    return jsonb_build_object(
+      'ok', false,
+      'granted', false,
+      'reason', 'WELCOME_POLICY_NOT_CONFIGURED'
+    );
+  end;
 
   select created_at into v_user_created_at from auth.users where id = p_user_id;
   if not found then
@@ -221,11 +240,11 @@ begin
   end if;
 
   v_ref := 'welcome:' || p_user_id::text;
-  v_granted := public.grant_credits_v1(p_user_id, v_ref, c_welcome_amount, 'welcome_grant');
+  v_granted := public.grant_credits_v1(p_user_id, v_ref, c_locked_amount, 'welcome_grant');
 
   if not v_granted then
     select * into v_ledger_row from public.credit_ledger where ref = v_ref;
-    if not found or v_ledger_row.user_id <> p_user_id or v_ledger_row.delta <> c_welcome_amount or v_ledger_row.reason <> 'welcome_grant' then
+    if not found or v_ledger_row.user_id <> p_user_id or v_ledger_row.delta <> c_locked_amount or v_ledger_row.reason <> 'welcome_grant' then
       raise exception 'IDEMPOTENCY_CONFLICT: welcome credit ref conflict for user %', p_user_id;
     end if;
   else
@@ -242,7 +261,7 @@ begin
     'ok', true,
     'granted', v_granted,
     'already_granted', not v_granted,
-    'credits', c_welcome_amount
+    'credits', c_locked_amount
   );
 end;
 $$;

@@ -70,31 +70,61 @@ begin
     (v_user_prem_old, 'old_prem_user@test.local', '2026-07-01 12:00:00+00'::timestamptz),
     (v_user_std_old, 'old_std_user@test.local', '2026-07-01 12:00:00+00'::timestamptz);
 
-  -- Test 1: Requirement 2 - Welcome grant (+20) server-authoritative configurable cutoff
+  -- Test 1A: Requirement 2 - Default state after migration (is_active = false) MUST REJECT as WELCOME_POLICY_NOT_ACTIVE
+  v_res := public.grant_welcome_credit_v1(v_user_new);
+  if (v_res->>'granted')::boolean is not false or (v_res->>'reason') <> 'WELCOME_POLICY_NOT_ACTIVE' then
+    raise exception 'Test 1A Inactive Policy Check Failed: expected WELCOME_POLICY_NOT_ACTIVE, got %', v_res;
+  end if;
+
+  -- Test 1B: Active but cutoff absent in metadata MUST REJECT as WELCOME_POLICY_NOT_CONFIGURED
+  update public.feature_credit_costs
+  set is_active = true, credits_required = 20, metadata = '{}'::jsonb
+  where feature_key = 'welcome_credit';
+
+  v_res := public.grant_welcome_credit_v1(v_user_new);
+  if (v_res->>'granted')::boolean is not false or (v_res->>'reason') <> 'WELCOME_POLICY_NOT_CONFIGURED' then
+    raise exception 'Test 1B Missing Cutoff Check Failed: expected WELCOME_POLICY_NOT_CONFIGURED, got %', v_res;
+  end if;
+
+  -- Test 1C: Active with invalid credits_required (30 instead of 20) MUST REJECT as WELCOME_POLICY_CONFIG_INVALID
+  update public.feature_credit_costs
+  set is_active = true, credits_required = 30, metadata = jsonb_build_object('welcome_eligible_from', '2026-08-04T00:00:00+00')
+  where feature_key = 'welcome_credit';
+
+  v_res := public.grant_welcome_credit_v1(v_user_new);
+  if (v_res->>'granted')::boolean is not false or (v_res->>'reason') <> 'WELCOME_POLICY_CONFIG_INVALID' then
+    raise exception 'Test 1C Invalid Amount Check Failed: expected WELCOME_POLICY_CONFIG_INVALID, got %', v_res;
+  end if;
+
+  -- Test 1D: Valid active policy (is_active = true, credits_required = 20, cutoff set)
+  update public.feature_credit_costs
+  set is_active = true, credits_required = 20, metadata = jsonb_build_object('welcome_eligible_from', '2026-08-04T00:00:00+00')
+  where feature_key = 'welcome_credit';
+
   -- Old account created before cutoff -> NOT ELIGIBLE for +20 welcome credit
   v_res := public.grant_welcome_credit_v1(v_user_old);
   if (v_res->>'granted')::boolean is not false or (v_res->>'reason') <> 'NOT_ELIGIBLE_ACCOUNT_CREATED_BEFORE_WELCOME_CUTOFF' then
-    raise exception 'Test 1 Old Account Welcome Check Failed: expected NOT_ELIGIBLE_ACCOUNT_CREATED_BEFORE_WELCOME_CUTOFF, got %', v_res;
+    raise exception 'Test 1D Old Account Welcome Check Failed: expected NOT_ELIGIBLE_ACCOUNT_CREATED_BEFORE_WELCOME_CUTOFF, got %', v_res;
   end if;
 
   if public.available_credit_balance_v1(v_user_old) <> 0 then
-    raise exception 'Test 1 Old Account Balance Check Failed: expected 0 credits, got %', public.available_credit_balance_v1(v_user_old);
+    raise exception 'Test 1D Old Account Balance Check Failed: expected 0 credits, got %', public.available_credit_balance_v1(v_user_old);
   end if;
 
   -- New account created after cutoff -> ELIGIBLE once (+20 credits)
   v_res := public.grant_welcome_credit_v1(v_user_new);
   if (v_res->>'granted')::boolean is not true or (v_res->>'credits')::int <> 20 then
-    raise exception 'Test 1 New Account Welcome Check Failed: expected granted=true, credits=20, got %', v_res;
+    raise exception 'Test 1D New Account Welcome Check Failed: expected granted=true, credits=20, got %', v_res;
   end if;
 
   if public.available_credit_balance_v1(v_user_new) <> 20 then
-    raise exception 'Test 1 New Account Balance Check Failed: expected 20 credits';
+    raise exception 'Test 1D New Account Balance Check Failed: expected 20 credits';
   end if;
 
   -- Replay on new account -> already_granted=true
   v_res := public.grant_welcome_credit_v1(v_user_new);
   if (v_res->>'already_granted')::boolean is not true or public.available_credit_balance_v1(v_user_new) <> 20 then
-    raise exception 'Test 1 Duplicate Welcome Check Failed';
+    raise exception 'Test 1D Duplicate Welcome Check Failed';
   end if;
 
   -- Test 2: Requirement 4 - Pricing Version Updates

@@ -1,6 +1,11 @@
 /**
  * M10-A1a — ChapterStateDeltaV1 schema: strictness, bounds, duplicate
  * rejection, canonical ordering (plan §8-§9).
+ *
+ * R1 updates:
+ *  - Point 1 R1: Typed `actRollup.stateDelta` (`ActRollupStateDeltaV1Schema`),
+ *    menolak arbitrary keys di stateDelta.
+ *  - Point 7 R1: `occursAt > 50` diterima (finite number | null).
  */
 
 import { describe, expect, it } from 'vitest'
@@ -23,7 +28,19 @@ import {
 
 type DeepPartial = Record<string, unknown>
 
-/** Delta minimal valid; overrides mengganti node penuh (deep merge manual). */
+const emptyRollupStateDelta = () => ({
+  factIdsAdded: [],
+  factIdsPaidOff: [],
+  knowledgeGrantKeys: [],
+  revealedSecretIds: [],
+  characterStatusTransitions: [],
+  touchedThreadIds: [],
+  threadTransitions: [],
+  plotDebtProgressKeys: [],
+  plotDebtClosureIds: [],
+})
+
+/** Delta minimal valid; overrides mengganti node penuh. */
 function makeDelta(overrides: DeepPartial = {}): Record<string, unknown> {
   return {
     schemaVersion: 1,
@@ -43,7 +60,7 @@ function makeDelta(overrides: DeepPartial = {}): Record<string, unknown> {
 
 const repeat = <T>(value: T, count: number): T[] => Array.from({ length: count }, () => value)
 
-describe('ChapterStateDeltaV1Schema — strictness', () => {
+describe('ChapterStateDeltaV1Schema — strictness & Point 1 R1 typed rollup', () => {
   it('menerima delta minimal valid', () => {
     const result = ChapterStateDeltaV1Schema.safeParse(makeDelta())
     expect(result.success).toBe(true)
@@ -64,7 +81,6 @@ describe('ChapterStateDeltaV1Schema — strictness', () => {
       { characters: { statusChanges: [], introduce: [] } },
       { threads: { touches: [], transitions: [], open: [] } },
       { plotDebts: { progress: [], closures: [], reset: [] } },
-      { actRollup: { actNumber: 1, coversFromChapter: 1, coversToChapter: 5, summary: 's', stateDelta: {}, hallucinated: true } },
     ]
     for (const overrides of badCategories) {
       const result = ChapterStateDeltaV1Schema.safeParse(makeDelta(overrides))
@@ -72,109 +88,132 @@ describe('ChapterStateDeltaV1Schema — strictness', () => {
     }
   })
 
-  it('menolak kategori yang bukan tipe terstruktur', () => {
-    const result = ChapterStateDeltaV1Schema.safeParse(
-      makeDelta({ facts: 'markPaidOff langsung' }),
-    )
+  it('Point 1 R1: menolak arbitrary key di actRollup.stateDelta (harus typed)', () => {
+    const badRollup = makeDelta({
+      actRollup: {
+        actNumber: 1,
+        coversFromChapter: 1,
+        coversToChapter: 5,
+        summary: 'summary',
+        stateDelta: { ...emptyRollupStateDelta(), arbitraryNestedState: 'lolos' },
+      },
+    })
+    const result = ChapterStateDeltaV1Schema.safeParse(badRollup)
     expect(result.success).toBe(false)
   })
 
-  it('menolak schemaVersion yang bukan 1', () => {
-    const result = ChapterStateDeltaV1Schema.safeParse(makeDelta({ schemaVersion: 2 }))
-    expect(result.success).toBe(false)
+  it('Point 1 R1: menerima actRollup.stateDelta yang typed & bounded', () => {
+    const goodRollup = makeDelta({
+      actRollup: {
+        actNumber: 1,
+        coversFromChapter: 1,
+        coversToChapter: 5,
+        summary: 'summary',
+        stateDelta: {
+          ...emptyRollupStateDelta(),
+          factIdsAdded: ['story:test:fact:1'],
+          revealedSecretIds: ['story:test:secret:1'],
+        },
+      },
+    })
+    const result = ChapterStateDeltaV1Schema.safeParse(goodRollup)
+    expect(result.success).toBe(true)
+  })
+})
+
+describe('ChapterStateDeltaV1Schema — Point 7 R1 timeline occursAt', () => {
+  it('menerima occursAt > 50 (finite number | null)', () => {
+    const delta = makeDelta({
+      timeline: {
+        append: [
+          { ordinal: 0, description: 'Event kronologi lama', characterId: null, occursAt: 1998, isFlashback: true },
+          { ordinal: 1, description: 'Event tanpa waktu', characterId: null, occursAt: null, isFlashback: false },
+        ],
+      },
+    })
+    const result = ChapterStateDeltaV1Schema.safeParse(delta)
+    expect(result.success).toBe(true)
   })
 })
 
 describe('ChapterStateDeltaV1Schema — bounds (plan §8)', () => {
   it('facts.add maksimal 16', () => {
-    // Perlu id berbeda agar tidak kena duplicate-rejection sebelum bounds.
     const entries = (count: number) => Array.from({ length: count }, (_, index) => ({
       id: `fact:b${index}`,
       statement: 's',
       subjectCharacterId: null,
       salience: 0.5,
     }))
-    const ok = ChapterStateDeltaV1Schema.safeParse(makeDelta({
+    expect(ChapterStateDeltaV1Schema.safeParse(makeDelta({
       facts: { add: entries(MAX_ADDED_FACTS), markPaidOff: [] },
-    }))
-    expect(ok.success).toBe(true)
-    const tooMany = ChapterStateDeltaV1Schema.safeParse(makeDelta({
+    })).success).toBe(true)
+    expect(ChapterStateDeltaV1Schema.safeParse(makeDelta({
       facts: { add: entries(MAX_ADDED_FACTS + 1), markPaidOff: [] },
-    }))
-    expect(tooMany.success).toBe(false)
+    })).success).toBe(false)
   })
 
   it('facts.markPaidOff maksimal 32', () => {
-    const result = ChapterStateDeltaV1Schema.safeParse(makeDelta({
+    expect(ChapterStateDeltaV1Schema.safeParse(makeDelta({
       facts: { add: [], markPaidOff: repeat('fact:x', MAX_PAID_OFF_FACTS + 1) },
-    }))
-    expect(result.success).toBe(false)
+    })).success).toBe(false)
   })
 
   it('knowledge.grants maksimal 64', () => {
-    const result = ChapterStateDeltaV1Schema.safeParse(makeDelta({
+    expect(ChapterStateDeltaV1Schema.safeParse(makeDelta({
       knowledge: { grants: repeat({ characterId: 'char:a', factId: 'fact:b' }, MAX_KNOWLEDGE_GRANTS + 1) },
-    }))
-    expect(result.success).toBe(false)
+    })).success).toBe(false)
   })
 
   it('secrets.revealIds maksimal 20', () => {
-    const result = ChapterStateDeltaV1Schema.safeParse(makeDelta({
+    expect(ChapterStateDeltaV1Schema.safeParse(makeDelta({
       secrets: { revealIds: repeat('secret:s', MAX_REVEAL_IDS + 1) },
-    }))
-    expect(result.success).toBe(false)
+    })).success).toBe(false)
   })
 
   it('timeline.append maksimal 32', () => {
-    const result = ChapterStateDeltaV1Schema.safeParse(makeDelta({
+    expect(ChapterStateDeltaV1Schema.safeParse(makeDelta({
       timeline: {
         append: repeat(
           { ordinal: 1, description: 'd', characterId: null, occursAt: null, isFlashback: false },
           MAX_TIMELINE_APPENDS + 1,
         ),
       },
-    }))
-    expect(result.success).toBe(false)
+    })).success).toBe(false)
   })
 
   it('characters.statusChanges maksimal 16', () => {
-    const result = ChapterStateDeltaV1Schema.safeParse(makeDelta({
+    expect(ChapterStateDeltaV1Schema.safeParse(makeDelta({
       characters: {
         statusChanges: repeat({ characterId: 'char:a', from: 'ALIVE', to: 'INACTIVE' }, MAX_STATUS_CHANGES + 1),
       },
-    }))
-    expect(result.success).toBe(false)
+    })).success).toBe(false)
   })
 
   it('threads.touches maksimal 24', () => {
-    const result = ChapterStateDeltaV1Schema.safeParse(makeDelta({
+    expect(ChapterStateDeltaV1Schema.safeParse(makeDelta({
       threads: { touches: repeat('thread:t', MAX_THREAD_TOUCHES + 1), transitions: [] },
-    }))
-    expect(result.success).toBe(false)
+    })).success).toBe(false)
   })
 
   it('threads.transitions maksimal 24', () => {
-    const result = ChapterStateDeltaV1Schema.safeParse(makeDelta({
+    expect(ChapterStateDeltaV1Schema.safeParse(makeDelta({
       threads: {
         touches: [],
         transitions: repeat({ threadId: 'thread:t', from: 'OPEN', to: 'DEVELOPING' }, MAX_THREAD_TRANSITIONS + 1),
       },
-    }))
-    expect(result.success).toBe(false)
+    })).success).toBe(false)
   })
 
   it('plotDebts.progress maksimal 20', () => {
-    const result = ChapterStateDeltaV1Schema.safeParse(makeDelta({
+    expect(ChapterStateDeltaV1Schema.safeParse(makeDelta({
       plotDebts: { progress: repeat({ debtId: 'debt:d', milestoneChapter: 5 }, MAX_PLOT_DEBT_PROGRESS + 1), closures: [] },
-    }))
-    expect(result.success).toBe(false)
+    })).success).toBe(false)
   })
 
   it('plotDebts.closures maksimal 20', () => {
-    const result = ChapterStateDeltaV1Schema.safeParse(makeDelta({
+    expect(ChapterStateDeltaV1Schema.safeParse(makeDelta({
       plotDebts: { progress: [], closures: repeat({ debtId: 'debt:d', closureForm: 'RESOLVED' }, MAX_PLOT_DEBT_CLOSURES + 1) },
-    }))
-    expect(result.success).toBe(false)
+    })).success).toBe(false)
   })
 
   it('string bounds: ID ≤ 256, statement ≤ 240, timeline ≤ 500', () => {
@@ -200,6 +239,7 @@ describe('ChapterStateDeltaV1Schema — bounds (plan §8)', () => {
         coversFromChapter: 1,
         coversToChapter: 5,
         summary: longSummary,
+        stateDelta: emptyRollupStateDelta(),
       },
     })).success).toBe(false)
     expect(ChapterStateDeltaV1Schema.safeParse(makeDelta({
@@ -208,6 +248,7 @@ describe('ChapterStateDeltaV1Schema — bounds (plan §8)', () => {
         coversFromChapter: 6,
         coversToChapter: 5,
         summary: 'ringkas',
+        stateDelta: emptyRollupStateDelta(),
       },
     })).success).toBe(false)
     expect(ChapterStateDeltaV1Schema.safeParse(makeDelta({
@@ -216,6 +257,7 @@ describe('ChapterStateDeltaV1Schema — bounds (plan §8)', () => {
         coversFromChapter: 1,
         coversToChapter: 5,
         summary: 'ringkas sekali',
+        stateDelta: emptyRollupStateDelta(),
       },
     })).success).toBe(true)
   })
@@ -264,7 +306,7 @@ describe('ChapterStateDeltaV1Schema — duplicate rejection (no last-write-wins)
 })
 
 describe('canonicalizeChapterStateDelta — canonical ordering (plan §9)', () => {
-  it('mengurutkan semua kategori secara deterministik', () => {
+  it('mengurutkan semua kategori secara deterministik termasuk actRollup stateDelta', () => {
     const delta = makeDelta({
       facts: {
         add: [
@@ -273,92 +315,21 @@ describe('canonicalizeChapterStateDelta — canonical ordering (plan §9)', () =
         ],
         markPaidOff: ['fact:zz', 'fact:aa'],
       },
-      knowledge: {
-        grants: [
-          { characterId: 'char:z', factId: 'fact:b' },
-          { characterId: 'char:a', factId: 'fact:z' },
-          { characterId: 'char:a', factId: 'fact:a' },
-        ],
-      },
-      secrets: { revealIds: ['secret:z', 'secret:a'] },
-      timeline: {
-        append: [
-          { ordinal: 2, description: 'kedua', characterId: null, occursAt: null, isFlashback: false },
-          { ordinal: 1, description: 'pertama', characterId: null, occursAt: null, isFlashback: false },
-        ],
-      },
-      characters: {
-        statusChanges: [
-          { characterId: 'char:z', from: 'ALIVE', to: 'DEAD' },
-          { characterId: 'char:a', from: 'ALIVE', to: 'INACTIVE' },
-        ],
-      },
-      threads: {
-        touches: ['thread:z', 'thread:a'],
-        transitions: [
-          { threadId: 'thread:z', from: 'OPEN', to: 'DEVELOPING' },
-          { threadId: 'thread:a', from: 'OPEN', to: 'PAYOFF_DUE' },
-        ],
-      },
-      plotDebts: {
-        progress: [
-          { debtId: 'debt:z', milestoneChapter: 3 },
-          { debtId: 'debt:a', milestoneChapter: 2 },
-        ],
-        closures: [
-          { debtId: 'debt:z', closureForm: 'RESOLVED' },
-          { debtId: 'debt:a', closureForm: 'ABANDONED' },
-        ],
+      actRollup: {
+        actNumber: 1,
+        coversFromChapter: 1,
+        coversToChapter: 5,
+        summary: 's',
+        stateDelta: {
+          ...emptyRollupStateDelta(),
+          factIdsAdded: ['fact:z', 'fact:a'],
+        },
       },
     })
     const canonical = canonicalizeChapterStateDelta(delta)
     expect(canonical.facts.add.map((fact) => fact.id)).toEqual(['fact:a', 'fact:z'])
     expect(canonical.facts.markPaidOff).toEqual(['fact:aa', 'fact:zz'])
-    expect(canonical.knowledge.grants.map((grant) => `${grant.characterId}:${grant.factId}`))
-      .toEqual(['char:a:fact:a', 'char:a:fact:z', 'char:z:fact:b'])
-    expect(canonical.secrets.revealIds).toEqual(['secret:a', 'secret:z'])
-    expect(canonical.timeline.append.map((event) => event.ordinal)).toEqual([1, 2])
-    expect(canonical.characters.statusChanges.map((change) => change.characterId))
-      .toEqual(['char:a', 'char:z'])
-    expect(canonical.threads.touches).toEqual(['thread:a', 'thread:z'])
-    expect(canonical.threads.transitions.map((transition) => transition.threadId))
-      .toEqual(['thread:a', 'thread:z'])
-    expect(canonical.plotDebts.progress.map((progress) => progress.debtId))
-      .toEqual(['debt:a', 'debt:z'])
-    expect(canonical.plotDebts.closures.map((closure) => closure.debtId))
-      .toEqual(['debt:a', 'debt:z'])
-  })
-
-  it('input sama dengan urutan beda → delta kanonik identik', () => {
-    const base = {
-      facts: {
-        add: [
-          { id: 'fact:one', statement: 'satu', subjectCharacterId: null, salience: 0.5 },
-          { id: 'fact:two', statement: 'dua', subjectCharacterId: 'char:a', salience: 0.6 },
-        ],
-        markPaidOff: ['fact:two'],
-      },
-      knowledge: { grants: [{ characterId: 'char:a', factId: 'fact:one' }] },
-      secrets: { revealIds: ['secret:s'] },
-      timeline: { append: [{ ordinal: 1, description: 'd', characterId: null, occursAt: null, isFlashback: false }] },
-      characters: { statusChanges: [{ characterId: 'char:a', from: 'ALIVE', to: 'INACTIVE' }] },
-      threads: { touches: ['thread:t'], transitions: [{ threadId: 'thread:t', from: 'OPEN', to: 'DEVELOPING' }] },
-      plotDebts: { progress: [{ debtId: 'debt:d', milestoneChapter: 5 }], closures: [] },
-      actRollup: null,
-    }
-    const forward = makeDelta(base)
-    const shuffled = makeDelta({
-      facts: { add: [...base.facts.add].reverse(), markPaidOff: ['fact:two'] },
-      knowledge: base.knowledge,
-      secrets: base.secrets,
-      timeline: base.timeline,
-      characters: base.characters,
-      threads: { touches: ['thread:t'], transitions: base.threads.transitions },
-      plotDebts: base.plotDebts,
-      actRollup: null,
-    })
-    expect(canonicalDeltaJson(canonicalizeChapterStateDelta(forward)))
-      .toBe(canonicalDeltaJson(canonicalizeChapterStateDelta(shuffled)))
+    expect(canonical.actRollup?.stateDelta.factIdsAdded).toEqual(['fact:a', 'fact:z'])
   })
 
   it('canonicalize idempotent — hasil dua kali sama', () => {

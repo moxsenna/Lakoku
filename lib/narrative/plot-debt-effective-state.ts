@@ -8,14 +8,15 @@
  *   - reader_plot_debt_progress (milestone selesai),
  *   - reader_plot_debt_closures (debt tertutup).
  *
- * `buildChapterBrief()` (stateful) wajib memakai proyeksi ini, bukan
- * `contract.status + milestone <= chapter`.
+ * Point 6 R1:
+ *  - Fail-closed ledger validation: unknown debt ID atau milestone di luar
+ *    contract `mustProgressBy` melempar `EffectivePlotDebtStateError`.
+ *  - `closedDebtIds` diurutkan kanonik & divalidasi vs contract.
  */
 
 import { z } from 'zod'
 import type { PlotDebt } from '../story-engine/story-contract'
 
-/** Milestone per debt yang sudah tercatat selesai (sorted unique). */
 export type ProgressedMilestones = Record<string, number[]>
 
 export type EffectiveDebtStatus = 'open' | 'progressing' | 'closed'
@@ -36,12 +37,22 @@ export interface EffectivePlotDebtState {
   debtsDueToProgress: string[]
   /** Debt terbuka yang deadline closure-nya TEPAT bab ini. */
   debtsDueToClose: string[]
+  /** Sorted unique. */
   closedDebtIds: string[]
   /** Sorted unique. */
   progressedMilestones: ProgressedMilestones
 }
 
 const milestoneChapter = z.number().int().min(1).max(50)
+
+export class EffectivePlotDebtStateError extends Error {
+  readonly code: string
+  constructor(code: string, message: string) {
+    super(message)
+    this.name = 'EffectivePlotDebtStateError'
+    this.code = code
+  }
+}
 
 export interface ProjectEffectivePlotDebtStateInput {
   plotDebts: readonly PlotDebt[]
@@ -50,13 +61,58 @@ export interface ProjectEffectivePlotDebtStateInput {
   chapterNumber: number
 }
 
+function compareIds(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0
+}
+
 export function projectEffectivePlotDebtState(
   input: ProjectEffectivePlotDebtStateInput,
 ): EffectivePlotDebtState {
-  const { plotDebts, closedDebtIds, chapterNumber } = input
+  const { plotDebts, chapterNumber } = input
+  const debtMap = new Map(plotDebts.map((debt) => [debt.id, debt]))
 
-  const closed = new Set(closedDebtIds)
-  const milestones = normalizeProgressedMilestones(input.progressedMilestones)
+  // Point 6 R1: Validate & canonicalize closedDebtIds
+  const closedSet = new Set<string>()
+  for (const id of input.closedDebtIds) {
+    if (!debtMap.has(id)) {
+      throw new EffectivePlotDebtStateError(
+        'UNKNOWN_CLOSED_DEBT_ID',
+        `Closed debt ledger berisi debt ID tak dikenal "${id}".`,
+      )
+    }
+    closedSet.add(id)
+  }
+  const closedDebtIds = [...closedSet].sort(compareIds)
+
+  // Point 6 R1: Validate & canonicalize progressedMilestones fail-closed
+  const milestones: ProgressedMilestones = {}
+  for (const [debtId, chapters] of Object.entries(input.progressedMilestones)) {
+    const debt = debtMap.get(debtId)
+    if (!debt) {
+      throw new EffectivePlotDebtStateError(
+        'UNKNOWN_PROGRESS_DEBT_ID',
+        `Progress milestone ledger berisi debt ID tak dikenal "${debtId}".`,
+      )
+    }
+    const uniqueChapters = [...new Set(chapters)].sort((a, b) => a - b)
+    for (const ch of uniqueChapters) {
+      if (!milestoneChapter.safeParse(ch).success) {
+        throw new EffectivePlotDebtStateError(
+          'INVALID_MILESTONE_CHAPTER',
+          `Milestone chapter ${ch} untuk debt "${debtId}" di luar range 1..50.`,
+        )
+      }
+      if (!debt.mustProgressBy.includes(ch)) {
+        throw new EffectivePlotDebtStateError(
+          'UNAUTHORIZED_MILESTONE_CHAPTER',
+          `Milestone chapter ${ch} tidak terdaftar di mustProgressBy untuk debt "${debtId}".`,
+        )
+      }
+    }
+    if (uniqueChapters.length > 0) {
+      milestones[debtId] = uniqueChapters
+    }
+  }
 
   const debts: Record<string, EffectiveDebtProjection> = {}
   const debtsDueToProgress: string[] = []
@@ -65,10 +121,10 @@ export function projectEffectivePlotDebtState(
   for (const debt of plotDebts) {
     const completedMilestones = milestones[debt.id] ?? []
     const nextUnpaidMilestones = debt.mustProgressBy
-      .filter((chapter) => !completedMilestones.includes(chapter))
+      .filter((ch) => !completedMilestones.includes(ch))
 
     let effectiveStatus: EffectiveDebtStatus = debt.status
-    if (closed.has(debt.id)) {
+    if (closedSet.has(debt.id)) {
       effectiveStatus = 'closed'
     } else if (completedMilestones.length > 0) {
       effectiveStatus = 'progressing'
@@ -97,23 +153,9 @@ export function projectEffectivePlotDebtState(
 
   return {
     debts,
-    debtsDueToProgress,
-    debtsDueToClose,
-    closedDebtIds: [...closed],
+    debtsDueToProgress: debtsDueToProgress.sort(compareIds),
+    debtsDueToClose: debtsDueToClose.sort(compareIds),
+    closedDebtIds,
     progressedMilestones: milestones,
   }
-}
-
-/** Normalisasi: sorted unique, hanya milestone legal 1..50. */
-export function normalizeProgressedMilestones(
-  input: ProgressedMilestones,
-): ProgressedMilestones {
-  const out: ProgressedMilestones = {}
-  for (const [debtId, chapters] of Object.entries(input)) {
-    const unique = [...new Set(chapters)]
-      .filter((chapter) => milestoneChapter.safeParse(chapter).success)
-      .sort((a, b) => a - b)
-    if (unique.length > 0) out[debtId] = unique
-  }
-  return out
 }

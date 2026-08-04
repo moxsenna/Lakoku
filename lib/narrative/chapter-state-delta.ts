@@ -6,12 +6,13 @@
  * dari draft TIDAK pernah dipakai langsung sebagai mutasi DB; semua mutasi
  * wajib melalui delta terkunci ini.
  *
- * Aturan:
+ * Aturan R1:
  *  - `.strict()` di semua level — kategori mutasi arbitrer ditolak.
+ *  - Typed `ActRollupStateDeltaV1Schema` (Point 1 R1) — menghapus `Record<string, unknown>`.
+ *  - Timeline `occursAt`: `number | null` (finite) — hapus batas 1..50 (Point 7 R1).
  *  - Bounds per bab (plan §8).
  *  - Urutan kanonik deterministik sebelum persist (plan §9).
  *  - Duplikat operasi ternormalisasi DITOLAK — tidak ada last-write-wins.
- *  - Resolusi ID lintas-cerita dilakukan resolver (bukan di schema ini).
  */
 
 import { z } from 'zod'
@@ -37,7 +38,6 @@ export const MAX_TIMELINE_DESCRIPTION_LENGTH = 500
 export const MAX_ACT_ROLLUP_SUMMARY_LENGTH = 3000
 export const MAX_ACT_ROLLUP_SUMMARY_WORDS = 250
 
-/** Duplikat lokal dari closure forms (pola sama seperti ai-gateway/schemas). */
 export const PLOT_DEBT_CLOSURE_FORMS = [
   'RESOLVED',
   'SUBVERTED',
@@ -70,11 +70,12 @@ const KnowledgeGrantSchema = z.object({
   factId: canonicalIdSchema,
 }).strict()
 
+/** Point 7 R1: occursAt adalah number | null finite (bukan 1..50). */
 const TimelineAppendSchema = z.object({
   ordinal: z.number().int().nonnegative(),
   description: z.string().trim().min(1).max(MAX_TIMELINE_DESCRIPTION_LENGTH),
   characterId: canonicalIdSchema.nullable(),
-  occursAt: z.number().int().min(1).max(50).nullable(),
+  occursAt: z.number().finite().nullable(),
   isFlashback: z.boolean(),
 }).strict()
 
@@ -100,12 +101,38 @@ const PlotDebtClosureSchema = z.object({
   closureForm: z.enum(PLOT_DEBT_CLOSURE_FORMS),
 }).strict()
 
+// ---------- Point 1 R1: Typed Act Rollup State Delta ----------
+
+export const ActRollupStateDeltaV1Schema = z.object({
+  factIdsAdded: z.array(canonicalIdSchema).max(MAX_ADDED_FACTS),
+  factIdsPaidOff: z.array(canonicalIdSchema).max(MAX_PAID_OFF_FACTS),
+  knowledgeGrantKeys: z.array(canonicalIdSchema).max(MAX_KNOWLEDGE_GRANTS),
+  revealedSecretIds: z.array(canonicalIdSchema).max(MAX_REVEAL_IDS),
+  characterStatusTransitions: z.array(canonicalIdSchema).max(MAX_STATUS_CHANGES),
+  touchedThreadIds: z.array(canonicalIdSchema).max(MAX_THREAD_TOUCHES),
+  threadTransitions: z.array(canonicalIdSchema).max(MAX_THREAD_TRANSITIONS),
+  plotDebtProgressKeys: z.array(canonicalIdSchema).max(MAX_PLOT_DEBT_PROGRESS),
+  plotDebtClosureIds: z.array(canonicalIdSchema).max(MAX_PLOT_DEBT_CLOSURES),
+}).strict().superRefine((rollupDelta, context) => {
+  rejectDuplicateIds(rollupDelta.factIdsAdded, ['factIdsAdded'], context)
+  rejectDuplicateIds(rollupDelta.factIdsPaidOff, ['factIdsPaidOff'], context)
+  rejectDuplicateIds(rollupDelta.knowledgeGrantKeys, ['knowledgeGrantKeys'], context)
+  rejectDuplicateIds(rollupDelta.revealedSecretIds, ['revealedSecretIds'], context)
+  rejectDuplicateIds(rollupDelta.characterStatusTransitions, ['characterStatusTransitions'], context)
+  rejectDuplicateIds(rollupDelta.touchedThreadIds, ['touchedThreadIds'], context)
+  rejectDuplicateIds(rollupDelta.threadTransitions, ['threadTransitions'], context)
+  rejectDuplicateIds(rollupDelta.plotDebtProgressKeys, ['plotDebtProgressKeys'], context)
+  rejectDuplicateIds(rollupDelta.plotDebtClosureIds, ['plotDebtClosureIds'], context)
+})
+
+export type ActRollupStateDeltaV1 = z.infer<typeof ActRollupStateDeltaV1Schema>
+
 const ActRollupSchema = z.object({
   actNumber: z.number().int().min(1),
   coversFromChapter: z.number().int().min(1).max(50),
   coversToChapter: z.number().int().min(1).max(50),
   summary: z.string().trim().min(1).max(MAX_ACT_ROLLUP_SUMMARY_LENGTH),
-  stateDelta: z.record(z.string(), z.unknown()).default({}),
+  stateDelta: ActRollupStateDeltaV1Schema,
 }).strict().superRefine((rollup, context) => {
   if (rollup.coversToChapter < rollup.coversFromChapter) {
     context.addIssue({
@@ -156,7 +183,6 @@ export const ChapterStateDeltaV1Schema = z.object({
   }).strict(),
   actRollup: ActRollupSchema.nullable(),
 }).strict().superRefine((delta, context) => {
-  // Duplikat operasi ternormalisasi → tolak (plan §9: never last-write-wins).
   rejectDuplicateIds(delta.facts.add.map((fact) => fact.id), ['facts', 'add'], context, 'id')
   rejectDuplicateIds(delta.facts.markPaidOff, ['facts', 'markPaidOff'], context)
   rejectDuplicatePairs(
@@ -237,15 +263,31 @@ function rejectDuplicatePairs(
   })
 }
 
-/** Perbandingan string byte-stable (deterministik lintas runtime/DB). */
 function compareIds(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0
 }
 
+/** Point 1 R1: canonicalize ActRollup stateDelta arrays. */
+export function canonicalizeActRollupStateDelta(
+  input: ActRollupStateDeltaV1,
+): ActRollupStateDeltaV1 {
+  const parsed = ActRollupStateDeltaV1Schema.parse(input)
+  return {
+    factIdsAdded: [...parsed.factIdsAdded].sort(compareIds),
+    factIdsPaidOff: [...parsed.factIdsPaidOff].sort(compareIds),
+    knowledgeGrantKeys: [...parsed.knowledgeGrantKeys].sort(compareIds),
+    revealedSecretIds: [...parsed.revealedSecretIds].sort(compareIds),
+    characterStatusTransitions: [...parsed.characterStatusTransitions].sort(compareIds),
+    touchedThreadIds: [...parsed.touchedThreadIds].sort(compareIds),
+    threadTransitions: [...parsed.threadTransitions].sort(compareIds),
+    plotDebtProgressKeys: [...parsed.plotDebtProgressKeys].sort(compareIds),
+    plotDebtClosureIds: [...parsed.plotDebtClosureIds].sort(compareIds),
+  }
+}
+
 /**
  * Canonicalisasi (plan §9): parse ketat + urutkan semua kategori deterministik.
- * Output siap di-jsonb-kan; JSON.stringify output ini deterministik karena
- * kunci objek mengikuti urutan schema dan seluruh array sudah terurut.
+ * Output siap di-jsonb-kan; JSON.stringify output ini deterministik.
  */
 export function canonicalizeChapterStateDelta(input: unknown): ChapterStateDeltaV1 {
   const parsed = ChapterStateDeltaV1Schema.parse(input)
@@ -287,7 +329,15 @@ export function canonicalizeChapterStateDelta(input: unknown): ChapterStateDelta
         (a, b) => compareIds(a.debtId, b.debtId),
       ),
     },
-    actRollup: parsed.actRollup,
+    actRollup: parsed.actRollup
+      ? {
+          actNumber: parsed.actRollup.actNumber,
+          coversFromChapter: parsed.actRollup.coversFromChapter,
+          coversToChapter: parsed.actRollup.coversToChapter,
+          summary: parsed.actRollup.summary,
+          stateDelta: canonicalizeActRollupStateDelta(parsed.actRollup.stateDelta),
+        }
+      : null,
   }
 }
 

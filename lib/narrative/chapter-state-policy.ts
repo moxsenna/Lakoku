@@ -1,13 +1,14 @@
 /**
  * M10-A1 — Typed blueprint state policy (`AllowedChapterStatePolicyV1`).
  *
- * Pengganti `allowed_state_delta: {}` untuk cerita stateful (version 1):
- * policy ber-typed, tanpa escape hatch `extra: Record<string, unknown>`.
+ * Policy ber-typed, tanpa escape hatch `extra: Record<string, unknown>`.
  * Setiap operasi pada ChapterStateDeltaV1 harus lolos policy ini sebelum
  * boleh masuk checkpoint/publikasi.
  *
- * Policy dibangun deterministik dari Story Contract terkunci (bukan dari
- * prose, bukan dari LLM). Kategori tanpa sumber aman → tetap kosong.
+ * Aturan R1:
+ *  - Point 4 R1: `actRollup` bukan lagi boolean, melainkan descriptor eksak
+ *    `null | { actNumber, coversFromChapter, coversToChapter }`. Resolver &
+ *    policy checker mewajibkan exact equality.
  */
 
 import { z } from 'zod'
@@ -19,6 +20,16 @@ export const ALLOWED_CHAPTER_STATE_POLICY_SCHEMA_VERSION = 1 as const
 
 const max256 = z.string().trim().min(1).max(256)
 const max20 = z.array(max256).max(20)
+
+export const ActRollupPolicyDescriptorSchema = z.object({
+  actNumber: z.number().int().min(1),
+  coversFromChapter: z.number().int().min(1).max(50),
+  coversToChapter: z.number().int().min(1).max(50),
+}).strict()
+
+export type ActRollupPolicyDescriptor = z.infer<
+  typeof ActRollupPolicyDescriptorSchema
+>
 
 export const AllowedChapterStatePolicyV1Schema = z.object({
   schemaVersion: z.literal(ALLOWED_CHAPTER_STATE_POLICY_SCHEMA_VERSION),
@@ -44,7 +55,7 @@ export const AllowedChapterStatePolicyV1Schema = z.object({
     progressIds: max20,
     closureIds: max20,
   }).strict(),
-  actRollup: z.boolean(),
+  actRollup: ActRollupPolicyDescriptorSchema.nullable(),
 }).strict()
 
 export type AllowedChapterStatePolicyV1 = z.infer<
@@ -58,17 +69,6 @@ export interface BuildBaselinePolicyInput {
 
 /**
  * Policy baseline deterministic dari Story Contract terkunci (plan §13).
- *
- * - facts.allowAdd = false sampai ada sumber faktur terstruktur (authoring).
- * - knowledge.allowGrants = false sampai ada sumber gain terstruktur.
- * - secrets.revealIds = secret canon yang gate-nya sudah terbuka bab ini
- *   (tidak pernah memajukan reveal lebih awal dari gate).
- * - thread touch/transition = thread debt-backed dalam window
- *   `introducedAt <= chapter <= mustCloseBy`.
- * - plot-debt progress = debt dengan milestone `mustProgressBy` tepat bab ini
- *   (milestone tidak dianggap selesai hanya karena babnya lewat).
- * - plot-debt closure = debt dalam window introduksi..deadline.
- * - actRollup = true hanya bila bab ini adalah ujung act (`actPlan.toChapter`).
  */
 export function buildBaselinePolicyForChapter(
   input: BuildBaselinePolicyInput,
@@ -92,7 +92,14 @@ export function buildBaselinePolicyForChapter(
     .filter((debt) => debt.introducedAt <= chapter && chapter <= debt.mustCloseBy)
     .map((debt) => debt.id)
 
-  const actRollup = storyContract.actPlan.some((act) => act.toChapter === chapter)
+  const actEntry = storyContract.actPlan.find((act) => act.toChapter === chapter)
+  const actRollupDescriptor: ActRollupPolicyDescriptor | null = actEntry
+    ? {
+        actNumber: actEntry.actNumber,
+        coversFromChapter: actEntry.fromChapter,
+        coversToChapter: actEntry.toChapter,
+      }
+    : null
 
   return {
     schemaVersion: ALLOWED_CHAPTER_STATE_POLICY_SCHEMA_VERSION,
@@ -103,7 +110,7 @@ export function buildBaselinePolicyForChapter(
     characters: { statusChangeCharacterIds: [] },
     threads: { touchIds: threadWindowIds, transitionIds: threadWindowIds },
     plotDebts: { progressIds, closureIds },
-    actRollup,
+    actRollup: actRollupDescriptor,
   }
 }
 
@@ -179,11 +186,34 @@ export function checkDeltaAgainstPolicy(
       })
     }
   }
-  if (d.actRollup != null && !policy.actRollup) {
+
+  // Point 4 R1: Exact descriptor match untuk actRollup
+  if (d.actRollup != null) {
+    if (policy.actRollup === null) {
+      violations.push({
+        category: 'actRollup',
+        detail: 'Bukan act boundary — rollup tidak diizinkan bab ini.',
+      })
+    } else {
+      const p = policy.actRollup
+      const r = d.actRollup
+      if (
+        r.actNumber !== p.actNumber ||
+        r.coversFromChapter !== p.coversFromChapter ||
+        r.coversToChapter !== p.coversToChapter
+      ) {
+        violations.push({
+          category: 'actRollup',
+          detail: `Descriptor actRollup (${r.actNumber}, ${r.coversFromChapter}..${r.coversToChapter}) tidak cocok dengan policy boundary (${p.actNumber}, ${p.coversFromChapter}..${p.coversToChapter}).`,
+        })
+      }
+    }
+  } else if (policy.actRollup !== null) {
     violations.push({
       category: 'actRollup',
-      detail: 'Bukan act boundary — rollup tidak diizinkan bab ini.',
+      detail: `Wajib membuat actRollup untuk Act ${policy.actRollup.actNumber} (Bab ${policy.actRollup.coversFromChapter}..${policy.actRollup.coversToChapter}) pada boundary ini.`,
     })
   }
+
   return violations
 }

@@ -8,10 +8,10 @@
  *   - supabase/migrations/20260707000000_core_runtime_baseline.sql :: act_rollups —
  *     table: id, story_id, act_number, summary, state_delta (jsonb), covers_from_chapter,
  *     covers_to_chapter, created_at; UNIQUE (story_id, act_number).
- *   - lib/authoring/compile.ts :: compileSnapshot (seed) — creates exactly ONE
+ *   - lib/authoring/compile.ts :: compileStoryBible (seed) — creates exactly ONE
  *     rollup (act 1) with `summary: premise.synopsis (fase ...)`, stateDelta {},
  *     coversFromChapter/ToChapter from ACTS[0] — "agar rollup chain punya titik awal".
- *   - lib/authoring/persist.ts :: snapshotPersistenceRows (seed path) — maps
+ *   - lib/authoring/persist.ts :: persistStoryBible (seed path) — maps
  *     s.actRollups to act_rollups rows (act_number, summary, state_delta,
  *     covers_from_chapter, covers_to_chapter).
  *   - lib/narrative/loader.ts :: loadCanonSnapshot — reads act_rollups into
@@ -60,13 +60,13 @@ export const ACT_ROLLUP_AUDIT_EVIDENCE: StructuredEvidence[] = [
       'act_rollups columns: id, story_id, act_number, summary, state_delta jsonb, covers_from_chapter, covers_to_chapter, created_at; UNIQUE(story_id, act_number); no updated_at column — mutation means row replacement, and no migration found that inserts/updates it after baseline.',
   },
   {
-    source: 'lib/authoring/compile.ts :: compileSnapshot',
+    source: 'lib/authoring/compile.ts :: compileStoryBible',
     evidenceClass: 'SOURCE_TRACE',
     observation:
       'Seeds exactly one rollup (act 1): summary = `premise.synopsis (fase <phase>)`, stateDelta {}, covers range from ACTS[0] — comment: "Seed act rollup (act 1) agar rollup chain punya titik awal".',
   },
   {
-    source: 'lib/authoring/persist.ts :: snapshotPersistenceRows',
+    source: 'lib/authoring/persist.ts :: persistStoryBible',
     evidenceClass: 'SOURCE_TRACE',
     observation:
       'Maps s.actRollups -> act_rollups rows (act_number, summary, state_delta, covers_from_chapter, covers_to_chapter) during story-bible persistence.',
@@ -150,7 +150,7 @@ function baseFinding(
     domain: 'Act Rollup',
     status: code === 'DEAD_PATH_CANDIDATE' ? 'DEAD_PATH_CANDIDATE' : 'CONSUMER_UNPROVEN',
     sourceOfTruth: ['act_rollups'],
-    producers: ['lib/authoring/compile.ts :: compileSnapshot (seed)', 'lib/authoring/persist.ts :: snapshotPersistenceRows'],
+    producers: ['lib/authoring/compile.ts :: compileStoryBible (seed)', 'lib/authoring/persist.ts :: persistStoryBible'],
     consumers: ['lib/narrative/loader.ts :: loadCanonSnapshot', 'lib/narrative/compiler.ts :: compileContext'],
     validators: ['lib/narrative/compiler.ts :: compileContext (rollupsSummaries cap)'],
     evidence: [

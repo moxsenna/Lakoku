@@ -2,7 +2,7 @@
  * Pure policy logic for anti-abuse & commercial entitlements (P0).
  *
  * Rules:
- *  - 1 account has at most 1 lifetime Starter Story (`starterStoryId`).
+ *  - 1 account has at most 1 lifetime Starter Story (`starterStoryId` / `starterClaimedAt`).
  *  - Only the Starter Story gets Chapters 1–3 free (`FREE_STARTER_CHAPTER`).
  *  - Welcome credits = 20 (granted once per account lifetime).
  *  - Additional story start cost = 24 credits.
@@ -15,7 +15,6 @@ export interface AccountCommercialState {
   starterClaimedAt: string | null
   welcomeCreditGrantedAt: string | null
   welcomeCreditEventId: string | null
-  firstPurchaseAt?: string | null
   riskState: 'NORMAL' | 'WATCH' | 'CHALLENGE' | 'BLOCK'
 }
 
@@ -47,12 +46,13 @@ export function isChapterFreeForAccount(
 
 /**
  * Returns the cost to start a new story.
- * If user has no starter story claimed yet, cost is 0 (included in Starter Story entitlement).
- * If user already has a starter story, cost is 24 credits.
+ * If user has consumed lifetime starter entitlement (`starterClaimedAt != null` or `starterStoryId != null`), cost is 24 credits.
+ * Otherwise, if starter entitlement has never been claimed, cost is 0 (included in Starter Story entitlement).
  */
 export function getStoryStartCost(accountState: AccountCommercialState | null): number {
-  if (!accountState || !accountState.starterStoryId) {
-    return 0 // First story is free Starter
+  if (!accountState) return 0
+  if (accountState.starterClaimedAt != null || accountState.starterStoryId != null) {
+    return ADDITIONAL_STORY_START_COST // Story #2+ costs 24
   }
-  return ADDITIONAL_STORY_START_COST // Story #2+ costs 24
+  return 0 // First story is free Starter
 }

@@ -65,6 +65,19 @@ describe('P0 Anti-Abuse Commercial Policy & Entitlements', () => {
       expect(isChapterFreeForAccount('story-C', 1, accountStateAfterDelete)).toBe(false)
       expect(getStoryStartCost(accountStateAfterDelete)).toBe(24)
     })
+
+    it('Requirement 7: starterClaimedAt is lifetime authority even if starterStoryId is null', () => {
+      const accountState: AccountCommercialState = {
+        userId: 'user-orphaned-starter',
+        starterStoryId: null,
+        starterClaimedAt: '2026-08-01T00:00:00.000Z',
+        welcomeCreditGrantedAt: '2026-08-01T00:00:00.000Z',
+        welcomeCreditEventId: 'evt-1',
+        riskState: 'NORMAL',
+      }
+
+      expect(getStoryStartCost(accountState)).toBe(24)
+    })
   })
 
   describe('Rule D: Welcome Credit Exactly Once', () => {

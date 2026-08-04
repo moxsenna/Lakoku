@@ -1,7 +1,7 @@
 -- Migration 20260804010000_account_commercial_entitlements.sql
 -- Account commercial states, starter story claim, welcome grant (with strict idempotency validation),
 -- explicit commercial_origin column without unsafe permanent default, hardened spend_credits_v1 (reservation-aware),
--- and strict ACL hardening.
+-- story_mode commercial authority enforcement, and strict ACL hardening.
 
 -- 1) Account Commercial States table (INTERNAL ONLY - NO READER RLS ACCESS)
 create table if not exists public.account_commercial_states (
@@ -23,12 +23,13 @@ alter table public.stories
   add column if not exists commercial_origin text
   check (commercial_origin in ('STARTER_FREE', 'PENDING_PAID_START', 'PAID_START', 'LEGACY_GRANDFATHERED', 'ADMIN_GRANTED'));
 
--- Explicit deterministic backfill ONLY for pre-existing owned private/personalized story instances
+-- Explicit deterministic backfill ONLY for pre-existing owned private/unlisted commercial stories (personalized_ai, premium_instance)
 update public.stories
 set commercial_origin = 'LEGACY_GRANDFATHERED'
 where owner_user_id is not null
-  and id not like 'demo:%'
+  and story_mode in ('personalized_ai', 'premium_instance')
   and visibility in ('private', 'unlisted')
+  and id not like 'demo:%'
   and commercial_origin is null;
 
 -- 3) Seed/update canonical DB pricing in feature_credit_costs (chapter_unlock = 8, story_start = 24)
@@ -42,7 +43,6 @@ set credits_required = excluded.credits_required,
     updated_at = clock_timestamp();
 
 -- 4) RPC: spend_credits_v1 (HARDENED: Reservation-Aware Spend)
--- Normal spend MUST exclude ACTIVE, unexpired reservations so reservations cannot be bypassed by legacy spend.
 create or replace function public.spend_credits_v1(
   p_user_id uuid,
   p_ref     text,
@@ -90,8 +90,8 @@ end;
 $$;
 
 -- 5) RPC: claim_starter_story_v1
--- Concurrency-safe via pg_advisory_xact_lock. Authority is starter_claimed_at IS NOT NULL (durable even if story deleted).
--- Checks DB story ownership AND eligible story mode (reader-owned private/unlisted, not demo).
+-- Concurrency-safe via pg_advisory_xact_lock. Authority is starter_claimed_at IS NOT NULL.
+-- Checks DB story ownership, story_mode (personalized_ai, premium_instance), and visibility.
 create or replace function public.claim_starter_story_v1(
   p_user_id  uuid,
   p_story_id text
@@ -102,6 +102,7 @@ declare
   v_state            public.account_commercial_states%rowtype;
   v_story_owner      uuid;
   v_story_visibility text;
+  v_story_mode       text;
 begin
   if p_user_id is null or p_story_id is null or trim(p_story_id) = '' then
     raise exception 'claim_starter_story_v1: invalid arguments';
@@ -110,8 +111,8 @@ begin
   -- Shared lock for all user credit & commercial entitlement mutations
   perform pg_advisory_xact_lock(hashtext(p_user_id::text));
 
-  -- Ownership and story mode verification
-  select owner_user_id, visibility into v_story_owner, v_story_visibility
+  -- Ownership and canonical story_mode verification
+  select owner_user_id, visibility, story_mode into v_story_owner, v_story_visibility, v_story_mode
   from public.stories
   where id = p_story_id;
 
@@ -122,7 +123,7 @@ begin
     );
   end if;
 
-  if v_story_visibility not in ('private', 'unlisted') or p_story_id like 'demo:%' then
+  if v_story_mode not in ('personalized_ai', 'premium_instance') or v_story_visibility not in ('private', 'unlisted') or p_story_id like 'demo:%' then
     return jsonb_build_object(
       'ok', false,
       'reason', 'NOT_ELIGIBLE_STORY_MODE'
@@ -166,7 +167,6 @@ end;
 $$;
 
 -- 6) RPC: grant_welcome_credit_v1
--- Server-authoritative exactly-once welcome grant (+20 credits). Validates idempotency conflict.
 create or replace function public.grant_welcome_credit_v1(
   p_user_id uuid
 ) returns jsonb
@@ -207,7 +207,6 @@ begin
   v_granted := public.grant_credits_v1(p_user_id, v_ref, c_welcome_amount, 'welcome_grant');
 
   if not v_granted then
-    -- Verify existing ledger row matches exact welcome parameters
     select * into v_ledger_row from public.credit_ledger where ref = v_ref;
     if not found or v_ledger_row.user_id <> p_user_id or v_ledger_row.delta <> c_welcome_amount or v_ledger_row.reason <> 'welcome_grant' then
       raise exception 'IDEMPOTENCY_CONFLICT: welcome credit ref conflict for user %', p_user_id;

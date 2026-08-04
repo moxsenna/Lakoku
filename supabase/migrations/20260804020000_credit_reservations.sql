@@ -1,7 +1,8 @@
 -- Migration 20260804020000_credit_reservations.sql
 -- Credit reservation primitives, fail-closed DB price derivation, server-owned TTL,
--- DB ownership & story-mode enforcement, uniform lock ordering (deadlock-free),
--- EXPIRED reservation re-activation semantics, generic financial capture (Phase 1: CHAPTER_UNLOCK only), and ACL hardening.
+-- DB ownership & canonical story_mode enforcement, commercial_origin state matrix enforcement,
+-- uniform lock ordering (deadlock-free), EXPIRED reservation re-activation semantics,
+-- hardened financial capture (Phase 1: CHAPTER_UNLOCK only with fail-closed ledger conflict check), and ACL hardening.
 
 -- 1) Table credit_reservations
 create table if not exists public.credit_reservations (
@@ -75,7 +76,8 @@ end;
 $$;
 
 -- 3) RPC: reserve_chapter_unlock_v1
--- Reserve credits for chapter unlock. Checks DB ownership & story mode, paid chapter status, existing unlocks.
+-- Reserve credits for chapter unlock. Checks DB ownership & canonical story_mode, paid chapter status, existing unlocks.
+-- Fail-closed commercial_origin matrix: DENIES if commercial_origin IS NULL or PENDING_PAID_START.
 -- Fail-closed DB price lookup. Handles re-activation of EXPIRED reservation for exact same chapter under user lock.
 create or replace function public.reserve_chapter_unlock_v1(
   p_user_id        uuid,
@@ -85,15 +87,16 @@ create or replace function public.reserve_chapter_unlock_v1(
 language plpgsql security definer set search_path = public
 as $$
 declare
-  v_cost             integer;
-  v_available        integer;
-  v_canonical_ref    text;
-  v_existing         public.credit_reservations%rowtype;
-  v_story_owner      uuid;
-  v_story_visibility text;
-  v_origin           text;
+  v_cost              integer;
+  v_available         integer;
+  v_canonical_ref     text;
+  v_existing          public.credit_reservations%rowtype;
+  v_story_owner       uuid;
+  v_story_visibility  text;
+  v_story_mode        text;
+  v_origin            text;
   v_unlock_ledger_ref text;
-  c_ttl_seconds      constant integer := 1800; -- 30 minutes workflow budget safety reserve
+  c_ttl_seconds       constant integer := 1800; -- 30 minutes workflow budget safety reserve
 begin
   if p_user_id is null or p_story_id is null or p_chapter_number is null or p_chapter_number < 1 then
     raise exception 'reserve_chapter_unlock_v1: invalid arguments';
@@ -102,9 +105,9 @@ begin
   -- Uniform Advisory User Lock FIRST (prevents deadlocks)
   perform pg_advisory_xact_lock(hashtext(p_user_id::text));
 
-  -- Ownership and story mode verification
-  select owner_user_id, visibility, commercial_origin
-  into v_story_owner, v_story_visibility, v_origin
+  -- Ownership, story_mode, and visibility verification
+  select owner_user_id, visibility, story_mode, commercial_origin
+  into v_story_owner, v_story_visibility, v_story_mode, v_origin
   from public.stories
   where id = p_story_id;
 
@@ -112,12 +115,21 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'NOT_STORY_OWNER');
   end if;
 
-  if v_story_visibility not in ('private', 'unlisted') or p_story_id like 'demo:%' then
+  if v_story_mode not in ('personalized_ai', 'premium_instance') or v_story_visibility not in ('private', 'unlisted') or p_story_id like 'demo:%' then
     return jsonb_build_object('ok', false, 'reason', 'NOT_ELIGIBLE_STORY_MODE');
   end if;
 
-  -- Check if chapter is a free starter chapter (Chapters 1-3 on Starter or Paid Start stories)
-  if p_chapter_number <= 3 and (v_origin in ('STARTER_FREE', 'PAID_START', 'LEGACY_GRANDFATHERED')) then
+  -- Requirement 4: Explicit commercial_origin state matrix check for chapter unlock
+  if v_origin is null or v_origin = 'PENDING_PAID_START' then
+    return jsonb_build_object('ok', false, 'reason', 'COMMERCIAL_STATE_INVALID', 'commercial_origin', v_origin);
+  end if;
+
+  if v_origin not in ('STARTER_FREE', 'PAID_START', 'LEGACY_GRANDFATHERED', 'ADMIN_GRANTED') then
+    return jsonb_build_object('ok', false, 'reason', 'COMMERCIAL_STATE_INVALID', 'commercial_origin', v_origin);
+  end if;
+
+  -- Check if chapter is a free starter/included chapter (Chapters 1-3)
+  if p_chapter_number <= 3 then
     return jsonb_build_object('ok', false, 'reason', 'CHAPTER_ALREADY_FREE');
   end if;
 
@@ -150,7 +162,6 @@ begin
     if v_existing.status = 'CAPTURED' then
       return jsonb_build_object('ok', true, 'status', 'ALREADY_CAPTURED', 'ref', v_canonical_ref);
     end if;
-    -- Existing reservation is EXPIRED or RELEASED -> re-activation path under user lock
   end if;
 
   v_available := public.available_credit_balance_v1(p_user_id);
@@ -174,9 +185,10 @@ end;
 $$;
 
 -- 4) RPC: reserve_story_start_v1
--- Reserve 24 credits for story start (#2+). Checks DB ownership AND story-mode eligibility.
--- Fail-closed DB price lookup. Handles re-activation of EXPIRED reservation under user lock.
--- Sets story commercial_origin to PENDING_PAID_START.
+-- Reserve 24 credits for story start (#2+).
+-- Checks DB ownership, canonical story_mode (personalized_ai, premium_instance), and visibility.
+-- Requirement 3: Proves lifetime starter entitlement has ALREADY been claimed by account, and story is NOT starter story.
+-- Checks current commercial_origin pre-state (allowed: NULL or exact same reservation replay).
 create or replace function public.reserve_story_start_v1(
   p_user_id  uuid,
   p_story_id text
@@ -190,6 +202,9 @@ declare
   v_existing         public.credit_reservations%rowtype;
   v_story_owner      uuid;
   v_story_visibility text;
+  v_story_mode       text;
+  v_origin           text;
+  v_state            public.account_commercial_states%rowtype;
   c_ttl_seconds      constant integer := 1800;
 begin
   if p_user_id is null or p_story_id is null then
@@ -199,8 +214,9 @@ begin
   -- Uniform Advisory User Lock FIRST (prevents deadlocks)
   perform pg_advisory_xact_lock(hashtext(p_user_id::text));
 
-  -- Ownership and story mode verification
-  select owner_user_id, visibility into v_story_owner, v_story_visibility
+  -- Ownership, story_mode, and visibility verification
+  select owner_user_id, visibility, story_mode, commercial_origin
+  into v_story_owner, v_story_visibility, v_story_mode, v_origin
   from public.stories
   where id = p_story_id;
 
@@ -208,8 +224,23 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'NOT_STORY_OWNER');
   end if;
 
-  if v_story_visibility not in ('private', 'unlisted') or p_story_id like 'demo:%' then
+  if v_story_mode not in ('personalized_ai', 'premium_instance') or v_story_visibility not in ('private', 'unlisted') or p_story_id like 'demo:%' then
     return jsonb_build_object('ok', false, 'reason', 'NOT_ELIGIBLE_STORY_MODE');
+  end if;
+
+  -- Requirement 3: Account Must Have Claimed Starter Story First
+  select * into v_state from public.account_commercial_states where user_id = p_user_id for update;
+  if not found or v_state.starter_claimed_at is null then
+    return jsonb_build_object('ok', false, 'reason', 'STORY_START_NOT_REQUIRED', 'detail', 'FIRST_STORY_MUST_USE_STARTER_FLOW');
+  end if;
+
+  if v_state.starter_story_id = p_story_id then
+    return jsonb_build_object('ok', false, 'reason', 'STARTER_STORY_CANNOT_RESERVE_STORY_START');
+  end if;
+
+  -- Requirement 3: Check commercial_origin pre-state
+  if v_origin in ('STARTER_FREE', 'PAID_START', 'LEGACY_GRANDFATHERED', 'ADMIN_GRANTED') then
+    return jsonb_build_object('ok', false, 'reason', 'COMMERCIAL_ORIGIN_ALREADY_COMMITTED', 'commercial_origin', v_origin);
   end if;
 
   -- Fail-closed DB price lookup from feature_credit_costs (NO SILENT DB FALLBACK)
@@ -264,9 +295,9 @@ $$;
 
 -- 5) RPC: capture_credit_reservation_v1
 -- Phase 1: FINANCIAL PRIMITIVE FOR CHAPTER_UNLOCK ONLY.
--- Requirement 4: STORY_START MUST NOT be captured by generic capture. Returns 'requires_story_finalize'.
--- Phase 2 fenced Bab 1 publication will atomically capture 24, mark reservation CAPTURED, and upgrade PENDING_PAID_START -> PAID_START.
--- Uniform lock ordering: resolves reservation target -> acquires advisory user lock FIRST -> locks reservation row FOR UPDATE.
+-- Generic capture MUST NOT capture STORY_START (returns 'requires_story_finalize').
+-- Requirement 5 Hardening: Validates existing canonical ledger ref. If exact match -> idempotent success.
+-- If mismatch -> raises IDEMPOTENCY_CONFLICT exception and DO NOT mark reservation CAPTURED.
 create or replace function public.capture_credit_reservation_v1(
   p_ref text
 ) returns text
@@ -274,9 +305,9 @@ language plpgsql security definer set search_path = public
 as $$
 declare
   v_res           public.credit_reservations%rowtype;
+  v_ledger_row    public.credit_ledger%rowtype;
   v_canonical_ref text;
   v_reason        text;
-  v_rows          integer;
 begin
   if p_ref is null or trim(p_ref) = '' then
     raise exception 'capture_credit_reservation_v1: invalid arguments';
@@ -289,7 +320,7 @@ begin
     return 'not_found';
   end if;
 
-  -- Requirement 4: Generic capture MUST NOT capture STORY_START
+  -- Generic capture MUST NOT capture STORY_START
   if v_res.reservation_kind = 'STORY_START' then
     return 'requires_story_finalize';
   end if;
@@ -317,10 +348,21 @@ begin
   v_canonical_ref := 'unlock:' || v_res.story_id || ':' || coalesce(v_res.chapter_number::text, '1');
   v_reason := 'unlock_chapter';
 
-  -- Direct idempotent write to credit_ledger (consumes active hold)
+  -- Requirement 5: Fail-closed canonical ledger conflict validation
+  select * into v_ledger_row from public.credit_ledger where ref = v_canonical_ref;
+  if found then
+    if v_ledger_row.user_id = v_res.user_id and v_ledger_row.delta = -v_res.amount and v_ledger_row.reason = v_reason then
+      -- Idempotent valid replay
+      update public.credit_reservations set status = 'CAPTURED', updated_at = clock_timestamp() where id = v_res.id;
+      return 'duplicate';
+    else
+      raise exception 'IDEMPOTENCY_CONFLICT: canonical ledger ref % mismatched existing entry', v_canonical_ref;
+    end if;
+  end if;
+
+  -- Direct write to credit_ledger
   insert into public.credit_ledger (user_id, delta, reason, ref)
-  values (v_res.user_id, -v_res.amount, v_reason, v_canonical_ref)
-  on conflict (ref) do nothing;
+  values (v_res.user_id, -v_res.amount, v_reason, v_canonical_ref);
 
   update public.credit_reservations
   set status = 'CAPTURED',
@@ -332,7 +374,6 @@ end;
 $$;
 
 -- 6) RPC: release_credit_reservation_v1
--- Releases an ACTIVE credit hold. Uniform lock ordering: advisory user lock FIRST -> lock row FOR UPDATE.
 create or replace function public.release_credit_reservation_v1(
   p_ref text
 ) returns text

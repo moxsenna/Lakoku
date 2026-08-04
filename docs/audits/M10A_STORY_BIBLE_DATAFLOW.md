@@ -1,7 +1,7 @@
 # M10-A — Story Bible End-to-End Dataflow Audit
 
 > Status audit: **EXECUTION: SUCCESS** | **VERDICT: HOLD**
-> Baseline: `b7961311cf70b91cb7245149e400075c4e454d74` | Branch: `audit/m10-a-story-bible-dataflow` | Head: koreksi R1 (uncommitted)
+> Baseline: `b7961311cf70b91cb7245149e400075c4e454d74` | Branch: `audit/m10-a-story-bible-dataflow` | Head: `9b2621dc77b16e88cea82e2f9f8685bf819b7c3b` (koreksi R1, committed)
 > Artifak mesin: `.zcode/artifacts/m10-a/audit.json`, `.zcode/artifacts/m10-a/context-pressure.json` (diregenerasi via `scripts/m10-story-bible-audit.ts` dan `scripts/m10-context-pressure-audit.ts`, koreksi R1)
 > Koreksi (M10-A/R1): hasil review cross-check terhadap baseline produksi. Beberapa temuan salah-klasifikasi dikoreksi: +2 BLOCKER (Living Canon write-back hilang; effective state plot debt tidak diproyeksikan), ENDING_LOCK_NOT_DURABLE dihapus sebagai false claim (lock memang durable lewat persistEndingLock sebelum publish), CHOICE_HISTORY_RECENT_LOSS false-positive diperbaiki (expected = N−1), dsb. Rincian: §14.
 
@@ -23,7 +23,7 @@
 |---|---|
 | Base SHA | `b7961311cf70b91cb7245149e400075c4e454d74` |
 | Branch | `audit/m10-a-story-bible-dataflow` |
-| Head SHA (audit ini) | koreksi R1, uncommitted (sebelumnya 13f7fe5) |
+| Head SHA (audit ini) | `9b2621dc77b16e88cea82e2f9f8685bf819b7c3b` (koreksi R1, committed) |
 | Komit pendukung | `372283a` (detectors awal), `601ffde` (tests awal, 94 test), `82a5f0a` (CLI runners), `9843bf7` (reports v1), `13f7fe5` (scratch untrack); koreksi R1: detector updates + 111 test narrative-qa (sebelumnya 94) |
 
 ## 3. Story Bible Architecture
@@ -389,4 +389,4 @@ Daftar PR lanjutan yang **tidak** dikerjakan di M10-A (plan §19: audit bukan fi
 
 ---
 
-*Lampiran teknis: seluruh angka pada laporan ini berasal dari `.zcode/artifacts/m10-a/audit.json` (19 findings: 2 BLOCKER / 7 HIGH / 7 MEDIUM / 1 LOW / 2 INFO) dan `.zcode/artifacts/m10-a/context-pressure.json` (memuat `WRITER_CONTEXT_WHOLE_SECTION_EVICTION` pada stress rows) — diregenerasi 2026-08-04 pada koreksi R1 (uncommitted di atas baseline `b7961311cf70b91cb7245149e400075c4e454d74`). Register temuan lengkap: `docs/audits/M10A_RISK_REGISTER.md`.*
+*Lampiran teknis: seluruh angka pada laporan ini berasal dari `.zcode/artifacts/m10-a/audit.json` (19 findings: 2 BLOCKER / 7 HIGH / 7 MEDIUM / 1 LOW / 2 INFO) dan `.zcode/artifacts/m10-a/context-pressure.json` (memuat `WRITER_CONTEXT_WHOLE_SECTION_EVICTION` pada stress rows) — diregenerasi 2026-08-04 pada koreksi R1 (committed sebagai `9b2621d` di atas baseline `b7961311cf70b91cb7245149e400075c4e454d74`). Register temuan lengkap: `docs/audits/M10A_RISK_REGISTER.md`.*

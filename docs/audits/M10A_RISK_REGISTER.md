@@ -1,7 +1,7 @@
 # M10-A — Risk Register
 
 > Status audit: **EXECUTION: SUCCESS** | **VERDICT: HOLD**
-> Baseline `b7961311cf70b91cb7245149e400075c4e454d74` | Branch `audit/m10-a-story-bible-dataflow` | Head: koreksi R1 (uncommitted)
+> Baseline `b7961311cf70b91cb7245149e400075c4e454d74` | Branch `audit/m10-a-story-bible-dataflow` | Head: `9b2621dc77b16e88cea82e2f9f8685bf819b7c3b` (koreksi R1, committed)
 > Sumber data: `.zcode/artifacts/m10-a/audit.json` (diregenerasi via `scripts/m10-story-bible-audit.ts`, 2026-08-04, koreksi R1). Register ini berisi **seluruh 19 findings** dari artifact — tanpa penambahan/pengurangan temuan.
 
 ## Ringkasan

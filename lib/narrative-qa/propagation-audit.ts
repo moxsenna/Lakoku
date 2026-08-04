@@ -203,10 +203,28 @@ export interface PropagationInput {
 }
 
 /**
+ * Global story anchors whose HIGH findings carry the renamed code
+ * GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED (reviewer correction: the old
+ * code DEPENDENCY_DECLARED_BUT_UNUSED mis-described the finding — these anchors
+ * CAN influence the story contract/chapter targets at bootstrap; they are
+ * persisted into canon but never propagated into the writer prompt).
+ */
+export const GLOBAL_STORY_ANCHOR_FIELDS = new Set([
+  'corePromise',
+  'mainConflict',
+  'finalQuestion',
+])
+
+/**
  * Emit propagation findings.
- * - DEPENDENCY_DECLARED_BUT_UNUSED: field persisted but never prompt-visible
- *   (per trace row); severity HIGH when it never leaves the contract, MEDIUM when
- *   it reaches a brief but dies before the prompt, INFO for partial identity loss.
+ * - GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED (HIGH): corePromise /
+ *   mainConflict / finalQuestion are persisted but never reach the writer
+ *   prompt directly; they only shape the story at bootstrap (via contract /
+ *   chapter targets) and must also surface in the final act (finalQuestion
+ *   becomes critical at 45–50).
+ * - DEPENDENCY_DECLARED_BUT_UNUSED: non-anchor fields persisted but never
+ *   prompt-visible; MEDIUM when the field reaches a brief but dies before
+ *   the prompt (death-between-brief-and-prompt variant).
  * - RETRIEVAL_LOG_WRITE_PATH_UNPROVEN: retrieval_logs write function exists but no
  *   invocation found in production code.
  * - CONTEXT_PACKET_CONSUMER_UNPROVEN: compiled packet sections (act rollups,
@@ -219,14 +237,23 @@ export function auditPropagation(input: PropagationInput = {}): StoryBibleAuditF
   for (const trace of traces) {
     if (!trace.persisted || trace.inWriterPrompt) continue
 
+    const isGlobalAnchor = GLOBAL_STORY_ANCHOR_FIELDS.has(trace.field)
+
     if (!trace.inChapterBrief && !trace.inPreProseBrief && !trace.inContinuation) {
+      const code = isGlobalAnchor
+        ? 'GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED'
+        : 'DEPENDENCY_DECLARED_BUT_UNUSED'
       findings.push(baseFinding(
-        'DEPENDENCY_DECLARED_BUT_UNUSED',
+        code,
         'HIGH',
         {
           detail: { field: trace.field, trace },
-          risk: `Contract field "${trace.field}" is persisted but never reaches ChapterBrief, PreProseBrief, ContinuationContext, or the writer prompt. It is declared in StoryContractSchema and persisted (contract-persistence.server.ts) yet invisible to generation.`,
-          followUp: `Decide the real consumer for "${trace.field}" or drop it from the contract surface.`,
+          risk: isGlobalAnchor
+            ? `Global story anchor "${trace.field}" is persisted (contract-persistence.server.ts) but never propagated directly to the writer prompt. It DOES influence the story at bootstrap (story contract + chapterTargets are derived from it), but once chapters run the writer prompt never sees it${trace.field === 'finalQuestion' ? ' — finalQuestion is the most critical anchor for chapters 45–50 (the finale must answer it explicitly)' : ''}.`
+            : `Contract field "${trace.field}" is persisted but never reaches ChapterBrief, PreProseBrief, ContinuationContext, or the writer prompt. It is declared in StoryContractSchema and persisted (contract-persistence.server.ts) yet invisible to generation.`,
+          followUp: isGlobalAnchor
+            ? `Propagate "${trace.field}" directly into the writer prompt (or into ContinuationContext) so generation at every chapter — and the finale — can reference it, instead of relying on bootstrap-only influence.`
+            : `Decide the real consumer for "${trace.field}" or drop it from the contract surface.`,
         },
       ))
     } else if (!trace.inWriterPrompt) {

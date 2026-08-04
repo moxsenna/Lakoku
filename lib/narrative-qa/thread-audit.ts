@@ -133,13 +133,14 @@ export function auditThreadSignals(
   }
 
   if (sample.validatorReceivesDraftSignals === false) {
-    findings.push(baseFinding('THREAD_ADVANCEMENT_SIGNAL_DISCONNECTED', 'MEDIUM', {
+    findings.push(baseFinding('THREAD_ADVANCEMENT_SIGNAL_DISCONNECTED', 'HIGH', {
       detail: {
         chapter: sample.chapter,
         validatorReceivesDraftSignals: false,
+        parentFinding: 'LIVING_CANON_WRITEBACK_MISSING',
       },
-      risk: 'Draft advancement signals never reach validateThreadLifecycle: ChapterDraftSchema has no advancedThreadIds slot and both runtime paths hardcode []. The validator always sees an empty advanced set.',
-      followUp: 'Either extend the parsed draft schema with advancedThreadIds or run thread lifecycle validation against draft fields directly.',
+      risk: 'Draft advancement signals never reach validateThreadLifecycle: ChapterDraftSchema has no advancedThreadIds slot and both runtime paths hardcode advancedThreadIds: [] / opensNewThread: false. The validator always sees an empty advanced set. Child of LIVING_CANON_WRITEBACK_MISSING (BLOCKER): thread state mutations in memory are not the same as persisting thread transitions to story_threads.',
+      followUp: 'Either extend the parsed draft schema with advancedThreadIds or run thread lifecycle validation against draft fields directly; persist thread transitions into story_threads.',
     }))
   }
 

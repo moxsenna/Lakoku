@@ -22,13 +22,15 @@ describe('thread-signal-audit — advancement disconnect', () => {
     }))
 
     const advancement = findings.filter((f) => f.code === 'THREAD_ADVANCEMENT_SIGNAL_DISCONNECTED')
-    // HIGH: thread yang diharapkan maju tidak ada di advanced set.
-    // MEDIUM: sinyal draft tidak pernah sampai ke validator.
+    // Koreksi M10-A/R1: dua varian sama-sama HIGH — (a) thread yang diharapkan
+    // maju tidak ada di advanced set; (b) sinyal draft tidak pernah sampai ke
+    // validator (child HIGH dari umbrella LIVING_CANON_WRITEBACK_MISSING).
     expect(advancement).toHaveLength(2)
-    expect(advancement.some((f) => f.severity === 'HIGH')).toBe(true)
-    expect(advancement.some((f) => f.severity === 'MEDIUM')).toBe(true)
-    const high = advancement.find((f) => f.severity === 'HIGH')
-    expect(detailOf(high as NonNullable<typeof high>).expectedToAdvance).toEqual(['t1'])
+    expect(advancement.every((f) => f.severity === 'HIGH')).toBe(true)
+    const expectedDriven = advancement.find((f) => detailOf(f).expectedToAdvance != null)
+    expect(detailOf(expectedDriven as NonNullable<typeof expectedDriven>).expectedToAdvance).toEqual(['t1'])
+    const validatorDriven = advancement.find((f) => detailOf(f).validatorReceivesDraftSignals === false)
+    expect(detailOf(validatorDriven as NonNullable<typeof validatorDriven>).parentFinding).toBe('LIVING_CANON_WRITEBACK_MISSING')
   })
 
   it('draft maju tapi tidak ada di threadContext -> tetap HIGH (runtime hardcode [])', () => {

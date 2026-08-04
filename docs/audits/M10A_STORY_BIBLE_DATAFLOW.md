@@ -1,8 +1,9 @@
 # M10-A — Story Bible End-to-End Dataflow Audit
 
 > Status audit: **EXECUTION: SUCCESS** | **VERDICT: HOLD**
-> Baseline: `b7961311cf70b91cb7245149e400075c4e454d74` | Branch: `audit/m10-a-story-bible-dataflow` | Head: `82a5f0ada55c39e71b36b0396e0dee62fe8f2f85`
-> Artifak mesin: `.zcode/artifacts/m10-a/audit.json`, `.zcode/artifacts/m10-a/context-pressure.json` (diregenerasi via `scripts/m10-story-bible-audit.ts` dan `scripts/m10-context-pressure-audit.ts`)
+> Baseline: `b7961311cf70b91cb7245149e400075c4e454d74` | Branch: `audit/m10-a-story-bible-dataflow` | Head: koreksi R1 (uncommitted)
+> Artifak mesin: `.zcode/artifacts/m10-a/audit.json`, `.zcode/artifacts/m10-a/context-pressure.json` (diregenerasi via `scripts/m10-story-bible-audit.ts` dan `scripts/m10-context-pressure-audit.ts`, koreksi R1)
+> Koreksi (M10-A/R1): hasil review cross-check terhadap baseline produksi. Beberapa temuan salah-klasifikasi dikoreksi: +2 BLOCKER (Living Canon write-back hilang; effective state plot debt tidak diproyeksikan), ENDING_LOCK_NOT_DURABLE dihapus sebagai false claim (lock memang durable lewat persistEndingLock sebelum publish), CHOICE_HISTORY_RECENT_LOSS false-positive diperbaiki (expected = N−1), dsb. Rincian: §14.
 
 ---
 
@@ -10,11 +11,11 @@
 
 **Objective.** M10-A mengaudit dataflow Story Bible end-to-end: dari persistence (tabel-tabel kanon), selection/compression context (`compileContext`), `ChapterBrief`, `ContinuationContext`, `PreProseBrief`, planner, writer prompt, validator, publish, hingga evolusi state (reader state, checkpoint, plot-debt ledger) untuk 17 domain. Audit bersifat **read-only**: tanpa mutasi database produksi, tanpa real-model generation, tanpa migration, tanpa worker flip (plan §19).
 
-**Metode.** Source discovery (inventarisasi seluruh write/read path terhadap 11 tabel kanon) → evidence catalog (katalog `file :: symbol` + observasi) → characterization (perilaku runtime dikarakterisasi dari source, bukan dari eksekusi live) → detector (10 modul pure di `lib/narrative-qa/`, komit `372283a`) → test (94 test, komit `601ffde`) → CLI runner (komit `82a5f0a`) → report ini.
+**Metode.** Source discovery → evidence catalog → characterization → detector (12 modul pure di `lib/narrative-qa/`, termasuk `canon-writeback-audit.ts` dari koreksi R1) → test (111 test di `tests/narrative-qa/`) → CLI runner → report ini.
 
-**Verdict.** `executionStatus: SUCCESS`; `auditVerdict: HOLD` (0 BLOCKER, 8 HIGH). Total 18 findings: 8 HIGH, 7 MEDIUM, 1 LOW, 2 INFO. Tidak ada temuan BLOCKER, tetapi keberadaan 8 temuan HIGH pada jalur yang menggerakkan chapter 45–50 (ending lock, plot debt, choice history, blueprint) mengharuskan **M10-A HOLD**.
+**Verdict (koreksi R1).** `executionStatus: SUCCESS`; `auditVerdict: HOLD`. Total **19 findings: 2 BLOCKER, 7 HIGH, 7 MEDIUM, 1 LOW, 2 INFO**. Dua BLOCKER adalah (a) `LIVING_CANON_WRITEBACK_MISSING` — jalur publish (sync `publishChapterV2` dan worker `publishGenerationJobChapterV4`) tidak membawa canon delta apa pun sehingga Story Bible tetap bootstrap/read-model dan tidak pernah berevolusi setelah chapter events; (b) `PLOT_DEBT_EFFECTIVE_STATE_NOT_PROJECTED` — ledger `reader_plot_debt_closures` sudah punya closures persisten, tapi `buildChapterBrief` menghitung `plotDebtsToProgress/ToClose` dari contract status saja (tanpa overlay ledger), sehingga debt yang sudah closed di ledger tetap ditagih di bab berikut. Kombinasi keduanya (ditambah 7 HIGH di jalur finalisasi 45–50) mengharuskan **M10-A HOLD**.
 
-**Rekomendasi.** **M10-A HOLD — jangan lanjut otomatis ke M10-B.** Detail lengkap tiap temuan HIGH ada di §14 (Proven Gaps). Audit ini tidak memperbaiki apa pun (plan §15/§19: audit bukan fix PR); perbaikan yang disarankan hanyalah "recommended narrow fix" untuk PR lanjutan (§16).
+**Rekomendasi.** **M10-A HOLD — jangan lanjut otomatis ke M10-B.** Detail lengkap tiap temuan BLOCKER/HIGH ada di §14 (Proven Gaps). Audit ini tidak memperbaiki apa pun (plan §15/§19); perbaikan yang disarankan hanyalah "recommended narrow fix" untuk PR lanjutan (§16).
 
 ## 2. Production Baseline SHA
 
@@ -22,8 +23,8 @@
 |---|---|
 | Base SHA | `b7961311cf70b91cb7245149e400075c4e454d74` |
 | Branch | `audit/m10-a-story-bible-dataflow` |
-| Head SHA (audit ini) | `82a5f0ada55c39e71b36b0396e0dee62fe8f2f85` |
-| Komit pendukung | `9e1f804` (contract types + SDD scaffold), `372283a` (detectors), `601ffde` (tests, 94 test), `82a5f0a` (CLI runners) |
+| Head SHA (audit ini) | koreksi R1, uncommitted (sebelumnya 13f7fe5) |
+| Komit pendukung | `372283a` (detectors awal), `601ffde` (tests awal, 94 test), `82a5f0a` (CLI runners), `9843bf7` (reports v1), `13f7fe5` (scratch untrack); koreksi R1: detector updates + 111 test narrative-qa (sebelumnya 94) |
 
 ## 3. Story Bible Architecture
 
@@ -95,14 +96,14 @@ Matriks 17 domain dari `lib/narrative-qa/story-bible-audit.ts :: buildSourceOfTr
 | 4 | Knowledge | `knowledge_scopes` | CONSUMER_UNPROVEN | `lib/narrative/types.ts :: KnowledgeScope` — shape saja; tidak ada proyeksi downstream ditemukan |
 | 5 | Secret | `secrets_reveals` | PROVEN_READ_ONLY | `lib/narrative/continuation-context.ts :: buildContinuationContext` — `mustNotReveal` (revealGateChapter > n) → layer 1 |
 | 6 | Timeline | `timeline_events` | PROVEN_READ_ONLY | `buildContinuationContext` — `recentTimeline` desc, `CAP_TIMELINE = 5`; layer 3 (trim pertama saat overflow) |
-| 7 | Thread | `story_threads` | PARITY_RISK | `lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter` — `threadContext = { threads, advancedThreadIds: [], opensNewThread: false }` (hardcoded) |
-| 8 | Act Rollup | `act_rollups` | DEAD_PATH_CANDIDATE | `buildContinuationContext` — `ContinuationContext` tidak punya field `actRollups`; prompt tidak punya section rollup |
+| 7 | Thread | `story_threads` | PARITY_RISK | `lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter` — `threadContext = { threads, advancedThreadIds: [], opensNewThread: false }` (hardcoded); HIGH child dari BLOCKER `LIVING_CANON_WRITEBACK_MISSING` (`THREAD_ADVANCEMENT_SIGNAL_DISCONNECTED`) |
+| 8 | Act Rollup | `act_rollups` | DEAD_PATH_CANDIDATE (HIGH) | `buildContinuationContext` — `ContinuationContext` tidak punya field `actRollups`; prompt tidak punya section rollup; 25% budget compiler (`rollupsSummaries 0.25`) terbuang |
 | 9 | Blueprint | `chapter_blueprints` | PARITY_RISK | `lib/story-engine/chapter-brief.ts :: buildChapterBrief` — `snapshot.blueprints.find(...)` tanpa sort versi; runtime/compiler pakai highest version |
 | 10 | Story Contract | `story_generation_contracts` | BOUNDED_LOSS_RISK | `gateway-provider.ts :: buildPrompt` — brief/preProse tidak pernah sampai prompt; corePromise/mainConflict/finalQuestion persisted tapi invisible ke generation |
 | 11 | Reader Route | `reader_states.route_state` | PROVEN_READ_ONLY | `lib/runtime/choice-context.ts :: choiceNarrativeContextFromReader` — route_state → RouteState; `chapter-brief.ts :: summarizeRouteStateForPrompt` → layer 3 |
 | 12 | Choice History | `reader_states.choice_history` | PROVEN_READ_ONLY | `lib/runtime/continuation-context.server.ts :: loadContinuationContextForChapter` — fail-closed trigger; `chapter-brief.ts :: summarizeChoiceHistory` — slice 4096 char |
-| 13 | Ending | `reader_states.locked_ending_key` | PARITY_RISK | `lib/runtime/lifecycle.ts :: publishChapterV2` — tidak ada parameter ending lock; lock hanya lewat v4 |
-| 14 | Plot Debt | `story_generation_contracts.plot_debts_json` + `reader_plot_debt_closures` | BOUNDED_LOSS_RISK | `lib/story-engine/plot-debt-closure.ts :: resolveDebtClosures` — proyeksi pure; contract tidak pernah dimutasi |
+| 13 | Ending | `reader_states.locked_ending_key` | PARITY_RISK | Sync path mem-persist lock via `persistEndingLock` → `persist_ending_lock_v1` SEBELUM publish (durable), tapi lock → publish = 2 transaksi (non-atomic); worker v4 atomik (lock + chapter + closures). Lihat `ENDING_LOCK_LEGACY_NONATOMIC_PUBLISH` |
+| 14 | Plot Debt | `story_generation_contracts.plot_debts_json` + `reader_plot_debt_closures` | BOUNDED_LOSS_RISK | `lib/story-engine/plot-debt-closure.ts :: resolveDebtClosures` — proyeksi pure; contract tidak pernah dimutasi; ledger tidak dikonsultasikan `buildChapterBrief` (PLOT_DEBT_EFFECTIVE_STATE_NOT_PROJECTED) |
 | 15 | Chapter | `chapters` | PROVEN_READ_ONLY | `lifecycle.ts :: publishChapterV2` — publish atomik idempoten; v4 RPC publication proof via `idempotency_keys` |
 | 16 | Checkpoint | `chapter_generation_checkpoints` | PROVEN_READ_ONLY | `supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: transition_checkpoint_published_atomic_v4` — transisi PUBLISHED atomik di bawah fencing |
 | 17 | Retrieval | `retrieval_logs` | DEAD_PATH_CANDIDATE | `lib/narrative/loader.ts :: persistRetrievalLog` — fungsi ada, wired di deps, tidak pernah dipanggil di production |
@@ -151,9 +152,9 @@ Per field Story Contract (`lib/story-engine/story-contract.ts :: StoryContractSc
 
 | Field | persisted | selected/compressed | propagated | prompt-visible | validator-enforced | write-back aware | Status |
 |---|---|---|---|---|---|---|---|
-| `corePromise` | Ya (→ voice `sample_lines`, `contract-persistence.server.ts`) | Tidak | Tidak (tidak di brief/preProse/continuation) | **Tidak** | Tidak | Tidak | HIGH `DEPENDENCY_DECLARED_BUT_UNUSED` |
-| `mainConflict` | Ya (→ `facts_ledger`) | Tidak | Tidak | **Tidak** | Tidak | Tidak | HIGH `DEPENDENCY_DECLARED_BUT_UNUSED` |
-| `finalQuestion` | Ya (→ `facts_ledger`, secret rows) | Tidak | Tidak | **Tidak** | Tidak | Tidak | HIGH `DEPENDENCY_DECLARED_BUT_UNUSED` |
+| `corePromise` | Ya (→ voice `sample_lines`, `contract-persistence.server.ts`) | Tidak | Tidak (tidak di brief/preProse/continuation) | **Tidak** | Tidak | Tidak | HIGH `GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED` |
+| `mainConflict` | Ya (→ `facts_ledger`) | Tidak | Tidak | **Tidak** | Tidak | Tidak | HIGH `GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED` |
+| `finalQuestion` | Ya (→ `facts_ledger`, secret rows) | Tidak | Tidak | **Tidak** | Tidak | Tidak | HIGH `GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED` (kritis di bab 45–50) |
 | `chapterTargets[n]` | Ya | Ya (per-chapter) | Ya → `buildChapterBrief` (goal, mustInclude, emotionalTurn, expectedThreadMovement, mustNotReveal) | Tidak langsung (via planner `composeChapterGoal`: continuity > brief.chapterGoal > blueprint) | Sebagian (brief schema) | Tidak | Terpropagasi ke planner |
 | `emotionalTurn` | Ya | — | Ya → brief | Tidak langsung | Tidak | Tidak | Terpropagasi ke brief |
 | `expectedThreadMovement` | Ya | — | Ya → brief | Tidak langsung | Tidak | Tidak | Terpropagasi ke brief |
@@ -162,7 +163,7 @@ Per field Story Contract (`lib/story-engine/story-contract.ts :: StoryContractSc
 | `closureRunway` | Ya | Ya (policy brief: allowedNewThread/allowedMajorNewConflict/endingRunway/lockEnding) | Ya → brief | **Tidak** | Sebagian (`auditPlotDebts` constants 35/40/45/48/49/50) | Tidak | MEDIUM `DEPENDENCY_DECLARED_BUT_UNUSED` |
 | `lockedEndingKey` (reader_states) | Ya | Ya | Ya → brief → preProse | **Tidak** (layer-1 comment vs code mismatch) | Ya (v4 RPC) | Ya | MEDIUM `DEPENDENCY_DECLARED_BUT_UNUSED` |
 
-Akar masalah bersama: `gateway-provider.ts :: buildPrompt` hanya menerima plan + continuation (`grep: no `brief` reference`), sehingga seluruh isi brief/preProse berhenti sebelum prompt. Field yang sampai layer prompt langsung adalah kanon yang dipilih `compileContext`/`buildContinuationContext` (karakter, voice, facts, timeline, thread, routeState, mustNotReveal).
+Akar masalah bersama: `gateway-provider.ts :: buildPrompt` hanya menerima plan + continuation (`grep: no `brief` reference`), sehingga seluruh isi brief/preProse berhenti sebelum prompt. Field yang sampai layer prompt langsung adalah kanon yang dipilih `compileContext`/`buildContinuationContext` (karakter, voice, facts, timeline, thread, routeState, mustNotReveal). Catatan koreksi R1: `corePromise`/`mainConflict`/`finalQuestion` **tetap berpengaruh tidak langsung** — saat bootstrap, `contract-persistence.server.ts` menulisnya ke kanon (voice facts, facts_ledger, secret rows) sehingga anchor bisa mempengaruhi target contract/chapter di authoring; yang hilang adalah *direct propagation* ke prompt runtime (kode `GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED`, `lib/narrative-qa/propagation-audit.ts :: GLOBAL_STORY_ANCHOR_FIELDS`). `finalQuestion` paling kritis di bab 45–50 (finalisasi).
 
 ## 9. Validation Coverage
 
@@ -179,7 +180,7 @@ Matriks validator per domain dan apa yang benar-benar mereka terima:
 | `ChapterDraftSchema` | `lib/ai-gateway/schemas.ts` | `opensNewThread` (optional) | **Tidak ada slot `advancedThreadIds`** — sinyal advancement draft tidak bisa mengalir lewat `parseDraft` |
 | `StoryContractSchema` | `lib/story-engine/story-contract.ts` | 17 field contract, chapterTargets tepat 50 | Persistence-time validation; tidak ada enforcement prompt-side |
 
-Ringkasan gap validasi: validator thread menerima sinyal kosong hardcoded; validator kontinuitas hanya melihat kanon (tidak melihat brief); validasi ending lock hanya ada di jalur worker v4 (jalur sync v2 tanpa lock sama sekali); ledger plot debt tidak pernah dibaca ulang oleh brief.
+Ringkasan gap validasi: validator thread menerima sinyal kosong hardcoded (HIGH `THREAD_ADVANCEMENT_SIGNAL_DISCONNECTED`, child dari BLOCKER `LIVING_CANON_WRITEBACK_MISSING`); validator kontinuitas hanya melihat kanon (tidak melihat brief); validasi ending lock atomik hanya ada di jalur worker v4 (jalur sync v2 mem-persist lock via `persist_ending_lock_v1` SEBELUM publish — durable, tapi lock→publish = 2 transaksi: MEDIUM `ENDING_LOCK_LEGACY_NONATOMIC_PUBLISH`); ledger plot debt tidak pernah dibaca ulang oleh brief (BLOCKER `PLOT_DEBT_EFFECTIVE_STATE_NOT_PROJECTED`).
 
 ## 10. Publish/State Evolution
 
@@ -196,7 +197,7 @@ Status per domain parity (plan §11). **Tidak ada mutasi DB live yang dilakukan*
 | Domain parity | Status | Bukti |
 |---|---|---|
 | Plot debt closure | PARITY_RISK | v4: ledger insert atomik; v2: `publishChapterV2` tanpa closure ledger. `resolveDebtClosures` proyeksi pure, contract tidak pernah dimutasi (BOUNDED_LOSS_RISK) |
-| Ending lock | PARITY_RISK | Lock hanya bisa persist lewat v4/`persist_ending_lock_v1`; `publishChapterV2` tidak menerima argumen lock (`ENDING_LOCK_WORKER_LEGACY_PARITY_RISK`) |
+| Ending lock | PARITY_RISK | Worker v4: lock + chapter + closure dalam satu transaksi atomik. Jalur sync: `persistEndingLock` → `persist_ending_lock_v1` persist **sebelum** publish (durable), tapi lock→publish = 2 transaksi; `publishChapterV2` sendiri tanpa argumen lock (`ENDING_LOCK_LEGACY_NONATOMIC_PUBLISH`, MEDIUM) |
 | Reader state | PROVEN_READ_ONLY | Kedua jalur berbagi `reader_states`; `publishChapterV2` menulis outcomes/route_state/choice_history; jalur v4 menulis via RPC. Parity pada subset ending-lock tidak terbukti (lihat baris di atas) |
 | Chapter | PROVEN_READ_ONLY | v4: RPC + idempotency_keys; v2: `publish_chapter_v2` atomik idempoten. Keduanya menulis `chapters` |
 | Choice outcomes | PROVEN_READ_ONLY | `choiceNarrativeContextFromReader` membaca `reader_states`; `checkOutcomeDrift` vs `choice_outcomes` di `loadContinuationContextForChapter` |
@@ -210,8 +211,8 @@ Catatan: ketiadaan proof parity **bukan** kegagalan audit; ini hasil audit (plan
 
 ## 12. Chapter 45–50 Finalization
 
-- **Ending lock lifecycle**: ch44 → `lockedEndingKey` null; ch45 → `resolveEnding` memilih kandidat (`ENDING_LOCK_CHAPTER = 45`), `defaultPersistEndingLock` → `persist_ending_lock_v1` hanya jika `reader.locked_ending_key` null; ch46–50 → `resolveEnding` early-return `lockedEndingKey` (tidak bisa switch); v4 RPC menolak payload lock selain ch45 personalized (`INVALID_ENDING_LOCK_TARGET`) di bawah advisory locks E1 (120713)/E2 (130600).
-- **Retry divergence detector**: `ENDING_LOCK_NOT_DURABLE` — sampel: chapter 45 resolve `ending_A` tapi `lockedEndingId: null`; retry sebelum lock ter-persist akan re-resolve via ranking `routeState.endingBias` dan **dapat berbeda**.
+- **Ending lock lifecycle**: ch44 → `lockedEndingKey` null; ch45 → `resolveEnding` memilih kandidat (`ENDING_LOCK_CHAPTER = 45`), `defaultPersistEndingLock` → `persist_ending_lock_v1` dieksekusi **dan di-await SEBELUM publish** (`personalized-generation.ts` baris 1128–1143) hanya jika `reader.locked_ending_key` null; ch46–50 → `resolveEnding` early-return `lockedEndingKey` (tidak bisa switch); v4 RPC menolak payload lock selain ch45 personalized (`INVALID_ENDING_LOCK_TARGET`) di bawah advisory locks E1 (120713)/E2 (130600).
+- **Koreksi R1 — durability lock**: `ENDING_LOCK_NOT_DURABLE` **dihapus sebagai false claim**. Pada jalur sync (non-job), lock di-persist via `persistEndingLock` → `persist_ending_lock_v1` **sebelum** `publishChapterV2`, sehingga lock **durable**: retry bab 45 membaca `reader.locked_ending_key` dan tidak re-resolve. Yang tersisa adalah MEDIUM `ENDING_LOCK_LEGACY_NONATOMIC_PUBLISH`: pada jalur legacy, lock→publish menjangkau **dua transaksi** (bukan atomik seperti worker v4). Crash di antara keduanya recoverable via `reader.locked_ending_key`; pada jalur v2 murni, `publishChapterV2` tidak menerima argumen lock sama sekali. Detector retry-divergence (`ENDING_LOCK_RETRY_DIVERGENCE` BLOCKER) tetap eksis untuk sampel di mana lock memang tidak persisted.
 - **Chapter 50 reconciliation**: `generateNextPersonalizedChapter` blok durability ch50 (baris ~1234–1250): `defaultMarkReaderStateSelesai` menulis status `SELESAI` + ending_name + locked_ending_key + current_chapter 50 setelah publish sukses **atau** `CHAPTER_EXISTS` (retry → akhirnya konsisten). Pada sampel sintetis, detector `FINAL_STATE_RECONCILIATION_GAP` / `FINAL_READER_STATE_STALE` / `FINAL_CHAPTER_DUPLICATE_STATE_RISK` (`lib/narrative-qa/chapter50-audit.ts`) **tidak terpicu** — reconciliation dikarakterisasi sebagai best-effort dengan recovery owner = jalur retry, bukan jalur deteksi deterministik terpisah. Pembuktian recovery lintas-restart didelegasikan ke M10-C.
 
 ## 13. Context Pressure Results
@@ -233,98 +234,127 @@ Sumber: `.zcode/artifacts/m10-a/context-pressure.json` (CLI `scripts/m10-context
 | 49 | 1018 | 73/0 | 18 | 2/0 | 10 | 20 | — |
 | 50 | 1040 | 75/0 | 18 | 2/0 | 10 | 20 | — |
 
-Kurva normal (tanpa tekanan buatan): budget 4000 tidak pernah tertekan (puncak 1040/4000 = 26%); tidak ada eviction; tidak ada detector terpicu. Perhatikan `writerLayer3CharLength` = 0 pada semua milestone — konsisten dengan temuan bahwa layer-3 prompt dibangun terpisah dari packet (proyeksi `buildContinuationContext`).
+Kurva normal (tanpa tekanan buatan): budget 4000 tidak pernah tertekan (puncak 1040/4000 = 26%); tidak ada eviction; tidak ada detector terpicu. `writerLayer3CharLength` = 0 pada milestone normal karena sampel kanon tidak membawa blok `writerLayer3` (projection packet tidak mencatat ukuran layer-3 prompt); kolom terisi hanya pada stress cases yang memodelkan blok tersebut.
 
-**Stress cases** (chapter 50, `totalBudget = 4000`, variasi biaya load-bearing):
+**Stress cases** (chapter 50, `totalBudget = 4000`, variasi biaya load-bearing; `writerLayer3` = timeline 8×40=320 char, facts 400-per-fakta, threads 5×40=200 char, `charLimit: 4800` — `lib/prose/prompt-engine/build-writer-prompt.ts :: buildWriterPrompt` baris 83–123):
 
-| loadBearingCost | actualUsed | facts incl/excl | loadBearing | rollups incl/excl | threads | timeline | detectorsTriggered |
-|---|---|---|---|---|---|---|---|
-| 900 | 3660 | 31/4 | 9 | 1/1 | 5 | 8 | RELEVANT_FACT_EVICTION, ROLLUP_EVICTION_PRESSURE |
-| 1500 | 4260 | 37/4 | 15 | 1/1 | 5 | 8 | CONTEXT_DECLARED_BUDGET_OVERSHOOT, LOAD_BEARING_PRESSURE, RELEVANT_FACT_EVICTION, ROLLUP_EVICTION_PRESSURE |
-| 3000 | 5760 | 52/4 | 30 | 1/1 | 5 | 8 | CONTEXT_DECLARED_BUDGET_OVERSHOOT, LOAD_BEARING_PRESSURE, RELEVANT_FACT_EVICTION, ROLLUP_EVICTION_PRESSURE |
-| 4500 | 7260 | 67/4 | 45 | 1/1 | 5 | 8 | CONTEXT_DECLARED_BUDGET_OVERSHOOT, LOAD_BEARING_PRESSURE, RELEVANT_FACT_EVICTION, ROLLUP_EVICTION_PRESSURE |
+| loadBearingCost | actualUsed | facts incl/excl | loadBearing | rollups incl/excl | threads | timeline | layer3 chars | detectorsTriggered |
+|---|---|---|---|---|---|---|---|---|
+| 900 | 3660 | 31/4 | 9 | 1/1 | 5 | 8 | 14520 | RELEVANT_FACT_EVICTION, ROLLUP_EVICTION_PRESSURE, WRITER_CONTEXT_WHOLE_SECTION_EVICTION |
+| 1500 | 4260 | 37/4 | 15 | 1/1 | 5 | 8 | 16920 | CONTEXT_DECLARED_BUDGET_OVERSHOOT, LOAD_BEARING_PRESSURE, RELEVANT_FACT_EVICTION, ROLLUP_EVICTION_PRESSURE, WRITER_CONTEXT_WHOLE_SECTION_EVICTION |
+| 3000 | 5760 | 52/4 | 30 | 1/1 | 5 | 8 | 22920 | CONTEXT_DECLARED_BUDGET_OVERSHOOT, LOAD_BEARING_PRESSURE, RELEVANT_FACT_EVICTION, ROLLUP_EVICTION_PRESSURE, WRITER_CONTEXT_WHOLE_SECTION_EVICTION |
+| 4500 | 7260 | 67/4 | 45 | 1/1 | 5 | 8 | 28920 | CONTEXT_DECLARED_BUDGET_OVERSHOOT, LOAD_BEARING_PRESSURE, RELEVANT_FACT_EVICTION, ROLLUP_EVICTION_PRESSURE, WRITER_CONTEXT_WHOLE_SECTION_EVICTION |
 
 Karakterisasi: di atas 900, budget declared (4000) di-overshoot; eviction dimulai lebih awal (900) karena load-bearing **tidak pernah di-trim** oleh desain (`compileContext` — "load-bearing never trimmed") sehingga tekanan jatuh ke facts non-load-bearing dan rollups. 4 facts selalu ter-eksklusi begitu tekanan muncul.
 
-**Choice-history pressure** (49 pilihan, bab 10/20/30/40/50):
+**Split kompiler vs writer (koreksi R1).** Tekanan di compiler (`compileContext`) bersifat granular trim per-item ke `excludedIds`; tekanan di writer (`buildWriterPrompt` layer 3, limit tetap **4800 char**) bersifat **whole-section eviction** berurutan: timeline dulu, lalu facts, lalu threads. Detector `WRITER_CONTEXT_WHOLE_SECTION_EVICTION` (HIGH) memodelkan kaskade ini dari input pure `writerLayer3 {timelineChars, factsChars, threadsChars, charLimit}`: jika total > limit → timeline di-evict utuh; jika facts+threads > limit → facts ikut di-evict; jika threads > limit → threads hilang sepenuhnya. Ini beda dengan eviction compiler dan tidak tercakup detector lain.
+
+**Choice-history pressure** (49 pilihan, target chapter 50, `summaryAppendsPreviousChoice: true`):
 
 | Chapter | totalChoices | visible | truncated | dupPrev | estTokens | detectorsTriggered |
 |---|---|---|---|---|---|---|
-| 10 | 49 | 49 | 0 | false | 1363 | — |
-| 20 | 49 | 49 | 0 | false | 1363 | — |
-| 30 | 49 | 49 | 0 | false | 1363 | — |
-| 40 | 49 | 49 | 0 | false | 1363 | — |
-| 50 | 49 | 49 | 0 | false | 1363 | CHOICE_HISTORY_RECENT_LOSS |
+| 10 | 49 | 49 | 0 | true | 1363 | CHOICE_HISTORY_DUPLICATE_PREVIOUS |
+| 20 | 49 | 49 | 0 | true | 1363 | CHOICE_HISTORY_DUPLICATE_PREVIOUS |
+| 30 | 49 | 49 | 0 | true | 1363 | CHOICE_HISTORY_DUPLICATE_PREVIOUS |
+| 40 | 49 | 49 | 0 | true | 1363 | CHOICE_HISTORY_DUPLICATE_PREVIOUS |
+| 50 | 49 | 49 | 0 | true | 1363 | CHOICE_HISTORY_DUPLICATE_PREVIOUS |
 
-Detector kunci yang terlibat: `CONTEXT_DECLARED_BUDGET_OVERSHOOT` (estimasi > declared budget), `LOAD_BEARING_PRESSURE` (biaya load-bearing ≥ 25% budget/facts cap), `RELEVANT_FACT_EVICTION` (fakta ter-eksklusi saat budget ≥ 90% terpakai), `ROLLUP_EVICTION_PRESSURE` (rollup ter-eksklusi saat ≥ 90%), `CHOICE_HISTORY_RECENT_LOSS` (entri choice terbaru yang terlihat = bab 49, padahal bab 50 diharapkan).
+Koreksi R1: `CHOICE_HISTORY_RECENT_LOSS` untuk Bab 50 **false-positive dan dihapus** — untuk target chapter N, expected latest visible = N−1 (49 untuk Bab 50); dengan 49 choices, entri terbaru yang terlihat = 49 = expected, jadi RECENT_LOSS tidak fire. Yang tersisa: `CHOICE_HISTORY_DUPLICATE_PREVIOUS` (MEDIUM) — `choiceNarrativeContextFromReader` mengembalikan history yang sudah mengandung previous choice, lalu `summarizeChoiceHistory` (`lib/story-engine/chapter-brief.ts` baris 194) meng-append `[...history, previousChoice]` tanpa syarat → entri terbaru duplikat.
+
+Detector kunci yang terlibat: `CONTEXT_DECLARED_BUDGET_OVERSHOOT` (estimasi > declared budget), `LOAD_BEARING_PRESSURE` (biaya load-bearing ≥ 25% budget/facts cap), `RELEVANT_FACT_EVICTION` (fakta ter-eksklusi saat budget ≥ 90% terpakai), `ROLLUP_EVICTION_PRESSURE` (rollup ter-eksklusi saat ≥ 90%), `WRITER_CONTEXT_WHOLE_SECTION_EVICTION` (eviction section utuh di layer 3 writer), `CHOICE_HISTORY_DUPLICATE_PREVIOUS` (append previousChoice tanpa syarat).
 
 ## 14. Proven Gaps
 
-Temuan BLOCKER: **tidak ada (0)**. Temuan HIGH: **8**. Berikut tiap temuan HIGH dengan CODE, observed vs expected, bukti sumber, rentang chapter, dan recommended narrow fix (dari `audit.json` findings + katalog `task-2-report`).
+Temuan BLOCKER: **2**. Temuan HIGH: **7**. Berikut BLOCKER terlebih dahulu (dengan dampak, bukti eksak, dan justifikasi severity), lalu 7 HIGH, masing-masing dengan CODE, observed vs expected, bukti sumber, rentang chapter, dan recommended narrow fix (dari `audit.json` findings + katalog `task-2-report`).
 
-### 14.1 CHOICE_HISTORY_RECENT_LOSS — HIGH — Choice History
+### 14.1 BLOCKER — LIVING_CANON_WRITEBACK_MISSING — Canon/Persistence
 
-- **Observed**: `summarizeChoiceHistory` mengurutkan History + previousChoice per chapter, menggabungkan, lalu `.slice(0, 4096)` — entri tertua jatuh diam-diam begitu summary melebihi 4096 char; tidak ada sinyal truncation. Sampel: entri choice terlihat terbaru = bab 49, expected = bab 50 (`{"latestVisibleChapter":49,"expectedLatestChapter":50}`).
-- **Expected**: choice terbaru (bab N-1) harus selalu tersedia untuk brief bab N.
-- **Bukti**: `lib/story-engine/chapter-brief.ts :: summarizeChoiceHistory` — slice 4096 char; `lib/runtime/choice-context.ts :: choiceNarrativeContextFromReader` — history penuh diteruskan tanpa budget enforcement; `lib/runtime/continuation-context.server.ts :: loadContinuationContextForChapter` — fail-closed `TRIGGER_CHOICE_REQUIRED_FOR_NON_FIRST_CHAPTER`; detector `lib/narrative-qa/choice-history-audit.ts :: CHOICE_HISTORY_RECENT_LOSS`.
-- **Rentang chapter**: ~40–50 (saat cap 4096 char tercapai).
-- **Recommended narrow fix**: verifikasi choice branch bab N-1 di-append ke `reader_states.choice_history` sebelum bab N digenerate (publish path).
+- **Observed**: Kedua jalur publish tidak membawa canon delta apa pun. `publish_chapter_v2` (dipanggil `lib/runtime/lifecycle.ts :: publishChapterV2`) hanya membawa chapter/outcomes/route_state/choice_history; `publish_generation_job_chapter_v4` (dipanggil `lib/runtime/generation-jobs.ts :: publishGenerationJobChapterV4`) membawa chapter + ending lock + closures + checkpoint — **tanpa** facts/knowledge/secrets/timeline/thread-transitions/character-states/act-rollup deltas.
+- **Expected**: Setelah chapter events, kanon harus berevolusi (write-back) agar bab berikut membaca state terkini, bukan seed authoring.
+- **Bukti**: `lib/runtime/lifecycle.ts :: publishChapterV2`; `lib/runtime/generation-jobs.ts :: publishGenerationJobChapterV4`; `supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4` (daftar payload RPC); `lib/narrative/loader.ts :: loadCanonSnapshot` — read-only, tidak ada runtime writer; `lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter` — tanpa mutasi facts/threads/timeline/act_rollups pasca-publish; detector `lib/narrative-qa/canon-writeback-audit.ts :: LIVING_CANON_WRITEBACK_MISSING` — observasi "neither publish path carries a canon delta and loadCanonSnapshot has no runtime writer".
+- **Dampak**: Story Bible = **bootstrap + read-model**. Setelah authoring, canon membeku di chapter 1 — bab 45–50 masih membaca seed authoring; sementara validators/ledger/checkpoint (plot-debt closures, ending lock) bergerak maju terhadap state yang tidak pernah ditulis balik. Bab 50 ditulis atas konteks canon yang salah-diam-diam.
+- **Justifikasi BLOCKER (runtime/severity)**: sesuai plan §17 — "canon state tidak pernah diperbarui" adalah kondisi BLOCKER; temuan ini proven read-only by construction (payload kedua RPC eksplisit, loader tanpa writer), bukan spekulasi; write-path dibuktikan *absen*, bukan hanya `WRITE_PATH_UNPROVEN` pasif. Tenant "canon evolves with the story" dari arsitektur long-horizon dilanggar di sumbernya (publish = satu-satunya titik evolusi runtime).
+- **Rentang chapter**: 1–50 (seluruh loop runtime).
+- **Recommended narrow fix**: rancang canon-delta minimal pada jalur publish v4 (thread transitions minimal; facts/timeline write-back) atau nyatakan eksplisit bahwa canon = bootstrap-only (kontrak desain) dan downgrade seluruh klaim evolusi state.
 
-### 14.2 BLUEPRINT_VERSION_RESOLUTION_DIVERGENCE — HIGH — Blueprint
+### 14.2 BLOCKER — PLOT_DEBT_EFFECTIVE_STATE_NOT_PROJECTED — Plot Debt
+
+- **Observed**: Ledger `reader_plot_debt_closures` berisi closure persisten (ditulis atomik oleh v4 RPC), tetapi `buildChapterBrief` menghitung `plotDebtsToProgress`/`plotDebtsToClose` **dari status contract saja** — `lib/story-engine/chapter-brief.ts :: buildChapterBrief` baris ~245: `storyContract.plotDebts.filter((debt) => debt.status !== 'closed')` tanpa overlay ledger. Detail detektor: `{"chapter":50,"ledgerClosedIds":["main_mystery"],"briefConsultsLedger":false}`.
+- **Expected**: effective state plot debt = contract status **overlay** ledger closures — debt yang sudah closed di ledger tidak boleh ditagih lagi di brief bab berikut.
+- **Bukti**: `lib/story-engine/chapter-brief.ts :: buildChapterBrief` — filter contract-status-only; `lib/runtime/continuation-context.server.ts :: loadContinuationContextForChapter` — memuat continuation tanpa membaca `reader_plot_debt_closures`; `lib/story-engine/plot-debt-closure.ts :: resolveDebtClosures` — proyeksi pure, contract tidak pernah dimutasi; `supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql` — ledger insert atomik (closure durable); detector `lib/narrative-qa/plot-debt-audit.ts :: PLOT_DEBT_EFFECTIVE_STATE_NOT_PROJECTED`.
+- **Dampak**: debt `main_mystery` sudah ter-closure durable di ledger, tetapi brief bab 50 tetap menuntut progress/closure padanya — prompt aksi menulis state yang secara persistent sudah selesai; closure tidak pernah "converge". Berinteraksi dengan 14.1: ledger maju, canon/brief tidak.
+- **Justifikasi BLOCKER (runtime/severity)**: plan §17 — divergensi state persistent vs state yang diproyeksikan ke generation adalah silent-wrong-story pada jalur 1→50; proven read-only (brief filter + ledger absen dari `loadContinuationContextForChapter`).
+- **Rentang chapter**: 35–50 (post-mustCloseBy `main_mystery`), praktis seluruh jalur begitu ledger pertama terisi.
+- **Recommended narrow fix**: `buildChapterBrief`/`loadContinuationContextForChapter` menerapkan overlay `reader_plot_debt_closures` (closed-in-ledger ⇒ excluded) sebelum menghitung `plotDebtsToProgress`/`ToClose`.
+- **Catatan**: `PLOT_DEBT_PROGRESS_NOT_PERSISTED` (HIGH, 14.5) menjadi child terkait: payung BLOCKER ini tentang *effective state*; HIGH tentang *progress memory* (tidak bentrok; payung ≠ duplikat karena ledger-consultation dan milestone-recording adalah dua write/read path berbeda).
+
+### 14.3 HIGH — BLUEPRINT_VERSION_RESOLUTION_DIVERGENCE — Blueprint
 
 - **Observed**: `buildChapterBrief` memakai `snapshot.blueprints.find((c) => c.chapterNumber === n)` — first array match, tanpa sort versi; runtime (`resolveBlueprint`) dan compiler (`latestBlueprint`) memakai highest version. Sampel bab 20: `{"resolvedVersions":{"brief":1,"compiler":2,"runtime":2}}`.
 - **Expected**: semua konsumen blueprint menyelesaikan ke versi yang sama (highest version wins).
 - **Bukti**: `lib/runtime/personalized-generation.ts :: resolveBlueprint` — sort `b.version - a.version` desc; `lib/narrative/compiler.ts :: latestBlueprint` — sort versi desc; `lib/story-engine/chapter-brief.ts :: buildChapterBrief` — `find()` tanpa sort; detector `lib/narrative-qa/blueprint-audit.ts :: BLUEPRINT_VERSION_RESOLUTION_DIVERGENCE`.
-- **Rentang chapter**: semua chapter dengan multi-versi blueprint (sampel: bab 20).
+- **Rentang chapter**: semua chapter dengan multi-versi blueprint (sampel: bab 20); finalisasi 45–50 rawan di-drive blueprint stale.
 - **Recommended narrow fix**: samakan `buildChapterBrief` dengan `resolveBlueprint`/`latestBlueprint` (highest version wins) atau buktikan loader menjamin satu baris blueprint per chapter.
 
-### 14.3 PLOT_DEBT_PROGRESS_NOT_PERSISTED — HIGH — Plot Debt (debt `main_mystery`)
+### 14.4 HIGH — THREAD_ADVANCEMENT_SIGNAL_DISCONNECTED — Thread (child dari 14.1)
 
-- **Observed**: debt `main_mystery` punya milestone 10, 20 ≤ bab 50, status contract tetap `open`, tidak ada progress tercatat (debt-level maupun per-milestone) — `{"chapter":50,"debtId":"main_mystery","dueMilestones":[10,20],"contractStatus":"open"}`.
-- **Expected**: milestone yang lewat harus meninggalkan jejak durable (status → progressing, atau record per-milestone).
-- **Bukti**: `lib/story-engine/plot-debt-closure.ts :: resolveDebtClosures` — proyeksi pure, contract tidak pernah dimutasi; `lib/story-engine/chapter-brief.ts :: buildChapterBrief` — debt lists dihitung dari status contract saja (`reader_plot_debt_closures` tidak dibaca); `lib/story-engine/story-contract.ts :: PlotDebtSchema` — shape riil `{id, question, introducedAt, mustProgressBy[], mustCloseBy, status}` tanpa field progress; detector `lib/narrative-qa/plot-debt-audit.ts :: PLOT_DEBT_PROGRESS_NOT_PERSISTED`.
-- **Rentang chapter**: 10–50.
-- **Recommended narrow fix**: persist sinyal progress (status → `progressing`, atau record per-milestone eksplisit) saat milestone tercapai.
+- **Observed**: `threadContext = { threads, advancedThreadIds: [], opensNewThread: false }` **hardcoded** di kedua jalur runtime; `ChapterDraftSchema` tidak punya slot `advancedThreadIds`, sehingga sinyal advancement draft tidak bisa mengalir lewat `parseDraft` → `runLayerA` → `validateThreadLifecycle`. Detail: `{"chapter":50,"validatorReceivesDraftSignals":false,"parentFinding":"LIVING_CANON_WRITEBACK_MISSING"}`.
+- **Expected**: validator thread menerima sinyal advancement riil dari draft.
+- **Bukti**: `lib/ai-gateway/generate.ts :: runLayerA` — meneruskan `threadCtx` verbatim; `lib/ai-gateway/schemas.ts :: ChapterDraftSchema` — tanpa slot `advancedThreadIds`; `lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter` dan `lib/runtime/story-generation.ts :: generateNextChapterReal` — hardcoded `advancedThreadIds: []`/`opensNewThread: false`; detector `lib/narrative-qa/thread-audit.ts :: THREAD_ADVANCEMENT_SIGNAL_DISCONNECTED`.
+- **Relasi ke BLOCKER**: dinaikkan MEDIUM → HIGH sebagai child dari `LIVING_CANON_WRITEBACK_MISSING` — thread transitions tidak hanya hilang dari validator, tetapi juga tidak pernah ditulis balik ke `story_threads`.
+- **Rentang chapter**: 1–50; paling kritis 48–50 (`MAIN_MYSTERY_BLOCK_CHAPTER = 48`).
+- **Recommended narrow fix**: extend parsed draft schema dengan `advancedThreadIds` atau jalankan thread lifecycle validation langsung terhadap field draft; wire-balance transisi thread ke `story_threads`.
 
-### 14.4 PLOT_DEBT_PROGRESS_NOT_PERSISTED — HIGH — Plot Debt (debt `debt_2`)
+### 14.5 HIGH — PLOT_DEBT_PROGRESS_NOT_PERSISTED — Plot Debt (`debt_2`; child terkait 14.2)
 
-- **Observed**: debt `debt_2` milestone 25 ≤ bab 50, status contract tetap `open`, tidak ada progress tercatat — `{"chapter":50,"debtId":"debt_2","dueMilestones":[25],"contractStatus":"open"}`.
-- **Expected**: sama dengan 14.3 — milestone lewat harus punya jejak durable.
-- **Bukti**: sama dengan 14.3 (`resolveDebtClosures`, `buildChapterBrief`, `PlotDebtSchema`, `lib/narrative-qa/plot-debt-audit.ts :: PLOT_DEBT_PROGRESS_NOT_PERSISTED`).
+- **Observed**: debt `debt_2` milestone 25 ≤ bab 50, status contract tetap `open`, tidak ada progress tercatat (debt-level maupun per-milestone) — `{"chapter":50,"debtId":"debt_2","dueMilestones":[25],"contractStatus":"open"}`. Milestone memory gap semantics dilipat ke sini (kode `PLOT_DEBT_MILESTONE_MEMORY_GAP` lama dihapus).
+- **Expected**: milestone yang lewat meninggalkan jejak durable (status → progressing, atau record per-milestone eksplisit).
+- **Bukti**: `lib/story-engine/plot-debt-closure.ts :: resolveDebtClosures` — proyeksi pure; `lib/story-engine/chapter-brief.ts :: buildChapterBrief` — debt lists dari status contract saja; `lib/story-engine/story-contract.ts :: PlotDebtSchema` — shape `{id, question, introducedAt, mustProgressBy[], mustCloseBy, status}` tanpa field progress; detector `lib/narrative-qa/plot-debt-audit.ts :: PLOT_DEBT_PROGRESS_NOT_PERSISTED`.
+- **Relasi ke BLOCKER**: berbeda domain-recording — BLOCKER (14.2) tentang *effective closure state* tidak diproyeksikan dari ledger; HIGH ini tentang *progress memory* milestone yang tidak pernah dipersist sama sekali.
 - **Rentang chapter**: 25–50.
-- **Recommended narrow fix**: persist sinyal progress saat milestone tercapai (status → `progressing` atau record per-milestone).
+- **Recommended narrow fix**: persist sinyal progress (status → `progressing` atau record per-milestone) saat milestone tercapai.
 
-### 14.5 ENDING_LOCK_NOT_DURABLE — HIGH — Ending
+### 14.6 HIGH — GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED — Story Contract (`corePromise`)
 
-- **Observed**: bab 45 resolve `ending_A` tapi `lockedEndingId: null` — lock tidak ter-persist (`{"chapterNumber":45,"resolvedEndingId":"ending_A","lockedEndingId":null}`). Retry bab 45 sebelum lock ter-persist akan re-resolve via ranking `routeState.endingBias` dan dapat menghasilkan ending berbeda.
-- **Expected**: begitu ending resolve di bab 45, lock harus durable sebelum chapter dipublish; retry memakai `reader.locked_ending_key`.
-- **Bukti**: `lib/story-engine/ending-resolver.ts :: resolveEnding` — throw sebelum endingLockChapter; lockedEndingKey early-return; ranking bias; `lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter` — `ENDING_LOCK_CHAPTER = 45`, lock ditulis sekali via `persist_ending_lock_v1` (`defaultPersistEndingLock`) hanya jika null; `supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4` — `INVALID_ENDING_LOCK_TARGET`, lock E1 (120713)/E2 (130600), atomik dengan chapter + ledger; detector `lib/narrative-qa/ending-audit.ts :: ENDING_LOCK_NOT_DURABLE`.
-- **Rentang chapter**: 45 (jendela retry).
-- **Recommended narrow fix**: pastikan write lock bab 45 (`persist_ending_lock_v1`) dieksekusi dan commit sebelum chapter dipublish; pada retry, `lockedEndingKey` harus dari `reader.locked_ending_key`.
-
-### 14.6 DEPENDENCY_DECLARED_BUT_UNUSED — HIGH — Story Contract (`corePromise`)
-
-- **Observed**: `corePromise` di-declare `StoryContractSchema` (800), dipersist ke voice `sample_lines` (`contract-persistence.server.ts`), tapi tidak pernah mencapai ChapterBrief, PreProseBrief, ContinuationContext, maupun writer prompt — `{"field":"corePromise","persisted":true,"inChapterBrief":false,...,"inWriterPrompt":false}`.
-- **Expected**: field contract yang dipersist harus punya konsumen di jalur generation, atau tidak di-declare.
-- **Bukti**: `lib/story-engine/story-contract.ts :: StoryContractSchema`; `lib/ai-gateway/gateway-provider.ts :: buildPrompt` — tidak ada referensi `brief` (grep); `lib/prose/prompt-engine/build-writer-prompt.ts :: buildWriterPrompt` — layer 1 hanya nama karakter + mustNotReveal; detector `lib/narrative-qa/propagation-audit.ts :: DEPENDENCY_DECLARED_BUT_UNUSED`.
-- **Rentang chapter**: 1–50 (seluruh generasi).
-- **Recommended narrow fix**: tentukan konsumen riil `corePromise` atau drop dari contract surface.
-
-### 14.7 DEPENDENCY_DECLARED_BUT_UNUSED — HIGH — Story Contract (`mainConflict`)
-
-- **Observed**: `mainConflict` di-declare (800), dipersist ke `facts_ledger`, tidak pernah dibaca brief/continuation/writer prompt — `{"field":"mainConflict","persisted":true,"inChapterBrief":false,...,"inWriterPrompt":false}`.
-- **Expected**: sama dengan 14.6.
-- **Bukti**: `StoryContractSchema`; `contract-persistence.server.ts` (persist ke `facts_ledger`); `gateway-provider.ts :: buildPrompt`; detector `lib/narrative-qa/propagation-audit.ts :: DEPENDENCY_DECLARED_BUT_UNUSED`.
+- **Observed**: `corePromise` di-declare `StoryContractSchema`, dipersist ke voice `sample_lines` (`contract-persistence.server.ts`), tapi tidak pernah mencapai ChapterBrief, PreProseBrief, ContinuationContext, maupun writer prompt — `{"field":"corePromise","persisted":true,"inChapterBrief":false,...,"inWriterPrompt":false}`. Koreksi R1: kode di-rename dari `DEPENDENCY_DECLARED_BUT_UNUSED` (severity tetap HIGH) karena anchor **memang** mempengaruhi story saat bootstrap (contract + chapterTargets diturunkan darinya) — yang hilang adalah *direct propagation* ke prompt runtime.
+- **Expected**: anchor global dipropagasikan langsung ke writer prompt setiap chapter, atau dideklarasikan sebagai bootstrap-only.
+- **Bukti**: `lib/story-engine/story-contract.ts :: StoryContractSchema`; `lib/story-engine/contract-persistence.server.ts` — persist ke `character_voice_sheets.sample_lines`; `lib/ai-gateway/gateway-provider.ts :: buildPrompt` — tidak ada referensi `brief` (grep); `lib/prose/prompt-engine/build-writer-prompt.ts :: buildWriterPrompt` — layer 1 hanya nama karakter + mustNotReveal; detector `lib/narrative-qa/propagation-audit.ts :: GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED` (`GLOBAL_STORY_ANCHOR_FIELDS`).
 - **Rentang chapter**: 1–50.
-- **Recommended narrow fix**: tentukan konsumen riil `mainConflict` atau drop dari contract surface.
+- **Recommended narrow fix**: tentukan konsumen prompt riil `corePromise` (layer 1/2 writer) atau drop dari contract surface.
 
-### 14.8 DEPENDENCY_DECLARED_BUT_UNUSED — HIGH — Story Contract (`finalQuestion`)
+### 14.7 HIGH — GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED — Story Contract (`mainConflict`)
 
-- **Observed**: `finalQuestion` di-declare (500), dipersist ke `facts_ledger` + direferensikan baris secret, tidak pernah muncul di writer prompt — `{"field":"finalQuestion","persisted":true,"inChapterBrief":false,...,"inWriterPrompt":false}`.
+- **Observed**: `mainConflict` di-declare, dipersist ke `facts_ledger` (`contract-persistence.server.ts`), tidak pernah dibaca brief/continuation/writer prompt — `{"field":"mainConflict","persisted":true,...,"inWriterPrompt":false}`.
 - **Expected**: sama dengan 14.6.
-- **Bukti**: `StoryContractSchema`; `contract-persistence.server.ts` (persist ke `facts_ledger` + secret rows); `gateway-provider.ts :: buildPrompt`; detector `lib/narrative-qa/propagation-audit.ts :: DEPENDENCY_DECLARED_BUT_UNUSED`.
+- **Bukti**: `StoryContractSchema`; `contract-persistence.server.ts` — persist ke `facts_ledger`; `gateway-provider.ts :: buildPrompt`; detector `lib/narrative-qa/propagation-audit.ts :: GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED`.
 - **Rentang chapter**: 1–50.
-- **Recommended narrow fix**: tentukan konsumen riil `finalQuestion` atau drop dari contract surface.
+- **Recommended narrow fix**: tentukan konsumen prompt riil `mainConflict` atau drop dari contract surface.
+
+### 14.8 HIGH — GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED — Story Contract (`finalQuestion`)
+
+- **Observed**: `finalQuestion` di-declare, dipersist ke `facts_ledger` + direferensikan baris secret, tidak pernah muncul di writer prompt — `{"field":"finalQuestion","persisted":true,...,"inWriterPrompt":false}`.
+- **Expected**: paling kritis untuk **bab 45–50** — finale harus menjawab `finalQuestion` secara eksplisit; writer tidak bisa menjawab pertanyaan yang tidak pernah dilihatnya.
+- **Bukti**: `StoryContractSchema`; `contract-persistence.server.ts` (persist ke `facts_ledger` + secret rows); `gateway-provider.ts :: buildPrompt`; detector `lib/narrative-qa/propagation-audit.ts :: GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED` — risk text memuat "finalQuestion is the most critical anchor for chapters 45–50".
+- **Rentang chapter**: 1–50 (kritis 45–50).
+- **Recommended narrow fix**: jadikan `finalQuestion` wajib-masuk layer 1 writer prompt mulai `endingLockChapter`.
+
+### 14.9 HIGH — DEAD_PATH_CANDIDATE — Act Rollup
+
+- **Observed**: 2 rollups (act 1, 2) di-seed saat authoring, tidak pernah di-update (tanpa kolom `updated_at`, tanpa migration update), dan tidak pernah sampai prompt — `{"rollupCount":2,"actNumbers":[1,2],"neverUpdated":true}`.
+- **Expected**: rollup act terpelihara (update saat act boundary) dan visible ke writer; jika tidak, alokasi budget-nya tidak boleh terbuang.
+- **Bukti**: `supabase/migrations/20260707000000_core_runtime_baseline.sql :: act_rollups` — tanpa `updated_at`; `lib/authoring/compile.ts :: compileStoryBible` — "Seed act rollup (act 1)"; `lib/narrative/continuation-context.ts :: buildContinuationContext` — tanpa field `actRollups`; `buildWriterPrompt` — tanpa section rollup; detector `lib/narrative-qa/act-rollup-audit.ts :: DEAD_PATH_CANDIDATE`.
+- **Justifikasi HIGH (naik dari MEDIUM, koreksi R1)**: dead path membawa **biaya budget nyata** — `compileContext` mengalokasikan 25% packet ke rollup summaries (`BUDGET_ALLOCATION.rollupsSummaries 0.25`) padahal `buildWriterPrompt` mengecualikan rollup sepenuhnya; writer tidak pernah melihat rollup **dan** 25% budget compiler terbuang.
+- **Rentang chapter**: 10–50.
+- **Recommended narrow fix**: keputusan desain — maintain rollup saat act boundary + konsumsi prompt, atau tandai write-once seed dan re-alokasi `rollupsSummaries 0.25`.
+
+### 14.10 HIGH — WRITER_CONTEXT_WHOLE_SECTION_EVICTION — Context Pressure (writer layer 3)
+
+- **Observed**: ketika total layer 3 melebihi limit tetap **4800 char**, `buildWriterPrompt` meng-evict **section utuh** secara berurutan: timeline dulu, lalu facts, lalu threads — bukan trim granular seperti compiler. Detail sampel stress (loadBearingCost 4500, 71 fakta × 400 char): `{"layer3TotalChars":28920,"evictedSections":["timeline","facts"]}` — timeline dan facts hilang utuh, threads (200 char) tersisa.
+- **Expected**: tekanan budget writer seharusnya trim granular (per-item) seperti `compileContext`, bukan menghapus kategori konteks utuh.
+- **Bukti**: `lib/prose/prompt-engine/build-writer-prompt.ts :: buildWriterPrompt` — baris 83–123: limit 4800 + urutan eviction timeline → facts → threads (source-read); detector `lib/narrative-qa/context-pressure-audit.ts :: WRITER_CONTEXT_WHOLE_SECTION_EVICTION` (input pure `writerLayer3 {timelineChars, factsChars, threadsChars, charLimit}`).
+- **Justifikasi HIGH**: di bab 45–50, kehilangan utuh timeline/facts/threads dari prompt berarti chapter final ditulis tanpa konteks build-up; berbeda dari detector compiler (`RELEVANT_FACT_EVICTION` dsb.) yang granular, finding ini tentang prompt-pressure riil di writer.
+- **Rentang chapter**: saat layer 3 > 4800 char (stress demo; runtime bergantung ukuran facts/timeline/threads).
+- **Recommended narrow fix**: ganti whole-section eviction dengan trim granular terukur dalam satu section dulu, atau naikkan limit + sinkronisasi dengan `contextBudgetReport`.
 
 ## 15. Unknown / Unproven Paths
 
@@ -333,7 +363,7 @@ Baris dengan status `CONSUMER_UNPROVEN` / `WRITE_PATH_UNPROVEN` / `DEAD_PATH_CAN
 | Domain | Status | Yang belum terbukti | Cara membuktikan (M10-C) |
 |---|---|---|---|
 | Knowledge | CONSUMER_UNPROVEN | `knowledge_scopes` termuat ke snapshot tapi tidak ada proyeksi downstream (prompt/validator) ditemukan | Harness DB: cek apakah knowledge assertions dipakai layer prompt mana pun |
-| Story Contract (`corePromise`/`mainConflict`/`finalQuestion`) | WRITE_PATH_UNPROVEN | Persisted tapi tidak pernah sampai brief/continuation/prompt | Harness DB + trace prompt lengkap |
+| Story Contract (`corePromise`/`mainConflict`/`finalQuestion`) | WRITE_PATH_UNPROVEN | Anchor global persisted tapi tidak pernah sampai brief/continuation/prompt secara langsung (`GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED`, HIGH) — pengaruh terbatas bootstrap | Harness DB + trace prompt lengkap |
 | Story Contract (`plotDebts`/`endingCandidates`/`closureRunway`/`lockedEndingKey`) | CONSUMER_UNPROVEN | Mati antara brief/preProse dan writer prompt | Trace end-to-end prompt dengan brief terisi |
 | Act Rollup | DEAD_PATH_CANDIDATE + CONSUMER_UNPROVEN | Seed act 1 saja; tidak pernah di-update (tanpa `updated_at`); `buildContinuationContext` tidak punya field `actRollups`; prompt tanpa section rollup | Keputusan desain: maintain rollup saat act boundary, atau tandai write-once seed |
 | Retrieval | DEAD_PATH_CANDIDATE | `persistRetrievalLog` terdefinisi + wired di `defaultDeps` tapi tidak pernah dipanggil; excluded/included ids + budget report dihitung `compileContext` lalu di-drop | Invoke di generation path, atau hapus dari packet contract |
@@ -343,18 +373,20 @@ Tidak ada domain `AMBIGUOUS` tanpa evidence: setiap baris di atas punya bukti so
 
 ## 16. Follow-up PR Recommendations
 
-Daftar PR lanjutan yang **tidak** dikerjakan di M10-A (plan §19: audit bukan fix PR; M10-A Must NOT fix). Diurutkan berdasarkan dampak:
+Daftar PR lanjutan yang **tidak** dikerjakan di M10-A (plan §19: audit bukan fix PR; M10-A Must NOT fix). Diurutkan berdasarkan dampak, BLOCKER dulu (§14.1–§14.10):
 
-1. **PR-1: Bridge ChapterBrief/PreProseBrief ke writer prompt.** Scope: `lib/ai-gateway/gateway-provider.ts :: buildPrompt` + `lib/prose/prompt-engine/build-writer-prompt.ts :: buildWriterPrompt`. Memperbaiki 8 temuan (14.6–14.8 HIGH + 4 MEDIUM DEPENDENCY + layer-1 ending-lock comment mismatch). Kenapa di luar mandat: mengubah business logic generation; M10-A hanya characterize.
-2. **PR-2: Samakan resolusi blueprint di `buildChapterBrief`** (highest version wins) — `lib/story-engine/chapter-brief.ts`. Memperbaiki 14.2. Di luar mandat: perubahan perilaku selection.
-3. **PR-3: Persist sinyal progress plot debt** (status → `progressing` atau record per-milestone) — `lib/story-engine/plot-debt.ts` / `lib/story-engine/contract-persistence.server.ts` / v4 RPC. Memperbaiki 14.3–14.4. Di luar mandat: perubahan persistence.
-4. **PR-4: Verifikasi/tandai truncation choice history** — append bab N-1 sebelum bab N + sinyal truncation di `summarizeChoiceHistory` (`lib/runtime/personalized-generation.ts` + `lib/story-engine/chapter-brief.ts`). Memperbaiki 14.1. Di luar mandat: perubahan publish path.
-5. **PR-5: Jamin durability ending lock pada retry bab 45** — `lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter` (`defaultPersistEndingLock` sebelum publish). Memperbaiki 14.5. Di luar mandat: perubahan publish path.
-6. **PR-6: Slot `advancedThreadIds` di `ChapterDraftSchema`** + validasi thread terhadap draft riil — `lib/ai-gateway/schemas.ts` + `lib/narrative/threads.ts`. Memperbaiki `THREAD_ADVANCEMENT_SIGNAL_DISCONNECTED`. Di luar mandat: perubahan skema draft/validator.
-7. **PR-7: Keputusan act rollup** (maintain di act boundary + konsumen prompt, atau tandai write-once seed) — `lib/authoring/compile.ts` / `lib/narrative/continuation-context.ts`. Memperbaiki `DEAD_PATH_CANDIDATE` + `CONSUMER_UNPROVEN`. Di luar mandat: keputusan desain + perubahan alokasi budget.
-8. **PR-8: Invoke `persistRetrievalLog` di generation path** (atau hapus dari packet) — `lib/narrative/loader.ts` + `lib/runtime/personalized-generation.ts` / `lib/runtime/story-generation.ts`. Memperbaiki `RETRIEVAL_LOG_WRITE_PATH_UNPROVEN` + `CONTEXT_PACKET_CONSUMER_UNPROVEN`. Di luar mandat: observability change.
-9. **PR-9 (M10-C): Isolated DB harness untuk parity worker vs sync** (canon delta, thread/timeline/fact state, reader state, ending lock) — pembuktian parity riil seperti di §11. Di luar mandat M10-A: butuh DB sandbox + publish live.
+1. **PR-1: Canon write-back pada jalur publish** (BLOCKER `LIVING_CANON_WRITEBACK_MISSING`, §14.1). Scope: `lib/runtime/lifecycle.ts :: publishChapterV2` RPC payload + `lib/runtime/generation-jobs.ts :: publishGenerationJobChapterV4`/SQL RPC + runtime canon writer. Tulis delta facts/knowledge/secrets/timeline/thread-transitions/character-states/act-rollup pasca-publish agar Story Bible berevolusi. Di luar mandat: perubahan RPC + migration + semantics canon.
+2. **PR-2: Proyeksikan effective plot-debt state** (BLOCKER `PLOT_DEBT_EFFECTIVE_STATE_NOT_PROJECTED`, §14.2). Scope: `lib/story-engine/chapter-brief.ts :: buildChapterBrief` + `lib/runtime/continuation-context.server.ts` — overlay `reader_plot_debt_closures` sebelum menghitung `plotDebtsToProgress`/`ToClose`. Di luar mandat: perubahan logika brief.
+3. **PR-3: Sinyal advancement thread riil** (HIGH child `THREAD_ADVANCEMENT_SIGNAL_DISCONNECTED`, §14.4). Scope: slot `advancedThreadIds` di `ChapterDraftSchema` (`lib/ai-gateway/schemas.ts`) + hapus hardcode `advancedThreadIds: []`/`opensNewThread: false` di kedua jalur runtime + persist transisi ke `story_threads`. Di luar mandat: skema draft + validator + write-path.
+4. **PR-4: Prompt-visible global story anchors** (HIGH ×3 `GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED`, §14.6–14.8). Scope: `lib/ai-gateway/gateway-provider.ts :: buildPrompt` + `buildWriterPrompt` — teruskan `corePromise`/`mainConflict`/`finalQuestion` dari brief ke layer writer; `finalQuestion` wajib prompt-visible mulai bab 45. Di luar mandat: perubahan business logic generation.
+5. **PR-5: Samakan resolusi blueprint** (HIGH `BLUEPRINT_VERSION_RESOLUTION_DIVERGENCE`, §14.3). Scope: `buildChapterBrief` — highest version wins, konsisten dengan `resolveBlueprint`/`latestBlueprint`. Di luar mandat: perubahan perilaku selection.
+6. **PR-6: Keputusan act rollup + realokasi budget** (HIGH `DEAD_PATH_CANDIDATE` + LOW `CONSUMER_UNPROVEN`). Scope: `lib/authoring/compile.ts`/`lib/narrative/continuation-context.ts`/budget `rollupsSummaries 0.25` — maintain rollup saat act boundary + konsumen prompt, atau tandai write-once seed dan kembalikan 25% budget. Di luar mandat: keputusan desain.
+7. **PR-7: Trim granular di writer layer 3 + de-duplikasi choice history** (HIGH `WRITER_CONTEXT_WHOLE_SECTION_EVICTION` follow-up implementation, §14.10 + `CHOICE_HISTORY_DUPLICATE_PREVIOUS` MEDIUM). Scope: `buildWriterPrompt` (trim granular; eviction whole-section saat ini HIGH finding, §14.10) + `summarizeChoiceHistory` (append previousChoice hanya jika belum ada di history). Di luar mandat: perubahan prompt builder.
+8. **PR-8: Atomisasi lock→publish jalur legacy** (MEDIUM `ENDING_LOCK_LEGACY_NONATOMIC_PUBLISH`). Scope: routing bab 45 melalui `publishGenerationJobChapterV4`, atau gabungkan persist lock ke transaksi publish v2. Di luar mandat: perubahan publish path.
+9. **PR-9: Persist progress plot debt** (HIGH `PLOT_DEBT_PROGRESS_NOT_PERSISTED`, §14.5). Scope: field/record progress saat milestone tercapai (`plot-debt.ts` + v4 RPC). Di luar mandat: perubahan persistence.
+10. **PR-10: Invoke `persistRetrievalLog`** (INFO `RETRIEVAL_LOG_WRITE_PATH_UNPROVEN`). Scope: wire di generation path sesudah `compileContext`. Di luar mandat: observability change.
+11. **PR-11 (M10-C): Isolated DB harness untuk parity worker vs sync** — pembuktian parity riil §11 (canon delta, thread/timeline/fact state, reader state, ending lock). Di luar mandat M10-A: butuh DB sandbox + publish live.
 
 ---
 
-*Lampiran teknis: seluruh angka pada laporan ini berasal dari `.zcode/artifacts/m10-a/audit.json` dan `.zcode/artifacts/m10-a/context-pressure.json` (diregenerasi 2026-08-04 dari commit `82a5f0a`). Register temuan lengkap: `docs/audits/M10A_RISK_REGISTER.md`.*
+*Lampiran teknis: seluruh angka pada laporan ini berasal dari `.zcode/artifacts/m10-a/audit.json` (19 findings: 2 BLOCKER / 7 HIGH / 7 MEDIUM / 1 LOW / 2 INFO) dan `.zcode/artifacts/m10-a/context-pressure.json` (memuat `WRITER_CONTEXT_WHOLE_SECTION_EVICTION` pada stress rows) — diregenerasi 2026-08-04 pada koreksi R1 (uncommitted di atas baseline `b7961311cf70b91cb7245149e400075c4e454d74`). Register temuan lengkap: `docs/audits/M10A_RISK_REGISTER.md`.*

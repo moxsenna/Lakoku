@@ -20,6 +20,10 @@
  *     / plotDebtsToClose computed from contract debt.status and milestones ONLY;
  *     the reader closure ledger is not consulted, so a closed-in-ledger debt still
  *     shows as open in the next chapter brief.
+ *   - lib/runtime/continuation-context.server.ts :: loadPreviousChapterRow /
+ *     choiceHistoryFrom... — loadChapter -> buildChapterBrief uses
+ *     storyContract.plotDebts with no ledger overlay (effective state never
+ *     projected from reader_plot_debt_closures).
  *   - supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql
  *     :: publish_generation_job_chapter_v4 — atomically inserts reader_plot_debt_closures
  *     (on conflict do nothing), verifies checkpoint closesPlotDebts matches the
@@ -55,6 +59,13 @@ export interface PlotDebtAuditSample {
   debts: PlotDebtState[]
   /** Debt ids already closed in the reader ledger (reader_plot_debt_closures). */
   ledgerClosedIds: string[]
+  /**
+   * Whether buildChapterBrief consults the reader ledger when projecting
+   * plotDebtsToProgress/ToClose. Production: false — the brief reads contract
+   * status only, so closures persisted in the ledger are invisible to the
+   * effective state (BLOCKER umbrella).
+   */
+  briefConsultsLedger?: boolean
   /** Closure proposals made by this chapter's draft. */
   closesProposed: string[]
   /** closesPlotDebts carried by the checkpoint audit signals. */
@@ -85,6 +96,12 @@ export const PLOT_DEBT_AUDIT_EVIDENCE: StructuredEvidence[] = [
       'plotDebtsToClose = open debts with mustCloseBy <= chapter; plotDebtsToProgress = remaining open debts with a mustProgressBy milestone <= chapter. Computed from CONTRACT status only — reader_plot_debt_closures is not read here.',
   },
   {
+    source: 'lib/runtime/continuation-context.server.ts :: loadChapter / buildChapterBrief',
+    evidenceClass: 'SOURCE_TRACE',
+    observation:
+      'loadChapter -> buildChapterBrief uses storyContract.plotDebts with no ledger overlay; effective plot-debt state is never projected from reader_plot_debt_closures into the brief.',
+  },
+  {
     source: 'lib/story-engine/plot-debt.ts :: auditPlotDebts',
     evidenceClass: 'SOURCE_TRACE',
     observation:
@@ -106,18 +123,22 @@ export const PLOT_DEBT_AUDIT_EVIDENCE: StructuredEvidence[] = [
 
 /**
  * Emit plot-debt persistence findings for one chapter sample.
- * - PLOT_DEBT_PROGRESS_NOT_PERSISTED: a debt has a mustProgressBy milestone at or
- *   before this chapter, is still contract-open, and no progress was recorded
- *   (neither debt-level nor per-milestone).
+ * - PLOT_DEBT_EFFECTIVE_STATE_NOT_PROJECTED (BLOCKER): the brief builds
+ *   plotDebtsToProgress/ToClose from CONTRACT status only, ignoring the
+ *   reader_plot_debt_closures ledger. Closure proposals can be durable in the
+ *   ledger yet never projected into effective state. Emitted when the ledger
+ *   has closures AND brief selection ignores the ledger (briefConsultsLedger
+ *   false/absent).
+ * - PLOT_DEBT_PROGRESS_NOT_PERSISTED (HIGH child): a debt has a mustProgressBy
+ *   milestone at or before this chapter, is still contract-open, and no progress
+ *   was recorded (neither debt-level nor per-milestone). Progression memory
+ *   alone — the milestone memory gap semantics stay folded into this single
+ *   HIGH child (no separate PLOT_DEBT_MILESTONE_MEMORY_GAP).
  * - PLOT_DEBT_CLOSE_NOT_PERSISTED: a closure was proposed but never persisted
  *   (absent from both the ledger and the checkpoint audit signals).
  * - PLOT_DEBT_NEXT_CHAPTER_STATE_STALE: debt is closed in the ledger while the
- *   contract row still says open/progressing — the next chapter brief derives
- *   plotDebtsToProgress/ToClose from the stale contract status.
- * - PLOT_DEBT_MILESTONE_MEMORY_GAP: SOME due milestones of a debt have per-milestone
- *   progress records while others have none (plan §10: at "Bab 20 milestone kedua"
- *   the engine cannot tell whether the first milestone was ever satisfied when
- *   progress is not recorded per milestone).
+ *   contract row still says open/progressing — kept for traceability; the
+ *   umbrella BLOCKER is the headline finding.
  */
 export function auditPlotDebts(sample: PlotDebtAuditSample): StoryBibleAuditFinding[] {
   const findings: StoryBibleAuditFinding[] = []
@@ -129,6 +150,22 @@ export function auditPlotDebts(sample: PlotDebtAuditSample): StoryBibleAuditFind
   const milestoneProgress = new Set(
     (sample.progressedMilestones ?? []).map((p) => `${p.debtId}:${p.milestoneIndex}`),
   )
+
+  // --- Umbrella BLOCKER: effective state not projected ---
+  // The ledger carries closures but the brief selection (buildChapterBrief)
+  // ignores the ledger (reads contract status only). A closed-in-ledger debt
+  // still shows as open in the next chapter brief.
+  if (ledger.size > 0 && sample.briefConsultsLedger !== true) {
+    findings.push(baseFinding('PLOT_DEBT_EFFECTIVE_STATE_NOT_PROJECTED', 'BLOCKER', {
+      detail: {
+        chapter: sample.chapter,
+        ledgerClosedIds: [...ledger],
+        briefConsultsLedger: false,
+      },
+      risk: 'reader_plot_debt_closures ledger contains persisted closures, but buildChapterBrief derives plotDebtsToProgress/plotDebtsToClose from CONTRACT status only (lib/story-engine/chapter-brief.ts). The closure is durable in the ledger yet never projected into effective state — the next chapter brief keeps demanding progress/closure on debts that are already closed. Combined with the missing Living Canon writeback (LIVING_CANON_WRITEBACK_MISSING), plot-debt state cannot converge.',
+      followUp: 'Project the ledger over contract status (projectClosedDebts) before building the brief — the ledger must be an input to buildChapterBrief plotDebtsToProgress/plotDebtsToClose.',
+    }))
+  }
 
   for (const debt of sample.debts) {
     const dueMilestones = debt.mustProgressBy
@@ -154,7 +191,10 @@ export function auditPlotDebts(sample: PlotDebtAuditSample): StoryBibleAuditFind
       }))
     }
 
-    // --- Progress not persisted ---
+    // --- Progress not persisted (HIGH child; milestone memory gap folded in) ---
+    const missingMilestones = dueMilestones.filter((m) =>
+      !milestoneProgress.has(`${debt.id}:${m.milestoneIndex}`),
+    )
     if (
       dueMilestones.length > 0
       && !closedInLedger
@@ -174,12 +214,8 @@ export function auditPlotDebts(sample: PlotDebtAuditSample): StoryBibleAuditFind
       }))
     }
 
-    // --- Milestone memory gap ---
-    const missingMilestones = dueMilestones.filter((m) =>
-      !milestoneProgress.has(`${debt.id}:${m.milestoneIndex}`),
-    )
     if (progressedDue.length > 0 && missingMilestones.length > 0) {
-      findings.push(baseFinding('PLOT_DEBT_MILESTONE_MEMORY_GAP', 'MEDIUM', {
+      findings.push(baseFinding('PLOT_DEBT_PROGRESS_NOT_PERSISTED', 'HIGH', {
         detail: {
           chapter: sample.chapter,
           debtId: debt.id,
@@ -192,22 +228,22 @@ export function auditPlotDebts(sample: PlotDebtAuditSample): StoryBibleAuditFind
             milestoneChapter: m.milestoneChapter,
           })),
         },
-        risk: `Debt "${debt.id}" has per-milestone progress for ${progressedDue.length} of ${dueMilestones.length} due milestones but NO record for ${missingMilestones.map((m) => m.milestoneChapter).join(', ')}. The engine cannot tell whether those milestones were ever satisfied (plan §10 "Bab 20 milestone kedua" scenario), because milestone satisfaction is not persisted per milestone.`,
+        risk: `Debt "${debt.id}" has per-milestone progress for ${progressedDue.length} of ${dueMilestones.length} due milestones but NO record for ${missingMilestones.map((m) => m.milestoneChapter).join(', ')}. Progression memory is incomplete: the engine cannot tell whether those milestones were ever satisfied (milestone memory gap), because milestone satisfaction is not persisted per milestone.`,
         followUp: 'Introduce a per-milestone ledger so the brief builder and next-chapter state can distinguish met vs skipped milestones.',
       }))
     }
 
-    // --- Next chapter state stale ---
+    // --- Next chapter state stale (traceability; umbrella is the headline) ---
     if (closedInLedger && debt.status !== 'closed') {
-      findings.push(baseFinding('PLOT_DEBT_NEXT_CHAPTER_STATE_STALE', 'HIGH', {
+      findings.push(baseFinding('PLOT_DEBT_NEXT_CHAPTER_STATE_STALE', 'MEDIUM', {
         detail: {
           chapter: sample.chapter,
           debtId: debt.id,
           contractStatus: debt.status,
           ledgerState: 'closed',
         },
-        risk: `Debt "${debt.id}" is closed in the reader ledger but the contract row still says '${debt.status}'. buildChapterBrief derives plotDebtsToProgress/plotDebtsToClose from contract status only, so the NEXT chapter brief may demand progress/closure on an already-closed debt.`,
-        followUp: 'Either project the ledger over contract status (projectClosedDebts) before building the brief, or sync contract status on closure.',
+        risk: `Debt "${debt.id}" is closed in the reader ledger but the contract row still says '${debt.status}'. buildChapterBrief derives plotDebtsToProgress/plotDebtsToClose from contract status only, so the NEXT chapter brief may demand progress/closure on an already-closed debt. Headline finding: PLOT_DEBT_EFFECTIVE_STATE_NOT_PROJECTED.`,
+        followUp: 'Project the ledger over contract status (projectClosedDebts) before building the brief, or sync contract status on closure.',
       }))
     }
   }

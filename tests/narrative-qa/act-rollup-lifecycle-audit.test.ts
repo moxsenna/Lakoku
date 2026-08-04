@@ -12,16 +12,19 @@ import { actRollupSample, rollupEntry } from './sample-builder'
 import { detailOf } from './sample-builder'
 
 describe('act-rollup-lifecycle-audit', () => {
-  it('rollup di-seed act boundary, tidak pernah di-update, tidak sampai prompt -> DEAD_PATH_CANDIDATE', () => {
+  it('rollup di-seed act boundary, tidak pernah di-update, tidak sampai prompt -> DEAD_PATH_CANDIDATE HIGH (25% compiler budget terbuang)', () => {
     const findings = auditActRollupLifecycle(actRollupSample({
       rollups: [rollupEntry(1, 1, 10, null)],
     }))
 
     const deadPath = findings.find((f) => f.code === 'DEAD_PATH_CANDIDATE')
     expect(deadPath).toBeDefined()
-    expect(deadPath?.severity).toBe('MEDIUM')
+    expect(deadPath?.severity).toBe('HIGH')
     expect(detailOf(deadPath as NonNullable<typeof deadPath>).neverUpdated).toBe(true)
     expect(detailOf(deadPath as NonNullable<typeof deadPath>).actNumbers).toEqual([1])
+    // Justifikasi HIGH: rollupsSummaries 0.25 di BUDGET_ALLOCATION tapi writer prompt
+    // mengecualikan rollup — 25% budget compiler terbuang.
+    expect(deadPath?.risk).toContain('0.25')
   })
 
   it('rollup ada di compiled packet tapi writer prompt tanpa section rollup -> CONSUMER_UNPROVEN', () => {

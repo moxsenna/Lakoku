@@ -124,7 +124,14 @@ function threadAuditSample(): ThreadAuditSample {
   }
 }
 
-/** Plot debt sample at chapter 50 from the synthetic story contract (both debts open). */
+/** Plot debt sample at chapter 50 from the synthetic story contract (both debts open).
+ *  Reviewer correction (M10-A/R1): ledger has closures persisted at publish
+ *  (v4 RPC), but the brief never consults the ledger (briefConsultsLedger:
+ *  false) — the baseline must surface PLOT_DEBT_EFFECTIVE_STATE_NOT_PROJECTED.
+ *  We simulate the real production shape: main_mystery closes at 35 and is in
+ *  the ledger at chapter 50, debt_2 closes at 48 (ledger too), yet the brief
+ *  still sees contract status 'open'.
+ */
 function plotDebtAuditSample(): PlotDebtAuditSample {
   const contract = buildSyntheticStoryContract()
   const debts: PlotDebtState[] = contract.plotDebts.map((d) => ({
@@ -137,19 +144,25 @@ function plotDebtAuditSample(): PlotDebtAuditSample {
   return {
     chapter: 50,
     debts,
-    ledgerClosedIds: [],
-    closesProposed: [],
+    // Ledger at publish-time (v4): main_mystery closure persisted at ch 35;
+    // debt_2 is NOT in the ledger (progress memory gap persists to ch 50).
+    ledgerClosedIds: ['main_mystery'],
+    closesProposed: [], // chapter-50 audit itself does not propose new closures
     auditSignalsClosesPlotDebts: [],
     progressRecordedThisChapter: [],
     progressedMilestones: [],
+    // Brief ignores the ledger (buildChapterBrief reads contract status only).
+    briefConsultsLedger: false,
   }
 }
 
-/** Ending fixture sequence: lock chapter via legacy path + durable post-lock chapter. */
+/** Ending fixture sequence: lock chapter via legacy path (persisted then
+ *  published, two transactions) + durable post-lock chapter. */
 function endingFixtureEntries(): EndingFixtureEntry[] {
   return [
     { chapterNumber: 44, resolvedEndingId: null, lockedEndingId: null },
-    { chapterNumber: 45, resolvedEndingId: 'ending_A', lockedEndingId: null, publishPath: 'v2' },
+    // Sync path persists lock BEFORE publish (durable) — non-atomic window only.
+    { chapterNumber: 45, resolvedEndingId: 'ending_A', lockedEndingId: 'ending_A', publishPath: 'v2' },
     { chapterNumber: 50, resolvedEndingId: 'ending_A', lockedEndingId: 'ending_A' },
   ]
 }
@@ -186,7 +199,12 @@ function buildInputs() {
   return {
     choiceHistory: {
       items: syntheticChoiceItems(49),
-      expectedLatestChapter: 50,
+      // Correction (M10-A/R1): Bab 50 target -> expected latest visible = 49
+      // (memory N-1), so the corrected baseline no longer emits the
+      // false-positive CHOICE_HISTORY_RECENT_LOSS. Production behavior:
+      // summarizeChoiceHistory appends previousChoice -> duplicate at tail.
+      targetChapter: 50,
+      summaryAppendsPreviousChoice: true,
     },
     contextSamples: CANON_MILESTONES.map(canonContextSample),
     blueprintVersions: blueprintVersionEntries(),

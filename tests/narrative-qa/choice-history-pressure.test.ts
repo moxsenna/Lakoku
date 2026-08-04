@@ -60,6 +60,21 @@ describe('choice-history-pressure-audit — detector', () => {
     expect(detailOf(recentLoss as NonNullable<typeof recentLoss>).expectedLatestChapter).toBe(12)
   })
 
+  it('targetChapter=N mengharapkan entri terbaru N-1 (koreksi reviewer: Bab 50 dengan 49 pilihan tidak RECENT_LOSS)', () => {
+    const items = syntheticChoiceItems(49)
+    const findings = auditChoiceHistory(items, { targetChapter: 50 })
+    expect(findings.some((f) => f.code === 'CHOICE_HISTORY_RECENT_LOSS')).toBe(false)
+  })
+
+  it('targetChapter=51 dengan 49 pilihan -> RECENT_LOSS HIGH (entri terbaru 49 < 50)', () => {
+    const items = syntheticChoiceItems(49)
+    const findings = auditChoiceHistory(items, { targetChapter: 51 })
+    const recentLoss = findings.find((f) => f.code === 'CHOICE_HISTORY_RECENT_LOSS')
+    expect(recentLoss).toBeDefined()
+    expect(recentLoss?.severity).toBe('HIGH')
+    expect(detailOf(recentLoss as NonNullable<typeof recentLoss>).expectedLatestChapter).toBe(50)
+  })
+
   it('CHOICE_HISTORY_RECENT_LOSS MEDIUM saat ada celah urutan chapter', () => {
     const items = [
       choiceItem(1, 'A', ['x']),
@@ -83,13 +98,30 @@ describe('choice-history-pressure-audit — detector', () => {
     expect(recentLoss?.severity).toBe('MEDIUM')
   })
 
-  it('CHOICE_HISTORY_DUPLICATE_PREVIOUS MEDIUM saat label+consequence kembar berurutan', () => {
+  it('CHOICE_HISTORY_DUPLICATE_PREVIOUS MEDIUM saat brief menyambung previousChoice ke history (produksi)', () => {
+    const items = syntheticChoiceItems(10)
+    const findings = auditChoiceHistory(items, { summaryAppendsPreviousChoice: true })
+    const dup = findings.find((f) => f.code === 'CHOICE_HISTORY_DUPLICATE_PREVIOUS')
+
+    expect(dup).toBeDefined()
+    expect(dup?.severity).toBe('MEDIUM')
+    expect(detailOf(dup as NonNullable<typeof dup>).latestChapter).toBe(10)
+    expect(detailOf(dup as NonNullable<typeof dup>).entryCount).toBe(10)
+  })
+
+  it('CHOICE_HISTORY_DUPLICATE_PREVIOUS tidak menembak ketika flag tidak di-set (mode murni)', () => {
+    const items = syntheticChoiceItems(10)
+    const findings = auditChoiceHistory(items)
+    expect(findings.some((f) => f.code === 'CHOICE_HISTORY_DUPLICATE_PREVIOUS')).toBe(false)
+  })
+
+  it('CHOICE_HISTORY_DUPLICATE_CONSECUTIVE MEDIUM saat label+consequence kembar berurutan', () => {
     const items = [
       choiceItem(1, 'Konfrontasi', ['Menuduh Raka'], 'e1'),
       choiceItem(2, 'Konfrontasi', ['Menuduh Raka'], 'e2'),
     ]
     const findings = auditChoiceHistory(items)
-    const dup = findings.find((f) => f.code === 'CHOICE_HISTORY_DUPLICATE_PREVIOUS')
+    const dup = findings.find((f) => f.code === 'CHOICE_HISTORY_DUPLICATE_CONSECUTIVE')
 
     expect(dup).toBeDefined()
     expect(dup?.severity).toBe('MEDIUM')
@@ -97,12 +129,12 @@ describe('choice-history-pressure-audit — detector', () => {
     expect(detailOf(dup as NonNullable<typeof dup>).chapterB).toBe(2)
   })
 
-  it('tidak ada DUPLICATE_PREVIOUS saat label sama tapi consequence berbeda', () => {
+  it('tidak ada DUPLICATE_CONSECUTIVE saat label sama tapi consequence berbeda', () => {
     const items = [
       choiceItem(1, 'Konfrontasi', ['Menuduh Raka'], 'e1'),
       choiceItem(2, 'Konfrontasi', ['Berdamai'], 'e2'),
     ]
-    expect(auditChoiceHistory(items).some((f) => f.code === 'CHOICE_HISTORY_DUPLICATE_PREVIOUS')).toBe(false)
+    expect(auditChoiceHistory(items).some((f) => f.code === 'CHOICE_HISTORY_DUPLICATE_CONSECUTIVE')).toBe(false)
   })
 
   it('CHOICE_HISTORY_BUDGET_PRESSURE HIGH saat estimasi chars/4 > declaredBudget', () => {

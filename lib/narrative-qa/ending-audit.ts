@@ -62,7 +62,13 @@ export const ENDING_AUDIT_EVIDENCE: StructuredEvidence[] = [
     source: 'lib/runtime/lifecycle.ts :: publishChapterV2',
     evidenceClass: 'SOURCE_TRACE',
     observation:
-      'The sync/legacy publish path (publish_chapter_v2 RPC) accepts NO ending lock arguments — an ending lock can only ever be persisted by the worker v4 path (or the standalone persist_ending_lock_v1 call).',
+      'The sync/legacy publish path (publish_chapter_v2 RPC) accepts NO ending lock arguments — the standalone persist_ending_lock_v1 call is what persists the lock on the legacy path.',
+  },
+  {
+    source: 'lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter (legacy branch)',
+    evidenceClass: 'SOURCE_TRACE',
+    observation:
+      'On the non-job (sync) path, chapter 45 calls d.persistEndingLock (await persist_ending_lock_v1) BEFORE publishChapterV2 — the lock commit is DURABLE, but lock -> publish spans two transactions (non-atomic window), unlike worker v4 where lock + chapter + closures commit in one transaction.',
   },
   {
     source: 'lib/runtime/generation-jobs.ts :: publishGenerationJobChapterV4',
@@ -74,34 +80,23 @@ export const ENDING_AUDIT_EVIDENCE: StructuredEvidence[] = [
 
 /**
  * Emit ending-lock findings over a sequence of fixture entries.
- * - ENDING_LOCK_NOT_DURABLE: chapter >= 45 with a resolved ending but no persisted
- *   lock (lockedEndingId null) — the lock is not durable across retries.
  * - ENDING_LOCK_RETRY_DIVERGENCE: the same chapter resolves to DIFFERENT ending
  *   ids across attempts (retry of chapter 45) while no lock was persisted.
  * - ENDING_LOCK_POST45_SWITCH: a chapter after 45 resolves an ending that differs
  *   from the locked one — the lock did not hold.
- * - ENDING_LOCK_WORKER_LEGACY_PARITY_RISK: a lock-chapter attempt ran through the
- *   legacy sync path (publishChapterV2), which cannot persist a lock.
+ * - ENDING_LOCK_LEGACY_NONATOMIC_PUBLISH: the legacy sync path persists the lock
+ *   (persistEndingLock -> persist_ending_lock_v1) BEFORE publish — the lock IS
+ *   durable on that path (ENDING_LOCK_NOT_DURABLE removed as a false claim) —
+ *   but lock->publish spans two transactions. The worker
+ *   v4 path commits lock + chapter + closures atomically. A crash between
+ *   persistEndingLock and publishChapterV2 leaves a persisted lock whose chapter
+ *   never published (recoverable: retry reuses reader.locked_ending_key — hence
+ *   MEDIUM, not a durability failure).
  */
 export function auditEndingLocks(
   entries: EndingFixtureEntry[],
 ): StoryBibleAuditFinding[] {
   const findings: StoryBibleAuditFinding[] = []
-
-  // --- Not durable ---
-  for (const entry of entries) {
-    if (entry.chapterNumber >= ENDING_LOCK_CHAPTER && entry.resolvedEndingId && !entry.lockedEndingId) {
-      findings.push(baseFinding('ENDING_LOCK_NOT_DURABLE', 'HIGH', {
-        detail: {
-          chapterNumber: entry.chapterNumber,
-          resolvedEndingId: entry.resolvedEndingId,
-          lockedEndingId: entry.lockedEndingId,
-        },
-        risk: `Chapter ${entry.chapterNumber} resolved ending "${entry.resolvedEndingId}" but no lock was persisted (lockedEndingId null). A retry re-resolves via routeState.endingBias ranking and can diverge; the lock only becomes durable when persist_ending_lock_v1 commits.`,
-        followUp: 'Confirm the chapter-45 lock write (persist_ending_lock_v1) is executed and committed before the chapter is published; on retry, lockedEndingKey must come from reader.locked_ending_key.',
-      }))
-    }
-  }
 
   // --- Retry divergence ---
   const byChapter = new Map<number, EndingFixtureEntry[]>()
@@ -147,19 +142,19 @@ export function auditEndingLocks(
     }
   }
 
-  // --- Worker/legacy parity risk ---
+  // --- Legacy sync path: lock is durable, but lock->publish is not atomic ---
   for (const entry of entries) {
     if (
       entry.chapterNumber === ENDING_LOCK_CHAPTER
       && entry.publishPath === 'v2'
     ) {
-      findings.push(baseFinding('ENDING_LOCK_WORKER_LEGACY_PARITY_RISK', 'MEDIUM', {
+      findings.push(baseFinding('ENDING_LOCK_LEGACY_NONATOMIC_PUBLISH', 'MEDIUM', {
         detail: {
           chapterNumber: entry.chapterNumber,
           publishPath: entry.publishPath,
         },
-        risk: `Lock-chapter ${entry.chapterNumber} ran through the legacy sync path (publishChapterV2), which cannot persist an ending lock. The v4 worker path is the only publication path that can atomically persist the lock with the chapter.`,
-        followUp: 'Route the lock chapter (45) through publishGenerationJobChapterV4; treat v2 publication of chapter 45 as a parity gap.',
+        risk: `Lock-chapter ${entry.chapterNumber} ran through the legacy sync path: persistEndingLock -> persist_ending_lock_v1 commits durably BEFORE publish, but the chapter publish is a SECOND transaction (publishChapterV2). The lock->publish window is non-atomic; a crash between them leaves a persisted lock with no published chapter (recoverable on retry via reader.locked_ending_key). The worker v4 path publishes lock + chapter + closures in ONE transaction.`,
+        followUp: 'Route the lock chapter (45) through publishGenerationJobChapterV4 for atomic lock+publish; keep the legacy path as fallback knowing lock->publish spans two transactions.',
       }))
     }
   }

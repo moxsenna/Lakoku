@@ -41,13 +41,22 @@ import {
   type ActRollupLifecycleSample,
 } from './act-rollup-audit'
 import {
+  auditLivingCanonWriteback,
+  type LivingCanonWritebackSample,
+} from './canon-writeback-audit'
+import {
   auditChapter50Finalization,
   type FinalizationSample,
 } from './chapter50-audit'
 import type { ContextPressureReportArtifact } from './story-bible-audit-contract'
 
 export interface StoryBibleAuditInputs {
-  choiceHistory?: { items: ChoiceHistoryItem[]; expectedLatestChapter?: number }
+  choiceHistory?: {
+    items: ChoiceHistoryItem[]
+    expectedLatestChapter?: number
+    targetChapter?: number
+    summaryAppendsPreviousChoice?: boolean
+  }
   contextSamples?: CanonContextSample[]
   blueprintVersions?: BlueprintVersionEntry[]
   threadSample?: ThreadAuditSample
@@ -56,6 +65,12 @@ export interface StoryBibleAuditInputs {
   propagation?: PropagationInput
   actRollupSample?: ActRollupLifecycleSample
   chapter50Sample?: FinalizationSample
+  /**
+   * Living Canon writeback flags. PRODUCTION DEFAULT (code-verified):
+   * neither publish path carries a canon delta and loadCanonSnapshot has no
+   * runtime writer -> LIVING_CANON_WRITEBACK_MISSING (BLOCKER).
+   */
+  canonWriteback?: LivingCanonWritebackSample
 }
 
 export interface StoryBibleAuditOptions {
@@ -89,7 +104,11 @@ export function runStoryBibleAudit(
   if (inputs.choiceHistory) {
     run('choice-history-audit', () => auditChoiceHistory(
       inputs.choiceHistory!.items,
-      { expectedLatestChapter: inputs.choiceHistory!.expectedLatestChapter },
+      {
+        expectedLatestChapter: inputs.choiceHistory!.expectedLatestChapter,
+        targetChapter: inputs.choiceHistory!.targetChapter,
+        summaryAppendsPreviousChoice: inputs.choiceHistory!.summaryAppendsPreviousChoice,
+      },
     ))
   }
   for (const sample of inputs.contextSamples ?? []) {
@@ -116,6 +135,13 @@ export function runStoryBibleAudit(
   if (inputs.chapter50Sample) {
     run('chapter50-audit', () => auditChapter50Finalization(inputs.chapter50Sample!))
   }
+  run('canon-writeback-audit', () => auditLivingCanonWriteback(
+    inputs.canonWriteback ?? {
+      v2CarriesCanonDelta: false,
+      v4CarriesCanonDelta: false,
+      canonRuntimeWriterExists: false,
+    },
+  ))
 
   const executionStatus: ExecutionStatus = errors.length > 0 ? 'ERROR' : 'SUCCESS'
   const summary = {
@@ -151,7 +177,10 @@ export function buildContextPressureReport(
 ): ContextPressureReportArtifact {
   const milestones = samples.map(buildContextPressureMilestone)
   const choiceHistoryPressure = choiceHistory.map(({ chapter, items }) => {
-    const findings = auditChoiceHistory(items, { expectedLatestChapter: chapter })
+    const findings = auditChoiceHistory(items, {
+      targetChapter: chapter,
+      summaryAppendsPreviousChoice: true,
+    })
     const totalChoices = items.length
     return {
       chapter,
@@ -323,13 +352,15 @@ const MATRIX_ROWS: Array<Omit<DomainSourceMatrixRow, 'evidence'> & { evidence: S
     validator: ['lib/ai-gateway/generate.ts :: runLayerA', 'lib/narrative/threads.ts :: validateThreadLifecycle'],
     updateTrigger: 'authoring replace (no runtime mutation found)',
     persistence: 'story_threads table',
-    workerPath: 'threadContext advancedThreadIds: [] / opensNewThread: false (hardcoded)',
-    legacySyncPath: 'same hardcoded empties (lib/runtime/story-generation.ts)',
+    workerPath: 'threadContext advancedThreadIds: [] / opensNewThread: false (hardcoded); no story_threads runtime writeback',
+    legacySyncPath: 'same hardcoded empties (lib/runtime/story-generation.ts); no story_threads runtime writeback',
     status: 'PARITY_RISK',
     evidence: [
       src('lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter', 'threadContext = { threads, advancedThreadIds: [], opensNewThread: false }'),
       src('lib/ai-gateway/generate.ts :: runLayerA', 'validateThreadLifecycle consumes threadCtx verbatim'),
+      src('lib/ai-gateway/schemas.ts :: ChapterDraftSchema', 'no advancedThreadIds slot'),
       src('lib/narrative/threads.ts :: validateThreadLifecycle', 'THREAD_STALE_UNADDRESSED / THREAD_PAYOFF_NOT_ADVANCED against empty advanced set'),
+      src('lib/narrative-qa/canon-writeback-audit.ts :: LIVING_CANON_WRITEBACK_MISSING', 'thread transitions are not persisted to story_threads at chapter publish (umbrella BLOCKER)'),
     ],
   },
   {
@@ -443,12 +474,12 @@ const MATRIX_ROWS: Array<Omit<DomainSourceMatrixRow, 'evidence'> & { evidence: S
     updateTrigger: 'chapter 45 personalized publish (v4)',
     persistence: 'reader_states.locked_ending_key + ending_name',
     workerPath: 'v4 RPC persists lock atomically at ch45',
-    legacySyncPath: 'publishChapterV2 has no ending lock (PARITY_RISK)',
+    legacySyncPath: 'sync path persists lock via persistEndingLock (persist_ending_lock_v1) BEFORE publish — DURABLE, but lock->publish spans two transactions (non-atomic window); v4 worker path persists lock+chapter+closures atomically (ENDING_LOCK_LEGACY_NONATOMIC_PUBLISH)',
     status: 'PARITY_RISK',
     evidence: [
       src('lib/story-engine/ending-resolver.ts :: resolveEnding', 'lockedEndingKey early-returns candidate'),
-      src('lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter', 'ENDING_LOCK_CHAPTER = 45; lock written once'),
-      src('lib/runtime/lifecycle.ts :: publishChapterV2', 'no ending lock parameter'),
+      src('lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter', 'ENDING_LOCK_CHAPTER = 45; sync path awaits persistEndingLock BEFORE publishChapterV2 (durable, two transactions, non-atomic window)'),
+      src('lib/runtime/lifecycle.ts :: publishChapterV2', 'no ending lock parameter; legacy lock carried by the preceding persist_ending_lock_v1 call'),
     ],
   },
   {
@@ -462,12 +493,13 @@ const MATRIX_ROWS: Array<Omit<DomainSourceMatrixRow, 'evidence'> & { evidence: S
     validator: ['supabase v4 RPC closure validation (DEBT_CLOSURE_DEADLINE_VIOLATION, MAIN_MYSTERY_UNRESOLVED, OPEN_DEBT_AT_END)'],
     updateTrigger: 'chapter publish with closures (v4)',
     persistence: 'reader_plot_debt_closures (ledger); contract status never mutated',
-    workerPath: 'auditSignals.closesPlotDebts -> v4 p_closures -> ledger',
+    workerPath: 'auditSignals.closesPlotDebts -> v4 p_closures -> ledger; ledger NEVER consulted by buildChapterBrief',
     legacySyncPath: 'v2 sync publish has no closure ledger',
     status: 'BOUNDED_LOSS_RISK',
     evidence: [
       src('lib/story-engine/plot-debt-closure.ts :: resolveDebtClosures', 'pure projection; contract never mutated'),
-      src('lib/story-engine/chapter-brief.ts :: buildChapterBrief', 'debt lists from contract status only'),
+      src('lib/story-engine/chapter-brief.ts :: buildChapterBrief', 'debt lists from CONTRACT status only — reader_plot_debt_closures not consulted (PLOT_DEBT_EFFECTIVE_STATE_NOT_PROJECTED)'),
+      src('lib/runtime/continuation-context.server.ts :: loadChapter', 'loadChapter -> buildChapterBrief uses storyContract.plotDebts with no ledger overlay'),
       src('supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql', 'atomic ledger insert + checkpoint closure binding'),
     ],
   },

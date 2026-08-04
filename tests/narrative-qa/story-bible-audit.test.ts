@@ -96,6 +96,14 @@ function cleanInputs(): StoryBibleAuditInputs {
       attempts: [attempt(1, true)],
       readerStateMarkedSelesai: true,
     }),
+    // Living Canon write-back proven (kalau tidak, default produksi me-emit
+    // LIVING_CANON_WRITEBACK_MISSING BLOCKER — benar untuk baseline, tapi input
+    // bersih ini harus benar-benar nol findings).
+    canonWriteback: {
+      v2CarriesCanonDelta: true,
+      v4CarriesCanonDelta: true,
+      canonRuntimeWriterExists: true,
+    },
   }
 }
 
@@ -174,6 +182,11 @@ describe('runStoryBibleAudit', () => {
         retrievalLogInvoked: false,
         contextPacketConsumerProven: true,
       },
+      canonWriteback: {
+        v2CarriesCanonDelta: true,
+        v4CarriesCanonDelta: true,
+        canonRuntimeWriterExists: true,
+      },
     })
 
     expect(report.executionStatus).toBe('ERROR')
@@ -182,11 +195,33 @@ describe('runStoryBibleAudit', () => {
     expect(report.auditVerdict).toBe('PASS')
   })
 
-  it('executionStatus SUCCESS tanpa input apa pun (semua grup opsional)', () => {
+  it('executionStatus ERROR + default canon writeback (produksi) -> LIVING_CANON_WRITEBACK_MISSING BLOCKER tetap muncul', () => {
+    const report = runStoryBibleAudit({
+      contextSamples: [
+        {
+          chapter: 10,
+          declaredBudget: 4000,
+          facts: [],
+          threads: [],
+          timeline: [],
+          actRollups: [],
+          choiceHistory: [],
+        },
+      ],
+    })
+    const blocker = report.findings.find((f) => f.code === 'LIVING_CANON_WRITEBACK_MISSING')
+    expect(blocker).toBeDefined()
+    expect(blocker?.severity).toBe('BLOCKER')
+    expect(report.auditVerdict).toBe('HOLD')
+  })
+
+  it('executionStatus SUCCESS tanpa input apa pun (semua grup opsional) — default produksi me-emit writeback BLOCKER', () => {
     const report = runStoryBibleAudit({})
     expect(report.executionStatus).toBe('SUCCESS')
-    expect(report.auditVerdict).toBe('PASS')
-    expect(report.findings).toEqual([])
+    // Koreksi M10-A/R1: tanpa input, detector canon writeback memakai default
+    // produksi (tanpa canon delta di kedua jalur publish) -> BLOCKER + HOLD.
+    expect(report.findings.some((f) => f.code === 'LIVING_CANON_WRITEBACK_MISSING')).toBe(true)
+    expect(report.auditVerdict).toBe('HOLD')
   })
 
   it('deterministik: dua eksekusi input sama menghasilkan findings identik', () => {

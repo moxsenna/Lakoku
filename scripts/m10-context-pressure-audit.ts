@@ -118,6 +118,16 @@ function stressContextSample(loadBearingCost: number, chapter = 50): CanonContex
     timeline,
     actRollups,
     choiceHistory: [],
+    // Correction (M10-A/R1): writer layer-3 block for the same sample.
+    // 400-char facts x (31..71) + 40-char threads x5 + 40-char timeline x8:
+    // total layer-3 chars far exceed the fixed 4800-char trim -> whole-section
+    // eviction (timeline -> facts) fires in the writer prompt assembly.
+    writerLayer3: {
+      timelineChars: 8 * 40,
+      factsChars: [...loadBearingFacts, ...regularFacts].length * 400,
+      threadsChars: 5 * 40,
+      charLimit: 4800,
+    },
   }
 }
 

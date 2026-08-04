@@ -62,6 +62,18 @@ export interface CanonContextSample {
   timeline: ContextTimelineSample[]
   actRollups: ContextActRollupSample[]
   choiceHistory: { chapterNumber: number; label: string }[]
+  /**
+   * Writer layer-3 block sizes (chars) as passed to buildWriterPrompt
+   * (lib/prose/prompt-engine/build-writer-prompt.ts: fixed 4800-char trim,
+   * whole sections evicted in order timeline -> facts -> threads).
+   */
+  writerLayer3?: {
+    timelineChars: number
+    factsChars: number
+    threadsChars: number
+    /** Fixed trim limit (4800 chars in buildWriterPrompt). */
+    charLimit: number
+  }
 }
 
 export const CONTEXT_PRESSURE_AUDIT_EVIDENCE: StructuredEvidence[] = [
@@ -82,6 +94,12 @@ export const CONTEXT_PRESSURE_AUDIT_EVIDENCE: StructuredEvidence[] = [
     evidenceClass: 'SOURCE_TRACE',
     observation:
       'includedIds/excludedIds/budgetReport from the compiled packet are designed to be persisted to retrieval_logs; the write is append-only best-effort (failures ignored).',
+  },
+  {
+    source: 'lib/prose/prompt-engine/build-writer-prompt.ts :: buildWriterPrompt (layer 3)',
+    evidenceClass: 'SOURCE_TRACE',
+    observation:
+      'Fixed ~4800-char limit. Trim order on overflow: timeline section dropped first (whole section set to \'\'), then facts section, then threads section. Excerpt/choice sections are untouched. Eviction is whole-section (all-or-nothing), not granular per entry, and is not recorded in excludedIds or retrieval logs.',
   },
 ]
 
@@ -127,19 +145,29 @@ export function buildContextPressureMilestone(
     rollupsExcluded: excludedRollups.length,
     threadsRetained: sample.threads.length,
     timelineRetained: sample.timeline.length,
-    writerLayer3CharLength: 0,
+    writerLayer3CharLength: sample.writerLayer3
+      ? sample.writerLayer3.timelineChars + sample.writerLayer3.factsChars + sample.writerLayer3.threadsChars
+      : 0,
     detectorsTriggered: analyzeContextSample(sample).map((f) => f.code),
   }
 }
 
 /**
  * Emit context-pressure findings for one chapter sample.
- * - CONTEXT_DECLARED_BUDGET_OVERSHOOT: estimated used > declared budget.
+ * - CONTEXT_DECLARED_BUDGET_OVERSHOOT: estimated used > declared budget
+ *   (compiler budget pressure).
  * - LOAD_BEARING_PRESSURE: load-bearing facts alone consume a dominant share of
  *   the budget (>= 25% = the facts section cap), squeezing trimmable content.
  * - RELEVANT_FACT_EVICTION: facts are marked excluded while budget is tight
  *   (>= 90% of declared budget used) — relevant facts drop out of the packet.
  * - ROLLUP_EVICTION_PRESSURE: act rollups are excluded while budget is tight.
+ * - WRITER_CONTEXT_WHOLE_SECTION_EVICTION: the writer layer-3 block
+ *   (timeline + facts + threads) exceeds the fixed 4800-char trim limit, so
+ *   buildWriterPrompt drops whole sections in order timeline -> facts ->
+ *   threads (never granular entries; excerpt/choice sections are untouched).
+ *   Distinct from COMPILER_BUDGET_PRESSURE: the compiler trims granular entries
+ *   into excludedIds under its own budget, while the writer prompt drops ENTIRE
+ *   sections when the joined layer-3 block crosses 4800 chars.
  */
 export function analyzeContextSample(
   sample: CanonContextSample,
@@ -202,6 +230,38 @@ export function analyzeContextSample(
       risk: `${excludedRollups.length} act rollup summaries are excluded while budget is ${Math.round(budgetRatio * 100)}% used; compileContext keeps newest-first and drops oldest.`,
       followUp: 'Confirm rollup summaries are compressed (not dropped) when over cap, and that excluded rollups are logged.',
     }))
+  }
+
+  // --- Writer layer-3 whole-section eviction (separate from compiler budget) ---
+  const w = sample.writerLayer3
+  if (w) {
+    const total = w.timelineChars + w.factsChars + w.threadsChars
+    if (total > w.charLimit) {
+      const remainingAfterTimeline = w.factsChars + w.threadsChars
+      const remainingAfterFacts = w.threadsChars
+      const evictedSections: string[] = ['timeline']
+      if (remainingAfterTimeline > w.charLimit) {
+        evictedSections.push('facts')
+        if (remainingAfterFacts > w.charLimit) {
+          evictedSections.push('threads')
+        }
+      }
+      findings.push(baseFinding('WRITER_CONTEXT_WHOLE_SECTION_EVICTION', 'HIGH', {
+        detail: {
+          chapter: sample.chapter,
+          layer3TotalChars: total,
+          charLimit: w.charLimit,
+          sectionChars: {
+            timeline: w.timelineChars,
+            facts: w.factsChars,
+            threads: w.threadsChars,
+          },
+          evictedSections,
+        },
+        risk: `Writer layer-3 block is ${total} chars > ${w.charLimit}-char limit at chapter ${sample.chapter}. buildWriterPrompt evicts WHOLE sections in fixed order (${evictedSections.join(' -> ')}), not granular entries: the prompt loses ${evictedSections.includes('threads') ? 'timeline + facts + threads' : evictedSections.join(' + ')} entirely. Distinct from compiler budget trimming — the writer eviction is all-or-nothing per section and is not recorded in any excludedIds/retrieval log.`,
+        followUp: 'Record which sections were dropped per chapter (e.g. retrieval log or budget report at the writer layer) and consider granular trimming (drop oldest timeline events first) instead of whole-section eviction.',
+      }))
+    }
   }
 
   return findings

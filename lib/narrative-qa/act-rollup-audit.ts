@@ -99,11 +99,12 @@ export const ACT_ROLLUP_AUDIT_EVIDENCE: StructuredEvidence[] = [
 
 /**
  * Emit act-rollup lifecycle findings.
- * - DEAD_PATH_CANDIDATE: rollups exist (seeded at authoring), are never updated,
- *   and never reach the writer prompt — the whole chain is write-once, read-almost,
- *   consumed-never.
- * - CONSUMER_UNPROVEN: rollups reach the compiled packet but the writer prompt has
- *   no rollup section, so the compiled summaries have no proven consumer.
+ * - DEAD_PATH_CANDIDATE (HIGH): rollups exist (seeded at authoring), are never
+ *   updated, and never reach the writer prompt. HIGH because
+ *   buildWriterPrompt has no rollup section while compileContext allocates 25%
+ *   of the packet budget to rollup summaries (rollupsSummaries 0.25) — the
+ *   compiler spends budget on data the writer never sees (writer prompt
+ *   excludes rollups, so that 25% compiler allocation is wasted).
  */
 export function auditActRollupLifecycle(
   sample: ActRollupLifecycleSample,
@@ -113,14 +114,14 @@ export function auditActRollupLifecycle(
   const neverUpdated = sample.rollups.every((r) => r.updatedAtChapter == null)
 
   if (sample.rollups.length > 0 && sample.seededAtAuthoring && neverUpdated && !sample.writerPromptIncludesRollups) {
-    findings.push(baseFinding('DEAD_PATH_CANDIDATE', 'MEDIUM', {
+    findings.push(baseFinding('DEAD_PATH_CANDIDATE', 'HIGH', {
       detail: {
         rollupCount: sample.rollups.length,
         actNumbers: sample.rollups.map((r) => r.actNumber),
         neverUpdated: true,
       },
-      risk: `${sample.rollups.length} act rollup(s) (acts ${sample.rollups.map((r) => r.actNumber).join(', ')}) were seeded at authoring, never updated (no updated_at column, no update migration found), and never reach the writer prompt. The rollup chain has no proven living path.`,
-      followUp: 'Confirm whether act rollups are meant to be maintained during generation; if yes, add an update trigger (e.g. at act boundaries) and a prompt consumer; if no, mark the domain as write-once seed data.',
+      risk: `${sample.rollups.length} act rollup(s) (acts ${sample.rollups.map((r) => r.actNumber).join(', ')}) were seeded at authoring, never updated (no updated_at column, no update migration found), and never reach the writer prompt. HIGH because the dead path has a real budget cost: compileContext allocates 25% of the context packet to rollup summaries (BUDGET_ALLOCATION.rollupsSummaries 0.25) while buildWriterPrompt excludes rollups entirely — the writer never sees a rollup AND 25% of the compiler budget is spent on sections the prompt drops. The rollup chain has no proven living path.`,
+      followUp: 'Confirm whether act rollups are meant to be maintained during generation; if yes, add an update trigger (e.g. at act boundaries) and a prompt consumer; if no, mark the domain as write-once seed data and reallocate the 0.25 rollupsSummaries budget.',
     }))
   }
 

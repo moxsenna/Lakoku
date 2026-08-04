@@ -11,7 +11,7 @@ import {
   buildContextPressureMilestone,
 } from '../../lib/narrative-qa/context-pressure-audit'
 import { runStoryBibleAudit } from '../../lib/narrative-qa/story-bible-audit'
-import { growingContextSample, stressContextSample } from './sample-builder'
+import { growingContextSample, stressContextSample, contextSample } from './sample-builder'
 import { detailOf } from './sample-builder'
 
 describe('context-pressure-audit — pertumbuhan canon lintas milestone', () => {
@@ -94,10 +94,82 @@ describe('context-pressure-audit — stress budget totalBudget=4000', () => {
   it('overshoot tidak auto-fail: executionStatus tetap SUCCESS (karakterisasi, bukan error)', () => {
     const report = runStoryBibleAudit({
       contextSamples: [stressContextSample(4500)],
+      canonWriteback: {
+        v2CarriesCanonDelta: true,
+        v4CarriesCanonDelta: true,
+        canonRuntimeWriterExists: true,
+      },
     })
     expect(report.executionStatus).toBe('SUCCESS')
     expect(report.findings.some((f) => f.code === 'CONTEXT_DECLARED_BUDGET_OVERSHOOT')).toBe(true)
     // Overshoot HIGH -> verdict HOLD adalah hasil audit, bukan kegagalan detector.
     expect(report.auditVerdict).toBe('HOLD')
+  })
+})
+
+describe('context-pressure-audit — WRITER_CONTEXT_WHOLE_SECTION_EVICTION (M10-A/R1)', () => {
+  it('layer-3 > 4800 char -> HIGH; timeline evict lebih dulu (whole section)', () => {
+    const finding = analyzeContextSample(contextSample({
+      chapter: 50,
+      writerLayer3: {
+        timelineChars: 3000,
+        factsChars: 1500,
+        threadsChars: 800,
+        charLimit: 4800,
+      },
+    })).find((f) => f.code === 'WRITER_CONTEXT_WHOLE_SECTION_EVICTION')
+
+    expect(finding).toBeDefined()
+    expect(finding?.severity).toBe('HIGH')
+    expect(detailOf(finding as NonNullable<typeof finding>).layer3TotalChars).toBe(5300)
+    expect(detailOf(finding as NonNullable<typeof finding>).evictedSections).toEqual(['timeline'])
+  })
+
+  it('facts+threads masih > limit setelah timeline evict -> facts ikut evict', () => {
+    const finding = analyzeContextSample(contextSample({
+      chapter: 50,
+      writerLayer3: {
+        timelineChars: 600,
+        factsChars: 4200,
+        threadsChars: 900,
+        charLimit: 4800,
+      },
+    })).find((f) => f.code === 'WRITER_CONTEXT_WHOLE_SECTION_EVICTION')
+
+    expect(finding).toBeDefined()
+    expect(detailOf(finding as NonNullable<typeof finding>).evictedSections).toEqual(['timeline', 'facts'])
+  })
+
+  it('threads masih > limit setelah timeline+facts evict -> threads ikut evict', () => {
+    const finding = analyzeContextSample(contextSample({
+      chapter: 50,
+      writerLayer3: {
+        timelineChars: 300,
+        factsChars: 400,
+        threadsChars: 5000,
+        charLimit: 4800,
+      },
+    })).find((f) => f.code === 'WRITER_CONTEXT_WHOLE_SECTION_EVICTION')
+
+    expect(finding).toBeDefined()
+    expect(detailOf(finding as NonNullable<typeof finding>).evictedSections).toEqual(['timeline', 'facts', 'threads'])
+  })
+
+  it('layer-3 <= 4800 char -> tidak ada eviction writer (dibedakan dari compiler budget pressure)', () => {
+    const findings = analyzeContextSample(contextSample({
+      chapter: 50,
+      writerLayer3: {
+        timelineChars: 1000,
+        factsChars: 2000,
+        threadsChars: 800,
+        charLimit: 4800,
+      },
+    }))
+    expect(findings.some((f) => f.code === 'WRITER_CONTEXT_WHOLE_SECTION_EVICTION')).toBe(false)
+  })
+
+  it('tanpa writerLayer3 input -> tidak ada finding writer eviction', () => {
+    const findings = analyzeContextSample(contextSample({ chapter: 50 }))
+    expect(findings.some((f) => f.code === 'WRITER_CONTEXT_WHOLE_SECTION_EVICTION')).toBe(false)
   })
 })

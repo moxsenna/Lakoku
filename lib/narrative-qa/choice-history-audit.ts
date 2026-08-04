@@ -39,10 +39,26 @@ export interface ChoiceHistoryAuditOptions {
   /** Declared per-chapter budget for the choice summary (token estimate). */
   declaredBudget?: number
   /**
-   * Latest chapter that SHOULD have a visible history entry. When supplied and
-   * the newest entry is older, CHOICE_HISTORY_RECENT_LOSS fires.
+   * Target chapter being generated. The latest expected visible choice is
+   * chapter (targetChapter - 1) — for Bab 50 the newest entry must be 49.
+   * Takes precedence over expectedLatestChapter.
+   */
+  targetChapter?: number
+  /**
+   * Latest chapter that SHOULD have a visible history entry.
+   * Convention: for target chapter N, the latest choice comes from chapter N-1.
+   * When supplied and the newest entry is older, CHOICE_HISTORY_RECENT_LOSS fires.
    */
   expectedLatestChapter?: number
+  /**
+   * Production behavior (lib/story-engine/chapter-brief.ts :: summarizeChoiceHistory):
+   * the brief appends previousChoice to the history array unconditionally
+   * (`[...history, previousChoice]`) while choiceNarrativeContextFromReader had
+   * already returned the latest entry inside choiceHistory — the newest choice
+   * appears TWICE at the tail of the summary. When true, a non-empty history
+   * triggers CHOICE_HISTORY_DUPLICATE_PREVIOUS (structural duplicate).
+   */
+  summaryAppendsPreviousChoice?: boolean
 }
 
 export const CHOICE_HISTORY_AUDIT_EVIDENCE: StructuredEvidence[] = [
@@ -95,13 +111,33 @@ export function auditChoiceHistory(
 
   const sorted = [...items].sort((a, b) => a.chapterNumber - b.chapterNumber)
 
+  // --- Duplicate previous (choiceNarrativeContextFromReader + summarizeChoiceHistory) ---
+  // Production: choiceNarrativeContextFromReader returns previousChoice = last history
+  // entry (or triggerChoiceId match). summarizeChoiceHistory then appends previousChoice
+  // unconditionally: `[...history, previousChoice]` — duplicating the latest entry.
+  // Emitted when the caller asserts the production append behavior is in effect.
+  if (options.summaryAppendsPreviousChoice === true && sorted.length > 0) {
+    findings.push(baseFinding('CHOICE_HISTORY_DUPLICATE_PREVIOUS', 'MEDIUM', {
+      risk: 'The latest choice history entry is duplicated in the writer prompt: choiceNarrativeContextFromReader returns previousChoice = last entry, and summarizeChoiceHistory appends previousChoice to the history array (`[...history, previousChoice]`). The writer sees the same branch twice at the tail of the summary.',
+      detail: {
+        latestChapter: sorted[sorted.length - 1].chapterNumber,
+        label: sorted[sorted.length - 1].label,
+        entryCount: sorted.length,
+      },
+      followUp: 'De-duplicate in summarizeChoiceHistory (drop the appended previousChoice when it is already the last history entry) or change choiceNarrativeContextFromReader to return previousChoice only when it differs from the last entry.',
+    }))
+  }
+
   // --- Recent loss ---
   if (sorted.length > 0) {
     const latestVisible = sorted[sorted.length - 1].chapterNumber
-    const expected = options.expectedLatestChapter ?? latestVisible
+    const expected =
+      options.targetChapter != null
+        ? options.targetChapter - 1
+        : (options.expectedLatestChapter ?? latestVisible)
     if (latestVisible < expected) {
       findings.push(baseFinding('CHOICE_HISTORY_RECENT_LOSS', 'HIGH', {
-        risk: `Latest visible choice history entry is chapter ${latestVisible}, but chapter ${expected} is expected. The most recent reader choice cannot reach the next chapter brief (summarizeChoiceHistory only sees recorded entries).`,
+        risk: `Latest visible choice history entry is chapter ${latestVisible}, but chapter ${expected} is expected (target chapter = expected + 1). The most recent reader choice cannot reach the next chapter brief (summarizeChoiceHistory only sees recorded entries).`,
         detail: { latestVisibleChapter: latestVisible, expectedLatestChapter: expected },
         followUp: 'Verify the choice branch for chapter N-1 is appended to reader_states.choice_history before chapter N is generated (publish path).',
       }))
@@ -119,15 +155,20 @@ export function auditChoiceHistory(
         }))
       }
     }
-  } else if (options.expectedLatestChapter != null && options.expectedLatestChapter > 1) {
-    findings.push(baseFinding('CHOICE_HISTORY_RECENT_LOSS', 'MEDIUM', {
-      risk: `Choice history is empty while chapter ${options.expectedLatestChapter} is expected to carry a visible entry.`,
-      detail: { expectedLatestChapter: options.expectedLatestChapter },
-      followUp: 'Confirm the first reader choice is recorded at the end of chapter 1.',
-    }))
+  } else {
+    const expected =
+      options.targetChapter != null ? options.targetChapter - 1 : options.expectedLatestChapter
+    if (expected != null && expected > 1) {
+      findings.push(baseFinding('CHOICE_HISTORY_RECENT_LOSS', 'MEDIUM', {
+        risk: `Choice history is empty while chapter ${expected} is expected to carry a visible entry.`,
+        detail: { expectedLatestChapter: expected },
+        followUp: 'Confirm the first reader choice is recorded at the end of chapter 1.',
+      }))
+    }
   }
 
-  // --- Duplicate previous ---
+  // --- Duplicate consecutive entries (data-level; distinct from the structural
+  // previousChoice duplication above) ---
   for (let i = 1; i < sorted.length; i++) {
     const prev = sorted[i - 1]
     const current = sorted[i]
@@ -135,7 +176,7 @@ export function auditChoiceHistory(
       prev.label === current.label
       && JSON.stringify(prev.consequence) === JSON.stringify(current.consequence)
     ) {
-      findings.push(baseFinding('CHOICE_HISTORY_DUPLICATE_PREVIOUS', 'MEDIUM', {
+      findings.push(baseFinding('CHOICE_HISTORY_DUPLICATE_CONSECUTIVE', 'MEDIUM', {
         risk: `Consecutive chapters ${prev.chapterNumber} and ${current.chapterNumber} record the same choice label and consequence; the same branch appears twice in the history the writer prompt summarizes.`,
         detail: {
           chapterA: prev.chapterNumber,

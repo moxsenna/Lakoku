@@ -29,10 +29,20 @@
  *    proyeksi chapter mismatch → STORY_SCOPE_MISMATCH.
  *  - Provenance: storyContract.storyId mismatch → STORY_SCOPE_MISMATCH;
  *    policyOverride salah storyId / malformed → POLICY_OVERRIDE_INVALID.
+ *
+ * Regression R3:
+ *  - BLOCKER: milestone bab ini ikut proyeksi "all milestones done" —
+ *    final progress (Bab 45, prior [12,32]) wajib DEVELOPING → PAYOFF_DUE.
+ *  - BLOCKER: debt op tanpa canonical thread debt-backed di snapshot →
+ *    STATE_THREAD_CONFLICT (fail-closed, tidak auto-create).
+ *  - HIGH: debt op wajib menyentuh thread debt-backed (threads.touches);
+ *    state hasil apply: lastTouchedChapter = bab op, stale=false,
+ *    staleSinceChapter=null; closure → lastTouchedChapter bab closure.
  */
 
 import { describe, expect, it } from 'vitest'
 import {
+  applyChapterStateDeltaToSnapshot,
   buildBaselinePolicyForChapter,
   buildValidatedChapterStateDelta,
   ChapterStateResolverError,
@@ -219,7 +229,7 @@ describe('buildValidatedChapterStateDelta — Point 2 R1 progress milestone chec
         closures: [],
       },
       threads: {
-        touches: [],
+        touches: [debtBackedThreadId('main_mystery')],
         transitions: [{ threadId: debtBackedThreadId('main_mystery'), from: 'OPEN', to: 'DEVELOPING' }],
       },
       actRollup: actRollup(2, 6, 12),
@@ -242,7 +252,7 @@ describe('buildValidatedChapterStateDelta — Point 3 R1 thread transitions & ma
         closures: [{ debtId: 'main_mystery', closureForm: 'ABANDONED' }],
       },
       threads: {
-        touches: [],
+        touches: [debtBackedThreadId('main_mystery')],
         transitions: [{ threadId: debtBackedThreadId('main_mystery'), from: 'OPEN', to: 'DEVELOPING' }],
       },
       actRollup: actRollup(2, 6, 12),
@@ -364,7 +374,7 @@ describe('buildValidatedChapterStateDelta — R2 BLOCKER 1 mandatory obligations
         closures: [{ debtId: 'main_mystery', closureForm: 'RESOLVED' }],
       },
       threads: {
-        touches: [],
+        touches: [debtBackedThreadId('main_mystery')],
         transitions: [{ threadId: debtBackedThreadId('main_mystery'), from: 'PAYOFF_DUE', to: 'RESOLVED' }],
       },
       actRollup: actRollup(7, 46, 48),
@@ -417,7 +427,7 @@ describe('buildValidatedChapterStateDelta — R2 BLOCKER 2 debt-thread coupling'
         closures: [],
       },
       threads: {
-        touches: [],
+        touches: [debtBackedThreadId('main_mystery')],
         transitions: [{ threadId: debtBackedThreadId('main_mystery'), from: 'OPEN', to: 'DEVELOPING' }],
       },
       actRollup: actRollup(2, 6, 12),
@@ -434,6 +444,10 @@ describe('buildValidatedChapterStateDelta — R2 BLOCKER 2 debt-thread coupling'
         progress: [{ debtId: 'main_mystery', milestoneChapter: 12 }],
         closures: [],
       },
+      threads: {
+        touches: [debtBackedThreadId('main_mystery')],
+        transitions: [],
+      },
       actRollup: actRollup(2, 6, 12),
     })
     const error = expectResolverError(12, proposed, 'STATE_DELTA_POLICY_VIOLATION')
@@ -447,7 +461,7 @@ describe('buildValidatedChapterStateDelta — R2 BLOCKER 2 debt-thread coupling'
         closures: DEBT_IDS.map((debtId) => ({ debtId, closureForm: 'RESOLVED' })),
       },
       threads: {
-        touches: [],
+        touches: DEBT_IDS.map(debtBackedThreadId),
         transitions: DEBT_IDS.map((debtId) => ({
           threadId: debtBackedThreadId(debtId),
           from: 'PAYOFF_DUE',
@@ -474,6 +488,10 @@ describe('buildValidatedChapterStateDelta — R2 BLOCKER 2 debt-thread coupling'
         progress: [],
         closures: DEBT_IDS.map((debtId) => ({ debtId, closureForm: 'RESOLVED' })),
       },
+      threads: {
+        touches: DEBT_IDS.map(debtBackedThreadId),
+        transitions: [],
+      },
       actRollup: actRollup(7, 46, 48),
     })
     const error = expectResolverError(48, proposed, 'STATE_DELTA_POLICY_VIOLATION', {
@@ -494,7 +512,7 @@ describe('buildValidatedChapterStateDelta — R2 BLOCKER 2 debt-thread coupling'
         closures: [{ debtId: 'debt:last-phone-call', closureForm: 'ABANDONED' }],
       },
       threads: {
-        touches: [],
+        touches: [debtBackedThreadId('main_mystery'), debtBackedThreadId('debt:last-phone-call')],
         transitions: [{ threadId: debtBackedThreadId('main_mystery'), from: 'OPEN', to: 'DEVELOPING' }],
       },
       actRollup: actRollup(2, 6, 12),
@@ -510,7 +528,7 @@ describe('buildValidatedChapterStateDelta — R2 BLOCKER 2 debt-thread coupling'
         closures: [],
       },
       threads: {
-        touches: [],
+        touches: [debtBackedThreadId('main_mystery')],
         transitions: [
           { threadId: debtBackedThreadId('main_mystery'), from: 'OPEN', to: 'DEVELOPING' },
           { threadId: debtBackedThreadId('debt:last-phone-call'), from: 'OPEN', to: 'DEVELOPING' },
@@ -646,7 +664,7 @@ describe('buildValidatedChapterStateDelta — R2 no-op protections', () => {
         closures: [],
       },
       threads: {
-        touches: [],
+        touches: [debtBackedThreadId('main_mystery')],
         transitions: [{ threadId: debtBackedThreadId('main_mystery'), from: 'OPEN', to: 'DEVELOPING' }],
       },
       secrets: { revealIds: [`${STORY_ID}:secret:ledger-copy`] },
@@ -723,5 +741,211 @@ describe('buildValidatedChapterStateDelta — R2 future ledger & scope binding',
         actRollup: 'bukan-descriptor',
       } as unknown as AllowedChapterStatePolicyV1,
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// R3 — BLOCKER: final milestone → PAYOFF_DUE (projection ledger + delta)
+// ---------------------------------------------------------------------------
+
+describe('buildValidatedChapterStateDelta — R3 final milestone projects PAYOFF_DUE', () => {
+  // main_mystery: mustProgressBy [12, 32, 45]. Ledger sebelum Bab 45 = [12,32];
+  // progress 45 di bab ini melunasi semua mustProgressBy → PAYOFF_DUE.
+  it('menerima transisi DEVELOPING → PAYOFF_DUE pada final progress Bab 45', () => {
+    const proposed = makeProposed(45, {
+      plotDebts: {
+        progress: [
+          { debtId: 'main_mystery', milestoneChapter: 45 },
+          { debtId: 'debt-floodgate-key', milestoneChapter: 45 },
+        ],
+        closures: [],
+      },
+      threads: {
+        touches: [debtBackedThreadId('main_mystery'), debtBackedThreadId('debt-floodgate-key')],
+        transitions: [
+          { threadId: debtBackedThreadId('main_mystery'), from: 'DEVELOPING', to: 'PAYOFF_DUE' },
+          { threadId: debtBackedThreadId('debt-floodgate-key'), from: 'OPEN', to: 'DEVELOPING' },
+        ],
+      },
+      actRollup: actRollup(6, 41, 45),
+    })
+    const validated = resolve(45, proposed, {
+      snapshot: snapshotWithThreadStatuses({ main_mystery: 'DEVELOPING' }),
+      effectivePlotDebtState: buildEffective(45, { main_mystery: [12, 32] }),
+    })
+    expect(validated.threads.transitions).toHaveLength(2)
+    expect(validated.threads.transitions).toContainEqual(
+      { threadId: debtBackedThreadId('main_mystery'), from: 'DEVELOPING', to: 'PAYOFF_DUE' },
+    )
+    expect(validated.threads.transitions).toContainEqual(
+      { threadId: debtBackedThreadId('debt-floodgate-key'), from: 'OPEN', to: 'DEVELOPING' },
+    )
+  })
+
+  it('menolak final progress tanpa transisi PAYOFF_DUE (ledger lama [12,32] tidak cukup)', () => {
+    const proposed = makeProposed(45, {
+      plotDebts: {
+        progress: [
+          { debtId: 'main_mystery', milestoneChapter: 45 },
+          { debtId: 'debt-floodgate-key', milestoneChapter: 45 },
+        ],
+        closures: [],
+      },
+      threads: {
+        touches: [debtBackedThreadId('main_mystery'), debtBackedThreadId('debt-floodgate-key')],
+        transitions: [
+          { threadId: debtBackedThreadId('debt-floodgate-key'), from: 'OPEN', to: 'DEVELOPING' },
+        ],
+      },
+      actRollup: actRollup(6, 41, 45),
+    })
+    const error = expectResolverError(45, proposed, 'STATE_DELTA_POLICY_VIOLATION', {
+      snapshot: snapshotWithThreadStatuses({ main_mystery: 'DEVELOPING' }),
+      effectivePlotDebtState: buildEffective(45, { main_mystery: [12, 32] }),
+    })
+    const details = error.details.join('\n')
+    expect(details).toContain('main_mystery')
+    expect(details).toContain('PAYOFF_DUE')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// R3 — BLOCKER: debt op tanpa canonical thread debt-backed = fail-closed
+// ---------------------------------------------------------------------------
+
+describe('buildValidatedChapterStateDelta — R3 missing debt-backed thread fails closed', () => {
+  function snapshotWithoutMainMysteryThread(
+    statuses: Partial<Record<string, ThreadStatus>> = {},
+  ): CanonSnapshot {
+    return baseSnapshot({
+      threads: ['debt:last-phone-call', 'debt-floodgate-key'].map((debtId) => ({
+        id: debtBackedThreadId(debtId),
+        title: `Thread ${debtId}`,
+        status: statuses[debtId] ?? 'OPEN',
+        openedChapter: 1,
+        lastTouchedChapter: 1,
+        payoffWindow: 48,
+        isMainMystery: false,
+      })),
+    })
+  }
+
+  it('menolak progress debt tanpa thread debt-backed di snapshot', () => {
+    const proposed = makeProposed(12, {
+      plotDebts: {
+        progress: [{ debtId: 'main_mystery', milestoneChapter: 12 }],
+        closures: [],
+      },
+      threads: {
+        touches: [debtBackedThreadId('main_mystery')],
+        transitions: [{ threadId: debtBackedThreadId('main_mystery'), from: 'OPEN', to: 'DEVELOPING' }],
+      },
+      actRollup: actRollup(2, 6, 12),
+    })
+    const error = expectResolverError(12, proposed, 'STATE_THREAD_CONFLICT', {
+      snapshot: snapshotWithoutMainMysteryThread(),
+    })
+    expect(error.message).toContain('main_mystery')
+    expect(error.message).toContain('missing')
+  })
+
+  it('menolak closure debt tanpa thread debt-backed di snapshot', () => {
+    const proposed = makeProposed(48, {
+      plotDebts: {
+        progress: [],
+        closures: DEBT_IDS.map((debtId) => ({ debtId, closureForm: 'RESOLVED' })),
+      },
+      threads: {
+        touches: DEBT_IDS.map(debtBackedThreadId),
+        transitions: DEBT_IDS.map((debtId) => ({
+          threadId: debtBackedThreadId(debtId),
+          from: 'PAYOFF_DUE',
+          to: 'RESOLVED',
+        })),
+      },
+      actRollup: actRollup(7, 46, 48),
+    })
+    const error = expectResolverError(48, proposed, 'STATE_THREAD_CONFLICT', {
+      snapshot: snapshotWithoutMainMysteryThread({
+        'debt:last-phone-call': 'PAYOFF_DUE',
+        'debt-floodgate-key': 'PAYOFF_DUE',
+      }),
+      effectivePlotDebtState: buildEffective(48, ALL_MILESTONES_DONE),
+    })
+    expect(error.message).toContain('main_mystery')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// R3 — HIGH: debt ops & thread transition refresh touch
+// ---------------------------------------------------------------------------
+
+describe('buildValidatedChapterStateDelta — R3 debt ops refresh thread touch', () => {
+  it('menolak debt op yang tidak menyentuh thread debt-backed (touches kosong)', () => {
+    const proposed = makeProposed(12, {
+      plotDebts: {
+        progress: [{ debtId: 'main_mystery', milestoneChapter: 12 }],
+        closures: [],
+      },
+      threads: {
+        touches: [],
+        transitions: [{ threadId: debtBackedThreadId('main_mystery'), from: 'OPEN', to: 'DEVELOPING' }],
+      },
+      actRollup: actRollup(2, 6, 12),
+    })
+    const error = expectResolverError(12, proposed, 'STATE_DELTA_POLICY_VIOLATION')
+    expect(error.details.join('\n')).toContain('disentuh (threads.touches)')
+  })
+
+  it('progress Bab 12 → DEVELOPING, lastTouchedChapter=12, stale reset', () => {
+    const proposed = makeProposed(12, {
+      plotDebts: {
+        progress: [{ debtId: 'main_mystery', milestoneChapter: 12 }],
+        closures: [],
+      },
+      threads: {
+        touches: [debtBackedThreadId('main_mystery')],
+        transitions: [{ threadId: debtBackedThreadId('main_mystery'), from: 'OPEN', to: 'DEVELOPING' }],
+      },
+      actRollup: actRollup(2, 6, 12),
+    })
+    const validated = resolve(12, proposed)
+    const after = applyChapterStateDeltaToSnapshot(baseSnapshot(), validated)
+    const thread = after.threads.find((t) => t.id === debtBackedThreadId('main_mystery'))!
+    expect(thread.status).toBe('DEVELOPING')
+    expect(thread.lastTouchedChapter).toBe(12)
+    expect(thread.stale).toBe(false)
+    expect(thread.staleSinceChapter).toBeNull()
+  })
+
+  it('closure Bab 48 → RESOLVED, lastTouchedChapter=48', () => {
+    const snapshot = snapshotWithThreadStatuses({
+      main_mystery: 'PAYOFF_DUE',
+      'debt:last-phone-call': 'PAYOFF_DUE',
+      'debt-floodgate-key': 'PAYOFF_DUE',
+    })
+    const proposed = makeProposed(48, {
+      plotDebts: {
+        progress: [],
+        closures: DEBT_IDS.map((debtId) => ({ debtId, closureForm: 'RESOLVED' })),
+      },
+      threads: {
+        touches: DEBT_IDS.map(debtBackedThreadId),
+        transitions: DEBT_IDS.map((debtId) => ({
+          threadId: debtBackedThreadId(debtId),
+          from: 'PAYOFF_DUE',
+          to: 'RESOLVED',
+        })),
+      },
+      actRollup: actRollup(7, 46, 48),
+    })
+    const validated = resolve(48, proposed, {
+      snapshot,
+      effectivePlotDebtState: buildEffective(48, ALL_MILESTONES_DONE),
+    })
+    const after = applyChapterStateDeltaToSnapshot(snapshot, validated)
+    const thread = after.threads.find((t) => t.id === debtBackedThreadId('main_mystery'))!
+    expect(thread.status).toBe('RESOLVED')
+    expect(thread.lastTouchedChapter).toBe(48)
   })
 })

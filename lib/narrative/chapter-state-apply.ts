@@ -261,7 +261,15 @@ export function applyChapterStateDeltaToSnapshot(
         `Transisi thread ilegal: ${transition.threadId} ${transition.from} → ${transition.to}.`,
       )
     }
-    threads[index] = { ...threads[index], status: transition.to }
+    threads[index] = {
+      ...threads[index],
+      status: transition.to,
+      // R3 HIGH: setiap thread transition = thread dianggap touched (semantics
+      // sama dengan debt ops via touches & SQL A1c nanti).
+      lastTouchedChapter: Math.max(threads[index].lastTouchedChapter, chapter),
+      stale: false,
+      staleSinceChapter: null,
+    }
     threadStatusById.set(transition.threadId, transition.to)
   }
 

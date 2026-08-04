@@ -124,3 +124,22 @@ describe('applyChapterStateDeltaToSnapshot — act rollup & integritas', () => {
     expect(result.facts.find((fact) => fact.id === 'fact:frozen')).toBeDefined()
   })
 })
+
+describe('applyChapterStateDeltaToSnapshot — R3 thread transition refreshes touch', () => {
+  it('transisi thread ikut menyentuh thread (lastTouchedChapter, stale reset)', () => {
+    const result = applyChapterStateDeltaToSnapshot(
+      buildFixtureSnapshot(),
+      makeDelta({
+        threads: {
+          touches: [],
+          transitions: [{ threadId: 'thread:warisan', from: 'OPEN', to: 'DEVELOPING' }],
+        },
+      }) as ChapterStateDeltaV1,
+    )
+    const thread = result.threads.find((t) => t.id === 'thread:warisan')!
+    expect(thread.status).toBe('DEVELOPING')
+    expect(thread.lastTouchedChapter).toBe(5)
+    expect(thread.stale).toBe(false)
+    expect(thread.staleSinceChapter).toBeNull()
+  })
+})

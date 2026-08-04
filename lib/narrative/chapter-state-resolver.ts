@@ -26,6 +26,16 @@
  *  - Coupling debt↔thread (R2 BLOCKER 2): operasi plot debt adalah authority
  *    state debt-backed thread (progress → DEVELOPING, final → PAYOFF_DUE,
  *    closure → RESOLVED); transisi divergen tanpa operasi debt ditolak.
+ *  - Thread invariant (R3 BLOCKER): debt yang mengalami operasi WAJIB punya
+ *    canonical thread debt-backed di snapshot — hilang = split-state, tolak
+ *    fail-closed (STATE_THREAD_CONFLICT), tidak ada auto-create.
+ *  - Final milestone projection (R3 BLOCKER): milestone bab ini ikut
+ *    perhitungan "semua mustProgressBy lunas" — ledger projection adalah
+ *    kondisi SEBELUM bab ini, jadi `projection.completedMilestones` saja
+ *    tidak pernah menghasilkan PAYOFF_DUE pada progress final.
+ *  - Touch semantics (R3 HIGH): tiap debt op wajib menyentuh thread
+ *    debt-backed (`threads.touches`); applier ikut menyentuh thread pada
+ *    tiap transisi — semantics sama untuk SQL A1c nanti.
  *  - Enforce policy (R1 Point 4): exact descriptor match untuk `actRollup`.
  *  - Preview snapshot via `applyChapterStateDeltaToSnapshot()`.
  */
@@ -360,11 +370,24 @@ export function buildValidatedChapterStateDelta(
   }
 
   const derivedExpectations = new Map<string, DebtBackedThreadExpectation>()
+  const proposedTouchIds = new Set(delta.threads.touches)
   for (const debt of storyContract.plotDebts) {
     const ops = debtOpsByDebtId.get(debt.id)
     if (!ops) continue
+    // R3 BLOCKER: debt op tanpa canonical thread debt-backed = split-state
+    // (ledger berubah, thread tidak). Fail-closed — resolver tidak membuat
+    // thread baru otomatis.
     const thread = threadMap.get(debtBackedThreadId(storyId, debt.id))
-    if (!thread) continue // thread belum termaterialisasi di canon — skip coupling
+    if (!thread) {
+      throw new ChapterStateResolverError(
+        'STATE_THREAD_CONFLICT',
+        `Debt-backed thread "${debtBackedThreadId(storyId, debt.id)}" missing untuk debt "${debt.id}" yang mengalami operasi di Bab ${chapterNumber}.`,
+      )
+    }
+    // R3 HIGH: tiap debt operation = thread debt-backed dianggap touched.
+    if (!proposedTouchIds.has(thread.id)) {
+      details.push(`Operasi plot debt "${debt.id}" mewajibkan thread debt-backed "${thread.id}" disentuh (threads.touches) di Bab ${chapterNumber}.`)
+    }
     const expected = deriveDebtBackedThreadStatus({
       debt,
       ops,
@@ -439,10 +462,15 @@ export function buildValidatedChapterStateDelta(
 
 /**
  * Derive status target thread debt-backed dari operasi plot debt bab ini
- * (R2 BLOCKER 2):
+ * (R2 BLOCKER 2 + R3 BLOCKER):
  *   - closure (RESOLVED/SUBVERTED/TRANSFORMED) → thread RESOLVED;
- *   - progress FINAL (semua milestone mustProgressBy lunas) → PAYOFF_DUE;
+ *   - progress FINAL (semua milestone mustProgressBy lunas setelah bab ini)
+ *     → PAYOFF_DUE;
  *   - progress pertama/biasa → DEVELOPING.
+ *
+ * R3: `projection.completedMilestones` adalah ledger SEBELUM bab ini, jadi
+ * milestone yang diproses bab ini WAJIB ikut dihitung — tanpa itu progress
+ * final tidak pernah memenuhi "all done".
  */
 function deriveDebtBackedThreadStatus(args: {
   debt: PlotDebt
@@ -454,8 +482,11 @@ function deriveDebtBackedThreadStatus(args: {
     return 'RESOLVED'
   }
   if (ops.progressedChapters.length > 0) {
-    const alreadyDone = new Set(projection?.completedMilestones ?? [])
-    const allDone = debt.mustProgressBy.every((chapter) => alreadyDone.has(chapter))
+    const projectedCompleted = new Set([
+      ...(projection?.completedMilestones ?? []),
+      ...ops.progressedChapters,
+    ])
+    const allDone = debt.mustProgressBy.every((chapter) => projectedCompleted.has(chapter))
     if (allDone) return 'PAYOFF_DUE'
     return 'DEVELOPING'
   }

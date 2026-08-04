@@ -2,7 +2,8 @@
 -- Credit reservation primitives, reservation-aware spend_credits_v1 redefinition,
 -- fail-closed DB price derivation, server-owned TTL, DB ownership & canonical story_mode enforcement,
 -- commercial_origin state matrix enforcement, uniform lock ordering (deadlock-free),
--- EXPIRED reservation re-activation semantics, hardened financial capture, and ACL hardening.
+-- EXPIRED reservation re-activation semantics (with accurate v_was_existing tracking),
+-- hardened financial capture, and ACL hardening.
 
 -- 1) Table credit_reservations
 create table if not exists public.credit_reservations (
@@ -141,6 +142,7 @@ declare
   v_story_mode        text;
   v_origin            text;
   v_unlock_ledger_ref text;
+  v_was_existing      boolean := false;
   c_ttl_seconds       constant integer := 1800;
 begin
   if p_user_id is null or p_story_id is null or p_chapter_number is null or p_chapter_number < 1 then
@@ -202,10 +204,13 @@ begin
 
   if found then
     if v_existing.status = 'ACTIVE' and v_existing.expires_at > clock_timestamp() then
-      return jsonb_build_object('ok', true, 'status', 'RESERVED', 'ref', v_canonical_ref, 'replayed', true);
+      return jsonb_build_object('ok', true, 'status', 'RESERVED', 'ref', v_canonical_ref, 'replayed', true, 'reactivated', false);
     end if;
     if v_existing.status = 'CAPTURED' then
-      return jsonb_build_object('ok', true, 'status', 'ALREADY_CAPTURED', 'ref', v_canonical_ref);
+      return jsonb_build_object('ok', true, 'status', 'ALREADY_CAPTURED', 'ref', v_canonical_ref, 'reactivated', false);
+    end if;
+    if v_existing.status in ('EXPIRED', 'RELEASED') then
+      v_was_existing := true;
     end if;
   end if;
 
@@ -225,7 +230,7 @@ begin
     expires_at = clock_timestamp() + (c_ttl_seconds * interval '1 second'),
     updated_at = clock_timestamp();
 
-  return jsonb_build_object('ok', true, 'status', 'RESERVED', 'ref', v_canonical_ref, 'cost', v_cost, 'reactivated', found);
+  return jsonb_build_object('ok', true, 'status', 'RESERVED', 'ref', v_canonical_ref, 'cost', v_cost, 'reactivated', v_was_existing);
 end;
 $$;
 
@@ -246,6 +251,7 @@ declare
   v_story_mode       text;
   v_origin           text;
   v_state            public.account_commercial_states%rowtype;
+  v_was_existing     boolean := false;
   c_ttl_seconds      constant integer := 1800;
 begin
   if p_user_id is null or p_story_id is null then
@@ -302,10 +308,13 @@ begin
 
   if found then
     if v_existing.status = 'ACTIVE' and v_existing.expires_at > clock_timestamp() then
-      return jsonb_build_object('ok', true, 'status', 'RESERVED', 'ref', v_canonical_ref, 'replayed', true);
+      return jsonb_build_object('ok', true, 'status', 'RESERVED', 'ref', v_canonical_ref, 'replayed', true, 'reactivated', false);
     end if;
     if v_existing.status = 'CAPTURED' then
-      return jsonb_build_object('ok', true, 'status', 'ALREADY_CAPTURED', 'ref', v_canonical_ref);
+      return jsonb_build_object('ok', true, 'status', 'ALREADY_CAPTURED', 'ref', v_canonical_ref, 'reactivated', false);
+    end if;
+    if v_existing.status in ('EXPIRED', 'RELEASED') then
+      v_was_existing := true;
     end if;
   end if;
 
@@ -330,7 +339,7 @@ begin
   set commercial_origin = 'PENDING_PAID_START'
   where id = p_story_id and (commercial_origin is null or commercial_origin = 'PENDING_PAID_START');
 
-  return jsonb_build_object('ok', true, 'status', 'RESERVED', 'ref', v_canonical_ref, 'cost', v_cost, 'reactivated', found);
+  return jsonb_build_object('ok', true, 'status', 'RESERVED', 'ref', v_canonical_ref, 'cost', v_cost, 'reactivated', v_was_existing);
 end;
 $$;
 

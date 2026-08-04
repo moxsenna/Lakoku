@@ -1,5 +1,5 @@
 -- Migration 20260804010000_account_commercial_entitlements.sql
--- Account commercial states, legacy starter account backfill, server-authoritative welcome cutoff (+20 for new users only),
+-- Account commercial states, legacy starter account backfill, server-authoritative configurable welcome cutoff,
 -- explicit commercial_origin column without unsafe permanent default, pricing_version updates, and strict ACL hardening.
 
 -- 1) Account Commercial States table (INTERNAL ONLY - NO READER RLS ACCESS)
@@ -49,15 +49,17 @@ on conflict (user_id) do update set
   starter_claimed_at = coalesce(account_commercial_states.starter_claimed_at, excluded.starter_claimed_at),
   updated_at = clock_timestamp();
 
--- 3) Seed/update canonical DB pricing in feature_credit_costs (chapter_unlock = 8, story_start = 24, with updated pricing_version)
-insert into public.feature_credit_costs (feature_key, credits_required, is_active, pricing_version)
+-- 3) Seed/update canonical DB pricing in feature_credit_costs (chapter_unlock = 8, story_start = 24, welcome_credit = 20 with updated pricing_version)
+insert into public.feature_credit_costs (feature_key, credits_required, is_active, pricing_version, metadata)
 values
-  ('chapter_unlock', 8, true, 'v1.1-202608'),
-  ('story_start', 24, true, 'v1.1-202608')
+  ('chapter_unlock', 8, true, 'v1.1-202608', '{}'::jsonb),
+  ('story_start', 24, true, 'v1.1-202608', '{}'::jsonb),
+  ('welcome_credit', 20, true, 'v1.1-202608', jsonb_build_object('welcome_eligible_from', '2026-08-04T00:00:00+00'))
 on conflict (feature_key) do update
 set credits_required = excluded.credits_required,
     pricing_version = excluded.pricing_version,
     is_active = true,
+    metadata = case when excluded.metadata <> '{}'::jsonb then excluded.metadata else feature_credit_costs.metadata end,
     updated_at = clock_timestamp();
 
 -- 4) RPC: claim_starter_story_v1
@@ -139,21 +141,23 @@ $$;
 
 -- 5) RPC: grant_welcome_credit_v1
 -- Server-authoritative welcome bonus (+20 credits).
--- VERIFIES auth.users.created_at AGAINST WELCOME CUTOFF ('2026-08-04 00:00:00+00').
--- Old accounts created before cutoff are NOT eligible for +20.
+-- Reads configurable welcome cutoff from feature_credit_costs (welcome_credit -> metadata -> welcome_eligible_from).
+-- Fail-closed: returns WELCOME_POLICY_NOT_ACTIVE / WELCOME_POLICY_NOT_CONFIGURED if unconfigured.
 create or replace function public.grant_welcome_credit_v1(
   p_user_id uuid
 ) returns jsonb
 language plpgsql security definer set search_path = public
 as $$
 declare
+  v_cost_row        public.feature_credit_costs%rowtype;
+  v_cutoff_str      text;
+  v_welcome_cutoff  timestamptz;
   v_user_created_at timestamptz;
   v_state           public.account_commercial_states%rowtype;
   v_ref             text;
   v_granted         boolean;
   v_ledger_row      public.credit_ledger%rowtype;
-  c_welcome_amount   constant integer := 20;
-  c_welcome_cutoff  constant timestamptz := '2026-08-04 00:00:00+00'::timestamptz;
+  c_welcome_amount  constant integer := 20;
 begin
   if p_user_id is null then
     raise exception 'grant_welcome_credit_v1: invalid arguments';
@@ -162,13 +166,36 @@ begin
   -- Uniform lock for user credit & commercial entitlement mutations
   perform pg_advisory_xact_lock(hashtext(p_user_id::text));
 
-  -- Check auth.users created_at against cutoff date
+  -- Query configurable welcome credit setting from feature_credit_costs
+  select * into v_cost_row
+  from public.feature_credit_costs
+  where feature_key = 'welcome_credit' and is_active = true;
+
+  if not found or v_cost_row.credits_required <= 0 then
+    return jsonb_build_object(
+      'ok', false,
+      'granted', false,
+      'reason', 'WELCOME_POLICY_NOT_ACTIVE'
+    );
+  end if;
+
+  v_cutoff_str := v_cost_row.metadata->>'welcome_eligible_from';
+  if v_cutoff_str is null or trim(v_cutoff_str) = '' then
+    return jsonb_build_object(
+      'ok', false,
+      'granted', false,
+      'reason', 'WELCOME_POLICY_NOT_CONFIGURED'
+    );
+  end if;
+
+  v_welcome_cutoff := v_cutoff_str::timestamptz;
+
   select created_at into v_user_created_at from auth.users where id = p_user_id;
   if not found then
     raise exception 'grant_welcome_credit_v1: user % not found', p_user_id;
   end if;
 
-  if v_user_created_at < c_welcome_cutoff then
+  if v_user_created_at < v_welcome_cutoff then
     return jsonb_build_object(
       'ok', false,
       'granted', false,

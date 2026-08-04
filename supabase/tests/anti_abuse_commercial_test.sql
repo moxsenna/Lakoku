@@ -70,7 +70,7 @@ begin
     (v_user_prem_old, 'old_prem_user@test.local', '2026-07-01 12:00:00+00'::timestamptz),
     (v_user_std_old, 'old_std_user@test.local', '2026-07-01 12:00:00+00'::timestamptz);
 
-  -- Test 1: Requirement 2 - Welcome grant (+20) server-authoritative cutoff
+  -- Test 1: Requirement 2 - Welcome grant (+20) server-authoritative configurable cutoff
   -- Old account created before cutoff -> NOT ELIGIBLE for +20 welcome credit
   v_res := public.grant_welcome_credit_v1(v_user_old);
   if (v_res->>'granted')::boolean is not false or (v_res->>'reason') <> 'NOT_ELIGIBLE_ACCOUNT_CREATED_BEFORE_WELCOME_CUTOFF' then
@@ -184,24 +184,41 @@ begin
     raise exception 'Test 4 Starter Claim Failed';
   end if;
 
-  -- Now reserve story start for new-pers-2 costs 24 and succeeds
+  -- Fresh story-start reservation for new-pers-2 MUST return reactivated = false!
   v_res := public.reserve_story_start_v1(v_user_new, 'new-pers-2');
-  if (v_res->>'ok')::boolean is not true or (v_res->>'status') <> 'RESERVED' then
-    raise exception 'Test 4 Story #2 Reserve Failed, got %', v_res;
+  if (v_res->>'ok')::boolean is not true or (v_res->>'status') <> 'RESERVED' or (v_res->>'reactivated')::boolean is not false then
+    raise exception 'Test 4 Fresh Story #2 Reserve Failed: expected reactivated=false, got %', v_res;
   end if;
 
-  -- Test 5: reserve_chapter_unlock_v1 fail-closed on PENDING_PAID_START
-  v_res := public.reserve_chapter_unlock_v1(v_user_new, 'new-pers-2', 4);
-  if (v_res->>'reason') <> 'COMMERCIAL_STATE_INVALID' then
-    raise exception 'Test 5 PENDING_PAID_START Ch4 Check Failed: expected COMMERCIAL_STATE_INVALID, got %', v_res;
+  -- Re-expire story-start reservation and reserve again -> reactivated MUST BE true!
+  update public.credit_reservations set status = 'EXPIRED' where ref = v_res->>'ref';
+
+  v_res := public.reserve_story_start_v1(v_user_new, 'new-pers-2');
+  if (v_res->>'ok')::boolean is not true or (v_res->>'status') <> 'RESERVED' or (v_res->>'reactivated')::boolean is not true then
+    raise exception 'Test 4 Expired Story #2 Reactivation Failed: expected reactivated=true, got %', v_res;
+  end if;
+
+  -- Test 5: Fresh vs Expired Chapter Reservation (Requirement 3)
+  -- Fresh chapter reservation for Ch 4 MUST return reactivated = false!
+  v_res := public.reserve_chapter_unlock_v1(v_user_new, 'new-pers-1', 4);
+  if (v_res->>'ok')::boolean is not true or (v_res->>'status') <> 'RESERVED' or (v_res->>'reactivated')::boolean is not false then
+    raise exception 'Test 5 Fresh Chapter Unlock Reserve Failed: expected reactivated=false, got %', v_res;
+  end if;
+
+  -- Expire chapter reservation and reserve again -> reactivated MUST BE true!
+  update public.credit_reservations set status = 'EXPIRED' where ref = v_res->>'ref';
+
+  v_res := public.reserve_chapter_unlock_v1(v_user_new, 'new-pers-1', 4);
+  if (v_res->>'ok')::boolean is not true or (v_res->>'status') <> 'RESERVED' or (v_res->>'reactivated')::boolean is not true then
+    raise exception 'Test 5 Expired Chapter Unlock Reactivation Failed: expected reactivated=true, got %', v_res;
   end if;
 
   -- Test 6: Ledger conflict validation during capture
-  v_res := public.reserve_chapter_unlock_v1(v_user_new, 'new-pers-1', 4);
+  v_res := public.reserve_chapter_unlock_v1(v_user_new, 'new-pers-1', 5);
   v_ref := v_res->>'ref';
 
   insert into public.credit_ledger (user_id, delta, reason, ref)
-  values (v_user_new, -5, 'unlock_chapter', 'unlock:new-pers-1:4');
+  values (v_user_new, -5, 'unlock_chapter', 'unlock:new-pers-1:5');
 
   v_caught := false;
   begin

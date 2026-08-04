@@ -11,10 +11,10 @@ function check(name: string, cond: boolean) {
   else { fail++; console.error('  FAIL ', name) }
 }
 
-const P = { freeChapters: 3, creditsPerChapter: 5 }
+const P = { freeChapters: 3, creditsPerChapter: 8 }
 
-// Default policy = 3 gratis, 5/bab.
-check('default 3 gratis / 5 per bab', DEFAULT_READING_POLICY.freeChapters === 3 && DEFAULT_READING_POLICY.creditsPerChapter === 5)
+// Default policy = 3 gratis, 8/bab.
+check('default 3 gratis / 8 per bab', DEFAULT_READING_POLICY.freeChapters === 3 && DEFAULT_READING_POLICY.creditsPerChapter === 8)
 
 // Bab 1..3 gratis, biaya 0.
 for (const n of [1, 2, 3]) {
@@ -24,7 +24,7 @@ for (const n of [1, 2, 3]) {
 // Bab 4+ berbayar, biaya = creditsPerChapter.
 for (const n of [4, 5, 50]) {
   check(`bab ${n} berbayar`, isChapterFree(n, P) === false)
-  check(`bab ${n} biaya 5`, chapterCost(n, P) === 5)
+  check(`bab ${n} biaya 8`, chapterCost(n, P) === 8)
 }
 
 // Kebijakan bisa diubah (mis. 1 gratis, 10/bab).

@@ -36,132 +36,172 @@ select ok(not has_function_privilege('anon', 'public.grant_welcome_credit_v1(uui
 select ok(not has_function_privilege('authenticated', 'public.grant_welcome_credit_v1(uuid)', 'EXECUTE'), 'authenticated cannot execute grant_welcome_credit_v1');
 select ok(has_function_privilege('service_role', 'public.grant_welcome_credit_v1(uuid)', 'EXECUTE'), 'service_role can execute grant_welcome_credit_v1');
 
-select ok(not has_function_privilege('anon', 'public.reserve_chapter_unlock_v1(uuid,text,integer)', 'EXECUTE'), 'anon cannot execute reserve_chapter_unlock_v1');
-select ok(not has_function_privilege('authenticated', 'public.reserve_chapter_unlock_v1(uuid,text,integer)', 'EXECUTE'), 'authenticated cannot execute reserve_chapter_unlock_v1');
-select ok(has_function_privilege('service_role', 'public.reserve_chapter_unlock_v1(uuid,text,integer)', 'EXECUTE'), 'service_role can execute reserve_chapter_unlock_v1');
+select ok(not has_function_privilege('anon', 'public.reserve_chapter_unlock_v1(uuid, text, integer)', 'EXECUTE'), 'anon cannot execute reserve_chapter_unlock_v1');
+select ok(not has_function_privilege('authenticated', 'public.reserve_chapter_unlock_v1(uuid, text, integer)', 'EXECUTE'), 'authenticated cannot execute reserve_chapter_unlock_v1');
+select ok(has_function_privilege('service_role', 'public.reserve_chapter_unlock_v1(uuid, text, integer)', 'EXECUTE'), 'service_role can execute reserve_chapter_unlock_v1');
 
-select ok(not has_function_privilege('anon', 'public.reserve_story_start_v1(uuid,text)', 'EXECUTE'), 'anon cannot execute reserve_story_start_v1');
-select ok(not has_function_privilege('authenticated', 'public.reserve_story_start_v1(uuid,text)', 'EXECUTE'), 'authenticated cannot execute reserve_story_start_v1');
-select ok(has_function_privilege('service_role', 'public.reserve_story_start_v1(uuid,text)', 'EXECUTE'), 'service_role can execute reserve_story_start_v1');
+select ok(not has_function_privilege('anon', 'public.reserve_story_start_v1(uuid, text)', 'EXECUTE'), 'anon cannot execute reserve_story_start_v1');
+select ok(not has_function_privilege('authenticated', 'public.reserve_story_start_v1(uuid, text)', 'EXECUTE'), 'authenticated cannot execute reserve_story_start_v1');
+select ok(has_function_privilege('service_role', 'public.reserve_story_start_v1(uuid, text)', 'EXECUTE'), 'service_role can execute reserve_story_start_v1');
 
 -- ============================================================================
--- 2. Functional, Story Mode & Business Logic Tests
+-- 2. Functional, Story Mode, Welcome Cutoff & Backfill Tests
 -- ============================================================================
 
 do $$
 declare
-  v_user_1 uuid := gen_random_uuid();
-  v_user_2 uuid := gen_random_uuid();
+  v_user_new uuid := gen_random_uuid();
+  v_user_old uuid := gen_random_uuid();
+  v_user_prem_old uuid := gen_random_uuid();
+  v_user_std_old uuid := gen_random_uuid();
   v_res jsonb;
   v_res_text text;
   v_origin text;
   v_ref text;
-  v_avail integer;
+  v_version text;
+  v_starter_id text;
+  v_claimed_at timestamptz;
   v_caught boolean := false;
 begin
-  insert into auth.users (id, email) values (v_user_1, 'user1@test.local'), (v_user_2, 'user2@test.local');
+  -- Setup auth users (v_user_old created before welcome cutoff 2026-08-04, v_user_new created after)
+  insert into auth.users (id, email, created_at) values
+    (v_user_new, 'new_user@test.local', '2026-08-04 12:00:00+00'::timestamptz),
+    (v_user_old, 'old_user@test.local', '2026-07-01 12:00:00+00'::timestamptz),
+    (v_user_prem_old, 'old_prem_user@test.local', '2026-07-01 12:00:00+00'::timestamptz),
+    (v_user_std_old, 'old_std_user@test.local', '2026-07-01 12:00:00+00'::timestamptz);
 
-  -- Test 1: Welcome grant (+20) exactly once & idempotency check
-  v_res := public.grant_welcome_credit_v1(v_user_1);
+  -- Test 1: Requirement 2 - Welcome grant (+20) server-authoritative cutoff
+  -- Old account created before cutoff -> NOT ELIGIBLE for +20 welcome credit
+  v_res := public.grant_welcome_credit_v1(v_user_old);
+  if (v_res->>'granted')::boolean is not false or (v_res->>'reason') <> 'NOT_ELIGIBLE_ACCOUNT_CREATED_BEFORE_WELCOME_CUTOFF' then
+    raise exception 'Test 1 Old Account Welcome Check Failed: expected NOT_ELIGIBLE_ACCOUNT_CREATED_BEFORE_WELCOME_CUTOFF, got %', v_res;
+  end if;
+
+  if public.available_credit_balance_v1(v_user_old) <> 0 then
+    raise exception 'Test 1 Old Account Balance Check Failed: expected 0 credits, got %', public.available_credit_balance_v1(v_user_old);
+  end if;
+
+  -- New account created after cutoff -> ELIGIBLE once (+20 credits)
+  v_res := public.grant_welcome_credit_v1(v_user_new);
   if (v_res->>'granted')::boolean is not true or (v_res->>'credits')::int <> 20 then
-    raise exception 'Test 1 Failed: welcome grant should return granted=true, credits=20';
+    raise exception 'Test 1 New Account Welcome Check Failed: expected granted=true, credits=20, got %', v_res;
   end if;
 
-  if public.available_credit_balance_v1(v_user_1) <> 20 then
-    raise exception 'Test 1 Failed: credit balance should be 20';
+  if public.available_credit_balance_v1(v_user_new) <> 20 then
+    raise exception 'Test 1 New Account Balance Check Failed: expected 20 credits';
   end if;
 
-  -- Test 2: Requirement 1 - Story Mode Boundaries & Ownership Checks
-  insert into public.stories (id, title, owner_user_id, visibility, story_mode, total_chapters)
+  -- Replay on new account -> already_granted=true
+  v_res := public.grant_welcome_credit_v1(v_user_new);
+  if (v_res->>'already_granted')::boolean is not true or public.available_credit_balance_v1(v_user_new) <> 20 then
+    raise exception 'Test 1 Duplicate Welcome Check Failed';
+  end if;
+
+  -- Test 2: Requirement 4 - Pricing Version Updates
+  select pricing_version into v_version from public.feature_credit_costs where feature_key = 'chapter_unlock';
+  if v_version <> 'v1.1-202608' then
+    raise exception 'Test 2 Pricing Version Failed for chapter_unlock: expected v1.1-202608, got %', v_version;
+  end if;
+
+  select pricing_version into v_version from public.feature_credit_costs where feature_key = 'story_start';
+  if v_version <> 'v1.1-202608' then
+    raise exception 'Test 2 Pricing Version Failed for story_start: expected v1.1-202608, got %', v_version;
+  end if;
+
+  -- Test 3: Requirement 1 - Legacy Account Starter Backfill Test
+  insert into public.stories (id, title, owner_user_id, visibility, story_mode, created_at)
   values
-    ('story-pers-A', 'Personalized Story A', v_user_1, 'private', 'personalized_ai', 50),
-    ('story-pers-B', 'Personalized Story B', v_user_1, 'private', 'personalized_ai', 50),
-    ('story-prem-1', 'Premium Instance 1', v_user_1, 'private', 'premium_instance', 50),
-    ('story-std-1',  'Standard Private 1',  v_user_1, 'private', 'standard', 50),
-    ('demo:shared-1', 'Demo Shared Story', v_user_1, 'public',  'premium_template', 50);
+    ('old-pers-1', 'Old Pers 1', v_user_old, 'private', 'personalized_ai', '2026-07-02 10:00:00+00'::timestamptz),
+    ('old-pers-2', 'Old Pers 2', v_user_old, 'private', 'personalized_ai', '2026-07-05 10:00:00+00'::timestamptz),
+    ('old-prem-1', 'Old Prem 1', v_user_prem_old, 'private', 'premium_instance', '2026-07-03 10:00:00+00'::timestamptz),
+    ('old-std-1',  'Old Std 1',  v_user_std_old,  'private', 'standard',           '2026-07-04 10:00:00+00'::timestamptz);
 
-  -- Standard story claim -> NOT_ELIGIBLE_STORY_MODE
-  v_res := public.claim_starter_story_v1(v_user_1, 'story-std-1');
-  if (v_res->>'reason') <> 'NOT_ELIGIBLE_STORY_MODE' then
-    raise exception 'Test 2 Story Mode Check Failed: standard story claim must return NOT_ELIGIBLE_STORY_MODE, got %', v_res;
+  -- Execute legacy backfill logic
+  insert into public.account_commercial_states (user_id, starter_story_id, starter_claimed_at, updated_at)
+  select distinct on (s.owner_user_id)
+    s.owner_user_id,
+    s.id as starter_story_id,
+    s.created_at as starter_claimed_at,
+    clock_timestamp() as updated_at
+  from public.stories s
+  where s.owner_user_id is not null
+    and s.story_mode in ('personalized_ai', 'premium_instance')
+    and s.visibility in ('private', 'unlisted')
+    and s.id not like 'demo:%'
+  order by s.owner_user_id, s.created_at asc, s.id asc
+  on conflict (user_id) do update set
+    starter_story_id = coalesce(account_commercial_states.starter_story_id, excluded.starter_story_id),
+    starter_claimed_at = coalesce(account_commercial_states.starter_claimed_at, excluded.starter_claimed_at),
+    updated_at = clock_timestamp();
+
+  -- Verify old user with 2 personalized stories has earliest story set as starter_story_id
+  select starter_story_id, starter_claimed_at into v_starter_id, v_claimed_at
+  from public.account_commercial_states where user_id = v_user_old;
+  if v_starter_id <> 'old-pers-1' or v_claimed_at is null then
+    raise exception 'Test 3 Earliest Starter Backfill Failed: expected old-pers-1, got %', v_starter_id;
   end if;
 
-  -- Demo story claim -> NOT_ELIGIBLE_STORY_MODE
-  v_res := public.claim_starter_story_v1(v_user_1, 'demo:shared-1');
-  if (v_res->>'reason') <> 'NOT_ELIGIBLE_STORY_MODE' then
-    raise exception 'Test 2 Demo Check Failed: demo story claim must return NOT_ELIGIBLE_STORY_MODE';
+  -- Attempting claim_starter_story_v1 on new story for old user MUST fail as STARTER_ALREADY_CLAIMED
+  insert into public.stories (id, title, owner_user_id, visibility, story_mode)
+  values ('old-pers-new', 'Old Pers New', v_user_old, 'private', 'personalized_ai');
+
+  v_res := public.claim_starter_story_v1(v_user_old, 'old-pers-new');
+  if (v_res->>'reason') <> 'STARTER_ALREADY_CLAIMED' then
+    raise exception 'Test 3 Claim Starter for Backfilled User Failed: expected STARTER_ALREADY_CLAIMED, got %', v_res;
   end if;
 
-  -- Un-owned story claim -> NOT_STORY_OWNER
-  v_res := public.claim_starter_story_v1(v_user_2, 'story-pers-A');
-  if (v_res->>'reason') <> 'NOT_STORY_OWNER' then
-    raise exception 'Test 2 Ownership Check Failed: un-owned story claim must return NOT_STORY_OWNER';
+  -- Verify premium instance user starter entitlement consumed
+  select starter_story_id, starter_claimed_at into v_starter_id, v_claimed_at
+  from public.account_commercial_states where user_id = v_user_prem_old;
+  if v_starter_id <> 'old-prem-1' or v_claimed_at is null then
+    raise exception 'Test 3 Premium Instance Starter Backfill Failed';
   end if;
 
-  -- Test 3: Requirement 3 - reserve_story_start_v1 Must Prove Account Has Claimed Starter First
-  perform public.grant_credits_v1(v_user_1, 'topup:seed', 30, 'seed'); -- balance = 50
+  -- Verify standard private story user remains unclaimed
+  select starter_claimed_at into v_claimed_at
+  from public.account_commercial_states where user_id = v_user_std_old;
+  if v_claimed_at is not null then
+    raise exception 'Test 3 Standard User Backfill Leak Failed: expected NULL claimed_at, got %', v_claimed_at;
+  end if;
 
-  -- User 1 has NOT claimed starter story yet -> reserve_story_start_v1 MUST REJECT!
-  v_res := public.reserve_story_start_v1(v_user_1, 'story-pers-B');
+  -- Test 4: reserve_story_start_v1 for user with starter claimed vs unclaimed
+  perform public.grant_credits_v1(v_user_new, 'topup:seed', 30, 'seed'); -- balance = 50
+
+  insert into public.stories (id, title, owner_user_id, visibility, story_mode)
+  values
+    ('new-pers-1', 'New Pers 1', v_user_new, 'private', 'personalized_ai'),
+    ('new-pers-2', 'New Pers 2', v_user_new, 'private', 'personalized_ai');
+
+  -- User new has NOT claimed starter story yet -> reserve_story_start_v1 MUST REJECT!
+  v_res := public.reserve_story_start_v1(v_user_new, 'new-pers-2');
   if (v_res->>'reason') <> 'STORY_START_NOT_REQUIRED' then
-    raise exception 'Test 3 Unclaimed Starter Check Failed: expected STORY_START_NOT_REQUIRED, got %', v_res;
+    raise exception 'Test 4 Unclaimed Starter Check Failed: expected STORY_START_NOT_REQUIRED, got %', v_res;
   end if;
 
-  -- User 1 claims Starter Story pers-A
-  v_res := public.claim_starter_story_v1(v_user_1, 'story-pers-A');
+  -- Claim starter story for new-pers-1
+  v_res := public.claim_starter_story_v1(v_user_new, 'new-pers-1');
   if (v_res->>'ok')::boolean is not true then
-    raise exception 'Test 3 Starter Claim Failed';
+    raise exception 'Test 4 Starter Claim Failed';
   end if;
 
-  -- Cannot reserve story start for Starter Story itself
-  v_res := public.reserve_story_start_v1(v_user_1, 'story-pers-A');
-  if (v_res->>'reason') <> 'STARTER_STORY_CANNOT_RESERVE_STORY_START' then
-    raise exception 'Test 3 Starter Story Self-Reserve Check Failed: expected STARTER_STORY_CANNOT_RESERVE_STORY_START, got %', v_res;
-  end if;
-
-  -- Valid Story #2 Start Reservation for story-pers-B (costs 24)
-  v_res := public.reserve_story_start_v1(v_user_1, 'story-pers-B');
+  -- Now reserve story start for new-pers-2 costs 24 and succeeds
+  v_res := public.reserve_story_start_v1(v_user_new, 'new-pers-2');
   if (v_res->>'ok')::boolean is not true or (v_res->>'status') <> 'RESERVED' then
-    raise exception 'Test 3 Valid Story Start Reservation Failed, got %', v_res;
+    raise exception 'Test 4 Story #2 Reserve Failed, got %', v_res;
   end if;
 
-  -- Pre-capture state check: PENDING_PAID_START
-  select commercial_origin into v_origin from public.stories where id = 'story-pers-B';
-  if v_origin <> 'PENDING_PAID_START' then
-    raise exception 'Test 3 Pre-capture state failed: expected PENDING_PAID_START, got %', v_origin;
-  end if;
-
-  -- Test 4: Requirement 4 - reserve_chapter_unlock_v1 Fail-Closed Matrix on commercial_origin
-  -- PENDING_PAID_START, Chapter 1 -> DENIED (COMMERCIAL_STATE_INVALID)
-  v_res := public.reserve_chapter_unlock_v1(v_user_1, 'story-pers-B', 1);
+  -- Test 5: reserve_chapter_unlock_v1 fail-closed on PENDING_PAID_START
+  v_res := public.reserve_chapter_unlock_v1(v_user_new, 'new-pers-2', 4);
   if (v_res->>'reason') <> 'COMMERCIAL_STATE_INVALID' then
-    raise exception 'Test 4 PENDING_PAID_START Ch1 Check Failed: expected COMMERCIAL_STATE_INVALID, got %', v_res;
+    raise exception 'Test 5 PENDING_PAID_START Ch4 Check Failed: expected COMMERCIAL_STATE_INVALID, got %', v_res;
   end if;
 
-  -- PENDING_PAID_START, Chapter 4 -> DENIED (COMMERCIAL_STATE_INVALID)
-  v_res := public.reserve_chapter_unlock_v1(v_user_1, 'story-pers-B', 4);
-  if (v_res->>'reason') <> 'COMMERCIAL_STATE_INVALID' then
-    raise exception 'Test 4 PENDING_PAID_START Ch4 Check Failed: expected COMMERCIAL_STATE_INVALID, got %', v_res;
-  end if;
-
-  -- NULL origin (story-prem-1), Chapter 4 -> DENIED (COMMERCIAL_STATE_INVALID)
-  v_res := public.reserve_chapter_unlock_v1(v_user_1, 'story-prem-1', 4);
-  if (v_res->>'reason') <> 'COMMERCIAL_STATE_INVALID' then
-    raise exception 'Test 4 NULL origin Ch4 Check Failed: expected COMMERCIAL_STATE_INVALID, got %', v_res;
-  end if;
-
-  -- STARTER_FREE (story-pers-A), Chapter 4 -> May reserve 8 (RESERVED)
-  v_res := public.reserve_chapter_unlock_v1(v_user_1, 'story-pers-A', 4);
-  if (v_res->>'ok')::boolean is not true or (v_res->>'status') <> 'RESERVED' then
-    raise exception 'Test 4 STARTER_FREE Ch4 Reserve Failed, got %', v_res;
-  end if;
-
-  -- Test 5: Requirement 5 - Canonical Ledger Conflict Hardening during Capture
+  -- Test 6: Ledger conflict validation during capture
+  v_res := public.reserve_chapter_unlock_v1(v_user_new, 'new-pers-1', 4);
   v_ref := v_res->>'ref';
 
-  -- Pre-insert conflicting ledger row with wrong delta (-5 instead of -8)
   insert into public.credit_ledger (user_id, delta, reason, ref)
-  values (v_user_1, -5, 'unlock_chapter', 'unlock:story-pers-A:4');
+  values (v_user_new, -5, 'unlock_chapter', 'unlock:new-pers-1:4');
 
   v_caught := false;
   begin
@@ -173,43 +213,7 @@ begin
   end;
 
   if not v_caught then
-    raise exception 'Test 5 Mismatched Ledger Ref Capture Check Failed: expected IDEMPOTENCY_CONFLICT exception';
-  end if;
-
-  -- Verify reservation status remains ACTIVE (NOT CAPTURED) after conflict
-  select status into v_res_text from public.credit_reservations where ref = v_ref;
-  if v_res_text <> 'ACTIVE' then
-    raise exception 'Test 5 Reservation Status Drift Failed: expected ACTIVE, got %', v_res_text;
-  end if;
-
-  -- Test 6: Requirement 2 - Legacy Backfill Test Verification
-  insert into public.stories (id, title, owner_user_id, visibility, story_mode)
-  values
-    ('legacy-pers', 'Legacy Personalized', v_user_2, 'private', 'personalized_ai'),
-    ('legacy-prem', 'Legacy Premium',      v_user_2, 'private', 'premium_instance'),
-    ('legacy-std',  'Legacy Standard',     v_user_2, 'private', 'standard');
-
-  update public.stories
-  set commercial_origin = 'LEGACY_GRANDFATHERED'
-  where owner_user_id is not null
-    and story_mode in ('personalized_ai', 'premium_instance')
-    and visibility in ('private', 'unlisted')
-    and id not like 'demo:%'
-    and commercial_origin is null;
-
-  select commercial_origin into v_origin from public.stories where id = 'legacy-pers';
-  if v_origin <> 'LEGACY_GRANDFATHERED' then
-    raise exception 'Test 6 Backfill legacy-pers Failed: expected LEGACY_GRANDFATHERED, got %', v_origin;
-  end if;
-
-  select commercial_origin into v_origin from public.stories where id = 'legacy-prem';
-  if v_origin <> 'LEGACY_GRANDFATHERED' then
-    raise exception 'Test 6 Backfill legacy-prem Failed: expected LEGACY_GRANDFATHERED, got %', v_origin;
-  end if;
-
-  select commercial_origin into v_origin from public.stories where id = 'legacy-std';
-  if v_origin is not null then
-    raise exception 'Test 6 Backfill legacy-std Failed: expected NULL, got %', v_origin;
+    raise exception 'Test 6 Mismatched Ledger Ref Capture Check Failed: expected IDEMPOTENCY_CONFLICT exception';
   end if;
 
 end

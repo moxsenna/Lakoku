@@ -1,8 +1,8 @@
 -- Migration 20260804020000_credit_reservations.sql
--- Credit reservation primitives, fail-closed DB price derivation, server-owned TTL,
--- DB ownership & canonical story_mode enforcement, commercial_origin state matrix enforcement,
--- uniform lock ordering (deadlock-free), EXPIRED reservation re-activation semantics,
--- hardened financial capture (Phase 1: CHAPTER_UNLOCK only with fail-closed ledger conflict check), and ACL hardening.
+-- Credit reservation primitives, reservation-aware spend_credits_v1 redefinition,
+-- fail-closed DB price derivation, server-owned TTL, DB ownership & canonical story_mode enforcement,
+-- commercial_origin state matrix enforcement, uniform lock ordering (deadlock-free),
+-- EXPIRED reservation re-activation semantics, hardened financial capture, and ACL hardening.
 
 -- 1) Table credit_reservations
 create table if not exists public.credit_reservations (
@@ -75,10 +75,55 @@ begin
 end;
 $$;
 
--- 3) RPC: reserve_chapter_unlock_v1
--- Reserve credits for chapter unlock. Checks DB ownership & canonical story_mode, paid chapter status, existing unlocks.
--- Fail-closed commercial_origin matrix: DENIES if commercial_origin IS NULL or PENDING_PAID_START.
--- Fail-closed DB price lookup. Handles re-activation of EXPIRED reservation for exact same chapter under user lock.
+-- 3) RPC: spend_credits_v1 (HARDENED: Reservation-Aware Spend)
+-- Defined HERE in migration 02 AFTER helper functions available_credit_balance_v1 and expire_user_reservations_lazy_v1 exist!
+create or replace function public.spend_credits_v1(
+  p_user_id uuid,
+  p_ref     text,
+  p_credits integer,
+  p_reason  text
+) returns text
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_available integer;
+  v_rows      integer;
+begin
+  if p_user_id is null or p_ref is null or trim(p_ref) = '' or p_credits is null or p_credits <= 0 then
+    raise exception 'spend_credits_v1: invalid arguments';
+  end if;
+
+  -- Uniform Advisory User Lock
+  perform pg_advisory_xact_lock(hashtext(p_user_id::text));
+
+  -- Idempotency Check
+  if exists (select 1 from public.credit_ledger where ref = p_ref) then
+    return 'duplicate';
+  end if;
+
+  -- Lazy cleanup of expired reservations under advisory lock
+  perform public.expire_user_reservations_lazy_v1(p_user_id);
+
+  -- Available balance excludes ACTIVE unexpired reservations
+  v_available := public.available_credit_balance_v1(p_user_id);
+  if v_available < p_credits then
+    return 'insufficient';
+  end if;
+
+  insert into public.credit_ledger (user_id, delta, reason, ref)
+  values (p_user_id, -p_credits, p_reason, p_ref)
+  on conflict (ref) do nothing;
+
+  get diagnostics v_rows = row_count;
+  if v_rows = 0 then
+    return 'duplicate';
+  end if;
+
+  return 'ok';
+end;
+$$;
+
+-- 4) RPC: reserve_chapter_unlock_v1
 create or replace function public.reserve_chapter_unlock_v1(
   p_user_id        uuid,
   p_story_id       text,
@@ -96,7 +141,7 @@ declare
   v_story_mode        text;
   v_origin            text;
   v_unlock_ledger_ref text;
-  c_ttl_seconds       constant integer := 1800; -- 30 minutes workflow budget safety reserve
+  c_ttl_seconds       constant integer := 1800;
 begin
   if p_user_id is null or p_story_id is null or p_chapter_number is null or p_chapter_number < 1 then
     raise exception 'reserve_chapter_unlock_v1: invalid arguments';
@@ -119,7 +164,7 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'NOT_ELIGIBLE_STORY_MODE');
   end if;
 
-  -- Requirement 4: Explicit commercial_origin state matrix check for chapter unlock
+  -- Explicit commercial_origin state matrix check for chapter unlock
   if v_origin is null or v_origin = 'PENDING_PAID_START' then
     return jsonb_build_object('ok', false, 'reason', 'COMMERCIAL_STATE_INVALID', 'commercial_origin', v_origin);
   end if;
@@ -184,11 +229,7 @@ begin
 end;
 $$;
 
--- 4) RPC: reserve_story_start_v1
--- Reserve 24 credits for story start (#2+).
--- Checks DB ownership, canonical story_mode (personalized_ai, premium_instance), and visibility.
--- Requirement 3: Proves lifetime starter entitlement has ALREADY been claimed by account, and story is NOT starter story.
--- Checks current commercial_origin pre-state (allowed: NULL or exact same reservation replay).
+-- 5) RPC: reserve_story_start_v1
 create or replace function public.reserve_story_start_v1(
   p_user_id  uuid,
   p_story_id text
@@ -228,7 +269,7 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'NOT_ELIGIBLE_STORY_MODE');
   end if;
 
-  -- Requirement 3: Account Must Have Claimed Starter Story First
+  -- Account Must Have Claimed Starter Story First
   select * into v_state from public.account_commercial_states where user_id = p_user_id for update;
   if not found or v_state.starter_claimed_at is null then
     return jsonb_build_object('ok', false, 'reason', 'STORY_START_NOT_REQUIRED', 'detail', 'FIRST_STORY_MUST_USE_STARTER_FLOW');
@@ -238,7 +279,7 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'STARTER_STORY_CANNOT_RESERVE_STORY_START');
   end if;
 
-  -- Requirement 3: Check commercial_origin pre-state
+  -- Check commercial_origin pre-state
   if v_origin in ('STARTER_FREE', 'PAID_START', 'LEGACY_GRANDFATHERED', 'ADMIN_GRANTED') then
     return jsonb_build_object('ok', false, 'reason', 'COMMERCIAL_ORIGIN_ALREADY_COMMITTED', 'commercial_origin', v_origin);
   end if;
@@ -293,11 +334,7 @@ begin
 end;
 $$;
 
--- 5) RPC: capture_credit_reservation_v1
--- Phase 1: FINANCIAL PRIMITIVE FOR CHAPTER_UNLOCK ONLY.
--- Generic capture MUST NOT capture STORY_START (returns 'requires_story_finalize').
--- Requirement 5 Hardening: Validates existing canonical ledger ref. If exact match -> idempotent success.
--- If mismatch -> raises IDEMPOTENCY_CONFLICT exception and DO NOT mark reservation CAPTURED.
+-- 6) RPC: capture_credit_reservation_v1
 create or replace function public.capture_credit_reservation_v1(
   p_ref text
 ) returns text
@@ -348,7 +385,7 @@ begin
   v_canonical_ref := 'unlock:' || v_res.story_id || ':' || coalesce(v_res.chapter_number::text, '1');
   v_reason := 'unlock_chapter';
 
-  -- Requirement 5: Fail-closed canonical ledger conflict validation
+  -- Fail-closed canonical ledger conflict validation
   select * into v_ledger_row from public.credit_ledger where ref = v_canonical_ref;
   if found then
     if v_ledger_row.user_id = v_res.user_id and v_ledger_row.delta = -v_res.amount and v_ledger_row.reason = v_reason then
@@ -373,7 +410,7 @@ begin
 end;
 $$;
 
--- 6) RPC: release_credit_reservation_v1
+-- 7) RPC: release_credit_reservation_v1
 create or replace function public.release_credit_reservation_v1(
   p_ref text
 ) returns text
@@ -416,13 +453,21 @@ begin
 end;
 $$;
 
--- 7) SECURITY & ACL HARDENING
+-- 8) SECURITY & ACL HARDENING
+REVOKE ALL ON FUNCTION public.credit_balance_v1(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.grant_credits_v1(uuid, text, integer, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.spend_credits_v1(uuid, text, integer, text) FROM PUBLIC, anon, authenticated;
+
 REVOKE ALL ON FUNCTION public.available_credit_balance_v1(uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.expire_user_reservations_lazy_v1(uuid) FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION public.reserve_chapter_unlock_v1(uuid, text, integer) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.reserve_story_start_v1(uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.capture_credit_reservation_v1(text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.release_credit_reservation_v1(text) FROM PUBLIC, anon, authenticated;
+
+GRANT EXECUTE ON FUNCTION public.credit_balance_v1(uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.grant_credits_v1(uuid, text, integer, text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.spend_credits_v1(uuid, text, integer, text) TO service_role;
 
 GRANT EXECUTE ON FUNCTION public.available_credit_balance_v1(uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.reserve_chapter_unlock_v1(uuid, text, integer) TO service_role;

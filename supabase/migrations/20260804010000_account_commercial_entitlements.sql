@@ -1,7 +1,6 @@
 -- Migration 20260804010000_account_commercial_entitlements.sql
--- Account commercial states, starter story claim, welcome grant (with strict idempotency validation),
--- explicit commercial_origin column without unsafe permanent default, hardened spend_credits_v1 (reservation-aware),
--- story_mode commercial authority enforcement, and strict ACL hardening.
+-- Account commercial states, legacy starter account backfill, server-authoritative welcome cutoff (+20 for new users only),
+-- explicit commercial_origin column without unsafe permanent default, pricing_version updates, and strict ACL hardening.
 
 -- 1) Account Commercial States table (INTERNAL ONLY - NO READER RLS ACCESS)
 create table if not exists public.account_commercial_states (
@@ -32,64 +31,36 @@ where owner_user_id is not null
   and id not like 'demo:%'
   and commercial_origin is null;
 
--- 3) Seed/update canonical DB pricing in feature_credit_costs (chapter_unlock = 8, story_start = 24)
+-- Deterministic legacy account backfill for existing users who already own >=1 eligible commercial story
+insert into public.account_commercial_states (user_id, starter_story_id, starter_claimed_at, updated_at)
+select distinct on (s.owner_user_id)
+  s.owner_user_id,
+  s.id as starter_story_id,
+  s.created_at as starter_claimed_at,
+  clock_timestamp() as updated_at
+from public.stories s
+where s.owner_user_id is not null
+  and s.story_mode in ('personalized_ai', 'premium_instance')
+  and s.visibility in ('private', 'unlisted')
+  and s.id not like 'demo:%'
+order by s.owner_user_id, s.created_at asc, s.id asc
+on conflict (user_id) do update set
+  starter_story_id = coalesce(account_commercial_states.starter_story_id, excluded.starter_story_id),
+  starter_claimed_at = coalesce(account_commercial_states.starter_claimed_at, excluded.starter_claimed_at),
+  updated_at = clock_timestamp();
+
+-- 3) Seed/update canonical DB pricing in feature_credit_costs (chapter_unlock = 8, story_start = 24, with updated pricing_version)
 insert into public.feature_credit_costs (feature_key, credits_required, is_active, pricing_version)
 values
-  ('chapter_unlock', 8, true, 'v1.1'),
-  ('story_start', 24, true, 'v1.1')
+  ('chapter_unlock', 8, true, 'v1.1-202608'),
+  ('story_start', 24, true, 'v1.1-202608')
 on conflict (feature_key) do update
 set credits_required = excluded.credits_required,
+    pricing_version = excluded.pricing_version,
     is_active = true,
     updated_at = clock_timestamp();
 
--- 4) RPC: spend_credits_v1 (HARDENED: Reservation-Aware Spend)
-create or replace function public.spend_credits_v1(
-  p_user_id uuid,
-  p_ref     text,
-  p_credits integer,
-  p_reason  text
-) returns text
-language plpgsql security definer set search_path = public
-as $$
-declare
-  v_available integer;
-  v_rows      integer;
-begin
-  if p_user_id is null or p_ref is null or trim(p_ref) = '' or p_credits is null or p_credits <= 0 then
-    raise exception 'spend_credits_v1: invalid arguments';
-  end if;
-
-  -- Uniform Advisory User Lock
-  perform pg_advisory_xact_lock(hashtext(p_user_id::text));
-
-  -- Idempotency Check
-  if exists (select 1 from public.credit_ledger where ref = p_ref) then
-    return 'duplicate';
-  end if;
-
-  -- Lazy cleanup of expired reservations under advisory lock
-  perform public.expire_user_reservations_lazy_v1(p_user_id);
-
-  -- Available balance excludes ACTIVE unexpired reservations
-  v_available := public.available_credit_balance_v1(p_user_id);
-  if v_available < p_credits then
-    return 'insufficient';
-  end if;
-
-  insert into public.credit_ledger (user_id, delta, reason, ref)
-  values (p_user_id, -p_credits, p_reason, p_ref)
-  on conflict (ref) do nothing;
-
-  get diagnostics v_rows = row_count;
-  if v_rows = 0 then
-    return 'duplicate';
-  end if;
-
-  return 'ok';
-end;
-$$;
-
--- 5) RPC: claim_starter_story_v1
+-- 4) RPC: claim_starter_story_v1
 -- Concurrency-safe via pg_advisory_xact_lock. Authority is starter_claimed_at IS NOT NULL.
 -- Checks DB story ownership, story_mode (personalized_ai, premium_instance), and visibility.
 create or replace function public.claim_starter_story_v1(
@@ -166,25 +137,44 @@ begin
 end;
 $$;
 
--- 6) RPC: grant_welcome_credit_v1
+-- 5) RPC: grant_welcome_credit_v1
+-- Server-authoritative welcome bonus (+20 credits).
+-- VERIFIES auth.users.created_at AGAINST WELCOME CUTOFF ('2026-08-04 00:00:00+00').
+-- Old accounts created before cutoff are NOT eligible for +20.
 create or replace function public.grant_welcome_credit_v1(
   p_user_id uuid
 ) returns jsonb
 language plpgsql security definer set search_path = public
 as $$
 declare
-  v_state        public.account_commercial_states%rowtype;
-  v_ref          text;
-  v_granted      boolean;
-  v_ledger_row   public.credit_ledger%rowtype;
-  c_welcome_amount constant integer := 20;
+  v_user_created_at timestamptz;
+  v_state           public.account_commercial_states%rowtype;
+  v_ref             text;
+  v_granted         boolean;
+  v_ledger_row      public.credit_ledger%rowtype;
+  c_welcome_amount   constant integer := 20;
+  c_welcome_cutoff  constant timestamptz := '2026-08-04 00:00:00+00'::timestamptz;
 begin
   if p_user_id is null then
     raise exception 'grant_welcome_credit_v1: invalid arguments';
   end if;
 
-  -- Shared lock for all user credit & commercial entitlement mutations
+  -- Uniform lock for user credit & commercial entitlement mutations
   perform pg_advisory_xact_lock(hashtext(p_user_id::text));
+
+  -- Check auth.users created_at against cutoff date
+  select created_at into v_user_created_at from auth.users where id = p_user_id;
+  if not found then
+    raise exception 'grant_welcome_credit_v1: user % not found', p_user_id;
+  end if;
+
+  if v_user_created_at < c_welcome_cutoff then
+    return jsonb_build_object(
+      'ok', false,
+      'granted', false,
+      'reason', 'NOT_ELIGIBLE_ACCOUNT_CREATED_BEFORE_WELCOME_CUTOFF'
+    );
+  end if;
 
   insert into public.account_commercial_states (user_id)
   values (p_user_id)
@@ -230,16 +220,9 @@ begin
 end;
 $$;
 
--- 7) SECURITY & ACL HARDENING
-REVOKE ALL ON FUNCTION public.credit_balance_v1(uuid) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.grant_credits_v1(uuid, text, integer, text) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.spend_credits_v1(uuid, text, integer, text) FROM PUBLIC, anon, authenticated;
-
+-- 6) SECURITY & ACL HARDENING
 REVOKE ALL ON FUNCTION public.claim_starter_story_v1(uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.grant_welcome_credit_v1(uuid) FROM PUBLIC, anon, authenticated;
 
-GRANT EXECUTE ON FUNCTION public.credit_balance_v1(uuid) TO service_role;
-GRANT EXECUTE ON FUNCTION public.grant_credits_v1(uuid, text, integer, text) TO service_role;
-GRANT EXECUTE ON FUNCTION public.spend_credits_v1(uuid, text, integer, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.claim_starter_story_v1(uuid, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.grant_welcome_credit_v1(uuid) TO service_role;

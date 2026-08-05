@@ -128,8 +128,14 @@ function main(): void {
     },
     withConstraintExclusions,
   )
+  // Single migration surface for every validation path: the main check, the
+  // hardening check, and all expectDrift() negative tests must exercise the
+  // SAME transformed SQL. Mixing the untransformed baseline into the negative
+  // tests would make them false-positive (the baseline would fail on its own
+  // known constraint drift, not on the injected mutation).
+  const validationMigration = migrationWithConstraintHashes
   const before = snapshot(target)
-  execLocalPsql(target, migrationWithConstraintHashes, {}, 30_000)
+  execLocalPsql(target, validationMigration, {}, 30_000)
   const after = snapshot(target)
   if (after !== before) throw new Error('runtime baseline sentinel: validation-only path mutated catalog')
 
@@ -138,7 +144,7 @@ function main(): void {
 begin;
 grant execute on function public.acquire_generation_lease(text,integer,text,integer,text) to public;
 grant execute on function public.publish_chapter(text,integer,text,jsonb,text,jsonb,jsonb,uuid,text) to public;
-${migrationWithConstraintHashes}
+${validationMigration}
 ${hardeningMigration}
 do $acl_hardened$
 begin
@@ -160,31 +166,31 @@ rollback;
 
   expectDrift(
     target,
-    migration,
+    validationMigration,
     "alter table public.generation_leases alter column status set default 'RELEASED';",
     'column default',
   )
   expectDrift(
     target,
-    migration,
+    validationMigration,
     'revoke execute on function public.acquire_generation_lease(text,integer,text,integer,text) from service_role;',
     'function ACL',
   )
   expectDrift(
     target,
-    migration,
+    validationMigration,
     'grant execute on function public.release_generation_lease(text,uuid) to public;',
     'unknown legacy function ACL',
   )
   expectDrift(
     target,
-    migration,
+    validationMigration,
     'drop function public.story_is_public(text) cascade;',
     'pre-history policy helper',
   )
   expectDrift(
     target,
-    migration,
+    validationMigration,
     'alter table public.generation_leases add constraint generation_leases_unexpected_check check (chapter_number > 0);',
     'unexpected constraint',
   )

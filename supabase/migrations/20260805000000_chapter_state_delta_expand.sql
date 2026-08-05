@@ -145,10 +145,10 @@ comment on column public.chapter_generation_checkpoints.base_canon_revision is
 -- ──────────────────────────────────────────────────────────────────────────────
 -- Row per (reader, story, debt, milestone_chapter) — NOT a mutable array.
 -- Two retries paying milestone 45 collide on the unique key instead of racing
--- on a read-modify-write array. Security posture mirrors the closure ledger:
--- zero direct mutation for every role including service_role; INSERT only via
--- the A1c security-definer publisher. RLS is NOT enabled; protection is from
--- revoke + security-definer.
+-- on a read-modify-write array. Security posture: zero direct mutation for
+-- every role including service_role (revoke all) — INSERT only via the A1c
+-- security-definer publisher — and RLS enabled with zero policies so direct
+-- access stays closed even if grants are later re-added.
 
 create table public.reader_plot_debt_progress (
   user_id               uuid not null,

@@ -10,27 +10,37 @@ const REQUEST_COLUMNS = 'story_id,request_hash,status,error_code' as const
 const TARGET_COLUMNS = 'id,owner_user_id,visibility,source_story_id,story_mode' as const
 const CHAPTER_COLUMNS = 'story_id,number' as const
 const MAX_RESERVATION_ATTEMPTS = 3
-const MAX_STORY_ID_LENGTH = 120
+const MAX_STORY_ID_LENGTH = 128
 
 const IdempotencyKeySchema = z.string().trim().min(1).max(240).regex(/^[\x21-\x7E]+$/)
 const UserIdSchema = z.string().uuid()
 const TemplateIdSchema = z.string().min(1).max(120).regex(/^premium:[a-z0-9]+(?:-[a-z0-9]+)*$/)
 
-const CreationRequestSchema = z.object({
-  story_id: z.string().min(1),
-  request_hash: z.string().min(1),
-  status: z.enum(['RESERVED', 'READY', 'FAILED', 'WAITING_FOR_CREDITS']),
-  error_code: z.string().nullable().optional(),
-}).strict()
+const CreationRequestSchema = z
+  .object({
+    story_id: z.string().min(1),
+    request_hash: z.string().length(64),
+    status: z.enum(['RESERVED', 'READY', 'FAILED', 'WAITING_FOR_CREDITS']),
+    error_code: z.string().nullable().optional(),
+  })
+  .strict()
 
-const TargetStorySchema = z.object({
-  id: z.string().min(1),
-  owner_user_id: z.string().uuid(),
-  visibility: z.literal('private'),
-  source_story_id: z.string().min(1),
-  story_mode: z.literal('premium_instance'),
-  commercial_origin: z.string().nullable().optional(),
-})
+const TargetStorySchema = z
+  .object({
+    id: z.string().min(1),
+    owner_user_id: z.string().uuid(),
+    visibility: z.literal('private'),
+    source_story_id: z.string().min(1),
+    story_mode: z.literal('premium_instance'),
+    commercial_origin: z.string().nullable().optional(),
+  })
+  .strict()
+
+export interface PremiumCloneResult {
+  storyId: string
+  redirectUrl: string
+  replayed: boolean
+}
 
 const CloneRpcResultSchema = z.discriminatedUnion('ok', [
   z.object({
@@ -79,13 +89,13 @@ export type PremiumCloneErrorCode =
   | 'INTERNAL_ERROR'
 
 export class PremiumCloneError extends Error {
-  public readonly result?: { storyId: string; redirectUrl: string; replayed: boolean }
+  public readonly result?: PremiumCloneResult
   public readonly requiredCredits?: number
   public readonly availableCredits?: number
 
   constructor(
     public readonly code: PremiumCloneErrorCode,
-    result?: { storyId: string; redirectUrl: string; replayed: boolean },
+    result?: PremiumCloneResult,
     requiredCredits?: number,
     availableCredits?: number,
   ) {

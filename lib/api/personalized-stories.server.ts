@@ -41,31 +41,38 @@ const ClaimStarterRpcResultSchema = z.object({
   claimed: z.boolean(),
 })
 
-function shellMetadata(contractTitle: string, contractGenre: string, tropes: string[]) {
-  return {
-    title: contractTitle || 'Cerita Pribadi',
-    cover: '/covers/default-personalized.webp',
-    tagline: contractGenre ? `Kisah ${contractGenre} interaktif.` : 'Cerita personal sedang disiapkan...',
-    role: 'Pemeran Utama',
-    tropes: Array.isArray(tropes) ? tropes.slice(0, 5) : [],
-    synopsis: 'Kisah interaktif yang dibuat khusus berdasarkan pilihan dan selera Anda.',
-  }
+function redirectUrlFor(storyId: string): string {
+  return `/baca/${encodeURIComponent(storyId)}?bab=1`
 }
 
 export function tasteProfileVersion(profile: TasteProfile): number {
-  return profile.version ?? 2
+  return typeof profile.version === 'number' ? profile.version : 1
 }
 
 export function buildPersonalizedRequestHash(input: {
   userId: string
   tasteProfileVersion: number
 }): string {
-  const payload = JSON.stringify({
-    kind: REQUEST_KIND,
-    userId: input.userId,
-    tasteProfileVersion: input.tasteProfileVersion,
-  })
-  return createHash('sha256').update(payload).digest('hex')
+  return createHash('sha256')
+    .update(JSON.stringify({
+      kind: REQUEST_KIND,
+      userId: input.userId,
+      tasteProfileVersion: input.tasteProfileVersion,
+    }))
+    .digest('hex')
+}
+
+function shellMetadata(contractTitle: string, contractGenre: string, tropes: string[]) {
+  const title = contractTitle.trim() || 'Cerita Pribadi'
+  const tagline = contractGenre.trim() || 'Drama interaktif personal'
+  return {
+    title: title.slice(0, 160),
+    cover: '/covers/default-cover.webp',
+    tagline: tagline.slice(0, 200),
+    role: 'Pembaca sebagai tokoh utama',
+    tropes: tropes.slice(0, 8),
+    synopsis: `Cerita pribadi bergenre ${tagline}.`.slice(0, 800),
+  }
 }
 
 export type PersonalizedStoryErrorCode =
@@ -108,7 +115,7 @@ export interface CreatePersonalizedStoryResult {
 function resultFor(storyId: string, replayed: boolean): CreatePersonalizedStoryResult {
   return {
     storyId,
-    redirectUrl: `/baca/${encodeURIComponent(storyId)}?bab=1`,
+    redirectUrl: redirectUrlFor(storyId),
     replayed,
   }
 }

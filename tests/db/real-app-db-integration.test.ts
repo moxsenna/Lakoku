@@ -30,9 +30,25 @@ process.env.SUPABASE_URL = status.url
 process.env.SUPABASE_SERVICE_ROLE_KEY = status.key
 
 import { createAdminClient } from '@/lib/supabase/admin'
-import { applyPersonalizedChoice, PersonalizedChoiceError } from '@/lib/api/personalized-choice.server'
+import { applyPersonalizedChoice } from '@/lib/api/personalized-choice.server'
 import { createPersonalizedStory, PersonalizedStoryError } from '@/lib/api/personalized-stories.server'
 import { clonePremiumStoryForUser, PremiumCloneError } from '@/lib/api/premium-clone.server'
+
+const selectProviderSpy = vi.fn()
+const createResilientStoryContractSpy = vi.fn()
+const generateNextPersonalizedChapterSpy = vi.fn()
+
+vi.mock('@/lib/ai-gateway/router', () => ({
+  selectProvider: (...args: unknown[]) => selectProviderSpy(...args),
+}))
+
+vi.mock('@/lib/story-engine/contract-generation.server', () => ({
+  createResilientStoryContract: (...args: unknown[]) => createResilientStoryContractSpy(...args),
+}))
+
+vi.mock('@/lib/runtime/personalized-generation', () => ({
+  generateNextPersonalizedChapter: (...args: unknown[]) => generateNextPersonalizedChapterSpy(...args),
+}))
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => {
@@ -284,6 +300,10 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
       errToVerify = err
     }
 
+    expect(selectProviderSpy).toHaveBeenCalledTimes(0)
+    expect(createResilientStoryContractSpy).toHaveBeenCalledTimes(0)
+    expect(generateNextPersonalizedChapterSpy).toHaveBeenCalledTimes(0)
+
     expect(errToVerify).toBeInstanceOf(PersonalizedStoryError)
     const pErr = errToVerify as PersonalizedStoryError
     expect(pErr.code).toBe('COMMERCIAL_RUNTIME_NOT_READY')
@@ -309,7 +329,7 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
 
     expect(transitionedStory?.commercial_origin).toBe('PENDING_PAID_START')
 
-    // 6. Replay with same idempotency key returns same story ID and stops cleanly
+    // 6. Replay with same idempotency key returns same story ID and stops cleanly (0 provider calls)
     let replayErr: unknown
     try {
       await createPersonalizedStory({
@@ -321,6 +341,10 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
     }
     expect(replayErr).toBeInstanceOf(PersonalizedStoryError)
     expect((replayErr as PersonalizedStoryError).storyId).toBe(createdStoryId)
+
+    expect(selectProviderSpy).toHaveBeenCalledTimes(0)
+    expect(createResilientStoryContractSpy).toHaveBeenCalledTimes(0)
+    expect(generateNextPersonalizedChapterSpy).toHaveBeenCalledTimes(0)
   })
 
   it('clonePremiumStoryForUser Story #2 application orchestration: shell target created -> reserve_story_start_v1 updates origin to PENDING_PAID_START -> stops with COMMERCIAL_RUNTIME_NOT_READY (0 provider calls)', async () => {
@@ -369,5 +393,51 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
       .single()
 
     expect(transitionedStory?.commercial_origin).toBe('PENDING_PAID_START')
+    expect(generateNextPersonalizedChapterSpy).toHaveBeenCalledTimes(0)
+  })
+
+  it('rejects non-canonical reservation ref in resolveCommercialAuthorization against local DB', async () => {
+    const testStoryId = `story-non-canon-${Date.now()}`
+    await admin.from('stories').insert({
+      id: testStoryId,
+      owner_user_id: userId,
+      title: 'Test Story',
+      cover: '/covers/default.webp',
+      tagline: 'Test',
+      role: 'Tokoh',
+      tropes: [],
+      total_chapters: 50,
+      synopsis: 'Test',
+      status: 'BARU',
+      current_chapter: 0,
+      jejak: [],
+      visibility: 'private',
+      story_mode: 'personalized_ai',
+      commercial_origin: 'PENDING_PAID_START',
+    })
+
+    // Insert active reservation with a deliberately non-canonical ref format
+    const expiresAt = new Date(Date.now() + 3600000).toISOString()
+    const { error: resErr } = await admin.from('credit_reservations').insert({
+      user_id: userId,
+      story_id: testStoryId,
+      chapter_number: 1,
+      reservation_kind: 'STORY_START',
+      amount: 24,
+      ref: `non-canonical-ref:${testStoryId}:1`,
+      status: 'ACTIVE',
+      expires_at: expiresAt,
+    })
+    expect(resErr).toBeNull()
+
+    const { resolveCommercialAuthorization } = await import('@/lib/commercial/resolver.server')
+    const decision = await resolveCommercialAuthorization({
+      userId,
+      storyId: testStoryId,
+      chapterNumber: 1,
+    })
+
+    expect(decision.status).toBe('NEEDS_RESERVATION')
+    expect(decision.reservationRef).toBeUndefined()
   })
 })

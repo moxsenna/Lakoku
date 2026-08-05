@@ -66,6 +66,18 @@ describe('Phase 2A Commercial Anti-Abuse Runtime', () => {
               }),
             }
           }
+          if (table === 'account_commercial_states') {
+            return {
+              select: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: { starter_story_id: 'story-1', starter_claimed_at: '2026-08-01T00:00:00Z' },
+                    error: null,
+                  }),
+                }),
+              }),
+            }
+          }
           return {}
         }),
       }
@@ -80,6 +92,61 @@ describe('Phase 2A Commercial Anti-Abuse Runtime', () => {
       expect(result.status).toBe('AUTHORIZED')
       expect(result.origin).toBe('STARTER_FREE')
       expect(result.requiredCredits).toBe(0)
+    })
+
+    it('denies STARTER_FREE authorization if account starter_story_id mismatches', async () => {
+      const mockDb = {
+        from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'feature_credit_costs') {
+            return {
+              select: () => ({
+                in: async () => ({ data: mockFeatureCreditCosts, error: null }),
+              }),
+            }
+          }
+          if (table === 'stories') {
+            return {
+              select: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: {
+                      id: 'story-1',
+                      owner_user_id: 'user-1',
+                      story_mode: 'personalized_ai',
+                      commercial_origin: 'STARTER_FREE',
+                      visibility: 'private',
+                    },
+                    error: null,
+                  }),
+                }),
+              }),
+            }
+          }
+          if (table === 'account_commercial_states') {
+            return {
+              select: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: { starter_story_id: 'story-other', starter_claimed_at: '2026-08-01T00:00:00Z' },
+                    error: null,
+                  }),
+                }),
+              }),
+            }
+          }
+          return {}
+        }),
+      }
+      mockCreateAdminClient.mockReturnValue(mockDb as unknown as ReturnType<typeof createAdminClient>)
+
+      const result = await resolveCommercialAuthorization({
+        userId: 'user-1',
+        storyId: 'story-1',
+        chapterNumber: 1,
+      })
+
+      expect(result.status).toBe('DENIED')
+      expect(result.reason).toBe('STARTER_IDENTITY_MISMATCH')
     })
 
     it('requires 8 credits reservation for Bab 4 on STARTER_FREE story', async () => {
@@ -113,6 +180,18 @@ describe('Phase 2A Commercial Anti-Abuse Runtime', () => {
                       commercial_origin: 'STARTER_FREE',
                       visibility: 'private',
                     },
+                    error: null,
+                  }),
+                }),
+              }),
+            }
+          }
+          if (table === 'account_commercial_states') {
+            return {
+              select: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: { starter_story_id: 'story-1', starter_claimed_at: '2026-08-01T00:00:00Z' },
                     error: null,
                   }),
                 }),

@@ -62,19 +62,52 @@ export async function resolveCommercialAuthorization(input: {
     return { status: 'DENIED', origin: story.commercial_origin, requiredCredits: 0, reason: 'NOT_COMMERCIAL_MODE' }
   }
 
+  // Commercial story mode requires private or unlisted visibility
+  if (story.visibility !== 'private' && story.visibility !== 'unlisted') {
+    return { status: 'DENIED', origin: story.commercial_origin, requiredCredits: 0, reason: 'NOT_ELIGIBLE_STORY' }
+  }
+
   const origin = story.commercial_origin
+  const targetStoryId = story.id
+
+  // Helper for STARTER_FREE identity validation against account_commercial_states
+  async function verifyStarterIdentity(): Promise<CommercialAuthorizationDecision | null> {
+    const { data: accountState, error: accountErr } = await db
+      .from('account_commercial_states')
+      .select('starter_story_id, starter_claimed_at')
+      .eq('user_id', input.userId)
+      .maybeSingle()
+
+    if (accountErr) {
+      return { status: 'DENIED', origin, requiredCredits: 0, reason: 'INTERNAL_CONFIG_ERROR' }
+    }
+    if (
+      !accountState
+      || accountState.starter_story_id !== targetStoryId
+      || accountState.starter_claimed_at == null
+    ) {
+      return { status: 'DENIED', origin, requiredCredits: 0, reason: 'STARTER_IDENTITY_MISMATCH' }
+    }
+    return null
+  }
 
   // 3. Bab 1-3 for STARTER_FREE, PAID_START, LEGACY_GRANDFATHERED
   if (input.chapterNumber >= 1 && input.chapterNumber <= 3) {
-    if (origin === 'STARTER_FREE' || origin === 'PAID_START' || origin === 'LEGACY_GRANDFATHERED') {
+    if (origin === 'STARTER_FREE') {
+      const mismatch = await verifyStarterIdentity()
+      if (mismatch) return mismatch
+      return { status: 'AUTHORIZED', origin, requiredCredits: 0 }
+    }
+    if (origin === 'PAID_START' || origin === 'LEGACY_GRANDFATHERED') {
       return { status: 'AUTHORIZED', origin, requiredCredits: 0 }
     }
     if (origin === 'PENDING_PAID_START') {
       if (input.chapterNumber === 1) {
-        // Check exact active STORY_START reservation matching Phase 1 schema
+        // Check exact active STORY_START reservation matching canonical ref: story-start:${userId}:${storyId}
+        const canonicalRef = `story-start:${input.userId}:${input.storyId}`
         const { data: res, error: resErr } = await db
           .from('credit_reservations')
-          .select('ref, amount, status, expires_at')
+          .select('ref, amount, status, expires_at, user_id, story_id, chapter_number, reservation_kind')
           .eq('user_id', input.userId)
           .eq('story_id', input.storyId)
           .eq('chapter_number', 1)
@@ -87,7 +120,16 @@ export async function resolveCommercialAuthorization(input: {
           return { status: 'DENIED', origin, requiredCredits: storyStartPrice, reason: 'INTERNAL_CONFIG_ERROR' }
         }
 
-        if (res && res.amount === storyStartPrice) {
+        if (
+          res
+          && res.ref === canonicalRef
+          && res.user_id === input.userId
+          && res.story_id === input.storyId
+          && res.chapter_number === 1
+          && res.reservation_kind === 'STORY_START'
+          && res.status === 'ACTIVE'
+          && res.amount === storyStartPrice
+        ) {
           return { status: 'AUTHORIZED', origin, requiredCredits: storyStartPrice, reservationRef: res.ref }
         }
         return { status: 'NEEDS_RESERVATION', origin, requiredCredits: storyStartPrice }
@@ -104,11 +146,17 @@ export async function resolveCommercialAuthorization(input: {
       return { status: 'DENIED', origin, requiredCredits: 0, reason: 'STORY_START_PENDING' }
     }
 
+    if (origin === 'STARTER_FREE') {
+      const mismatch = await verifyStarterIdentity()
+      if (mismatch) return mismatch
+    }
+
     if (origin === 'STARTER_FREE' || origin === 'PAID_START' || origin === 'LEGACY_GRANDFATHERED') {
-      // Check exact active CHAPTER_UNLOCK reservation matching Phase 1 schema
+      // Check exact active CHAPTER_UNLOCK reservation matching canonical ref: chapter-reservation:${userId}:${storyId}:${chapterNumber}
+      const canonicalRef = `chapter-reservation:${input.userId}:${input.storyId}:${input.chapterNumber}`
       const { data: res, error: resErr } = await db
         .from('credit_reservations')
-        .select('ref, amount, status, expires_at')
+        .select('ref, amount, status, expires_at, user_id, story_id, chapter_number, reservation_kind')
         .eq('user_id', input.userId)
         .eq('story_id', input.storyId)
         .eq('chapter_number', input.chapterNumber)
@@ -121,7 +169,16 @@ export async function resolveCommercialAuthorization(input: {
         return { status: 'DENIED', origin, requiredCredits: chapterUnlockPrice, reason: 'INTERNAL_CONFIG_ERROR' }
       }
 
-      if (res && res.amount === chapterUnlockPrice) {
+      if (
+        res
+        && res.ref === canonicalRef
+        && res.user_id === input.userId
+        && res.story_id === input.storyId
+        && res.chapter_number === input.chapterNumber
+        && res.reservation_kind === 'CHAPTER_UNLOCK'
+        && res.status === 'ACTIVE'
+        && res.amount === chapterUnlockPrice
+      ) {
         return { status: 'AUTHORIZED', origin, requiredCredits: chapterUnlockPrice, reservationRef: res.ref }
       }
       return { status: 'NEEDS_RESERVATION', origin, requiredCredits: chapterUnlockPrice }

@@ -52,6 +52,8 @@ export type PremiumCloneErrorCode =
   | 'INVALID_TEMPLATE'
   | 'GENERATION_IN_PROGRESS'
   | 'GENERATION_FAILED'
+  | 'INSUFFICIENT_CREDITS'
+  | 'COMMERCIAL_RUNTIME_NOT_READY'
   | 'INTERNAL_ERROR'
 
 export interface PremiumCloneResult {
@@ -329,6 +331,59 @@ export async function clonePremiumStoryForUser(input: {
     userId: input.userId,
     templateStoryId: input.templateStoryId,
   })
+
+  // COMMERCIAL AUTHORIZATION PRE-FLIGHT BEFORE AI PROVIDER CALL
+  const { data: accountState } = await admin
+    .from('account_commercial_states')
+    .select('starter_story_id, starter_claimed_at')
+    .eq('user_id', input.userId)
+    .maybeSingle()
+
+  const hasClaimedStarter = Boolean(accountState?.starter_claimed_at || accountState?.starter_story_id)
+
+  if (!hasClaimedStarter) {
+    if (typeof admin.rpc === 'function') {
+      const { data: claimData, error: claimErr } = await admin.rpc('claim_starter_story_v1', {
+        p_user_id: input.userId,
+        p_story_id: reserved.row.story_id,
+      })
+      if (!claimErr && claimData && typeof claimData === 'object' && 'claimed' in claimData && claimData.claimed) {
+        await admin.rpc('grant_welcome_credit_v1', { p_user_id: input.userId }).then(() => null, () => null)
+      }
+    }
+  } else {
+    if (typeof admin.rpc === 'function') {
+      const { data: resData, error: resErr } = await admin.rpc('reserve_story_start_v1', {
+        p_user_id: input.userId,
+        p_story_id: reserved.row.story_id,
+      })
+      const isInsufficient = resErr || (resData && typeof resData === 'object' && 'status' in resData && resData.status === 'insufficient') || String(resData) === 'insufficient'
+      if (isInsufficient) {
+        await admin
+          .from('story_creation_requests')
+          .update({
+            status: 'WAITING_FOR_CREDITS',
+            error_code: 'INSUFFICIENT_CREDITS',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('owner_user_id', input.userId)
+          .eq('request_kind', REQUEST_KIND)
+          .eq('idempotency_key', input.idempotencyKey)
+
+        throw new PremiumCloneError('INSUFFICIENT_CREDITS', identity)
+      }
+    }
+  }
+
+  const { data: storyRow } = await admin
+    .from('stories')
+    .select('commercial_origin')
+    .eq('id', reserved.row.story_id)
+    .maybeSingle()
+
+  if (storyRow?.commercial_origin === 'PENDING_PAID_START') {
+    throw new PremiumCloneError('COMMERCIAL_RUNTIME_NOT_READY', identity)
+  }
 
   if (!await chapterOneExists({ admin, storyId: reserved.row.story_id })) {
     let generated

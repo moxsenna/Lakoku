@@ -83,6 +83,16 @@ export async function POST(
       if (error.code === 'GENERATION_IN_PROGRESS' && error.result) {
         return NextResponse.json(successBody(error.result), { status: 202 })
       }
+      if (error.code === 'INSUFFICIENT_CREDITS') {
+        return NextResponse.json(
+          {
+            status: 'WAITING_FOR_CREDITS',
+            storyId: error.result?.storyId,
+            requiredCredits: 24,
+          },
+          { status: 402 },
+        )
+      }
       if (error.code === 'GENERATION_FAILED') {
         return NextResponse.json({ error: 'Bab pertama gagal dibuat.' }, { status: 422 })
       }

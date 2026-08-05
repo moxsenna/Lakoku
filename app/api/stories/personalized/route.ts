@@ -46,6 +46,16 @@ export async function POST(req: Request) {
           { status: 409 },
         )
       }
+      if (error.code === 'INSUFFICIENT_CREDITS') {
+        return NextResponse.json(
+          {
+            status: 'WAITING_FOR_CREDITS',
+            storyId: error.storyId,
+            requiredCredits: 24,
+          },
+          { status: 402 },
+        )
+      }
       return NextResponse.json({ error: 'Gagal membuat cerita personal.' }, { status: 500 })
     }
     return NextResponse.json({ error: 'Gagal membuat cerita personal.' }, { status: 500 })

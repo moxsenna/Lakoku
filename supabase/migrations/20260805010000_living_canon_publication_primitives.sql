@@ -31,17 +31,22 @@
 -- 9. publish_generation_job_chapter_v5(): worker publisher (V4 fencing +
 --    living canon gate, title/paragraphs/delta/closures ALL from locked
 --    checkpoint — caller supplies none of them, shared applier, commit
---    insert, canon revision increment, mirror V4 terminalization)
+--    insert, canon revision increment, mirror V4 terminalization; replay
+--    authority = the immutable commit ledger via lookup_chapter_commit_replay_v1
+--    evaluated under the LOCKED J — no dual-hash fast path, R3)
 --
 -- Lock order (final, both publishers):
---   V5: E1 → E2 → S(120712) → STORY FOR UPDATE → R → J → L → C → CONTRACT
---       → COMMIT lookup FOR UPDATE → writes
---   V3: E1 → E2 → S(120712) → STORY FOR UPDATE → R → L → C → CONTRACT
---       → COMMIT lookup FOR UPDATE → writes
+--   V5: E1 → E2 → S(120712) → STORY FOR UPDATE → R → J → [checkpoint pre-read
+--       + commit replay eval — pure SELECT, the ONLY replay authority, R3] →
+--       L → C FOR UPDATE (same-row hash re-verify) → CONTRACT → writes
+--   V3: E1 → E2 → S(120712) → STORY FOR UPDATE → R → [checkpoint pre-read +
+--       commit replay eval — pure SELECT] → L → C → CONTRACT → writes
 --   V4 (redefined): E1 → E2 → S(120712) → STORY FOR SHARE → gate → R → J → L → C
 -- Invariants: S before STORY, STORY before R, STORY before L, J before L,
--- L before C, C before COMMIT lookup. Commit row is read FOR UPDATE AFTER C;
--- serialization is the story row + advisory S (commit lookup is proof).
+-- L before C, C before writes. The commit ledger is evaluated by the shared
+-- 13-field replay machine as a pure SELECT BEFORE L/C (no FOR UPDATE — the
+-- ledger is immutable once written); serialization for NEW commits is the
+-- story row + advisory S + the unique (story_id, chapter_number).
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- 1. reader_plot_debt_closures.closed_by_job_id → nullable
@@ -2378,8 +2383,12 @@ declare
   v_proof_result jsonb;
   v_proof_valid boolean := false;
   v_checkpoint_publish_result jsonb;
-  v_result jsonb;
+    v_result jsonb;
   v_replay jsonb;
+  -- Commit's OWN base revision (R3): a successful retry arrives with the canon
+  -- already advanced by the first publication, so only the commit's own base
+  -- can satisfy the 13-field exact machine (mirror of V3).
+  v_replay_base bigint;
   v_now timestamptz;
   v_started_at timestamptz;
   v_elapsed_ms bigint;
@@ -2390,6 +2399,11 @@ declare
   v_closure_hash text;
   v_pub_hash text;
   v_state_delta_hash text;
+  -- C-lock re-derivation (R3): the locked row must hash-identically match the
+  -- J-pre-read values the replay evaluation used.
+  v_locked_closure_hash text;
+  v_locked_pub_hash text;
+  v_locked_delta_hash text;
   v_debt_id text;
   v_debt_obj jsonb;
   v_ledger_debts text[];
@@ -2398,12 +2412,16 @@ declare
   v_main_mystery_closed boolean;
 begin
   -- ═══════════════════════════════════════════════════════════════════════════
-  -- PHASE A — Pre-read (unlocked, for lock key + fast-path hash only)
+  -- PHASE A — Pre-read (unlocked, for LOCK KEYS only; NO successful return)
   -- ═══════════════════════════════════════════════════════════════════════════
-  -- Reads job + checkpoint WITHOUT lock. Values are UNTRUSTED until re-verified
-  -- under J/C locks in Phase C. The checkpoint pre-read only feeds the
-  -- SUCCEEDED fast path; Phase C re-derives every canonical value from the
-  -- LOCKED checkpoint.
+  -- The job row is pre-read WITHOUT lock to derive the lock keys (story,
+  -- chapter, user, ending lock targets). Values are UNTRUSTED until
+  -- re-verified under J. Replay authority is the immutable commit ledger
+  -- (lookup_chapter_commit_replay_v1), evaluated under the LOCKED J in Phase C
+  -- — the legacy SUCCEEDED dual-hash fast path is GONE (R3): publication +
+  -- closure hashes do not prove exact living-canon replay (they miss the
+  -- state_delta, correlation, base revision, schema, and actor/source
+  -- provenance).
 
   select j.* into v_preflight
   from public.generation_jobs j
@@ -2417,14 +2435,6 @@ begin
   if v_preflight.publication_idempotency_key is distinct from v_expected_key then
     raise exception using errcode = 'P0001', message = 'GENERATION_PUBLICATION_CONFLICT';
   end if;
-
-  select c.* into v_preflight_checkpoint
-  from public.chapter_generation_checkpoints c
-  where c.story_id = v_preflight.story_id
-    and c.chapter_number = v_preflight.chapter_number
-    and c.attempt_id = v_preflight.id
-    and c.job_id = v_preflight.id;
-  v_pre_checkpoint_found := found;
 
   -- Ending lock payload: both or neither; V5 endings exist only on ch45.
   if (p_ending_key is null) is distinct from (p_ending_name is null) then
@@ -2443,58 +2453,6 @@ begin
       or v_preflight.generation_kind is distinct from 'personalized'
       or v_preflight.chapter_number is distinct from 45 then
       raise exception using errcode = '22023', message = 'INVALID_ENDING_LOCK_TARGET';
-    end if;
-  end if;
-
-  -- Fast-path hashes from the PRE-READ checkpoint (untrusted; Phase C
-  -- re-derives from the locked row before any write).
-  if v_pre_checkpoint_found then
-    select coalesce(pg_catalog.jsonb_agg(
-      pg_catalog.jsonb_build_object(
-        'closureForm', item.closureForm,
-        'closedAtChapter', v_preflight.chapter_number,
-        'debtId', item.debtId
-      ) order by item.debtId
-    ), '[]'::jsonb)
-    into v_canonical_closures
-    from (
-      select
-        (elem->>'debtId') as debtId,
-        (elem->>'closureForm') as closureForm
-      from pg_catalog.jsonb_array_elements(
-        coalesce(v_preflight_checkpoint.audit_signals_json->'closesPlotDebts', '[]'::jsonb)      ) elem
-      order by (elem->>'debtId')
-    ) item;
-
-    v_closure_hash := pg_catalog.encode(
-      extensions.digest(
-        'generation-plot-debt-closures-v1' || v_canonical_closures::text,
-        'sha256'
-      ),
-      'hex'
-    );
-
-    v_pub_hash := public.chapter_publication_payload_hash_v1(
-      v_preflight.story_id, v_preflight.chapter_number,
-      v_preflight_checkpoint.title, v_preflight_checkpoint.paragraphs_json,
-      p_choice_prompt, p_choices, p_outcomes, p_ending_key, p_ending_name
-    );
-
-    -- Idempotent success fast path (unlocked, dual-hash verification).
-    if v_preflight.status = 'SUCCEEDED' and v_preflight.publication_result is not null then
-      if v_preflight.publication_payload_hash = v_pub_hash
-        and v_preflight.closure_payload_hash = v_closure_hash
-      then
-        return v_preflight.publication_result;
-      else
-        raise exception using errcode = 'P0001', message = 'IDEMPOTENCY_CONFLICT';
-      end if;
-    end if;
-  else
-    -- A SUCCEEDED job always published from an existing checkpoint (same
-    -- transaction). Missing checkpoint on a SUCCEEDED job is broken state.
-    if v_preflight.status = 'SUCCEEDED' and v_preflight.publication_result is not null then
-      raise exception using errcode = 'P0001', message = 'PROVENANCE_CONFLICT';
     end if;
   end if;
 
@@ -2584,6 +2542,108 @@ begin
     raise exception using errcode = '22023', message = 'INVALID_CHECKPOINT_PAYLOAD';
   end if;
 
+  -- ═══════════════════════════════════════════════════════════════════════════
+  -- PHASE C — Checkpoint pre-read + canonical replay evaluation (under J)
+  -- ═══════════════════════════════════════════════════════════════════════════
+  -- The worker checkpoint is read HERE without a row lock, but under the held
+  -- J FOR UPDATE: the A1b worker checkpoint writer claims J FOR UPDATE before
+  -- it writes lease/checkpoint state, so no legitimate writer can mutate this
+  -- row behind us. Global lock order stays J → L → C. The checkpoint is the
+  -- ONLY canonical source of state/prose/closures — the caller supplies
+  -- nothing; the hashes are re-derived from the LOCKED row after C and must
+  -- hash-identically match (fence below).
+  select c.* into v_preflight_checkpoint
+  from public.chapter_generation_checkpoints c
+  where c.story_id = v_job.story_id
+    and c.chapter_number = v_job.chapter_number
+    and c.attempt_id = v_job.id
+    and c.job_id = v_job.id;
+  v_pre_checkpoint_found := found;
+
+  if not v_pre_checkpoint_found then
+    raise exception using errcode = 'P0001', message = 'PROVENANCE_CONFLICT';
+  end if;
+  if v_preflight_checkpoint.checkpoint_schema_version <> 3
+    or v_preflight_checkpoint.correlation_id is distinct from v_job.correlation_id
+    or v_preflight_checkpoint.generation_mode is distinct from v_job.generation_kind
+    or v_preflight_checkpoint.status not in ('PROSE_READY','RUNNING_CHOICES','READY_TO_PUBLISH','PUBLISHED')
+    or v_preflight_checkpoint.state_delta_json is null
+    or v_preflight_checkpoint.state_delta_schema_version is distinct from 1
+  then
+    raise exception using errcode = 'P0001', message = 'PROVENANCE_CONFLICT';
+  end if;
+
+  -- Canonical closure set (with closedAtChapter) — same shape V4 hashes.
+  select coalesce(pg_catalog.jsonb_agg(
+    pg_catalog.jsonb_build_object(
+      'closureForm', item.closureForm,
+      'closedAtChapter', v_job.chapter_number,
+      'debtId', item.debtId
+    ) order by item.debtId
+  ), '[]'::jsonb)
+  into v_canonical_closures
+  from (
+    select elem->>'debtId' as debtId, elem->>'closureForm' as closureForm
+    from pg_catalog.jsonb_array_elements(
+      coalesce(v_preflight_checkpoint.audit_signals_json->'closesPlotDebts', '[]'::jsonb)
+    ) elem
+    order by (elem->>'debtId')
+  ) item;
+
+  v_closure_hash := pg_catalog.encode(
+    extensions.digest(
+      'generation-plot-debt-closures-v1' || v_canonical_closures::text,
+      'sha256'
+    ),
+    'hex'
+  );
+  v_pub_hash := public.chapter_publication_payload_hash_v1(
+    v_job.story_id, v_job.chapter_number,
+    v_preflight_checkpoint.title, v_preflight_checkpoint.paragraphs_json,
+    p_choice_prompt, p_choices, p_outcomes, p_ending_key, p_ending_name
+  );
+  v_state_delta_hash := public.chapter_state_delta_hash_v1(v_preflight_checkpoint.state_delta_json);
+
+  -- Replay authority = the immutable commit ledger (the SAME 13-field machine
+  -- V3 uses — R3 unifies V5 replay with it). The base revision is pre-read
+  -- FROM THE COMMIT, not the story: a successful retry always arrives with the
+  -- canon already advanced by the first publication, so only the commit's own
+  -- base can satisfy the exact machine (mirror of V3). A fresh publication has
+  -- no commit → base NULL → NO_COMMIT → the full lock/provenance path runs.
+  select c.base_canon_revision into v_replay_base
+  from public.chapter_state_commits c
+  where c.story_id = v_job.story_id
+    and c.chapter_number = v_job.chapter_number;
+
+  v_replay := public.lookup_chapter_commit_replay_v1(
+    v_job.story_id, v_job.chapter_number,
+    v_job.id, v_preflight_checkpoint.correlation_id,
+    v_replay_base, 1::smallint, v_state_delta_hash,
+    1::smallint, v_pub_hash,
+    'personalized'::text, v_job.user_id, v_job.id
+  );
+
+  -- EXACT_REPLAY → the SAME living-canon publication already exists in the
+  -- ledger: return the stored result (no lease, no fresh base needed — the
+  -- commit is the idempotency proof). CONFLICT → the checkpoint diverged from
+  -- what was committed: a SUCCEEDED job with a mismatched checkpoint is broken
+  -- provenance (R3 tests 2-3); a still-RUNNING job lost a publication race
+  -- (e.g. the V3/V5 cross-path race) → publication-level conflict.
+  if v_replay->>'state' = 'EXACT_REPLAY' then
+    return v_replay->'result';
+  end if;
+  if v_replay->>'state' = 'CONFLICT' then
+    if v_job.status = 'SUCCEEDED' and v_job.publication_result is not null then
+      raise exception using errcode = 'P0001', message = 'PROVENANCE_CONFLICT';
+    end if;
+    raise exception using errcode = 'P0001', message = 'PUBLICATION_CONFLICT';
+  end if;
+  -- NO_COMMIT: only a RUNNING job legitimately continues into L/C. A SUCCEEDED
+  -- job claiming success WITHOUT a ledger row is broken state → never SUCCESS.
+  if v_job.status = 'SUCCEEDED' and v_job.publication_result is not null then
+    raise exception using errcode = 'P0001', message = 'PROVENANCE_CONFLICT';
+  end if;
+
   -- L: lease lock.
   select l.* into v_lease
   from public.generation_leases l
@@ -2627,23 +2687,58 @@ begin
     raise exception using errcode = 'P0001', message = 'PROVENANCE_CONFLICT';
   end if;
 
-  -- Canon revision binding: the delta was computed against the exact revision
-  -- captured under the STORY lock. If the canon advanced between the writer
-  -- and this publication, the delta is stale — fail closed, never apply it.
-  if v_checkpoint.base_canon_revision is distinct from v_base_canon_revision then
-    raise exception using errcode = 'P0001', message = 'STALE_CANON_REVISION';
+  -- R3 fence — the LOCKED row must hash-identically match the J-pre-read
+  -- checkpoint the replay evaluation used. Re-derives every canonical value
+  -- from the locked row; divergence between the J-pre-read and the C lock
+  -- means the checkpoint mutated behind the publication → broken state.
+  select coalesce(pg_catalog.jsonb_agg(
+    pg_catalog.jsonb_build_object(
+      'closureForm', item.closureForm,
+      'closedAtChapter', v_job.chapter_number,
+      'debtId', item.debtId
+    ) order by item.debtId
+  ), '[]'::jsonb)
+  into v_canonical_closures
+  from (
+    select elem->>'debtId' as debtId, elem->>'closureForm' as closureForm
+    from pg_catalog.jsonb_array_elements(
+      coalesce(v_checkpoint.audit_signals_json->'closesPlotDebts', '[]'::jsonb)
+    ) elem
+    order by (elem->>'debtId')
+  ) item;
+
+  v_locked_closure_hash := pg_catalog.encode(
+    extensions.digest(
+      'generation-plot-debt-closures-v1' || v_canonical_closures::text,
+      'sha256'
+    ),
+    'hex'
+  );
+  v_locked_pub_hash := public.chapter_publication_payload_hash_v1(
+    v_job.story_id, v_job.chapter_number,
+    v_checkpoint.title, v_checkpoint.paragraphs_json,
+    p_choice_prompt, p_choices, p_outcomes, p_ending_key, p_ending_name
+  );
+  v_locked_delta_hash := public.chapter_state_delta_hash_v1(v_checkpoint.state_delta_json);
+
+  if v_locked_closure_hash is distinct from v_closure_hash
+    or v_locked_pub_hash is distinct from v_pub_hash
+    or v_locked_delta_hash is distinct from v_state_delta_hash
+  then
+    raise exception using errcode = 'P0001', message = 'PROVENANCE_CONFLICT';
   end if;
 
-  -- SUCCEEDED recheck (idempotent replay via dual hash), mirroring V4. The
-  -- job row is now locked; values are authoritative.
-  if v_job.status = 'SUCCEEDED' and v_job.publication_result is not null then
-    if v_job.publication_payload_hash = v_pub_hash
-      and v_job.closure_payload_hash = v_closure_hash
-    then
-      return v_job.publication_result;
-    else
-      raise exception using errcode = 'P0001', message = 'IDEMPOTENCY_CONFLICT';
-    end if;
+  -- Adopt the LOCKED-row hashes as authoritative for the commit ledger below.
+  v_closure_hash := v_locked_closure_hash;
+  v_pub_hash := v_locked_pub_hash;
+  v_state_delta_hash := v_locked_delta_hash;
+
+  -- Canon revision binding — ONLY the fresh-publication path reaches this point
+  -- (EXACT_REPLAY/CONFLICT/broken-SUCCEEDED already returned in Phase C). The
+  -- delta was computed against the exact revision captured under the STORY
+  -- lock; if the canon advanced in between, the delta is stale — fail closed.
+  if v_checkpoint.base_canon_revision is distinct from v_base_canon_revision then
+    raise exception using errcode = 'P0001', message = 'STALE_CANON_REVISION';
   end if;
 
   -- Ownership + runtime validation.
@@ -2718,40 +2813,6 @@ begin
   ) then
     raise exception using errcode = 'P0001', message = 'CHECKPOINT_CLOSURE_PAYLOAD_MISMATCH';
   end if;
-
-  -- Canonical closure set (with closedAtChapter) for the ledger-facing hash
-  -- and contract validation — same shape V4 hashes.
-  select coalesce(pg_catalog.jsonb_agg(
-    pg_catalog.jsonb_build_object(
-      'closureForm', item.closureForm,
-      'closedAtChapter', v_job.chapter_number,
-      'debtId', item.debtId
-    ) order by item.debtId
-  ), '[]'::jsonb)
-  into v_canonical_closures
-  from (
-    select elem->>'debtId' as debtId, elem->>'closureForm' as closureForm
-    from pg_catalog.jsonb_array_elements(
-      coalesce(v_checkpoint.audit_signals_json->'closesPlotDebts', '[]'::jsonb)
-    ) elem
-    order by (elem->>'debtId')
-  ) item;
-
-  -- Recompute hashes from the LOCKED checkpoint (Phase A values were
-  -- pre-read-only; the locked row is authoritative).
-  v_closure_hash := pg_catalog.encode(
-    extensions.digest(
-      'generation-plot-debt-closures-v1' || v_canonical_closures::text,
-      'sha256'
-    ),
-    'hex'
-  );
-  v_pub_hash := public.chapter_publication_payload_hash_v1(
-    v_job.story_id, v_job.chapter_number,
-    v_checkpoint.title, v_checkpoint.paragraphs_json,
-    p_choice_prompt, p_choices, p_outcomes, p_ending_key, p_ending_name
-  );
-  v_state_delta_hash := public.chapter_state_delta_hash_v1(v_checkpoint.state_delta_json);
 
   -- CONTRACT FOR SHARE: single mutable row per story.
   select plot_debts_json, story_contract_version
@@ -2852,24 +2913,9 @@ begin
     end if;
   end loop;
 
-  -- COMMIT lookup + 13-field exact replay evaluation (pure SELECT — no row
-  -- lock; serialization is the story row + advisory S). NO_COMMIT
-  -- → require exact base → publish → apply → commit; EXACT_REPLAY → return
-  -- the stored result (no re-apply); CONFLICT → hard stop.
-  v_replay := public.lookup_chapter_commit_replay_v1(
-    v_job.story_id, v_job.chapter_number,
-    v_job.id, v_checkpoint.correlation_id,
-    v_base_canon_revision, 1::smallint, v_state_delta_hash,
-    1::smallint, v_pub_hash,
-    'personalized'::text, v_job.user_id, v_job.id
-  );
-
-  if v_replay->>'state' = 'EXACT_REPLAY' then
-    return v_replay->'result';
-  end if;
-  if v_replay->>'state' = 'CONFLICT' then
-    raise exception using errcode = 'P0001', message = 'PUBLICATION_CONFLICT';
-  end if;
+  -- The 13-field replay evaluation already ran in Phase C under the LOCKED J
+  -- (before L); this path is strictly fresh publication — the L/C-reverified
+  -- checkpoint is the exact base the commit records below.
 
   -- ═══════════════════════════════════════════════════════════════════════════
   -- PHASE F — Publication (after all fencing validated)

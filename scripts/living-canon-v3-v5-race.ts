@@ -1,6 +1,7 @@
 /**
  * publish_chapter_state_v3 (sync) vs publish_generation_job_chapter_v5 (worker)
- * race test — M10-A1c.1 (R1 redesign: per-lease-ownership).
+ * race test — M10-A1c.1 (R1 redesign: per-lease-ownership; R3: replay
+ * authority = immutable commit ledger, evaluated under the LOCKED J before L).
  *
  * Two real database connections publishing the SAME story + chapter
  * concurrently: one through the sync publisher (V3, checkpoint attempt bound
@@ -10,16 +11,20 @@
  *
  * Property 1 — WORKER-owned ACTIVE lease (job_id/claim_token bound):
  *   V5 is eligible (lease matches job id/claim/holder) and wins. V3 is fenced
- *   as a non-sync lease: its replay fast path (pure SELECT, BEFORE the lease
+ *   as a non-sync lease: its replay evaluation (pure SELECT, BEFORE the lease
  *   gate) sees the winner's commit with a DIFFERENT checkpoint attempt →
  *   13-field CONFLICT → PUBLICATION_CONFLICT (R1-8: V3 loser is the replay
  *   fence, not an L-phase lease failure). The V3 lease gate itself
  *   (job_id IS NULL AND claim_token IS NULL) is proven separately in the
  *   pgTAP suite (v3-worker-lease → GENERATION_JOB_LEASE_INVALID).
  * Property 2 — SYNC-owned ACTIVE lease (job_id/claim_token NULL):
- *   V3 is eligible (sync lease contract) and wins. V5 is fenced at its
- *   L-phase recheck: the lease's job_id/claim_token cannot bind the job →
- *   GENERATION_JOB_LEASE_INVALID (missing job/claim binding).
+ *   V3 is eligible (sync lease contract) and wins. V5 is fenced by the SAME
+ *   ledger replay (R3 — the SUCCEEDED dual-hash fast path is gone): its
+ *   Phase C replay under the locked J sees the winner's sync commit with a
+ *   different checkpoint attempt/correlation → 13-field CONFLICT; the loser's
+ *   job is still RUNNING → PUBLICATION_CONFLICT. The lease binding itself
+ *   (fresh V5 publication with a sync-owned lease → GENERATION_JOB_LEASE_INVALID)
+ *   is proven separately in the pgTAP suite (v5-sync-lease).
  *
  * Deterministic winner via the advisory barrier (120799): the winner's session
  * completes its publication inside an open transaction and then blocks at the
@@ -31,9 +36,8 @@
  * Properties:
  * 1. Worker lease → V5 wins → job SUCCEEDED, V3 fenced (PUBLICATION_CONFLICT
  *    via replay); exactly one publication.
- * 2. Sync lease → V3 wins → job stays RUNNING, V5 fenced
- *    (GENERATION_JOB_LEASE_INVALID via missing job/claim binding); exactly
- *    one publication.
+ * 2. Sync lease → V3 wins → job stays RUNNING, V5 fenced (PUBLICATION_CONFLICT
+ *    via replay); exactly one publication.
  */
 import {
   checkRace,
@@ -369,15 +373,20 @@ function assertSinglePublication(
   `).trim()
   check(leaseStatus === 'RELEASED', `${winner}: shared lease RELEASED (got: ${leaseStatus})`)
 
-  // Loser fenced without a deadlock (per-lease-ownership, R1-3):
-  //  - V3 loser (P1, worker-owned lease) hits the replay fast path BEFORE the
-  //    lease gate — the winner's commit already exists with a different
-  //    checkpoint attempt → 13-field CONFLICT → PUBLICATION_CONFLICT
-  //    (R1-8: V3 loser is the replay fence, not an L-phase lease failure).
-  //  - V5 loser (P2, sync-owned lease) reaches its L-phase recheck — the
-  //    lease's job_id/claim_token cannot bind the job → the missing job/claim
-  //    binding fences it with GENERATION_JOB_LEASE_INVALID.
-  const expectedFence = winner === 'v5' ? 'PUBLICATION_CONFLICT' : 'GENERATION_JOB_LEASE_INVALID'
+  // Loser fenced without a deadlock (R3 — replay authority is the immutable
+  // commit ledger for BOTH paths, evaluated BEFORE the L-phase lease gate):
+  //  - V3 loser (P1, worker-owned lease): the winner's commit already exists
+  //    with a different checkpoint attempt → 13-field CONFLICT →
+  //    PUBLICATION_CONFLICT (R1-8: V3 loser is the replay fence, not an
+  //    L-phase lease failure).
+  //  - V5 loser (P2, sync-owned lease): its Phase C replay under the locked J
+  //    exists the same way — the winner's sync commit has a different
+  //    checkpoint attempt/correlation → 13-field CONFLICT; the loser's job is
+  //    still RUNNING (never terminalized) → PUBLICATION_CONFLICT. (R3 removed
+  //    V5's SUCCEEDED dual-hash fast path, which would have raced ahead of the
+  //    ledger; the lease binding itself is covered by pgTAP v5-sync-lease →
+  //    GENERATION_JOB_LEASE_INVALID on a fresh publication.)
+  const expectedFence = 'PUBLICATION_CONFLICT'
   check(
     loserSession.stdout.includes(expectedFence),
     `${winner}: loser fenced with ${expectedFence}`,
@@ -518,7 +527,7 @@ async function runRaceTests(): Promise<void> {
       check(jobStatus === 'RUNNING', `P2: fenced job still RUNNING (got: ${jobStatus})`)
 
       assertSinglePublication(target, fixture, 'v3', winner, loser)
-      console.log('  ✓ Property 2: sync lease → V3 wins → job stays RUNNING, V5 fenced (GENERATION_JOB_LEASE_INVALID), one publication')
+      console.log('  ✓ Property 2: sync lease → V3 wins → job stays RUNNING, V5 fenced (PUBLICATION_CONFLICT via ledger replay), one publication')
     }
 
     console.log(`\n  All ${CONTEXT} properties verified.`)

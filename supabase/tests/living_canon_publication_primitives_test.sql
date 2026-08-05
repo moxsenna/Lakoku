@@ -25,7 +25,7 @@ begin
 end
 $$;
 
-select plan(207);
+select plan(226);
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- Setup: owner auth user + shared fixtures
@@ -1433,7 +1433,8 @@ select is((select canon_state_revision from public.stories where id = 'test:atom
   0::bigint, 'finalization failure never increments revision');
 
 -- 6d. V5 retry: identical retry returns the same result; NO duplicate rows;
---     payload drift raises IDEMPOTENCY_CONFLICT.
+--     payload drift on a SUCCEEDED job raises PROVENANCE_CONFLICT (R3: the
+--     commit-ledger replay is the only replay authority).
 select is(
   (select public.publish_generation_job_chapter_v5(
     'a7000000-0000-4000-8000-000000000001', 'a1c-worker',
@@ -1459,7 +1460,177 @@ select throws_ok($$
     'test:v5-happy', 2, 'DIFFERENT PROMPT', pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
     null, null
   )
-$$, 'P0001', 'IDEMPOTENCY_CONFLICT', 'V5 payload drift on retry raises IDEMPOTENCY_CONFLICT');
+$$, 'P0001', 'PROVENANCE_CONFLICT', 'R3: payload drift on a SUCCEEDED job → PROVENANCE_CONFLICT (ledger mismatch)');
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- 6e. R3 — V5 replay authority = the immutable commit ledger. The 13-field
+--     exact machine (lookup_chapter_commit_replay_v1) is evaluated under the
+--     LOCKED J, BEFORE L/C — the legacy SUCCEEDED dual-hash fast path is GONE:
+--     publication + closure hashes alone do not prove living-canon replay.
+--     SUCCESS is only ever returned by an EXACT ledger match.
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+-- 6e-1: successful EXACT retry → returns THE published commit result; still
+-- one chapter / one commit / one attempt.
+select pg_temp.seed_story('test:v5-replay-exact', 2);
+select pg_temp.seed_thread('test:v5-replay-exact');
+select pg_temp.seed_job('test:v5-replay-exact', 2, 'd4000000-0000-4000-8000-000000000001', 'd5000000-0000-4000-8000-000000000001');
+select pg_temp.seed_v5_checkpoint('test:v5-replay-exact', 2, 'd4000000-0000-4000-8000-000000000001',
+  pg_temp.touch_delta('test:v5-replay-exact', 2), 0);
+select is(
+  (select public.publish_generation_job_chapter_v5(
+    'd4000000-0000-4000-8000-000000000001', 'a1c-worker',
+    (select claim_token from public.generation_jobs where id = 'd4000000-0000-4000-8000-000000000001'),
+    'd5000000-0000-4000-8000-000000000001',
+    'test:v5-replay-exact', 2, pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  )->>'committed_canon_revision'),
+  '1', 'R3: V5 fresh publication (baseline)');
+select is(
+  (select (select public.publish_generation_job_chapter_v5(
+    'd4000000-0000-4000-8000-000000000001', 'a1c-worker',
+    (select claim_token from public.generation_jobs where id = 'd4000000-0000-4000-8000-000000000001'),
+    'd5000000-0000-4000-8000-000000000001',
+    'test:v5-replay-exact', 2, pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  ))::text),
+  (select publication_result::text from public.chapter_state_commits
+   where story_id = 'test:v5-replay-exact' and chapter_number = 2),
+  'R3: successful exact retry returns THE published commit result');
+select is((select count(*)::integer from public.chapters where story_id = 'test:v5-replay-exact'), 1,
+  'R3: exact retry keeps one chapter');
+select is((select count(*)::integer from public.chapter_state_commits where story_id = 'test:v5-replay-exact'), 1,
+  'R3: exact retry keeps one commit');
+select is((select count(*)::integer from public.generation_job_attempts
+   where job_id = 'd4000000-0000-4000-8000-000000000001'), 1,
+  'R3: exact retry keeps one PUBLICATION_SUCCEEDED attempt');
+select is((select canon_state_revision from public.stories where id = 'test:v5-replay-exact'),
+  1::bigint, 'R3: exact retry never re-increments the revision');
+
+-- 6e-2: SUCCESS then LOCAL-ONLY checkpoint corruption — state_delta diverged
+-- (prose/choices/closures identical, recomputed hash still valid) → the retry
+-- must NOT return SUCCESS: PROVENANCE_CONFLICT.
+select pg_temp.seed_story('test:v5-replay-delta', 2);
+select pg_temp.seed_thread('test:v5-replay-delta');
+select pg_temp.seed_job('test:v5-replay-delta', 2, 'd6000000-0000-4000-8000-000000000001', 'd7000000-0000-4000-8000-000000000001');
+select pg_temp.seed_v5_checkpoint('test:v5-replay-delta', 2, 'd6000000-0000-4000-8000-000000000001',
+  pg_temp.touch_delta('test:v5-replay-delta', 2), 0);
+select public.publish_generation_job_chapter_v5(
+  'd6000000-0000-4000-8000-000000000001', 'a1c-worker',
+  (select claim_token from public.generation_jobs where id = 'd6000000-0000-4000-8000-000000000001'),
+  'd7000000-0000-4000-8000-000000000001',
+  'test:v5-replay-delta', 2, pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+  null, null
+);
+update public.chapter_generation_checkpoints
+set state_delta_json = pg_catalog.jsonb_set(state_delta_json, '{facts}',
+      '{"add":[{"kind":"note","content":"LOCAL-ONLY CORRUPTION"}]}'::jsonb),
+    state_delta_hash = public.chapter_state_delta_hash_v1(
+      pg_catalog.jsonb_set(state_delta_json, '{facts}',
+        '{"add":[{"kind":"note","content":"LOCAL-ONLY CORRUPTION"}]}'::jsonb))
+where story_id = 'test:v5-replay-delta' and chapter_number = 2;
+select throws_ok($$
+  select public.publish_generation_job_chapter_v5(
+    'd6000000-0000-4000-8000-000000000001', 'a1c-worker',
+    (select claim_token from public.generation_jobs where id = 'd6000000-0000-4000-8000-000000000001'),
+    'd7000000-0000-4000-8000-000000000001',
+    'test:v5-replay-delta', 2, pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  )
+$$, 'P0001', 'PROVENANCE_CONFLICT', 'R3: checkpoint state_delta diverged from the committed ledger → PROVENANCE_CONFLICT');
+select is((select count(*)::integer from public.chapter_state_commits where story_id = 'test:v5-replay-delta'), 1,
+  'R3: delta-divergence never re-commits');
+select is((select canon_state_revision from public.stories where id = 'test:v5-replay-delta'),
+  1::bigint, 'R3: delta-divergence never re-increments the revision');
+
+-- 6e-3: SUCCESS then checkpoint correlation/provenance diverged → the retry
+-- cannot bind the checkpoint to the committed publication: PROVENANCE_CONFLICT.
+select pg_temp.seed_story('test:v5-replay-corr', 2);
+select pg_temp.seed_thread('test:v5-replay-corr');
+select pg_temp.seed_job('test:v5-replay-corr', 2, 'd8000000-0000-4000-8000-000000000001', 'd9000000-0000-4000-8000-000000000001');
+select pg_temp.seed_v5_checkpoint('test:v5-replay-corr', 2, 'd8000000-0000-4000-8000-000000000001',
+  pg_temp.touch_delta('test:v5-replay-corr', 2), 0);
+select public.publish_generation_job_chapter_v5(
+  'd8000000-0000-4000-8000-000000000001', 'a1c-worker',
+  (select claim_token from public.generation_jobs where id = 'd8000000-0000-4000-8000-000000000001'),
+  'd9000000-0000-4000-8000-000000000001',
+  'test:v5-replay-corr', 2, pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+  null, null
+);
+update public.chapter_generation_checkpoints
+set correlation_id = '00000000-0000-0000-0000-0000000000d8'
+where story_id = 'test:v5-replay-corr' and chapter_number = 2;
+select throws_ok($$
+  select public.publish_generation_job_chapter_v5(
+    'd8000000-0000-4000-8000-000000000001', 'a1c-worker',
+    (select claim_token from public.generation_jobs where id = 'd8000000-0000-4000-8000-000000000001'),
+    'd9000000-0000-4000-8000-000000000001',
+    'test:v5-replay-corr', 2, pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  )
+$$, 'P0001', 'PROVENANCE_CONFLICT', 'R3: checkpoint correlation diverged from the committed publication → PROVENANCE_CONFLICT');
+select is((select count(*)::integer from public.chapter_state_commits where story_id = 'test:v5-replay-corr'), 1,
+  'R3: correlation-divergence never re-commits');
+
+-- 6e-4: SUCCEEDED job whose commit ledger row is MISSING → broken state, never
+-- SUCCESS: PROVENANCE_CONFLICT (the old dual-hash fast path would have returned
+-- the cached job result here — R3 removes it).
+select pg_temp.seed_story('test:v5-replay-nocommit', 2);
+select pg_temp.seed_thread('test:v5-replay-nocommit');
+select pg_temp.seed_job('test:v5-replay-nocommit', 2, 'e6000000-0000-4000-8000-000000000001', 'e7000000-0000-4000-8000-000000000001');
+select pg_temp.seed_v5_checkpoint('test:v5-replay-nocommit', 2, 'e6000000-0000-4000-8000-000000000001',
+  pg_temp.touch_delta('test:v5-replay-nocommit', 2), 0);
+select public.publish_generation_job_chapter_v5(
+  'e6000000-0000-4000-8000-000000000001', 'a1c-worker',
+  (select claim_token from public.generation_jobs where id = 'e6000000-0000-4000-8000-000000000001'),
+  'e7000000-0000-4000-8000-000000000001',
+  'test:v5-replay-nocommit', 2, pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+  null, null
+);
+delete from public.chapter_state_commits
+where story_id = 'test:v5-replay-nocommit' and chapter_number = 2;
+select throws_ok($$
+  select public.publish_generation_job_chapter_v5(
+    'e6000000-0000-4000-8000-000000000001', 'a1c-worker',
+    (select claim_token from public.generation_jobs where id = 'e6000000-0000-4000-8000-000000000001'),
+    'e7000000-0000-4000-8000-000000000001',
+    'test:v5-replay-nocommit', 2, pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  )
+$$, 'P0001', 'PROVENANCE_CONFLICT', 'R3: SUCCEEDED job without a commit ledger row → PROVENANCE_CONFLICT (never SUCCESS)');
+select is((select count(*)::integer from public.chapter_state_commits where story_id = 'test:v5-replay-nocommit'), 0,
+  'R3: broken ledger stays empty');
+select is((select count(*)::integer from public.chapters where story_id = 'test:v5-replay-nocommit'), 1,
+  'R3: broken-ledger retry leaves the published chapter');
+
+-- 6f. R3 — V5 fresh publication (RUNNING job, NO commit) with a SYNC-owned
+--     lease (job_id/claim_token NULL): lease binding fences BEFORE any write
+--     (per-lease-ownership; the cross-path race is proven by the ledger).
+select pg_temp.seed_story('test:v5-sync-lease', 2);
+select pg_temp.seed_thread('test:v5-sync-lease');
+select pg_temp.seed_job('test:v5-sync-lease', 2, 'e8000000-0000-4000-8000-000000000001', 'e9000000-0000-4000-8000-000000000001');
+select pg_temp.seed_v5_checkpoint('test:v5-sync-lease', 2, 'e8000000-0000-4000-8000-000000000001',
+  pg_temp.touch_delta('test:v5-sync-lease', 2), 0);
+update public.generation_leases
+set job_id = null, claim_token = null, holder = 'sync-holder'
+where id = 'e9000000-0000-4000-8000-000000000001';
+select throws_ok($$
+  select public.publish_generation_job_chapter_v5(
+    'e8000000-0000-4000-8000-000000000001', 'a1c-worker',
+    (select claim_token from public.generation_jobs where id = 'e8000000-0000-4000-8000-000000000001'),
+    'e9000000-0000-4000-8000-000000000001',
+    'test:v5-sync-lease', 2, pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  )
+$$, 'P0001', 'GENERATION_JOB_LEASE_INVALID', 'R3: V5 rejects a sync-owned lease (job/claim binding)');
+select is((select count(*)::integer from public.chapter_state_commits where story_id = 'test:v5-sync-lease'), 0,
+  'R3: lease fence never commits');
+select is((select count(*)::integer from public.chapters where story_id = 'test:v5-sync-lease'), 0,
+  'R3: lease fence never publishes');
+select is((select status from public.generation_jobs where id = 'e8000000-0000-4000-8000-000000000001'),
+  'RUNNING', 'R3: lease fence leaves the job RUNNING');
+select is((select status from public.generation_leases where id = 'e9000000-0000-4000-8000-000000000001'),
+  'ACTIVE', 'R3: lease fence leaves the lease ACTIVE');
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- 7. LEASE — V2 releases the lease inside V3/V5; finalization never requires a

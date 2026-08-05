@@ -3,7 +3,6 @@ import { cache } from 'react'
 import { createAdminClient } from '@lakoku/db'
 import {
   DEFAULT_READING_POLICY,
-  isChapterFree,
   unlockRef,
   type ReadingPolicy,
 } from './policy'
@@ -81,27 +80,15 @@ export async function listUnlockedChapters(userId: string, storyId: string): Pro
   }
 }
 
-/** true bila bab bisa dibaca user: gratis (≤ freeChapters) ATAU sudah di-unlock. */
 export async function isChapterUnlocked(
   userId: string | null,
   storyId: string,
   chapter: number,
-  policy: ReadingPolicy,
+  policy: ReadingPolicy = DEFAULT_READING_POLICY,
 ): Promise<boolean> {
-  if (isChapterFree(chapter, policy)) return true
-  if (!userId) return false
-  try {
-    const db = createAdminClient()
-    const { data } = await db
-      .from('credit_ledger')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('ref', unlockRef(storyId, chapter))
-      .maybeSingle()
-    return data != null
-  } catch {
-    return false
-  }
+  const { resolveChapterAccess } = await import('./access-resolver.server')
+  const decision = await resolveChapterAccess({ userId, storyId, chapterNumber: chapter, policy })
+  return decision.readable
 }
 
 export type SpendResult = 'ok' | 'insufficient' | 'duplicate'

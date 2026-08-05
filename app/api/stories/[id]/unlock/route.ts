@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getReadingPolicy, getCreditBalance, spendChapterUnlock } from '@/lib/credits/server'
-import { isChapterFree } from '@/lib/credits/policy'
 
 /**
  * Buka satu bab berbayar dengan kredit (M-PAY reader).
@@ -33,17 +32,55 @@ export async function POST(
   }
 
   const policy = await getReadingPolicy()
-  if (isChapterFree(chapter, policy)) {
-    return NextResponse.json({ status: 'free' }, { status: 200 })
+  const { resolveChapterAccess } = await import('@/lib/credits/access-resolver.server')
+  const decision = await resolveChapterAccess({ userId: auth.user.id, storyId, chapterNumber: chapter, policy })
+
+  const balance = await getCreditBalance(auth.user.id)
+
+  if (decision.readable) {
+    return NextResponse.json({ status: decision.reason === 'FREE_STANDARD' ? 'free' : 'ok', balance }, { status: 200 })
   }
 
+  if (decision.reason === 'STORY_PENDING') {
+    return NextResponse.json({ status: 'insufficient', balance, requiredCredits: 24 }, { status: 402 })
+  }
+
+  // Check if story is LEGACY_GRANDFATHERED
+  const { createAdminClient } = await import('@/lib/supabase/admin')
+  const db = createAdminClient()
+  const { data: story } = await db
+    .from('stories')
+    .select('commercial_origin, story_mode')
+    .eq('id', storyId)
+    .maybeSingle()
+
+  if (story?.commercial_origin === 'LEGACY_GRANDFATHERED' && chapter >= 4) {
+    try {
+      const result = await spendChapterUnlock(auth.user.id, storyId, chapter, 8)
+      const newBalance = await getCreditBalance(auth.user.id)
+      if (result === 'insufficient') {
+        return NextResponse.json({ status: 'insufficient', balance: newBalance }, { status: 402 })
+      }
+      return NextResponse.json({ status: 'ok', balance: newBalance }, { status: 200 })
+    } catch (err) {
+      console.log('[v0] unlock chapter gagal:', (err as Error)?.message)
+      return NextResponse.json({ error: 'processing_error' }, { status: 500 })
+    }
+  }
+
+  // Modern published commercial chapter missing ledger -> Fail closed (V5 must capture during publication)
+  if (story && (story.story_mode === 'personalized_ai' || story.story_mode === 'premium_instance')) {
+    return NextResponse.json({ status: 'insufficient', balance, requiredCredits: decision.cost }, { status: 402 })
+  }
+
+  // Fallback for standard/shared story unlock
   try {
     const result = await spendChapterUnlock(auth.user.id, storyId, chapter, policy.creditsPerChapter)
-    const balance = await getCreditBalance(auth.user.id)
+    const newBalance = await getCreditBalance(auth.user.id)
     if (result === 'insufficient') {
-      return NextResponse.json({ status: 'insufficient', balance }, { status: 402 })
+      return NextResponse.json({ status: 'insufficient', balance: newBalance }, { status: 402 })
     }
-    return NextResponse.json({ status: 'ok', balance }, { status: 200 })
+    return NextResponse.json({ status: 'ok', balance: newBalance }, { status: 200 })
   } catch (err) {
     console.log('[v0] unlock chapter gagal:', (err as Error)?.message)
     return NextResponse.json({ error: 'processing_error' }, { status: 500 })

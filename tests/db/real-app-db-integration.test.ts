@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { execFileSync } from 'node:child_process'
-import { describe, expect, it, beforeAll, afterAll, vi } from 'vitest'
+import { describe, expect, it, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
@@ -34,21 +34,9 @@ import { applyPersonalizedChoice } from '@/lib/api/personalized-choice.server'
 import { createPersonalizedStory, PersonalizedStoryError } from '@/lib/api/personalized-stories.server'
 import { clonePremiumStoryForUser, PremiumCloneError } from '@/lib/api/premium-clone.server'
 
-const selectProviderSpy = vi.fn()
-const createResilientStoryContractSpy = vi.fn()
-const generateNextPersonalizedChapterSpy = vi.fn()
-
-vi.mock('@/lib/ai-gateway/router', () => ({
-  selectProvider: (...args: unknown[]) => selectProviderSpy(...args),
-}))
-
-vi.mock('@/lib/story-engine/contract-generation.server', () => ({
-  createResilientStoryContract: (...args: unknown[]) => createResilientStoryContractSpy(...args),
-}))
-
-vi.mock('@/lib/runtime/personalized-generation', () => ({
-  generateNextPersonalizedChapter: (...args: unknown[]) => generateNextPersonalizedChapterSpy(...args),
-}))
+import * as aiGatewayModule from '@lakoku/ai-gateway/server'
+import * as contractGenModule from '@/lib/story-engine/contract-generation.server'
+import * as personalizedGenModule from '@/lib/runtime/personalized-generation'
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => {
@@ -63,9 +51,15 @@ vi.mock('@/lib/supabase/server', () => ({
 // Real application integration test against local Supabase DB
 describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB Integration Test Harness', () => {
   let admin: ReturnType<typeof createAdminClient>
+  let selectProviderSpy: ReturnType<typeof vi.spyOn>
+  let createResilientStoryContractSpy: ReturnType<typeof vi.spyOn>
+  let generateNextPersonalizedChapterSpy: ReturnType<typeof vi.spyOn>
   const storyId = 'story-real-db-ch3'
 
   beforeAll(async () => {
+    selectProviderSpy = vi.spyOn(aiGatewayModule, 'selectProvider')
+    createResilientStoryContractSpy = vi.spyOn(contractGenModule, 'createResilientStoryContract')
+    generateNextPersonalizedChapterSpy = vi.spyOn(personalizedGenModule, 'generateNextPersonalizedChapter')
     admin = createAdminClient()
 
     // Ensure user exists in auth.users
@@ -146,6 +140,12 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
     await admin.from('stories').delete().eq('owner_user_id', userId)
     await admin.from('story_creation_requests').delete().eq('owner_user_id', userId)
     await admin.from('account_commercial_states').delete().eq('user_id', userId)
+  })
+
+  beforeEach(() => {
+    selectProviderSpy?.mockClear()
+    createResilientStoryContractSpy?.mockClear()
+    generateNextPersonalizedChapterSpy?.mockClear()
   })
 
   it('applyPersonalizedChoice application TS wrapper executes 9-arg apply_personalized_choice_v2 against real local Postgres DB', async () => {

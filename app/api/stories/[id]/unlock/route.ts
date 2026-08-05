@@ -61,13 +61,17 @@ export async function POST(
   // Check commercial story origin
   const { createAdminClient } = await import('@/lib/supabase/admin')
   const db = createAdminClient()
-  const { data: story } = await db
+  const { data: story, error: storyError } = await db
     .from('stories')
     .select('owner_user_id, commercial_origin, story_mode')
     .eq('id', storyId)
     .maybeSingle()
 
-  const isCommercialMode = story?.story_mode === 'personalized_ai' || story?.story_mode === 'premium_instance'
+  if (storyError || !story) {
+    return NextResponse.json({ error: 'Gagal memverifikasi status cerita.' }, { status: 500 })
+  }
+
+  const isCommercialMode = story.story_mode === 'personalized_ai' || story.story_mode === 'premium_instance'
 
   if (isCommercialMode) {
     // STRUCTURAL GUARD: Commercial modes NEVER fall through to generic spend!

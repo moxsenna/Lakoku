@@ -12,14 +12,19 @@ const CHAPTER_COLUMNS = 'story_id,number' as const
 const MAX_RESERVATION_ATTEMPTS = 3
 const MAX_STORY_ID_LENGTH = 128
 
-const IdempotencyKeySchema = z.string().trim().min(1).max(240).regex(/^[\x21-\x7E]+$/)
 const UserIdSchema = z.string().uuid()
-const TemplateIdSchema = z.string().min(1).max(120).regex(/^premium:[a-z0-9]+(?:-[a-z0-9]+)*$/)
+const IdempotencyKeySchema = z.string().min(1).max(240).regex(/^[\x21-\x7E]+$/)
+const TemplateIdSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .refine((value) => value === value.trim())
+  .refine((value) => value.startsWith('premium:') && value.slice('premium:'.length).length > 0)
 
 const CreationRequestSchema = z
   .object({
-    story_id: z.string().min(1),
-    request_hash: z.string().length(64),
+    story_id: z.string().min(1).max(MAX_STORY_ID_LENGTH),
+    request_hash: z.string().length(64).regex(/^[a-f0-9]+$/),
     status: z.enum(['RESERVED', 'READY', 'FAILED', 'WAITING_FOR_CREDITS']),
     error_code: z.string().nullable().optional(),
   })
@@ -28,10 +33,10 @@ const CreationRequestSchema = z
 const TargetStorySchema = z
   .object({
     id: z.string().min(1),
-    owner_user_id: z.string().uuid(),
-    visibility: z.literal('private'),
-    source_story_id: z.string().min(1),
-    story_mode: z.literal('premium_instance'),
+    owner_user_id: z.string().uuid().nullable(),
+    visibility: z.string(),
+    source_story_id: z.string().nullable(),
+    story_mode: z.string(),
     commercial_origin: z.string().nullable().optional(),
   })
   .strict()
@@ -42,16 +47,16 @@ export interface PremiumCloneResult {
   replayed: boolean
 }
 
-const CloneRpcResultSchema = z.discriminatedUnion('ok', [
-  z.object({
-    ok: z.literal(true),
+const ChapterOneSchema = z
+  .object({
     story_id: z.string().min(1),
-  }),
-  z.object({
-    ok: z.literal(false),
-    reason: z.enum(['INVALID_TEMPLATE', 'TARGET_STORY_EXISTS', 'INTERNAL_ERROR']),
-    error: z.string().optional(),
-  }),
+    number: z.literal(1),
+  })
+  .strict()
+
+const CloneRpcResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), story_id: z.string().min(1) }).strict(),
+  z.object({ ok: z.literal(false), reason: z.string() }).passthrough(),
 ])
 
 const ReserveStartRpcResultSchema = z.discriminatedUnion('ok', [
@@ -69,11 +74,6 @@ const ReserveStartRpcResultSchema = z.discriminatedUnion('ok', [
 
 const ClaimStarterRpcResultSchema = z.object({
   claimed: z.boolean(),
-})
-
-const ChapterOneSchema = z.object({
-  story_id: z.string().min(1),
-  number: z.literal(1),
 })
 
 export type PremiumCloneErrorCode =

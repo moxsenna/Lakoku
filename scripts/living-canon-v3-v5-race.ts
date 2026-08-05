@@ -137,8 +137,9 @@ function insertFixture(
     values (:'story_id', 'V3/V5 race', :'user_id'::uuid, 'private', 'personalized_ai', 1, 1, 0);
     insert into public.reader_states (user_id, story_id, status, current_chapter)
     values (:'user_id'::uuid, :'story_id', 'BERJALAN', ${CHAPTER});
-    insert into public.story_generation_contracts (story_id, mode, total_chapters, plot_debts_json, story_contract_version)
-    values (:'story_id', 'personalized_ai', 50, '${DEBTS_JSON}'::jsonb, 1);
+    insert into public.story_generation_contracts (story_id, mode, total_chapters, plot_debts_json, story_contract_version, story_contract_json)
+    values (:'story_id', 'personalized_ai', 50, '${DEBTS_JSON}'::jsonb, 1,
+      '{"actPlan":[{"actNumber":1,"fromChapter":1,"toChapter":4,"goal":"G1"},{"actNumber":2,"fromChapter":5,"toChapter":8,"goal":"G2"},{"actNumber":3,"fromChapter":9,"toChapter":12,"goal":"G3"},{"actNumber":4,"fromChapter":13,"toChapter":16,"goal":"G4"},{"actNumber":5,"fromChapter":17,"toChapter":20,"goal":"G5"},{"actNumber":6,"fromChapter":21,"toChapter":24,"goal":"G6"},{"actNumber":7,"fromChapter":25,"toChapter":28,"goal":"G7"},{"actNumber":8,"fromChapter":29,"toChapter":32,"goal":"G8"},{"actNumber":9,"fromChapter":33,"toChapter":36,"goal":"G9"},{"actNumber":10,"fromChapter":37,"toChapter":40,"goal":"G10"},{"actNumber":11,"fromChapter":41,"toChapter":44,"goal":"G11"},{"actNumber":12,"fromChapter":45,"toChapter":50,"goal":"G12"}]}'::jsonb);
     insert into public.generation_jobs (
       id, story_id, chapter_number, user_id, generation_kind,
       status, attempt_count, max_attempts, available_at, deadline_at,
@@ -198,7 +199,7 @@ function insertFixture(
       'v3v5-fp-0000000000000000000000000000000',
       '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
       2, 5, 2, 'v3v5-dir-00000000000000000000000000000', 'personalized', 2, 2,
-      null, 1, 3,
+      null, null, 3,
       '${deltaJson(storyId)}'::jsonb,
       chapter_state_delta_hash_v1('${deltaJson(storyId)}'::jsonb), 1, 0,
       1, 0, clock_timestamp() + interval '24 hours', 1

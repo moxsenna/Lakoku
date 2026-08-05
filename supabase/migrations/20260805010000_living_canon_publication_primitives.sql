@@ -102,13 +102,22 @@ alter table public.chapter_state_commits
 
 -- publication_result is a small bounded object that must bind its metadata
 -- back to the row it lives on (chapter, attempt, committed revision).
+-- Fail-closed shape (R2-B3): every required key must EXIST and carry the exact
+-- jsonb type BEFORE any cast — a missing key made the old `->>` expression
+-- evaluate NULL and the comparison vacuously pass. Key presence is pinned with
+-- ?&, types with jsonb_typeof, and only then are the values cast and compared.
 alter table public.chapter_state_commits
   add constraint chapter_state_commits_publication_result_check
   check (
     pg_catalog.jsonb_typeof(publication_result) = 'object'
-    and publication_result @> '{"ok":true}'::jsonb
+    and publication_result ?& '{ok,chapter_number,checkpoint_attempt_id,committed_canon_revision}'::pg_catalog.text[]
+    and pg_catalog.jsonb_typeof(publication_result->'ok') = 'boolean'
+    and (publication_result->>'ok')::boolean is true
+    and pg_catalog.jsonb_typeof(publication_result->'chapter_number') = 'number'
     and (publication_result->>'chapter_number')::numeric = chapter_number
+    and pg_catalog.jsonb_typeof(publication_result->'checkpoint_attempt_id') = 'string'
     and (publication_result->>'checkpoint_attempt_id')::uuid = checkpoint_attempt_id
+    and pg_catalog.jsonb_typeof(publication_result->'committed_canon_revision') = 'number'
     and (publication_result->>'committed_canon_revision')::bigint = committed_canon_revision
     and pg_catalog.pg_column_size(publication_result) <= 8192
   );
@@ -304,6 +313,13 @@ declare
   v_from text;
   v_to text;
   v_legal boolean := false;
+  v_act_plan jsonb;
+  v_act_item jsonb;
+  v_act_boundary jsonb;
+  v_is_act_boundary boolean := false;
+  v_act_number integer;
+  v_act_from_chapter integer;
+  v_act_to_chapter integer;
 begin
   -- Identity + delta shape (fail closed before any mutation).
   if p_story_id is null or p_story_id = ''
@@ -540,9 +556,55 @@ begin
     where id = v_thread_id and story_id = p_story_id;
   end loop;
 
-  -- ── actRollup: null means no rollup; non-null must be new for this act.
+  -- ── actRollup: boundary gate (R2-B1, A1a invariant). The authoritative
+  -- boundary source is the story's actPlan (story_generation_contracts.
+  -- story_contract_json->'actPlan' — the SAME source the ASI bootstrap and
+  -- plot-debt ledger validate), never a second hardcoded plan. A chapter is an
+  -- act boundary iff some actPlan item has toChapter = p_chapter_number.
+  --
+  -- Four-way semantics (all fail closed with P0001):
+  --   non-boundary + actRollup      → STATE_ACT_ROLLUP_OUTSIDE_ACT
+  --   boundary + no actRollup       → STATE_ACT_ROLLUP_MISSING
+  --   boundary + wrong descriptor   → STATE_ACT_ROLLUP_DESCRIPTOR_MISMATCH
+  --   boundary + exact descriptor   → INSERT (actNumber/coversFromChapter/
+  --     coversToChapter must equal the actPlan item exactly)
+  --
+  -- actPlan is REQUIRED for every personalized contract (bootstrap
+  -- validation); a publishing story without it is broken state → fail closed
+  -- rather than silently skipping the gate.
+  select sgc.story_contract_json->'actPlan' into v_act_plan
+  from public.story_generation_contracts sgc
+  where sgc.story_id = p_story_id;
+
+  if v_act_plan is null or pg_catalog.jsonb_typeof(v_act_plan) <> 'array' then
+    raise exception using errcode = 'P0001', message = 'ACT_PLAN_NOT_FOUND';
+  end if;
+  for v_act_item in select value
+                    from pg_catalog.jsonb_array_elements(v_act_plan)
+  loop
+    if (v_act_item->>'toChapter')::integer = p_chapter_number then
+      v_act_boundary := v_act_item;
+      v_is_act_boundary := true;
+      v_act_number := (v_act_item->>'actNumber')::integer;
+      v_act_from_chapter := (v_act_item->>'fromChapter')::integer;
+      v_act_to_chapter := (v_act_item->>'toChapter')::integer;
+      exit;
+    end if;
+  end loop;
+
   if pg_catalog.jsonb_typeof(v_delta->'actRollup') = 'object' then
     v_item := v_delta->'actRollup';
+    if not v_is_act_boundary then
+      raise exception using errcode = 'P0001',
+        message = 'STATE_ACT_ROLLUP_OUTSIDE_ACT: ' || p_chapter_number::text;
+    end if;
+    if (v_item->>'actNumber')::integer is distinct from v_act_number
+      or (v_item->>'coversFromChapter')::integer is distinct from v_act_from_chapter
+      or (v_item->>'coversToChapter')::integer is distinct from v_act_to_chapter
+    then
+      raise exception using errcode = 'P0001',
+        message = 'STATE_ACT_ROLLUP_DESCRIPTOR_MISMATCH: ' || p_chapter_number::text;
+    end if;
     begin
       insert into public.act_rollups (
         story_id, act_number, summary, state_delta,
@@ -557,6 +619,9 @@ begin
         raise exception using errcode = 'P0001',
           message = 'STATE_ACT_ROLLUP_CONFLICT: ' || (v_item->>'actNumber')::text;
     end;
+  elsif v_is_act_boundary then
+    raise exception using errcode = 'P0001',
+      message = 'STATE_ACT_ROLLUP_MISSING: ' || p_chapter_number::text;
   end if;
 
   -- ── plotDebts.progress: append-only milestone ledger (single mutation
@@ -1426,6 +1491,7 @@ declare
   v_story_contract_version integer;
   v_story_owner_user_id uuid;
   v_story_visibility text;
+  v_story_mode text;
   v_state_delta_hash text;
   v_attempt_id uuid;
   v_existing public.chapter_generation_checkpoints%rowtype;
@@ -1463,9 +1529,9 @@ begin
   -- STORY FOR SHARE: capability + exact base revision + owner binding, read
   -- consistently.
   select s.id, s.living_canon_version, s.canon_state_revision, s.story_contract_version,
-         s.owner_user_id, s.visibility
+         s.owner_user_id, s.visibility, s.story_mode
     into v_story_id, v_living_canon_version, v_canon_state_revision, v_story_contract_version,
-         v_story_owner_user_id, v_story_visibility
+         v_story_owner_user_id, v_story_visibility, v_story_mode
   from public.stories s
   where s.id = p_story_id
   for share;
@@ -1477,12 +1543,14 @@ begin
     return pg_catalog.jsonb_build_object('ok', false, 'result', 'LIVING_CANON_NOT_ACTIVE');
   end if;
 
-  -- Actor binding (sync path is private/personalized only): the locked story
-  -- must be owned by p_user_id, private, and have an existing reader_state for
-  -- (user, story). Any mismatch is provenance conflict — the writer never
-  -- writes checkpoints for foreign or non-private stories.
+  -- Actor binding (sync path is private/personalized_ai only — R2-H2): the
+  -- locked story must be owned by p_user_id, private, personalized, and have
+  -- an existing reader_state for (user, story). Any mismatch is provenance
+  -- conflict — the writer never writes checkpoints for foreign, non-private,
+  -- or non-personalized stories.
   if v_story_owner_user_id is distinct from p_user_id
-    or v_story_visibility is distinct from 'private' then
+    or v_story_visibility is distinct from 'private'
+    or v_story_mode is distinct from 'personalized_ai' then
     return pg_catalog.jsonb_build_object('ok', false, 'result', 'PROVENANCE_CONFLICT');
   end if;
   perform 1 from public.reader_states rs
@@ -1550,13 +1618,16 @@ begin
   end if;
 
   -- Replay identity: a retry of the same sync attempt-run (same attempt id +
-  -- same correlation id) must bind to the SAME checkpoint row. Lookup by
-  -- (story, chapter, correlation); a different attempt id for the same run is
-  -- provenance breaking, never a silent second row.
+  -- same correlation id) must bind to the SAME checkpoint row. The pair
+  -- (story, chapter, attempt_id) is the row identity and the correlation the
+  -- attempt-run identity — replay requires BOTH to match (R2-H1, symmetric):
+  -- a row found under exactly one of them is provenance confusion and must
+  -- never be reused or silently duplicated.
   select c.* into v_existing
   from public.chapter_generation_checkpoints c
   where c.story_id = p_story_id
     and c.chapter_number = p_chapter_number
+    and c.attempt_id = p_checkpoint_attempt_id
     and c.correlation_id = p_correlation_id
   for update;
 
@@ -1588,6 +1659,27 @@ begin
       'checkpoint_attempt_id', v_existing.attempt_id,
       'checkpoint', pg_catalog.to_jsonb(v_existing)
     );
+  end if;
+
+  -- Symmetric provenance fence: an existing row under the SAME attempt with a
+  -- DIFFERENT correlation (or under the SAME correlation with a DIFFERENT
+  -- attempt) is provenance confusion — the caller is reusing one half of a
+  -- foreign identity. Fail closed instead of surfacing a raw PK violation.
+  if exists (
+    select 1 from public.chapter_generation_checkpoints c
+    where c.story_id = p_story_id
+      and c.chapter_number = p_chapter_number
+      and c.attempt_id = p_checkpoint_attempt_id
+  ) then
+    return pg_catalog.jsonb_build_object('ok', false, 'result', 'PROVENANCE_CONFLICT');
+  end if;
+  if exists (
+    select 1 from public.chapter_generation_checkpoints c
+    where c.story_id = p_story_id
+      and c.chapter_number = p_chapter_number
+      and c.correlation_id = p_correlation_id
+  ) then
+    return pg_catalog.jsonb_build_object('ok', false, 'result', 'PROVENANCE_CONFLICT');
   end if;
 
   -- Caller-produced attempt id (never minted by the DB — the sync generation
@@ -1772,7 +1864,11 @@ begin
   if v_story.living_canon_version <> 1 then
     raise exception using errcode = 'P0001', message = 'LIVING_CANON_NOT_ACTIVE';
   end if;
-  if v_story.owner_user_id is distinct from p_user_id then
+  -- Actor binding (R2-H2, symmetric to the sync writer): the sync publisher
+  -- serves only stories owned by p_user_id AND private AND personalized_ai.
+  if v_story.owner_user_id is distinct from p_user_id
+    or v_story.visibility is distinct from 'private'
+    or v_story.story_mode is distinct from 'personalized_ai' then
     raise exception using errcode = 'P0001', message = 'PROVENANCE_CONFLICT';
   end if;
   v_base_canon_revision := v_story.canon_state_revision;
@@ -1809,6 +1905,11 @@ begin
     or v_pre_checkpoint.title is null
     or v_pre_checkpoint.paragraphs_json is null
     or v_pre_checkpoint.status not in ('PROSE_READY','RUNNING_CHOICES','READY_TO_PUBLISH','PUBLISHED')
+    -- Domain separation (R2-B2): the sync path publishes ONLY sync checkpoints
+    -- (job_id IS NULL AND job_attempt_number IS NULL) — symmetric to V5's
+    -- exact job binding. A worker-owned checkpoint is never publishable by V3.
+    or v_pre_checkpoint.job_id is not null
+    or v_pre_checkpoint.job_attempt_number is not null
   then
     raise exception using errcode = 'P0001', message = 'PROVENANCE_CONFLICT';
   end if;
@@ -1904,6 +2005,10 @@ begin
     or v_checkpoint.base_canon_revision is distinct from v_base_canon_revision
     or v_checkpoint.title is distinct from v_pre_checkpoint.title
     or v_checkpoint.paragraphs_json is distinct from v_pre_checkpoint.paragraphs_json
+    -- Domain separation (R2-B2): sync publications bind sync checkpoints only;
+    -- the locked row must stay job-unbound exactly as the pre-read saw it.
+    or v_checkpoint.job_id is not null
+    or v_checkpoint.job_attempt_number is not null
   then
     raise exception using errcode = 'P0001', message = 'PROVENANCE_CONFLICT';
   end if;

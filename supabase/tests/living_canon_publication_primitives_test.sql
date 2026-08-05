@@ -25,7 +25,7 @@ begin
 end
 $$;
 
-select plan(181);
+select plan(207);
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- Setup: owner auth user + shared fixtures
@@ -63,6 +63,10 @@ $$;
 
 -- Story + reader + contract (one ACTIVE lease per story: each fixture lives on
 -- its own story). Default debt contract keeps ch2 closure checks green.
+-- The contract carries the authoritative actPlan (R2-B1 source of truth):
+-- 12 acts tiling 1..50 with boundaries at 5,10,15,20,25,30,35,40,44,45,48,50 —
+-- 45/48/50 are the R2-mandated boundary chapters, every other publishing
+-- chapter in this suite (2) is deliberately non-boundary.
 create or replace function pg_temp.seed_story(
   p_story text, p_chapter integer, p_living integer default 1,
   p_revision integer default 0,
@@ -77,8 +81,23 @@ begin
   insert into public.reader_states (user_id, story_id, status, current_chapter)
   values ('00000000-0000-0000-0000-000000000001', p_story, 'BERJALAN', p_chapter);
   insert into public.story_generation_contracts (story_id, mode, total_chapters,
-                                                 plot_debts_json, story_contract_version)
-  values (p_story, 'personalized_ai', 50, p_debts, 1);
+                                                 plot_debts_json, story_contract_version,
+                                                 story_contract_json)
+  values (p_story, 'personalized_ai', 50, p_debts, 1,
+    ('{"actPlan":[' ||
+    '{"actNumber":1,"fromChapter":1,"toChapter":5,"goal":"Membuka misteri gudang."},' ||
+    '{"actNumber":2,"fromChapter":6,"toChapter":10,"goal":"Menyusuri jejak pertama."},' ||
+    '{"actNumber":3,"fromChapter":11,"toChapter":15,"goal":"Menemukan kunci rahasia."},' ||
+    '{"actNumber":4,"fromChapter":16,"toChapter":20,"goal":"Mengungkap konspirasi awal."},' ||
+    '{"actNumber":5,"fromChapter":21,"toChapter":25,"goal":"Menghadapi pengkhianat."},' ||
+    '{"actNumber":6,"fromChapter":26,"toChapter":30,"goal":"Kehilangan sekutu terdekat."},' ||
+    '{"actNumber":7,"fromChapter":31,"toChapter":35,"goal":"Memasuki sarang musuh."},' ||
+    '{"actNumber":8,"fromChapter":36,"toChapter":40,"goal":"Membuka rahasia keluarga."},' ||
+    '{"actNumber":9,"fromChapter":41,"toChapter":44,"goal":"Menentukan pihak terakhir."},' ||
+    '{"actNumber":10,"fromChapter":45,"toChapter":45,"goal":"Menghadapi titik balik utama."},' ||
+    '{"actNumber":11,"fromChapter":46,"toChapter":48,"goal":"Menggenggam kebenaran penuh."},' ||
+    '{"actNumber":12,"fromChapter":49,"toChapter":50,"goal":"Menyelesaikan takdir."}' ||
+    ']}')::jsonb);
 end
 $$;
 
@@ -244,6 +263,20 @@ returns jsonb language sql as $$
           ',"threads":{"touches":["t1"]}}')::jsonb
 $$;
 
+-- Delta carrying an actRollup descriptor (R2-B1 boundary tests). Every section
+-- is present-but-empty so the ONLY canonical mutation is the rollup.
+create or replace function pg_temp.act_delta(
+  p_story text, p_chapter integer, p_act integer, p_from integer, p_to integer
+) returns jsonb language sql as $$
+  select ('{"schemaVersion":1,"storyId":"' || p_story || '","chapterNumber":' || p_chapter ||
+          ',"facts":{"add":[],"markPaidOff":[]},"knowledge":{"grants":[]},' ||
+          '"secrets":{"revealIds":[]},"timeline":{"append":[]},' ||
+          '"characters":{"statusChanges":[]},"threads":{"touches":[],"transitions":[]},' ||
+          '"actRollup":{"actNumber":' || p_act || ',"summary":"Ringkasan babak.","stateDelta":{},' ||
+          '"coversFromChapter":' || p_from || ',"coversToChapter":' || p_to || '},' ||
+          '"plotDebts":{"progress":[],"closures":[]}}')::jsonb
+$$;
+
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- 1. STRUCTURE — closure ledger, commit expand, functions, security
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -278,7 +311,7 @@ select throws_ok($$
     correlation_id, publication_payload_schema_version, publication_payload_hash,
     publication_result
   ) values (
-    'test:commit-checks', 1, 0, 1, '{"a":1}'::jsonb, 1, repeat('0', 64),
+    'test:commit-checks', 1, 0, 1, '{"a":1}'::jsonb, 1, public.chapter_state_delta_hash_v1('{"a":1}'::jsonb),
     'personalized', '00000000-0000-0000-0000-000000000001',
     '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
     1, 'ZZ-not-hex', '{"ok":true,"chapter_number":1,"seq":1,"checkpoint_attempt_id":"11111111-1111-4111-8111-111111111111","committed_canon_revision":1}'::jsonb
@@ -292,7 +325,7 @@ select throws_ok($$
     correlation_id, publication_payload_schema_version, publication_payload_hash,
     publication_result
   ) values (
-    'test:commit-checks', 1, 0, 1, '{"a":1}'::jsonb, 1, repeat('0', 64),
+    'test:commit-checks', 1, 0, 1, '{"a":1}'::jsonb, 1, public.chapter_state_delta_hash_v1('{"a":1}'::jsonb),
     'personalized', '00000000-0000-0000-0000-000000000001',
     '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
     2, repeat('a', 64), '{"ok":true,"chapter_number":1,"seq":1,"checkpoint_attempt_id":"11111111-1111-4111-8111-111111111111","committed_canon_revision":1}'::jsonb
@@ -306,7 +339,7 @@ select throws_ok($$
     correlation_id, publication_payload_schema_version, publication_payload_hash,
     publication_result
   ) values (
-    'test:commit-checks', 1, 0, 1, '{"a":1}'::jsonb, 1, repeat('0', 64),
+    'test:commit-checks', 1, 0, 1, '{"a":1}'::jsonb, 1, public.chapter_state_delta_hash_v1('{"a":1}'::jsonb),
     'personalized', '00000000-0000-0000-0000-000000000001',
     '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
     1, repeat('a', 64), '{"ok":false,"chapter_number":1,"seq":1,"checkpoint_attempt_id":"11111111-1111-4111-8111-111111111111","committed_canon_revision":1}'::jsonb
@@ -320,7 +353,7 @@ select throws_ok($$
     correlation_id, publication_payload_schema_version, publication_payload_hash,
     publication_result
   ) values (
-    'test:commit-checks', 1, 0, 1, '{"a":1}'::jsonb, 1, repeat('0', 64),
+    'test:commit-checks', 1, 0, 1, '{"a":1}'::jsonb, 1, public.chapter_state_delta_hash_v1('{"a":1}'::jsonb),
     'personalized', '00000000-0000-0000-0000-000000000001',
     '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
     1, repeat('a', 64), '{"ok":true,"chapter_number":2,"seq":1,"checkpoint_attempt_id":"11111111-1111-4111-8111-111111111111","committed_canon_revision":1}'::jsonb
@@ -334,12 +367,40 @@ select throws_ok($$
     correlation_id, publication_payload_schema_version, publication_payload_hash,
     publication_result
   ) values (
-    'test:commit-checks', 1, 0, 1, '{"a":1}'::jsonb, 1, repeat('0', 64),
+    'test:commit-checks', 1, 0, 1, '{"a":1}'::jsonb, 1, public.chapter_state_delta_hash_v1('{"a":1}'::jsonb),
     'personalized', '00000000-0000-0000-0000-000000000001',
     '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
     1, repeat('a', 64), '{"ok":true,"chapter_number":1,"seq":1,"committed_canon_revision":1}'::jsonb
   )
 $$, '23514', null, 'publication_result must bind checkpoint_attempt_id');
+select throws_ok($$
+  insert into public.chapter_state_commits (
+    story_id, chapter_number, base_canon_revision, committed_canon_revision,
+    state_delta_json, state_delta_schema_version, state_delta_hash,
+    generation_mode, actor_user_id, checkpoint_attempt_id,
+    correlation_id, publication_payload_schema_version, publication_payload_hash,
+    publication_result
+  ) values (
+    'test:commit-checks', 1, 0, 1, '{"a":1}'::jsonb, 1, public.chapter_state_delta_hash_v1('{"a":1}'::jsonb),
+    'personalized', '00000000-0000-0000-0000-000000000001',
+    '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
+    1, repeat('a', 64), '{"ok":true,"chapter_number":1,"seq":1,"checkpoint_attempt_id":"11111111-1111-4111-8111-111111111111"}'::jsonb
+  )
+$$, '23514', null, 'publication_result missing committed_canon_revision rejected (no vacuous pass)');
+select throws_ok($$
+  insert into public.chapter_state_commits (
+    story_id, chapter_number, base_canon_revision, committed_canon_revision,
+    state_delta_json, state_delta_schema_version, state_delta_hash,
+    generation_mode, actor_user_id, checkpoint_attempt_id,
+    correlation_id, publication_payload_schema_version, publication_payload_hash,
+    publication_result
+  ) values (
+    'test:commit-checks', 1, 0, 1, '{"a":1}'::jsonb, 1, public.chapter_state_delta_hash_v1('{"a":1}'::jsonb),
+    'personalized', '00000000-0000-0000-0000-000000000001',
+    '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
+    1, repeat('a', 64), '{"ok":"true","chapter_number":1,"seq":1,"checkpoint_attempt_id":"11111111-1111-4111-8111-111111111111","committed_canon_revision":1}'::jsonb
+  )
+$$, '23514', null, 'publication_result ok must be boolean true (string type rejected)');
 
 -- hash helper: SQL, invoker, immutable, service_role-only.
 select has_function('public', 'chapter_publication_payload_hash_v1',
@@ -635,6 +696,17 @@ select is(
 select is(
   (select public.upsert_generation_checkpoint_sync_v1(
     'test:sync-writer', 2, '00000000-0000-0000-0000-000000000001',
+    'aaa33333-0000-4000-8000-000000000001', '99999999-9999-4999-8999-999999999998',
+    'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
+    '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
+    2, 5, 2, 'dir1', 2, 2,
+    pg_temp.touch_delta('test:sync-writer', 2), 0
+  )->>'result'),
+  'PROVENANCE_CONFLICT', 'same attempt with a DIFFERENT correlation is provenance conflict (pair binding is symmetric)'
+);
+select is(
+  (select public.upsert_generation_checkpoint_sync_v1(
+    'test:sync-writer', 2, '00000000-0000-0000-0000-000000000001',
     'bbb44444-0000-4000-8000-000000000002', '44444444-4444-4444-8444-444444444444', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
     '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
     2, 5, 2, 'dir1', 2, 2,
@@ -743,6 +815,20 @@ select is(
     pg_temp.touch_delta('test:sync-writer-public', 2), 0
   )->>'result'),
   'PROVENANCE_CONFLICT', 'non-private story rejected (sync path is private/personalized only)');
+select pg_temp.seed_story('test:sync-writer-standard', 2);
+update public.stories
+set story_mode = 'standard'
+where id = 'test:sync-writer-standard';
+select is(
+  (select public.upsert_generation_checkpoint_sync_v1(
+    'test:sync-writer-standard', 2, '00000000-0000-0000-0000-000000000001',
+    'ccc55555-0000-4000-8000-000000000013', '55555555-5555-4555-8555-555555555573',
+    'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
+    '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
+    2, 5, 2, 'dir1', 2, 2,
+    pg_temp.touch_delta('test:sync-writer-standard', 2), 0
+  )->>'result'),
+  'PROVENANCE_CONFLICT', 'private-but-standard story rejected (sync path is private AND personalized_ai only)');
 
 -- Payload raises (22023).
 select throws_ok($$
@@ -1169,6 +1255,71 @@ select is((select status from public.generation_jobs where id = 'f8000000-0000-4
 select is((select status from public.generation_leases where id = 'f9000000-0000-4000-8000-000000000001'),
   'ACTIVE', 'V5 reader fence leaves the lease ACTIVE');
 
+-- 5e. R2-H2 — V3 actor binding is the FULL sync contract: owner + private +
+-- personalized_ai + reader_state (symmetric to the sync writer).
+select pg_temp.seed_story('test:v3-private-std', 2);
+update public.stories
+set story_mode = 'standard'
+where id = 'test:v3-private-std';
+select pg_temp.seed_sync_lease('test:v3-private-std', 2, 'a9000000-0000-4000-8000-000000000001');
+select pg_temp.seed_sync_checkpoint('test:v3-private-std', 2, 'a9000001-0000-4000-8000-000000000001',
+  'a9000002-0000-4000-8000-000000000001', pg_temp.touch_delta('test:v3-private-std', 2), 0, 'Bab 2');
+select throws_ok($$
+  select public.publish_chapter_state_v3(
+    'test:v3-private-std', 2, '00000000-0000-0000-0000-000000000001',
+    'a9000000-0000-4000-8000-000000000001', 'a9000001-0000-4000-8000-000000000001',
+    pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  )
+$$, 'P0001', 'PROVENANCE_CONFLICT', 'V3 rejects private-but-standard story (sync path is private AND personalized_ai only)');
+select is((select count(*)::integer from public.chapters where story_id = 'test:v3-private-std'), 0,
+  'V3 story_mode fence never publishes');
+
+select pg_temp.seed_story('test:v3-public-per', 2);
+update public.stories
+set visibility = 'public'
+where id = 'test:v3-public-per';
+select pg_temp.seed_sync_lease('test:v3-public-per', 2, 'a9000003-0000-4000-8000-000000000001');
+select pg_temp.seed_sync_checkpoint('test:v3-public-per', 2, 'a9000004-0000-4000-8000-000000000001',
+  'a9000005-0000-4000-8000-000000000001', pg_temp.touch_delta('test:v3-public-per', 2), 0, 'Bab 2');
+select throws_ok($$
+  select public.publish_chapter_state_v3(
+    'test:v3-public-per', 2, '00000000-0000-0000-0000-000000000001',
+    'a9000003-0000-4000-8000-000000000001', 'a9000004-0000-4000-8000-000000000001',
+    pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  )
+$$, 'P0001', 'PROVENANCE_CONFLICT', 'V3 rejects public-personalized story (sync path publishes private stories only)');
+select is((select count(*)::integer from public.chapters where story_id = 'test:v3-public-per'), 0,
+  'V3 visibility fence never publishes');
+
+-- 5f. R2-B2 — V3 must NEVER publish a worker-bound checkpoint (domain
+-- separation, symmetric to V5's exact job binding): sync-owned lease + schema-3
+-- checkpoint bound to a generation job → PROVENANCE_CONFLICT, no chapter, no
+-- commit, no revision.
+select pg_temp.seed_story('test:v3-worker-checkpoint', 2);
+select pg_temp.seed_thread('test:v3-worker-checkpoint');
+select pg_temp.seed_job('test:v3-worker-checkpoint', 2, 'a9000006-0000-4000-8000-000000000001', 'a9000007-0000-4000-8000-000000000001');
+select pg_temp.seed_v5_checkpoint('test:v3-worker-checkpoint', 2, 'a9000006-0000-4000-8000-000000000001',
+  pg_temp.touch_delta('test:v3-worker-checkpoint', 2), 0);
+-- No sync lease here: the job-bound checkpoint fence (pre-read, R2-B2) fires
+-- BEFORE the lease lock, so the worker lease from seed_job is the only lease.
+-- (generation_leases_one_active forbids a second ACTIVE lease on the story.)
+select throws_ok($$
+  select public.publish_chapter_state_v3(
+    'test:v3-worker-checkpoint', 2, '00000000-0000-0000-0000-000000000001',
+    'a9000008-0000-4000-8000-000000000001', 'a9000006-0000-4000-8000-000000000001',
+    pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  )
+$$, 'P0001', 'PROVENANCE_CONFLICT', 'V3 rejects a job-bound checkpoint (sync path never publishes worker-owned checkpoints)');
+select is((select count(*)::integer from public.chapters where story_id = 'test:v3-worker-checkpoint'), 0,
+  'worker-checkpoint fence publishes no chapter');
+select is((select count(*)::integer from public.chapter_state_commits where story_id = 'test:v3-worker-checkpoint'), 0,
+  'worker-checkpoint fence writes no commit');
+select is((select canon_state_revision from public.stories where id = 'test:v3-worker-checkpoint'),
+  0::bigint, 'worker-checkpoint fence never increments revision');
+
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- 6. ATOMICITY — any failure after V2 rolls back the WHOLE publication
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -1339,7 +1490,141 @@ select is((select status from public.generation_leases where id = 'a8000000-0000
   'RELEASED', 'V5 final lease state is RELEASED (worker path)');
 
 -- ═══════════════════════════════════════════════════════════════════════════════
--- 8. PARITY — identical validated delta via V3 (sync) and V5 (worker) produces
+-- 8. ACT-ROLLUP BOUNDARY — A1a invariant gate in the shared applier (R2-B1),
+--    derived from the authoritative actPlan (story_contract_json->'actPlan',
+--    seeded by seed_story with boundaries at 45/48/50). Four-way semantics:
+--    non-boundary + rollup → reject; boundary + no rollup → reject; boundary +
+--    wrong descriptor → reject; boundary + exact descriptor → accept.
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+-- Boundary 45 (act 10: 45-45) + exact descriptor → accept.
+select pg_temp.seed_story('test:act-b45', 45);
+select pg_temp.seed_sync_lease('test:act-b45', 45, '91000000-0000-4000-8000-000000000001');
+select pg_temp.seed_sync_checkpoint('test:act-b45', 45, '92000000-0000-4000-8000-000000000001',
+  '93000000-0000-4000-8000-000000000001', pg_temp.act_delta('test:act-b45', 45, 10, 45, 45), 0, 'Bab 45');
+select is(
+  (select public.publish_chapter_state_v3(
+    'test:act-b45', 45, '00000000-0000-0000-0000-000000000001',
+    '91000000-0000-4000-8000-000000000001', '92000000-0000-4000-8000-000000000001',
+    pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(46),
+    null, null
+  )->>'ok'),
+  'true', 'boundary ch45 with exact rollup publishes');
+select is(
+  (select row(act_number, covers_from_chapter, covers_to_chapter)::text
+   from public.act_rollups where story_id = 'test:act-b45'),
+  '(10,45,45)', 'ch45 boundary stores the exact descriptor (act 10, covers 45-45)');
+
+-- Boundary 48 (act 11: 46-48) + exact descriptor → accept.
+select pg_temp.seed_story('test:act-b48', 48);
+select pg_temp.seed_sync_lease('test:act-b48', 48, '94000000-0000-4000-8000-000000000001');
+select pg_temp.seed_sync_checkpoint('test:act-b48', 48, '95000000-0000-4000-8000-000000000001',
+  '96000000-0000-4000-8000-000000000001', pg_temp.act_delta('test:act-b48', 48, 11, 46, 48), 0, 'Bab 48');
+select is(
+  (select public.publish_chapter_state_v3(
+    'test:act-b48', 48, '00000000-0000-0000-0000-000000000001',
+    '94000000-0000-4000-8000-000000000001', '95000000-0000-4000-8000-000000000001',
+    pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(49),
+    null, null
+  )->>'ok'),
+  'true', 'boundary ch48 with exact rollup publishes');
+select is(
+  (select row(act_number, covers_from_chapter, covers_to_chapter)::text
+   from public.act_rollups where story_id = 'test:act-b48'),
+  '(11,46,48)', 'ch48 boundary stores the exact descriptor (act 11, covers 46-48)');
+
+-- Boundary 50 (act 12: 49-50) + exact descriptor → accept.
+select pg_temp.seed_story('test:act-b50', 50);
+select pg_temp.seed_sync_lease('test:act-b50', 50, '97000000-0000-4000-8000-000000000001');
+select pg_temp.seed_sync_checkpoint('test:act-b50', 50, '98000000-0000-4000-8000-000000000001',
+  '99000000-0000-4000-8000-000000000001', pg_temp.act_delta('test:act-b50', 50, 12, 49, 50), 0, 'Bab 50');
+select is(
+  (select public.publish_chapter_state_v3(
+    'test:act-b50', 50, '00000000-0000-0000-0000-000000000001',
+    '97000000-0000-4000-8000-000000000001', '98000000-0000-4000-8000-000000000001',
+    null, '[]'::jsonb, '[]'::jsonb,
+    null, null
+  )->>'ok'),
+  'true', 'boundary ch50 with exact rollup publishes');
+select is(
+  (select row(act_number, covers_from_chapter, covers_to_chapter)::text
+   from public.act_rollups where story_id = 'test:act-b50'),
+  '(12,49,50)', 'ch50 boundary stores the exact descriptor (act 12, covers 49-50)');
+
+-- Non-boundary ch2 + rollup → STATE_ACT_ROLLUP_OUTSIDE_ACT (whole publication
+-- rolls back: no chapter, no commit).
+select pg_temp.seed_story('test:act-nonbound', 2);
+select pg_temp.seed_sync_lease('test:act-nonbound', 2, '9a000000-0000-4000-8000-000000000001');
+select pg_temp.seed_sync_checkpoint('test:act-nonbound', 2, '9b000000-0000-4000-8000-000000000001',
+  '9c000000-0000-4000-8000-000000000001', pg_temp.act_delta('test:act-nonbound', 2, 1, 1, 5), 0, 'Bab 2');
+select throws_ok($$
+  select public.publish_chapter_state_v3(
+    'test:act-nonbound', 2, '00000000-0000-0000-0000-000000000001',
+    '9a000000-0000-4000-8000-000000000001', '9b000000-0000-4000-8000-000000000001',
+    pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  )
+$$, 'P0001', 'STATE_ACT_ROLLUP_OUTSIDE_ACT: 2', 'non-boundary chapter with actRollup rejected');
+select is((select count(*)::integer from public.chapter_state_commits where story_id = 'test:act-nonbound'), 0,
+  'outside-act rejection writes no commit');
+
+-- Boundary 45 + NO rollup → STATE_ACT_ROLLUP_MISSING.
+select pg_temp.seed_story('test:act-missing', 45);
+select pg_temp.seed_thread('test:act-missing');
+select pg_temp.seed_sync_lease('test:act-missing', 45, '9d000000-0000-4000-8000-000000000001');
+select pg_temp.seed_sync_checkpoint('test:act-missing', 45, '9e000000-0000-4000-8000-000000000001',
+  '9f000000-0000-4000-8000-000000000001', pg_temp.touch_delta('test:act-missing', 45), 0, 'Bab 45');
+select throws_ok($$
+  select public.publish_chapter_state_v3(
+    'test:act-missing', 45, '00000000-0000-0000-0000-000000000001',
+    '9d000000-0000-4000-8000-000000000001', '9e000000-0000-4000-8000-000000000001',
+    pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(46),
+    null, null
+  )
+$$, 'P0001', 'STATE_ACT_ROLLUP_MISSING: 45', 'boundary chapter without actRollup rejected');
+select is((select count(*)::integer from public.chapter_state_commits where story_id = 'test:act-missing'), 0,
+  'missing-rollup rejection writes no commit');
+
+-- Boundary 45 + wrong descriptor (coversTo 44 instead of 45) →
+-- STATE_ACT_ROLLUP_DESCRIPTOR_MISMATCH.
+select pg_temp.seed_story('test:act-descriptor', 45);
+select pg_temp.seed_sync_lease('test:act-descriptor', 45, '91000000-0000-4000-8000-000000000010');
+select pg_temp.seed_sync_checkpoint('test:act-descriptor', 45, '92000000-0000-4000-8000-000000000010',
+  '93000000-0000-4000-8000-000000000010', pg_temp.act_delta('test:act-descriptor', 45, 10, 45, 44), 0, 'Bab 45');
+select throws_ok($$
+  select public.publish_chapter_state_v3(
+    'test:act-descriptor', 45, '00000000-0000-0000-0000-000000000001',
+    '91000000-0000-4000-8000-000000000010', '92000000-0000-4000-8000-000000000010',
+    pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(46),
+    null, null
+  )
+$$, 'P0001', 'STATE_ACT_ROLLUP_DESCRIPTOR_MISMATCH: 45', 'boundary chapter with wrong descriptor rejected');
+select is((select count(*)::integer from public.chapter_state_commits where story_id = 'test:act-descriptor'), 0,
+  'descriptor-mismatch rejection writes no commit');
+
+-- Missing authoritative actPlan → fail closed (ACT_PLAN_NOT_FOUND), never a
+-- silent skip of the boundary gate.
+select pg_temp.seed_story('test:act-noplan', 2);
+select pg_temp.seed_thread('test:act-noplan');
+update public.story_generation_contracts
+set story_contract_json = '{}'::jsonb
+where story_id = 'test:act-noplan';
+select pg_temp.seed_sync_lease('test:act-noplan', 2, '91000000-0000-4000-8000-000000000011');
+select pg_temp.seed_sync_checkpoint('test:act-noplan', 2, '92000000-0000-4000-8000-000000000011',
+  '93000000-0000-4000-8000-000000000011', pg_temp.touch_delta('test:act-noplan', 2), 0, 'Bab 2');
+select throws_ok($$
+  select public.publish_chapter_state_v3(
+    'test:act-noplan', 2, '00000000-0000-0000-0000-000000000001',
+    '91000000-0000-4000-8000-000000000011', '92000000-0000-4000-8000-000000000011',
+    pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  )
+$$, 'P0001', 'ACT_PLAN_NOT_FOUND', 'story without actPlan fails closed in the applier');
+select is((select count(*)::integer from public.chapter_state_commits where story_id = 'test:act-noplan'), 0,
+  'missing-actPlan rejection writes no commit');
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- 9. PARITY — identical validated delta via V3 (sync) and V5 (worker) produces
 --    identical canonical tables + identical revision semantics
 -- ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1349,7 +1634,6 @@ returns jsonb language sql as $$
           '"timeline":{"append":[{"ordinal":1,"description":"Raka membuka gudang.","isFlashback":false,"occursAt":1}]},' ||
           '"characters":{"statusChanges":[{"characterId":"ch-raka-' || p_story || '","from":"ALIVE","to":"INACTIVE"}]},' ||
           '"threads":{"touches":["t1-' || p_story || '"],"transitions":[{"threadId":"t1-' || p_story || '","from":"OPEN","to":"DEVELOPING"}]},' ||
-          '"actRollup":{"actNumber":1,"summary":"Awal cerita.","stateDelta":{},"coversFromChapter":1,"coversToChapter":3},' ||
           '"plotDebts":{"progress":[{"debtId":"d1","milestoneChapter":2}],' ||
           '"closures":[{"closureForm":"RESOLVED","debtId":"d1"},{"closureForm":"RESOLVED","debtId":"main_mystery"}]}}')::jsonb
 $$;
@@ -1438,7 +1722,7 @@ select is(
 select is(
   pg_temp.canon_state('test:parity:v3'),
   pg_temp.canon_state('test:parity:v5'),
-  'PARITY: identical delta via V3/V5 → identical canonical tables (facts, timeline, character_states, threads, act_rollups, progress, closures)'
+  'PARITY: identical delta via V3/V5 → identical canonical tables (facts, timeline, character_states, threads, progress, closures)'
 );
 select is(
   (select row(base_canon_revision, committed_canon_revision, state_delta_schema_version,

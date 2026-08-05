@@ -132,6 +132,12 @@ function createAdminDb(input?: {
         }
         const queue = selectQueues.get(table)
         if (queue && queue.length > 0) return queue.shift()!
+        if (table === 'account_commercial_states') {
+          return { data: { starter_claimed_at: '2026-08-01T00:00:00Z', starter_story_id: reservedStoryId }, error: null }
+        }
+        if (table === 'stories') {
+          return { data: { commercial_origin: 'STARTER_FREE' }, error: null }
+        }
         return { data: null, error: null }
       })
 
@@ -202,6 +208,16 @@ function createAdminDb(input?: {
       })
 
       return builder
+    }),
+    rpc: vi.fn(async (rpcName: string, args?: unknown) => {
+      calls.push({ method: 'rpc', args: [rpcName, args] })
+      if (rpcName === 'claim_starter_story_v1') {
+        return { data: { claimed: true }, error: null }
+      }
+      if (rpcName === 'reserve_story_start_v1') {
+        return { data: { ok: true, status: 'RESERVED' }, error: null }
+      }
+      return { data: null, error: null }
     }),
   }
 

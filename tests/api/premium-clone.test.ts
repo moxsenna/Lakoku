@@ -60,6 +60,7 @@ function target(overrides: Record<string, unknown> = {}) {
     visibility: 'private',
     source_story_id: templateStoryId,
     story_mode: 'premium_instance',
+    commercial_origin: 'PAID_START',
     ...overrides,
   }
 }
@@ -98,7 +99,7 @@ function db(input: DbInput = {}) {
       return stories.shift() ?? { data: null, error: null }
     }
     if (table === 'account_commercial_states' && operation === 'select') {
-      return { data: { starter_claimed_at: '2026-08-01T00:00:00Z', starter_story_id: 'story-1' }, error: null }
+      return { data: { starter_claimed_at: null, starter_story_id: null }, error: null }
     }
     if (table === 'chapters' && operation === 'select') {
       return chapters.shift() ?? { data: { story_id: storyId, number: 1 }, error: null }
@@ -156,7 +157,15 @@ function db(input: DbInput = {}) {
     }),
     rpc: vi.fn(async (...args: unknown[]) => {
       calls.push({ method: 'rpc', args })
-      return rpcs.shift() ?? { data: { ok: true, story_id: storyId }, error: null }
+      const next = rpcs.shift()
+      if (next) return next
+      if (args[0] === 'reserve_story_start_v1') {
+        return { data: { ok: true, status: 'RESERVED' }, error: null }
+      }
+      if (args[0] === 'claim_starter_story_v1') {
+        return { data: { claimed: true }, error: null }
+      }
+      return { data: { ok: true, story_id: storyId }, error: null }
     }),
   }
   return { client, calls }
@@ -420,7 +429,7 @@ describe('clonePremiumStoryForUser', () => {
     mocks.adminFactory.mockReturnValue(fixture.client)
     const { clonePremiumStoryForUser } = await import('@/lib/api/premium-clone.server')
     await expect(clonePremiumStoryForUser({ userId, templateStoryId, idempotencyKey })).resolves.toMatchObject({ storyId, replayed: true })
-    expect(fixture.client.rpc).toHaveBeenCalledWith('reserve_story_start_v1', expect.anything())
+    expect(fixture.client.rpc).toHaveBeenCalledWith('claim_starter_story_v1', expect.anything())
   })
 
   it('rejects invalid key and template before admin access', async () => {

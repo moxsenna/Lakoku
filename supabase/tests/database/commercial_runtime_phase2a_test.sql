@@ -11,7 +11,7 @@ begin
 end
 $$;
 
-select plan(25);
+select plan(28);
 
 -- 1. Table existence & RLS
 select has_table('commercial_generation_intents', 'commercial_generation_intents table should exist');
@@ -55,7 +55,13 @@ insert into public.stories (
 ) values (
   'story-p2a-1', 'Test Story Phase 2A', '/c.webp', 'Tag', 'Role', '{}', 50, 'BARU', 3, '{}', '11111111-1111-1111-1111-111111111111', 'private', 'personalized_ai', 'STARTER_FREE', 'ready'
 ), (
-  'story-std-1', 'Standard Story', '/c.webp', 'Tag', 'Role', '{}', 50, 'BARU', 3, '{}', '11111111-1111-1111-1111-111111111111', 'public', 'standard', 'STARTER_FREE', 'ready'
+  'story-std-1', 'Standard Story', '/c.webp', 'Tag', 'Role', '{}', 50, 'BARU', 3, '{}', '11111111-1111-1111-1111-111111111111', 'private', 'standard', 'STARTER_FREE', 'ready'
+), (
+  'story-legacy-1', 'Legacy Story', '/c.webp', 'Tag', 'Role', '{}', 50, 'BARU', 3, '{}', '11111111-1111-1111-1111-111111111111', 'private', 'personalized_ai', 'LEGACY_GRANDFATHERED', 'ready'
+), (
+  'story-pending-1', 'Pending Paid Story', '/c.webp', 'Tag', 'Role', '{}', 50, 'BARU', 3, '{}', '11111111-1111-1111-1111-111111111111', 'private', 'personalized_ai', 'PENDING_PAID_START', 'ready'
+), (
+  'story-public-comm', 'Public Commercial Story', '/c.webp', 'Tag', 'Role', '{}', 50, 'BARU', 3, '{}', '11111111-1111-1111-1111-111111111111', 'public', 'personalized_ai', 'STARTER_FREE', 'ready'
 ) on conflict (id) do nothing;
 
 insert into public.reader_states (
@@ -97,6 +103,25 @@ select throws_ok(
   'ensure_commercial_generation_intent_v1 rejects standard story_mode'
 );
 
+select lives_ok(
+  $$ select public.ensure_commercial_generation_intent_v1('11111111-1111-1111-1111-111111111111', 'story-legacy-1', 4, 'choice-a'); $$,
+  'ensure_commercial_generation_intent_v1 permits LEGACY_GRANDFATHERED commercial origin'
+);
+
+select throws_ok(
+  $$ select public.ensure_commercial_generation_intent_v1('11111111-1111-1111-1111-111111111111', 'story-pending-1', 4, 'choice-a'); $$,
+  'P0001',
+  'INVALID_COMMERCIAL_ORIGIN',
+  'ensure_commercial_generation_intent_v1 rejects PENDING_PAID_START commercial origin'
+);
+
+select throws_ok(
+  $$ select public.ensure_commercial_generation_intent_v1('11111111-1111-1111-1111-111111111111', 'story-public-comm', 4, 'choice-a'); $$,
+  'P0001',
+  'FORBIDDEN_VISIBILITY',
+  'ensure_commercial_generation_intent_v1 rejects public visibility commercial story'
+);
+
 -- 5. Test apply_personalized_choice_v2 (Bab 3 -> Bab 4 requires commercial intent)
 select lives_ok(
   $$
@@ -124,8 +149,8 @@ select lives_ok(
       'choiceId', 'choice-a',
       'label', 'Pilihan A',
       'consequence', jsonb_build_array('Dampak A'),
-      'effectSummary', '{"truth": 1, "flagsSet": ["clue_found"]}'::jsonb,
-      'createdAt', now()
+      'effectSummary', jsonb_build_object('flagsSet', jsonb_build_array('clue_found'), 'truth', 1),
+      'createdAt', '2026-08-05T00:00:00.000Z'
     ),
     jsonb_build_object(
       'chapter', 3,
@@ -302,8 +327,8 @@ select lives_ok(
       'choiceId', 'choice-c1',
       'label', 'Pilihan C1',
       'consequence', jsonb_build_array('Dampak C1'),
-      'effectSummary', '{"flagsSet": []}'::jsonb,
-      'createdAt', now()
+      'effectSummary', jsonb_build_object('flagsSet', jsonb_build_array()),
+      'createdAt', '2026-08-05T00:00:00.000Z'
     ),
     jsonb_build_object(
       'chapter', 1,
@@ -375,8 +400,8 @@ select throws_ok(
       'choiceId', 'choice-cfg',
       'label', 'Pilihan Cfg',
       'consequence', jsonb_build_array('Dampak Cfg'),
-      'effectSummary', '{"flagsSet": []}'::jsonb,
-      'createdAt', now()
+      'effectSummary', jsonb_build_object('flagsSet', jsonb_build_array()),
+      'createdAt', '2026-08-05T00:00:00.000Z'
     ),
     jsonb_build_object(
       'chapter', 3,

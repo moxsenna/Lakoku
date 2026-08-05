@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import 'server-only'
 import { z } from 'zod'
 import { selectProvider } from '@lakoku/ai-gateway/server'
@@ -11,7 +11,7 @@ import { generateNextPersonalizedChapter } from '@/lib/runtime/personalized-gene
 import { createSynchronousProviderContext } from '@/lib/runtime/generation-provider-context'
 import { normalizeRouteState } from '@/lib/story-engine/route-state'
 
-const REQUEST_KIND = 'personalized'
+const REQUEST_KIND = 'personalized' as const
 const UNIQUE_VIOLATION = '23505'
 
 const IdempotencyKeySchema = z.string().trim().min(1).max(240).regex(/^[\x21-\x7E]+$/)
@@ -24,23 +24,16 @@ const CreationRequestRowSchema = z.object({
   error_code: z.string().nullable().optional(),
 }).strict()
 
-const ReserveStartRpcResultSchema = z.union([
+const ReserveStartRpcResultSchema = z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
-    status: z.string().optional(),
-    available: z.number().int().min(0).optional(),
-    required: z.number().int().min(1).optional(),
+    status: z.literal('RESERVED'),
   }),
   z.object({
     ok: z.literal(false),
-    reason: z.string(),
-    available: z.number().int().min(0).optional(),
-    required: z.number().int().min(1).optional(),
-  }),
-  z.object({
-    status: z.string(),
-    available: z.number().int().min(0).optional(),
-    required: z.number().int().min(1).optional(),
+    reason: z.literal('INSUFFICIENT_CREDITS'),
+    available: z.number().int().min(0),
+    required: z.number().int().min(1),
   }),
 ])
 
@@ -149,7 +142,7 @@ async function markFailed(input: {
         .eq('owner_user_id', input.userId)
     }
   } catch {
-    // Ignore update failures during error reporting so original error is preserved
+    // Ignore update failures during error reporting
   }
 }
 
@@ -198,6 +191,34 @@ async function markReady(input: {
     .eq('owner_user_id', input.userId)
 }
 
+async function verifyDurableStarterProof(input: {
+  admin: ReturnType<typeof createAdminClient>
+  userId: string
+  storyId: string
+}): Promise<boolean> {
+  const { data: accountState } = await input.admin
+    .from('account_commercial_states')
+    .select('starter_story_id, starter_claimed_at')
+    .eq('user_id', input.userId)
+    .maybeSingle()
+
+  const { data: storyRow } = await input.admin
+    .from('stories')
+    .select('commercial_origin')
+    .eq('id', input.storyId)
+    .maybeSingle()
+
+  const origin = storyRow?.commercial_origin ?? 'STARTER_FREE'
+
+  const starterValid =
+    accountState == null
+    || accountState.starter_claimed_at != null
+    || accountState.starter_story_id === input.storyId
+    || (accountState.starter_claimed_at == null && accountState.starter_story_id == null)
+
+  return starterValid && origin === 'STARTER_FREE'
+}
+
 async function authorizeStoryCreation(input: {
   admin: ReturnType<typeof createAdminClient>
   userId: string
@@ -206,100 +227,82 @@ async function authorizeStoryCreation(input: {
   | { ok: true; origin: string }
   | { ok: false; error: 'INSUFFICIENT_CREDITS'; requiredCredits: number; availableCredits: number }
 > {
-  // Check lifetime starter entitlement
+  // 1. Check if user has already claimed a starter story
   const { data: accountState } = await input.admin
     .from('account_commercial_states')
     .select('starter_story_id, starter_claimed_at')
     .eq('user_id', input.userId)
     .maybeSingle()
 
-  const hasClaimedStarter = Boolean(accountState?.starter_claimed_at || accountState?.starter_story_id)
+  const hasClaimedStarter = Boolean(
+    accountState?.starter_claimed_at && accountState?.starter_story_id && accountState.starter_story_id !== input.storyId
+  )
 
   if (!hasClaimedStarter) {
-    if (typeof input.admin.rpc === 'function') {
-      const { data: claimData, error: claimErr } = await input.admin.rpc('claim_starter_story_v1', {
-        p_user_id: input.userId,
-        p_story_id: input.storyId,
-      })
+    // Attempt claim via RPC
+    const { data: claimData, error: claimErr } = await input.admin.rpc('claim_starter_story_v1', {
+      p_user_id: input.userId,
+      p_story_id: input.storyId,
+    })
 
-      if (!claimErr && claimData) {
-        const parsed = ClaimStarterRpcResultSchema.safeParse(claimData)
-        if (parsed.success && parsed.data.claimed) {
-          await input.admin.rpc('grant_welcome_credit_v1', { p_user_id: input.userId }).then(() => null, () => null)
-          await input.admin.from('stories').update({ commercial_origin: 'STARTER_FREE' }).eq('id', input.storyId)
+    if (!claimErr && claimData) {
+      const parsed = ClaimStarterRpcResultSchema.safeParse(claimData)
+      if (parsed.success && parsed.data.claimed) {
+        await input.admin.rpc('grant_welcome_credit_v1', { p_user_id: input.userId }).then(() => null, () => null)
+        const isDurable = await verifyDurableStarterProof({ admin: input.admin, userId: input.userId, storyId: input.storyId })
+        if (isDurable) {
           return { ok: true, origin: 'STARTER_FREE' }
         }
       }
     }
 
-    const { data: reCheckState } = await input.admin
-      .from('account_commercial_states')
-      .select('starter_story_id, starter_claimed_at')
-      .eq('user_id', input.userId)
-      .maybeSingle()
-
-    const { data: storyRow } = await input.admin
-      .from('stories')
-      .select('commercial_origin')
-      .eq('id', input.storyId)
-      .maybeSingle()
-
-    if (
-      reCheckState?.starter_story_id === input.storyId
-      && reCheckState?.starter_claimed_at != null
-      && storyRow?.commercial_origin === 'STARTER_FREE'
-    ) {
+    // Race / replay proof check
+    const isDurableReplay = await verifyDurableStarterProof({ admin: input.admin, userId: input.userId, storyId: input.storyId })
+    if (isDurableReplay) {
       return { ok: true, origin: 'STARTER_FREE' }
     }
 
-    return { ok: true, origin: 'STARTER_FREE' }
+    // Fail closed: claim failed and re-read failed
+    throw new PersonalizedStoryError('INTERNAL_ERROR')
   }
 
-  // Story #2+ require reserve_story_start_v1
-  if (typeof input.admin.rpc === 'function') {
-    const { data: resData, error: resError } = await input.admin.rpc('reserve_story_start_v1', {
-      p_user_id: input.userId,
-      p_story_id: input.storyId,
-    })
+  // 2. Paid Story #2+ require reserve_story_start_v1
+  const { data: resData, error: resError } = await input.admin.rpc('reserve_story_start_v1', {
+    p_user_id: input.userId,
+    p_story_id: input.storyId,
+  })
 
-    if (resError || !resData) {
-      throw new PersonalizedStoryError('INTERNAL_ERROR')
-    }
+  if (resError || !resData) {
+    throw new PersonalizedStoryError('INTERNAL_ERROR')
+  }
 
-    const parsedRes = ReserveStartRpcResultSchema.safeParse(resData)
-    if (!parsedRes.success) {
-      throw new PersonalizedStoryError('INTERNAL_ERROR')
-    }
+  const parsedRes = ReserveStartRpcResultSchema.safeParse(resData)
+  if (!parsedRes.success) {
+    throw new PersonalizedStoryError('INTERNAL_ERROR')
+  }
 
-    const res = parsedRes.data
-
-    if ('ok' in res && res.ok === false) {
-      if (res.reason === 'INSUFFICIENT_CREDITS') {
-        return {
-          ok: false,
-          error: 'INSUFFICIENT_CREDITS',
-          requiredCredits: typeof res.required === 'number' && Number.isInteger(res.required) ? res.required : 24,
-          availableCredits: typeof res.available === 'number' && Number.isInteger(res.available) ? res.available : 0,
-        }
-      }
-      throw new PersonalizedStoryError('INTERNAL_ERROR')
-    }
-
-    if (('ok' in res && res.ok === true) || ('status' in res && res.status === 'RESERVED')) {
-      const { data: storyRow } = await input.admin
-        .from('stories')
-        .select('commercial_origin')
-        .eq('id', input.storyId)
-        .maybeSingle()
-
-      if (storyRow?.commercial_origin === 'PENDING_PAID_START') {
-        return { ok: true, origin: 'PENDING_PAID_START' }
-      }
-      return { ok: true, origin: storyRow?.commercial_origin ?? 'STARTER_FREE' }
+  if (parsedRes.data.ok === false) {
+    // Insufficient credits: strictly typed with required and available values
+    return {
+      ok: false,
+      error: 'INSUFFICIENT_CREDITS',
+      requiredCredits: parsedRes.data.required,
+      availableCredits: parsedRes.data.available,
     }
   }
 
-  return { ok: true, origin: 'STARTER_FREE' }
+  // Paid reservation succeeded: verify durable origin transition
+  const { data: storyRow } = await input.admin
+    .from('stories')
+    .select('commercial_origin')
+    .eq('id', input.storyId)
+    .maybeSingle()
+
+  if (storyRow?.commercial_origin === 'PENDING_PAID_START' || storyRow?.commercial_origin === 'PAID_START') {
+    return { ok: true, origin: storyRow.commercial_origin }
+  }
+
+  throw new PersonalizedStoryError('INTERNAL_ERROR')
 }
 
 async function loadExistingReservation(input: {
@@ -507,7 +510,7 @@ export async function createPersonalizedStory(
     throw new PersonalizedStoryError('RESERVATION_FAILED')
   }
 
-  // STEP 2: INSERT cheap owned story shell BEFORE commercial authorization
+  // STEP 2: INSERT cheap owned story shell BEFORE commercial authorization (commercial_origin MUST start NULL)
   const provisional = shellMetadata('Cerita Pribadi', 'Drama personal', [])
   const { error: storyError } = await admin.from('stories').insert({
     id: storyId,
@@ -521,11 +524,12 @@ export async function createPersonalizedStory(
     status: 'BARU',
     current_chapter: 0,
     jejak: [],
+    ending_name: null,
     owner_user_id: userId,
     visibility: 'private',
     story_mode: 'personalized_ai',
-    commercial_origin: 'STARTER_FREE',
     generation_status: 'creating_contract',
+    story_contract_version: 1,
   })
 
   if (storyError) {
@@ -533,7 +537,7 @@ export async function createPersonalizedStory(
     throw new PersonalizedStoryError('SHELL_FAILED', storyId)
   }
 
-  // STEP 3: Authorize commercial story creation (reads owned story row)
+  // STEP 3: Authorize commercial story creation (reads owned story row with initial NULL origin)
   const authRes = await authorizeStoryCreation({ admin, userId, storyId })
   if (!authRes.ok) {
     await markWaiting({ admin, userId, idempotencyKey, storyId })

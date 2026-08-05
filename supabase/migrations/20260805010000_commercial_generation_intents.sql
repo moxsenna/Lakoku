@@ -76,11 +76,15 @@ begin
     raise exception using errcode = 'P0001', message = 'FORBIDDEN_OWNER';
   end if;
 
+  if v_story.visibility not in ('private', 'unlisted') then
+    raise exception using errcode = 'P0001', message = 'FORBIDDEN_VISIBILITY';
+  end if;
+
   if v_story.story_mode not in ('personalized_ai', 'premium_instance') then
     raise exception using errcode = 'P0001', message = 'INVALID_STORY_MODE';
   end if;
 
-  if v_story.commercial_origin not in ('STARTER_FREE', 'PAID_START') then
+  if v_story.commercial_origin not in ('STARTER_FREE', 'PAID_START', 'LEGACY_GRANDFATHERED') then
     raise exception using errcode = 'P0001', message = 'INVALID_COMMERCIAL_ORIGIN';
   end if;
 

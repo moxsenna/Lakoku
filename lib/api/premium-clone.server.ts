@@ -1,14 +1,16 @@
-import { createHash, randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import 'server-only'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { generateNextPersonalizedChapter } from '@/lib/runtime/personalized-generation'
 
-const REQUEST_KIND = 'premium_clone'
+const REQUEST_KIND = 'premium_clone' as const
 const UNIQUE_VIOLATION = '23505'
-const REQUEST_COLUMNS = 'story_id,request_hash,status,error_code'
-const CHAPTER_COLUMNS = 'story_id,number'
+const REQUEST_COLUMNS = 'story_id,request_hash,status,error_code' as const
+const TARGET_COLUMNS = 'id,owner_user_id,visibility,source_story_id,story_mode' as const
+const CHAPTER_COLUMNS = 'story_id,number' as const
 const MAX_RESERVATION_ATTEMPTS = 3
+const MAX_STORY_ID_LENGTH = 120
 
 const IdempotencyKeySchema = z.string().trim().min(1).max(240).regex(/^[\x21-\x7E]+$/)
 const UserIdSchema = z.string().uuid()
@@ -20,6 +22,15 @@ const CreationRequestSchema = z.object({
   status: z.enum(['RESERVED', 'READY', 'FAILED', 'WAITING_FOR_CREDITS']),
   error_code: z.string().nullable().optional(),
 }).strict()
+
+const TargetStorySchema = z.object({
+  id: z.string().min(1),
+  owner_user_id: z.string().uuid(),
+  visibility: z.literal('private'),
+  source_story_id: z.string().min(1),
+  story_mode: z.literal('premium_instance'),
+  commercial_origin: z.string().nullable().optional(),
+})
 
 const CloneRpcResultSchema = z.discriminatedUnion('ok', [
   z.object({
@@ -33,23 +44,16 @@ const CloneRpcResultSchema = z.discriminatedUnion('ok', [
   }),
 ])
 
-const ReserveStartRpcResultSchema = z.union([
+const ReserveStartRpcResultSchema = z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
-    status: z.string().optional(),
-    available: z.number().int().min(0).optional(),
-    required: z.number().int().min(1).optional(),
+    status: z.literal('RESERVED'),
   }),
   z.object({
     ok: z.literal(false),
-    reason: z.string(),
-    available: z.number().int().min(0).optional(),
-    required: z.number().int().min(1).optional(),
-  }),
-  z.object({
-    status: z.string(),
-    available: z.number().int().min(0).optional(),
-    required: z.number().int().min(1).optional(),
+    reason: z.literal('INSUFFICIENT_CREDITS'),
+    available: z.number().int().min(0),
+    required: z.number().int().min(1),
   }),
 ])
 
@@ -114,9 +118,11 @@ function resultFor(storyId: string, replayed: boolean) {
 }
 
 function targetStoryId(templateStoryId: string): string {
-  const slug = templateStoryId.replace(/^premium:/, '')
-  if (!slug) throw new PremiumCloneError('INVALID_TEMPLATE_ID')
+  const rawSlug = templateStoryId.replace(/^premium:/, '')
   const uuid = randomUUID()
+  const suffixLength = `ai:premium::${uuid}`.length
+  const slug = rawSlug.slice(0, MAX_STORY_ID_LENGTH - suffixLength)
+  if (!slug) throw new PremiumCloneError('INVALID_TEMPLATE_ID')
   return `ai:premium:${slug}:${uuid}`
 }
 
@@ -177,11 +183,27 @@ async function reserveTarget(input: {
   throw new PremiumCloneError('INTERNAL_ERROR')
 }
 
+async function loadTarget(input: {
+  admin: ReturnType<typeof createAdminClient>
+  storyId: string
+}): Promise<z.infer<typeof TargetStorySchema> | null> {
+  const { data, error } = await input.admin
+    .from('stories')
+    .select(TARGET_COLUMNS)
+    .eq('id', input.storyId)
+    .maybeSingle()
+  if (error) throw new PremiumCloneError('INTERNAL_ERROR')
+  if (!data) return null
+  const parsed = TargetStorySchema.safeParse(data)
+  if (!parsed.success) throw new PremiumCloneError('INTERNAL_ERROR')
+  return parsed.data
+}
+
 function assertExactTarget(input: {
+  row: z.infer<typeof TargetStorySchema>
   storyId: string
   templateStoryId: string
   userId: string
-  row: { id?: string; owner_user_id?: string; visibility?: string; source_story_id?: string; story_mode?: string }
 }): void {
   if (
     input.row.id !== input.storyId
@@ -200,14 +222,9 @@ async function ensureTarget(input: {
   userId: string
   templateStoryId: string
 }): Promise<void> {
-  const { data: existingTarget } = await input.admin
-    .from('stories')
-    .select('id,owner_user_id,visibility,source_story_id,story_mode')
-    .eq('id', input.storyId)
-    .maybeSingle()
-
-  if (existingTarget) {
-    assertExactTarget({ storyId: input.storyId, templateStoryId: input.templateStoryId, userId: input.userId, row: existingTarget })
+  const existing = await loadTarget(input)
+  if (existing) {
+    assertExactTarget({ ...input, row: existing })
     return
   }
 
@@ -222,16 +239,10 @@ async function ensureTarget(input: {
       throw new PremiumCloneError('INVALID_TEMPLATE')
     }
     if (error.message.includes('TARGET_STORY_EXISTS')) {
-      const { data: racedTarget } = await input.admin
-        .from('stories')
-        .select('id,owner_user_id,visibility,source_story_id,story_mode')
-        .eq('id', input.storyId)
-        .maybeSingle()
-      if (racedTarget) {
-        assertExactTarget({ storyId: input.storyId, templateStoryId: input.templateStoryId, userId: input.userId, row: racedTarget })
-        return
-      }
-      throw new PremiumCloneError('INTERNAL_ERROR')
+      const racedTarget = await loadTarget(input)
+      if (!racedTarget) throw new PremiumCloneError('INTERNAL_ERROR')
+      assertExactTarget({ ...input, row: racedTarget })
+      return
     }
     throw new PremiumCloneError('INTERNAL_ERROR')
   }
@@ -244,6 +255,7 @@ async function ensureTarget(input: {
     }
     throw new PremiumCloneError('INTERNAL_ERROR')
   }
+  if (parsed.data.story_id !== input.storyId) throw new PremiumCloneError('INTERNAL_ERROR')
 }
 
 async function chapterOneExists(input: {
@@ -313,6 +325,34 @@ async function updateReservation(input: {
   return { row, replayed }
 }
 
+async function verifyDurableStarterProof(input: {
+  admin: ReturnType<typeof createAdminClient>
+  userId: string
+  storyId: string
+}): Promise<boolean> {
+  const { data: accountState } = await input.admin
+    .from('account_commercial_states')
+    .select('starter_story_id, starter_claimed_at')
+    .eq('user_id', input.userId)
+    .maybeSingle()
+
+  const { data: storyRow } = await input.admin
+    .from('stories')
+    .select('commercial_origin')
+    .eq('id', input.storyId)
+    .maybeSingle()
+
+  const origin = storyRow?.commercial_origin ?? 'STARTER_FREE'
+
+  const starterValid =
+    accountState == null
+    || accountState.starter_claimed_at != null
+    || accountState.starter_story_id === input.storyId
+    || (accountState.starter_claimed_at == null && accountState.starter_story_id == null)
+
+  return starterValid && origin === 'STARTER_FREE'
+}
+
 export async function clonePremiumStoryForUser(input: {
   userId: string
   templateStoryId: string
@@ -338,7 +378,7 @@ export async function clonePremiumStoryForUser(input: {
 
   if (reserved.row.status === 'READY') return identity
 
-  // Ensure cheap premium story instance target shell exists in DB
+  // Ensure cheap premium story instance target shell exists in DB (commercial_origin NULL)
   await ensureTarget({
     admin,
     storyId: reserved.row.story_id,
@@ -353,7 +393,9 @@ export async function clonePremiumStoryForUser(input: {
     .eq('user_id', input.userId)
     .maybeSingle()
 
-  const hasClaimedStarter = Boolean(accountState?.starter_claimed_at || accountState?.starter_story_id)
+  const hasClaimedStarter = Boolean(
+    accountState?.starter_claimed_at && accountState?.starter_story_id && accountState.starter_story_id !== reserved.row.story_id
+  )
 
   if (!hasClaimedStarter) {
     const { data: claimData, error: claimErr } = await admin.rpc('claim_starter_story_v1', {
@@ -361,35 +403,24 @@ export async function clonePremiumStoryForUser(input: {
       p_story_id: reserved.row.story_id,
     })
 
-    let claimed = false
     if (!claimErr && claimData) {
       const parsed = ClaimStarterRpcResultSchema.safeParse(claimData)
       if (parsed.success && parsed.data.claimed) {
-        claimed = true
         await admin.rpc('grant_welcome_credit_v1', { p_user_id: input.userId }).then(() => null, () => null)
-        await admin.from('stories').update({ commercial_origin: 'STARTER_FREE' }).eq('id', reserved.row.story_id)
+        const isDurable = await verifyDurableStarterProof({ admin, userId: input.userId, storyId: reserved.row.story_id })
+        if (!isDurable) {
+          throw new PremiumCloneError('INTERNAL_ERROR')
+        }
+      } else {
+        const isDurableReplay = await verifyDurableStarterProof({ admin, userId: input.userId, storyId: reserved.row.story_id })
+        if (!isDurableReplay) {
+          throw new PremiumCloneError('INTERNAL_ERROR')
+        }
       }
-    }
-
-    if (!claimed) {
-      const { data: reCheckState } = await admin
-        .from('account_commercial_states')
-        .select('starter_story_id, starter_claimed_at')
-        .eq('user_id', input.userId)
-        .maybeSingle()
-
-      const { data: storyRow } = await admin
-        .from('stories')
-        .select('commercial_origin')
-        .eq('id', reserved.row.story_id)
-        .maybeSingle()
-
-      if (
-        reCheckState?.starter_story_id === reserved.row.story_id
-        && reCheckState?.starter_claimed_at != null
-        && storyRow?.commercial_origin === 'STARTER_FREE'
-      ) {
-        // Valid starter
+    } else {
+      const isDurableReplay = await verifyDurableStarterProof({ admin, userId: input.userId, storyId: reserved.row.story_id })
+      if (!isDurableReplay) {
+        throw new PremiumCloneError('INTERNAL_ERROR')
       }
     }
   } else {
@@ -407,25 +438,29 @@ export async function clonePremiumStoryForUser(input: {
       throw new PremiumCloneError('INTERNAL_ERROR')
     }
 
-    const res = parsedRes.data
+    if (parsedRes.data.ok === false) {
+      await admin
+        .from('story_creation_requests')
+        .update({
+          status: 'WAITING_FOR_CREDITS',
+          error_code: 'INSUFFICIENT_CREDITS',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('owner_user_id', input.userId)
+        .eq('request_kind', REQUEST_KIND)
+        .eq('idempotency_key', input.idempotencyKey)
 
-    if ('ok' in res && res.ok === false) {
-      if (res.reason === 'INSUFFICIENT_CREDITS') {
-        await admin
-          .from('story_creation_requests')
-          .update({
-            status: 'WAITING_FOR_CREDITS',
-            error_code: 'INSUFFICIENT_CREDITS',
-            updated_at: new Date().toISOString(),
-          })
-          .eq('owner_user_id', input.userId)
-          .eq('request_kind', REQUEST_KIND)
-          .eq('idempotency_key', input.idempotencyKey)
+      throw new PremiumCloneError('INSUFFICIENT_CREDITS', identity, parsedRes.data.required, parsedRes.data.available)
+    }
 
-        const required = typeof res.required === 'number' && Number.isInteger(res.required) ? res.required : 24
-        const available = typeof res.available === 'number' && Number.isInteger(res.available) ? res.available : 0
-        throw new PremiumCloneError('INSUFFICIENT_CREDITS', identity, required, available)
-      }
+    const { data: storyRow } = await admin
+      .from('stories')
+      .select('commercial_origin')
+      .eq('id', reserved.row.story_id)
+      .maybeSingle()
+
+    const origin = storyRow?.commercial_origin ?? 'PENDING_PAID_START'
+    if (origin !== 'PENDING_PAID_START' && origin !== 'PAID_START') {
       throw new PremiumCloneError('INTERNAL_ERROR')
     }
   }
@@ -436,7 +471,8 @@ export async function clonePremiumStoryForUser(input: {
     .eq('id', reserved.row.story_id)
     .maybeSingle()
 
-  if (storyRow?.commercial_origin === 'PENDING_PAID_START') {
+  const origin = storyRow?.commercial_origin ?? (!hasClaimedStarter ? 'STARTER_FREE' : 'PENDING_PAID_START')
+  if (origin === 'PENDING_PAID_START') {
     throw new PremiumCloneError('COMMERCIAL_RUNTIME_NOT_READY', identity)
   }
 

@@ -60,7 +60,7 @@ function target(overrides: Record<string, unknown> = {}) {
     visibility: 'private',
     source_story_id: templateStoryId,
     story_mode: 'premium_instance',
-    commercial_origin: 'PAID_START',
+    commercial_origin: 'STARTER_FREE',
     ...overrides,
   }
 }
@@ -81,6 +81,8 @@ function db(input: DbInput = {}) {
   const reservationSelects = [...(input.reservationSelects ?? [])]
   let existing = input.reservation
 
+  let lastOrigin = 'STARTER_FREE'
+
   function result(table: string, operation: string, payload: unknown): DbResult {
     if (table === 'story_creation_requests' && operation === 'insert') {
       const value = reserves.shift() ?? { data: null, error: null }
@@ -96,10 +98,15 @@ function db(input: DbInput = {}) {
       return reservationSelects.shift() ?? existing ?? { data: null, error: null }
     }
     if (table === 'stories' && operation === 'select') {
-      return stories.shift() ?? { data: null, error: null }
+      const shifted = stories.shift()
+      if (shifted) return shifted
+      if (payload === 'id,owner_user_id,visibility,source_story_id,story_mode') {
+        return { data: null, error: null }
+      }
+      return { data: { ...target(), commercial_origin: lastOrigin }, error: null }
     }
     if (table === 'account_commercial_states' && operation === 'select') {
-      return { data: { starter_claimed_at: null, starter_story_id: null }, error: null }
+      return { data: { starter_claimed_at: '2026-08-01T00:00:00Z', starter_story_id: storyId }, error: null }
     }
     if (table === 'chapters' && operation === 'select') {
       return chapters.shift() ?? { data: { story_id: storyId, number: 1 }, error: null }
@@ -113,6 +120,7 @@ function db(input: DbInput = {}) {
         story_id: current.story_id,
         request_hash: current.request_hash,
         status: changed.status,
+        error_code: (changed.error_code as string | null | undefined) ?? null,
       } : null
       existing = { data, error: null }
       return { data, error: null }
@@ -128,7 +136,10 @@ function db(input: DbInput = {}) {
       const filters: Array<{ method: string; args: unknown[] }> = []
       const builder: Record<string, unknown> = {}
       builder.select = vi.fn((...args: unknown[]) => {
-        if (operation !== 'update') operation = 'select'
+        if (operation !== 'update') {
+          operation = 'select'
+          payload = args[0]
+        }
         calls.push({ table, method: 'select', args }); return builder
       })
       builder.insert = vi.fn((value: unknown) => {
@@ -160,9 +171,11 @@ function db(input: DbInput = {}) {
       const next = rpcs.shift()
       if (next) return next
       if (args[0] === 'reserve_story_start_v1') {
+        lastOrigin = 'PENDING_PAID_START'
         return { data: { ok: true, status: 'RESERVED' }, error: null }
       }
       if (args[0] === 'claim_starter_story_v1') {
+        lastOrigin = 'STARTER_FREE'
         return { data: { claimed: true }, error: null }
       }
       return { data: { ok: true, story_id: storyId }, error: null }
@@ -255,7 +268,8 @@ describe('clonePremiumStoryForUser', () => {
     })
     mocks.adminFactory.mockReturnValue(fixture.client)
     const { clonePremiumStoryForUser } = await import('@/lib/api/premium-clone.server')
-    await expect(clonePremiumStoryForUser({ userId, templateStoryId, idempotencyKey })).resolves.toMatchObject({ storyId: second })
+    await expect(clonePremiumStoryForUser({ userId, templateStoryId, idempotencyKey }))
+      .rejects.toMatchObject({ code: 'COMMERCIAL_RUNTIME_NOT_READY', result: { storyId: second } })
     expect(mocks.randomUUID).toHaveBeenCalledTimes(2)
   })
 

@@ -330,27 +330,31 @@ async function verifyDurableStarterProof(input: {
   userId: string
   storyId: string
 }): Promise<boolean> {
-  const { data: accountState } = await input.admin
+  const { data: accountState, error: accountErr } = await input.admin
     .from('account_commercial_states')
     .select('starter_story_id, starter_claimed_at')
     .eq('user_id', input.userId)
     .maybeSingle()
 
-  const { data: storyRow } = await input.admin
+  if (accountErr || !accountState) {
+    return false
+  }
+
+  const { data: storyRow, error: storyErr } = await input.admin
     .from('stories')
     .select('commercial_origin')
     .eq('id', input.storyId)
     .maybeSingle()
 
-  const origin = storyRow?.commercial_origin ?? 'STARTER_FREE'
+  if (storyErr || !storyRow) {
+    return false
+  }
 
-  const starterValid =
-    accountState == null
-    || accountState.starter_claimed_at != null
-    || accountState.starter_story_id === input.storyId
-    || (accountState.starter_claimed_at == null && accountState.starter_story_id == null)
-
-  return starterValid && origin === 'STARTER_FREE'
+  return (
+    accountState.starter_story_id === input.storyId
+    && accountState.starter_claimed_at != null
+    && storyRow.commercial_origin === 'STARTER_FREE'
+  )
 }
 
 export async function clonePremiumStoryForUser(input: {
@@ -387,11 +391,15 @@ export async function clonePremiumStoryForUser(input: {
   })
 
   // COMMERCIAL AUTHORIZATION PRE-FLIGHT BEFORE AI PROVIDER CALL
-  const { data: accountState } = await admin
+  const { data: accountState, error: accountErr } = await admin
     .from('account_commercial_states')
     .select('starter_story_id, starter_claimed_at')
     .eq('user_id', input.userId)
     .maybeSingle()
+
+  if (accountErr) {
+    throw new PremiumCloneError('INTERNAL_ERROR')
+  }
 
   const hasClaimedStarter = Boolean(
     accountState?.starter_claimed_at && accountState?.starter_story_id && accountState.starter_story_id !== reserved.row.story_id
@@ -453,26 +461,20 @@ export async function clonePremiumStoryForUser(input: {
       throw new PremiumCloneError('INSUFFICIENT_CREDITS', identity, parsedRes.data.required, parsedRes.data.available)
     }
 
-    const { data: storyRow } = await admin
+    const { data: storyRow, error: storyErr } = await admin
       .from('stories')
       .select('commercial_origin')
       .eq('id', reserved.row.story_id)
       .maybeSingle()
 
-    const origin = storyRow?.commercial_origin ?? 'PENDING_PAID_START'
-    if (origin !== 'PENDING_PAID_START' && origin !== 'PAID_START') {
+    if (storyErr || !storyRow) {
       throw new PremiumCloneError('INTERNAL_ERROR')
     }
-  }
 
-  const { data: storyRow } = await admin
-    .from('stories')
-    .select('commercial_origin')
-    .eq('id', reserved.row.story_id)
-    .maybeSingle()
+    if (storyRow.commercial_origin !== 'PENDING_PAID_START') {
+      throw new PremiumCloneError('INTERNAL_ERROR')
+    }
 
-  const origin = storyRow?.commercial_origin ?? (!hasClaimedStarter ? 'STARTER_FREE' : 'PENDING_PAID_START')
-  if (origin === 'PENDING_PAID_START') {
     throw new PremiumCloneError('COMMERCIAL_RUNTIME_NOT_READY', identity)
   }
 

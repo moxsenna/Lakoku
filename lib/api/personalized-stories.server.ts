@@ -77,6 +77,7 @@ export type PersonalizedStoryErrorCode =
   | 'CONTRACT_FAILED'
   | 'READER_STATE_FAILED'
   | 'GENERATION_FAILED'
+  | 'MARK_READY_FAILED'
   | 'INSUFFICIENT_CREDITS'
   | 'COMMERCIAL_RUNTIME_NOT_READY'
   | 'INTERNAL_ERROR'
@@ -170,7 +171,20 @@ async function markReady(input: {
   idempotencyKey: string
   storyId: string
 }): Promise<void> {
-  await input.admin
+  const { error: storyError } = await input.admin
+    .from('stories')
+    .update({
+      generation_status: 'ready',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', input.storyId)
+    .eq('owner_user_id', input.userId)
+
+  if (storyError) {
+    throw new PersonalizedStoryError('MARK_READY_FAILED', input.storyId)
+  }
+
+  const { error: requestError } = await input.admin
     .from('story_creation_requests')
     .update({
       status: 'READY',
@@ -181,42 +195,41 @@ async function markReady(input: {
     .eq('request_kind', REQUEST_KIND)
     .eq('idempotency_key', input.idempotencyKey)
 
-  await input.admin
-    .from('stories')
-    .update({
-      generation_status: 'ready',
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', input.storyId)
-    .eq('owner_user_id', input.userId)
+  if (requestError) {
+    throw new PersonalizedStoryError('MARK_READY_FAILED', input.storyId)
+  }
 }
 
-async function verifyDurableStarterProof(input: {
+export async function verifyDurableStarterProof(input: {
   admin: ReturnType<typeof createAdminClient>
   userId: string
   storyId: string
 }): Promise<boolean> {
-  const { data: accountState } = await input.admin
+  const { data: accountState, error: accountErr } = await input.admin
     .from('account_commercial_states')
     .select('starter_story_id, starter_claimed_at')
     .eq('user_id', input.userId)
     .maybeSingle()
 
-  const { data: storyRow } = await input.admin
+  if (accountErr || !accountState) {
+    return false
+  }
+
+  const { data: storyRow, error: storyErr } = await input.admin
     .from('stories')
     .select('commercial_origin')
     .eq('id', input.storyId)
     .maybeSingle()
 
-  const origin = storyRow?.commercial_origin ?? 'STARTER_FREE'
+  if (storyErr || !storyRow) {
+    return false
+  }
 
-  const starterValid =
-    accountState == null
-    || accountState.starter_claimed_at != null
-    || accountState.starter_story_id === input.storyId
-    || (accountState.starter_claimed_at == null && accountState.starter_story_id == null)
-
-  return starterValid && origin === 'STARTER_FREE'
+  return (
+    accountState.starter_story_id === input.storyId
+    && accountState.starter_claimed_at != null
+    && storyRow.commercial_origin === 'STARTER_FREE'
+  )
 }
 
 async function authorizeStoryCreation(input: {
@@ -224,15 +237,19 @@ async function authorizeStoryCreation(input: {
   userId: string
   storyId: string
 }): Promise<
-  | { ok: true; origin: string }
+  | { ok: true; origin: 'STARTER_FREE' | 'PENDING_PAID_START' }
   | { ok: false; error: 'INSUFFICIENT_CREDITS'; requiredCredits: number; availableCredits: number }
 > {
   // 1. Check if user has already claimed a starter story
-  const { data: accountState } = await input.admin
+  const { data: accountState, error: accountErr } = await input.admin
     .from('account_commercial_states')
     .select('starter_story_id, starter_claimed_at')
     .eq('user_id', input.userId)
     .maybeSingle()
+
+  if (accountErr) {
+    throw new PersonalizedStoryError('INTERNAL_ERROR', input.storyId)
+  }
 
   const hasClaimedStarter = Boolean(
     accountState?.starter_claimed_at && accountState?.starter_story_id && accountState.starter_story_id !== input.storyId
@@ -263,7 +280,7 @@ async function authorizeStoryCreation(input: {
     }
 
     // Fail closed: claim failed and re-read failed
-    throw new PersonalizedStoryError('INTERNAL_ERROR')
+    throw new PersonalizedStoryError('INTERNAL_ERROR', input.storyId)
   }
 
   // 2. Paid Story #2+ require reserve_story_start_v1
@@ -273,12 +290,12 @@ async function authorizeStoryCreation(input: {
   })
 
   if (resError || !resData) {
-    throw new PersonalizedStoryError('INTERNAL_ERROR')
+    throw new PersonalizedStoryError('INTERNAL_ERROR', input.storyId)
   }
 
   const parsedRes = ReserveStartRpcResultSchema.safeParse(resData)
   if (!parsedRes.success) {
-    throw new PersonalizedStoryError('INTERNAL_ERROR')
+    throw new PersonalizedStoryError('INTERNAL_ERROR', input.storyId)
   }
 
   if (parsedRes.data.ok === false) {
@@ -292,17 +309,21 @@ async function authorizeStoryCreation(input: {
   }
 
   // Paid reservation succeeded: verify durable origin transition
-  const { data: storyRow } = await input.admin
+  const { data: storyRow, error: storyErr } = await input.admin
     .from('stories')
     .select('commercial_origin')
     .eq('id', input.storyId)
     .maybeSingle()
 
-  if (storyRow?.commercial_origin === 'PENDING_PAID_START' || storyRow?.commercial_origin === 'PAID_START') {
-    return { ok: true, origin: storyRow.commercial_origin }
+  if (storyErr || !storyRow) {
+    throw new PersonalizedStoryError('INTERNAL_ERROR', input.storyId)
   }
 
-  throw new PersonalizedStoryError('INTERNAL_ERROR')
+  if (storyRow.commercial_origin === 'PENDING_PAID_START') {
+    return { ok: true, origin: 'PENDING_PAID_START' }
+  }
+
+  throw new PersonalizedStoryError('INTERNAL_ERROR', input.storyId)
 }
 
 async function loadExistingReservation(input: {

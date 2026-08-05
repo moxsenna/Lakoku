@@ -625,4 +625,102 @@ describe('POST /api/stories/personalized', () => {
     expect(response.status).toBe(409)
     expect(await response.json()).toEqual({ error: 'Permintaan berkonflik dengan kunci idempotensi.' })
   })
+
+  describe('verifyDurableStarterProof strict unit tests', () => {
+    it('returns false when account row is missing', async () => {
+      const { verifyDurableStarterProof } = await import('@/lib/api/personalized-stories.server')
+      const admin = createAdminDb({
+        selects: {
+          account_commercial_states: [{ data: null, error: null }],
+          stories: [{ data: { commercial_origin: 'STARTER_FREE' }, error: null }],
+        },
+      }).client as unknown as Parameters<typeof verifyDurableStarterProof>[0]['admin']
+      expect(await verifyDurableStarterProof({ admin, userId, storyId: reservedStoryId })).toBe(false)
+    })
+
+    it('returns false when account row fields are both null', async () => {
+      const { verifyDurableStarterProof } = await import('@/lib/api/personalized-stories.server')
+      const admin = createAdminDb({
+        selects: {
+          account_commercial_states: [{ data: { starter_story_id: null, starter_claimed_at: null }, error: null }],
+          stories: [{ data: { commercial_origin: 'STARTER_FREE' }, error: null }],
+        },
+      }).client as unknown as Parameters<typeof verifyDurableStarterProof>[0]['admin']
+      expect(await verifyDurableStarterProof({ admin, userId, storyId: reservedStoryId })).toBe(false)
+    })
+
+    it('returns false when starter_claimed_at exists but starter_story_id is for another story', async () => {
+      const { verifyDurableStarterProof } = await import('@/lib/api/personalized-stories.server')
+      const admin = createAdminDb({
+        selects: {
+          account_commercial_states: [{ data: { starter_story_id: 'ai:other-story', starter_claimed_at: '2026-08-01T00:00:00Z' }, error: null }],
+          stories: [{ data: { commercial_origin: 'STARTER_FREE' }, error: null }],
+        },
+      }).client as unknown as Parameters<typeof verifyDurableStarterProof>[0]['admin']
+      expect(await verifyDurableStarterProof({ admin, userId, storyId: reservedStoryId })).toBe(false)
+    })
+
+    it('returns false when starter_story_id matches but claimed_at is null', async () => {
+      const { verifyDurableStarterProof } = await import('@/lib/api/personalized-stories.server')
+      const admin = createAdminDb({
+        selects: {
+          account_commercial_states: [{ data: { starter_story_id: reservedStoryId, starter_claimed_at: null }, error: null }],
+          stories: [{ data: { commercial_origin: 'STARTER_FREE' }, error: null }],
+        },
+      }).client as unknown as Parameters<typeof verifyDurableStarterProof>[0]['admin']
+      expect(await verifyDurableStarterProof({ admin, userId, storyId: reservedStoryId })).toBe(false)
+    })
+
+    it('returns false when story commercial_origin is null or not STARTER_FREE', async () => {
+      const { verifyDurableStarterProof } = await import('@/lib/api/personalized-stories.server')
+      const adminNullOrigin = createAdminDb({
+        selects: {
+          account_commercial_states: [{ data: { starter_story_id: reservedStoryId, starter_claimed_at: '2026-08-01T00:00:00Z' }, error: null }],
+          stories: [{ data: { commercial_origin: null }, error: null }],
+        },
+      }).client as unknown as Parameters<typeof verifyDurableStarterProof>[0]['admin']
+      expect(await verifyDurableStarterProof({ admin: adminNullOrigin, userId, storyId: reservedStoryId })).toBe(false)
+
+      const adminPaidOrigin = createAdminDb({
+        selects: {
+          account_commercial_states: [{ data: { starter_story_id: reservedStoryId, starter_claimed_at: '2026-08-01T00:00:00Z' }, error: null }],
+          stories: [{ data: { commercial_origin: 'PENDING_PAID_START' }, error: null }],
+        },
+      }).client as unknown as Parameters<typeof verifyDurableStarterProof>[0]['admin']
+      expect(await verifyDurableStarterProof({ admin: adminPaidOrigin, userId, storyId: reservedStoryId })).toBe(false)
+    })
+
+    it('returns false when story row is missing', async () => {
+      const { verifyDurableStarterProof } = await import('@/lib/api/personalized-stories.server')
+      const admin = createAdminDb({
+        selects: {
+          account_commercial_states: [{ data: { starter_story_id: reservedStoryId, starter_claimed_at: '2026-08-01T00:00:00Z' }, error: null }],
+          stories: [{ data: null, error: null }],
+        },
+      }).client as unknown as Parameters<typeof verifyDurableStarterProof>[0]['admin']
+      expect(await verifyDurableStarterProof({ admin, userId, storyId: reservedStoryId })).toBe(false)
+    })
+
+    it('returns false on query error', async () => {
+      const { verifyDurableStarterProof } = await import('@/lib/api/personalized-stories.server')
+      const adminErr = createAdminDb({
+        selects: {
+          account_commercial_states: [{ data: null, error: { message: 'db error' } }],
+          stories: [{ data: { commercial_origin: 'STARTER_FREE' }, error: null }],
+        },
+      }).client as unknown as Parameters<typeof verifyDurableStarterProof>[0]['admin']
+      expect(await verifyDurableStarterProof({ admin: adminErr, userId, storyId: reservedStoryId })).toBe(false)
+    })
+
+    it('returns true ONLY when exact durable proof holds', async () => {
+      const { verifyDurableStarterProof } = await import('@/lib/api/personalized-stories.server')
+      const admin = createAdminDb({
+        selects: {
+          account_commercial_states: [{ data: { starter_story_id: reservedStoryId, starter_claimed_at: '2026-08-01T00:00:00Z' }, error: null }],
+          stories: [{ data: { commercial_origin: 'STARTER_FREE' }, error: null }],
+        },
+      }).client as unknown as Parameters<typeof verifyDurableStarterProof>[0]['admin']
+      expect(await verifyDurableStarterProof({ admin, userId, storyId: reservedStoryId })).toBe(true)
+    })
+  })
 })

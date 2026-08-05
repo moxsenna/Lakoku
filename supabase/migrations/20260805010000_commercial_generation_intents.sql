@@ -1,4 +1,4 @@
--- 20260805000000_commercial_generation_intents.sql
+-- 20260805010000_commercial_generation_intents.sql
 -- Durable state machine for commercial generation intents & story creation requests.
 
 -- 1. Extend story_creation_requests status check

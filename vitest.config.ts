@@ -12,12 +12,28 @@ export default defineConfig({
       // Exact-match (^...$) agar tidak membayangi subpath
       // (@lakoku/ai-gateway/server tetap resolve sendiri).
       {
+        find: /^@lakoku\/ai-gateway\/server$/,
+        replacement: fileURLToPath(new URL('./lib/ai-gateway/server.ts', import.meta.url)),
+      },
+      {
         find: /^@lakoku\/ai-gateway$/,
         replacement: fileURLToPath(new URL('./lib/ai-gateway/index.ts', import.meta.url)),
       },
       {
+        find: /^@lakoku\/narrative-core\/server$/,
+        replacement: fileURLToPath(new URL('./lib/narrative/server.ts', import.meta.url)),
+      },
+      {
         find: /^@lakoku\/narrative-core$/,
         replacement: fileURLToPath(new URL('./lib/narrative/index.ts', import.meta.url)),
+      },
+      {
+        find: /^@lakoku\/runtime$/,
+        replacement: fileURLToPath(new URL('./lib/runtime/index.ts', import.meta.url)),
+      },
+      {
+        find: /^@lakoku\/db$/,
+        replacement: fileURLToPath(new URL('./lib/supabase/index.ts', import.meta.url)),
       },
     ],
   },

@@ -30,6 +30,19 @@ process.env.SUPABASE_URL = status.url
 process.env.SUPABASE_SERVICE_ROLE_KEY = status.key
 
 import { createAdminClient } from '@/lib/supabase/admin'
+import { applyPersonalizedChoice, PersonalizedChoiceError } from '@/lib/api/personalized-choice.server'
+import { createPersonalizedStory, PersonalizedStoryError } from '@/lib/api/personalized-stories.server'
+import { clonePremiumStoryForUser, PremiumCloneError } from '@/lib/api/premium-clone.server'
+
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: vi.fn(async () => {
+    const admin = createAdminClient()
+    return {
+      auth: { getUser: vi.fn(async () => ({ data: { user: { id: userId } }, error: null })) },
+      from: (table: string) => admin.from(table),
+    }
+  }),
+}))
 
 // Real application integration test against local Supabase DB
 describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB Integration Test Harness', () => {
@@ -55,6 +68,57 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
     await admin.from('stories').delete().eq('owner_user_id', userId)
     await admin.from('story_creation_requests').delete().eq('owner_user_id', userId)
     await admin.from('account_commercial_states').delete().eq('user_id', userId)
+
+    // Ensure template story exists for premium clone test
+    await admin.from('chapter_blueprints').delete().eq('story_id', 'premium:rain-archive')
+    await admin.from('story_generation_contracts').delete().eq('story_id', 'premium:rain-archive')
+    await admin.from('stories').delete().eq('id', 'premium:rain-archive')
+
+    await admin.from('stories').insert({
+      id: 'premium:rain-archive',
+      title: 'Rain Archive Template',
+      cover: '/cover.webp',
+      tagline: 'Template Tagline',
+      role: 'Role',
+      tropes: ['mystery'],
+      total_chapters: 50,
+      synopsis: 'Template synopsis',
+      status: 'SELESAI',
+      current_chapter: 50,
+      jejak: [],
+      visibility: 'public',
+      story_mode: 'premium_template',
+      generation_status: 'ready',
+      story_contract_version: 1,
+    })
+
+    await admin.from('story_generation_contracts').insert({
+      story_id: 'premium:rain-archive',
+      mode: 'premium_template',
+      total_chapters: 50,
+      contract_source: 'llm_repaired',
+      onboarding_json: { hero: 'char:hero' },
+      story_contract_json: { storyId: 'premium:rain-archive' },
+      route_schema_json: {},
+      plot_debts_json: [],
+      ending_candidates_json: [],
+      ending_lock_json: {},
+      quality_profile: 'lakoku_mobile_drama_v1',
+      story_contract_version: 1,
+    })
+
+    const blueprints = Array.from({ length: 50 }, (_, i) => ({
+      story_id: 'premium:rain-archive',
+      chapter_number: i + 1,
+      version: 1,
+      phase: i < 15 ? 'ACT_1' : i < 35 ? 'ACT_2' : 'ACT_3',
+      chapter_goal: `Goal ${i + 1}`,
+      mandatory_beats: ['beat-1'],
+      forbidden_reveals: [],
+      allowed_state_delta: {},
+      introduces_characters: [],
+    }))
+    await admin.from('chapter_blueprints').insert(blueprints)
   })
 
   afterAll(async () => {
@@ -68,7 +132,7 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
     await admin.from('account_commercial_states').delete().eq('user_id', userId)
   })
 
-  it('admin.rpc executes 9-arg apply_personalized_choice_v2 against real local Postgres DB', async () => {
+  it('applyPersonalizedChoice application TS wrapper executes 9-arg apply_personalized_choice_v2 against real local Postgres DB', async () => {
     // Seed test story & state
     const { error: storyErr } = await admin.from('stories').insert({
       id: storyId,
@@ -88,6 +152,13 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
       generation_status: 'ready',
     })
     expect(storyErr).toBeNull()
+
+    // Also seed starter account state matching storyId for STARTER_FREE identity check
+    await admin.from('account_commercial_states').upsert({
+      user_id: userId,
+      starter_story_id: storyId,
+      starter_claimed_at: new Date().toISOString(),
+    })
 
     const initialUpdatedAt = new Date().toISOString()
 
@@ -125,43 +196,22 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
     })
     expect(coErr).toBeNull()
 
-    // Call 9-arg apply_personalized_choice_v2 RPC directly on local DB
-    const { data: choiceData, error: choiceErr } = await admin.rpc('apply_personalized_choice_v2', {
-      p_user_id: userId,
-      p_story_id: storyId,
-      p_chapter_number: 3,
-      p_choice_id: 'choice-real-a',
-      p_idempotency_key: `real-key:${storyId}:3:choice-real-a`,
-      p_expected_state: {
-        user_id: userId,
-        story_id: storyId,
-        status: 'BERJALAN',
-        current_chapter: 3,
-        jejak: [],
-        ending_name: null,
-        route_state: { truth: 1, risk: 0, secrecy: 0, empathy: 0, trust: {}, evidence: [], flags: {}, endingBias: {} },
-        choice_history: [],
-        locked_ending_key: null,
-        updated_at: initialUpdatedAt,
-      },
-      p_next_route_state: { truth: 2, risk: 0, secrecy: 0, empathy: 0, trust: {}, evidence: [], flags: { secret_revealed: true }, endingBias: {} },
-      p_history_entry: {
+    let choiceResult
+    try {
+      choiceResult = await applyPersonalizedChoice({
+        userId,
+        storyId,
         chapterNumber: 3,
         choiceId: 'choice-real-a',
-        label: 'Buka Rahasia',
-        consequence: ['Rahasia terungkap.'],
-        effectSummary: { flagsSet: ['secret_revealed'], truth: 1 },
-        createdAt: '2026-08-05T00:00:00.000Z',
-      },
-      p_jejak_entry: {
-        chapter: 3,
-        decision: 'Buka Rahasia',
-        consequence: 'Rahasia terungkap.',
-      },
-    })
+        idempotencyKey: `real-key:${storyId}:3:choice-real-a`,
+      })
+    } catch (err) {
+      console.error('APPLY_CHOICE_FULL_ERROR:', err)
+      throw err
+    }
 
-    expect(choiceErr).toBeNull()
-    expect(choiceData?.outcome?.nextChapterNumber).toBe(4)
+    expect(choiceResult.nextChapterNumber).toBe(4)
+    expect(choiceResult.replayed).toBe(false)
 
     // Verify reader_states mutated in DB
     const { data: readerState } = await admin
@@ -188,13 +238,24 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
     expect(intent?.status).toBe('WAITING_FOR_CREDITS')
     expect(intent?.trigger_choice_id).toBe('choice-real-a')
     expect(intent?.quoted_credits).toBeGreaterThan(0)
+
+    // Replay idempotently via app wrapper
+    const replayResult = await applyPersonalizedChoice({
+      userId,
+      storyId,
+      chapterNumber: 3,
+      choiceId: 'choice-real-a',
+      idempotencyKey: `real-key:${storyId}:3:choice-real-a`,
+    })
+
+    expect(replayResult.replayed).toBe(true)
   })
 
-  it('Personalized Story #2 creation state machine: initial shell origin NULL -> reserve_story_start_v1 transitions origin to PENDING_PAID_START', async () => {
-    // 1. Mark user as having claimed starter
+  it('createPersonalizedStory Story #2 application orchestration: shell created with NULL origin -> reserve_story_start_v1 updates origin to PENDING_PAID_START -> stops with COMMERCIAL_RUNTIME_NOT_READY (0 provider calls)', async () => {
+    // 1. Mark user as having claimed a DIFFERENT starter story
     const { error: upsertErr } = await admin.from('account_commercial_states').upsert({
       user_id: userId,
-      starter_story_id: 'story-starter-1',
+      starter_story_id: 'story-starter-prev-1',
       starter_claimed_at: new Date().toISOString(),
       welcome_credit_granted_at: new Date().toISOString(),
     })
@@ -210,50 +271,101 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
     expect(gErr).toBeNull()
     expect(gData).toBe(true)
 
-    const story2Id = 'ai:test-story-shell-null'
+    const idempotencyKey = `p2-app-key-${Date.now()}`
 
-    // 3. Create initial shell with commercial_origin NULL (as created by application TS)
-    await admin.from('stories').insert({
-      id: story2Id,
-      title: 'Story 2 Shell',
-      cover: '/cover.webp',
-      tagline: 'Tagline',
-      role: 'Role',
-      tropes: [],
-      total_chapters: 50,
-      status: 'BARU',
-      current_chapter: 0,
-      jejak: [],
-      owner_user_id: userId,
-      visibility: 'private',
-      story_mode: 'personalized_ai',
-      commercial_origin: null,
-      generation_status: 'creating_contract',
-    })
+    // 3. Invoke application creation function
+    let errToVerify: unknown
+    try {
+      await createPersonalizedStory({
+        userId,
+        idempotencyKey,
+      })
+    } catch (err) {
+      errToVerify = err
+    }
 
-    // Verify initial shell origin is NULL/falsy
-    const { data: initialShell } = await admin
-      .from('stories')
-      .select('commercial_origin')
-      .eq('id', story2Id)
+    expect(errToVerify).toBeInstanceOf(PersonalizedStoryError)
+    const pErr = errToVerify as PersonalizedStoryError
+    expect(pErr.code).toBe('COMMERCIAL_RUNTIME_NOT_READY')
+    const createdStoryId = pErr.storyId
+    expect(createdStoryId).toBeDefined()
+
+    // 4. Verify DB creation request remains RESERVED
+    const { data: reqRow } = await admin
+      .from('story_creation_requests')
+      .select('status')
+      .eq('owner_user_id', userId)
+      .eq('idempotency_key', idempotencyKey)
       .single()
 
-    expect(initialShell?.commercial_origin ?? null).toBeNull()
-
-    // 4. Call reserve_story_start_v1 RPC
-    const { data: resData, error: resError } = await admin.rpc('reserve_story_start_v1', {
-      p_user_id: userId,
-      p_story_id: story2Id,
-    })
-
-    expect(resError).toBeNull()
-    expect(resData?.ok).toBe(true)
+    expect(reqRow?.status).toBe('RESERVED')
 
     // 5. Verify DB story row was transitioned to PENDING_PAID_START by reserve_story_start_v1
     const { data: transitionedStory } = await admin
       .from('stories')
       .select('commercial_origin')
-      .eq('id', story2Id)
+      .eq('id', createdStoryId)
+      .single()
+
+    expect(transitionedStory?.commercial_origin).toBe('PENDING_PAID_START')
+
+    // 6. Replay with same idempotency key returns same story ID and stops cleanly
+    let replayErr: unknown
+    try {
+      await createPersonalizedStory({
+        userId,
+        idempotencyKey,
+      })
+    } catch (err) {
+      replayErr = err
+    }
+    expect(replayErr).toBeInstanceOf(PersonalizedStoryError)
+    expect((replayErr as PersonalizedStoryError).storyId).toBe(createdStoryId)
+  })
+
+  it('clonePremiumStoryForUser Story #2 application orchestration: shell target created -> reserve_story_start_v1 updates origin to PENDING_PAID_START -> stops with COMMERCIAL_RUNTIME_NOT_READY (0 provider calls)', async () => {
+    // User already claimed different starter story
+    await admin.from('account_commercial_states').upsert({
+      user_id: userId,
+      starter_story_id: 'story-starter-prev-1',
+      starter_claimed_at: new Date().toISOString(),
+    })
+
+    const idempotencyKey = `p2-prem-app-key-${Date.now()}`
+
+    let errToVerify: unknown
+    try {
+      await clonePremiumStoryForUser({
+        userId,
+        templateStoryId: 'premium:rain-archive',
+        idempotencyKey,
+      })
+    } catch (err) {
+      errToVerify = err
+    }
+
+    expect(errToVerify).toBeInstanceOf(PremiumCloneError)
+    const pErr = errToVerify as PremiumCloneError
+    expect(pErr.code).toBe('COMMERCIAL_RUNTIME_NOT_READY')
+    expect(pErr.result?.storyId).toBeDefined()
+
+    const createdStoryId = pErr.result!.storyId
+
+    // Verify DB story creation request remains RESERVED
+    const { data: reqRow } = await admin
+      .from('story_creation_requests')
+      .select('status')
+      .eq('owner_user_id', userId)
+      .eq('idempotency_key', idempotencyKey)
+      .single()
+
+    expect(reqRow?.status).toBe('RESERVED')
+
+    // Verify DB story row origin transitioned to PENDING_PAID_START
+    const { data: transitionedStory } = await admin
+      .from('stories')
+      .select('commercial_origin')
+      .eq('id', createdStoryId)
       .single()
 
     expect(transitionedStory?.commercial_origin).toBe('PENDING_PAID_START')

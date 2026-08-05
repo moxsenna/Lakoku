@@ -28,13 +28,13 @@ export async function resolveChapterAccess(input: {
   const db = createAdminClient()
 
   // 1. Fetch story
-  const { data: story } = await db
+  const { data: story, error: storyErr } = await db
     .from('stories')
-    .select('id, owner_user_id, story_mode, commercial_origin')
+    .select('id, owner_user_id, story_mode, commercial_origin, visibility')
     .eq('id', input.storyId)
     .maybeSingle()
 
-  if (!story) {
+  if (storyErr || !story) {
     return { readable: false, reason: 'NOT_AUTHORIZED', cost: 0 }
   }
 
@@ -64,8 +64,12 @@ export async function resolveChapterAccess(input: {
     return { readable: false, reason: 'PAYMENT_REQUIRED', cost: policy.creditsPerChapter }
   }
 
-  // Commercial mode (personalized_ai / premium_instance): STRICT OWNER CHECK
+  // Commercial mode (personalized_ai / premium_instance): STRICT OWNER CHECK & VISIBILITY CHECK
   if (!input.userId || story.owner_user_id !== input.userId) {
+    return { readable: false, reason: 'NOT_AUTHORIZED', cost: 0 }
+  }
+
+  if (story.visibility && story.visibility !== 'private' && story.visibility !== 'unlisted') {
     return { readable: false, reason: 'NOT_AUTHORIZED', cost: 0 }
   }
 
@@ -96,6 +100,21 @@ export async function resolveChapterAccess(input: {
   // Bab 1-3 for STARTER_FREE, PAID_START, LEGACY_GRANDFATHERED
   if (input.chapterNumber >= 1 && input.chapterNumber <= 3) {
     if (origin === 'STARTER_FREE') {
+      const { data: accountState, error: accountErr } = await db
+        .from('account_commercial_states')
+        .select('starter_story_id, starter_claimed_at')
+        .eq('user_id', input.userId)
+        .maybeSingle()
+
+      if (
+        accountErr
+        || !accountState
+        || accountState.starter_story_id !== story.id
+        || accountState.starter_claimed_at == null
+      ) {
+        return { readable: false, reason: 'NOT_AUTHORIZED', cost: 0 }
+      }
+
       return { readable: true, reason: 'STARTER_INCLUDED', cost: 0 }
     }
     if (origin === 'PAID_START') {

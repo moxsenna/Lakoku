@@ -25,7 +25,7 @@ begin
 end
 $$;
 
-select plan(165);
+select plan(181);
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- Setup: owner auth user + shared fixtures
@@ -129,9 +129,8 @@ end
 $$;
 
 -- Schema-3 worker checkpoint bound to the job (checkpoint-authoritative state).
--- Paragraphs are caller-supplied so PARITY can pin both paths to identical
--- publication payloads (V3 takes paragraphs from the caller, V5 from the
--- checkpoint — the checkpoint is V5's caller).
+-- Title/paragraphs/delta live IN the checkpoint row; V3 and V5 both read them
+-- from the locked checkpoint, so PARITY seeds identical values on both paths.
 create or replace function pg_temp.seed_v5_checkpoint(
   p_story text, p_chapter integer, p_job uuid, p_delta jsonb, p_base bigint,
   p_audit jsonb default
@@ -399,38 +398,42 @@ select is(
 );
 select ok(not has_function_privilege('service_role', 'public.apply_validated_chapter_state_v1(text,integer,bigint,uuid,uuid,jsonb)', 'EXECUTE'), 'service_role cannot execute shared applier');
 
--- sync writer: definer, hard search_path, NO grants.
+-- sync writer: definer, hard search_path, outer authority (service_role only).
 select has_function('public', 'upsert_generation_checkpoint_sync_v1',
-  array['text','integer','uuid','uuid','text','jsonb','text','jsonb','integer','bigint','bigint','text','integer','integer','jsonb','bigint'],
-  'sync writer exists with 16-param signature');
+  array['text','integer','uuid','uuid','uuid','text','jsonb','text','jsonb','integer','bigint','bigint','text','integer','integer','jsonb','bigint'],
+  'sync writer exists with 17-param signature (caller attempt + correlation)');
 select ok(
   coalesce((select prosecdef from pg_proc
-            where oid = to_regprocedure('public.upsert_generation_checkpoint_sync_v1(text,integer,uuid,uuid,text,jsonb,text,jsonb,integer,bigint,bigint,text,integer,integer,jsonb,bigint)')), false),
+            where oid = to_regprocedure('public.upsert_generation_checkpoint_sync_v1(text,integer,uuid,uuid,uuid,text,jsonb,text,jsonb,integer,bigint,bigint,text,integer,integer,jsonb,bigint)')), false),
   'sync writer is SECURITY DEFINER'
 );
 select is(
   (select proconfig from pg_proc
-   where oid = to_regprocedure('public.upsert_generation_checkpoint_sync_v1(text,integer,uuid,uuid,text,jsonb,text,jsonb,integer,bigint,bigint,text,integer,integer,jsonb,bigint)')),
+   where oid = to_regprocedure('public.upsert_generation_checkpoint_sync_v1(text,integer,uuid,uuid,uuid,text,jsonb,text,jsonb,integer,bigint,bigint,text,integer,integer,jsonb,bigint)')),
   array['search_path=""']::text[], 'sync writer hardens empty search_path'
 );
-select ok(not has_function_privilege('service_role', 'public.upsert_generation_checkpoint_sync_v1(text,integer,uuid,uuid,text,jsonb,text,jsonb,integer,bigint,bigint,text,integer,integer,jsonb,bigint)', 'EXECUTE'), 'service_role cannot execute sync writer');
+select ok(not has_function_privilege('anon', 'public.upsert_generation_checkpoint_sync_v1(text,integer,uuid,uuid,uuid,text,jsonb,text,jsonb,integer,bigint,bigint,text,integer,integer,jsonb,bigint)', 'EXECUTE'), 'anon cannot execute sync writer');
+select ok(not has_function_privilege('authenticated', 'public.upsert_generation_checkpoint_sync_v1(text,integer,uuid,uuid,uuid,text,jsonb,text,jsonb,integer,bigint,bigint,text,integer,integer,jsonb,bigint)', 'EXECUTE'), 'authenticated cannot execute sync writer');
+select ok(has_function_privilege('service_role', 'public.upsert_generation_checkpoint_sync_v1(text,integer,uuid,uuid,uuid,text,jsonb,text,jsonb,integer,bigint,bigint,text,integer,integer,jsonb,bigint)', 'EXECUTE'), 'service_role CAN execute sync writer (outer authority — A1d calls it directly)');
 
--- V3 sync publisher: definer, hard search_path, NO grants.
+-- V3 sync publisher: definer, hard search_path, outer authority (service_role
+-- only); checkpoint-authoritative — NO delta/title/paragraphs params.
 select has_function('public', 'publish_chapter_state_v3',
-  array['text','integer','uuid','uuid','uuid','jsonb','text','jsonb','text','jsonb','jsonb','text','text'],
-  'V3 exists with 13-param signature');
+  array['text','integer','uuid','uuid','uuid','text','jsonb','jsonb','text','text'],
+  'V3 exists with 10-param signature (checkpoint-authoritative)');
 select ok(
   coalesce((select prosecdef from pg_proc
-            where oid = to_regprocedure('public.publish_chapter_state_v3(text,integer,uuid,uuid,uuid,jsonb,text,jsonb,text,jsonb,jsonb,text,text)')), false),
+            where oid = to_regprocedure('public.publish_chapter_state_v3(text,integer,uuid,uuid,uuid,text,jsonb,jsonb,text,text)')), false),
   'V3 is SECURITY DEFINER'
 );
 select is(
   (select proconfig from pg_proc
-   where oid = to_regprocedure('public.publish_chapter_state_v3(text,integer,uuid,uuid,uuid,jsonb,text,jsonb,text,jsonb,jsonb,text,text)')),
+   where oid = to_regprocedure('public.publish_chapter_state_v3(text,integer,uuid,uuid,uuid,text,jsonb,jsonb,text,text)')),
   array['search_path=""']::text[], 'V3 hardens empty search_path'
 );
-select ok(not has_function_privilege('anon', 'public.publish_chapter_state_v3(text,integer,uuid,uuid,uuid,jsonb,text,jsonb,text,jsonb,jsonb,text,text)', 'EXECUTE'), 'anon cannot execute V3');
-select ok(not has_function_privilege('service_role', 'public.publish_chapter_state_v3(text,integer,uuid,uuid,uuid,jsonb,text,jsonb,text,jsonb,jsonb,text,text)', 'EXECUTE'), 'service_role cannot execute V3');
+select ok(not has_function_privilege('anon', 'public.publish_chapter_state_v3(text,integer,uuid,uuid,uuid,text,jsonb,jsonb,text,text)', 'EXECUTE'), 'anon cannot execute V3');
+select ok(not has_function_privilege('authenticated', 'public.publish_chapter_state_v3(text,integer,uuid,uuid,uuid,text,jsonb,jsonb,text,text)', 'EXECUTE'), 'authenticated cannot execute V3');
+select ok(has_function_privilege('service_role', 'public.publish_chapter_state_v3(text,integer,uuid,uuid,uuid,text,jsonb,jsonb,text,text)', 'EXECUTE'), 'service_role CAN execute V3 (outer authority — A1d calls it directly)');
 
 -- V4 redefinition: same legacy signature + grants preserved.
 select has_function('public', 'publish_generation_job_chapter_v4',
@@ -439,7 +442,7 @@ select has_function('public', 'publish_generation_job_chapter_v4',
 select ok(not has_function_privilege('anon', 'public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)', 'EXECUTE'), 'anon cannot execute V4');
 select ok(has_function_privilege('service_role', 'public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)', 'EXECUTE'), 'service_role can execute V4');
 
--- V5 atomic helper + V5 publisher: definer, NO grants.
+-- V5 atomic helper: definer, internal only (NO service_role).
 select has_function('public', 'transition_checkpoint_published_atomic_v5',
   array['uuid','text','uuid','uuid','text','integer'],
   'V5 atomic helper exists with 6-param signature');
@@ -459,7 +462,8 @@ select is(
   array['search_path=""']::text[], 'V5 hardens empty search_path'
 );
 select ok(not has_function_privilege('anon', 'public.publish_generation_job_chapter_v5(uuid,text,uuid,uuid,text,integer,text,jsonb,jsonb,text,text)', 'EXECUTE'), 'anon cannot execute V5');
-select ok(not has_function_privilege('service_role', 'public.publish_generation_job_chapter_v5(uuid,text,uuid,uuid,text,integer,text,jsonb,jsonb,text,text)', 'EXECUTE'), 'service_role cannot execute V5');
+select ok(not has_function_privilege('authenticated', 'public.publish_generation_job_chapter_v5(uuid,text,uuid,uuid,text,integer,text,jsonb,jsonb,text,text)', 'EXECUTE'), 'authenticated cannot execute V5');
+select ok(has_function_privilege('service_role', 'public.publish_generation_job_chapter_v5(uuid,text,uuid,uuid,text,integer,text,jsonb,jsonb,text,text)', 'EXECUTE'), 'service_role CAN execute V5 (outer authority — A1d calls it directly)');
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- 2. HASH HELPER — byte-identical to the V4 inline formula (fixture equality)
@@ -549,7 +553,7 @@ select pg_temp.seed_story('test:sync-writer', 2);
 select is(
   (select public.upsert_generation_checkpoint_sync_v1(
     'test:sync-writer', 2, '00000000-0000-0000-0000-000000000001',
-    '33333333-3333-4333-8333-333333333333', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
+    'aaa33333-0000-4000-8000-000000000001', '33333333-3333-4333-8333-333333333333', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
     '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
     2, 5, 2, 'dir1', 2, 2,
     pg_temp.touch_delta('test:sync-writer', 2), 0
@@ -577,6 +581,11 @@ select is(
   '33333333-3333-4333-8333-333333333333'::uuid, 'sync checkpoint stores caller correlation'
 );
 select is(
+  (select attempt_id from public.chapter_generation_checkpoints
+   where story_id = 'test:sync-writer'),
+  'aaa33333-0000-4000-8000-000000000001'::uuid, 'sync checkpoint stores CALLER attempt id (never DB-minted)'
+);
+select is(
   (select state_delta_hash from public.chapter_generation_checkpoints
    where story_id = 'test:sync-writer'),
   public.chapter_state_delta_hash_v1(pg_temp.touch_delta('test:sync-writer', 2)),
@@ -590,7 +599,7 @@ select is(
 select is(
   (select public.upsert_generation_checkpoint_sync_v1(
     'test:sync-writer', 2, '00000000-0000-0000-0000-000000000001',
-    '33333333-3333-4333-8333-333333333333', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
+    'aaa33333-0000-4000-8000-000000000001', '33333333-3333-4333-8333-333333333333', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
     '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
     2, 5, 2, 'dir1', 2, 2,
     pg_temp.touch_delta('test:sync-writer', 2), 0
@@ -605,7 +614,7 @@ select is(
 select is(
   (select public.upsert_generation_checkpoint_sync_v1(
     'test:sync-writer', 2, '00000000-0000-0000-0000-000000000001',
-    '33333333-3333-4333-8333-333333333333', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
+    'aaa33333-0000-4000-8000-000000000001', '33333333-3333-4333-8333-333333333333', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
     '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
     2, 5, 2, 'dir1', 2, 2,
     '{"schemaVersion":1,"storyId":"test:sync-writer","chapterNumber":2,"threads":{"touches":["t2"]}}'::jsonb, 0
@@ -615,7 +624,18 @@ select is(
 select is(
   (select public.upsert_generation_checkpoint_sync_v1(
     'test:sync-writer', 2, '00000000-0000-0000-0000-000000000001',
-    '44444444-4444-4444-8444-444444444444', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
+    '99999999-9999-4999-8999-999999999999', '33333333-3333-4333-8333-333333333333',
+    'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
+    '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
+    2, 5, 2, 'dir1', 2, 2,
+    pg_temp.touch_delta('test:sync-writer', 2), 0
+  )->>'result'),
+  'PROVENANCE_CONFLICT', 'same correlation with a DIFFERENT attempt id is provenance conflict (attempt identity is caller-owned)'
+);
+select is(
+  (select public.upsert_generation_checkpoint_sync_v1(
+    'test:sync-writer', 2, '00000000-0000-0000-0000-000000000001',
+    'bbb44444-0000-4000-8000-000000000002', '44444444-4444-4444-8444-444444444444', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
     '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
     2, 5, 2, 'dir1', 2, 2,
     pg_temp.touch_delta('test:sync-writer', 2), 0
@@ -633,7 +653,7 @@ where story_id = 'test:sync-writer' and correlation_id = '33333333-3333-4333-833
 select is(
   (select public.upsert_generation_checkpoint_sync_v1(
     'test:sync-writer', 2, '00000000-0000-0000-0000-000000000001',
-    '33333333-3333-4333-8333-333333333333', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
+    'aaa33333-0000-4000-8000-000000000001', '33333333-3333-4333-8333-333333333333', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
     '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
     2, 5, 2, 'dir1', 2, 2,
     pg_temp.touch_delta('test:sync-writer', 2), 0
@@ -646,7 +666,7 @@ select pg_temp.seed_story('test:sync-writer-v0', 2, 0);
 select is(
   (select public.upsert_generation_checkpoint_sync_v1(
     'test:sync-writer-v0', 2, '00000000-0000-0000-0000-000000000001',
-    '55555555-5555-4555-8555-555555555555', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
+    'ccc55555-0000-4000-8000-000000000003', '55555555-5555-4555-8555-555555555555', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
     '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
     2, 5, 2, 'dir1', 2, 2,
     pg_temp.touch_delta('test:sync-writer-v0', 2), 0
@@ -656,7 +676,7 @@ select pg_temp.seed_story('test:sync-writer-rev', 2, 1, 5);
 select is(
   (select public.upsert_generation_checkpoint_sync_v1(
     'test:sync-writer-rev', 2, '00000000-0000-0000-0000-000000000001',
-    '55555555-5555-4555-8555-555555555556', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
+    'ddd55555-0000-4000-8000-000000000004', '55555555-5555-4555-8555-555555555556', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
     '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
     2, 5, 2, 'dir1', 2, 2,
     pg_temp.touch_delta('test:sync-writer-rev', 2), 3
@@ -665,18 +685,70 @@ select is(
 select is(
   (select public.upsert_generation_checkpoint_sync_v1(
     'test:sync-writer-rev', 2, '00000000-0000-0000-0000-000000000001',
-    '55555555-5555-4555-8555-555555555557', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
+    'eee55555-0000-4000-8000-000000000005', '55555555-5555-4555-8555-555555555557', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
     '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
     2, 5, 2, 'dir1', 2, 2,
     pg_temp.touch_delta('test:sync-writer-rev', 2), 7
   )->>'result'),
   'BASE_CANON_AHEAD', 'ahead base rejected');
 
+-- Actor binding: foreign owner, missing reader_state, non-private visibility.
+-- A second auth user for the foreign-owner bindings (stories.owner_user_id FK).
+insert into auth.users (
+  id, aud, role, email, encrypted_password, email_confirmed_at,
+  raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+) values (
+  '00000000-0000-0000-0000-000000000099', 'authenticated', 'authenticated',
+  'foreign-owner@example.invalid', '', clock_timestamp(),
+  '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb,
+  clock_timestamp(), clock_timestamp()
+) on conflict (id) do nothing;
+
+select pg_temp.seed_story('test:sync-writer-foreign', 2);
+update public.stories
+set owner_user_id = '00000000-0000-0000-0000-000000000099'
+where id = 'test:sync-writer-foreign';
+select is(
+  (select public.upsert_generation_checkpoint_sync_v1(
+    'test:sync-writer-foreign', 2, '00000000-0000-0000-0000-000000000001',
+    'aaa99999-0000-4000-8000-000000000010', '55555555-5555-4555-8555-555555555570',
+    'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
+    '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
+    2, 5, 2, 'dir1', 2, 2,
+    pg_temp.touch_delta('test:sync-writer-foreign', 2), 0
+  )->>'result'),
+  'PROVENANCE_CONFLICT', 'story owned by another user rejected (owner binding)');
+select pg_temp.seed_bare_story('test:sync-writer-noreader', 1);
+select is(
+  (select public.upsert_generation_checkpoint_sync_v1(
+    'test:sync-writer-noreader', 2, '00000000-0000-0000-0000-000000000001',
+    'aaa99999-0000-4000-8000-000000000011', '55555555-5555-4555-8555-555555555571',
+    'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
+    '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
+    2, 5, 2, 'dir1', 2, 2,
+    pg_temp.touch_delta('test:sync-writer-noreader', 2), 0
+  )->>'result'),
+  'PROVENANCE_CONFLICT', 'missing reader_state rejected (actor binding)');
+select pg_temp.seed_story('test:sync-writer-public', 2);
+update public.stories
+set visibility = 'public'
+where id = 'test:sync-writer-public';
+select is(
+  (select public.upsert_generation_checkpoint_sync_v1(
+    'test:sync-writer-public', 2, '00000000-0000-0000-0000-000000000001',
+    'aaa99999-0000-4000-8000-000000000012', '55555555-5555-4555-8555-555555555572',
+    'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
+    '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
+    2, 5, 2, 'dir1', 2, 2,
+    pg_temp.touch_delta('test:sync-writer-public', 2), 0
+  )->>'result'),
+  'PROVENANCE_CONFLICT', 'non-private story rejected (sync path is private/personalized only)');
+
 -- Payload raises (22023).
 select throws_ok($$
   select public.upsert_generation_checkpoint_sync_v1(
     'test:sync-writer-rev', 2, '00000000-0000-0000-0000-000000000001',
-    '55555555-5555-4555-8555-555555555558', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
+    'fff55558-0000-4000-8000-000000000006', '55555555-5555-4555-8555-555555555558', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
     '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
     2, 5, 2, 'dir1', 2, 2,
     '[1,2]'::jsonb, 0
@@ -685,7 +757,7 @@ $$, '22023', null, 'non-object delta rejected (22023)');
 select throws_ok($$
   select public.upsert_generation_checkpoint_sync_v1(
     'test:sync-writer-rev', 2, '00000000-0000-0000-0000-000000000001',
-    '55555555-5555-4555-8555-555555555559', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
+    'fff55559-0000-4000-8000-000000000007', '55555555-5555-4555-8555-555555555559', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
     '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
     1, 5, 2, 'dir1', 2, 2,
     pg_temp.touch_delta('test:sync-writer-rev', 2), 5
@@ -694,7 +766,7 @@ $$, '22023', null, 'v1 audit signals must be exact-key shape (22023)');
 select throws_ok($$
   select public.upsert_generation_checkpoint_sync_v1(
     'test:sync-writer-rev', 2, '00000000-0000-0000-0000-000000000001',
-    '55555555-5555-4555-8555-555555555560', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
+    'fff55560-0000-4000-8000-000000000008', '55555555-5555-4555-8555-555555555560', 'Bab Sinkron', '["P1"]'::jsonb, 'fp1',
     '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[{"closureForm":"RESOLVED","debtId":"d1"},{"closureForm":"RESOLVED","debtId":"d1"}]}'::jsonb,
     2, 5, 2, 'dir1', 2, 2,
     pg_temp.touch_delta('test:sync-writer-rev', 2), 5
@@ -703,7 +775,7 @@ $$, '22023', null, 'v2 duplicate closesPlotDebts rejected (22023)');
 select throws_ok($$
   select public.upsert_generation_checkpoint_sync_v1(
     'test:sync-writer-rev', 2, '00000000-0000-0000-0000-000000000001',
-    '55555555-5555-4555-8555-555555555561', 'Bab Sinkron', '[]'::jsonb, 'fp1',
+    'fff55561-0000-4000-8000-000000000009', '55555555-5555-4555-8555-555555555561', 'Bab Sinkron', '[]'::jsonb, 'fp1',
     '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,"closesPlotDebts":[]}'::jsonb,
     2, 5, 2, 'dir1', 2, 2,
     pg_temp.touch_delta('test:sync-writer-rev', 2), 5
@@ -984,7 +1056,6 @@ select lives_ok($$
   select public.publish_chapter_state_v3(
     'test:replay-v3-key', 2, '00000000-0000-0000-0000-000000000001',
     'b3000000-0000-4000-8000-000000000001', 'b4000000-0000-4000-8000-000000000001',
-    pg_temp.touch_delta('test:replay-v3-key', 2), 'Bab 2', '["Paragraf sinkron."]'::jsonb,
     pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
     null, null
   )
@@ -997,7 +1068,6 @@ select is(
   (select public.publish_chapter_state_v3(
     'test:replay-v3-key', 2, '00000000-0000-0000-0000-000000000001',
     'b3000000-0000-4000-8000-000000000001', 'b4000000-0000-4000-8000-000000000001',
-    pg_temp.touch_delta('test:replay-v3-key', 2), 'Bab 2', '["Paragraf sinkron."]'::jsonb,
     pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
     null, null
   )->>'committed_canon_revision'),
@@ -1026,7 +1096,6 @@ select throws_ok($$
   select public.publish_chapter_state_v3(
     'test:replay-ch-exists', 2, '00000000-0000-0000-0000-000000000001',
     'b9000000-0000-4000-8000-000000000001', 'b7000000-0000-4000-8000-000000000001',
-    pg_temp.touch_delta('test:replay-ch-exists', 2), 'Bab 2', '["Paragraf sinkron."]'::jsonb,
     pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
     null, null
   )
@@ -1039,6 +1108,66 @@ select is((select canon_state_revision from public.stories where id = 'test:repl
   0::bigint, 'PUBLICATION_CONFLICT never increments revision');
 select is((select status from public.chapter_generation_checkpoints where story_id = 'test:replay-ch-exists'),
   'PROSE_READY', 'PUBLICATION_CONFLICT leaves checkpoint PROSE_READY');
+
+-- 5d. R1 authority gates — actor/lease/reader fences (fail closed).
+-- V3 foreign owner: locked story.owner_user_id <> p_user_id →
+-- PROVENANCE_CONFLICT (R1-7; same binding the sync writer enforces).
+select pg_temp.seed_story('test:v3-foreign-owner', 2);
+update public.stories
+set owner_user_id = '00000000-0000-0000-0000-000000000099'
+where id = 'test:v3-foreign-owner';
+select pg_temp.seed_sync_lease('test:v3-foreign-owner', 2, 'f1000000-0000-4000-8000-000000000001');
+select pg_temp.seed_sync_checkpoint('test:v3-foreign-owner', 2, 'f2000000-0000-4000-8000-000000000001',
+  'f3000000-0000-4000-8000-000000000001', pg_temp.touch_delta('test:v3-foreign-owner', 2), 0, 'Bab 2');
+select throws_ok($$
+  select public.publish_chapter_state_v3(
+    'test:v3-foreign-owner', 2, '00000000-0000-0000-0000-000000000001',
+    'f1000000-0000-4000-8000-000000000001', 'f2000000-0000-4000-8000-000000000001',
+    pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  )
+$$, 'P0001', 'PROVENANCE_CONFLICT', 'V3 rejects a story owned by another user (owner binding)');
+select is((select count(*)::integer from public.chapters where story_id = 'test:v3-foreign-owner'), 0,
+  'V3 owner fence never publishes');
+
+-- V3 worker-owned lease: a lease bound to a generation job (job_id/claim_token
+-- NOT NULL) is NEVER publishable by the sync path → GENERATION_JOB_LEASE_INVALID
+-- (R1-3; the sync lease contract is job_id IS NULL AND claim_token IS NULL).
+select pg_temp.seed_story('test:v3-worker-lease', 2);
+select pg_temp.seed_thread('test:v3-worker-lease');
+select pg_temp.seed_job('test:v3-worker-lease', 2, 'f4000000-0000-4000-8000-000000000001', 'f5000000-0000-4000-8000-000000000001');
+select pg_temp.seed_sync_checkpoint('test:v3-worker-lease', 2, 'f6000000-0000-4000-8000-000000000001',
+  'f7000000-0000-4000-8000-000000000001', pg_temp.touch_delta('test:v3-worker-lease', 2), 0, 'Bab 2');
+select throws_ok($$
+  select public.publish_chapter_state_v3(
+    'test:v3-worker-lease', 2, '00000000-0000-0000-0000-000000000001',
+    'f5000000-0000-4000-8000-000000000001', 'f6000000-0000-4000-8000-000000000001',
+    pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  )
+$$, 'P0001', 'GENERATION_JOB_LEASE_INVALID', 'V3 rejects a worker-owned lease (sync path never publishes job-bound leases)');
+select is((select status from public.generation_leases where id = 'f5000000-0000-4000-8000-000000000001'),
+  'ACTIVE', 'V3 lease fence leaves the worker lease ACTIVE');
+
+-- V5 reader fence: valid v1 story + RUNNING job + schema-3 checkpoint but NO
+-- reader_state → READER_STATE_MISSING (P0002) at the R lock (R1-4, fail closed).
+select pg_temp.seed_bare_story('test:v5-noreader', 1);
+select pg_temp.seed_job('test:v5-noreader', 2, 'f8000000-0000-4000-8000-000000000001', 'f9000000-0000-4000-8000-000000000001');
+select pg_temp.seed_v5_checkpoint('test:v5-noreader', 2, 'f8000000-0000-4000-8000-000000000001',
+  pg_temp.touch_delta('test:v5-noreader', 2), 0);
+select throws_ok($$
+  select public.publish_generation_job_chapter_v5(
+    'f8000000-0000-4000-8000-000000000001', 'a1c-worker',
+    (select claim_token from public.generation_jobs where id = 'f8000000-0000-4000-8000-000000000001'),
+    'f9000000-0000-4000-8000-000000000001',
+    'test:v5-noreader', 2, pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  )
+$$, 'P0002', 'READER_STATE_MISSING', 'V5 without a reader_state fails closed (READER_STATE_MISSING)');
+select is((select status from public.generation_jobs where id = 'f8000000-0000-4000-8000-000000000001'),
+  'RUNNING', 'V5 reader fence leaves the job RUNNING');
+select is((select status from public.generation_leases where id = 'f9000000-0000-4000-8000-000000000001'),
+  'ACTIVE', 'V5 reader fence leaves the lease ACTIVE');
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- 6. ATOMICITY — any failure after V2 rolls back the WHOLE publication
@@ -1099,7 +1228,6 @@ select throws_ok($$
   select public.publish_chapter_state_v3(
     'test:atomic-v3-commit', 2, '00000000-0000-0000-0000-000000000001',
     'c5000000-0000-4000-8000-000000000001', 'c6000000-0000-4000-8000-000000000001',
-    pg_temp.touch_delta('test:atomic-v3-commit', 2), 'Bab 2', '["Paragraf sinkron."]'::jsonb,
     pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
     null, null
   )
@@ -1196,7 +1324,6 @@ select lives_ok($$
   select public.publish_chapter_state_v3(
     'test:lease-v3', 2, '00000000-0000-0000-0000-000000000001',
     'd1000000-0000-4000-8000-000000000001', 'd2000000-0000-4000-8000-000000000001',
-    pg_temp.touch_delta('test:lease-v3', 2), 'Bab 2', '["Paragraf sinkron."]'::jsonb,
     pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
     null, null
   )
@@ -1283,7 +1410,6 @@ select is(
   (select public.publish_chapter_state_v3(
     'test:parity:v3', 2, '00000000-0000-0000-0000-000000000001',
     'e1000000-0000-4000-8000-000000000001', 'e2000000-0000-4000-8000-000000000001',
-    pg_temp.parity_delta('test:parity:v3', 2), 'Bab 2', '["Paragraf sinkron."]'::jsonb,
     pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
     null, null
   )->>'ok'),

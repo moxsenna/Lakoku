@@ -1,25 +1,39 @@
 /**
  * publish_chapter_state_v3 (sync) vs publish_generation_job_chapter_v5 (worker)
- * race test — M10-A1c.1.
+ * race test — M10-A1c.1 (R1 redesign: per-lease-ownership).
  *
  * Two real database connections publishing the SAME story + chapter
  * concurrently: one through the sync publisher (V3, checkpoint attempt bound
  * to a sync writer, no job) and one through the worker publisher (V5, RUNNING
- * job + claim-bound lease). They share the single ACTIVE lease allowed per
- * story, so exactly one publication can exist.
+ * job + claim-bound lease). The two properties differ in WHO OWNS the single
+ * ACTIVE lease — each ownership proves the OTHER side is fenced:
+ *
+ * Property 1 — WORKER-owned ACTIVE lease (job_id/claim_token bound):
+ *   V5 is eligible (lease matches job id/claim/holder) and wins. V3 is fenced
+ *   as a non-sync lease: its replay fast path (pure SELECT, BEFORE the lease
+ *   gate) sees the winner's commit with a DIFFERENT checkpoint attempt →
+ *   13-field CONFLICT → PUBLICATION_CONFLICT (R1-8: V3 loser is the replay
+ *   fence, not an L-phase lease failure). The V3 lease gate itself
+ *   (job_id IS NULL AND claim_token IS NULL) is proven separately in the
+ *   pgTAP suite (v3-worker-lease → GENERATION_JOB_LEASE_INVALID).
+ * Property 2 — SYNC-owned ACTIVE lease (job_id/claim_token NULL):
+ *   V3 is eligible (sync lease contract) and wins. V5 is fenced at its
+ *   L-phase recheck: the lease's job_id/claim_token cannot bind the job →
+ *   GENERATION_JOB_LEASE_INVALID (missing job/claim binding).
  *
  * Deterministic winner via the advisory barrier (120799): the winner's session
  * completes its publication inside an open transaction and then blocks at the
  * barrier, holding S (120712) + all row locks. The loser starts afterwards,
- * blocks on S, and after the barrier releases it is fenced — the winner's
- * publish_chapter_v2 already released the shared lease, so the loser's L-phase
- * ACTIVE recheck fails with GENERATION_JOB_LEASE_INVALID before it can reach
- * V2/replay. No deadlock (S is the single serialization point), one chapter,
- * one commit, revision +1, winner checkpoint PUBLISHED, loser untouched.
+ * blocks on S, and after the barrier releases is fenced. No deadlock (S is
+ * the single serialization point), one chapter, one commit, revision +1,
+ * winner checkpoint PUBLISHED, loser untouched.
  *
  * Properties:
- * 1. V5 wins → job SUCCEEDED, V3 fenced; exactly one publication.
- * 2. V3 wins → job stays RUNNING, V5 fenced; exactly one publication.
+ * 1. Worker lease → V5 wins → job SUCCEEDED, V3 fenced (PUBLICATION_CONFLICT
+ *    via replay); exactly one publication.
+ * 2. Sync lease → V3 wins → job stays RUNNING, V5 fenced
+ *    (GENERATION_JOB_LEASE_INVALID via missing job/claim binding); exactly
+ *    one publication.
  */
 import {
   checkRace,
@@ -76,11 +90,20 @@ interface Fixture {
   syncAttemptId: string
 }
 
+/** Lease ownership decides which side is eligible (R1-3): a worker lease binds
+ * job_id/claim_token (V5-only); a sync lease leaves them NULL (V3-only). */
+type LeaseOwnership = 'worker' | 'sync'
+
 function check(value: unknown, message: string): asserts value {
   checkRace(value, CONTEXT, message)
 }
 
-function insertFixture(target: RaceTarget, label: string, storyIds: string[]): Fixture {
+function insertFixture(
+  target: RaceTarget,
+  label: string,
+  storyIds: string[],
+  leaseOwnership: LeaseOwnership,
+): Fixture {
   const storyId = `test:v3v5-race:${crypto.randomUUID()}`
   const jobId = crypto.randomUUID()
   const leaseId = crypto.randomUUID()
@@ -88,6 +111,23 @@ function insertFixture(target: RaceTarget, label: string, storyIds: string[]): F
   const syncAttemptId = crypto.randomUUID()
   const syncCorrelationId = crypto.randomUUID()
   storyIds.push(storyId)
+
+  const leaseInsert =
+    leaseOwnership === 'worker'
+      ? `
+        insert into public.generation_leases (
+          id, story_id, chapter_number, status, holder, expires_at, job_id, claim_token
+        ) values (
+          :'lease_id'::uuid, :'story_id', ${CHAPTER}, 'ACTIVE', '${WORKER_ID}',
+          clock_timestamp() + interval '5 minutes', :'job_id'::uuid, :'claim_token'::uuid
+        );`
+      : `
+        insert into public.generation_leases (
+          id, story_id, chapter_number, status, holder, expires_at, job_id, claim_token
+        ) values (
+          :'lease_id'::uuid, :'story_id', ${CHAPTER}, 'ACTIVE', 'sync-holder',
+          clock_timestamp() + interval '5 minutes', null, null
+        );`
 
   execLocalPsql(target, `
     insert into auth.users (id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -116,12 +156,7 @@ function insertFixture(target: RaceTarget, label: string, storyIds: string[]): F
         worker_id = '${WORKER_ID}', claim_token = :'claim_token'::uuid,
         claimed_at = clock_timestamp(), heartbeat_at = clock_timestamp()
     where id = :'job_id'::uuid;
-    insert into public.generation_leases (
-      id, story_id, chapter_number, status, holder, expires_at, job_id, claim_token
-    ) values (
-      :'lease_id'::uuid, :'story_id', ${CHAPTER}, 'ACTIVE', '${WORKER_ID}',
-      clock_timestamp() + interval '5 minutes', :'job_id'::uuid, :'claim_token'::uuid
-    );
+    ${leaseInsert}
     -- V5 (worker) checkpoint: attempt = job id, bound to job.
     insert into public.chapter_generation_checkpoints (
       story_id, chapter_number, attempt_id, correlation_id, status,
@@ -195,8 +230,6 @@ function v3CallSql(fixture: Fixture): string {
     select public.publish_chapter_state_v3(
       '${fixture.storyId}', ${CHAPTER}, '${USER_ID}'::uuid,
       '${fixture.leaseId}'::uuid, '${fixture.syncAttemptId}'::uuid,
-      '${deltaJson(fixture.storyId)}'::jsonb,
-      '${TITLE}', '${PARAGRAPHS}'::jsonb,
       '${CHOICE_PROMPT}', '${CHOICES}'::jsonb, '${OUTCOMES}'::jsonb,
       null, null
     )::text;
@@ -335,13 +368,14 @@ function assertSinglePublication(
   `).trim()
   check(leaseStatus === 'RELEASED', `${winner}: shared lease RELEASED (got: ${leaseStatus})`)
 
-  // Loser fenced without a deadlock:
-  //  - V3 loser (P1) hits the replay fast path BEFORE the lease gate — the
-  //    winner's commit already exists with a different checkpoint attempt →
-  //    13-field CONFLICT → PUBLICATION_CONFLICT (invariant a), fail-closed.
-  //  - V5 loser (P2) still reaches the L-phase recheck — winner's V2 already
-  //    released the shared ACTIVE lease → GENERATION_JOB_LEASE_INVALID
-  //    (invariant b: no second ACTIVE→RELEASED transition is attempted).
+  // Loser fenced without a deadlock (per-lease-ownership, R1-3):
+  //  - V3 loser (P1, worker-owned lease) hits the replay fast path BEFORE the
+  //    lease gate — the winner's commit already exists with a different
+  //    checkpoint attempt → 13-field CONFLICT → PUBLICATION_CONFLICT
+  //    (R1-8: V3 loser is the replay fence, not an L-phase lease failure).
+  //  - V5 loser (P2, sync-owned lease) reaches its L-phase recheck — the
+  //    lease's job_id/claim_token cannot bind the job → the missing job/claim
+  //    binding fences it with GENERATION_JOB_LEASE_INVALID.
   const expectedFence = winner === 'v5' ? 'PUBLICATION_CONFLICT' : 'GENERATION_JOB_LEASE_INVALID'
   check(
     loserSession.stdout.includes(expectedFence),
@@ -364,12 +398,13 @@ async function runRaceTests(): Promise<void> {
   const sessions: RunningRacePsql[] = []
 
   try {
-    // ─── Property 1: V5 (worker) wins; V3 (sync) fenced ───
+    // ─── Property 1: WORKER-owned lease → V5 (worker) wins; V3 (sync) fenced ───
     // V5 completes publication in an open transaction and blocks at the
     // barrier, holding S + row locks. V3 starts after, blocks on S, and after
-    // the barrier release is fenced by the released lease.
+    // the barrier release is fenced by the replay fast path (the winner's
+    // commit has a different checkpoint attempt → PUBLICATION_CONFLICT).
     {
-      const fixture = insertFixture(target, 'v5-wins', storyIds)
+      const fixture = insertFixture(target, 'v5-wins', storyIds, 'worker')
 
       const barrier = startRacePsql(target, 'v5w-barrier', {})
       sessions.push(barrier)
@@ -422,14 +457,16 @@ async function runRaceTests(): Promise<void> {
       check(jobStatus === 'SUCCEEDED', `P1: winner job SUCCEEDED (got: ${jobStatus})`)
 
       assertSinglePublication(target, fixture, 'v5', winner, loser)
-      console.log('  ✓ Property 1: V5 wins → job SUCCEEDED, V3 fenced, one publication')
+      console.log('  ✓ Property 1: worker lease → V5 wins → job SUCCEEDED, V3 fenced (PUBLICATION_CONFLICT), one publication')
     }
 
-    // ─── Property 2: V3 (sync) wins; V5 (worker) fenced, job still RUNNING ───
-    // Mirror of P1 with swapped roles. V3's publication never touches the
-    // job row, so the fenced V5 job must remain RUNNING.
+    // ─── Property 2: SYNC-owned lease → V3 (sync) wins; V5 (worker) fenced,
+    // job still RUNNING ───
+    // Mirror of P1 with swapped lease ownership. V3's publication never
+    // touches the job row, so the fenced V5 job must remain RUNNING — V5 is
+    // fenced at its L-phase recheck by the missing job/claim binding.
     {
-      const fixture = insertFixture(target, 'v3-wins', storyIds)
+      const fixture = insertFixture(target, 'v3-wins', storyIds, 'sync')
 
       const barrier = startRacePsql(target, 'v3w-barrier', {})
       sessions.push(barrier)
@@ -480,7 +517,7 @@ async function runRaceTests(): Promise<void> {
       check(jobStatus === 'RUNNING', `P2: fenced job still RUNNING (got: ${jobStatus})`)
 
       assertSinglePublication(target, fixture, 'v3', winner, loser)
-      console.log('  ✓ Property 2: V3 wins → job stays RUNNING, V5 fenced, one publication')
+      console.log('  ✓ Property 2: sync lease → V3 wins → job stays RUNNING, V5 fenced (GENERATION_JOB_LEASE_INVALID), one publication')
     }
 
     console.log(`\n  All ${CONTEXT} properties verified.`)

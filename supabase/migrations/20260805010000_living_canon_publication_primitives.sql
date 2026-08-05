@@ -186,10 +186,11 @@ comment on function public.chapter_publication_payload_hash_v1(
 -- ──────────────────────────────────────────────────────────────────────────────
 -- 4. lookup_chapter_commit_replay_v1() — shared exact-replay machine
 -- ──────────────────────────────────────────────────────────────────────────────
--- The ONLY replay evaluator in the living-canon surface. Reads the commit
--- row FOR UPDATE (caller must hold all ordered locks first; serialization is
--- the story row + advisory S, the commit lookup is proof). 13-field exact
--- comparison; NULL==NULL via IS DISTINCT FROM.
+-- The ONLY replay evaluator in the living-canon surface. Pure SELECT — NO
+-- row lock: serialization authority is the story row + advisory S (held by
+-- every caller), and the unique (story_id, chapter_number) commit row is the
+-- final database guard. 13-field exact comparison; NULL==NULL via IS
+-- DISTINCT FROM.
 -- Internal only: no grants, revoke ALL including service_role. Called from
 -- the DEFINER publishers in the same transaction.
 
@@ -225,8 +226,7 @@ begin
   select c.* into v_commit
   from public.chapter_state_commits c
   where c.story_id = p_story_id
-    and c.chapter_number = p_chapter_number
-  for update;
+    and c.chapter_number = p_chapter_number;
 
   if not found then
     return pg_catalog.jsonb_build_object('state', 'NO_COMMIT');
@@ -1376,14 +1376,18 @@ comment on function public.publish_generation_job_chapter_v4(
 -- Counterpart of upsert_generation_checkpoint_fenced_v2 for the SYNC path
 -- (living canon published by the runtime itself, no generation job, no lease).
 -- Differences from the fenced V2 writer:
---   * attempt_id is a fresh gen_random_uuid() per attempt-run — deterministic
---     UUIDv5-style ids are REJECTED here so no two runs can ever collide on
---     the same synthetic attempt id.
---   * correlation_id comes from the CALLER (no job to derive it from) and
---     becomes the sync replay identity: a retry of the same attempt-run with
---     the same correlation id replays the same checkpoint row.
+--   * attempt_id comes from the CALLER (p_checkpoint_attempt_id), created ONCE
+--     by the sync generation attempt and reused for retries of that attempt —
+--     the DB never mints attempt identity.
+--   * correlation_id comes from the CALLER too; (attempt, correlation) is the
+--     sync replay identity: the same attempt-run with the same correlation id
+--     replays the same checkpoint row; a different attempt id for the same
+--     correlation is provenance breaking.
 --   * job_id/job_attempt_number stay NULL (no job exists).
 --   * no lease, no claim token.
+-- Actor binding: the writer requires the locked story to be owned by
+-- p_user_id with an existing reader_state for (user, story) — the sync path
+-- is private/personalized only.
 -- Locks: S advisory (120712) + STORY FOR SHARE — the revision gate reads
 -- stories.canon_state_revision consistently and blocks no publisher.
 -- Gates mirror the fenced writer: LIVING_CANON_NOT_ACTIVE (v0 story),
@@ -1395,6 +1399,7 @@ create or replace function public.upsert_generation_checkpoint_sync_v1(
   p_story_id text,
   p_chapter_number integer,
   p_user_id uuid,
+  p_checkpoint_attempt_id uuid,
   p_correlation_id uuid,
   p_title text,
   p_paragraphs jsonb,
@@ -1419,17 +1424,22 @@ declare
   v_living_canon_version smallint;
   v_canon_state_revision bigint;
   v_story_contract_version integer;
+  v_story_owner_user_id uuid;
+  v_story_visibility text;
   v_state_delta_hash text;
   v_attempt_id uuid;
   v_existing public.chapter_generation_checkpoints%rowtype;
   v_paragraph_count integer;
 begin
   -- Identity must be canonical before it participates in locks or lookups.
+  -- The attempt id is caller-produced ONCE per sync attempt-run (never minted
+  -- here) and is the replay identity alongside the correlation id.
   if p_story_id is null or p_story_id = ''
     or p_story_id <> pg_catalog.btrim(p_story_id)
     or pg_catalog.char_length(p_story_id) > 200
     or p_chapter_number is null or p_chapter_number not between 1 and 50
     or p_user_id is null
+    or p_checkpoint_attempt_id is null
     or p_correlation_id is null then
     raise exception using errcode = '22023', message = 'INVALID_CHECKPOINT_IDENTITY';
   end if;
@@ -1450,9 +1460,12 @@ begin
     pg_catalog.hashtextextended(p_story_id, 120712)
   );
 
-  -- STORY FOR SHARE: capability + exact base revision, read consistently.
-  select s.id, s.living_canon_version, s.canon_state_revision, s.story_contract_version
-    into v_story_id, v_living_canon_version, v_canon_state_revision, v_story_contract_version
+  -- STORY FOR SHARE: capability + exact base revision + owner binding, read
+  -- consistently.
+  select s.id, s.living_canon_version, s.canon_state_revision, s.story_contract_version,
+         s.owner_user_id, s.visibility
+    into v_story_id, v_living_canon_version, v_canon_state_revision, v_story_contract_version,
+         v_story_owner_user_id, v_story_visibility
   from public.stories s
   where s.id = p_story_id
   for share;
@@ -1463,6 +1476,22 @@ begin
   if v_living_canon_version <> 1 then
     return pg_catalog.jsonb_build_object('ok', false, 'result', 'LIVING_CANON_NOT_ACTIVE');
   end if;
+
+  -- Actor binding (sync path is private/personalized only): the locked story
+  -- must be owned by p_user_id, private, and have an existing reader_state for
+  -- (user, story). Any mismatch is provenance conflict — the writer never
+  -- writes checkpoints for foreign or non-private stories.
+  if v_story_owner_user_id is distinct from p_user_id
+    or v_story_visibility is distinct from 'private' then
+    return pg_catalog.jsonb_build_object('ok', false, 'result', 'PROVENANCE_CONFLICT');
+  end if;
+  perform 1 from public.reader_states rs
+  where rs.user_id = p_user_id
+    and rs.story_id = p_story_id;
+  if not found then
+    return pg_catalog.jsonb_build_object('ok', false, 'result', 'PROVENANCE_CONFLICT');
+  end if;
+
   if p_base_canon_revision < v_canon_state_revision then
     return pg_catalog.jsonb_build_object('ok', false, 'result', 'STALE_CANON_REVISION');
   end if;
@@ -1520,10 +1549,10 @@ begin
     raise exception using errcode = '22023', message = 'INVALID_CHECKPOINT_PAYLOAD';
   end if;
 
-  -- Replay identity: a retry of the same sync attempt-run (same correlation
-  -- id) must bind to the SAME checkpoint row. Lookup by (story, chapter,
-  -- correlation); a different attempt id for the same run is provenance
-  -- breaking, never a silent second row.
+  -- Replay identity: a retry of the same sync attempt-run (same attempt id +
+  -- same correlation id) must bind to the SAME checkpoint row. Lookup by
+  -- (story, chapter, correlation); a different attempt id for the same run is
+  -- provenance breaking, never a silent second row.
   select c.* into v_existing
   from public.chapter_generation_checkpoints c
   where c.story_id = p_story_id
@@ -1532,7 +1561,7 @@ begin
   for update;
 
   if found then
-    if v_existing.attempt_id is null
+    if v_existing.attempt_id is distinct from p_checkpoint_attempt_id
       or v_existing.checkpoint_schema_version <> 3
       or v_existing.correlation_id is distinct from p_correlation_id
       or v_existing.prose_fingerprint is distinct from p_prose_fingerprint
@@ -1561,8 +1590,9 @@ begin
     );
   end if;
 
-  -- Fresh synthetic attempt id (uuid — collision would bind two runs).
-  v_attempt_id := pg_catalog.gen_random_uuid();
+  -- Caller-produced attempt id (never minted by the DB — the sync generation
+  -- attempt owns its identity and reuses it for retries).
+  v_attempt_id := p_checkpoint_attempt_id;
 
   insert into public.chapter_generation_checkpoints (
     story_id, chapter_number, attempt_id, correlation_id, status,
@@ -1595,27 +1625,38 @@ end;
 $$;
 
 revoke all on function public.upsert_generation_checkpoint_sync_v1(
-  text, integer, uuid, uuid, text, jsonb, text, jsonb, integer, bigint, bigint, text, integer, integer, jsonb, bigint
-) from public, anon, authenticated, service_role;
+  text, integer, uuid, uuid, uuid, text, jsonb, text, jsonb, integer, bigint, bigint, text, integer, integer, jsonb, bigint
+) from public, anon, authenticated;
+grant execute on function public.upsert_generation_checkpoint_sync_v1(
+  text, integer, uuid, uuid, uuid, text, jsonb, text, jsonb, integer, bigint, bigint, text, integer, integer, jsonb, bigint
+) to service_role;
 
 comment on function public.upsert_generation_checkpoint_sync_v1(
-  text, integer, uuid, uuid, text, jsonb, text, jsonb, integer, bigint, bigint, text, integer, integer, jsonb, bigint
+  text, integer, uuid, uuid, uuid, text, jsonb, text, jsonb, integer, bigint, bigint, text, integer, integer, jsonb, bigint
 ) is
-  'Sync (server-only) living-canon checkpoint writer. Fresh gen_random_uuid attempt id, caller correlation as replay identity, no job/lease, DB-computed hash. No grants (DEFINER publishers only; A1d wiring uses the service seam).';
+  'Sync living-canon checkpoint writer (outer authority — service_role only). Caller mints attempt + correlation once per attempt-run; DB validates exact provenance. No job/lease. Owner+reader bound.';
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- 8. publish_chapter_state_v3() — sync publisher
 -- ──────────────────────────────────────────────────────────────────────────────
 -- Sync-path atomic living-canon publication. The runtime (A1d) already holds
--- an ACTIVE lease it acquired itself; V3 NEVER creates a lease.
+-- an ACTIVE sync lease it acquired itself; V3 NEVER creates a lease and ONLY
+-- accepts a sync lease (job_id IS NULL AND claim_token IS NULL) — a
+-- worker-owned lease is fenced with GENERATION_JOB_LEASE_INVALID.
 -- Lock order (final):
---   E1 → E2 (ending only) → S(120712) → STORY FOR UPDATE → R → L → C
---   → CONTRACT (FOR SHARE) → writes
+--   E1 → E2 (ending only) → S(120712) → STORY FOR UPDATE → R → replay fast
+--   path (read-only) → L → C → CONTRACT (FOR SHARE) → writes
 -- Invariants: S before STORY, STORY before R, STORY before L, L before C.
--- Replay fast path (read-only 13-field commit lookup, no row locks) runs
--- after R and BEFORE L: a retry whose commit already exists returns
--- EXACT_REPLAY without touching the lease gate (the lease was released by
--- the first publication). Serialization is the story row + advisory S.
+--
+-- CHECKPOINT AUTHORITY: canonical state + prose come from the locked
+-- checkpoint ONLY — the caller supplies no state_delta_json/title/paragraphs
+-- (invariant: publisher never chooses/compares caller A vs checkpoint B).
+-- Replay hashes are computed FROM the checkpoint, first from an unlocked
+-- pre-read (after R, before L) so the 13-field replay short-circuits before
+-- the lease gate; after C locks the row, everything is re-derived from the
+-- LOCKED checkpoint and the pre-read is re-verified.
+-- Serialization is the story row + advisory S (every writer/publisher passes
+-- through both), so the pre-read cannot drift under us.
 --
 -- Replay state machine (shared evaluator lookup_chapter_commit_replay_v1):
 --   NO_COMMIT     → require exact base → validate → publish → apply → commit
@@ -1625,6 +1666,9 @@ comment on function public.upsert_generation_checkpoint_sync_v1(
 -- commit) is ALSO a PUBLICATION_CONFLICT: V2 returns ok:false instead of
 -- raising, and the outer publisher must NOT continue into applier/commit/
 -- revision increment.
+--
+-- Actor binding: locked story owner_user_id must equal p_user_id and the
+-- reader_state for (user, story) must exist (private personalized sync path).
 --
 -- Commit provenance: actor_user_id = p_user_id, source_job_id = NULL (sync
 -- has no generation job), correlation from the locked checkpoint, publication
@@ -1639,9 +1683,6 @@ create or replace function public.publish_chapter_state_v3(
   p_user_id uuid,
   p_lease_id uuid,
   p_checkpoint_attempt_id uuid,
-  p_state_delta_json jsonb,
-  p_title text,
-  p_paragraphs jsonb,
   p_choice_prompt text,
   p_choices jsonb,
   p_outcomes jsonb,
@@ -1658,12 +1699,12 @@ declare
   v_story public.stories%rowtype;
   v_lease public.generation_leases%rowtype;
   v_checkpoint public.chapter_generation_checkpoints%rowtype;
+  v_pre_checkpoint public.chapter_generation_checkpoints%rowtype;
   v_contract_row record;
   v_base_canon_revision bigint;
   v_committed_canon_revision bigint;
   v_state_delta_hash text;
   v_pub_hash text;
-  v_replay_correlation_id uuid;
   v_replay_base bigint;
   v_has_ending_lock boolean;
   v_sync_key text;
@@ -1713,28 +1754,13 @@ begin
     );
   end if;
 
-  -- Delta shape + payload bounds (fail closed before any lock/mutation).
-  -- schemaVersion/storyId/chapterNumber are checked via jsonb_typeof guards so
-  -- a malformed value fails with INVALID_PUBLICATION_PAYLOAD, never an
-  -- uncaught 22P02 cast error.
-  if p_state_delta_json is null
-    or pg_catalog.jsonb_typeof(p_state_delta_json) <> 'object'
-    or pg_catalog.pg_column_size(p_state_delta_json) > 1000000
-    or pg_catalog.jsonb_typeof(p_state_delta_json->'schemaVersion') is distinct from 'number'
-    or (p_state_delta_json->>'schemaVersion')::integer is distinct from 1
-    or pg_catalog.jsonb_typeof(p_state_delta_json->'chapterNumber') is distinct from 'number'
-    or (p_state_delta_json->>'chapterNumber')::integer is distinct from p_chapter_number
-    or (p_state_delta_json->>'storyId') is distinct from p_story_id then
-    raise exception using errcode = '22023', message = 'INVALID_PUBLICATION_PAYLOAD';
-  end if;
-  v_state_delta_hash := public.chapter_state_delta_hash_v1(p_state_delta_json);
-
   -- S: story advisory lock — BEFORE the story row lock (all publishers).
   perform pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended(p_story_id, 120712)
   );
 
-  -- STORY FOR UPDATE: capability + canonical revision (serialized).
+  -- STORY FOR UPDATE: capability + canonical revision + owner binding
+  -- (serialized).
   select s.* into v_story
   from public.stories s
   where s.id = p_story_id
@@ -1745,6 +1771,9 @@ begin
   end if;
   if v_story.living_canon_version <> 1 then
     raise exception using errcode = 'P0001', message = 'LIVING_CANON_NOT_ACTIVE';
+  end if;
+  if v_story.owner_user_id is distinct from p_user_id then
+    raise exception using errcode = 'P0001', message = 'PROVENANCE_CONFLICT';
   end if;
   v_base_canon_revision := v_story.canon_state_revision;
 
@@ -1759,10 +1788,41 @@ begin
     raise exception using errcode = 'P0002', message = 'READER_STATE_MISSING';
   end if;
 
-  -- Publication payload hash (DB-computed, byte-identical to the worker
-  -- formula — chapter_publication_payload_hash_v1).
+  -- PRE-READ checkpoint by exact attempt (NO row lock — the STORY FOR UPDATE
+  -- held above serializes every checkpoint writer: all of them pass through
+  -- the S advisory + the STORY row first). The checkpoint is the ONLY source
+  -- of canonical state and prose; the caller supplies nothing here.
+  select c.* into v_pre_checkpoint
+  from public.chapter_generation_checkpoints c
+  where c.story_id = p_story_id
+    and c.chapter_number = p_chapter_number
+    and c.attempt_id = p_checkpoint_attempt_id;
+
+  if not found then
+    raise exception using errcode = 'P0001', message = 'PROVENANCE_CONFLICT';
+  end if;
+  if v_pre_checkpoint.checkpoint_schema_version <> 3
+    or v_pre_checkpoint.correlation_id is null
+    or v_pre_checkpoint.generation_mode is distinct from 'personalized'
+    or v_pre_checkpoint.state_delta_json is null
+    or v_pre_checkpoint.state_delta_schema_version is distinct from 1
+    or v_pre_checkpoint.title is null
+    or v_pre_checkpoint.paragraphs_json is null
+    or v_pre_checkpoint.status not in ('PROSE_READY','RUNNING_CHOICES','READY_TO_PUBLISH','PUBLISHED')
+  then
+    raise exception using errcode = 'P0001', message = 'PROVENANCE_CONFLICT';
+  end if;
+  -- NOTE: base_canon_revision is deliberately NOT checked here — on a retry the
+  -- story revision has already advanced past the checkpoint's base. The replay
+  -- fast path below decides via the commit's own base; a fresh publication
+  -- (NO_COMMIT) gets the base guard at the C-lock re-verify.
+
+  -- Replay hashes FROM THE CHECKPOINT (DB-computed; caller supplies only the
+  -- choice/ending UI payload, never canonical state or prose).
+  v_state_delta_hash := public.chapter_state_delta_hash_v1(v_pre_checkpoint.state_delta_json);
   v_pub_hash := public.chapter_publication_payload_hash_v1(
-    p_story_id, p_chapter_number, p_title, p_paragraphs,
+    p_story_id, p_chapter_number,
+    v_pre_checkpoint.title, v_pre_checkpoint.paragraphs_json,
     p_choice_prompt, p_choices, p_outcomes, p_ending_key, p_ending_name
   );
 
@@ -1778,12 +1838,6 @@ begin
   -- first publication, so only the commit's own base can satisfy the 13-field
   -- exact machine. A fresh publication has no commit → base is NULL → the
   -- machine returns NO_COMMIT and the full lock/provenance path runs below.
-  select c.correlation_id into v_replay_correlation_id
-  from public.chapter_generation_checkpoints c
-  where c.story_id = p_story_id
-    and c.chapter_number = p_chapter_number
-    and c.attempt_id = p_checkpoint_attempt_id;
-
   select c.base_canon_revision into v_replay_base
   from public.chapter_state_commits c
   where c.story_id = p_story_id
@@ -1791,7 +1845,7 @@ begin
 
   v_replay := public.lookup_chapter_commit_replay_v1(
     p_story_id, p_chapter_number,
-    p_checkpoint_attempt_id, v_replay_correlation_id,
+    p_checkpoint_attempt_id, v_pre_checkpoint.correlation_id,
     v_replay_base, 1::smallint, v_state_delta_hash,
     1::smallint, v_pub_hash,
     'personalized'::text, p_user_id, null
@@ -1805,8 +1859,11 @@ begin
   end if;
 
   -- L: lease lock. The sync caller holds this lease (A1d acquired it); V3
-  -- never creates a lease. After publish_chapter_v2 releases it, the lease
-  -- stays RELEASED — no second ACTIVE→RELEASED transition is attempted.
+  -- never creates a lease. Sync-ownership contract: the lease must NOT be
+  -- bound to a generation job (job_id/claim_token NULL) — a worker-owned
+  -- lease is never publishable by the sync path. After publish_chapter_v2
+  -- releases the lease, it stays RELEASED — no second ACTIVE→RELEASED
+  -- transition is attempted.
   select l.* into v_lease
   from public.generation_leases l
   where l.id = p_lease_id
@@ -1817,12 +1874,17 @@ begin
     or v_lease.chapter_number is distinct from p_chapter_number
     or v_lease.status <> 'ACTIVE'
     or v_lease.expires_at <= pg_catalog.clock_timestamp()
+    or v_lease.job_id is not null
+    or v_lease.claim_token is not null
   then
     raise exception using errcode = 'P0001', message = 'GENERATION_JOB_LEASE_INVALID';
   end if;
 
   -- C: checkpoint lock. The publication binds to the exact checkpoint row
   -- produced by the sync writer (same story/chapter/attempt + correlation).
+  -- The locked row is authoritative: re-verify the pre-read and re-derive
+  -- every canonical value from C (a writer cannot have changed the row under
+  -- our STORY lock, but the check is the belt).
   select c.* into v_checkpoint
   from public.chapter_generation_checkpoints c
   where c.story_id = p_story_id
@@ -1834,17 +1896,25 @@ begin
     raise exception using errcode = 'P0001', message = 'PROVENANCE_CONFLICT';
   end if;
   if v_checkpoint.checkpoint_schema_version <> 3
-    or v_checkpoint.correlation_id is null
+    or v_checkpoint.correlation_id is distinct from v_pre_checkpoint.correlation_id
     or v_checkpoint.generation_mode is distinct from 'personalized'
     or v_checkpoint.status not in ('PROSE_READY','RUNNING_CHOICES','READY_TO_PUBLISH','PUBLISHED')
-    or v_checkpoint.state_delta_json is distinct from p_state_delta_json
+    or v_checkpoint.state_delta_json is distinct from v_pre_checkpoint.state_delta_json
     or v_checkpoint.state_delta_schema_version is distinct from 1
     or v_checkpoint.base_canon_revision is distinct from v_base_canon_revision
-    or v_checkpoint.title is distinct from p_title
-    or v_checkpoint.paragraphs_json is distinct from p_paragraphs
+    or v_checkpoint.title is distinct from v_pre_checkpoint.title
+    or v_checkpoint.paragraphs_json is distinct from v_pre_checkpoint.paragraphs_json
   then
     raise exception using errcode = 'P0001', message = 'PROVENANCE_CONFLICT';
   end if;
+
+  -- Re-derive from the LOCKED checkpoint (all downstream values come from C).
+  v_state_delta_hash := public.chapter_state_delta_hash_v1(v_checkpoint.state_delta_json);
+  v_pub_hash := public.chapter_publication_payload_hash_v1(
+    p_story_id, p_chapter_number,
+    v_checkpoint.title, v_checkpoint.paragraphs_json,
+    p_choice_prompt, p_choices, p_outcomes, p_ending_key, p_ending_name
+  );
 
   -- CONTRACT FOR SHARE (personalized sync always has a contract).
   select plot_debts_json, story_contract_version
@@ -1878,12 +1948,14 @@ begin
     );
   end if;
 
-  -- Chapter publication (V2). CHAPTER_EXISTS returns {ok:false} WITHOUT an
-  -- exception — that is still a hard conflict for the living-canon path
-  -- (a chapter without a commit is foreign state): raise and roll back.
+  -- Chapter publication (V2), with the CHECKPOINT's title/paragraphs (never
+  -- caller-supplied). CHAPTER_EXISTS returns {ok:false} WITHOUT an exception
+  -- — that is still a hard conflict for the living-canon path (a chapter
+  -- without a commit is foreign state): raise and roll back.
   v_publisher_result := public.publish_chapter_v2(
     p_story_id, p_chapter_number,
-    p_title, p_paragraphs, p_choice_prompt, p_choices, p_outcomes,
+    v_checkpoint.title, v_checkpoint.paragraphs_json,
+    p_choice_prompt, p_choices, p_outcomes,
     p_lease_id, v_sync_key
   );
 
@@ -1920,10 +1992,11 @@ begin
   v_seq := (v_proof_result->>'seq')::integer;
 
   -- Shared atomic state applier (canonical tables + progress/closure ledgers;
-  -- closures/progress provenance: source_job_id NULL for sync).
+  -- closures/progress provenance: source_job_id NULL for sync). The delta
+  -- comes from the LOCKED checkpoint — never from the caller.
   perform public.apply_validated_chapter_state_v1(
     p_story_id, p_chapter_number,
-    v_base_canon_revision, p_user_id, null, p_state_delta_json
+    v_base_canon_revision, p_user_id, null, v_checkpoint.state_delta_json
   );
 
   -- Commit ledger insert (canonical replay proof) + revision increment.
@@ -1948,7 +2021,7 @@ begin
   ) values (
     p_story_id, p_chapter_number,
     v_base_canon_revision, v_committed_canon_revision,
-    p_state_delta_json, 1, v_state_delta_hash,
+    v_checkpoint.state_delta_json, 1, v_state_delta_hash,
     'personalized', p_user_id, null,
     p_checkpoint_attempt_id,
     v_checkpoint.correlation_id,
@@ -1984,13 +2057,16 @@ end;
 $$;
 
 revoke all on function public.publish_chapter_state_v3(
-  text, integer, uuid, uuid, uuid, jsonb, text, jsonb, text, jsonb, jsonb, text, text
-) from public, anon, authenticated, service_role;
+  text, integer, uuid, uuid, uuid, text, jsonb, jsonb, text, text
+) from public, anon, authenticated;
+grant execute on function public.publish_chapter_state_v3(
+  text, integer, uuid, uuid, uuid, text, jsonb, jsonb, text, text
+) to service_role;
 
 comment on function public.publish_chapter_state_v3(
-  text, integer, uuid, uuid, uuid, jsonb, text, jsonb, text, jsonb, jsonb, text, text
+  text, integer, uuid, uuid, uuid, text, jsonb, jsonb, text, text
 ) is
-  'Sync living-canon publisher. Existing ACTIVE lease only (never created); ordered locks; 13-field replay; shared applier; commit insert + revision increment. CHAPTER_EXISTS → PUBLICATION_CONFLICT. No grants (DEFINER publishers only; A1d wiring uses the service seam).';
+  'Sync living-canon publisher (outer authority — service_role only). Checkpoint-authoritative state/prose; sync lease only (job_id/claim_token NULL); ordered locks; 13-field replay; shared applier; commit insert + revision increment. CHAPTER_EXISTS → PUBLICATION_CONFLICT.';
 
 
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -2362,11 +2438,17 @@ begin
   end if;
   v_base_canon_revision := v_story.canon_state_revision;
 
-  -- R: reader_states FOR UPDATE (personalized always).
+  -- R: reader_states FOR UPDATE (personalized always). The canonical actor
+  -- row MUST exist — a job without its reader state is broken state and must
+  -- never publish (fail closed).
   perform 1 from public.reader_states rs
   where rs.user_id = v_preflight.user_id
     and rs.story_id = v_preflight.story_id
   for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'READER_STATE_MISSING';
+  end if;
 
   -- J: generation_jobs FOR UPDATE.
   select j.* into v_job
@@ -2665,7 +2747,8 @@ begin
     end if;
   end loop;
 
-  -- COMMIT lookup FOR UPDATE + 13-field exact replay evaluation. NO_COMMIT
+  -- COMMIT lookup + 13-field exact replay evaluation (pure SELECT — no row
+  -- lock; serialization is the story row + advisory S). NO_COMMIT
   -- → require exact base → publish → apply → commit; EXACT_REPLAY → return
   -- the stored result (no re-apply); CONFLICT → hard stop.
   v_replay := public.lookup_chapter_commit_replay_v1(
@@ -2873,9 +2956,12 @@ $$;
 
 revoke all on function public.publish_generation_job_chapter_v5(
   uuid,text,uuid,uuid,text,integer,text,jsonb,jsonb,text,text
-) from public, anon, authenticated, service_role;
+) from public, anon, authenticated;
+grant execute on function public.publish_generation_job_chapter_v5(
+  uuid,text,uuid,uuid,text,integer,text,jsonb,jsonb,text,text
+) to service_role;
 
 comment on function public.publish_generation_job_chapter_v5(
   uuid,text,uuid,uuid,text,integer,text,jsonb,jsonb,text,text
 ) is
-  'Living-canon worker publisher (v1 stories only; LIVING_CANON_NOT_ACTIVE on v0). Canonical state from the locked schema-3 checkpoint; caller supplies only choice/ending UI payload. Shared applier + commit ledger + revision increment; 13-field replay; exact V4 terminalization order. No grants (DEFINER publishers only; A1d wiring uses the service seam).';
+  'Living-canon worker publisher (outer authority — service_role only; v1 stories only; LIVING_CANON_NOT_ACTIVE on v0). Canonical state from the locked schema-3 checkpoint; caller supplies only choice/ending UI payload. Shared applier + commit ledger + revision increment; 13-field replay; exact V4 terminalization order.';

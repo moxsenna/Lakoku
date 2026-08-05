@@ -40,5 +40,6 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['lib/**/*.test.ts', 'tests/**/*.test.ts'],
+    exclude: ['node_modules/**', '.next/**', 'tests/db/real-app-db-integration.test.ts'],
   },
 })

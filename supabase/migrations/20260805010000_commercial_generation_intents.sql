@@ -1,13 +1,17 @@
--- 20260805010000_commercial_generation_intents.sql
--- Durable state machine for commercial generation intents & story creation requests.
-
--- 1. Extend story_creation_requests status check
+-- 1. Extend story_creation_requests status check & job binding
 alter table public.story_creation_requests
   drop constraint if exists story_creation_requests_status_check;
 
 alter table public.story_creation_requests
   add constraint story_creation_requests_status_check
   check (status in ('RESERVED', 'READY', 'FAILED', 'WAITING_FOR_CREDITS'));
+
+alter table public.story_creation_requests
+  add column if not exists generation_job_id uuid null references public.generation_jobs(id) on delete set null;
+
+create unique index if not exists story_creation_requests_job_idx
+  on public.story_creation_requests(generation_job_id)
+  where generation_job_id is not null;
 
 -- 2. Commercial generation intents table
 create table if not exists public.commercial_generation_intents (

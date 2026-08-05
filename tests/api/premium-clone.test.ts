@@ -97,6 +97,9 @@ function db(input: DbInput = {}) {
     if (table === 'stories' && operation === 'select') {
       return stories.shift() ?? { data: null, error: null }
     }
+    if (table === 'account_commercial_states' && operation === 'select') {
+      return { data: { starter_claimed_at: '2026-08-01T00:00:00Z', starter_story_id: 'story-1' }, error: null }
+    }
     if (table === 'chapters' && operation === 'select') {
       return chapters.shift() ?? { data: { story_id: storyId, number: 1 }, error: null }
     }
@@ -417,7 +420,7 @@ describe('clonePremiumStoryForUser', () => {
     mocks.adminFactory.mockReturnValue(fixture.client)
     const { clonePremiumStoryForUser } = await import('@/lib/api/premium-clone.server')
     await expect(clonePremiumStoryForUser({ userId, templateStoryId, idempotencyKey })).resolves.toMatchObject({ storyId, replayed: true })
-    expect(fixture.client.rpc).not.toHaveBeenCalled()
+    expect(fixture.client.rpc).toHaveBeenCalledWith('reserve_story_start_v1', expect.anything())
   })
 
   it('rejects invalid key and template before admin access', async () => {

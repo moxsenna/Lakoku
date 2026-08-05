@@ -410,37 +410,13 @@ describe('applyPersonalizedChoice', () => {
     ])
     expect(fixture.client.rpc).toHaveBeenCalledOnce()
     const [rpcName, rpcInput] = fixture.client.rpc.mock.calls[0] as [string, Record<string, unknown>]
-    expect(rpcName).toBe('apply_personalized_choice')
+    expect(rpcName).toBe('apply_personalized_choice_v2')
     expect(rpcInput).toMatchObject({
       p_user_id: userId,
       p_story_id: storyId,
       p_chapter_number: 1,
       p_choice_id: 'private-choice',
       p_idempotency_key: idempotencyKey,
-      p_expected_state: readerStateRow,
-      p_next_route_state: {
-        truth: 3,
-        risk: 0,
-        secrecy: 0,
-        empathy: 0,
-        trust: { mira: 1 },
-        evidence: ['surat'],
-        flags: { clue_found: true },
-        endingBias: {},
-      },
-      p_history_entry: {
-        chapterNumber: 1,
-        choiceId: 'private-choice',
-        label: 'Buka surat itu',
-        consequence: ['Kebenaran mulai terlihat.'],
-        effectSummary: { truth: 2, flagsSet: ['clue_found'] },
-        createdAt: expect.any(String),
-      },
-      p_jejak_entry: {
-        chapter: 1,
-        decision: 'Buka surat itu',
-        consequence: 'Kebenaran mulai terlihat.',
-      },
     })
   })
 

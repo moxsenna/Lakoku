@@ -1,19 +1,12 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getReadingPolicy, getCreditBalance, spendChapterUnlock } from '@/lib/credits/server'
-import { isChapterFree } from '@/lib/credits/policy'
 
 /**
  * Buka satu bab berbayar dengan kredit (M-PAY reader).
  *
  * Belanja kredit HANYA lewat jalur ini (server, service-role RPC idempoten).
  * Idempoten: membuka bab yang sama dua kali tak mengurangi kredit lagi.
- *
- * Body: { chapter: number }
- * Hasil → HTTP:
- *  - ok / duplicate  → 200 (bab bisa dibaca)
- *  - free            → 200 (bab memang gratis)
- *  - insufficient    → 402 (kredit kurang → arahkan beli)
  */
 export async function POST(
   req: Request,
@@ -33,17 +26,123 @@ export async function POST(
   }
 
   const policy = await getReadingPolicy()
-  if (isChapterFree(chapter, policy)) {
-    return NextResponse.json({ status: 'free' }, { status: 200 })
+  const { resolveChapterAccess } = await import('@/lib/credits/access-resolver.server')
+  const decision = await resolveChapterAccess({ userId: auth.user.id, storyId, chapterNumber: chapter, policy })
+
+  const balance = await getCreditBalance(auth.user.id)
+
+  if (decision.readable) {
+    return NextResponse.json({ status: decision.reason === 'FREE_STANDARD' ? 'free' : 'ok', balance }, { status: 200 })
   }
 
-  try {
-    const result = await spendChapterUnlock(auth.user.id, storyId, chapter, policy.creditsPerChapter)
-    const balance = await getCreditBalance(auth.user.id)
-    if (result === 'insufficient') {
-      return NextResponse.json({ status: 'insufficient', balance }, { status: 402 })
+  if (decision.reason === 'NOT_AUTHORIZED') {
+    return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 403 })
+  }
+
+  if (decision.reason === 'CONFIG_ERROR') {
+    return NextResponse.json({ error: 'Pengaturan kredit tidak valid.' }, { status: 500 })
+  }
+
+  if (decision.reason === 'STORY_PENDING') {
+    return NextResponse.json({
+      status: 'WAITING_FOR_CREDITS',
+      storyId,
+      requiredCredits: decision.cost,
+      availableCredits: balance,
+    }, { status: 402 })
+  }
+
+  if (decision.reason === 'COMMERCIAL_ACCESS_NOT_FINALIZED') {
+    return NextResponse.json({
+      error: 'Akses cerita komersial belum difinalisasi.',
+    }, { status: 503 })
+  }
+
+  // Check commercial story origin
+  const { createAdminClient } = await import('@/lib/supabase/admin')
+  const db = createAdminClient()
+  const { data: story, error: storyError } = await db
+    .from('stories')
+    .select('owner_user_id, commercial_origin, story_mode')
+    .eq('id', storyId)
+    .maybeSingle()
+
+  if (storyError || !story) {
+    return NextResponse.json({ error: 'Gagal memverifikasi status cerita.' }, { status: 500 })
+  }
+
+  const isCommercialMode = story.story_mode === 'personalized_ai' || story.story_mode === 'premium_instance'
+
+  if (isCommercialMode) {
+    // STRUCTURAL GUARD: Commercial modes NEVER fall through to generic spend!
+    if (story?.commercial_origin === 'STARTER_FREE' || story?.commercial_origin === 'PAID_START') {
+      return NextResponse.json({
+        status: 'WAITING_FOR_CREDITS',
+        storyId,
+        requiredCredits: decision.cost,
+        availableCredits: balance,
+      }, { status: 402 })
     }
-    return NextResponse.json({ status: 'ok', balance }, { status: 200 })
+
+    if (story?.commercial_origin === 'LEGACY_GRANDFATHERED') {
+      if (story.owner_user_id === auth.user.id && chapter >= 4) {
+        const { data: chRow } = await db
+          .from('chapters')
+          .select('number')
+          .eq('story_id', storyId)
+          .eq('number', chapter)
+          .maybeSingle()
+
+        if (!chRow) {
+          return NextResponse.json({ error: 'Bab belum dipublikasikan.' }, { status: 400 })
+        }
+
+        try {
+          const result = await spendChapterUnlock(auth.user.id, storyId, chapter, decision.cost)
+          const newBalance = await getCreditBalance(auth.user.id)
+          if (result === 'insufficient') {
+            return NextResponse.json({
+              status: 'WAITING_FOR_CREDITS',
+              storyId,
+              requiredCredits: decision.cost,
+              availableCredits: newBalance,
+            }, { status: 402 })
+          }
+          return NextResponse.json({ status: 'ok', balance: newBalance }, { status: 200 })
+        } catch (err) {
+          console.log('[v0] unlock chapter gagal:', (err as Error)?.message)
+          return NextResponse.json({ error: 'processing_error' }, { status: 500 })
+        }
+      }
+      return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 403 })
+    }
+
+    if (story?.commercial_origin === 'PENDING_PAID_START') {
+      return NextResponse.json({
+        status: 'WAITING_FOR_CREDITS',
+        storyId,
+        requiredCredits: decision.cost,
+        availableCredits: balance,
+      }, { status: 402 })
+    }
+
+    // Any unknown/invalid/ADMIN_GRANTED/NULL commercial origin in commercial story_mode MUST fail closed with 0 debit!
+    return NextResponse.json({ error: 'Asal-usul komersial tidak valid.' }, { status: 500 })
+  }
+
+  // Fallback ONLY for standard/shared public story unlock
+  try {
+    const result = await spendChapterUnlock(auth.user.id, storyId, chapter, decision.cost)
+    const newBalance = await getCreditBalance(auth.user.id)
+    if (result === 'insufficient') {
+      return NextResponse.json({
+        status: 'WAITING_FOR_CREDITS',
+        storyId,
+        requiredCredits: decision.cost,
+        availableCredits: newBalance,
+      }, { status: 402 })
+    }
+    return NextResponse.json({ status: 'ok', balance: newBalance }, { status: 200 })
   } catch (err) {
     console.log('[v0] unlock chapter gagal:', (err as Error)?.message)
     return NextResponse.json({ error: 'processing_error' }, { status: 500 })

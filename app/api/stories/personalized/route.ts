@@ -46,6 +46,27 @@ export async function POST(req: Request) {
           { status: 409 },
         )
       }
+      if (error.code === 'INSUFFICIENT_CREDITS') {
+        if (
+          typeof error.requiredCredits === 'number'
+          && Number.isInteger(error.requiredCredits)
+          && error.requiredCredits > 0
+          && typeof error.availableCredits === 'number'
+          && Number.isInteger(error.availableCredits)
+          && error.availableCredits >= 0
+        ) {
+          return NextResponse.json(
+            {
+              status: 'WAITING_FOR_CREDITS',
+              storyId: error.storyId,
+              requiredCredits: error.requiredCredits,
+              availableCredits: error.availableCredits,
+            },
+            { status: 402 },
+          )
+        }
+        return NextResponse.json({ error: 'Gagal membuat cerita personal.' }, { status: 500 })
+      }
       return NextResponse.json({ error: 'Gagal membuat cerita personal.' }, { status: 500 })
     }
     return NextResponse.json({ error: 'Gagal membuat cerita personal.' }, { status: 500 })

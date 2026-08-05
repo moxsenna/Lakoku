@@ -1,22 +1,18 @@
-import 'server-only'
 import { createHash, randomUUID } from 'node:crypto'
+import 'server-only'
 import { z } from 'zod'
 import { selectProvider } from '@lakoku/ai-gateway/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getTasteProfileForUser } from '@/lib/api/taste-profile'
-import {
-  asV1Compat,
-  createDefaultTasteProfile,
-  type TasteProfile,
-} from '@/lib/taste-profile/schema'
 import { createResilientStoryContract } from '@/lib/story-engine/contract-generation.server'
 import { persistContractAndCanon } from '@/lib/story-engine/contract-persistence.server'
-import { normalizeRouteState } from '@/lib/story-engine/route-state'
+import { getTasteProfileForUser } from '@/lib/api/taste-profile'
+import { createDefaultTasteProfile, asV1Compat, type TasteProfile } from '@/lib/taste-profile/schema'
 import { generateNextPersonalizedChapter } from '@/lib/runtime/personalized-generation'
 import { createSynchronousProviderContext } from '@/lib/runtime/generation-provider-context'
+import { normalizeRouteState } from '@/lib/story-engine/route-state'
 
-const UNIQUE_VIOLATION = '23505'
 const REQUEST_KIND = 'personalized' as const
+const UNIQUE_VIOLATION = '23505'
 
 const IdempotencyKeySchema = z.string().trim().min(1).max(240).regex(/^[\x21-\x7E]+$/)
 const UserIdSchema = z.string().uuid()
@@ -24,51 +20,32 @@ const UserIdSchema = z.string().uuid()
 const CreationRequestRowSchema = z.object({
   story_id: z.string().min(1),
   request_hash: z.string().min(1),
-  status: z.enum(['RESERVED', 'READY', 'FAILED']),
+  status: z.enum(['RESERVED', 'READY', 'FAILED', 'WAITING_FOR_CREDITS']),
+  error_code: z.string().nullable().optional(),
 }).strict()
 
-export type PersonalizedStoryErrorCode =
-  | 'INVALID_IDEMPOTENCY_KEY'
-  | 'INVALID_USER'
-  | 'IDEMPOTENCY_CONFLICT'
-  | 'RESERVATION_FAILED'
-  | 'SHELL_FAILED'
-  | 'CONTRACT_FAILED'
-  | 'READER_STATE_FAILED'
-  | 'GENERATION_FAILED'
-  | 'INTERNAL_ERROR'
+const ReserveStartRpcResultSchema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    status: z.literal('RESERVED'),
+  }),
+  z.object({
+    ok: z.literal(false),
+    reason: z.literal('INSUFFICIENT_CREDITS'),
+    available: z.number().int().min(0),
+    required: z.number().int().min(1),
+  }),
+])
 
-export class PersonalizedStoryError extends Error {
-  constructor(public readonly code: PersonalizedStoryErrorCode) {
-    super(code)
-    this.name = 'PersonalizedStoryError'
-  }
-}
-
-export interface CreatePersonalizedStoryInput {
-  userId: string
-  idempotencyKey: string
-}
-
-export interface CreatePersonalizedStoryResult {
-  storyId: string
-  redirectUrl: string
-  replayed: boolean
-}
+const ClaimStarterRpcResultSchema = z.object({
+  claimed: z.boolean(),
+})
 
 function redirectUrlFor(storyId: string): string {
   return `/baca/${encodeURIComponent(storyId)}?bab=1`
 }
 
-function resultFor(storyId: string, replayed: boolean): CreatePersonalizedStoryResult {
-  return {
-    storyId,
-    redirectUrl: redirectUrlFor(storyId),
-    replayed,
-  }
-}
-
-function tasteProfileVersion(profile: TasteProfile): number {
+export function tasteProfileVersion(profile: TasteProfile): number {
   return typeof profile.version === 'number' ? profile.version : 1
 }
 
@@ -98,26 +75,97 @@ function shellMetadata(contractTitle: string, contractGenre: string, tropes: str
   }
 }
 
+export type PersonalizedStoryErrorCode =
+  | 'INVALID_IDEMPOTENCY_KEY'
+  | 'INVALID_USER'
+  | 'IDEMPOTENCY_CONFLICT'
+  | 'RESERVATION_FAILED'
+  | 'SHELL_FAILED'
+  | 'CONTRACT_FAILED'
+  | 'READER_STATE_FAILED'
+  | 'GENERATION_FAILED'
+  | 'MARK_READY_FAILED'
+  | 'INSUFFICIENT_CREDITS'
+  | 'COMMERCIAL_RUNTIME_NOT_READY'
+  | 'INTERNAL_ERROR'
+
+export class PersonalizedStoryError extends Error {
+  constructor(
+    public readonly code: PersonalizedStoryErrorCode,
+    public readonly storyId?: string,
+    public readonly requiredCredits?: number,
+    public readonly availableCredits?: number,
+  ) {
+    super(code)
+    this.name = 'PersonalizedStoryError'
+  }
+}
+
+export interface CreatePersonalizedStoryInput {
+  userId: string
+  idempotencyKey: string
+}
+
+export interface CreatePersonalizedStoryResult {
+  storyId: string
+  redirectUrl: string
+  replayed: boolean
+}
+
+function resultFor(storyId: string, replayed: boolean): CreatePersonalizedStoryResult {
+  return {
+    storyId,
+    redirectUrl: redirectUrlFor(storyId),
+    replayed,
+  }
+}
+
 async function markFailed(input: {
   admin: ReturnType<typeof createAdminClient>
   userId: string
   idempotencyKey: string
-  storyId: string
+  storyId?: string
   errorCode: PersonalizedStoryErrorCode
 }): Promise<void> {
-  const now = new Date().toISOString()
-  await input.admin
-    .from('stories')
-    .update({ generation_status: 'failed' })
-    .eq('id', input.storyId)
-    .eq('owner_user_id', input.userId)
+  try {
+    await input.admin
+      .from('story_creation_requests')
+      .update({
+        status: 'FAILED',
+        error_code: input.errorCode,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('owner_user_id', input.userId)
+      .eq('request_kind', REQUEST_KIND)
+      .eq('idempotency_key', input.idempotencyKey)
 
+    if (input.storyId) {
+      await input.admin
+        .from('stories')
+        .update({
+          generation_status: 'failed',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', input.storyId)
+        .eq('owner_user_id', input.userId)
+    }
+  } catch {
+    // Ignore update failures during error reporting
+  }
+}
+
+async function markWaiting(input: {
+  admin: ReturnType<typeof createAdminClient>
+  userId: string
+  idempotencyKey: string
+  storyId?: string
+}): Promise<void> {
   await input.admin
     .from('story_creation_requests')
     .update({
-      status: 'FAILED',
-      error_code: input.errorCode,
-      updated_at: now,
+      status: 'WAITING_FOR_CREDITS',
+      error_code: 'INSUFFICIENT_CREDITS',
+      updated_at: new Date().toISOString(),
     })
     .eq('owner_user_id', input.userId)
     .eq('request_kind', REQUEST_KIND)
@@ -130,25 +178,159 @@ async function markReady(input: {
   idempotencyKey: string
   storyId: string
 }): Promise<void> {
-  const now = new Date().toISOString()
   const { error: storyError } = await input.admin
     .from('stories')
-    .update({ generation_status: 'ready' })
+    .update({
+      generation_status: 'ready',
+      updated_at: new Date().toISOString(),
+    })
     .eq('id', input.storyId)
     .eq('owner_user_id', input.userId)
-  if (storyError) throw new PersonalizedStoryError('INTERNAL_ERROR')
+
+  if (storyError) {
+    throw new PersonalizedStoryError('MARK_READY_FAILED', input.storyId)
+  }
 
   const { error: requestError } = await input.admin
     .from('story_creation_requests')
     .update({
       status: 'READY',
       error_code: null,
-      updated_at: now,
+      updated_at: new Date().toISOString(),
     })
     .eq('owner_user_id', input.userId)
     .eq('request_kind', REQUEST_KIND)
     .eq('idempotency_key', input.idempotencyKey)
-  if (requestError) throw new PersonalizedStoryError('INTERNAL_ERROR')
+
+  if (requestError) {
+    throw new PersonalizedStoryError('MARK_READY_FAILED', input.storyId)
+  }
+}
+
+export async function verifyDurableStarterProof(input: {
+  admin: ReturnType<typeof createAdminClient>
+  userId: string
+  storyId: string
+}): Promise<boolean> {
+  const { data: accountState, error: accountErr } = await input.admin
+    .from('account_commercial_states')
+    .select('starter_story_id, starter_claimed_at')
+    .eq('user_id', input.userId)
+    .maybeSingle()
+
+  if (accountErr || !accountState) {
+    return false
+  }
+
+  const { data: storyRow, error: storyErr } = await input.admin
+    .from('stories')
+    .select('commercial_origin')
+    .eq('id', input.storyId)
+    .maybeSingle()
+
+  if (storyErr || !storyRow) {
+    return false
+  }
+
+  return (
+    accountState.starter_story_id === input.storyId
+    && accountState.starter_claimed_at != null
+    && storyRow.commercial_origin === 'STARTER_FREE'
+  )
+}
+
+async function authorizeStoryCreation(input: {
+  admin: ReturnType<typeof createAdminClient>
+  userId: string
+  storyId: string
+}): Promise<
+  | { ok: true; origin: 'STARTER_FREE' | 'PENDING_PAID_START' }
+  | { ok: false; error: 'INSUFFICIENT_CREDITS'; requiredCredits: number; availableCredits: number }
+> {
+  // 1. Check if user has already claimed a starter story
+  const { data: accountState, error: accountErr } = await input.admin
+    .from('account_commercial_states')
+    .select('starter_story_id, starter_claimed_at')
+    .eq('user_id', input.userId)
+    .maybeSingle()
+
+  if (accountErr) {
+    throw new PersonalizedStoryError('INTERNAL_ERROR', input.storyId)
+  }
+
+  const hasClaimedStarter = Boolean(
+    accountState?.starter_claimed_at && accountState?.starter_story_id && accountState.starter_story_id !== input.storyId
+  )
+
+  if (!hasClaimedStarter) {
+    // Attempt claim via RPC
+    const { data: claimData, error: claimErr } = await input.admin.rpc('claim_starter_story_v1', {
+      p_user_id: input.userId,
+      p_story_id: input.storyId,
+    })
+
+    if (!claimErr && claimData) {
+      const parsed = ClaimStarterRpcResultSchema.safeParse(claimData)
+      if (parsed.success && parsed.data.claimed) {
+        await input.admin.rpc('grant_welcome_credit_v1', { p_user_id: input.userId }).then(() => null, () => null)
+        const isDurable = await verifyDurableStarterProof({ admin: input.admin, userId: input.userId, storyId: input.storyId })
+        if (isDurable) {
+          return { ok: true, origin: 'STARTER_FREE' }
+        }
+      }
+    }
+
+    // Race / replay proof check
+    const isDurableReplay = await verifyDurableStarterProof({ admin: input.admin, userId: input.userId, storyId: input.storyId })
+    if (isDurableReplay) {
+      return { ok: true, origin: 'STARTER_FREE' }
+    }
+
+    // Fail closed: claim failed and re-read failed
+    throw new PersonalizedStoryError('INTERNAL_ERROR', input.storyId)
+  }
+
+  // 2. Paid Story #2+ require reserve_story_start_v1
+  const { data: resData, error: resError } = await input.admin.rpc('reserve_story_start_v1', {
+    p_user_id: input.userId,
+    p_story_id: input.storyId,
+  })
+
+  if (resError || !resData) {
+    throw new PersonalizedStoryError('INTERNAL_ERROR', input.storyId)
+  }
+
+  const parsedRes = ReserveStartRpcResultSchema.safeParse(resData)
+  if (!parsedRes.success) {
+    throw new PersonalizedStoryError('INTERNAL_ERROR', input.storyId)
+  }
+
+  if (parsedRes.data.ok === false) {
+    // Insufficient credits: strictly typed with required and available values
+    return {
+      ok: false,
+      error: 'INSUFFICIENT_CREDITS',
+      requiredCredits: parsedRes.data.required,
+      availableCredits: parsedRes.data.available,
+    }
+  }
+
+  // Paid reservation succeeded: verify durable origin transition
+  const { data: storyRow, error: storyErr } = await input.admin
+    .from('stories')
+    .select('commercial_origin')
+    .eq('id', input.storyId)
+    .maybeSingle()
+
+  if (storyErr || !storyRow) {
+    throw new PersonalizedStoryError('INTERNAL_ERROR', input.storyId)
+  }
+
+  if (storyRow.commercial_origin === 'PENDING_PAID_START') {
+    return { ok: true, origin: 'PENDING_PAID_START' }
+  }
+
+  throw new PersonalizedStoryError('INTERNAL_ERROR', input.storyId)
 }
 
 async function loadExistingReservation(input: {
@@ -156,10 +338,11 @@ async function loadExistingReservation(input: {
   userId: string
   idempotencyKey: string
   requestHash: string
+  tasteProfile: TasteProfile
 }): Promise<CreatePersonalizedStoryResult> {
   const { data, error } = await input.admin
     .from('story_creation_requests')
-    .select('story_id,request_hash,status')
+    .select('story_id,request_hash,status,error_code')
     .eq('owner_user_id', input.userId)
     .eq('request_kind', REQUEST_KIND)
     .eq('idempotency_key', input.idempotencyKey)
@@ -171,7 +354,144 @@ async function loadExistingReservation(input: {
   if (row.data.request_hash !== input.requestHash) {
     throw new PersonalizedStoryError('IDEMPOTENCY_CONFLICT')
   }
-  return resultFor(row.data.story_id, true)
+
+  const existingStoryId = row.data.story_id
+
+  if (row.data.status === 'READY') {
+    return resultFor(existingStoryId, true)
+  }
+
+  if (row.data.status === 'WAITING_FOR_CREDITS' || row.data.status === 'RESERVED') {
+    const authRes = await authorizeStoryCreation({
+      admin: input.admin,
+      userId: input.userId,
+      storyId: existingStoryId,
+    })
+
+    if (!authRes.ok) {
+      await markWaiting({ admin: input.admin, userId: input.userId, idempotencyKey: input.idempotencyKey, storyId: existingStoryId })
+      throw new PersonalizedStoryError('INSUFFICIENT_CREDITS', existingStoryId, authRes.requiredCredits, authRes.availableCredits)
+    }
+
+    await input.admin
+      .from('story_creation_requests')
+      .update({ status: 'RESERVED', error_code: null, updated_at: new Date().toISOString() })
+      .eq('owner_user_id', input.userId)
+      .eq('request_kind', REQUEST_KIND)
+      .eq('idempotency_key', input.idempotencyKey)
+
+    await runContractAndGeneration({
+      admin: input.admin,
+      userId: input.userId,
+      idempotencyKey: input.idempotencyKey,
+      storyId: existingStoryId,
+      tasteProfile: input.tasteProfile,
+      commercialOrigin: authRes.origin,
+    })
+
+    return resultFor(existingStoryId, true)
+  }
+
+  throw new PersonalizedStoryError('RESERVATION_FAILED')
+}
+
+async function runContractAndGeneration(input: {
+  admin: ReturnType<typeof createAdminClient>
+  userId: string
+  idempotencyKey: string
+  storyId: string
+  tasteProfile: TasteProfile
+  commercialOrigin: string
+}): Promise<void> {
+  // CRITICAL FAIL-CLOSED GUARD: Check commercial origin AT THE VERY TOP before provider work
+  if (input.commercialOrigin === 'PENDING_PAID_START') {
+    // Paid Story #2+ MUST stop BEFORE provider calls until Phase 2B V5 exists
+    throw new PersonalizedStoryError('COMMERCIAL_RUNTIME_NOT_READY', input.storyId)
+  }
+
+  const correlationId = randomUUID()
+
+  // Inspect if story_generation_contracts already exists
+  const { data: existingContract } = await input.admin
+    .from('story_generation_contracts')
+    .select('story_id')
+    .eq('story_id', input.storyId)
+    .maybeSingle()
+
+  if (!existingContract) {
+    const contractProviderContext = createSynchronousProviderContext({
+      userId: input.userId,
+      storyId: input.storyId,
+      chapterNumber: null,
+      generationKind: 'personalized',
+      correlationId,
+    })
+    const provider = await selectProvider(contractProviderContext)
+    const { contract, contractSource } = await createResilientStoryContract({
+      storyId: input.storyId,
+      tasteJson: input.tasteProfile,
+      provider,
+      telemetryContext: contractProviderContext,
+    })
+
+    const meta = shellMetadata(
+      contract.title,
+      contract.genre,
+      asV1Compat(input.tasteProfile).likedTropes ?? [],
+    )
+    await input.admin
+      .from('stories')
+      .update({
+        title: meta.title,
+        tagline: meta.tagline,
+        synopsis: meta.synopsis,
+        tropes: meta.tropes,
+        generation_status: 'creating_contract',
+      })
+      .eq('id', input.storyId)
+      .eq('owner_user_id', input.userId)
+
+    await persistContractAndCanon({
+      ownerUserId: input.userId,
+      contract,
+      contractSource,
+      onboardingJson: input.tasteProfile,
+    })
+  }
+
+  const { error: readerError } = await input.admin.from('reader_states').insert({
+    user_id: input.userId,
+    story_id: input.storyId,
+    status: 'BERJALAN',
+    current_chapter: 1,
+    jejak: [],
+    ending_name: null,
+    route_state: normalizeRouteState({}),
+    choice_history: [],
+    locked_ending_key: null,
+    updated_at: new Date().toISOString(),
+  })
+  if (readerError && readerError.code !== UNIQUE_VIOLATION) {
+    throw new PersonalizedStoryError('READER_STATE_FAILED')
+  }
+
+  await input.admin
+    .from('stories')
+    .update({ generation_status: 'generating_chapter' })
+    .eq('id', input.storyId)
+    .eq('owner_user_id', input.userId)
+
+  const generated = await generateNextPersonalizedChapter({
+    storyId: input.storyId,
+    userId: input.userId,
+    chapterNumber: 1,
+    correlationId,
+  })
+  if (!generated.ok && generated.reason !== 'CHAPTER_EXISTS') {
+    throw new PersonalizedStoryError('GENERATION_FAILED')
+  }
+
+  await markReady({ admin: input.admin, userId: input.userId, idempotencyKey: input.idempotencyKey, storyId: input.storyId })
 }
 
 export async function createPersonalizedStory(
@@ -190,8 +510,8 @@ export async function createPersonalizedStory(
 
   const admin = createAdminClient()
   const storyId = `ai:${randomUUID()}`
-  const correlationId = randomUUID()
 
+  // STEP 1: Reserve target in story_creation_requests
   const { error: reserveError } = await admin
     .from('story_creation_requests')
     .insert({
@@ -204,21 +524,23 @@ export async function createPersonalizedStory(
       error_code: null,
     })
 
+  if (reserveError && reserveError.code === UNIQUE_VIOLATION) {
+    return loadExistingReservation({
+      admin,
+      userId,
+      idempotencyKey,
+      requestHash,
+      tasteProfile,
+    })
+  }
+
   if (reserveError) {
-    if (reserveError.code === UNIQUE_VIOLATION) {
-      return loadExistingReservation({
-        admin,
-        userId,
-        idempotencyKey,
-        requestHash,
-      })
-    }
     throw new PersonalizedStoryError('RESERVATION_FAILED')
   }
 
-  // Temporary shell fields; title/tagline/synopsis refined after contract generation.
+  // STEP 2: INSERT cheap owned story shell BEFORE commercial authorization (commercial_origin MUST start NULL)
   const provisional = shellMetadata('Cerita Pribadi', 'Drama personal', [])
-  const { error: shellError } = await admin.from('stories').insert({
+  const { error: storyError } = await admin.from('stories').insert({
     id: storyId,
     title: provisional.title,
     cover: provisional.cover,
@@ -237,116 +559,43 @@ export async function createPersonalizedStory(
     generation_status: 'creating_contract',
     story_contract_version: 1,
   })
-  if (shellError) {
-    await markFailed({
-      admin,
-      userId,
-      idempotencyKey,
-      storyId,
-      errorCode: 'SHELL_FAILED',
-    })
-    throw new PersonalizedStoryError('SHELL_FAILED')
+
+  if (storyError) {
+    await markFailed({ admin, userId, idempotencyKey, storyId, errorCode: 'SHELL_FAILED' })
+    throw new PersonalizedStoryError('SHELL_FAILED', storyId)
+  }
+
+  // STEP 3: Authorize commercial story creation (reads owned story row with initial NULL origin)
+  const authRes = await authorizeStoryCreation({ admin, userId, storyId })
+  if (!authRes.ok) {
+    await markWaiting({ admin, userId, idempotencyKey, storyId })
+    throw new PersonalizedStoryError('INSUFFICIENT_CREDITS', storyId, authRes.requiredCredits, authRes.availableCredits)
   }
 
   try {
-    const contractProviderContext = createSynchronousProviderContext({
-      userId,
-      storyId,
-      chapterNumber: null,
-      generationKind: 'personalized',
-      correlationId,
-    })
-    const provider = await selectProvider(contractProviderContext)
-    const { contract, contractSource } = await createResilientStoryContract({
-      storyId,
-      tasteJson: tasteProfile,
-      provider,
-      telemetryContext: contractProviderContext,
-    })
-
-    const meta = shellMetadata(
-      contract.title,
-      contract.genre,
-      asV1Compat(tasteProfile).likedTropes ?? [],
-    )
-    await admin
-      .from('stories')
-      .update({
-        title: meta.title,
-        tagline: meta.tagline,
-        synopsis: meta.synopsis,
-        tropes: meta.tropes,
-        generation_status: 'creating_contract',
-      })
-      .eq('id', storyId)
-      .eq('owner_user_id', userId)
-
-    await persistContractAndCanon({
-      ownerUserId: userId,
-      contract,
-      contractSource,
-      onboardingJson: tasteProfile,
-    })
-
-    const { error: readerError } = await admin.from('reader_states').insert({
-      user_id: userId,
-      story_id: storyId,
-      status: 'BERJALAN',
-      current_chapter: 1,
-      jejak: [],
-      ending_name: null,
-      route_state: normalizeRouteState({}),
-      choice_history: [],
-      locked_ending_key: null,
-      updated_at: new Date().toISOString(),
-    })
-    if (readerError) throw new PersonalizedStoryError('READER_STATE_FAILED')
-
-    await admin
-      .from('stories')
-      .update({ generation_status: 'generating_chapter' })
-      .eq('id', storyId)
-      .eq('owner_user_id', userId)
-
-    const generated = await generateNextPersonalizedChapter({
-      storyId,
-      userId,
-      chapterNumber: 1,
-      correlationId,
-    })
-    if (!generated.ok && generated.reason !== 'CHAPTER_EXISTS') {
-      throw new PersonalizedStoryError('GENERATION_FAILED')
-    }
-
-    await markReady({ admin, userId, idempotencyKey, storyId })
-    return resultFor(storyId, false)
-  } catch (error) {
-    // Pre-write / conflict errors must not mutate an existing valid reservation.
-    if (error instanceof PersonalizedStoryError) {
-      if (
-        error.code === 'INVALID_IDEMPOTENCY_KEY'
-        || error.code === 'INVALID_USER'
-        || error.code === 'IDEMPOTENCY_CONFLICT'
-      ) {
-        throw error
-      }
-      await markFailed({
-        admin,
-        userId,
-        idempotencyKey,
-        storyId,
-        errorCode: error.code,
-      })
-      throw error
-    }
-
-    await markFailed({
+    await runContractAndGeneration({
       admin,
       userId,
       idempotencyKey,
       storyId,
-      errorCode: 'INTERNAL_ERROR',
+      tasteProfile,
+      commercialOrigin: authRes.origin,
     })
-    throw new PersonalizedStoryError('INTERNAL_ERROR')
+  } catch (error) {
+    if (error instanceof PersonalizedStoryError) {
+      if (error.code === 'COMMERCIAL_RUNTIME_NOT_READY') {
+        // Do NOT mark failed; request remains in RESERVED so it stays cleanly resumable for Phase 2B!
+        throw error
+      }
+      if (error.code === 'CONTRACT_FAILED' || error.code === 'READER_STATE_FAILED' || error.code === 'GENERATION_FAILED') {
+        await markFailed({ admin, userId, idempotencyKey, storyId, errorCode: error.code })
+        throw error
+      }
+      throw error
+    }
+    await markFailed({ admin, userId, idempotencyKey, storyId, errorCode: 'INTERNAL_ERROR' })
+    throw new PersonalizedStoryError('INTERNAL_ERROR', storyId)
   }
+
+  return resultFor(storyId, false)
 }

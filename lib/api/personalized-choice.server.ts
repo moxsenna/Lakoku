@@ -235,7 +235,7 @@ export async function applyPersonalizedChoice(
     consequence: outcome.consequence[0],
   })
 
-  const { data, error } = await admin.rpc('apply_personalized_choice', {
+  const { data, error } = await admin.rpc('apply_personalized_choice_v2', {
     p_user_id: input.userId,
     p_story_id: input.storyId,
     p_chapter_number: input.chapterNumber,
@@ -246,6 +246,11 @@ export async function applyPersonalizedChoice(
     p_history_entry: historyEntry,
     p_jejak_entry: jejakEntry,
   })
-  if (error) throw mapRpcError(error.message)
+  if (error) {
+    if (error.message.includes('COMMERCIAL_INTENT_CONFLICT')) {
+      throw new PersonalizedChoiceError('CHOICE_CONFLICT')
+    }
+    throw mapRpcError(error.message)
+  }
   return parseStored(RpcResultSchema, data)
 }

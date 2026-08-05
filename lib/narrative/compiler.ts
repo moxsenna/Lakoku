@@ -18,8 +18,8 @@ import type {
   StoryThread,
   ActRollup,
   VoiceSheet,
-  ChapterBlueprint,
 } from './types'
+import { latestBlueprintForChapter } from './blueprint'
 
 /** Proxy token deterministik: jumlah kata (kasar tapi konsisten). */
 export function estimateTokens(text: string): number {
@@ -74,17 +74,6 @@ export interface ChapterContextPacket {
 
 const DEFAULT_BUDGET = 4000
 
-/** Ambil blueprint versi tertinggi untuk sebuah bab. */
-function latestBlueprint(
-  snapshot: CanonSnapshot,
-  chapter: number,
-): ChapterBlueprint | null {
-  const candidates = snapshot.blueprints
-    .filter((b) => b.chapterNumber === chapter)
-    .sort((a, b) => b.version - a.version)
-  return candidates[0] ?? null
-}
-
 /**
  * Skor relevansi fakta untuk target bab (proxy salience §2.3):
  * lebih tinggi bila baru ditetapkan, salience tinggi, atau subjek thread aktif.
@@ -112,7 +101,7 @@ export function compileContext(
   opts: CompileOptions = {},
 ): ChapterContextPacket {
   const totalBudget = opts.totalBudget ?? DEFAULT_BUDGET
-  const blueprint = latestBlueprint(snapshot, targetChapter)
+  const blueprint = latestBlueprintForChapter(snapshot, targetChapter)
 
   // --- Current state: thread aktif (bukan RESOLVED/ABANDONED). Urut deterministik.
   const activeThreads = snapshot.threads

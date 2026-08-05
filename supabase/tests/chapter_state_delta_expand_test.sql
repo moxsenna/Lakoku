@@ -224,7 +224,7 @@ select ok(
 select is(
   (select proconfig from pg_proc
    where oid = to_regprocedure('public.upsert_generation_checkpoint_fenced_v2(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,integer,bigint,bigint,text,text,integer,integer,integer,jsonb,smallint,bigint)')),
-  array['search_path=pg_catalog, public']::text[], 'V2 fixes canonical search_path'
+  array['search_path=""']::text[], 'V2 hardens empty search_path (V1 convention)'
 );
 select ok(not has_function_privilege('anon', 'public.upsert_generation_checkpoint_fenced_v2(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,integer,bigint,bigint,text,text,integer,integer,integer,jsonb,smallint,bigint)', 'EXECUTE'), 'anon cannot execute V2');
 select ok(not has_function_privilege('authenticated', 'public.upsert_generation_checkpoint_fenced_v2(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,integer,bigint,bigint,text,text,integer,integer,integer,jsonb,smallint,bigint)', 'EXECUTE'), 'authenticated cannot execute V2');

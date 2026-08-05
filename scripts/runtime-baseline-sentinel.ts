@@ -84,13 +84,52 @@ function main(): void {
     ['aa4b498641464d7d56479860d51a7ec9', '37b1adf87ba331233bb24397cbefc116'],
     ['e8f33f2aaca0b3343f8fe51200fc402b', '32a20fe2abe82cdb869dc2e6c3606ce8'],
   ]
+  // Additive, already-audited CHECKs landed on owned tables AFTER the baseline
+  // migration was written: stories.commercial_origin (#47) and the two M10-A1b
+  // living-canon columns. The baseline constraint inventory stays immutable, so
+  // this harness excludes those names from the count/hash — the same
+  // compatibility-transform role as the function-hash sentinels below. The
+  // count stays 60; only the md5 over the remaining set is accepted in both
+  // the historical and the current rendering.
+  const auditedConstraintExclusions = [
+    'stories_source_story_id_fkey',
+    'stories_story_contract_version_check',
+    'stories_story_mode_check',
+    'stories_generation_status_check',
+    'choice_outcomes_choice_kind_check',
+    'generation_leases_job_id_fkey',
+    'stories_commercial_origin_check',
+    'stories_living_canon_version_check',
+    'stories_canon_state_revision_check',
+  ]
+  const verifiedConstraintHashSentinels: ReadonlyArray<readonly [string, string]> = [
+    ['43e8607ae0e97120a842f56b7d89a446', '0a1213b158c0e0b6c6fae5a8fc36970e'],
+  ]
   const migration = verifiedFunctionHashSentinels.reduce((sql, [oldHash, currentHash]) => {
     const needle = `<>\'${oldHash}\'`
     if (!sql.includes(needle)) throw new Error(`runtime baseline sentinel: missing historical hash ${oldHash}`)
     return sql.replace(needle, `not in (\'${oldHash}\',\'${currentHash}\')`)
   }, migrationSource)
+  const auditedConstraintNeedle =
+    "array['stories_source_story_id_fkey','stories_story_contract_version_check','stories_story_mode_check','stories_generation_status_check','choice_outcomes_choice_kind_check','generation_leases_job_id_fkey']"
+  if (!migration.includes(auditedConstraintNeedle)) {
+    throw new Error('runtime baseline sentinel: missing historical constraint exclusion list')
+  }
+  const auditedConstraintReplacement =
+    `array[${auditedConstraintExclusions.map((name) => `'${name}'`).join(',')}]`
+  const withConstraintExclusions = migration.split(auditedConstraintNeedle).join(auditedConstraintReplacement)
+  const migrationWithConstraintHashes = verifiedConstraintHashSentinels.reduce(
+    (sql, [oldHash, currentHash]) => {
+      const needle = `<>\'${oldHash}\'`
+      if (!sql.includes(needle)) {
+        throw new Error(`runtime baseline sentinel: missing historical constraint hash ${oldHash}`)
+      }
+      return sql.replace(needle, `not in (\'${oldHash}\',\'${currentHash}\')`)
+    },
+    withConstraintExclusions,
+  )
   const before = snapshot(target)
-  execLocalPsql(target, migration, {}, 30_000)
+  execLocalPsql(target, migrationWithConstraintHashes, {}, 30_000)
   const after = snapshot(target)
   if (after !== before) throw new Error('runtime baseline sentinel: validation-only path mutated catalog')
 
@@ -99,7 +138,7 @@ function main(): void {
 begin;
 grant execute on function public.acquire_generation_lease(text,integer,text,integer,text) to public;
 grant execute on function public.publish_chapter(text,integer,text,jsonb,text,jsonb,jsonb,uuid,text) to public;
-${migration}
+${migrationWithConstraintHashes}
 ${hardeningMigration}
 do $acl_hardened$
 begin

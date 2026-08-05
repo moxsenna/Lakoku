@@ -274,7 +274,22 @@ select ok(not has_table_privilege('authenticated', 'public.chapter_state_commits
 select ok(not has_table_privilege('service_role', 'public.chapter_state_commits', 'INSERT'), 'service_role direct INSERT denied');
 select ok(not has_table_privilege('service_role', 'public.chapter_state_commits', 'UPDATE'), 'service_role direct UPDATE denied');
 select ok(not has_table_privilege('service_role', 'public.chapter_state_commits', 'DELETE'), 'service_role direct DELETE denied');
+select ok(not has_table_privilege('service_role', 'public.chapter_state_commits', 'TRUNCATE'), 'service_role direct TRUNCATE denied');
+-- No ambient SELECT either: canonical/private state, direct access must not
+-- rely on default ACLs.
+select ok(not has_table_privilege('public', 'public.chapter_state_commits', 'SELECT'), 'public SELECT denied');
+select ok(not has_table_privilege('anon', 'public.chapter_state_commits', 'SELECT'), 'anon SELECT denied');
+select ok(not has_table_privilege('authenticated', 'public.chapter_state_commits', 'SELECT'), 'authenticated SELECT denied');
 select ok(has_table_privilege('service_role', 'public.chapter_state_commits', 'SELECT'), 'service_role SELECT granted');
+
+-- Defense in depth: RLS enabled, but ZERO policies (no anon/authenticated path).
+select ok((select relrowsecurity from pg_catalog.pg_class
+           where oid = 'public.chapter_state_commits'::regclass),
+          'RLS enabled on commit ledger');
+select is(
+  (select count(*) from pg_catalog.pg_policies
+   where schemaname = 'public' and tablename = 'chapter_state_commits'),
+  0::bigint, 'zero RLS policies (no anon/auth direct access)');
 
 select * from finish();
 rollback;

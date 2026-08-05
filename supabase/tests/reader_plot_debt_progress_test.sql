@@ -77,7 +77,7 @@ select lives_ok($$
     user_id, story_id, debt_id, milestone_chapter, progressed_at_chapter, source_job_id
   ) values (
     '57000000-0000-4000-8000-000000000001', 'test:plot-debt-progress',
-    'main_mystery', 45, 46, NULL
+    'main_mystery', 45, 45, NULL
   )
 $$, 'sync-path milestone accepted (NULL source_job_id)');
 
@@ -86,7 +86,7 @@ select lives_ok($$
     user_id, story_id, debt_id, milestone_chapter, progressed_at_chapter, source_job_id
   ) values (
     '57000000-0000-4000-8000-000000000001', 'test:plot-debt-progress',
-    'floodgate', 40, 46, '77777777-7777-4777-8777-777777777777'
+    'floodgate', 40, 40, '77777777-7777-4777-8777-777777777777'
   )
 $$, 'worker-path milestone accepted');
 
@@ -99,9 +99,34 @@ select throws_ok($$
     user_id, story_id, debt_id, milestone_chapter, progressed_at_chapter, source_job_id
   ) values (
     '57000000-0000-4000-8000-000000000001', 'test:plot-debt-progress',
-    'main_mystery', 45, 46, NULL
+    'main_mystery', 45, 45, NULL
   )
 $$, '23505', null, 'duplicate milestone rejected (idempotency via unique key)');
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- 3b. Temporal invariant: progressed_at_chapter must EQUAL milestone_chapter.
+-- A1a resolver requires progress.milestoneChapter === chapterNumber; no silent
+-- catch-up for missed milestones, no early recording (semantic change needs a
+-- new contract version, not storage anticipation).
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+select throws_ok($$
+  insert into public.reader_plot_debt_progress (
+    user_id, story_id, debt_id, milestone_chapter, progressed_at_chapter
+  ) values (
+    '57000000-0000-4000-8000-000000000001', 'test:plot-debt-progress',
+    'd_catchup', 45, 46
+  )
+$$, '23514', null, 'late catch-up (45/46) rejected');
+
+select throws_ok($$
+  insert into public.reader_plot_debt_progress (
+    user_id, story_id, debt_id, milestone_chapter, progressed_at_chapter
+  ) values (
+    '57000000-0000-4000-8000-000000000001', 'test:plot-debt-progress',
+    'd_early', 45, 44
+  )
+$$, '23514', null, 'early progress (45/44) rejected');
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- 4. Domain constraints
@@ -178,13 +203,21 @@ select ok(not has_table_privilege('authenticated', 'public.reader_plot_debt_prog
 select ok(not has_table_privilege('service_role', 'public.reader_plot_debt_progress', 'INSERT'), 'service_role direct INSERT denied');
 select ok(not has_table_privilege('service_role', 'public.reader_plot_debt_progress', 'UPDATE'), 'service_role direct UPDATE denied');
 select ok(not has_table_privilege('service_role', 'public.reader_plot_debt_progress', 'DELETE'), 'service_role direct DELETE denied');
+select ok(not has_table_privilege('service_role', 'public.reader_plot_debt_progress', 'TRUNCATE'), 'service_role direct TRUNCATE denied');
+-- No ambient SELECT either: direct reader access must not rely on defaults.
+select ok(not has_table_privilege('public', 'public.reader_plot_debt_progress', 'SELECT'), 'public SELECT denied');
+select ok(not has_table_privilege('anon', 'public.reader_plot_debt_progress', 'SELECT'), 'anon SELECT denied');
+select ok(not has_table_privilege('authenticated', 'public.reader_plot_debt_progress', 'SELECT'), 'authenticated SELECT denied');
 select ok(has_table_privilege('service_role', 'public.reader_plot_debt_progress', 'SELECT'), 'service_role SELECT granted');
 
--- No owner RLS policies: readers have no reason to mutate plot-debt state.
+-- Defense in depth: RLS enabled, but ZERO policies (no anon/authenticated path).
+select ok((select relrowsecurity from pg_catalog.pg_class
+           where oid = 'public.reader_plot_debt_progress'::regclass),
+          'RLS enabled on progress ledger');
 select is(
   (select count(*) from pg_catalog.pg_policies
    where schemaname = 'public' and tablename = 'reader_plot_debt_progress'),
-  0::bigint, 'no RLS policies on progress ledger');
+  0::bigint, 'zero RLS policies (no anon/auth direct access)');
 
 select * from finish();
 rollback;

@@ -97,20 +97,30 @@ alter table public.chapter_generation_checkpoints
   check (state_delta_hash is null or state_delta_hash ~ '^[0-9a-f]{64}$');
 
 -- Backward-compatible conditional check: v1/v2 rows must keep deltas NULL,
--- v3 rows must carry a valid object delta with a DB-verifiable hash.
+-- v3 rows must carry a valid object delta with a DB-verifiable hash. A NULL
+-- marker (pre-migration state during replay of the historical versioning
+-- migration) is treated as legacy: deltas must be NULL. NULL can never be
+-- inserted in production (column is NOT NULL DEFAULT 2) — this branch exists
+-- only so the migration replay path in checkpoint_versioning_test stays valid.
 alter table public.chapter_generation_checkpoints
   add constraint chapter_generation_checkpoints_state_delta_check
   check (
-    case checkpoint_schema_version
-      when 1 then state_delta_json is null and state_delta_schema_version is null
-               and state_delta_hash is null and base_canon_revision is null
-      when 2 then state_delta_json is null and state_delta_schema_version is null
-               and state_delta_hash is null and base_canon_revision is null
-      when 3 then pg_catalog.jsonb_typeof(state_delta_json) = 'object'
-               and state_delta_schema_version = 1
-               and state_delta_hash is not null
-               and base_canon_revision is not null and base_canon_revision >= 0
-               and state_delta_hash = public.chapter_state_delta_hash_v1(state_delta_json)
+    case
+      when checkpoint_schema_version is null
+        then state_delta_json is null and state_delta_schema_version is null
+             and state_delta_hash is null and base_canon_revision is null
+      when checkpoint_schema_version = 1
+        then state_delta_json is null and state_delta_schema_version is null
+             and state_delta_hash is null and base_canon_revision is null
+      when checkpoint_schema_version = 2
+        then state_delta_json is null and state_delta_schema_version is null
+             and state_delta_hash is null and base_canon_revision is null
+      when checkpoint_schema_version = 3
+        then pg_catalog.jsonb_typeof(state_delta_json) = 'object'
+             and state_delta_schema_version = 1
+             and state_delta_hash is not null
+             and base_canon_revision is not null and base_canon_revision >= 0
+             and state_delta_hash = public.chapter_state_delta_hash_v1(state_delta_json)
       else false
     end
   ) not valid;
@@ -148,8 +158,13 @@ create table public.reader_plot_debt_progress (
                                and pg_catalog.char_length(debt_id) between 1 and 100),
   milestone_chapter     integer not null
                         check (milestone_chapter between 1 and 50),
+  -- Fail-closed temporal invariant: with progress_version = 1 a milestone is
+  -- recorded exactly at the chapter it belongs to. Late catch-up for a missed
+  -- milestone (progressed_at > milestone) is prohibited by A1a resolver
+  -- semantics; earlier recording would be a new semantic contract.
   progressed_at_chapter integer not null
-                        check (progressed_at_chapter between 1 and 50),
+                        check (progressed_at_chapter between 1 and 50
+                               and progressed_at_chapter = milestone_chapter),
   source_job_id         uuid null
                         references public.generation_jobs(id) on delete restrict,
   progress_version      integer not null default 1
@@ -180,13 +195,18 @@ create trigger reader_plot_debt_progress_immutable
   before update on public.reader_plot_debt_progress
   for each row execute function public.reject_plot_debt_progress_update();
 
--- All DML revoked. INSERT only via security-definer RPC (A1c).
-revoke insert, update, delete, truncate on public.reader_plot_debt_progress
+-- Every role (including service_role) is denied ALL direct access. These
+-- ledgers have no reader-facing API and hold canonical/private state, so
+-- authorization must not depend on ambient/default ACLs — INSERT only via the
+-- A1c security-definer publisher. RLS is enabled with ZERO policies so direct
+-- access stays closed even if grants are later re-added.
+revoke all on public.reader_plot_debt_progress
   from public, anon, authenticated, service_role;
 grant select on public.reader_plot_debt_progress to service_role;
+alter table public.reader_plot_debt_progress enable row level security;
 
 comment on table public.reader_plot_debt_progress is
-  'Append-only plot-debt milestone ledger. Progress rows are immutable; server-controlled writes only.';
+  'Append-only plot-debt milestone ledger. Progress rows are immutable; server-controlled writes only. RLS on, zero policies — no direct access for any role.';
 comment on column public.reader_plot_debt_progress.source_job_id is
   'Worker provenance; NULL when progress was recorded by the sync path (no generation job).';
 
@@ -262,14 +282,17 @@ create trigger chapter_state_commits_immutable
   before update on public.chapter_state_commits
   for each row execute function public.reject_chapter_state_commit_update();
 
--- Append-only: INSERT only via security-definer RPC (A1c). RLS is NOT enabled —
--- protection is from revoke + security-definer, same as the closure ledger.
-revoke insert, update, delete, truncate on public.chapter_state_commits
+-- Append-only: no direct access for any role, including service_role — INSERT
+-- only via the A1c security-definer atomic publisher. RLS is enabled with ZERO
+-- policies (defense in depth; direct access stays closed even if grants are
+-- later re-added).
+revoke all on public.chapter_state_commits
   from public, anon, authenticated, service_role;
 grant select on public.chapter_state_commits to service_role;
+alter table public.chapter_state_commits enable row level security;
 
 comment on table public.chapter_state_commits is
-  'Append-only committed living-canon state ledger. One row per story/chapter, one per committed revision, immutable.';
+  'Append-only committed living-canon state ledger. One row per story/chapter, one per committed revision, immutable. RLS on, zero policies — no direct access for any role.';
 comment on column public.chapter_state_commits.base_canon_revision is
   'Pre-commit revision the delta was computed against (stories.canon_state_revision before increment).';
 comment on column public.chapter_state_commits.committed_canon_revision is
@@ -323,7 +346,9 @@ create or replace function public.upsert_generation_checkpoint_fenced_v2(
 language plpgsql
 volatile
 security definer
-set search_path = pg_catalog, public
+-- Hardened empty search_path (V1 convention): every object reference in the
+-- body is fully qualified, so no writable schema can shadow them.
+set search_path = ''
 as $$
 declare
   v_job public.generation_jobs%rowtype;

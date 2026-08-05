@@ -25,7 +25,7 @@ begin
 end
 $$;
 
-select plan(226);
+select plan(237);
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- Setup: owner auth user + shared fixtures
@@ -1163,6 +1163,39 @@ select is((select count(*)::integer from public.chapters where story_id = 'test:
 select is((select count(*)::integer from public.chapter_state_commits where story_id = 'test:replay-v3-key'), 1,
   'key-independent replay never re-inserts the commit');
 
+-- 5b-5. R4 — V3 replay binds the CHECKPOINT's base: after a successful sync
+-- publication, corrupting checkpoint.base_canon_revision (999) must NOT replay
+-- (the old behavior compared commit.base against itself — self-comparison):
+-- PUBLICATION_CONFLICT, and the canonical chapter/commit/revision stay put.
+select pg_temp.seed_story('test:replay-v3-base', 2);
+select pg_temp.seed_thread('test:replay-v3-base');
+select pg_temp.seed_sync_lease('test:replay-v3-base', 2, 'ba000000-0000-4000-8000-000000000001');
+select pg_temp.seed_sync_checkpoint('test:replay-v3-base', 2, 'bb000000-0000-4000-8000-000000000001',
+  'bc000000-0000-4000-8000-000000000001', pg_temp.touch_delta('test:replay-v3-base', 2), 0, 'Bab 2');
+select lives_ok($$
+  select public.publish_chapter_state_v3(
+    'test:replay-v3-base', 2, '00000000-0000-0000-0000-000000000001',
+    'ba000000-0000-4000-8000-000000000001', 'bb000000-0000-4000-8000-000000000001',
+    pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  )
+$$, 'R4: V3 fresh sync publication (baseline)');
+update public.chapter_generation_checkpoints
+set base_canon_revision = 999
+where story_id = 'test:replay-v3-base' and chapter_number = 2;
+select throws_ok($$
+  select public.publish_chapter_state_v3(
+    'test:replay-v3-base', 2, '00000000-0000-0000-0000-000000000001',
+    'ba000000-0000-4000-8000-000000000001', 'bb000000-0000-4000-8000-000000000001',
+    pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  )
+$$, 'P0001', 'PUBLICATION_CONFLICT', 'R4: V3 checkpoint base diverged from the committed base → PUBLICATION_CONFLICT (no self-comparison)');
+select is((select count(*)::integer from public.chapter_state_commits where story_id = 'test:replay-v3-base'), 1,
+  'R4: base-diverged V3 retry never re-commits');
+select is((select canon_state_revision from public.stories where id = 'test:replay-v3-base'),
+  1::bigint, 'R4: base-diverged V3 retry never re-increments the revision');
+
 -- 5c. V3 with commit ABSENT + chapter already exists (foreign state):
 --     replay NO_COMMIT → V2 CHAPTER_EXISTS ok:false → PUBLICATION_CONFLICT raise.
 select pg_temp.seed_story('test:replay-ch-exists', 2);
@@ -1602,6 +1635,77 @@ select is((select count(*)::integer from public.chapter_state_commits where stor
   'R3: broken ledger stays empty');
 select is((select count(*)::integer from public.chapters where story_id = 'test:v5-replay-nocommit'), 1,
   'R3: broken-ledger retry leaves the published chapter');
+
+-- 6e-5. R4 — SUCCESS then checkpoint.base corrupted (999): the exact replay
+-- must NOT self-compare commit.base against itself; the CHECKPOINT's base is
+-- part of the 13-field binding → PROVENANCE_CONFLICT, and the ledger/revision
+-- stay at the first publication.
+select pg_temp.seed_story('test:v5-replay-base', 2);
+select pg_temp.seed_thread('test:v5-replay-base');
+select pg_temp.seed_job('test:v5-replay-base', 2, 'ce000000-0000-4000-8000-000000000001', 'cf000000-0000-4000-8000-000000000001');
+select pg_temp.seed_v5_checkpoint('test:v5-replay-base', 2, 'ce000000-0000-4000-8000-000000000001',
+  pg_temp.touch_delta('test:v5-replay-base', 2), 0);
+select lives_ok($$
+  select public.publish_generation_job_chapter_v5(
+    'ce000000-0000-4000-8000-000000000001', 'a1c-worker',
+    (select claim_token from public.generation_jobs where id = 'ce000000-0000-4000-8000-000000000001'),
+    'cf000000-0000-4000-8000-000000000001',
+    'test:v5-replay-base', 2, pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  )
+$$, 'R4: V5 fresh publication (baseline)');
+update public.chapter_generation_checkpoints
+set base_canon_revision = 999
+where story_id = 'test:v5-replay-base' and chapter_number = 2;
+select throws_ok($$
+  select public.publish_generation_job_chapter_v5(
+    'ce000000-0000-4000-8000-000000000001', 'a1c-worker',
+    (select claim_token from public.generation_jobs where id = 'ce000000-0000-4000-8000-000000000001'),
+    'cf000000-0000-4000-8000-000000000001',
+    'test:v5-replay-base', 2, pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  )
+$$, 'P0001', 'PROVENANCE_CONFLICT', 'R4: V5 checkpoint base diverged from the committed base → PROVENANCE_CONFLICT');
+select is((select count(*)::integer from public.chapter_state_commits where story_id = 'test:v5-replay-base'), 1,
+  'R4: base-diverged V5 retry never re-commits');
+select is((select canon_state_revision from public.stories where id = 'test:v5-replay-base'),
+  1::bigint, 'R4: base-diverged V5 retry never re-increments');
+
+-- 6e-6. R4 — EXACT replay is fenced by the closure ledger: SUCCESS then corrupt
+-- ONLY the checkpoint audit closesPlotDebts (valid v2 signals, state/prose/
+-- correlation untouched): the replay must NOT return EXACT_REPLAY — the
+-- pre-flight closure audit↔delta equality throws CHECKPOINT_CLOSURE_PAYLOAD
+-- _MISMATCH (the 13-field machine by itself never sees the closure set).
+select pg_temp.seed_story('test:v5-replay-closure', 2);
+select pg_temp.seed_thread('test:v5-replay-closure');
+select pg_temp.seed_job('test:v5-replay-closure', 2, 'db000000-0000-4000-8000-000000000001', 'dc000000-0000-4000-8000-000000000001');
+select pg_temp.seed_v5_checkpoint('test:v5-replay-closure', 2, 'db000000-0000-4000-8000-000000000001',
+  pg_temp.touch_delta('test:v5-replay-closure', 2), 0);
+select lives_ok($$
+  select public.publish_generation_job_chapter_v5(
+    'db000000-0000-4000-8000-000000000001', 'a1c-worker',
+    (select claim_token from public.generation_jobs where id = 'db000000-0000-4000-8000-000000000001'),
+    'dc000000-0000-4000-8000-000000000001',
+    'test:v5-replay-closure', 2, pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  )
+$$, 'R4: V5 fresh closure publication (baseline)');
+update public.chapter_generation_checkpoints
+set audit_signals_json = audit_signals_json ||
+  '{"opensNewThread":false,"opensMajorMystery":false,"opensNewConflict":false,
+    "closesPlotDebts":[{"closureForm":"RESOLVED","debtId":"d9"}]}'::jsonb
+where story_id = 'test:v5-replay-closure' and chapter_number = 2;
+select throws_ok($$
+  select public.publish_generation_job_chapter_v5(
+    'db000000-0000-4000-8000-000000000001', 'a1c-worker',
+    (select claim_token from public.generation_jobs where id = 'db000000-0000-4000-8000-000000000001'),
+    'dc000000-0000-4000-8000-000000000001',
+    'test:v5-replay-closure', 2, pg_temp.prompt_fixture(), pg_temp.choices_fixture(), pg_temp.outcomes_fixture(3),
+    null, null
+  )
+$$, 'P0001', 'CHECKPOINT_CLOSURE_PAYLOAD_MISMATCH', 'R4: EXACT replay fenced by closure audit↔delta equality (closure drift visible)');
+select is((select count(*)::integer from public.chapter_state_commits where story_id = 'test:v5-replay-closure'), 1,
+  'R4: closure-diverged replay never re-commits');
 
 -- 6f. R3 — V5 fresh publication (RUNNING job, NO commit) with a SYNC-owned
 --     lease (job_id/claim_token NULL): lease binding fences BEFORE any write

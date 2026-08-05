@@ -1802,7 +1802,6 @@ declare
   v_committed_canon_revision bigint;
   v_state_delta_hash text;
   v_pub_hash text;
-  v_replay_base bigint;
   v_has_ending_lock boolean;
   v_sync_key text;
   v_publisher_result jsonb;
@@ -1915,13 +1914,19 @@ begin
     -- exact job binding. A worker-owned checkpoint is never publishable by V3.
     or v_pre_checkpoint.job_id is not null
     or v_pre_checkpoint.job_attempt_number is not null
+    or v_pre_checkpoint.base_canon_revision is null
   then
     raise exception using errcode = 'P0001', message = 'PROVENANCE_CONFLICT';
   end if;
-  -- NOTE: base_canon_revision is deliberately NOT checked here — on a retry the
-  -- story revision has already advanced past the checkpoint's base. The replay
-  -- fast path below decides via the commit's own base; a fresh publication
-  -- (NO_COMMIT) gets the base guard at the C-lock re-verify.
+  -- NOTE: base_canon_revision is deliberately NOT checked against the story
+  -- here — on a retry the story revision has already advanced past the
+  -- checkpoint's base. The replay fast path below binds the CHECKPOINT's base
+  -- (R4): commit.base == commit.base self-comparison proved nothing; the
+  -- 13-field machine must compare the checkpoint's base against the commit
+  -- row. This stays safe for a legitimate retry because publication NEVER
+  -- mutates the checkpoint's base (it remains at write time), so committed ==
+  -- checkpoint.base + 1 still holds. A fresh publication (NO_COMMIT) gets the
+  -- base guard at the C-lock re-verify.
 
   -- Replay hashes FROM THE CHECKPOINT (DB-computed; caller supplies only the
   -- choice/ending UI payload, never canonical state or prose).
@@ -1938,21 +1943,10 @@ begin
   -- legitimate retry — the commit row is the idempotency proof, and
   -- serialization remains the story row + advisory S (read-only lookup, no
   -- row lock, so the canonical lock order is untouched).
-  --
-  -- The base revision is pre-read FROM THE COMMIT (if one exists), not from
-  -- the story: a retry always arrives with the canon already advanced by the
-  -- first publication, so only the commit's own base can satisfy the 13-field
-  -- exact machine. A fresh publication has no commit → base is NULL → the
-  -- machine returns NO_COMMIT and the full lock/provenance path runs below.
-  select c.base_canon_revision into v_replay_base
-  from public.chapter_state_commits c
-  where c.story_id = p_story_id
-    and c.chapter_number = p_chapter_number;
-
   v_replay := public.lookup_chapter_commit_replay_v1(
     p_story_id, p_chapter_number,
     p_checkpoint_attempt_id, v_pre_checkpoint.correlation_id,
-    v_replay_base, 1::smallint, v_state_delta_hash,
+    v_pre_checkpoint.base_canon_revision, 1::smallint, v_state_delta_hash,
     1::smallint, v_pub_hash,
     'personalized'::text, p_user_id, null
   );
@@ -2385,10 +2379,6 @@ declare
   v_checkpoint_publish_result jsonb;
     v_result jsonb;
   v_replay jsonb;
-  -- Commit's OWN base revision (R3): a successful retry arrives with the canon
-  -- already advanced by the first publication, so only the commit's own base
-  -- can satisfy the 13-field exact machine (mirror of V3).
-  v_replay_base bigint;
   v_now timestamptz;
   v_started_at timestamptz;
   v_elapsed_ms bigint;
@@ -2569,6 +2559,7 @@ begin
     or v_preflight_checkpoint.status not in ('PROSE_READY','RUNNING_CHOICES','READY_TO_PUBLISH','PUBLISHED')
     or v_preflight_checkpoint.state_delta_json is null
     or v_preflight_checkpoint.state_delta_schema_version is distinct from 1
+    or v_preflight_checkpoint.base_canon_revision is null
   then
     raise exception using errcode = 'P0001', message = 'PROVENANCE_CONFLICT';
   end if;
@@ -2602,23 +2593,55 @@ begin
     v_preflight_checkpoint.title, v_preflight_checkpoint.paragraphs_json,
     p_choice_prompt, p_choices, p_outcomes, p_ending_key, p_ending_name
   );
-  v_state_delta_hash := public.chapter_state_delta_hash_v1(v_preflight_checkpoint.state_delta_json);
+v_state_delta_hash := public.chapter_state_delta_hash_v1(v_preflight_checkpoint.state_delta_json);
+
+  -- Closure binding BEFORE replay (R4): the delta's plotDebts.closures MUST
+  -- equal the checkpoint audit closesPlotDebts EXACTLY (both canonicalized to
+  -- {closureForm,debtId} sorted by debtId — the SAME invariant clamps the
+  -- fresh publication at C-lock). The 13-field machine never sees the closure
+  -- set, so an exact replay must not return a publication whose closure the
+  -- checkpoint never recorded (a corrupted audit closesPlotDebts with intact
+  -- prose/state is otherwise invisible to the ledger). Evaluated under the
+  -- LOCKED J: the A1b checkpoint writer claims J FOR UPDATE before it writes
+  -- lease/checkpoint state, so no legitimate writer mutates the pre-read row.
+  if (
+    select coalesce(pg_catalog.jsonb_agg(
+      pg_catalog.jsonb_build_object('closureForm', item.closureForm, 'debtId', item.debtId)
+      order by item.debtId
+    ), '[]'::jsonb)
+    from (
+      select elem->>'debtId' as debtId, elem->>'closureForm' as closureForm
+      from pg_catalog.jsonb_array_elements(
+        coalesce(v_preflight_checkpoint.state_delta_json->'plotDebts'->'closures', '[]'::jsonb)
+      ) elem
+    ) item
+  ) is distinct from (
+    select coalesce(pg_catalog.jsonb_agg(
+      pg_catalog.jsonb_build_object('closureForm', item.closureForm, 'debtId', item.debtId)
+      order by item.debtId
+    ), '[]'::jsonb)
+    from (
+      select elem->>'debtId' as debtId, elem->>'closureForm' as closureForm
+      from pg_catalog.jsonb_array_elements(
+        coalesce(v_preflight_checkpoint.audit_signals_json->'closesPlotDebts', '[]'::jsonb)
+      ) elem
+    ) item
+  ) then
+    raise exception using errcode = 'P0001', message = 'CHECKPOINT_CLOSURE_PAYLOAD_MISMATCH';
+  end if;
 
   -- Replay authority = the immutable commit ledger (the SAME 13-field machine
-  -- V3 uses — R3 unifies V5 replay with it). The base revision is pre-read
-  -- FROM THE COMMIT, not the story: a successful retry always arrives with the
-  -- canon already advanced by the first publication, so only the commit's own
-  -- base can satisfy the exact machine (mirror of V3). A fresh publication has
-  -- no commit → base NULL → NO_COMMIT → the full lock/provenance path runs.
-  select c.base_canon_revision into v_replay_base
-  from public.chapter_state_commits c
-  where c.story_id = v_job.story_id
-    and c.chapter_number = v_job.chapter_number;
-
+  -- V3 uses — R3 unified V5 replay with it). The base field carries the
+  -- CHECKPOINT's base, NOT the commit's own (R4: commit.base == commit.base
+  -- self-comparison proved nothing). Publication never mutates the checkpoint
+  -- base, so a legitimate retry still yields checkpoint.base == commit.base
+  -- and committed == base + 1; a corrupted base (999 vs 0) diverges → CONFLICT.
+  -- A fresh publication has no commit → NO_COMMIT → the full lock/provenance
+  -- path runs below.
   v_replay := public.lookup_chapter_commit_replay_v1(
     v_job.story_id, v_job.chapter_number,
     v_job.id, v_preflight_checkpoint.correlation_id,
-    v_replay_base, 1::smallint, v_state_delta_hash,
+    v_preflight_checkpoint.base_canon_revision, 1::smallint, v_state_delta_hash,
     1::smallint, v_pub_hash,
     'personalized'::text, v_job.user_id, v_job.id
   );
@@ -2630,6 +2653,17 @@ begin
   -- provenance (R3 tests 2-3); a still-RUNNING job lost a publication race
   -- (e.g. the V3/V5 cross-path race) → publication-level conflict.
   if v_replay->>'state' = 'EXACT_REPLAY' then
+    -- Defense-in-depth (R4): on a SUCCEEDED exact replay, the job's stored
+    -- closure hash (set at terminalization) must equal the closure hash the
+    -- checkpoint intends — the closure ledger is otherwise invisible to the
+    -- 13-field machine. The audit↔delta equality above already ran; this
+    -- pins the job terminalization to the same canonical closure set.
+    if v_job.status = 'SUCCEEDED'
+      and v_job.closure_payload_hash is not null
+      and v_job.closure_payload_hash is distinct from v_closure_hash
+    then
+      raise exception using errcode = 'P0001', message = 'PROVENANCE_CONFLICT';
+    end if;
     return v_replay->'result';
   end if;
   if v_replay->>'state' = 'CONFLICT' then

@@ -33,6 +33,30 @@ const CloneRpcResultSchema = z.discriminatedUnion('ok', [
   }),
 ])
 
+const ReserveStartRpcResultSchema = z.union([
+  z.object({
+    ok: z.literal(true),
+    status: z.string().optional(),
+    available: z.number().int().min(0).optional(),
+    required: z.number().int().min(1).optional(),
+  }),
+  z.object({
+    ok: z.literal(false),
+    reason: z.string(),
+    available: z.number().int().min(0).optional(),
+    required: z.number().int().min(1).optional(),
+  }),
+  z.object({
+    status: z.string(),
+    available: z.number().int().min(0).optional(),
+    required: z.number().int().min(1).optional(),
+  }),
+])
+
+const ClaimStarterRpcResultSchema = z.object({
+  claimed: z.boolean(),
+})
+
 const ChapterOneSchema = z.object({
   story_id: z.string().min(1),
   number: z.literal(1),
@@ -52,14 +76,20 @@ export type PremiumCloneErrorCode =
 
 export class PremiumCloneError extends Error {
   public readonly result?: { storyId: string; redirectUrl: string; replayed: boolean }
+  public readonly requiredCredits?: number
+  public readonly availableCredits?: number
 
   constructor(
     public readonly code: PremiumCloneErrorCode,
     result?: { storyId: string; redirectUrl: string; replayed: boolean },
+    requiredCredits?: number,
+    availableCredits?: number,
   ) {
     super(code)
     this.name = 'PremiumCloneError'
     this.result = result
+    this.requiredCredits = requiredCredits
+    this.availableCredits = availableCredits
   }
 }
 
@@ -197,8 +227,11 @@ async function ensureTarget(input: {
         .select('id,owner_user_id,visibility,source_story_id,story_mode')
         .eq('id', input.storyId)
         .maybeSingle()
-      if (racedTarget) assertExactTarget({ storyId: input.storyId, templateStoryId: input.templateStoryId, userId: input.userId, row: racedTarget })
-      return
+      if (racedTarget) {
+        assertExactTarget({ storyId: input.storyId, templateStoryId: input.templateStoryId, userId: input.userId, row: racedTarget })
+        return
+      }
+      throw new PremiumCloneError('INTERNAL_ERROR')
     }
     throw new PremiumCloneError('INTERNAL_ERROR')
   }
@@ -305,6 +338,7 @@ export async function clonePremiumStoryForUser(input: {
 
   if (reserved.row.status === 'READY') return identity
 
+  // Ensure cheap premium story instance target shell exists in DB
   await ensureTarget({
     admin,
     storyId: reserved.row.story_id,
@@ -322,23 +356,61 @@ export async function clonePremiumStoryForUser(input: {
   const hasClaimedStarter = Boolean(accountState?.starter_claimed_at || accountState?.starter_story_id)
 
   if (!hasClaimedStarter) {
-    if (typeof admin.rpc === 'function') {
-      const { data: claimData, error: claimErr } = await admin.rpc('claim_starter_story_v1', {
-        p_user_id: input.userId,
-        p_story_id: reserved.row.story_id,
-      })
-      if (!claimErr && claimData && typeof claimData === 'object' && 'claimed' in claimData && claimData.claimed) {
+    const { data: claimData, error: claimErr } = await admin.rpc('claim_starter_story_v1', {
+      p_user_id: input.userId,
+      p_story_id: reserved.row.story_id,
+    })
+
+    let claimed = false
+    if (!claimErr && claimData) {
+      const parsed = ClaimStarterRpcResultSchema.safeParse(claimData)
+      if (parsed.success && parsed.data.claimed) {
+        claimed = true
         await admin.rpc('grant_welcome_credit_v1', { p_user_id: input.userId }).then(() => null, () => null)
+        await admin.from('stories').update({ commercial_origin: 'STARTER_FREE' }).eq('id', reserved.row.story_id)
+      }
+    }
+
+    if (!claimed) {
+      const { data: reCheckState } = await admin
+        .from('account_commercial_states')
+        .select('starter_story_id, starter_claimed_at')
+        .eq('user_id', input.userId)
+        .maybeSingle()
+
+      const { data: storyRow } = await admin
+        .from('stories')
+        .select('commercial_origin')
+        .eq('id', reserved.row.story_id)
+        .maybeSingle()
+
+      if (
+        reCheckState?.starter_story_id === reserved.row.story_id
+        && reCheckState?.starter_claimed_at != null
+        && storyRow?.commercial_origin === 'STARTER_FREE'
+      ) {
+        // Valid starter
       }
     }
   } else {
-    if (typeof admin.rpc === 'function') {
-      const { data: resData, error: resErr } = await admin.rpc('reserve_story_start_v1', {
-        p_user_id: input.userId,
-        p_story_id: reserved.row.story_id,
-      })
-      const isInsufficient = resErr || (resData && typeof resData === 'object' && 'status' in resData && resData.status === 'insufficient') || String(resData) === 'insufficient'
-      if (isInsufficient) {
+    const { data: resData, error: resErr } = await admin.rpc('reserve_story_start_v1', {
+      p_user_id: input.userId,
+      p_story_id: reserved.row.story_id,
+    })
+
+    if (resErr || !resData) {
+      throw new PremiumCloneError('INTERNAL_ERROR')
+    }
+
+    const parsedRes = ReserveStartRpcResultSchema.safeParse(resData)
+    if (!parsedRes.success) {
+      throw new PremiumCloneError('INTERNAL_ERROR')
+    }
+
+    const res = parsedRes.data
+
+    if ('ok' in res && res.ok === false) {
+      if (res.reason === 'INSUFFICIENT_CREDITS') {
         await admin
           .from('story_creation_requests')
           .update({
@@ -350,9 +422,22 @@ export async function clonePremiumStoryForUser(input: {
           .eq('request_kind', REQUEST_KIND)
           .eq('idempotency_key', input.idempotencyKey)
 
-        throw new PremiumCloneError('INSUFFICIENT_CREDITS', identity)
+        const required = typeof res.required === 'number' && Number.isInteger(res.required) ? res.required : 24
+        const available = typeof res.available === 'number' && Number.isInteger(res.available) ? res.available : 0
+        throw new PremiumCloneError('INSUFFICIENT_CREDITS', identity, required, available)
       }
+      throw new PremiumCloneError('INTERNAL_ERROR')
     }
+  }
+
+  const { data: storyRow } = await admin
+    .from('stories')
+    .select('commercial_origin')
+    .eq('id', reserved.row.story_id)
+    .maybeSingle()
+
+  if (storyRow?.commercial_origin === 'PENDING_PAID_START') {
+    throw new PremiumCloneError('COMMERCIAL_RUNTIME_NOT_READY', identity)
   }
 
   if (!await chapterOneExists({ admin, storyId: reserved.row.story_id })) {

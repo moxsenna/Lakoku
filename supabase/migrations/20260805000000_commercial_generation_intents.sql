@@ -14,7 +14,7 @@ create table if not exists public.commercial_generation_intents (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   story_id text not null references public.stories(id) on delete cascade,
-  chapter_number integer not null check (chapter_number > 0),
+  chapter_number integer not null check (chapter_number >= 4),
   trigger_choice_id text not null,
   generation_job_id uuid null references public.generation_jobs(id) on delete set null,
   status text not null check (status in ('WAITING_FOR_CREDITS', 'AUTHORIZED', 'QUEUED', 'FULFILLED', 'FAILED')),
@@ -36,7 +36,7 @@ alter table public.commercial_generation_intents enable row level security;
 revoke all on table public.commercial_generation_intents from public, anon, authenticated;
 grant all on table public.commercial_generation_intents to service_role;
 
--- 3. Ensure Intent RPC (Fail-Closed Pricing & Atomicity)
+-- 3. Ensure Intent RPC (Fail-Closed Validation & Atomicity)
 create or replace function public.ensure_commercial_generation_intent_v1(
   p_user_id uuid,
   p_story_id text,
@@ -59,9 +59,29 @@ begin
     raise exception using errcode = '22023', message = 'INVALID_INPUT';
   end if;
 
+  if p_chapter_number < 4 then
+    raise exception using errcode = '22023', message = 'INVALID_CHAPTER_NUMBER';
+  end if;
+
+  if length(trim(p_trigger_choice_id)) = 0 or length(p_trigger_choice_id) > 120 then
+    raise exception using errcode = '22023', message = 'INVALID_TRIGGER_CHOICE';
+  end if;
+
   select * into v_story from public.stories where id = p_story_id for share;
   if not found then
     raise exception using errcode = 'P0001', message = 'STORY_NOT_FOUND';
+  end if;
+
+  if v_story.owner_user_id <> p_user_id then
+    raise exception using errcode = 'P0001', message = 'FORBIDDEN_OWNER';
+  end if;
+
+  if v_story.story_mode not in ('personalized_ai', 'premium_instance') then
+    raise exception using errcode = 'P0001', message = 'INVALID_STORY_MODE';
+  end if;
+
+  if v_story.commercial_origin not in ('STARTER_FREE', 'PAID_START') then
+    raise exception using errcode = 'P0001', message = 'INVALID_COMMERCIAL_ORIGIN';
   end if;
 
   -- Require active DB price config with zero fallbacks
@@ -118,6 +138,7 @@ declare
   v_intent public.commercial_generation_intents%rowtype;
   v_job public.generation_jobs%rowtype;
   v_valid_transition boolean := false;
+  v_new_job_id uuid;
 begin
   if p_target_status not in ('WAITING_FOR_CREDITS', 'AUTHORIZED', 'QUEUED', 'FULFILLED', 'FAILED') then
     raise exception using errcode = '22023', message = 'INVALID_TARGET_STATUS';
@@ -136,29 +157,55 @@ begin
 
   -- Idempotent same-state check
   if v_intent.status = p_target_status then
-    if p_target_status = 'QUEUED' and p_generation_job_id is not null then
-      if v_intent.generation_job_id is not null and v_intent.generation_job_id <> p_generation_job_id then
+    if p_target_status = 'QUEUED' then
+      if p_generation_job_id is null or v_intent.generation_job_id is null or v_intent.generation_job_id <> p_generation_job_id then
         raise exception using errcode = 'P0001', message = 'INTENT_JOB_CONFLICT';
       end if;
     end if;
     return jsonb_build_object('ok', true, 'replayed', true, 'status', v_intent.status);
   end if;
 
-  -- Validate generation job binding if queuing
-  if p_target_status = 'QUEUED' and p_generation_job_id is not null then
+  -- Enforce job binding rules per transition
+  if v_intent.status = 'WAITING_FOR_CREDITS' and p_target_status = 'AUTHORIZED' then
+    if p_generation_job_id is not null then
+      raise exception using errcode = 'P0001', message = 'INVALID_INTENT_TRANSITION';
+    end if;
+    v_valid_transition := true;
+    v_new_job_id := null;
+
+  elsif v_intent.status = 'AUTHORIZED' and p_target_status = 'QUEUED' then
+    if p_generation_job_id is null then
+      raise exception using errcode = 'P0001', message = 'INVALID_INTENT_TRANSITION';
+    end if;
+
     select * into v_job from public.generation_jobs where id = p_generation_job_id;
     if not found or v_job.user_id <> p_user_id or v_job.story_id <> p_story_id or v_job.chapter_number <> p_chapter_number or v_job.trigger_choice_id <> v_intent.trigger_choice_id then
       raise exception using errcode = 'P0001', message = 'INTENT_JOB_MISMATCH';
     end if;
-  end if;
 
-  -- Enforce transition matrix
-  if v_intent.status = 'WAITING_FOR_CREDITS' and p_target_status in ('AUTHORIZED', 'FAILED') then
     v_valid_transition := true;
-  elsif v_intent.status = 'AUTHORIZED' and p_target_status in ('QUEUED', 'WAITING_FOR_CREDITS') then
+    v_new_job_id := p_generation_job_id;
+
+  elsif v_intent.status = 'AUTHORIZED' and p_target_status = 'WAITING_FOR_CREDITS' then
+    if p_generation_job_id is not null then
+      raise exception using errcode = 'P0001', message = 'INVALID_INTENT_TRANSITION';
+    end if;
     v_valid_transition := true;
+    v_new_job_id := null;
+
+  elsif v_intent.status = 'WAITING_FOR_CREDITS' and p_target_status = 'FAILED' then
+    if p_generation_job_id is not null then
+      raise exception using errcode = 'P0001', message = 'INVALID_INTENT_TRANSITION';
+    end if;
+    v_valid_transition := true;
+    v_new_job_id := null;
+
   elsif v_intent.status = 'QUEUED' and p_target_status in ('FULFILLED', 'WAITING_FOR_CREDITS', 'FAILED') then
+    if p_generation_job_id is not null and p_generation_job_id <> v_intent.generation_job_id then
+      raise exception using errcode = 'P0001', message = 'INTENT_JOB_CONFLICT';
+    end if;
     v_valid_transition := true;
+    v_new_job_id := v_intent.generation_job_id;
   end if;
 
   if not v_valid_transition then
@@ -167,7 +214,7 @@ begin
 
   update public.commercial_generation_intents
   set status = p_target_status,
-      generation_job_id = coalesce(p_generation_job_id, generation_job_id),
+      generation_job_id = v_new_job_id,
       updated_at = clock_timestamp()
   where id = v_intent.id;
 

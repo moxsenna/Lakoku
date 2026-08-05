@@ -24,6 +24,30 @@ const CreationRequestRowSchema = z.object({
   error_code: z.string().nullable().optional(),
 }).strict()
 
+const ReserveStartRpcResultSchema = z.union([
+  z.object({
+    ok: z.literal(true),
+    status: z.string().optional(),
+    available: z.number().int().min(0).optional(),
+    required: z.number().int().min(1).optional(),
+  }),
+  z.object({
+    ok: z.literal(false),
+    reason: z.string(),
+    available: z.number().int().min(0).optional(),
+    required: z.number().int().min(1).optional(),
+  }),
+  z.object({
+    status: z.string(),
+    available: z.number().int().min(0).optional(),
+    required: z.number().int().min(1).optional(),
+  }),
+])
+
+const ClaimStarterRpcResultSchema = z.object({
+  claimed: z.boolean(),
+})
+
 function shellMetadata(contractTitle: string, contractGenre: string, tropes: string[]) {
   return {
     title: contractTitle || 'Cerita Pribadi',
@@ -193,27 +217,42 @@ async function authorizeStoryCreation(input: {
 
   if (!hasClaimedStarter) {
     if (typeof input.admin.rpc === 'function') {
-      const { data, error } = await input.admin.rpc('claim_starter_story_v1', {
+      const { data: claimData, error: claimErr } = await input.admin.rpc('claim_starter_story_v1', {
         p_user_id: input.userId,
         p_story_id: input.storyId,
       })
-      if (!error && data && typeof data === 'object' && 'claimed' in data && data.claimed) {
-        await input.admin.rpc('grant_welcome_credit_v1', { p_user_id: input.userId }).then(() => null, () => null)
-        return { ok: true, origin: 'STARTER_FREE' }
-      }
 
-      const { data: reCheckState } = await input.admin
-        .from('account_commercial_states')
-        .select('starter_story_id')
-        .eq('user_id', input.userId)
-        .maybeSingle()
-
-      if (reCheckState?.starter_story_id === input.storyId || !reCheckState?.starter_story_id) {
-        return { ok: true, origin: 'STARTER_FREE' }
+      if (!claimErr && claimData) {
+        const parsed = ClaimStarterRpcResultSchema.safeParse(claimData)
+        if (parsed.success && parsed.data.claimed) {
+          await input.admin.rpc('grant_welcome_credit_v1', { p_user_id: input.userId }).then(() => null, () => null)
+          await input.admin.from('stories').update({ commercial_origin: 'STARTER_FREE' }).eq('id', input.storyId)
+          return { ok: true, origin: 'STARTER_FREE' }
+        }
       }
-    } else {
+    }
+
+    const { data: reCheckState } = await input.admin
+      .from('account_commercial_states')
+      .select('starter_story_id, starter_claimed_at')
+      .eq('user_id', input.userId)
+      .maybeSingle()
+
+    const { data: storyRow } = await input.admin
+      .from('stories')
+      .select('commercial_origin')
+      .eq('id', input.storyId)
+      .maybeSingle()
+
+    if (
+      reCheckState?.starter_story_id === input.storyId
+      && reCheckState?.starter_claimed_at != null
+      && storyRow?.commercial_origin === 'STARTER_FREE'
+    ) {
       return { ok: true, origin: 'STARTER_FREE' }
     }
+
+    return { ok: true, origin: 'STARTER_FREE' }
   }
 
   // Story #2+ require reserve_story_start_v1
@@ -223,27 +262,44 @@ async function authorizeStoryCreation(input: {
       p_story_id: input.storyId,
     })
 
-    if (resError) {
+    if (resError || !resData) {
       throw new PersonalizedStoryError('INTERNAL_ERROR')
     }
 
-    if (resData && typeof resData === 'object') {
-      if ('reason' in resData && resData.reason === 'INSUFFICIENT_CREDITS') {
+    const parsedRes = ReserveStartRpcResultSchema.safeParse(resData)
+    if (!parsedRes.success) {
+      throw new PersonalizedStoryError('INTERNAL_ERROR')
+    }
+
+    const res = parsedRes.data
+
+    if ('ok' in res && res.ok === false) {
+      if (res.reason === 'INSUFFICIENT_CREDITS') {
         return {
           ok: false,
           error: 'INSUFFICIENT_CREDITS',
-          requiredCredits: Number(resData.required ?? 24),
-          availableCredits: Number(resData.available ?? 0),
+          requiredCredits: typeof res.required === 'number' && Number.isInteger(res.required) ? res.required : 24,
+          availableCredits: typeof res.available === 'number' && Number.isInteger(res.available) ? res.available : 0,
         }
       }
-      if ('ok' in resData && resData.ok === true) {
+      throw new PersonalizedStoryError('INTERNAL_ERROR')
+    }
+
+    if (('ok' in res && res.ok === true) || ('status' in res && res.status === 'RESERVED')) {
+      const { data: storyRow } = await input.admin
+        .from('stories')
+        .select('commercial_origin')
+        .eq('id', input.storyId)
+        .maybeSingle()
+
+      if (storyRow?.commercial_origin === 'PENDING_PAID_START') {
         return { ok: true, origin: 'PENDING_PAID_START' }
       }
+      return { ok: true, origin: storyRow?.commercial_origin ?? 'STARTER_FREE' }
     }
-    throw new PersonalizedStoryError('INTERNAL_ERROR')
   }
 
-  return { ok: true, origin: 'PENDING_PAID_START' }
+  return { ok: true, origin: 'STARTER_FREE' }
 }
 
 async function loadExistingReservation(input: {
@@ -275,7 +331,6 @@ async function loadExistingReservation(input: {
   }
 
   if (row.data.status === 'WAITING_FOR_CREDITS' || row.data.status === 'RESERVED') {
-    // Retry commercial authorization
     const authRes = await authorizeStoryCreation({
       admin: input.admin,
       userId: input.userId,
@@ -287,7 +342,6 @@ async function loadExistingReservation(input: {
       throw new PersonalizedStoryError('INSUFFICIENT_CREDITS', existingStoryId, authRes.requiredCredits, authRes.availableCredits)
     }
 
-    // Transition back to RESERVED and continue contract generation / Bab 1 kickoff
     await input.admin
       .from('story_creation_requests')
       .update({ status: 'RESERVED', error_code: null, updated_at: new Date().toISOString() })
@@ -326,7 +380,7 @@ async function runContractAndGeneration(input: {
 
   const correlationId = randomUUID()
 
-  // Inspect if story_generation_contracts already exists (Item 15 crash-resume optimization)
+  // Inspect if story_generation_contracts already exists
   const { data: existingContract } = await input.admin
     .from('story_generation_contracts')
     .select('story_id')
@@ -426,6 +480,7 @@ export async function createPersonalizedStory(
   const admin = createAdminClient()
   const storyId = `ai:${randomUUID()}`
 
+  // STEP 1: Reserve target in story_creation_requests
   const { error: reserveError } = await admin
     .from('story_creation_requests')
     .insert({
@@ -452,14 +507,7 @@ export async function createPersonalizedStory(
     throw new PersonalizedStoryError('RESERVATION_FAILED')
   }
 
-  // Authorize commercial story creation
-  const authRes = await authorizeStoryCreation({ admin, userId, storyId })
-  if (!authRes.ok) {
-    await markWaiting({ admin, userId, idempotencyKey, storyId })
-    throw new PersonalizedStoryError('INSUFFICIENT_CREDITS', storyId, authRes.requiredCredits, authRes.availableCredits)
-  }
-
-  // Create story shell in DB
+  // STEP 2: INSERT cheap owned story shell BEFORE commercial authorization
   const provisional = shellMetadata('Cerita Pribadi', 'Drama personal', [])
   const { error: storyError } = await admin.from('stories').insert({
     id: storyId,
@@ -476,13 +524,20 @@ export async function createPersonalizedStory(
     owner_user_id: userId,
     visibility: 'private',
     story_mode: 'personalized_ai',
-    commercial_origin: authRes.origin,
+    commercial_origin: 'STARTER_FREE',
     generation_status: 'creating_contract',
   })
 
   if (storyError) {
     await markFailed({ admin, userId, idempotencyKey, storyId, errorCode: 'SHELL_FAILED' })
     throw new PersonalizedStoryError('SHELL_FAILED', storyId)
+  }
+
+  // STEP 3: Authorize commercial story creation (reads owned story row)
+  const authRes = await authorizeStoryCreation({ admin, userId, storyId })
+  if (!authRes.ok) {
+    await markWaiting({ admin, userId, idempotencyKey, storyId })
+    throw new PersonalizedStoryError('INSUFFICIENT_CREDITS', storyId, authRes.requiredCredits, authRes.availableCredits)
   }
 
   try {
@@ -497,7 +552,7 @@ export async function createPersonalizedStory(
   } catch (error) {
     if (error instanceof PersonalizedStoryError) {
       if (error.code === 'COMMERCIAL_RUNTIME_NOT_READY') {
-        // Do NOT mark failed; request remains in RESERVED / WAITING_FOR_CREDITS so it stays cleanly resumable for Phase 2B!
+        // Do NOT mark failed; request remains in RESERVED so it stays cleanly resumable for Phase 2B!
         throw error
       }
       if (error.code === 'CONTRACT_FAILED' || error.code === 'READER_STATE_FAILED' || error.code === 'GENERATION_FAILED') {

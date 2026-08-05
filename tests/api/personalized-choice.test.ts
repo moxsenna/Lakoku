@@ -417,6 +417,10 @@ describe('applyPersonalizedChoice', () => {
       p_chapter_number: 1,
       p_choice_id: 'private-choice',
       p_idempotency_key: idempotencyKey,
+      p_expected_state: readerStateRow,
+      p_next_route_state: expect.objectContaining({ truth: 3 }),
+      p_history_entry: expect.objectContaining({ chapterNumber: 1, choiceId: 'private-choice' }),
+      p_jejak_entry: expect.objectContaining({ chapter: 1, decision: 'Buka surat itu' }),
     })
   })
 

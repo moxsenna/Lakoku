@@ -58,7 +58,7 @@ export async function POST(
     }, { status: 503 })
   }
 
-  // Check if story is LEGACY_GRANDFATHERED
+  // Check commercial story origin
   const { createAdminClient } = await import('@/lib/supabase/admin')
   const db = createAdminClient()
   const { data: story } = await db
@@ -66,6 +66,19 @@ export async function POST(
     .select('owner_user_id, commercial_origin, story_mode')
     .eq('id', storyId)
     .maybeSingle()
+
+  const isModernCommercial = (story?.story_mode === 'personalized_ai' || story?.story_mode === 'premium_instance')
+    && (story?.commercial_origin === 'STARTER_FREE' || story?.commercial_origin === 'PAID_START')
+
+  if (isModernCommercial) {
+    // Modern commercial stories NEVER execute read-time debit via /unlock
+    return NextResponse.json({
+      status: 'WAITING_FOR_CREDITS',
+      storyId,
+      requiredCredits: decision.cost,
+      availableCredits: balance,
+    }, { status: 402 })
+  }
 
   if (story?.commercial_origin === 'LEGACY_GRANDFATHERED' && story.owner_user_id === auth.user.id && chapter >= 4) {
     // Prove chapter is ALREADY PUBLISHED in DB before permitting read-time spend
@@ -99,7 +112,7 @@ export async function POST(
     }
   }
 
-  // Fallback for standard/shared story unlock
+  // Fallback ONLY for standard/shared public story unlock
   try {
     const result = await spendChapterUnlock(auth.user.id, storyId, chapter, decision.cost)
     const newBalance = await getCreditBalance(auth.user.id)

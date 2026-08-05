@@ -84,14 +84,25 @@ export async function POST(
         return NextResponse.json(successBody(error.result), { status: 202 })
       }
       if (error.code === 'INSUFFICIENT_CREDITS') {
-        return NextResponse.json(
-          {
-            status: 'WAITING_FOR_CREDITS',
-            storyId: error.result?.storyId,
-            requiredCredits: 24,
-          },
-          { status: 402 },
-        )
+        if (
+          typeof error.requiredCredits === 'number'
+          && Number.isInteger(error.requiredCredits)
+          && error.requiredCredits > 0
+          && typeof error.availableCredits === 'number'
+          && Number.isInteger(error.availableCredits)
+          && error.availableCredits >= 0
+        ) {
+          return NextResponse.json(
+            {
+              status: 'WAITING_FOR_CREDITS',
+              storyId: error.result?.storyId,
+              requiredCredits: error.requiredCredits,
+              availableCredits: error.availableCredits,
+            },
+            { status: 402 },
+          )
+        }
+        return NextResponse.json({ error: 'Gagal menyalin cerita premium.' }, { status: 500 })
       }
       if (error.code === 'GENERATION_FAILED') {
         return NextResponse.json({ error: 'Bab pertama gagal dibuat.' }, { status: 422 })

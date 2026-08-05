@@ -11,7 +11,7 @@ begin
 end
 $$;
 
-select plan(20);
+select plan(25);
 
 -- 1. Table existence & RLS
 select has_table('commercial_generation_intents', 'commercial_generation_intents table should exist');
@@ -36,12 +36,26 @@ values (
   '{}'::jsonb,
   now(),
   now()
+), (
+  '22222222-2222-2222-2222-222222222222',
+  '00000000-0000-0000-0000-000000000000',
+  'authenticated',
+  'authenticated',
+  'other@example.com',
+  'secret',
+  now(),
+  '{"provider":"email","providers":["email"]}'::jsonb,
+  '{}'::jsonb,
+  now(),
+  now()
 ) on conflict (id) do nothing;
 
 insert into public.stories (
-  id, title, cover, tagline, role, tropes, total_chapters, status, current_chapter, jejak, owner_user_id, visibility, story_mode, generation_status
+  id, title, cover, tagline, role, tropes, total_chapters, status, current_chapter, jejak, owner_user_id, visibility, story_mode, commercial_origin, generation_status
 ) values (
-  'story-p2a-1', 'Test Story Phase 2A', '/c.webp', 'Tag', 'Role', '{}', 50, 'BARU', 3, '{}', '11111111-1111-1111-1111-111111111111', 'private', 'personalized_ai', 'ready'
+  'story-p2a-1', 'Test Story Phase 2A', '/c.webp', 'Tag', 'Role', '{}', 50, 'BARU', 3, '{}', '11111111-1111-1111-1111-111111111111', 'private', 'personalized_ai', 'STARTER_FREE', 'ready'
+), (
+  'story-std-1', 'Standard Story', '/c.webp', 'Tag', 'Role', '{}', 50, 'BARU', 3, '{}', '11111111-1111-1111-1111-111111111111', 'public', 'standard', 'STARTER_FREE', 'ready'
 ) on conflict (id) do nothing;
 
 insert into public.reader_states (
@@ -68,7 +82,22 @@ insert into public.choice_outcomes (
   'story-p2a-1', 3, 'choice-b', jsonb_build_array('Dampak B'), 4, false, '{"routeDeltas": {}, "trustDeltas": {}, "flagsSet": {}, "evidenceAdded": [], "endingBiasDeltas": {}}'::jsonb, 'normal'
 ) on conflict (story_id, chapter_number, choice_id) do nothing;
 
--- 4. Test apply_personalized_choice_v2 (Bab 3 -> Bab 4 requires commercial intent)
+-- 4. Test ensure_commercial_generation_intent_v1 validation assertions
+select throws_ok(
+  $$ select public.ensure_commercial_generation_intent_v1('22222222-2222-2222-2222-222222222222', 'story-p2a-1', 4, 'choice-a'); $$,
+  'P0001',
+  'FORBIDDEN_OWNER',
+  'ensure_commercial_generation_intent_v1 rejects wrong owner'
+);
+
+select throws_ok(
+  $$ select public.ensure_commercial_generation_intent_v1('11111111-1111-1111-1111-111111111111', 'story-std-1', 4, 'choice-a'); $$,
+  'P0001',
+  'INVALID_STORY_MODE',
+  'ensure_commercial_generation_intent_v1 rejects standard story_mode'
+);
+
+-- 5. Test apply_personalized_choice_v2 (Bab 3 -> Bab 4 requires commercial intent)
 select lives_ok(
   $$
   select public.apply_personalized_choice_v2(
@@ -122,7 +151,7 @@ select results_eq(
   'commercial_generation_intent created atomically'
 );
 
--- 5. Test ensure_commercial_generation_intent_v1 idempotency & conflict
+-- 6. Test ensure_commercial_generation_intent_v1 idempotency & conflict
 select lives_ok(
   $$ select public.ensure_commercial_generation_intent_v1('11111111-1111-1111-1111-111111111111', 'story-p2a-1', 4, 'choice-a'); $$,
   'ensure_commercial_generation_intent_v1 replays idempotently for same choice'
@@ -135,23 +164,72 @@ select throws_ok(
   'ensure_commercial_generation_intent_v1 raises COMMERCIAL_INTENT_CONFLICT for different choice'
 );
 
--- 6. Test intent transition state machine
+-- 7. Test intent transition state machine & job binding rules
 select lives_ok(
   $$ select public.transition_commercial_generation_intent_v1('11111111-1111-1111-1111-111111111111', 'story-p2a-1', 4, 'AUTHORIZED'); $$,
   'transition WAITING_FOR_CREDITS -> AUTHORIZED succeeds'
 );
 
-select lives_ok(
-  $$ select public.transition_commercial_generation_intent_v1('11111111-1111-1111-1111-111111111111', 'story-p2a-1', 4, 'QUEUED'); $$,
-  'transition AUTHORIZED -> QUEUED succeeds'
+-- AUTHORIZED -> QUEUED with NULL job => rejected
+select throws_ok(
+  $$ select public.transition_commercial_generation_intent_v1('11111111-1111-1111-1111-111111111111', 'story-p2a-1', 4, 'QUEUED', null); $$,
+  'P0001',
+  'INVALID_INTENT_TRANSITION',
+  'transition AUTHORIZED -> QUEUED with NULL job raises INVALID_INTENT_TRANSITION'
+);
+
+-- Setup generation job for binding
+insert into public.generation_jobs (
+  id, user_id, story_id, chapter_number, status, trigger_choice_id, generation_kind, deadline_at, publication_idempotency_key
+) values (
+  '33333333-3333-3333-3333-333333333333',
+  '11111111-1111-1111-1111-111111111111',
+  'story-p2a-1',
+  4,
+  'QUEUED',
+  'choice-a',
+  'personalized',
+  now() + interval '1 hour',
+  'generation-job:33333333-3333-3333-3333-333333333333:publish:4'
+), (
+  '44444444-4444-4444-4444-444444444444',
+  '11111111-1111-1111-1111-111111111111',
+  'story-p2a-1',
+  5,
+  'QUEUED',
+  'choice-a',
+  'personalized',
+  now() + interval '1 hour',
+  'generation-job:44444444-4444-4444-4444-444444444444:publish:5'
+) on conflict (id) do nothing;
+
+-- AUTHORIZED -> QUEUED with mismatching triggerChoice job (different chapter) => rejected
+select throws_ok(
+  $$ select public.transition_commercial_generation_intent_v1('11111111-1111-1111-1111-111111111111', 'story-p2a-1', 4, 'QUEUED', '44444444-4444-4444-4444-444444444444'::uuid); $$,
+  'P0001',
+  'INTENT_JOB_MISMATCH',
+  'transition AUTHORIZED -> QUEUED with mismatching triggerChoice job raises INTENT_JOB_MISMATCH'
 );
 
 select lives_ok(
-  $$ select public.transition_commercial_generation_intent_v1('11111111-1111-1111-1111-111111111111', 'story-p2a-1', 4, 'FULFILLED'); $$,
+  $$ select public.transition_commercial_generation_intent_v1('11111111-1111-1111-1111-111111111111', 'story-p2a-1', 4, 'QUEUED', '33333333-3333-3333-3333-333333333333'::uuid); $$,
+  'transition AUTHORIZED -> QUEUED with matching job succeeds'
+);
+
+-- QUEUED replay with different job => rejected
+select throws_ok(
+  $$ select public.transition_commercial_generation_intent_v1('11111111-1111-1111-1111-111111111111', 'story-p2a-1', 4, 'QUEUED', '44444444-4444-4444-4444-444444444444'::uuid); $$,
+  'P0001',
+  'INTENT_JOB_CONFLICT',
+  'QUEUED replay with different job raises INTENT_JOB_CONFLICT'
+);
+
+select lives_ok(
+  $$ select public.transition_commercial_generation_intent_v1('11111111-1111-1111-1111-111111111111', 'story-p2a-1', 4, 'FULFILLED', '33333333-3333-3333-3333-333333333333'::uuid); $$,
   'transition QUEUED -> FULFILLED succeeds'
 );
 
--- 7. Test illegal transition (FULFILLED -> WAITING_FOR_CREDITS raises exception)
+-- 8. Test illegal transition (FULFILLED -> WAITING_FOR_CREDITS raises exception)
 select throws_ok(
   $$ select public.transition_commercial_generation_intent_v1('11111111-1111-1111-1111-111111111111', 'story-p2a-1', 4, 'WAITING_FOR_CREDITS'); $$,
   'P0001',
@@ -159,7 +237,7 @@ select throws_ok(
   'transition out of FULFILLED raises INVALID_INTENT_TRANSITION'
 );
 
--- 8. Test story_creation_requests accepts WAITING_FOR_CREDITS
+-- 9. Test story_creation_requests accepts WAITING_FOR_CREDITS
 select lives_ok(
   $$ insert into public.story_creation_requests (owner_user_id, request_kind, idempotency_key, request_hash, story_id, status, error_code)
      values ('11111111-1111-1111-1111-111111111111', 'personalized', 'k-wait-1', 'hash1', 'story-wait-1', 'WAITING_FOR_CREDITS', 'INSUFFICIENT_CREDITS'); $$,
@@ -172,11 +250,11 @@ select results_eq(
   'story_creation_requests status is WAITING_FOR_CREDITS'
 );
 
--- 9. Test Ch 1-3 included does NOT create intent
+-- 10. Test Ch 1-3 included does NOT create intent
 insert into public.stories (
-  id, title, cover, tagline, role, tropes, total_chapters, status, current_chapter, jejak, owner_user_id, visibility, story_mode, generation_status
+  id, title, cover, tagline, role, tropes, total_chapters, status, current_chapter, jejak, owner_user_id, visibility, story_mode, commercial_origin, generation_status
 ) values (
-  'story-p2a-ch1', 'Test Story Ch1', '/c.webp', 'Tag', 'Role', '{}', 50, 'BARU', 1, '{}', '11111111-1111-1111-1111-111111111111', 'private', 'personalized_ai', 'ready'
+  'story-p2a-ch1', 'Test Story Ch1', '/c.webp', 'Tag', 'Role', '{}', 50, 'BARU', 1, '{}', '11111111-1111-1111-1111-111111111111', 'private', 'personalized_ai', 'STARTER_FREE', 'ready'
 ) on conflict (id) do nothing;
 
 insert into public.reader_states (
@@ -243,13 +321,13 @@ select results_eq(
   'Bab 1 -> Bab 2 does not create a paid intent'
 );
 
--- 10. Test CONFIG_ERROR rollback on missing/inactive pricing config
+-- 11. Test CONFIG_ERROR rollback on missing/inactive pricing config
 update public.feature_credit_costs set is_active = false where feature_key = 'chapter_unlock';
 
 insert into public.stories (
-  id, title, cover, tagline, role, tropes, total_chapters, status, current_chapter, jejak, owner_user_id, visibility, story_mode, generation_status
+  id, title, cover, tagline, role, tropes, total_chapters, status, current_chapter, jejak, owner_user_id, visibility, story_mode, commercial_origin, generation_status
 ) values (
-  'story-p2a-cfg', 'Test Story Cfg', '/c.webp', 'Tag', 'Role', '{}', 50, 'BARU', 3, '{}', '11111111-1111-1111-1111-111111111111', 'private', 'personalized_ai', 'ready'
+  'story-p2a-cfg', 'Test Story Cfg', '/c.webp', 'Tag', 'Role', '{}', 50, 'BARU', 3, '{}', '11111111-1111-1111-1111-111111111111', 'private', 'personalized_ai', 'STARTER_FREE', 'ready'
 ) on conflict (id) do nothing;
 
 insert into public.reader_states (

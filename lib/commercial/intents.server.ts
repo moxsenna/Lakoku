@@ -74,43 +74,17 @@ export async function repairCommercialIntentFromHistory(input: {
 
   const triggerChoiceId = matchingEntry.choiceId
 
-  // Load quote from DB
-  const { data: costRow } = await db
-    .from('feature_credit_costs')
-    .select('credits_required, pricing_version')
-    .eq('feature_key', 'chapter_unlock')
-    .maybeSingle()
+  // Call DB-authoritative RPC to ensure intent with active DB pricing
+  const { error } = await db.rpc('ensure_commercial_generation_intent_v1', {
+    p_user_id: input.userId,
+    p_story_id: input.storyId,
+    p_chapter_number: input.targetChapterNumber,
+    p_trigger_choice_id: triggerChoiceId,
+  })
 
-  const quotedCredits = costRow?.credits_required ?? 8
-  const pricingVersion = costRow?.pricing_version ?? 'v1.1-202608'
-
-  const { data: inserted, error } = await db
-    .from('commercial_generation_intents')
-    .insert({
-      user_id: input.userId,
-      story_id: input.storyId,
-      chapter_number: input.targetChapterNumber,
-      trigger_choice_id: triggerChoiceId,
-      status: 'WAITING_FOR_CREDITS',
-      quoted_credits: quotedCredits,
-      pricing_version: pricingVersion,
-    })
-    .select('*')
-    .single()
-
-  if (error || !inserted) {
-    return getCommercialIntent({ userId: input.userId, storyId: input.storyId, chapterNumber: input.targetChapterNumber })
+  if (error) {
+    return null
   }
 
-  return {
-    id: inserted.id,
-    userId: inserted.user_id,
-    storyId: inserted.story_id,
-    chapterNumber: inserted.chapter_number,
-    triggerChoiceId: inserted.trigger_choice_id,
-    generationJobId: inserted.generation_job_id,
-    status: inserted.status,
-    quotedCredits: inserted.quoted_credits,
-    pricingVersion: inserted.pricing_version,
-  }
+  return getCommercialIntent({ userId: input.userId, storyId: input.storyId, chapterNumber: input.targetChapterNumber })
 }

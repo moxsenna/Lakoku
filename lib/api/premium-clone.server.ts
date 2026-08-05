@@ -1,82 +1,65 @@
+import { createHash, randomUUID } from 'crypto'
 import 'server-only'
-import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { generateNextPersonalizedChapter } from '@/lib/runtime/personalized-generation'
 
-const REQUEST_KIND = 'premium_clone' as const
+const REQUEST_KIND = 'premium_clone'
 const UNIQUE_VIOLATION = '23505'
-const MAX_STORY_ID_LENGTH = 128
+const REQUEST_COLUMNS = 'story_id,request_hash,status,error_code'
+const CHAPTER_COLUMNS = 'story_id,number'
 const MAX_RESERVATION_ATTEMPTS = 3
-const REQUEST_COLUMNS = 'story_id,request_hash,status' as const
-const TARGET_COLUMNS = 'id,owner_user_id,visibility,source_story_id,story_mode' as const
-const CHAPTER_COLUMNS = 'story_id,number' as const
 
+const IdempotencyKeySchema = z.string().trim().min(1).max(240).regex(/^[\x21-\x7E]+$/)
 const UserIdSchema = z.string().uuid()
-const IdempotencyKeySchema = z.string().min(1).max(240).regex(/^[\x21-\x7E]+$/)
-const TemplateIdSchema = z.string()
-  .min(1)
-  .max(200)
-  .refine((value) => value === value.trim())
-  .refine((value) => value.startsWith('premium:') && value.slice('premium:'.length).length > 0)
+const TemplateIdSchema = z.string().min(1).max(120).regex(/^premium:[a-z0-9]+(?:-[a-z0-9]+)*$/)
 
 const CreationRequestSchema = z.object({
-  story_id: z.string().min(1).max(MAX_STORY_ID_LENGTH),
-  request_hash: z.string().length(64).regex(/^[a-f0-9]+$/),
-  status: z.enum(['RESERVED', 'READY', 'FAILED']),
+  story_id: z.string().min(1),
+  request_hash: z.string().min(1),
+  status: z.enum(['RESERVED', 'READY', 'FAILED', 'WAITING_FOR_CREDITS']),
+  error_code: z.string().nullable().optional(),
 }).strict()
 
-const TargetStorySchema = z.object({
-  id: z.string().min(1),
-  owner_user_id: z.string().uuid().nullable(),
-  visibility: z.string(),
-  source_story_id: z.string().nullable(),
-  story_mode: z.string(),
-}).strict()
+const CloneRpcResultSchema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    story_id: z.string().min(1),
+  }),
+  z.object({
+    ok: z.literal(false),
+    reason: z.enum(['INVALID_TEMPLATE', 'TARGET_STORY_EXISTS', 'INTERNAL_ERROR']),
+    error: z.string().optional(),
+  }),
+])
 
 const ChapterOneSchema = z.object({
   story_id: z.string().min(1),
   number: z.literal(1),
-}).strict()
-
-const CloneRpcResultSchema = z.discriminatedUnion('ok', [
-  z.object({ ok: z.literal(true), story_id: z.string().min(1) }).strict(),
-  z.object({ ok: z.literal(false), reason: z.string() }).passthrough(),
-])
+})
 
 export type PremiumCloneErrorCode =
-  | 'INVALID_USER'
   | 'INVALID_IDEMPOTENCY_KEY'
+  | 'INVALID_USER'
   | 'INVALID_TEMPLATE_ID'
-  | 'IDEMPOTENCY_CONFLICT'
   | 'INVALID_TEMPLATE'
+  | 'IDEMPOTENCY_CONFLICT'
   | 'GENERATION_IN_PROGRESS'
   | 'GENERATION_FAILED'
   | 'INSUFFICIENT_CREDITS'
   | 'COMMERCIAL_RUNTIME_NOT_READY'
   | 'INTERNAL_ERROR'
 
-export interface PremiumCloneResult {
-  storyId: string
-  redirectUrl: string
-  replayed: boolean
-}
-
 export class PremiumCloneError extends Error {
+  public readonly result?: { storyId: string; redirectUrl: string; replayed: boolean }
+
   constructor(
     public readonly code: PremiumCloneErrorCode,
-    public readonly result?: PremiumCloneResult,
+    result?: { storyId: string; redirectUrl: string; replayed: boolean },
   ) {
     super(code)
     this.name = 'PremiumCloneError'
-  }
-}
-
-function resultFor(storyId: string, replayed: boolean): PremiumCloneResult {
-  return {
-    storyId,
-    redirectUrl: `/baca/${encodeURIComponent(storyId)}?bab=1`,
-    replayed,
+    this.result = result
   }
 }
 
@@ -84,21 +67,26 @@ export function buildPremiumCloneRequestHash(input: {
   userId: string
   templateStoryId: string
 }): string {
-  return createHash('sha256')
-    .update(JSON.stringify({
-      kind: REQUEST_KIND,
-      userId: input.userId,
-      templateStoryId: input.templateStoryId,
-    }))
-    .digest('hex')
+  const payload = JSON.stringify({
+    kind: REQUEST_KIND,
+    userId: input.userId,
+    templateStoryId: input.templateStoryId,
+  })
+  return createHash('sha256').update(payload).digest('hex')
+}
+
+function resultFor(storyId: string, replayed: boolean) {
+  return {
+    storyId,
+    redirectUrl: `/baca/${encodeURIComponent(storyId)}?bab=1`,
+    replayed,
+  }
 }
 
 function targetStoryId(templateStoryId: string): string {
-  const rawSlug = templateStoryId.replace(/^premium:/, '')
-  const uuid = randomUUID()
-  const suffixLength = `ai:premium::${uuid}`.length
-  const slug = rawSlug.slice(0, MAX_STORY_ID_LENGTH - suffixLength)
+  const slug = templateStoryId.replace(/^premium:/, '')
   if (!slug) throw new PremiumCloneError('INVALID_TEMPLATE_ID')
+  const uuid = randomUUID()
   return `ai:premium:${slug}:${uuid}`
 }
 
@@ -116,9 +104,9 @@ async function loadReservation(input: {
     .eq('request_kind', REQUEST_KIND)
     .eq('idempotency_key', input.idempotencyKey)
     .maybeSingle()
+
   if (error) throw new PremiumCloneError('INTERNAL_ERROR')
   if (!data) return null
-
   const parsed = CreationRequestSchema.safeParse(data)
   if (!parsed.success) throw new PremiumCloneError('INTERNAL_ERROR')
   if (parsed.data.request_hash !== input.requestHash) {
@@ -159,27 +147,11 @@ async function reserveTarget(input: {
   throw new PremiumCloneError('INTERNAL_ERROR')
 }
 
-async function loadTarget(input: {
-  admin: ReturnType<typeof createAdminClient>
-  storyId: string
-}): Promise<z.infer<typeof TargetStorySchema> | null> {
-  const { data, error } = await input.admin
-    .from('stories')
-    .select(TARGET_COLUMNS)
-    .eq('id', input.storyId)
-    .maybeSingle()
-  if (error) throw new PremiumCloneError('INTERNAL_ERROR')
-  if (!data) return null
-  const parsed = TargetStorySchema.safeParse(data)
-  if (!parsed.success) throw new PremiumCloneError('INTERNAL_ERROR')
-  return parsed.data
-}
-
 function assertExactTarget(input: {
-  row: z.infer<typeof TargetStorySchema>
   storyId: string
-  userId: string
   templateStoryId: string
+  userId: string
+  row: { id?: string; owner_user_id?: string; visibility?: string; source_story_id?: string; story_mode?: string }
 }): void {
   if (
     input.row.id !== input.storyId
@@ -198,9 +170,14 @@ async function ensureTarget(input: {
   userId: string
   templateStoryId: string
 }): Promise<void> {
-  const existing = await loadTarget(input)
-  if (existing) {
-    assertExactTarget({ ...input, row: existing })
+  const { data: existingTarget } = await input.admin
+    .from('stories')
+    .select('id,owner_user_id,visibility,source_story_id,story_mode')
+    .eq('id', input.storyId)
+    .maybeSingle()
+
+  if (existingTarget) {
+    assertExactTarget({ storyId: input.storyId, templateStoryId: input.templateStoryId, userId: input.userId, row: existingTarget })
     return
   }
 
@@ -215,9 +192,12 @@ async function ensureTarget(input: {
       throw new PremiumCloneError('INVALID_TEMPLATE')
     }
     if (error.message.includes('TARGET_STORY_EXISTS')) {
-      const racedTarget = await loadTarget(input)
-      if (!racedTarget) throw new PremiumCloneError('INTERNAL_ERROR')
-      assertExactTarget({ ...input, row: racedTarget })
+      const { data: racedTarget } = await input.admin
+        .from('stories')
+        .select('id,owner_user_id,visibility,source_story_id,story_mode')
+        .eq('id', input.storyId)
+        .maybeSingle()
+      if (racedTarget) assertExactTarget({ storyId: input.storyId, templateStoryId: input.templateStoryId, userId: input.userId, row: racedTarget })
       return
     }
     throw new PremiumCloneError('INTERNAL_ERROR')
@@ -231,7 +211,6 @@ async function ensureTarget(input: {
     }
     throw new PremiumCloneError('INTERNAL_ERROR')
   }
-  if (parsed.data.story_id !== input.storyId) throw new PremiumCloneError('INTERNAL_ERROR')
 }
 
 async function chapterOneExists(input: {
@@ -277,6 +256,7 @@ async function updateReservation(input: {
     .in('status', ['RESERVED', 'FAILED'])
     .select(REQUEST_COLUMNS)
     .maybeSingle()
+
   if (error) throw new PremiumCloneError('INTERNAL_ERROR')
 
   let row: z.infer<typeof CreationRequestSchema> | null = null
@@ -375,16 +355,6 @@ export async function clonePremiumStoryForUser(input: {
     }
   }
 
-  const { data: storyRow } = await admin
-    .from('stories')
-    .select('commercial_origin')
-    .eq('id', reserved.row.story_id)
-    .maybeSingle()
-
-  if (storyRow?.commercial_origin === 'PENDING_PAID_START') {
-    throw new PremiumCloneError('COMMERCIAL_RUNTIME_NOT_READY', identity)
-  }
-
   if (!await chapterOneExists({ admin, storyId: reserved.row.story_id })) {
     let generated
     try {
@@ -399,7 +369,6 @@ export async function clonePremiumStoryForUser(input: {
     }
 
     if (!generated.ok) {
-        // Includes FAILED_REVIEW_REQUIRED and CHOICE_GENERATION_FAILED
       if (generated.reason === 'CHAPTER_EXISTS') {
         if (!await chapterOneExists({ admin, storyId: reserved.row.story_id })) {
           throw new PremiumCloneError('INTERNAL_ERROR')

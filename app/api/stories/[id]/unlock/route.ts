@@ -7,12 +7,6 @@ import { getReadingPolicy, getCreditBalance, spendChapterUnlock } from '@/lib/cr
  *
  * Belanja kredit HANYA lewat jalur ini (server, service-role RPC idempoten).
  * Idempoten: membuka bab yang sama dua kali tak mengurangi kredit lagi.
- *
- * Body: { chapter: number }
- * Hasil → HTTP:
- *  - ok / duplicate  → 200 (bab bisa dibaca)
- *  - free            → 200 (bab memang gratis)
- *  - insufficient    → 402 (kredit kurang → arahkan beli)
  */
 export async function POST(
   req: Request,
@@ -41,8 +35,27 @@ export async function POST(
     return NextResponse.json({ status: decision.reason === 'FREE_STANDARD' ? 'free' : 'ok', balance }, { status: 200 })
   }
 
+  if (decision.reason === 'NOT_AUTHORIZED') {
+    return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 403 })
+  }
+
+  if (decision.reason === 'CONFIG_ERROR') {
+    return NextResponse.json({ error: 'Pengaturan kredit tidak valid.' }, { status: 500 })
+  }
+
   if (decision.reason === 'STORY_PENDING') {
-    return NextResponse.json({ status: 'insufficient', balance, requiredCredits: 24 }, { status: 402 })
+    return NextResponse.json({
+      status: 'WAITING_FOR_CREDITS',
+      storyId,
+      requiredCredits: decision.cost,
+      availableCredits: balance,
+    }, { status: 402 })
+  }
+
+  if (decision.reason === 'COMMERCIAL_ACCESS_NOT_FINALIZED') {
+    return NextResponse.json({
+      error: 'Akses cerita komersial belum difinalisasi.',
+    }, { status: 503 })
   }
 
   // Check if story is LEGACY_GRANDFATHERED
@@ -50,16 +63,34 @@ export async function POST(
   const db = createAdminClient()
   const { data: story } = await db
     .from('stories')
-    .select('commercial_origin, story_mode')
+    .select('owner_user_id, commercial_origin, story_mode')
     .eq('id', storyId)
     .maybeSingle()
 
-  if (story?.commercial_origin === 'LEGACY_GRANDFATHERED' && chapter >= 4) {
+  if (story?.commercial_origin === 'LEGACY_GRANDFATHERED' && story.owner_user_id === auth.user.id && chapter >= 4) {
+    // Prove chapter is ALREADY PUBLISHED in DB before permitting read-time spend
+    const { data: chRow } = await db
+      .from('chapters')
+      .select('number')
+      .eq('story_id', storyId)
+      .eq('number', chapter)
+      .maybeSingle()
+
+    if (!chRow) {
+      // Unpublished legacy chapter -> zero debit!
+      return NextResponse.json({ error: 'Bab belum dipublikasikan.' }, { status: 400 })
+    }
+
     try {
-      const result = await spendChapterUnlock(auth.user.id, storyId, chapter, 8)
+      const result = await spendChapterUnlock(auth.user.id, storyId, chapter, decision.cost)
       const newBalance = await getCreditBalance(auth.user.id)
       if (result === 'insufficient') {
-        return NextResponse.json({ status: 'insufficient', balance: newBalance }, { status: 402 })
+        return NextResponse.json({
+          status: 'WAITING_FOR_CREDITS',
+          storyId,
+          requiredCredits: decision.cost,
+          availableCredits: newBalance,
+        }, { status: 402 })
       }
       return NextResponse.json({ status: 'ok', balance: newBalance }, { status: 200 })
     } catch (err) {
@@ -68,17 +99,17 @@ export async function POST(
     }
   }
 
-  // Modern published commercial chapter missing ledger -> Fail closed (V5 must capture during publication)
-  if (story && (story.story_mode === 'personalized_ai' || story.story_mode === 'premium_instance')) {
-    return NextResponse.json({ status: 'insufficient', balance, requiredCredits: decision.cost }, { status: 402 })
-  }
-
   // Fallback for standard/shared story unlock
   try {
-    const result = await spendChapterUnlock(auth.user.id, storyId, chapter, policy.creditsPerChapter)
+    const result = await spendChapterUnlock(auth.user.id, storyId, chapter, decision.cost)
     const newBalance = await getCreditBalance(auth.user.id)
     if (result === 'insufficient') {
-      return NextResponse.json({ status: 'insufficient', balance: newBalance }, { status: 402 })
+      return NextResponse.json({
+        status: 'WAITING_FOR_CREDITS',
+        storyId,
+        requiredCredits: decision.cost,
+        availableCredits: newBalance,
+      }, { status: 402 })
     }
     return NextResponse.json({ status: 'ok', balance: newBalance }, { status: 200 })
   } catch (err) {

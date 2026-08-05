@@ -51,7 +51,8 @@ export async function POST(req: Request) {
           {
             status: 'WAITING_FOR_CREDITS',
             storyId: error.storyId,
-            requiredCredits: 24,
+            requiredCredits: error.requiredCredits ?? 24,
+            availableCredits: error.availableCredits ?? 0,
           },
           { status: 402 },
         )

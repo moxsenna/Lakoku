@@ -14,6 +14,11 @@ import { createAdminClient } from '@/lib/supabase/admin'
 
 const mockCreateAdminClient = vi.mocked(createAdminClient)
 
+const mockFeatureCreditCosts = [
+  { feature_key: 'story_start', credits_required: 24, is_active: true },
+  { feature_key: 'chapter_unlock', credits_required: 8, is_active: true },
+]
+
 describe('Phase 2A Commercial Anti-Abuse Runtime', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -33,6 +38,16 @@ describe('Phase 2A Commercial Anti-Abuse Runtime', () => {
     it('authorizes Bab 1-3 for STARTER_FREE story', async () => {
       const mockDb = {
         from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'feature_credit_costs') {
+            return {
+              select: () => ({
+                in: async () => ({
+                  data: mockFeatureCreditCosts,
+                  error: null,
+                }),
+              }),
+            }
+          }
           if (table === 'stories') {
             return {
               select: () => ({
@@ -76,6 +91,16 @@ describe('Phase 2A Commercial Anti-Abuse Runtime', () => {
       }
       const mockDb = {
         from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'feature_credit_costs') {
+            return {
+              select: () => ({
+                in: async () => ({
+                  data: mockFeatureCreditCosts,
+                  error: null,
+                }),
+              }),
+            }
+          }
           if (table === 'stories') {
             return {
               select: () => ({
@@ -116,6 +141,16 @@ describe('Phase 2A Commercial Anti-Abuse Runtime', () => {
     it('denies Bab 2 for PENDING_PAID_START story before Bab 1 publish capture', async () => {
       const mockDb = {
         from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'feature_credit_costs') {
+            return {
+              select: () => ({
+                in: async () => ({
+                  data: mockFeatureCreditCosts,
+                  error: null,
+                }),
+              }),
+            }
+          }
           if (table === 'stories') {
             return {
               select: () => ({
@@ -154,6 +189,16 @@ describe('Phase 2A Commercial Anti-Abuse Runtime', () => {
     it('returns STORY_PENDING for PENDING_PAID_START story on any chapter', async () => {
       const mockDb = {
         from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'feature_credit_costs') {
+            return {
+              select: () => ({
+                in: async () => ({
+                  data: mockFeatureCreditCosts,
+                  error: null,
+                }),
+              }),
+            }
+          }
           if (table === 'stories') {
             return {
               select: () => ({
@@ -195,6 +240,16 @@ describe('Phase 2A Commercial Anti-Abuse Runtime', () => {
       }
       const mockDb = {
         from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'feature_credit_costs') {
+            return {
+              select: () => ({
+                in: async () => ({
+                  data: mockFeatureCreditCosts,
+                  error: null,
+                }),
+              }),
+            }
+          }
           if (table === 'stories') {
             return {
               select: () => ({

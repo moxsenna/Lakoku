@@ -81,13 +81,16 @@ select lives_ok($$
   insert into public.chapter_state_commits (
     story_id, chapter_number, base_canon_revision, committed_canon_revision,
     state_delta_json, state_delta_schema_version, state_delta_hash,
-    generation_mode, source_job_id, checkpoint_attempt_id
+    generation_mode, source_job_id, checkpoint_attempt_id,
+    correlation_id, publication_payload_hash, publication_payload_schema_version, publication_result
   ) values (
     'test:state-commits', 3, 0, 1,
     '{"threads":{"touches":["t1"]}}'::jsonb, 1,
     public.chapter_state_delta_hash_v1('{"threads":{"touches":["t1"]}}'::jsonb),
     'personalized', '66666666-6666-4666-8666-666666666666',
-    '66666666-6666-4666-8666-666666666665'
+    '66666666-6666-4666-8666-666666666665',
+    gen_random_uuid(), repeat('a', 64), 1,
+    '{"ok":true,"chapter_number":3,"checkpoint_attempt_id":"66666666-6666-4666-8666-666666666665","committed_canon_revision":1}'::jsonb
   )
 $$, 'worker-path commit accepted');
 
@@ -95,13 +98,16 @@ select lives_ok($$
   insert into public.chapter_state_commits (
     story_id, chapter_number, base_canon_revision, committed_canon_revision,
     state_delta_json, state_delta_schema_version, state_delta_hash,
-    generation_mode, actor_user_id, source_job_id, checkpoint_attempt_id
+    generation_mode, actor_user_id, source_job_id, checkpoint_attempt_id,
+    correlation_id, publication_payload_hash, publication_payload_schema_version, publication_result
   ) values (
     'test:state-commits', 4, 1, 2,
     '{"threads":{"touches":[]}}'::jsonb, 1,
     public.chapter_state_delta_hash_v1('{"threads":{"touches":[]}}'::jsonb),
     'personalized', '56000000-0000-4000-8000-000000000001', NULL,
-    '66666666-6666-4666-8666-666666666664'
+    '66666666-6666-4666-8666-666666666664',
+    gen_random_uuid(), repeat('a', 64), 1,
+    '{"ok":true,"chapter_number":4,"checkpoint_attempt_id":"66666666-6666-4666-8666-666666666664","committed_canon_revision":2}'::jsonb
   )
 $$, 'sync-path commit with NULL source_job_id accepted');
 
@@ -114,12 +120,15 @@ select throws_ok($$
   insert into public.chapter_state_commits (
     story_id, chapter_number, base_canon_revision, committed_canon_revision,
     state_delta_json, state_delta_schema_version, state_delta_hash,
-    generation_mode, source_job_id, checkpoint_attempt_id
+    generation_mode, source_job_id, checkpoint_attempt_id,
+    correlation_id, publication_payload_hash, publication_payload_schema_version, publication_result
   ) values (
     'test:state-commits', 3, 2, 3,
     '{"threads":{"touches":["t2"]}}'::jsonb, 1,
     public.chapter_state_delta_hash_v1('{"threads":{"touches":["t2"]}}'::jsonb),
-    'personalized', NULL, '66666666-6666-4666-8666-666666666663'
+    'personalized', NULL, '66666666-6666-4666-8666-666666666663',
+    gen_random_uuid(), repeat('a', 64), 1,
+    '{"ok":true,"chapter_number":3,"checkpoint_attempt_id":"66666666-6666-4666-8666-666666666663","committed_canon_revision":3}'::jsonb
   )
 $$, '23505', null, 'duplicate chapter with different revision rejected');
 
@@ -128,12 +137,15 @@ select throws_ok($$
   insert into public.chapter_state_commits (
     story_id, chapter_number, base_canon_revision, committed_canon_revision,
     state_delta_json, state_delta_schema_version, state_delta_hash,
-    generation_mode, source_job_id, checkpoint_attempt_id
+    generation_mode, source_job_id, checkpoint_attempt_id,
+    correlation_id, publication_payload_hash, publication_payload_schema_version, publication_result
   ) values (
     'test:state-commits', 5, 1, 2,
     '{"threads":{"touches":["t3"]}}'::jsonb, 1,
     public.chapter_state_delta_hash_v1('{"threads":{"touches":["t3"]}}'::jsonb),
-    'personalized', NULL, '66666666-6666-4666-8666-666666666662'
+    'personalized', NULL, '66666666-6666-4666-8666-666666666662',
+    gen_random_uuid(), repeat('a', 64), 1,
+    '{"ok":true,"chapter_number":5,"checkpoint_attempt_id":"66666666-6666-4666-8666-666666666662","committed_canon_revision":2}'::jsonb
   )
 $$, '23505', null, 'duplicate committed revision rejected');
 
@@ -142,12 +154,15 @@ select throws_ok($$
   insert into public.chapter_state_commits (
     story_id, chapter_number, base_canon_revision, committed_canon_revision,
     state_delta_json, state_delta_schema_version, state_delta_hash,
-    generation_mode, source_job_id, checkpoint_attempt_id
+    generation_mode, source_job_id, checkpoint_attempt_id,
+    correlation_id, publication_payload_hash, publication_payload_schema_version, publication_result
   ) values (
     'test:state-commits', 6, 1, 3,
     '{"threads":{"touches":["t4"]}}'::jsonb, 1,
     public.chapter_state_delta_hash_v1('{"threads":{"touches":["t4"]}}'::jsonb),
-    'personalized', NULL, '66666666-6666-4666-8666-666666666661'
+    'personalized', NULL, '66666666-6666-4666-8666-666666666661',
+    gen_random_uuid(), repeat('a', 64), 1,
+    '{"ok":true,"chapter_number":6,"checkpoint_attempt_id":"66666666-6666-4666-8666-666666666661","committed_canon_revision":3}'::jsonb
   )
 $$, '23514', null, 'committed revision must equal base + 1');
 
@@ -161,12 +176,15 @@ select throws_ok($$
   insert into public.chapter_state_commits (
     story_id, chapter_number, base_canon_revision, committed_canon_revision,
     state_delta_json, state_delta_schema_version, state_delta_hash,
-    generation_mode, source_job_id, checkpoint_attempt_id
+    generation_mode, source_job_id, checkpoint_attempt_id,
+    correlation_id, publication_payload_hash, publication_payload_schema_version, publication_result
   ) values (
     'test:state-commits', 7, 2, 3,
     '[1,2]'::jsonb, 1,
     'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
-    'personalized', NULL, '66666666-6666-4666-8666-666666666660'
+    'personalized', NULL, '66666666-6666-4666-8666-666666666660',
+    gen_random_uuid(), repeat('a', 64), 1,
+    '{"ok":true,"chapter_number":7,"checkpoint_attempt_id":"66666666-6666-4666-8666-666666666660","committed_canon_revision":3}'::jsonb
   )
 $$, '23514', null, 'non-object state delta rejected');
 
@@ -175,12 +193,15 @@ select throws_ok($$
   insert into public.chapter_state_commits (
     story_id, chapter_number, base_canon_revision, committed_canon_revision,
     state_delta_json, state_delta_schema_version, state_delta_hash,
-    generation_mode, source_job_id, checkpoint_attempt_id
+    generation_mode, source_job_id, checkpoint_attempt_id,
+    correlation_id, publication_payload_hash, publication_payload_schema_version, publication_result
   ) values (
     'test:state-commits', 8, 3, 4,
     '{"threads":{"touches":["t5"]}}'::jsonb, 1,
     'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
-    'personalized', NULL, '66666666-6666-4666-8666-666666666659'
+    'personalized', NULL, '66666666-6666-4666-8666-666666666659',
+    gen_random_uuid(), repeat('a', 64), 1,
+    '{"ok":true,"chapter_number":8,"checkpoint_attempt_id":"66666666-6666-4666-8666-666666666659","committed_canon_revision":4}'::jsonb
   )
 $$, '23514', null, 'caller-supplied hash mismatch rejected');
 
@@ -189,12 +210,15 @@ select throws_ok($$
   insert into public.chapter_state_commits (
     story_id, chapter_number, base_canon_revision, committed_canon_revision,
     state_delta_json, state_delta_schema_version, state_delta_hash,
-    generation_mode, source_job_id, checkpoint_attempt_id
+    generation_mode, source_job_id, checkpoint_attempt_id,
+    correlation_id, publication_payload_hash, publication_payload_schema_version, publication_result
   ) values (
     'test:state-commits', 9, 4, 5,
     '{"threads":{"touches":["t6"]}}'::jsonb, 2,
     public.chapter_state_delta_hash_v1('{"threads":{"touches":["t6"]}}'::jsonb),
-    'personalized', NULL, '66666666-6666-4666-8666-666666666658'
+    'personalized', NULL, '66666666-6666-4666-8666-666666666658',
+    gen_random_uuid(), repeat('a', 64), 1,
+    '{"ok":true,"chapter_number":9,"checkpoint_attempt_id":"66666666-6666-4666-8666-666666666658","committed_canon_revision":5}'::jsonb
   )
 $$, '23514', null, 'delta schema version 2 rejected');
 
@@ -207,12 +231,15 @@ select throws_ok($$
   insert into public.chapter_state_commits (
     story_id, chapter_number, base_canon_revision, committed_canon_revision,
     state_delta_json, state_delta_schema_version, state_delta_hash,
-    generation_mode, source_job_id, checkpoint_attempt_id
+    generation_mode, source_job_id, checkpoint_attempt_id,
+    correlation_id, publication_payload_hash, publication_payload_schema_version, publication_result
   ) values (
     'test:state-commits', 51, 5, 6,
     '{"threads":{"touches":["t7"]}}'::jsonb, 1,
     public.chapter_state_delta_hash_v1('{"threads":{"touches":["t7"]}}'::jsonb),
-    'personalized', NULL, '66666666-6666-4666-8666-666666666657'
+    'personalized', NULL, '66666666-6666-4666-8666-666666666657',
+    gen_random_uuid(), repeat('a', 64), 1,
+    '{"ok":true,"chapter_number":51,"checkpoint_attempt_id":"66666666-6666-4666-8666-666666666657","committed_canon_revision":6}'::jsonb
   )
 $$, '23514', null, 'chapter_number out of range rejected');
 
@@ -221,12 +248,15 @@ select throws_ok($$
   insert into public.chapter_state_commits (
     story_id, chapter_number, base_canon_revision, committed_canon_revision,
     state_delta_json, state_delta_schema_version, state_delta_hash,
-    generation_mode, source_job_id, checkpoint_attempt_id
+    generation_mode, source_job_id, checkpoint_attempt_id,
+    correlation_id, publication_payload_hash, publication_payload_schema_version, publication_result
   ) values (
     'test:state-commits', 10, 5, 6,
     '{"threads":{"touches":["t8"]}}'::jsonb, 1,
     public.chapter_state_delta_hash_v1('{"threads":{"touches":["t8"]}}'::jsonb),
-    'bogus', NULL, '66666666-6666-4666-8666-666666666656'
+    'bogus', NULL, '66666666-6666-4666-8666-666666666656',
+    gen_random_uuid(), repeat('a', 64), 1,
+    '{"ok":true,"chapter_number":10,"checkpoint_attempt_id":"66666666-6666-4666-8666-666666666656","committed_canon_revision":6}'::jsonb
   )
 $$, '23514', null, 'generation_mode outside (standard, personalized) rejected');
 
@@ -235,12 +265,15 @@ select throws_ok($$
   insert into public.chapter_state_commits (
     story_id, chapter_number, base_canon_revision, committed_canon_revision,
     state_delta_json, state_delta_schema_version, state_delta_hash,
-    generation_mode, source_job_id, checkpoint_attempt_id, commit_version
+    generation_mode, source_job_id, checkpoint_attempt_id, commit_version,
+    correlation_id, publication_payload_hash, publication_payload_schema_version, publication_result
   ) values (
     'test:state-commits', 11, 6, 7,
     '{"threads":{"touches":["t9"]}}'::jsonb, 1,
     public.chapter_state_delta_hash_v1('{"threads":{"touches":["t9"]}}'::jsonb),
-    'personalized', NULL, '66666666-6666-4666-8666-666666666655', 2
+    'personalized', NULL, '66666666-6666-4666-8666-666666666655', 2,
+    gen_random_uuid(), repeat('a', 64), 1,
+    '{"ok":true,"chapter_number":11,"checkpoint_attempt_id":"66666666-6666-4666-8666-666666666655","committed_canon_revision":7}'::jsonb
   )
 $$, '23514', null, 'commit_version 2 rejected');
 
@@ -249,12 +282,14 @@ select throws_ok($$
   insert into public.chapter_state_commits (
     story_id, chapter_number, base_canon_revision, committed_canon_revision,
     state_delta_json, state_delta_schema_version, state_delta_hash,
-    generation_mode, source_job_id, checkpoint_attempt_id
+    generation_mode, source_job_id, checkpoint_attempt_id,
+    correlation_id, publication_payload_hash, publication_payload_schema_version, publication_result
   ) values (
     'test:state-commits', 12, 7, 8,
     '{"threads":{"touches":["t10"]}}'::jsonb, 1,
     public.chapter_state_delta_hash_v1('{"threads":{"touches":["t10"]}}'::jsonb),
-    'personalized', NULL, NULL
+    'personalized', NULL, NULL,
+    gen_random_uuid(), repeat('a', 64), 1, NULL
   )
 $$, '23502', null, 'null checkpoint_attempt_id rejected');
 

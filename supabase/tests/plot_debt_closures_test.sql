@@ -204,7 +204,9 @@ select lives_ok($$
   where id = '11111111-1111-1111-1111-111111111111'
 $$, 'valid hex hash accepted');
 
--- V4 canonical structural lock order: E1, E2, R, S, J, L, checkpoint.
+-- V4 canonical structural lock order: E1, E2, S, STORY FOR SHARE, R, J, L,
+-- checkpoint (corrected in A1c.1: S before R so the capability gate + canon
+-- revision read are serialized before any row lock).
 select ok(
   position('hashtextextended(v_preflight.story_id || '':ending:''' in pg_get_functiondef('public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)'::regprocedure))
     < position('hashtextextended(v_preflight.story_id || '':''' in pg_get_functiondef('public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)'::regprocedure)),
@@ -216,9 +218,9 @@ select ok(
   'V4 acquires E2 before reader row'
 );
 select ok(
-  position('from public.reader_states rs' in pg_get_functiondef('public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)'::regprocedure))
-    < position('hashtextextended(v_preflight.story_id, 120712)' in pg_get_functiondef('public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)'::regprocedure)),
-  'V4 locks reader before story'
+  position('hashtextextended(v_preflight.story_id, 120712)' in pg_get_functiondef('public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)'::regprocedure))
+    < position('from public.reader_states rs' in pg_get_functiondef('public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)'::regprocedure)),
+  'V4 locks story before reader'
 );
 select ok(
   position('hashtextextended(v_preflight.story_id, 120712)' in pg_get_functiondef('public.publish_generation_job_chapter_v4(uuid,text,uuid,uuid,text,integer,text,jsonb,text,jsonb,jsonb,text,text,jsonb)'::regprocedure))

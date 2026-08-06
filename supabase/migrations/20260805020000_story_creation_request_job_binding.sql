@@ -9,6 +9,7 @@ create unique index if not exists story_creation_requests_job_idx
   where generation_job_id is not null;
 
 -- Align enqueue_generation_job_v1 policy: allow private OR unlisted for commercial owned stories
+-- Derived byte-for-byte from current main (20260728040000_enqueue_contract_provenance.sql)
 create or replace function public.enqueue_generation_job_v1(
   p_story_id text,
   p_chapter_number integer,
@@ -92,23 +93,92 @@ begin
     and (
       v_story.owner_user_id is distinct from v_user_id
       or v_story.visibility not in ('private', 'unlisted')
+      or v_story.story_mode not in ('personalized_ai', 'premium_instance')
     )
   ) then
-    raise exception using errcode = 'P0001', message = 'GENERATION_KIND_MISMATCH';
+    raise exception using errcode = 'P0001', message = 'GENERATION_JOB_CONFLICT';
   end if;
 
-  v_now := pg_catalog.clock_timestamp();
+  -- Story advisory lock.
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(p_story_id, 120712)
+  );
 
+  -- Reauthorize after waiting.
+  select s.*
+  into v_story
+  from public.stories as s
+  where s.id = p_story_id
+    and (
+      s.owner_user_id = v_user_id
+      or (
+        p_generation_kind = 'standard'
+        and s.visibility = 'public'
+        and exists (
+          select 1
+          from public.reader_states as rs
+          where rs.user_id = v_user_id
+            and rs.story_id = s.id
+        )
+      )
+    );
+
+  if not found then
+    raise exception using errcode = 'P0001', message = 'STORY_NOT_FOUND';
+  end if;
+
+  if (
+    p_generation_kind = 'standard'
+    and v_story.story_mode is distinct from 'standard'
+  ) or (
+    p_generation_kind = 'personalized'
+    and (
+      v_story.owner_user_id is distinct from v_user_id
+      or v_story.visibility not in ('private', 'unlisted')
+      or v_story.story_mode not in ('personalized_ai', 'premium_instance')
+    )
+  ) then
+    raise exception using errcode = 'P0001', message = 'GENERATION_JOB_CONFLICT';
+  end if;
+
+  -- Snapshot contract version for personalized mode.
+  if p_generation_kind = 'personalized' then
+    v_contract_version := v_story.story_contract_version;
+  else
+    v_contract_version := null;
+  end if;
+
+  -- Already complete check.
+  if exists (
+    select 1
+    from public.chapters as c
+    where c.story_id = p_story_id
+      and c.number = p_chapter_number
+  ) then
+    return pg_catalog.jsonb_build_object(
+      'alreadyComplete', true,
+      'jobId', null,
+      'correlationId', null,
+      'status', 'SUCCEEDED'
+    );
+  end if;
+
+  -- Active job check.
   select j.*
   into v_active
   from public.generation_jobs as j
   where j.story_id = p_story_id
     and j.chapter_number = p_chapter_number
     and j.status in ('QUEUED', 'RUNNING', 'RETRY_WAIT')
-    and j.deadline_at > v_now
   for update;
 
   if found then
+    if v_active.user_id is distinct from v_user_id
+      or v_active.generation_kind is distinct from p_generation_kind
+      or v_active.trigger_choice_id is distinct from p_trigger_choice_id then
+      raise exception using errcode = 'P0001', message = 'GENERATION_JOB_CONFLICT';
+    end if;
+
     return pg_catalog.jsonb_build_object(
       'alreadyComplete', false,
       'jobId', v_active.id,
@@ -119,7 +189,7 @@ begin
 
   v_job_id := pg_catalog.gen_random_uuid();
   v_correlation_id := pg_catalog.gen_random_uuid();
-  v_contract_version := v_story.story_contract_version;
+  v_now := pg_catalog.clock_timestamp();
 
   insert into public.generation_jobs (
     id,
@@ -169,7 +239,7 @@ $$;
 revoke all on function public.enqueue_generation_job_v1(text, integer, text, text) from public, anon, authenticated;
 grant execute on function public.enqueue_generation_job_v1(text, integer, text, text) to authenticated;
 
--- DB-authoritative binding primitive for Story Start Bab 1 (with controlled replacement)
+-- DB-authoritative binding primitive for Story Start Bab 1 (with controlled replacement & U -> M -> Q lock order)
 create or replace function public.bind_story_creation_request_job_v1(
   p_owner_user_id uuid,
   p_story_id text,
@@ -185,15 +255,19 @@ declare
   v_job public.generation_jobs%rowtype;
   v_old_job public.generation_jobs%rowtype;
   v_req public.story_creation_requests%rowtype;
+  v_res public.credit_reservations%rowtype;
   v_req_count integer;
   v_expected_kind text;
-  v_res_active boolean;
+  v_expected_ref text;
 begin
   if p_owner_user_id is null or p_story_id is null or p_generation_job_id is null then
     return pg_catalog.jsonb_build_object('ok', false, 'reason', 'INVALID_ARGUMENTS');
   end if;
 
-  -- 1. Validate exact job identity
+  -- 1. Financial user lock U (Must be FIRST before any M or Q lock)
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(p_owner_user_id::text));
+
+  -- 2. Validate exact job identity (new job MUST be QUEUED)
   select j.* into v_job
   from public.generation_jobs j
   where j.id = p_generation_job_id;
@@ -204,12 +278,12 @@ begin
     or v_job.chapter_number <> 1
     or v_job.generation_kind <> 'personalized'
     or v_job.trigger_choice_id is not null
-    or v_job.status not in ('QUEUED', 'RUNNING', 'AUTHORIZED')
+    or v_job.status <> 'QUEUED'
   then
     return pg_catalog.jsonb_build_object('ok', false, 'reason', 'JOB_PROVENANCE_MISMATCH');
   end if;
 
-  -- 2. Validate story mode, origin, and visibility
+  -- 3. Validate story mode, origin, and visibility
   select s.* into v_story
   from public.stories s
   where s.id = p_story_id;
@@ -224,8 +298,26 @@ begin
   end if;
 
   v_expected_kind := case when v_story.story_mode = 'premium_instance' then 'premium_clone' else 'personalized' end;
+  v_expected_ref := 'story-start:' || p_owner_user_id::text || ':' || p_story_id;
 
-  -- 3. Require EXACTLY ONE creation request matching expected request_kind
+  -- 4. Lock & Validate M (STORY_START credit reservation must be ACTIVE, canonical, unexpired, amount > 0)
+  select r.* into v_res
+  from public.credit_reservations r
+  where r.user_id = p_owner_user_id
+    and r.story_id = p_story_id
+    and r.chapter_number = 1
+    and r.reservation_kind = 'STORY_START'
+    and r.ref = v_expected_ref
+    and r.status = 'ACTIVE'
+    and r.expires_at > pg_catalog.clock_timestamp()
+    and r.amount > 0
+  for update;
+
+  if not found then
+    return pg_catalog.jsonb_build_object('ok', false, 'reason', 'STORY_START_RESERVATION_NOT_ACTIVE');
+  end if;
+
+  -- 5. Lock & Validate Q (story_creation_request)
   select count(*) into v_req_count
   from public.story_creation_requests r
   where r.owner_user_id = p_owner_user_id
@@ -243,7 +335,7 @@ begin
     and r.request_kind = v_expected_kind
   for update;
 
-  -- 4. Binding branch logic: Fresh (RESERVED) vs Replacement (WAITING_FOR_CREDITS)
+  -- 6. Binding branch logic: Fresh (RESERVED) vs Replacement (WAITING_FOR_CREDITS)
   if v_req.status = 'RESERVED' then
     if v_req.generation_job_id is not null and v_req.generation_job_id <> p_generation_job_id then
       return pg_catalog.jsonb_build_object('ok', false, 'reason', 'CREATION_REQUEST_ALREADY_BOUND');
@@ -258,7 +350,7 @@ begin
     return pg_catalog.jsonb_build_object('ok', true, 'story_id', p_story_id, 'job_id', p_generation_job_id, 'mode', 'FRESH');
 
   elsif v_req.status = 'WAITING_FOR_CREDITS' then
-    -- Controlled replacement requirement: old job must be terminal
+    -- Controlled replacement requirement: old job must exist and be terminal (FAILED or CANCELLED)
     if v_req.generation_job_id is null then
       return pg_catalog.jsonb_build_object('ok', false, 'reason', 'REPLACEMENT_PROVENANCE_MISSING');
     end if;
@@ -267,23 +359,8 @@ begin
     from public.generation_jobs j
     where j.id = v_req.generation_job_id;
 
-    if found and v_old_job.status not in ('FAILED', 'SUCCEEDED') then
+    if not found or v_old_job.status not in ('FAILED', 'CANCELLED') then
       return pg_catalog.jsonb_build_object('ok', false, 'reason', 'PREVIOUS_JOB_NOT_TERMINAL');
-    end if;
-
-    -- Controlled replacement requirement: STORY_START reservation must be ACTIVE again
-    select exists (
-      select 1 from public.credit_reservations cr
-      where cr.user_id = p_owner_user_id
-        and cr.story_id = p_story_id
-        and cr.chapter_number = 1
-        and cr.reservation_kind = 'STORY_START'
-        and cr.status = 'ACTIVE'
-        and cr.expires_at > pg_catalog.clock_timestamp()
-    ) into v_res_active;
-
-    if not v_res_active then
-      return pg_catalog.jsonb_build_object('ok', false, 'reason', 'STORY_START_RESERVATION_NOT_ACTIVE');
     end if;
 
     -- Replacement approved: update job binding and transition request back to RESERVED
@@ -306,3 +383,57 @@ $$;
 
 revoke all on function public.bind_story_creation_request_job_v1(uuid, text, uuid) from public, anon, authenticated;
 grant execute on function public.bind_story_creation_request_job_v1(uuid, text, uuid) to service_role;
+
+-- DB-authoritative RPC for transitioning story_creation_requests to WAITING_FOR_CREDITS
+create or replace function public.transition_story_creation_request_waiting_v1(
+  p_owner_user_id uuid,
+  p_story_id text,
+  p_request_kind text,
+  p_generation_job_id uuid
+) returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_req public.story_creation_requests%rowtype;
+begin
+  if p_owner_user_id is null or p_story_id is null or p_request_kind is null or p_generation_job_id is null then
+    return pg_catalog.jsonb_build_object('ok', false, 'reason', 'INVALID_ARGUMENTS');
+  end if;
+
+  -- 1. Financial user lock U
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(p_owner_user_id::text));
+
+  -- 2. Lock and validate exact request Q
+  select r.* into v_req
+  from public.story_creation_requests r
+  where r.owner_user_id = p_owner_user_id
+    and r.story_id = p_story_id
+    and r.request_kind = p_request_kind
+    and r.generation_job_id = p_generation_job_id
+  for update;
+
+  if not found then
+    return pg_catalog.jsonb_build_object('ok', false, 'reason', 'CREATION_REQUEST_NOT_FOUND');
+  end if;
+
+  if v_req.status <> 'RESERVED' then
+    return pg_catalog.jsonb_build_object('ok', false, 'reason', 'CREATION_REQUEST_INVALID_STATUS');
+  end if;
+
+  -- 3. Transition to WAITING_FOR_CREDITS
+  update public.story_creation_requests
+    set status = 'WAITING_FOR_CREDITS',
+        updated_at = pg_catalog.clock_timestamp()
+    where owner_user_id = v_req.owner_user_id
+      and request_kind = v_req.request_kind
+      and idempotency_key = v_req.idempotency_key;
+
+  return pg_catalog.jsonb_build_object('ok', true, 'status', 'WAITING_FOR_CREDITS', 'job_id', p_generation_job_id);
+end;
+$$;
+
+revoke all on function public.transition_story_creation_request_waiting_v1(uuid, text, text, uuid) from public, anon, authenticated;
+grant execute on function public.transition_story_creation_request_waiting_v1(uuid, text, text, uuid) to service_role;

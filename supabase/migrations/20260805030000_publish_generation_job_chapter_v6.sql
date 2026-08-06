@@ -35,9 +35,10 @@ declare
   v_canon_ref text;
   v_ledger_ref text;
   v_req_count integer;
-  v_intent_count integer;
   v_active_price integer;
   v_existing_ledger public.credit_ledger%rowtype;
+  v_starter_valid boolean;
+  v_expected_req_kind text;
 begin
   -- ═══════════════════════════════════════════════════════════════════════════
   -- 1. UNLOCKED PRE-READ: Derivation of lock keys and narrative routing only
@@ -116,28 +117,47 @@ begin
   -- Commercial Lock Order: U -> Narrative Locks -> M (reservation) -> I/Q (intent/request)
   -- ═══════════════════════════════════════════════════════════════════════════
 
-  -- Starter / Paid / Legacy included Bab 1-3
+  -- Starter Free included Bab 1-3: requires exact Starter identity proof
   if v_story.commercial_origin = 'STARTER_FREE' and p_chapter_number <= 3 then
+    select exists (
+      select 1 from public.account_commercial_states acs
+      where acs.user_id = v_job.user_id
+        and acs.starter_story_id = p_story_id
+        and acs.starter_claimed_at is not null
+    ) into v_starter_valid;
+
+    if not v_starter_valid then
+      raise exception using errcode = 'P0001', message = 'COMMERCIAL_FINALIZATION_CONFLICT';
+    end if;
+
     return v_pub_result;
   end if;
 
-  if (v_story.commercial_origin = 'PAID_START' or v_story.commercial_origin = 'LEGACY_GRANDFATHERED') and p_chapter_number <= 3 then
-    -- If Bab 1 and creation request is bound to THIS job, require exact paid creation proof below instead of skipping.
-    select count(*) into v_req_count
-    from public.story_creation_requests
-    where owner_user_id = v_job.user_id and story_id = p_story_id and generation_job_id = p_job_id;
-
-    if p_chapter_number <> 1 or v_req_count = 0 then
-      return v_pub_result;
-    end if;
+  -- Paid / Legacy included Bab 2-3
+  if (v_story.commercial_origin = 'PAID_START' or v_story.commercial_origin = 'LEGACY_GRANDFATHERED') and p_chapter_number between 2 and 3 then
+    return v_pub_result;
   end if;
 
   -- ---------------------------------------------------------------------------
-  -- CASE A: Bab 4+ Commercial Chapter Unlock Capture
+  -- CASE A: Bab 4+ Commercial Chapter Unlock Capture (STARTER_FREE, PAID_START, LEGACY_GRANDFATHERED)
   -- ---------------------------------------------------------------------------
   if p_chapter_number >= 4 then
-    if v_story.commercial_origin is distinct from 'PAID_START' and v_story.commercial_origin is distinct from 'LEGACY_GRANDFATHERED' then
+    if v_story.commercial_origin not in ('STARTER_FREE', 'PAID_START', 'LEGACY_GRANDFATHERED') then
       raise exception using errcode = 'P0001', message = 'STORY_START_PENDING';
+    end if;
+
+    -- If STARTER_FREE Bab4+, revalidate Starter account identity
+    if v_story.commercial_origin = 'STARTER_FREE' then
+      select exists (
+        select 1 from public.account_commercial_states acs
+        where acs.user_id = v_job.user_id
+          and acs.starter_story_id = p_story_id
+          and acs.starter_claimed_at is not null
+      ) into v_starter_valid;
+
+      if not v_starter_valid then
+        raise exception using errcode = 'P0001', message = 'COMMERCIAL_FINALIZATION_CONFLICT';
+      end if;
     end if;
 
     -- Fetch active price from DB
@@ -183,8 +203,8 @@ begin
       raise exception using errcode = 'P0001', message = 'COMMERCIAL_TRIGGER_CHOICE_MISMATCH';
     end if;
 
-    -- Fresh Capture Path
-    if v_reservation.status = 'ACTIVE' and v_intent.status in ('QUEUED', 'RUNNING', 'AUTHORIZED') then
+    -- Fresh Capture Path: REQUIREment 9 — intent status MUST BE EXACT 'QUEUED'
+    if v_reservation.status = 'ACTIVE' and v_intent.status = 'QUEUED' then
       if v_reservation.expires_at <= clock_timestamp() then
         raise exception using errcode = 'P0001', message = 'COMMERCIAL_RESERVATION_EXPIRED';
       end if;
@@ -260,6 +280,7 @@ begin
 
     v_canon_ref := 'story-start:' || v_job.user_id::text || ':' || p_story_id;
     v_ledger_ref := 'story-start:' || v_job.user_id::text || ':' || p_story_id;
+    v_expected_req_kind := case when v_story.story_mode = 'premium_instance' then 'premium_clone' else 'personalized' end;
 
     -- M: Lock credit_reservations FOR UPDATE
     select cr.* into v_reservation
@@ -276,6 +297,7 @@ begin
     from public.story_creation_requests r
     where r.owner_user_id = v_job.user_id
       and r.story_id = p_story_id
+      and r.request_kind = v_expected_req_kind
       and r.generation_job_id = p_job_id
     for update;
 

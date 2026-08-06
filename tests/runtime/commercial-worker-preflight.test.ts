@@ -180,4 +180,52 @@ describe('commercial-worker-preflight zero-provider dispatch assertions', () => 
     expect(mockResolvePreflight).toHaveBeenCalledTimes(1)
     expect(mockRunChapterGenerationAttempt).not.toHaveBeenCalled()
   })
+
+  it('fails preflight with ZERO provider calls when preflight returns DENIED for wrong DB generation_kind (JOB_STATE_MISMATCH)', async () => {
+    mockResolvePreflight.mockResolvedValueOnce({ status: 'DENIED', reason: 'JOB_STATE_MISMATCH' })
+
+    const result = await executeClaimedJob({
+      id: 'job-wrong-kind',
+      userId: 'user-1',
+      storyId: 'story-1',
+      chapterNumber: 4,
+      generationKind: 'personalized',
+      workerId: 'worker-1',
+      claimToken: 'token-1',
+      correlationId: 'corr-1',
+      attemptCount: 1,
+      maxAttempts: 4,
+      deadlineAt: new Date(Date.now() + 60000).toISOString(),
+      triggerChoiceId: 'c1',
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toBe('COMMERCIAL_PREFLIGHT_FAILED')
+    }
+    expect(mockRunChapterGenerationAttempt).not.toHaveBeenCalled()
+  })
+
+  it('fails preflight with ZERO provider calls when preflight returns DENIED for wrong DB trigger_choice_id mismatch', async () => {
+    mockResolvePreflight.mockResolvedValueOnce({ status: 'DENIED', reason: 'JOB_STATE_MISMATCH' })
+
+    const result = await executeClaimedJob({
+      id: 'job-wrong-trigger',
+      userId: 'user-1',
+      storyId: 'story-1',
+      chapterNumber: 4,
+      generationKind: 'personalized',
+      workerId: 'worker-1',
+      claimToken: 'token-1',
+      correlationId: 'corr-1',
+      attemptCount: 1,
+      maxAttempts: 4,
+      deadlineAt: new Date(Date.now() + 60000).toISOString(),
+      triggerChoiceId: 'choice-mismatched',
+    })
+
+    expect(result.ok).toBe(false)
+    expect(mockResolvePreflight).toHaveBeenCalledTimes(1)
+    expect(mockRunChapterGenerationAttempt).not.toHaveBeenCalled()
+  })
 })

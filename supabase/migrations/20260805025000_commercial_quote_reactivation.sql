@@ -78,11 +78,15 @@ begin
 
   -- Check existing reservation status
   if v_res.status = 'ACTIVE' and v_res.expires_at > clock_timestamp() then
-    return jsonb_build_object('ok', true, 'status', 'RESERVED', 'reactivated', false, 'amount', v_res.amount);
+    if v_res.amount = v_intent.quoted_credits then
+      return jsonb_build_object('ok', true, 'status', 'RESERVED', 'reactivated', false, 'amount', v_res.amount);
+    else
+      return jsonb_build_object('ok', false, 'reason', 'RESERVATION_AMOUNT_MISMATCH', 'reservation_amount', v_res.amount, 'intent_amount', v_intent.quoted_credits);
+    end if;
   end if;
 
   if v_res.status = 'CAPTURED' then
-    return jsonb_build_object('ok', true, 'status', 'ALREADY_CAPTURED', 'reactivated', false, 'amount', v_res.amount);
+    return jsonb_build_object('ok', false, 'reason', 'RESERVATION_ALREADY_CAPTURED', 'amount', v_res.amount);
   end if;
 
   if v_res.status not in ('EXPIRED', 'RELEASED') and not (v_res.status = 'ACTIVE' and v_res.expires_at <= clock_timestamp()) then

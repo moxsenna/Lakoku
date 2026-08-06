@@ -40,7 +40,7 @@ export async function evaluateCommercialWorkerPreflight(
   // Authoritative second-read of generation_jobs row (Requirement 4)
   const { data: jobRow, error: jobErr } = await db
     .from('generation_jobs')
-    .select('id, user_id, story_id, chapter_number, status, worker_id, claim_token')
+    .select('id, user_id, story_id, chapter_number, status, worker_id, claim_token, generation_kind, trigger_choice_id')
     .eq('id', input.jobId)
     .maybeSingle()
 
@@ -52,7 +52,9 @@ export async function evaluateCommercialWorkerPreflight(
     jobRow.claim_token !== input.claimToken ||
     jobRow.user_id !== input.userId ||
     jobRow.story_id !== input.storyId ||
-    jobRow.chapter_number !== input.chapterNumber
+    jobRow.chapter_number !== input.chapterNumber ||
+    jobRow.generation_kind !== 'personalized' ||
+    (jobRow.trigger_choice_id ?? null) !== (input.triggerChoiceId ?? null)
   ) {
     return { status: 'DENIED', reason: 'JOB_STATE_MISMATCH' }
   }
@@ -273,7 +275,12 @@ export async function evaluateCommercialWorkerPreflight(
       .eq('generation_job_id', input.jobId)
       .maybeSingle()
 
-    if (intentErr || !intent || intent.trigger_choice_id !== (input.triggerChoiceId ?? null)) {
+    if (
+      intentErr ||
+      !intent ||
+      (intent.trigger_choice_id ?? null) !== (jobRow.trigger_choice_id ?? null) ||
+      (intent.trigger_choice_id ?? null) !== (input.triggerChoiceId ?? null)
+    ) {
       return { status: 'DENIED', reason: 'COMMERCIAL_INTENT_NOT_BOUND' }
     }
 

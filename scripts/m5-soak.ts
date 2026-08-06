@@ -398,15 +398,19 @@ async function targetedTests(): Promise<void> {
     check('G4: callback membersihkan stale', !f2.some((x) => x.code === 'THREAD_STALE_UNADDRESSED'), f2)
   }
 
-  // Thread lifecycle: Bab 48 diblokir bila mystery utama non-RESOLVED.
+  // Thread lifecycle: Bab 49+ diblokir bila mystery utama non-RESOLVED.
+  // (Bab 48 = bab closure: mystery justru dikomit RESOLVED di delta bab itu,
+  // jadi gate thread deterministik mulai berlaku 49+; otoritas kebenaran
+  // closure Bab 48 = ledger plot-debt resolveDebtClosures.)
   {
     const threads: StoryThread[] = [
       { id: 'thread:warisan', title: 'main', status: 'PAYOFF_DUE', openedChapter: 1, lastTouchedChapter: 47, payoffWindow: 45, isMainMystery: true },
     ]
-    const f = checkChapter48Block(threads, 48)
-    check('G4: MAIN_MYSTERY_UNRESOLVED_AT_48 (CRITICAL)', f.some((x) => x.code === 'MAIN_MYSTERY_UNRESOLVED_AT_48' && x.severity === 'CRITICAL'), f)
+    const f49 = checkChapter48Block(threads, 49)
+    check('G4: MAIN_MYSTERY_UNRESOLVED_AT_48 (CRITICAL) di Bab 49+', f49.some((x) => x.code === 'MAIN_MYSTERY_UNRESOLVED_AT_48' && x.severity === 'CRITICAL'), f49)
+    check('G4: Bab 48 (bab closure) tidak diblokir dari snapshot pra-bab', checkChapter48Block(threads, 48).length === 0)
     const resolved = threads.map((t) => ({ ...t, status: 'RESOLVED' as const }))
-    check('G4: Bab 48 lolos bila mystery RESOLVED', checkChapter48Block(resolved, 48).length === 0)
+    check('G4: Bab 49 lolos bila mystery RESOLVED', checkChapter48Block(resolved, 49).length === 0)
   }
 
   // Status machine: transisi ilegal ditolak; ABANDONED butuh checkpoint.

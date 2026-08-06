@@ -54,6 +54,7 @@ import {
   type PlotDebtAuditInput,
   type PlotDebtAuditResult,
 } from '@/lib/story-engine/plot-debt'
+import { projectClosedDebts } from '@/lib/story-engine/plot-debt-closure'
 import {
   acquireGenerationLease,
   releaseGenerationLease,
@@ -983,6 +984,7 @@ async function generateNextPersonalizedChapterInner(
       attemptId: null,
       freshness,
       jobContext,
+      ...(living ? { includePublishedForReplay: true } : {}),
     })
 
     const reconcilePublishedCheckpoint = async () => {
@@ -1017,9 +1019,56 @@ async function generateNextPersonalizedChapterInner(
       }
     }
 
+    // M10-A1d: materialize + policy authority + validasi delta (living v1).
+    // Struktur proposal berasal dari kanon/proyeksi (koreksi #6 — model tidak
+    // pernah menentukan mutasi state); policy otoritas v1 dari blueprint
+    // (koreksi #2) — fail closed bila bukan schema-v1. Dihitung SEBELUM
+    // generation agar Layer A melihat advancement thread yang SAMA dengan
+    // delta yang akan dikomit (threadContext.advancedThreadIds) — check
+    // THREAD_PAYOFF_NOT_ADVANCED / THREAD_STALE_UNADDRESSED konsisten dengan
+    // state debt-backed, bukan hardcode [] (thread-audit gap).
+    // Pada resume (existingCheckpoint ada), delta tidak di-materialize ulang
+    // karena checkpoint schema-3 sudah menyimpan state_delta_json yang ter-validasi,
+    // dan kanon sudah berada pada revision N (mencoba re-apply ke snapshot advanced
+    // akan memicu error no-op/conflict).
+    let validatedStateDelta: ValidatedChapterStateDelta | null = null
+    let baseCanonRevision: number | null = null
+    if (living && !existingCheckpoint) {
+      const proposal = input.stateProposal ?? deriveStructuredStateProposalDefault({
+        storyId,
+        chapterNumber,
+        storyContract: contract,
+        effectivePlotDebtState: effectivePlotDebtState as EffectivePlotDebtState,
+      })
+      const candidate = materializeChapterStateCandidateV1({
+        storyId,
+        chapterNumber,
+        snapshot,
+        storyContract: contract,
+        effectivePlotDebtState: effectivePlotDebtState as EffectivePlotDebtState,
+        proposal,
+      })
+      const policy = resolvePolicyAuthorityFromBlueprint({ snapshot, chapterNumber, storyId })
+      validatedStateDelta = buildValidatedChapterStateDelta({
+        storyId,
+        chapterNumber,
+        snapshot,
+        storyContract: contract,
+        effectivePlotDebtState: effectivePlotDebtState as EffectivePlotDebtState,
+        proposedDelta: candidate,
+        policyOverride: policy,
+      })
+      baseCanonRevision = await (d.loadCanonStateRevision ?? defaultLoadCanonStateRevision)(storyId)
+    }
+
     const threadContext: ThreadContext = {
       threads: snapshot.threads,
-      advancedThreadIds: [],
+      advancedThreadIds: validatedStateDelta
+        ? [
+            ...validatedStateDelta.threads.touches,
+            ...validatedStateDelta.threads.transitions.map((t) => t.threadId),
+          ]
+        : [],
       opensNewThread: false,
     }
 
@@ -1107,10 +1156,32 @@ async function generateNextPersonalizedChapterInner(
         findings: result.findings,
         endingLocked: false,
       })
-      const closesPlotDebts = draft.closesPlotDebts ?? []
+      // M10-A1d: closures OTORITAS = delta tervalidasi (bukan sinyal draft —
+      // model prose-only, koreksi #6). V5 R4 membutuhkan
+      // state_delta.plotDebts.closures == audit_signals.closesPlotDebts EXACT
+      // (kanonikalisasi {closureForm,debtId}); draft deterministik tidak
+      // membawa closesPlotDebts, jadi delta adalah satu-satunya sumber yang
+      // konsisten dengan ledder yang akan dikomit.
+      const closesPlotDebts = living && validatedStateDelta
+        ? validatedStateDelta.plotDebts.closures.map((closure) => ({
+            debtId: closure.debtId,
+            closureForm: closure.closureForm,
+          }))
+        : (draft.closesPlotDebts ?? [])
+      // M10-A1d: audit closure-runway terhadap state SETELAH delta bab ini
+      // dikomit (ledger efektif pra-bab + closure bab ini) — konsisten dengan
+      // gate ledger resolver (`resolveDebtClosures`), bukan contract mentah
+      // (status statis 'open' selalu memicu MAIN_MYSTERY_OPEN di Bab 48+,
+      // padahal closure mystery dikomit tepat DI delta Bab 48).
+      const auditDebts = living && validatedStateDelta && effectivePlotDebtState
+        ? projectClosedDebts(contract.plotDebts, [
+            ...effectivePlotDebtState.closedDebtIds,
+            ...validatedStateDelta.plotDebts.closures.map((c) => c.debtId),
+          ])
+        : contract.plotDebts
       const audited = d.auditPlotDebts({
         chapterNumber,
-        debts: contract.plotDebts,
+        debts: auditDebts,
         opensNewThread: derived.opensNewThread,
         opensMajorMystery: derived.opensMajorMystery,
         opensNewConflict: derived.opensNewConflict,
@@ -1137,40 +1208,6 @@ async function generateNextPersonalizedChapterInner(
         reason: 'FAILED_REVIEW_REQUIRED',
         detail: { findings: audit.findings, reason: 'PLOT_DEBT_AUDIT_FAILED' },
       }
-    }
-
-    // M10-A1d: materialize + policy authority + validasi delta (living v1).
-    // Struktur proposal berasal dari kanon/proyeksi (koreksi #6 — model tidak
-    // pernah menentukan mutasi state); policy otoritas v1 dari blueprint
-    // (koreksi #2) — fail closed bila bukan schema-v1.
-    let validatedStateDelta: ValidatedChapterStateDelta | null = null
-    let baseCanonRevision: number | null = null
-    if (living) {
-      const proposal = input.stateProposal ?? deriveStructuredStateProposalDefault({
-        storyId,
-        chapterNumber,
-        storyContract: contract,
-        effectivePlotDebtState: effectivePlotDebtState as EffectivePlotDebtState,
-      })
-      const candidate = materializeChapterStateCandidateV1({
-        storyId,
-        chapterNumber,
-        snapshot,
-        storyContract: contract,
-        effectivePlotDebtState: effectivePlotDebtState as EffectivePlotDebtState,
-        proposal,
-      })
-      const policy = resolvePolicyAuthorityFromBlueprint({ snapshot, chapterNumber, storyId })
-      validatedStateDelta = buildValidatedChapterStateDelta({
-        storyId,
-        chapterNumber,
-        snapshot,
-        storyContract: contract,
-        effectivePlotDebtState: effectivePlotDebtState as EffectivePlotDebtState,
-        proposedDelta: candidate,
-        policyOverride: policy,
-      })
-      baseCanonRevision = await (d.loadCanonStateRevision ?? defaultLoadCanonStateRevision)(storyId)
     }
 
     throwIfAborted(jobContext?.signal)

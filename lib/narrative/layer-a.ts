@@ -29,6 +29,7 @@ import type {
 } from './types'
 import { buildAliasResolver, resolveMentions } from './alias'
 import { latestBlueprintForChapter } from './blueprint'
+import { AllowedChapterStatePolicyV1Schema } from './chapter-state-policy'
 
 export interface LayerAResult {
   ok: boolean
@@ -154,8 +155,13 @@ export function validateLayerA(
   }
 
   // --- Cek 4: state delta ⊆ allowed_state_delta.
+  // Blueprint dengan typed policy v1 (schemaVersion 1) = authority v1 yang
+  // diperiksa `checkDeltaAgainstPolicy` (fail-closed) di buildValidatedChapterStateDelta
+  // — Layer A flatten-key subset hanya utk legacy/v0 blueprint shape, bukan v1.
   const blueprint = latestBlueprintForChapter(snapshot, target)
-  if (blueprint) {
+  const blueprintIsTypedPolicyV1 =
+    blueprint !== null && AllowedChapterStatePolicyV1Schema.safeParse(blueprint.allowedStateDelta).success
+  if (blueprint && !blueprintIsTypedPolicyV1) {
     const allowed = new Set(flattenKeys(blueprint.allowedStateDelta))
     const proposed = flattenKeys(draft.proposedStateDelta)
     for (const key of proposed) {
@@ -168,7 +174,7 @@ export function validateLayerA(
         })
       }
     }
-  } else if (flattenKeys(draft.proposedStateDelta).length > 0) {
+  } else if (!blueprint && flattenKeys(draft.proposedStateDelta).length > 0) {
     findings.push({
       code: 'BLUEPRINT_MISSING',
       severity: 'CRITICAL',

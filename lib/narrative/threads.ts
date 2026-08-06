@@ -180,14 +180,21 @@ export function validateThreadLifecycle(args: {
 }
 
 /**
- * Gate keras publish Bab 48 (deterministik):
+ * Gate keras publish Bab 48+ (deterministik):
  * diblokir bila ada thread mystery utama berstatus non-RESOLVED.
+ *
+ * Bab closure (48) sendiri TIDAK diblokir dari snapshot pra-bab: pada Bab 48
+ * closure mystery justru dikomit DI state bab itu (status thread debt-backed
+ * → RESOLVED lewat operasi closure). Authority kebenaran closure = ledger
+ * plot-debt (`resolveDebtClosures`: MAIN_MYSTERY_UNRESOLVED on chapter >= 48
+ * terhadap proyeksi yang memuat closure bab ini) — gate thread ini adalah
+ * proxy deterministik untuk bab-bab SETELAH bab resolusi (49+).
  */
 export function checkChapter48Block(
   threads: StoryThread[],
   chapter: number,
 ): Finding[] {
-  if (chapter < MAIN_MYSTERY_BLOCK_CHAPTER) return []
+  if (chapter <= MAIN_MYSTERY_BLOCK_CHAPTER) return []
   const unresolvedMain = threads.filter(
     (t) => t.isMainMystery && t.status !== 'RESOLVED',
   )

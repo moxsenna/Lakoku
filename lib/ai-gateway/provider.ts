@@ -225,6 +225,10 @@ function buildParagraphs(
     `Aku mengangguk pelan.`,
     `"Kalau salah, kita bayar mahal," katanya.`,
     `Suara di luar meredup.`,
+    // Anchor kata yang dipakai label pilihan (kunci/papan/lorong) supaya
+    // grounding check choice-quality lolos — prose selalu memuat benda yang
+    // dijadikan pilihan pembaca.
+    `Petunjuk kunci di balik papan masih samar di lorong.`,
     `Aku melangkah maju.`,
     `Nafas ${other} terdengar pendek.`,
     `"Bilang sekarang," desakku.`,

@@ -388,6 +388,10 @@ export async function buildChoiceBranch(
         chapterBrief: {
           ...providerInput.chapterBrief,
           chapterGoal: repairGoal,
+          // ChapterBriefSchema alias `goals` WAJIB tetap sinkron dgn chapterGoal
+          // (superRefine: goals === [chapterGoal]); tanpanya repair brief selalu
+          // ditolak & berhenti di REPAIR_EXHAUSTED.
+          goals: [repairGoal],
           mustNotInclude: providerInput.chapterBrief.mustNotInclude.slice(0, 16),
         },
       }

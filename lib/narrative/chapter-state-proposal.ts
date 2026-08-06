@@ -466,30 +466,41 @@ export function deterministicActRollupSummary(
 
 // ---------- Helpers ----------
 
+// ---------- Act rollup state delta key separator ----------
+//
+// Composite key arrays (knowledgeGrantKeys, characterStatusTransitions, ...)
+// memakai pemisah JSONB-safe. `\u0000` legal di TEXT tapi TIDAK di JSONB
+// (Postgres 22P05 saat konversi) — rollup stateDelta dipersist ke
+// `act_rollups.state_delta` (jsonb), jadi pemisah harus aman di JSONB.
+export const ACT_ROLLUP_KEY_SEPARATOR = '\u001f'
+
 /**
  * StateDelta agregat act: id/keys kanonik dari semua op boundary bab.
- * Konvensi key gabungan mengikuti dedupe `\u0000` di ChapterStateDeltaV1Schema.
+ * Konvensi key gabungan mengikuti dedupe `\u0000` di ChapterStateDeltaV1Schema
+ * untuk kategori root delta; array rollup memakai pemisah JSONB-safe
+ * (ACT_ROLLUP_KEY_SEPARATOR) karena rollup stateDelta tersimpan di jsonb.
  */
 function buildRollupStateDelta(delta: ChapterStateDeltaV1): ActRollupStateDeltaV1 {
+  const sep = ACT_ROLLUP_KEY_SEPARATOR
   return {
     factIdsAdded: delta.facts.add.map((f) => f.id),
     factIdsPaidOff: [...delta.facts.markPaidOff],
     knowledgeGrantKeys: delta.knowledge.grants.map(
-      (grant) => `${grant.characterId}\u0000${grant.factId}`,
+      (grant) => `${grant.characterId}${sep}${grant.factId}`,
     ),
     revealedSecretIds: [...delta.secrets.revealIds],
     characterStatusTransitions: delta.characters.statusChanges.map(
-      (change) => `${change.characterId}\u0000${change.from}\u0000${change.to}`,
+      (change) => `${change.characterId}${sep}${change.from}${sep}${change.to}`,
     ),
     touchedThreadIds: [...delta.threads.touches],
     threadTransitions: delta.threads.transitions.map(
-      (transition) => `${transition.threadId}\u0000${transition.from}\u0000${transition.to}`,
+      (transition) => `${transition.threadId}${sep}${transition.from}${sep}${transition.to}`,
     ),
     plotDebtProgressKeys: delta.plotDebts.progress.map(
-      (progress) => `${progress.debtId}\u0000${progress.milestoneChapter}`,
+      (progress) => `${progress.debtId}${sep}${progress.milestoneChapter}`,
     ),
     plotDebtClosureIds: delta.plotDebts.closures.map(
-      (closure) => `${closure.debtId}\u0000${closure.closureForm}`,
+      (closure) => `${closure.debtId}${sep}${closure.closureForm}`,
     ),
   }
 }

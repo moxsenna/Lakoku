@@ -260,7 +260,9 @@ async function callCheckpointRpcV3(
 ): Promise<CheckpointMutationResult> {
   const client = createAdminClient()
   const { data, error } = await client.rpc(name, payload)
-  if (error) return checkpointWriteFailure(error)
+  if (error) {
+    return checkpointWriteFailure(error)
+  }
   const raw = RawLivingCheckpointResultSchema.parse(data)
   return adaptLivingCheckpointResult(raw, successOutcome, expectedCheckpointAttemptId)
 }
@@ -432,7 +434,9 @@ function mapRpcError(error: { message?: unknown; code?: unknown }): GenerationJo
 async function callRpcSchema3(name: string, payload: Record<string, unknown>): Promise<unknown> {
   const client = createAdminClient()
   const { data, error } = await client.rpc(name, payload)
-  if (error) throw mapRpcError(error)
+  if (error) {
+    throw mapRpcError(error)
+  }
   return data
 }
 

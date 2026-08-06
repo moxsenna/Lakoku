@@ -104,22 +104,25 @@ export async function loadUsableProseCheckpoint(args: {
   attemptId?: string | null
   freshness?: import('./chapter-generation-checkpoint.pure').CheckpointFreshnessContext
   jobContext?: GenerationJobExecutionContext | null
+  includePublishedForReplay?: boolean
 }): Promise<ChapterGenerationCheckpoint | null> {
   if (!isChoiceDurableCheckpointEnabled()) return null
   try {
     const db = createAdminClient()
     const nowIso = new Date().toISOString()
+    const statuses = [
+      'PROSE_READY',
+      'CHOICES_RETRY_WAIT',
+      'QUEUED_CHOICES',
+      'RUNNING_CHOICES',
+      ...(args.includePublishedForReplay ? ['PUBLISHED'] : []),
+    ]
     let query = db
       .from('chapter_generation_checkpoints')
       .select('*')
       .eq('story_id', args.storyId)
       .eq('chapter_number', args.chapterNumber)
-      .in('status', [
-        'PROSE_READY',
-        'CHOICES_RETRY_WAIT',
-        'QUEUED_CHOICES',
-        'RUNNING_CHOICES',
-      ])
+      .in('status', statuses)
       .gt('expires_at', nowIso)
       .order('updated_at', { ascending: false })
       .limit(MAX_CHECKPOINT_LOOKUP_CANDIDATES)
@@ -131,12 +134,7 @@ export async function loadUsableProseCheckpoint(args: {
         .eq('story_id', args.storyId)
         .eq('chapter_number', args.chapterNumber)
         .eq('attempt_id', args.attemptId)
-        .in('status', [
-          'PROSE_READY',
-          'CHOICES_RETRY_WAIT',
-          'QUEUED_CHOICES',
-          'RUNNING_CHOICES',
-        ])
+        .in('status', statuses)
         .gt('expires_at', nowIso)
         .order('updated_at', { ascending: false })
         .limit(MAX_CHECKPOINT_LOOKUP_CANDIDATES)
@@ -164,7 +162,8 @@ export async function loadUsableProseCheckpoint(args: {
     const candidates = data.slice(0, MAX_CHECKPOINT_LOOKUP_CANDIDATES)
     for (const row of candidates) {
       const cp = rowToCheckpoint(row as Record<string, unknown>)
-      if (!cp || !isCheckpointUsableForChoiceRetry(cp)) continue
+      if (!cp) continue
+      if (!args.includePublishedForReplay && !isCheckpointUsableForChoiceRetry(cp)) continue
 
       // Reuse for generation always needs full current provenance. Callers that
       // only inspect chapter status must use status evidence, not reusable prose.

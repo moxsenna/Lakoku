@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { latestBlueprintForChapter } from '@/lib/narrative/blueprint'
 import type { CanonSnapshot } from '@/lib/narrative/types'
 import type { EffectivePlotDebtState } from '@/lib/narrative/plot-debt-effective-state'
 import { resolveEnding } from './ending-resolver'
@@ -256,9 +257,9 @@ export function buildChapterBrief(input: BuildChapterBriefInput): ChapterBrief {
   )
   if (!target) throw new Error(`Missing story contract target for chapter ${chapterNumber}.`)
 
-  const blueprint = snapshot.blueprints.find(
-    (candidate) => candidate.chapterNumber === chapterNumber,
-  )
+  // Otoritas tunggal (M10-A closure): versi tertinggi menang, sama seperti
+  // compiler (latestBlueprintForChapter). Bukan `.find()` pertama.
+  const blueprint = latestBlueprintForChapter(snapshot, chapterNumber)
   if (!blueprint) throw new Error(`Missing canon blueprint for chapter ${chapterNumber}.`)
 
   const openDebts = storyContract.plotDebts.filter((debt) => debt.status !== 'closed')

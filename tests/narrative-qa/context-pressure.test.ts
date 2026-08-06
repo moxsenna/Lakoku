@@ -107,8 +107,8 @@ describe('context-pressure-audit — stress budget totalBudget=4000', () => {
   })
 })
 
-describe('context-pressure-audit — WRITER_CONTEXT_WHOLE_SECTION_EVICTION (M10-A/R1)', () => {
-  it('layer-3 > 4800 char -> HIGH; timeline evict lebih dulu (whole section)', () => {
+describe('context-pressure-audit — WRITER_CONTEXT_GRANULAR_TRIM_NOT_RECORDED (M10-A closure)', () => {
+  it('layer-3 > 4800 tanpa layerEviction -> MEDIUM (trim granular terjadi tanpa rekaman)', () => {
     const finding = analyzeContextSample(contextSample({
       chapter: 50,
       writerLayer3: {
@@ -117,45 +117,45 @@ describe('context-pressure-audit — WRITER_CONTEXT_WHOLE_SECTION_EVICTION (M10-
         threadsChars: 800,
         charLimit: 4800,
       },
-    })).find((f) => f.code === 'WRITER_CONTEXT_WHOLE_SECTION_EVICTION')
+    })).find((f) => f.code === 'WRITER_CONTEXT_GRANULAR_TRIM_NOT_RECORDED')
 
     expect(finding).toBeDefined()
-    expect(finding?.severity).toBe('HIGH')
+    expect(finding?.severity).toBe('MEDIUM')
     expect(detailOf(finding as NonNullable<typeof finding>).layer3TotalChars).toBe(5300)
-    expect(detailOf(finding as NonNullable<typeof finding>).evictedSections).toEqual(['timeline'])
   })
 
-  it('facts+threads masih > limit setelah timeline evict -> facts ikut evict', () => {
+  it('layer-3 > 4800 DENGAN layerEviction granular + trimmedToLimit -> tidak ada finding (closure)', () => {
+    const findings = analyzeContextSample(contextSample({
+      chapter: 50,
+      writerLayer3: {
+        timelineChars: 320,
+        factsChars: 14000,
+        threadsChars: 200,
+        rollupsChars: 120,
+        charLimit: 4800,
+        layerEviction: { timeline: 0, facts: 24, threads: 0, rollups: 0, trimmedToLimit: true },
+      },
+    }))
+    expect(findings.some((f) => f.code === 'WRITER_CONTEXT_GRANULAR_TRIM_NOT_RECORDED')).toBe(false)
+  })
+
+  it('layerEviction hadir tapi trimmedToLimit false -> MEDIUM (trim belum selesai)', () => {
     const finding = analyzeContextSample(contextSample({
       chapter: 50,
       writerLayer3: {
-        timelineChars: 600,
-        factsChars: 4200,
-        threadsChars: 900,
+        timelineChars: 320,
+        factsChars: 14000,
+        threadsChars: 200,
         charLimit: 4800,
+        layerEviction: { timeline: 0, facts: 10, threads: 0, rollups: 0, trimmedToLimit: false },
       },
-    })).find((f) => f.code === 'WRITER_CONTEXT_WHOLE_SECTION_EVICTION')
+    })).find((f) => f.code === 'WRITER_CONTEXT_GRANULAR_TRIM_NOT_RECORDED')
 
     expect(finding).toBeDefined()
-    expect(detailOf(finding as NonNullable<typeof finding>).evictedSections).toEqual(['timeline', 'facts'])
+    expect(finding?.severity).toBe('MEDIUM')
   })
 
-  it('threads masih > limit setelah timeline+facts evict -> threads ikut evict', () => {
-    const finding = analyzeContextSample(contextSample({
-      chapter: 50,
-      writerLayer3: {
-        timelineChars: 300,
-        factsChars: 400,
-        threadsChars: 5000,
-        charLimit: 4800,
-      },
-    })).find((f) => f.code === 'WRITER_CONTEXT_WHOLE_SECTION_EVICTION')
-
-    expect(finding).toBeDefined()
-    expect(detailOf(finding as NonNullable<typeof finding>).evictedSections).toEqual(['timeline', 'facts', 'threads'])
-  })
-
-  it('layer-3 <= 4800 char -> tidak ada eviction writer (dibedakan dari compiler budget pressure)', () => {
+  it('layer-3 <= 4800 char -> tidak ada finding writer trim', () => {
     const findings = analyzeContextSample(contextSample({
       chapter: 50,
       writerLayer3: {
@@ -165,11 +165,11 @@ describe('context-pressure-audit — WRITER_CONTEXT_WHOLE_SECTION_EVICTION (M10-
         charLimit: 4800,
       },
     }))
-    expect(findings.some((f) => f.code === 'WRITER_CONTEXT_WHOLE_SECTION_EVICTION')).toBe(false)
+    expect(findings.some((f) => f.code === 'WRITER_CONTEXT_GRANULAR_TRIM_NOT_RECORDED')).toBe(false)
   })
 
-  it('tanpa writerLayer3 input -> tidak ada finding writer eviction', () => {
+  it('tanpa writerLayer3 input -> tidak ada finding writer trim', () => {
     const findings = analyzeContextSample(contextSample({ chapter: 50 }))
-    expect(findings.some((f) => f.code === 'WRITER_CONTEXT_WHOLE_SECTION_EVICTION')).toBe(false)
+    expect(findings.some((f) => f.code === 'WRITER_CONTEXT_GRANULAR_TRIM_NOT_RECORDED')).toBe(false)
   })
 })

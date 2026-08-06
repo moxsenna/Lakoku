@@ -13,7 +13,10 @@
  */
 
 import type { CanonSnapshot, ChapterBlueprint } from '@/lib/narrative/types'
-import type { ContinuationContext } from '@/lib/narrative/continuation-context'
+import type {
+  ContinuationActRollup,
+  ContinuationContext,
+} from '@/lib/narrative/continuation-context'
 import type { PreProseChapterBrief } from '@/lib/story-engine/pre-prose-brief'
 
 export const NADIA_RAKA_STORY_ID = 'story-nadia-raka'
@@ -82,6 +85,9 @@ const SHARED_CONTINUATION = {
     { chapterNumber: 1, ordinal: 1, description: 'Nadia mengonfrontasi Raka di galeri soal lukisan yang hilang' },
   ],
   mustNotReveal: [],
+  storyAnchors: null,
+  actRollups: [] as ContinuationActRollup[],
+  lockedEndingKey: null,
 } as const
 
 /**

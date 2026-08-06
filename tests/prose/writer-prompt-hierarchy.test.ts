@@ -28,6 +28,9 @@ describe('buildWriterPrompt - Prompt Hierarchy & Continuation Context', () => {
     anchorFacts: [{ id: 'f1', statement: 'Fakta 1: Lukisan hilang', establishedChapter: 1, loadBearing: true }],
     recentTimeline: [{ chapterNumber: 1, ordinal: 1, description: 'Nadia masuk galeri' }],
     mustNotReveal: ['Secret X'],
+    storyAnchors: null,
+    actRollups: [],
+    lockedEndingKey: null,
   }
 
   it('menyusun 5 lapis hierarki sesuai urutan kontrak', () => {

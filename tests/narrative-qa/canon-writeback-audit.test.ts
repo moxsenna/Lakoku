@@ -1,14 +1,17 @@
 /**
  * M10-A/R1 — Living Canon writeback detector.
  *
- * BLOCKER: publishChapterV2 (sync) dan publishGenerationJobChapterV4 (worker)
- * sama-sama TIDAK membawa canon delta (facts/knowledge/secrets/timeline/thread
- * transitions/character states/act rollup). loadCanonSnapshot hanya membaca canon
- * hasil authoring — Story Bible bootstrap/read-only, tidak pernah berevolusi.
+ * POST-M10-A CLOSURE: jalur v1 (publish_chapter_state_v3 sync /
+ * publish_generation_job_chapter_v5 worker) membawa canon delta lewat
+ * apply_validated_chapter_state_v1 di migration
+ * 20260805020000_living_canon_publication_primitives.sql. Jalur v0 legacy
+ * (publishChapterV2 / publishGenerationJobChapterV4) tetap draft-only.
+ * Detector kini regression guard: BLOCKER hanya menembak saat sample melaporkan
+ * TIDAK ada writeback canon di jalur manapun (v2, v4, dan tanpa runtime writer).
  *
  * THREAD follow-up (HIGH): THREAD_ADVANCEMENT_SIGNAL_DISCONNECTED — child dari
- * umbrella BLOCKER ini (sinyal draft hardcoded, thread state tidak persist ke
- * story_threads).
+ * umbrella BLOCKER ini; v1 bridge membawa advancedThreadIds delta-derived, v0
+ * masih hardcode sinyal kosong (PARITY_RISK).
  */
 import { describe, expect, it } from 'vitest'
 import {
@@ -55,7 +58,7 @@ describe('canon-writeback-audit — LIVING_CANON_WRITEBACK_MISSING', () => {
     const sources = CANON_WRITEBACK_EVIDENCE.map((e) => e.source)
     expect(sources).toContain('lib/runtime/lifecycle.ts :: publishChapterV2')
     expect(sources).toContain('lib/runtime/generation-jobs.ts :: publishGenerationJobChapterV4')
-    expect(sources.some((s) => s.includes('publish_generation_job_chapter_v4_common_checkpoint.sql'))).toBe(true)
+    expect(sources.some((s) => s.includes('20260805020000_living_canon_publication_primitives.sql'))).toBe(true)
     expect(sources).toContain('lib/narrative/loader.ts :: loadCanonSnapshot')
   })
 })

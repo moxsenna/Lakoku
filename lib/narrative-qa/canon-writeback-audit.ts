@@ -3,26 +3,36 @@
  *
  * Answers one question: do the publish paths carry a Living Canon delta (facts,
  * knowledge, secrets, timeline, thread transitions, character states, act rollup,
- * canon delta)? End-to-end tracing says NO on both publish paths; the Story
- * Bible stays a bootstrap/read model and never evolves after chapter events.
+ * canon delta)? POST-M10-A closure: YES on the personalized living-canon v1 path —
+ * publish_chapter_state_v3 (sync) and publish_generation_job_chapter_v5 (worker)
+ * both render apply_validated_chapter_state_v1, which atomically writes
+ * facts_ledger, knowledge_scopes, timeline_events, character_states, story_threads,
+ * act_rollups, reader_plot_debt_progress, and closures. The v0/legacy paths
+ * (publish_chapter_v2 / publish_generation_job_chapter_v4) still publish
+ * draft-only payloads and are out of living-canon v1 scope. The BLOCKER fires now
+ * only as a regression guard when a sample reports no canon writeback on any path.
  *
  * Evidence cited (source strings):
- *   - lib/runtime/lifecycle.ts :: publishChapterV2 — RPC payload is
- *     { story, chapter, title, paragraphs, choicePrompt, choices, outcomes,
- *       lease, idempotency }; NO facts/knowledge/secrets/timeline/thread
- *     transitions/character states/act rollup/canon delta.
- *   - lib/runtime/generation-jobs.ts :: publishGenerationJobChapterV4 — worker V4
- *     payload is { job/worker/claim/lease, story/chapter/title/paragraphs,
- *     choicePrompt/choices/outcomes, ending key/name, closures }; no Living Canon
- *     delta fields.
- *   - supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql
- *     :: publish_generation_job_chapter_v4 — receives chapter + story idempotency
- *     + closures + ending lock; no canon delta parameter.
- *   - lib/narrative/loader.ts :: loadCanonSnapshot — the canon is read-only after
- *     authoring replace (no runtime mutation for facts/timeline/act_rollups).
+ *   - supabase/migrations/20260805020000_living_canon_publication_primitives.sql
+ *     :: apply_validated_chapter_state_v1 — the SHARED atomic state applier:
+ *     facts_ledger, knowledge_scopes, timeline_events, character_states,
+ *     story_threads (incl. thread transitions), act_rollups (upsert at act
+ *     boundaries), reader_plot_debt_progress, closures.
+ *   - supabase/migrations/20260805020000_living_canon_publication_primitives.sql
+ *     :: publish_chapter_state_v3 (sync, receives p_ending_key/p_ending_name so the
+ *     chapter-45 ending lock is committed atomically) and
+ *     publish_generation_job_chapter_v5 / transition_checkpoint_published_atomic_v5
+ *     (worker) — both call the shared applier with the validated schema-3 delta.
+ *   - lib/runtime/lifecycle.ts :: publishChapterV2 — legacy sync v0: RPC payload is
+ *     { story, chapter, title, paragraphs, choicePrompt, choices, outcomes, lease,
+ *       idempotency }; NO facts/knowledge/secrets/timeline/thread transitions/
+ *     character states/act rollup/canon delta (out of v1 scope).
+ *   - lib/runtime/generation-jobs.ts :: publishGenerationJobChapterV4 — legacy
+ *     worker v0 payload; no Living Canon delta (out of v1 scope).
  *
- * THREAD follow-up (HIGH, child of this BLOCKER): the thread-signal path is also
- * disconnected — see lib/narrative-qa/thread-audit.ts and evidence below.
+ * THREAD follow-up (HIGH, child of this BLOCKER): on the v1 path the thread-signal
+ * bridge now carries delta-derived advancedThreadIds; the v0 path still hardcodes
+ * empty signals — see lib/narrative-qa/thread-audit.ts.
  */
 
 import type {
@@ -32,46 +42,53 @@ import type {
 
 export const CANON_WRITEBACK_EVIDENCE: StructuredEvidence[] = [
   {
+    source:
+      'supabase/migrations/20260805020000_living_canon_publication_primitives.sql :: apply_validated_chapter_state_v1',
+    evidenceClass: 'SOURCE_TRACE',
+    observation:
+      'M10-A closure (LIVING_CANON_WRITEBACK_MISSING): the shared atomic applier writes facts_ledger, knowledge_scopes, timeline_events, character_states, story_threads (incl. transitions), act_rollups (upsert at act boundary), reader_plot_debt_progress, actor closures — the Story Bible evolves after chapter events on the v1 path.',
+  },
+  {
+    source:
+      'supabase/migrations/20260805020000_living_canon_publication_primitives.sql :: publish_chapter_state_v3 / publish_generation_job_chapter_v5 / transition_checkpoint_published_atomic_v5',
+    evidenceClass: 'SOURCE_TRACE',
+    observation:
+      'M10-A closure: publish_chapter_state_v3 (sync) receives p_ending_key/p_ending_name so the chapter-45 ending lock is committed atomically with the canon; publish_generation_job_chapter_v5 / transition_checkpoint_published_atomic_v5 (worker) receive the validated schema-3 delta and both invoke apply_validated_chapter_state_v1.',
+  },
+  {
     source: 'lib/runtime/lifecycle.ts :: publishChapterV2',
     evidenceClass: 'SOURCE_TRACE',
     observation:
-      'publish_chapter_v2 RPC payload fields: storyId, chapterNumber, title, paragraphs, choicePrompt, choices, outcomes, leaseId, idempotencyKey. No facts/knowledge/secrets/timeline/thread-transitions/character-states/act-rollup/canon-delta.',
+      'Legacy v0 sync path (unchanged, out of living-canon v1 scope): publish_chapter_v2 RPC payload fields are storyId, chapterNumber, title, paragraphs, choicePrompt, choices, outcomes, leaseId, idempotencyKey — draft-only, no canon delta.',
   },
   {
     source: 'lib/runtime/generation-jobs.ts :: publishGenerationJobChapterV4',
     evidenceClass: 'SOURCE_TRACE',
     observation:
-      'publish_generation_job_chapter_v4 RPC payload fields: jobId, workerId, claimToken, leaseId, storyId, chapterNumber, title, paragraphs, choicePrompt, choices, outcomes, endingKey/endingName, closures. No Living Canon delta.',
-  },
-  {
-    source:
-      'supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4',
-    evidenceClass: 'SOURCE_TRACE',
-    observation:
-      'RPC signature receives chapter + story idempotency + closures + ending lock; it does not accept a canon delta. The canon tables (facts_ledger, timeline_events, story_threads, act_rollups) are not written by the publish path.',
+      'Legacy v0 worker path (unchanged, out of v1 scope): publish_generation_job_chapter_v4 RPC payload is jobId, workerId, claimToken, leaseId, storyId, chapterNumber, title, paragraphs, choicePrompt, choices, outcomes, endingKey/endingName, closures — no Living Canon delta.',
   },
   {
     source: 'lib/narrative/loader.ts :: loadCanonSnapshot',
     evidenceClass: 'SOURCE_TRACE',
     observation:
-      'loadCanonSnapshot is the only canon read path; it reads tables written only by authoring/contract persistence (no runtime writeback). Story Bible = bootstrap/read model.',
+      'loadCanonSnapshot is the read path; the canon is written by authoring/contract persistence AND by the v1 applier. Story Bible is no longer bootstrap+read-only on the personalized v1 path.',
   },
 ]
 
 export interface LivingCanonWritebackSample {
-  /** publishChapterV2 payload carries a Living Canon delta? */
+  /** publishChapterV2 payload carries a Living Canon delta? (v0 legacy — false today) */
   v2CarriesCanonDelta: boolean
-  /** publishGenerationJobChapterV4 payload carries a Living Canon delta? */
+  /** publishGenerationJobChapterV4 payload carries a Living Canon delta? (v0 legacy — false today) */
   v4CarriesCanonDelta: boolean
-  /** loadCanonSnapshot has any runtime writer (other than authoring replace)? */
+  /** A runtime canon writer exists (v1 applier via v3/v5 publish)? */
   canonRuntimeWriterExists: boolean
 }
 
 /**
- * Emit LIVING_CANON_WRITEBACK_MISSING (BLOCKER) when neither publish path carries
- * a canon delta and no runtime canon writer exists. The Story Bible cannot evolve
- * after chapter events; validator/ledger/checkpoint state may advance while the
- * canon stays frozen at authoring seed.
+ * Emit LIVING_CANON_WRITEBACK_MISSING (BLOCKER) as a REGRESSION GUARD: it fires
+ * only when the sample reports no canon writeback anywhere (v2, v4 AND no runtime
+ * writer). Post-closure this detector must stay silent; re-opening it means the v1
+ * applier or its publish wiring regressed.
  */
 export function auditLivingCanonWriteback(
   sample: LivingCanonWritebackSample,
@@ -87,25 +104,29 @@ export function auditLivingCanonWriteback(
       domain: 'Canon/Persistence',
       status: 'WRITE_PATH_UNPROVEN',
       sourceOfTruth: [
+        'supabase/migrations/20260805020000_living_canon_publication_primitives.sql :: apply_validated_chapter_state_v1',
         'lib/runtime/lifecycle.ts :: publishChapterV2',
         'lib/runtime/generation-jobs.ts :: publishGenerationJobChapterV4',
-        'lib/narrative/loader.ts :: loadCanonSnapshot',
       ],
-      producers: ['lib/runtime/lifecycle.ts :: publishChapterV2', 'lib/runtime/generation-jobs.ts :: publishGenerationJobChapterV4'],
+      producers: [
+        'supabase/migrations/20260805020000_living_canon_publication_primitives.sql :: publish_chapter_state_v3 / publish_generation_job_chapter_v5',
+        'lib/runtime/lifecycle.ts :: publishChapterV2',
+        'lib/runtime/generation-jobs.ts :: publishGenerationJobChapterV4',
+      ],
       consumers: ['lib/narrative/loader.ts :: loadCanonSnapshot', 'lib/story-engine/chapter-brief.ts :: buildChapterBrief'],
-      validators: ['supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4'],
+      validators: ['supabase/migrations/20260805020000_living_canon_publication_primitives.sql :: publish_chapter_state_v3 (schema preflight / hash)'],
       evidence: [
         ...CANON_WRITEBACK_EVIDENCE,
         {
           source: 'lib/narrative-qa/canon-writeback-audit.ts :: LIVING_CANON_WRITEBACK_MISSING',
           evidenceClass: 'PURE_CHARACTERIZATION',
           observation:
-            'Detector confirmed: neither publish path carries a canon delta and loadCanonSnapshot has no runtime writer; canon is bootstrap+read-only.',
+            'Detector confirmed (regression): no publish path carries a canon delta and no runtime canon writer exists; the v1 applier wiring is absent for this sample.',
         } satisfies StructuredEvidence,
       ],
-      risk: 'Story Bible is bootstrap+read-only: after authoring, chapter events (publish) never write facts/knowledge/secrets/timeline/thread-transitions/character-states/act-rollup/canon-delta back to canon. The canon cannot evolve past chapter 1; validators/ledger/checkpoint state may advance while prompts still see the authoring seed.',
+      risk: 'Story Bible is bootstrap+read-only for this sample: no publish path writes facts/knowledge/secrets/timeline/thread-transitions/character-states/act-rollup/canon-delta and no runtime canon writer exists. The M10-A closure added apply_validated_chapter_state_v1 behind publish_chapter_state_v3 / publish_generation_job_chapter_v5 — its absence here means the v1 writeback regressed.',
       recommendedFollowUp:
-        'Add a Living Canon delta to the publish payload (or a post-publish canon writer) that projects chapter events into facts_ledger, timeline_events, story_threads, character_states, and act_rollups.',
+        'Restore apply_validated_chapter_state_v1 in publish_chapter_state_v3 (sync) and publish_generation_job_chapter_v5 (worker) so chapter events project into facts_ledger, timeline_events, story_threads, character_states, and act_rollups.',
     })
   }
 
@@ -114,8 +135,9 @@ export function auditLivingCanonWriteback(
 
 /**
  * Emit THREAD_ADVANCEMENT_SIGNAL_DISCONNECTED (HIGH) — child of the BLOCKER
- * umbrella above. Thread state mutations are not the same as persisting to
- * story_threads; the runtime ThreadContext carries hardcoded empty signals.
+ * umbrella above. On the personalized v1 path the ThreadContext bridge now carries
+ * delta-derived advancedThreadIds; the detector re-fires only when a sample still
+ * reports hardcoded empty signals (v0/standard path or regression).
  */
 export function auditThreadSignalAsCanonFollowUp(sample: {
   validatorReceivesHardcodedEmptySignals: boolean
@@ -141,22 +163,23 @@ export function auditThreadSignalAsCanonFollowUp(sample: {
         {
           source: 'lib/ai-gateway/schemas.ts :: ChapterDraftSchema',
           evidenceClass: 'SCHEMA_CONTRACT',
-          observation: 'No advancedThreadIds slot; draft signals cannot reach validateThreadLifecycle via parseDraft.',
+          observation: 'No advancedThreadIds slot; draft-derived signals reach validateThreadLifecycle only via the ThreadContext bridge (no parseDraft slot).',
         },
         {
-          source: 'lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter',
+          source: 'lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter (v1) vs lib/runtime/story-generation.ts :: generateNextChapterReal (v0)',
           evidenceClass: 'SOURCE_TRACE',
-          observation: 'ThreadContext hardcodes advancedThreadIds: [] and opensNewThread: false.',
+          observation:
+            'v1 path: advancedThreadIds derived from validatedStateDelta ([...delta.threads.touches, ...delta.threads.transitions.map(t => t.threadId)]) — closure. v0/standard path still hardcodes advancedThreadIds: [] and opensNewThread: false.',
         },
         {
           source: 'lib/narrative-qa/canon-writeback-audit.ts :: THREAD_ADVANCEMENT_SIGNAL_DISCONNECTED',
           evidenceClass: 'PURE_CHARACTERIZATION',
-          observation: 'Detector emitted from input: validatorReceivesHardcodedEmptySignals = true.',
+          observation: 'Detector emitted from input: validatorReceivesHardcodedEmptySignals = true (v0/legacy or regression).',
         } satisfies StructuredEvidence,
       ],
-      risk: 'Validator receives hardcoded empty thread signals (advancedThreadIds: [], opensNewThread: false). THREAD_STALE_UNADDRESSED / THREAD_PAYOFF_NOT_ADVANCED never fire on real drafts. Child of LIVING_CANON_WRITEBACK_MISSING: thread state mutations are not the same as persisting to story_threads.',
+      risk: 'Validator receives hardcoded empty thread signals (advancedThreadIds: [], opensNewThread: false). THREAD_STALE_UNADDRESSED / THREAD_PAYOFF_NOT_ADVANCED never fire on real drafts on this path. The v1 living-canon path derives real delta signals (see THREAD_AUDIT_EVIDENCE); child of LIVING_CANON_WRITEBACK_MISSING for the v0/legacy path.',
       recommendedFollowUp:
-        'Wire draft-derived advancedThreadIds into ThreadContext (or validate from the draft) and persist thread transitions to story_threads.',
+        'Keep the delta-derived ThreadContext bridge on the v1 path (or validate from the draft) and persist thread transitions to story_threads.',
     })
   }
   return findings

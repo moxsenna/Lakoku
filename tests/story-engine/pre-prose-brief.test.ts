@@ -64,6 +64,9 @@ function makeContinuation(overrides?: Partial<ContinuationContext>): Continuatio
     anchorFacts: [],
     recentTimeline: [],
     mustNotReveal: ['Rahasia S1'],
+    storyAnchors: null,
+    actRollups: [],
+    lockedEndingKey: null,
     ...overrides,
   }
 }

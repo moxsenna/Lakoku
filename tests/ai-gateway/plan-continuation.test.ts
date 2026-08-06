@@ -59,6 +59,9 @@ describe('planWithContinuation / CC-aware planner', () => {
     anchorFacts: [{ id: 'f1', statement: 'Lukisan galeri hilang', establishedChapter: 1, loadBearing: true }],
     recentTimeline: [{ chapterNumber: 1, ordinal: 1, description: 'Nadia bertemu Raka di galeri' }],
     mustNotReveal: [],
+    storyAnchors: null,
+    actRollups: [],
+    lockedEndingKey: null,
   }
 
   const mockPreProseBrief: PreProseChapterBrief = {

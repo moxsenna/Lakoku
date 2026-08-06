@@ -3,7 +3,8 @@
  *
  * Traces the real plot-debt path: contract plotDebts (pure projection), the
  * closure ledger (reader_plot_debt_closures), checkpoint audit signals
- * (closesPlotDebts), and the v4 publication RPC that persists closures atomically.
+ * (closesPlotDebts), and the v1 publication applier that persists progress +
+ * closures atomically (M10-A closure).
  *
  * Evidence cited (source strings):
  *   - lib/story-engine/story-contract.ts :: PlotDebtSchema — actual shape is
@@ -16,18 +17,16 @@
  *   - lib/story-engine/plot-debt.ts :: auditPlotDebts — deterministic per-chapter
  *     audit (MAJOR_MYSTERY_AFTER_35, THREAD_AFTER_40, ENDING_NOT_LOCKED,
  *     MAIN_MYSTERY_OPEN, OPEN_CONFLICT_AT_END, NEW_CONFLICT_AT_END).
- *   - lib/story-engine/chapter-brief.ts :: buildChapterBrief — plotDebtsToProgress
- *     / plotDebtsToClose computed from contract debt.status and milestones ONLY;
- *     the reader closure ledger is not consulted, so a closed-in-ledger debt still
- *     shows as open in the next chapter brief.
- *   - lib/runtime/continuation-context.server.ts :: loadPreviousChapterRow /
- *     choiceHistoryFrom... — loadChapter -> buildChapterBrief uses
- *     storyContract.plotDebts with no ledger overlay (effective state never
- *     projected from reader_plot_debt_closures).
- *   - supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql
- *     :: publish_generation_job_chapter_v4 — atomically inserts reader_plot_debt_closures
- *     (on conflict do nothing), verifies checkpoint closesPlotDebts matches the
- *     caller payload exactly (CHECKPOINT_CLOSURE_PAYLOAD_MISMATCH), validates
+ *   - lib/story-engine/chapter-brief.ts :: buildChapterBrief — M10-A closure
+ *     (PLOT_DEBT_EFFECTIVE_STATE_NOT_PROJECTED): parses effectivePlotDebtState
+ *     (ledger projection loaded before generation) for plotDebtsToProgress /
+ *     plotDebtsToClose — the ledger IS consulted on the v1 path.
+ *   - lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter
+ *     (lines ~887-889) — effectivePlotDebtState is loaded BEFORE buildChapterBrief
+ *     so obligations are visible to generation (closure).
+ *   - supabase/migrations/20260805020000_living_canon_publication_primitives.sql
+ *     :: apply_validated_chapter_state_v1 — writes reader_plot_debt_progress and
+ *     reader_plot_debt_closures atomically with the canon; validates
  *     DEBT_CLOSURE_DEADLINE_VIOLATION / MAIN_MYSTERY_UNRESOLVED / OPEN_DEBT_AT_END.
  */
 
@@ -61,9 +60,9 @@ export interface PlotDebtAuditSample {
   ledgerClosedIds: string[]
   /**
    * Whether buildChapterBrief consults the reader ledger when projecting
-   * plotDebtsToProgress/ToClose. Production: false — the brief reads contract
-   * status only, so closures persisted in the ledger are invisible to the
-   * effective state (BLOCKER umbrella).
+   * plotDebtsToProgress/ToClose. Post-closure v1 path: TRUE — effectivePlotDebtState
+   * (ledger projection) is loaded before generation and parsed by the brief.
+   * The v0/legacy path still reads contract status only.
    */
   briefConsultsLedger?: boolean
   /** Closure proposals made by this chapter's draft. */
@@ -93,13 +92,13 @@ export const PLOT_DEBT_AUDIT_EVIDENCE: StructuredEvidence[] = [
     source: 'lib/story-engine/chapter-brief.ts :: buildChapterBrief',
     evidenceClass: 'SOURCE_TRACE',
     observation:
-      'plotDebtsToClose = open debts with mustCloseBy <= chapter; plotDebtsToProgress = remaining open debts with a mustProgressBy milestone <= chapter. Computed from CONTRACT status only — reader_plot_debt_closures is not read here.',
+      'M10-A closure (PLOT_DEBT_EFFECTIVE_STATE_NOT_PROJECTED): brief parses effectivePlotDebtState (chapter-brief.ts:268) — plotDebtsToClose/plotDebtsToProgress come from the effective projection (ledger overlay), not raw contract status.',
   },
   {
-    source: 'lib/runtime/continuation-context.server.ts :: loadChapter / buildChapterBrief',
+    source: 'lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter',
     evidenceClass: 'SOURCE_TRACE',
     observation:
-      'loadChapter -> buildChapterBrief uses storyContract.plotDebts with no ledger overlay; effective plot-debt state is never projected from reader_plot_debt_closures into the brief.',
+      'M10-A closure: effectivePlotDebtState is loaded BEFORE buildChapterBrief (personalized-generation.ts:887-889) so the generation and the brief see the SAME ledger-projected obligations.',
   },
   {
     source: 'lib/story-engine/plot-debt.ts :: auditPlotDebts',
@@ -108,27 +107,26 @@ export const PLOT_DEBT_AUDIT_EVIDENCE: StructuredEvidence[] = [
       'Deterministic per-chapter debt audit with CLOSURE_RUNWAY constants (noNewMajorConflictAfter 35, noNewThreadAfter 40, endingLockChapter 45, mainMysteryResolveBy 48, finalEndingChapter 50).',
   },
   {
-    source: 'supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4',
+    source: 'supabase/migrations/20260805020000_living_canon_publication_primitives.sql :: apply_validated_chapter_state_v1',
     evidenceClass: 'SOURCE_TRACE',
     observation:
-      'The v4 RPC canonicalizes p_closures, requires checkpoint audit signals closesPlotDebts to match exactly (CHECKPOINT_CLOSURE_PAYLOAD_MISMATCH), validates ledger conflicts (DEBT_CLOSURE_CONFLICT), and inserts reader_plot_debt_closures rows in the same transaction (on conflict do nothing).',
+      'M10-A closure (PLOT_DEBT_PROGRESS_NOT_PERSISTED): the applier inserts reader_plot_debt_progress rows and reader_plot_debt_closures rows (with closed_by_job_id nullable for the sync path) atomically with the canon; validates DEBT_CLOSURE_DEADLINE_VIOLATION / MAIN_MYSTERY_UNRESOLVED / OPEN_DEBT_AT_END.',
   },
   {
     source: 'lib/runtime/personalized-generation.ts :: derivePlotDebtAuditFlags',
     evidenceClass: 'SOURCE_TRACE',
     observation:
-      'Audit flags (opensNewThread/opensMajorMystery/opensNewConflict/endingLocked) are derived from draft + findings + state delta, then persisted into checkpoint audit signals V2; closures flow from the checkpoint to the v4 publication call.',
+      'Audit flags (opensNewThread/opensMajorMystery/opensNewConflict/endingLocked) are derived from draft + findings + state delta, then persisted into checkpoint audit signals V2; closures flow from the checkpoint to the v1 publication call.',
   },
 ]
 
 /**
  * Emit plot-debt persistence findings for one chapter sample.
- * - PLOT_DEBT_EFFECTIVE_STATE_NOT_PROJECTED (BLOCKER): the brief builds
- *   plotDebtsToProgress/ToClose from CONTRACT status only, ignoring the
- *   reader_plot_debt_closures ledger. Closure proposals can be durable in the
- *   ledger yet never projected into effective state. Emitted when the ledger
- *   has closures AND brief selection ignores the ledger (briefConsultsLedger
- *   false/absent).
+ * - PLOT_DEBT_EFFECTIVE_STATE_NOT_PROJECTED (BLOCKER, POST-CLOSURE REGRESSION
+ *   GUARD): the ledger has closures while brief selection ignores the ledger
+ *   (briefConsultsLedger false/absent). The M10-A closure loads
+ *   effectivePlotDebtState before generation and the brief parses it, so a
+ *   sample with this shape means the v1 path regressed (or the sample is v0).
  * - PLOT_DEBT_PROGRESS_NOT_PERSISTED (HIGH child): a debt has a mustProgressBy
  *   milestone at or before this chapter, is still contract-open, and no progress
  *   was recorded (neither debt-level nor per-milestone). Progression memory

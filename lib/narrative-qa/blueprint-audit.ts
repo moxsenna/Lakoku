@@ -11,10 +11,12 @@
  *     falls back to a deterministic derived blueprint when canon has none.
  *   - lib/narrative/compiler.ts :: latestBlueprint — same descending-version
  *     resolution (sort by version desc, candidates[0]).
- *   - lib/story-engine/chapter-brief.ts :: buildChapterBrief — uses
- *     `snapshot.blueprints.find(...)` (first match in array order) with NO
- *     version sort, so it can resolve a DIFFERENT (older) version than the
- *     runtime/compiler when multiple versions exist for the chapter.
+ *   - lib/story-engine/chapter-brief.ts :: buildChapterBrief — delegates to
+ *     latestBlueprintForChapter (M10-A closure), the SAME highest-version-wins
+ *     primitive used by compiler/runtime, so the brief can no longer resolve a
+ *     different (older) version when multiple versions exist for the chapter.
+ *   - lib/api/reports.ts — same closure: latestBlueprintForChapter instead of
+ *     `snapshot.blueprints.find(...)`.
  */
 
 import type {
@@ -49,7 +51,13 @@ export const BLUEPRINT_AUDIT_EVIDENCE: StructuredEvidence[] = [
     source: 'lib/story-engine/chapter-brief.ts :: buildChapterBrief',
     evidenceClass: 'SOURCE_TRACE',
     observation:
-      'Brief resolution: `snapshot.blueprints.find((candidate) => candidate.chapterNumber === chapterNumber)` — first array match, NO version ordering. Diverges from runtime/compiler when multiple versions exist for one chapter.',
+      'Brief resolution (M10-A closure): `latestBlueprintForChapter(snapshot, chapterNumber)` — the SAME highest-version-wins primitive as compiler/runtime. No divergence is possible when multiple versions exist for one chapter.',
+  },
+  {
+    source: 'lib/api/reports.ts :: blueprint summary',
+    evidenceClass: 'SOURCE_TRACE',
+    observation:
+      'reports.ts replaced its `.find(...)` resolution with `latestBlueprintForChapter(snap, chapterNumber)` — second consumer aligned to the single authority.',
   },
 ]
 

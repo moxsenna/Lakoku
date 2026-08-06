@@ -23,17 +23,20 @@
  *     lockedEndingKey; previousChoice hierarchy.
  *   - lib/ai-gateway/gateway-provider.ts :: buildPrompt — the writer prompt is
  *     built ONLY from `plan` + `continuation`; the ChapterBrief/PreProseChapterBrief
- *     is NOT passed into buildWriterPrompt, so brief-only fields (lockedEndingKey,
- *     plotDebtsToProgress/ToClose, endingRunway) never appear in the writer prompt.
- *   - lib/prose/prompt-engine/build-writer-prompt.ts :: buildWriterPrompt — layer
- *     comment claims "[1] INVARIAN CANON (... ending terkunci)" but the layer-1
- *     code emits only names + mustNotReveal; no locked-ending instruction exists.
+ *     is NOT passed into buildWriterPrompt, so brief-only fields (plotDebtsToProgress/
+ *     ToClose, endingRunway) never appear in the writer prompt.
+ *   - lib/prose/prompt-engine/build-writer-prompt.ts :: buildWriterPrompt — M10-A
+ *     closure (GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED + locked-ending): layer
+ *     1a renders storyAnchors (Janji Inti Cerita / Konflik Utama / Pertanyaan Akhir,
+ *     finalQuestion emphasized at ch >= 45) and the locked-ending invariant
+ *     ("ENDING SUDAH TERKUNCI pada ...") from continuationContext.
  *   - lib/narrative/loader.ts :: persistRetrievalLog — write function exists and is
  *     wired into deps, but has NO production call sites (see RETRIEVAL_LOG finder).
  *   - lib/narrative/compiler.ts :: ChapterContextPacket — carries actRollups and
  *     contextBudgetReport; lib/narrative/continuation-context.ts :: buildContinuationContext
- *     projects only facts/threads/timeline/routeState, dropping rollups and the
- *     budget report before the writer prompt.
+ *     projects storyAnchors, actRollups, lockedEndingKey (all now consumed by the
+ *     writer) but still drops contextBudgetReport and storyContractSummary before
+ *     the writer prompt.
  */
 
 import type {
@@ -68,27 +71,27 @@ export const DEFAULT_CONTRACT_FIELD_TRACES: ContractFieldTrace[] = [
     persisted: true,
     inChapterBrief: false,
     inPreProseBrief: false,
-    inContinuation: false,
-    inWriterPrompt: false,
-    note: 'StoryContractSchema declares it; contract-persistence.server.ts persists it into voice sample_lines; no generation-path consumer found.',
+    inContinuation: true,
+    inWriterPrompt: true,
+    note: 'StoryContractSchema declares it; contract-persistence.server.ts persists it into voice sample_lines; M10-A closure: loadStoryAnchors resolves it into ContinuationContext.storyAnchors and buildWriterPrompt layer 1a renders "Janji Inti Cerita".',
   },
   {
     field: 'mainConflict',
     persisted: true,
     inChapterBrief: false,
     inPreProseBrief: false,
-    inContinuation: false,
-    inWriterPrompt: false,
-    note: 'Persisted into facts_ledger (contract-persistence.server.ts); never read by brief/continuation/writer prompt.',
+    inContinuation: true,
+    inWriterPrompt: true,
+    note: 'Persisted into facts_ledger (contract-persistence.server.ts); M10-A closure: propagates via ContinuationContext.storyAnchors -> layer 1a "Konflik Utama (harus tetap terasa di bab ini)".',
   },
   {
     field: 'finalQuestion',
     persisted: true,
     inChapterBrief: false,
     inPreProseBrief: false,
-    inContinuation: false,
-    inWriterPrompt: false,
-    note: 'Persisted into facts_ledger and referenced by secret rows; never surfaces in the writer prompt.',
+    inContinuation: true,
+    inWriterPrompt: true,
+    note: 'Persisted into facts_ledger and referenced by secret rows; M10-A closure: ContinuationContext.storyAnchors -> layer 1a renders it, emphasized "PERTANYAAN AKHIR (WAJIB diarahkan ke jawaban, ending mendekat)" at ch >= 45.',
   },
   {
     field: 'chapterTargets[n]',
@@ -124,7 +127,7 @@ export const DEFAULT_CONTRACT_FIELD_TRACES: ContractFieldTrace[] = [
     inPreProseBrief: false,
     inContinuation: false,
     inWriterPrompt: false,
-    note: 'plotDebtsToProgress/plotDebtsToClose land on the brief; preProse drops them and buildWriterPrompt has no debt section.',
+    note: 'plotDebtsToProgress/plotDebtsToClose land on the brief; preProse drops them and buildWriterPrompt has no debt section (writer layer 3 renders timeline/facts/threads/rollups only) — known residual gap, see M10-B trade-off.',
   },
   {
     field: 'endingCandidates',
@@ -133,7 +136,7 @@ export const DEFAULT_CONTRACT_FIELD_TRACES: ContractFieldTrace[] = [
     inPreProseBrief: true,
     inContinuation: false,
     inWriterPrompt: false,
-    note: 'resolveEnding picks lockedEndingKey -> brief.lockedEndingKey -> preProse.lockedEndingKey; the writer prompt never receives the lock (layer-1 comment claims it does).',
+    note: 'resolveEnding picks lockedEndingKey -> brief.lockedEndingKey -> preProse -> continuation -> layer 1a "ENDING SUDAH TERKUNCI" line (M10-A closure); the candidate list itself stays brief-only.',
   },
   {
     field: 'closureRunway',
@@ -149,9 +152,9 @@ export const DEFAULT_CONTRACT_FIELD_TRACES: ContractFieldTrace[] = [
     persisted: true,
     inChapterBrief: true,
     inPreProseBrief: true,
-    inContinuation: false,
-    inWriterPrompt: false,
-    note: 'buildWriterPrompt layer-1 comment says "ending terkunci" is an invariant, but the code emits only names + mustNotReveal.',
+    inContinuation: true,
+    inWriterPrompt: true,
+    note: 'M10-A closure: buildContinuationContext projects lockedEndingKey and buildWriterPrompt layer 1a renders "ENDING SUDAH TERKUNCI pada <key>. Semua pilihan/akibat bab ini harus mengarah ke ending tersebut." when present.',
   },
 ]
 
@@ -172,13 +175,13 @@ export const PROPAGATION_AUDIT_EVIDENCE: StructuredEvidence[] = [
     source: 'lib/ai-gateway/gateway-provider.ts :: buildPrompt',
     evidenceClass: 'SOURCE_TRACE',
     observation:
-      'buildWriterPrompt is called with ONLY plan-derived fields + continuation; the ChapterBrief / PreProseChapterBrief object is not passed to the prompt builder at all (grep: no `brief` reference in gateway-provider.ts).',
+      'buildWriterPrompt is called with ONLY plan-derived fields + continuation; the ChapterBrief / PreProseChapterBrief object is not passed to the prompt builder at all (grep: no `brief` reference in gateway-provider.ts). Anchor/ending propagation therefore rides continuationContext (M10-A closure), and brief-only fields (plotDebtsToProgress/ToClose, endingRunway) still die before the prompt.',
   },
   {
     source: 'lib/prose/prompt-engine/build-writer-prompt.ts :: buildWriterPrompt',
     evidenceClass: 'SOURCE_TRACE',
     observation:
-      'Layer-1 header comment claims "[1] INVARIAN CANON (... ending terkunci)" but the emitted block contains only character names + mustNotReveal — no locked-ending instruction line exists.',
+      'M10-A closure: layer 1a renders storyAnchors (corePromise "Janji Inti Cerita", mainConflict "Konflik Utama", finalQuestion — emphasized "PERTANYAAN AKHIR (WAJIB diarahkan ke jawaban, ending mendekat)" when chapter >= 45) and the locked-ending line "ENDING SUDAH TERKUNCI pada ..." when continuationContext.lockedEndingKey is present.',
   },
   {
     source: 'lib/narrative/loader.ts :: persistRetrievalLog',
@@ -190,7 +193,7 @@ export const PROPAGATION_AUDIT_EVIDENCE: StructuredEvidence[] = [
     source: 'lib/narrative/compiler.ts :: ChapterContextPacket / lib/narrative/continuation-context.ts :: buildContinuationContext',
     evidenceClass: 'SOURCE_TRACE',
     observation:
-      'Packet carries actRollups + contextBudgetReport + storyContractSummary; buildContinuationContext projects only loadBearingFacts, relevantFacts, activeThreads, recentTimeline, routeStateSummary, mustNotReveal — rollups and the budget report never reach the writer prompt.',
+      'Packet carries actRollups + contextBudgetReport + storyContractSummary; buildContinuationContext projects loadBearingFacts, relevantFacts, activeThreads, recentTimeline, routeStateSummary, mustNotReveal, storyAnchors, actRollups, lockedEndingKey — actRollups are consumed by the writer layer-3 "Ringkasan Babak Terlewati" section, but contextBudgetReport and storyContractSummary still never reach the writer prompt.',
   },
 ]
 
@@ -288,9 +291,9 @@ export function auditPropagation(input: PropagationInput = {}): StoryBibleAuditF
       'CONTEXT_PACKET_CONSUMER_UNPROVEN',
       'INFO',
       {
-        detail: { packetSectionsDropped: ['actRollups', 'contextBudgetReport', 'storyContractSummary'] },
-        risk: 'ChapterContextPacket sections (actRollups, contextBudgetReport, storyContractSummary) are compiled but buildContinuationContext projects only facts/threads/timeline/routeState — the compiled rollup summaries and budget report never reach the writer prompt.',
-        followUp: 'Either feed rollup summaries into the continuation/writer layer or remove them from the packet contract.',
+      detail: { packetSectionsDropped: ['contextBudgetReport', 'storyContractSummary'] },
+      risk: 'ChapterContextPacket sections (contextBudgetReport, storyContractSummary) are compiled but buildContinuationContext does not project them — actRollups were closed (writer layer 3 consumes them), yet the budget report and contract summary still never reach the writer prompt.',
+      followUp: 'Either feed the budget report / contract summary into the continuation/writer layer or remove them from the packet contract.',
       },
     ))
   }

@@ -9,6 +9,7 @@
  * Heartbeat ownership loss aborts provider calls via AbortSignal; no publish/finish.
  */
 import 'server-only'
+import { resolveCommercialAuthorization } from '@/lib/commercial/resolver.server'
 import {
   acquireGenerationJobLease,
   claimGenerationJob,
@@ -201,6 +202,39 @@ export async function executeClaimedJob(
     heartbeatTimer = setInterval(() => {
       void doHeartbeat('interval')
     }, DEFAULT_HEARTBEAT_INTERVAL_MS)
+
+    // 3.5) Commercial Preflight: Verify active reservation / financial proof BEFORE any provider or generator dispatch
+    if (job.userId && job.generationKind === 'personalized') {
+      const authDecision = await resolveCommercialAuthorization({
+        userId: job.userId,
+        storyId: job.storyId,
+        chapterNumber: job.chapterNumber,
+      })
+
+      if (authDecision.status !== 'AUTHORIZED') {
+        const finish = await finishGenerationJobAttempt({
+          jobId: job.id,
+          workerId: job.workerId,
+          claimToken: job.claimToken,
+          outcome: 'FAILED',
+          availableAt: null,
+          errorCode: 'COMMERCIAL_PREFLIGHT_FAILED',
+          errorClass: 'TERMINAL',
+          workflowPhase: 'PREFLIGHT',
+          providerId: null,
+          modelId: null,
+          startedAt: startedAt.toISOString(),
+          endedAt: new Date().toISOString(),
+          elapsedMs: Date.now() - startedAt.getTime(),
+          leaseAgeMs: null,
+          leaseRemainingMs: null,
+          retryDecision: 'FAILED',
+        })
+        return finish.ok
+          ? { ok: false, outcome: 'FAILED', jobId: job.id, reason: 'COMMERCIAL_PREFLIGHT_FAILED' }
+          : { ok: false, outcome: 'OWNERSHIP_LOST', jobId: job.id }
+      }
+    }
 
     // 4) Build execution context + run generator.
     let jobContext: GenerationJobExecutionContext

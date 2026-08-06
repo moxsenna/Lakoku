@@ -9,7 +9,7 @@
  * Heartbeat ownership loss aborts provider calls via AbortSignal; no publish/finish.
  */
 import 'server-only'
-import { resolveCommercialAuthorization } from '@/lib/commercial/resolver.server'
+import { resolveCommercialWorkerPreflight } from '@/lib/commercial/worker-preflight.server'
 import {
   acquireGenerationJobLease,
   claimGenerationJob,
@@ -203,12 +203,14 @@ export async function executeClaimedJob(
       void doHeartbeat('interval')
     }, DEFAULT_HEARTBEAT_INTERVAL_MS)
 
-    // 3.5) Commercial Preflight: Verify active reservation / financial proof BEFORE any provider or generator dispatch
+    // 3.5) Commercial Preflight: Verify active reservation & exact job provenance BEFORE any provider or generator dispatch
     if (job.userId && job.generationKind === 'personalized') {
-      const authDecision = await resolveCommercialAuthorization({
+      const authDecision = await resolveCommercialWorkerPreflight({
+        jobId: job.id,
         userId: job.userId,
         storyId: job.storyId,
         chapterNumber: job.chapterNumber,
+        triggerChoiceId: job.triggerChoiceId,
       })
 
       if (authDecision.status !== 'AUTHORIZED') {

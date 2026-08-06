@@ -1,6 +1,6 @@
 -- 20260805030000_publish_generation_job_chapter_v6.sql
--- Commercial Atomic Chapter Publisher (V6).
--- Wraps canonical narrative publication (V5 for Living Canon, V4 for legacy) in outer transaction with financial capture.
+-- Commercial Atomic Publisher V6
+-- Wraps canonical narrative publication (V5 or V4) with PayCore credit capture, exact provenance proof, and user financial lock U.
 
 create or replace function public.publish_generation_job_chapter_v6(
   p_job_id uuid,
@@ -14,9 +14,9 @@ create or replace function public.publish_generation_job_chapter_v6(
   p_choice_prompt text,
   p_choices jsonb,
   p_outcomes jsonb,
-  p_ending_key text,
-  p_ending_name text,
-  p_closures jsonb
+  p_ending_key text default null,
+  p_ending_name text default null,
+  p_closures jsonb default '[]'::jsonb
 )
 returns jsonb
 language plpgsql
@@ -24,9 +24,11 @@ security definer
 set search_path = pg_catalog, public
 as $$
 declare
-  v_pub_result jsonb;
-  v_story public.stories%rowtype;
+  v_preflight_job public.generation_jobs%rowtype;
+  v_preflight_story public.stories%rowtype;
   v_job public.generation_jobs%rowtype;
+  v_story public.stories%rowtype;
+  v_pub_result jsonb;
   v_reservation public.credit_reservations%rowtype;
   v_creation_req public.story_creation_requests%rowtype;
   v_intent public.commercial_generation_intents%rowtype;
@@ -35,28 +37,36 @@ declare
   v_req_count integer;
   v_intent_count integer;
   v_active_price integer;
-  v_existing_ledger record;
+  v_existing_ledger public.credit_ledger%rowtype;
 begin
-  -- 1. Read job identity for user financial advisory lock (U)
-  select j.* into v_job from public.generation_jobs j where j.id = p_job_id;
+  -- ═══════════════════════════════════════════════════════════════════════════
+  -- 1. UNLOCKED PRE-READ: Derivation of lock keys and narrative routing only
+  -- ═══════════════════════════════════════════════════════════════════════════
+  select j.* into v_preflight_job
+  from public.generation_jobs j
+  where j.id = p_job_id;
+
   if not found then
     raise exception using errcode = 'P0001', message = 'GENERATION_JOB_NOT_FOUND';
   end if;
 
-  -- Lock user financial advisory lock (U) byte-for-byte matching Phase 1 financial primitives
-  perform pg_advisory_xact_lock(hashtext(v_job.user_id::text));
+  select s.* into v_preflight_story
+  from public.stories s
+  where s.id = p_story_id;
 
-  -- 2. Execute underlying narrative publication
-  -- If story is Living Canon (schema 3), call canonical V5; otherwise call V4
-  select * into v_story from public.stories where id = p_story_id for update;
   if not found then
     raise exception using errcode = 'P0001', message = 'STORY_NOT_FOUND';
   end if;
 
-  if exists (
-    select 1 from public.chapter_generation_checkpoints c
-    where c.job_id = p_job_id and c.checkpoint_schema_version = 3
-  ) then
+  -- User Financial Advisory Lock (U): hashtext(user_id::text)
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(v_preflight_job.user_id::text));
+
+  -- ═══════════════════════════════════════════════════════════════════════════
+  -- 2. CANONICAL NARRATIVE PUBLICATION (V5 for Living Canon, V4 for legacy)
+  -- ═══════════════════════════════════════════════════════════════════════════
+  -- Narrative lock graph (E1/E2 -> S -> STORY FOR UPDATE -> R -> J -> L -> Checkpoint)
+  -- runs nested inside narrative publisher. We do NOT pre-lock stories FOR UPDATE before this call.
+  if coalesce(v_preflight_story.living_canon_version, 0) = 1 then
     v_pub_result := public.publish_generation_job_chapter_v5(
       p_job_id, p_worker_id, p_claim_token, p_lease_id, p_story_id,
       p_chapter_number, p_choice_prompt, p_choices, p_outcomes,
@@ -70,171 +80,244 @@ begin
     );
   end if;
 
-  -- 3. Commercial story mode checks
-  if v_story.story_mode = 'personalized_ai' or v_story.story_mode = 'premium_instance' then
-    -- STARTER_FREE Bab 1-3 is included (no debit needed)
-    if v_story.commercial_origin = 'STARTER_FREE' and p_chapter_number <= 3 then
+  -- REQUIREMENT A: Narrative Result Gate
+  -- Financial finalization NEVER executes after a failed narrative publication.
+  if v_pub_result is null or not (v_pub_result ? 'ok') or (v_pub_result->>'ok')::boolean is not true then
+    raise exception using errcode = 'P0001', message = 'NARRATIVE_PUBLICATION_FAILED';
+  end if;
+
+  -- ═══════════════════════════════════════════════════════════════════════════
+  -- 3. POST-PUBLISH AUTHORITATIVE RE-READ: Validate exact provenance
+  -- ═══════════════════════════════════════════════════════════════════════════
+  select j.* into v_job
+  from public.generation_jobs j
+  where j.id = p_job_id;
+
+  select s.* into v_story
+  from public.stories s
+  where s.id = p_story_id;
+
+  if v_job.id is distinct from p_job_id
+    or v_job.user_id is distinct from v_preflight_job.user_id
+    or v_job.story_id is distinct from p_story_id
+    or v_job.chapter_number is distinct from p_chapter_number
+    or v_story.owner_user_id is distinct from v_job.user_id
+  then
+    raise exception using errcode = 'P0001', message = 'COMMERCIAL_FINALIZATION_CONFLICT';
+  end if;
+
+  -- Non-commercial stories (standard mode or non-owner) stay outside commercial debit
+  if v_story.story_mode is distinct from 'personalized_ai' and v_story.story_mode is distinct from 'premium_instance' then
+    return v_pub_result;
+  end if;
+
+  -- ═══════════════════════════════════════════════════════════════════════════
+  -- 4. COMMERCIAL MODE FINANCING & ROW LOCKING
+  -- Commercial Lock Order: U -> Narrative Locks -> M (reservation) -> I/Q (intent/request)
+  -- ═══════════════════════════════════════════════════════════════════════════
+
+  -- Starter / Paid / Legacy included Bab 1-3
+  if v_story.commercial_origin = 'STARTER_FREE' and p_chapter_number <= 3 then
+    return v_pub_result;
+  end if;
+
+  if (v_story.commercial_origin = 'PAID_START' or v_story.commercial_origin = 'LEGACY_GRANDFATHERED') and p_chapter_number <= 3 then
+    -- If Bab 1 and creation request is bound to THIS job, require exact paid creation proof below instead of skipping.
+    select count(*) into v_req_count
+    from public.story_creation_requests
+    where owner_user_id = v_job.user_id and story_id = p_story_id and generation_job_id = p_job_id;
+
+    if p_chapter_number <> 1 or v_req_count = 0 then
       return v_pub_result;
     end if;
+  end if;
 
-    -- PAID_START / LEGACY_GRANDFATHERED Bab 1-3 included
-    if (v_story.commercial_origin = 'PAID_START' or v_story.commercial_origin = 'LEGACY_GRANDFATHERED') and p_chapter_number <= 3 then
-      return v_pub_result;
+  -- ---------------------------------------------------------------------------
+  -- CASE A: Bab 4+ Commercial Chapter Unlock Capture
+  -- ---------------------------------------------------------------------------
+  if p_chapter_number >= 4 then
+    if v_story.commercial_origin is distinct from 'PAID_START' and v_story.commercial_origin is distinct from 'LEGACY_GRANDFATHERED' then
+      raise exception using errcode = 'P0001', message = 'STORY_START_PENDING';
     end if;
 
-    -- STARTER_FREE / PAID_START / LEGACY_GRANDFATHERED Bab 4+: require ACTIVE CHAPTER_UNLOCK reservation & exact intent
-    if (v_story.commercial_origin in ('STARTER_FREE', 'PAID_START', 'LEGACY_GRANDFATHERED') and p_chapter_number >= 4) then
-      -- Validate active price from DB
-      select credits_required into v_active_price
-      from public.feature_credit_costs
-      where feature_key = 'chapter_unlock' and is_active = true;
+    -- Fetch active price from DB
+    select credits_required into v_active_price
+    from public.feature_credit_costs
+    where feature_key = 'chapter_unlock' and is_active = true;
 
-      if v_active_price is null or v_active_price <= 0 then
-        raise exception using errcode = 'P0001', message = 'COMMERCIAL_CONFIG_INVALID';
+    if v_active_price is null or v_active_price <= 0 then
+      raise exception using errcode = 'P0001', message = 'COMMERCIAL_CONFIG_INVALID';
+    end if;
+
+    v_canon_ref := 'chapter-reservation:' || v_job.user_id::text || ':' || p_story_id || ':' || p_chapter_number::text;
+    v_ledger_ref := 'unlock:' || p_story_id || ':' || p_chapter_number::text;
+
+    -- M: Lock credit_reservations FOR UPDATE
+    select cr.* into v_reservation
+    from public.credit_reservations cr
+    where cr.ref = v_canon_ref
+      and cr.user_id = v_job.user_id
+      and cr.story_id = p_story_id
+      and cr.chapter_number = p_chapter_number
+      and cr.reservation_kind = 'CHAPTER_UNLOCK'
+    for update;
+
+    -- I: Lock commercial_generation_intents FOR UPDATE
+    select i.* into v_intent
+    from public.commercial_generation_intents i
+    where i.story_id = p_story_id
+      and i.chapter_number = p_chapter_number
+      and i.generation_job_id = p_job_id
+    for update;
+
+    if v_reservation.id is null or v_intent.id is null then
+      raise exception using errcode = 'P0001', message = 'COMMERCIAL_PROVENANCE_MISSING';
+    end if;
+
+    -- REQUIREMENT G: Pricing Snapshot Invariant
+    if v_intent.quoted_credits <> v_reservation.amount or v_intent.pricing_version is null then
+      raise exception using errcode = 'P0001', message = 'COMMERCIAL_PRICING_SNAPSHOT_MISMATCH';
+    end if;
+
+    if v_intent.trigger_choice_id is distinct from v_job.trigger_choice_id then
+      raise exception using errcode = 'P0001', message = 'COMMERCIAL_TRIGGER_CHOICE_MISMATCH';
+    end if;
+
+    -- Fresh Capture Path
+    if v_reservation.status = 'ACTIVE' and v_intent.status in ('QUEUED', 'RUNNING', 'AUTHORIZED') then
+      if v_reservation.expires_at <= clock_timestamp() then
+        raise exception using errcode = 'P0001', message = 'COMMERCIAL_RESERVATION_EXPIRED';
       end if;
 
-      v_canon_ref := 'chapter-reservation:' || v_job.user_id::text || ':' || p_story_id || ':' || p_chapter_number::text;
-      v_ledger_ref := 'unlock:' || p_story_id || ':' || p_chapter_number::text;
+      -- Update reservation status to CAPTURED
+      update public.credit_reservations
+        set status = 'CAPTURED', updated_at = clock_timestamp()
+        where id = v_reservation.id;
 
-      -- Validate intent: MUST match exactly one intent bound to this job
-      select count(*) into v_intent_count
-      from public.commercial_generation_intents
-      where user_id = v_job.user_id
-        and story_id = p_story_id
-        and chapter_number = p_chapter_number
-        and generation_job_id = p_job_id;
+      -- Write PayCore ledger
+      insert into public.credit_ledger (
+        user_id, delta, reason, ref
+      ) values (
+        v_job.user_id,
+        -v_reservation.amount,
+        'unlock_chapter',
+        v_ledger_ref
+      ) on conflict (ref) do nothing;
 
-      if v_intent_count <> 1 then
-        raise exception using errcode = 'P0001', message = 'COMMERCIAL_INTENT_PROVENANCE_MISMATCH';
+      -- REQUIREMENT H: Exact Ledger Proof Verification After Insert
+      select cl.* into v_existing_ledger
+      from public.credit_ledger cl
+      where cl.ref = v_ledger_ref;
+
+      if v_existing_ledger.id is null
+        or v_existing_ledger.user_id is distinct from v_job.user_id
+        or v_existing_ledger.delta is distinct from -v_reservation.amount
+        or v_existing_ledger.reason is distinct from 'unlock_chapter'
+      then
+        raise exception using errcode = 'P0001', message = 'COMMERCIAL_FINALIZATION_CONFLICT';
       end if;
 
-      select * into v_intent
-      from public.commercial_generation_intents
-      where user_id = v_job.user_id
-        and story_id = p_story_id
-        and chapter_number = p_chapter_number
-        and generation_job_id = p_job_id
-      for update;
-
-      select * into v_reservation
-      from public.credit_reservations
-      where ref = v_canon_ref
-        and user_id = v_job.user_id
-        and story_id = p_story_id
-        and chapter_number = p_chapter_number
-        and reservation_kind = 'CHAPTER_UNLOCK'
-        and status = 'ACTIVE'
-        and amount = v_active_price
-        and expires_at > clock_timestamp()
-      for update;
-
-      if not found then
-        -- Exact financial replay check
-        select * into v_reservation
-        from public.credit_reservations
-        where ref = v_canon_ref and user_id = v_job.user_id and status = 'CAPTURED';
-
-        select * into v_existing_ledger
-        from public.credit_ledger
-        where ref = v_ledger_ref and user_id = v_job.user_id and delta = -v_active_price and reason = 'unlock_chapter';
-
-        if v_reservation.id is null or v_existing_ledger.id is null then
-          raise exception using errcode = 'P0001', message = 'COMMERCIAL_FINALIZATION_CONFLICT';
-        end if;
-      else
-        -- Atomically capture reservation & write PayCore ledger
-        update public.credit_reservations
-          set status = 'CAPTURED', updated_at = clock_timestamp()
-          where id = v_reservation.id;
-
-        insert into public.credit_ledger (
-          user_id, delta, reason, ref
-        ) values (
-          v_job.user_id,
-          -v_reservation.amount,
-          'unlock_chapter',
-          v_ledger_ref
-        ) on conflict (ref) do nothing;
-      end if;
-
-      -- Fulfill intent
+      -- Transition intent status to FULFILLED
       update public.commercial_generation_intents
         set status = 'FULFILLED', updated_at = clock_timestamp()
         where id = v_intent.id;
 
       return v_pub_result;
+
+    -- Replay Capture Path
+    elsif v_reservation.status = 'CAPTURED' and v_intent.status = 'FULFILLED' then
+      -- REQUIREMENT 11: Exact CAPTURED Replay Proof
+      select cl.* into v_existing_ledger
+      from public.credit_ledger cl
+      where cl.ref = v_ledger_ref;
+
+      if v_existing_ledger.id is null
+        or v_existing_ledger.user_id is distinct from v_job.user_id
+        or v_existing_ledger.delta is distinct from -v_reservation.amount
+        or v_existing_ledger.reason is distinct from 'unlock_chapter'
+      then
+        raise exception using errcode = 'P0001', message = 'COMMERCIAL_FINALIZATION_CONFLICT';
+      end if;
+
+      return v_pub_result;
+
+    else
+      raise exception using errcode = 'P0001', message = 'COMMERCIAL_FINALIZATION_CONFLICT';
+    end if;
+  end if;
+
+  -- ---------------------------------------------------------------------------
+  -- CASE B: Bab 1 Paid Creation Capture (PENDING_PAID_START -> PAID_START)
+  -- ---------------------------------------------------------------------------
+  if p_chapter_number = 1 then
+    select credits_required into v_active_price
+    from public.feature_credit_costs
+    where feature_key = 'story_start' and is_active = true;
+
+    if v_active_price is null or v_active_price <= 0 then
+      raise exception using errcode = 'P0001', message = 'COMMERCIAL_CONFIG_INVALID';
     end if;
 
-    -- PENDING_PAID_START Bab 1: require ACTIVE STORY_START reservation & bound creation request
-    if v_story.commercial_origin = 'PENDING_PAID_START' and p_chapter_number = 1 then
-      select credits_required into v_active_price
-      from public.feature_credit_costs
-      where feature_key = 'story_start' and is_active = true;
+    v_canon_ref := 'story-start:' || v_job.user_id::text || ':' || p_story_id;
+    v_ledger_ref := 'story-start:' || v_job.user_id::text || ':' || p_story_id;
 
-      if v_active_price is null or v_active_price <= 0 then
-        raise exception using errcode = 'P0001', message = 'COMMERCIAL_CONFIG_INVALID';
+    -- M: Lock credit_reservations FOR UPDATE
+    select cr.* into v_reservation
+    from public.credit_reservations cr
+    where cr.ref = v_canon_ref
+      and cr.user_id = v_job.user_id
+      and cr.story_id = p_story_id
+      and cr.chapter_number = 1
+      and cr.reservation_kind = 'STORY_START'
+    for update;
+
+    -- Q: Lock story_creation_requests FOR UPDATE
+    select r.* into v_creation_req
+    from public.story_creation_requests r
+    where r.owner_user_id = v_job.user_id
+      and r.story_id = p_story_id
+      and r.generation_job_id = p_job_id
+    for update;
+
+    if v_reservation.id is null or v_creation_req.owner_user_id is null then
+      raise exception using errcode = 'P0001', message = 'COMMERCIAL_PROVENANCE_MISSING';
+    end if;
+
+    -- Fresh Paid Start Capture Path
+    if v_story.commercial_origin = 'PENDING_PAID_START'
+      and v_reservation.status = 'ACTIVE'
+      and v_creation_req.status = 'RESERVED'
+    then
+      if v_reservation.expires_at <= clock_timestamp() then
+        raise exception using errcode = 'P0001', message = 'COMMERCIAL_RESERVATION_EXPIRED';
       end if;
 
-      v_canon_ref := 'story-start:' || v_job.user_id::text || ':' || p_story_id;
-      v_ledger_ref := 'story-start:' || v_job.user_id::text || ':' || p_story_id;
+      -- Update reservation status to CAPTURED
+      update public.credit_reservations
+        set status = 'CAPTURED', updated_at = clock_timestamp()
+        where id = v_reservation.id;
 
-      -- Require exactly one story creation request bound to this job
-      select count(*) into v_req_count
-      from public.story_creation_requests
-      where owner_user_id = v_job.user_id
-        and story_id = p_story_id
-        and generation_job_id = p_job_id;
+      -- Write PayCore ledger
+      insert into public.credit_ledger (
+        user_id, delta, reason, ref
+      ) values (
+        v_job.user_id,
+        -v_reservation.amount,
+        'story_start',
+        v_ledger_ref
+      ) on conflict (ref) do nothing;
 
-      if v_req_count <> 1 then
-        raise exception using errcode = 'P0001', message = 'CREATION_REQUEST_PROVENANCE_MISMATCH';
-      end if;
+      -- REQUIREMENT H: Exact Ledger Proof Verification After Insert
+      select cl.* into v_existing_ledger
+      from public.credit_ledger cl
+      where cl.ref = v_ledger_ref;
 
-      select * into v_creation_req
-      from public.story_creation_requests
-      where owner_user_id = v_job.user_id
-        and story_id = p_story_id
-        and generation_job_id = p_job_id
-      for update;
-
-      select * into v_reservation
-      from public.credit_reservations
-      where ref = v_canon_ref
-        and user_id = v_job.user_id
-        and story_id = p_story_id
-        and chapter_number = 1
-        and reservation_kind = 'STORY_START'
-        and status = 'ACTIVE'
-        and amount = v_active_price
-        and expires_at > clock_timestamp()
-      for update;
-
-      if not found then
-        -- Exact financial replay check
-        select * into v_reservation
-        from public.credit_reservations
-        where ref = v_canon_ref and user_id = v_job.user_id and status = 'CAPTURED';
-
-        select * into v_existing_ledger
-        from public.credit_ledger
-        where ref = v_ledger_ref and user_id = v_job.user_id and delta = -v_active_price and reason = 'story_start';
-
-        if v_reservation.id is null or v_existing_ledger.id is null then
-          raise exception using errcode = 'P0001', message = 'COMMERCIAL_FINALIZATION_CONFLICT';
-        end if;
-      else
-        -- Atomically capture reservation & write PayCore ledger
-        update public.credit_reservations
-          set status = 'CAPTURED', updated_at = clock_timestamp()
-          where id = v_reservation.id;
-
-        insert into public.credit_ledger (
-          user_id, delta, reason, ref
-        ) values (
-          v_job.user_id,
-          -v_reservation.amount,
-          'story_start',
-          v_ledger_ref
-        ) on conflict (ref) do nothing;
+      if v_existing_ledger.id is null
+        or v_existing_ledger.user_id is distinct from v_job.user_id
+        or v_existing_ledger.delta is distinct from -v_reservation.amount
+        or v_existing_ledger.reason is distinct from 'story_start'
+      then
+        raise exception using errcode = 'P0001', message = 'COMMERCIAL_FINALIZATION_CONFLICT';
       end if;
 
       -- Promote story to PAID_START
@@ -245,23 +328,41 @@ begin
       -- Promote creation request to READY
       update public.story_creation_requests
         set status = 'READY', error_code = null, updated_at = clock_timestamp()
-        where owner_user_id = v_job.user_id and story_id = p_story_id and generation_job_id = p_job_id;
+        where owner_user_id = v_creation_req.owner_user_id
+          and request_kind = v_creation_req.request_kind
+          and idempotency_key = v_creation_req.idempotency_key;
 
       return v_pub_result;
-    end if;
 
-    -- Exhaustive check: Bab 2+ for PENDING_PAID_START is DENIED
-    raise exception using errcode = 'P0001', message = 'STORY_START_PENDING';
+    -- Replay Paid Start Path
+    elsif v_story.commercial_origin = 'PAID_START'
+      and v_reservation.status = 'CAPTURED'
+      and v_creation_req.status = 'READY'
+    then
+      -- REQUIREMENT 8: Replay requires exact ledger proof
+      select cl.* into v_existing_ledger
+      from public.credit_ledger cl
+      where cl.ref = v_ledger_ref;
+
+      if v_existing_ledger.id is null
+        or v_existing_ledger.user_id is distinct from v_job.user_id
+        or v_existing_ledger.delta is distinct from -v_reservation.amount
+        or v_existing_ledger.reason is distinct from 'story_start'
+      then
+        raise exception using errcode = 'P0001', message = 'COMMERCIAL_FINALIZATION_CONFLICT';
+      end if;
+
+      return v_pub_result;
+
+    else
+      raise exception using errcode = 'P0001', message = 'COMMERCIAL_FINALIZATION_CONFLICT';
+    end if;
   end if;
 
   return v_pub_result;
 end;
 $$;
 
-revoke all on function public.publish_generation_job_chapter_v6(
-  uuid, text, uuid, uuid, text, integer, text, jsonb, text, jsonb, jsonb, text, text, jsonb
-) from public, anon, authenticated;
-
-grant execute on function public.publish_generation_job_chapter_v6(
-  uuid, text, uuid, uuid, text, integer, text, jsonb, text, jsonb, jsonb, text, text, jsonb
-) to service_role;
+-- REQUIREMENT 16: Keep V6 ACL as service_role only
+revoke all on function public.publish_generation_job_chapter_v6(uuid, text, uuid, uuid, text, integer, text, jsonb, text, jsonb, jsonb, text, text, jsonb) from public, anon, authenticated;
+grant execute on function public.publish_generation_job_chapter_v6(uuid, text, uuid, uuid, text, integer, text, jsonb, text, jsonb, jsonb, text, text, jsonb) to service_role;

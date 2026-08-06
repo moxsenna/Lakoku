@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { executeClaimedJob } from '@/lib/runtime/generation-worker'
 import { createAdminClient } from '@/lib/supabase/admin'
 
+vi.mock('server-only', () => ({}))
 vi.mock('@/lib/supabase/admin', () => ({
   createAdminClient: vi.fn(),
 }))
@@ -23,7 +24,7 @@ describe('commercial-worker-preflight', () => {
     vi.clearAllMocks()
   })
 
-  it('fails preflight when commercial authorization returns status !== AUTHORIZED', async () => {
+  it('fails preflight and returns COMMERCIAL_PREFLIGHT_FAILED when intent is missing/wrong job', async () => {
     const mockDb = {
       from: vi.fn((table: string) => {
         if (table === 'feature_credit_costs') {
@@ -57,36 +58,16 @@ describe('commercial-worker-preflight', () => {
             }),
           }
         }
-        if (table === 'account_commercial_states') {
-          return {
-            select: () => ({
-              eq: () => ({
-                maybeSingle: async () => ({
-                  data: { starter_story_id: 'story-starter', starter_claimed_at: '2026-08-01T00:00:00Z' },
-                  error: null,
-                }),
-              }),
-            }),
-          }
-        }
-        if (table === 'credit_ledger') {
-          return {
-            select: () => ({
-              eq: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }),
-            }),
-          }
-        }
-        if (table === 'credit_reservations') {
+        if (table === 'commercial_generation_intents') {
           return {
             select: () => ({
               eq: () => ({
                 eq: () => ({
                   eq: () => ({
                     eq: () => ({
-                      eq: () => ({
-                        gt: () => ({
-                          maybeSingle: async () => ({ data: null, error: null }),
-                        }),
+                      maybeSingle: async () => ({
+                        data: null, // Intent missing / not bound
+                        error: null,
                       }),
                     }),
                   }),

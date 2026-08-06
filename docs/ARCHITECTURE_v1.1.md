@@ -996,7 +996,7 @@ Each template release requires fixtures for at least:
 - drift fixture: state deliberately bent at Bab 20 → Act 4 checkpoint must reconcile without violating spine;
 - load-bearing compaction fixture: a `LOAD_BEARING` fact from Bab 3 must still surface correctly at Bab 47;
 - alias fixture: a character referred to by 3 different terms in one chapter must not produce a duplicate entity;
-- thread staleness/blocking fixture: a stale thread forces a callback; Bab 48 with an unresolved main mystery blocks publish.
+- thread staleness/blocking fixture: a stale thread forces a callback; Bab 48 with an unresolved main mystery blocks publish (authority: validated-state/plot-debt closure resolver — post-chapter state must close main mystery at Bab 48; 49+ unresolved hard-blocked).
 
 ### 18.3 Release gates
 

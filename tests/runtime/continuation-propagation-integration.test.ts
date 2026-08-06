@@ -58,6 +58,9 @@ describe('ContinuationContext Runtime Propagation Integration & Mutation Test', 
     anchorFacts: [{ id: 'f1', statement: 'Kasus pengadilan diajukan', establishedChapter: 1, loadBearing: true }],
     recentTimeline: [{ chapterNumber: 1, ordinal: 1, description: 'Konfrontasi terjadi' }],
     mustNotReveal: [],
+    storyAnchors: null,
+    actRollups: [],
+    lockedEndingKey: null,
   }
 
   const mockBrief: PreProseChapterBrief = {

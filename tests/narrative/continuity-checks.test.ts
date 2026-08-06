@@ -41,6 +41,9 @@ describe('runContinuityChecks', () => {
     anchorFacts: [],
     recentTimeline: [],
     mustNotReveal: [],
+    storyAnchors: null,
+    actRollups: [],
+    lockedEndingKey: null,
   }
 
   it('memberikan MAJOR jika jangkar pilihan Bab N-1 sama sekali tidak muncul', () => {

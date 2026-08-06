@@ -1,5 +1,6 @@
 import 'server-only'
 import { createAdminClient } from '@lakoku/db'
+import { latestBlueprintForChapter } from '@/lib/narrative/blueprint'
 import { loadCanonSnapshot } from '@/lib/narrative/loader'
 import type { ReportCategory } from './types'
 
@@ -53,7 +54,9 @@ export async function buildCanonicalRefs(
   try {
     const snap = await loadCanonSnapshot(storyId, chapterNumber)
 
-    const bp = snap.blueprints.find((b) => b.chapterNumber === chapterNumber)
+    // Otoritas tunggal (M10-A closure): versi tertinggi menang, sama seperti
+    // compiler — bukan `.find()` pertama dalam daftar.
+    const bp = latestBlueprintForChapter(snap, chapterNumber)
     base.blueprintVersion = bp ? bp.version : null
     base.chapterGoal = bp ? bp.chapterGoal : null
 

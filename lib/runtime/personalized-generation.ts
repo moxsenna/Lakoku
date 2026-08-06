@@ -932,6 +932,12 @@ async function generateNextPersonalizedChapterInner(
       storyId,
       chapterNumber,
       triggerChoiceId: triggerChoiceId ?? null,
+      // Jangkar kisah global dari contract yang SUDAH dimuat (M10-A closure).
+      storyAnchors: {
+        corePromise: contract.corePromise,
+        mainConflict: contract.mainConflict,
+        finalQuestion: contract.finalQuestion,
+      },
     })
 
     if (!contRes.ok) {

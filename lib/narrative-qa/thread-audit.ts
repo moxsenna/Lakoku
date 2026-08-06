@@ -2,23 +2,30 @@
  * M10-A Task 2 — Thread signal disconnect detectors.
  *
  * Traces the REAL production thread-signal path and characterizes the disconnects
- * found there. Both generation paths build a ThreadContext with hardcoded empty
- * signals and the validator consumes exactly those values.
+ * found there. Post-M10-A closure (personalized living-canon v1 path): the
+ * runtime derives advancedThreadIds from the validated state delta and the
+ * validator receives those real signals. The v0/standard path still builds a
+ * ThreadContext with hardcoded empty signals.
  *
  * Evidence cited (source strings):
  *   - lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter
- *     (line ~808): `const threadContext: ThreadContext = { threads: snapshot.threads,
- *     advancedThreadIds: [], opensNewThread: false }`.
- *   - lib/runtime/story-generation.ts :: generateNextChapterReal (line ~817):
- *     identical `advancedThreadIds: [], opensNewThread: false` construction.
+ *     (lines ~1070-1079): `threadContext = { threads: snapshot.threads,
+ *     advancedThreadIds: validatedStateDelta ? [...delta.threads.touches,
+ *     ...delta.threads.transitions.map(t => t.threadId)] : [], opensNewThread:
+ *     false }` — the personalized v1 path derives advancement from the SAME
+ *     validated delta that will be committed (delta dihitung sebelum generation).
+ *   - lib/runtime/story-generation.ts :: generateNextChapterReal (line ~819):
+ *     the standard (v0/legacy) path still hardcodes `advancedThreadIds: [],
+ *     opensNewThread: false` — out of living-canon v1 scope, unchanged.
  *   - lib/ai-gateway/generate.ts :: runLayerA — validateThreadLifecycle is fed
  *     `threadCtx.advancedThreadIds` / `threadCtx.opensNewThread` verbatim.
  *   - lib/ai-gateway/schemas.ts :: ChapterDraftSchema — only `opensNewThread`
  *     optional field parsed; `advancedThreadIds` is NOT part of the parsed draft
- *     schema, so draft signals cannot reach the validator via parseDraft either.
+ *     schema, so draft signals reach the validator only via the ThreadContext
+ *     bridge above (not via parseDraft).
  *   - lib/narrative/threads.ts :: validateThreadLifecycle — emits
  *     THREAD_STALE_UNADDRESSED / THREAD_PAYOFF_NOT_ADVANCED / THREAD_NEW_FORBIDDEN
- *     against the (always empty) advanced set.
+ *     against the advanced set supplied by ThreadContext.
  *   - lib/narrative/compiler.ts :: compileContext — activeThreads filtered ONLY
  *     by status (RESOLVED/ABANDONED_APPROVED excluded); the `stale` flag plays no
  *     role in context selection.
@@ -46,7 +53,7 @@ export interface ThreadAuditSample {
   threads: ThreadSample[]
   /** Threads the draft actually advanced (from ChapterDraft, if captured). */
   draftAdvancedThreadIds?: string[]
-  /** advancedThreadIds the runtime put into ThreadContext (hardcoded [] in prod). */
+  /** advancedThreadIds the runtime put into ThreadContext (delta-derived on the v1 path; hardcoded [] on the v0/standard path). */
   threadContextAdvancedThreadIds?: string[]
   /** opensNewThread the runtime put into ThreadContext (hardcoded false in prod). */
   threadContextOpensNewThread?: boolean
@@ -55,8 +62,10 @@ export interface ThreadAuditSample {
   /** New thread(s) introduced this chapter (openedChapter === chapter). */
   newThreadIds?: string[]
   /**
-   * true when draft signals are captured and actually reach validateThreadLifecycle
-   * (production today: false — see schemas.ts evidence).
+   * true when draft-derived advancement signals are captured and actually reach
+   * validateThreadLifecycle (personalized v1 path: true via the ThreadContext
+   * bridge from the validated state delta; v0/standard path: false — see
+   * THREAD_AUDIT_EVIDENCE).
    */
   validatorReceivesDraftSignals?: boolean
 }
@@ -66,25 +75,25 @@ export const THREAD_AUDIT_EVIDENCE: StructuredEvidence[] = [
     source: 'lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter',
     evidenceClass: 'SOURCE_TRACE',
     observation:
-      '`const threadContext: ThreadContext = { threads: snapshot.threads, advancedThreadIds: [], opensNewThread: false }` — the personalized path hardcodes empty advancement/open signals regardless of the draft.',
+      'M10-A closure (personalized living-canon v1): `threadContext = { threads: snapshot.threads, advancedThreadIds: validatedStateDelta ? [...delta.threads.touches, ...delta.threads.transitions.map(t => t.threadId)] : [], opensNewThread: false }` — advancement is derived from the SAME validated delta that will be committed, so Layer A sees the real delta signals, not hardcoded empties.',
   },
   {
     source: 'lib/runtime/story-generation.ts :: generateNextChapterReal',
     evidenceClass: 'SOURCE_TRACE',
     observation:
-      'Same hardcoded construction: `{ threads: snapshot.threads, advancedThreadIds: [], opensNewThread: false }` in the standard generation path.',
+      'Standard (v0/legacy) path still hardcodes `{ threads: snapshot.threads, advancedThreadIds: [], opensNewThread: false }` — this path is out of living-canon v1 scope and unchanged by M10-A closure.',
   },
   {
     source: 'lib/ai-gateway/generate.ts :: runLayerA',
     evidenceClass: 'SOURCE_TRACE',
     observation:
-      'validateThreadLifecycle({ threads: threadCtx.threads, chapter, advancedThreadIds: threadCtx.advancedThreadIds, opensNewThread: threadCtx.opensNewThread }) — the validator consumes the ThreadContext values verbatim, so hardcoded empties mean THREAD_STALE_UNADDRESSED / THREAD_PAYOFF_NOT_ADVANCED never fire on real drafts.',
+      'validateThreadLifecycle({ threads: threadCtx.threads, chapter, advancedThreadIds: threadCtx.advancedThreadIds, opensNewThread: threadCtx.opensNewThread }) — the validator consumes the ThreadContext values verbatim. On the personalized v1 path those are now the real delta-derived ids, so THREAD_STALE_UNADDRESSED / THREAD_PAYOFF_NOT_ADVANCED can fire on real drafts.',
   },
   {
     source: 'lib/ai-gateway/schemas.ts :: ChapterDraftSchema',
     evidenceClass: 'SCHEMA_CONTRACT',
     observation:
-      'Only `opensNewThread` is an optional parsed field; `advancedThreadIds` has no schema slot, so draft-level advancement cannot flow into the validator through parseDraft.',
+      'Only `opensNewThread` is an optional parsed field; `advancedThreadIds` has no schema slot, so draft-level advancement reaches the validator only via the ThreadContext bridge (personalized v1 path), not through parseDraft.',
   },
   {
     source: 'lib/narrative/threads.ts :: validateThreadLifecycle',
@@ -139,7 +148,7 @@ export function auditThreadSignals(
         validatorReceivesDraftSignals: false,
         parentFinding: 'LIVING_CANON_WRITEBACK_MISSING',
       },
-      risk: 'Draft advancement signals never reach validateThreadLifecycle: ChapterDraftSchema has no advancedThreadIds slot and both runtime paths hardcode advancedThreadIds: [] / opensNewThread: false. The validator always sees an empty advanced set. Child of LIVING_CANON_WRITEBACK_MISSING (BLOCKER): thread state mutations in memory are not the same as persisting thread transitions to story_threads.',
+      risk: 'Draft advancement signals never reach validateThreadLifecycle for this sample: ChapterDraftSchema has no advancedThreadIds slot and the ThreadContext bridge is absent (the standard/v0 path still hardcodes advancedThreadIds: [] / opensNewThread: false; the personalized v1 path derives them from the validated state delta — see THREAD_AUDIT_EVIDENCE). The validator sees an empty advanced set on the v0 path.',
       followUp: 'Either extend the parsed draft schema with advancedThreadIds or run thread lifecycle validation against draft fields directly; persist thread transitions into story_threads.',
     }))
   }

@@ -31,6 +31,46 @@ export type LoadContinuationResult =
   | { ok: false; kind: 'TRANSIENT'; detail: string }
   | { ok: false; kind: 'REVIEW_REQUIRED'; detail: string }
 
+/** Jangkar kisah global dari story contract (M10-A closure). */
+export interface StoryAnchorsInput {
+  corePromise: string
+  mainConflict: string
+  finalQuestion: string
+}
+
+const CAP_ANCHOR_CHARS = 240
+
+/** Best-effort: ambil jangkar dari story_generation_contracts bila caller tak kirim. */
+async function loadStoryAnchorsBestEffort(storyId: string): Promise<StoryAnchorsInput | null> {
+  try {
+    const db = createAdminClient()
+    const { data, error } = await db
+      .from('story_generation_contracts')
+      .select('story_contract_json')
+      .eq('story_id', storyId)
+      .maybeSingle()
+    if (error) return null
+    const contract = (data as { story_contract_json?: Record<string, unknown> } | null)
+      ?.story_contract_json
+    if (!contract) return null
+    const pick = (key: string): string => {
+      const value = contract[key]
+      return typeof value === 'string' && value.trim() ? value.trim().slice(0, CAP_ANCHOR_CHARS) : ''
+    }
+    const anchors: StoryAnchorsInput = {
+      corePromise: pick('corePromise'),
+      mainConflict: pick('mainConflict'),
+      finalQuestion: pick('finalQuestion'),
+    }
+    // Null hanya bila contract benar-benar tanpa ketiga jangkar (legacy/standard).
+    return anchors.corePromise || anchors.mainConflict || anchors.finalQuestion
+      ? anchors
+      : null
+  } catch {
+    return null
+  }
+}
+
 interface ReaderRow {
   route_state: unknown
   choice_history: ChoiceHistoryEntry[] | null
@@ -115,6 +155,8 @@ export async function loadContinuationContextForChapter(input: {
   storyId: string
   chapterNumber: number
   triggerChoiceId?: string | null
+  /** Jangkar kisah global; bila absen, loader coba ambil dari contract (best-effort). */
+  storyAnchors?: StoryAnchorsInput | null
 }): Promise<LoadContinuationResult> {
   const n = input.chapterNumber
   if (n <= 1) return { ok: true, continuation: null }
@@ -226,6 +268,7 @@ export async function loadContinuationContextForChapter(input: {
 
   // 6) Build konteks (pure projection).
   const routeStateSummary = summarizeRouteStateForPrompt(narrative.routeState as RouteState)
+  const storyAnchors = input.storyAnchors ?? (await loadStoryAnchorsBestEffort(input.storyId))
   const continuation = buildContinuationContext({
     storyId: input.storyId,
     targetChapterNumber: n,
@@ -239,6 +282,7 @@ export async function loadContinuationContextForChapter(input: {
     previousChoice: narrative.previousChoice,
     routeStateSummary,
     lockedEndingKey: narrative.lockedEndingKey,
+    storyAnchors,
   })
 
   return { ok: true, continuation }

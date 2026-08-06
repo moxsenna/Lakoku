@@ -51,6 +51,30 @@ export function buildWriterPrompt(input: BuildWriterPromptInput): WriterPromptPa
     cc?.mustNotReveal?.length
       ? `- RAHASIA DILARANG UNTUK DIKONTAMINASI/DIUNGKAP: ${cc.mustNotReveal.join(', ')}`
       : '',
+    // M10-A closure: jangkar kisah global langsung di layer 1 (bukan tersirat
+    // dari contract yang tak pernah sampai ke writer).
+    cc?.storyAnchors
+      ? [
+          '',
+          '=== [1a] SANGKAR KISAH (JANGKAR GLOBAL — JANGAN MELANGGAR) ===',
+          cc.storyAnchors.corePromise
+            ? `- Janji Inti Cerita: ${cc.storyAnchors.corePromise}`
+            : '',
+          cc.storyAnchors.mainConflict
+            ? `- Konflik Utama (harus tetap terasa di bab ini): ${cc.storyAnchors.mainConflict}`
+            : '',
+          cc.storyAnchors.finalQuestion
+            ? chapter >= 45
+              ? `- PERTANYAAN AKHIR (WAJIB diarahkan ke jawaban, ending mendekat): ${cc.storyAnchors.finalQuestion}`
+              : `- Pertanyaan akhir cerita yang menggantung: ${cc.storyAnchors.finalQuestion}`
+            : '',
+        ].filter(Boolean).join('\n')
+      : '',
+    // Ending lock dipancarkan EKSPLISIT begitu terkunci (Bab >= 45) — bukan
+    // hanya diklaim di komentar (M10-A closure).
+    cc?.lockedEndingKey
+      ? `- ENDING SUDAH TERKUNCI pada "${cc.lockedEndingKey}". Semua pilihan/akibat bab ini harus mengarah ke ending tersebut.`
+      : '',
   ].filter(Boolean).join('\n')
 
   // --- Lapis 2: RIWAYAT PEMBACA ---
@@ -80,54 +104,69 @@ export function buildWriterPrompt(input: BuildWriterPromptInput): WriterPromptPa
     ].join('\n')
   }
 
-  // --- Lapis 3: KEADAAN CERITA & BUDGET CONTROL (1200 token budget proxy ~4800 chars) ---
+  // --- Lapis 3: KEADAAN CERITA & BUDGET CONTROL (total ≤ 4800 chars) ---
   let layer3StoryState = ''
+  let layer3Eviction: WriterPromptParts['layer3Eviction']
   if (cc) {
-    let threads = cc.openThreads.map((t) => `- Thread Aktif: ${t.id} (${t.status})`).join('\n')
     // Field spesifik, bukan objeknya: interpolasi objek menghasilkan
     // "[object Object]" dan menghapus seluruh fakta/kronologi dari prompt.
-    let facts = cc.anchorFacts
+    const threadLines = cc.openThreads
+      .map((t) => `- Thread Aktif: ${t.id} (${t.status})`)
+    const factLines = cc.anchorFacts
       .map((f) => `- Fakta Mapan (Bab ${f.establishedChapter}): ${f.statement}`)
-      .join('\n')
-    let timeline = cc.recentTimeline
+    const timelineLines = cc.recentTimeline
       .map((t) => `- Kronologi Pasti (Bab ${t.chapterNumber}): ${t.description}`)
-      .join('\n')
+    // M10-A closure: ringkasan babak yang sudah selesai turut dibawa ke writer
+    // (dulu hanya ada di compiler, tak pernah sampai prompt = DEAD_PATH).
+    const rollupLines = cc.actRollups.length
+      ? ['Ringkasan Babak Terlewati:', ...cc.actRollups.map(
+          (r) => `- Babak ${r.actNumber} (Bab 1-${r.coversToChapter}): ${r.summary}`,
+        )]
+      : []
 
-    let blockContent = [
-      '=== [3] KEADAAN CERITA ===',
-      `Rute & Status Pembaca: ${cc.routeStateSummary}`,
-      threads ? `Thread Aktif:\n${threads}` : '',
-      facts ? `Fakta Terbukti:\n${facts}` : '',
-      timeline ? `Kronologi Terbaru:\n${timeline}` : '',
-    ].filter(Boolean).join('\n')
+    const sections: Array<{
+      id: 'threads' | 'facts' | 'timeline' | 'rollups'
+      header: string | null
+      lines: string[]
+    }> = [
+      { id: 'threads' as const, header: 'Thread Aktif:', lines: threadLines },
+      { id: 'facts' as const, header: 'Fakta Terbukti:', lines: factLines },
+      { id: 'timeline' as const, header: 'Kronologi Terbaru:', lines: timelineLines },
+      { id: 'rollups' as const, header: null, lines: rollupLines },
+    ].filter((s) => s.lines.length > 0)
 
-    // Proxy budget ~4800 karakter. Jika berlebih: pangkas timeline -> facts -> threads (excerpt/choice tidak tersentuh)
-    if (blockContent.length > 4800 && timeline) {
-      timeline = ''
-      blockContent = [
+    const render = (): string => {
+      const parts: string[] = [
         '=== [3] KEADAAN CERITA ===',
         `Rute & Status Pembaca: ${cc.routeStateSummary}`,
-        threads ? `Thread Aktif:\n${threads}` : '',
-        facts ? `Fakta Terbukti:\n${facts}` : '',
-      ].filter(Boolean).join('\n')
-    }
-    if (blockContent.length > 4800 && facts) {
-      facts = ''
-      blockContent = [
-        '=== [3] KEADAAN CERITA ===',
-        `Rute & Status Pembaca: ${cc.routeStateSummary}`,
-        threads ? `Thread Aktif:\n${threads}` : '',
-      ].filter(Boolean).join('\n')
-    }
-    if (blockContent.length > 4800 && threads) {
-      threads = ''
-      blockContent = [
-        '=== [3] KEADAAN CERITA ===',
-        `Rute & Status Pembaca: ${cc.routeStateSummary}`,
-      ].filter(Boolean).join('\n')
+      ]
+      for (const section of sections) {
+        if (section.lines.length === 0) continue
+        if (section.header) parts.push(section.header)
+        parts.push(...section.lines)
+      }
+      return parts.join('\n')
     }
 
-    layer3StoryState = blockContent
+    // Trim GRANULAR per baris (tertua dibuang dulu), bukan whole-section:
+    // urutan prioritas timeline -> facts -> threads -> rollups. Baris yang
+    // dibuang dicatat untuk observability (layer3Eviction), tidak pernah
+    // memotong excerpt/pilihan pembaca.
+    const trimPriority: Array<typeof sections[number]['id']> = ['timeline', 'facts', 'threads', 'rollups']
+    const evicted: WriterPromptParts['layer3Eviction'] = { timeline: 0, facts: 0, threads: 0, rollups: 0 }
+    let content = render()
+    while (content.length > 4800) {
+      const target = trimPriority
+        .map((id) => sections.find((s) => s.id === id))
+        .find((s) => s && s.lines.length > 0)
+      if (!target) break // patologi: semua seksi habis, terima overshoot minimal
+      target.lines.pop()
+      evicted[target.id] = (evicted[target.id] ?? 0) + 1
+      content = render()
+    }
+
+    layer3StoryState = content
+    layer3Eviction = evicted
   }
 
   // --- Lapis 4: SASARAN BAB ---
@@ -184,5 +223,6 @@ export function buildWriterPrompt(input: BuildWriterPromptInput): WriterPromptPa
       softMin: paragraphs.softMin,
       softMax: paragraphs.softMax,
     },
+    ...(layer3Eviction !== undefined ? { layer3Eviction } : {}),
   }
 }

@@ -53,6 +53,23 @@ export interface PreviousChapterRef {
 }
 
 /**
+ * Jangkar kisah global dari story contract (M10-A closure). Nilai pendek
+ * reader-safe; null bila cerita tanpa contract (standard/public legacy).
+ */
+export interface StoryAnchors {
+  corePromise: string
+  mainConflict: string
+  finalQuestion: string
+}
+
+/** Ringkasan babak yang SUDAH selesai (coversToChapter < N), bounded. */
+export interface ContinuationActRollup {
+  actNumber: number
+  summary: string
+  coversToChapter: number
+}
+
+/**
  * Konteks kelanjutan Bab N. Semua field sudah di-bounding.
  * previousChoice null sah hanya bila Bab N-1 memang tanpa pilihan
  * (legacy non-choice) atau Bab 1. Untuk Bab dengan choice, previousChoice wajib ada.
@@ -72,11 +89,18 @@ export interface ContinuationContext {
   recentTimeline: ContinuationTimelineEvent[]
   /** Rahasia yang BELUM boleh dibocorkan (gate > N). Hanya larangan, bukan fakta. */
   mustNotReveal: string[]
+  /** Jangkar kisah global (contract), di-bounding; null bila tanpa contract. */
+  storyAnchors: StoryAnchors | null
+  /** Ringkasan babak selesai (act rollup), newest-first, bounded (M10-A closure). */
+  actRollups: ContinuationActRollup[]
+  /** Ending terkunci pembaca (null sampai endingLockChapter). */
+  lockedEndingKey: string | null
 }
 
 const CAP_FACTS = 6
 const CAP_THREADS = 6
 const CAP_TIMELINE = 5
+const CAP_ROLLUPS = 2
 
 function projectFact(f: Fact): ContinuationFact {
   return {
@@ -118,6 +142,8 @@ export interface BuildContinuationContextInput {
   previousChoice: ChoiceHistoryEntry | null
   routeStateSummary: string
   lockedEndingKey: string | null
+  /** Jangkar kisah global dari story contract (dari loader/caller). Null = tanpa contract. */
+  storyAnchors?: StoryAnchors | null
 }
 
 /**
@@ -156,6 +182,14 @@ export function buildContinuationContext(
     .slice(0, CAP_TIMELINE)
     .map(projectTimeline)
 
+  // Act rollup: hanya babak yang SUDAH selesai (coversToChapter < N), aturan
+  // sama dengan compiler — bukan seluruh daftar (M10-A closure).
+  const actRollups = [...input.snapshot.actRollups]
+    .filter((r) => r.coversToChapter < n)
+    .sort((a, b) => b.actNumber - a.actNumber)
+    .slice(0, CAP_ROLLUPS)
+    .map((r) => ({ actNumber: r.actNumber, summary: r.summary, coversToChapter: r.coversToChapter }))
+
   // Rahasia terkunci: hanya yang gate-nya > N. Masuk sebagai larangan.
   const mustNotReveal = input.snapshot.secrets
     .filter((s) => s.revealGateChapter > n)
@@ -171,5 +205,8 @@ export function buildContinuationContext(
     anchorFacts,
     recentTimeline,
     mustNotReveal,
+    storyAnchors: input.storyAnchors ?? null,
+    actRollups,
+    lockedEndingKey: input.lockedEndingKey,
   }
 }

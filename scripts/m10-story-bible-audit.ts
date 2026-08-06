@@ -3,10 +3,12 @@
  *
  * Assembles synthetic inputs from fixtures/long-horizon/story-bible-pressure.ts
  * (49 choice-history entries, canon snapshots at milestones 10/20/30/40/45/50,
- * the 50-chapter story contract) plus the audit hypothesis flags
- * (retrievalLogInvoked: false, validatorReceivesDraftSignals: false) into the
- * input groups of runStoryBibleAudit, then prints the audit result and writes
- * the full AuditReportArtifact to .zcode/artifacts/m10-a/audit.json.
+ * the 50-chapter story contract) plus the post-closure production hypothesis
+ * flags (retrievalLogInvoked: false INFO; validator receives delta-derived
+ * thread signals; brief consults the effective plot-debt ledger; act rollups
+ * reach the writer; canon writeback exists via the v1 applier) into the input
+ * groups of runStoryBibleAudit, then prints the audit result and writes the
+ * full AuditReportArtifact to .zcode/artifacts/m10-a/audit.json.
  *
  * Exit contract: 0 on executionStatus SUCCESS (BLOCKER/HIGH findings are VALID
  * audit output — auditVerdict HOLD is not a script failure); 1 only on auditor
@@ -82,28 +84,31 @@ function canonContextSample(chapter: number): CanonContextSample {
 
 /**
  * Blueprint resolution entries for chapter 20 (two versions in the fixture).
- * The fixture array order is [v1, v2]: buildChapterBrief takes the FIRST array
- * match (v1) while resolveBlueprint/latestBlueprint take the highest version
- * (v2) — the same divergence the production detector characterizes.
+ * Post-M10-A closure: runtime AND compiler AND brief all resolve through
+ * latestBlueprintForChapter (highest version wins) — all three entries report
+ * v2, so BLUEPRINT_VERSION_RESOLUTION_DIVERGENCE stays silent.
  */
 function blueprintVersionEntries(): BlueprintVersionEntry[] {
   const snap = buildSyntheticCanonSnapshot(20)
   const byVersion = new Map(snap.blueprints.map((b) => [b.version, b]))
-  const v1 = byVersion.get(1)
   const v2 = byVersion.get(2)
-  if (!v1 || !v2) {
-    throw new Error('fixture blueprint v1/v2 missing at canon milestone 20')
+  if (!v2) {
+    throw new Error('fixture blueprint v2 missing at canon milestone 20')
   }
   return [
     { chapterNumber: 20, version: v2.version, source: 'runtime', beats: v2.mandatoryBeats },
     { chapterNumber: 20, version: v2.version, source: 'compiler', beats: v2.mandatoryBeats },
-    { chapterNumber: 20, version: v1.version, source: 'brief', beats: v1.mandatoryBeats },
+    { chapterNumber: 20, version: v2.version, source: 'brief', beats: v2.mandatoryBeats },
   ]
 }
 
-/** Thread sample at canon milestone 50 with production hypothesis flags. */
+/** Thread sample at canon milestone 50 with post-closure production hypothesis:
+ *  the personalized v1 path derives advancedThreadIds from the validated state
+ *  delta (delta.threads.touches + transitions) and the validator receives those
+ *  real signals via the ThreadContext bridge. */
 function threadAuditSample(): ThreadAuditSample {
   const snap = buildSyntheticCanonSnapshot(50)
+  const advancing = snap.threads.find((t) => t.status !== 'RESOLVED')?.id ?? 'thread_2'
   return {
     chapter: 50,
     threads: snap.threads.map((t) => ({
@@ -116,21 +121,21 @@ function threadAuditSample(): ThreadAuditSample {
       stale: t.stale,
       staleSinceChapter: t.staleSinceChapter,
     })),
-    // Production hypothesis (code-reading): runtime hardcodes empty signals and
-    // the draft validator never receives them.
-    threadContextAdvancedThreadIds: [],
+    // Post-closure reality (v1): advancedThreadIds = validatedStateDelta
+    // touches + transition threadIds; validator consumes them verbatim.
+    threadContextAdvancedThreadIds: [advancing],
     threadContextOpensNewThread: false,
-    validatorReceivesDraftSignals: false,
+    validatorReceivesDraftSignals: true,
   }
 }
 
-/** Plot debt sample at chapter 50 from the synthetic story contract (both debts open).
- *  Reviewer correction (M10-A/R1): ledger has closures persisted at publish
- *  (v4 RPC), but the brief never consults the ledger (briefConsultsLedger:
- *  false) — the baseline must surface PLOT_DEBT_EFFECTIVE_STATE_NOT_PROJECTED.
- *  We simulate the real production shape: main_mystery closes at 35 and is in
- *  the ledger at chapter 50, debt_2 closes at 48 (ledger too), yet the brief
- *  still sees contract status 'open'.
+/** Plot debt sample at chapter 50 from the synthetic story contract (both debts
+ *  contract-open). Post-M10-A closure (v1): the brief consults the effective
+ *  plot-debt state (ledger projection loaded before generation), main_mystery is
+ *  closed in the ledger, and progress on remaining milestones is recorded — so
+ *  PLOT_DEBT_EFFECTIVE_STATE_NOT_PROJECTED and PLOT_DEBT_PROGRESS_NOT_PERSISTED
+ *  stay silent. PLOT_DEBT_NEXT_CHAPTER_STATE_STALE (MEDIUM) remains for
+ *  traceability (contract row still says open while ledger says closed).
  */
 function plotDebtAuditSample(): PlotDebtAuditSample {
   const contract = buildSyntheticStoryContract()
@@ -144,15 +149,16 @@ function plotDebtAuditSample(): PlotDebtAuditSample {
   return {
     chapter: 50,
     debts,
-    // Ledger at publish-time (v4): main_mystery closure persisted at ch 35;
-    // debt_2 is NOT in the ledger (progress memory gap persists to ch 50).
+    // Ledger at publish-time (v1 applier): main_mystery closure persisted at ch 35;
+    // debt_2 progress recorded at its milestone ch 25 (reader_plot_debt_progress).
     ledgerClosedIds: ['main_mystery'],
     closesProposed: [], // chapter-50 audit itself does not propose new closures
     auditSignalsClosesPlotDebts: [],
-    progressRecordedThisChapter: [],
-    progressedMilestones: [],
-    // Brief ignores the ledger (buildChapterBrief reads contract status only).
-    briefConsultsLedger: false,
+    progressRecordedThisChapter: ['debt_2'],
+    progressedMilestones: [{ debtId: 'debt_2', milestoneIndex: 0, progressedAt: 25 }],
+    // v1 closure: effectivePlotDebtState (ledger projection) is an input to
+    // buildChapterBrief (personalized-generation.ts:887-889 -> chapter-brief.ts:268).
+    briefConsultsLedger: true,
   }
 }
 
@@ -167,7 +173,10 @@ function endingFixtureEntries(): EndingFixtureEntry[] {
   ]
 }
 
-/** Act rollup lifecycle sample from canon milestone 50 (seeded, never updated). */
+/** Act rollup lifecycle sample from canon milestone 50. Post-M10-A closure:
+ *  the v1 applier upserts rollups at act boundaries (act1 at ch 10, act2 at
+ *  ch 25) and the writer layer 3 renders them ("Ringkasan Babak Terlewati"), so
+ *  DEAD_PATH_CANDIDATE stays silent. */
 function actRollupLifecycleSample(): ActRollupLifecycleSample {
   const snap = buildSyntheticCanonSnapshot(50)
   return {
@@ -176,11 +185,11 @@ function actRollupLifecycleSample(): ActRollupLifecycleSample {
       summary: r.summary,
       coversFromChapter: r.coversFromChapter,
       coversToChapter: r.coversToChapter,
-      updatedAtChapter: null,
+      updatedAtChapter: r.coversToChapter,
     })),
     snapshotReadsRollups: true,
     compilerIncludesRollups: true,
-    writerPromptIncludesRollups: false,
+    writerPromptIncludesRollups: true,
     seededAtAuthoring: true,
   }
 }
@@ -219,6 +228,15 @@ function buildInputs() {
     },
     actRollupSample: actRollupLifecycleSample(),
     chapter50Sample: chapter50FinalizationSample(),
+    // Post-closure (v1): the shared applier writes canon (facts/knowledge/
+    // timeline/characters/threads/act rollups/debt ledger) behind
+    // publish_chapter_state_v3 (sync) and publish_generation_job_chapter_v5
+    // (worker); the v0/legacy publish payloads (v2/v4) carry no canon delta.
+    canonWriteback: {
+      v2CarriesCanonDelta: false,
+      v4CarriesCanonDelta: false,
+      canonRuntimeWriterExists: true,
+    },
   }
 }
 

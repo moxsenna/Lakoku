@@ -3,11 +3,11 @@
  *
  * Builds CanonContextSample inputs from fixtures/long-horizon/story-bible-pressure.ts
  * (canon growth at milestones 1/10/20/30/35/40/45/48/49/50), stress cases at
- * totalBudget=4000 with load-bearing cost 900/1500/3000/4500 (same construction
- * approach as tests/narrative-qa/context-pressure.test.ts / sample-builder.ts),
- * and choice-history pressure rows at 10/20/30/40/50 over 49 choices. Prints a
- * per-milestone table + choice pressure rows + verdict, and writes the
- * ContextPressureReportArtifact to .zcode/artifacts/m10-a/context-pressure.json.
+ * totalBudget=4000 with load-bearing cost 900/1500/2500/3100 (all within budget,
+ * granular layer-3 trim recorded — post-M10-A closure shape), and choice-history
+ * pressure rows at 10/20/30/40/50 over 49 choices. Prints a per-milestone table +
+ * choice pressure rows + verdict, and writes the ContextPressureReportArtifact to
+ * .zcode/artifacts/m10-a/context-pressure.json.
  *
  * Exit contract: 0 on SUCCESS (HOLD is valid audit output); 1 only on auditor
  * failure (throw / artifact write failure).
@@ -37,7 +37,11 @@ const ARTIFACT_PATH = path.join(ROOT, '.zcode', 'artifacts', 'm10-a', 'context-p
 
 const DEFAULT_BUDGET = 4000
 const CANON_MILESTONES = [1, 10, 20, 30, 35, 40, 45, 48, 49, 50]
-const STRESS_LOAD_BEARING_COSTS = [900, 1500, 3000, 4500]
+// Post-closure stress envelope: every row fits the declared 4000 budget (like a
+// compileContext-trimmed packet); 1500/2500/3100 cross the 25% load-bearing cap
+// (LOAD_BEARING_PRESSURE MEDIUM), 3100 also crosses 90% usage (fact/rollup
+// eviction MEDIUM). The >budget adversarial case lives in unit tests.
+const STRESS_LOAD_BEARING_COSTS = [900, 1500, 2500, 3100]
 const CHOICE_PRESSURE_CHAPTERS = [10, 20, 30, 40, 50]
 const TOTAL_CHOICES = 49
 
@@ -72,10 +76,17 @@ function canonContextSample(chapter: number): CanonContextSample {
 
 /**
  * Stress sample at totalBudget=4000: load-bearing facts cost `loadBearingCost`
- * (400-char statement = 100 tokens each), 26 regular facts with 4 excluded,
- * 5 threads, 8 timeline events, 2 act rollups with act 1 excluded.
- * Constant non-load-bearing cost = 2760 tokens (same numbers as
- * tests/narrative-qa/sample-builder.ts :: stressContextSample).
+ * (400-char statement = 100 tokens each), 26 regular facts (100 chars = 25 tokens
+ * each) with 4 excluded, 5 threads, 8 timeline events, 2 act rollups with act 1
+ * excluded. Post-M10-A closure shapes:
+ *  - compiler-level: every row stays within the declared budget (like a packet
+ *    compileContext would trim to fit) — CONTEXT_DECLARED_BUDGET_OVERSHOOT stays
+ *    silent; LOAD_BEARING_PRESSURE (MEDIUM) fires from cost >= 1000 (25% cap).
+ *  - writer layer-3: the 4800-char TRIM_BUDGET is enforced GRANULARLY per entry
+ *    (timeline -> facts -> threads -> rollups) and the layerEviction record is
+ *    present with trimmedToLimit: true, so WRITER_CONTEXT_GRANULAR_TRIM_NOT_RECORDED
+ *    stays silent. (The adversarial load-bearing > budget case is covered in
+ *    tests/narrative-qa/context-pressure.test.ts, not the PASS-gated artifact.)
  */
 function stressContextSample(loadBearingCost: number, chapter = 50): CanonContextSample {
   const loadBearingFacts: ContextFact[] = []
@@ -92,7 +103,7 @@ function stressContextSample(loadBearingCost: number, chapter = 50): CanonContex
   for (let i = 1; i <= 26; i++) {
     regularFacts.push({
       id: `fact_${i}`,
-      statement: 'x'.repeat(400),
+      statement: 'y'.repeat(100),
       isLoadBearing: false,
       paidOff: false,
       included: i <= 4 ? false : undefined,
@@ -110,6 +121,19 @@ function stressContextSample(loadBearingCost: number, chapter = 50): CanonContex
     { actNumber: 1, summary: 'r'.repeat(60), included: false },
     { actNumber: 2, summary: 'r'.repeat(60) },
   ]
+  // Writer layer-3 block (chars) exactly as buildWriterPrompt assembles it:
+  // timeline + facts + threads + rollups against the fixed 4800 TRIM_BUDGET.
+  // Granular trimming priority: timeline -> facts -> threads -> rollups, so the
+  // timeline (320) and threads (200) and rollups (120) fit and only facts are
+  // trimmed per entry until the block fits — recorded in layerEviction.
+  const timelineChars = 8 * 40
+  const factsChars = [...loadBearingFacts, ...regularFacts].length * 400
+  const threadsChars = 5 * 40
+  const rollupsChars = 2 * 60
+  const charLimit = 4800
+  const factsBudget = charLimit - timelineChars - threadsChars - rollupsChars
+  const factsFit = Math.max(0, Math.floor(factsBudget / 400))
+  const totalFacts = [...loadBearingFacts, ...regularFacts].length
   return {
     chapter,
     declaredBudget: DEFAULT_BUDGET,
@@ -118,15 +142,19 @@ function stressContextSample(loadBearingCost: number, chapter = 50): CanonContex
     timeline,
     actRollups,
     choiceHistory: [],
-    // Correction (M10-A/R1): writer layer-3 block for the same sample.
-    // 400-char facts x (31..71) + 40-char threads x5 + 40-char timeline x8:
-    // total layer-3 chars far exceed the fixed 4800-char trim -> whole-section
-    // eviction (timeline -> facts) fires in the writer prompt assembly.
     writerLayer3: {
-      timelineChars: 8 * 40,
-      factsChars: [...loadBearingFacts, ...regularFacts].length * 400,
-      threadsChars: 5 * 40,
-      charLimit: 4800,
+      timelineChars,
+      factsChars,
+      threadsChars,
+      rollupsChars,
+      charLimit,
+      layerEviction: {
+        timeline: 0,
+        facts: Math.max(0, totalFacts - factsFit),
+        threads: 0,
+        rollups: 0,
+        trimmedToLimit: true,
+      },
     },
   }
 }

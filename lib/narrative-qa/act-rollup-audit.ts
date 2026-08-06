@@ -19,10 +19,16 @@
  *   - lib/narrative/compiler.ts :: compileContext — keeps act rollups whose
  *     coversToChapter < targetChapter, budgets them under rollupsSummaries (0.25),
  *     keeps newest-first and drops oldest into excludedIds over cap.
+ *   - supabase/migrations/20260805020000_living_canon_publication_primitives.sql
+ *     :: apply_validated_chapter_state_v1 — the shared atomic state applier
+ *     (publish_chapter_state_v3 sync / publish_generation_job_chapter v5 worker)
+ *     upserts the act rollup at act boundaries (M10-A closure) — rollups are no
+ *     longer write-once seed data.
  *   - lib/narrative/continuation-context.ts :: buildContinuationContext — the
- *     ContinuationContext type has NO actRollups field; rollups die at the packet.
+ *     ContinuationContext carries actRollups (M10-A closure): only completed acts
+ *     (coversToChapter < N), newest-first, CAP_ROLLUPS = 2.
  *   - lib/prose/prompt-engine/build-writer-prompt.ts :: buildWriterPrompt — layer 3
- *     emits threads, facts, timeline, routeStateSummary — no rollup section.
+ *     renders a "Ringkasan Babak Terlewati:" rollup section (M10-A closure).
  */
 
 import type {
@@ -57,7 +63,7 @@ export const ACT_ROLLUP_AUDIT_EVIDENCE: StructuredEvidence[] = [
     source: 'supabase/migrations/20260707000000_core_runtime_baseline.sql :: act_rollups',
     evidenceClass: 'SCHEMA_CONTRACT',
     observation:
-      'act_rollups columns: id, story_id, act_number, summary, state_delta jsonb, covers_from_chapter, covers_to_chapter, created_at; UNIQUE(story_id, act_number); no updated_at column — mutation means row replacement, and no migration found that inserts/updates it after baseline.',
+      'act_rollups columns: id, story_id, act_number, summary, state_delta jsonb, covers_from_chapter, covers_to_chapter, created_at; UNIQUE(story_id, act_number); no updated_at column — mutation means row replacement, which is exactly what the A1d applier does at act boundaries (see apply_validated_chapter_state_v1).',
   },
   {
     source: 'lib/authoring/compile.ts :: compileStoryBible',
@@ -87,24 +93,26 @@ export const ACT_ROLLUP_AUDIT_EVIDENCE: StructuredEvidence[] = [
     source: 'lib/narrative/continuation-context.ts :: buildContinuationContext',
     evidenceClass: 'SOURCE_TRACE',
     observation:
-      'ContinuationContext has NO actRollups field — the projected context handed to the writer path contains only openThreads, anchorFacts, recentTimeline, routeStateSummary, mustNotReveal.',
+      'M10-A closure (DEAD_PATH_CANDIDATE): ContinuationContext now carries actRollups — only completed acts (coversToChapter < N), sorted newest-first, capped at CAP_ROLLUPS = 2. The compiled rollup summaries no longer die at the packet boundary.',
   },
   {
     source: 'lib/prose/prompt-engine/build-writer-prompt.ts :: buildWriterPrompt',
     evidenceClass: 'SOURCE_TRACE',
     observation:
-      'Layer-3 story-state block renders threads, facts, timeline, routeStateSummary only; no act-rollup summary section exists in the writer prompt.',
+      'M10-A closure: layer 3 renders a "Ringkasan Babak Terlewati:" section from continuationContext.actRollups, so the writer prompt consumes the compiled rollup summaries (budget allocation rollupsSummaries 0.25 now has a live consumer).',
   },
 ]
 
 /**
  * Emit act-rollup lifecycle findings.
- * - DEAD_PATH_CANDIDATE (HIGH): rollups exist (seeded at authoring), are never
- *   updated, and never reach the writer prompt. HIGH because
- *   buildWriterPrompt has no rollup section while compileContext allocates 25%
- *   of the packet budget to rollup summaries (rollupsSummaries 0.25) — the
- *   compiler spends budget on data the writer never sees (writer prompt
- *   excludes rollups, so that 25% compiler allocation is wasted).
+ * - DEAD_PATH_CANDIDATE (HIGH): the sample still shows rollups seeded at
+ *   authoring, never updated, and never reaching the writer prompt. This is now
+ *   a POST-CLOSURE regression detector: production (apply_validated_chapter_state_v1
+ *   at act boundaries + ContinuationContext.actRollups + layer-3 "Ringkasan Babak
+ *   Terlewati:" section) has closed the living path, so a sample that regresses
+ *   to the old dead path re-opens the finding. HIGH because the dead path has a
+ *   real budget cost: compileContext allocates 25% of the packet budget to rollup
+ *   summaries (rollupsSummaries 0.25) that a dead path would never render.
  */
 export function auditActRollupLifecycle(
   sample: ActRollupLifecycleSample,
@@ -120,8 +128,8 @@ export function auditActRollupLifecycle(
         actNumbers: sample.rollups.map((r) => r.actNumber),
         neverUpdated: true,
       },
-      risk: `${sample.rollups.length} act rollup(s) (acts ${sample.rollups.map((r) => r.actNumber).join(', ')}) were seeded at authoring, never updated (no updated_at column, no update migration found), and never reach the writer prompt. HIGH because the dead path has a real budget cost: compileContext allocates 25% of the context packet to rollup summaries (BUDGET_ALLOCATION.rollupsSummaries 0.25) while buildWriterPrompt excludes rollups entirely — the writer never sees a rollup AND 25% of the compiler budget is spent on sections the prompt drops. The rollup chain has no proven living path.`,
-      followUp: 'Confirm whether act rollups are meant to be maintained during generation; if yes, add an update trigger (e.g. at act boundaries) and a prompt consumer; if no, mark the domain as write-once seed data and reallocate the 0.25 rollupsSummaries budget.',
+      risk: `${sample.rollups.length} act rollup(s) (acts ${sample.rollups.map((r) => r.actNumber).join(', ')}) are seeded at authoring, never updated (production updates them at act boundaries via apply_validated_chapter_state_v1 — a sample reporting null updatedAtChapter means the writer runtime path did NOT refresh them), and never reach the writer prompt (layer-3 "Ringkasan Babak Terlewati:" section absent from the sample). HIGH because the dead path has a real budget cost: compileContext allocates 25% of the context packet to rollup summaries (BUDGET_ALLOCATION.rollupsSummaries 0.25) while the prompt excludes rollups entirely — the writer never sees a rollup AND 25% of the compiler budget is spent on sections the prompt drops. The rollup chain has no proven living path.`,
+      followUp: 'The M10-A closure (applier upsert at act boundary + ContinuationContext.actRollups + layer-3 section) fixes this path — re-check whether the sample reflects the closure (updatedAtChapter non-null, writerPromptIncludesRollups true); if production regressed, restore the applier upsert and the layer-3 rollup section.',
     }))
   }
 

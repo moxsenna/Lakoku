@@ -16,26 +16,18 @@ import { contractTrace, fullyPropagatedTrace } from './sample-builder'
 import { detailOf } from './sample-builder'
 
 describe('writer-propagation-audit — default trace table', () => {
-  it('corePromise/mainConflict/finalQuestion persist tapi tak pernah prompt-visible -> GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED HIGH (nama kode baru, M10-A/R1)', () => {
+  it('corePromise/mainConflict/finalQuestion terpropagasi ke prompt (M10-A closure) -> tanpa HIGH anchor', () => {
     const findings = auditPropagation()
-    const highFields = findings
-      .filter((f) => f.code === 'GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED' && f.severity === 'HIGH')
-      .map((f) => detailOf(f).field)
-
-    expect(highFields).toContain('corePromise')
-    expect(highFields).toContain('mainConflict')
-    expect(highFields).toContain('finalQuestion')
-    expect(highFields).toHaveLength(3)
-    // Kode lama DEPENDENCY_DECLARED_BUT_UNUSED tidak lagi dipakai untuk anchor ini.
+    // M10-A closure: anchors reach ContinuationContext.storyAnchors -> layer 1a.
     expect(
-      findings.filter((f) => f.code === 'DEPENDENCY_DECLARED_BUT_UNUSED' && f.severity === 'HIGH'),
+      findings.filter((f) => f.code === 'GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED' && f.severity === 'HIGH'),
     ).toEqual([])
-    // Catatan finalQuestion khusus: anchor kritis di Bab 45–50.
-    const finalQ = findings.find(
-      (f) => f.code === 'GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED'
-        && detailOf(f).field === 'finalQuestion',
-    )
-    expect(finalQ?.risk).toContain('45–50')
+    // Trace default mencatat jalur closure: persisted + continuation + prompt.
+    for (const field of ['corePromise', 'mainConflict', 'finalQuestion']) {
+      const trace = DEFAULT_CONTRACT_FIELD_TRACES.find((t) => t.field === field)
+      expect(trace?.inContinuation, field).toBe(true)
+      expect(trace?.inWriterPrompt, field).toBe(true)
+    }
   })
 
   it('field yang sampai ke brief tapi mati sebelum prompt -> DEPENDENCY_DECLARED_BUT_UNUSED MEDIUM', () => {
@@ -47,7 +39,9 @@ describe('writer-propagation-audit — default trace table', () => {
     expect(mediumFields).toContain('plotDebts')
     expect(mediumFields).toContain('endingCandidates')
     expect(mediumFields).toContain('closureRunway')
-    expect(mediumFields).toContain('lockedEndingKey (reader_states)')
+    // M10-A closure: lockedEndingKey sekarang sampai ke prompt (layer 1a)
+    // sehingga tidak lagi termasuk MIDDLE-ground unused.
+    expect(mediumFields).not.toContain('lockedEndingKey (reader_states)')
   })
 
   it('chapterTargets/emotionalTurn/expectedThreadMovement terpropagasi ke prompt -> tidak ada finding', () => {
@@ -118,7 +112,9 @@ describe('writer-propagation-audit — packet consumer & retrieval log', () => {
     const packet = findings.find((f) => f.code === 'CONTEXT_PACKET_CONSUMER_UNPROVEN')
     expect(packet).toBeDefined()
     expect(packet?.severity).toBe('INFO')
-    expect(detailOf(packet as NonNullable<typeof packet>).packetSectionsDropped).toEqual(['actRollups', 'contextBudgetReport', 'storyContractSummary'])
+    // M10-A closure: actRollups kini dikonsumsi writer layer 3; yang masih
+    // di-drop sebelum prompt adalah budget report dan contract summary.
+    expect(detailOf(packet as NonNullable<typeof packet>).packetSectionsDropped).toEqual(['contextBudgetReport', 'storyContractSummary'])
   })
 
   it('CONTEXT_PACKET_CONSUMER_UNPROVEN tidak ter-emit saat consumer proven', () => {

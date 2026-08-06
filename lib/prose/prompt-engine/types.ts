@@ -19,6 +19,17 @@ export interface WriterPromptParts {
     softMin: number
     softMax: number
   }
+  /**
+   * M10-A closure: berapa baris per kategori yang dievicted layer-3 saat
+   * melewati batas karakter (trim granular per-baris, bukan whole-section).
+   * Untuk observability/audit; tidak memotong prosa.
+   */
+  layer3Eviction?: {
+    timeline: number
+    facts: number
+    threads: number
+    rollups: number
+  }
 }
 
 export interface BuildWriterPromptInput {

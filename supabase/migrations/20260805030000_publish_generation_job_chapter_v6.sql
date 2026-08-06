@@ -187,7 +187,7 @@ begin
       and cr.reservation_kind = 'CHAPTER_UNLOCK'
     for update;
 
-    -- I: Lock commercial_generation_intents FOR UPDATE with exact user provenance (REQUIREMENT 8)
+    -- I: Lock commercial_generation_intents FOR UPDATE with exact user provenance
     select i.* into v_intent
     from public.commercial_generation_intents i
     where i.user_id = v_job.user_id
@@ -210,7 +210,7 @@ begin
       raise exception using errcode = 'P0001', message = 'COMMERCIAL_TRIGGER_CHOICE_MISMATCH';
     end if;
 
-    -- Fresh Capture Path: REQUIREment 9 — intent status MUST BE EXACT 'QUEUED'
+    -- Fresh Capture Path: intent status MUST BE EXACT 'QUEUED'
     if v_reservation.status = 'ACTIVE' and v_intent.status = 'QUEUED' then
       if v_reservation.expires_at <= clock_timestamp() then
         raise exception using errcode = 'P0001', message = 'COMMERCIAL_RESERVATION_EXPIRED';
@@ -251,14 +251,13 @@ begin
 
       return v_pub_result;
 
-    -- Replay Capture Path
+    -- Replay Capture Path: Historical replay uses historical intent quote snapshot, NOT active catalog price
     elsif v_reservation.status = 'CAPTURED' and v_intent.status = 'FULFILLED' then
-      -- REQUIREMENT 11: Exact CAPTURED Replay Proof
       if v_reservation.user_id is distinct from v_job.user_id
         or v_reservation.story_id is distinct from p_story_id
         or v_reservation.chapter_number is distinct from p_chapter_number
         or v_reservation.reservation_kind is distinct from 'CHAPTER_UNLOCK'
-        or v_reservation.amount is distinct from v_active_price
+        or v_reservation.amount is distinct from v_intent.quoted_credits
         or v_intent.user_id is distinct from v_job.user_id
         or v_intent.story_id is distinct from p_story_id
         or v_intent.chapter_number is distinct from p_chapter_number
@@ -334,6 +333,11 @@ begin
         raise exception using errcode = 'P0001', message = 'COMMERCIAL_RESERVATION_EXPIRED';
       end if;
 
+      -- HARDENING: Fresh Paid Story Start reservation amount MUST equal active Story Start cost (e.g. 24)
+      if v_reservation.amount is distinct from v_active_price then
+        raise exception using errcode = 'P0001', message = 'INVALID_STORY_START_RESERVATION_AMOUNT';
+      end if;
+
       -- Update reservation status to CAPTURED
       update public.credit_reservations
         set status = 'CAPTURED', updated_at = clock_timestamp()
@@ -381,7 +385,7 @@ begin
       and v_reservation.status = 'CAPTURED'
       and v_creation_req.status = 'READY'
     then
-      -- REQUIREMENT 11: Replay requires exact request, reservation & ledger proof
+      -- REPLAY PROOF
       if v_creation_req.owner_user_id is distinct from v_job.user_id
         or v_creation_req.request_kind is distinct from v_expected_req_kind
         or v_creation_req.generation_job_id is distinct from p_job_id
@@ -416,6 +420,5 @@ begin
 end;
 $$;
 
--- REQUIREMENT 16: Keep V6 ACL as service_role only
 revoke all on function public.publish_generation_job_chapter_v6(uuid, text, uuid, uuid, text, integer, text, jsonb, text, jsonb, jsonb, text, text, jsonb) from public, anon, authenticated;
 grant execute on function public.publish_generation_job_chapter_v6(uuid, text, uuid, uuid, text, integer, text, jsonb, text, jsonb, jsonb, text, text, jsonb) to service_role;

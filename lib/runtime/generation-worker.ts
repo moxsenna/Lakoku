@@ -211,8 +211,10 @@ export async function executeClaimedJob(
         storyId: job.storyId,
         chapterNumber: job.chapterNumber,
         triggerChoiceId: job.triggerChoiceId,
-        workerId: job.workerId,
+        jobStatus: 'RUNNING',
+        claimedByWorkerId: job.workerId,
         claimToken: job.claimToken,
+        expectedClaimToken: job.claimToken,
       })
 
       if (authDecision.status !== 'AUTHORIZED') {

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { executeClaimedJob } from '@/lib/runtime/generation-worker'
-import { createAdminClient } from '@/lib/supabase/admin'
 import { runChapterGenerationAttempt } from '@/lib/runtime/generation-mode'
+import { resolveCommercialWorkerPreflight } from '@/lib/commercial/worker-preflight.server'
 
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/supabase/admin', () => ({
@@ -22,7 +22,12 @@ vi.mock('@/lib/runtime/generation-lease-ttl', () => ({
   resolveGenerationLeaseTtlSeconds: vi.fn(async () => 120),
 }))
 
-const mockCreateAdminClient = vi.mocked(createAdminClient)
+vi.mock('@/lib/commercial/worker-preflight.server', () => ({
+  resolveCommercialWorkerPreflight: vi.fn(),
+  evaluateCommercialWorkerPreflight: vi.fn(),
+}))
+
+const mockResolvePreflight = vi.mocked(resolveCommercialWorkerPreflight)
 const mockRunChapterGenerationAttempt = vi.mocked(runChapterGenerationAttempt)
 
 describe('commercial-worker-preflight zero-provider dispatch assertions', () => {
@@ -30,84 +35,8 @@ describe('commercial-worker-preflight zero-provider dispatch assertions', () => 
     vi.clearAllMocks()
   })
 
-  it('fails preflight and ZERO provider calls when intent is missing/wrong job', async () => {
-    const mockDb = {
-      from: vi.fn((table: string) => {
-        if (table === 'generation_jobs') {
-          return {
-            select: () => ({
-              eq: () => ({
-                maybeSingle: async () => ({
-                  data: {
-                    id: 'job-unauthorized',
-                    user_id: 'user-worker',
-                    story_id: 'story-worker-test',
-                    chapter_number: 4,
-                    trigger_choice_id: 'choice-1',
-                    generation_kind: 'personalized',
-                    status: 'RUNNING',
-                    worker_id: 'worker-1',
-                    claim_token: 'token-1',
-                  },
-                  error: null,
-                }),
-              }),
-            }),
-          }
-        }
-        if (table === 'feature_credit_costs') {
-          return {
-            select: () => ({
-              in: async () => ({
-                data: [
-                  { feature_key: 'story_start', credits_required: 24, is_active: true },
-                  { feature_key: 'chapter_unlock', credits_required: 8, is_active: true },
-                ],
-                error: null,
-              }),
-            }),
-          }
-        }
-        if (table === 'stories') {
-          return {
-            select: () => ({
-              eq: () => ({
-                maybeSingle: async () => ({
-                  data: {
-                    id: 'story-worker-test',
-                    owner_user_id: 'user-worker',
-                    story_mode: 'personalized_ai',
-                    commercial_origin: 'PAID_START',
-                    visibility: 'private',
-                  },
-                  error: null,
-                }),
-              }),
-            }),
-          }
-        }
-        if (table === 'commercial_generation_intents') {
-          return {
-            select: () => ({
-              eq: () => ({
-                eq: () => ({
-                  eq: () => ({
-                    eq: () => ({
-                      maybeSingle: async () => ({
-                        data: null, // Intent missing / not bound
-                        error: null,
-                      }),
-                    }),
-                  }),
-                }),
-              }),
-            }),
-          }
-        }
-        return {}
-      }),
-    }
-    mockCreateAdminClient.mockReturnValue(mockDb as unknown as ReturnType<typeof createAdminClient>)
+  it('fails preflight with ZERO provider calls when preflight returns DENIED for missing/unbound intent', async () => {
+    mockResolvePreflight.mockResolvedValueOnce({ status: 'DENIED', reason: 'COMMERCIAL_INTENT_NOT_BOUND' })
 
     const result = await executeClaimedJob({
       id: 'job-unauthorized',
@@ -129,70 +58,12 @@ describe('commercial-worker-preflight zero-provider dispatch assertions', () => 
       expect(result.reason).toBe('COMMERCIAL_PREFLIGHT_FAILED')
     }
 
-    // REQUIREMENT 13: Zero provider calls asserted!
+    expect(mockResolvePreflight).toHaveBeenCalledTimes(1)
     expect(mockRunChapterGenerationAttempt).not.toHaveBeenCalled()
   })
 
-  it('fails preflight with ZERO provider calls when story owner mismatches job user', async () => {
-    const mockDb = {
-      from: vi.fn((table: string) => {
-        if (table === 'generation_jobs') {
-          return {
-            select: () => ({
-              eq: () => ({
-                maybeSingle: async () => ({
-                  data: {
-                    id: 'job-mismatch',
-                    user_id: 'user-a',
-                    story_id: 'story-1',
-                    chapter_number: 4,
-                    trigger_choice_id: null,
-                    generation_kind: 'personalized',
-                    status: 'RUNNING',
-                    worker_id: 'worker-1',
-                    claim_token: 'token-1',
-                  },
-                  error: null,
-                }),
-              }),
-            }),
-          }
-        }
-        if (table === 'feature_credit_costs') {
-          return {
-            select: () => ({
-              in: async () => ({
-                data: [
-                  { feature_key: 'story_start', credits_required: 24, is_active: true },
-                  { feature_key: 'chapter_unlock', credits_required: 8, is_active: true },
-                ],
-                error: null,
-              }),
-            }),
-          }
-        }
-        if (table === 'stories') {
-          return {
-            select: () => ({
-              eq: () => ({
-                maybeSingle: async () => ({
-                  data: {
-                    id: 'story-1',
-                    owner_user_id: 'user-b', // Owner mismatch!
-                    story_mode: 'personalized_ai',
-                    commercial_origin: 'PAID_START',
-                    visibility: 'private',
-                  },
-                  error: null,
-                }),
-              }),
-            }),
-          }
-        }
-        return {}
-      }),
-    }
-    mockCreateAdminClient.mockReturnValue(mockDb as unknown as ReturnType<typeof createAdminClient>)
+  it('fails preflight with ZERO provider calls when preflight returns DENIED for commercial owner mismatch', async () => {
+    mockResolvePreflight.mockResolvedValueOnce({ status: 'DENIED', reason: 'COMMERCIAL_OWNER_MISMATCH' })
 
     const result = await executeClaimedJob({
       id: 'job-mismatch',
@@ -210,6 +81,103 @@ describe('commercial-worker-preflight zero-provider dispatch assertions', () => 
     })
 
     expect(result.ok).toBe(false)
+    expect(mockResolvePreflight).toHaveBeenCalledTimes(1)
+    expect(mockRunChapterGenerationAttempt).not.toHaveBeenCalled()
+  })
+
+  it('fails preflight with ZERO provider calls when intent is not QUEUED (status AUTHORIZED or RUNNING)', async () => {
+    mockResolvePreflight.mockResolvedValueOnce({ status: 'DENIED', reason: 'COMMERCIAL_INTENT_NOT_QUEUED' })
+
+    const result = await executeClaimedJob({
+      id: 'job-intent-running',
+      userId: 'user-1',
+      storyId: 'story-1',
+      chapterNumber: 4,
+      generationKind: 'personalized',
+      workerId: 'worker-1',
+      claimToken: 'token-1',
+      correlationId: 'corr-1',
+      attemptCount: 1,
+      maxAttempts: 4,
+      deadlineAt: new Date(Date.now() + 60000).toISOString(),
+      triggerChoiceId: 'c1',
+    })
+
+    expect(result.ok).toBe(false)
+    expect(mockResolvePreflight).toHaveBeenCalledTimes(1)
+    expect(mockRunChapterGenerationAttempt).not.toHaveBeenCalled()
+  })
+
+  it('fails preflight with ZERO provider calls for PAID_START Bab 1 fresh RUNNING job replay', async () => {
+    mockResolvePreflight.mockResolvedValueOnce({ status: 'DENIED', reason: 'PAID_START_BAB1_REPLAY_FORBIDDEN' })
+
+    const result = await executeClaimedJob({
+      id: 'job-paid-start-replay',
+      userId: 'user-1',
+      storyId: 'story-1',
+      chapterNumber: 1,
+      generationKind: 'personalized',
+      workerId: 'worker-1',
+      claimToken: 'token-1',
+      correlationId: 'corr-1',
+      attemptCount: 1,
+      maxAttempts: 4,
+      deadlineAt: new Date(Date.now() + 60000).toISOString(),
+      triggerChoiceId: null,
+    })
+
+    expect(result.ok).toBe(false)
+    expect(mockResolvePreflight).toHaveBeenCalledTimes(1)
+    expect(mockRunChapterGenerationAttempt).not.toHaveBeenCalled()
+  })
+
+  it('fails preflight with ZERO provider calls when preflight returns WAITING_FOR_CREDITS due to insufficient credits', async () => {
+    mockResolvePreflight.mockResolvedValueOnce({ status: 'WAITING_FOR_CREDITS', origin: 'STARTER_FREE', reason: 'INSUFFICIENT_CREDITS' })
+
+    const result = await executeClaimedJob({
+      id: 'job-waiting',
+      userId: 'user-1',
+      storyId: 'story-1',
+      chapterNumber: 4,
+      generationKind: 'personalized',
+      workerId: 'worker-1',
+      claimToken: 'token-1',
+      correlationId: 'corr-1',
+      attemptCount: 1,
+      maxAttempts: 4,
+      deadlineAt: new Date(Date.now() + 60000).toISOString(),
+      triggerChoiceId: 'c1',
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toBe('COMMERCIAL_PREFLIGHT_FAILED')
+    }
+
+    expect(mockResolvePreflight).toHaveBeenCalledTimes(1)
+    expect(mockRunChapterGenerationAttempt).not.toHaveBeenCalled()
+  })
+
+  it('fails preflight with ZERO provider calls when reservation RPC encounters an internal error', async () => {
+    mockResolvePreflight.mockResolvedValueOnce({ status: 'DENIED', reason: 'COMMERCIAL_RESERVATION_FAILED' })
+
+    const result = await executeClaimedJob({
+      id: 'job-rpc-err',
+      userId: 'user-1',
+      storyId: 'story-1',
+      chapterNumber: 4,
+      generationKind: 'personalized',
+      workerId: 'worker-1',
+      claimToken: 'token-1',
+      correlationId: 'corr-1',
+      attemptCount: 1,
+      maxAttempts: 4,
+      deadlineAt: new Date(Date.now() + 60000).toISOString(),
+      triggerChoiceId: 'c1',
+    })
+
+    expect(result.ok).toBe(false)
+    expect(mockResolvePreflight).toHaveBeenCalledTimes(1)
     expect(mockRunChapterGenerationAttempt).not.toHaveBeenCalled()
   })
 })

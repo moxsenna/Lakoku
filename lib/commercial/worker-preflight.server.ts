@@ -1,50 +1,63 @@
-import 'server-only'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createClient } from '@supabase/supabase-js'
 
-export type PreflightStatus =
-  | 'AUTHORIZED'
-  | 'WAITING_FOR_CREDITS'
-  | 'DENIED'
+export type PreflightResultStatus = 'AUTHORIZED' | 'WAITING_FOR_CREDITS' | 'DENIED'
 
-export interface CommercialWorkerPreflightResult {
-  status: PreflightStatus
-  origin?: string | null
+export interface PreflightResult {
+  status: PreflightResultStatus
+  origin?: 'STARTER_FREE' | 'PAID_START' | 'LEGACY_GRANDFATHERED' | 'ADMIN_GRANTED' | 'PENDING_PAID_START'
   reason?: string
 }
 
-export async function resolveCommercialWorkerPreflight(input: {
-  jobId: string
+export interface WorkerPreflightInput {
   userId: string
   storyId: string
   chapterNumber: number
-  triggerChoiceId?: string | null
-  workerId: string
-  claimToken: string
-}): Promise<CommercialWorkerPreflightResult> {
-  const db = createAdminClient()
+  jobId: string
+  jobStatus: string
+  claimedByWorkerId: string | null
+  claimToken: string | null
+  triggerChoiceId: string | null
+  expectedClaimToken: string
+}
 
-  // 1. Load exact claimed job from DB
-  const { data: job, error: jobErr } = await db
+export async function evaluateCommercialWorkerPreflight(
+  input: WorkerPreflightInput,
+): Promise<PreflightResult> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY!
+  const db = createClient(url, key)
+
+  // 1. Validate exact claimed job state before financial preflight (Requirement 4)
+  if (
+    input.jobStatus !== 'RUNNING' ||
+    !input.claimedByWorkerId ||
+    !input.claimToken ||
+    input.claimToken !== input.expectedClaimToken
+  ) {
+    return { status: 'DENIED', reason: 'JOB_NOT_CLAIMED_BY_WORKER' }
+  }
+
+  // Authoritative second-read of generation_jobs row (Requirement 4)
+  const { data: jobRow, error: jobErr } = await db
     .from('generation_jobs')
-    .select('id, user_id, story_id, chapter_number, trigger_choice_id, generation_kind, status, worker_id, claim_token')
+    .select('id, user_id, story_id, chapter_number, status, worker_id, claim_token')
     .eq('id', input.jobId)
     .maybeSingle()
 
   if (
-    jobErr || !job
-    || job.user_id !== input.userId
-    || job.story_id !== input.storyId
-    || job.chapter_number !== input.chapterNumber
-    || (job.trigger_choice_id ?? null) !== (input.triggerChoiceId ?? null)
-    || job.generation_kind !== 'personalized'
-    || job.status !== 'RUNNING'
-    || job.worker_id !== input.workerId
-    || job.claim_token !== input.claimToken
+    jobErr ||
+    !jobRow ||
+    jobRow.status !== 'RUNNING' ||
+    jobRow.worker_id !== input.claimedByWorkerId ||
+    jobRow.claim_token !== input.claimToken ||
+    jobRow.user_id !== input.userId ||
+    jobRow.story_id !== input.storyId ||
+    jobRow.chapter_number !== input.chapterNumber
   ) {
-    return { status: 'DENIED', reason: 'JOB_PROVENANCE_MISMATCH' }
+    return { status: 'DENIED', reason: 'JOB_STATE_MISMATCH' }
   }
 
-  // 2. Load pricing config from DB
+  // 2. Load fail-closed active pricing config
   const { data: pricingRows, error: pricingErr } = await db
     .from('feature_credit_costs')
     .select('feature_key, credits_required, is_active')
@@ -154,9 +167,13 @@ export async function resolveCommercialWorkerPreflight(input: {
       .gt('expires_at', new Date().toISOString())
       .maybeSingle()
 
+    if (resRow && resRow.amount !== storyStartPrice) {
+      return { status: 'DENIED', reason: 'STORY_START_AMOUNT_MISMATCH' }
+    }
+
     let reserveInsufficient = false
 
-    // Pass 2 Reactivation: Attempt reserve_story_start_v1 using exact Phase 1 signature (Requirement 2 & 3)
+    // Pass 2 Reactivation: Attempt reserve_story_start_v1 using Phase 1 signature (current catalog price)
     if (!resRow) {
       const { data: reserveRpcRes, error: reserveRpcErr } = await db.rpc('reserve_story_start_v1', {
         p_user_id: input.userId,
@@ -177,8 +194,10 @@ export async function resolveCommercialWorkerPreflight(input: {
           .gt('expires_at', new Date().toISOString())
           .maybeSingle()
 
-        if (secondRes && secondRes.amount > 0) {
+        if (secondRes && secondRes.amount === storyStartPrice) {
           resRow = secondRes
+        } else if (secondRes) {
+          return { status: 'DENIED', reason: 'STORY_START_AMOUNT_MISMATCH' }
         }
       } else if (!reserveRpcErr && reserveRpcRes?.ok === false && reserveRpcRes?.reason === 'INSUFFICIENT_CREDITS') {
         reserveInsufficient = true
@@ -188,7 +207,7 @@ export async function resolveCommercialWorkerPreflight(input: {
       }
     }
 
-    if (!resRow) {
+    if (!resRow || resRow.amount !== storyStartPrice) {
       if (!reserveInsufficient) {
         return { status: 'DENIED', reason: 'COMMERCIAL_RESERVATION_FAILED' }
       }
@@ -280,15 +299,16 @@ export async function resolveCommercialWorkerPreflight(input: {
 
     let reserveInsufficient = false
 
-    // Pass 2 Reactivation: Attempt reserve_chapter_unlock_v1 using exact Phase 1 signature (Requirement 2 & 3)
+    // Pass 2 Reactivation: Attempt quote-preserving DB RPC reactivate_commercial_chapter_reservation_v1
     if (!resRow || resRow.amount !== intent.quoted_credits) {
-      const { data: reserveRpcRes, error: reserveRpcErr } = await db.rpc('reserve_chapter_unlock_v1', {
+      const { data: reserveRpcRes, error: reserveRpcErr } = await db.rpc('reactivate_commercial_chapter_reservation_v1', {
         p_user_id: input.userId,
         p_story_id: input.storyId,
         p_chapter_number: input.chapterNumber,
+        p_generation_job_id: input.jobId,
       })
 
-      if (!reserveRpcErr && reserveRpcRes?.ok === true && reserveRpcRes?.status === 'RESERVED') {
+      if (!reserveRpcErr && reserveRpcRes?.ok === true && (reserveRpcRes?.status === 'ACTIVE' || reserveRpcRes?.status === 'RESERVED')) {
         // Authoritative SECOND READ
         const { data: secondRes } = await db
           .from('credit_reservations')
@@ -308,7 +328,7 @@ export async function resolveCommercialWorkerPreflight(input: {
       } else if (!reserveRpcErr && reserveRpcRes?.ok === false && reserveRpcRes?.reason === 'INSUFFICIENT_CREDITS') {
         reserveInsufficient = true
       } else {
-        // RPC error, DB failure, or unexpected reason -> DENY (fail closed, never map to WAITING)
+        // RPC error, DB failure, missing reservation, or unexpected reason -> DENY (fail closed)
         return { status: 'DENIED', reason: reserveRpcRes?.reason ?? 'COMMERCIAL_RESERVATION_FAILED' }
       }
     }
@@ -348,3 +368,5 @@ export async function resolveCommercialWorkerPreflight(input: {
 
   return { status: 'DENIED', reason: 'INVALID_PREFLIGHT_CHAPTER' }
 }
+
+export const resolveCommercialWorkerPreflight = evaluateCommercialWorkerPreflight

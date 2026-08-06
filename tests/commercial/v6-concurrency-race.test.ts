@@ -12,7 +12,7 @@ import {
   type RunningRacePsql,
 } from '../../scripts/authoring-race-session'
 
-describe('V6 Commercial Publisher Concurrency & 5-Race Lock Order Matrix', () => {
+describe.skipIf(process.env.LAKOKU_LOCAL_DB_TEST !== '1')('V6 Commercial Publisher Concurrency & 5-Race Lock Order Matrix', () => {
   // RACE 1: V6 vs reserve_chapter_unlock_v1
   it('Race 1: V6 vs reserve_chapter_unlock_v1 maintains exact atomic financial state and zero deadlock', async () => {
     const target = verifyLocalRaceTarget('anti-abuse DB race 1')
@@ -124,8 +124,16 @@ commit;
       expect(runnerB.stdout).not.toContain('40P01')
       expect(runnerA.stdout).toContain('V6_RESULT|{"ok": true')
 
-      const capCount = execLocalPsql(target, `set role service_role; select count(*)::text from public.credit_reservations where user_id = '${userId}'::uuid and story_id = '${storyId}' and status = 'CAPTURED';`).trim()
-      expect(parseInt(capCount, 10)).toBe(1)
+      // Post-race DB Relational & Cardinality Invariant Proofs (Blocker 4)
+      const chapCount = parseInt(execLocalPsql(target, `set role service_role; select count(*)::text from public.chapters where story_id = '${storyId}' and number = 4;`).trim(), 10)
+      const ledgerCount = parseInt(execLocalPsql(target, `set role service_role; select count(*)::text from public.credit_ledger where user_id = '${userId}'::uuid and reason = 'unlock_chapter';`).trim(), 10)
+      const capCount = parseInt(execLocalPsql(target, `set role service_role; select count(*)::text from public.credit_reservations where user_id = '${userId}'::uuid and story_id = '${storyId}' and status = 'CAPTURED';`).trim(), 10)
+      const intentStatus = execLocalPsql(target, `set role service_role; select status::text from public.commercial_generation_intents where user_id = '${userId}'::uuid and story_id = '${storyId}' and chapter_number = 4;`).trim()
+
+      expect(chapCount).toBe(1)
+      expect(ledgerCount).toBe(1)
+      expect(capCount).toBe(1)
+      expect(intentStatus).toBe('FULFILLED')
     } finally {
       await cleanupRaceSessions(target, sessions)
       await cleanupFixtureRows(target, [storyId], [userId])
@@ -243,8 +251,18 @@ commit;
       expect(runnerB.stdout).not.toContain('40P01')
       expect(runnerA.stdout).toContain('V6_RESULT|{"ok": true')
 
+      // Post-race DB Relational & Cardinality Invariant Proofs (Blocker 4)
+      const chapCount = parseInt(execLocalPsql(target, `set role service_role; select count(*)::text from public.chapters where story_id = '${storyId}' and number = 1;`).trim(), 10)
+      const ledgerCount = parseInt(execLocalPsql(target, `set role service_role; select count(*)::text from public.credit_ledger where user_id = '${userId}'::uuid and reason = 'story_start';`).trim(), 10)
+      const capCount = parseInt(execLocalPsql(target, `set role service_role; select count(*)::text from public.credit_reservations where user_id = '${userId}'::uuid and story_id = '${storyId}' and status = 'CAPTURED';`).trim(), 10)
       const storyOrigin = execLocalPsql(target, `set role service_role; select commercial_origin::text from public.stories where id = '${storyId}';`).trim()
+      const reqStatus = execLocalPsql(target, `set role service_role; select status::text from public.story_creation_requests where owner_user_id = '${userId}'::uuid and story_id = '${storyId}';`).trim()
+
+      expect(chapCount).toBe(1)
+      expect(ledgerCount).toBe(1)
+      expect(capCount).toBe(1)
       expect(storyOrigin).toBe('PAID_START')
+      expect(reqStatus).toBe('READY')
     } finally {
       await cleanupRaceSessions(target, sessions)
       await cleanupFixtureRows(target, [storyId, starterId], [userId])
@@ -364,10 +382,29 @@ commit;
       expect(allOutputA).not.toContain('40P01')
       expect(allOutputB).not.toContain('40P01')
 
-      // Serialization check: Either V6 succeeded OR V6 failed closed with COMMERCIAL_FINALIZATION_CONFLICT
+      // Serialization check: Either V6 succeeded OR V6 failed closed
       const v6Success = runnerA.stdout.includes('V6_RESULT|{"ok": true')
       const v6FailClosed = runnerA.stderr.includes('COMMERCIAL_FINALIZATION_CONFLICT')
       expect(v6Success || v6FailClosed).toBe(true)
+
+      // Post-race DB Relational Invariant Proofs (Blocker 4)
+      const chapCount = parseInt(execLocalPsql(target, `set role service_role; select count(*)::text from public.chapters where story_id = '${storyId}' and number = 4;`).trim(), 10)
+      const ledgerCount = parseInt(execLocalPsql(target, `set role service_role; select count(*)::text from public.credit_ledger where user_id = '${userId}'::uuid and reason = 'unlock_chapter';`).trim(), 10)
+      const capCount = parseInt(execLocalPsql(target, `set role service_role; select count(*)::text from public.credit_reservations where user_id = '${userId}'::uuid and story_id = '${storyId}' and status = 'CAPTURED';`).trim(), 10)
+
+      expect(chapCount).toBeLessThanOrEqual(1)
+      expect(ledgerCount).toBeLessThanOrEqual(1)
+      expect(capCount).toBeLessThanOrEqual(1)
+
+      if (v6Success) {
+        expect(chapCount).toBe(1)
+        expect(ledgerCount).toBe(1)
+        expect(capCount).toBe(1)
+      } else {
+        expect(chapCount).toBe(0)
+        expect(ledgerCount).toBe(0)
+        expect(capCount).toBe(0)
+      }
     } finally {
       await cleanupRaceSessions(target, sessions)
       await cleanupFixtureRows(target, [storyId], [userId])
@@ -478,6 +515,15 @@ commit;
       expect(runnerA.stdout).not.toContain('40P01')
       expect(runnerB.stdout).not.toContain('40P01')
       expect(runnerA.stdout).toContain('V6_RESULT|{"ok": true')
+
+      // Post-race DB Relational & Cardinality Invariant Proofs (Blocker 4)
+      const chapCount = parseInt(execLocalPsql(target, `set role service_role; select count(*)::text from public.chapters where story_id = '${storyId}' and number = 4;`).trim(), 10)
+      const ledgerCount = parseInt(execLocalPsql(target, `set role service_role; select count(*)::text from public.credit_ledger where user_id = '${userId}'::uuid and reason = 'unlock_chapter';`).trim(), 10)
+      const capCount = parseInt(execLocalPsql(target, `set role service_role; select count(*)::text from public.credit_reservations where user_id = '${userId}'::uuid and story_id = '${storyId}' and status = 'CAPTURED';`).trim(), 10)
+
+      expect(chapCount).toBe(1)
+      expect(ledgerCount).toBe(1)
+      expect(capCount).toBe(1)
     } finally {
       await cleanupRaceSessions(target, sessions)
       await cleanupFixtureRows(target, [storyId], [userId])
@@ -599,6 +645,25 @@ commit;
       const v6Success = runnerA.stdout.includes('V6_RESULT|{"ok": true')
       const v6FailClosed = runnerA.stderr.includes('COMMERCIAL_FINALIZATION_CONFLICT')
       expect(v6Success || v6FailClosed).toBe(true)
+
+      // Post-race DB Relational Invariant Proofs (Blocker 4)
+      const chapCount = parseInt(execLocalPsql(target, `set role service_role; select count(*)::text from public.chapters where story_id = '${storyId}' and number = 4;`).trim(), 10)
+      const ledgerCount = parseInt(execLocalPsql(target, `set role service_role; select count(*)::text from public.credit_ledger where user_id = '${userId}'::uuid and reason = 'unlock_chapter';`).trim(), 10)
+      const capCount = parseInt(execLocalPsql(target, `set role service_role; select count(*)::text from public.credit_reservations where user_id = '${userId}'::uuid and story_id = '${storyId}' and status = 'CAPTURED';`).trim(), 10)
+
+      expect(chapCount).toBeLessThanOrEqual(1)
+      expect(ledgerCount).toBeLessThanOrEqual(1)
+      expect(capCount).toBeLessThanOrEqual(1)
+
+      if (v6Success) {
+        expect(chapCount).toBe(1)
+        expect(ledgerCount).toBe(1)
+        expect(capCount).toBe(1)
+      } else {
+        expect(chapCount).toBe(0)
+        expect(ledgerCount).toBe(0)
+        expect(capCount).toBe(0)
+      }
     } finally {
       await cleanupRaceSessions(target, sessions)
       await cleanupFixtureRows(target, [storyId], [userId])

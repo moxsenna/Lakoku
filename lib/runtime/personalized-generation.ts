@@ -4,9 +4,15 @@ import { z } from 'zod'
 import {
   compileContext,
   buildBlueprints,
+  materializeChapterStateCandidateV1,
+  resolvePolicyAuthorityFromBlueprint,
+  buildValidatedChapterStateDelta,
   type CanonSnapshot,
   type ChapterBlueprint,
   type ChapterContextPacket,
+  type EffectivePlotDebtState,
+  type StructuredStateProposalV1,
+  type ValidatedChapterStateDelta,
 } from '@lakoku/narrative-core'
 import { loadCanonSnapshot, persistRetrievalLog } from '@lakoku/narrative-core/server'
 import { loadContinuationContextForChapter } from './continuation-context.server'
@@ -48,6 +54,7 @@ import {
   type PlotDebtAuditInput,
   type PlotDebtAuditResult,
 } from '@/lib/story-engine/plot-debt'
+import { projectClosedDebts } from '@/lib/story-engine/plot-debt-closure'
 import {
   acquireGenerationLease,
   releaseGenerationLease,
@@ -97,6 +104,11 @@ import {
 } from './choice-context'
 import { resolveGenerationLeaseTtlSeconds } from './generation-lease-ttl'
 import { throwIfAborted } from './abort'
+import { deriveStructuredStateProposalDefault } from './state-proposal-derivation'
+import { proseFingerprint } from './chapter-generation-checkpoint.pure'
+import { loadEffectivePlotDebtState } from './plot-debt-effective-state.loader'
+import type { GenerationJobExecutionContext } from './generation-job-execution'
+import type { Schema3PublicationResult } from './checkpoint-schema-v3'
 
 /**
  * Personalized chapter runtime (Task 17).
@@ -145,6 +157,12 @@ export interface PersonalizedGenerateInput {
   attemptNumber?: number
   /** Durable attempt id (job id on worker path). */
   attemptId?: string | null
+  /**
+   * Structured state proposal (M10-A1d, living v1). Sumber struktur delta:
+   * kanon/proyeksi, BUKAN model. Saat tidak diberikan (jalur produksi), pipeline
+   * memakai `deriveStructuredStateProposalDefault` (kewajiban plot-debt + rollup).
+   */
+  stateProposal?: StructuredStateProposalV1 | null
   /**
    * Worker path: reuse job lease + fenced publish. Skip own acquireGenerationLease.
    */
@@ -274,6 +292,55 @@ export interface PersonalizedGenerationDeps {
     repairAttempts: number
     findings: GenerationResult['findings']
   }) => Promise<void>
+  // ---- M10-A1d living canon v1 (optional; defaultDeps menyediakan) ----
+  /** `stories.living_canon_version` (0/1). 0 = legacy capability. */
+  loadLivingCanonVersion?: (storyId: string) => Promise<number>
+  /** Proyeksi ledger plot-debt efektif — WAJIB sebelum `buildChapterBrief` (koreksi #5). */
+  loadEffectivePlotDebtState?: (input: {
+    userId: string
+    storyId: string
+    chapterNumber: number
+    plotDebts: StoryContract['plotDebts']
+  }) => Promise<EffectivePlotDebtState>
+  /** `stories.canon_state_revision` saat ini (base revisi pre-commit). */
+  loadCanonStateRevision?: (storyId: string) => Promise<number>
+  /** Schema-3 checkpoint writer (fenced_v2 worker / sync_v1 request). */
+  persistCheckpointSchema3?: (input: PersistSchema3CheckpointInput) => Promise<CheckpointMutationResult>
+  /** Schema-3 publisher (v5 worker / v3 sync). */
+  publishChapterSchema3?: (input: PublishSchema3ChapterInput) => Promise<Schema3PublicationResult>
+}
+
+export interface PersistSchema3CheckpointInput {
+  storyId: string
+  chapterNumber: number
+  userId: string
+  attemptId: string
+  correlationId: string
+  title: string
+  paragraphs: string[]
+  auditSignals: CheckpointAuditSignalsV2
+  canonVersion: number
+  blueprintVersion: number
+  directionFingerprint: string
+  generationPolicyVersion: number
+  promptContractVersion: number
+  proseAttemptCount: number
+  stateDelta: ValidatedChapterStateDelta
+  baseCanonRevision: number | null
+  jobContext?: GenerationJobExecutionContext | null
+}
+
+export interface PublishSchema3ChapterInput {
+  storyId: string
+  chapterNumber: number
+  userId: string
+  leaseId: string
+  checkpointAttemptId: string
+  choicePrompt: string | null
+  choices: unknown[] | null
+  outcomes: PublishOutcomeV2[]
+  endingLock: { key: string; name: string } | null
+  jobContext?: GenerationJobExecutionContext | null
 }
 
 export function personalizedGenerationKey(
@@ -503,6 +570,129 @@ async function defaultMarkReaderStateSelesai(input: MarkReaderSelesaiInput): Pro
   if (error) throw new Error(`markReaderStateSelesai: ${error.message}`)
 }
 
+function isMissingColumn(error: { code?: string } | null | undefined): boolean {
+  return error != null && String(error.code ?? '') === '42703'
+}
+
+/**
+ * `stories.living_canon_version` (0/1). Kolom belum ada (mis. DB sebelum
+ * migrasi M10) diperlakukan sebagai v0/legacy — jangan pernah memblokir jalur
+ * v0 karena kolom living baru belum ada.
+ */
+async function defaultLoadLivingCanonVersion(storyId: string): Promise<number> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('stories')
+    .select('living_canon_version')
+    .eq('id', storyId)
+    .maybeSingle()
+  if (error) {
+    if (isMissingColumn(error)) return 0
+    throw new Error(`loadLivingCanonVersion: ${error.message}`)
+  }
+  return Number(data?.living_canon_version ?? 0)
+}
+
+/** `stories.canon_state_revision` — base revisi untuk schema-3 checkpoint. */
+async function defaultLoadCanonStateRevision(storyId: string): Promise<number> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('stories')
+    .select('canon_state_revision')
+    .eq('id', storyId)
+    .maybeSingle()
+  if (error) {
+    if (isMissingColumn(error)) return 0
+    throw error
+  }
+  return Number(data?.canon_state_revision ?? 0)
+}
+
+/** Schema-3 checkpoint writer — route fenced_v2 (worker) / sync_v1 (request). */
+async function defaultPersistCheckpointSchema3(
+  input: PersistSchema3CheckpointInput,
+): Promise<CheckpointMutationResult> {
+  const { upsertGenerationCheckpointFencedV2, upsertGenerationCheckpointSyncV1 } =
+    await import('./checkpoint-schema-v3')
+  const fingerprint = proseFingerprint(input.title, input.paragraphs)
+  if (input.jobContext) {
+    return upsertGenerationCheckpointFencedV2({
+      jobId: input.jobContext.jobId,
+      workerId: input.jobContext.workerId,
+      claimToken: input.jobContext.claimToken,
+      leaseId: input.jobContext.leaseId,
+      storyId: input.storyId,
+      chapterNumber: input.chapterNumber,
+      title: input.title,
+      paragraphs: input.paragraphs,
+      proseFingerprint: fingerprint,
+      auditSignals: input.auditSignals,
+      auditSignalsVersion: CHECKPOINT_AUDIT_SIGNALS_VERSION,
+      canonVersion: input.canonVersion,
+      blueprintVersion: input.blueprintVersion,
+      directionFingerprint: input.directionFingerprint,
+      generationMode: 'personalized',
+      generationPolicyVersion: input.generationPolicyVersion,
+      promptContractVersion: input.promptContractVersion,
+      proseAttemptCount: input.proseAttemptCount,
+      stateDelta: input.stateDelta,
+      baseCanonRevision: input.baseCanonRevision,
+    })
+  }
+  return upsertGenerationCheckpointSyncV1({
+    storyId: input.storyId,
+    chapterNumber: input.chapterNumber,
+    userId: input.userId,
+    checkpointAttemptId: input.attemptId,
+    correlationId: input.correlationId,
+    title: input.title,
+    paragraphs: input.paragraphs,
+    proseFingerprint: fingerprint,
+    auditSignals: input.auditSignals,
+    auditSignalsVersion: CHECKPOINT_AUDIT_SIGNALS_VERSION,
+    canonVersion: input.canonVersion,
+    blueprintVersion: input.blueprintVersion,
+    directionFingerprint: input.directionFingerprint,
+    generationPolicyVersion: input.generationPolicyVersion,
+    promptContractVersion: input.promptContractVersion,
+    stateDelta: input.stateDelta,
+    baseCanonRevision: input.baseCanonRevision,
+  })
+}
+
+/** Schema-3 publisher — route v5 (worker) / v3 (sync). */
+async function defaultPublishChapterSchema3(
+  input: PublishSchema3ChapterInput,
+): Promise<Schema3PublicationResult> {
+  const { publishGenerationJobChapterV5, publishChapterStateV3 } =
+    await import('./checkpoint-schema-v3')
+  if (input.jobContext) {
+    return publishGenerationJobChapterV5({
+      jobId: input.jobContext.jobId,
+      workerId: input.jobContext.workerId,
+      claimToken: input.jobContext.claimToken,
+      leaseId: input.jobContext.leaseId,
+      storyId: input.storyId,
+      chapterNumber: input.chapterNumber,
+      choicePrompt: input.choicePrompt,
+      choices: input.choices,
+      outcomes: input.outcomes,
+      endingLock: input.endingLock,
+    })
+  }
+  return publishChapterStateV3({
+    storyId: input.storyId,
+    chapterNumber: input.chapterNumber,
+    userId: input.userId,
+    leaseId: input.leaseId,
+    checkpointAttemptId: input.checkpointAttemptId,
+    choicePrompt: input.choicePrompt,
+    choices: input.choices,
+    outcomes: input.outcomes,
+    endingLock: input.endingLock,
+  })
+}
+
 function defaultDeps(): PersonalizedGenerationDeps {
   return {
     acquireGenerationLease,
@@ -539,6 +729,11 @@ function defaultDeps(): PersonalizedGenerationDeps {
     publishChapterV2,
     markReaderStateSelesai: defaultMarkReaderStateSelesai,
     recordGenerationAttempt,
+    loadLivingCanonVersion: defaultLoadLivingCanonVersion,
+    loadEffectivePlotDebtState,
+    loadCanonStateRevision: defaultLoadCanonStateRevision,
+    persistCheckpointSchema3: defaultPersistCheckpointSchema3,
+    publishChapterSchema3: defaultPublishChapterSchema3,
   }
 }
 
@@ -684,6 +879,21 @@ async function generateNextPersonalizedChapterInner(
       throw new Error('Contract storyId does not match generation storyId.')
     }
 
+    // M10-A1d: deteksi capability living-canon + proyeksi ledger plot-debt
+    // efektif SEBELUM buildChapterBrief (koreksi #5) — kewajiban plot-debt
+    // terlihat oleh generation, dan resolver memakai proyeksi YANG SAMA.
+    const livingCanonVersion = await (d.loadLivingCanonVersion ?? defaultLoadLivingCanonVersion)(storyId)
+    const living = livingCanonVersion === 1
+    let effectivePlotDebtState: EffectivePlotDebtState | null = null
+    if (living) {
+      effectivePlotDebtState = await (d.loadEffectivePlotDebtState ?? loadEffectivePlotDebtState)({
+        userId,
+        storyId,
+        chapterNumber,
+        plotDebts: contract.plotDebts,
+      })
+    }
+
     const reader = await d.loadReaderStateInternal(userId, storyId)
     if (reader.story_id !== storyId || reader.user_id !== userId) {
       await releaseOwnLease()
@@ -712,6 +922,9 @@ async function generateNextPersonalizedChapterInner(
       },
       chapterNumber,
       previousChoice,
+      ...(living
+        ? { effectivePlotDebtState: effectivePlotDebtState as EffectivePlotDebtState }
+        : {}),
     })
 
     const contRes = await d.loadContinuationContextForChapter({
@@ -771,6 +984,7 @@ async function generateNextPersonalizedChapterInner(
       attemptId: null,
       freshness,
       jobContext,
+      ...(living ? { includePublishedForReplay: true } : {}),
     })
 
     const reconcilePublishedCheckpoint = async () => {
@@ -805,9 +1019,56 @@ async function generateNextPersonalizedChapterInner(
       }
     }
 
+    // M10-A1d: materialize + policy authority + validasi delta (living v1).
+    // Struktur proposal berasal dari kanon/proyeksi (koreksi #6 — model tidak
+    // pernah menentukan mutasi state); policy otoritas v1 dari blueprint
+    // (koreksi #2) — fail closed bila bukan schema-v1. Dihitung SEBELUM
+    // generation agar Layer A melihat advancement thread yang SAMA dengan
+    // delta yang akan dikomit (threadContext.advancedThreadIds) — check
+    // THREAD_PAYOFF_NOT_ADVANCED / THREAD_STALE_UNADDRESSED konsisten dengan
+    // state debt-backed, bukan hardcode [] (thread-audit gap).
+    // Pada resume (existingCheckpoint ada), delta tidak di-materialize ulang
+    // karena checkpoint schema-3 sudah menyimpan state_delta_json yang ter-validasi,
+    // dan kanon sudah berada pada revision N (mencoba re-apply ke snapshot advanced
+    // akan memicu error no-op/conflict).
+    let validatedStateDelta: ValidatedChapterStateDelta | null = null
+    let baseCanonRevision: number | null = null
+    if (living && !existingCheckpoint) {
+      const proposal = input.stateProposal ?? deriveStructuredStateProposalDefault({
+        storyId,
+        chapterNumber,
+        storyContract: contract,
+        effectivePlotDebtState: effectivePlotDebtState as EffectivePlotDebtState,
+      })
+      const candidate = materializeChapterStateCandidateV1({
+        storyId,
+        chapterNumber,
+        snapshot,
+        storyContract: contract,
+        effectivePlotDebtState: effectivePlotDebtState as EffectivePlotDebtState,
+        proposal,
+      })
+      const policy = resolvePolicyAuthorityFromBlueprint({ snapshot, chapterNumber, storyId })
+      validatedStateDelta = buildValidatedChapterStateDelta({
+        storyId,
+        chapterNumber,
+        snapshot,
+        storyContract: contract,
+        effectivePlotDebtState: effectivePlotDebtState as EffectivePlotDebtState,
+        proposedDelta: candidate,
+        policyOverride: policy,
+      })
+      baseCanonRevision = await (d.loadCanonStateRevision ?? defaultLoadCanonStateRevision)(storyId)
+    }
+
     const threadContext: ThreadContext = {
       threads: snapshot.threads,
-      advancedThreadIds: [],
+      advancedThreadIds: validatedStateDelta
+        ? [
+            ...validatedStateDelta.threads.touches,
+            ...validatedStateDelta.threads.transitions.map((t) => t.threadId),
+          ]
+        : [],
       opensNewThread: false,
     }
 
@@ -895,10 +1156,32 @@ async function generateNextPersonalizedChapterInner(
         findings: result.findings,
         endingLocked: false,
       })
-      const closesPlotDebts = draft.closesPlotDebts ?? []
+      // M10-A1d: closures OTORITAS = delta tervalidasi (bukan sinyal draft —
+      // model prose-only, koreksi #6). V5 R4 membutuhkan
+      // state_delta.plotDebts.closures == audit_signals.closesPlotDebts EXACT
+      // (kanonikalisasi {closureForm,debtId}); draft deterministik tidak
+      // membawa closesPlotDebts, jadi delta adalah satu-satunya sumber yang
+      // konsisten dengan ledder yang akan dikomit.
+      const closesPlotDebts = living && validatedStateDelta
+        ? validatedStateDelta.plotDebts.closures.map((closure) => ({
+            debtId: closure.debtId,
+            closureForm: closure.closureForm,
+          }))
+        : (draft.closesPlotDebts ?? [])
+      // M10-A1d: audit closure-runway terhadap state SETELAH delta bab ini
+      // dikomit (ledger efektif pra-bab + closure bab ini) — konsisten dengan
+      // gate ledger resolver (`resolveDebtClosures`), bukan contract mentah
+      // (status statis 'open' selalu memicu MAIN_MYSTERY_OPEN di Bab 48+,
+      // padahal closure mystery dikomit tepat DI delta Bab 48).
+      const auditDebts = living && validatedStateDelta && effectivePlotDebtState
+        ? projectClosedDebts(contract.plotDebts, [
+            ...effectivePlotDebtState.closedDebtIds,
+            ...validatedStateDelta.plotDebts.closures.map((c) => c.debtId),
+          ])
+        : contract.plotDebts
       const audited = d.auditPlotDebts({
         chapterNumber,
-        debts: contract.plotDebts,
+        debts: auditDebts,
         opensNewThread: derived.opensNewThread,
         opensMajorMystery: derived.opensMajorMystery,
         opensNewConflict: derived.opensNewConflict,
@@ -929,26 +1212,46 @@ async function generateNextPersonalizedChapterInner(
 
     throwIfAborted(jobContext?.signal)
     if (!existingCheckpoint) {
-      const saved = await d.persistProseReadyCheckpoint({
-        storyId,
-        chapterNumber,
-        attemptId,
-        correlationId,
-        title: draft.title,
-        paragraphs: draft.paragraphs ?? [],
-        proseAttemptCount: result.attempts,
-        auditSignals,
-        auditSignalsVersion: CHECKPOINT_AUDIT_SIGNALS_VERSION,
-        canonVersion,
-        blueprintVersion,
-        directionFingerprint,
-        generationMode: 'personalized',
-        generationPolicyVersion: GENERATION_PROMPT_CONTRACT_VERSION,
-        promptContractVersion: GENERATION_PROMPT_CONTRACT_VERSION,
-        jobId: jobContext?.jobId ?? null,
-        jobAttemptNumber: jobContext?.attemptNumber ?? null,
-        jobContext,
-      })
+      const saved = living
+        ? await (d.persistCheckpointSchema3 ?? defaultPersistCheckpointSchema3)({
+            storyId,
+            chapterNumber,
+            userId,
+            attemptId: checkpointAttemptId,
+            correlationId,
+            title: draft.title,
+            paragraphs: draft.paragraphs ?? [],
+            auditSignals,
+            canonVersion,
+            blueprintVersion,
+            directionFingerprint,
+            generationPolicyVersion: GENERATION_PROMPT_CONTRACT_VERSION,
+            promptContractVersion: GENERATION_PROMPT_CONTRACT_VERSION,
+            proseAttemptCount: result.attempts,
+            stateDelta: validatedStateDelta as ValidatedChapterStateDelta,
+            baseCanonRevision,
+            jobContext,
+          })
+        : await d.persistProseReadyCheckpoint({
+            storyId,
+            chapterNumber,
+            attemptId,
+            correlationId,
+            title: draft.title,
+            paragraphs: draft.paragraphs ?? [],
+            proseAttemptCount: result.attempts,
+            auditSignals,
+            auditSignalsVersion: CHECKPOINT_AUDIT_SIGNALS_VERSION,
+            canonVersion,
+            blueprintVersion,
+            directionFingerprint,
+            generationMode: 'personalized',
+            generationPolicyVersion: GENERATION_PROMPT_CONTRACT_VERSION,
+            promptContractVersion: GENERATION_PROMPT_CONTRACT_VERSION,
+            jobId: jobContext?.jobId ?? null,
+            jobAttemptNumber: jobContext?.attemptNumber ?? null,
+            jobContext,
+          })
       if (saved.ok !== true) {
         await releaseOwnLease()
         console.error('CHECKPOINT_STATUS_UPDATE_FAILED', {
@@ -960,21 +1263,25 @@ async function generateNextPersonalizedChapterInner(
       if (saved.ok === true) checkpointAttemptId = saved.checkpointAttemptId
     }
 
-    const runningChoices = await d.markCheckpointStatus({
-      storyId,
-      chapterNumber,
-      attemptId: checkpointAttemptId,
-      status: 'RUNNING_CHOICES',
-      ...(existingCheckpoint ? { choiceAttemptCount: existingCheckpoint.choiceAttemptCount + 1 } : {}),
-      jobContext,
-    })
-    if (!checkpointMutationSucceeded(runningChoices)) {
-      await releaseOwnLease()
-      console.error('CHECKPOINT_STATUS_UPDATE_FAILED', {
-        storyId, chapterNumber, correlationId, attemptId: checkpointAttemptId,
-        status: 'RUNNING_CHOICES', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED', path: 'personalized',
+    // Schema-3 (living v1) TIDAK pakai markCheckpointStatus — status PUBLISHED
+    // hanya lewat V3/V5; checkpoint tetap PROSE_READY selama choices.
+    if (!living) {
+      const runningChoices = await d.markCheckpointStatus({
+        storyId,
+        chapterNumber,
+        attemptId: checkpointAttemptId,
+        status: 'RUNNING_CHOICES',
+        ...(existingCheckpoint ? { choiceAttemptCount: existingCheckpoint.choiceAttemptCount + 1 } : {}),
+        jobContext,
       })
-      return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: runningChoices } }
+      if (!checkpointMutationSucceeded(runningChoices)) {
+        await releaseOwnLease()
+        console.error('CHECKPOINT_STATUS_UPDATE_FAILED', {
+          storyId, chapterNumber, correlationId, attemptId: checkpointAttemptId,
+          status: 'RUNNING_CHOICES', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED', path: 'personalized',
+        })
+        return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: runningChoices } }
+      }
     }
 
     const readerSafe = d.toReaderSafe(draft)
@@ -1034,20 +1341,23 @@ async function generateNextPersonalizedChapterInner(
       throwIfAborted(jobContext?.signal)
 
       if (!choiceResult.ok) {
-        const retryCheckpoint = await d.markCheckpointStatus({
-          storyId,
-          chapterNumber,
-          attemptId: checkpointAttemptId,
-          status: 'CHOICES_RETRY_WAIT',
-          jobContext,
-        })
-        if (!checkpointMutationSucceeded(retryCheckpoint)) {
-          await releaseOwnLease()
-          console.error('CHECKPOINT_STATUS_UPDATE_FAILED', {
-            storyId, chapterNumber, correlationId, attemptId: checkpointAttemptId,
-            status: 'CHOICES_RETRY_WAIT', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED', path: 'personalized',
+        // Schema-3 (living v1): TIDAK markCheckpointStatus — tetap PROSE_READY.
+        if (!living) {
+          const retryCheckpoint = await d.markCheckpointStatus({
+            storyId,
+            chapterNumber,
+            attemptId: checkpointAttemptId,
+            status: 'CHOICES_RETRY_WAIT',
+            jobContext,
           })
-          return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: retryCheckpoint } }
+          if (!checkpointMutationSucceeded(retryCheckpoint)) {
+            await releaseOwnLease()
+            console.error('CHECKPOINT_STATUS_UPDATE_FAILED', {
+              storyId, chapterNumber, correlationId, attemptId: checkpointAttemptId,
+              status: 'CHOICES_RETRY_WAIT', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED', path: 'personalized',
+            })
+            return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: retryCheckpoint } }
+          }
         }
         await releaseOwnLease()
         await d.recordGenerationAttempt({
@@ -1125,7 +1435,7 @@ async function generateNextPersonalizedChapterInner(
       return { ok: false, reason: 'CAPACITY_TIMEOUT', detail: { reason: 'ABORT_SIGNAL' } }
     }
 
-    if (chapterNumber === ENDING_LOCK_CHAPTER && !jobContext) {
+    if (chapterNumber === ENDING_LOCK_CHAPTER && !jobContext && !living) {
       const lock = lockWrittenThisTurn ?? ending ?? d.resolveEnding({
         routeState,
         storyContract: contract,
@@ -1147,7 +1457,57 @@ async function generateNextPersonalizedChapterInner(
       | { ok: false; reason: 'CHAPTER_EXISTS' | 'LEASE_HELD' | 'FAILED_REVIEW_REQUIRED' | 'TRANSIENT' | 'CAPACITY_TIMEOUT' }
 
     let published: LocalPublish
-    if (jobContext) {
+    if (living) {
+      // M10-A1d: schema-3 publisher (V5 worker / V3 sync). Canonical state
+      // berasal dari checkpoint schema-3 (caller hanya choice/ending payload);
+      // V3 menulis ending lock atomik (ch45), V5 terminalisasi job + release
+      // lease sendiri. `markCheckpointStatus` TIDAK dipakai untuk schema-3
+      // (PUBLISHED hanya lewat V3/V5).
+      const endingLock = chapterNumber === ENDING_LOCK_CHAPTER
+        ? lockWrittenThisTurn ?? ending ?? d.resolveEnding({
+            routeState,
+            storyContract: contract,
+            chapterNumber,
+            lockedEndingKey: reader.locked_ending_key ?? brief.lockedEndingKey,
+          })
+        : null
+      try {
+        const v3 = await (d.publishChapterSchema3 ?? defaultPublishChapterSchema3)({
+          storyId,
+          chapterNumber,
+          userId,
+          leaseId,
+          checkpointAttemptId,
+          choicePrompt,
+          choices,
+          outcomes,
+          endingLock: endingLock ? { key: endingLock.key, name: endingLock.name } : null,
+          jobContext,
+        })
+        published = { ok: true, chapter_number: v3.chapterNumber, seq: v3.seq }
+        if (!jobContext) await releaseOwnLease()
+      } catch (err) {
+        throwIfAborted(jobContext?.signal)
+        const classification = classifyGenerationPublicationError(err)
+        const info = safeErrorInfo(err)
+        console.error('PERSONALIZED_SCHEMA3_PUBLISH_FAILED', {
+          storyId,
+          chapterNumber,
+          jobId: jobContext?.jobId ?? null,
+          errorCode: classification.code,
+          errorName: info.errorName.slice(0, 100),
+        })
+        if (classification.kind === 'chapter_exists') {
+          published = { ok: false, reason: 'CHAPTER_EXISTS' }
+        } else if (classification.kind === 'ownership_lost') {
+          published = { ok: false, reason: 'LEASE_HELD' }
+        } else if (classification.kind === 'transient') {
+          published = { ok: false, reason: 'TRANSIENT' }
+        } else {
+          published = { ok: false, reason: 'FAILED_REVIEW_REQUIRED' }
+        }
+      }
+    } else if (jobContext) {
       const { publishGenerationJobChapterV4 } = await import('@/lib/runtime/generation-jobs')
       const endingLock = chapterNumber === ENDING_LOCK_CHAPTER
         ? lockWrittenThisTurn ?? ending ?? d.resolveEnding({
@@ -1227,7 +1587,7 @@ async function generateNextPersonalizedChapterInner(
     // keeps cleanup exactly once even when publish already removed the DB row.
     if (!published.ok) await releaseOwnLease()
 
-    if (published.ok && !jobContext) {
+    if (published.ok && !jobContext && !living) {
       await reconcilePublishedCheckpoint()
     }
 

@@ -148,7 +148,7 @@ Total packet maksimal ditetapkan per model policy version. Alokasi baseline:
 - Maksimal **7 thread aktif** (OPEN/DEVELOPING) bersamaan; planner tidak boleh membuka thread baru bila penuh.
 - Thread yang tidak disentuh **6 bab berturut-turut** ditandai `STALE` → wajib direferensikan (minimal callback 1 kalimat) dalam 3 bab berikutnya, atau dieskalasi ke checkpoint.
 - Mulai Bab 41 (Act 6): planner **dilarang** membuka thread baru; setiap bab wajib memajukan ≥ 1 thread `PAYOFF_DUE`.
-- Publish Bab 48 diblokir bila masih ada thread mystery utama berstatus non-RESOLVED (deterministic check).
+- Bab 48 wajib menghasilkan post-chapter state di mana mystery utama RESOLVED. Pre-chapter snapshot Bab 48 tidak boleh memblok closure yang dikomit di bab yang sama. Deterministic validated-state / plot-debt resolver wajib menolak publication Bab 48 bila delta tidak menutup mystery utama; Bab 49+ dengan mystery unresolved tetap hard-blocked.
 
 ---
 

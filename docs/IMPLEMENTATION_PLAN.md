@@ -162,7 +162,7 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
   - Ref: ARCH §11.2 step 6 (Layer B), NCS §3.
   - DoD: voice fixture lolos; kontradiksi lunak tertangkap.
 - **T5.3 Thread lifecycle** — **NTM G4-STATUS, G4-BUDGET, G4-STALE, G4-BLOCK48**
-  - Deliverable: status `OPEN→DEVELOPING→PAYOFF_DUE→RESOLVED|ABANDONED_APPROVED`; maks 7 thread; no new thread ≥ Bab 41; stale 6 bab → callback ≤ 3 bab; publish Bab 48 diblokir bila mystery utama non-RESOLVED.
+  - Deliverable: status `OPEN→DEVELOPING→PAYOFF_DUE→RESOLVED|ABANDONED_APPROVED`; maks 7 thread; no new thread ≥ Bab 41; stale 6 bab → callback ≤ 3 bab; Bab 48 wajib menutup mystery utama di delta bab yang sama (validated-state/plot-debt resolver menolak publication bila tidak); Bab 49+ unresolved tetap hard-blocked.
   - Ref: ARCH §11.2 step 2 & 9, NCS §4.
   - DoD: thread fixture + Bab 48 unresolved fixture memblokir publish.
 - **T5.4 Soak test 50 bab**

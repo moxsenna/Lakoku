@@ -71,7 +71,7 @@ Before flipping this plan to executable:
 - [x] `docs/audits/M10A_RISK_REGISTER.md` has closure addendum with verdict PASS for baseline `0997e7d`.
 - [x] Exact closure SHA `0997e7dd848eed77b8b480e5fa1057804827d303` written into this document as **Execution baseline**.
 - [x] Local exact-baseline gates PASS.
-- [ ] GitHub-hosted CI exact-baseline replay PASS (`BLOCKED_BY_GITHUB_RUNNER_ACQUISITION`).
+- [x] GitHub-hosted CI exact-baseline replay PASS (Run ID `31127530895`, target SHA `0997e7dd848eed77b8b480e5fa1057804827d303` verified in step).
 - [x] STOP for reviewer confirmation; marked `M10-A CLOSED / M10-B NEXT`.
 
 This entry gate is outside M10-B scope. Do not hide an M10-A problem inside an M10-B evaluator.

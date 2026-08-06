@@ -4,7 +4,7 @@
 **M10-A closure anchor:** `0997e7dd848eed77b8b480e5fa1057804827d303` (immutable; NOT the stage base)
 **Stage B base SHA:** `ef12234c648d6b93c6e1f039df0a234c686f5774`
 **Previous head (R1 HOLD):** `38a5e75aec51f655c75ec8b0f4010f0b12544f06`
-**New head SHA:** _filled at commit time — see §8_
+**New head SHA:** `c3a60d9f6ea705a9c7587f99c2ff895d477aca48`
 
 **Scope guard held:** no LLM/model calls, no semantic scoring, no M10-C 1→50 harness, no production DB mutation, no production activation, no runtime behavior changed to satisfy an evaluator.
 

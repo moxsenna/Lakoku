@@ -265,7 +265,7 @@ commit;
       expect(reqStatus).toBe('READY')
     } finally {
       await cleanupRaceSessions(target, sessions)
-      await cleanupFixtureRows(target, [storyId, starterId], [userId])
+      await cleanupFixtureRows(target, [storyId], [userId])
     }
   }, 30000)
 

@@ -270,8 +270,8 @@ describe.skipIf(process.env.LAKOKU_LOCAL_DB_TEST !== '1')('Commercial Worker Pre
     expect(reqStatus).toBe('WAITING_FOR_CREDITS')
   })
 
-  // CASE E: Bab4 expired quote reactivation preserves original quoted price (quote = 8, catalog changed to 10)
-  it('CASE E: Bab4 expired quote reactivation preserves original quoted price even when catalog changes to 10', async () => {
+  // CASE E: Price-change regression (Operation A quote 8 preserved on reactivation/capture/replay; Operation B after catalog change quotes 10)
+  it('CASE E: Price-change regression preserves Operation A quote 8 on reactivation/capture/replay while Operation B quotes 10', async () => {
     const userId = crypto.randomUUID()
     const storyId = `story-${crypto.randomUUID()}`
     createdUsers.push(userId)
@@ -285,7 +285,7 @@ describe.skipIf(process.env.LAKOKU_LOCAL_DB_TEST !== '1')('Commercial Worker Pre
       `insert into public.stories (id, title, owner_user_id, visibility, story_mode, commercial_origin, living_canon_version, story_contract_version) values ('${storyId}', 'Reactivation Story E', '${userId}', 'private', 'personalized_ai', 'STARTER_FREE', 1, 1);\n` +
       `insert into public.story_generation_contracts (story_id, mode, total_chapters, story_contract_version, story_contract_json) values ('${storyId}', 'personalized_ai', 50, 1, jsonb_build_object('actPlan', jsonb_build_array(jsonb_build_object('actNumber', 1, 'fromChapter', 1, 'toChapter', 10), jsonb_build_object('actNumber', 2, 'fromChapter', 11, 'toChapter', 35), jsonb_build_object('actNumber', 3, 'fromChapter', 36, 'toChapter', 50))));\n` +
       `insert into public.reader_states (user_id, story_id, current_chapter, status) values ('${userId}', '${storyId}', 3, 'BERJALAN');\n` +
-      `insert into public.credit_ledger (user_id, delta, reason, ref) values ('${userId}'::uuid, 16, 'seed', 'seed:${userId}');\n` +
+      `insert into public.credit_ledger (user_id, delta, reason, ref) values ('${userId}'::uuid, 48, 'seed', 'seed:${userId}');\n` +
       `insert into public.credit_reservations (user_id, story_id, chapter_number, reservation_kind, amount, ref, status, expires_at) values ('${userId}'::uuid, '${storyId}', 4, 'CHAPTER_UNLOCK', 8, 'chapter-reservation:${userId}:${storyId}:4', 'EXPIRED', now() - interval '1 hour');`
     )
 
@@ -303,15 +303,21 @@ describe.skipIf(process.env.LAKOKU_LOCAL_DB_TEST !== '1')('Commercial Worker Pre
     const claimOut = execLocalPsql(target, `set role service_role; select public.claim_generation_job_by_id_v1('${jobId}'::uuid, 'worker-react-e')::text;`)
     const claimObj = JSON.parse(claimOut)
     const claimToken = claimObj.job.claim_token
+    const corrId = claimObj.job.correlation_id
+    const leaseOut = execLocalPsql(target, `set role service_role; select public.acquire_generation_job_lease_v1('${jobId}'::uuid, 'worker-react-e', '${claimToken}'::uuid, 120)::text;`)
+    const leaseObj = JSON.parse(leaseOut)
+    const leaseId = leaseObj.lease_id
 
     execLocalPsql(
       target,
       `set role service_role;\n` +
       `insert into public.commercial_generation_intents (id, user_id, story_id, chapter_number, trigger_choice_id, generation_job_id, status, quoted_credits, pricing_version) values (gen_random_uuid(), '${userId}', '${storyId}', 4, 'choice-react-e', '${jobId}', 'QUEUED', 8, 'v1');\n` +
+      `insert into public.chapter_generation_checkpoints (story_id, chapter_number, attempt_id, correlation_id, job_id, checkpoint_schema_version, status, title, paragraphs_json, audit_signals_version, audit_signals_json, story_contract_version, prose_fingerprint, generation_mode, job_attempt_number, expires_at, state_delta_json, state_delta_schema_version, state_delta_hash, base_canon_revision) values ('${storyId}', 4, '${jobId}', '${corrId}'::uuid, '${jobId}', 3, 'PROSE_READY', 'Bab 4', '["Paragraf."]'::jsonb, 2, '{"opensNewThread": false, "opensMajorMystery": false, "opensNewConflict": false, "closesPlotDebts": []}'::jsonb, 1, 'fp-e', 'personalized', 1, clock_timestamp() + interval '1 hour', jsonb_build_object('schemaVersion', '1', 'storyId', '${storyId}', 'chapterNumber', 4, 'facts', jsonb_build_object('add', '[]'::jsonb), 'threads', jsonb_build_object('touches', '[]'::jsonb, 'transitions', '[]'::jsonb)), 1, public.chapter_state_delta_hash_v1(jsonb_build_object('schemaVersion', '1', 'storyId', '${storyId}', 'chapterNumber', 4, 'facts', jsonb_build_object('add', '[]'::jsonb), 'threads', jsonb_build_object('touches', '[]'::jsonb, 'transitions', '[]'::jsonb))), 0);\n` +
       `update public.feature_credit_costs set credits_required = 10 where feature_key = 'chapter_unlock';`
     )
 
     try {
+      // Operation A: Worker preflight reactivates at quote 8
       const preflight = await resolveCommercialWorkerPreflight({
         jobId,
         userId,
@@ -328,6 +334,32 @@ describe.skipIf(process.env.LAKOKU_LOCAL_DB_TEST !== '1')('Commercial Worker Pre
 
       const resRow = execLocalPsql(target, `set role service_role; select status::text || '|' || amount::text from public.credit_reservations where ref = 'chapter-reservation:${userId}:${storyId}:4';`).trim()
       expect(resRow).toBe('ACTIVE|8')
+
+      // Publish Operation A at price 8
+      const pubOut = execLocalPsql(
+        target,
+        `set role service_role; select public.publish_generation_job_chapter_v6('${jobId}'::uuid, 'worker-react-e', '${claimToken}'::uuid, '${leaseId}'::uuid, '${storyId}', 4, 'Bab 4', '["Paragraf."]'::jsonb, 'Apa yang akan kamu lakukan selanjutnya?', '[{"id":"c1","label":"Mendatangi ruang kerja tua"},{"id":"c2","label":"Bertanya kepada penjaga toko"},{"id":"c3","label":"Pergi meninggalkan tempat itu"}]'::jsonb, '[{"choiceId":"c1","consequence":["A"],"nextChapterNumber":5,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"},{"choiceId":"c2","consequence":["B"],"nextChapterNumber":5,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"},{"choiceId":"c3","consequence":["C"],"nextChapterNumber":5,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"}]'::jsonb, null, null, '[]'::jsonb)::text;`
+      )
+      expect(JSON.parse(pubOut.trim()).ok).toBe(true)
+
+      // Replay Operation A -> MUST still succeed
+      const replayOut = execLocalPsql(
+        target,
+        `set role service_role; select public.publish_generation_job_chapter_v6('${jobId}'::uuid, 'worker-react-e', '${claimToken}'::uuid, '${leaseId}'::uuid, '${storyId}', 4, 'Bab 4', '["Paragraf."]'::jsonb, 'Apa yang akan kamu lakukan selanjutnya?', '[{"id":"c1","label":"Mendatangi ruang kerja tua"},{"id":"c2","label":"Bertanya kepada penjaga toko"},{"id":"c3","label":"Pergi meninggalkan tempat itu"}]'::jsonb, '[{"choiceId":"c1","consequence":["A"],"nextChapterNumber":5,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"},{"choiceId":"c2","consequence":["B"],"nextChapterNumber":5,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"},{"choiceId":"c3","consequence":["C"],"nextChapterNumber":5,"isEnding":false,"effect_json":{"routeDeltas":{},"trustDeltas":{},"flagsSet":{},"evidenceAdded":[],"endingBiasDeltas":{},"threadTouches":[]},"choice_kind":"normal"}]'::jsonb, null, null, '[]'::jsonb)::text;`
+      )
+      expect(JSON.parse(replayOut.trim()).ok).toBe(true)
+
+      const ledgerCount = execLocalPsql(target, `set role service_role; select count(*)::text from public.credit_ledger where user_id = '${userId}'::uuid and reason = 'unlock_chapter';`).trim()
+      expect(ledgerCount).toBe('1')
+
+      // Operation B: New logical operation created AFTER catalog change to 10
+      const resB = execLocalPsql(target, `set role service_role; select public.reserve_chapter_unlock_v1('${userId}'::uuid, '${storyId}', 5)::text;`).trim()
+      const resBObj = JSON.parse(resB)
+      expect(resBObj.ok).toBe(true)
+      expect(resBObj.cost).toBe(10)
+
+      const resBRow = execLocalPsql(target, `set role service_role; select status::text || '|' || amount::text from public.credit_reservations where ref = 'chapter-reservation:${userId}:${storyId}:5';`).trim()
+      expect(resBRow).toBe('ACTIVE|10')
     } finally {
       // Revert catalog price back to 8
       execLocalPsql(target, `set role service_role; update public.feature_credit_costs set credits_required = 8 where feature_key = 'chapter_unlock';`)

@@ -25,6 +25,9 @@ vi.mock('@/lib/runtime/generation-mode', () => ({
 vi.mock('@/lib/runtime/generation-lease-ttl', () => ({
   resolveGenerationLeaseTtlSeconds: mocks.resolveGenerationLeaseTtlSeconds,
 }))
+vi.mock('@/lib/commercial/worker-preflight.server', () => ({
+  resolveCommercialWorkerPreflight: vi.fn(async () => ({ status: 'AUTHORIZED' })),
+}))
 
 const JOB = {
   id: '00000000-0000-4000-8000-000000000001',

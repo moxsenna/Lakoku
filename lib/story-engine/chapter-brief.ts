@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { CanonSnapshot } from '@/lib/narrative/types'
+import type { EffectivePlotDebtState } from '@/lib/narrative/plot-debt-effective-state'
 import { resolveEnding } from './ending-resolver'
 import {
   RouteStateSchema,
@@ -106,6 +107,14 @@ const ReaderStateSchema = z.object({
   lockedEndingKey: boundedString(80).nullable().default(null),
 }).strict()
 
+function isEffectivePlotDebtState(value: unknown): value is EffectivePlotDebtState {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const candidate = value as Partial<EffectivePlotDebtState>
+  return typeof candidate.chapterNumber === 'number'
+    && Array.isArray(candidate.debtsDueToClose)
+    && Array.isArray(candidate.debtsDueToProgress)
+}
+
 const BuildChapterBriefInputSchema = z.object({
   storyContract: StoryContractSchema,
   snapshot: z.custom<CanonSnapshot>((value) => isCanonSnapshot(value), {
@@ -114,6 +123,15 @@ const BuildChapterBriefInputSchema = z.object({
   readerState: ReaderStateSchema,
   chapterNumber: chapterNumberSchema,
   previousChoice: ChoiceHistoryEntrySchema.nullable(),
+  /**
+   * Proyeksi ledger plot-debt efektif (M10-A1d, living v1). Saat diberikan,
+   * kewajiban plot-debt brief diturunkan dari ledger (TOTAL sebelum prose),
+   * bukan dari kontrak saja. Absen → perilaku legacy (kontrak-only).
+   */
+  effectivePlotDebtState: z.custom<EffectivePlotDebtState>(
+    (value) => value == null || isEffectivePlotDebtState(value),
+    { message: 'Invalid effective plot-debt state.' },
+  ).optional(),
 }).strict()
 
 export interface BuildChapterBriefInput {
@@ -126,6 +144,7 @@ export interface BuildChapterBriefInput {
   }
   chapterNumber: number
   previousChoice?: ChoiceHistoryEntry | null
+  effectivePlotDebtState?: EffectivePlotDebtState | null
 }
 
 function isCanonSnapshot(value: unknown): value is CanonSnapshot {
@@ -243,16 +262,23 @@ export function buildChapterBrief(input: BuildChapterBriefInput): ChapterBrief {
   if (!blueprint) throw new Error(`Missing canon blueprint for chapter ${chapterNumber}.`)
 
   const openDebts = storyContract.plotDebts.filter((debt) => debt.status !== 'closed')
-  const plotDebtsToClose = stableUnique(openDebts
-    .filter((debt) => debt.mustCloseBy <= chapterNumber)
-    .map((debt) => debt.id))
+  // Living v1 (M10-A1d, koreksi #5): kewajiban plot-debt dari proyeksi ledger
+  // yang TOTAL sebelum prose — bukan perkiraan kontrak. Absen = legacy.
+  const effective = parsed.effectivePlotDebtState ?? null
+  const plotDebtsToClose = effective
+    ? stableUnique(effective.debtsDueToClose)
+    : stableUnique(openDebts
+        .filter((debt) => debt.mustCloseBy <= chapterNumber)
+        .map((debt) => debt.id))
   const closingIds = new Set(plotDebtsToClose)
-  const plotDebtsToProgress = stableUnique(openDebts
-    .filter((debt) => (
-      !closingIds.has(debt.id)
-      && debt.mustProgressBy.some((milestone) => milestone <= chapterNumber)
-    ))
-    .map((debt) => debt.id))
+  const plotDebtsToProgress = effective
+    ? stableUnique(effective.debtsDueToProgress.filter((id) => !closingIds.has(id)))
+    : stableUnique(openDebts
+        .filter((debt) => (
+          !closingIds.has(debt.id)
+          && debt.mustProgressBy.some((milestone) => milestone <= chapterNumber)
+        ))
+        .map((debt) => debt.id))
   const routeStateSummary = summarizeRouteStateForPrompt(readerState.routeState)
   const choiceHistorySummary = summarizeChoiceHistory(readerState.choiceHistory, previousChoice)
   const allowedNewThread = chapterNumber <= storyContract.closureRunway.noNewThreadAfter

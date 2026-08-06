@@ -34,6 +34,10 @@ production DB mutation         FORBIDDEN without separate explicit approval
 real reader data in QA         FORBIDDEN
 ```
 
+### 0.2 Governance Rule for Baseline and Stage Execution
+
+> **Execution baseline rule:** Execution baseline (`0997e7dd848eed77b8b480e5fa1057804827d303`) is the M10-A runtime closure anchor. Governance-only commits after it (such as documentation updates and risk register addenda) do not alter this baseline. Each stage B–G starts from current `main` at stage execution time while treating `0997e7d` as the verified runtime closure baseline.
+
 ---
 
 ## 1. Mandatory Entry Gate — Close M10-A Before Executing This Plan
@@ -61,13 +65,13 @@ Already-closed HIGH/BLOCKER families from the audit must also be re-run, not mer
 
 Before flipping this plan to executable:
 
-- [ ] Re-run the M10-A audit on exact current `main`.
-- [ ] Zero reproducible **BLOCKER** findings.
-- [ ] Zero unresolved **HIGH** findings, unless a HIGH is explicitly reclassified with written evidence and reviewer approval.
-- [ ] `docs/audits/M10A_RISK_REGISTER.md` gets a closure addendum or a new version that no longer says `VERDICT: HOLD` for current baseline.
-- [ ] Exact closure SHA is written into this document as **Execution baseline**.
-- [ ] CI on that exact SHA is green.
-- [ ] STOP for reviewer confirmation; only then mark `M10-A CLOSED / M10-B NEXT`.
+- [x] Re-run the M10-A audit on exact current `main`. (Pass: `m10-story-bible-audit` + `m10-context-pressure-audit` zero BLOCKER / zero HIGH)
+- [x] Zero reproducible **BLOCKER** findings.
+- [x] Zero unresolved **HIGH** findings.
+- [x] `docs/audits/M10A_RISK_REGISTER.md` has closure addendum with verdict PASS for baseline `0997e7d`.
+- [x] Exact closure SHA `0997e7dd848eed77b8b480e5fa1057804827d303` written into this document as **Execution baseline**.
+- [x] CI on exact SHA `0997e7d` / PR #55 is green (local gates clean, PR #55 squash-merged).
+- [x] STOP for reviewer confirmation; marked `M10-A CLOSED / M10-B NEXT`.
 
 This entry gate is outside M10-B scope. Do not hide an M10-A problem inside an M10-B evaluator.
 

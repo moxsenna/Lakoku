@@ -1,8 +1,30 @@
 # M10-A — Risk Register
 
-> Status audit: **EXECUTION: SUCCESS** | **VERDICT: HOLD**
-> Baseline `b7961311cf70b91cb7245149e400075c4e454d74` | Branch `audit/m10-a-story-bible-dataflow` | Head: `9b2621dc77b16e88cea82e2f9f8685bf819b7c3b` (koreksi R1, committed)
-> Sumber data: `.zcode/artifacts/m10-a/audit.json` (diregenerasi via `scripts/m10-story-bible-audit.ts`, 2026-08-04, koreksi R1). Register ini berisi **seluruh 19 findings** dari artifact — tanpa penambahan/pengurangan temuan.
+> Status audit (Drafting baseline): **EXECUTION: SUCCESS** | **VERDICT: HOLD** (Baseline `b7961311cf70b91cb7245149e400075c4e454d74`)  
+> Status audit (Closure baseline): **EXECUTION: SUCCESS** | **VERDICT: PASS** (Baseline `0997e7dd848eed77b8b480e5fa1057804827d303` / PR #54 + PR #55)  
+> Sumber data: `.zcode/artifacts/m10-a/audit.json` dan `.zcode/artifacts/m10-a/context-pressure.json` (diregenerasi 2026-08-06 pada SHA `0997e7d`).
+
+## Addendum Penutupan M10-A (Baseline Execution `0997e7dd848eed77b8b480e5fa1057804827d303`)
+
+Seluruh temuan BLOCKER dan HIGH dari baseline awal `b796131` telah **ditutup penuh** dengan bukti kode produksi dan pengujian regression QA:
+
+1. **`LIVING_CANON_WRITEBACK_MISSING` (BLOCKER)** → **TERTUTUP** di M10-A1c/A1d (PR #52 / PR #54). Migration `20260805020000_living_canon_publication_primitives.sql` menyediakan `apply_validated_chapter_state_v1` yang dipanggil secara atomik oleh `publish_chapter_state_v3` (sync) dan `publish_generation_job_chapter_v5` (worker) untuk menulis `facts_ledger`, `knowledge_scopes`, `timeline_events`, `character_states`, `story_threads`, `act_rollups`, `reader_plot_debt_progress`, dan `closures`.
+2. **`PLOT_DEBT_EFFECTIVE_STATE_NOT_PROJECTED` (BLOCKER)** → **TERTUTUP** di M10-A1d (PR #54). `personalized-generation.ts` memuat `effectivePlotDebtState` sebelum `buildChapterBrief()`, dan `chapter-brief.ts` mem-parse `effectivePlotDebtState` sehingga `plotDebtsToProgress`/`plotDebtsToClose` membaca overlay ledger riil.
+3. **`BLUEPRINT_VERSION_RESOLUTION_DIVERGENCE` (HIGH)** → **TERTUTUP** di PR #55. `chapter-brief.ts` dan `reports.ts` sekarang menggunakan `latestBlueprintForChapter` (highest-version-wins), selaras dengan compiler dan runtime authority.
+4. **`THREAD_ADVANCEMENT_SIGNAL_DISCONNECTED` (HIGH)** → **TERTUTUP** di PR #54. Path personalized v1 menurunkan `advancedThreadIds` dari `validatedStateDelta.threads.touches` + `transitions`, sehingga sinyal real draft diteruskan ke `validateThreadLifecycle`.
+5. **`PLOT_DEBT_PROGRESS_NOT_PERSISTED` (HIGH)** → **TERTUTUP** di PR #54. Sinyal progress ditulis ke ledger `reader_plot_debt_progress` oleh applier atomik `apply_validated_chapter_state_v1`.
+6. **`GLOBAL_STORY_ANCHOR_NOT_DIRECTLY_PROPAGATED` ×3 (`corePromise`, `mainConflict`, `finalQuestion`) (HIGH)** → **TERTUTUP** di PR #55. `continuation-context.ts` memproyeksikan `storyAnchors` ke `ContinuationContext`, dan `build-writer-prompt.ts` layer 1a merender ketiga anchor secara langsung di prompt writer (dengan penekanan `finalQuestion` mulai `endingLockChapter` bab 45, serta `lockedEndingKey` yang dirender di prompt).
+7. **`DEAD_PATH_CANDIDATE` (act rollup) (HIGH)** → **TERTUTUP** di PR #55. `ContinuationContext` membawa `actRollups` (completed acts, newest-first, `CAP_ROLLUPS = 2`), dan `build-writer-prompt.ts` layer 3 merender section `Ringkasan Babak Terlewati:`, sehingga 0.25 compiler budget memiliki konsumen riil di prompt writer.
+8. **`WRITER_CONTEXT_WHOLE_SECTION_EVICTION` (HIGH)** → **TERTUTUP** di PR #55. `buildWriterPrompt` memotong entri yang melebihi batas 4800 char secara **GRANULAR per-entri** (urutan prioritas: timeline → facts → threads → rollups) tanpa membuang seluruh section, dan mencatat per-layer trim di `WriterPromptParts.layerEviction`. Detector direklasifikasi menjadi `WRITER_CONTEXT_GRANULAR_TRIM_NOT_RECORDED` (MEDIUM).
+
+### Hasil Audit Final pada Baseline `0997e7d`
+
+- **m10-story-bible-audit**: **PASS** (BLOCKER: 0, HIGH: 0, MEDIUM: 6, LOW: 0, INFO: 2)
+- **m10-context-pressure-audit**: **PASS** (BLOCKER: 0, HIGH: 0, MEDIUM: stress rows only)
+
+Dengan ini, kriteria penutupan M10-A (plan `M10_B_TO_G_EXECUTION_PLAN.md` §1) **TETAP DAN LENGKAP DIPENUHI**. Status M10-A dinyatakan **M10-A CLOSED**, dan gerbang eksekusi **M10-B NEXT** dapat dibuka.
+
+---
 
 ## Ringkasan
 

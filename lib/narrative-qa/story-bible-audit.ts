@@ -79,7 +79,7 @@ export interface StoryBibleAuditOptions {
   now?: Date
 }
 
-const DEFAULT_BASELINE_SHA = 'b7961311cf70b91cb7245149e400075c4e454d74'
+const DEFAULT_BASELINE_SHA = '0997e7dd848eed77b8b480e5fa1057804827d303'
 
 /**
  * Run every detector over the supplied inputs and aggregate into an

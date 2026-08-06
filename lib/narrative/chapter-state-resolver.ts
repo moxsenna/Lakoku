@@ -472,7 +472,7 @@ export function buildValidatedChapterStateDelta(
  * milestone yang diproses bab ini WAJIB ikut dihitung — tanpa itu progress
  * final tidak pernah memenuhi "all done".
  */
-function deriveDebtBackedThreadStatus(args: {
+export function deriveDebtBackedThreadStatus(args: {
   debt: PlotDebt
   ops: { progressedChapters: number[]; closureForm: PlotDebtClosureForm | null }
   projection: EffectiveDebtProjection | undefined
@@ -494,7 +494,7 @@ function deriveDebtBackedThreadStatus(args: {
 }
 
 /** Apakah thread debt-backed? id = `${storyId}:thread:${debtId}` (canon-id). */
-function isDebtBackedThread(
+export function isDebtBackedThread(
   storyId: string,
   threadId: string,
   debtMap: Map<string, PlotDebt>,

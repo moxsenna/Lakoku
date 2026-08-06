@@ -14,6 +14,8 @@
 import { z } from 'zod'
 import type { StoryContract } from '../story-engine/story-contract'
 import { debtBackedThreadId } from './canon-id'
+import { latestBlueprintForChapter } from './blueprint'
+import type { CanonSnapshot } from './types'
 import type { ChapterStateDeltaV1 } from './chapter-state-delta'
 
 export const ALLOWED_CHAPTER_STATE_POLICY_SCHEMA_VERSION = 1 as const
@@ -117,6 +119,61 @@ export function buildBaselinePolicyForChapter(
 export interface PolicyViolation {
   category: string
   detail: string
+}
+
+export class ChapterStatePolicyAuthorityError extends Error {
+  readonly code: string
+  constructor(code: string, message: string) {
+    super(message)
+    this.name = 'ChapterStatePolicyAuthorityError'
+    this.code = code
+  }
+}
+
+export interface BlueprintPolicyAuthorityInput {
+  snapshot: CanonSnapshot
+  chapterNumber: number
+  storyId: string
+}
+
+/**
+ * Policy authority v1 untuk living canon (version 1): SATU-SATUNYA sumber
+ * otoritas adalah `allowedStateDelta` blueprint versi terbaru yang
+ * ter-serialize sebagai `AllowedChapterStatePolicyV1` (schema-v1).
+ *
+ * Fail-closed:
+ *  - blueprint bab ini hilang → error (tidak ada self-authorization).
+ *  - `allowedStateDelta` bukan schema-v1 / malformed → error.
+ *  - `storyId` di policy tidak cocok → error.
+ *
+ * Layer A (`flattenKeys ⊆ allowed`) tetap v0 legacy — bukan authority v1.
+ */
+export function resolvePolicyAuthorityFromBlueprint(
+  input: BlueprintPolicyAuthorityInput,
+): AllowedChapterStatePolicyV1 {
+  const { snapshot, chapterNumber, storyId } = input
+  const blueprint = latestBlueprintForChapter(snapshot, chapterNumber)
+  if (!blueprint) {
+    throw new ChapterStatePolicyAuthorityError(
+      'BLUEPRINT_POLICY_MISSING',
+      `Bab ${chapterNumber} tidak punya blueprint — policy otoritas v1 gagal (fail closed).`,
+    )
+  }
+  const parsed = AllowedChapterStatePolicyV1Schema.safeParse(blueprint.allowedStateDelta)
+  if (!parsed.success) {
+    throw new ChapterStatePolicyAuthorityError(
+      'BLUEPRINT_POLICY_INVALID',
+      `Blueprint Bab ${chapterNumber} mengemas allowedStateDelta bukan schema-v1 (fail closed): `
+        + parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; '),
+    )
+  }
+  if (parsed.data.storyId !== storyId) {
+    throw new ChapterStatePolicyAuthorityError(
+      'BLUEPRINT_POLICY_SCOPE_MISMATCH',
+      `Policy storyId "${parsed.data.storyId}" tidak cocok dengan "${storyId}".`,
+    )
+  }
+  return parsed.data
 }
 
 /** Cek delta terhadap policy — pure, mengembalikan daftar pelanggaran. */

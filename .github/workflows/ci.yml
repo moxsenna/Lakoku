@@ -2,6 +2,10 @@ name: CI
 
 on:
   workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Commit SHA to verify
+        required: false
   pull_request:
   push:
     branches:
@@ -20,6 +24,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_sha || github.sha }}
+
+      - name: Verify target SHA
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ inputs.target_sha || github.sha }}"
 
       - name: Setup Node
         uses: actions/setup-node@v4

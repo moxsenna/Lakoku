@@ -70,7 +70,8 @@ Before flipping this plan to executable:
 - [x] Zero unresolved **HIGH** findings.
 - [x] `docs/audits/M10A_RISK_REGISTER.md` has closure addendum with verdict PASS for baseline `0997e7d`.
 - [x] Exact closure SHA `0997e7dd848eed77b8b480e5fa1057804827d303` written into this document as **Execution baseline**.
-- [x] CI on exact SHA `0997e7d` / PR #55 is green (local gates clean, PR #55 squash-merged).
+- [x] Local exact-baseline gates PASS.
+- [ ] GitHub-hosted CI exact-baseline replay PASS (`BLOCKED_BY_GITHUB_RUNNER_ACQUISITION`).
 - [x] STOP for reviewer confirmation; marked `M10-A CLOSED / M10-B NEXT`.
 
 This entry gate is outside M10-B scope. Do not hide an M10-A problem inside an M10-B evaluator.

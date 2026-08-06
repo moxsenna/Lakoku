@@ -99,39 +99,21 @@ export async function resolveCommercialWorkerPreflight(input: {
     return { status: 'AUTHORIZED', origin }
   }
 
-  // PAID_START Bab 2-3 & LEGACY_GRANDFATHERED Bab 1-3
+  // LEGACY_GRANDFATHERED Bab 1-3 -> included
   if (origin === 'LEGACY_GRANDFATHERED' && input.chapterNumber <= 3) {
     return { status: 'AUTHORIZED', origin }
   }
 
+  // PAID_START Bab 2-3 -> included
   if (origin === 'PAID_START' && input.chapterNumber >= 2 && input.chapterNumber <= 3) {
     return { status: 'AUTHORIZED', origin }
   }
 
-  // PAID_START Bab 1 with fresh RUNNING job
+  // PAID_START Bab 1 with fresh RUNNING job -> DENY (Requirement 6)
+  // Legitimate Story Start generation enters worker while origin is PENDING_PAID_START.
+  // After successful capture, origin is PAID_START and replay belongs to V6 publication proof.
   if (origin === 'PAID_START' && input.chapterNumber === 1) {
-    const expectedKind = story.story_mode === 'premium_instance' ? 'premium_clone' : 'personalized'
-    const { data: req } = await db
-      .from('story_creation_requests')
-      .select('status, generation_job_id')
-      .eq('owner_user_id', input.userId)
-      .eq('story_id', input.storyId)
-      .eq('request_kind', expectedKind)
-      .maybeSingle()
-
-    const resRef = `story-start:${input.userId}:${input.storyId}`
-    const { data: resRow } = await db
-      .from('credit_reservations')
-      .select('status')
-      .eq('ref', resRef)
-      .eq('user_id', input.userId)
-      .maybeSingle()
-
-    if (req && req.status === 'READY' && resRow && resRow.status === 'CAPTURED') {
-      return { status: 'AUTHORIZED', origin }
-    }
-
-    return { status: 'DENIED', reason: 'PAID_START_BAB1_PROVENANCE_INVALID' }
+    return { status: 'DENIED', reason: 'PAID_START_BAB1_REPLAY_FORBIDDEN' }
   }
 
   // PENDING_PAID_START Bab 2+ -> DENY
@@ -147,7 +129,7 @@ export async function resolveCommercialWorkerPreflight(input: {
 
     const { data: req, error: reqErr } = await db
       .from('story_creation_requests')
-      .select('id, status, generation_job_id')
+      .select('status, generation_job_id')
       .eq('owner_user_id', input.userId)
       .eq('story_id', input.storyId)
       .eq('request_kind', expectedKind)
@@ -172,17 +154,16 @@ export async function resolveCommercialWorkerPreflight(input: {
       .gt('expires_at', new Date().toISOString())
       .maybeSingle()
 
-    // Pass 2 Reactivation: Attempt reserve_story_start_v1 if reservation is missing or inactive
+    let reserveInsufficient = false
+
+    // Pass 2 Reactivation: Attempt reserve_story_start_v1 using exact Phase 1 signature (Requirement 2 & 3)
     if (!resRow) {
-      const { data: reserveRpcRes } = await db.rpc('reserve_story_start_v1', {
+      const { data: reserveRpcRes, error: reserveRpcErr } = await db.rpc('reserve_story_start_v1', {
         p_user_id: input.userId,
         p_story_id: input.storyId,
-        p_request_kind: expectedKind,
-        p_quoted_credits: storyStartPrice,
-        p_pricing_version: 'v1',
       })
 
-      if (reserveRpcRes && reserveRpcRes.status === 'RESERVED') {
+      if (!reserveRpcErr && reserveRpcRes?.ok === true && reserveRpcRes?.status === 'RESERVED') {
         // Authoritative SECOND READ
         const { data: secondRes } = await db
           .from('credit_reservations')
@@ -199,12 +180,21 @@ export async function resolveCommercialWorkerPreflight(input: {
         if (secondRes && secondRes.amount > 0) {
           resRow = secondRes
         }
+      } else if (!reserveRpcErr && reserveRpcRes?.ok === false && reserveRpcRes?.reason === 'INSUFFICIENT_CREDITS') {
+        reserveInsufficient = true
+      } else {
+        // RPC error, DB failure, or unexpected reason -> DENY (fail closed, never map to WAITING)
+        return { status: 'DENIED', reason: reserveRpcRes?.reason ?? 'COMMERCIAL_RESERVATION_FAILED' }
       }
     }
 
     if (!resRow) {
+      if (!reserveInsufficient) {
+        return { status: 'DENIED', reason: 'COMMERCIAL_RESERVATION_FAILED' }
+      }
+
       // Transition creation request to WAITING_FOR_CREDITS using DB-authoritative RPC
-      const { data: transRes } = await db.rpc('transition_story_creation_request_waiting_v1', {
+      const { data: transRes, error: transErr } = await db.rpc('transition_story_creation_request_waiting_v1', {
         p_owner_user_id: input.userId,
         p_story_id: input.storyId,
         p_request_kind: expectedKind,
@@ -220,7 +210,7 @@ export async function resolveCommercialWorkerPreflight(input: {
         .eq('request_kind', expectedKind)
         .maybeSingle()
 
-      if (transRes && transRes.ok && reReadReq?.status === 'WAITING_FOR_CREDITS' && reReadReq?.generation_job_id === input.jobId) {
+      if (!transErr && transRes && transRes.ok && reReadReq?.status === 'WAITING_FOR_CREDITS' && reReadReq?.generation_job_id === input.jobId) {
         return { status: 'WAITING_FOR_CREDITS', origin, reason: 'INSUFFICIENT_CREDITS' }
       }
 
@@ -268,6 +258,11 @@ export async function resolveCommercialWorkerPreflight(input: {
       return { status: 'DENIED', reason: 'COMMERCIAL_INTENT_NOT_BOUND' }
     }
 
+    // REQUIREMENT 5: Worker intent status MUST be exact 'QUEUED' before provider generation
+    if (intent.status !== 'QUEUED') {
+      return { status: 'DENIED', reason: 'COMMERCIAL_INTENT_NOT_QUEUED' }
+    }
+
     const resRef = `chapter-reservation:${input.userId}:${input.storyId}:${input.chapterNumber}`
 
     // Pass 1: Check active reservation
@@ -283,17 +278,17 @@ export async function resolveCommercialWorkerPreflight(input: {
       .gt('expires_at', new Date().toISOString())
       .maybeSingle()
 
-    // Pass 2 Reactivation: Attempt reserve_chapter_unlock_v1 if reservation is missing or inactive
+    let reserveInsufficient = false
+
+    // Pass 2 Reactivation: Attempt reserve_chapter_unlock_v1 using exact Phase 1 signature (Requirement 2 & 3)
     if (!resRow || resRow.amount !== intent.quoted_credits) {
-      const { data: reserveRpcRes } = await db.rpc('reserve_chapter_unlock_v1', {
+      const { data: reserveRpcRes, error: reserveRpcErr } = await db.rpc('reserve_chapter_unlock_v1', {
         p_user_id: input.userId,
         p_story_id: input.storyId,
         p_chapter_number: input.chapterNumber,
-        p_quoted_credits: intent.quoted_credits,
-        p_pricing_version: 'v1',
       })
 
-      if (reserveRpcRes && reserveRpcRes.status === 'RESERVED') {
+      if (!reserveRpcErr && reserveRpcRes?.ok === true && reserveRpcRes?.status === 'RESERVED') {
         // Authoritative SECOND READ
         const { data: secondRes } = await db
           .from('credit_reservations')
@@ -310,10 +305,19 @@ export async function resolveCommercialWorkerPreflight(input: {
         if (secondRes && secondRes.amount === intent.quoted_credits) {
           resRow = secondRes
         }
+      } else if (!reserveRpcErr && reserveRpcRes?.ok === false && reserveRpcRes?.reason === 'INSUFFICIENT_CREDITS') {
+        reserveInsufficient = true
+      } else {
+        // RPC error, DB failure, or unexpected reason -> DENY (fail closed, never map to WAITING)
+        return { status: 'DENIED', reason: reserveRpcRes?.reason ?? 'COMMERCIAL_RESERVATION_FAILED' }
       }
     }
 
     if (!resRow || resRow.amount !== intent.quoted_credits) {
+      if (!reserveInsufficient) {
+        return { status: 'DENIED', reason: 'COMMERCIAL_RESERVATION_FAILED' }
+      }
+
       // Transition intent to WAITING_FOR_CREDITS using correct 5 RPC params
       const { data: transRes, error: transErr } = await db.rpc('transition_commercial_generation_intent_v1', {
         p_user_id: input.userId,
@@ -337,10 +341,6 @@ export async function resolveCommercialWorkerPreflight(input: {
       }
 
       return { status: 'DENIED', reason: 'COMMERCIAL_STATE_ERROR' }
-    }
-
-    if (intent.status !== 'QUEUED' && intent.status !== 'RUNNING' && intent.status !== 'AUTHORIZED') {
-      return { status: 'DENIED', reason: 'COMMERCIAL_INTENT_INVALID_STATE' }
     }
 
     return { status: 'AUTHORIZED', origin }

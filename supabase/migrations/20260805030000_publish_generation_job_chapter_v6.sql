@@ -133,8 +133,13 @@ begin
     return v_pub_result;
   end if;
 
-  -- Paid / Legacy included Bab 2-3
-  if (v_story.commercial_origin = 'PAID_START' or v_story.commercial_origin = 'LEGACY_GRANDFATHERED') and p_chapter_number between 2 and 3 then
+  -- LEGACY_GRANDFATHERED included Bab 1-3
+  if v_story.commercial_origin = 'LEGACY_GRANDFATHERED' and p_chapter_number between 1 and 3 then
+    return v_pub_result;
+  end if;
+
+  -- PAID_START included Bab 2-3
+  if v_story.commercial_origin = 'PAID_START' and p_chapter_number between 2 and 3 then
     return v_pub_result;
   end if;
 
@@ -182,20 +187,22 @@ begin
       and cr.reservation_kind = 'CHAPTER_UNLOCK'
     for update;
 
-    -- I: Lock commercial_generation_intents FOR UPDATE
+    -- I: Lock commercial_generation_intents FOR UPDATE with exact user provenance (REQUIREMENT 8)
     select i.* into v_intent
     from public.commercial_generation_intents i
-    where i.story_id = p_story_id
+    where i.user_id = v_job.user_id
+      and i.story_id = p_story_id
       and i.chapter_number = p_chapter_number
       and i.generation_job_id = p_job_id
+      and i.trigger_choice_id is not distinct from v_job.trigger_choice_id
     for update;
 
     if v_reservation.id is null or v_intent.id is null then
       raise exception using errcode = 'P0001', message = 'COMMERCIAL_PROVENANCE_MISSING';
     end if;
 
-    -- REQUIREMENT G: Pricing Snapshot Invariant
-    if v_intent.quoted_credits <> v_reservation.amount or v_intent.pricing_version is null then
+    -- REQUIREMENT G: Pricing Snapshot Invariant (non-null and non-empty)
+    if v_intent.quoted_credits <> v_reservation.amount or v_intent.pricing_version is null or v_intent.pricing_version = '' then
       raise exception using errcode = 'P0001', message = 'COMMERCIAL_PRICING_SNAPSHOT_MISMATCH';
     end if;
 
@@ -247,6 +254,19 @@ begin
     -- Replay Capture Path
     elsif v_reservation.status = 'CAPTURED' and v_intent.status = 'FULFILLED' then
       -- REQUIREMENT 11: Exact CAPTURED Replay Proof
+      if v_reservation.user_id is distinct from v_job.user_id
+        or v_reservation.story_id is distinct from p_story_id
+        or v_reservation.chapter_number is distinct from p_chapter_number
+        or v_reservation.reservation_kind is distinct from 'CHAPTER_UNLOCK'
+        or v_reservation.amount is distinct from v_active_price
+        or v_intent.user_id is distinct from v_job.user_id
+        or v_intent.story_id is distinct from p_story_id
+        or v_intent.chapter_number is distinct from p_chapter_number
+        or v_intent.generation_job_id is distinct from p_job_id
+      then
+        raise exception using errcode = 'P0001', message = 'COMMERCIAL_FINALIZATION_CONFLICT';
+      end if;
+
       select cl.* into v_existing_ledger
       from public.credit_ledger cl
       where cl.ref = v_ledger_ref;
@@ -361,7 +381,18 @@ begin
       and v_reservation.status = 'CAPTURED'
       and v_creation_req.status = 'READY'
     then
-      -- REQUIREMENT 8: Replay requires exact ledger proof
+      -- REQUIREMENT 11: Replay requires exact request, reservation & ledger proof
+      if v_creation_req.owner_user_id is distinct from v_job.user_id
+        or v_creation_req.request_kind is distinct from v_expected_req_kind
+        or v_creation_req.generation_job_id is distinct from p_job_id
+        or v_reservation.user_id is distinct from v_job.user_id
+        or v_reservation.story_id is distinct from p_story_id
+        or v_reservation.chapter_number is distinct from 1
+        or v_reservation.reservation_kind is distinct from 'STORY_START'
+      then
+        raise exception using errcode = 'P0001', message = 'COMMERCIAL_FINALIZATION_CONFLICT';
+      end if;
+
       select cl.* into v_existing_ledger
       from public.credit_ledger cl
       where cl.ref = v_ledger_ref;

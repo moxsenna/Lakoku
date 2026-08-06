@@ -200,13 +200,12 @@ function snapshotFor(storyId: string): CanonSnapshot {
 function readerState(overrides: {
   lockedEndingKey?: string | null
   choiceHistory?: ChoiceHistoryEntry[]
-  currentChapter?: number
 } = {}) {
   return {
     user_id: USER_A,
     story_id: STORY_A,
     status: 'BERJALAN' as const,
-    current_chapter: overrides.currentChapter ?? 12,
+    current_chapter: 12,
     jejak: [],
     ending_name: null,
     route_state: normalizeRouteState({
@@ -355,7 +354,7 @@ function makeDeps(options: {
       push('reader')
       capture.storyIdsSeen.push(id)
       return {
-        ...readerState({ lockedEndingKey, currentChapter: chapterNumber }),
+        ...readerState({ lockedEndingKey }),
         user_id: userId,
         story_id: id,
         route_state: normalizeRouteState({

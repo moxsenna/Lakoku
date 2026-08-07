@@ -29,6 +29,7 @@
     "smoke": "pnpm run smoke:analytics && pnpm run smoke:story-setup && pnpm run smoke:taste-profile && pnpm run smoke:taste-profile-db && pnpm run smoke:contracts && pnpm run smoke:web-release && pnpm run smoke:onboarding-shimmer && pnpm run smoke:auth-config && pnpm run smoke:admin-guard && pnpm run smoke:m4 && pnpm run smoke:m5 && pnpm run smoke:authoring-model && pnpm run smoke:m7-authoring && pnpm run smoke:m7-reconcile && pnpm run smoke:m7-opening && pnpm run smoke:m8-metrics && pnpm run smoke:m8-alert && pnpm run smoke:m8-entitlement && pnpm run smoke:paycore-webhook && pnpm run smoke:paycore-client && pnpm run smoke:credits-policy && pnpm run smoke:topup-bonus && pnpm run smoke:admin-credit-grant && pnpm run smoke:generation-policy && pnpm run smoke:ai-model-routes && pnpm run smoke:admin-panel && pnpm run smoke:admin-generation-observability && pnpm run smoke:personalized-story",
     "smoke:personalized-story": "node scripts/run-smoke.cjs scripts/personalized-story-smoke.ts",
     "m10:b:qa": "node scripts/run-smoke.cjs scripts/m10-b-qa-cli.ts",
+    "m10:c:harness": "node scripts/run-smoke.cjs scripts/m10-c-harness-cli.ts",
     "replay:choice": "node scripts/run-smoke.cjs scripts/choice-replay-harness-cli.ts",
     "replay:bridge": "node scripts/run-smoke.cjs scripts/replay-bridge-cli.ts",
     "test:e2e:personalized-auth": "node scripts/run-smoke.cjs scripts/personalized-authenticated-e2e.ts",

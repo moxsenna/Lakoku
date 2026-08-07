@@ -24,6 +24,7 @@ import {
   sortFindings,
   stableStringify,
 } from '../lib/narrative-qa/scoring/canonical-serializer'
+import { headShaOfWorkingTree } from '../lib/narrative-qa/git-sha'
 import { evaluateBlueprintAuthority } from '../lib/narrative-qa/evaluators/blueprint-evaluator'
 import { evaluateCanonDrift } from '../lib/narrative-qa/evaluators/canon-drift-evaluator'
 import { evaluateChoiceHistory } from '../lib/narrative-qa/evaluators/choice-evaluator'
@@ -173,11 +174,14 @@ export function generateM10BArtifacts(outDir?: string) {
   const finishedAt = new Date().toISOString()
   // runId is derived from content, not wall clock, so repeated runs are byte-identical.
   const runId = `m10-b-${findingsHash.slice(0, 12)}`
+  const { headSha, workingTreeDirty } = headShaOfWorkingTree()
 
   const manifest: M10ArtifactManifestV1 = {
     schemaVersion: 1,
     stage: 'B',
     baselineSha: BASELINE_SHA,
+    headSha,
+    workingTreeDirty,
     m10aClosureAnchor: M10A_CLOSURE_ANCHOR,
     runId,
     startedAt,

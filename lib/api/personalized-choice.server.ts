@@ -158,11 +158,18 @@ async function authorizeParentWithCookieRls(userId: string, storyId: string): Pr
   if (!data) throw new PersonalizedChoiceError('STORY_NOT_FOUND')
 }
 
-export async function applyPersonalizedChoice(
+/**
+ * Accepted-choice core: seluruh langkah setelah otorisasi pembaca.
+ *
+ * Dipisah TANPA mengubah urutan maupun efek apa pun, supaya jalur non-HTTP yang
+ * sudah terotorisasi di layer lain (mis. harness QA terisolasi M10-C) memakai
+ * seam pilihan yang SAMA dengan produksi — bukan menulis `reader_states`
+ * langsung. Jalur HTTP tetap wajib lewat `applyPersonalizedChoice`, yang
+ * memeriksa RLS cookie lebih dulu lalu mendelegasikan ke fungsi ini.
+ */
+export async function applyPersonalizedChoiceAuthorized(
   input: ApplyPersonalizedChoiceInput,
 ): Promise<ApplyPersonalizedChoiceResult> {
-  await authorizeParentWithCookieRls(input.userId, input.storyId)
-
   const admin = createAdminClient()
   const { data: metadataData, error: metadataError } = await admin
     .from('stories')
@@ -253,4 +260,11 @@ export async function applyPersonalizedChoice(
     throw mapRpcError(error.message)
   }
   return parseStored(RpcResultSchema, data)
+}
+
+export async function applyPersonalizedChoice(
+  input: ApplyPersonalizedChoiceInput,
+): Promise<ApplyPersonalizedChoiceResult> {
+  await authorizeParentWithCookieRls(input.userId, input.storyId)
+  return applyPersonalizedChoiceAuthorized(input)
 }

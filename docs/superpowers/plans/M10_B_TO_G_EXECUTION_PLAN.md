@@ -1,6 +1,6 @@
 # Lakoku — M10-B → M10-G Execution Plan
 
-**Status:** EXECUTION-READY (M10-A CLOSED / M10-B NEXT)  
+**Status:** EXECUTION-READY (M10-A CLOSED / M10-B CLOSED / M10-C NEXT — restart on current runtime)  
 **Drafting baseline:** `46c68e9374e8e57defff421b777f38a419387fac` (`main`, after PR #54 / M10-A1d squash)  
 **Execution baseline:** `0997e7dd848eed77b8b480e5fa1057804827d303` (`main`, after PR #55 / M10-A closure correctives)  
 **Date:** 6 August 2026  
@@ -37,6 +37,35 @@ real reader data in QA         FORBIDDEN
 ### 0.2 Governance Rule for Baseline and Stage Execution
 
 > **Execution baseline rule:** Execution baseline (`0997e7dd848eed77b8b480e5fa1057804827d303`) is the M10-A runtime closure anchor. Governance-only commits after it (such as documentation updates and risk register addenda) do not alter this baseline. Each stage B–G starts from current `main` at stage execution time while treating `0997e7d` as the verified runtime closure baseline.
+
+### 0.3 Post-integration status (reviewer governance reset, 2026-08-08)
+
+Reviewer verdict: STOP / RESET after M10-B. M10-B.1 R1 was APPROVED and
+integrated onto current main via PR #56 (squash head
+`7d0dd039109656237841873f31e973f8da853ffb`, base `a2ac23e` Phase 2B).
+**M10-B CLOSED** at `7d0dd03`.
+
+Locked stage state after the reset:
+
+```text
+M10-A                 CLOSED
+M10-B                 CLOSED at 7d0dd03 (PR #56)
+M10-C                 BLOCKED — must achieve PASS (restart on current runtime;
+                      six observability blockers must close or reclassify
+                      with proof)
+M10-E evidence        PRELIMINARY ONLY; stage entry invalid until C PASS
+M10-D                 BLOCKED BY C PASS
+M10-F                 BLOCKED BY C + D + E PASS
+M10-G                 BLOCKED BY F PASS
+G5-NOCONFLICT         OPEN / BLOCKED
+production activation FORBIDDEN
+production DB action  FORBIDDEN
+```
+
+Pre-integration C/E work (commits `eea7de9` / `57c138e` / `3672d4d` on
+`feature/m10-b-deterministic-evaluators`, preserved through `a152e6e`) is
+exploratory/preflight evidence only — not stage evidence. The §0.1 snapshot
+above remains the historical record at execution baseline.
 
 ---
 

@@ -241,3 +241,39 @@ No production DB was contacted. No production feature was activated.
 - `production activation FORBIDDEN`, `production DB mutation FORBIDDEN`, `real reader data in QA FORBIDDEN` — all held.
 
 **STOP discipline active.**
+
+---
+
+## 10. Closure addendum (2026-08-08)
+
+Reviewer verdict 2026-08-08: **M10-B.0 PASS, M10-B.1 R1 APPROVED**,
+READY TO INTEGRATE / CLOSE. Integrated onto current main
+(`a2ac23e` Phase 2B) via PR #56 — cherry-pick of `38a5e75` / `c3a60d9` /
+`401f0f8` (clean; one `package.json` scripts auto-merge), squash-merged as
+**`7d0dd039109656237841873f31e973f8da853ffb`** — the M10-B closure head.
+
+Integration gates rerun at branch head `d025e60` (base `a2ac23e`):
+
+| Gate | Result |
+|---|---|
+| `pnpm typecheck` | PASS |
+| `pnpm lint` | PASS — 0 errors, 11 pre-existing warnings |
+| `pnpm test:unit` | 1977 passed / 18 skipped / **1 failed** (see caveat) |
+| M10-B suite | PASS — 110/110 |
+| `pnpm m10:b:qa` ×2 | PASS — findingsHash `24f9f0b3a9bb…` / summaryHash `1b88c837089c…` identical both runs AND identical to §5 on the old base |
+| `pnpm smoke` | PASS — all suites, ending `personalized-story-smoke: 30/30 PASS` |
+
+**Caveat — pre-existing main defect, NOT introduced by M10-B:** the single
+unit failure is `tests/db/migration-version-uniqueness.test.ts` — duplicate
+14-digit version `20260805020000` used by both
+`living_canon_publication_primitives.sql` (pre-existing) and
+`story_creation_request_job_binding.sql` (added by PR #53). Proven
+pre-existing: the same test fails identically on clean `origin/main`
+(`a2ac23e`), verified in a scratch worktree. M10-B touches no migrations. A
+repair-migration decision is required and is outside M10-B scope and outside
+implementation-agent authorization (migration edits forbidden).
+
+Carried forward: `G5-NOCONFLICT OPEN_BLOCKED_NO_RUNTIME_AUTHORITY`; the
+duplicate-version repair decision above.
+
+**M10-B CLOSED at `7d0dd03`.**

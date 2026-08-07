@@ -114,3 +114,46 @@ Agent-side record (reviewer verdict still pending):
 - NTM G4-STALE and G4-STATUS updated IN_PROGRESS → DONE with scope + evidence.
 - Stage state unchanged until verdict: M10-D/E BLOCKED BY C; production action
   FORBIDDEN. **STOP for reviewer verdict.**
+
+## Entry 4 — 2026-08 (reviewer verdict: M10-C = PASS CANDIDATE, belum CLOSED; verbatim key block)
+
+```text
+M10-A                 CLOSED
+M10-B                 CLOSED
+M10-C implementation  PASS CANDIDATE
+M10-C stage           HOLD — final evidence/repro/migration gate
+M10-D                 BLOCKED BY C
+M10-E                 BLOCKED BY C
+M10-F                 BLOCKED
+M10-G                 BLOCKED
+production action     FORBIDDEN
+```
+
+Substance accepted: #2 real capture seam; #4 canonical publication proof instead of
+tx-id; #5/#6 lifecycle hook + read-back; G4-STALE real touch/enforcement (HIGH
+findings gone); #3 accepted in principle if the formal decision is versioned and the
+evaluator no longer relies on synthesized input.
+
+Four closing gates ordered (verbatim intent):
+
+1. **Push** the branch containing full SHA `e02a3a7…` and `b45f802…` to origin so the
+   exact diff/report is independently inspectable; the report must contain the
+   V5-vs-V6 **call chain conclusion**, not just "proof complete".
+2. **Migration history** resolved from `supabase_migrations.schema_migrations` on the
+   staging/shared DB that actually received deployments — that ledger is the
+   authoritative source (`supabase migration list --linked` only an operator view;
+   CI/local bookkeeping/Git/deploy docs supporting only). If no shared/staging
+   environment ever received the migration, there is no remote-history evidence —
+   do NOT delete/rename on assumption. Production may not answer this gap without
+   separate approval. After the repair decision: `supabase db reset` AND
+   migration-version-uniqueness must PASS from a fresh environment.
+3. **Two** `pnpm m10:c:harness` runs on the exact same C-R1 code head from
+   clean/reseeded environments with identical normalized hashes (the single
+   `m10-c-ceccff8be159` run does not count as a pair; the recovery ran on another head).
+4. **Clean/fresh worktree** for final evidence: the two intentionally-uncommitted
+   files must move out of the worktree (or closure runs from a fresh worktree) —
+   "documented but still untracked" is not a clean tree.
+
+Reviewer: if all four hold and the exact diff shows no hidden regression, the next
+verdict target is directly **M10-C PASS / CLOSED; M10-D + M10-E GO** — no new design
+round. Do not start D/E.

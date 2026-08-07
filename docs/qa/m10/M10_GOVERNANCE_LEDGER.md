@@ -86,3 +86,31 @@ Ratification detail (reviewer, verbatim intent):
 Next step ordered by reviewer: a **narrow C-R1 corrective package** for #2, formal #3
 decision, #4 closure adapter, runtime G1 #5/#6, G4-STALE, and V5-vs-V6 proof, then a
 clean 1→50 sync+worker rerun. Green there ⇒ real M10-C PASS, opening D + E.
+
+## Entry 3 — 2026-08-08 (C-R1 corrective package + closure rerun SUBMITTED; not a verdict)
+
+Agent-side record (reviewer verdict still pending):
+
+- **C-R1 committed** at `e02a3a7` on `feature/m10-c-recovery` (17 files): #2 capture
+  seam (`persistRetrievalLog` + capture read-back, fail-closed), #3 formal beat
+  decision (`M10_C_R1_DECISION_3_BEAT_CONTRACT.md`, B 1.1.0 semantics, veto fallback
+  documented), #4 ending-evaluator 1.2.0 canonical publication proof adapter, #5/#6
+  production post-publication lifecycle hook (`ACT_RECONCILIATION` /
+  `ACT_ENDING_REACHABILITY` story_events from the shared schema-3 publish path),
+  G4-STALE Option A (runtime `markThreadStaleness` side-effect + unchanged Layer A
+  fail-closed enforcement + cadence + pure/DB regression tests), blocker dispositions
+  rewritten (5 CLOSED, prompt layer RECLASSIFIED to F per ratification #1).
+- **Closure rerun `m10-c-ceccff8be159` from clean committed worktree** (manifest
+  `headSha` = `e02a3a7`, isolated-qa, deterministic provider): PASS, 50+50 chapters,
+  0 parity mismatches, stateDeltaHash both modes, 7/7 completion checks ×2,
+  0 BLOCKER/HIGH findings, 0 STALE_THREAD_*, 0 ENDING_LOCK_NOT_DURABLE,
+  0 CHAPTER_49_EMOTIONAL_RESOLUTION_MISSING, retrieval_logs Bab 2–50 both stories,
+  story_events per act boundary both stories, fork single-spine + no cross-leak,
+  fencing tamper probes rejected. Full evidence: `M10_C_R1_REPORT.md`.
+- **Carried to reviewer:** migration duplicate HOLD (staging-history source for
+  algorithm step 2 unknown — no delete/no-op performed), #3 veto fallback, pre-existing
+  full-suite flakiness (baseline 20 failing files vs 1 with C-R1 = the HOLD-owned
+  migration test).
+- NTM G4-STALE and G4-STATUS updated IN_PROGRESS → DONE with scope + evidence.
+- Stage state unchanged until verdict: M10-D/E BLOCKED BY C; production action
+  FORBIDDEN. **STOP for reviewer verdict.**

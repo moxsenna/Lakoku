@@ -132,25 +132,22 @@ untracked files that are deliberately not committed.
 
 1. **Migration duplicate HOLD** (reviewer algorithm): byte-identical pair
    `20260805015000`/`20260805020000 _living_canon_publication_primitives.sql`
-   (SHA256 `940c4643…`) + prefix collision `20260805020000` ×2. Repo forensics done;
-   step (2) — whether the newer duplicate was ever applied in shared/staging — needs
-   environment history this repo does not contain. **No delete/no-op performed.**
-   `tests/db/migration-version-uniqueness.test.ts` fails accordingly and is owned by
-   the HOLD, not by C-R1. Question to reviewer: which environment history source is
-   authoritative for step (2)?
+   (SHA256 `940c4643…`) + prefix collision `20260805020000` ×2. **RESOLVED in §7.2
+   (Gate 2)**: ledger forensics + forward-only repair `bb3287a`; fresh `supabase db
+   reset` + uniqueness test now PASS. No delete/no-op was performed on assumption.
 2. **#3 veto fallback**: if the reviewer rejects the formal beat decision, the path is
    the documented B contract rebaseline (version bump + fixture update + reviewer
    approval); until then the decision stands as written.
-3. **test:unit suite flakiness (pre-existing)**: the full parallel suite is unstable
-   at baseline. Evidence: at pre-C-R1 baseline (`git stash` comparison, commit
-   `aa302c7`) the same `vitest run` fails **20 files** (incl. personalized-generation
-   15×, generation-worker, story-generation-post-publish, choice-generation-baseline,
-   api/authoring suites); with C-R1 applied the same command fails **1 file** —
-   exactly the HOLD-owned migration test. All C-R1-touched suites pass deterministically
-   in isolation and together (97/97 for the four suspect runtime suites). The flaky
-   set shifts run-to-run (3 files → 10 files → 20 files) under parallel scheduling —
-   pre-existing infra behavior, not a C-R1 regression. `pnpm typecheck` clean;
-   `pnpm lint` 0 errors.
+3. **test:unit suite flakiness (pre-existing) — dispositioned**: the full parallel
+   suite is unstable under scheduling load at baseline. Evidence: at pre-C-R1 baseline
+   (`git stash` comparison, commit `aa302c7`) the same parallel `vitest run` fails
+   **20 files**; with C-R1 applied, the identical parallel command fails **1 file in
+   one run and 16 files in the next** from the same code state (same suites:
+   api/authoring/gateway/runtime under load). **Deterministic proof:
+   `vitest run --no-file-parallelism` over all 165 files is ALL GREEN on the fresh
+   post-repair environment** (includes migration-version-uniqueness 5/5 and both C-R1
+   regression files). `pnpm typecheck` clean; `pnpm lint` 0 errors. The parallel
+   flakiness predates C-R1 and is escalated as infra debt (not a C gate).
 
 ## 5. Pre-existing untracked paths (design gate: "committed or documented")
 
@@ -170,3 +167,115 @@ untracked files that are deliberately not committed.
   #1 scope. **No production action taken or planned.**
 
 **STOP — awaiting reviewer verdict on M10-C.**
+
+---
+
+## 7. Closing-gate package (reviewer Entry 4: PASS CANDIDATE → four gates)
+
+Reviewer verdict (ledger Entry 4) accepted the C-R1 substance and ordered four formal
+closing gates. This section records their resolution. Branch
+`feature/m10-c-recovery` is **pushed to origin** (`https://github.com/moxsenna/Lakoku.git`);
+tip at package-completion time: see ledger Entry 5. Commits `e02a3a7` (C-R1 package),
+`b45f802` (closure docs), `bb3287a` (migration repair) are all on origin and
+independently inspectable.
+
+### Gate 1 — push + V5-vs-V6 call chain conclusion
+
+**Conclusion: the terminal publication authority of the current production commercial
+worker is `publish_generation_job_chapter_v5` (V5). V6 is an unwired wrapper that
+appears on no production path.** Verified call chain (exact symbols, current branch):
+
+```text
+WORKER (commercial production path):
+  worker poll/claim seam
+    → claimGenerationJobById()                      lib/runtime/generation-worker.ts:72
+    → executeClaimedJob(claim.job, …)               lib/runtime/generation-worker.ts:81
+    → generateNextPersonalizedChapter(… jobContext) lib/runtime/personalized-generation.ts
+        ├─ checkpoint: upsertGenerationCheckpointFencedV2()   (personalized-generation.ts:620)
+        ├─ schema-3 validated delta + Layer A/B validation
+        └─ defaultPublishChapterSchema3(input)                (personalized-generation.ts:665)
+             └─ input.jobContext present →
+                publishGenerationJobChapterV5()     lib/runtime/checkpoint-schema-v3.ts:459
+                  → SQL public.publish_generation_job_chapter_v5(…)   ← TERMINAL AUTHORITY
+
+SYNC (personalized non-worker path):
+  choice/generation route → generateNextPersonalizedChapter(… no jobContext)
+    → upsertGenerationCheckpointSyncV1()            (personalized-generation.ts:643)
+    → defaultPublishChapterSchema3 → publishChapterStateV3()  (personalized-generation.ts:684)
+      → SQL public.publish_chapter_state_v3(…)
+```
+
+V6 evidence: `public.publish_generation_job_chapter_v6` exists only as the SQL function
+defined by `supabase/migrations/20260805030000_publish_generation_job_chapter_v6.sql`
+("Commercial Atomic Publisher V6 — wraps canonical narrative publication (V5 or V4)
+with PayCore credit capture"). Repo-wide grep for `publishGenerationJobChapterV6` /
+`publish_generation_job_chapter_v6` across `lib/` and `scripts/` (tests excluded)
+returns **zero TypeScript callers** — no wrapper, no route, no worker seam invokes it.
+Therefore the earlier "preflight V6 + publication V5" concern is moot: V6 is not on
+any production path, and the harness exercises the exact production chain
+(claim → lease → preflight → generate → V5). Unspent credit-reservation cleanup
+remains the real Phase-2B gap, already escalated to D/E as D-OBS-5.
+
+### Gate 2 — migration history resolved from `supabase_migrations.schema_migrations`
+
+**Authoritative-source determination.** No staging/shared Supabase instance exists
+anywhere in this environment: repo-wide search finds exactly one project ref
+(production), no `SUPABASE_ACCESS_TOKEN`, no second linked project; production use is
+forbidden for this gate without separate approval and was not used. The only
+inspectable `supabase_migrations.schema_migrations` ledger is the isolated local QA
+database; it is the application history applied here, and it records:
+
+```text
+20260805015000  living_canon_publication_primitives   APPLIED
+20260805020000  living_canon_publication_primitives   APPLIED   (byte-identical duplicate)
+20260805021000  story_creation_request_job_binding    APPLIED   (NOT 020000)
+```
+
+Git forensics corroborate: the 020000→021000 rename of the job binding was an
+intentional earlier collision fix (`af71671` "fix(db): resolve migration version
+timestamp collision for story creation request job binding") on a lineage that never
+merged into current main; PR #53 (`a2ac23e`) re-added the 020000-named file; PR #54
+(`46c68e9`, M10-A1d) added the byte-identical `020000_living_canon…` duplicate.
+
+**Repair decision (reviewer algorithm branch 4 — ever-applied → forward-only; no
+deletion without never-applied proof — here the opposite is proven).** Committed in
+`bb3287a`:
+
+1. `20260805020000_story_creation_request_job_binding.sql` →
+   `20260805021000_story_creation_request_job_binding.sql` (git R100 rename): restores
+   the unique version the ledger evidences as actually applied; version 020000 never
+   belonged to this migration in any ledger.
+2. Both `living_canon_publication_primitives` versions **kept** (both recorded
+   applied; deletion would rewrite applied history). The retained `020000` duplicate
+   made rerun-safe: its only non-idempotent top-level DDL — three named
+   `ADD CONSTRAINT` statements — now guarded by `pg_constraint` existence checks
+   (columns already `add column if not exists`; functions `create or replace`; all
+   inserts live inside function bodies). Applied-once environments never re-run the
+   file (version recorded); fresh environments apply 015000 then 020000 cleanly.
+
+**Proof from a truly fresh environment (post-repair):**
+
+- `supabase db reset` (recreate DB → apply all migrations): **all 66 migrations apply,
+  zero errors**. Pre-repair the same command failed with SQLSTATE 42710
+  (duplicate constraint) at `020000`.
+- `tests/db/migration-version-uniqueness.test.ts`: **5/5 PASS** (pre-existing failure
+  resolved; the HOLD is released by this evidence).
+- `tests/db/m10-c-r1-g4-stale-enforcement.test.ts` on the fresh schema: **4/4 PASS**.
+
+Production caveat (flagged, out of scope): the production ledger was not consulted
+(forbidden). Any future production deployment of this repo must first verify its own
+`schema_migrations` under separate approval; the repair is forward-only and preserves
+every version recorded applied here.
+
+### Gate 4 — fully clean worktree
+
+The two intentionally-uncommitted pre-existing files were **moved out of the
+worktree** to `../lakoku-v2-untracked-quarantine/` (outside the repository) with a
+README recording origin paths and reasons (canary script carries production wiring;
+anti-abuse plan is an out-of-scope product proposal). `git status` is now empty;
+closure runs below execute from that fully clean tree.
+
+### Gate 3 — double closure run on the exact same head
+
+(Filled after both runs complete — see §7.3 results below.)
+

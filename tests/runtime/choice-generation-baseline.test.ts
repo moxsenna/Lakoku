@@ -196,7 +196,7 @@ describe('Phase 0 — Characterization', () => {
       expect(outcomes[0]).toHaveProperty('consequence')
       expect(outcomes[0]).toHaveProperty('nextChapterNumber')
       expect(outcomes[0]).toHaveProperty('isEnding')
-    }, 30_000)
+    })
 
     it('marks chapter 49 isEnding outcomes as special_bad_ending', async () => {
       const { __testMapBranchToV2Outcomes: mapper } = await import(

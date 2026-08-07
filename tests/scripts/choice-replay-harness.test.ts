@@ -238,7 +238,7 @@ describe('choice replay harness (validator produksi, tanpa kebocoran label)', ()
     expect(stdout).toContain('code: none')
     expect(stdout).not.toContain(KNOWN_GOOD_LABEL)
     expect(stderr).not.toContain(KNOWN_GOOD_LABEL)
-  }, 30_000)
+  })
 
   it('formatted output is safe metadata only (snapshot)', () => {
     expect(formatReplayOutput(replayChoiceLabel(SECRET_LABEL))).toMatchSnapshot()

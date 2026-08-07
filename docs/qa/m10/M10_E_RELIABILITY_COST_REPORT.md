@@ -1,5 +1,13 @@
 # M10-E — Reliability & Cost Report
 
+> **GOVERNANCE ADDENDUM (reviewer verdict, recorded post-commit):** M10-E's
+> entry gate requires `M10-C PASS`. M10-C has not passed (it is BLOCKED / NOT
+> PASS), so this stage's entry was **invalid**. The fault-matrix evidence
+> below is preserved as **PRELIMINARY / exploratory only** and must be rerun
+> on a valid C harness against the current runtime (main ≥ `a2ac23e`) before
+> it may count as M10-E stage evidence. See `.superpowers/sdd/progress.md` →
+> GOVERNANCE RESET.
+
 **Result:** BLOCKED
 **Run:** 2026-08-07T15:35:24.746Z → 2026-08-07T15:35:40.263Z
 **Commit:** `57c138e2959878ee09fe7730859186ab56503bcb` (working tree DIRTY)

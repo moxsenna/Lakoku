@@ -1,5 +1,15 @@
 # M10-C Stage Report — Long-Horizon 1→50 Harness
 
+> **GOVERNANCE ADDENDUM (reviewer verdict, recorded post-commit):** The
+> "CLOSED AS BLOCKED" status below is **REJECTED**. The plan gates downstream
+> stages on `M10-C PASS`; therefore **M10-C = BLOCKED / NOT PASS** until the
+> six observability gaps are closed or reclassified with proof **on the
+> current runtime** (main ≥ `a2ac23e`, including Phase 2B V6
+> publication/preflight and the changed worker seam). The evidence below is
+> preserved as exploratory/preflight only — it is NOT exact-head stage
+> evidence. Recovery: restart C from main containing M10-B + current runtime.
+> See `.superpowers/sdd/progress.md` → GOVERNANCE RESET.
+
 **Status:** M10-C COMPLETE — result **BLOCKED** (honest: 6 capture blockers for
 missing production wires; no blocker removed to force green)
 **Stage report commit:** this docs commit (records evidence of `eea7de9`)

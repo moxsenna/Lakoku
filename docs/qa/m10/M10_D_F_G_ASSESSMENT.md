@@ -1,5 +1,17 @@
 # M10-D / M10-F / M10-G — Status Assessment
 
+> **CORRECTION ADDENDUM (reviewer verdict, recorded post-commit):** Two
+> corrections apply to this document. (1) **M10-D framing:** the no-model-call
+> prohibition applied at M10-B, not globally — M10-D is by design the
+> semantic judge stage. D is **BLOCKED BY C PASS**; after C PASS,
+> judge/model authorization, budget, and human calibration time are
+> operational decisions for the decision-maker, not a plan-level LLM ban.
+> (2) **Stage locks:** M10-C is BLOCKED / NOT PASS (the "CLOSED AS BLOCKED"
+> framing is rejected — downstream gates require `M10-C PASS`); M10-E
+> evidence is PRELIMINARY ONLY and its stage entry was invalid until C PASS;
+> F is BLOCKED BY C + D + E PASS; G is BLOCKED BY F PASS. See
+> `.superpowers/sdd/progress.md` → GOVERNANCE RESET.
+
 **Result:** all three stages BLOCKED — none executed
 **Assessed at:** 2026-08-07T15:47Z
 **Head SHA:** `3672d4d0120f24679df509ed0125b4b90461f290`

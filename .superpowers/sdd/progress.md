@@ -220,3 +220,54 @@ Branch: feature/m10-b-deterministic-evaluators @ 3672d4d
 - Assessment: docs/qa/m10/M10_D_F_G_ASSESSMENT.md. STOP — plan taken as far
   as standing constraints allow; B done, C/E closed BLOCKED, D/F/G blocked on
   external decisions. Production activation remains FORBIDDEN.
+
+## GOVERNANCE RESET — REVIEWER VERDICT (recorded 2026-08-08)
+
+Reviewer verdict: STOP / RESET stage state setelah M10-B. Locked status
+(verbatim):
+
+```text
+M10-A                 CLOSED
+M10-B.0               PASS
+M10-B.1 R1            APPROVED
+M10-B                 READY TO INTEGRATE / CLOSE
+M10-C                 BLOCKED — must achieve PASS
+M10-E evidence        PRELIMINARY ONLY; stage entry invalid until C PASS
+M10-D                 BLOCKED BY C PASS
+M10-F                 BLOCKED BY C + D + E PASS
+M10-G                 BLOCKED BY F PASS
+G5-NOCONFLICT         OPEN / BLOCKED
+production activation FORBIDDEN
+production DB action  FORBIDDEN
+```
+
+Accepted corrections:
+- "M10-C CLOSED AS BLOCKED" REJECTED — plan gates D/E/F on "M10-C PASS", so
+  C = BLOCKED / NOT PASS until the six observability gaps are closed or
+  reclassified with proof on the current runtime.
+- Commits eea7de9/57c138e (C) and 3672d4d (E) are PRESERVED as useful
+  exploratory/preflight evidence, NOT stage evidence. E entry was invalid
+  (gate = M10-C PASS). The fault matrix must be rerun on a valid C harness /
+  current runtime after C PASS — work is kept, gate-skipping is not.
+- M10-D framing corrected: the no-model-call prohibition applied at M10-B;
+  D is by design the semantic judge stage. D is BLOCKED BY C PASS. After C
+  PASS, judge/model authorization + budget + human calibration time are
+  operational decisions — not a global LLM ban.
+- main has moved: a2ac23e "feat(commercial): Phase 2B V5 publication & worker
+  preflight checkpoint (#53)" adds worker-preflight.server.ts, +40 lines in
+  lib/runtime/generation-worker.ts, migrations 20260805015000 living-canon
+  primitives, story_creation_request_job_binding, commercial_quote_reactivation,
+  publish_generation_job_chapter_v6. Old-branch C/E evidence is not final
+  against this runtime.
+
+Recovery order (reviewer-mandated):
+1. Push/preserve local C/E/D-F-G commits without stage-closure claims (done:
+   branch pushed 401f0f8..b6888f4 + this reset commit); merge/rebase M10-B R1
+   to current main; rerun integration gates; close B.
+2. Restart M10-C from new main (B + current runtime). Close or reclassify the
+   six observability blockers with proof until C PASS.
+3. After C PASS: open D and E. Reuse + rerun the E fault matrix on the valid
+   C harness / current runtime.
+4. D needs judge/model authorization + human calibration; E needs
+   business-approved unit-economics ceiling.
+5. F only after D PASS + E PASS; G after F PASS.

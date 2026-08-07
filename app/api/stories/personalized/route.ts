@@ -10,7 +10,7 @@ import {
  *
  * Authenticated strong-idempotency creation of a private personalized_ai story.
  * Owner is always the session user (cookie or Bearer JWT). Body userId ignored.
- * Response is reader-safe: storyId + redirectUrl only.
+ * Response is reader-safe: storyId + redirectUrl (201/200) or generationStatus PENDING (202).
  */
 export async function POST(req: Request) {
   try {
@@ -27,6 +27,16 @@ export async function POST(req: Request) {
       userId: user.id,
       idempotencyKey,
     })
+
+    if (result.pending) {
+      return NextResponse.json(
+        {
+          storyId: result.storyId,
+          pending: true,
+        },
+        { status: 202 },
+      )
+    }
 
     return NextResponse.json(
       {

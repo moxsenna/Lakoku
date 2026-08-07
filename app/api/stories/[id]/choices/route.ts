@@ -17,9 +17,7 @@ import { normalizeStoryRouteId } from '@/lib/story-route-id'
  * POST /api/stories/[id]/choices
  * Body: { chapterNumber: number, choiceId: string }
  *
- * Interim: mengembalikan outcome yang sudah dipublikasi (fixtures di DB).
- * Nanti (M2+): endpoint ini men-trigger pipeline generasi durable dan
- * mengembalikan status generasi — kontrak respons tetap ChoiceOutcome.
+ * Durable choice application & worker queueing for personalized AI stories.
  */
 export async function POST(
   req: Request,
@@ -47,21 +45,45 @@ export async function POST(
           idempotencyKey: req.headers.get('Idempotency-Key') ?? '',
         })
 
+        if ('status' in result && result.status === 'WAITING_FOR_CREDITS') {
+          return NextResponse.json(
+            {
+              outcome: result.outcome,
+              nextChapterReady: false,
+              status: 'WAITING_FOR_CREDITS',
+              targetChapterNumber: result.targetChapterNumber,
+              requiredCredits: result.requiredCredits,
+              availableCredits: result.availableCredits,
+            },
+            { status: 402 },
+          )
+        }
+
         const nextChapterNumber = result.nextChapterNumber ?? result.outcome.nextChapterNumber
         if (
           !result.outcome.isEnding
           && typeof nextChapterNumber === 'number'
           && Number.isInteger(nextChapterNumber)
           && nextChapterNumber > 0
+          && result.jobId
         ) {
           const { nextChapterReady } = await continuePersonalizedGeneration({
+            jobId: result.jobId,
             storyId: id,
             userId: user.id,
             chapterNumber: nextChapterNumber,
             correlationId: crypto.randomUUID(),
             triggerChoiceId: choiceId,
           })
-          return NextResponse.json({ outcome: result.outcome, nextChapterReady })
+
+          if (!nextChapterReady) {
+            return NextResponse.json({
+              outcome: result.outcome,
+              nextChapterReady: false,
+            })
+          }
+
+          return NextResponse.json({ outcome: result.outcome, nextChapterReady: true })
         }
 
         return NextResponse.json({ outcome: result.outcome })
@@ -108,9 +130,6 @@ export async function POST(
     await applyChoiceToUserState(id, chapterNumber, decision, outcome)
 
     // Standard path: kick off next chapter hanya untuk pemilik story.
-    // Topologi: chapters PK (story_id, number) — 1 bab per story tanpa dimensi reader.
-    // Story publik/berbagi = shared-linear (pre-generated); non-owner tidak boleh
-    // memicu generasi personal karena hasilnya dipublikasi global ke story_id sama.
     const nextChapterNumber = outcome.nextChapterNumber
     if (
       user
@@ -138,4 +157,4 @@ export async function POST(
   }
 }
 
-export const dynamic = 'force-dynamic';
+export const dynamic = 'force-dynamic'

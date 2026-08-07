@@ -1,9 +1,7 @@
 import 'server-only'
 import { after } from 'next/server'
-import {
-  generateNextPersonalizedChapter,
-  type PersonalizedGenerateInput,
-} from '@/lib/runtime/personalized-generation'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { claimAndRunGenerationJobById } from '@/lib/runtime/generation-worker'
 import {
   generateNextChapterReal,
   type RealGenerateResult,
@@ -12,8 +10,7 @@ import {
 export const CONTINUATION_WAIT_MS = 25_000
 
 type ContinuationJob = Promise<RealGenerateResult>
-
-const jobs = new Map<string, ContinuationJob>()
+const standardJobs = new Map<string, ContinuationJob>()
 
 export function continuationJobKey(storyId: string, chapterNumber: number): string {
   return `${storyId}:${chapterNumber}`
@@ -25,18 +22,17 @@ function isReady(result: RealGenerateResult): boolean {
 }
 
 function startOrReuseJob(
+  map: Map<string, ContinuationJob>,
   key: string,
   launch: () => ContinuationJob,
 ): ContinuationJob {
-  const existing = jobs.get(key)
+  const existing = map.get(key)
   if (existing) return existing
 
   const promise = launch().finally(() => {
-    // Keep settled jobs briefly reusable only while still referenced by after/wait.
-    // Drop from map once settled so later requests can relaunch if needed.
-    if (jobs.get(key) === promise) jobs.delete(key)
+    if (map.get(key) === promise) map.delete(key)
   })
-  jobs.set(key, promise)
+  map.set(key, promise)
   return promise
 }
 
@@ -47,11 +43,8 @@ function waitMs(ms: number): Promise<'timeout'> {
 }
 
 async function raceContinuation(promise: ContinuationJob): Promise<{ nextChapterReady: boolean }> {
-  // Same in-flight promise continues after response via after()/waitUntil.
   after(() => promise)
 
-  // Keep after() registered on the raw promise so timeout/reject still continues.
-  // Map reject to non-ready so choice response never 500 after apply succeeded.
   const raced = await Promise.race([
     promise.then(
       (result) => ({ kind: 'result' as const, result }),
@@ -67,29 +60,61 @@ async function raceContinuation(promise: ContinuationJob): Promise<{ nextChapter
   return { nextChapterReady: isReady(raced.result) }
 }
 
+export async function checkChapterReadiness(storyId: string, chapterNumber: number): Promise<boolean> {
+  const admin = createAdminClient()
+  const { data } = await admin
+    .from('chapters')
+    .select('number')
+    .eq('story_id', storyId)
+    .eq('number', chapterNumber)
+    .maybeSingle()
+  return Boolean(data)
+}
+
+/**
+ * Cutover continuation for personalized AI generation.
+ * Executes worker via claimAndRunGenerationJobById in after(), and races/polls chapter readiness.
+ * No direct generateNextPersonalizedChapter call.
+ */
 export async function continuePersonalizedGeneration(input: {
+  jobId: string
   storyId: string
   userId: string
   chapterNumber: number
-  correlationId: string
+  correlationId?: string
   triggerChoiceId?: string | null
 }): Promise<{ nextChapterReady: boolean }> {
-  const generationInput: PersonalizedGenerateInput = {
-    storyId: input.storyId,
-    userId: input.userId,
-    chapterNumber: input.chapterNumber,
-    correlationId: input.correlationId,
-    ...('triggerChoiceId' in input ? { triggerChoiceId: input.triggerChoiceId } : {}),
+  // 1) Kick worker asynchronously in after() (or direct fire-and-forget if outside request scope)
+  try {
+    after(async () => {
+      try {
+        await claimAndRunGenerationJobById({ jobId: input.jobId, workerId: `continuation-${Date.now()}` })
+      } catch (err) {
+        console.error('continuation worker kick failed:', err)
+      }
+    })
+  } catch (_scopeErr) {
+    void claimAndRunGenerationJobById({ jobId: input.jobId, workerId: `continuation-${Date.now()}` }).catch((err) => {
+      console.error('continuation worker kick fallback failed:', err)
+    })
   }
 
-  const key = continuationJobKey(input.storyId, input.chapterNumber)
-  const promise = startOrReuseJob(key, () => generateNextPersonalizedChapter(generationInput))
-  return raceContinuation(promise)
+  // 2) Poll/race chapter readiness up to 25s limit
+  const startTime = Date.now()
+
+  while (Date.now() - startTime < CONTINUATION_WAIT_MS) {
+    const ready = await checkChapterReadiness(input.storyId, input.chapterNumber)
+    if (ready) return { nextChapterReady: true }
+    await waitMs(500)
+  }
+
+  const finalReady = await checkChapterReadiness(input.storyId, input.chapterNumber)
+  return { nextChapterReady: finalReady }
 }
 
 /**
  * Standard/onboarding stories: kick off next chapter via generateNextChapterReal.
- * Same 25s race + after() semantics as personalized path.
+ * Preserves existing 25s race + after() semantics.
  */
 export async function continueStandardGeneration(input: {
   storyId: string
@@ -106,6 +131,6 @@ export async function continueStandardGeneration(input: {
     ...('triggerChoiceId' in input ? { triggerChoiceId: input.triggerChoiceId } : {}),
   }
   const key = continuationJobKey(input.storyId, input.chapterNumber)
-  const promise = startOrReuseJob(key, () => generateNextChapterReal(generationInput))
+  const promise = startOrReuseJob(standardJobs, key, () => generateNextChapterReal(generationInput))
   return raceContinuation(promise)
 }

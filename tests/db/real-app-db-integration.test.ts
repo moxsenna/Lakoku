@@ -27,11 +27,12 @@ function getLocalStatus() {
 
 const status = getLocalStatus()
 process.env.SUPABASE_URL = status.url
+process.env.NEXT_PUBLIC_SUPABASE_URL = status.url
 process.env.SUPABASE_SERVICE_ROLE_KEY = status.key
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { applyPersonalizedChoice } from '@/lib/api/personalized-choice.server'
-import { createPersonalizedStory, PersonalizedStoryError } from '@/lib/api/personalized-stories.server'
+import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
 import { clonePremiumStoryForUser, PremiumCloneError } from '@/lib/api/premium-clone.server'
 import * as aiGatewayModule from '@lakoku/ai-gateway/server'
 import * as contractGenModule from '@/lib/story-engine/contract-generation.server'
@@ -168,8 +169,18 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
       story_mode: 'personalized_ai',
       commercial_origin: 'STARTER_FREE',
       generation_status: 'ready',
+      story_contract_version: 1,
     })
     expect(storyErr).toBeNull()
+
+    const { error: sgcErr } = await admin.from('story_generation_contracts').insert({
+      story_id: storyId,
+      mode: 'personalized_ai',
+      total_chapters: 50,
+      contract_source: 'llm',
+      story_contract_version: 1,
+    })
+    expect(sgcErr).toBeNull()
 
     // Also seed starter account state matching storyId for STARTER_FREE identity check
     await admin.from('account_commercial_states').upsert({
@@ -214,6 +225,13 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
     })
     expect(coErr).toBeNull()
 
+    await admin.rpc('grant_credits_v1', {
+      p_user_id: userId,
+      p_ref: `ref-test-choice-${Date.now()}`,
+      p_credits: 100,
+      p_reason: 'TEST_GRANT',
+    })
+
     let choiceResult
     try {
       choiceResult = await applyPersonalizedChoice({
@@ -253,7 +271,7 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
       .single()
 
     expect(intent).toBeDefined()
-    expect(intent?.status).toBe('WAITING_FOR_CREDITS')
+    expect(intent?.status).toBe('QUEUED')
     expect(intent?.trigger_choice_id).toBe('choice-real-a')
     expect(intent?.quoted_credits).toBeGreaterThan(0)
 
@@ -269,7 +287,7 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
     expect(replayResult.replayed).toBe(true)
   })
 
-  it('createPersonalizedStory Story #2 application orchestration: shell created with NULL origin -> reserve_story_start_v1 updates origin to PENDING_PAID_START -> stops with COMMERCIAL_RUNTIME_NOT_READY (0 provider calls)', async () => {
+  it('createPersonalizedStory Story #2 application orchestration: cutover creates contract post-authorization, binds atomic generation job, and returns pending response', async () => {
     // 1. Mark user as having claimed a DIFFERENT starter story
     const { error: upsertErr } = await admin.from('account_commercial_states').upsert({
       user_id: userId,
@@ -291,38 +309,28 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
 
     const idempotencyKey = `p2-app-key-${Date.now()}`
 
-    // 3. Invoke application creation function
-    let errToVerify: unknown
-    try {
-      await createPersonalizedStory({
-        userId,
-        idempotencyKey,
-      })
-    } catch (err) {
-      errToVerify = err
-    }
+    // 3. Invoke application creation function (succeeds in cutover)
+    const result = await createPersonalizedStory({
+      userId,
+      idempotencyKey,
+    })
 
-    expect(selectProviderSpy).toHaveBeenCalledTimes(0)
-    expect(createResilientStoryContractSpy).toHaveBeenCalledTimes(0)
-    expect(generateNextPersonalizedChapterSpy).toHaveBeenCalledTimes(0)
+    expect(result.storyId).toBeDefined()
+    expect(result.pending).toBe(true)
+    const createdStoryId = result.storyId
 
-    expect(errToVerify).toBeInstanceOf(PersonalizedStoryError)
-    const pErr = errToVerify as PersonalizedStoryError
-    expect(pErr.code).toBe('COMMERCIAL_RUNTIME_NOT_READY')
-    const createdStoryId = pErr.storyId
-    expect(createdStoryId).toBeDefined()
-
-    // 4. Verify DB creation request remains RESERVED
+    // 4. Verify DB creation request remains RESERVED with generation_job_id bound
     const { data: reqRow } = await admin
       .from('story_creation_requests')
-      .select('status')
+      .select('status, generation_job_id')
       .eq('owner_user_id', userId)
       .eq('idempotency_key', idempotencyKey)
       .single()
 
     expect(reqRow?.status).toBe('RESERVED')
+    expect(reqRow?.generation_job_id).toBeDefined()
 
-    // 5. Verify DB story row was transitioned to PENDING_PAID_START by reserve_story_start_v1
+    // 5. Verify DB story row was transitioned to PENDING_PAID_START
     const { data: transitionedStory } = await admin
       .from('stories')
       .select('commercial_origin')
@@ -331,23 +339,22 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
 
     expect(transitionedStory?.commercial_origin).toBe('PENDING_PAID_START')
 
+    selectProviderSpy.mockClear()
+    createResilientStoryContractSpy.mockClear()
+    generateNextPersonalizedChapterSpy.mockClear()
+
     // 6. Replay with same idempotency key returns same story ID and stops cleanly (0 provider calls)
-    let replayErr: unknown
-    try {
-      await createPersonalizedStory({
-        userId,
-        idempotencyKey,
-      })
-    } catch (err) {
-      replayErr = err
-    }
-    expect(replayErr).toBeInstanceOf(PersonalizedStoryError)
-    expect((replayErr as PersonalizedStoryError).storyId).toBe(createdStoryId)
+    const replayResult = await createPersonalizedStory({
+      userId,
+      idempotencyKey,
+    })
+    expect(replayResult.storyId).toBe(createdStoryId)
+    expect(replayResult.pending).toBe(true)
 
     expect(selectProviderSpy).toHaveBeenCalledTimes(0)
     expect(createResilientStoryContractSpy).toHaveBeenCalledTimes(0)
     expect(generateNextPersonalizedChapterSpy).toHaveBeenCalledTimes(0)
-  })
+  }, 60_000)
 
   it('clonePremiumStoryForUser Story #2 application orchestration: shell target created -> reserve_story_start_v1 updates origin to PENDING_PAID_START -> stops with COMMERCIAL_RUNTIME_NOT_READY (0 provider calls)', async () => {
     // User already claimed different starter story

@@ -28,6 +28,7 @@ vi.mock('@/lib/api/story-ownership.server', () => ({
 vi.mock('@/lib/api/generation-continuation.server', () => ({
   continuePersonalizedGeneration: mocks.continuePersonalizedGeneration,
   continueStandardGeneration: mocks.continueStandardGeneration,
+  checkChapterReadiness: vi.fn(async () => true),
 }))
 
 type DbResult = { data: unknown; error: { message: string; code?: string } | null }
@@ -171,6 +172,19 @@ function createCookieDb(input?: {
         }),
       }
       return builder
+    }),
+    rpc: vi.fn(async () => {
+      input?.order?.push('cookie:rpc')
+      return {
+        data: {
+          ok: true,
+          status: 'QUEUED',
+          replayed: false,
+          job_id: '00000000-0000-4000-8000-000000000001',
+          correlation_id: '00000000-0000-4000-8000-000000000002',
+        },
+        error: null,
+      }
     }),
   }
   return { client, calls }
@@ -391,7 +405,12 @@ describe('applyPersonalizedChoice', () => {
       idempotencyKey,
     })
 
-    expect(result).toEqual({ outcome: publicOutcome, nextChapterNumber: 2, replayed: false })
+    expect(result).toEqual({
+      outcome: publicOutcome,
+      nextChapterNumber: 2,
+      replayed: false,
+      jobId: '00000000-0000-4000-8000-000000000001',
+    })
     expect(fixture.calls.filter((call) => call.method === 'select').map((call) => call.args[0])).toEqual([
       'id,owner_user_id,visibility,story_mode',
       'user_id,story_id,status,current_chapter,jejak,ending_name,route_state,choice_history,locked_ending_key,updated_at',
@@ -622,6 +641,7 @@ describe('personalized choice route dispatch', () => {
       chapterNumber: 2,
       triggerChoiceId: 'private-choice',
       correlationId: expect.any(String),
+      jobId: '00000000-0000-4000-8000-000000000001',
     })
   })
 })

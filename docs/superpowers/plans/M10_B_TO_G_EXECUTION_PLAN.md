@@ -507,16 +507,16 @@ Output:
 
 ### M10-B DoD
 
-- [ ] All deterministic evaluator contracts are versioned.
-- [ ] No evaluator calls an LLM/provider.
-- [ ] Same fixture run twice → identical sorted findings and hashes.
-- [ ] All required red fixtures produce intended codes.
-- [ ] False-positive battery is green.
-- [ ] `G5-NOCONFLICT` has complete deterministic proof or remains explicitly open with a blocker.
-- [ ] Current M10-A audit detectors are either reused or superseded with traceable mappings; no silent duplicate truth source.
-- [ ] Typecheck/lint/unit/smoke relevant gates green.
-- [ ] Sanitized `M10_B_REPORT.md` committed with exact-head evidence.
-- [ ] STOP for review.
+- [x] All deterministic evaluator contracts are versioned.
+- [x] No evaluator calls an LLM/provider.
+- [x] Same fixture run twice → identical sorted findings and hashes.
+- [x] All required red fixtures produce intended codes.
+- [x] False-positive battery is green.
+- [x] `G5-NOCONFLICT` has complete deterministic proof or remains explicitly open with a blocker.
+- [x] Current M10-A audit detectors are either reused or superseded with traceable mappings; no silent duplicate truth source.
+- [x] Typecheck/lint/unit/smoke relevant gates green.
+- [x] Sanitized `M10_B_REPORT.md` committed with exact-head evidence.
+- [x] STOP for review.
 
 ### M10-B STOP conditions
 

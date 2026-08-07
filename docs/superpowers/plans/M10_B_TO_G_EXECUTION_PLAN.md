@@ -673,17 +673,17 @@ All allowed differences must be explicitly normalized; never blanket-drop an ent
 
 ### M10-C DoD
 
-- [ ] Clean isolated DB can run Bab 1→50 without manual state patch.
-- [ ] Sync and worker modes supported.
-- [ ] Per-chapter artifacts + B findings are captured.
-- [ ] Two identical runs produce identical normalized canonical hashes.
-- [ ] Mid + late checkpoint resume proven.
-- [ ] Act boundary hooks proven from production runtime.
-- [ ] Branch-fork primitive exists and is isolated.
-- [ ] Known NTM G1/G2-TIERS/G4 status-stale runtime gaps are either proven closed or remain explicit C blockers.
-- [ ] Harness can be executed by CI/QA with one documented command.
-- [ ] `M10_C_HARNESS_REPORT.md` records exact-head evidence.
-- [ ] STOP for review.
+- [x] Clean isolated DB can run Bab 1→50 without manual state patch. <!-- ALL_50_CHAPTERS_PUBLISHED PASS both modes -->
+- [x] Sync and worker modes supported. <!-- m10c-sync V3 + m10c-worker V5 complete -->
+- [x] Per-chapter artifacts + B findings are captured. <!-- captures.json 50+50; findings.json 592 findings -->
+- [x] Two identical runs produce identical normalized canonical hashes. <!-- runId m10-c-41852d4cbec3 identical across 4 runs -->
+- [x] Mid + late checkpoint resume proven. <!-- Bab 20/33/46 same+new-attempt; canon revision exactly 50 -->
+- [x] Act boundary hooks proven from production runtime. <!-- rollups Bab 5/12/50 + next-act blueprint versions from prod runtime -->
+- [x] Branch-fork primitive exists and is isolated. <!-- two isolated stories, pre-fork captureHash parity, no cross-leak -->
+- [x] Known NTM G1/G2-TIERS/G4 status-stale runtime gaps are either proven closed or remain explicit C blockers. <!-- remain explicit C blockers (6 capture blockers, none removed) -->
+- [x] Harness can be executed by CI/QA with one documented command. <!-- pnpm m10:c:harness -->
+- [x] `M10_C_HARNESS_REPORT.md` records exact-head evidence. <!-- docs/qa/m10/M10_C_HARNESS_REPORT.md @ eea7de9 -->
+- [x] STOP for review. <!-- report written; stage result BLOCKED (honest capture blockers) -->
 
 ### M10-C STOP conditions
 

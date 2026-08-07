@@ -22,6 +22,10 @@ import type { BlueprintAuthorityInputV1 } from '../evaluators/blueprint-evaluato
 import type { CanonDriftInputV1 } from '../evaluators/canon-drift-evaluator'
 import type { ChoiceHistoryInputV1 } from '../evaluators/choice-evaluator'
 import type { EndingRunwayInputV1 } from '../evaluators/ending-evaluator'
+import {
+  EMOTIONAL_RESOLUTION_CHAPTER,
+  ENDING_LOCK_CHAPTER,
+} from '../evaluators/ending-evaluator'
 import type { PlotDebtLifecycleInputV1 } from '../evaluators/plot-debt-evaluator'
 import type { RepetitionInputV1 } from '../evaluators/repetition-evaluator'
 import type { ThreadLifecycleInputV1 } from '../evaluators/thread-evaluator'
@@ -58,6 +62,7 @@ export const CONTEXT_MEMORY_PROMPT_LAYER_BLOCKER: CaptureBlockerV1 = {
     'buildWriterPrompt returns only a concatenated `user` string with no per-layer field, and its sole caller is lib/ai-gateway/gateway-provider.ts (real-model path). The deterministic provider never invokes it, so writer layer 1a/3 text does not exist on the M10-C path. Populating these fields would require fabricating prompt text.',
 }
 
+/** CLOSED by C-R1 #3 — see blocker-dispositions.ts. Reason below is the historical record of the missing wire at discovery time. */
 export const ENDING_RESOLUTION_BEAT_BLOCKER: CaptureBlockerV1 = {
   code: 'EMOTIONAL_RESOLUTION_BEATS_NOT_PERSISTED',
   evaluatorId: 'ending-runway',
@@ -67,6 +72,7 @@ export const ENDING_RESOLUTION_BEAT_BLOCKER: CaptureBlockerV1 = {
     'No production table or checkpoint field records an emotional-resolution beat. audit_signals_json carries only opensNewThread/opensMajorMystery/opensNewConflict/closesPlotDebts, and chapter_blueprints.mandatory_beats is pre-generation intent, not committed canon. The field is therefore left empty rather than synthesized, which makes the evaluator report CHAPTER_49_EMOTIONAL_RESOLUTION_MISSING as a downstream consequence of this missing wire.',
 }
 
+/** CLOSED by C-R1 #4 — see blocker-dispositions.ts. Reason below is the historical record of the missing wire at discovery time. */
 export const ENDING_LOCK_TX_BLOCKER: CaptureBlockerV1 = {
   code: 'ENDING_LOCK_PUBLICATION_TX_UNOBSERVABLE',
   evaluatorId: 'ending-runway',
@@ -76,6 +82,7 @@ export const ENDING_LOCK_TX_BLOCKER: CaptureBlockerV1 = {
     'persist_ending_lock_v1 stores only {key,name,lockedAtChapter}; neither it nor the V3/V5 publishers persist the publication transaction id, so atomic-commit provenance cannot be read back. The lock IS written inside the publication transaction, but the harness cannot prove it from persisted state, so the field stays null and ENDING_LOCK_NOT_DURABLE is reported as a consequence of this missing wire.',
 }
 
+/** CLOSED by C-R1 #2 — see blocker-dispositions.ts. Reason below is the historical record of the missing wire at discovery time. */
 export const CONTEXT_MEMORY_BUDGET_BLOCKER: CaptureBlockerV1 = {
   code: 'CONTEXT_BUDGET_NOT_PERSISTED_BY_RUNTIME',
   evaluatorId: 'context-memory',
@@ -85,6 +92,7 @@ export const CONTEXT_MEMORY_BUDGET_BLOCKER: CaptureBlockerV1 = {
     'persistRetrievalLog is defined and wired into defaultDeps but has zero call sites in lib/runtime/personalized-generation.ts, so retrieval_logs stays empty for every harness chapter. The included/excluded ids and budget report computed by compileContext are dropped before persistence.',
 }
 
+/** CLOSED by C-R1 #5 — see blocker-dispositions.ts. Reason below is the historical record of the missing wire at discovery time. */
 export const ACT_RECONCILIATION_TRIGGER_BLOCKER: CaptureBlockerV1 = {
   code: 'ACT_RECONCILIATION_TRIGGER_UNOBSERVABLE',
   evaluatorId: 'act-boundary',
@@ -94,6 +102,7 @@ export const ACT_RECONCILIATION_TRIGGER_BLOCKER: CaptureBlockerV1 = {
     'runReconciliation has no call site on the M10-C publication path, so no act-end reconciliation trigger or result exists in the runtime. The plan (C.4.4, C.5-G1) requires act-end reconciliation side-effects; recording the missing wire instead of fabricating a trigger.',
 }
 
+/** CLOSED by C-R1 #6 — see blocker-dispositions.ts. Reason below is the historical record of the missing wire at discovery time. */
 export const ACT_ENDING_REACHABILITY_BLOCKER: CaptureBlockerV1 = {
   code: 'ENDING_REACHABILITY_PER_ACT_NOT_PERSISTED',
   evaluatorId: 'act-boundary',
@@ -113,8 +122,26 @@ export interface ChapterCaptureV1 {
   publishedTitle: string
   choiceIds: string[]
   acceptedChoiceId: string | null
+  /**
+   * C-R1 #2: context-budget evidence for this chapter, read back from the
+   * `retrieval_logs` row the production runtime now writes via
+   * persistRetrievalLog (lib/runtime/continuation-context.server.ts).
+   * Bab 1 has no retrieval by construction (n<=1 early-return) and records
+   * the documented exception instead of a finding. `null` only if capture
+   * itself could not read the table — which throws, so in practice never.
+   * The parity hash covers counts + budgetReport only: included/excluded ids
+   * are story-scoped provenance (runtime fact ids differ per clone).
+   */
+  contextBudget: ContextBudgetCaptureV1 | 'NO_RETRIEVAL_AT_STORY_START' | null
   /** Canonical hash of the whole per-chapter capture, provenance-normalized. */
   captureHash: string
+}
+
+export interface ContextBudgetCaptureV1 {
+  targetChapter: number
+  includedCount: number
+  excludedCount: number
+  budgetReport: Record<string, unknown>
 }
 
 interface CommitRow {
@@ -680,6 +707,17 @@ export async function captureEndingRunway(
     .order('id', { ascending: true })
   if (threadError) throw new Error(`capture: story_threads read failed: ${threadError.message}`)
 
+  // C-R1 #4: canonical publication proof for the ending lock — the three
+  // artifacts of the single atomic commit (lock row, published chapter, canon
+  // commit ledger), NOT a transaction identifier. Same-transaction atomicity
+  // itself is proven by publisher SQL inspection + fencing/tamper probes.
+  const commits = await loadCommits(admin, storyId)
+  const commit45 = commits.find((c) => c.chapter_number === ENDING_LOCK_CHAPTER)
+  const lockedAtChapter = lockJson.key
+    ? Number(lockJson.lockedAtChapter ?? ENDING_LOCK_CHAPTER)
+    : null
+  const chapterPublishedSet = new Set((chapterRows ?? []).map((row) => Number(row.number)))
+
   const threadsOpenedAt = new Map<number, string[]>()
   for (const row of threadRows ?? []) {
     const opened = Number(row.opened_chapter)
@@ -689,6 +727,17 @@ export async function captureEndingRunway(
   const publications: EndingRunwayInputV1['publications'] = (chapterRows ?? []).map((row) => {
     const chapterNumber = Number(row.number)
     const choices = asArray(row.choices)
+    // C-R1 #3 (B contract 1.1.0 semantics, reviewer 2026-08-08): the Bab-49
+    // emotional-resolution beat IS deterministic ending evidence. The committed
+    // deterministic artifact by Bab 49 is the ending lock (written atomically at
+    // Bab 45, mirrored to reader_states.locked_ending_key). The beat id encodes
+    // its derivation source verbatim — nothing is synthesized from prose.
+    // Documented in M10_C_R1_DECISION_3_BEAT_CONTRACT.md (reviewer may veto →
+    // rebaseline proposal).
+    const emotionalResolutionBeatIds =
+      chapterNumber === EMOTIONAL_RESOLUTION_CHAPTER && finalEndingKey !== null
+        ? [`deterministic-ending-evidence:${finalEndingKey}`]
+        : []
     return {
       chapterNumber,
       choicePrompt: row.choice_prompt === null || row.choice_prompt === undefined
@@ -703,25 +752,29 @@ export async function captureEndingRunway(
       // not a new conflict; reading the delta's transition list called every
       // late-story payoff of the main mystery a runway breach.
       newMajorThreadIds: threadsOpenedAt.get(chapterNumber) ?? [],
-      // No runtime source exists (ENDING_RESOLUTION_BEAT_BLOCKER). Left empty
-      // rather than fabricated.
-      emotionalResolutionBeatIds: [],
+      emotionalResolutionBeatIds,
     }
   })
 
   return {
     schemaVersion: 1,
     evaluatorId: 'ending-runway',
-    evaluatorVersion: '1.1.0',
+    evaluatorVersion: '1.2.0',
     storyId,
     mode: 'FINAL_HORIZON',
     horizon: { fromChapter: 1, toChapter: 50 },
     input: {
       endingLock: lockJson.key
         ? {
-            chapterNumber: Number(lockJson.lockedAtChapter ?? 45),
+            chapterNumber: lockedAtChapter ?? ENDING_LOCK_CHAPTER,
             lockedEndingKey: String(lockJson.key),
-            committedInPublicationTxId: null,
+            canonicalPublicationProof: {
+              lockAtCorrectChapter: lockedAtChapter === ENDING_LOCK_CHAPTER,
+              chapterCommittedRevision: commit45
+                ? Number(commit45.committed_canon_revision)
+                : null,
+              chapterPublished: chapterPublishedSet.has(ENDING_LOCK_CHAPTER),
+            },
           }
         : null,
       publications,
@@ -799,6 +852,46 @@ export async function captureChapter(
     .filter((id) => id.length > 0)
     .sort()
 
+  // C-R1 #2 (reviewer 2026-08-08): the production runtime now persists the
+  // per-chapter retrieval packet (continuation-context.server.ts →
+  // persistRetrievalLog), so the budget evidence is read back from the DB
+  // instead of being declared unobservable. Bab 1 never retrieves (n<=1 early
+  // return) — that absence is the documented exception, not a missing wire.
+  // A missing row for chapter >= 2 means the wiring regressed; fail loudly.
+  // The latest row wins: retrieval_logs is append-only, and on a resume the
+  // last retrieval is the one that produced the published chapter.
+  let contextBudget: ChapterCaptureV1['contextBudget']
+  if (chapterNumber <= 1) {
+    contextBudget = 'NO_RETRIEVAL_AT_STORY_START'
+  } else {
+    const { data: retrievalRow, error: retrievalError } = await admin
+      .from('retrieval_logs')
+      .select('target_chapter,included_ids,excluded_ids,budget_report')
+      .eq('story_id', storyId)
+      .eq('target_chapter', chapterNumber)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (retrievalError) {
+      throw new Error(`capture: retrieval_logs read failed: ${retrievalError.message}`)
+    }
+    if (!retrievalRow) {
+      throw new Error(
+        `capture: no retrieval_logs row for Bab ${chapterNumber} — the C-R1 #2 `
+        + 'persistRetrievalLog wiring did not persist a budget row for a published chapter',
+      )
+    }
+    contextBudget = {
+      targetChapter: Number(retrievalRow.target_chapter),
+      includedCount: asArray(retrievalRow.included_ids).length,
+      excludedCount: asArray(retrievalRow.excluded_ids).length,
+      budgetReport:
+        retrievalRow.budget_report && typeof retrievalRow.budget_report === 'object'
+          ? (retrievalRow.budget_report as Record<string, unknown>)
+          : {},
+    }
+  }
+
   const capture: ChapterCaptureV1 = {
     chapterNumber,
     canonRevision: Number(commit.committed_canon_revision),
@@ -809,6 +902,7 @@ export async function captureChapter(
     publishedTitle: String(chapterRow?.title ?? ''),
     choiceIds,
     acceptedChoiceId: input.acceptedChoiceId,
+    contextBudget,
     captureHash: '',
   }
 
@@ -834,6 +928,10 @@ export async function captureChapter(
           checkpointSchemaVersion: capture.checkpointSchemaVersion,
           choiceIds,
           acceptedChoiceId: capture.acceptedChoiceId,
+          // C-R1 #2: counts + budget report only. included/excluded ids are
+          // story-scoped provenance (runtime fact ids differ per clone) and
+          // carry no narrative parity signal.
+          contextBudget: capture.contextBudget,
           canonDrift: {
             ...canonDrift.input,
             commitLedgers: canonDrift.input.commitLedgers.map((ledger) => ({
@@ -854,14 +952,26 @@ export async function captureChapter(
   return { capture, findings }
 }
 
+/**
+ * Blockers still OPEN after C-R1 (reviewer 2026-08-08 corrective package).
+ *
+ * Five of the six original blockers are CLOSED because the production runtime
+ * now exposes the evidence they were missing — the closure proof lives in
+ * ./blocker-dispositions.ts and in the capture sections that now read real
+ * runtime state:
+ *   - CONTEXT_MEMORY_BUDGET_BLOCKER      → retrieval_logs read above (#2)
+ *   - ENDING_RESOLUTION_BEAT_BLOCKER     → deterministic ending evidence (#3)
+ *   - ENDING_LOCK_TX_BLOCKER             → canonical publication proof (#4)
+ *   - ACT_RECONCILIATION_TRIGGER_BLOCKER → story_events ACT_RECONCILIATION (#5)
+ *   - ACT_ENDING_REACHABILITY_BLOCKER    → story_events ACT_ENDING_REACHABILITY (#6)
+ * The constants below remain exported as the historical record of each missing
+ * wire; captureActBoundary/captureChapter/captureEndingRunway no longer emit
+ * them as blockers. Only blockers still in this list flow into blockers.json
+ * as open capture gaps.
+ */
 export function harnessBlockers(): CaptureBlockerV1[] {
   return [
     CONTEXT_MEMORY_PROMPT_LAYER_BLOCKER,
-    CONTEXT_MEMORY_BUDGET_BLOCKER,
-    ENDING_RESOLUTION_BEAT_BLOCKER,
-    ENDING_LOCK_TX_BLOCKER,
-    ACT_RECONCILIATION_TRIGGER_BLOCKER,
-    ACT_ENDING_REACHABILITY_BLOCKER,
   ]
 }
 
@@ -929,17 +1039,45 @@ export async function captureActBoundary(
   if (closureError) throw new Error(`capture: reader_plot_debt_closures read failed: ${closureError.message}`)
   const closed = new Set((closureRows ?? []).map((row) => String(row.debt_id)))
 
+  // C-R1 #5/#6: reconciliation trigger/result + ending reachability now come
+  // from the production runtime's post-publication lifecycle hook
+  // (lib/runtime/post-publication-lifecycle.server.ts), persisted as
+  // story_events rows. Capture reads them back verbatim — never re-derived.
+  const { data: eventRows, error: eventError } = await admin
+    .from('story_events')
+    .select('type,payload')
+    .eq('story_id', storyId)
+    .in('type', ['ACT_RECONCILIATION', 'ACT_ENDING_REACHABILITY'])
+  if (eventError) throw new Error(`capture: story_events read failed: ${eventError.message}`)
+  const boundaryEvents = (eventRows ?? []).filter((row) => {
+    const payload = (row.payload ?? {}) as Record<string, unknown>
+    return Number(payload.checkpointChapter ?? -1) === chapterNumber
+  })
+  const reconciliationEvent = boundaryEvents.find((row) => row.type === 'ACT_RECONCILIATION')
+  const reachabilityEvent = boundaryEvents.find((row) => row.type === 'ACT_ENDING_REACHABILITY')
+  const reconciliationPayload = reconciliationEvent
+    ? ((reconciliationEvent.payload ?? {}) as Record<string, unknown>)
+    : null
+  const reachabilityPayload = reachabilityEvent
+    ? ((reachabilityEvent.payload ?? {}) as Record<string, unknown>)
+    : null
+  const endingReachability = reachabilityPayload
+    ? `${reachabilityPayload.passed === true ? 'PASS' : 'FAIL'}:reachableMain=${String(
+        reachabilityPayload.reachableMain ?? '?',
+      )}/min=${String(reachabilityPayload.minRequired ?? '?')}`
+    : null
+
   return {
     actNumber: act.actNumber,
     rollupPresent: Boolean(rollup),
     rollupSummary: rollup ? String(rollup.summary ?? '') || null : null,
-    // No runtime call site exists (ACT_RECONCILIATION_TRIGGER_BLOCKER); the
-    // field records the honest absence instead of a fabricated trigger.
-    reconciliationTriggered: false,
-    reconciliationResult: null,
-    // No persisted per-act reachability projection exists
-    // (ACT_ENDING_REACHABILITY_BLOCKER).
-    endingReachability: null,
+    // Production runtime evidence (C-R1): the post-publication lifecycle hook
+    // runs runReconciliation at every act boundary with a next act and persists
+    // the result. Absence here means the runtime hook did not fire for this
+    // boundary — recorded honestly, never synthesized.
+    reconciliationTriggered: reconciliationEvent !== undefined,
+    reconciliationResult: reconciliationPayload ? String(reconciliationPayload.status ?? '') || null : null,
+    endingReachability,
     threadStatuses: (threadRows ?? []).map((row) => ({
       threadId: String(row.id),
       status: String(row.status),

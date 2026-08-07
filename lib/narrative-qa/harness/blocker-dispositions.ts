@@ -1,20 +1,22 @@
 /**
- * M10-C recovery — per-blocker dispositions with proof (reviewer mandate:
- * "Enam observability blocker harus ditutup atau direclassify dengan proof
- * sampai C PASS").
+ * M10-C recovery — per-blocker dispositions with proof.
  *
- * The six capture blockers recorded in ./capture.ts are NOT removed — they are
- * carried into every artifact verbatim. This module attaches an auditable
- * disposition to each: either CLOSED (an honest runtime source now exists) or
- * RECLASSIFIED (the missing wire is proven to be out of M10-C's deterministic
- * scope or a tracked production observability defect, with the code evidence).
+ * History: the six capture blockers recorded in ./capture.ts were first
+ * RECLASSIFIED (deferred) during recovery. Reviewer verdict 2026-08-08
+ * (M10_GOVERNANCE_LEDGER.md Entry 2) rejected five of those deferrals and
+ * ordered the narrow C-R1 corrective package: #2, #3, #4, #5, #6. C-R1
+ * implements the missing production wires and the capture adapters that read
+ * them back, so five blockers are now CLOSED with code-level proof. The sixth
+ * (prompt layers) is RECLASSIFIED to M10-F with reviewer ratification
+ * (#1 APPROVED → F): writer prompt text is a real-model artifact that does
+ * not exist on the deterministic C path, so nothing can be observed there
+ * without fabrication.
+ *
  * A blocker without a CLOSED/RECLASSIFIED disposition keeps forcing result
- * BLOCKED, exactly as before.
- *
- * Every reclassification here is PENDING REVIEWER RATIFICATION: the manifest
- * result computed with these dispositions is only final once the reviewer
- * accepts each proof. The harness writes the full disposition table into
- * blockers.json and summary.json so the audit trail travels with the evidence.
+ * BLOCKED, exactly as before. The harness writes the full disposition table
+ * into blockers.json and summary.json so the audit trail travels with the
+ * evidence. CLOSED dispositions here are pending the reviewer's C verdict;
+ * each proof cites the exact files/lines that implement the closure.
  */
 
 import type { CaptureBlockerV1 } from './capture'
@@ -43,8 +45,9 @@ export interface BlockerDispositionV1 {
 }
 
 /**
- * Verified on current main (21cb682 + recovery branch) — each proof cites the
- * files/lines checked at recovery time.
+ * C-R1 closure proofs. Every CLOSED entry names the production wire that now
+ * exists and the capture read-back that consumes it — closure is runtime
+ * evidence, not a paperwork change.
  */
 export const BLOCKER_DISPOSITIONS: BlockerDispositionV1[] = [
   {
@@ -54,117 +57,114 @@ export const BLOCKER_DISPOSITIONS: BlockerDispositionV1[] = [
     proof:
       'Writer prompt layers 1a/3 are real-model artifacts. buildWriterPrompt '
       + '(lib/prose/prompt-engine/build-writer-prompt.ts) has exactly ONE '
-      + 'production caller on current main: lib/ai-gateway/gateway-provider.ts:421 '
-      + '(verified by repo-wide grep; every other reference is narrative-qa audit '
-      + 'docs). M10-C is deterministic-only by contract (assertDeterministicProvider '
-      + 'refuses NARRATIVE_PROVIDER=gateway), so no writer prompt text exists to '
-      + 'observe on the C path — the absence is structural, not a missing wire in '
-      + 'the narrative runtime. Populating the fields would violate the '
-      + 'no-fabrication rule. The context-memory evaluator contract retains the '
-      + 'fields for M10-F, where the gateway path runs and the layers exist.',
+      + 'production caller on current main: lib/ai-gateway/gateway-provider.ts '
+      + '(verified by repo-wide grep; every other reference is narrative-qa '
+      + 'audit docs). M10-C is deterministic-only by contract '
+      + '(assertDeterministicProvider refuses NARRATIVE_PROVIDER=gateway), so '
+      + 'no writer prompt text exists to observe on the C path — the absence '
+      + 'is structural, not a missing wire. Populating the fields would '
+      + 'violate the no-fabrication rule. Reviewer verdict 2026-08-08 '
+      + 'ratified the deferral: #1 APPROVED → F.',
     consequenceFindings: [],
-    ratifiedByReviewer: false,
+    ratifiedByReviewer: true,
   },
   {
     code: CONTEXT_MEMORY_BUDGET_BLOCKER.code,
-    disposition: 'RECLASSIFIED',
-    reclassifiedTo: 'Production observability defect D-OBS-1 (dead wire, tracked)',
+    disposition: 'CLOSED',
+    reclassifiedTo: null,
     proof:
-      'persistRetrievalLog (lib/narrative/loader.ts:221) is wired into '
-      + 'PersonalizedGenerationDeps (lib/runtime/personalized-generation.ts:206 '
-      + 'deps declaration, :705 deps object) but has ZERO invocation sites anywhere '
-      + 'in lib/runtime or lib/narrative on current main (verified by grep for '
-      + '"persistRetrievalLog(" excluding definition/wiring/import lines — no '
-      + 'matches). The retrieval budget therefore affects no canonical state and '
-      + 'never has: it is a production observability defect identical for sync, '
-      + 'worker, and real-model paths, not a harness-specific gap. It cannot '
-      + 'invalidate C parity (both clones drop the identical nothing). Fixing it '
-      + 'requires a call site in lib/runtime/personalized-generation.ts, which the '
-      + 'M10-C recovery constraints declare read-only; recorded as tracked defect '
-      + 'D-OBS-1 for the runtime team instead of being papered over.',
+      'C-R1 #2 (reviewer 2026-08-08: "Fix capture seam/runtime observability '
+      + 'di C"). Runtime wire: lib/runtime/continuation-context.server.ts now '
+      + 'calls persistRetrievalLog(storyId, n, packet) after the sole '
+      + 'production compileContext() call — the existing best-effort writer '
+      + '(lib/narrative/loader.ts :: persistRetrievalLog) into retrieval_logs '
+      + '{story_id, target_chapter, included_ids, excluded_ids, '
+      + 'budget_report}; both sync and worker modes share '
+      + 'loadContinuationContextForChapter, so parity is preserved. Capture '
+      + 'read-back: captureChapter reads the retrieval_logs row per chapter '
+      + 'into ChapterCaptureV1.contextBudget (counts + budgetReport; '
+      + 'story-scoped ids excluded as provenance) and throws when a chapter '
+      + '>= 2 has no row. Bab 1 records NO_RETRIEVAL_AT_STORY_START (n<=1 '
+      + 'early return — no retrieval exists at story start by construction).',
     consequenceFindings: [],
     ratifiedByReviewer: false,
   },
   {
     code: ENDING_RESOLUTION_BEAT_BLOCKER.code,
-    disposition: 'RECLASSIFIED',
-    reclassifiedTo: 'Production observability defect D-OBS-2 (no beat persistence anywhere)',
+    disposition: 'CLOSED',
+    reclassifiedTo: null,
     proof:
-      'No production table, checkpoint field, or audit-signal records an '
-      + 'emotional-resolution beat on current main: grep for '
-      + '"emotionalResolution|emotional_resolution" across lib/runtime, lib/prose '
-      + 'and supabase/migrations returns ZERO matches outside lib/narrative-qa. '
-      + 'CheckpointAuditSignalsV2 carries only opensNewThread/opensMajorMystery/'
-      + 'opensNewConflict/closesPlotDebts. The Bab-49 beat is a narrative-quality '
-      + 'concept the runtime never persists; M10-B froze the evaluator field so F '
-      + '(real-model stage) can score it once persistence exists. The capture '
-      + 'leaves the field empty rather than synthesizing beats. Downstream finding '
-      + 'CHAPTER_49_EMOTIONAL_RESOLUTION_MISSING (HIGH) is retained in every run '
-      + 'as the recorded consequence of this missing wire.',
-    consequenceFindings: ['CHAPTER_49_EMOTIONAL_RESOLUTION_MISSING'],
+      'C-R1 #3 (formal decision: docs/qa/m10/'
+      + 'M10_C_R1_DECISION_3_BEAT_CONTRACT.md). Reviewer ruling: B 1.1.0 '
+      + 'already made emotional-resolution beats deterministic ending '
+      + 'evidence. captureEndingRunway therefore derives '
+      + 'emotionalResolutionBeatIds for Bab 49 from the committed '
+      + 'deterministic ending evidence — "deterministic-ending-evidence:'
+      + '<lockedEndingKey>" — when the Bab-49 commit exists and the ending '
+      + 'key is locked. This is runtime state, not invented prose beats, and '
+      + 'it is the B-contract semantics (no evaluator-logic change), so '
+      + 'CHAPTER_49_EMOTIONAL_RESOLUTION_MISSING clears without touching the '
+      + 'frozen 1.1.0 beat rule.',
+    consequenceFindings: [],
     ratifiedByReviewer: false,
   },
   {
     code: ENDING_LOCK_TX_BLOCKER.code,
-    disposition: 'RECLASSIFIED',
-    reclassifiedTo: 'Production observability defect D-OBS-3 (atomicity proven, tx-id unpersisted)',
+    disposition: 'CLOSED',
+    reclassifiedTo: null,
     proof:
-      'The load-bearing claim — the ending lock commits ATOMICALLY with its '
-      + 'publication — IS provable on current main, and the harness proves it two '
-      + 'ways. (1) Code: both V3 (sync) and V5 (worker) in '
-      + 'supabase/migrations/20260805015000_living_canon_publication_primitives.sql '
-      + 'call persist_ending_lock_v1 INSIDE the publication transaction (lines '
-      + '~1289 and ~2050), acquiring the E2 advisory lock 130600 reentrantly in '
-      + 'the same tx — a single SQL function body is one transaction. (2) Runtime: '
-      + 'completion check ENDING_LOCKED verifies ending_lock_json carries the lock '
-      + 'and reader_states.locked_ending_key matches it after Bab 50 in both '
-      + 'modes. What is missing is only a persisted transaction IDENTIFIER '
-      + '(persist_ending_lock_v1 stores {key,name,lockedAtChapter}; neither '
-      + 'publisher writes a tx id), i.e. an observability column, not the '
-      + 'atomic-commit behavior. Adding the column requires a migration, which '
-      + 'the recovery constraints forbid. Downstream ENDING_LOCK_NOT_DURABLE '
-      + '(HIGH) is retained as the recorded consequence.',
-    consequenceFindings: ['ENDING_LOCK_NOT_DURABLE'],
+      'C-R1 #4 (reviewer: "durability berasal dari canonical publication '
+      + 'proof, bukan keberadaan tx-id"). Adapter: ending-runway evaluator '
+      + '1.1.0 → 1.2.0; EndingLockEvidence.committedInPublicationTxId '
+      + 'replaced by canonicalPublicationProof {lockAtCorrectChapter, '
+      + 'chapterCommittedRevision, chapterPublished}. captureEndingRunway '
+      + 'builds it from three persisted artifacts of the publication commit: '
+      + 'the ending_lock_json row (lockedAtChapter), the chapter_state_commits '
+      + 'ledger row for Bab 45, and the published chapters row. Same-'
+      + 'transaction atomicity is proven separately by publisher SQL '
+      + 'inspection (persist_ending_lock_v1 called inside the single V3/V5 '
+      + 'publication transaction) and by the harness fencing/tamper probes — '
+      + 'the tx identifier itself was never the requirement.',
+    consequenceFindings: [],
     ratifiedByReviewer: false,
   },
   {
     code: ACT_RECONCILIATION_TRIGGER_BLOCKER.code,
-    disposition: 'RECLASSIFIED',
-    reclassifiedTo: 'Production observability defect D-OBS-4 (no publication-path call site)',
+    disposition: 'CLOSED',
+    reclassifiedTo: null,
     proof:
-      'runReconciliation / runReconciliationAdaptive (lib/narrative/'
-      + 'reconciliation.ts) have NO call site on any publication path on current '
-      + 'main: verified grep shows invocations only in evidence tooling '
-      + '(scripts/m5-soak.ts, scripts/m7b-reconcile-smoke.ts); lib/authoring/'
-      + 'reconcile-goal.ts references them only in doc comments. Reconciliation is '
-      + 'an authoring-side instrument, not a reader-path side-effect. The '
-      + 'act-boundary obligations the runtime DOES execute — act rollup commit and '
-      + 'next-act blueprint version — are positively VERIFIED by completion check '
-      + 'ACT_BOUNDARY_HOOKS_PROVEN at every boundary (5, 12, 50) in both modes, '
-      + 'and a missing rollup is itself a BLOCKER finding '
-      + '(ACT_ROLLUP_MISSING_AT_BOUNDARY). A trigger/result capture for a function '
-      + 'the runtime never calls would be fabrication.',
+      'C-R1 #5 (reviewer: "tidak ada publication-path call site" — fixed). '
+      + 'Production wire: lib/runtime/post-publication-lifecycle.server.ts :: '
+      + 'runPostPublicationLifecycle is invoked from '
+      + 'lib/runtime/personalized-generation.ts immediately after schema-3 '
+      + 'publication success — the single shared point both sync/V3 and '
+      + 'worker/V5 pass. At an act boundary it runs production '
+      + 'runReconciliation over a fresh post-commit canon snapshot and '
+      + 'persists an ACT_RECONCILIATION story_event {actNumber, '
+      + 'checkpointChapter, status, driftByChapter, reconciledChapters, '
+      + 'findingCodes}. Capture read-back: captureActBoundary reads the event '
+      + '(reconciliationTriggered = event exists, reconciliationResult = '
+      + 'payload.status). RECONCILED persists new blueprint versions; '
+      + 'FAILED_REVIEW_REQUIRED logs loud and escalates to D (D-OBS-6).',
     consequenceFindings: [],
     ratifiedByReviewer: false,
   },
   {
     code: ACT_ENDING_REACHABILITY_BLOCKER.code,
-    disposition: 'RECLASSIFIED',
-    reclassifiedTo: 'Runtime enforcement proven by completion; persisted projection is defect D-OBS-5',
+    disposition: 'CLOSED',
+    reclassifiedTo: null,
     proof:
-      'The closure runway (no new thread after Bab 35 captured at publication, '
-      + 'ending lock at 45, main-mystery resolve at 48, all debts closed at 50) '
-      + 'is enforced FAIL-CLOSED by the publication SQL state machine '
-      + '(apply_validated_chapter_state_v1 in '
-      + '20260805015000_living_canon_publication_primitives.sql): any violation '
-      + 'rejects the publication, which would abort the harness run. ALL_50_'
-      + 'CHAPTERS_PUBLISHED + ENDING_LOCKED + zero BLOCKER ending findings in BOTH '
-      + 'modes therefore constitutes positive runtime proof the enforcement held '
-      + 'for every chapter of both runs. What does not exist is a PERSISTED '
-      + 'per-act reachability projection a capture could read back — that is a '
-      + 'missing observability artifact (tracked D-OBS-5), not missing runtime '
-      + 'behavior. Deriving a projection from fixture constants would be the '
-      + 'fabrication the capture rules forbid.',
+      'C-R1 #6 (reviewer: "C harus membuktikan ending reachability pada '
+      + 'checkpoint/act boundary melalui production runtime"). Same '
+      + 'post-publication lifecycle hook runs checkEndingReachability over '
+      + 'endings derived from contract ending_candidates_json and actual '
+      + 'state derived from the post-commit canon snapshot, then persists an '
+      + 'ACT_ENDING_REACHABILITY story_event {actNumber, checkpointChapter, '
+      + 'passed, reachableMain, minRequired, requiredClosure}. Capture '
+      + 'read-back: captureActBoundary renders endingReachability = '
+      + 'PASS/FAIL:reachableMain=<n>/min=<m> plus required-closure '
+      + 'satisfiability — a persisted per-act projection produced by the '
+      + 'production runtime, not re-derived from fixture constants.',
     consequenceFindings: [],
     ratifiedByReviewer: false,
   },

@@ -22,6 +22,7 @@ node_modules
 .zcode/
 .commandcode/
 .omo/
+.superpowers/
 
 # TestSprite intermediate artifacts (logs, raw results, config)
 testsprite_tests/tmp/

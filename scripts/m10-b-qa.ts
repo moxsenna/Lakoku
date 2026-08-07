@@ -56,7 +56,10 @@ export const EVALUATOR_VERSIONS: Record<string, string> = {
   threadLifecycle: '1.1.0',
   contextMemory: '1.1.0',
   choiceHistory: '1.1.0',
-  endingRunway: '1.1.0',
+  // C-R1 #4: durability evidence moved from a transaction id to the canonical
+  // publication proof (lock row + committed canon ledger row + published
+  // chapter). Adapter contract change → minor bump.
+  endingRunway: '1.2.0',
   repetition: '1.1.0',
   factConflict: '0.0.0-blocked',
 }

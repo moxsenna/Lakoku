@@ -4,6 +4,7 @@ vi.mock('server-only', () => ({}))
 
 const mocks = vi.hoisted(() => ({
   loadCanonSnapshot: vi.fn(),
+  persistRetrievalLog: vi.fn(),
   from: vi.fn(),
 }))
 
@@ -12,6 +13,9 @@ vi.mock('@lakoku/db', () => ({
 }))
 vi.mock('@lakoku/narrative-core/server', () => ({
   loadCanonSnapshot: mocks.loadCanonSnapshot,
+  // C-R1 #2: loadContinuationContextForChapter now fire-and-forgets the
+  // retrieval log write; the fail-closed contract under test is unaffected.
+  persistRetrievalLog: mocks.persistRetrievalLog.mockResolvedValue(undefined),
 }))
 
 import { loadContinuationContextForChapter } from '@/lib/runtime/continuation-context.server'

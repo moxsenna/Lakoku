@@ -334,7 +334,7 @@ function greenEnding(): EvaluatorEnvelopeV1<EndingRunwayInputV1> {
   return {
     schemaVersion: 1,
     evaluatorId: 'ending-runway',
-    evaluatorVersion: '1.1.0',
+    evaluatorVersion: '1.2.0',
     storyId: STORY_ID,
     mode: 'FINAL_HORIZON',
     horizon: { fromChapter: 45, toChapter: 50 },
@@ -342,7 +342,14 @@ function greenEnding(): EvaluatorEnvelopeV1<EndingRunwayInputV1> {
       endingLock: {
         chapterNumber: 45,
         lockedEndingKey: 'ending-quiet-return',
-        committedInPublicationTxId: 'tx-45',
+        // C-R1 #4: durability derives from the canonical publication proof
+        // (lock row at the right chapter + committed canon ledger row +
+        // published chapter), not a transaction identifier.
+        canonicalPublicationProof: {
+          lockAtCorrectChapter: true,
+          chapterCommittedRevision: 45,
+          chapterPublished: true,
+        },
       },
       publications: [
         {
@@ -899,10 +906,10 @@ const RED_SPECS: RedSpec[] = [
   {
     id: 'red-ending-lock-not-durable',
     targetEvaluator: 'endingRunway',
-    mutation: 'Ending lock exists but was not committed inside a publication transaction.',
+    mutation: 'Ending lock exists but the canonical publication proof (lock chapter, committed canon revision, published chapter) is missing.',
     expectedFindingCodes: ['ENDING_LOCK_NOT_DURABLE'],
     apply: (e) => {
-      e.endingRunway!.input.endingLock!.committedInPublicationTxId = null
+      e.endingRunway!.input.endingLock!.canonicalPublicationProof = null
     },
   },
   {

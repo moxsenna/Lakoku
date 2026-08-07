@@ -10,8 +10,9 @@
  *   - sync and worker must reach byte-identical per-chapter capture hashes;
  *   - capture blockers force result=BLOCKED unless a blocker carries a
  *     proof-backed CLOSED/RECLASSIFIED disposition (blocker-dispositions.ts).
- *     The six original blockers are never removed; every disposition is
- *     written into the artifacts and is pending reviewer ratification.
+ *     A blocker only closes when the production runtime gains the wire and the
+ *     capture reads it back; every disposition (including all six original
+ *     codes) is written into the artifacts for reviewer audit.
  *
  * Never touches production. Never invokes a real model. Requires an explicitly
  * local Supabase target (enforced by `assertIsolatedTarget`).
@@ -280,11 +281,12 @@ export async function runM10CHarness(outDir?: string): Promise<M10CRunOutput> {
   // runtime wire appears in both clones and must be reported once.
   const blockers = [...new Map([...sync.blockers, ...worker.blockers].map((b) => [b.code, b])).values()]
 
-  // Reviewer-mandated recovery rule: the six blockers are never deleted. Each
-  // carries a proof-backed disposition (blocker-dispositions.ts); only blockers
-  // that are still UNRESOLVED (or have no disposition at all) force BLOCKED.
-  // Every reclassification is pending reviewer ratification and is written into
-  // the artifacts as part of the evidence.
+  // Blocker gate: only blockers that are still UNRESOLVED (or have no
+  // disposition at all) force BLOCKED. After C-R1 (reviewer 2026-08-08), five
+  // of the six original blockers are CLOSED by production wiring with capture
+  // read-back (blocker-dispositions.ts carries the proof per code); the prompt
+  // layers blocker stays RECLASSIFIED to M10-F with reviewer ratification #1.
+  // The full disposition table is written into the artifacts as evidence.
   const unresolved = unresolvedBlockers(blockers)
 
   const failedCompletion = [...completion.sync, ...completion.worker].filter((c) => !c.passed)
@@ -316,13 +318,13 @@ export async function runM10CHarness(outDir?: string): Promise<M10CRunOutput> {
       ratifiedByReviewer: d.ratifiedByReviewer,
     })),
     blockerDispositionBasis:
-      'proof-based reclassification pending reviewer ratification (M10-C recovery mandate)',
+      'C-R1 corrective package (reviewer 2026-08-08): five blockers CLOSED by production wiring + capture read-back; prompt layers RECLASSIFIED to F with reviewer ratification #1. Proofs in blocker-dispositions.ts.',
   }
 
   // A capture blocker means an evaluator input has no honest runtime source.
   // The stage cannot claim coverage it does not have, so an UNRESOLVED blocker
   // reports BLOCKED. Proof-backed CLOSED/RECLASSIFIED dispositions are audited
-  // via blockers.json; none of the six original blockers was removed.
+  // via blockers.json — the five closures rest on runtime wires, not removal.
   const result: M10ArtifactManifestV1['result'] =
     unresolved.length > 0
       ? 'BLOCKED'
@@ -370,7 +372,7 @@ export async function runM10CHarness(outDir?: string): Promise<M10CRunOutput> {
         blockers,
         unresolvedCodes: unresolved.map((b) => b.code),
         dispositions: BLOCKER_DISPOSITIONS,
-        basis: 'six original blockers preserved verbatim; dispositions are proof-backed and pending reviewer ratification',
+        basis: 'C-R1 (reviewer 2026-08-08): blockers listed are the capture gaps still open; dispositions carry the proof-backed closure for all six original codes (five CLOSED by production wiring, one RECLASSIFIED to F with ratification #1)',
       }),
     )
     writeFileSync(
@@ -431,7 +433,7 @@ export async function runM10CCli(): Promise<number> {
   )
   for (const code of captureBlockers) {
     const disposition = dispositionByCode.get(code) ?? 'UNRESOLVED'
-    const marker = unresolvedCodes.has(code) ? 'UNRESOLVED — run stays BLOCKED' : `${disposition} (proof in blockers.json, pending reviewer ratification)`
+    const marker = unresolvedCodes.has(code) ? 'UNRESOLVED — run stays BLOCKED' : `${disposition} (proof in blockers.json)`
     console.error(`    CAPTURE BLOCKER: ${code} :: ${marker}`)
   }
   if (run.manifest.result === 'PASS' && captureBlockers.length > 0) {

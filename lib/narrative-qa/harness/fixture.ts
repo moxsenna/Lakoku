@@ -68,6 +68,37 @@ export const CH1_FACT_STATEMENT = 'Surat tak bernama ditemukan di balik brankas 
 /** Chapters whose deterministic proposal carries a LOAD_BEARING payoff. */
 export const CH1_FACT_PAYOFF_CHAPTER = 2
 
+/**
+ * C-R1 G4-STALE (NCS §4.2): explicit main_mystery callback touches.
+ *
+ * Now that the production runtime MARKS staleness (post-publication lifecycle
+ * hook) and Layer A enforcement can bite (THREAD_STALE_UNADDRESSED MAJOR →
+ * FAILED_REVIEW_REQUIRED), the authoring plan must keep every active thread
+ * referenced at least once every STALE_AFTER_CHAPTERS chapters. Debt-driven
+ * progress already touches at Bab 12/32/45 and Bab 46/47 advance the
+ * PAYOFF_DUE thread (G4 no-new-thread rule); these callback touches close the
+ * remaining gaps so the largest gap is exactly 6 (1→6→12→18→24→30→32→38→44→
+ * 45→46→47→48). This is the planner discipline NCS §6 step 2 demands — a
+ * CONSEQUENCE of enforcement becoming real, proven necessary by the
+ * staleness regression test (without it the run fails closed at Bab 22).
+ */
+export const MAIN_MYSTERY_CALLBACK_CHAPTERS: readonly number[] = [6, 18, 24, 30, 38, 44]
+
+/** Debt-driven progress chapters also touch the backing thread (applier). */
+export const MAIN_MYSTERY_PROGRESS_CHAPTERS: readonly number[] = [12, 32, 45]
+
+/** All main_mystery touch sources, for the staleness-cadence regression test. */
+export function mainMysteryTouchChapters(): number[] {
+  return [
+    1, // seeded: thread opens at Bab 1
+    ...MAIN_MYSTERY_CALLBACK_CHAPTERS,
+    ...MAIN_MYSTERY_PROGRESS_CHAPTERS,
+    46,
+    47,
+    48, // closure resolves the thread (terminal — cadence ends)
+  ].sort((a, b) => a - b)
+}
+
 export function harnessFactId(storyId: string, chapterNumber = 1): string {
   return runtimeFactId({
     storyId,
@@ -85,7 +116,7 @@ export function buildHarnessContract(storyId: string): StoryContract {
     mustInclude: ['beat-utama'],
     mustNotReveal: [],
     emotionalTurn: 'Ketegangan naik.',
-    expectedThreadMovement: ['thread:main'],
+    expectedThreadMovement: [debtBackedThreadId(storyId, 'main_mystery')],
   }))
   return {
     storyId,
@@ -240,6 +271,14 @@ export function harnessProposalFor(
     return {
       ...base,
       plotDebts: { progress: [{ debtId: 'main_mystery', milestoneChapter: chapterNumber }], closures: [] },
+    }
+  }
+  // C-R1 G4-STALE callback touches (see MAIN_MYSTERY_CALLBACK_CHAPTERS): keep
+  // the main mystery thread referenced within the 6-chapter staleness window.
+  if (MAIN_MYSTERY_CALLBACK_CHAPTERS.includes(chapterNumber)) {
+    return {
+      ...base,
+      threads: { touches: [debtBackedThreadId(storyId, 'main_mystery')], transitions: [] },
     }
   }
   // Bab 46-47: main_mystery already PAYOFF_DUE (final progress at Bab 45).

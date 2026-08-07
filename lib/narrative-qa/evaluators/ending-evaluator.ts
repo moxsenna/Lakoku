@@ -16,7 +16,18 @@ import type {
 import { observed, validateEvaluatorEnvelope } from '../contracts/evaluator-contract'
 
 export const ENDING_EVALUATOR_ID = 'ending-runway'
-export const ENDING_EVALUATOR_VERSION = '1.1.0'
+/**
+ * 1.1.0 → 1.2.0 (C-R1 #4, reviewer 2026-08-08): durability evidence no longer
+ * requires a publication transaction id. The V3/V5 publishers write lock +
+ * chapter + canon commit inside one SQL function/transaction but expose no
+ * tx-id readback; demanding one made ENDING_LOCK_NOT_DURABLE unfalsifiable.
+ * v1.2.0 derives durability from the canonical publication PROOF instead:
+ * lock at the correct chapter ∧ chapter published ∧ canon commit ledger row —
+ * the three artifacts of the single atomic commit. Same-transaction atomicity
+ * is proven by code inspection of the publisher SQL plus the harness
+ * fencing/tamper probes (no torn state producible).
+ */
+export const ENDING_EVALUATOR_VERSION = '1.2.0'
 
 export const ENDING_LOCK_CHAPTER = 45
 export const MAIN_MYSTERY_CLOSURE_CHAPTER = 48
@@ -27,8 +38,16 @@ export const FINAL_CHAPTER = 50
 export interface EndingLockEvidence {
   chapterNumber: number
   lockedEndingKey: string
-  /** Publication transaction id that wrote the lock atomically, if any. */
-  committedInPublicationTxId: string | null
+  /**
+   * Canonical publication proof that the lock committed atomically with its
+   * chapter (C-R1 #4). Same-transaction atomicity is proven by the publisher
+   * SQL + fencing/tamper probes; these fields are the DB-readback artifacts.
+   */
+  canonicalPublicationProof: {
+    lockAtCorrectChapter: boolean
+    chapterCommittedRevision: number | null
+    chapterPublished: boolean
+  } | null
 }
 
 /** Raw published chapter row for a runway chapter. */
@@ -80,7 +99,19 @@ export function evaluateEndingRunway(
   const publications = [...input.publications].sort((a, b) => a.chapterNumber - b.chapterNumber)
 
   // ── ending lock durability + atomic provenance at Bab 45 ────────────────
-  if (!lock || lock.chapterNumber !== ENDING_LOCK_CHAPTER || !lock.committedInPublicationTxId) {
+  // C-R1 #4: durability is proven by the canonical publication artifacts
+  // (lock at ch45 ∧ ch45 published ∧ ch45 canon commit), NOT a tx-id. The
+  // publisher SQL commits lock+chapter+canon in one transaction; fencing and
+  // tamper probes demonstrate no torn state is producible.
+  const proof = lock?.canonicalPublicationProof ?? null
+  const lockDurable =
+    lock !== null &&
+    lock.chapterNumber === ENDING_LOCK_CHAPTER &&
+    proof !== null &&
+    proof.lockAtCorrectChapter &&
+    proof.chapterPublished &&
+    proof.chapterCommittedRevision !== null
+  if (!lockDurable) {
     findings.push({
       schemaVersion: 1,
       code: 'ENDING_LOCK_NOT_DURABLE',
@@ -95,11 +126,11 @@ export function evaluateEndingRunway(
           detail: {
             lockPresent: lock !== null,
             lockChapter: lock?.chapterNumber ?? null,
-            committedInPublicationTxId: lock?.committedInPublicationTxId ?? null,
+            canonicalPublicationProof: proof,
           },
         },
       ],
-      message: `Ending lock at chapter ${ENDING_LOCK_CHAPTER} is missing, misplaced, or not committed atomically with its publication.`,
+      message: `Ending lock at chapter ${ENDING_LOCK_CHAPTER} is missing, misplaced, or not proven committed atomically with its publication.`,
       remediationClass: 'runtime',
     })
   }

@@ -105,6 +105,7 @@ import {
 import { resolveGenerationLeaseTtlSeconds } from './generation-lease-ttl'
 import { throwIfAborted } from './abort'
 import { deriveStructuredStateProposalDefault } from './state-proposal-derivation'
+import { runPostPublicationLifecycle } from './post-publication-lifecycle.server'
 import { proseFingerprint } from './chapter-generation-checkpoint.pure'
 import { loadEffectivePlotDebtState } from './plot-debt-effective-state.loader'
 import type { GenerationJobExecutionContext } from './generation-job-execution'
@@ -1492,6 +1493,11 @@ async function generateNextPersonalizedChapterInner(
         })
         published = { ok: true, chapter_number: v3.chapterNumber, seq: v3.seq }
         if (!jobContext) await releaseOwnLease()
+        // C-R1 (reviewer 2026-08-08): post-publication lifecycle side-effects —
+        // G4 stale marking (NCS §4.2) + act-boundary reconciliation/ending
+        // reachability proof (NCS §1.2/§1.4). Runs AFTER canonical commit in
+        // both sync(V3)/worker(V5) modes; never throws into publication.
+        await runPostPublicationLifecycle({ storyId, chapterNumber, contract })
       } catch (err) {
         throwIfAborted(jobContext?.signal)
         const classification = classifyGenerationPublicationError(err)

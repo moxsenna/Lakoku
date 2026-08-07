@@ -190,3 +190,33 @@ Branch: feature/m10-b-deterministic-evaluators
 - Artifacts: docs/qa/m10/M10_E_RELIABILITY_COST_REPORT.md (result BLOCKED) +
   docs/qa/m10/m10-e-fault-evidence.json (full per-scenario evidence, sha256 in
   report). STOP for review recorded. Next: D/F/G assessment (all gated).
+
+## M10-D/F/G ASSESSMENT (all BLOCKED — not executed)
+Plan: docs/superpowers/plans/M10_B_TO_G_EXECUTION_PLAN.md (stages D, F, G)
+Branch: feature/m10-b-deterministic-evaluators @ 3672d4d
+- M10-D BLOCKED: judges require model calls (standing constraint forbids any
+  LLM call / NARRATIVE_PROVIDER=gateway; plan §6 permits real model at D as
+  judge only). NCS gives no numeric thresholds — they must be discovered by
+  real calibration + human FP/FN review, never invented. Judge cost
+  measurement (DoD) also needs real calls. D.5 calibration fixture set does
+  not exist yet. No scaffold built on purpose: uncalibrated judge infra
+  satisfies no DoD item and is a fabrication hazard. Entry-gate deviation:
+  C closed BLOCKED, same as for E.
+- M10-F BLOCKED: entry gate requires C PASS (closed BLOCKED), D PASS with
+  frozen thresholds (D not executed), E PASS with frozen guardrails (E
+  BLOCKED; E4_COST_CEILING_NOT_APPROVED). M10-E's own STOP clause forbids
+  starting F while the ceiling is open — pilot would spend real money against
+  a ceiling that does not exist. Real model calls + spend also forbidden by
+  standing constraint; no approved budget exists.
+- M10-G BLOCKED: entry gate is F PASS on a fresh final pilot — unmet, and
+  thresholds/ceiling both unfrozen. Independently: 3 novels x 50 + fork matrix
+  = real model spend (forbidden/unfunded); golden novel 50-chapter human read
+  is human work; G.6 pass/fail uses the unfrozen E ceiling; G.7 reader KPI is
+  live-only and must stay BETA_KPI_PENDING (never synthesized).
+- Unblocking needs decision-maker input: (1) QA model-call authorization,
+  (2) business-approved E.4 ceilings, (3) pilot budget, (4) human reviewer
+  time (D calibration / F engineering review / G golden read), (5) optionally
+  closing M10-C's six observability blockers for a clean gate chain.
+- Assessment: docs/qa/m10/M10_D_F_G_ASSESSMENT.md. STOP — plan taken as far
+  as standing constraints allow; B done, C/E closed BLOCKED, D/F/G blocked on
+  external decisions. Production activation remains FORBIDDEN.

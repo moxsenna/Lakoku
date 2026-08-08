@@ -52,6 +52,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { buildHarnessContract } from '../../lib/narrative-qa/harness/fixture'
 import { parseStoryContractWithNormalization } from '../../lib/story-engine/story-contract'
 import { assertIsolatedTarget, HARNESS_USER_ID } from '../../lib/narrative-qa/harness/seed'
+import { generateNextPersonalizedChapter } from '@/lib/runtime/personalized-generation'
 
 // Isolation gate: MUST run against local/isolated Supabase only
 assertIsolatedTarget()
@@ -293,12 +294,73 @@ describe('M10-C R3.2 — Negative DB-backed FAILED_REVIEW_REQUIRED proof', () =>
     // ASSERTION 5: generation_status remains 'needs_review' after failure
     const { data: updatedStory, error: storyQueryError } = await admin
       .from('stories')
-      .select('generation_status')
+      .select('generation_status, canon_state_revision')
       .eq('id', STORY_ID)
       .single()
 
     if (storyQueryError) throw new Error(`Failed to query story status: ${storyQueryError.message}`)
     expect(updatedStory?.generation_status).toBe('needs_review') // Changed from 'published'
+
+    // === STEP 7: SYNC PATH PROOF - Attempt chapter 6 generation through REAL production seam ===
+    // Production: generateNextPersonalizedChapter() → should fail CLOSED due to needs_review
+    // No triggerChoiceId required for pure generation admission test
+    
+    // Save baseline state before attempt
+    const baselineRevision = updatedStory.canon_state_revision ?? 0
+
+    const nextChapterAttempt = await generateNextPersonalizedChapter({
+      storyId: STORY_ID,
+      userId: HARNESS_USER_ID,
+      chapterNumber: NEXT_CHAPTER,
+      correlationId: randomUUID(),
+      attemptId: 'sync-proof-attempt',
+    })
+
+    // ASSERTION 6: Real generation admission returns FAILED_REVIEW_REQUIRED
+    // NOT a provider call, NOT a checkpoint, NOT a chapter publication
+    expect(nextChapterAttempt.ok).toBe(false)
+    
+    // Narrow type to access reason property
+    if (!nextChapterAttempt.ok && 'reason' in nextChapterAttempt) {
+      expect(nextChapterAttempt.reason).toBe('FAILED_REVIEW_REQUIRED')
+    } else {
+      throw new Error(`Expected FAILED_REVIEW_REQUIRED but got ok=false without reason: ${JSON.stringify(nextChapterAttempt)}`)
+    }
+    
+    // Assert no state mutations occurred during failed attempt
+    const { count: activeLeases } = await admin
+      .from('generation_leases')
+      .select('*', { count: 'exact', head: false })
+      .eq('story_id', STORY_ID)
+      .eq('status', 'ACTIVE')
+    
+    expect(activeLeases ?? 0).toBe(0) // No new lease created on rejected request
+    
+    const { count: allCheckpoints } = await admin
+      .from('chapter_generation_checkpoints')
+      .select('*', { count: 'exact', head: false })
+      .eq('story_id', STORY_ID)
+      .eq('chapter_number', NEXT_CHAPTER)
+    
+    expect(allCheckpoints ?? 0).toBe(0) // No checkpoint persisted on rejected attempt
+    
+    const { count: newChapters } = await admin
+      .from('chapters')
+      .select('*', { count: 'exact', head: false })
+      .eq('story_id', STORY_ID)
+      .eq('chapter_number', NEXT_CHAPTER)
+    
+    expect(newChapters ?? 0).toBe(0) // No chapter published on rejected attempt
+    
+    // Verify canon_state_revision unchanged
+    const { data: postStory, error: postStoryError } = await admin
+      .from('stories')
+      .select('canon_state_revision')
+      .eq('id', STORY_ID)
+      .single()
+    
+    if (postStoryError) throw new Error(`Failed to query post-state revision: ${postStoryError.message}`)
+    expect(postStory?.canon_state_revision).toBe(baselineRevision) // Immutable on failure
 
     // STEP 8: Verify failure event persisted
     const { count: reconciliationEvents } = await admin

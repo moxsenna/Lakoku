@@ -255,9 +255,14 @@ deletion without never-applied proof — here the opposite is proven).** Committ
 
 **Proof from a truly fresh environment (post-repair):**
 
-- `supabase db reset` (recreate DB → apply all migrations): **all 66 migrations apply,
+- `supabase db reset` (recreate DB → apply all migrations): **all migrations apply,
   zero errors**. Pre-repair the same command failed with SQLSTATE 42710
-  (duplicate constraint) at `020000`.
+  (duplicate constraint) at `020000`. Count correction (superseded by Gate 3): this
+  bullet first read "66 migrations"; the repo contains exactly **65** migration files,
+  and the transient 66th ledger row was later traced to a concurrent second clone
+  sharing the same local Supabase project id (disclosed in Gate 3 below). The
+  definitive fresh-environment proof is the isolated re-verification there: ledger
+  version set == the 65 files exactly, applied with zero errors.
 - `tests/db/migration-version-uniqueness.test.ts`: **5/5 PASS** (pre-existing failure
   resolved; the HOLD is released by this evidence).
 - `tests/db/m10-c-r1-g4-stale-enforcement.test.ts` on the fresh schema: **4/4 PASS**.
@@ -277,5 +282,80 @@ closure runs below execute from that fully clean tree.
 
 ### Gate 3 — double closure run on the exact same head
 
-(Filled after both runs complete — see §7.3 results below.)
+**Environment-integrity incident (disclosed).** While preparing the two runs, the
+local QA stack (project id `lakoku-v2`) was found to be **shared with a second repo
+clone** (`D:\Coding\Lakoku-anti-abuse-runtime`, identical `project_id = "lakoku-v2"`
+in its `supabase/config.toml`). That clone's own reset/migration runs intermittently
+recreated the same DB container and applied its own migration set to it: the shared
+ledger transiently carried a 66th version `20260806010000_commercial_cutover_primitives`
+that exists in no file of this tree (verified by diff: other clone's version set =
+this tree's 65 versions + that one). This is also the source of the corrected "66
+migrations" count in Gate 2 above. A contended stack cannot prove a clean/reseeded
+environment, so both counted runs were executed on a **purpose-built isolated
+Supabase instance** instead:
+
+- detached git worktree of THIS repo at the exact head `eb5e669`
+  (`D:\Coding\lakoku-m10c-gate3`) — same commit, same tracked content;
+- worktree-local rebrand to project id `lakoku-m10c` on non-colliding ports
+  56320–56327; the config edit was reverted (`git checkout`) before each counted
+  run so the manifest records a clean tree; the CLI-created untracked
+  `supabase/.branches/` dir was removed before each run for the same reason;
+- `supabase start` + `supabase db reset` from scratch; ledger re-verified EXACT:
+  version set == this tree's 65 migration files (clean diff, zero foreign versions);
+- pre-run env state: `auth.users = 0` (fully reseeded) and `/auth/v1/health` = 200
+  through the isolated Kong. (The earlier Run-A failure on the contended stack —
+  `stories_owner_user_id_fkey` — was Kong returning 502 for a recreated auth
+  container; a Kong restart fixed it there. Operational, not a code change;
+  `ensureHarnessUser`'s swallowed-createUser behavior is noted in §4 as-is.)
+- target resolution via `SUPABASE_URL=http://127.0.0.1:56321` + local service role
+  key passed as process env; the harness's fail-closed `assertIsolatedTarget`
+  local-only fence accepted it. No `NARRATIVE_PROVIDER` set anywhere — deterministic
+  provider, zero model calls.
+
+**Run A** (fresh reset → 65/65 ledger → `pnpm m10:c:harness`):
+
+```text
+runId             m10-c-ceccff8be159
+headSha           eb5e669508bbd867be00d2e22988e7379a9b0f03   (exact closure head)
+workingTreeDirty  false
+result            PASS (50 chapters x 2 modes, 0 parity mismatches)
+findingsHash      ceccff8be159a81ffee25129d66d12c44673ac845d34c890639ed3166c6b9b49
+summaryHash       61549907154880b0f988a9ceb997364fe01e61cc305bd293d6f583250a502b3a
+```
+
+**Run B** (second fresh reset → 65/65 ledger, `auth.users = 0`, auth health 200 →
+same command, same head):
+
+```text
+runId             m10-c-ceccff8be159                          (identical)
+headSha           eb5e669508bbd867be00d2e22988e7379a9b0f03    (identical)
+workingTreeDirty  false                                       (identical)
+result            PASS                                        (identical)
+findingsHash      ceccff8be159a81ffee25129d66d12c44673ac845d34c890639ed3166c6b9b49  (identical)
+summaryHash       61549907154880b0f988a9ceb997364fe01e61cc305bd293d6f583250a502b3a  (identical)
+```
+
+**Normalized hashes identical.** Whole-artifact comparison A vs B: `summary.json`,
+`findings.json`, `parity.json`, `blockers.json`, `fork.json`, `fencing.json`, and
+`captures.json` (all 100 per-chapter captureHashes) are byte-identical.
+
+One non-hash-bearing artifact is NOT byte-identical, fully accounted: in
+`act-boundaries.json` the worker-mode `threadStatuses` arrays swap the ORDER of
+their two elements (`thread:main_mystery` vs `thread:debt:a`) across the three
+act-boundary records. Contents and statuses are element-for-element equal and all
+reconciliation verdicts are unchanged (the check is set-based; PASS in both runs).
+The ordering comes from snapshot thread row order in the freshly seeded DB; it is
+not an input to `findingsHash`/`summaryHash` or to any evaluator. (Follow-up,
+out of closure scope: an explicit ORDER BY would make this evidence artifact
+byte-stable too.)
+
+Cross-environment corroboration: both hashes also equal the earlier closure rerun
+executed from the main worktree (§3, same runId `m10-c-ceccff8be159`). Three runs,
+two different stacks, one hash pair — the determinism evidence is not an artifact
+of one environment.
+
+Artifact custody: identical findingsHash ⇒ identical runId ⇒ the artifact directory
+is reused, so Run A's set was saved before Run B overwrote it:
+`D:\Coding\m10c-gate3-evidence\run-a\` (Run A) vs the isolated worktree's
+`.zcode\artifacts\m10-c\m10-c-ceccff8be159\` (Run B, final state).
 

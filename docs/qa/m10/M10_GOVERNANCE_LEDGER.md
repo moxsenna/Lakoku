@@ -157,3 +157,47 @@ Four closing gates ordered (verbatim intent):
 Reviewer: if all four hold and the exact diff shows no hidden regression, the next
 verdict target is directly **M10-C PASS / CLOSED; M10-D + M10-E GO** — no new design
 round. Do not start D/E.
+
+## Entry 5 — 2026-08-08 (closing-gate package SUBMITTED for the four Entry-4 gates; not a verdict)
+
+Submitted by: implementation side (M10-C closure). This entry records the delivered
+evidence per gate; the verdict remains the reviewer's.
+
+- **Gate 1 (push + V5-vs-V6 conclusion).** Branch pushed to origin
+  (`aa302c7..eb5e669`; full chain `21cb682 ← d06c852 ← aa302c7 ← e02a3a7 ← b45f802
+  ← bb3287a ← eb5e669`). Report §7 Gate 1 carries the full V5-vs-V6 call chain with
+  file:line references; conclusion: worker publication authority =
+  `publish_generation_job_chapter_v5` (SQL, terminal); sync = `publish_chapter_state_v3`;
+  V6 exists only as a SQL function with ZERO production TS callers.
+- **Gate 2 (migration history).** Forward-only repair committed (`bb3287a`): rename
+  job binding to the ledger-evidenced `20260805021000`; retained byte-identical
+  `020000` duplicate made rerun-safe via `pg_constraint` guards. No deletion.
+  Fresh-environment proofs: db reset applies all migrations zero-error; uniqueness
+  5/5; G4 DB regression 4/4. Production not consulted (forbidden for this gate).
+- **Gate 3 (double run, identical normalized hashes).** DONE — report §7 Gate 3.
+  Two runs (A, B) from two fresh `supabase db reset` environments on exact head
+  `eb5e669508bbd867be00d2e22988e7379a9b0f03`: identical findingsHash
+  `ceccff8be159…6b9b49` and summaryHash `6154990715…502b3a`, both PASS, both
+  `workingTreeDirty=false`. Whole artifact sets byte-identical except a set-order
+  difference in `act-boundaries.json` worker `threadStatuses` (content- and
+  verdict-equal; not a hash input; disclosed with cause).
+  **Incident disclosure:** the original local stack is shared with a second clone
+  (`project_id = "lakoku-v2"` in `D:\Coding\Lakoku-anti-abuse-runtime`) whose
+  resets intermittently recreated the same DB and applied a foreign migration
+  (`20260806010000`) into the shared ledger. The counted runs therefore executed
+  on an isolated instance (project `lakoku-m10c`, worktree `lakoku-m10c-gate3`,
+  ports 563xx) whose ledger was verified to equal exactly this tree's 65 files.
+  Both hashes also equal the earlier closure rerun (§3) — same hash pair across
+  three runs on two stacks.
+- **Gate 4 (clean worktree).** The two intentionally-uncommitted files live outside
+  the repo in `../lakoku-v2-untracked-quarantine/` with a README; `git status`
+  empty; both counted-run manifests record `workingTreeDirty=false` on the exact head.
+
+Environment notes: the contended `lakoku-v2` stack was stopped (CLI backup volume
+preserves its state) during the isolated runs; the isolated `lakoku-m10c` stack and
+its worktree are preserved for reviewer inspection. No production target touched;
+no model calls; no secret material in any artifact.
+
+Status lock unchanged (M10-C stage HOLD pending verdict; D/E not started; production
+actions FORBIDDEN). Awaiting reviewer verdict; target per Entry 4: M10-C PASS / CLOSED;
+M10-D + M10-E GO.

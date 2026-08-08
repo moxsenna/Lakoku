@@ -411,3 +411,144 @@ production activation          FORBIDDEN
 
 STOP — awaiting reviewer verdict on C-R2 and the decision-maker's Gate-2 choice.
 D/E/F/G not started. No production action taken or planned.
+
+## Entry 8 — 2026-08-08 (reviewer verdict C-R2: APPROVED substantively, M10-C tetap BLOCKED; GO C-R3; Gate-2 Option 1 approved)
+
+Recorded by: implementation side, from the reviewer's exact-source review of the
+remote package. Branch tip inspected `3d43f072c16fd55b6139dc17a090ef086fbdd288`;
+counted evidence head `dab4967aa7ba129ddc38d7c5d1f599b6a5b7c1b6`. Reviewer noted
+`3d43f07` documents the result as BLOCKED rather than forcing PASS.
+
+Four C-R2 corrections RATIFIED:
+
+```text
+B.3.7 beat fabrication          PASS  (emotionalResolutionBeatIds removed; Bab-49 -> M10-D judge)
+B.3.7 durability raw evidence   PASS  (endingRunway 1.3.0 takes raw rows; evaluator computes durability)
+missing-thread drift mask       PASS  (no filter; missing thread reaches computeDriftScore)
+ending reachability honesty     PASS AS BLOCKER DETECTION, NOT CLOSURE
+                                      (ncs14Proven=false, secret path unproven, no fake passed=true)
+double-run reproducibility      PASS  (exact dab4967, clean worktree, two fresh resets,
+                                       0 parity mismatch, endingRunway 1.3.0, deterministic artifacts)
+```
+
+**Gate 2 — Option 1 APPROVED: read-only production migration-ledger query.** The
+decision-maker/reviewer granted a NARROW production exception for this single
+purpose: reading migration history. Authorized statement (verbatim):
+
+```sql
+select version, name
+from supabase_migrations.schema_migrations
+where version >= '20260805010000'
+  and version <= '20260805040000'
+order by version;
+```
+
+Fallback if `name` is unavailable:
+
+```sql
+select version
+from supabase_migrations.schema_migrations
+where version >= '20260805010000'
+  and version <= '20260805040000'
+order by version;
+```
+
+Authorization is **SELECT against `supabase_migrations.schema_migrations` ONLY**.
+It does NOT permit `db push`, `migration repair`, DDL, UPDATE/INSERT/DELETE,
+mutating RPC, canary, or any activation. Until the result exists, `bb3287a`
+remains **NOT RATIFIED**.
+
+**Additional G1 gate that must ride along in C-R3.** Exact-source review shows #6
+alone does not finish C. Plan C.5 requires G1 version/drift/reach/spine to be
+exercised through the PRODUCTION runtime, not only pure/unit proof. The counted
+1->50 run yields reconciliation `NO_CHANGE`; the new missing-thread regression
+proves derivation + `computeDriftScore` only, not a production `RECONCILED`
+side-effect. Worse, when `runReconciliation()` returns `FAILED_REVIEW_REQUIRED`
+the current hook only does `console.error(...)` + `return`, and
+`runPostPublicationLifecycle()` deliberately swallows errors so an already
+committed publication does not unwind. Sensible for the published Bab N, but it
+does not meet NCS: a reconciliation failure must be a DURABLE FAIL-CLOSED GATE
+BEFORE Bab N+1, not just a log.
+
+C-R3 scope (reviewer, narrow — no new design round):
+
+1. **Structured ending model for NCS §1.4** so >=2 main endings + secret path +
+   blocking conditions become machine-checkable instead of `UNPROVEN`.
+2. **Production G1 reconciliation enforcement proof:**
+   - a dedicated deterministic drift fixture reaching `RECONCILED` through the
+     real post-publication path;
+   - blueprint version actually incremented with correct `reconciled_from_version`;
+   - spine fields identical;
+   - a negative fixture producing reconciliation `FAILED_REVIEW_REQUIRED`;
+   - that status persisted as a durable gate so the NEXT chapter's generation is
+     refused until review/resolution — not merely a console log.
+
+Constraint (verbatim intent): do NOT modify an already committed chapter to make
+fail-closed happen; the gate applies at **next-chapter admission**.
+
+Status lock (verbatim):
+
+```text
+M10-A                         CLOSED
+M10-B                         CLOSED
+
+C-R2 B.3.7 rebaseline         PASS
+C-R2 missing-thread fix       PASS
+C-R2 honest reachability      PASS AS BLOCKER EVIDENCE
+C-R2 reproducibility          PASS
+
+G1-REACH                      OPEN
+G1 reconciliation fail-gate   OPEN
+G1 RECONCILED runtime proof   OPEN
+migration-history Gate 2      READ-ONLY PROD QUERY APPROVED
+
+M10-C                         BLOCKED / NOT CLOSED
+M10-D                         BLOCKED BY C
+M10-E                         BLOCKED BY C
+M10-F                         BLOCKED
+M10-G                         BLOCKED
+
+production writes             FORBIDDEN
+production activation         FORBIDDEN
+```
+
+**GO C-R3**, scope limited to structured ending reachability + the production
+reconciliation fail-closed/proof above. The Gate-2 SELECT may run in parallel.
+After C-R3 + ledger proof the target is still to CLOSE C, not to open a new
+design round.
+
+### Entry 8a — Gate-2 read-only production query EXECUTED (result: repaired range NOT APPLIED on production)
+
+Executed under the Entry 8 Option-1 authorization, SELECT-only. Command:
+`supabase migration list --linked` (its sole remote operation is reading
+`supabase_migrations.schema_migrations`). No DDL, no INSERT/UPDATE/DELETE, no
+`db push`, no `migration repair`, no mutating RPC, no canary, no activation.
+Full evidence: `docs/qa/m10/M10_C_GATE2_MIGRATION_LEDGER_EVIDENCE.md`.
+
+```text
+local migration files                   65
+applied on production                   60
+remote-only versions (unknown to repo)   0
+local/remote version mismatches          0
+newest applied production version       20260805010000
+
+range 20260805010000..20260805040000
+  20260805010000  APPLIED
+  20260805015000  NOT APPLIED
+  20260805020000  NOT APPLIED
+  20260805021000  NOT APPLIED
+  20260805025000  NOT APPLIED
+  20260805030000  NOT APPLIED
+```
+
+The reviewer's hypothetical production ledger (015000/020000/021000 present) did
+NOT materialize. Consequence for `bb3287a`: both versions it edited or renamed
+(`20260805020000` and the resulting `20260805021000`) are unapplied on production,
+so the content change is not a rewrite of applied history and the rename cannot
+desynchronize the production ledger; there are zero remote-only rows, so no orphan
+row is hidden by the rename. The earlier report's "APPLIED" claim was true only of
+local/isolated QA databases — which is exactly why the reviewer refused it as
+authority. Residual risk recorded honestly: this proves PRODUCTION only; an
+unknown other deployed environment that had applied `20260805020000` would still
+diverge. No such environment is known and no shared/staging ledger exists.
+Ratification of `bb3287a` remains the reviewer's call.

@@ -16,9 +16,15 @@
  *   Negative: ending unreachable → FAILED_REVIEW_REQUIRED → NO version++ → story HALTS
  */
 
-import { test, expect, describe } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { describe, expect, test, beforeAll, afterAll, vi } from 'vitest'
+
+// Mock server-only for vitest environment (required because admin.ts uses 'server-only' directive)
+vi.mock('server-only', () => ({})
+
 import { createAdminClient } from '@/lib/supabase/admin'
-import { buildHarnessContract } from '../../lib/narrative-qa/harness/fixture'
+import { buildHarnessContract, HARNESS_USER_ID } from '../../lib/narrative-qa/harness/fixture'
 import { parseStoryContractWithNormalization } from '../../lib/story-engine/story-contract'
 import { assertIsolatedTarget } from '../../lib/narrative-qa/harness/seed'
 
@@ -64,29 +70,45 @@ describe('M10-C R3.2 — Negative DB-backed FAILED_REVIEW_REQUIRED proof', () =>
       }),
     }
     
-    // Insert story row
+    // Insert story row with EXACT shape from harness canonical (not invented fields)
     const { error: storyError } = await admin.from('stories').insert({
       id: STORY_ID,
-      title: contract.title,
-      genre: contract.genre,
-      tone: contract.tone,
-      total_chapters: contract.totalChapters,
+      title: 'Brankas Rahasia 50 Bab',
+      cover: '/cover.webp',
+      tagline: 'Misteri brankas basement',
+      role: 'Protector',
+      tropes: ['misteri'],
+      total_chapters: 50,
+      synopsis: 'Synopsis deterministik.',
+      status: 'BERJALAN',
+      current_chapter: 0,
+      owner_user_id: HARNESS_USER_ID,
+      jejak: [],
+      visibility: 'private',
+      story_mode: 'personalized_ai',
       generation_status: 'published', // Starting state
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      story_contract_version: 1,
+      living_canon_version: 1,
+      canon_state_revision: 0,
+      commercial_origin: 'LEGACY_GRANDFATHERED',
     })
     if (storyError) throw new Error(`Failed to seed stories: ${storyError.message}`)
 
-    // Parse and insert story contract
+    // Insert story contract with EXACT shape from harness canonical (not invented fields)
     const parsedContract = parseStoryContractWithNormalization(failedContract)
     const { error: contractError } = await admin.from('story_generation_contracts').insert({
       story_id: STORY_ID,
+      mode: 'personalized_ai',
+      total_chapters: parsedContract.totalChapters,
+      contract_source: 'llm_repaired',
+      onboarding_json: { hero: 'char:hero' },
       story_contract_json: parsedContract,
+      route_schema_json: {},
       plot_debts_json: parsedContract.plotDebts,
       ending_candidates_json: parsedContract.endingCandidates,
-      ending_lock_json: null,
-      mode: 'personalized' as const,
-      total_chapters: parsedContract.totalChapters,
+      ending_lock_json: {},
+      quality_profile: 'lakoku_mobile_drama_v1',
+      story_contract_version: 1,
     })
     if (contractError) throw new Error(`Failed to seed contracts: ${contractError.message}`)
 

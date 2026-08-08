@@ -12,7 +12,13 @@
  *   → DB chapter_blueprints version++ → reconciled_from_version persisted → spine unchanged
  */
 
-import { test, expect, describe } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { describe, expect, test, beforeAll, afterAll, vi } from 'vitest'
+
+// Mock server-only for vitest environment (required because admin.ts uses 'server-only' directive)
+vi.mock('server-only', () => ({})
+
 import { createAdminClient } from '@/lib/supabase/admin'
 import { buildHarnessContract } from '../../lib/narrative-qa/harness/fixture'
 import { parseStoryContractWithNormalization } from '../../lib/story-engine/story-contract'
@@ -27,16 +33,39 @@ const STORY_ID = 'm10c-r3-2-positive-test'
 // For checkpoint at end of act 1 (chapter 5), NEXT ACT is 6-12.
 // We seed blueprints for chapters 6-12 and execute reconciliation FROM chapter 5.
 const ACT_BOUNDARY_CHAPTER = 5 // Checkpoint at end of act 1 → next act is 6-12
+const HARNESS_USER_ID = '99999999-9999-4999-9999-99999999c000'
 
 describe('M10-C R3.2 — Positive DB-backed RECONCILED proof', () => {
   test('version++ chain + reconciled_from_version persistence at act boundary', async () => {
     const admin = createAdminClient()
-
-    // STEP 1: Seed isolated story with canonical act boundary
-    const contract = buildHarnessContract(STORY_ID)
     
-    // Override chapter 6's expectedThreadMovement to create drift ≥2
-    // Both required threads absent from canonical snapshot state.threadStatuses
+    // STEP 1: Seed canonical story with EXACT shape from harness (not invented fields)
+    // This matches seedHarnessStory() - NO genre/tone fields (these columns don't exist in canonical stories)
+    const { error: storyError } = await admin.from('stories').insert({
+      id: STORY_ID,
+      title: 'Brankas Rahasia 50 Bab',
+      cover: '/cover.webp',
+      tagline: 'Misteri brankas basement',
+      role: 'Protector',
+      tropes: ['misteri'],
+      total_chapters: 50,
+      synopsis: 'Synopsis deterministik.',
+      status: 'BERJALAN',
+      current_chapter: 0,
+      owner_user_id: HARNESS_USER_ID,
+      jejak: [],
+      visibility: 'private',
+      story_mode: 'personalized_ai',
+      generation_status: 'published', // Starting state
+      story_contract_version: 1,
+      living_canon_version: 1,
+      canon_state_revision: 0,
+      commercial_origin: 'LEGACY_GRANDFATHERED',
+    })
+    if (storyError) throw new Error(`Failed to seed stories: ${storyError.message}`)
+
+    // Parse contract with drift injection
+    const contract = buildHarnessContract(STORY_ID)
     const overriddenContract = {
       ...contract,
       chapterTargets: contract.chapterTargets.map((target) => {
@@ -49,30 +78,22 @@ describe('M10-C R3.2 — Positive DB-backed RECONCILED proof', () => {
         return target
       }),
     }
-    
-    // Insert story row
-    const { error: storyError } = await admin.from('stories').insert({
-      id: STORY_ID,
-      title: contract.title,
-      genre: contract.genre,
-      tone: contract.tone,
-      total_chapters: contract.totalChapters,
-      generation_status: 'published', // Normal published state (NOT needs_review)
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    if (storyError) throw new Error(`Failed to seed stories: ${storyError.message}`)
-
-    // Parse and insert story contract
     const parsedContract = parseStoryContractWithNormalization(overriddenContract)
+    
+    // Insert story contract with EXACT shape from harness canonical (not invented fields)
     const { error: contractError } = await admin.from('story_generation_contracts').insert({
       story_id: STORY_ID,
+      mode: 'personalized_ai',
+      total_chapters: parsedContract.totalChapters,
+      contract_source: 'llm_repaired',
+      onboarding_json: { hero: 'char:hero' },
       story_contract_json: parsedContract,
+      route_schema_json: {},
       plot_debts_json: parsedContract.plotDebts,
       ending_candidates_json: parsedContract.endingCandidates,
-      ending_lock_json: null,
-      mode: 'personalized' as const,
-      total_chapters: parsedContract.totalChapters,
+      ending_lock_json: {},
+      quality_profile: 'lakoku_mobile_drama_v1',
+      story_contract_version: 1,
     })
     if (contractError) throw new Error(`Failed to seed contracts: ${contractError.message}`)
 

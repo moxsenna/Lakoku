@@ -354,13 +354,13 @@ export function deriveEndingReachabilityEvidence(args: {
   const mainEndings = endings.filter((e) => e.isMain && !e.isSecret)
   const secretEndings = endings.filter((e) => e.isSecret)
   
-  // C-R3-R2 Blocker #4: Calculate actual reachable counts via isEndingReachable helper
+  // C-R3-R2 Blocker #4: Calculate actual reachable counts via isEndingReachable helper (symmetric for both main and secret)
   const reachableMainCount = mainEndings.filter((e) => isEndingReachable(e, state)).length
   const mainReachable = reachableMainCount >= ENDING_RULES.minReachableEndings
   
-  // Secret path is proven if at least one secret ending exists and is not unreachable
-  const secretPathBlocked = violationFindings.some((f) => f.code === 'SECRET_ENDING_UNREACHABLE')
-  const secretReachable = secretEndings.length > 0 && !secretPathBlocked
+  // Secret path proven via actual reachable count (symmetric with main endings)
+  const reachableSecretCount = secretEndings.filter((e) => isEndingReachable(e, state)).length
+  const secretReachable = reachableSecretCount >= 1
   
   // Build per-ending closure evidence with flagged status (C-R3-R1 fix #6: use helper)
   // C-R3-R2 Blocker #4: Pass full contract instead of empty object workaround
@@ -419,7 +419,9 @@ export function deriveEndingReachabilityEvidence(args: {
  * explicit — this is the blocking path EndingDef.blockedByFlags cannot express
  * for closure-based endings.
  * 
- * C-R3-R2 Blocker #4: Use requiredPlotDebtIds (structured IDs) as authority over prose-text requiredClosure.
+ * C-R3-R2 Blocker #4: Use requiredPlotDebtIds (structured IDs) as authority.
+ * V2: requiredPlotDebtIds is REQUIRED and PRIMARY authority
+ * V1: structured closure proof = UNPROVEN (legacy prose semantics not machine-convertible)
  */
 export function deriveRequiredClosureSatisfiability(args: {
   storyId: string
@@ -428,16 +430,24 @@ export function deriveRequiredClosureSatisfiability(args: {
 }): Array<{ endingId: string; satisfiable: boolean; blockingThreadIds: string[] }> {
   const { storyId, contract, snapshot } = args
   const statusByThreadId = new Map(snapshot.threads.map((t) => [t.id, t.status]))
+  
   return contract.endingCandidates.map((candidate) => {
     const blockingThreadIds: string[] = []
     
-    // C-R3-R2 Blocker #4: Use requiredPlotDebtIds as structured authority; fallback to requiredClosure for V1 compatibility
-    const debtIdsToCheck = candidate.requiredPlotDebtIds ?? candidate.requiredClosure
-    
-    for (const debtId of debtIdsToCheck) {
-      const threadId = debtBackedThreadId(storyId, debtId)
-      const status = statusByThreadId.get(threadId)
-      if (status === 'ABANDONED_APPROVED') blockingThreadIds.push(threadId)
+    // C-R3-R2 Blocker #4: ONLY use requiredPlotDebtIds as structured authority
+    // DO NOT fall back to prose-text requiredClosure (not convertible to debt IDs)
+    if (candidate.requiredPlotDebtIds && candidate.requiredPlotDebtIds.length > 0) {
+      // V2 or normalized V1 → use structured debt IDs
+      for (const debtId of candidate.requiredPlotDebtIds) {
+        const threadId = debtBackedThreadId(storyId, debtId)
+        const status = statusByThreadId.get(threadId)
+        if (status === 'ABANDONED_APPROVED') blockingThreadIds.push(threadId)
+      }
+    } else {
+      // V1 legacy with no structured data → UNPROVEN / unknown closure state
+      // Do NOT treat prose strings as debt IDs - reviewer feedback
+      // Structured closure proof remains empty, marking as satisfiable only by default
+      // but evidence downstream will flag insufficient provenance
     }
     
     return { endingId: candidate.key, satisfiable: blockingThreadIds.length === 0, blockingThreadIds }

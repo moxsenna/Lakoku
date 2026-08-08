@@ -67,14 +67,14 @@ export const EndingCandidateV2Schema = z.object({
   blockingConditions: z.array(z.string().min(1).max(100)).min(0).max(20).default([]),
 }).strict()
 
-/** Normalized ending candidate with explicit `kind` field */
+/** Normalized ending candidate - runtime schema that accepts both V1 (optional PlotDebtIds) and V2 (required) during transition */
 export const EndingCandidateSchema = z.object({
   key: boundedString(80),
   name: boundedString(160),
   kind: z.enum(['main', 'secret']),
   condition: boundedString(500),
   requiredClosure: boundedStringArray(8, 400, 1),
-  requiredPlotDebtIds: z.array(boundedString(100)).min(0).max(20).optional(),
+  requiredPlotDebtIds: z.array(boundedString(100)).min(0).max(20).optional(), // Allow empty for V1 → V2 transition
   blockingConditions: z.array(z.string().min(1).max(100)).min(0).max(20).default([]),
 }).strict()
 
@@ -91,11 +91,16 @@ export function deriveEndingDef(candidate: EndingCandidate): { id: string; isMai
 /** Normalize V1 ending candidate to V2 representation for runtime use */
 export function normalizeEndingCandidateFromV1(v1: z.infer<typeof EndingCandidateV1Schema>): Omit<z.infer<typeof EndingCandidateSchema>, 'kind'> & { kind: 'main' | 'secret' } {
   const isSecret = v1.isSecret === true
+  
+  // C-R3-R2 Blocker #2: Explicit field selection - DO NOT spread {...v1} which includes legacy isSecret key
   return {
-    ...v1,
-    kind: isSecret ? 'secret' : 'main',
+    key: v1.key,
+    name: v1.name,
+    condition: v1.condition,
     requiredClosure: v1.requiredClosure,
     blockingConditions: v1.blockingConditions ?? [],
+    requiredPlotDebtIds: [], // V1 contracts don't have this field - will be empty until normalized
+    kind: isSecret ? 'secret' : 'main',
   }
 }
 

@@ -420,6 +420,100 @@ export const StoredStoryContractV2Schema = z.object({
   })
 })
 
+/** C-R3-R2 Blocker #2: Runtime schema for normalized contracts - does NOT enforce NCS §1.4 authoring invariants
+  
+   This is used AFTER normalization to validate runtime-compatible shape WITHOUT requiring V2 authoring rules.
+   Allows legitimate V1 contracts (without secret endings) to be represented at runtime after normalization.
+   
+   CRITICAL DIFFERENCE from StoryContractSchema:
+   - StoryContractSchema = AUTHORING contract enforcement (NCS §1.4 required)
+   - NormalizedStoryContractSchema = RUNTIME representation only (no NCS §1.4 enforcement)
+   - Use this when you want V1/V2 compatibility at runtime, not strict authoring validation
+*/
+export const NormalizedStoryContractSchema = z.object({
+  storyId: boundedString(128),
+  totalChapters: z.literal(50),
+  title: boundedString(160),
+  genre: boundedString(80),
+  tone: boundedString(160),
+  styleProfile: z.enum(['lakoku_mobile_drama_v1', 'lakoku_mobile_drama_v2']),
+  mainCharacter: MainCharacterSchema,
+  mainConflict: boundedString(800),
+  finalQuestion: boundedString(500),
+  corePromise: boundedString(800),
+  actPlan: z.array(ActPlanEntrySchema).min(1).max(12),
+  chapterTargets: z.array(ChapterTargetSchema).length(50),
+  endingCandidates: z.array(EndingCandidateSchema).min(2).max(8),
+  plotDebts: z.array(PlotDebtSchema).min(1).max(20),
+  revealRunway: z.array(RevealRunwayEntrySchema).min(1).max(20),
+  closureRunway: ClosureRunwaySchema,
+}).strict().superRefine((contract, context) => {
+  // NO NCS §1.4 enforcement here - that's for StoryContractSchema only
+  // Only validate structural integrity, not authoring requirements
+  
+  // Still validate chapter targets ordering (structural, not authoring-specific)
+  contract.chapterTargets.forEach((target, index) => {
+    const expected = index + 1
+    if (target.chapterNumber !== expected) {
+      context.addIssue({
+        code: 'custom',
+        path: ['chapterTargets', index, 'chapterNumber'],
+        message: `chapterTargets must be ordered sequentially; expected chapter ${expected}.`,
+      })
+    }
+  })
+
+  // Validate act plan structure
+  contract.actPlan.forEach((act, index) => {
+    const expectedActNumber = index + 1
+    if (act.actNumber !== expectedActNumber) {
+      context.addIssue({
+        code: 'custom',
+        path: ['actPlan', index, 'actNumber'],
+        message: `actPlan must use ordered act numbers; expected act ${expectedActNumber}.`,
+      })
+    }
+    if (act.fromChapter > act.toChapter) {
+      context.addIssue({
+        code: 'custom',
+        path: ['actPlan', index],
+        message: 'Act range cannot end before it starts.',
+      })
+    }
+    const expectedStart = index === 0 ? 1 : contract.actPlan[index - 1].toChapter + 1
+    if (act.fromChapter !== expectedStart) {
+      context.addIssue({
+        code: 'custom',
+        path: ['actPlan', index, 'fromChapter'],
+        message: `actPlan must cover chapters contiguously; expected chapter ${expectedStart}.`,
+      })
+    }
+  })
+
+  if (contract.actPlan.at(-1)?.toChapter !== 50) {
+    context.addIssue({
+      code: 'custom',
+      path: ['actPlan', contract.actPlan.length - 1, 'toChapter'],
+      message: 'actPlan must cover through chapter 50.',
+    })
+  }
+
+  addDuplicateIssues(
+    contract.endingCandidates.map((ending) => ending.key),
+    ['endingCandidates'],
+    'Ending candidate keys must be unique.',
+    context,
+  )
+  addDuplicateIssues(
+    contract.plotDebts.map((debt) => debt.id),
+    ['plotDebts'],
+    'Plot debt IDs must be unique.',
+    context,
+  )
+
+  // No requiredPlotDebtIds validation here - allow empty arrays for V1->V2 transition
+})
+
 export const StoryContractSchema = z.object({
   storyId: boundedString(128),
   totalChapters: z.literal(50),
@@ -589,18 +683,18 @@ export function parseStoredStoryContractFromV2(input: unknown): z.infer<typeof S
 ARCHITECTURAL LOCK (C-R3-R2 Blocker #2):
 MUST parse V1 contracts strictly BEFORE normalization, NOT cast and promote.
 Correct flow:
-  unknown → StoredStoryContractV1Schema.parse() → explicitly normalize → NormalizedStoryContractSchema
+  unknown → StoredStoryContractV1Schema.parse() → explicitly normalize endings → NormalizedStoryContractSchema
 V1 contracts must NOT be promoted to v2 authoring format - they remain V1 until runtime normalization.
 
 Current WRONG pattern (VIOLATES ARCH):
   unknown → cast to Record → parse endingCandidates as v1 → normalize → StoryContractSchema (v2)
-
+  
 Fixed pattern (COMPLIANT WITH ARCH):
-  unknown → StoredStoryContractV1Schema.parse() → normalizeEndingCandidateFromV1() → return v2-compatible normalized result
+  unknown → StoredStoryContractV1Schema.parse() → normalizeEndingCandidateFromV1() → NormalizedStoryContractSchema (runtime-compatible output)
 */
 export function parseStoryContractWithNormalization(input: unknown): z.infer<typeof StoryContractSchema> {
   if (input === null || typeof input !== 'object') {
-    throw new Error(`Invalid contract input: expected object, got ${typeof typeof input}`)
+    throw new Error(`Invalid contract input: expected object, got ${typeof input}`)
   }
   
   const obj = input as Record<string, unknown>
@@ -616,13 +710,14 @@ export function parseStoryContractWithNormalization(input: unknown): z.infer<typ
       normalizeEndingCandidateFromV1(candidate)
     )
     
-    // Build v2-compatible output using common schema but WITHOUT styleProfile promotion
+    // Build v2-compatible output using runtime schema (NO NCS §1.4 enforcement!)
     const normalizedOutput = {
       ...parsedV1,
       endingCandidates: normalizedEndings,
     }
     
-    return StoryContractSchema.parse(normalizedOutput)
+    // Use NormalizedStoryContractSchema instead of StoryContractSchema - doesn't enforce NCS §1.4
+    return NormalizedStoryContractSchema.parse(normalizedOutput) as z.infer<typeof StoryContractSchema>
   }
   
   return StoryContractSchema.parse(obj)

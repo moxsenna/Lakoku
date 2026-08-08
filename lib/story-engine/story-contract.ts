@@ -88,18 +88,23 @@ export function deriveEndingDef(candidate: EndingCandidate): { id: string; isMai
   }
 }
 
-/** Normalize V1 ending candidate to V2 representation for runtime use */
+/** Normalize V1 ending candidate to V2 representation for runtime use
+  
+   C-R3-R2 Blocker #2 + #3: Must use explicit field selection, NOT spread {...v1} which includes legacy isSecret field.
+   Architecture: V1 contracts remain V1 until runtime normalization - do not promote styleProfile or spreading legacy fields.
+*/
 export function normalizeEndingCandidateFromV1(v1: z.infer<typeof EndingCandidateV1Schema>): Omit<z.infer<typeof EndingCandidateSchema>, 'kind'> & { kind: 'main' | 'secret' } {
   const isSecret = v1.isSecret === true
   
-  // C-R3-R2 Blocker #2: Explicit field selection - DO NOT spread {...v1} which includes legacy isSecret key
+  // C-R3-R2 Blocker #2 + #3: Explicit field selection - DO NOT spread {...v1} which includes legacy isSecret field
+  // Also marks structured closure proof as empty (UNPROVEN) since V1 contracts lack requiredPlotDebtIds
   return {
     key: v1.key,
     name: v1.name,
     condition: v1.condition,
     requiredClosure: v1.requiredClosure,
     blockingConditions: v1.blockingConditions ?? [],
-    requiredPlotDebtIds: [], // V1 contracts don't have this field - will be empty until normalized
+    requiredPlotDebtIds: [], // V1 contracts don't have this field — empty until normalized to V2
     kind: isSecret ? 'secret' : 'main',
   }
 }
@@ -579,10 +584,23 @@ export function parseStoredStoryContractFromV2(input: unknown): z.infer<typeof S
   return StoredStoryContractV2Schema.parse(input)
 }
 
-/** Runtime adapter: normalize V1 contracts to V2 semantics during parsing */
+/** Runtime adapter: normalize V1 contracts to V2 semantics during parsing
+
+ARCHITECTURAL LOCK (C-R3-R2 Blocker #2):
+MUST parse V1 contracts strictly BEFORE normalization, NOT cast and promote.
+Correct flow:
+  unknown → StoredStoryContractV1Schema.parse() → explicitly normalize → NormalizedStoryContractSchema
+V1 contracts must NOT be promoted to v2 authoring format - they remain V1 until runtime normalization.
+
+Current WRONG pattern (VIOLATES ARCH):
+  unknown → cast to Record → parse endingCandidates as v1 → normalize → StoryContractSchema (v2)
+
+Fixed pattern (COMPLIANT WITH ARCH):
+  unknown → StoredStoryContractV1Schema.parse() → normalizeEndingCandidateFromV1() → return v2-compatible normalized result
+*/
 export function parseStoryContractWithNormalization(input: unknown): z.infer<typeof StoryContractSchema> {
   if (input === null || typeof input !== 'object') {
-    throw new Error(`Invalid contract input: expected object, got ${typeof input}`)
+    throw new Error(`Invalid contract input: expected object, got ${typeof typeof input}`)
   }
   
   const obj = input as Record<string, unknown>
@@ -590,14 +608,21 @@ export function parseStoryContractWithNormalization(input: unknown): z.infer<typ
   const isV1 = styleProfile === 'lakoku_mobile_drama_v1'
   
   if (isV1) {
-    const normalized = {
-      ...obj,
-      endingCandidates: (obj.endingCandidates as Array<z.infer<typeof EndingCandidateV1Schema>>).map((candidate) => 
-        normalizeEndingCandidateFromV1(candidate)
-      ),
-      styleProfile: 'lakoku_mobile_drama_v2', // Promote to v2 semantics for runtime
+    // C-R3-R2 Blocker #2: STRICT V1 PARSING FIRST - must validate against StoredStoryContractV1Schema before any normalization
+    const parsedV1 = StoredStoryContractV1Schema.parse(obj)
+    
+    // Then explicitly normalize ending candidates without promoting styleProfile or spreading legacy fields
+    const normalizedEndings = parsedV1.endingCandidates.map((candidate) => 
+      normalizeEndingCandidateFromV1(candidate)
+    )
+    
+    // Build v2-compatible output using common schema but WITHOUT styleProfile promotion
+    const normalizedOutput = {
+      ...parsedV1,
+      endingCandidates: normalizedEndings,
     }
-    return StoryContractSchema.parse(normalized)
+    
+    return StoryContractSchema.parse(normalizedOutput)
   }
   
   return StoryContractSchema.parse(obj)

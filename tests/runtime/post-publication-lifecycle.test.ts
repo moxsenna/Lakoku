@@ -360,10 +360,12 @@ describe('C-R2 G1: deriveEndingReachabilityEvidence', () => {
       requiredClosure: derived.endings.map((ending) => ({
         endingId: ending.id,
         endingKind: ending.isSecret ? 'secret' : 'main',
+        proven: true, // Test uses V2 contract with requiredPlotDebtIds
         satisfiable: !closure.find((c) => c.endingId === ending.id)?.blockingThreadIds.length,
         blockedByFlags: ending.blockedByFlags ?? [],
         flagsPresent: (ending.blockedByFlags ?? []).every((f) => snapshot.facts.some((fact) => fact.id === f)),
       })),
+      closureProofComplete: true,
       closureAllSatisfiable: closure.every((c) => c.satisfiable),
       mainReachable: true,
       secretReachable: false,

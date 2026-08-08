@@ -265,8 +265,16 @@ export interface EndingReachabilityEvidenceV2 {
   secretEndingCount: number
   minRequiredSecret: number // NCS §1.4 requires at least one
   /** Per-ending requiredClosure satisfiability (deterministic, honest). */
-  requiredClosure: Array<{ endingId: string; endingKind: 'main'|'secret'; satisfiable: boolean; blockedByFlags: string[]; flagsPresent: boolean }>
+  requiredClosure: Array<{ 
+    endingId: string 
+    endingKind: 'main'|'secret' 
+    proven: boolean      // true for V2 with requiredPlotDebtIds; false for V1 without structured data (UNPROVEN)
+    satisfiable: boolean | null  // null if unproven; actual value if proven
+    blockedByFlags: string[] 
+    flagsPresent: boolean 
+  }>
   closureAllSatisfiable: boolean
+  closureProofComplete: boolean  // NEW: all endings have proven=true
   mainReachable: boolean
   secretReachable: boolean
   /** Finding codes from checkEndingReachability over structured data. Empty = no violation detectable. */
@@ -363,7 +371,7 @@ export function deriveEndingReachabilityEvidence(args: {
   const secretReachable = reachableSecretCount >= 1
   
   // Build per-ending closure evidence with flagged status (C-R3-R1 fix #6: use helper)
-  // C-R3-R2 Blocker #4: Pass full contract instead of empty object workaround
+  // C-R3-R2 Blocker #4 + #3: Pass full contract and mark V1 contracts as UNPROVEN
   const closureFromHelper = deriveRequiredClosureSatisfiability({
     storyId: args.snapshot.storyId,
     contract: contract,
@@ -375,26 +383,38 @@ export function deriveEndingReachabilityEvidence(args: {
     const helperEntry = closureFromHelper.find((h) => h.endingId === ending.id)
     const blockingThreadIds = helperEntry?.blockingThreadIds ?? []
     
+    // Check if this candidate has structured requiredPlotDebtIds (V2) or not (V1 legacy)
+    const originalCandidate = contract.endingCandidates.find((c) => c.key === ending.id)
+    const hasStructuredData = originalCandidate?.requiredPlotDebtIds && originalCandidate.requiredPlotDebtIds.length > 0
+    
     return {
       endingId: ending.id,
       endingKind: ending.isSecret ? 'secret' : 'main',
-      satisfiable: blockingThreadIds.length === 0, // Use actual blocking thread IDs from helper
+      proven: hasStructuredData ?? false,  // true for V2 with requiredPlotDebtIds, false for V1 legacy
+      satisfiable: hasStructuredData ? (blockingThreadIds.length === 0) : null,  // null when unproven (C-R3-R2 Blocker #3)
       blockedByFlags: ending.blockedByFlags ?? [],
       flagsPresent: (ending.blockedByFlags ?? []).every((flag) => state.storyFlags.has(flag)),
     }
   })
 
-  const closureAllSatisfiable = requiredClosure.every((c) => c.satisfiable)
+  // NEW: Check if all closures have been proven (not just whether they're satisfiable)
+  const closureProofComplete = requiredClosure.every((c) => c.proven === true)
+  
+  // Closure is only considered "all satisfiable" if proof is complete AND all are satisfiable
+  // If proof incomplete (V1 legacy), closureAllSatisfiable=false even if satisfiable=true
+  const closureAllSatisfiable = closureProofComplete && requiredClosure.every((c) => c.satisfiable === true)
   
   // NCS §1.4 proven only when:
   // - At least 2 main endings reachable
   // - At least 1 secret ending path reachable  
-  // - All closures satisfiable
+  // - All closures PROVEN (structured data exists for V2 contracts)
+  // - All closures SATISFIABLE (no blocking threads/flags present)
   // - No critical violations
   const ncs14Proven =
     mainReachable
     && secretReachable
-    && closureAllSatisfiable
+    && closureProofComplete      // Must have structured proof (V2 requiredPlotDebtIds)
+    && closureAllSatisfiable     // AND all proved closures must be satisfiable
     && violationFindings.filter((f) => f.severity === 'CRITICAL').length === 0
 
   return {
@@ -406,6 +426,7 @@ export function deriveEndingReachabilityEvidence(args: {
     minRequiredSecret: 1, // NCS §1.4 requirement
     requiredClosure,
     closureAllSatisfiable,
+    closureProofComplete,
     mainReachable,
     secretReachable,
     reachabilityViolationFindingCodes: violationFindings.map((f) => f.code),
@@ -419,15 +440,20 @@ export function deriveEndingReachabilityEvidence(args: {
  * explicit — this is the blocking path EndingDef.blockedByFlags cannot express
  * for closure-based endings.
  * 
- * C-R3-R2 Blocker #4: Use requiredPlotDebtIds (structured IDs) as authority.
- * V2: requiredPlotDebtIds is REQUIRED and PRIMARY authority
- * V1: structured closure proof = UNPROVEN (legacy prose semantics not machine-convertible)
+ * C-R3-R2 Blocker #4 + #3: Use requiredPlotDebtIds (structured IDs) as authority.
+ * V2: requiredPlotDebtIds is REQUIRED and PRIMARY authority → proven=true, satisfiable calculated
+ * V1: no structured data → proven=false, satisfiable=null (UNPROVEN/legacy semantics not machine-convertible)
  */
 export function deriveRequiredClosureSatisfiability(args: {
   storyId: string
   contract: StoryContract
   snapshot: CanonSnapshot
-}): Array<{ endingId: string; satisfiable: boolean; blockingThreadIds: string[] }> {
+}): Array<{ 
+  endingId: string 
+  proven: boolean           // true if requiredPlotDebtIds present; false for V1 legacy
+  satisfiable: boolean | null  // actual value when proven=true, null when proven=false (unproven)
+  blockingThreadIds: string[] 
+}> {
   const { storyId, contract, snapshot } = args
   const statusByThreadId = new Map(snapshot.threads.map((t) => [t.id, t.status]))
   
@@ -437,20 +463,30 @@ export function deriveRequiredClosureSatisfiability(args: {
     // C-R3-R2 Blocker #4: ONLY use requiredPlotDebtIds as structured authority
     // DO NOT fall back to prose-text requiredClosure (not convertible to debt IDs)
     if (candidate.requiredPlotDebtIds && candidate.requiredPlotDebtIds.length > 0) {
-      // V2 or normalized V1 → use structured debt IDs
+      // V2 or normalized V1 with structured data → PROVEN with satisfiability check
       for (const debtId of candidate.requiredPlotDebtIds) {
         const threadId = debtBackedThreadId(storyId, debtId)
         const status = statusByThreadId.get(threadId)
         if (status === 'ABANDONED_APPROVED') blockingThreadIds.push(threadId)
       }
+      
+      return { 
+        endingId: candidate.key, 
+        proven: true,     // Has structured proof
+        satisfiable: blockingThreadIds.length === 0,
+        blockingThreadIds 
+      }
     } else {
       // V1 legacy with no structured data → UNPROVEN / unknown closure state
       // Do NOT treat prose strings as debt IDs - reviewer feedback
-      // Structured closure proof remains empty, marking as satisfiable only by default
-      // but evidence downstream will flag insufficient provenance
+      // Return proven=false, satisfiable=null to explicitly mark unproven status
+      return { 
+        endingId: candidate.key, 
+        proven: false,    // No structured proof available
+        satisfiable: null, // Unknown until structured data provided
+        blockingThreadIds: []
+      }
     }
-    
-    return { endingId: candidate.key, satisfiable: blockingThreadIds.length === 0, blockingThreadIds }
   })
 }
 

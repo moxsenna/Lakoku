@@ -184,9 +184,11 @@ begin
         or pg_catalog.jsonb_typeof(item->'blockingConditions') <> 'array' or pg_catalog.jsonb_array_length(item->'blockingConditions') not between 0 and 20
         or exists(select 1 from pg_catalog.jsonb_array_elements(item->'blockingConditions') v where pg_catalog.jsonb_typeof(v)<>'string' or pg_catalog.char_length(v#>>'{}') not between 1 and 100)
         -- REQUIRED ENFORCEMENT: kind must exist and be exactly 'main' or 'secret'
-        -- Use jsonb access (item->'kind') not text extraction (item->>'kind') for type check
+        -- Use jsonb access (item->'kind') for type check, then text extraction (item->>'kind') for value comparison
+        -- item->'kind' produces JSONB "main" (with quotes), cast to text keeps quotes
+        -- item->>'kind' produces plain text main (without quotes) for direct value comparison
         or pg_catalog.jsonb_typeof(item->'kind') is distinct from 'string'
-        or (item->'kind')::text not in ('main', 'secret')
+        or item->>'kind' not in ('main', 'secret')
         -- REQUIRED ENFORCEMENT: requiredPlotDebtIds must exist and be non-empty array of valid string IDs
         or not (item ? 'requiredPlotDebtIds')
         or pg_catalog.jsonb_typeof(item->'requiredPlotDebtIds') <> 'array'

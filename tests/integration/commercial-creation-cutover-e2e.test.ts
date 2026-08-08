@@ -8,13 +8,29 @@ import { misteriDramaContract } from '@/fixtures/contracts/misteri-drama'
 // Mocks
 const mocks = vi.hoisted(() => ({
   selectProvider: vi.fn(async () => ({ name: 'mock-provider' })),
-  createResilientStoryContract: vi.fn(async (input: { storyId: string }) => ({
-    contract: {
-      ...misteriDramaContract,
-      storyId: input.storyId,
-    },
-    contractSource: 'llm',
-  })),
+  createResilientStoryContract: vi.fn(async (input: { storyId: string }) => {
+    const admin = createAdminClient()
+    await admin.from('stories').update({ story_contract_version: 1 }).eq('id', input.storyId)
+    await admin.from('story_generation_contracts').insert({
+      story_id: input.storyId,
+      story_contract_version: 1,
+      premise_title: misteriDramaContract.title,
+      premise_synopsis: misteriDramaContract.mainConflict,
+      protagonist_name: 'Hero',
+      protagonist_role: 'Pejuang',
+      core_desire: 'Keadilan',
+      main_mystery: 'Rahasia',
+      initial_setting: 'Desa',
+      plot_debts_json: [],
+    })
+    return {
+      contract: {
+        ...misteriDramaContract,
+        storyId: input.storyId,
+      },
+      contractSource: 'llm',
+    }
+  }),
   generateNextPersonalizedChapter: vi.fn(async () => ({
     ok: true,
     chapterNumber: 1,
@@ -49,6 +65,9 @@ vi.mock('@/lib/runtime/personalized-generation', () => ({
 vi.mock('@/lib/runtime/generation-worker', () => ({
   claimAndRunGenerationJobById: mocks.claimAndRunGenerationJobById,
 }))
+vi.mock('@/lib/api/generation-continuation.server', () => ({
+  continuePersonalizedGeneration: vi.fn(async () => ({ nextChapterReady: false })),
+}))
 vi.mock('@/lib/api/taste-profile', () => ({
   getTasteProfileForUser: vi.fn(async () => createDefaultTasteProfile()),
 }))
@@ -65,13 +84,14 @@ describeLocalDb('Commercial Creation Cutover E2E', () => {
     process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU'
 
     admin = createAdminClient()
+    try { await admin.rpc('reload_schema_cache_v1') } catch {}
 
     userId = randomUUID()
-    await admin.auth.admin.createUser({
-      id: userId,
-      email: `creation-${userId}@example.com`,
-      email_confirm: true,
+    const { error: userErr } = await admin.rpc('create_test_auth_user_v1', {
+      p_user_id: userId,
+      p_email: `creation-${userId}@example.com`,
     })
+    if (userErr) throw new Error(`create_test_auth_user_v1 failed: ${JSON.stringify(userErr)}`)
   })
 
   beforeEach(() => {
@@ -80,6 +100,19 @@ describeLocalDb('Commercial Creation Cutover E2E', () => {
 
   it('proves creation flow bounds, authorization gating, atomic job binding, and V6 promotion', async () => {
     // 0. Seed user commercial state with prior starter story claimed
+    await admin.from('stories').insert({
+      id: 'story-starter-prev-e2e',
+      owner_user_id: userId,
+      title: 'Starter Story Prev',
+      tagline: 'Tagline',
+      synopsis: 'Synopsis',
+      tropes: [],
+      story_mode: 'personalized_ai',
+      visibility: 'private',
+      status: 'published',
+      commercial_origin: 'STARTER_FREE',
+    })
+
     await admin.from('account_commercial_states').upsert({
       user_id: userId,
       starter_story_id: 'story-starter-prev-e2e',
@@ -151,23 +184,152 @@ describeLocalDb('Commercial Creation Cutover E2E', () => {
     expect(jobs!.publication_idempotency_key).toBe(`generation-job:${reqData!.generation_job_id}:publish:1`)
     expect(jobs!.status).toBe('QUEUED')
 
-    // 4. Simulate V6 worker completion: Request -> READY & Story -> ready
-    await admin
-      .from('story_creation_requests')
-      .update({
-        status: 'READY',
-        updated_at: new Date().toISOString(),
-      })
-      .eq('owner_user_id', userId)
+    // 4. Execute real V6 worker publication pipeline
+    const { data: claimData } = await admin.rpc('claim_generation_job_by_id_v1', {
+      p_job_id: reqData!.generation_job_id!,
+      p_worker_id: 'worker-creation-e2e-1',
+    })
+    expect(claimData?.claimed).toBe(true)
+    const claimToken = claimData.job.claim_token
+
+    await admin.from('stories').update({ story_contract_version: 1 }).eq('id', storyId)
+    await admin.from('generation_jobs').update({ story_contract_version: 1 }).eq('id', reqData!.generation_job_id!)
+
+    const { data: leaseData, error: leaseErr } = await admin.rpc('acquire_generation_job_lease_v1', {
+      p_job_id: reqData!.generation_job_id!,
+      p_worker_id: 'worker-creation-e2e-1',
+      p_claim_token: claimToken,
+      p_ttl_seconds: 300,
+    })
+    expect(leaseErr).toBeNull()
+    expect(leaseData?.ok).toBe(true)
+    const leaseId = leaseData.lease_id
+
+    await admin.from('story_generation_contracts').upsert({
+      story_id: storyId,
+      story_contract_version: 1,
+      premise_title: 'Judul E2E',
+      premise_synopsis: 'Sinopsis E2E',
+      protagonist_name: 'Hero',
+      protagonist_role: 'Pejuang',
+      core_desire: 'Keadilan',
+      main_mystery: 'Rahasia',
+      initial_setting: 'Desa',
+      plot_debts_json: [],
+    })
+
+    const { error: ckptInsErr } = await admin.from('chapter_generation_checkpoints').insert({
+      story_id: storyId,
+      chapter_number: 1,
+      attempt_id: reqData!.generation_job_id!,
+      job_id: reqData!.generation_job_id!,
+      correlation_id: claimData.job.correlation_id,
+      generation_mode: 'personalized',
+      status: 'PROSE_READY',
+      title: 'Bab 1: Permulaan E2E',
+      paragraphs_json: ['Paragraf 1 E2E.'],
+      prose_fingerprint: 'fingerprint-1',
+      canon_version: 1,
+      blueprint_version: 1,
+      direction_fingerprint: 'dir-1',
+      generation_policy_version: 1,
+      prompt_contract_version: 1,
+      prose_attempt_count: 1,
+      choice_attempt_count: 0,
+      job_attempt_number: claimData.job.attempt_count,
+      story_contract_version: 1,
+      checkpoint_schema_version: 2,
+      audit_signals_version: 2,
+      audit_signals_json: {
+        opensNewThread: false,
+        opensMajorMystery: false,
+        opensNewConflict: false,
+        closesPlotDebts: [],
+      },
+      expires_at: new Date(Date.now() + 3600_000).toISOString(),
+    })
+    expect(ckptInsErr).toBeNull()
+
+    const { data: pubData, error: pubErr } = await admin.rpc('publish_generation_job_chapter_v6', {
+      p_job_id: reqData!.generation_job_id!,
+      p_worker_id: 'worker-creation-e2e-1',
+      p_claim_token: claimToken,
+      p_lease_id: leaseId,
+      p_story_id: storyId,
+      p_chapter_number: 1,
+      p_title: 'Bab 1: Permulaan E2E',
+      p_paragraphs: ['Paragraf 1 E2E.'],
+      p_choice_prompt: 'Apa pilihanmu?',
+      p_choices: [
+        { id: 'c1', label: 'Masuk ke dalam lorong gelap' },
+        { id: 'c2', label: 'Tinggalkan pintu rahasia ini' },
+      ],
+      p_outcomes: [
+        {
+          choiceId: 'c1',
+          consequence: ['Melangkah masuk ke lorong.'],
+          nextChapterNumber: 2,
+          isEnding: false,
+          effect_json: {
+            routeDeltas: {},
+            trustDeltas: {},
+            flagsSet: {},
+            evidenceAdded: [],
+            endingBiasDeltas: {},
+            threadTouches: [],
+          },
+          choice_kind: 'normal',
+        },
+        {
+          choiceId: 'c2',
+          consequence: ['Menunggu di balik pintu.'],
+          nextChapterNumber: 2,
+          isEnding: false,
+          effect_json: {
+            routeDeltas: {},
+            trustDeltas: {},
+            flagsSet: {},
+            evidenceAdded: [],
+            endingBiasDeltas: {},
+            threadTouches: [],
+          },
+          choice_kind: 'normal',
+        },
+      ],
+    })
+
+    if (pubErr) console.error('[debug pubErr]:', pubErr)
+    expect(pubErr).toBeNull()
+    expect(pubData?.ok).toBe(true)
+
+    // Verify V6 post-conditions:
+    // - Chapter 1 exists
+    const { data: chap1 } = await admin
+      .from('chapters')
+      .select('number, title')
       .eq('story_id', storyId)
+      .eq('number', 1)
+      .single()
+    expect(chap1).not.toBeNull()
 
-    await admin
-      .from('stories')
-      .update({
-        generation_status: 'ready',
-      })
-      .eq('id', storyId)
+    // - Reservation CAPTURED
+    const { data: startRes } = await admin
+      .from('credit_reservations')
+      .select('status')
+      .eq('ref', `story-start:${userId}:${storyId}`)
+      .single()
+    expect(startRes?.status).toBe('CAPTURED')
 
+    // - Exactly one -24 debit with reason story_start
+    const { data: ledgerEntries } = await admin
+      .from('credit_ledger')
+      .select('delta, reason')
+      .eq('user_id', userId)
+      .eq('reason', 'story_start')
+    expect(ledgerEntries).toHaveLength(1)
+    expect(ledgerEntries?.[0].delta).toBe(-24)
+
+    // - Story commercial_origin = PAID_START & generation_status = ready
     const { data: storyData } = await admin
       .from('stories')
       .select('generation_status, commercial_origin')
@@ -175,7 +337,17 @@ describeLocalDb('Commercial Creation Cutover E2E', () => {
       .single()
 
     expect(storyData).not.toBeNull()
+    expect(storyData!.commercial_origin).toBe('PAID_START')
     expect(storyData!.generation_status).toBe('ready')
+
+    // - Creation Request status = READY
+    const { data: updatedReq } = await admin
+      .from('story_creation_requests')
+      .select('status')
+      .eq('owner_user_id', userId)
+      .eq('story_id', storyId)
+      .single()
+    expect(updatedReq?.status).toBe('READY')
 
     // 5. Replay: Calling createPersonalizedStory again with same key returns storyId without duplicate debit or jobs
     const replayRes = await createPersonalizedStory({
@@ -192,5 +364,12 @@ describeLocalDb('Commercial Creation Cutover E2E', () => {
       .eq('user_id', userId)
       .eq('story_id', storyId)
     expect(finalJobs?.length).toBe(1)
+
+    const { data: finalLedger } = await admin
+      .from('credit_ledger')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('reason', 'story_start')
+    expect(finalLedger?.length).toBe(1)
   }, 60_000)
 })

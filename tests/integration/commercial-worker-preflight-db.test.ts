@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest'
 vi.mock('server-only', () => ({}))
 import { randomUUID } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { resolveCommercialWorkerPreflight } from '@/lib/commercial/worker-preflight.server'
 
@@ -14,12 +13,8 @@ describeLocalDb('Worker Preflight Local DB Provenance & Zero-Provider Tests', ()
   const storyId = `ai:preflight-${randomUUID()}`
 
   beforeAll(async () => {
-    const raw = process.platform === 'win32'
-      ? execFileSync('cmd.exe', ['/d', '/s', '/c', 'pnpm exec supabase status -o json'], { encoding: 'utf8' })
-      : execFileSync('pnpm', ['exec', 'supabase', 'status', '-o', 'json'], { encoding: 'utf8' })
-    const status = JSON.parse(raw)
-    process.env.NEXT_PUBLIC_SUPABASE_URL = status.API_URL
-    process.env.SUPABASE_SERVICE_ROLE_KEY = status.SERVICE_ROLE_KEY
+    process.env.NEXT_PUBLIC_SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'http://127.0.0.1:55321'
+    process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU'
 
     admin = createAdminClient()
 
@@ -180,5 +175,41 @@ describeLocalDb('Worker Preflight Local DB Provenance & Zero-Provider Tests', ()
 
     expect(preflight.status).toBe('DENIED')
     expect(preflight.reason).toBe('JOB_STATE_MISMATCH')
+  })
+
+  it('runs claimAndRunGenerationJobById on mutated real DB job and proves generator call count = 0', async () => {
+    const claimToken = randomUUID()
+    const jobId = randomUUID()
+
+    // Insert job with generation_kind = 'personalized' but NO matching intent in DB
+    await admin.from('generation_jobs').insert({
+      id: jobId,
+      correlation_id: randomUUID(),
+      user_id: userId,
+      story_id: storyId,
+      chapter_number: 6,
+      generation_kind: 'personalized',
+      trigger_choice_id: 'choice-unbound',
+      status: 'QUEUED',
+      attempt_count: 0,
+      max_attempts: 4,
+      publication_idempotency_key: `generation-job:${jobId}:publish:6`,
+      story_contract_version: 1,
+    })
+
+    const mockGen = vi.fn()
+    vi.doMock('@/lib/runtime/personalized-generation', () => ({
+      generateNextPersonalizedChapter: mockGen,
+    }))
+
+    const { claimAndRunGenerationJobById } = await import('@/lib/runtime/generation-worker')
+
+    const result = await claimAndRunGenerationJobById({
+      jobId,
+      workerId: 'worker-pf-zero-test',
+    })
+
+    expect(result.ok).toBe(false)
+    expect(mockGen).not.toHaveBeenCalled()
   })
 })

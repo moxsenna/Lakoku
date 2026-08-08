@@ -303,14 +303,22 @@ export async function applyPersonalizedChoice(
     }
   }
 
-  // STEP 2: Commercial Intent & Job Queueing
-  if (targetChapter >= 4) {
+  // STEP 2: Commercial Intent & Job Queueing (personalized_ai only; premium_instance uses authenticated queueing)
+  if (targetChapter >= 4 && metadata.story_mode === 'personalized_ai') {
     // Bab 4+: Quote-preserving commercial authorization & atomic queueing
     const { data: authData, error: authErr } = await admin.rpc('authorize_commercial_generation_intent_v1', {
       p_user_id: input.userId,
       p_story_id: input.storyId,
       p_chapter_number: targetChapter,
     })
+
+    if (authErr?.message === 'SUCCEEDED_JOB_PRESENT') {
+      return {
+        outcome: result.outcome,
+        nextChapterNumber: targetChapter,
+        replayed: true,
+      }
+    }
 
     if (authErr || !authData) {
       throw new PersonalizedChoiceError('INTERNAL_ERROR')
@@ -336,7 +344,13 @@ export async function applyPersonalizedChoice(
           status: 'WAITING_FOR_CREDITS',
           requiredCredits: authParsed.data.required,
           availableCredits: authParsed.data.available,
-          targetChapterNumber: targetChapter,
+        }
+      }
+      if (authParsed.data.reason === 'RESERVATION_ALREADY_CAPTURED') {
+        return {
+          outcome: result.outcome,
+          nextChapterNumber: targetChapter,
+          replayed: true,
         }
       }
       throw new PersonalizedChoiceError('INTERNAL_ERROR')

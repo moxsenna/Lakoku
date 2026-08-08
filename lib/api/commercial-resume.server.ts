@@ -2,6 +2,9 @@ import 'server-only'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { continuePersonalizedGeneration } from '@/lib/api/generation-continuation.server'
+import { getTasteProfileForUser } from '@/lib/api/taste-profile'
+import { normalizeTasteProfile } from '@/lib/taste-profile/schema'
+import { authorizeStoryCreation, runContractAndGeneration } from '@/lib/api/personalized-stories.server'
 
 export type CommercialResumeErrorCode =
   | 'STORY_NOT_FOUND'
@@ -104,37 +107,29 @@ export async function resumeCommercialOperation(
 
   // Handle Resumable Creation Request (Paid Story #2+ Start)
   if (pendingCreation.length === 1) {
-    // Authorize story creation
-    const { data: resData, error: resError } = await admin.rpc('reserve_story_start_v1', {
-      p_user_id: input.userId,
-      p_story_id: input.storyId,
+    const creationReq = pendingCreation[0]
+    const authRes = await authorizeStoryCreation({
+      admin,
+      userId: input.userId,
+      storyId: input.storyId,
     })
 
-    if (resError || !resData) throw new CommercialResumeError('INTERNAL_ERROR')
-
-    if (resData.ok === false && resData.error === 'INSUFFICIENT_CREDITS') {
-      throw new CommercialResumeError('INSUFFICIENT_CREDITS', resData.required, resData.available, 1)
+    if (!authRes.ok) {
+      throw new CommercialResumeError('INSUFFICIENT_CREDITS', authRes.requiredCredits, authRes.availableCredits, 1)
     }
 
-    // Queue paid story start
-    const { data: queueData, error: queueErr } = await admin.rpc('queue_paid_story_start_generation_v1', {
-      p_owner_user_id: input.userId,
-      p_story_id: input.storyId,
-    })
+    const tasteProfile = (await getTasteProfileForUser(input.userId)) ?? normalizeTasteProfile(null)
 
-    if (queueErr || !queueData) throw new CommercialResumeError('INTERNAL_ERROR')
-
-    const parsedQueue = QueueJobResultSchema.safeParse(queueData)
-    if (!parsedQueue.success || !parsedQueue.data.ok) throw new CommercialResumeError('INTERNAL_ERROR')
-
-    const jobId = parsedQueue.data.job_id
-
-    const { nextChapterReady } = await continuePersonalizedGeneration({
-      jobId,
-      storyId: input.storyId,
+    const runRes = await runContractAndGeneration({
+      admin,
       userId: input.userId,
-      chapterNumber: 1,
+      idempotencyKey: creationReq.idempotency_key,
+      storyId: input.storyId,
+      tasteProfile,
+      commercialOrigin: authRes.origin,
     })
+
+    const nextChapterReady = !runRes.pending
 
     return {
       ok: true,
@@ -180,7 +175,10 @@ export async function resumeCommercialOperation(
     p_chapter_number: intent.chapter_number,
   })
 
-  if (queueErr || !queueData) throw new CommercialResumeError('INTERNAL_ERROR')
+  if (queueErr || !queueData) {
+    if (queueErr) console.error('[resumeCommercialOperation] queueErr:', queueErr)
+    throw new CommercialResumeError('INTERNAL_ERROR')
+  }
 
   const queueParsed = QueueJobResultSchema.safeParse(queueData)
   if (!queueParsed.success || !queueParsed.data.ok) throw new CommercialResumeError('INTERNAL_ERROR')

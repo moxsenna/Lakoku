@@ -65,22 +65,25 @@ export async function POST(
           && typeof nextChapterNumber === 'number'
           && Number.isInteger(nextChapterNumber)
           && nextChapterNumber > 0
-          && result.jobId
         ) {
-          const { nextChapterReady } = await continuePersonalizedGeneration({
-            jobId: result.jobId,
-            storyId: id,
-            userId: user.id,
-            chapterNumber: nextChapterNumber,
-            correlationId: crypto.randomUUID(),
-            triggerChoiceId: choiceId,
-          })
-
-          if (!nextChapterReady) {
-            return NextResponse.json({
-              outcome: result.outcome,
-              nextChapterReady: false,
+          if (result.jobId) {
+            const { nextChapterReady } = await continuePersonalizedGeneration({
+              jobId: result.jobId,
+              storyId: id,
+              userId: user.id,
+              chapterNumber: nextChapterNumber,
+              correlationId: crypto.randomUUID(),
+              triggerChoiceId: choiceId,
             })
+
+            if (!nextChapterReady) {
+              return NextResponse.json({
+                outcome: result.outcome,
+                nextChapterReady: false,
+              })
+            }
+
+            return NextResponse.json({ outcome: result.outcome, nextChapterReady: true })
           }
 
           return NextResponse.json({ outcome: result.outcome, nextChapterReady: true })

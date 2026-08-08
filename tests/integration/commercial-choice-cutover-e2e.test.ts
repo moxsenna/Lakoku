@@ -29,7 +29,7 @@ const runsLocalDb = process.env.LAKOKU_LOCAL_DB_TEST === '1'
 const describeLocalDb = runsLocalDb ? describe : describe.skip
 
 describeLocalDb('Commercial Choice Cutover E2E', () => {
-  const storyId = 'story-choice-e2e-1'
+  let storyId = ''
   const chapterNumber = 4
   const choiceId = 'choice-e2e-4a'
   const idempotencyKey = '00000000-0000-4000-8000-e2e000000002'
@@ -40,13 +40,15 @@ describeLocalDb('Commercial Choice Cutover E2E', () => {
     process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU'
 
     admin = createAdminClient()
+    try { await admin.rpc('reload_schema_cache_v1') } catch {}
+    storyId = `ai:choice-e2e-${randomUUID()}`
 
     userId = randomUUID()
-    await admin.auth.admin.createUser({
-      id: userId,
-      email: `choice-${userId}@example.com`,
-      email_confirm: true,
+    const { error: userErr } = await admin.rpc('create_test_auth_user_v1', {
+      p_user_id: userId,
+      p_email: `choice-${userId}@example.com`,
     })
+    if (userErr) throw new Error(`create_test_auth_user_v1 failed: ${JSON.stringify(userErr)}`)
   })
 
   beforeEach(() => {
@@ -205,6 +207,161 @@ describeLocalDb('Commercial Choice Cutover E2E', () => {
     expect(job!.publication_idempotency_key).toBe(`generation-job:${updatedIntent!.generation_job_id}:publish:5`)
     expect(job!.trigger_choice_id).toBe(choiceId)
 
+    // 2d. Execute real V6 worker publication pipeline for Bab 5
+    const { data: claimData } = await admin.rpc('claim_generation_job_by_id_v1', {
+      p_job_id: updatedIntent!.generation_job_id!,
+      p_worker_id: 'worker-choice-e2e-1',
+    })
+    expect(claimData?.claimed).toBe(true)
+
+    const claimToken = claimData.job.claim_token
+
+    await admin.from('stories').update({ story_contract_version: 1 }).eq('id', storyId)
+    await admin.from('generation_jobs').update({ story_contract_version: 1 }).eq('id', updatedIntent!.generation_job_id!)
+
+    const { data: leaseData, error: leaseErr } = await admin.rpc('acquire_generation_job_lease_v1', {
+      p_job_id: updatedIntent!.generation_job_id!,
+      p_worker_id: 'worker-choice-e2e-1',
+      p_claim_token: claimToken,
+      p_ttl_seconds: 300,
+    })
+    expect(leaseErr).toBeNull()
+    expect(leaseData?.ok).toBe(true)
+    const leaseId = leaseData.lease_id
+
+    await admin.from('story_generation_contracts').upsert({
+      story_id: storyId,
+      story_contract_version: 1,
+      premise_title: 'Judul E2E Choice',
+      premise_synopsis: 'Sinopsis E2E Choice',
+      protagonist_name: 'Hero',
+      protagonist_role: 'Pejuang',
+      core_desire: 'Keadilan',
+      main_mystery: 'Rahasia',
+      initial_setting: 'Desa',
+      plot_debts_json: [],
+    })
+
+    const { error: ckptInsErr } = await admin.from('chapter_generation_checkpoints').insert({
+      story_id: storyId,
+      chapter_number: 5,
+      attempt_id: updatedIntent!.generation_job_id!,
+      job_id: updatedIntent!.generation_job_id!,
+      correlation_id: claimData.job.correlation_id,
+      generation_mode: 'personalized',
+      status: 'PROSE_READY',
+      title: 'Bab 5: Pengungkapan E2E',
+      paragraphs_json: ['Paragraf Bab 5 E2E.'],
+      prose_fingerprint: 'fingerprint-5',
+      canon_version: 1,
+      blueprint_version: 1,
+      direction_fingerprint: 'dir-5',
+      generation_policy_version: 1,
+      prompt_contract_version: 1,
+      prose_attempt_count: 1,
+      choice_attempt_count: 0,
+      job_attempt_number: claimData.job.attempt_count,
+      story_contract_version: 1,
+      checkpoint_schema_version: 2,
+      audit_signals_version: 2,
+      audit_signals_json: {
+        opensNewThread: false,
+        opensMajorMystery: false,
+        opensNewConflict: false,
+        closesPlotDebts: [],
+      },
+      expires_at: new Date(Date.now() + 3600_000).toISOString(),
+    })
+    expect(ckptInsErr).toBeNull()
+
+    const { data: pubData, error: pubErr } = await admin.rpc('publish_generation_job_chapter_v6', {
+      p_job_id: updatedIntent!.generation_job_id!,
+      p_worker_id: 'worker-choice-e2e-1',
+      p_claim_token: claimToken,
+      p_lease_id: leaseId,
+      p_story_id: storyId,
+      p_chapter_number: 5,
+      p_title: 'Bab 5: Pengungkapan E2E',
+      p_paragraphs: ['Paragraf Bab 5 E2E.'],
+      p_choice_prompt: 'Apa pilihanmu?',
+      p_choices: [
+        { id: 'c5a', label: 'Ambil peti tua yang berdebu' },
+        { id: 'c5b', label: 'Periksa jendela kaca retak' },
+      ],
+      p_outcomes: [
+        {
+          choiceId: 'c5a',
+          consequence: ['Membuka isi peti tua.'],
+          nextChapterNumber: 6,
+          isEnding: false,
+          effect_json: {
+            routeDeltas: {},
+            trustDeltas: {},
+            flagsSet: {},
+            evidenceAdded: [],
+            endingBiasDeltas: {},
+            threadTouches: [],
+          },
+          choice_kind: 'normal',
+        },
+        {
+          choiceId: 'c5b',
+          consequence: ['Melihat keluar jendela.'],
+          nextChapterNumber: 6,
+          isEnding: false,
+          effect_json: {
+            routeDeltas: {},
+            trustDeltas: {},
+            flagsSet: {},
+            evidenceAdded: [],
+            endingBiasDeltas: {},
+            threadTouches: [],
+          },
+          choice_kind: 'normal',
+        },
+      ],
+    })
+
+    expect(pubErr).toBeNull()
+    expect(pubData?.ok).toBe(true)
+
+    // Verify V6 post-conditions for choice:
+    // - Chapter 5 published
+    const { data: chap5 } = await admin
+      .from('chapters')
+      .select('number, title')
+      .eq('story_id', storyId)
+      .eq('number', 5)
+      .single()
+    expect(chap5).not.toBeNull()
+
+    // - Reservation CAPTURED
+    const { data: choiceRes } = await admin
+      .from('credit_reservations')
+      .select('status')
+      .eq('ref', `chapter-reservation:${userId}:${storyId}:5`)
+      .single()
+    expect(choiceRes?.status).toBe('CAPTURED')
+
+    // - Intent FULFILLED
+    const { data: fulfilledIntent } = await admin
+      .from('commercial_generation_intents')
+      .select('status')
+      .eq('user_id', userId)
+      .eq('story_id', storyId)
+      .eq('chapter_number', 5)
+      .single()
+    expect(fulfilledIntent?.status).toBe('FULFILLED')
+
+    // - Exactly one -8 debit with reason unlock_chapter
+    const { data: ledgerEntries } = await admin
+      .from('credit_ledger')
+      .select('delta, reason')
+      .eq('user_id', userId)
+      .eq('reason', 'unlock_chapter')
+    expect(ledgerEntries).toHaveLength(1)
+    expect(ledgerEntries?.[0].delta).toBe(-8)
+
     // 3. Replay: Calling applyPersonalizedChoice again with same choice and idempotencyKey returns replayed outcome without duplicate job or intent
     const replayRes = await applyPersonalizedChoice({
       userId,
@@ -224,5 +381,12 @@ describeLocalDb('Commercial Choice Cutover E2E', () => {
       .eq('chapter_number', 5)
 
     expect(allJobs?.length).toBe(1)
+
+    const { data: finalLedger } = await admin
+      .from('credit_ledger')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('reason', 'unlock_chapter')
+    expect(finalLedger?.length).toBe(1)
   }, 30_000)
 })

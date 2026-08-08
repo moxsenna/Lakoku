@@ -79,12 +79,21 @@ begin
     raise exception using errcode = 'P0001', message = 'INTENT_NOT_FOUND';
   end if;
 
-  if v_intent.status = 'QUEUED' and v_intent.generation_job_id is not null then
+  -- Replacement fencing on existing bound job
+  if v_intent.generation_job_id is not null then
     select * into v_job from public.generation_jobs where id = v_intent.generation_job_id;
-    if found and v_job.status in ('QUEUED', 'RUNNING', 'RETRY_WAIT') then
-      return jsonb_build_object('ok', true, 'status', 'QUEUED', 'replayed', true, 'amount', v_intent.quoted_credits);
-    elsif found and v_job.status = 'SUCCEEDED' then
-      raise exception using errcode = 'P0001', message = 'SUCCEEDED_JOB_PRESENT';
+    if found then
+      if v_job.status in ('QUEUED', 'RUNNING', 'RETRY_WAIT') then
+        if v_intent.status = 'QUEUED' then
+          return jsonb_build_object('ok', true, 'status', 'QUEUED', 'replayed', true, 'amount', v_intent.quoted_credits);
+        else
+          raise exception using errcode = 'P0001', message = 'INTENT_JOB_CONFLICT';
+        end if;
+      elsif v_job.status = 'SUCCEEDED' then
+        raise exception using errcode = 'P0001', message = 'SUCCEEDED_JOB_PRESENT';
+      elsif v_job.status in ('FAILED', 'CANCELLED') then
+        v_intent.generation_job_id := null;
+      end if;
     end if;
   end if;
 
@@ -102,7 +111,7 @@ begin
       return jsonb_build_object('ok', false, 'reason', 'RESERVATION_AMOUNT_MISMATCH', 'reservation_amount', v_res.amount, 'intent_amount', v_intent.quoted_credits);
     end if;
 
-    if v_intent.status <> 'AUTHORIZED' then
+    if v_intent.status <> 'AUTHORIZED' or v_intent.generation_job_id is not null then
       update public.commercial_generation_intents
       set status = 'AUTHORIZED', generation_job_id = null, updated_at = clock_timestamp()
       where id = v_intent.id;
@@ -127,9 +136,8 @@ begin
     update public.credit_reservations
     set status = 'ACTIVE',
         amount = v_intent.quoted_credits,
-        created_at = clock_timestamp(),
         expires_at = clock_timestamp() + (c_ttl_seconds || ' seconds')::interval,
-        released_at = null
+        updated_at = clock_timestamp()
     where id = v_res.id;
   else
     insert into public.credit_reservations (
@@ -239,7 +247,26 @@ begin
     raise exception using errcode = 'P0001', message = 'TRIGGER_CHOICE_MISSING';
   end if;
 
-  -- Active job check
+  -- Chapter already published check before creating job
+  if exists (
+    select 1 from public.chapters
+    where story_id = p_story_id and number = p_chapter_number
+  ) then
+    if v_intent.status = 'FULFILLED' and v_res.status = 'CAPTURED' then
+      return jsonb_build_object(
+        'ok', true,
+        'status', 'COMPLETED',
+        'replayed', true,
+        'alreadyComplete', true,
+        'job_id', coalesce(v_intent.generation_job_id, gen_random_uuid()),
+        'correlation_id', gen_random_uuid()
+      );
+    else
+      raise exception using errcode = 'P0001', message = 'CHAPTER_EXISTS_UNFULFILLED_INTENT';
+    end if;
+  end if;
+
+  -- Active job check (Strict Provenance: intent.generation_job_id must match exact active job)
   select * into v_existing_job
   from public.generation_jobs
   where story_id = p_story_id
@@ -248,9 +275,15 @@ begin
   for update;
 
   if found then
-    if v_intent.generation_job_id is null or v_intent.generation_job_id = v_existing_job.id then
+    if v_intent.generation_job_id is not null and v_intent.generation_job_id = v_existing_job.id then
+      if v_existing_job.user_id <> p_user_id
+         or v_existing_job.trigger_choice_id <> v_intent.trigger_choice_id
+         or v_existing_job.story_contract_version <> v_story.story_contract_version then
+        raise exception using errcode = 'P0001', message = 'PROVENANCE_MISMATCH';
+      end if;
+
       update public.commercial_generation_intents
-      set generation_job_id = v_existing_job.id, status = 'QUEUED', updated_at = clock_timestamp()
+      set status = 'QUEUED', updated_at = clock_timestamp()
       where id = v_intent.id;
 
       return jsonb_build_object('ok', true, 'status', 'QUEUED', 'replayed', true, 'job_id', v_existing_job.id, 'correlation_id', v_existing_job.correlation_id);
@@ -427,9 +460,7 @@ begin
 
   update public.story_creation_requests
   set generation_job_id = v_job_id, status = 'RESERVED', error_code = null, updated_at = clock_timestamp()
-  where owner_user_id = v_req.owner_user_id
-    and request_kind = 'personalized'
-    and idempotency_key = v_req.idempotency_key;
+  where story_id = p_story_id;
 
   return jsonb_build_object('ok', true, 'status', 'QUEUED', 'replayed', false, 'job_id', v_job_id, 'correlation_id', v_corr);
 end;
@@ -467,3 +498,50 @@ drop trigger if exists trg_personalized_creation_request_ready on public.story_c
 create trigger trg_personalized_creation_request_ready
   after update of status on public.story_creation_requests
   for each row execute function public.trg_personalized_creation_request_ready();
+
+-- Helper function to trigger PostgREST schema cache reload in test environments
+create or replace function public.reload_schema_cache_v1()
+returns void
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+begin
+  perform pg_notify('pgrst', 'reload schema');
+end;
+$$;
+
+revoke all on function public.reload_schema_cache_v1() from public, anon, authenticated;
+grant execute on function public.reload_schema_cache_v1() to service_role;
+
+-- Helper function to insert test auth user directly in DB
+create or replace function public.create_test_auth_user_v1(
+  p_user_id uuid,
+  p_email text
+)
+returns void
+language plpgsql
+security definer
+set search_path = pg_catalog, public, auth
+as $$
+begin
+  insert into auth.users (id, instance_id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at, role, aud)
+  values (
+    p_user_id,
+    '00000000-0000-0000-0000-000000000000',
+    p_email,
+    '',
+    clock_timestamp(),
+    '{"provider":"email","providers":["email"]}',
+    '{}',
+    clock_timestamp(),
+    clock_timestamp(),
+    'authenticated',
+    'authenticated'
+  )
+  on conflict (id) do nothing;
+end;
+$$;
+
+revoke all on function public.create_test_auth_user_v1(uuid, text) from public, anon, authenticated;
+grant execute on function public.create_test_auth_user_v1(uuid, text) to service_role;

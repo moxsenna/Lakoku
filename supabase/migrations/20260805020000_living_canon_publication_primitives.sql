@@ -97,35 +97,38 @@ alter table public.chapter_state_commits
 alter table public.chapter_state_commits
   alter column publication_result set not null;
 
-alter table public.chapter_state_commits
-  add constraint chapter_state_commits_publication_payload_hash_check
-  check (publication_payload_hash ~ '^[0-9a-f]{64}$');
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'chapter_state_commits_publication_payload_hash_check') then
+    alter table public.chapter_state_commits
+      add constraint chapter_state_commits_publication_payload_hash_check
+      check (publication_payload_hash ~ '^[0-9a-f]{64}$');
+  end if;
 
-alter table public.chapter_state_commits
-  add constraint chapter_state_commits_publication_payload_schema_version_check
-  check (publication_payload_schema_version = 1);
+  if not exists (select 1 from pg_constraint where conname = 'chapter_state_commits_publication_payload_schema_version_check') then
+    alter table public.chapter_state_commits
+      add constraint chapter_state_commits_publication_payload_schema_version_check
+      check (publication_payload_schema_version = 1);
+  end if;
 
--- publication_result is a small bounded object that must bind its metadata
--- back to the row it lives on (chapter, attempt, committed revision).
--- Fail-closed shape (R2-B3): every required key must EXIST and carry the exact
--- jsonb type BEFORE any cast — a missing key made the old `->>` expression
--- evaluate NULL and the comparison vacuously pass. Key presence is pinned with
--- ?&, types with jsonb_typeof, and only then are the values cast and compared.
-alter table public.chapter_state_commits
-  add constraint chapter_state_commits_publication_result_check
-  check (
-    pg_catalog.jsonb_typeof(publication_result) = 'object'
-    and publication_result ?& '{ok,chapter_number,checkpoint_attempt_id,committed_canon_revision}'::pg_catalog.text[]
-    and pg_catalog.jsonb_typeof(publication_result->'ok') = 'boolean'
-    and (publication_result->>'ok')::boolean is true
-    and pg_catalog.jsonb_typeof(publication_result->'chapter_number') = 'number'
-    and (publication_result->>'chapter_number')::numeric = chapter_number
-    and pg_catalog.jsonb_typeof(publication_result->'checkpoint_attempt_id') = 'string'
-    and (publication_result->>'checkpoint_attempt_id')::uuid = checkpoint_attempt_id
-    and pg_catalog.jsonb_typeof(publication_result->'committed_canon_revision') = 'number'
-    and (publication_result->>'committed_canon_revision')::bigint = committed_canon_revision
-    and pg_catalog.pg_column_size(publication_result) <= 8192
-  );
+  if not exists (select 1 from pg_constraint where conname = 'chapter_state_commits_publication_result_check') then
+    alter table public.chapter_state_commits
+      add constraint chapter_state_commits_publication_result_check
+      check (
+        pg_catalog.jsonb_typeof(publication_result) = 'object'
+        and publication_result ?& '{ok,chapter_number,checkpoint_attempt_id,committed_canon_revision}'::pg_catalog.text[]
+        and pg_catalog.jsonb_typeof(publication_result->'ok') = 'boolean'
+        and (publication_result->>'ok')::boolean is true
+        and pg_catalog.jsonb_typeof(publication_result->'chapter_number') = 'number'
+        and (publication_result->>'chapter_number')::numeric = chapter_number
+        and pg_catalog.jsonb_typeof(publication_result->'checkpoint_attempt_id') = 'string'
+        and (publication_result->>'checkpoint_attempt_id')::uuid = checkpoint_attempt_id
+        and pg_catalog.jsonb_typeof(publication_result->'committed_canon_revision') = 'number'
+        and (publication_result->>'committed_canon_revision')::bigint = committed_canon_revision
+        and pg_catalog.pg_column_size(publication_result) <= 8192
+      );
+  end if;
+end $$;
 
 comment on column public.chapter_state_commits.correlation_id is
   'Attempt-run correlation, read from the locked checkpoint at publication. Never caller-supplied.';

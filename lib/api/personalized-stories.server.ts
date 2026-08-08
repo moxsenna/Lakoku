@@ -276,7 +276,7 @@ export async function verifyDurableStarterProof(input: {
   )
 }
 
-async function authorizeStoryCreation(input: {
+export async function authorizeStoryCreation(input: {
   admin: ReturnType<typeof createAdminClient>
   userId: string
   storyId: string
@@ -326,15 +326,18 @@ async function authorizeStoryCreation(input: {
   })
 
   if (resError || !resData) {
+    if (resError) console.error('[authorizeStoryCreation] resError:', resError)
     throw new PersonalizedStoryError('INTERNAL_ERROR', input.storyId)
   }
 
   const parsedRes = ReserveStartRpcResultSchema.safeParse(resData)
   if (!parsedRes.success) {
+    console.error('[authorizeStoryCreation] parsedRes error:', parsedRes.error)
     throw new PersonalizedStoryError('INTERNAL_ERROR', input.storyId)
   }
 
   if (parsedRes.data.ok === false) {
+    console.error('[authorizeStoryCreation] reserve_story_start_v1 ok=false:', parsedRes.data)
     if (parsedRes.data.reason === 'INSUFFICIENT_CREDITS') {
       return {
         ok: false,
@@ -421,7 +424,7 @@ async function loadExistingReservation(input: {
   throw new PersonalizedStoryError('RESERVATION_FAILED')
 }
 
-async function runContractAndGeneration(input: {
+export async function runContractAndGeneration(input: {
   admin: ReturnType<typeof createAdminClient>
   userId: string
   idempotencyKey: string
@@ -504,6 +507,7 @@ async function runContractAndGeneration(input: {
     })
 
     if (queueError || !queueData) {
+      if (queueError) console.error('[runContractAndGeneration] queueError:', queueError)
       throw new PersonalizedStoryError('GENERATION_FAILED')
     }
 
@@ -591,6 +595,7 @@ export async function createPersonalizedStory(
   }
 
   if (reserveError) {
+    console.error('[createPersonalizedStory] reserveError:', reserveError)
     throw new PersonalizedStoryError('RESERVATION_FAILED')
   }
 

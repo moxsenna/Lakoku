@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit --incremental false",
     "check:migration-versions": "node scripts/run-smoke.cjs scripts/check-migration-version-uniqueness.ts",
     "test": "pnpm run typecheck && pnpm run check:migration-versions && pnpm run test:unit && pnpm run smoke",
-    "test:unit": "vitest run --test-timeout=15000",
+    "test:unit": "vitest run",
     "test:unit:watch": "vitest",
     "test:generation-observability": "pnpm exec vitest run tests/observability tests/ai-gateway/observed-model-call.test.ts tests/runtime/generation-provider-context.test.ts tests/admin",
     "test:db:generation-observability": "node scripts/run-smoke.cjs scripts/runtime-baseline-sentinel.ts && pnpm exec supabase test db --local supabase/tests/runtime_lifecycle_baseline_test.sql supabase/tests/generation_jobs_schema_test.sql supabase/tests/generation_provider_calls_schema_test.sql supabase/tests/generation_provider_call_recording_test.sql supabase/tests/generation_provider_retention_test.sql supabase/tests/admin_generation_observability_rpc_test.sql supabase/tests/generation_incident_capture_test.sql supabase/tests/generation_incident_metadata_test.sql",

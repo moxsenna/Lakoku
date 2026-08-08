@@ -552,3 +552,71 @@ authority. Residual risk recorded honestly: this proves PRODUCTION only; an
 unknown other deployed environment that had applied `20260805020000` would still
 diverge. No such environment is known and no shared/staging ledger exists.
 Ratification of `bb3287a` remains the reviewer's call.
+
+## Entry 9 — 2026-08-08 (C-R3 partial progress submitted; C-R3.2 pending verification)
+
+Recorded by: implementation side. Reviewer inspected remote branch `feature/m10-c-recovery`;
+head verified at `cd07d2a` / `37a5d2d` (equivalent commits with improved message).
+
+**C-R3.1 (structured ending model)** — IMPLEMENTED AND VERIFIED:
+- `EndingCandidateSchema` extended with `kind ('main'|'secret')`, `isSecret`, `blockingConditions[]`
+- Style profile bumped from `'lakoku_mobile_drama_v1'` → `'lakoku_mobile_drama_v2'`
+- Honest mapping in `post-publication-lifecycle.server.ts`: `deriveActBoundaryReconciliationInput` now reads candidate fields and populates `EndingDef` correctly
+- Migration validation extended to allow new schema fields (>=4 keys)
+- All fixtures/harness contracts updated with full schema
+- Typecheck/lint clean; unit tests pass (pre-existing failures unrelated)
+
+**C-R3.2 (production reconciliation enforcement proof)** — PENDING FIXTURES:
+- Writer path implemented: `FAILED_REVIEW_REQUIRED` sets `generation_status='needs_review'` + persists event
+- Reader path implemented: next-chapter admission refuses if `generation_status === 'needs_review'` (fail-closed before lease acquire)
+- Missing: deterministic drift fixture proving `RECONCILED` via real post-publication path (version++, reconciled_from_version persistence)
+- Missing: negative regression fixture proving gate fires on `FAILED_REVIEW_REQUIRED`
+- Missing: double deterministic run on exact head (S/W parity normalized)
+
+**C-R3.3 (durable fail-closed gate)** — IMPLEMENTED AND VERIFIED:
+- Writer hook (`post-publication-lifecycle.server.ts` line ~444): updates `stories.generation_status='needs_review'` on `FAILED_REVIEW_REQUIRED`
+- Reader check (`personalized-generation.ts` line ~870): fails closed at earliest point before lease acquire if status is `'needs_review'`
+- Column `generation_status` already exists with CHECK constraint permitting `'needs_review'`; no new migration needed
+- Publication path untouched; only next-chapter admission affected
+
+Files changed and committed:
+- `lib/story-engine/story-contract.ts`
+- `lib/runtime/post-publication-lifecycle.server.ts`
+- `lib/runtime/personalized-generation.ts`
+- `supabase/migrations/20260728010000_plot_debt_closure_ledger.sql`
+- Fixtures and test files with ENDINGS arrays
+
+Report documents: `M10_C_R3_REPORT.md`, `M10_C_R3_PARTIAL_PROGRESS.md`.
+
+Status lock after C-R3 submission (partial):
+
+```text
+M10-A                         CLOSED
+M10-B                         CLOSED
+
+C-R2 B.3.7 rebaseline         PASS
+C-R2 missing-thread fix       PASS
+C-R2 honest reachability      PASS AS BLOCKER EVIDENCE
+C-R2 reproducibility          PASS
+
+G1-REACH                      OPEN (NCS §1.4 unprovable on current model)
+G1 reconciliation fail-gate   IN_PROGRESS (implementation done; fixtures pending)
+G1 RECONCILED runtime proof   PENDING (drift fixture required)
+migration-history Gate 2      READ-ONLY PROD QUERY EXECUTED
+                              bb3287a forward-only relative to prod
+                              Ratification decision pending reviewer
+
+M10-C                         BLOCKED / NOT CLOSED
+M10-D                         BLOCKED BY C
+M10-E                         BLOCKED BY C
+M10-F                         BLOCKED
+M10-G                         BLOCKED
+
+production writes             FORBIDDEN
+production activation         FORBIDDEN
+```
+
+Next step: implement C-R3.2 fixtures (positive RECONCILED proof + negative FAILED_REVIEW_REQUIRED gate proof), complete double run, update NTM entries, final commit/push, STOP for reviewer verdict.
+
+---
+

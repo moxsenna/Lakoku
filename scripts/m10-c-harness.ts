@@ -318,7 +318,7 @@ export async function runM10CHarness(outDir?: string): Promise<M10CRunOutput> {
       ratifiedByReviewer: d.ratifiedByReviewer,
     })),
     blockerDispositionBasis:
-      'C-R1 corrective package (reviewer 2026-08-08): five blockers CLOSED by production wiring + capture read-back; prompt layers RECLASSIFIED to F with reviewer ratification #1. Proofs in blocker-dispositions.ts.',
+      'C-R2 corrective package (reviewer Entry 6, 2026-08-08): three CLOSED by production wiring + capture read-back (context budget, ending-lock durability on ending-runway 1.3.0 raw rows, act-reconciliation trigger); prompt layers RECLASSIFIED to M10-F (ratification #1) and Bab-49 emotional-resolution RECLASSIFIED to M10-D (Entry 6 BLOCKER 1 veto of the C-R1 beat derivation); ending reachability UNRESOLVED — #6 stays OPEN and the run reports BLOCKED. Proofs in blocker-dispositions.ts.',
   }
 
   // A capture blocker means an evaluator input has no honest runtime source.
@@ -372,7 +372,7 @@ export async function runM10CHarness(outDir?: string): Promise<M10CRunOutput> {
         blockers,
         unresolvedCodes: unresolved.map((b) => b.code),
         dispositions: BLOCKER_DISPOSITIONS,
-        basis: 'C-R1 (reviewer 2026-08-08): blockers listed are the capture gaps still open; dispositions carry the proof-backed closure for all six original codes (five CLOSED by production wiring, one RECLASSIFIED to F with ratification #1)',
+        basis: 'C-R2 (reviewer Entry 6, 2026-08-08): blockers listed are the capture gaps still open; dispositions cover all six codes — three CLOSED by production wiring, two RECLASSIFIED (prompt layers to M10-F, Bab-49 emotional resolution to M10-D after the Entry 6 BLOCKER 1 veto), one UNRESOLVED (ending reachability: EndingCandidateSchema cannot express a secret ending or structured flag blocking, so NCS §1.4 stays unproven and the run reports BLOCKED)',
       }),
     )
     writeFileSync(

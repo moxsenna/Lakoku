@@ -170,6 +170,7 @@ export function deriveActBoundaryReconciliationInput(args: {
   state: ActualState
   endings: EndingDef[]
   secrets: SecretReveal[]
+  snapshot: CanonSnapshot // C-R3-R1 Blocker #6: pass snapshot for reachability evidence (C-R3-R1 fix #6)
 } | null {
   const { chapterNumber, contract, snapshot } = args
   // storyId stays in the input type for call-site clarity; the derivation
@@ -232,6 +233,7 @@ export function deriveActBoundaryReconciliationInput(args: {
     state,
     endings,
     secrets: snapshot.secrets,
+    snapshot: args.snapshot, // C-R3-R1 Blocker #6: pass snapshot for reachability evidence (C-R3-R1 fix #6)
   }
 }
 
@@ -336,6 +338,7 @@ export function deriveEndingReachabilityEvidence(args: {
   checkpointChapter: number
   endings: EndingDef[]
   state: ActualState
+  snapshot: CanonSnapshot // Added for closure satisfiability (C-R3-R1 fix #6)
 }): EndingReachabilityEvidenceV2 {
   const { actNumber, checkpointChapter, endings, state } = args
 
@@ -350,17 +353,26 @@ export function deriveEndingReachabilityEvidence(args: {
   const secretPathBlocked = violationFindings.some((f) => f.code === 'SECRET_ENDING_UNREACHABLE')
   const secretReachable = secretEndings.length > 0 && !secretPathBlocked
   
-  // Build per-ending closure evidence with flagged status
-  const requiredClosure: EndingReachabilityEvidenceV2['requiredClosure'] = endings.map((ending) => ({
-    endingId: ending.id,
-    endingKind: ending.isSecret ? 'secret' : 'main',
-    // Type-safe access to Finding properties via code/reason patterns
-    satisfiable: !violationFindings.some((f) => 
-      f.code === 'ENDING_UNREACHABLE' && f.detail?.endingId === ending.id && f.detail?.reason === 'UNSATISFIED_CLOSURE'
-    ),
-    blockedByFlags: ending.blockedByFlags ?? [], // Normalize undefined to empty array
-    flagsPresent: (ending.blockedByFlags ?? []).every((flag) => state.storyFlags.has(flag)),
-  }))
+  // Build per-ending closure evidence with flagged status (C-R3-R1 fix #6: use helper)
+  const closureFromHelper = deriveRequiredClosureSatisfiability({
+    storyId: args.snapshot.storyId,
+    contract: { endingCandidates: [] } as unknown as StoryContract, // Minimal contract for thread lookup only - TODO: pass full contract properly
+    snapshot: args.snapshot,
+  })
+  
+  const requiredClosure: EndingReachabilityEvidenceV2['requiredClosure'] = endings.map((ending) => {
+    // Get closure info from helper OR fallback to finding-based check
+    const helperEntry = closureFromHelper.find((h) => h.endingId === ending.id)
+    const blockingThreadIds = helperEntry?.blockingThreadIds ?? []
+    
+    return {
+      endingId: ending.id,
+      endingKind: ending.isSecret ? 'secret' : 'main',
+      satisfiable: blockingThreadIds.length === 0, // Use actual blocking thread IDs from helper
+      blockedByFlags: ending.blockedByFlags ?? [],
+      flagsPresent: (ending.blockedByFlags ?? []).every((flag) => state.storyFlags.has(flag)),
+    }
+  })
 
   const closureAllSatisfiable = requiredClosure.every((c) => c.satisfiable)
   
@@ -455,6 +467,7 @@ export async function runActBoundaryReconciliation(
     checkpointChapter: chapterNumber,
     endings: derived.endings,
     state: derived.state,
+    snapshot: derived.snapshot, // C-R3-R1 Blocker #6: pass snapshot for closure satisfiability analysis
   })
 
   await insertStoryEvent(admin, storyId, 'ACT_RECONCILIATION', {

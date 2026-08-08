@@ -293,6 +293,7 @@ describe('C-R2 G1: deriveEndingReachabilityEvidence', () => {
       checkpointChapter: chapterNumber,
       endings: derived!.endings,
       state: derived!.state,
+      snapshot: derived!.snapshot,
     })
   }
 
@@ -391,6 +392,7 @@ describe('C-R2 G1: deriveEndingReachabilityEvidence', () => {
         { id: 'ending-rahasia', isMain: false, isSecret: true, blockedByFlags: [] },
       ],
       state: derived.state,
+      snapshot: derived.snapshot,
     })
     // V2: explicit counts and reachability flags instead of model-gap booleans
     expect(evidence.secretEndingCount).toBe(1)

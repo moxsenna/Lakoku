@@ -173,8 +173,8 @@ begin
     or exists (
       select 1 from pg_catalog.jsonb_array_elements(p_ending_candidates_json) item
       where pg_catalog.jsonb_typeof(item) <> 'object'
-        or not (item ?& array['key','name','condition','requiredClosure','blockingConditions'])
-        or (select pg_catalog.count(*) from pg_catalog.jsonb_object_keys(item)) >= 5
+        or not (item ?& array['key','name','condition','requiredClosure','blockingConditions','kind'])
+        or (select pg_catalog.count(*) from pg_catalog.jsonb_object_keys(item)) <> 6
         or pg_catalog.jsonb_typeof(item->'key') <> 'string' or pg_catalog.char_length(item->>'key') not between 1 and 80
         or pg_catalog.jsonb_typeof(item->'name') <> 'string' or pg_catalog.char_length(item->>'name') not between 1 and 160
         or pg_catalog.jsonb_typeof(item->'condition') <> 'string' or pg_catalog.char_length(item->>'condition') not between 1 and 500
@@ -182,10 +182,9 @@ begin
         or exists(select 1 from pg_catalog.jsonb_array_elements(item->'requiredClosure') v where pg_catalog.jsonb_typeof(v)<>'string' or pg_catalog.char_length(v#>>'{}') not between 1 and 400)
         or pg_catalog.jsonb_typeof(item->'blockingConditions') <> 'array' or pg_catalog.jsonb_array_length(item->'blockingConditions') not between 0 and 20
         or exists(select 1 from pg_catalog.jsonb_array_elements(item->'blockingConditions') v where pg_catalog.jsonb_typeof(v)<>'string' or pg_catalog.char_length(v#>>'{}') not between 1 and 100)
-        -- REQUIRED ENFORCEMENT: kind must be 'main' or 'secret'
-        and (
-            item->>'kind' = 'main' or item->>'kind' = 'secret'
-        )
+        -- REQUIRED ENFORCEMENT: kind must exist and be exactly 'main' or 'secret'
+        or pg_catalog.jsonb_typeof(item->>'kind') is distinct from 'string'
+        or (item->>'kind') not in ('main', 'secret')
     ) or (select pg_catalog.count(*) <> pg_catalog.count(distinct item->>'key') from pg_catalog.jsonb_array_elements(p_ending_candidates_json) item)
     -- Enforce minimum structure for v2 contracts: at least 2 main endings
     or (

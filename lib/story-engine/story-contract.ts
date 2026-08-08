@@ -38,12 +38,11 @@ export const EndingCandidateSchema = z.object({
    */
   kind: z.enum(['main', 'secret']),
   condition: boundedString(500), // free-text legacy field retained for compatibility
-  requiredClosure: boundedStringArray(8, 400, 1),
-  /** Machine-checkable blocking conditions on ending candidates.
-   * Each element is a canonical story flag ID (fact ID or secret ID) that, when present,
-   * blocks this ending. Unlike generic strings, these must match values in ActualState.storyFlags.
-   * Example: 'debt-main-mystery' means "this ending is blocked until main_mystery fact/flag exists".
+  requiredClosure: boundedStringArray(8, 400, 1), // prose/text requirement (legacy semantics)
+  /** Structured plot debt IDs required for this ending — authoritative list for reachability analysis.
+   * Each ID must exist in contract.plotDebts for referential integrity. Optional for V1/V2 transition period.
    */
+  requiredPlotDebtIds: z.array(boundedString(100)).min(0).max(20).optional(),
   blockingConditions: z.array(z.string().min(1).max(100)).min(0).max(20).default([]),
 }).strict()
 
@@ -54,6 +53,31 @@ export function deriveEndingDef(candidate: EndingCandidate): { id: string; isMai
     isMain: candidate.kind === 'main',
     isSecret: candidate.kind === 'secret',
     blockedByFlags: candidate.blockingConditions ?? [],
+  }
+}
+
+/** Legacy V1 ending candidate schema - lacks canonical `kind` field */
+export const EndingCandidateV1Schema = z.object({
+  key: boundedString(80),
+  name: boundedString(160),
+  condition: boundedString(500), // free-text legacy field
+  requiredClosure: boundedStringArray(8, 400, 1),
+  isSecret: z.boolean().optional(), // optional in legacy DB
+  blockingConditions: z.array(z.string().min(1).max(100)).min(0).max(20).default([]),
+}).strict()
+
+/** Normalize V1 ending candidate to V2 representation for runtime use */
+function normalizeEndingCandidateFromV1(v1: z.infer<typeof EndingCandidateV1Schema>): Omit<z.infer<typeof EndingCandidateSchema>, 'kind'> & { kind: 'main' | 'secret' } {
+  /** Derive kind from isSecret matching existing deriveEndingDef pattern */
+  const isSecret = v1.isSecret === true
+  return {
+    key: v1.key,
+    name: v1.name,
+    kind: isSecret ? 'secret' : 'main',
+    condition: v1.condition,
+    requiredClosure: v1.requiredClosure,
+    requiredPlotDebtIds: [], // V1 contracts don't have this field - will be empty until normalized
+    blockingConditions: v1.blockingConditions ?? [],
   }
 }
 
@@ -172,6 +196,21 @@ export const StoryContractSchema = z.object({
     'Plot debt IDs must be unique.',
     context,
   )
+  
+  // C-R3-R1 Blocker #6: Validate referential integrity for requiredPlotDebtIds (optional during V1/V2 transition)
+  const allPlotDebtIds = new Set(contract.plotDebts.map((debt) => debt.id))
+  contract.endingCandidates.forEach((ending, endingIndex) => {
+    (ending.requiredPlotDebtIds ?? []).forEach((debtId, i) => {
+      if (!allPlotDebtIds.has(debtId)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['endingCandidates', endingIndex, 'requiredPlotDebtIds', i],
+          message: `Required plot debt ID "${debtId}" does not exist in contract.plotDebts.`,
+        })
+      }
+    })
+  })
+  
   if (contract.plotDebts.filter((debt) => debt.id === 'main_mystery').length !== 1) {
     context.addIssue({
       code: 'custom',
@@ -239,4 +278,30 @@ export type StoryContract = z.infer<typeof StoryContractSchema>
 
 export function parseStoryContract(input: unknown): StoryContract {
   return StoryContractSchema.parse(input)
+}
+
+/** Version-aware contract parser for C-R3-R1 Blocker #3 - supports legacy V1 contracts */
+export function parseStoryContractWithNormalization(input: unknown): StoryContract {
+  // Validate input is a plain object first (no schema parsing yet)
+  if (input === null || typeof input !== 'object') {
+    throw new Error(`Invalid contract input: expected object, got ${typeof input}`)
+  }
+
+  const obj = input as Record<string, unknown>
+  const styleProfile = obj.styleProfile as string | undefined
+  const isV1 = styleProfile === 'lakoku_mobile_drama_v1'
+
+  if (isV1) {
+    // Normalize V1 contract with isSecret field to V2 representation
+    const normalized = {
+      ...obj,
+      endingCandidates: (obj.endingCandidates as Array<z.infer<typeof EndingCandidateV1Schema>>).map((candidate) => 
+        normalizeEndingCandidateFromV1(candidate)
+      ),
+    }
+    return StoryContractSchema.parse(normalized)
+  }
+
+  // V2 contracts have canonical `kind` field directly
+  return StoryContractSchema.parse(obj)
 }

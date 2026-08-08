@@ -41,6 +41,8 @@ import {
 } from '@/lib/story-engine/chapter-brief'
 import {
   parseStoryContract,
+  /** C-R3-R1 Blocker #3: export normalized parser for V1/V2 compatibility */
+  parseStoryContractWithNormalization as parseStoryContractNormalized,
   type StoryContract,
 } from '@/lib/story-engine/story-contract'
 import {
@@ -415,7 +417,7 @@ async function defaultLoadStoryGenerationContract(storyId: string): Promise<Stor
     ending_lock_json: unknown
   }
 
-  return parseStoryContract({
+  return parseStoryContractNormalized({
     ...row.story_contract_json,
     storyId: row.story_id,
     plotDebts: row.plot_debts_json,
@@ -463,6 +465,34 @@ export async function defaultPersistEndingLock(input: PersistEndingLockInput): P
 
 /** Test seam for default atomic ending-lock path. */
 export const defaultPersistEndingLockForTest = defaultPersistEndingLock
+
+/**
+ * Check generation admission gate before acquiring lease.
+ * Returns error if generation_status === 'needs_review' (FAILED_REVIEW_REQUIRED durable).
+ * FAIL-CLOSED: throws on read error to prevent proceeding on ambiguous state.
+ */
+async function checkAdmissionBeforeGeneration(storyId: string): Promise<{ ok: true } | { ok: false; reason: 'FAILED_REVIEW_REQUIRED' }> {
+  try {
+    const admin = createAdminClient()
+    const { data, error } = await admin
+      .from('stories')
+      .select('generation_status')
+      .eq('id', storyId)
+      .maybeSingle()
+    if (error) throw error // FAIL-CLOSED
+    
+    const storyRow = data as { generation_status?: string } | null
+    
+    if (storyRow?.generation_status === 'needs_review') {
+      return { ok: false, reason: 'FAILED_REVIEW_REQUIRED' as const }
+    }
+    
+    return { ok: true }
+  } catch (err) {
+    console.error('ADMISSION_CHECK_FAILED', { storyId, error: String(err) })
+    throw err // Re-throw to fail-closed (caller will return FAILED_REVIEW_REQUIRED)
+  }
+}
 
 // ---- Test-only exports (Phase 0 baseline) ----
 // Exported for characterization / desired-behavior TDD tests only.
@@ -831,6 +861,13 @@ async function generateNextPersonalizedChapterInner(
     return { ok: false, reason: 'CAPACITY_TIMEOUT', detail: { reason: 'ABORT_SIGNAL' } }
   }
 
+  // C-R3-R1 (reviewer Entry 10): Check admission gate BEFORE acquiring lease for sync path.
+  // Worker path reuses existing job context; check there too as safety.
+  const admissionCheck = await checkAdmissionBeforeGeneration(storyId)
+  if (!admissionCheck.ok) {
+    return { ok: false, reason: admissionCheck.reason, detail: { reason: 'NEEDS_REVIEW', storyId } }
+  }
+
   // Worker path reuses job lease (no second acquire). Legacy acquires own.
   let leaseId: string
   let ownLease = false
@@ -874,18 +911,17 @@ async function generateNextPersonalizedChapterInner(
       return { ok: false, reason: 'CANON_MISSING' }
     }
 
-    // C-R3-R1 (reviewer Entry 10): DURABLE GATE — refuse NEXT chapter admission if reconciliation failed
-    // and generation_status was set to 'needs_review'. The writer runs in
-    // post-publication-lifecycle.server.ts; reader here MUST fail closed (C-R1 blocker #6).
-    // FIX: use correct column 'id' not 'story_id'; throw on error to fail-closed.
+    // Safety check for worker path (should not trigger on normal flow, but guards against state changes mid-execution)
     try {
       const admin = createAdminClient()
-      const { data: storyRow, error } = await admin
+      const { data, error } = await admin
         .from('stories')
         .select('generation_status')
         .eq('id', storyId) // FIX: was 'story_id', must be 'id' per database schema
-        .single()
+        .maybeSingle()
       if (error) throw error // FAIL-CLOSED: if read fails, do NOT proceed with generation
+      
+      const storyRow = data as { generation_status?: string } | null
       if (storyRow?.generation_status === 'needs_review') {
         await releaseOwnLease()
         return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { reason: 'NEEDS_REVIEW', storyId } }

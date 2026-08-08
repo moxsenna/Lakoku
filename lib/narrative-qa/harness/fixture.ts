@@ -49,11 +49,22 @@ export const PLOT_DEBTS = [
     mustCloseBy: 8,
     status: 'open' as const,
   },
+  // C-R3-R1 Blocker #4: debt path needed for secret ending closure
+  {
+    id: 'debt:b',
+    question: 'Mengapa surat ini ditulis dengan tanda tangan palsu?',
+    introducedAt: 6,
+    mustProgressBy: [12, 45],
+    mustCloseBy: 50,
+    status: 'open' as const,
+  },
 ]
 
 export const ENDINGS = [
-  { key: 'ending-open', name: 'Jalan Terbuka', kind: 'main' as const, isSecret: false, condition: 'Surat terbaca', requiredClosure: ['debt:a'], blockingConditions: [] },
-  { key: 'ending-gelap', name: 'Rahasia Terkubur', kind: 'main' as const, isSecret: false, condition: 'Surat ditutup', requiredClosure: ['main_mystery'], blockingConditions: [] },
+  { key: 'ending-open', name: 'Jalan Terbuka', kind: 'main' as const, condition: 'Surat terbaca dan disebar', requiredClosure: ['debt:a'], requiredPlotDebtIds: ['debt:a'], blockingConditions: [] },
+  { key: 'ending-gelap', name: 'Rahasia Terkubur', kind: 'main' as const, condition: 'Surat dimusnahkan', requiredClosure: ['main_mystery'], requiredPlotDebtIds: ['main_mystery'], blockingConditions: [] },
+  // C-R3-R1 Blocker #4: ≥1 secret ending per NCS §1.4
+  { key: 'ending-rahasia', name: 'Kesunyian Bijak', kind: 'secret' as const, condition: 'Surat dibaca tapi tidak ditindaklanjuti', requiredClosure: ['debt:a', 'main_mystery'], requiredPlotDebtIds: ['debt:a', 'main_mystery'], blockingConditions: [] },
 ]
 
 export const REVEALS = [{ secretId: 'secret:brankas', revealGateChapter: 3 }]

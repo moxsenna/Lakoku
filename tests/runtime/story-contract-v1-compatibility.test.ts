@@ -48,9 +48,9 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
         phase: i < 5 ? 'INTRODUCTION' : 'MAIN_STORY',
         goal: `Chapter ${i + 1} goal`,
         mustInclude: ['beat-1'],
-        mustNotReveal: [],
+        mustNotReveal: ['forbidden-secret'], // V1 allows this
         emotionalTurn: 'Neutral',
-        expectedThreadMovement: [],
+        expectedThreadMovement: ['thread-A'], // Required by ChapterTargetSchema
       })),
       revealRunway: [{ secretId: 'secret-main', revealGateChapter: 40 }],
       closureRunway: { mainMysteryResolveBy: 48, emotionalResolutionChapter: 49, finalEndingChapter: 50 },
@@ -131,7 +131,7 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
         mustInclude: ['beat'],
         mustNotReveal: [],
         emotionalTurn: 'Neutral',
-        expectedThreadMovement: [],
+        expectedThreadMovement: ['thread-A'], // Required by ChapterTargetSchema
       })),
       revealRunway: [{ secretId: 's1', revealGateChapter: 40 }],
       closureRunway: { mainMysteryResolveBy: 48, emotionalResolutionChapter: 49, finalEndingChapter: 50 },
@@ -174,7 +174,7 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
         mustInclude: ['beat'],
         mustNotReveal: [],
         emotionalTurn: 'Neutral',
-        expectedThreadMovement: [],
+        expectedThreadMovement: ['thread-A'], // Required by ChapterTargetSchema
       })),
       revealRunway: [{ secretId: 's1', revealGateChapter: 40 }],
       closureRunway: { mainMysteryResolveBy: 48, emotionalResolutionChapter: 49, finalEndingChapter: 50 },
@@ -231,7 +231,7 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
         mustInclude: ['beat'],
         mustNotReveal: [],
         emotionalTurn: 'Neutral',
-        expectedThreadMovement: [],
+        expectedThreadMovement: ['thread-A'], // Required by ChapterTargetSchema
       })),
       revealRunway: [],
       closureRunway: { mainMysteryResolveBy: 48, emotionalResolutionChapter: 49, finalEndingChapter: 50 },
@@ -277,7 +277,7 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
         mustInclude: ['beat'],
         mustNotReveal: [],
         emotionalTurn: 'Neutral',
-        expectedThreadMovement: [],
+        expectedThreadMovement: ['thread-A'], // Required by ChapterTargetSchema
       })),
       revealRunway: [],
       closureRunway: { mainMysteryResolveBy: 48, emotionalResolutionChapter: 49, finalEndingChapter: 50 },

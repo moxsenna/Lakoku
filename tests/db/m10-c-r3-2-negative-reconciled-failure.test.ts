@@ -305,6 +305,20 @@ describe('M10-C R3.2 — Negative DB-backed FAILED_REVIEW_REQUIRED proof', () =>
     // Production: generateNextPersonalizedChapter() → should fail CLOSED due to needs_review
     // No triggerChoiceId required for pure generation admission test
     
+    // Generate correlation ID and capture BEFORE state
+    const preAttemptCorrelationId = randomUUID()
+    const preProviderCalls = await admin
+      .from('generation_provider_calls')
+      .select('*', { count: 'exact', head: false })
+      .eq('user_id', HARNESS_USER_ID)
+      .eq('story_id', STORY_ID)
+      .eq('correlation_id', preAttemptCorrelationId)
+    
+    if (preProviderCalls.error) {
+      throw new Error(`Failed to query pre-attempt provider calls: ${preProviderCalls.error.message}`)
+    }
+    expect(preProviderCalls.count ?? 0).toBe(0) // Fresh correlation has no prior calls
+    
     // Save baseline state before attempt
     const baselineRevision = updatedStory.canon_state_revision ?? 0
 
@@ -312,8 +326,8 @@ describe('M10-C R3.2 — Negative DB-backed FAILED_REVIEW_REQUIRED proof', () =>
       storyId: STORY_ID,
       userId: HARNESS_USER_ID,
       chapterNumber: NEXT_CHAPTER,
-      correlationId: randomUUID(),
-      attemptId: 'sync-proof-attempt',
+      correlationId: preAttemptCorrelationId,
+      attemptId: randomUUID(),
     })
 
     // ASSERTION 6: Real generation admission returns FAILED_REVIEW_REQUIRED
@@ -327,29 +341,45 @@ describe('M10-C R3.2 — Negative DB-backed FAILED_REVIEW_REQUIRED proof', () =>
       throw new Error(`Expected FAILED_REVIEW_REQUIRED but got ok=false without reason: ${JSON.stringify(nextChapterAttempt)}`)
     }
     
+    // Verify ZERO provider calls made during failed admission
+    const postProviderCalls = await admin
+      .from('generation_provider_calls')
+      .select('*', { count: 'exact', head: false })
+      .eq('user_id', HARNESS_USER_ID)
+      .eq('story_id', STORY_ID)
+      .eq('correlation_id', preAttemptCorrelationId)
+    
+    if (postProviderCalls.error) {
+      throw new Error(`Failed to query post-attempt provider calls: ${postProviderCalls.error.message}`)
+    }
+    expect(postProviderCalls.count ?? 0).toBe(0) // No provider calls on admission rejection
+    
     // Assert no state mutations occurred during failed attempt
-    const { count: activeLeases } = await admin
+    const { count: activeLeases, error: leasesError } = await admin
       .from('generation_leases')
       .select('*', { count: 'exact', head: false })
       .eq('story_id', STORY_ID)
       .eq('status', 'ACTIVE')
     
+    if (leasesError) throw new Error(`Failed to query active leases: ${leasesError.message}`)
     expect(activeLeases ?? 0).toBe(0) // No new lease created on rejected request
     
-    const { count: allCheckpoints } = await admin
+    const { count: allCheckpoints, error: checkpointsError } = await admin
       .from('chapter_generation_checkpoints')
       .select('*', { count: 'exact', head: false })
       .eq('story_id', STORY_ID)
       .eq('chapter_number', NEXT_CHAPTER)
     
+    if (checkpointsError) throw new Error(`Failed to query checkpoints: ${checkpointsError.message}`)
     expect(allCheckpoints ?? 0).toBe(0) // No checkpoint persisted on rejected attempt
     
-    const { count: newChapters } = await admin
+    const { count: newChapters, error: chaptersError } = await admin
       .from('chapters')
       .select('*', { count: 'exact', head: false })
       .eq('story_id', STORY_ID)
-      .eq('chapter_number', NEXT_CHAPTER)
+      .eq('number', NEXT_CHAPTER) // Canonical column is 'number', not 'chapter_number'
     
+    if (chaptersError) throw new Error(`Failed to query chapters: ${chaptersError.message}`)
     expect(newChapters ?? 0).toBe(0) // No chapter published on rejected attempt
     
     // Verify canon_state_revision unchanged

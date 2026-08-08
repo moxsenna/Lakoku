@@ -49,6 +49,7 @@ declare
   v_fact_ids text[];
   v_secret_ids text[];
   v_thread_ids text[];
+  v_plot_debt_ids text[];
   v_main_ending_count integer := 0;
   v_secret_ending_count integer := 0;
 begin

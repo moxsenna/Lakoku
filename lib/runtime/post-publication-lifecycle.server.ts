@@ -18,10 +18,13 @@
  *     next act, run the deterministic production `runReconciliation` over the
  *     fresh post-commit canon and persist an ACT_RECONCILIATION story_event.
  *
- *  3. G1 ending reachability (NCS §1.4 / §8.3): per-act execution proof that
- *     endings remain reachable, via the production `checkEndingReachability`
- *     plus a requiredClosure-satisfiability predicate, persisted as an
- *     ACT_ENDING_REACHABILITY story_event.
+ *  3. G1 ending reachability evidence (NCS §1.4 / §8.3): per-act HONEST
+ *     evidence of what the deterministic layer can prove (candidate count,
+ *     requiredClosure satisfiability, detectable violations) plus explicit
+ *     UNPROVEN markers for the clauses the contract model cannot express
+ *     (secret-ending path, flag blocking) — via
+ *     deriveEndingReachabilityEvidence, persisted as an
+ *     ACT_ENDING_REACHABILITY story_event. Never a PASS verdict (C-R2).
  *
  * NON-NEGOTIABLE SAFETY PROPERTIES:
  *  - These hooks run AFTER the canonical commit. They must NEVER throw into
@@ -42,6 +45,7 @@ import 'server-only'
 import { createAdminClient } from '@lakoku/db'
 import { loadCanonSnapshot } from '@lakoku/narrative-core/server'
 import {
+  ENDING_RULES,
   STALE_AFTER_CHAPTERS,
   checkEndingReachability,
   debtBackedThreadId,
@@ -138,13 +142,17 @@ export async function markThreadStaleness(
  *  - storyFlags = committed fact ids ∪ revealed secret ids (no dedicated flag
  *    ledger exists yet; this is the canonical closest surface).
  *  - clues = knowledge scopes as `characterId:factId`.
- *  - requirements = contract chapterTargets[n].expectedThreadMovement ∩ ids of
- *    threads that actually exist (unknown ids ignored defensively — production
- *    contracts may reference planned threads that never materialized).
- *  - endings = contract ending_candidates_json mapped to EndingDef with
- *    blockedByFlags=[] (no canon flag blocks them); the real blocking path is
- *    requiredClosure abandonment, captured by the explicit satisfiability
- *    predicate in runActBoundaryReconciliation.
+ *  - requirements = contract chapterTargets[n].expectedThreadMovement,
+ *    UNFILTERED (C-R2, reviewer Entry 6): a trajectory-required thread that
+ *    never materialized is drift EVIDENCE — computeDriftScore must see it and
+ *    score it as unmet. Filtering missing ids away masked drift.
+ *  - endings = contract ending_candidates_json mapped to EndingDef solely as
+ *    the input of checkEndingReachability's VIOLATION DETECTION. The mapping
+ *    cannot express what EndingCandidateSchema does not carry (a structured
+ *    ending kind or blocking conditions); that absence is recorded explicitly
+ *    by deriveEndingReachabilityEvidence and is NEVER reported as a
+ *    reachability PASS (C-R2, reviewer Entry 6 — the C-R1 all-main/no-blocking
+ *    mapping that produced a trivially-true PASS is withdrawn).
  */
 export function deriveActBoundaryReconciliationInput(args: {
   storyId: string
@@ -179,14 +187,18 @@ export function deriveActBoundaryReconciliationInput(args: {
     (a, b) => a.chapterNumber - b.chapterNumber,
   )
 
-  const existingThreadIds = new Set(snapshot.threads.map((t) => t.id))
   const requirements: TrajectoryRequirement[] = []
   for (let n = nextAct.fromChapter; n <= nextAct.toChapter; n++) {
     const target = contract.chapterTargets.find((t) => t.chapterNumber === n)
-    const requiredThreadsActive = (target?.expectedThreadMovement ?? []).filter((id) =>
-      existingThreadIds.has(id),
-    )
-    requirements.push({ chapterNumber: n, requiredThreadsActive })
+    // C-R2 (reviewer Entry 6): NO filter against materialized thread ids. A
+    // trajectory-required thread that never materialized stays in the
+    // requirement set; computeDriftScore finds no entry for it in
+    // state.threadStatuses and scores it unmet. Missing requirement = drift
+    // evidence, never ignored.
+    requirements.push({
+      chapterNumber: n,
+      requiredThreadsActive: [...(target?.expectedThreadMovement ?? [])],
+    })
   }
 
   const revealedSecretIds = snapshot.secrets
@@ -198,6 +210,14 @@ export function deriveActBoundaryReconciliationInput(args: {
     threadStatuses: Object.fromEntries(snapshot.threads.map((t) => [t.id, t.status])),
   }
 
+  // EndingCandidateSchema (lib/story-engine/story-contract.ts) carries only
+  // key/name/condition(free-text)/requiredClosure. Candidates are mapped as
+  // main ending candidates for the VIOLATION-DETECTION gate inside
+  // runReconciliation; the mapping asserts nothing about secret endings or
+  // flag blocking because the contract model cannot express either. The
+  // honesty of that limitation is enforced downstream by
+  // deriveEndingReachabilityEvidence (C-R2, reviewer Entry 6) — its output is
+  // never allowed to become a reachability PASS on this model.
   const endings: EndingDef[] = contract.endingCandidates.map((candidate) => ({
     id: candidate.key,
     isMain: true,
@@ -217,6 +237,102 @@ export function deriveActBoundaryReconciliationInput(args: {
     state,
     endings,
     secrets: snapshot.secrets,
+  }
+}
+
+/**
+ * C-R2 (reviewer Entry 6 2026-08-08) — HONEST act-boundary ending-
+ * reachability evidence (NCS §1.4).
+ *
+ * The C-R1 event asserted `passed` from a trivially-true gate (every
+ * candidate mapped main/unblocked; no secret ever modeled). This version
+ * splits the evidence into what the deterministic layer CAN prove from the
+ * current contract model and what it CANNOT:
+ *
+ *   PROVABLE now:
+ *    - ending-candidate count vs ENDING_RULES.minReachableEndings;
+ *    - per-ending requiredClosure satisfiability (backing thread not
+ *      ABANDONED_APPROVED) — deriveRequiredClosureSatisfiability;
+ *    - violation findings detectable on the structured data that exists.
+ *
+ *   UNPROVEN on the current model (recorded, never faked):
+ *    - secret-ending path: EndingCandidateSchema has no kind/isSecret field,
+ *      so the contract cannot even express a secret ending (NCS §1.4 clause
+ *      "jalur menuju secret ending harus tetap reachable" — PRD requires at
+ *      least one);
+ *    - flag-based reachability: the schema carries only free-text
+ *      `condition`, no structured blocking condition.
+ *
+ * `ncs14Proven` is therefore false while any clause is unproven, and no
+ * consumer may render this evidence as a reachability PASS. Full proof
+ * requires a structured ending model (kind + blocking); until then NTM
+ * G1-REACH remains IN_PROGRESS (#6 OPEN).
+ */
+export interface EndingReachabilityEvidenceV1 {
+  actNumber: number
+  checkpointChapter: number
+  endingCandidateCount: number
+  minRequiredMain: number
+  /** Per-ending requiredClosure satisfiability (deterministic, honest). */
+  requiredClosure: Array<{ endingId: string; satisfiable: boolean; blockingThreadIds: string[] }>
+  closureAllSatisfiable: boolean
+  /**
+   * Finding codes from checkEndingReachability over the structured data the
+   * model CAN express. Empty means "no violation detectable on this model" —
+   * NOT "reachability proven". See the model-gap flags below.
+   */
+  reachabilityViolationFindingCodes: string[]
+  /** Model-gap flags (C-R2). Schema facts, not runtime readings. */
+  secretEndingModeled: boolean
+  secretPathProven: boolean
+  flagBlockingModeled: boolean
+  ncs14Proven: boolean
+}
+
+/**
+ * Flag-based reachability has no data source in the current contract model
+ * (EndingCandidateSchema.condition is free text). This is a MODEL FACT, not a
+ * runtime reading; it can only flip when the contract schema gains a
+ * structured blocking model.
+ */
+export const FLAG_BLOCKING_PROVABLE_ON_CURRENT_MODEL = false
+
+export function deriveEndingReachabilityEvidence(args: {
+  actNumber: number
+  checkpointChapter: number
+  endings: EndingDef[]
+  state: ActualState
+  closure: Array<{ endingId: string; satisfiable: boolean; blockingThreadIds: string[] }>
+}): EndingReachabilityEvidenceV1 {
+  const { actNumber, checkpointChapter, endings, state, closure } = args
+
+  const violationFindings = checkEndingReachability(endings, state)
+  const closureAllSatisfiable = closure.every((c) => c.satisfiable)
+  const secretEnding = endings.find((e) => e.isSecret)
+  const secretBlocked = violationFindings.some((f) => f.code === 'SECRET_ENDING_UNREACHABLE')
+  const secretEndingModeled = secretEnding !== undefined
+  // The secret-path clause is proven only when a secret ending IS modeled and
+  // the gate finds it reachable. No secret can be modeled on the current
+  // schema, so today this is always false — recorded UNPROVEN, never PASS.
+  const secretPathProven = secretEndingModeled && !secretBlocked
+  const flagBlockingModeled = endings.some((e) => (e.blockedByFlags ?? []).length > 0)
+
+  return {
+    actNumber,
+    checkpointChapter,
+    endingCandidateCount: endings.length,
+    minRequiredMain: ENDING_RULES.minReachableEndings,
+    requiredClosure: closure,
+    closureAllSatisfiable,
+    reachabilityViolationFindingCodes: violationFindings.map((f) => f.code),
+    secretEndingModeled,
+    secretPathProven,
+    flagBlockingModeled,
+    ncs14Proven:
+      endings.length >= ENDING_RULES.minReachableEndings
+      && closureAllSatisfiable
+      && secretPathProven
+      && FLAG_BLOCKING_PROVABLE_ON_CURRENT_MODEL,
   }
 }
 
@@ -278,17 +394,17 @@ export async function runActBoundaryReconciliation(
     checkpointChapter: chapterNumber,
   })
 
-  const reachabilityFindings = checkEndingReachability(derived.endings, derived.state)
-  const mainEndingCount = derived.endings.filter((e) => e.isMain).length
-  // Exact reachable-main count: when the gate fails, the finding carries the
-  // count in detail.reachableMain; when it passes, every main ending stands.
-  const unreachableFinding = reachabilityFindings.find((f) => f.code === 'ENDING_UNREACHABLE')
-  const reachableMain = unreachableFinding
-    ? Number((unreachableFinding.detail as { reachableMain?: number } | undefined)?.reachableMain ?? 0)
-    : mainEndingCount
-  const secretEnding = derived.endings.find((e) => e.isSecret)
-  const secretBlocked = reachabilityFindings.some((f) => f.code === 'SECRET_ENDING_UNREACHABLE')
   const closure = deriveRequiredClosureSatisfiability({ storyId, contract, snapshot })
+  // C-R2 (reviewer Entry 6): persist the HONEST reachability evidence —
+  // provable clauses plus explicit UNPROVEN model-gap markers. No `passed`
+  // verdict: NCS §1.4 cannot be asserted true on the current contract model.
+  const reachabilityEvidence = deriveEndingReachabilityEvidence({
+    actNumber: derived.actNumber,
+    checkpointChapter: chapterNumber,
+    endings: derived.endings,
+    state: derived.state,
+    closure,
+  })
 
   await insertStoryEvent(admin, storyId, 'ACT_RECONCILIATION', {
     actNumber: derived.actNumber,
@@ -300,16 +416,7 @@ export async function runActBoundaryReconciliation(
     findingCodes: result.findings.map((f) => f.code),
   })
 
-  await insertStoryEvent(admin, storyId, 'ACT_ENDING_REACHABILITY', {
-    actNumber: derived.actNumber,
-    checkpointChapter: chapterNumber,
-    reachableMain,
-    minRequired: 2,
-    secretEndingPresent: secretEnding !== null && secretEnding !== undefined,
-    secretReachable: secretEnding ? !secretBlocked : null,
-    requiredClosure: closure,
-    passed: reachabilityFindings.length === 0 && closure.every((c) => c.satisfiable),
-  })
+  await insertStoryEvent(admin, storyId, 'ACT_ENDING_REACHABILITY', { ...reachabilityEvidence })
 
   if (result.status === 'RECONCILED') {
     // NCS §1.2 point 4: versioned, auditable — new blueprint versions, never

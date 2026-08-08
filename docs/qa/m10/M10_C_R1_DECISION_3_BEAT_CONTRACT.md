@@ -1,8 +1,18 @@
 # C-R1 Decision #3 — Emotional-Resolution Beats Stay in C (B 1.1.0 Semantics)
 
+> **STATUS: SUPERSEDED + VETOED (reviewer Entry 6, 2026-08-08 — BLOCKER 1).**
+> The decision below was implemented in C-R1 and then VETOED: making
+> `emotionalResolutionBeatIds` non-empty merely because `reader_states.locked_ending_key`
+> exists is evaluator-input fabrication — the "caller supplies the conclusion so the
+> evaluator passes" pattern. Naming (`deterministic-ending-evidence:`) did not change the
+> semantics. The governing decision is now
+> **`M10_C_R2_DECISION_B37_REBASELINE.md`** (ending-runway 1.2.0 → 1.3.0; the Bab-49 beat
+> check is WITHDRAWN from the deterministic suite and emotional-resolution CONTENT moves
+> to the M10-D semantic judge). This document is retained as historical record only.
+
 **Date:** 2026-08-08
 **Authority:** Reviewer verdict 2026-08-08, M10_GOVERNANCE_LEDGER.md Entry 2, ruling #3.
-**Status:** IMPLEMENTED in C-R1 (pending reviewer's final C verdict; veto path below).
+**Status:** IMPLEMENTED in C-R1, then VETOED by Entry 6; superseded by the C-R2 rebaseline.
 
 ## Reviewer ruling (verbatim intent)
 

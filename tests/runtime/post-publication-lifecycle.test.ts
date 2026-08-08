@@ -17,24 +17,33 @@
  *     touches are load-bearing, not cosmetic.
  *  3. deriveActBoundaryReconciliationInput maps the post-commit canon +
  *     contract honestly: boundary detection, latest-blueprint selection,
- *     requirement intersection with existing threads, endings mapping.
+ *     UNFILTERED trajectory requirements (C-R2: a missing required thread is
+ *     drift evidence, never filtered away), endings mapping.
  *  4. deriveRequiredClosureSatisfiability blocks an ending exactly when a
  *     required-closure debt's backing thread was abandoned.
+ *  5. deriveEndingReachabilityEvidence (C-R2, reviewer Entry 6) proves only
+ *     what the current contract model can prove and records the model gaps
+ *     (secret path, flag blocking) as UNPROVEN — ncs14Proven stays false and
+ *     no consumer may render the evidence as a reachability PASS.
  */
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
 import {
+  ENDING_RULES,
   STALE_AFTER_CHAPTERS,
   STALE_CALLBACK_WINDOW,
+  computeDriftScore,
   debtBackedThreadId,
   refreshStaleness,
   type CanonSnapshot,
   type StoryThread,
 } from '@lakoku/narrative-core'
 import {
+  FLAG_BLOCKING_PROVABLE_ON_CURRENT_MODEL,
   deriveActBoundaryReconciliationInput,
+  deriveEndingReachabilityEvidence,
   deriveRequiredClosureSatisfiability,
   isStaleAtChapter,
 } from '@/lib/runtime/post-publication-lifecycle.server'
@@ -221,7 +230,11 @@ describe('C-R1 G1: deriveActBoundaryReconciliationInput', () => {
     expect(derived!.requirements.every((r) => (r.requiredThreadsActive ?? []).includes(mainThreadId))).toBe(true)
   })
 
-  it('ignores expectedThreadMovement ids that never materialized (defensive)', () => {
+  it('keeps expectedThreadMovement ids that never materialized — missing requirement is drift evidence (C-R2)', () => {
+    // Reviewer Entry 6: "Jangan filter missing requirement. Missing required
+    // thread adalah evidence drift, bukan sesuatu yang harus di-ignore." The
+    // pre-C-R2 derivation intersected requirements with materialized thread
+    // ids, silently dropping trajectory requirements and masking drift.
     const ghostContract = {
       ...contract,
       chapterTargets: contract.chapterTargets.map((t) => ({
@@ -237,11 +250,18 @@ describe('C-R1 G1: deriveActBoundaryReconciliationInput', () => {
     })
     expect(derived).not.toBeNull()
     for (const req of derived!.requirements) {
-      expect(req.requiredThreadsActive).not.toContain('ghost-thread-id')
+      expect(req.requiredThreadsActive).toContain('ghost-thread-id')
+    }
+    // The ghost thread has no entry in state.threadStatuses, so
+    // computeDriftScore scores it unmet — the requirement survives into the
+    // drift gate instead of being ignored (exactly one unmet: the ghost; the
+    // main_mystery thread itself is OPEN and met).
+    for (const req of derived!.requirements) {
+      expect(computeDriftScore(req, derived!.state)).toBe(1)
     }
   })
 
-  it('maps endings from contract ending candidates with no canon flag blocking', () => {
+  it('maps ending candidates as violation-detection input only — no secret, no flag blocking (C-R2)', () => {
     const derived = deriveActBoundaryReconciliationInput({
       storyId: STORY_ID,
       chapterNumber: 12,
@@ -252,7 +272,110 @@ describe('C-R1 G1: deriveActBoundaryReconciliationInput', () => {
     expect(derived!.actNumber).toBe(2)
     expect(derived!.nextAct).toEqual({ actNumber: 3, fromChapter: 13, toChapter: 50 })
     expect(derived!.endings.map((e) => e.id).sort()).toEqual(['ending-gelap', 'ending-open'])
+    // Honesty guard: the mapping NEVER asserts a secret ending or flag
+    // blocking — EndingCandidateSchema cannot express either. The limitation
+    // is enforced downstream by deriveEndingReachabilityEvidence (asserted
+    // below), not by pretending the model covers more than it does.
+    expect(derived!.endings.every((e) => e.isSecret === false)).toBe(true)
     expect(derived!.endings.every((e) => (e.blockedByFlags ?? []).length === 0)).toBe(true)
+  })
+})
+
+// ── 3b. honest ending-reachability evidence (C-R2, reviewer Entry 6) ───────
+
+describe('C-R2 G1: deriveEndingReachabilityEvidence', () => {
+  const contract = buildHarnessContract(STORY_ID)
+
+  function evidenceAt(chapterNumber: number, snapshot: CanonSnapshot = snapshotFor({})) {
+    const derived = deriveActBoundaryReconciliationInput({ storyId: STORY_ID, chapterNumber, contract, snapshot })
+    expect(derived).not.toBeNull()
+    const closure = deriveRequiredClosureSatisfiability({ storyId: STORY_ID, contract, snapshot })
+    return deriveEndingReachabilityEvidence({
+      actNumber: derived!.actNumber,
+      checkpointChapter: chapterNumber,
+      endings: derived!.endings,
+      state: derived!.state,
+      closure,
+    })
+  }
+
+  it('proves the count + closure clauses but never NCS §1.4 on the current model', () => {
+    const evidence = evidenceAt(12)
+    expect(evidence.endingCandidateCount).toBe(2)
+    expect(evidence.minRequiredMain).toBe(ENDING_RULES.minReachableEndings)
+    expect(evidence.closureAllSatisfiable).toBe(true)
+    // No violation detectable on the structured data that exists — but that
+    // is explicitly NOT "reachability proven" (see the model-gap flags).
+    expect(evidence.reachabilityViolationFindingCodes).toEqual([])
+    expect(evidence.secretEndingModeled).toBe(false)
+    expect(evidence.secretPathProven).toBe(false)
+    expect(evidence.flagBlockingModeled).toBe(false)
+    expect(evidence.ncs14Proven).toBe(false)
+  })
+
+  it('FLAG_BLOCKING_PROVABLE_ON_CURRENT_MODEL is a documented model fact, not a runtime reading', () => {
+    expect(FLAG_BLOCKING_PROVABLE_ON_CURRENT_MODEL).toBe(false)
+  })
+
+  it('records closure blocking honestly when a backing thread is abandoned', () => {
+    const snapshot = snapshotFor({
+      threads: [
+        {
+          id: debtBackedThreadId(STORY_ID, 'main_mystery'),
+          title: 'main',
+          status: 'ABANDONED_APPROVED',
+          openedChapter: 1,
+          lastTouchedChapter: 1,
+          payoffWindow: 48,
+          isMainMystery: true,
+        },
+        {
+          id: debtBackedThreadId(STORY_ID, 'debt:a'),
+          title: 'a',
+          status: 'OPEN',
+          openedChapter: 1,
+          lastTouchedChapter: 1,
+          payoffWindow: 8,
+          isMainMystery: false,
+        },
+      ],
+    })
+    const evidence = evidenceAt(12, snapshot)
+    expect(evidence.closureAllSatisfiable).toBe(false)
+    const gelap = evidence.requiredClosure.find((r) => r.endingId === 'ending-gelap')
+    expect(gelap?.satisfiable).toBe(false)
+    expect(evidence.ncs14Proven).toBe(false)
+  })
+
+  it('still proves nothing even when a secret ending is hand-modeled and reachable', () => {
+    // m5-soak hand-writes a secret EndingDef; even feeding one in directly,
+    // ncs14Proven must stay false while flag blocking is unprovable on the
+    // current model (FLAG_BLOCKING_PROVABLE_ON_CURRENT_MODEL).
+    const derived = deriveActBoundaryReconciliationInput({
+      storyId: STORY_ID,
+      chapterNumber: 12,
+      contract,
+      snapshot: snapshotFor({}),
+    })!
+    const closure = deriveRequiredClosureSatisfiability({
+      storyId: STORY_ID,
+      contract,
+      snapshot: snapshotFor({}),
+    })
+    const evidence = deriveEndingReachabilityEvidence({
+      actNumber: derived.actNumber,
+      checkpointChapter: 12,
+      endings: [
+        ...derived.endings,
+        { id: 'ending-rahasia', isMain: false, isSecret: true, blockedByFlags: [] },
+      ],
+      state: derived.state,
+      closure,
+    })
+    expect(evidence.secretEndingModeled).toBe(true)
+    expect(evidence.secretPathProven).toBe(true)
+    expect(evidence.flagBlockingModeled).toBe(false)
+    expect(evidence.ncs14Proven).toBe(false)
   })
 })
 

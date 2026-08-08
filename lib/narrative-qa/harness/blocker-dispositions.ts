@@ -5,12 +5,19 @@
  * RECLASSIFIED (deferred) during recovery. Reviewer verdict 2026-08-08
  * (M10_GOVERNANCE_LEDGER.md Entry 2) rejected five of those deferrals and
  * ordered the narrow C-R1 corrective package: #2, #3, #4, #5, #6. C-R1
- * implements the missing production wires and the capture adapters that read
- * them back, so five blockers are now CLOSED with code-level proof. The sixth
- * (prompt layers) is RECLASSIFIED to M10-F with reviewer ratification
- * (#1 APPROVED → F): writer prompt text is a real-model artifact that does
- * not exist on the deterministic C path, so nothing can be observed there
- * without fabrication.
+ * implemented the missing production wires and the capture adapters that read
+ * them back. Reviewer Entry 6 (2026-08-08) then re-opened TWO of those five:
+ *   - #3 (emotional-resolution beat): the C-R1 derivation was VETOED as
+ *     evaluator-input fabrication → RECLASSIFIED to the M10-D semantic judge;
+ *   - #6 (ending reachability): the C-R1 proof was NOT RATIFIED (fabricated
+ *     all-main/no-blocking mapping, trivially-true PASS) → UNRESOLVED until a
+ *     structured ending model exists; #6 OPEN, G1-REACH IN_PROGRESS.
+ * #4 (durability) stays CLOSED but rebaselined: ending-runway 1.3.0 now
+ * computes durability itself from RAW rows (caller conclusions forbidden).
+ * The sixth blocker (prompt layers) remains RECLASSIFIED to M10-F (#1
+ * APPROVED → F): writer prompt text is a real-model artifact that does not
+ * exist on the deterministic C path, so nothing can be observed there without
+ * fabrication.
  *
  * A blocker without a CLOSED/RECLASSIFIED disposition keeps forcing result
  * BLOCKED, exactly as before. The harness writes the full disposition table
@@ -91,40 +98,50 @@ export const BLOCKER_DISPOSITIONS: BlockerDispositionV1[] = [
   },
   {
     code: ENDING_RESOLUTION_BEAT_BLOCKER.code,
-    disposition: 'CLOSED',
-    reclassifiedTo: null,
+    disposition: 'RECLASSIFIED',
+    reclassifiedTo: 'M10-D scope (semantic judge over real prose)',
     proof:
-      'C-R1 #3 (formal decision: docs/qa/m10/'
-      + 'M10_C_R1_DECISION_3_BEAT_CONTRACT.md). Reviewer ruling: B 1.1.0 '
-      + 'already made emotional-resolution beats deterministic ending '
-      + 'evidence. captureEndingRunway therefore derives '
-      + 'emotionalResolutionBeatIds for Bab 49 from the committed '
-      + 'deterministic ending evidence — "deterministic-ending-evidence:'
-      + '<lockedEndingKey>" — when the Bab-49 commit exists and the ending '
-      + 'key is locked. This is runtime state, not invented prose beats, and '
-      + 'it is the B-contract semantics (no evaluator-logic change), so '
-      + 'CHAPTER_49_EMOTIONAL_RESOLUTION_MISSING clears without touching the '
-      + 'frozen 1.1.0 beat rule.',
+      'C-R2 (reviewer Entry 6 2026-08-08, BLOCKER 1 — VETO of C-R1 #3). The '
+      + 'C-R1 derivation made Bab-49 emotionalResolutionBeatIds non-empty '
+      + 'merely because reader_states.locked_ending_key exists. That lock is '
+      + 'a Bab-45 artifact, NOT a Bab-49 beat; renaming it does not change '
+      + 'the semantics, and it is the forbidden "caller supplies the '
+      + 'conclusion so the evaluator passes" pattern (M10-B no-cheating). '
+      + 'Decision #3 is VETOED; the corrective path ordered: version bump and '
+      + 'rebaseline of B.3.7. Implemented: ending-runway 1.2.0 → 1.3.0 '
+      + '(lib/narrative-qa/evaluators/ending-evaluator.ts); the '
+      + 'emotionalResolutionBeatIds field and the '
+      + 'CHAPTER_49_EMOTIONAL_RESOLUTION_MISSING check are WITHDRAWN from the '
+      + 'deterministic suite; captureEndingRunway fabricates no beat '
+      + '(lib/narrative-qa/harness/capture.ts). Emotional-resolution CONTENT '
+      + 'moves to the M10-D semantic judge, which can read real prose; '
+      + 'deterministic B/C checks only structured runtime obligations that '
+      + 'actually exist. Formal record: docs/qa/m10/'
+      + 'M10_C_R2_DECISION_B37_REBASELINE.md (supersedes '
+      + 'M10_C_R1_DECISION_3_BEAT_CONTRACT.md).',
     consequenceFindings: [],
-    ratifiedByReviewer: false,
+    ratifiedByReviewer: true,
   },
   {
     code: ENDING_LOCK_TX_BLOCKER.code,
     disposition: 'CLOSED',
     reclassifiedTo: null,
     proof:
-      'C-R1 #4 (reviewer: "durability berasal dari canonical publication '
-      + 'proof, bukan keberadaan tx-id"). Adapter: ending-runway evaluator '
-      + '1.1.0 → 1.2.0; EndingLockEvidence.committedInPublicationTxId '
-      + 'replaced by canonicalPublicationProof {lockAtCorrectChapter, '
-      + 'chapterCommittedRevision, chapterPublished}. captureEndingRunway '
-      + 'builds it from three persisted artifacts of the publication commit: '
-      + 'the ending_lock_json row (lockedAtChapter), the chapter_state_commits '
-      + 'ledger row for Bab 45, and the published chapters row. Same-'
-      + 'transaction atomicity is proven separately by publisher SQL '
-      + 'inspection (persist_ending_lock_v1 called inside the single V3/V5 '
-      + 'publication transaction) and by the harness fencing/tamper probes — '
-      + 'the tx identifier itself was never the requirement.',
+      'C-R1 #4, REBASELINED by C-R2 (reviewer Entry 6 2026-08-08, BLOCKER 2). '
+      + 'The 1.2.0 canonicalPublicationProof still carried caller-computed '
+      + 'conclusions (lockAtCorrectChapter, chapterPublished booleans); the '
+      + 'M10-B architecture lock forbids conclusion booleans from callers. '
+      + 'ending-runway 1.2.0 → 1.3.0: inputs are now RAW persisted rows — '
+      + 'endingLock.lockedAtChapter, commit45.chapterNumber, '
+      + 'commit45.committedCanonRevision, publishedChapterNumbers — and the '
+      + 'EVALUATOR itself computes lock chapter == 45 ∧ commit Bab 45 exists '
+      + '∧ published Bab 45 exists. captureEndingRunway reads the three raw '
+      + 'artifacts (story_generation_contracts.ending_lock_json, '
+      + 'chapter_state_commits ledger row for Bab 45, public.chapters) and '
+      + 'precomputes nothing. Same-transaction atomicity remains proven by '
+      + 'publisher SQL inspection (persist_ending_lock_v1 called inside the '
+      + 'single V3/V5 publication transaction) plus harness fencing/tamper '
+      + 'probes.',
     consequenceFindings: [],
     ratifiedByReviewer: false,
   },
@@ -151,22 +168,34 @@ export const BLOCKER_DISPOSITIONS: BlockerDispositionV1[] = [
   },
   {
     code: ACT_ENDING_REACHABILITY_BLOCKER.code,
-    disposition: 'CLOSED',
+    disposition: 'UNRESOLVED',
     reclassifiedTo: null,
     proof:
-      'C-R1 #6 (reviewer: "C harus membuktikan ending reachability pada '
-      + 'checkpoint/act boundary melalui production runtime"). Same '
-      + 'post-publication lifecycle hook runs checkEndingReachability over '
-      + 'endings derived from contract ending_candidates_json and actual '
-      + 'state derived from the post-commit canon snapshot, then persists an '
-      + 'ACT_ENDING_REACHABILITY story_event {actNumber, checkpointChapter, '
-      + 'passed, reachableMain, minRequired, requiredClosure}. Capture '
-      + 'read-back: captureActBoundary renders endingReachability = '
-      + 'PASS/FAIL:reachableMain=<n>/min=<m> plus required-closure '
-      + 'satisfiability — a persisted per-act projection produced by the '
-      + 'production runtime, not re-derived from fixture constants.',
+      'C-R2 (reviewer Entry 6 2026-08-08, BLOCKER 3 — C-R1 #6 proof NOT '
+      + 'RATIFIED). The C-R1 mapping sent EVERY contract endingCandidate to '
+      + 'checkEndingReachability as {isMain:true, isSecret:false, '
+      + 'blockedByFlags:[]}, so a secret ending could never exist and '
+      + 'blocking could never occur; PASS:reachableMain=2/min=2 was '
+      + 'trivially true and did not prove NCS §1.4. That fabrication is '
+      + 'withdrawn from deriveActBoundaryReconciliationInput '
+      + '(lib/runtime/post-publication-lifecycle.server.ts). What the '
+      + 'lifecycle hook persists now is the HONEST deterministic subset: '
+      + 'ending-candidate count vs ENDING_RULES.minReachableEndings, '
+      + 'per-ending requiredClosure satisfiability '
+      + '(deriveRequiredClosureSatisfiability — unchanged, real evidence), '
+      + 'the violation-finding codes detectable on the structured data that '
+      + 'exists, and explicit model-gap markers: secretEndingModeled=false, '
+      + 'secretPathProven=false, ncs14Proven=false, because '
+      + 'EndingCandidateSchema (lib/story-engine/story-contract.ts) carries '
+      + 'only key/name/condition(free-text)/requiredClosure — no structured '
+      + 'ending kind, no blocking condition. Capture renders '
+      + 'UNPROVEN:candidates=.../closure=.../secretPath=UNPROVEN, never '
+      + 'PASS. Disposition stays UNRESOLVED (forces BLOCKED): full NCS §1.4 '
+      + 'proof requires a structured ending model (secret path + blocking) '
+      + 'that does not exist yet. #6 = OPEN; G1-REACH = IN_PROGRESS; never '
+      + 'mark done because story_events exist.',
     consequenceFindings: [],
-    ratifiedByReviewer: false,
+    ratifiedByReviewer: true,
   },
 ]
 

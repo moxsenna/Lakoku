@@ -201,3 +201,110 @@ no model calls; no secret material in any artifact.
 Status lock unchanged (M10-C stage HOLD pending verdict; D/E not started; production
 actions FORBIDDEN). Awaiting reviewer verdict; target per Entry 4: M10-C PASS / CLOSED;
 M10-D + M10-E GO.
+
+## Entry 6 — 2026-08-08 (reviewer verdict: M10-C masih HOLD — belum CLOSED; C-R2 sempit; verbatim key block)
+
+Recorded by: implementation side. Reviewer inspected the pushed remote branch;
+chain/head as reported validated (`eb5e669` = code/evidence head of counted runs;
+`bbf1e6d` docs-only after it).
+
+```text
+Gate 1  push + V5/V6 proof       PASS
+Gate 2  migration history        FAIL / NOT RATIFIED
+Gate 3  double deterministic run PASS
+Gate 4  clean worktree           PASS
+```
+
+Three substantive blockers (newly verifiable from the remote branch) plus one
+additional G1 issue:
+
+**BLOCKER 1 — #3 emotional-resolution = evaluator-input fabrication (VETO).**
+B 1.1.0 contract: `emotionalResolutionBeatIds` = "Emotional resolution beats the
+chapter committed to canon"; the finding means "Chapter 49 committed no emotional
+resolution beat." C-R1 makes the array non-empty merely because
+`reader_states.locked_ending_key` exists (`deterministic-ending-evidence:<key>`).
+That is NOT a Bab-49 beat (the lock was made at Bab 45); naming does not change
+semantics. This is exactly the "caller supplies conclusion so evaluator passes"
+pattern forbidden by the M10-B no-cheating contract. Decision #3 VETOED.
+Corrective path (already documented by implementation side) must now be executed:
+version bump B.3.7 and rebaseline. Reviewer's direction: emotional-resolution
+CONTENT moves to M10-D semantic judge; deterministic B/C may only check structured
+runtime obligation/evidence that actually exists.
+
+**BLOCKER 2 — ending evaluator 1.2.0 still accepts precomputed booleans.**
+`canonicalPublicationProof { lockAtCorrectChapter: boolean, chapterCommittedRevision,
+chapterPublished: boolean }` — evaluator trusts caller conclusions; the M10-B
+architecture lock forbids conclusion booleans from callers. Inputs must be RAW
+(`endingLock.lockedAtChapter`, `commit45.chapterNumber`,
+`commit45.committedCanonRevision`, `publishedChapterNumbers`) and the EVALUATOR
+itself computes `lock chapter == 45 AND commit Bab45 exists AND published Bab45
+exists`. Bump to `endingRunway 1.3.0` together with the #3 correction.
+
+**BLOCKER 3 — #6 ending reachability produces false PASS.** NCS requires at every
+checkpoint: ≥2 main endings + path to secret ending remain reachable. C-R1 maps
+EVERY `endingCandidate` to `{ id: key, isMain: true, isSecret: false,
+blockedByFlags: [] }` ⇒ secret endings never exist, blocking always empty,
+everything main; `checkEndingReachability()` can only test secrets via
+`isSecret === true` and reachability via `blockedByFlags`. So
+`PASS:reachableMain=2/min=2` does not prove NCS §1.4 — it passes because runtime
+input makes reachability trivially true. `EndingCandidateSchema` only has
+`key/name/condition(free-text)/requiredClosure` — no structured isSecret/kind or
+blocking condition. Disposition: `ACT_ENDING_REACHABILITY proof = NOT RATIFIED;
+#6 = OPEN; G1-REACH remains IN_PROGRESS`. Never mark done because story_events exist.
+
+**Additional G1 issue — missing-thread drift mask.** C-R1 builds reconciliation
+requirements via `expectedThreadMovement.filter(id => existingThreadIds.has(id))`;
+a trajectory-required thread that never materialized is dropped before
+`computeDriftScore()` sees it, although that function is designed to score drift
+for required-but-absent/inactive threads. Do not filter missing requirements.
+
+**Gate 2 migration — NOT RATIFIED.** Reviewer instruction was specific:
+shared/staging deployment ledger is authoritative; if none exists there is no
+remote-history proof; do not rename/delete on assumption. The report says there is
+no shared/staging, then used the isolated/local QA ledger as application-history
+authority and renamed `020000 → 021000`. Moreover `bb3287a` changed the CONTENT of
+the old `20260805020000_living_canon_publication_primitives.sql` that the report
+itself calls APPLIED — that is historical migration rewrite, not forward-only.
+Fresh-green `db reset` proves fresh bootstrap only, not repair safety against real
+deployment history. With no shared/staging environment, the exit must be one of:
+(1) decision-maker authorizes a separate READ-ONLY production query on
+`supabase_migrations.schema_migrations` (no migration/write of any kind); or
+(2) decision-maker explicitly approves migration-history rewrite/waiver because the
+project has no authoritative deployed migration history for that range.
+Without one of those decisions the reviewer will not ratify `bb3287a` for merge.
+
+Approved from C-R1 (kept): context-budget wiring, G4 stale marking + fail-closed
+regression, post-publication call site, V5 production call-chain proof, clean
+isolated two-run reproducibility, fork/fencing/parity, STALE HIGH findings gone.
+
+Status lock (verbatim):
+
+```text
+M10-A                         CLOSED
+M10-B                         CLOSED
+M10-C core 1→50 harness       PASS
+sync/worker parity            PASS
+resume/fencing/fork           PASS
+G4-STALE runtime              PASS
+context-budget capture        PASS
+V5/V6 call-path gate          PASS
+double-run reproducibility    PASS
+clean worktree                PASS
+B.3.7 beat evidence           BLOCKER
+B.3.7 raw durability input    BLOCKER
+G1 ending reachability        BLOCKER
+G1 missing-thread drift mask  BLOCKER
+migration-history authority   HOLD
+M10-C                         NOT CLOSED
+M10-D                         BLOCKED
+M10-E                         BLOCKED
+M10-F                         BLOCKED
+M10-G                         BLOCKED
+production activation         FORBIDDEN
+```
+
+C-R2 scope (reviewer: narrow, no big redesign): one versioned ending-evaluator
+rebaseline (B.3.7) covering both B.3.7 problems; one G1 correction that neither
+fakes secret/reachability nor drops missing-thread requirements; migration-history
+decision from the decision-maker. Then rerun C once more; the full double-run need
+not be repeated unless runtime/schema affecting normalized evidence changed.

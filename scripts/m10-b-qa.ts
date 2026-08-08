@@ -56,10 +56,12 @@ export const EVALUATOR_VERSIONS: Record<string, string> = {
   threadLifecycle: '1.1.0',
   contextMemory: '1.1.0',
   choiceHistory: '1.1.0',
-  // C-R1 #4: durability evidence moved from a transaction id to the canonical
-  // publication proof (lock row + committed canon ledger row + published
-  // chapter). Adapter contract change → minor bump.
-  endingRunway: '1.2.0',
+  // C-R1 #4 → C-R2 (reviewer Entry 6): B.3.7 rebaseline. Durability inputs are
+  // now RAW persisted rows; the evaluator itself computes the lock/commit/
+  // publication conjunction. The fabricated Bab-49 emotional-resolution beat
+  // check was withdrawn (emotional resolution moves to the M10-D semantic
+  // judge). Contract change → minor bump to 1.3.0.
+  endingRunway: '1.3.0',
   repetition: '1.1.0',
   factConflict: '0.0.0-blocked',
 }

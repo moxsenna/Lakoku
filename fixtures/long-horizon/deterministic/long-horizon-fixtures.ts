@@ -334,23 +334,19 @@ function greenEnding(): EvaluatorEnvelopeV1<EndingRunwayInputV1> {
   return {
     schemaVersion: 1,
     evaluatorId: 'ending-runway',
-    evaluatorVersion: '1.2.0',
+    evaluatorVersion: '1.3.0',
     storyId: STORY_ID,
     mode: 'FINAL_HORIZON',
     horizon: { fromChapter: 45, toChapter: 50 },
     input: {
+      // C-R2 (reviewer Entry 6): RAW rows only — the evaluator computes
+      // durability (lock at 45 ∧ commit Bab 45 exists ∧ published Bab 45).
       endingLock: {
-        chapterNumber: 45,
         lockedEndingKey: 'ending-quiet-return',
-        // C-R1 #4: durability derives from the canonical publication proof
-        // (lock row at the right chapter + committed canon ledger row +
-        // published chapter), not a transaction identifier.
-        canonicalPublicationProof: {
-          lockAtCorrectChapter: true,
-          chapterCommittedRevision: 45,
-          chapterPublished: true,
-        },
+        lockedAtChapter: 45,
       },
+      commit45: { chapterNumber: 45, committedCanonRevision: 45 },
+      publishedChapterNumbers: [45, 49, 50],
       publications: [
         {
           chapterNumber: 45,
@@ -358,7 +354,6 @@ function greenEnding(): EvaluatorEnvelopeV1<EndingRunwayInputV1> {
           choiceCount: 2,
           endingKey: null,
           newMajorThreadIds: [],
-          emotionalResolutionBeatIds: [],
         },
         {
           chapterNumber: 49,
@@ -366,7 +361,6 @@ function greenEnding(): EvaluatorEnvelopeV1<EndingRunwayInputV1> {
           choiceCount: 2,
           endingKey: null,
           newMajorThreadIds: [],
-          emotionalResolutionBeatIds: ['beat-reconcile'],
         },
         {
           chapterNumber: 50,
@@ -374,7 +368,6 @@ function greenEnding(): EvaluatorEnvelopeV1<EndingRunwayInputV1> {
           choiceCount: 0,
           endingKey: 'ending-quiet-return',
           newMajorThreadIds: [],
-          emotionalResolutionBeatIds: ['beat-closure'],
         },
       ],
       finalState: {
@@ -906,10 +899,21 @@ const RED_SPECS: RedSpec[] = [
   {
     id: 'red-ending-lock-not-durable',
     targetEvaluator: 'endingRunway',
-    mutation: 'Ending lock exists but the canonical publication proof (lock chapter, committed canon revision, published chapter) is missing.',
+    mutation: 'Ending lock exists but the raw Bab-45 canon commit ledger row is missing (C-R2: evaluator computes durability from raw rows).',
     expectedFindingCodes: ['ENDING_LOCK_NOT_DURABLE'],
     apply: (e) => {
-      e.endingRunway!.input.endingLock!.canonicalPublicationProof = null
+      e.endingRunway!.input.commit45 = null
+    },
+  },
+  {
+    id: 'red-ending-lock-wrong-chapter',
+    targetEvaluator: 'endingRunway',
+    mutation: 'The raw lock row records a lock chapter other than Bab 45 (C-R2: misplaced lock detected by the evaluator, not precomputed).',
+    expectedFindingCodes: ['ENDING_LOCK_NOT_DURABLE'],
+    apply: (e) => {
+      // 46 stays inside the FINAL_HORIZON window; any chapter != 45 is a
+      // misplaced lock as far as the durability conjunction is concerned.
+      e.endingRunway!.input.endingLock!.lockedAtChapter = 46
     },
   },
   {
@@ -943,16 +947,10 @@ const RED_SPECS: RedSpec[] = [
       ch49.newMajorThreadIds = ['thread-late-twist']
     },
   },
-  {
-    id: 'red-ending-chapter49-no-resolution',
-    targetEvaluator: 'endingRunway',
-    mutation: 'Chapter 49 commits no emotional resolution beat.',
-    expectedFindingCodes: ['CHAPTER_49_EMOTIONAL_RESOLUTION_MISSING'],
-    apply: (e) => {
-      const ch49 = e.endingRunway!.input.publications.find((p) => p.chapterNumber === 49)!
-      ch49.emotionalResolutionBeatIds = []
-    },
-  },
+  // 'red-ending-chapter49-no-resolution' WITHDRAWN (C-R2, reviewer Entry 6
+  // BLOCKER 1): CHAPTER_49_EMOTIONAL_RESOLUTION_MISSING no longer exists in
+  // the deterministic suite — emotional-resolution content is semantic and
+  // moves to the M10-D semantic judge (B.3.7 rebaseline, ending-runway 1.3.0).
   {
     id: 'red-ending-unresolved-state',
     targetEvaluator: 'endingRunway',

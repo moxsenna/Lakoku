@@ -294,6 +294,7 @@ describe('C-R2 G1: deriveEndingReachabilityEvidence', () => {
       endings: derived!.endings,
       state: derived!.state,
       snapshot: derived!.snapshot,
+      contract: derived!.contract, // C-R3-R2 Blocker #4: pass full contract for reachability analysis
     })
   }
 
@@ -393,6 +394,7 @@ describe('C-R2 G1: deriveEndingReachabilityEvidence', () => {
       ],
       state: derived.state,
       snapshot: derived.snapshot,
+      contract: derived.contract, // C-R3-R2 Blocker #4: pass full contract for reachability analysis
     })
     // V2: explicit counts and reachability flags instead of model-gap booleans
     expect(evidence.secretEndingCount).toBe(1)

@@ -48,6 +48,7 @@ import {
   ENDING_RULES,
   STALE_AFTER_CHAPTERS,
   checkEndingReachability,
+  isEndingReachable,
   debtBackedThreadId,
   runReconciliation,
   type ActualState,
@@ -171,6 +172,7 @@ export function deriveActBoundaryReconciliationInput(args: {
   endings: EndingDef[]
   secrets: SecretReveal[]
   snapshot: CanonSnapshot // C-R3-R1 Blocker #6: pass snapshot for reachability evidence (C-R3-R1 fix #6)
+  contract: StoryContract // C-R3-R2 Blocker #4: pass contract for reachability evidence
 } | null {
   const { chapterNumber, contract, snapshot } = args
   // storyId stays in the input type for call-site clarity; the derivation
@@ -234,6 +236,7 @@ export function deriveActBoundaryReconciliationInput(args: {
     endings,
     secrets: snapshot.secrets,
     snapshot: args.snapshot, // C-R3-R1 Blocker #6: pass snapshot for reachability evidence (C-R3-R1 fix #6)
+    contract, // C-R3-R2 Blocker #4: pass contract for reachability evidence
   }
 }
 
@@ -326,6 +329,8 @@ export function deriveEndingReachabilityEvidenceV1(args: {
 /**
  * V2 implementation (C-R3-R1, reviewer Entry 10) — PRODUCTION READY.
  *
+ * C-R3-R2 Blocker #4: Pass full normalized contract to reachability evidence; calculate reachable counts via isEndingReachable().
+ *
  * FIXES vs V1:
  * 1. Counts MAIN endings only (not total endings - was counting bug)
  * 2. Counts SECRET endings separately
@@ -339,24 +344,29 @@ export function deriveEndingReachabilityEvidence(args: {
   endings: EndingDef[]
   state: ActualState
   snapshot: CanonSnapshot // Added for closure satisfiability (C-R3-R1 fix #6)
+  contract: StoryContract // C-R3-R2 Blocker #4: full contract for reachability analysis
 }): EndingReachabilityEvidenceV2 {
-  const { actNumber, checkpointChapter, endings, state } = args
+  const { actNumber, checkpointChapter, endings, state, contract } = args
 
   const violationFindings = checkEndingReachability(endings, state)
   
   // Count main vs secret endings explicitly (BUG FIX: was counting ALL endings in V1)
   const mainEndings = endings.filter((e) => e.isMain && !e.isSecret)
   const secretEndings = endings.filter((e) => e.isSecret)
-  const mainReachable = mainEndings.length >= ENDING_RULES.minReachableEndings
+  
+  // C-R3-R2 Blocker #4: Calculate actual reachable counts via isEndingReachable helper
+  const reachableMainCount = mainEndings.filter((e) => isEndingReachable(e, state)).length
+  const mainReachable = reachableMainCount >= ENDING_RULES.minReachableEndings
   
   // Secret path is proven if at least one secret ending exists and is not unreachable
   const secretPathBlocked = violationFindings.some((f) => f.code === 'SECRET_ENDING_UNREACHABLE')
   const secretReachable = secretEndings.length > 0 && !secretPathBlocked
   
   // Build per-ending closure evidence with flagged status (C-R3-R1 fix #6: use helper)
+  // C-R3-R2 Blocker #4: Pass full contract instead of empty object workaround
   const closureFromHelper = deriveRequiredClosureSatisfiability({
     storyId: args.snapshot.storyId,
-    contract: { endingCandidates: [] } as unknown as StoryContract, // Minimal contract for thread lookup only - TODO: pass full contract properly
+    contract: contract,
     snapshot: args.snapshot,
   })
   
@@ -404,10 +414,12 @@ export function deriveEndingReachabilityEvidence(args: {
 }
 
 /**
- * Per-ending requiredClosure satisfiability: an ending stays reachable while
+ * Per-ending required closure satisfiability: an ending stays reachable while
  * none of its required debts' backing threads was abandoned. Deterministic and
  * explicit — this is the blocking path EndingDef.blockedByFlags cannot express
  * for closure-based endings.
+ * 
+ * C-R3-R2 Blocker #4: Use requiredPlotDebtIds (structured IDs) as authority over prose-text requiredClosure.
  */
 export function deriveRequiredClosureSatisfiability(args: {
   storyId: string
@@ -418,11 +430,16 @@ export function deriveRequiredClosureSatisfiability(args: {
   const statusByThreadId = new Map(snapshot.threads.map((t) => [t.id, t.status]))
   return contract.endingCandidates.map((candidate) => {
     const blockingThreadIds: string[] = []
-    for (const debtId of candidate.requiredClosure) {
+    
+    // C-R3-R2 Blocker #4: Use requiredPlotDebtIds as structured authority; fallback to requiredClosure for V1 compatibility
+    const debtIdsToCheck = candidate.requiredPlotDebtIds ?? candidate.requiredClosure
+    
+    for (const debtId of debtIdsToCheck) {
       const threadId = debtBackedThreadId(storyId, debtId)
       const status = statusByThreadId.get(threadId)
       if (status === 'ABANDONED_APPROVED') blockingThreadIds.push(threadId)
     }
+    
     return { endingId: candidate.key, satisfiable: blockingThreadIds.length === 0, blockingThreadIds }
   })
 }
@@ -462,12 +479,14 @@ export async function runActBoundaryReconciliation(
   })
 
   // C-R3-R1: persist HONEST reachability evidence with FULL PROVABILITY on v2 model
+  // C-R3-R2 Blocker #4: Pass full normalized contract for proper closure analysis
   const reachabilityEvidence = deriveEndingReachabilityEvidence({
     actNumber: derived.actNumber,
     checkpointChapter: chapterNumber,
     endings: derived.endings,
     state: derived.state,
     snapshot: derived.snapshot, // C-R3-R1 Blocker #6: pass snapshot for closure satisfiability analysis
+    contract: derived.contract, // C-R3-R2 Blocker #4: pass full contract
   })
 
   await insertStoryEvent(admin, storyId, 'ACT_RECONCILIATION', {

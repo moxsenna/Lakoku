@@ -173,8 +173,9 @@ begin
     or exists (
       select 1 from pg_catalog.jsonb_array_elements(p_ending_candidates_json) item
       where pg_catalog.jsonb_typeof(item) <> 'object'
-        or not (item ?& array['key','name','condition','requiredClosure','blockingConditions','kind'])
-        or (select pg_catalog.count(*) from pg_catalog.jsonb_object_keys(item)) <> 6
+        or not (item ?& array['key','name','condition','requiredClosure','blockingConditions','kind','requiredPlotDebtIds'])
+        -- C-R3-R2 Blocker #1: V2 requires exact 7 keys with requiredPlotDebtIds present
+        or (select pg_catalog.count(*) from pg_catalog.jsonb_object_keys(item)) <> 7
         or pg_catalog.jsonb_typeof(item->'key') <> 'string' or pg_catalog.char_length(item->>'key') not between 1 and 80
         or pg_catalog.jsonb_typeof(item->'name') <> 'string' or pg_catalog.char_length(item->>'name') not between 1 and 160
         or pg_catalog.jsonb_typeof(item->'condition') <> 'string' or pg_catalog.char_length(item->>'condition') not between 1 and 500
@@ -185,6 +186,14 @@ begin
         -- REQUIRED ENFORCEMENT: kind must exist and be exactly 'main' or 'secret'
         or pg_catalog.jsonb_typeof(item->>'kind') is distinct from 'string'
         or (item->>'kind') not in ('main', 'secret')
+        -- REQUIRED ENFORCEMENT: requiredPlotDebtIds must exist and be non-empty array of valid string IDs
+        or not (item ? 'requiredPlotDebtIds')
+        or pg_catalog.jsonb_typeof(item->'requiredPlotDebtIds') <> 'array'
+        or pg_catalog.jsonb_array_length(item->'requiredPlotDebtIds') = 0
+        or exists(
+            select 1 from pg_catalog.jsonb_array_elements(item->'requiredPlotDebtIds') v 
+            where pg_catalog.jsonb_typeof(v)<>'string' or pg_catalog.char_length(v#>>'{}') not between 1 and 100
+          )
     ) or (select pg_catalog.count(*) <> pg_catalog.count(distinct item->>'key') from pg_catalog.jsonb_array_elements(p_ending_candidates_json) item)
     -- Enforce minimum structure for v2 contracts: at least 2 main endings
     or (
@@ -241,6 +250,20 @@ begin
   select pg_catalog.array_agg(item->>'id' order by item->>'id') into v_fact_ids from pg_catalog.jsonb_array_elements(p_facts) item;
   select pg_catalog.array_agg(item->>'id' order by item->>'id') into v_secret_ids from pg_catalog.jsonb_array_elements(p_secrets) item;
   select pg_catalog.array_agg(item->>'id' order by item->>'id') into v_thread_ids from pg_catalog.jsonb_array_elements(p_threads) item;
+  
+  -- C-R3-R2 Blocker #1: Extract plot debt IDs for referential integrity validation
+  select pg_catalog.array_agg(item->>'id' order by item->>'id') into v_plot_debt_ids 
+  from pg_catalog.jsonb_array_elements(p_plot_debts_json) item;
+  
+  -- C-R3-R2 Blocker #1: Validate requiredPlotDebtIds references exist in plotDebts
+  if exists (
+      select 1 from pg_catalog.jsonb_array_elements(p_ending_candidates_json) ec
+      cross join lateral pg_catalog.jsonb_array_elements_text(ec->'requiredPlotDebtIds') ref
+      where not(ref = any(v_plot_debt_ids))
+    )
+  then
+    raise exception using errcode = '22023', message = 'INVALID_PLOT_DEBT_REFERENCE';
+  end if;
 
   if (select pg_catalog.count(*) <> pg_catalog.count(distinct id) from pg_catalog.unnest(v_character_ids) id)
     or (select pg_catalog.count(*) <> pg_catalog.count(distinct pg_catalog.lower(item->>'alias')) from pg_catalog.jsonb_array_elements(p_character_aliases) item)

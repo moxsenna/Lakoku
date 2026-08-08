@@ -2,7 +2,7 @@
  * M10-C R3.2 — Positive DB-backed proof of RECONCILED reconciliation.
  *
  * This is NOT a unit test; it's an isolated DB-backed integration that:
- *   1. Seeds a legal story at real act boundary (chapter 5)
+ *   1. Seeds a legal story at real act boundary (chapter 12)
  *   2. Injects canonical drift through fixture/bootstrap setup
  *   3. Executes REAL post-publication lifecycle (no mocks)
  *   4. Proves chapter_blueprints version++ and reconciled_from_version persistence
@@ -22,7 +22,11 @@ import { assertIsolatedTarget } from '../../lib/narrative-qa/harness/seed'
 assertIsolatedTarget()
 
 const STORY_ID = 'm10c-r3-2-positive-test'
-const ACT_BOUNDARY_CHAPTER = 5 // First act boundary (chapters 1-5)
+// C-R3-R2 Blocker #5: Correct act boundary target.
+// Production derivation uses nextAct.fromChapter === chapterNumber + 1
+// For checkpoint at end of act 1 (chapter 5), NEXT ACT is 6-12.
+// We seed blueprints for chapters 6-12 and execute reconciliation FROM chapter 5.
+const ACT_BOUNDARY_CHAPTER = 5 // Checkpoint at end of act 1 → next act is 6-12
 
 describe('M10-C R3.2 — Positive DB-backed RECONCILED proof', () => {
   test('version++ chain + reconciled_from_version persistence at act boundary', async () => {
@@ -30,6 +34,21 @@ describe('M10-C R3.2 — Positive DB-backed RECONCILED proof', () => {
 
     // STEP 1: Seed isolated story with canonical act boundary
     const contract = buildHarnessContract(STORY_ID)
+    
+    // Override chapter 6's expectedThreadMovement to create drift ≥2
+    // Both required threads absent from canonical snapshot state.threadStatuses
+    const overriddenContract = {
+      ...contract,
+      chapterTargets: contract.chapterTargets.map((target) => {
+        if (target.chapterNumber === 6) {
+          return {
+            ...target,
+            expectedThreadMovement: ['missing-thread-A', 'missing-thread-B'],
+          }
+        }
+        return target
+      }),
+    }
     
     // Insert story row
     const { error: storyError } = await admin.from('stories').insert({
@@ -45,7 +64,7 @@ describe('M10-C R3.2 — Positive DB-backed RECONCILED proof', () => {
     if (storyError) throw new Error(`Failed to seed stories: ${storyError.message}`)
 
     // Parse and insert story contract
-    const parsedContract = parseStoryContractWithNormalization(contract)
+    const parsedContract = parseStoryContractWithNormalization(overriddenContract)
     const { error: contractError } = await admin.from('story_generation_contracts').insert({
       story_id: STORY_ID,
       story_contract_json: parsedContract,
@@ -57,24 +76,36 @@ describe('M10-C R3.2 — Positive DB-backed RECONCILED proof', () => {
     })
     if (contractError) throw new Error(`Failed to seed contracts: ${contractError.message}`)
 
-    // Seed act rollup
-    const { error: rollupError } = await admin.from('act_rollups').insert({
-      story_id: STORY_ID,
-      act_number: 1,
-      from_chapter: 1,
-      to_chapter: 5,
-      checkpoint_chapter: 5,
-    })
+    // Seed act rollups (both act 1 and act 2 for proper boundary detection)
+    const { error: rollupError } = await admin.from('act_rollups').insert([
+      {
+        story_id: STORY_ID,
+        act_number: 1,
+        from_chapter: 1,
+        to_chapter: 5,
+        checkpoint_chapter: 5,
+      },
+      {
+        story_id: STORY_ID,
+        act_number: 2,
+        from_chapter: 6,
+        to_chapter: 12,
+        checkpoint_chapter: 12,
+      },
+    ])
     if (rollupError) throw new Error(`Failed to seed act_rollups: ${rollupError.message}`)
 
-    // STEP 2: Create draft blueprints at version 1 (pre-drift baseline)
-    const blueprintsToInsert = Array.from({ length: 5 }, (_, i) => ({
-      chapterNumber: i + 1,
-      phase: 'BABAK_1',
-      chapterGoal: `Draft goal for chapter ${i + 1}`,
+    // STEP 2: Create draft blueprints for NEXT ACT (chapters 6-12) at version 1
+    // C-R3-R2 Blocker #5: Production derives reconciliation from NEXT ACT chapters
+    // We need to seed chapters 6-12 with required thread movement that creates drift ≥2
+    // via expectedThreadMovement not materialized in state.threadStatuses.
+    const blueprintsToInsert = Array.from({ length: 7 }, (_, i) => ({
+      chapterNumber: i + 6, // Chapters 6-12
+      phase: 'BABAK_2',
+      chapterGoal: `Draft goal for chapter ${i + 6}`,
       mandatoryBeats: ['beat-utama'],
       forbiddenReveals: [],
-      introducedCharacters: [`char:hero-${i + 1}`],
+      introducedCharacters: [`char:hero-${i + 6}`],
       version: 1,
     }))
 
@@ -126,11 +157,13 @@ describe('M10-C R3.2 — Positive DB-backed RECONCILED proof', () => {
     expect((events?.data?.reconciledChapters as number[]).length).toBeGreaterThan(0)
 
     // STEP 4: Query DB to verify version++ and reconciled_from_version persistence
+    // C-R3-R2 Blocker #5: Reconciliation triggers for NEXT ACT chapters (6-12)
+    // We need to check chapter 6 has v2 (not chapter 5 which is checkpoint)
     const { data: oldBlueprint, error: oldError } = await admin
       .from('chapter_blueprints')
       .select('*')
       .eq('story_id', STORY_ID)
-      .eq('chapter_number', ACT_BOUNDARY_CHAPTER)
+      .eq('chapter_number', 6) // Next act first chapter
       .eq('version', 1)
       .single()
 
@@ -141,7 +174,7 @@ describe('M10-C R3.2 — Positive DB-backed RECONCILED proof', () => {
       .from('chapter_blueprints')
       .select('*')
       .eq('story_id', STORY_ID)
-      .eq('chapter_number', ACT_BOUNDARY_CHAPTER)
+      .eq('chapter_number', 6) // Next act first chapter should have v2
       .eq('version', 2) // Must be N+1
       .single()
 
@@ -183,8 +216,8 @@ describe('M10-C R3.2 — Positive DB-backed RECONCILED proof', () => {
       .from('chapter_blueprints')
       .select('*', { count: 'exact', head: false })
       .eq('story_id', STORY_ID)
-      .eq('chapter_number', ACT_BOUNDARY_CHAPTER)
+      .eq('chapter_number', 6) // Next act first chapter
 
     expect(remainingRows).toBe(2) // Version 1 + Version 2
-  }, 30000)
+  })
 })

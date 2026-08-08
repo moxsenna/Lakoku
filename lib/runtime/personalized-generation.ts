@@ -469,7 +469,7 @@ export const defaultPersistEndingLockForTest = defaultPersistEndingLock
 /**
  * Check generation admission gate before acquiring lease.
  * Returns error if generation_status === 'needs_review' (FAILED_REVIEW_REQUIRED durable).
- * FAIL-CLOSED: throws on read error to prevent proceeding on ambiguous state.
+ * FAIL-CLOSED: treats missing story or read error as failure to prevent proceeding on ambiguous state.
  */
 async function checkAdmissionBeforeGeneration(storyId: string): Promise<{ ok: true } | { ok: false; reason: 'FAILED_REVIEW_REQUIRED' }> {
   try {
@@ -479,11 +479,18 @@ async function checkAdmissionBeforeGeneration(storyId: string): Promise<{ ok: tr
       .select('generation_status')
       .eq('id', storyId)
       .maybeSingle()
-    if (error) throw error // FAIL-CLOSED
     
-    const storyRow = data as { generation_status?: string } | null
+    if (error) throw error // FAIL-CLOSED: treat read error as failure
     
-    if (storyRow?.generation_status === 'needs_review') {
+    // C-R3-R2 Blocker #3: Treat null data (story missing) as failed admission for fail-closed semantics
+    if (!data) {
+      console.error('ADMISSION_CHECK_FAILED', { storyId, reason: 'STORY_MISSING' })
+      throw new Error(`Story ${storyId} not found in database`)
+    }
+    
+    const storyRow = data as { generation_status?: string }
+    
+    if (storyRow.generation_status === 'needs_review') {
       return { ok: false, reason: 'FAILED_REVIEW_REQUIRED' as const }
     }
     

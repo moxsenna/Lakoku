@@ -5,7 +5,7 @@
  * Tests both storage (StoredStoryContractV1Schema) and runtime (parseStoryContractWithNormalization) paths.
  */
 
-import { test, expect } from 'vitest'
+import { test, expect, describe } from 'vitest'
 import {
   StoredStoryContractV1Schema,
   StoredStoryContractV2Schema,
@@ -127,6 +127,11 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
     // CRITICAL: Use StoredStoryContractV2Schema (authoring schema) not NormalizedStoryContractSchema (runtime)
     // The runtime schema intentionally allows empty requiredPlotDebtIds for V1→V2 transition
     // But authoring schema requires ≥1 PlotDebtId reference for V2 structuring
+    
+    // Fixture design: 2 main + 1 secret to satisfy NCS §1.4 base requirement
+    // Only first main is missing requiredPlotDebtIds - that's the ONLY intentional defect
+    
+    // CRITICAL: Must have exactly one 'main_mystery' plot debt per StoredStoryContractV2Schema refinement
     const v2MissingRequiredPlotDebtIds = {
       storyId: 'test-story-002',
       totalChapters: 50,
@@ -147,11 +152,33 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
       chapterTargets: fullChapterTargets,
       revealRunway: minimalRevealRunway,
       closureRunway: fullClosureRunway,
-      plotDebts: [{ id: 'debt', question: 'Q', introducedAt: 1, mustProgressBy: [10], mustCloseBy: 45, status: 'open' }],
+      // Must have exactly one 'main_mystery' plot debt (schema requirement)
+      plotDebts: [
+        { id: 'main_mystery', question: 'Who did it?', introducedAt: 1, mustProgressBy: [10], mustCloseBy: 45, status: 'open' },
+      ],
       endingCandidates: [
-        // Valid V2 format but MISSING requiredPlotDebtIds array entirely - should be rejected
+        // First main MISSING requiredPlotDebtIds - INTENTIONAL DEFECT
         { key: 'e1', name: 'E1', kind: 'main', condition: 'C', requiredClosure: ['closure-e1'], blockingConditions: [] },
-        { key: 'e2', name: 'E2', kind: 'secret', condition: 'C', requiredClosure: ['closure-e2'], blockingConditions: [] },
+        // Second main WITH valid requiredPlotDebtIds
+        { 
+          key: 'e2', 
+          name: 'E2', 
+          kind: 'main', 
+          condition: 'C',
+          requiredClosure: ['closure-e2'], 
+          requiredPlotDebtIds: ['main_mystery'], // Legal reference to main_mystery
+          blockingConditions: [] 
+        },
+        // Secret WITH valid requiredPlotDebtIds
+        { 
+          key: 'e3', 
+          name: 'E3', 
+          kind: 'secret', 
+          condition: 'C',
+          requiredClosure: ['closure-e3'], 
+          requiredPlotDebtIds: ['main_mystery'], // Same legal reference (multiple endings can share same debt)
+          blockingConditions: [] 
+        },
       ],
     }
 
@@ -160,19 +187,29 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
     expect(result.success).toBe(false)
     
     if (!result.success) {
-      // Check that validation failed (we don't need specific error paths since schema will reject anyway)
-      // The important part is that V2 without requiredPlotDebtIds fails authoring validation
-      expect(result.error.issues.length).toBeGreaterThan(0)
-      
-      // Verify the rejection happens at endingCandidates level
-      const hasEndingCandidateError = result.error.issues.some((issue) => {
-        return issue.path[0] === 'endingCandidates'
+      // Assert error exists specifically at endingCandidates[0].requiredPlotDebtIds path
+      const hasSpecificError = result.error.issues.some((issue) => {
+        return (
+          issue.path.length === 3 &&
+          issue.path[0] === 'endingCandidates' &&
+          issue.path[1] === 0 &&
+          issue.path[2] === 'requiredPlotDebtIds'
+        )
       })
-      expect(hasEndingCandidateError).toBe(true)
+      
+      expect(hasSpecificError).toBe(true)
+      expect(result.error.issues.length).toBeGreaterThan(0)
     }
   })
 
-  test('V2 with legal requiredPlotDebtIds accepted by runtime schema', () => {
+  test('V2 with legal requiredPlotDebtIds accepted by authoring schema', () => {
+    // This is the POSITIVE counterpart to the negative test above
+    // Uses StoredStoryContractV2Schema (authoring) with FULL requirements:
+    // - ≥2 main endings
+    // - ≥1 secret ending  
+    // - ALL requiredPlotDebtIds present and legal
+    
+    // CRITICAL: Must have exactly one 'main_mystery' plot debt per StoredStoryContractV2Schema refinement
     const validV2WithRequiredFields = {
       storyId: 'test-story-003',
       totalChapters: 50,
@@ -193,7 +230,9 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
       chapterTargets: fullChapterTargets,
       revealRunway: minimalRevealRunway,
       closureRunway: fullClosureRunway,
-      plotDebts: [{ id: 'debt-main', question: 'Q', introducedAt: 1, mustProgressBy: [10], mustCloseBy: 45, status: 'open' }],
+      plotDebts: [
+        { id: 'main_mystery', question: 'Who did it?', introducedAt: 1, mustProgressBy: [10], mustCloseBy: 45, status: 'open' },
+      ],
       endingCandidates: [
         { 
           key: 'e1', 
@@ -201,24 +240,60 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
           kind: 'main', 
           condition: 'C',
           requiredClosure: ['closure-e1'], 
-          requiredPlotDebtIds: ['debt-main'], // Legal reference to existing plot debt (≥1 required)
+          requiredPlotDebtIds: ['main_mystery'], // Legal reference
           blockingConditions: [] 
         },
         { 
           key: 'e2', 
           name: 'E2', 
-          kind: 'secret', 
+          kind: 'main', 
           condition: 'C',
           requiredClosure: ['closure-e2'], 
-          requiredPlotDebtIds: ['debt-main'], // Same legal reference
+          requiredPlotDebtIds: ['main_mystery'], // Same legal reference
+          blockingConditions: [] 
+        },
+        { 
+          key: 'e3', 
+          name: 'E3', 
+          kind: 'secret', 
+          condition: 'C',
+          requiredClosure: ['closure-e3'], 
+          requiredPlotDebtIds: ['main_mystery'], // Same legal reference (multiple endings share debt)
           blockingConditions: [] 
         },
       ],
     }
 
-    // Should accept - has required structured fields
-    const result = NormalizedStoryContractSchema.parse(validV2WithRequiredFields)
-    expect(result.endingCandidates[0].requiredPlotDebtIds).toEqual(['debt-main'])
+    // Should accept - has all V2 authoring requirements:
+    // ✓ ≥2 main endings
+    // ✓ ≥1 secret ending
+    // ✓ All requiredPlotDebtIds present and referencing existing debts
+    const result = StoredStoryContractV2Schema.safeParse(validV2WithRequiredFields)
+    
+    expect(result.success).toBe(true)
+    
+    if (result.success) {
+      const parsed = result.data
+      expect(parsed.endingCandidates.length).toBe(3)
+      
+      const mainCount = parsed.endingCandidates.filter((e) => e.kind === 'main').length
+      const secretCount = parsed.endingCandidates.filter((e) => e.kind === 'secret').length
+      expect(mainCount).toBe(2)
+      expect(secretCount).toBe(1)
+      
+      // Verify all endings have requiredPlotDebtIds
+      parsed.endingCandidates.forEach((ending) => {
+        expect(ending.requiredPlotDebtIds).toBeDefined()
+        expect(Array.isArray(ending.requiredPlotDebtIds)).toBe(true)
+        expect(ending.requiredPlotDebtIds.length).toBeGreaterThan(0)
+        
+        // Verify references are legal (exist in plotDebts)
+        const validRefs = parsed.plotDebts.map((d) => d.id)
+        ending.requiredPlotDebtIds.forEach((ref) => {
+          expect(validRefs).toContain(ref)
+        })
+      })
+    }
   })
 
   test('NormalizedStoryContractSchema allows zero secrets (no NCS §1.4 enforcement)', () => {
@@ -280,8 +355,10 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
       closureRunway: fullClosureRunway,
       plotDebts: [{ id: 'd', question: 'Q', introducedAt: 1, mustProgressBy: [10], mustCloseBy: 45, status: 'open' }],
       endingCandidates: [
-        // Only 1 main ending, NO secrets - INVALID for authoring (also requiresPlotDebtIds missing)
-        { key: 'e1', name: 'E1', kind: 'main', condition: 'C', requiredClosure: [], requiredPlotDebtIds: ['d'], blockingConditions: [] },
+        // Only 1 main ending, NO secrets - INVALID for NCS §1.4
+        // Also using legal requiredPlotDebtIds and non-empty requiredClosure
+        // so rejection is specifically due to <2 main / no secret
+        { key: 'e1', name: 'E1', kind: 'main', condition: 'C', requiredClosure: ['closure-e1'], requiredPlotDebtIds: ['d'], blockingConditions: [] },
       ],
     }
 

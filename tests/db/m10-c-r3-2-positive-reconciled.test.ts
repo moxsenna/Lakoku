@@ -24,6 +24,29 @@ vi.mock('server-only', () => ({}))
 // Local Supabase bootstrap
 // ---------------------------------------------------------------------------
 
+function getLocalStatus() {
+  try {
+    const raw = process.platform === 'win32'
+      ? execFileSync('cmd.exe', ['/d', '/s', '/c', 'pnpm exec supabase status -o json'], { cwd: process.cwd(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+      : execFileSync('pnpm', ['exec', 'supabase', 'status', '-o', 'json'], { cwd: process.cwd(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+    const jsonStr = raw.match(/{[\s\S]*}/)?.[0] ?? raw
+    const parsed = JSON.parse(jsonStr) as Record<string, string>
+    return {
+      url: parsed.API_URL ?? 'http://127.0.0.1:54321',
+      key: parsed.SERVICE_ROLE_KEY ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU',
+    }
+  } catch {
+    return {
+      url: 'http://127.0.0.1:54321',
+      key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU',
+    }
+  }
+}
+
+const status = getLocalStatus()
+process.env.SUPABASE_URL = status.url
+process.env.SUPABASE_SERVICE_ROLE_KEY = status.key
+
 import { createAdminClient } from '@/lib/supabase/admin'
 import { buildHarnessContract } from '../../lib/narrative-qa/harness/fixture'
 import { parseStoryContractWithNormalization } from '../../lib/story-engine/story-contract'
@@ -37,6 +60,20 @@ const ACT_BOUNDARY_CHAPTER = 5
 describe('M10-C R3.2 — Positive DB-backed RECONCILED proof', () => {
   test('version++ chain + reconciled_from_version persistence at act boundary', async () => {
     const admin = createAdminClient()
+
+    // Ensure harness user exists in auth.users (stories.owner_user_id references it)
+    await admin.auth.admin.createUser({
+      id: HARNESS_USER_ID,
+      email: 'm10c-harness@example.invalid',
+      password: 'harness123',
+      email_confirm: true,
+    }).catch(() => null) // Silently ignore if already exists
+    
+    // Cleanup any previous test data for this story ID
+    await admin.from('act_rollups').delete().eq('story_id', STORY_ID)
+    await admin.from('chapter_blueprints').delete().eq('story_id', STORY_ID)
+    await admin.from('story_generation_contracts').delete().eq('story_id', STORY_ID)
+    await admin.from('stories').delete().eq('id', STORY_ID)
     
     // STEP 1: Seed canonical story with EXACT shape from harness (not invented fields)
     // This matches seedHarnessStory() - NO genre/tone fields (these columns don't exist in canonical stories)
@@ -55,7 +92,7 @@ describe('M10-C R3.2 — Positive DB-backed RECONCILED proof', () => {
       jejak: [],
       visibility: 'private',
       story_mode: 'personalized_ai',
-      generation_status: 'published', // Starting state
+      generation_status: 'ready', // Starting state per canonical harness
       story_contract_version: 1,
       living_canon_version: 1,
       canon_state_revision: 0,
@@ -97,20 +134,21 @@ describe('M10-C R3.2 — Positive DB-backed RECONCILED proof', () => {
     if (contractError) throw new Error(`Failed to seed contracts: ${contractError.message}`)
 
     // Seed act rollups (both act 1 and act 2 for proper boundary detection)
+    // Canonical schema uses covers_from_chapter/covers_to_chapter/summary, not from_chapter/to_chapter/checkpoint_chapter
     const { error: rollupError } = await admin.from('act_rollups').insert([
       {
         story_id: STORY_ID,
         act_number: 1,
-        from_chapter: 1,
-        to_chapter: 5,
-        checkpoint_chapter: 5,
+        covers_from_chapter: 1,
+        covers_to_chapter: 5,
+        summary: 'Act 1 summary',
       },
       {
         story_id: STORY_ID,
         act_number: 2,
-        from_chapter: 6,
-        to_chapter: 12,
-        checkpoint_chapter: 12,
+        covers_from_chapter: 6,
+        covers_to_chapter: 12,
+        summary: 'Act 2 summary',
       },
     ])
     if (rollupError) throw new Error(`Failed to seed act_rollups: ${rollupError.message}`)

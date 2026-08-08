@@ -118,8 +118,8 @@ describe('StoryContractSchema fixtures', () => {
       finalQuestion: 'Akankah Nara memilih kebenaran saat keluarganya terancam?',
       corePromise: 'Misteri berlapis dengan pengungkapan emosional.',
       endingCandidates: [
-        { key: 'truth', name: 'Kebenaran Terbuka', kind: 'main' as const, isSecret: false, condition: 'Nara menjaga bukti.', requiredClosure: ['Kasus terungkap.'], blockingConditions: [] },
-        { key: 'mercy', name: 'Belas Kasih', kind: 'main' as const, isSecret: false, condition: 'Nara memahami motif pelaku.', requiredClosure: ['Korban mendapat pemulihan.'], blockingConditions: [] },
+        { key: 'truth', name: 'Kebenaran Terbuka', kind: 'main' as const, condition: 'Nara menjaga bukti.', requiredClosure: ['Kasus terungkap.'], blockingConditions: [] },
+        { key: 'mercy', name: 'Belas Kasih', kind: 'main' as const, condition: 'Nara memahami motif pelaku.', requiredClosure: ['Korban mendapat pemulihan.'], blockingConditions: [] },
       ],
       plotDebts: [
         { id: 'main_mystery', question: 'Siapa pemalsu bukti?', introducedAt: 1, mustProgressBy: [12, 32], mustCloseBy: 48, status: 'open' },
@@ -149,8 +149,8 @@ describe('StoryContractSchema fixtures', () => {
       finalQuestion: 'Akankah Saka memperoleh rumah tanpa kehilangan dirinya?',
       corePromise: 'Drama keluarga dengan pilihan pengampunan.',
       endingCandidates: [
-        { key: 'home', name: 'Pulang', kind: 'main' as const, isSecret: false, condition: 'Saka berdamai.', requiredClosure: ['Nama ibu dipulihkan.'], blockingConditions: [] },
-        { key: 'leave', name: 'Jalan Baru', kind: 'main' as const, isSecret: false, condition: 'Saka melepaskan warisan.', requiredClosure: ['Saka memilih masa depan.'], blockingConditions: [] },
+        { key: 'home', name: 'Pulang', kind: 'main' as const, condition: 'Saka berdamai.', requiredClosure: ['Nama ibu dipulihkan.'], blockingConditions: [] },
+        { key: 'leave', name: 'Jalan Baru', kind: 'main' as const, condition: 'Saka melepaskan warisan.', requiredClosure: ['Saka memilih masa depan.'], blockingConditions: [] },
       ],
       plotDebts: [
         { id: 'main_mystery', question: 'Siapa yang menghapus nama ibu?', introducedAt: 2, mustProgressBy: [20, 40], mustCloseBy: 48, status: 'progressing' },

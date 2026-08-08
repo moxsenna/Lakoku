@@ -874,24 +874,25 @@ async function generateNextPersonalizedChapterInner(
       return { ok: false, reason: 'CANON_MISSING' }
     }
 
-    // C-R3.3: DURABLE GATE — refuse NEXT chapter admission if reconciliation failed
+    // C-R3-R1 (reviewer Entry 10): DURABLE GATE — refuse NEXT chapter admission if reconciliation failed
     // and generation_status was set to 'needs_review'. The writer runs in
-    // post-publication-lifecycle.server.ts; reader here fails closed before lease acquire.
+    // post-publication-lifecycle.server.ts; reader here MUST fail closed (C-R1 blocker #6).
+    // FIX: use correct column 'id' not 'story_id'; throw on error to fail-closed.
     try {
       const admin = createAdminClient()
       const { data: storyRow, error } = await admin
         .from('stories')
         .select('generation_status')
-        .eq('story_id', storyId)
+        .eq('id', storyId) // FIX: was 'story_id', must be 'id' per database schema
         .single()
-      if (error) throw error
+      if (error) throw error // FAIL-CLOSED: if read fails, do NOT proceed with generation
       if (storyRow?.generation_status === 'needs_review') {
         await releaseOwnLease()
         return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { reason: 'NEEDS_REVIEW', storyId } }
       }
     } catch (err) {
-      // If status read fails, fail open with warning — but for safety prefer fail-closed
       console.error('GATE_STATUS_CHECK_FAILED', { storyId, error: String(err) })
+      throw err // FAIL-CLOSED: never allow generation to proceed if status check fails
     }
 
     const contract = await d.loadStoryGenerationContract(storyId)

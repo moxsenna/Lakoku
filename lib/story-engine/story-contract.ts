@@ -32,22 +32,30 @@ export const ChapterTargetSchema = z.object({
 export const EndingCandidateSchema = z.object({
   key: boundedString(80),
   name: boundedString(160),
-  kind: z.enum(['main', 'secret']).default('main'),
-  isSecret: z.boolean().default(false),
   /**
-   * Free-text condition (prose, legacy). Used by consumers that do not have
-   * structured blocking conditions yet. Still required for backward compatibility.
+   * Canonical authority for ending type. isMain and isSecret are derived from this field,
+   * not stored independently. This avoids dual-authority ambiguity (reviewer Entry 10).
    */
-  condition: boundedString(500),
+  kind: z.enum(['main', 'secret']),
+  condition: boundedString(500), // free-text legacy field retained for compatibility
   requiredClosure: boundedStringArray(8, 400, 1),
   /** Machine-checkable blocking conditions on ending candidates.
-   * Each element is either a plot-debt id or a string expression describing a
-   * boolean predicate that, when satisfied, blocks this ending. For now we store
-   * debt ids only; the field is structured so future models can add predicates.
-   * Example: 'debt-main-mystery' means "this ending is blocked until main_mystery closes".
+   * Each element is a canonical story flag ID (fact ID or secret ID) that, when present,
+   * blocks this ending. Unlike generic strings, these must match values in ActualState.storyFlags.
+   * Example: 'debt-main-mystery' means "this ending is blocked until main_mystery fact/flag exists".
    */
-  blockingConditions: z.array(z.string()).min(0).max(20).default([]),
+  blockingConditions: z.array(z.string().min(1).max(100)).min(0).max(20).default([]),
 }).strict()
+
+/** Derive isMain/isSecret strictly from kind field to avoid dual-authority ambiguity. */
+export function deriveEndingDef(candidate: EndingCandidate): { id: string; isMain: boolean; isSecret: boolean; blockedByFlags: string[] } {
+  return {
+    id: candidate.key,
+    isMain: candidate.kind === 'main',
+    isSecret: candidate.kind === 'secret',
+    blockedByFlags: candidate.blockingConditions ?? [],
+  }
+}
 
 export const PlotDebtSchema = z.object({
   id: boundedString(100),
@@ -78,7 +86,7 @@ export const StoryContractSchema = z.object({
   title: boundedString(160),
   genre: boundedString(80),
   tone: boundedString(160),
-  styleProfile: z.literal('lakoku_mobile_drama_v2'),
+  styleProfile: z.enum(['lakoku_mobile_drama_v1', 'lakoku_mobile_drama_v2']),
   mainCharacter: MainCharacterSchema,
   mainConflict: boundedString(800),
   finalQuestion: boundedString(500),
@@ -90,6 +98,23 @@ export const StoryContractSchema = z.object({
   revealRunway: z.array(RevealRunwayEntrySchema).min(1).max(20),
   closureRunway: ClosureRunwaySchema,
 }).strict().superRefine((contract, context) => {
+  // Per NCS §1.4: ≥2 main endings PLUS secret-ending path required
+  const mainCount = contract.endingCandidates.filter((e) => e.kind === 'main').length
+  const secretCount = contract.endingCandidates.filter((e) => e.kind === 'secret').length
+  if (mainCount < 2) {
+    context.addIssue({
+      code: 'custom',
+      path: ['endingCandidates'],
+      message: `NCS §1.4 requires at least 2 main endings; found ${mainCount}.`,
+    })
+  }
+  if (secretCount < 1) {
+    context.addIssue({
+      code: 'custom',
+      path: ['endingCandidates'],
+      message: `NCS §1.4 requires at least 1 secret ending path; found ${secretCount}.`,
+    })
+  }
   contract.chapterTargets.forEach((target, index) => {
     const expected = index + 1
     if (target.chapterNumber !== expected) {

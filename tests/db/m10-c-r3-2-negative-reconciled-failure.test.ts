@@ -15,18 +15,22 @@
  *   Positive: drift≥2 → RECONCILED → version++ → spine adjusted but story continues
  *   Negative: ending unreachable → FAILED_REVIEW_REQUIRED → NO version++ → story HALTS
  */
+// @vitest-environment node
 
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { describe, expect, test, beforeAll, afterAll, vi } from 'vitest'
 
-// Mock server-only for vitest environment (required because admin.ts uses 'server-only' directive)
-vi.mock('server-only', () => ({})
+vi.mock('server-only', () => ({}))
+
+// ---------------------------------------------------------------------------
+// Local Supabase bootstrap
+// ---------------------------------------------------------------------------
 
 import { createAdminClient } from '@/lib/supabase/admin'
-import { buildHarnessContract, HARNESS_USER_ID } from '../../lib/narrative-qa/harness/fixture'
+import { buildHarnessContract } from '../../lib/narrative-qa/harness/fixture'
 import { parseStoryContractWithNormalization } from '../../lib/story-engine/story-contract'
-import { assertIsolatedTarget } from '../../lib/narrative-qa/harness/seed'
+import { assertIsolatedTarget, HARNESS_USER_ID } from '../../lib/narrative-qa/harness/seed'
 
 // Isolation gate: MUST run against local/isolated Supabase only
 assertIsolatedTarget()

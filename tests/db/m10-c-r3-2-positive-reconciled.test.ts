@@ -11,29 +11,28 @@
  *   > real post-publication path → runActBoundaryReconciliation() → RECONCILED
  *   → DB chapter_blueprints version++ → reconciled_from_version persisted → spine unchanged
  */
+// @vitest-environment node
 
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { describe, expect, test, beforeAll, afterAll, vi } from 'vitest'
 
 // Mock server-only for vitest environment (required because admin.ts uses 'server-only' directive)
-vi.mock('server-only', () => ({})
+vi.mock('server-only', () => ({}))
+
+// ---------------------------------------------------------------------------
+// Local Supabase bootstrap
+// ---------------------------------------------------------------------------
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { buildHarnessContract } from '../../lib/narrative-qa/harness/fixture'
 import { parseStoryContractWithNormalization } from '../../lib/story-engine/story-contract'
-import { assertIsolatedTarget } from '../../lib/narrative-qa/harness/seed'
+import { assertIsolatedTarget, HARNESS_USER_ID } from '../../lib/narrative-qa/harness/seed'
 
-// Isolation gate: MUST run against local/isolated Supabase only
 assertIsolatedTarget()
 
 const STORY_ID = 'm10c-r3-2-positive-test'
-// C-R3-R2 Blocker #5: Correct act boundary target.
-// Production derivation uses nextAct.fromChapter === chapterNumber + 1
-// For checkpoint at end of act 1 (chapter 5), NEXT ACT is 6-12.
-// We seed blueprints for chapters 6-12 and execute reconciliation FROM chapter 5.
-const ACT_BOUNDARY_CHAPTER = 5 // Checkpoint at end of act 1 → next act is 6-12
-const HARNESS_USER_ID = '99999999-9999-4999-9999-99999999c000'
+const ACT_BOUNDARY_CHAPTER = 5
 
 describe('M10-C R3.2 — Positive DB-backed RECONCILED proof', () => {
   test('version++ chain + reconciled_from_version persistence at act boundary', async () => {

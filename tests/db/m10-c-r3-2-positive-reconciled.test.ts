@@ -142,19 +142,19 @@ describe('M10-C R3.2 — Positive DB-backed RECONCILED proof', () => {
     // ASSERTION 2: Query DB directly for detailed reconciliation info (status + drift evidence)
     const { data: events, error: eventError } = await admin
       .from('story_events')
-      .select('data')
+      .select('payload')
       .eq('story_id', STORY_ID)
-      .eq('event_type', 'ACT_RECONCILIATION')
-      .order('occurred_at', { ascending: false })
+      .eq('type', 'ACT_RECONCILIATION')
+      .order('seq', { ascending: false })
       .limit(1)
       .single()
 
     if (eventError) throw new Error(`Failed to read reconciliation event: ${eventError.message}`)
 
-    // ASSERTION 3: Drift and reconciled chapters recorded in event data
-    expect(events?.data?.driftByChapter).toBeDefined()
-    expect(Array.isArray(events?.data?.reconciledChapters)).toBe(true)
-    expect((events?.data?.reconciledChapters as number[]).length).toBeGreaterThan(0)
+    // ASSERTION 3: Drift and reconciled chapters recorded in event payload
+    expect(events?.payload?.driftByChapter).toBeDefined()
+    expect(Array.isArray(events?.payload?.reconciledChapters)).toBe(true)
+    expect((events?.payload?.reconciledChapters as number[]).length).toBeGreaterThan(0)
 
     // STEP 4: Query DB to verify version++ and reconciled_from_version persistence
     // C-R3-R2 Blocker #5: Reconciliation triggers for NEXT ACT chapters (6-12)
@@ -199,7 +199,7 @@ describe('M10-C R3.2 — Positive DB-backed RECONCILED proof', () => {
       .from('story_events')
       .select('*', { count: 'exact', head: false })
       .eq('story_id', STORY_ID)
-      .eq('event_type', 'ACT_RECONCILIATION')
+      .eq('type', 'ACT_RECONCILIATION')
 
     expect(reconciliationEvents).toBeGreaterThanOrEqual(1)
 
@@ -207,7 +207,7 @@ describe('M10-C R3.2 — Positive DB-backed RECONCILED proof', () => {
       .from('story_events')
       .select('*', { count: 'exact', head: false })
       .eq('story_id', STORY_ID)
-      .eq('event_type', 'ACT_ENDING_REACHABILITY')
+      .eq('type', 'ACT_ENDING_REACHABILITY')
 
     expect(reachabilityEvents).toBeGreaterThanOrEqual(1)
 

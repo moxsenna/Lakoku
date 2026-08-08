@@ -36,13 +36,16 @@ describe('M10-C R3.2 — Negative DB-backed FAILED_REVIEW_REQUIRED proof', () =>
     const contract = buildHarnessContract(STORY_ID)
     
     // Override contract endings to create FAILURE scenario:
-    // - Add structured blocking flag that's ALWAYS present in snapshot
-    // - Ensure <2 main endings reachable
-    // - Use requiredPlotDebtIds as structured authority (C-R3-R2 Blocker #4)
+    // - Add structured blocking flag that's ALWAYS present in snapshot via canonical facts
+    // - Use requiredPlotDebtIds with legal debt ID from contract (must reference existing plotDebt IDs)
     
-    // For V2 contract: use requiredPlotDebtIds with a thread ID that will be abandoned
+    // For V2 contract: use requiredPlotDebtIds with legal debt ID from contract
     const blockedMainEndingId = contract.endingCandidates.find(e => e.kind === 'main')?.key
     if (!blockedMainEndingId) throw new Error('No main ending found to block')
+    
+    // Get first plot debt ID from contract for legal requiredPlotDebtIds reference
+    const firstPlotDebtId = contract.plotDebts[0]?.id
+    if (!firstPlotDebtId) throw new Error('No plot debts available for requiredPlotDebtIds')
     
     const failedContract = {
       ...contract,
@@ -51,9 +54,10 @@ describe('M10-C R3.2 — Negative DB-backed FAILED_REVIEW_REQUIRED proof', () =>
           // Make this main ending unreachable via STRUCTURED blocking mechanism
           return {
             ...candidate,
-            blockingConditions: ['block-always-present-flag'], // Flag we'll seed in snapshot
-            // Also use requiredPlotDebtIds with a thread we'll abandon
-            requiredPlotDebtIds: ['never-abandoned-debt'], // Thread doesn't exist → safe for now
+            blockingConditions: ['block-always-present-flag'], // Flag we'll seed as canonical fact
+            // Use LEGAL debt ID from contract (not fictional 'never-abandoned-debt')
+            // This debt will NOT be abandoned, so closure proof remains satisfiable=true
+            requiredPlotDebtIds: [firstPlotDebtId], 
           }
         }
         return candidate
@@ -133,31 +137,21 @@ describe('M10-C R3.2 — Negative DB-backed FAILED_REVIEW_REQUIRED proof', () =>
       )
     if (blueprintError) throw new Error(`Failed to seed blueprints: ${blueprintError.message}`)
 
-    // STEP 3: Inject synthetic canonical state with BLOCKING FLAG PRESENT
-    // This simulates a story where the blocking condition is already active
-    const snapshotThreads = [
-      {
-        id: 'thread-block-source',
-        storyId: STORY_ID,
-        type: 'MYSTERY',
-        status: 'ACTIVE',
-        introductionChapter: 1,
-      },
-    ]
-    
-    const snapshotFlags = new Set(['block-always-present-flag']) // Always present → blocks ending
-    
-    // Insert canonical snapshot with blocking state
-    const { error: canonError } = await admin.from('canonical_snapshots').insert({
+    // STEP 3: Inject BLOCKING FLAG as canonical fact (production way, NOT pseudo-snapshot table)
+    // Production loadCanonSnapshot() derives flags from facts_ledger and secrets_reveals tables
+    // Writing directly to canonical_snapshots.story_flags_json won't be read by production loader
+    const { error: factError } = await admin.from('facts_ledger').insert({
+      id: 'block-always-present-flag',
       story_id: STORY_ID,
-      chapter_number: ACT_BOUNDARY_CHAPTER,
-      threads_json: snapshotThreads,
-      story_flags_json: Array.from(snapshotFlags),
-      story_state_json: {},
-      generated_at: new Date().toISOString(),
-      checksum: 'synthetic-checksum-for-test',
+      statement: 'Critical blocking condition always present for testing',
+      subject_character_id: null,
+      established_chapter: 1,
+      salience: 0.5,
+      load_bearing: true,
+      paid_off: false,
     })
-    if (canonError) throw new Error(`Failed to seed canonical snapshot: ${canonError.message}`)
+    
+    if (factError) throw new Error(`Failed to seed blocking fact: ${factError.message}`)
 
     // STEP 4: Execute REAL post-publication reconciliation via production hook
     const { runActBoundaryReconciliation } = await import('../../lib/runtime/post-publication-lifecycle.server')
@@ -175,24 +169,24 @@ describe('M10-C R3.2 — Negative DB-backed FAILED_REVIEW_REQUIRED proof', () =>
     // ASSERTION 2: Query DB for detailed reconciliation info
     const { data: events, error: eventError } = await admin
       .from('story_events')
-      .select('data')
+      .select('payload')
       .eq('story_id', STORY_ID)
-      .eq('event_type', 'ACT_RECONCILIATION')
-      .order('occurred_at', { ascending: false })
+      .eq('type', 'ACT_RECONCILIATION')
+      .order('seq', { ascending: false })
       .limit(1)
       .single()
 
     if (eventError) throw new Error(`Failed to read reconciliation event: ${eventError.message}`)
 
-    // ASSERTION 3: Failed reconciliation recorded with reachability evidence
-    expect(events?.data?.reason).toContain('unreachable')
-    expect(Array.isArray(events?.data?.violations)).toBe(true)
+    // ASSERTION 3: Failed reconciliation recorded with status and finding codes
+    // Production ACT_RECONCILIATION payload contains: actNumber, checkpointChapter, nextAct, status, driftByChapter, reconciledChapters, findingCodes
+    expect(events?.payload?.status).toBe('FAILED_REVIEW_REQUIRED')
+    expect(Array.isArray(events?.payload?.findingCodes)).toBe(true)
     
-    // Verify reachability violations detected
-    const violations = events?.data?.violations as Array<{ code: string; count?: number }>
-    const unreachableViolation = violations.find(v => v.code === 'MAIN_ENDINGS_UNREACHABLE')
-    expect(unreachableViolation).toBeDefined()
-    expect(unreachableViolation?.count).toBeLessThan(2) // <2 main endings reachable
+    // Verify reachability violations detected - finding codes use ENDING_UNREACHABLE not MAIN_ENDINGS_UNREACHABLE
+    const findingCodes = events?.payload?.findingCodes as string[]
+    const unreachableFinding = findingCodes.find(f => f === 'ENDING_UNREACHABLE')
+    expect(unreachableFinding).toBeDefined()
 
     // ASSERTION 4: Blueprints NOT version++ on failure
     const { data: oldBlueprint, error: oldError } = await admin
@@ -233,7 +227,7 @@ describe('M10-C R3.2 — Negative DB-backed FAILED_REVIEW_REQUIRED proof', () =>
       .from('story_events')
       .select('*', { count: 'exact', head: false })
       .eq('story_id', STORY_ID)
-      .eq('event_type', 'ACT_RECONCILIATION')
+      .eq('type', 'ACT_RECONCILIATION')
 
     expect(reconciliationEvents).toBeGreaterThanOrEqual(1)
 
@@ -241,7 +235,7 @@ describe('M10-C R3.2 — Negative DB-backed FAILED_REVIEW_REQUIRED proof', () =>
       .from('story_events')
       .select('*', { count: 'exact', head: false })
       .eq('story_id', STORY_ID)
-      .eq('event_type', 'ACT_ENDING_REACHABILITY')
+      .eq('type', 'ACT_ENDING_REACHABILITY')
 
     expect(reachabilityEvents).toBeGreaterThanOrEqual(1)
   }, 30000)

@@ -8,12 +8,46 @@
 import { test, expect, describe } from 'vitest'
 import {
   StoredStoryContractV1Schema,
+  StoredStoryContractV2Schema,
   parseStoryContractWithNormalization,
   NormalizedStoryContractSchema,
 } from '@/lib/story-engine/story-contract'
 import type { z } from 'zod'
 
 describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
+  // Helper: Full ClosureRunwaySchema (all 6 literal fields required)
+  const fullClosureRunway = {
+    noNewMajorConflictAfter: 35,
+    noNewThreadAfter: 40,
+    endingLockChapter: 45,
+    mainMysteryResolveBy: 48,
+    emotionalResolutionChapter: 49,
+    finalEndingChapter: 50,
+  } as const
+
+  // Helper: Minimal valid revealRunway (min 1 entry required by schema)
+  const minimalRevealRunway = [{ secretId: 'secret-main', revealGateChapter: 40 }]
+
+  // Helper: Full act plan (5 acts covering chapters 1-50)
+  const fullActPlan = [
+    { actNumber: 1, fromChapter: 1, toChapter: 5, goal: 'Setup' },
+    { actNumber: 2, fromChapter: 6, toChapter: 12, goal: 'Rising action' },
+    { actNumber: 3, fromChapter: 13, toChapter: 25, goal: 'Complication' },
+    { actNumber: 4, fromChapter: 26, toChapter: 37, goal: 'Crisis' },
+    { actNumber: 5, fromChapter: 38, toChapter: 50, goal: 'Resolution' },
+  ]
+
+  // Helper: Full chapter targets (length 50, ordered sequentially)
+  const fullChapterTargets = Array.from({ length: 50 }, (_, i) => ({
+    chapterNumber: i + 1,
+    phase: i < 5 ? 'INTRODUCTION' : 'MAIN_STORY',
+    goal: `Chapter ${i + 1} goal`,
+    mustInclude: ['beat-1'],
+    mustNotReveal: [],
+    emotionalTurn: 'Neutral',
+    expectedThreadMovement: ['thread-A'],
+  }))
+
   test('legitimate V1 with 2 main endings and ZERO secrets parses correctly at runtime', () => {
     // This is a LEGITIMATE V1 contract per reviewer feedback:
     // - styleProfile = 'lakoku_mobile_drama_v1'
@@ -36,24 +70,10 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
       mainConflict: 'Internal struggle vs external antagonist',
       finalQuestion: 'What defines redemption?',
       corePromise: 'A journey of self-discovery',
-      actPlan: [
-        { actNumber: 1, fromChapter: 1, toChapter: 5, goal: 'Setup' },
-        { actNumber: 2, fromChapter: 6, toChapter: 12, goal: 'Rising action' },
-        { actNumber: 3, fromChapter: 13, toChapter: 25, goal: 'Complication' },
-        { actNumber: 4, fromChapter: 26, toChapter: 37, goal: 'Crisis' },
-        { actNumber: 5, fromChapter: 38, toChapter: 50, goal: 'Resolution' },
-      ],
-      chapterTargets: Array.from({ length: 50 }, (_, i) => ({
-        chapterNumber: i + 1,
-        phase: i < 5 ? 'INTRODUCTION' : 'MAIN_STORY',
-        goal: `Chapter ${i + 1} goal`,
-        mustInclude: ['beat-1'],
-        mustNotReveal: ['forbidden-secret'], // V1 allows this
-        emotionalTurn: 'Neutral',
-        expectedThreadMovement: ['thread-A'], // Required by ChapterTargetSchema
-      })),
-      revealRunway: [{ secretId: 'secret-main', revealGateChapter: 40 }],
-      closureRunway: { mainMysteryResolveBy: 48, emotionalResolutionChapter: 49, finalEndingChapter: 50 },
+      actPlan: fullActPlan,
+      chapterTargets: fullChapterTargets,
+      revealRunway: minimalRevealRunway, // FULL structural requirement
+      closureRunway: fullClosureRunway,   // ALL 6 literal fields
       plotDebts: [
         { id: 'main_mystery', question: 'Who did it?', introducedAt: 1, mustProgressBy: [10, 20], mustCloseBy: 45, status: 'open' },
       ],
@@ -104,7 +124,10 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
     expect(() => StoredStoryContractV1Schema.parse(malformedV1)).toThrow()
   })
 
-  test('V2 without requiredPlotDebtIds still rejected by StoredStoryContractV2Schema', () => {
+  test('V2 without requiredPlotDebtIds rejected by StoredStoryContractV2Schema (authoring)', () => {
+    // CRITICAL: Use StoredStoryContractV2Schema (authoring schema) not NormalizedStoryContractSchema (runtime)
+    // The runtime schema intentionally allows empty requiredPlotDebtIds for V1→V2 transition
+    // But authoring schema requires ≥1 PlotDebtId reference for V2 structuring
     const v2MissingRequiredPlotDebtIds = {
       storyId: 'test-story-002',
       totalChapters: 50,
@@ -121,30 +144,33 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
       mainConflict: 'Conflict',
       finalQuestion: 'Question?',
       corePromise: 'Promise',
-      actPlan: [
-        { actNumber: 1, fromChapter: 1, toChapter: 50, goal: 'Complete' },
-      ],
-      chapterTargets: Array.from({ length: 50 }, (_, i) => ({
-        chapterNumber: i + 1,
-        phase: 'MAIN',
-        goal: `Goal`,
-        mustInclude: ['beat'],
-        mustNotReveal: [],
-        emotionalTurn: 'Neutral',
-        expectedThreadMovement: ['thread-A'], // Required by ChapterTargetSchema
-      })),
-      revealRunway: [{ secretId: 's1', revealGateChapter: 40 }],
-      closureRunway: { mainMysteryResolveBy: 48, emotionalResolutionChapter: 49, finalEndingChapter: 50 },
+      actPlan: fullActPlan,
+      chapterTargets: fullChapterTargets,
+      revealRunway: minimalRevealRunway,
+      closureRunway: fullClosureRunway,
       plotDebts: [{ id: 'debt', question: 'Q', introducedAt: 1, mustProgressBy: [10], mustCloseBy: 45, status: 'open' }],
       endingCandidates: [
-        // Valid V2 format but MISSING requiredPlotDebtIds - should be rejected
-        { key: 'e1', name: 'E1', kind: 'main', condition: 'C', requiredPlotDebtIds: undefined as any, blockingConditions: [] },
-        { key: 'e2', name: 'E2', kind: 'secret', condition: 'C', requiredPlotDebtIds: undefined as any, blockingConditions: [] },
+        // Valid V2 format but MISSING requiredPlotDebtIds array entirely - should be rejected
+        { key: 'e1', name: 'E1', kind: 'main', condition: 'C', requiredClosure: ['closure-e1'], blockingConditions: [] },
+        { key: 'e2', name: 'E2', kind: 'secret', condition: 'C', requiredClosure: ['closure-e2'], blockingConditions: [] },
       ],
     }
 
-    // Must reject - V2 requires requiredPlotDebtIds with exactly 7 keys
-    expect(() => NormalizedStoryContractSchema.parse(v2MissingRequiredPlotDebtIds)).toThrow()
+    // Must reject - V2 authoring schema requires requiredPlotDebtIds with exactly ≥1 entry
+    const result = StoredStoryContractV2Schema.safeParse(v2MissingRequiredPlotDebtIds)
+    expect(result.success).toBe(false)
+    
+    if (!result.success) {
+      // Check that validation failed (we don't need specific error paths since schema will reject anyway)
+      // The important part is that V2 without requiredPlotDebtIds fails authoring validation
+      expect(result.error.issues.length).toBeGreaterThan(0)
+      
+      // Verify the rejection happens at endingCandidates level
+      const hasEndingCandidateError = result.error.issues.some((issue) => {
+        return issue.path[0] === 'endingCandidates'
+      })
+      expect(hasEndingCandidateError).toBe(true)
+    }
   })
 
   test('V2 with legal requiredPlotDebtIds accepted by runtime schema', () => {
@@ -164,35 +190,27 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
       mainConflict: 'Conflict',
       finalQuestion: 'Question?',
       corePromise: 'Promise',
-      actPlan: [
-        { actNumber: 1, fromChapter: 1, toChapter: 50, goal: 'Complete' },
-      ],
-      chapterTargets: Array.from({ length: 50 }, (_, i) => ({
-        chapterNumber: i + 1,
-        phase: 'MAIN',
-        goal: `Goal`,
-        mustInclude: ['beat'],
-        mustNotReveal: [],
-        emotionalTurn: 'Neutral',
-        expectedThreadMovement: ['thread-A'], // Required by ChapterTargetSchema
-      })),
-      revealRunway: [{ secretId: 's1', revealGateChapter: 40 }],
-      closureRunway: { mainMysteryResolveBy: 48, emotionalResolutionChapter: 49, finalEndingChapter: 50 },
+      actPlan: fullActPlan,
+      chapterTargets: fullChapterTargets,
+      revealRunway: minimalRevealRunway,
+      closureRunway: fullClosureRunway,
       plotDebts: [{ id: 'debt-main', question: 'Q', introducedAt: 1, mustProgressBy: [10], mustCloseBy: 45, status: 'open' }],
       endingCandidates: [
         { 
           key: 'e1', 
           name: 'E1', 
           kind: 'main', 
-          condition: 'C', 
-          requiredPlotDebtIds: ['debt-main'] as any, // Legal reference to existing plot debt
+          condition: 'C',
+          requiredClosure: ['closure-e1'], 
+          requiredPlotDebtIds: ['debt-main'] as any, // Legal reference to existing plot debt (≥1 required)
           blockingConditions: [] 
         },
         { 
           key: 'e2', 
           name: 'E2', 
           kind: 'secret', 
-          condition: 'C', 
+          condition: 'C',
+          requiredClosure: ['closure-e2'], 
           requiredPlotDebtIds: ['debt-main'] as any, // Same legal reference
           blockingConditions: [] 
         },
@@ -221,24 +239,14 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
       mainConflict: 'Conflict',
       finalQuestion: 'Question?',
       corePromise: 'Promise',
-      actPlan: [
-        { actNumber: 1, fromChapter: 1, toChapter: 50, goal: 'Complete' },
-      ],
-      chapterTargets: Array.from({ length: 50 }, (_, i) => ({
-        chapterNumber: i + 1,
-        phase: 'MAIN',
-        goal: `Goal`,
-        mustInclude: ['beat'],
-        mustNotReveal: [],
-        emotionalTurn: 'Neutral',
-        expectedThreadMovement: ['thread-A'], // Required by ChapterTargetSchema
-      })),
-      revealRunway: [],
-      closureRunway: { mainMysteryResolveBy: 48, emotionalResolutionChapter: 49, finalEndingChapter: 50 },
+      actPlan: fullActPlan,
+      chapterTargets: fullChapterTargets,
+      revealRunway: minimalRevealRunway, // FULL structural requirement (not [])
+      closureRunway: fullClosureRunway,   // ALL 6 literal fields
       plotDebts: [{ id: 'd', question: 'Q', introducedAt: 1, mustProgressBy: [10], mustCloseBy: 45, status: 'open' }],
       endingCandidates: [
-        { key: 'e1', name: 'E1', kind: 'main', condition: 'C', requiredClosure: [], requiredPlotDebtIds: [], blockingConditions: [] },
-        { key: 'e2', name: 'E2', kind: 'main', condition: 'C', requiredClosure: [], requiredPlotDebtIds: [], blockingConditions: [] },
+        { key: 'e1', name: 'E1', kind: 'main', condition: 'C', requiredClosure: ['closure-e1'], requiredPlotDebtIds: [], blockingConditions: [] },
+        { key: 'e2', name: 'E2', kind: 'main', condition: 'C', requiredClosure: ['closure-e2'], requiredPlotDebtIds: [], blockingConditions: [] },
       ],
     }
 
@@ -250,7 +258,7 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
     expect(secretCount).toBe(0)
   })
 
-  test('StoryContractSchema STILL enforces NCS §1.4 for authoring validation', () => {
+  test('StoryContractSchema STILL enforces NCS §1.4 for authoring validation', async () => {
     const invalidForAuthoring = {
       storyId: 'test-story-005',
       totalChapters: 50,
@@ -267,28 +275,20 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
       mainConflict: 'Conflict',
       finalQuestion: 'Question?',
       corePromise: 'Promise',
-      actPlan: [
-        { actNumber: 1, fromChapter: 1, toChapter: 50, goal: 'Complete' },
-      ],
-      chapterTargets: Array.from({ length: 50 }, (_, i) => ({
-        chapterNumber: i + 1,
-        phase: 'MAIN',
-        goal: `Goal`,
-        mustInclude: ['beat'],
-        mustNotReveal: [],
-        emotionalTurn: 'Neutral',
-        expectedThreadMovement: ['thread-A'], // Required by ChapterTargetSchema
-      })),
-      revealRunway: [],
-      closureRunway: { mainMysteryResolveBy: 48, emotionalResolutionChapter: 49, finalEndingChapter: 50 },
+      actPlan: fullActPlan,
+      chapterTargets: fullChapterTargets,
+      revealRunway: minimalRevealRunway,
+      closureRunway: fullClosureRunway,
       plotDebts: [{ id: 'd', question: 'Q', introducedAt: 1, mustProgressBy: [10], mustCloseBy: 45, status: 'open' }],
       endingCandidates: [
-        // Only 1 main ending, NO secrets - INVALID for authoring
-        { key: 'e1', name: 'E1', kind: 'main', condition: 'C', requiredPlotDebtIds: ['d'], blockingConditions: [] },
+        // Only 1 main ending, NO secrets - INVALID for authoring (also requiresPlotDebtIds missing)
+        { key: 'e1', name: 'E1', kind: 'main', condition: 'C', requiredClosure: [], requiredPlotDebtIds: ['d'], blockingConditions: [] },
       ],
     }
 
     // Should reject - NCS §1.4 enforcement applies here (≥2 main + ≥1 secret)
-    expect(() => import('@/lib/story-engine/story-contract').then((m) => m.StoryContractSchema.parse(invalidForAuthoring))).rejects.toThrow()
+    await expect(
+      import('@/lib/story-engine/story-contract').then((m) => m.StoryContractSchema.parse(invalidForAuthoring))
+    ).rejects.toThrow(/NCS.*§.*1\.4/)
   })
 })

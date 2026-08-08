@@ -5,14 +5,13 @@
  * Tests both storage (StoredStoryContractV1Schema) and runtime (parseStoryContractWithNormalization) paths.
  */
 
-import { test, expect, describe } from 'vitest'
+import { test, expect } from 'vitest'
 import {
   StoredStoryContractV1Schema,
   StoredStoryContractV2Schema,
   parseStoryContractWithNormalization,
   NormalizedStoryContractSchema,
 } from '@/lib/story-engine/story-contract'
-import type { z } from 'zod'
 
 describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
   // Helper: Full ClosureRunwaySchema (all 6 literal fields required)
@@ -104,7 +103,7 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
     // Endings now have 'kind' field instead of 'isSecret'
     expect(normalizedRuntime.endingCandidates[0].kind).toBe('main')
     expect(normalizedRuntime.endingCandidates[1].kind).toBe('main')
-    expect((normalizedRuntime.endingCandidates[0] as any).requiredPlotDebtIds).toEqual([]) // Empty for V1
+    expect(normalizedRuntime.endingCandidates[0].requiredPlotDebtIds).toEqual([]) // Empty for V1
     
     // Should NOT throw about missing secret endings - that's NCS §1.4 enforcement which doesn't apply to V1
   })
@@ -202,7 +201,7 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
           kind: 'main', 
           condition: 'C',
           requiredClosure: ['closure-e1'], 
-          requiredPlotDebtIds: ['debt-main'] as any, // Legal reference to existing plot debt (≥1 required)
+          requiredPlotDebtIds: ['debt-main'], // Legal reference to existing plot debt (≥1 required)
           blockingConditions: [] 
         },
         { 
@@ -211,7 +210,7 @@ describe('C-R3-R2 Blocker #2 - V1 compatibility', () => {
           kind: 'secret', 
           condition: 'C',
           requiredClosure: ['closure-e2'], 
-          requiredPlotDebtIds: ['debt-main'] as any, // Same legal reference
+          requiredPlotDebtIds: ['debt-main'], // Same legal reference
           blockingConditions: [] 
         },
       ],

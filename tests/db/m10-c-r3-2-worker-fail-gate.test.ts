@@ -14,7 +14,7 @@ const STORY_ID = 'm10c-r3-2-worker-fail-gate-test'
 const CHAPTER_NUMBER = 7
 
 describe('M10-C R3.2 — Worker Fail-Gate proof', () => {
-  let jobInsertResult: any
+  let jobInsertResult: Record<string, unknown>
   
   beforeAll(async () => {
     const admin = createAdminClient()

@@ -308,3 +308,106 @@ rebaseline (B.3.7) covering both B.3.7 problems; one G1 correction that neither
 fakes secret/reachability nor drops missing-thread requirements; migration-history
 decision from the decision-maker. Then rerun C once more; the full double-run need
 not be repeated unless runtime/schema affecting normalized evidence changed.
+
+## Entry 7 — 2026-08-08 (implementation: C-R2 package submitted; rerun result BLOCKED, honestly reported)
+
+Recorded by: implementation side. Report: `docs/qa/m10/M10_C_R2_REPORT.md`.
+Decision doc: `docs/qa/m10/M10_C_R2_DECISION_B37_REBASELINE.md`
+(the C-R1 beat decision doc is marked SUPERSEDED + VETOED in place).
+
+Scope held to Entry 6's "C-R2 harus sempit": one versioned ending-evaluator
+rebaseline, one G1 correction, and the migration-history question escalated
+unchanged. No redesign, no new stage work.
+
+**BLOCKER 1 (beat fabrication) — corrected by withdrawal.** The Bab-49
+emotional-resolution check is removed from the deterministic suite;
+`CHAPTER_49_EMOTIONAL_RESOLUTION_MISSING` and its red fixture no longer exist.
+Emotional-resolution CONTENT is reclassified to the M10-D semantic judge. The
+`deterministic-ending-evidence:<key>` derivation is deleted, not renamed.
+
+**BLOCKER 2 (precomputed booleans) — corrected by rebaseline to
+`endingRunway 1.3.0`.** `canonicalPublicationProof` is gone. Inputs are raw rows
+(`endingLock.lockedAtChapter`, `commit45`, `publishedChapterNumbers`) and the
+evaluator computes `lock@45 AND commit Bab45 exists AND published Bab45 exists`
+itself. New red fixture `red-ending-lock-wrong-chapter` (`lockedAtChapter = 46`,
+inside the FINAL_HORIZON window) proves the evaluator detects a misplaced lock
+without being told.
+
+**BLOCKER 3 (false reachability PASS) — corrected by refusing to claim a PASS.**
+`EndingCandidateSchema` cannot express a secret ending or structured flag
+blocking; that is a MODEL FACT, recorded as exported
+`FLAG_BLOCKING_PROVABLE_ON_CURRENT_MODEL = false`, not a stub. Candidates are
+still mapped to `EndingDef`s SOLELY as violation-detection input to
+`checkEndingReachability` (an empty list would raise ENDING_UNREACHABLE CRITICAL
+at every boundary and break the approved #5 wiring). New
+`deriveEndingReachabilityEvidence()` publishes provable clauses only; the
+persisted payload has no `passed` field; `ncs14Proven` is always false on the
+current model; capture can never print PASS. Every boundary in both modes records
+`UNPROVEN:candidates=2/min=2,closure=satisfiable,secretPath=UNPROVEN`.
+Disposition kept as ordered: proof NOT RATIFIED, #6 OPEN, G1-REACH IN_PROGRESS.
+
+**G1 missing-thread drift mask — filter removed.** `expectedThreadMovement` is no
+longer filtered by `existingThreadIds`; a required-but-absent thread reaches
+`computeDriftScore()` and scores drift (regression test asserts exactly 1).
+
+**Gate 2 — untouched, escalated.** No migration renamed, deleted, or rewritten in
+C-R2. `bb3287a` remains NOT RATIFIED pending the decision-maker's choice between
+(1) a separate READ-ONLY production `SELECT` on
+`supabase_migrations.schema_migrations`, or (2) explicit approval of a
+rewrite/waiver.
+
+**Counted rerun (full double run, because runtime/persisted evidence changed).**
+Isolated worktree only; 65/65 ledger, `auth.users = 0`, auth health 200, clean
+tree before each run; deterministic provider, zero model calls.
+
+```text
+headSha           dab4967aa7ba129ddc38d7c5d1f599b6a5b7c1b6
+runId             m10-c-ceccff8be159
+result            BLOCKED
+chapters          50 (sync + worker), parity mismatches 0
+findings          542  (BLOCKER 0 / HIGH 0 / MEDIUM 542 / LOW 0 / INFO 0)
+failedChecks      []
+findingsHash      ceccff8be159a81ffee25129d66d12c44673ac845d34c890639ed3166c6b9b49
+summaryHash       2f8d5f10fcfc890aabc1efcb54a4fe1ae188878e985a9f2742d4afc8ba37ca14
+endingRunway      1.3.0
+A vs B            all 8 artifacts byte-identical; manifest differs in timestamps only
+```
+
+Dispositions recorded by the run: 3 CLOSED (context budget, ending-lock durability,
+act-reconciliation trigger), 2 RECLASSIFIED (prompt layers → M10-F; Bab-49
+emotional resolution → M10-D), 1 UNRESOLVED
+(`ENDING_REACHABILITY_PER_ACT_NOT_PERSISTED`). The unresolved blocker is what makes
+the run BLOCKED. **No capture blocker was removed to force green.** Stale C-R1
+basis strings in `summary.json` / `blockers.json` were corrected in `dab4967`;
+both feed hashed artifacts, which is why the double run was redone on that head.
+
+Gates: `pnpm typecheck` clean; `pnpm lint` 0 errors (11 pre-existing warnings in
+untouched files); `pnpm test:unit` 1993 passed / 22 skipped.
+
+Status lock after C-R2:
+
+```text
+M10-A                          CLOSED
+M10-B                          CLOSED
+M10-C core 1→50 harness        PASS
+sync/worker parity             PASS
+resume/fencing/fork            PASS
+G4-STALE runtime               PASS
+context-budget capture         PASS
+V5/V6 call-path gate           PASS
+double-run reproducibility     PASS (redone at dab4967)
+clean worktree                 PASS
+B.3.7 raw durability input     CLOSED
+B.3.7 beat evidence            WITHDRAWN → M10-D
+G1 missing-thread drift mask   CLOSED
+G1 ending reachability         OPEN (NCS §1.4 unprovable on current model)
+ACT_ENDING_REACHABILITY proof  NOT RATIFIED
+migration-history authority    HOLD (decision-maker)
+M10-C rerun result             BLOCKED
+M10-C                          NOT CLOSED
+M10-D / M10-E / M10-F / M10-G  BLOCKED
+production activation          FORBIDDEN
+```
+
+STOP — awaiting reviewer verdict on C-R2 and the decision-maker's Gate-2 choice.
+D/E/F/G not started. No production action taken or planned.

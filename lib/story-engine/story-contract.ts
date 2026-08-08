@@ -32,8 +32,21 @@ export const ChapterTargetSchema = z.object({
 export const EndingCandidateSchema = z.object({
   key: boundedString(80),
   name: boundedString(160),
+  kind: z.enum(['main', 'secret']).default('main'),
+  isSecret: z.boolean().default(false),
+  /**
+   * Free-text condition (prose, legacy). Used by consumers that do not have
+   * structured blocking conditions yet. Still required for backward compatibility.
+   */
   condition: boundedString(500),
   requiredClosure: boundedStringArray(8, 400, 1),
+  /** Machine-checkable blocking conditions on ending candidates.
+   * Each element is either a plot-debt id or a string expression describing a
+   * boolean predicate that, when satisfied, blocks this ending. For now we store
+   * debt ids only; the field is structured so future models can add predicates.
+   * Example: 'debt-main-mystery' means "this ending is blocked until main_mystery closes".
+   */
+  blockingConditions: z.array(z.string()).min(0).max(20).default([]),
 }).strict()
 
 export const PlotDebtSchema = z.object({
@@ -65,7 +78,7 @@ export const StoryContractSchema = z.object({
   title: boundedString(160),
   genre: boundedString(80),
   tone: boundedString(160),
-  styleProfile: z.literal('lakoku_mobile_drama_v1'),
+  styleProfile: z.literal('lakoku_mobile_drama_v2'),
   mainCharacter: MainCharacterSchema,
   mainConflict: boundedString(800),
   finalQuestion: boundedString(500),

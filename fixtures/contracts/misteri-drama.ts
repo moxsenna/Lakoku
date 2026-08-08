@@ -18,14 +18,20 @@ export const misteriDramaContract = buildContractFixture({
     {
       key: 'publish-truth',
       name: 'Arsip Dibuka',
+      kind: 'main' as const,
+      isSecret: false,
       condition: 'Maya menjaga bukti asli dan memilih kesaksian publik.',
       requiredClosure: ['Dalang sabotase banjir terungkap.', 'Nama kakak Maya dipulihkan.', 'Maya menerima akibat peran ayahnya.'],
+      blockingConditions: [],
     },
     {
       key: 'protect-witnesses',
       name: 'Kebenaran yang Dijaga',
+      kind: 'main' as const,
+      isSecret: false,
       condition: 'Maya memprioritaskan keselamatan saksi sambil menyerahkan bukti melalui jalur hukum.',
       requiredClosure: ['Para saksi mendapat perlindungan.', 'Jaringan pejabat kehilangan kendali.', 'Maya berdamai dengan kakaknya secara simbolis.'],
+      blockingConditions: [],
     },
   ],
   plotDebts: [

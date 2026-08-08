@@ -210,19 +210,13 @@ export function deriveActBoundaryReconciliationInput(args: {
     threadStatuses: Object.fromEntries(snapshot.threads.map((t) => [t.id, t.status])),
   }
 
-  // EndingCandidateSchema (lib/story-engine/story-contract.ts) carries only
-  // key/name/condition(free-text)/requiredClosure. Candidates are mapped as
-  // main ending candidates for the VIOLATION-DETECTION gate inside
-  // runReconciliation; the mapping asserts nothing about secret endings or
-  // flag blocking because the contract model cannot express either. The
-  // honesty of that limitation is enforced downstream by
-  // deriveEndingReachabilityEvidence (C-R2, reviewer Entry 6) — its output is
-  // never allowed to become a reachability PASS on this model.
+  // C-R3 (reviewer Entry 8): EndingCandidateSchema now has isSecret/kind + blockingConditions
+  // — map them honestly to EndingDef so NCS §1.4 can be machine-checkable
   const endings: EndingDef[] = contract.endingCandidates.map((candidate) => ({
     id: candidate.key,
-    isMain: true,
-    isSecret: false,
-    blockedByFlags: [],
+    isMain: candidate.kind === 'main' || !candidate.isSecret,
+    isSecret: candidate.kind === 'secret' || candidate.isSecret,
+    blockedByFlags: candidate.blockingConditions ?? [],
   }))
 
   return {
@@ -442,14 +436,19 @@ export async function runActBoundaryReconciliation(
   }
 
   if (result.status === 'FAILED_REVIEW_REQUIRED') {
-    // Evidence is durable (events above). A blueprint review workflow for this
-    // state is M10-D scope (D-OBS-6); C-R1 must not let publication unwind,
-    // but the failure IS loud and persisted.
-    console.error('ACT_RECONCILIATION_FAILED_REVIEW_REQUIRED', {
-      storyId,
-      chapterNumber,
+    // C-R3.3: DURABLE GATE — set generation_status to 'needs_review' and persist
+    // as story_event. Future generation calls will check this status and refuse
+    // to proceed until review resolves it. This is not just a log; it blocks NEXT chapter
+    // admission (see personalized-generation.ts next-chapter check).
+    const { error } = await admin
+      .from('stories')
+      .update({ generation_status: 'needs_review' })
+      .eq('story_id', storyId)
+    if (error) throw new Error(`failed to set generation_status='needs_review': ${error.message}`)
+    await insertStoryEvent(admin, storyId, 'ACT_RECONCILIATION_FAILED_REVIEW_REQUIRED', {
       actNumber: derived.actNumber,
       findingCodes: result.findings.map((f) => f.code),
+      chapterNumber,
     })
   }
 

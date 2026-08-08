@@ -52,8 +52,8 @@ export const PLOT_DEBTS = [
 ]
 
 export const ENDINGS = [
-  { key: 'ending-open', name: 'Jalan Terbuka', condition: 'Surat terbaca', requiredClosure: ['debt:a'] },
-  { key: 'ending-gelap', name: 'Rahasia Terkubur', condition: 'Surat ditutup', requiredClosure: ['main_mystery'] },
+  { key: 'ending-open', name: 'Jalan Terbuka', kind: 'main' as const, isSecret: false, condition: 'Surat terbaca', requiredClosure: ['debt:a'], blockingConditions: [] },
+  { key: 'ending-gelap', name: 'Rahasia Terkubur', kind: 'main' as const, isSecret: false, condition: 'Surat ditutup', requiredClosure: ['main_mystery'], blockingConditions: [] },
 ]
 
 export const REVEALS = [{ secretId: 'secret:brankas', revealGateChapter: 3 }]
@@ -124,7 +124,7 @@ export function buildHarnessContract(storyId: string): StoryContract {
     title: 'Brankas Rahasia 50 Bab',
     genre: 'misteri',
     tone: 'gelap',
-    styleProfile: 'lakoku_mobile_drama_v1',
+    styleProfile: 'lakoku_mobile_drama_v2',
     mainCharacter: {
       name: 'Aku',
       role: 'penjaga brankas',

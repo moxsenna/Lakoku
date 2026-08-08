@@ -108,8 +108,8 @@ const PLOT_DEBTS = [
 ]
 
 const ENDINGS = [
-  { key: 'ending-open', name: 'Jalan Terbuka', condition: 'Surat terbaca', requiredClosure: ['debt:a'] },
-  { key: 'ending-gelap', name: 'Rahasia Terkubur', condition: 'Surat ditutup', requiredClosure: ['main_mystery'] },
+  { key: 'ending-open', name: 'Jalan Terbuka', kind: 'main' as const, isSecret: false, condition: 'Surat terbaca', requiredClosure: ['debt:a'], blockingConditions: [] },
+  { key: 'ending-gelap', name: 'Rahasia Terkubur', kind: 'main' as const, isSecret: false, condition: 'Surat ditutup', requiredClosure: ['main_mystery'], blockingConditions: [] },
 ]
 
 const REVEALS = [{ secretId: 'secret:brankas', revealGateChapter: 3 }]
@@ -146,7 +146,7 @@ function buildContract(storyId: string): StoryContract {
     title: 'Brankas Rahasia 50 Bab',
     genre: 'misteri',
     tone: 'gelap',
-    styleProfile: 'lakoku_mobile_drama_v1',
+    styleProfile: 'lakoku_mobile_drama_v2',
     mainCharacter: {
       name: 'Aku',
       role: 'penjaga brankas',
@@ -158,7 +158,7 @@ function buildContract(storyId: string): StoryContract {
     corePromise: 'Satu surat, satu kebenaran bab-per-bab.',
     actPlan: ACT,
     chapterTargets,
-    endingCandidates: ENDINGS,
+    endingCandidates: ENDINGS.map(e => ({ ...e, kind: e.kind ?? 'main' as const, isSecret: e.isSecret ?? false, blockingConditions: e.blockingConditions ?? [] })),
     plotDebts: PLOT_DEBTS,
     revealRunway: REVEALS,
     closureRunway: {

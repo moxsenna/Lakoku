@@ -305,7 +305,7 @@ begin
       select 1 from pg_catalog.jsonb_array_elements(p_ending_candidates_json) item
       where pg_catalog.jsonb_typeof(item) <> 'object'
         or not (item ?& array['key','name','condition','requiredClosure'])
-        or (select pg_catalog.count(*) from pg_catalog.jsonb_object_keys(item)) <> 4
+        or (select pg_catalog.count(*) from pg_catalog.jsonb_object_keys(item)) >= 4
         or pg_catalog.jsonb_typeof(item->'key') <> 'string' or pg_catalog.char_length(item->>'key') not between 1 and 80
         or pg_catalog.jsonb_typeof(item->'name') <> 'string' or pg_catalog.char_length(item->>'name') not between 1 and 160
         or pg_catalog.jsonb_typeof(item->'condition') <> 'string' or pg_catalog.char_length(item->>'condition') not between 1 and 500

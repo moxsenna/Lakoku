@@ -10,10 +10,8 @@
  *   4. Proves chapter_blueprints NOT version++ when reconciliation fails
  *   5. Proves story_events persisted FAILED_REVIEW_REQUIRED
  *   6. Proves generation_status='needs_review' persists
- *
- * Critical distinction from positive proof:
- *   Positive: drift≥2 → RECONCILED → version++ → spine adjusted but story continues
- *   Negative: ending unreachable → FAILED_REVIEW_REQUIRED → NO version++ → story HALTS
+ *   7. Proves generateNextPersonalizedChapter() returns FAILED_REVIEW_REQUIRED for chapter 6
+ *   8. Proves zero new leases/checkpoints/publications/canon revisions during sync failure
  */
 // @vitest-environment node
 
@@ -60,6 +58,7 @@ assertIsolatedTarget()
 
 const STORY_ID = 'm10c-r3-2-negative-test'
 const ACT_BOUNDARY_CHAPTER = 5 // Checkpoint at end of act 1 → next act is 6-12
+const NEXT_CHAPTER = 6 // Attempt to generate next chapter after failed boundary
 
 describe('M10-C R3.2 — Negative DB-backed FAILED_REVIEW_REQUIRED proof', () => {
   test('FAILED_REVIEW_REQUIRED persists + no version++ when main endings unreachable', async () => {
@@ -78,6 +77,7 @@ describe('M10-C R3.2 — Negative DB-backed FAILED_REVIEW_REQUIRED proof', () =>
     await admin.from('chapter_blueprints').delete().eq('story_id', STORY_ID)
     await admin.from('story_generation_contracts').delete().eq('story_id', STORY_ID)
     await admin.from('stories').delete().eq('id', STORY_ID)
+    await admin.from('reader_states').delete().eq('story_id', STORY_ID).eq('user_id', HARNESS_USER_ID)
     
     // STEP 1: Seed isolated story with canonical act boundary
     const contract = buildHarnessContract(STORY_ID)
@@ -134,6 +134,20 @@ describe('M10-C R3.2 — Negative DB-backed FAILED_REVIEW_REQUIRED proof', () =>
       commercial_origin: 'LEGACY_GRANDFATHERED',
     })
     if (storyError) throw new Error(`Failed to seed stories: ${storyError.message}`)
+    
+    // Create reader state for harness user (required by applyPersonalizedChoice)
+    await admin.from('reader_states').insert({
+      user_id: HARNESS_USER_ID,
+      story_id: STORY_ID,
+      status: 'BERJALAN',
+      current_chapter: ACT_BOUNDARY_CHAPTER,
+      jejak: [],
+      ending_name: null,
+      route_state: {},
+      choice_history: [],
+      locked_ending_key: null,
+      updated_at: new Date().toISOString(),
+    })
 
     // Insert story contract with EXACT shape from harness canonical (not invented fields)
     const parsedContract = parseStoryContractWithNormalization(failedContract)
@@ -286,7 +300,7 @@ describe('M10-C R3.2 — Negative DB-backed FAILED_REVIEW_REQUIRED proof', () =>
     if (storyQueryError) throw new Error(`Failed to query story status: ${storyQueryError.message}`)
     expect(updatedStory?.generation_status).toBe('needs_review') // Changed from 'published'
 
-    // STEP 6: Verify failure event persisted
+    // STEP 8: Verify failure event persisted
     const { count: reconciliationEvents } = await admin
       .from('story_events')
       .select('*', { count: 'exact', head: false })

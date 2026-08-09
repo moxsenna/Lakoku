@@ -280,11 +280,13 @@ export async function runM10CHarness(outDir?: string): Promise<M10CRunOutput> {
   const blockers = [...new Map([...sync.blockers, ...worker.blockers].map((b) => [b.code, b])).values()]
 
   // Blocker gate: only blockers that are still UNRESOLVED (or have no
-  // disposition at all) force BLOCKED. After C-R1 (reviewer 2026-08-08), five
-  // of the six original blockers are CLOSED by production wiring with capture
-  // read-back (blocker-dispositions.ts carries the proof per code); the prompt
-  // layers blocker stays RECLASSIFIED to M10-F with reviewer ratification #1.
-  // The full disposition table is written into the artifacts as evidence.
+  // disposition at all) force BLOCKED. Current C-R3 topology of the six
+  // original blockers: FOUR CLOSED by production wiring with capture read-back
+  // (context-memory budget, ending-lock durability, act-reconciliation trigger,
+  // ending reachability) and TWO RECLASSIFIED (prompt layers to M10-F,
+  // Bab-49 emotional resolution to M10-D). Zero UNRESOLVED.
+  // blocker-dispositions.ts carries the proof per code, and the full
+  // disposition table is written into the artifacts as evidence.
   const unresolved = unresolvedBlockers(blockers)
 
   const failedCompletion = [...completion.sync, ...completion.worker].filter((c) => !c.passed)
@@ -316,13 +318,14 @@ export async function runM10CHarness(outDir?: string): Promise<M10CRunOutput> {
       ratifiedByReviewer: d.ratifiedByReviewer,
     })),
     blockerDispositionBasis:
-      'C-R2 corrective package (reviewer Entry 6, 2026-08-08): three CLOSED by production wiring + capture read-back (context budget, ending-lock durability on ending-runway 1.3.0 raw rows, act-reconciliation trigger); prompt layers RECLASSIFIED to M10-F (ratification #1) and Bab-49 emotional-resolution RECLASSIFIED to M10-D (Entry 6 BLOCKER 1 veto of the C-R1 beat derivation); ending reachability UNRESOLVED — #6 stays OPEN and the run reports BLOCKED. Proofs in blocker-dispositions.ts.',
+      'C-R3 state: 4 CLOSED + 2 RECLASSIFIED, 0 UNRESOLVED active capture blockers. CLOSED by production wiring + capture read-back: context-memory budget, ending-lock durability (ending-runway 1.3.0 raw rows), act-reconciliation trigger, and ending reachability (structured ending model + V2 ACT_ENDING_REACHABILITY writer + endingReachabilityV2 capture read-back; reviewer-ratified at 3fbcad2). RECLASSIFIED: prompt layers to M10-F (ratification #1) and Bab-49 emotional-resolution to M10-D (Entry 6 BLOCKER 1 veto of the C-R1 beat derivation). Reachability closure is OBSERVABILITY, not an assertion that reachability always passes: a failing act boundary now fails the ACT_BOUNDARY_HOOKS_PROVEN completion check instead of forcing a permanent BLOCKED. Proofs in blocker-dispositions.ts.',
   }
 
   // A capture blocker means an evaluator input has no honest runtime source.
   // The stage cannot claim coverage it does not have, so an UNRESOLVED blocker
   // reports BLOCKED. Proof-backed CLOSED/RECLASSIFIED dispositions are audited
-  // via blockers.json — the five closures rest on runtime wires, not removal.
+  // via blockers.json — the four closures rest on runtime wires, not removal,
+  // and reachability failure is now caught by ACT_BOUNDARY_HOOKS_PROVEN.
   const result: M10ArtifactManifestV1['result'] =
     unresolved.length > 0
       ? 'BLOCKED'
@@ -370,7 +373,7 @@ export async function runM10CHarness(outDir?: string): Promise<M10CRunOutput> {
         blockers,
         unresolvedCodes: unresolved.map((b) => b.code),
         dispositions: BLOCKER_DISPOSITIONS,
-        basis: 'C-R2 (reviewer Entry 6, 2026-08-08): blockers listed are the capture gaps still open; dispositions cover all six codes — three CLOSED by production wiring, two RECLASSIFIED (prompt layers to M10-F, Bab-49 emotional resolution to M10-D after the Entry 6 BLOCKER 1 veto), one UNRESOLVED (ending reachability: EndingCandidateSchema cannot express a secret ending or structured flag blocking, so NCS §1.4 stays unproven and the run reports BLOCKED)',
+        basis: 'C-R3: blockers listed are the capture gaps still open; dispositions cover all six codes — 4 CLOSED by production wiring + capture read-back (context-memory budget, ending-lock durability, act-reconciliation trigger, ending reachability), 2 RECLASSIFIED (prompt layers to M10-F, Bab-49 emotional resolution to M10-D after the Entry 6 BLOCKER 1 veto), 0 UNRESOLVED. Ending reachability closed because the structured ending model now expresses secret endings and flag blocking (isSecret / blockedByFlags / requiredPlotDebtIds), the production V2 writer emits a computed ncs14Proven on the ACT_ENDING_REACHABILITY event, and the capture reads it back into endingReachabilityV2; reviewer-ratified at 3fbcad2. Failing reachability is caught by the ACT_BOUNDARY_HOOKS_PROVEN completion check, not by a permanent BLOCKED verdict.',
       }),
     )
     writeFileSync(

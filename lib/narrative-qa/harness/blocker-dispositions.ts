@@ -11,7 +11,12 @@
  *     evaluator-input fabrication → RECLASSIFIED to the M10-D semantic judge;
  *   - #6 (ending reachability): the C-R1 proof was NOT RATIFIED (fabricated
  *     all-main/no-blocking mapping, trivially-true PASS) → UNRESOLVED until a
- *     structured ending model exists; #6 OPEN, G1-REACH IN_PROGRESS.
+ *     structured ending model exists.
+ * C-R3 then closed #6: the structured ending model landed, the production V2
+ * writer emits computed ACT_ENDING_REACHABILITY evidence, and the capture reads
+ * it back into a structured `endingReachabilityV2`. The failure mode moved from
+ * a permanent BLOCKED verdict into the ACT_BOUNDARY_HOOKS_PROVEN completion
+ * gate. Reviewer ratified that closure against exact source 3fbcad2.
  * #4 (durability) stays CLOSED but rebaselined: ending-runway 1.3.0 now
  * computes durability itself from RAW rows (caller conclusions forbidden).
  * The sixth blocker (prompt layers) remains RECLASSIFIED to M10-F (#1
@@ -19,11 +24,17 @@
  * exist on the deterministic C path, so nothing can be observed there without
  * fabrication.
  *
+ * Current topology (C-R3): four CLOSED (context budget, ending-lock
+ * durability, act-reconciliation trigger, ending reachability) and two
+ * RECLASSIFIED (prompt layers → M10-F, Bab-49 emotional resolution → M10-D).
+ * Zero UNRESOLVED.
+ *
  * A blocker without a CLOSED/RECLASSIFIED disposition keeps forcing result
  * BLOCKED, exactly as before. The harness writes the full disposition table
  * into blockers.json and summary.json so the audit trail travels with the
- * evidence. CLOSED dispositions here are pending the reviewer's C verdict;
- * each proof cites the exact files/lines that implement the closure.
+ * evidence. Each proof cites the exact files/lines that implement the closure;
+ * `ratifiedByReviewer` records whether the reviewer has verified it against an
+ * exact SHA, so an unratified closure is still visible in the artifacts.
  */
 
 import type { CaptureBlockerV1 } from './capture'
@@ -208,9 +219,12 @@ export const BLOCKER_DISPOSITIONS: BlockerDispositionV1[] = [
       + 'boundary (Bab 50, no next act) requires none of those because '
       + 'runActBoundaryReconciliation returns triggered:false when no next act '
       + 'exists; Bab 45/48/49/50 obligations stay with the ending-runway '
-      + 'evaluator.',
+      + 'evaluator. RATIFICATION: the reviewer verified this closure against '
+      + 'exact source 3fbcad2b083c6a9648af4e850e129aea83c473fa and ratified it '
+      + '(V2 capture parser PASS, terminal-act semantics PASS, reachability '
+      + 'completion gate PASS).',
     consequenceFindings: [],
-    ratifiedByReviewer: false,
+    ratifiedByReviewer: true,
   },
 ]
 

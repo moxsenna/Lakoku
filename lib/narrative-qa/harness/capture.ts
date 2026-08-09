@@ -137,7 +137,7 @@ export const ACT_ENDING_REACHABILITY_BLOCKER: CaptureBlockerV1 = {
   missingField: 'endingReachability[*].secretPathProof + flag-blocking proof (full NCS §1.4)',
   productionSource: 'lib/story-engine/story-contract.ts :: EndingCandidateSchema (no kind/isSecret field, no structured blocking condition — only free-text `condition`)',
   reason:
-    'C-R2 persists only what the deterministic layer can honestly prove per act: ending-candidate count >= 2 and requiredClosure satisfiability. The NCS §1.4 secret-ending-path and flag-reachability clauses are recorded UNPROVEN because the contract model cannot express a secret ending or blocking flags at all. The C-R1 mapping of every candidate to {isMain:true,isSecret:false,blockedByFlags:[]} was withdrawn (reviewer Entry 6: trivially-true PASS does not prove §1.4).',
+    'AT DISCOVERY TIME (C-R2; superseded by the C-R3 closure documented above): C-R2 persisted only what the deterministic layer could honestly prove per act — ending-candidate count >= 2 and requiredClosure satisfiability. The NCS §1.4 secret-ending-path and flag-reachability clauses were recorded UNPROVEN because the contract model could not express a secret ending or blocking flags at all. The C-R1 mapping of every candidate to {isMain:true,isSecret:false,blockedByFlags:[]} was withdrawn (reviewer Entry 6: trivially-true PASS does not prove §1.4). The contract now carries structured isSecret/blockedByFlags/requiredPlotDebtIds, so this description no longer reflects the runtime.',
 }
 
 export interface ChapterCaptureV1 {
@@ -994,9 +994,12 @@ export async function captureChapter(
  *     (reviewer Entry 6 VETO of the C-R1 #3 fabricated beat; no deterministic
  *     emotional-resolution evidence exists)
  *   - CONTEXT_MEMORY_PROMPT_LAYER_BLOCKER → RECLASSIFIED to M10-F (#1 APPROVED → F)
+ * Net topology: four CLOSED, two RECLASSIFIED, zero UNRESOLVED.
+ *
  * The constants stay exported as the historical record of each missing wire.
  * Only blockers still in this list flow into blockers.json as open capture
- * gaps; dispositions (including RECLASSIFIED/UNRESOLVED) travel with them.
+ * gaps; the full disposition table (any kind, including a future UNRESOLVED)
+ * travels with them.
  */
 export function harnessBlockers(): CaptureBlockerV1[] {
   return [

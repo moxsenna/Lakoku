@@ -168,34 +168,49 @@ export const BLOCKER_DISPOSITIONS: BlockerDispositionV1[] = [
   },
   {
     code: ACT_ENDING_REACHABILITY_BLOCKER.code,
-    disposition: 'UNRESOLVED',
+    disposition: 'CLOSED',
     reclassifiedTo: null,
     proof:
-      'C-R2 (reviewer Entry 6 2026-08-08, BLOCKER 3 — C-R1 #6 proof NOT '
-      + 'RATIFIED). The C-R1 mapping sent EVERY contract endingCandidate to '
-      + 'checkEndingReachability as {isMain:true, isSecret:false, '
-      + 'blockedByFlags:[]}, so a secret ending could never exist and '
-      + 'blocking could never occur; PASS:reachableMain=2/min=2 was '
-      + 'trivially true and did not prove NCS §1.4. That fabrication is '
-      + 'withdrawn from deriveActBoundaryReconciliationInput '
-      + '(lib/runtime/post-publication-lifecycle.server.ts). What the '
-      + 'lifecycle hook persists now is the HONEST deterministic subset: '
-      + 'ending-candidate count vs ENDING_RULES.minReachableEndings, '
-      + 'per-ending requiredClosure satisfiability '
-      + '(deriveRequiredClosureSatisfiability — unchanged, real evidence), '
-      + 'the violation-finding codes detectable on the structured data that '
-      + 'exists, and explicit model-gap markers: secretEndingModeled=false, '
-      + 'secretPathProven=false, ncs14Proven=false, because '
-      + 'EndingCandidateSchema (lib/story-engine/story-contract.ts) carries '
-      + 'only key/name/condition(free-text)/requiredClosure — no structured '
-      + 'ending kind, no blocking condition. Capture renders '
-      + 'UNPROVEN:candidates=.../closure=.../secretPath=UNPROVEN, never '
-      + 'PASS. Disposition stays UNRESOLVED (forces BLOCKED): full NCS §1.4 '
-      + 'proof requires a structured ending model (secret path + blocking) '
-      + 'that does not exist yet. #6 = OPEN; G1-REACH = IN_PROGRESS; never '
-      + 'mark done because story_events exist.',
+      'C-R3 (supersedes the C-R2 UNRESOLVED entry). The blocker was recorded '
+      + 'because EndingCandidateSchema could not express a secret ending or a '
+      + 'blocking condition, so the C-R1 all-main/no-blocking mapping produced '
+      + 'a trivially-true PASS (reviewer Entry 6: NOT RATIFIED). That model '
+      + 'gap is now closed. (1) CONTRACT: ending candidates carry structured '
+      + 'ending kind and structured closure ids, so EndingDef derivation has '
+      + 'real isSecret / blockedByFlags / requiredPlotDebtIds instead of a '
+      + 'fabricated constant. (2) PRODUCTION WIRE: '
+      + 'lib/runtime/post-publication-lifecycle.server.ts :: '
+      + 'deriveEndingReachabilityEvidence (V2) counts MAIN and SECRET endings '
+      + 'separately, computes reachable counts per ending via '
+      + 'isEndingReachable, and derives per-ending closure from '
+      + 'deriveRequiredClosureSatisfiability using requiredPlotDebtIds only '
+      + '(prose requiredClosure is never treated as debt ids; absent '
+      + 'structured data yields proven=false / satisfiable=null). '
+      + 'runActBoundaryReconciliation persists it verbatim as the '
+      + 'ACT_ENDING_REACHABILITY story_event. ncs14Proven is COMPUTED, not '
+      + 'constant: mainReachable (>= ENDING_RULES.minReachableEndings '
+      + 'reachable main endings) AND secretReachable (>= 1 reachable secret) '
+      + 'AND closureProofComplete AND closureAllSatisfiable AND zero CRITICAL '
+      + 'checkEndingReachability findings. The deprecated V1 writer '
+      + '(deriveEndingReachabilityEvidenceV1, hardcoded ncs14Proven=false) is '
+      + 'retained only for legacy reads and never writes new events. '
+      + '(3) CAPTURE READ-BACK: parseEndingReachabilityCaptureV2 '
+      + '(lib/narrative-qa/harness/act-boundary-evidence.ts) reads the event '
+      + 'into ActBoundaryCaptureV1.endingReachabilityV2; a V1-shaped or '
+      + 'type-mismatched payload yields validV2=false and can never satisfy '
+      + 'the gate. CLOSURE SCOPE: this closes OBSERVABILITY, it does NOT '
+      + 'assert that reachability always passes. The failure mode moved into '
+      + 'the completion gate — evaluateActBoundaryGate requires, at every '
+      + 'boundary that has a next act, reconciliationTriggered=true AND '
+      + 'validV2=true AND ncs14Proven=true AND a next-act blueprint version; a '
+      + 'failing act now fails ACT_BOUNDARY_HOOKS_PROVEN instead of forcing a '
+      + 'permanent BLOCKED verdict that no run could ever clear. The terminal '
+      + 'boundary (Bab 50, no next act) requires none of those because '
+      + 'runActBoundaryReconciliation returns triggered:false when no next act '
+      + 'exists; Bab 45/48/49/50 obligations stay with the ending-runway '
+      + 'evaluator.',
     consequenceFindings: [],
-    ratifiedByReviewer: true,
+    ratifiedByReviewer: false,
   },
 ]
 

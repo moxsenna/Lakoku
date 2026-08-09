@@ -390,10 +390,13 @@ export async function runHarness(input: RunHarnessInput): Promise<HarnessRunResu
 
   // Act-boundary hooks (B1): capture rollup presence + next-act blueprint
   // version + thread/payoff state at every configured boundary, and VERIFY the
-  // load-bearing ones. Reconciliation trigger/result and ending reachability
-  // have no runtime source; both are recorded as CaptureBlockerV1 (see
-  // harnessBlockers) and captured as null. A missing rollup or next-act
-  // blueprint is a real production side-effect gap and becomes a finding.
+  // load-bearing ones. C-R1/C-R3: reconciliation trigger/result and the
+  // structured V2 ending-reachability evidence DO have a runtime source now
+  // (lib/runtime/post-publication-lifecycle.server.ts persists both as
+  // story_events); capture reads them back verbatim and the completion gate
+  // (evaluateActBoundaryGate) enforces them at every boundary with a next act.
+  // A missing rollup or next-act blueprint is a real production side-effect gap
+  // and becomes a finding here.
   const actBoundaryChapterNumbers = ACT_BOUNDARY_CHAPTERS.filter((c) => c <= HARNESS_TOTAL_CHAPTERS)
   for (const boundaryChapter of actBoundaryChapterNumbers) {
     const boundary = await captureActBoundary(admin, storyId, userId, boundaryChapter)

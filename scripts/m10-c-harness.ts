@@ -68,7 +68,8 @@ import { runForkProbe, FORK_STORY_A_ID, FORK_STORY_B_ID } from '../lib/narrative
 import { BLOCKER_DISPOSITIONS, unresolvedBlockers } from '../lib/narrative-qa/harness/blocker-dispositions'
 import { headShaOfWorkingTree } from '../lib/narrative-qa/git-sha'
 import { DEFAULT_RESUME_PLAN, HARNESS_CHOICE_POLICY_VERSION, buildRunSpec } from '../lib/narrative-qa/harness/run-spec'
-import { ACT_PLAN, ACT_BOUNDARY_CHAPTERS, HARNESS_FIXTURE_ID, HARNESS_TOTAL_CHAPTERS } from '../lib/narrative-qa/harness/fixture'
+import { HARNESS_FIXTURE_ID, HARNESS_TOTAL_CHAPTERS } from '../lib/narrative-qa/harness/fixture'
+import { evaluateActBoundaryGate } from '../lib/narrative-qa/harness/act-boundary-evidence'
 import { EVALUATOR_VERSIONS, M10A_CLOSURE_ANCHOR } from './m10-b-qa'
 
 /**
@@ -220,16 +221,13 @@ export function checkCompletion(run: HarnessRunResult): CompletionCheck[] {
     },
     {
       code: 'ACT_BOUNDARY_HOOKS_PROVEN',
-      // Every configured boundary must have a committed rollup and (where a next
-      // act exists) a blueprint version in effect for the next act's first
-      // chapter. Missing either is a production side-effect gap.
-      passed:
-        run.actBoundaries.length === ACT_BOUNDARY_CHAPTERS.filter((c) => c <= HARNESS_TOTAL_CHAPTERS).length
-        && run.actBoundaries.every((b) => {
-          const hasNextAct = ACT_PLAN.some((a) => a.actNumber === b.actNumber + 1)
-          return b.rollupPresent && (!hasNextAct || b.nextActFirstChapterBlueprintVersion !== null)
-        }),
-      detail: { actBoundaries: run.actBoundaries.map((b) => ({ act: b.actNumber, rollup: b.rollupPresent, nextBlueprint: b.nextActFirstChapterBlueprintVersion })) },
+      // C-R3: rollup + next-act blueprint alone do NOT prove an act boundary.
+      // A boundary with a next act must also show the post-publication hook
+      // fired (ACT_RECONCILIATION) and that its STRUCTURED V2 reachability
+      // evidence passes (validV2 + ncs14Proven). The terminal boundary requires
+      // neither, by production construction. The gate reads only
+      // endingReachabilityV2 — never the deprecated display string.
+      ...evaluateActBoundaryGate(run.actBoundaries),
     },
   ]
 }

@@ -32,6 +32,11 @@ import { evaluateChoiceHistory } from '../evaluators/choice-evaluator'
 import { evaluatePlotDebtLifecycle } from '../evaluators/plot-debt-evaluator'
 import { evaluateThreadLifecycle } from '../evaluators/thread-evaluator'
 import { computeSha256, sortFindings, stableStringify } from '../scoring/canonical-serializer'
+import {
+  parseEndingReachabilityCaptureV2,
+  renderEndingReachabilityDisplay,
+} from './act-boundary-evidence'
+import type { EndingReachabilityCaptureV2 } from './act-boundary-evidence'
 import { ACT_PLAN, CH1_FACT_PAYOFF_CHAPTER, PLOT_DEBTS, harnessFactId } from './fixture'
 
 type Admin = ReturnType<typeof createAdminClient>
@@ -108,15 +113,23 @@ export const ACT_RECONCILIATION_TRIGGER_BLOCKER: CaptureBlockerV1 = {
 }
 
 /**
- * REOPENED by C-R2 (reviewer Entry 6 2026-08-08): the C-R1 #6 proof was
- * NOT RATIFIED. The lifecycle hook persists an HONEST per-act evidence event
- * (candidate count + requiredClosure satisfiability + explicit UNPROVEN
- * markers), but a full NCS §1.4 proof is impossible on the current contract
- * model: EndingCandidateSchema has no structured ending-kind (secret) field
- * and no blocking conditions, so secret-path and flag-based reachability
- * cannot be proven — and the old all-main/no-blocking mapping faked exactly
- * that. #6 = OPEN, G1-REACH = IN_PROGRESS until a structured ending model
- * exists. Never mark done because story_events exist.
+ * HISTORICAL AUDIT RECORD — no longer an active capture blocker.
+ *
+ * Timeline: C-R1 #6 mapped every ending candidate to
+ * {isMain:true,isSecret:false,blockedByFlags:[]}, making PASS trivially true;
+ * reviewer Entry 6 (C-R2) did NOT RATIFY that proof, so this was recorded as
+ * UNRESOLVED — a full NCS §1.4 proof was impossible while the contract model
+ * had no structured ending kind and no blocking conditions.
+ *
+ * C-R3 closed the wire (see blocker-dispositions.ts): the contract now carries
+ * structured ending kind/blocking/requiredPlotDebtIds, the production hook
+ * persists the V2 `ACT_ENDING_REACHABILITY` evidence
+ * (deriveEndingReachabilityEvidence), and capture reads it back into
+ * ActBoundaryCaptureV1.endingReachabilityV2. Closure means the evidence is
+ * OBSERVABLE and GATED, not that reachability always passes: a failing act now
+ * fails ACT_BOUNDARY_HOOKS_PROVEN via validV2/ncs14Proven instead of forcing a
+ * permanent BLOCKED verdict. The constant stays exported as the record of the
+ * missing wire at discovery time.
  */
 export const ACT_ENDING_REACHABILITY_BLOCKER: CaptureBlockerV1 = {
   code: 'ENDING_REACHABILITY_PER_ACT_NOT_PERSISTED',
@@ -966,19 +979,20 @@ export async function captureChapter(
 }
 
 /**
- * Blockers still OPEN after C-R2 (reviewer Entry 6 corrective package).
+ * Blockers still OPEN after C-R3 (reviewer Entry 10 corrective package).
  *
- * C-R2 status of the six original blockers:
+ * Status of the six original blockers:
  *   - CONTEXT_MEMORY_BUDGET_BLOCKER      → CLOSED (C-R1 #2; retrieval_logs read-back)
  *   - ENDING_LOCK_TX_BLOCKER             → CLOSED (C-R1 #4, rebaselined C-R2 to
  *     raw rows + evaluator-computed durability; ending-runway 1.3.0)
  *   - ACT_RECONCILIATION_TRIGGER_BLOCKER → CLOSED (C-R1 #5; story_events read-back)
+ *   - ACT_ENDING_REACHABILITY_BLOCKER    → CLOSED (C-R3; structured ending model
+ *     + V2 ACT_ENDING_REACHABILITY event + endingReachabilityV2 read-back. The
+ *     failure mode moved to the completion gate — see evaluateActBoundaryGate —
+ *     it was not removed)
  *   - ENDING_RESOLUTION_BEAT_BLOCKER     → REOPENED + RECLASSIFIED to M10-D
  *     (reviewer Entry 6 VETO of the C-R1 #3 fabricated beat; no deterministic
  *     emotional-resolution evidence exists)
- *   - ACT_ENDING_REACHABILITY_BLOCKER    → REOPENED / UNRESOLVED (reviewer
- *     Entry 6: C-R1 #6 proof NOT RATIFIED — full NCS §1.4 unprovable on the
- *     current contract model; #6 OPEN, G1-REACH IN_PROGRESS)
  *   - CONTEXT_MEMORY_PROMPT_LAYER_BLOCKER → RECLASSIFIED to M10-F (#1 APPROVED → F)
  * The constants stay exported as the historical record of each missing wire.
  * Only blockers still in this list flow into blockers.json as open capture
@@ -988,7 +1002,6 @@ export function harnessBlockers(): CaptureBlockerV1[] {
   return [
     CONTEXT_MEMORY_PROMPT_LAYER_BLOCKER,
     ENDING_RESOLUTION_BEAT_BLOCKER,
-    ACT_ENDING_REACHABILITY_BLOCKER,
   ]
 }
 
@@ -1000,7 +1013,13 @@ export interface ActBoundaryCaptureV1 {
   rollupSummary: string | null
   reconciliationTriggered: boolean
   reconciliationResult: string | null
+  /**
+   * @deprecated Display-only rendering kept for artifact backward
+   * compatibility. Never gate on this string — use `endingReachabilityV2`.
+   */
   endingReachability: string | null
+  /** C-R3 authoritative structured read-back of the V2 reachability event. */
+  endingReachabilityV2: EndingReachabilityCaptureV2
   threadStatuses: Array<{ threadId: string; status: string }>
   openDebtIds: string[]
   nextActFirstChapterBlueprintVersion: number | null
@@ -1056,15 +1075,15 @@ export async function captureActBoundary(
   if (closureError) throw new Error(`capture: reader_plot_debt_closures read failed: ${closureError.message}`)
   const closed = new Set((closureRows ?? []).map((row) => String(row.debt_id)))
 
-  // C-R1 #5 + C-R2: reconciliation trigger/result and the HONEST ending-
-  // reachability evidence come from the production runtime's post-publication
-  // lifecycle hook (lib/runtime/post-publication-lifecycle.server.ts),
-  // persisted as story_events rows. Capture reads them back verbatim — never
-  // re-derived. C-R2 (reviewer Entry 6): the payload no longer carries a
-  // PASS verdict; it records what the deterministic layer CAN prove
-  // (candidate count, requiredClosure satisfiability) and marks the NCS §1.4
-  // clauses the contract model cannot express as UNPROVEN. Capture renders
-  // that state verbatim and never renders 'PASS'.
+  // C-R1 #5 + C-R3: reconciliation trigger/result and the ending-reachability
+  // evidence come from the production runtime's post-publication lifecycle hook
+  // (lib/runtime/post-publication-lifecycle.server.ts), persisted as
+  // story_events rows. Capture reads them back verbatim — never re-derived,
+  // never re-computed here. C-R3: the reachability payload is the structured V2
+  // contract written by deriveEndingReachabilityEvidence; parsing lives in the
+  // pure ./act-boundary-evidence module so a legacy V1 payload can never be
+  // mistaken for a V2 proof. A boundary without a next act legitimately has no
+  // event at all (runActBoundaryReconciliation returns triggered:false).
   const { data: eventRows, error: eventError } = await admin
     .from('story_events')
     .select('type,payload')
@@ -1080,16 +1099,10 @@ export async function captureActBoundary(
   const reconciliationPayload = reconciliationEvent
     ? ((reconciliationEvent.payload ?? {}) as Record<string, unknown>)
     : null
-  const reachabilityPayload = reachabilityEvent
-    ? ((reachabilityEvent.payload ?? {}) as Record<string, unknown>)
-    : null
-  const endingReachability = reachabilityPayload
-    ? `${reachabilityPayload.ncs14Proven === true ? 'PROVEN' : 'UNPROVEN'}`
-      + `:candidates=${String(reachabilityPayload.endingCandidateCount ?? '?')}`
-      + `/min=${String(reachabilityPayload.minRequiredMain ?? '?')}`
-      + `,closure=${reachabilityPayload.closureAllSatisfiable === true ? 'satisfiable' : 'blocked'}`
-      + `,secretPath=${reachabilityPayload.secretPathProven === true ? 'PROVEN' : 'UNPROVEN'}`
-    : null
+  const endingReachabilityV2 = parseEndingReachabilityCaptureV2(
+    reachabilityEvent ? (reachabilityEvent.payload ?? {}) : null,
+  )
+  const endingReachability = renderEndingReachabilityDisplay(endingReachabilityV2)
 
   return {
     actNumber: act.actNumber,
@@ -1102,6 +1115,7 @@ export async function captureActBoundary(
     reconciliationTriggered: reconciliationEvent !== undefined,
     reconciliationResult: reconciliationPayload ? String(reconciliationPayload.status ?? '') || null : null,
     endingReachability,
+    endingReachabilityV2,
     threadStatuses: (threadRows ?? []).map((row) => ({
       threadId: String(row.id),
       status: String(row.status),

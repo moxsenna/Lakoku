@@ -49,15 +49,19 @@ export const PLOT_DEBTS = [
     mustCloseBy: 8,
     status: 'open' as const,
   },
-  // C-R3-R1 Blocker #4: debt path needed for secret ending closure
-  {
-    id: 'debt:b',
-    question: 'Mengapa surat ini ditulis dengan tanda tangan palsu?',
-    introducedAt: 6,
-    mustProgressBy: [12, 45],
-    mustCloseBy: 50,
-    status: 'open' as const,
-  },
+  // C-R3-R2: `debt:b` was added by C-R3-R1 as a supposed "debt path needed for
+  // secret ending closure" and withdrawn here. It was orphaned in every seam:
+  // no seed row in seed.ts, no progress in harnessProposalFor at its own
+  // mustProgressBy chapters (12, 45), no closure before mustCloseBy 50, and no
+  // ending referenced it — all three endingCandidates below prove closure via
+  // requiredPlotDebtIds over `debt:a` / `main_mystery` only. The declaration
+  // therefore put `debt:b` into effectivePlotDebtState.debtsDueToProgress at
+  // Bab 12 while the proposal carried only `main_mystery`, so
+  // buildValidatedChapterStateDelta fail-closed with
+  // STATE_DELTA_POLICY_VIOLATION ("Debt \"debt:b\" wajib menunjukkan progress
+  // di Bab 12"). That was a fixture defect, not a runtime one: the validator
+  // and the policy resolver both behaved per contract. The secret-ending proof
+  // (NCS §1.4) does not depend on this debt.
 ]
 
 export const ENDINGS = [

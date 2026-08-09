@@ -620,3 +620,139 @@ Next step: implement C-R3.2 fixtures (positive RECONCILED proof + negative FAILE
 
 ---
 
+## Entry 10 — 2026-08-09 (reviewer verdict: **M10-C PASS / CLOSED**; GO M10-D + M10-E; verbatim key block)
+
+C closure anchor — exact head ratified by the reviewer:
+
+```text
+08532c87a6b7d505c2c6f4c3d06bebf58b3c44f6
+```
+
+Historical plot-debt migration at this head still blob exact
+`4cd25ff166a333e0d39c12c9f01c344144cdedd3`.
+
+### Path to closure after Entry 9
+
+1. `3fbcad2` — C-R3 harness/test-only gate: V2 ending-reachability capture parser,
+   tightened act-boundary completion gate, blocker disposition flip, 15 new tests.
+2. `6e3af48` — reviewer-mandated audit-text follow-up: counted-artifact prose
+   (`summary.blockerDispositionBasis`, `blockers.json.basis`) rewritten to the C-R3
+   topology (4 CLOSED + 2 RECLASSIFIED, 0 UNRESOLVED), `ACT_ENDING_REACHABILITY_BLOCKER`
+   `ratifiedByReviewer: true`. Both strings enter `summaryHash`, so counted evidence
+   must not carry an audit statement known to be false.
+3. Counted attempt at `6e3af48` FAILED at sync Bab 12 with
+   `STATE_DELTA_POLICY_VIOLATION` / `Debt "debt:b" wajib menunjukkan progress di Bab 12`.
+   Halted; reviewer authorized a narrow read-only A/B/C/D trace only.
+4. `08532c8` — classified as a **fixture-policy defect**, not runtime. C-R3-R1 (`cb294c5`)
+   declared `debt:b` in `PLOT_DEBTS` (`mustProgressBy [12,45]`, `mustCloseBy 50`) but wired
+   it into no seam: no seed `story_threads` row, no proposal progress at its own milestones,
+   no closure, and no ending referenced it. `debtsDueToProgress` therefore contained a debt
+   the proposal never advanced and `buildValidatedChapterStateDelta` fail-closed as designed.
+   Declaration withdrawn; `tests/narrative-qa/fixture-debt-topology.test.ts` added so the
+   defect class fails at unit time instead of 12 chapters into a counted run.
+
+### Counted pair (ratified)
+
+Both invocations fresh at the same head, each preceded by a fresh local-only
+`supabase db reset`, no `--linked`, target `127.0.0.1:55322`.
+
+```text
+Run 1   PASS
+Run 2   PASS
+
+findingsHash
+ceccff8be159a81ffee25129d66d12c44673ac845d34c890639ed3166c6b9b49
+= identical
+
+summaryHash
+890c06ef47f828aa699bff7f52edaf59ebc9372cdecbd0d6c2671617969d7abe
+= identical
+
+sync captureHash[1..50]       identical
+worker captureHash[1..50]     identical
+normalized fork evidence      identical
+parity mismatches             0 / 0
+failed completion             [] / []
+unresolved blockers           [] / []
+workingTreeDirty              false / false
+```
+
+Findings `542 MEDIUM / 0 HIGH / 0 BLOCKER`. Reviewer note: the C gate formula admits
+MEDIUM findings as evidence; C fails only on unresolved capture blockers, parity/delta/
+completion failure, or a `BLOCKER`-severity finding.
+
+Artifacts archived immutably at `.zcode/artifacts/m10-c-counted/counted-run-{1,2}/`
+(deterministic `runId` collides across same-head runs, so Run 1 was archived before Run 2
+started). Reviewer recorded these as **submitted local execution evidence**, not an
+independent artifact download; source provenance, branch state, gate semantics, and the
+corrective SHA were verified independently.
+
+### Run-2 infrastructure abort — disclosed, does not invalidate the pair
+
+The first Run 2 attempt aborted at seed with
+`stories_owner_user_id_fkey`. Cause was infrastructure: `db reset` restarted
+`supabase_auth_*` while `supabase_kong_*` held a stale cached upstream IP, so `/auth/v1/*`
+returned 502 while `/rest/v1/` returned 200; `ensureHarnessUser` swallows errors
+(`lib/narrative-qa/harness/seed.ts` `.catch(() => null)`), so the missing `auth.users` row
+surfaced later as the FK violation. Fixed by restarting the gateway only. The partial state
+was **not** continued — a full fresh reset was performed and Run 2 restarted from zero on
+the same SHA, with no source/schema/migration change in between. Reviewer therefore counted
+`fresh Run 1 PASS` + `fresh Run 2 PASS`, not "PASS after chapter retry".
+
+### Two RECLASSIFIED blockers — RATIFIED
+
+- `CONTEXT_MEMORY_PROMPT_LAYERS_UNOBSERVABLE → M10-F`: C is explicitly deterministic-only;
+  writer prompt layers are a real-model artifact. Supplying that evidence in C would be
+  fabrication — the proof belongs to the real-model engineering pilot.
+- `EMOTIONAL_RESOLUTION_BEATS_NOT_PERSISTED → M10-D`: structured deterministic state has no
+  authority to conclude that Bab 49 semantically resolves emotion. Deriving it from the
+  ending lock was conclusion fabrication; it is a semantic-judge obligation over prose.
+
+Both already carry `ratifiedByReviewer: true` in the exact disposition source. No commit
+required to flip the booleans.
+
+### Final C ledger
+
+```text
+M10-B deterministic contracts        CLOSED
+M10-C isolated 1→50 harness          CLOSED
+
+sync 1→50                            PASS
+worker 1→50                          PASS
+sync↔worker parity                   PASS
+resume/fencing                       PASS
+fork isolation                       PASS
+act reconciliation                   PASS
+structured ending reachability       PASS
+worker commercial lifecycle          PASS
+same-head repeat determinism         PASS
+unresolved capture blockers          0
+
+C closure anchor
+08532c87a6b7d505c2c6f4c3d06bebf58b3c44f6
+```
+
+### Stage transition
+
+```text
+M10-D Semantic Long-Horizon Judges     GO
+M10-E Reliability & Cost Hardening     GO
+
+M10-F First Real 1→50 Pilot            BLOCKED until D + E PASS
+M10-G Final Quality Proof              BLOCKED until F PASS
+
+production writes                      FORBIDDEN
+production activation                  FORBIDDEN
+```
+
+D and E may run in parallel. D must open with the obligation just reclassified into it —
+semantic emotional resolution at Bab 49 — plus calibration/thresholds derived from C fixture
+evidence. E must use the now-frozen isolated harness as its fault-injection/reliability
+substrate and must not alter C semantics to turn E green.
+
+M10-C is not to be reopened unless D or E produce evidence contradicting the C runtime or
+harness itself — not merely semantic-quality or reliability findings that are by definition
+the next stages' scope.
+
+---
+

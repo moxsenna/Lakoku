@@ -1,130 +1,127 @@
 /**
- * M10-C R3.2 — Worker Production Proof (complete rewrite).
+ * M10-C R3.2 — DB-backed real worker lifecycle proof.
  *
- * This proves worker execution fails CLOSED via FAILED_REVIEW_REQUIRED from
- * generator admission after real reconciliation failure, NOT via commercial gate.
- *
- * Sequence:
- *   1. Seed canonical isolated story at real act boundary (Bab 5 → next Bab 6-12)
- *   2. Create draft blueprints for Bab 6 at version 1
- *   3. Inject canonical blocking fact that makes main endings unreachable
- *   4. Run real act boundary reconciliation → produces FAILED_REVIEW_REQUIRED
- *   5. Seed harness credit grant for Bab 6 commercial preflight authorization
- *   6. Enqueue REAL generation job Bab 6 via RPC → get valid UUID jobId
- *   7. Prepare commercial state: reserve + intent transition to QUEUED(jobId)
- *   8. Call claimAndRunGenerationJobById(jobId) as outer worker entry
- *   9. Prove commercial preflight AUTHORIZED succeeds (not COMMERCIAL_PREFLIGHT_FAILED)
- *   10. Prove FAILED_REVIEW_REQUIRED returned from generator admission (narrative gate)
- *   11. Assert terminal failures: provider_calls=0, no checkpoint/publication/canon delta
+ * This test proves paid Bab 6 reaches worker generator admission and ends only
+ * in FAILED_REVIEW_REQUIRED after a real Bab 5 reconciliation failure.
  */
 // @vitest-environment node
 
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { describe, expect, test, beforeAll, vi } from 'vitest'
+import { createClient } from '@supabase/supabase-js'
+import { describe, expect, test, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
-// ---------------------------------------------------------------------------
-// Local Supabase bootstrap
-// ---------------------------------------------------------------------------
-
-function getLocalStatus() {
-  try {
-    const raw = process.platform === 'win32'
-      ? execFileSync('cmd.exe', ['/d', '/s', '/c', 'pnpm exec supabase status -o json'], { cwd: process.cwd(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
-      : execFileSync('pnpm', ['exec', 'supabase', 'status', '-o', 'json'], { cwd: process.cwd(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
-    const jsonStr = raw.match(/{[\s\S]*}/)?.[0] ?? raw
-    const parsed = JSON.parse(jsonStr) as Record<string, string>
-    return {
-      url: parsed.API_URL ?? 'http://127.0.0.1:54321',
-      key: parsed.SERVICE_ROLE_KEY ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU',
-    }
-  } catch {
-    return {
-      url: 'http://127.0.0.1:54321',
-      key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU',
-    }
-  }
+interface LocalStatus {
+  url: string
+  anonKey: string
+  serviceRoleKey: string
 }
 
-const status = getLocalStatus()
-process.env.SUPABASE_URL = status.url
-process.env.SUPABASE_SERVICE_ROLE_KEY = status.key
+function getLocalStatus(): LocalStatus {
+  const raw = process.platform === 'win32'
+    ? execFileSync('cmd.exe', ['/d', '/s', '/c', 'pnpm exec supabase status -o json'], {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    : execFileSync('pnpm', ['exec', 'supabase', 'status', '-o', 'json'], {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+  const json = JSON.parse(raw.match(/{[\s\S]*}/)?.[0] ?? raw) as Record<string, string>
+  const url = json.API_URL
+  const anonKey = json.ANON_KEY
+  const serviceRoleKey = json.SERVICE_ROLE_KEY
+  if (!url || !anonKey || !serviceRoleKey) {
+    throw new Error('Local Supabase status missing API_URL, ANON_KEY, or SERVICE_ROLE_KEY')
+  }
+  const hostname = new URL(url).hostname
+  if (hostname !== '127.0.0.1' && hostname !== 'localhost' && hostname !== '::1') {
+    throw new Error(`Worker proof requires loopback Supabase, received ${url}`)
+  }
+  return { url, anonKey, serviceRoleKey }
+}
 
-import { createAdminClient } from '@/lib/supabase/admin'
-import { buildHarnessContract } from '../../lib/narrative-qa/harness/fixture'
-import { parseStoryContractWithNormalization } from '../../lib/story-engine/story-contract'
-import { assertIsolatedTarget, HARNESS_USER_ID } from '../../lib/narrative-qa/harness/seed'
-import { ensureHarnessCreditGrant, prepareCommercialChapterPreflight } from '../../lib/narrative-qa/harness/commercial'
-import { claimAndRunGenerationJobById } from '@/lib/runtime/generation-worker'
+const local = getLocalStatus()
+process.env.SUPABASE_URL = local.url
+process.env.NEXT_PUBLIC_SUPABASE_URL = local.url
+process.env.SUPABASE_SERVICE_ROLE_KEY = local.serviceRoleKey
 
-assertIsolatedTarget()
-
-const STORY_ID = 'm10c-r3-2-worker-production-test'
+const STORY_ID = `m10c-r3-2-worker-${randomUUID()}`
+const WORKER_USER_ID = '99999999-9999-4999-9999-99999999c006'
+const WORKER_EMAIL = 'm10c-worker-production@example.invalid'
+const WORKER_PASSWORD = 'worker-harness-password'
 const ACT_BOUNDARY_CHAPTER = 5
 const NEXT_CHAPTER = 6
+const CHOICE_ID = 'worker-choice-a'
+const BLOCKING_FACT_ID = `worker-proof-blocking-fact:${STORY_ID}`
+const WORKER_ID = 'm10c-worker-proof'
 
-describe('M10-C R3.2 — Worker Production Proof', () => {
-  test('real enqueue + commercial authority + failed review blocks worker via narrative gate', async () => {
-    const admin = createAdminClient()
+function exactCount(result: { count: number | null; error: { message: string } | null }, label: string): number {
+  if (result.error) throw new Error(`${label}: ${result.error.message}`)
+  return result.count ?? 0
+}
 
-    // Ensure harness user exists in auth.users
+describe('M10-C R3.2 — real worker lifecycle', () => {
+  test('commercial AUTHORIZED then narrative FAILED_REVIEW_REQUIRED', async () => {
+    const { assertIsolatedTarget } = await import('../../lib/narrative-qa/harness/seed')
+    assertIsolatedTarget()
+    const admin = createClient(local.url, local.serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    })
+    const { applyPersonalizedChoiceAuthorized } = await import('@/lib/api/personalized-choice.server')
+    const { ensureHarnessCreditGrant, prepareCommercialChapterPreflight } = await import('../../lib/narrative-qa/harness/commercial')
+    const { buildHarnessContract } = await import('../../lib/narrative-qa/harness/fixture')
+    const { normalizeRouteState } = await import('../../lib/story-engine/route-state')
+    const { parseStoryContractWithNormalization } = await import('../../lib/story-engine/story-contract')
+
+    // Per-run UUID makes fixture isolated without direct writes to protected
+    // worker/commercial tables. Production paths create those rows.
+
     await admin.auth.admin.createUser({
-      id: HARNESS_USER_ID,
-      email: 'm10c-worker-harness@example.invalid',
-      password: 'harness123',
+      id: WORKER_USER_ID,
+      email: WORKER_EMAIL,
+      password: WORKER_PASSWORD,
       email_confirm: true,
-    }).catch(() => null)
+    }).catch(async () => {
+      const { error } = await admin.auth.admin.updateUserById(WORKER_USER_ID, {
+        email: WORKER_EMAIL,
+        password: WORKER_PASSWORD,
+        email_confirm: true,
+      })
+      if (error) throw new Error(`Worker user update failed: ${error.message}`)
+    })
 
-    // STEP 0: Cleanup any previous test data
-    await admin.from('generation_jobs').delete().eq('story_id', STORY_ID)
-    await admin.from('commercial_generation_intents').delete().eq('story_id', STORY_ID).eq('user_id', HARNESS_USER_ID)
-    await admin.from('chapter_generation_checkpoints').delete().eq('story_id', STORY_ID)
-    await admin.from('generation_provider_calls').delete().eq('story_id', STORY_ID)
-    await admin.from('generation_job_leases').delete().eq('job_id', expect.anything())
-    await admin.from('act_rollups').delete().eq('story_id', STORY_ID)
-    await admin.from('chapter_blueprints').delete().eq('story_id', STORY_ID)
-    await admin.from('story_generation_contracts').delete().eq('story_id', STORY_ID)
-    await admin.from('stories').delete().eq('id', STORY_ID)
-    await admin.from('reader_states').delete().eq('story_id', STORY_ID).eq('user_id', HARNESS_USER_ID)
-    await admin.from('facts_ledger').delete().eq('story_id', STORY_ID).eq('id', 'impossible-block-condition')
-
-    // STEP 1: Seed canonical story with exact shape (no genre/tone, uses cover/tagline/role)
     const contract = buildHarnessContract(STORY_ID)
-
-    const blockedMainEndingId = contract.endingCandidates.find(e => e.kind === 'main')?.key
-    if (!blockedMainEndingId) throw new Error('No main ending found to block')
-
-    const firstPlotDebtId = contract.plotDebts[0]?.id
-    if (!firstPlotDebtId) throw new Error('No plot debts available for requiredPlotDebtIds')
+    const blockedMainEnding = contract.endingCandidates.find((ending) => ending.kind === 'main')
+    const requiredDebt = contract.plotDebts[0]
+    if (!blockedMainEnding || !requiredDebt) throw new Error('Harness contract missing main ending or plot debt')
 
     const failedContract = {
       ...contract,
-      endingCandidates: contract.endingCandidates.map((candidate) => {
-        if (candidate.key === blockedMainEndingId && candidate.kind === 'main') {
-          return {
-            ...candidate,
-            blockingConditions: ['impossible-block-condition'],
-            requiredPlotDebtIds: [firstPlotDebtId],
-          }
-        }
-        return candidate
-      }),
+      endingCandidates: contract.endingCandidates.map((ending) => (
+        ending.key === blockedMainEnding.key
+          ? { ...ending, blockingConditions: [BLOCKING_FACT_ID], requiredPlotDebtIds: [requiredDebt.id] }
+          : ending
+      )),
     }
+    const parsedContract = parseStoryContractWithNormalization(failedContract)
 
     const { error: storyError } = await admin.from('stories').insert({
       id: STORY_ID,
-      title: 'Brankas Rahasia 50 Bab',
+      title: 'Brankas worker proof',
       cover: '/cover.webp',
-      tagline: 'Misteri brankas basement',
+      tagline: 'Misteri worker',
       role: 'Protector',
       tropes: ['misteri'],
       total_chapters: 50,
-      synopsis: 'Synopsis deterministik.',
+      synopsis: 'Fixture worker production proof.',
       status: 'BERJALAN',
-      current_chapter: 0,
-      owner_user_id: HARNESS_USER_ID,
+      current_chapter: ACT_BOUNDARY_CHAPTER,
+      owner_user_id: WORKER_USER_ID,
       jejak: [],
       visibility: 'private',
       story_mode: 'personalized_ai',
@@ -134,10 +131,8 @@ describe('M10-C R3.2 — Worker Production Proof', () => {
       canon_state_revision: 0,
       commercial_origin: 'LEGACY_GRANDFATHERED',
     })
-    if (storyError) throw new Error(`Failed to seed stories: ${storyError.message}`)
+    if (storyError) throw new Error(`Story seed failed: ${storyError.message}`)
 
-    // STEP 2: Insert story contract with full metadata
-    const parsedContract = parseStoryContractWithNormalization(failedContract)
     const { error: contractError } = await admin.from('story_generation_contracts').insert({
       story_id: STORY_ID,
       mode: 'personalized_ai',
@@ -152,240 +147,271 @@ describe('M10-C R3.2 — Worker Production Proof', () => {
       quality_profile: 'lakoku_mobile_drama_v1',
       story_contract_version: 1,
     })
-    if (contractError) throw new Error(`Failed to seed contracts: ${contractError.message}`)
+    if (contractError) throw new Error(`Contract seed failed: ${contractError.message}`)
 
-    // STEP 3: Seed act rollups for proper act boundary detection
     const { error: rollupError } = await admin.from('act_rollups').insert([
-      { story_id: STORY_ID, act_number: 1, covers_from_chapter: 1, covers_to_chapter: 5, summary: 'Act 1 summary' },
-      { story_id: STORY_ID, act_number: 2, covers_from_chapter: 6, covers_to_chapter: 12, summary: 'Act 2 summary' },
+      { story_id: STORY_ID, act_number: 1, covers_from_chapter: 1, covers_to_chapter: 5, summary: 'Act 1' },
+      { story_id: STORY_ID, act_number: 2, covers_from_chapter: 6, covers_to_chapter: 12, summary: 'Act 2' },
     ])
-    if (rollupError) throw new Error(`Failed to seed act_rollups: ${rollupError.message}`)
+    if (rollupError) throw new Error(`Act rollup seed failed: ${rollupError.message}`)
 
-    // STEP 4: Insert draft blueprints for next act (chapters 6-12)
-    const blueprintsToInsert = Array.from({ length: 7 }, (_, i) => ({
-      chapter_number: i + 6,
-      version: 1,
-      phase: 'BABAK_2',
-      chapter_goal: `Draft goal for chapter ${i + 6}`,
-      mandatory_beats: ['beat-utama'],
-      forbidden_reveals: [],
-      introduces_characters: [`char:hero-${i + 6}`],
-      reconciled_from_version: null,
-    }))
+    const { error: blueprintsError } = await admin.from('chapter_blueprints').insert(
+      Array.from({ length: 7 }, (_, index) => ({
+        story_id: STORY_ID,
+        chapter_number: NEXT_CHAPTER + index,
+        version: 1,
+        phase: 'BABAK_2',
+        chapter_goal: `Goal ${NEXT_CHAPTER + index}`,
+        mandatory_beats: ['beat-utama'],
+        forbidden_reveals: [],
+        introduces_characters: [`char:worker-${NEXT_CHAPTER + index}`],
+        reconciled_from_version: null,
+      })),
+    )
+    if (blueprintsError) throw new Error(`Blueprint seed failed: ${blueprintsError.message}`)
 
-    const { error: blueprintError } = await admin
-      .from('chapter_blueprints')
-      .insert(blueprintsToInsert.map(bp => ({ story_id: STORY_ID, ...bp })))
-    if (blueprintError) throw new Error(`Failed to seed blueprints: ${blueprintError.message}`)
-
-    // STEP 5: Inject blocking fact as canonical data source
     const { error: factError } = await admin.from('facts_ledger').insert({
-      id: 'impossible-block-condition',
+      id: BLOCKING_FACT_ID,
       story_id: STORY_ID,
-      statement: 'Impossible blocking condition always present for worker proof test',
+      statement: 'Blocking condition remains true.',
       subject_character_id: null,
       established_chapter: 1,
       salience: 0.5,
       load_bearing: true,
       paid_off: false,
     })
-    if (factError) throw new Error(`Failed to seed blocking fact: ${factError.message}`)
+    if (factError) throw new Error(`Fact seed failed: ${factError.message}`)
 
-    // STEP 6: Execute REAL act boundary reconciliation → should produce FAILED_REVIEW_REQUIRED
+    const { error: chapterError } = await admin.from('chapters').insert({
+      story_id: STORY_ID,
+      number: ACT_BOUNDARY_CHAPTER,
+      title: 'Bab Lima',
+      paragraphs: ['Pilihan legal sebelum Bab Enam.'],
+      choice_prompt: 'Pilih jalanmu.',
+      choices: [{ id: CHOICE_ID, label: 'Masuk lorong', hint: 'Cari petunjuk' }],
+    })
+    if (chapterError) throw new Error(`Chapter seed failed: ${chapterError.message}`)
+
+    const { error: outcomeError } = await admin.from('choice_outcomes').insert({
+      story_id: STORY_ID,
+      chapter_number: ACT_BOUNDARY_CHAPTER,
+      choice_id: CHOICE_ID,
+      consequence: ['Kamu melangkah ke lorong.'],
+      next_chapter_number: NEXT_CHAPTER,
+      is_ending: false,
+      effect_json: {
+        routeDeltas: {},
+        trustDeltas: {},
+        flagsSet: {},
+        evidenceAdded: [],
+        endingBiasDeltas: {},
+      },
+      choice_kind: 'normal',
+    })
+    if (outcomeError) throw new Error(`Outcome seed failed: ${outcomeError.message}`)
+
+    const { error: stateError } = await admin.from('reader_states').insert({
+      user_id: WORKER_USER_ID,
+      story_id: STORY_ID,
+      status: 'BERJALAN',
+      current_chapter: ACT_BOUNDARY_CHAPTER,
+      jejak: [],
+      ending_name: null,
+      route_state: normalizeRouteState({}),
+      choice_history: [],
+      locked_ending_key: null,
+      updated_at: new Date().toISOString(),
+    })
+    if (stateError) throw new Error(`Reader state seed failed: ${stateError.message}`)
+
+    const acceptedChoice = await applyPersonalizedChoiceAuthorized({
+      userId: WORKER_USER_ID,
+      storyId: STORY_ID,
+      chapterNumber: ACT_BOUNDARY_CHAPTER,
+      choiceId: CHOICE_ID,
+      idempotencyKey: randomUUID(),
+    })
+    expect(acceptedChoice.replayed).toBe(false)
+    expect(acceptedChoice.nextChapterNumber).toBe(NEXT_CHAPTER)
+
+    const { data: waitingIntent, error: waitingIntentError } = await admin
+      .from('commercial_generation_intents')
+      .select('status, trigger_choice_id, quoted_credits, generation_job_id')
+      .eq('user_id', WORKER_USER_ID)
+      .eq('story_id', STORY_ID)
+      .eq('chapter_number', NEXT_CHAPTER)
+      .single()
+    if (waitingIntentError) throw new Error(`Waiting intent query failed: ${waitingIntentError.message}`)
+    expect(waitingIntent?.status).toBe('WAITING_FOR_CREDITS')
+    expect(waitingIntent?.trigger_choice_id).toBe(CHOICE_ID)
+    expect(Number(waitingIntent?.quoted_credits)).toBeGreaterThan(0)
+    expect(waitingIntent?.generation_job_id).toBeNull()
+
+    await ensureHarnessCreditGrant(admin, WORKER_USER_ID)
+
+    const userClient = createClient(local.url, local.anonKey, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    })
+    const { data: session, error: signInError } = await userClient.auth.signInWithPassword({
+      email: WORKER_EMAIL,
+      password: WORKER_PASSWORD,
+    })
+    if (signInError || !session.user) throw new Error(`Worker user sign-in failed: ${signInError?.message ?? 'no user'}`)
+    expect(session.user.id).toBe(WORKER_USER_ID)
+
+    const { data: enqueue, error: enqueueError } = await userClient.rpc('enqueue_generation_job_v1', {
+      p_story_id: STORY_ID,
+      p_chapter_number: NEXT_CHAPTER,
+      p_generation_kind: 'personalized',
+      p_trigger_choice_id: CHOICE_ID,
+    })
+    if (enqueueError) throw new Error(`Real enqueue RPC failed: ${enqueueError.message}`)
+    if (!enqueue?.jobId || !enqueue?.correlationId || enqueue.status !== 'QUEUED') {
+      throw new Error(`Unexpected real enqueue result: ${JSON.stringify(enqueue)}`)
+    }
+    const jobId = enqueue.jobId as string
+    const correlationId = enqueue.correlationId as string
+
+    const commercial = await prepareCommercialChapterPreflight(admin, {
+      userId: WORKER_USER_ID,
+      storyId: STORY_ID,
+      chapterNumber: NEXT_CHAPTER,
+      jobId,
+    })
+    expect(commercial.intentStatus).toBe('QUEUED')
+    expect(commercial.reservationStatus).toBe('RESERVED')
+
+    const { data: queuedIntent, error: queuedIntentError } = await admin
+      .from('commercial_generation_intents')
+      .select('status, trigger_choice_id, generation_job_id')
+      .eq('user_id', WORKER_USER_ID)
+      .eq('story_id', STORY_ID)
+      .eq('chapter_number', NEXT_CHAPTER)
+      .single()
+    if (queuedIntentError) throw new Error(`Queued intent query failed: ${queuedIntentError.message}`)
+    expect(queuedIntent?.status).toBe('QUEUED')
+    expect(queuedIntent?.trigger_choice_id).toBe(CHOICE_ID)
+    expect(queuedIntent?.generation_job_id).toBe(jobId)
+
+    const { data: reservation, error: reservationError } = await admin
+      .from('credit_reservations')
+      .select('status, amount, expires_at')
+      .eq('user_id', WORKER_USER_ID)
+      .eq('story_id', STORY_ID)
+      .eq('chapter_number', NEXT_CHAPTER)
+      .eq('reservation_kind', 'CHAPTER_UNLOCK')
+      .single()
+    if (reservationError) throw new Error(`Reservation query failed: ${reservationError.message}`)
+    expect(reservation?.status).toBe('ACTIVE')
+    expect(Number(reservation?.amount)).toBe(commercial.quotedCredits)
+    expect(new Date(reservation?.expires_at ?? 0).getTime()).toBeGreaterThan(Date.now())
+
     const { runActBoundaryReconciliation } = await import('../../lib/runtime/post-publication-lifecycle.server')
-
-    const reconcileResult = await runActBoundaryReconciliation(admin, {
+    const reconciliation = await runActBoundaryReconciliation(admin, {
       storyId: STORY_ID,
       chapterNumber: ACT_BOUNDARY_CHAPTER,
       contract: parsedContract,
     })
+    expect(reconciliation.triggered).toBe(true)
+    expect(reconciliation.status).toBe('FAILED_REVIEW_REQUIRED')
 
-    expect(reconcileResult.triggered).toBe(true)
-    expect(reconcileResult.status).toBe('FAILED_REVIEW_REQUIRED')
-
-    // Verify needs_review persisted
-    const { data: updatedStory, error: storyQueryError } = await admin
+    const { data: blockedStory, error: blockedStoryError } = await admin
       .from('stories')
       .select('generation_status, canon_state_revision')
       .eq('id', STORY_ID)
       .single()
-    if (storyQueryError) throw new Error(`Failed to query story status: ${storyQueryError.message}`)
-    expect(updatedStory?.generation_status).toBe('needs_review')
+    if (blockedStoryError) throw new Error(`Blocked story query failed: ${blockedStoryError.message}`)
+    expect(blockedStory?.generation_status).toBe('needs_review')
+    const baselineRevision = blockedStory?.canon_state_revision ?? 0
 
-    const baselineRevision = updatedStory.canon_state_revision ?? 0
-
-    // STEP 7: Seed reader state for commercial flow
-    await admin.from('reader_states').insert({
-      user_id: HARNESS_USER_ID,
-      story_id: STORY_ID,
-      status: 'BERJALAN',
-      current_chapter: ACT_BOUNDARY_CHAPTER,
-      jejak: [],
-      ending_name: null,
-      route_state: {},
-      choice_history: [],
-      locked_ending_key: null,
-      updated_at: new Date().toISOString(),
-    })
-
-    // STEP 8: Seed reader state for flow continuity (required for some runtime checks)
-    await admin.from('reader_states').insert({
-      user_id: HARNESS_USER_ID,
-      story_id: STORY_ID,
-      status: 'BERJALAN',
-      current_chapter: ACT_BOUNDARY_CHAPTER,
-      jejak: [],
-      ending_name: null,
-      route_state: {},
-      choice_history: [],
-      locked_ending_key: null,
-      updated_at: new Date().toISOString(),
-    })
-
-    // STEP 9: Create REAL generation job row directly (RPC requires auth.uid which isn't available in tests)
-    const jobId = randomUUID()
-    const correlationId = randomUUID()
-    const deadlineAt = new Date(Date.now() + 15 * 60 * 1000).toISOString() // 15 min deadline
-    
-    const { data: enqueueResult, error: enqueueError } = await admin
-      .from('generation_jobs')
-      .insert({
-        id: jobId,
-        story_id: STORY_ID,
-        chapter_number: NEXT_CHAPTER,
-        user_id: HARNESS_USER_ID,
-        generation_kind: 'personalized',
-        trigger_choice_id: null,
-        status: 'QUEUED',
-        attempt_count: 0,
-        max_attempts: 4,
-        available_at: new Date().toISOString(),
-        deadline_at: deadlineAt,
-        correlation_id: correlationId,
-        publication_idempotency_key: `generation-job:${jobId}:publish:${NEXT_CHAPTER}`,
-      })
-      .select()
-      .single()
-
-    if (enqueueError) throw new Error(`Failed to create job: ${enqueueError.message}`)
-    if (!enqueueResult?.id) throw new Error('Job creation did not return job ID')
-
-    expect(jobId).toBeDefined()
-    expect(enqueueResult.status).toBe('QUEUED')
-
-    // NOTE: Skip prepareCommercialChapterPreflight for Bab 6 in this worker proof
-    // Commercial intent creation requires accepted-choice seam which inserts choice/outcome rows.
-    // For worker proof focusing on narrative gate admission, we let commercial preflight
-    // fall through to legacy path via commercial_origin='LEGACY_GRANDFATHERED' which bypasses credits check.
-
-    // STEP 10: Save baseline counts before worker attempt
-    const preProviderCalls = await admin
+    const providerBefore = exactCount(await admin
       .from('generation_provider_calls')
-      .select('*', { count: 'exact', head: false })
-      .eq('user_id', HARNESS_USER_ID)
-      .eq('story_id', STORY_ID)
-      .eq('correlation_id', correlationId)
-    if (preProviderCalls.error) throw new Error(`Failed to query pre-provider calls: ${preProviderCalls.error.message}`)
-    const preCallCount = preProviderCalls.count ?? 0
-
-    // STEP 11: Call production outer worker entry via claimAndRunGenerationJobById
-    const result = await claimAndRunGenerationJobById({ jobId, workerId: 'worker-test' })
-
-    // ASSERTION 1: Worker does not succeed - must fail at some gate
-    expect(result.ok).toBe(false)
-
-    // ASSERTION 2: Either FAILED_REVIEW_REQUIRED from narrative admission OR exception due to test env
-    // The critical proof is that commercial preflight doesn't block (LEGACY_GRANDFATHERED path)
-    // and narrative admission blocks BEFORE provider calls
-    
-    const outcome = (result as any).outcome as string
-    const reason = (result as any).reason as string
-    
-    if (outcome === 'FAILED' && reason === 'FAILED_REVIEW_REQUIRED') {
-      // Perfect case: blocked by narrative gate
-    } else if (outcome === 'EXCEPTION' || outcome === 'LEASE_FAILED') {
-      // Test environment limitation - still proves narrative gate check runs first
-      // The fact that we don't get COMMERCIAL_PREFLIGHT_FAILED proves financial gate bypasses
-    } else {
-      throw new Error(`Unexpected failure mode: ${JSON.stringify(result)}`)
-    }
-
-    // STEP 13: Verify terminal failures
-
-    // Provider calls still zero (admission rejected before any provider context)
-    const postProviderCalls = await admin
-      .from('generation_provider_calls')
-      .select('*', { count: 'exact', head: false })
-      .eq('user_id', HARNESS_USER_ID)
-      .eq('story_id', STORY_ID)
-      .eq('correlation_id', correlationId)
-    if (postProviderCalls.error) throw new Error(`Failed to query post-provider calls: ${postProviderCalls.error.message}`)
-    expect(postProviderCalls.count ?? 0).toBe(preCallCount)
-
-    // Job terminal FAILED (may have LEASE_FAILED if worker can't complete claim)
-    const { data: finalJob, error: jobError } = await admin
-      .from('generation_jobs')
-      .select('status, last_error_class, last_error_code')
-      .eq('id', jobId)
-      .single()
-    if (jobError) throw new Error(`Failed to query final job: ${jobError.message}`)
-    
-    // Job must NOT succeed
-    expect(finalJob?.status).not.toBe('SUCCEEDED')
-    
-    // If FAILED or RETRY_WAIT, check error details for narrative gate evidence
-    if (finalJob?.status === 'FAILED' || finalJob?.status === 'RETRY_WAIT') {
-      const errorCode = finalJob.last_error_code
-      const errorClass = finalJob.last_error_class
-      
-      // Look for FAILED_REVIEW_REQUIRED evidence
-      if ((errorCode && errorCode.includes('FAILED_REVIEW_REQUIRED')) ||
-          (errorClass && errorClass.includes('FAILED_REVIEW_REQUIRED'))) {
-        // Perfect: narrative admission blocked execution
-      } else {
-        // Test env limitation: we still proved commercial preflight didn't block
-        console.log('Job failed with:', { errorCode, errorClass })
-      }
-    }
-    
-    // Provider calls must be zero - admission rejected before any provider context
-    const { data: jobWithCalls, error: jobError2 } = await admin
-      .from('generation_jobs')
-      .select('provider_calls')
-      .eq('id', jobId)
-      .single()
-    if (!jobError2) expect(jobWithCalls?.provider_calls ?? 0).toBe(0)
-
-    // No checkpoints persisted for chapter 6
-    const { count: checkpoints, error: checkpointError } = await admin
-      .from('chapter_generation_checkpoints')
       .select('*', { count: 'exact', head: false })
       .eq('story_id', STORY_ID)
       .eq('chapter_number', NEXT_CHAPTER)
-    if (checkpointError) throw new Error(`Failed to query checkpoints: ${checkpointError.message}`)
-    expect(checkpoints ?? 0).toBe(0)
-
-    // No chapters published for chapter 6
-    const { count: chapters, error: chaptersError } = await admin
+      .eq('correlation_id', correlationId), 'Provider-before query')
+    const checkpointBefore = exactCount(await admin
+      .from('chapter_generation_checkpoints')
+      .select('*', { count: 'exact', head: false })
+      .eq('story_id', STORY_ID)
+      .eq('chapter_number', NEXT_CHAPTER), 'Checkpoint-before query')
+    const chapterBefore = exactCount(await admin
       .from('chapters')
       .select('*', { count: 'exact', head: false })
       .eq('story_id', STORY_ID)
-      .eq('number', NEXT_CHAPTER)
-    if (chaptersError) throw new Error(`Failed to query chapters: ${chaptersError.message}`)
-    expect(chapters ?? 0).toBe(0)
+      .eq('number', NEXT_CHAPTER), 'Chapter-before query')
+    expect(providerBefore).toBe(0)
+    expect(checkpointBefore).toBe(0)
+    expect(chapterBefore).toBe(0)
 
-    // Canon revision unchanged
-    const { data: postStory, error: postStoryError } = await admin
+    const { claimAndRunGenerationJobById } = await import('@/lib/runtime/generation-worker')
+    const worker = await claimAndRunGenerationJobById({ jobId, workerId: WORKER_ID })
+
+    expect(worker.ok).toBe(false)
+    if (worker.ok) throw new Error(`Worker unexpectedly completed with ${worker.outcome}`)
+    expect(worker.outcome).toBe('FAILED')
+    expect(worker.reason).toBe('FAILED_REVIEW_REQUIRED')
+
+    const { data: finalJob, error: finalJobError } = await admin
+      .from('generation_jobs')
+      .select('status, last_error_code, last_error_class, correlation_id')
+      .eq('id', jobId)
+      .single()
+    if (finalJobError) throw new Error(`Final job query failed: ${finalJobError.message}`)
+    expect(finalJob?.status).toBe('FAILED')
+    expect(finalJob?.last_error_code).toBe('FAILED_REVIEW_REQUIRED')
+    expect(finalJob?.last_error_class).toBe('TERMINAL')
+    expect(finalJob?.correlation_id).toBe(correlationId)
+
+    const providerAfter = exactCount(await admin
+      .from('generation_provider_calls')
+      .select('*', { count: 'exact', head: false })
+      .eq('story_id', STORY_ID)
+      .eq('chapter_number', NEXT_CHAPTER)
+      .eq('correlation_id', correlationId), 'Provider-after query')
+    expect(providerAfter).toBe(providerBefore)
+    expect(providerAfter).toBe(0)
+
+    const checkpointAfter = exactCount(await admin
+      .from('chapter_generation_checkpoints')
+      .select('*', { count: 'exact', head: false })
+      .eq('story_id', STORY_ID)
+      .eq('chapter_number', NEXT_CHAPTER), 'Checkpoint-after query')
+    expect(checkpointAfter).toBe(checkpointBefore)
+    expect(checkpointAfter).toBe(0)
+
+    const chapterAfter = exactCount(await admin
+      .from('chapters')
+      .select('*', { count: 'exact', head: false })
+      .eq('story_id', STORY_ID)
+      .eq('number', NEXT_CHAPTER), 'Chapter-after query')
+    expect(chapterAfter).toBe(chapterBefore)
+    expect(chapterAfter).toBe(0)
+
+    const { data: finalStory, error: finalStoryError } = await admin
       .from('stories')
-      .select('canon_state_revision')
+      .select('generation_status, canon_state_revision')
       .eq('id', STORY_ID)
       .single()
-    if (postStoryError) throw new Error(`Failed to query post-revision: ${postStoryError.message}`)
-    expect(postStory?.canon_state_revision).toBe(baselineRevision)
+    if (finalStoryError) throw new Error(`Final story query failed: ${finalStoryError.message}`)
+    expect(finalStory?.generation_status).toBe('needs_review')
+    expect(finalStory?.canon_state_revision).toBe(baselineRevision)
 
-    // NOTE: Skip checking active bound lease - lease mechanism is part of worker execution flow
-    // which may not have been reached if admission failed before lease acquisition
-    // The key proofs are: commercial preflight bypassed (LEGACY_GRANDFATHERED),
-    // narrative gate admitted BEFORE provider calls, job terminal state
-  }, 30000)
+    // Canonical active-worker-lease predicate: exact job, current lease status,
+    // and expiry still in the future. A terminal worker must leave no such row.
+    const activeLeases = await admin
+      .from('generation_leases')
+      .select('*', { count: 'exact', head: false })
+      .eq('job_id', jobId)
+      .eq('status', 'ACTIVE')
+      .gt('expires_at', new Date().toISOString())
+    expect(exactCount(activeLeases, 'Active worker lease query')).toBe(0)
+
+    const runningJob = await admin
+      .from('generation_jobs')
+      .select('*', { count: 'exact', head: false })
+      .eq('id', jobId)
+      .eq('status', 'RUNNING')
+    expect(exactCount(runningJob, 'Running job query')).toBe(0)
+  }, 60_000)
 })

@@ -262,15 +262,17 @@ this exact per-rubric algorithm using **CALIBRATION only**:
 weakCeiling = max(medianScore(fixture) for every CALIBRATION weak fixture)
 strongFloor = min(medianScore(fixture) for every CALIBRATION strong fixture)
 require weakCeiling < strongFloor
-threshold = floor((weakCeiling + strongFloor) / 2)
+threshold = ceil((weakCeiling + strongFloor) / 2)
 PASS iff aggregatedScore >= threshold
 FAIL iff aggregatedScore < threshold
 ```
 
-`floor` is fixed rounding. Equality belongs to PASS. If `weakCeiling >=
-strongFloor`, calibration fails: threshold is not chosen manually and the holdout
-partition is not inspected to rescue it. Borderline scores are recorded but do
-not enter the formula.
+`ceil` is fixed rounding. Equality belongs to PASS. Thus for the minimum legal
+gap (`weakCeiling = 79`, `strongFloor = 80`), `threshold = 80`: the weak fixture
+fails and the strong fixture passes. If `weakCeiling >= strongFloor`, calibration
+fails: threshold is not chosen manually and the holdout partition is not
+inspected to rescue it. Borderline scores are recorded but do not enter the
+formula.
 
 - Thresholds are never tuned against M10-F/M10-G stories, pilot results, or
   `VALIDATION_HOLDOUT` results.
@@ -292,6 +294,27 @@ audit require. Zod-strict, additive-refused, same discipline as
 `SemanticJudgeResultSchema` (`semantic-continuation-judge.ts:31-50`).
 
 ```ts
+interface SemanticRubricSampleV1 {
+  schemaVersion: 1
+  fixtureId: string
+  fixtureContentHash: string
+  judgeInputHash: string
+  rubricId: string
+  rubricVersion: number
+  judgePolicyVersion: string
+  promptHash: string
+  exactModelId: string
+  sampleIndex: number
+  rawScore: number            // 0..100, rubric-defined
+  rawModelVerdict: 'PASS' | 'FAIL' // diagnostic only
+  confidence: number          // diagnostic only; excluded from all gates
+  findingCodes: string[]      // rubric-scoped allowlist, enum-validated
+  evidenceMode: 'SPAN' | 'FULL_HORIZON_ABSENCE'
+  evidenceSpans: Array<{ chapterNumber: number; quote: string }>
+  evidenceValid: boolean      // deterministic validation of mode-specific evidence rules
+  rationaleSummary: string    // bounded; no hidden chain-of-thought persisted
+}
+
 interface SemanticRubricFindingV1 {
   schemaVersion: 1
   fixtureId: string
@@ -306,36 +329,43 @@ interface SemanticRubricFindingV1 {
   horizon: { fromChapter: number; toChapter: number }
   verdict: 'PASS' | 'FAIL' | 'INCONCLUSIVE' // mechanically derived; never raw model authority
   score: number               // aggregated 0..100, rubric-defined
-  confidence: number          // self-reported diagnostic only; excluded from all gates
-  findingCodes: string[]      // rubric-scoped allowlist, enum-validated
-  evidenceSpans: Array<{ chapterNumber: number; quote: string }>  // bounded, verbatim from input prose
-  rationaleSummary: string    // bounded; no hidden chain-of-thought persisted
+  sampleRefs: string[]        // immutable SemanticRubricSampleV1 record ids
   aggregation: {
     sampleCount: number       // k
-    rawScores: number[]
-    rawModelVerdicts: Array<'PASS' | 'FAIL'> // diagnostic only, not aggregated for gate
     scoreSpread: number       // max - min
     unstable: boolean
   }
 }
 ```
 
-`evidenceSpans` is the anti-hallucination control: every quote must be a verbatim
-substring of the prose actually supplied to that call. A span that is not found in
-the input invalidates the sample — the model asserted evidence that does not
-exist. This is checked mechanically, not judged. Empty arrays never satisfy a
-PASS or FAIL evidence requirement:
+`evidenceSpans` is the anti-hallucination control: every `SPAN` quote must be a
+verbatim substring of the prose actually supplied to that call. A span not found
+in input invalidates the **sample** — the model asserted evidence that does not
+exist. This is checked mechanically, not judged.
 
-| rubric outcome | minimum grounded evidence |
-|----------------|---------------------------|
-| every `PASS` / `FAIL` | ≥ 1 span, unless rubric-specific rule below requires more |
-| `D-R4 FAIL` | ≥ 2 spans from distinct chapter/paragraph locations that demonstrate the claimed repetition |
-| `D-R7 PASS` | ≥ 1 span from Bab 49; no other chapter can substitute |
-| `D-R7 FAIL` | ≥ 1 Bab-49 span showing the missing/deferred/contradicted resolution condition, or explicit `INCONCLUSIVE` if no such judgment can be grounded |
-| `D-R8 PASS` | ≥ 1 span from Bab 50 plus ≥ 1 earlier runway span that establishes the promise/payoff connection |
+`FULL_HORIZON_ABSENCE` is a narrow, rubric/code-specific exception for an absence
+claim. It never means generic empty evidence. It may be used **only** for `D-R7
+FAIL` with code `EMOTIONAL_RESOLUTION_ABSENT`: all Bab-49 prose must be present
+in the evaluated input, and the sample's `fixtureContentHash` + `judgeInputHash`
+must pin that complete Bab-49 surface. The record stores no invented quote;
+`evidenceSpans` is empty precisely because the claim is that no qualifying span
+exists. Any missing/truncated Bab-49 prose makes the sample `INCONCLUSIVE`, not
+FAIL.
+
+| rubric outcome | valid evidence mode and minimum |
+|----------------|---------------------------------|
+| every `PASS` / `FAIL` except narrow D-R7 exception | `SPAN`, ≥ 1 span, unless rubric-specific row requires more |
+| `D-R4 FAIL` | `SPAN`, ≥ 2 spans from distinct chapter/paragraph locations that demonstrate the claimed repetition |
+| `D-R7 PASS` | `SPAN`, ≥ 1 span from Bab 49; no other chapter can substitute |
+| `D-R7 FAIL` explicit unresolved/deferred/contradicted emotion | `SPAN`, ≥ 1 span from Bab 49 |
+| `D-R7 FAIL` resolution simply absent | `FULL_HORIZON_ABSENCE` only, full Bab-49 surface pinned; no fabricated quote permitted |
+| `D-R8 PASS` | `SPAN`, ≥ 1 span from Bab 50 plus ≥ 1 earlier runway span that establishes the promise/payoff connection |
 
 A sample violating its row becomes invalid. Invalid samples count toward
-insufficiency/instability; they never become weak evidence for a score.
+insufficiency/instability; they never become weak evidence for a score. D1 must
+persist one `SemanticRubricSampleV1` per provider call, including its evidence
+mode and evidence validity, before it writes the aggregate
+`SemanticRubricFindingV1`; aggregate score arrays alone are not audit evidence.
 
 ### D0.4.2 Determinism policy
 
@@ -383,7 +413,7 @@ active rubric has, **in each partition**, ≥ 5 clear strong, ≥ 5 clear weak, 
 
 **G-D2 — calibration derivation, not gate evidence**
 For every rubric, the exact §D0.3.3 algorithm completes on `CALIBRATION` only:
-`weakCeiling < strongFloor`, then `threshold = floor(midpoint)`. This derives and
+`weakCeiling < strongFloor`, then `threshold = ceil(midpoint)`. This derives and
 freezes a threshold. No holdout score may be read before the threshold artifact
 is committed.
 
@@ -528,7 +558,19 @@ approved D0 foundation:
 D-OBS-6 is retained as `D-OPS-1`, a non-judge D obligation with disposition
 requirements before D PASS. The 900-call request is withdrawn.
 
+### D0.2 correction record
+
+1. Threshold rounding is `ceil((weakCeiling + strongFloor) / 2)` with equality
+   PASS. This preserves zero weak false positives even when the legal score gap is
+   one point.
+2. `D-R7 FAIL` supports absence without fabricated evidence through the sole
+   `FULL_HORIZON_ABSENCE` exception: code
+   `EMOTIONAL_RESOLUTION_ABSENT`, full Bab-49 surface required and hash-pinned.
+   Every other PASS/FAIL remains span-grounded and non-empty.
+3. D1 must persist a per-call `SemanticRubricSampleV1`; aggregate
+   `SemanticRubricFindingV1` records only sample references and derived outcome.
+
 ---
 
-**Next step: STOP for D0.1 design-lock verdict. D1 stays HOLD until this
+**Next step: STOP for D0.2 design-lock verdict. D1 stays HOLD until this
 docs-only corrective commit is reviewed. D2/D3 model calls remain unauthorized.**

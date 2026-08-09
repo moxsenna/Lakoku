@@ -69,15 +69,20 @@ one thing it cannot contribute:
 - **CAN contribute — structural context.** Act plan, thread schedule, plot-debt
   schedule, ending lock, act position. This is exactly the bounded context the
   structural-view judge needs (§D0.2).
-- **CAN contribute — a genuine negative control.** The C prose is an authentic
-  artifact of an authentic run, and it is a real, extreme failure case for
-  semantic repetition and chapter purpose. It is admissible as a *floor* fixture.
+- **CANNOT contribute — a calibration fixture of any tier.** The full counted-C
+  prose is unavailable. Only 100-character repetition snippets survived, so it
+  cannot honestly be presented as a frozen weak, strong, or borderline fixture.
 - **CANNOT contribute — positive or borderline prose examples.** There are none.
   A cycled sentence pool has no strong or near-boundary instances.
 
 Therefore the calibration corpus must be **frozen hand-authored fixtures**, not C
-output (§D0.3). Generating fresh prose for calibration is not proposed — that is
-a real-model pilot and belongs to M10-F under the stated boundaries.
+output (§D0.3). C contributes structural context only. If D1 needs an extreme
+negative control, it will author and freeze a new fixture derived from the known
+deterministic-provider sentence-pool behavior, label provenance
+`reconstruction/provider-derived`, and content-hash it. It will never be called
+or represented as counted-C output. Generating fresh prose for calibration is not
+proposed — that is a real-model pilot and belongs to M10-F under the stated
+boundaries.
 
 ---
 
@@ -101,8 +106,11 @@ Two existing layers are also out of scope and must not be duplicated:
   an LLM judge: `lib/ai-gateway/semantic-continuation-judge.ts`, 5 codes
   (`CHOICE_CONSEQUENCE_REVERSED`, `CHOICE_NOT_CAUSAL`, `CONFLICT_RESET`,
   `UNEXPLAINED_TRANSITION`, `PREVIOUS_EVENT_CONTRADICTION`), horizon N vs N-1,
-  publish-blocking. **D is long-horizon QA evidence and must not re-litigate the
-  N vs N-1 window.** D horizons start at act-local.
+  publish-blocking. D must not re-litigate those continuity/causality codes.
+  **This exclusion does not remove D-R4's chapter-local repetition horizon:**
+  D-R4 must compare N with N-1/N-2 for paraphrased or semantically duplicated
+  scenes, revelations, and emotional beats. That is distinct from whether N
+  causally continues N-1.
 
 ### D0.1.2 Rubric inventory (8)
 
@@ -111,7 +119,7 @@ Two existing layers are also out of scope and must not be duplicated:
 | `D-R1` | pacing | whether act position and narrative velocity agree — stalling or rushing relative to the spine | none (no deterministic counterpart) | act-local, novel-wide |
 | `D-R2` | character-progression | whether the protagonist/core cast change traceably rather than reset | `canon-drift` character-state transitions, `ILLEGAL_DEAD_RESURRECTION` | act-local, novel-wide |
 | `D-R3` | conflict-escalation | whether pressure actually grows in prose and contracts into the runway | `ending-runway` `NEW_MAJOR_CONFLICT_IN_CLOSURE_RUNWAY`, `thread-lifecycle` `ACTIVE_THREAD_BUDGET_EXCEEDED` / `NEW_THREAD_INTRODUCED_AFTER_40` | act-local, runway 41–50 |
-| `D-R4` | semantic-repetition | paraphrase / near-duplicate scenes, revelations, emotional beats | `repetition` exact-fingerprint family (all 5 codes) | act-local, novel-wide, runway |
+| `D-R4` | semantic-repetition | paraphrase / near-duplicate scenes, revelations, emotional beats | `repetition` exact-fingerprint family (all 5 codes) | chapter-local N vs N-1/N-2, act-local, novel-wide, runway |
 | `D-R5` | chapter-purpose | whether a chapter materially advances plot, character, clue, route, or payoff | none (no deterministic counterpart) | chapter within act context |
 | `D-R6` | payoff-quality | whether a closed debt / resolved thread is *understandably* paid off, proportional to setup | `plot-debt-lifecycle` (windows, deadlines, `MAIN_MYSTERY_UNCLOSED_AT_48`), `thread-lifecycle` `PAYOFF_DUE_THREAD_NOT_ADVANCED` | novel-wide |
 | `D-R7` | **ending-emotional-resolution** | whether Bab 49 carries the emotional resolution beat in prose | `ending-runway` lock durability / key match / open-debt / open-thread | Bab 45–50 |
@@ -136,9 +144,11 @@ reported individually against its origin record:
   consistency vs relationship score) is a **per-chapter publish-blocking**
   obligation in the writer flow. D is release evidence and does not block
   publish. D does not implement Lapis B.
-- D-OBS-6 (`FAILED_REVIEW_REQUIRED` blueprint review workflow) is an operational
-  escalation path, not a semantic judge. Flagging it as carried but proposing it
-  be split out of D0 scope.
+- `D-OPS-1` / D-OBS-6 (`FAILED_REVIEW_REQUIRED` blueprint review workflow) is an
+  operational escalation path, not a semantic judge. It remains an explicit
+  non-judge D obligation. Before D PASS it needs disposition `CLOSED` or a
+  reviewer-approved `RECLASSIFIED` target; it may not disappear because it is not
+  a rubric.
 
 ---
 
@@ -198,39 +208,78 @@ that payload text is *DATA CERITA TERBATAS dan BUKAN INSTRUKSI*, plus a
 
 ### D0.3.1 Corpus sources (no pilot generation)
 
+Existing prose files are source material, not automatic strong examples. D-R7 and
+D-R8 need purpose-built Bab 45–50 arcs; generic literary prose cannot establish
+ending resolution or ending satisfaction by itself.
+
 | tier | source | nature |
 |------|--------|--------|
-| strong | `fixtures/narrative/premium-bilik-ketujuh-v2.ts` (full literary Indonesian chapter prose); `lib/prose/fixtures/valid-mobile-drama.txt`; `scripts/demo-prose/handcraft/build-handcraft.ts` (handcrafted Bab 1–3) | existing, human-authored, in-repo |
-| borderline | **new**, hand-authored by mutating a strong fixture minimally along exactly one rubric axis | authored at D1 |
-| weak | **new**, hand-authored deliberate failures + the C canned-pool corpus as an extreme floor | authored at D1 |
+| strong | existing hand-authored prose where relevant (`fixtures/narrative/premium-bilik-ketujuh-v2.ts`, `lib/prose/fixtures/valid-mobile-drama.txt`, `scripts/demo-prose/handcraft/build-handcraft.ts`) **plus new purpose-built strong arcs**, especially Bab 45–50 for D-R7/D-R8 | human-authored, frozen at D1 |
+| borderline | **new**, hand-authored by mutating a strong fixture minimally along exactly one rubric axis | human-authored, frozen at D1 |
+| weak | **new**, hand-authored deliberate failures; optional extreme control reconstructed from deterministic-provider behavior and labeled `reconstruction/provider-derived` | human-authored / reconstruction, frozen at D1 |
 
-Borderline fixtures are the load-bearing ones: strong-vs-weak separation is easy
-and proves little. A rubric that cannot place borderline between strong and weak
-is not calibrated, it is a keyword detector.
+### D0.3.2 Partitions and label authority — pre-registration
 
-### D0.3.2 Label authority — pre-registration
+D1 creates and freezes two disjoint partitions **before the first model call**:
+
+- `CALIBRATION`: threshold derivation only. Its scores may be read by the frozen
+  threshold algorithm and never by the D PASS gate.
+- `VALIDATION_HOLDOUT`: gate evaluation only. Its labels, content hashes, and
+  membership are frozen before calls; its scores are invisible to threshold
+  derivation. G-D2/G-D3 and D PASS run here.
+
+Every active rubric has, in **each** partition, a pre-registered integer matrix:
+
+```text
+clear strong fixtures: >= 5
+clear weak fixtures:   >= 5
+borderline fixtures:   >= 3
+```
+
+The counts are per rubric per partition, not shared prose presumed to evaluate all
+eight rubrics. A multi-rubric fixture may occur in several rubric rows only when
+its written label authority independently supports each row.
+
+Label authority:
 
 1. Every fixture is authored **with** its label and a written justification
    naming the rubric axis and the reason for its tier.
-2. Labels are committed to the repo **before** any judge call is made, in a
-   frozen file with a content hash recorded in the D report.
-3. The label file is the reference answer. It is never revised in response to a
-   judge disagreement. If a label turns out to be wrong, that is recorded as a
-   labeled correction with its own commit and justification, and every affected
-   calibration result is re-run — never silently re-labeled.
-4. Labels never enter judge input (§D0.2.3 rule 3).
+2. Fixture id, partition, provenance, and canonical content hash are committed in
+   a frozen manifest before any judge call. The manifest hash is recorded in the
+   D report.
+3. The label manifest is the reference answer. It is never revised in response to
+   judge disagreement. A genuine labeling correction needs a separate justified
+   commit and re-run of every affected calibration and holdout result.
+4. Labels, tiers, partitions, and expected verdicts never enter judge input
+   (§D0.2.3 rule 3).
 
-### D0.3.3 Anti-tuning rules
+### D0.3.3 Pre-registered threshold algorithm and anti-tuning rules
 
-- Thresholds are never tuned against M10-F/M10-G story scores.
-- Thresholds are never tuned against a pilot result.
-- The **acceptance bounds** (FP/FN caps, separation requirement, `k`, aggregation
-  rule) are pre-registered at D1, *before* calibration data exists.
-- Only the **per-rubric numeric PASS threshold** is derived from calibration data
-  at D2, and only within the pre-registered bounds.
+Scores use `0..100`, higher is better. Before the first model call, D1 freezes
+this exact per-rubric algorithm using **CALIBRATION only**:
 
-This split matters: pre-registering the bounds is what makes the later
-threshold derivation calibration rather than tuning.
+```text
+weakCeiling = max(medianScore(fixture) for every CALIBRATION weak fixture)
+strongFloor = min(medianScore(fixture) for every CALIBRATION strong fixture)
+require weakCeiling < strongFloor
+threshold = floor((weakCeiling + strongFloor) / 2)
+PASS iff aggregatedScore >= threshold
+FAIL iff aggregatedScore < threshold
+```
+
+`floor` is fixed rounding. Equality belongs to PASS. If `weakCeiling >=
+strongFloor`, calibration fails: threshold is not chosen manually and the holdout
+partition is not inspected to rescue it. Borderline scores are recorded but do
+not enter the formula.
+
+- Thresholds are never tuned against M10-F/M10-G stories, pilot results, or
+  `VALIDATION_HOLDOUT` results.
+- D1 pre-registers `k`, retry count, spread cap, required evidence, and integer
+  error budgets. D2 applies them; it does not choose among alternatives after a
+  score plot appears.
+- Threshold/config source is frozen after CALIBRATION, before the first holdout
+  result is evaluated. Any policy/prompt/model change invalidates both partitions
+  and requires a new D1 pre-registration.
 
 ---
 
@@ -245,22 +294,26 @@ audit require. Zod-strict, additive-refused, same discipline as
 ```ts
 interface SemanticRubricFindingV1 {
   schemaVersion: 1
+  fixtureId: string
+  fixtureContentHash: string  // canonical fixture source, pins corpus identity
+  judgeInputHash: string      // canonical assembled bounded input, pins run identity
   rubricId: string            // 'D-R1' … 'D-R8'
   rubricVersion: number
-  judgePolicyVersion: string  // pinned judge config identity
-  promptHash: string          // sha256 of assembled system+user template (not story text)
+  judgePolicyVersion: string  // pinned policy + prompt configuration identity
+  promptHash: string          // sha256 of assembled prompt template, not story text
+  exactModelId: string        // resolved provider model, no fallback permitted in gate samples
   view: 'reader' | 'structural'
   horizon: { fromChapter: number; toChapter: number }
-  verdict: 'PASS' | 'FAIL' | 'INCONCLUSIVE'
-  score: number               // 0..100, rubric-defined
-  confidence: number          // 0..1, self-reported
+  verdict: 'PASS' | 'FAIL' | 'INCONCLUSIVE' // mechanically derived; never raw model authority
+  score: number               // aggregated 0..100, rubric-defined
+  confidence: number          // self-reported diagnostic only; excluded from all gates
   findingCodes: string[]      // rubric-scoped allowlist, enum-validated
   evidenceSpans: Array<{ chapterNumber: number; quote: string }>  // bounded, verbatim from input prose
   rationaleSummary: string    // bounded; no hidden chain-of-thought persisted
   aggregation: {
     sampleCount: number       // k
     rawScores: number[]
-    rawVerdicts: Array<'PASS' | 'FAIL'>
+    rawModelVerdicts: Array<'PASS' | 'FAIL'> // diagnostic only, not aggregated for gate
     scoreSpread: number       // max - min
     unstable: boolean
   }
@@ -270,7 +323,19 @@ interface SemanticRubricFindingV1 {
 `evidenceSpans` is the anti-hallucination control: every quote must be a verbatim
 substring of the prose actually supplied to that call. A span that is not found in
 the input invalidates the sample — the model asserted evidence that does not
-exist. This is checked mechanically, not judged.
+exist. This is checked mechanically, not judged. Empty arrays never satisfy a
+PASS or FAIL evidence requirement:
+
+| rubric outcome | minimum grounded evidence |
+|----------------|---------------------------|
+| every `PASS` / `FAIL` | ≥ 1 span, unless rubric-specific rule below requires more |
+| `D-R4 FAIL` | ≥ 2 spans from distinct chapter/paragraph locations that demonstrate the claimed repetition |
+| `D-R7 PASS` | ≥ 1 span from Bab 49; no other chapter can substitute |
+| `D-R7 FAIL` | ≥ 1 Bab-49 span showing the missing/deferred/contradicted resolution condition, or explicit `INCONCLUSIVE` if no such judgment can be grounded |
+| `D-R8 PASS` | ≥ 1 span from Bab 50 plus ≥ 1 earlier runway span that establishes the promise/payoff connection |
+
+A sample violating its row becomes invalid. Invalid samples count toward
+insufficiency/instability; they never become weak evidence for a score.
 
 ### D0.4.2 Determinism policy
 
@@ -280,16 +345,16 @@ deterministic and to make instability visible instead of averaging it away.
 | control | value |
 |---------|-------|
 | temperature | `0.0` (matches existing judge, `gateway-provider.ts` `continuity_judge`) |
-| model | pinned by id + `fallbackIndex` recorded per sample; a fallback hop invalidates the sample for calibration |
+| model | exact resolved model id pinned in policy and recorded per sample; any fallback hop invalidates that sample for calibration/holdout |
 | repeats | `k = 3` for calibration and gating; `k = 1` permitted only for exploratory non-gating runs, marked as such |
-| verdict aggregation | strict majority of `k` |
-| score aggregation | median of `k` |
-| instability | `unstable = true` when `scoreSpread` exceeds the pre-registered cap, or when verdicts split without a majority |
+| score aggregation | median of `k` valid raw scores |
+| verdict authority | raw model `verdict` is diagnostic-only; final PASS/FAIL derives mechanically from median score against frozen threshold |
+| instability | `unstable = true` when `scoreSpread` exceeds pre-registered cap, valid samples `< k`, a required evidence rule fails, or model identity differs from policy |
 | unstable outcome | `INCONCLUSIVE` |
 | `INCONCLUSIVE` semantics | **fail-closed — never counts as PASS** at any gate |
-| transport failure | reuse `SEMANTIC_JUDGE_UNAVAILABLE` controlled-outage class; retryable; a run with unresolved outages is not a valid gate run |
+| transport failure | reuse `SEMANTIC_JUDGE_UNAVAILABLE` controlled-outage class; retryable; exhausted retry leaves `< k` valid samples and produces `INCONCLUSIVE` |
 | separate task call | judge call is always an independent call from any writer call — same provider response is never reused as both (plan §D STOP condition) |
-| observability | every sample recorded through `executeObservedModelCall` → `recordGenerationProviderCall`: `useCase`, model id, `fallbackIndex`, tokens, cost, latency, outcome |
+| observability | every sample recorded through `executeObservedModelCall` → `recordGenerationProviderCall`: `useCase`, exact model id, fallback index, tokens, cost, latency, outcome |
 
 Prompt templates are frozen by hash before calibration. Changing a template
 changes `promptHash` and `judgePolicyVersion`, which invalidates calibration and
@@ -297,10 +362,11 @@ requires re-running it. There is no silent prompt edit.
 
 ### D0.4.3 Threshold freeze
 
-Per-rubric PASS thresholds are frozen **in source** at D2, after calibration and
-before any M10-F pilot prose is judged. The frozen file records rubric id,
-rubric version, judge policy version, prompt hash, threshold, and the calibration
-run id that produced it.
+Per-rubric PASS thresholds are frozen **in source** at D2 immediately after the
+pre-registered `CALIBRATION` algorithm (§D0.3.3) completes, and before any
+`VALIDATION_HOLDOUT` score or M10-F pilot prose is evaluated. The frozen file
+records rubric id, rubric version, judge policy version, prompt hash, exact model
+id, threshold, calibration manifest hash, and calibration run id.
 
 ---
 
@@ -308,57 +374,76 @@ run id that produced it.
 
 `D PASS` requires **all** of the following. Any single failure is `D FAIL`.
 
-**G-D1 — corpus integrity**
-Frozen calibration corpus committed; every fixture pre-labeled with written
-justification; label file hash recorded; each active rubric has ≥ 2 strong,
-≥ 2 borderline, ≥ 2 weak fixtures.
+**G-D1 — corpus integrity and partition isolation**
+Frozen corpus committed before model calls; every fixture pre-labeled with written
+justification; fixture id, provenance, partition and canonical content hash
+recorded in manifest; `CALIBRATION` and `VALIDATION_HOLDOUT` are disjoint. Each
+active rubric has, **in each partition**, ≥ 5 clear strong, ≥ 5 clear weak, and
+≥ 3 borderline fixtures. Purpose-built Bab 45–50 arcs exist for D-R7/D-R8.
 
-**G-D2 — separation power**
-For every active rubric: `min(score over strong) > max(score over weak)` — strict
-separation at the extremes, no overlap. Borderline may overlap either side; it is
-measured, not required to separate.
+**G-D2 — calibration derivation, not gate evidence**
+For every rubric, the exact §D0.3.3 algorithm completes on `CALIBRATION` only:
+`weakCeiling < strongFloor`, then `threshold = floor(midpoint)`. This derives and
+freezes a threshold. No holdout score may be read before the threshold artifact
+is committed.
 
-**G-D3 — error bounds within pre-registered caps**
-Per rubric, on the frozen corpus: false-positive rate on strong fixtures and
-false-negative rate on weak fixtures both within the caps pre-registered at D1.
-Borderline misclassification is reported but does not fail the gate.
+**G-D3 — holdout separation power**
+For every active rubric on `VALIDATION_HOLDOUT`: `min(score over strong) >
+max(score over weak)` — strict separation at the extremes, no overlap.
+Borderline may overlap either side; it is measured, not required to separate.
 
-**G-D4 — determinism**
-Across `k` repeats: no rubric exceeds the pre-registered `unstable` fraction on
-the calibration corpus. Any `INCONCLUSIVE` on a strong or weak fixture counts as
-a failure of that fixture, not as a neutral result.
+**G-D4 — holdout integer error budgets**
+For every rubric on `VALIDATION_HOLDOUT`: clear strong fixture judged FAIL =
+**false negative**; clear weak fixture judged PASS = **false positive**. Both
+pre-registered budgets are exactly zero:
 
-**G-D5 — evidence grounding**
-100% of `evidenceSpans` verify as verbatim substrings of the supplied prose.
-Any unverifiable span fails the gate — a judge that fabricates evidence is not
-calibrated regardless of its scores.
+```text
+strong false negatives = 0
+weak false positives   = 0
+```
 
-**G-D6 — no label leakage**
+Borderline classification is reported but does not make a binary gate decision.
+Integer budgets avoid fake percentage precision with small fixture sets.
+
+**G-D5 — determinism**
+Across `k` repeats: every clear strong/weak holdout fixture has `k` valid samples,
+no `INCONCLUSIVE`, and `scoreSpread <=` the pre-registered cap. Any invalid,
+insufficient, or unstable fixture is a gate failure, not a neutral result.
+
+**G-D6 — evidence grounding and sufficiency**
+100% of `evidenceSpans` verify as verbatim substrings of the supplied prose **and
+meet the rubric-specific minimums in §D0.4.1**. Empty evidence is invalid. Any
+unverifiable or insufficient span fails the gate — a judge that fabricates or
+cannot ground evidence is not calibrated regardless of its scores.
+
+**G-D7 — no label leakage**
 `assertNoLabelLeak` passes on every assembled payload, proven by unit tests
 including negative cases that must throw.
 
-**G-D7 — required rubrics green**
-All 8 rubrics calibrated and passing G-D2..G-D6. A rubric may be withdrawn only
-by an explicit reviewer-ratified disposition record (same discipline as C's
+**G-D8 — required rubrics green**
+All 8 rubrics pass G-D2..G-D7. A rubric may be withdrawn only by an explicit
+reviewer-ratified disposition record (same discipline as C's
 `blocker-dispositions.ts`) — never silently dropped for being hard to calibrate.
 
-**G-D8 — no open D blocker**
-Every D blocker is `CLOSED` or `RECLASSIFIED` with a named target stage. Any
-`UNRESOLVED` blocker forces `D BLOCKED`, mirroring the C gate.
+**G-D9 — no open D blocker**
+Every D blocker, including non-judge `D-OPS-1` / D-OBS-6, is `CLOSED` or
+reviewer-approved `RECLASSIFIED` with a named target stage. Any `UNRESOLVED`
+blocker forces `D BLOCKED`, mirroring the C gate.
 
-**G-D9 — frozen artifacts**
-Rubric versions, judge policy version, prompt hashes, and thresholds committed to
-source; calibration run artifacts archived immutably; `M10_D_SEMANTIC_JUDGE_REPORT.md`
-committed.
+**G-D10 — frozen artifacts**
+Rubric versions, judge policy version, prompt hashes, exact model id, fixture
+manifest hash, input hashes, and thresholds committed to source; calibration and
+holdout artifacts archived immutably; `M10_D_SEMANTIC_JUDGE_REPORT.md` committed.
 
-**G-D10 — counted reproducibility**
-Two counted calibration runs at the same head produce the same aggregated
-verdicts per fixture-rubric pair. Raw scores may differ (`temperature 0` is not a
-guarantee); the *decision* must not. Divergent decisions mean `k` is too small
-and the gate fails.
+**G-D11 — counted reproducibility**
+Two counted holdout runs at the same head receive the same fixture content hashes,
+judge-input hashes, exact model id and policy identity, then produce identical
+mechanically derived verdicts per fixture-rubric pair. Raw scores may differ
+(`temperature 0` is not a guarantee); derived decision may not. Divergent
+identity, insufficiency, instability, or decision fails the gate.
 
-> `D PASS` is never "the model said PASS once." Under G-D4 and G-D10 a single
-> sample cannot produce a passing gate, and under G-D2/G-D3 a rubric that agrees
+> `D PASS` is never "the model said PASS once." Under G-D5 and G-D11 a single
+> sample cannot produce a passing gate, and under G-D3/G-D4 a rubric that agrees
 > with the reviewer only by accident cannot pass either.
 
 ### D0.5.1 D STOP conditions (inherited + extended)
@@ -377,31 +462,21 @@ revised to agree with it.
 | step | deliverable | model calls |
 |------|-------------|-------------|
 | **D0** | this document — scope/design lock | none |
-| **D1** | frozen labeled calibration corpus + pre-registered acceptance bounds (`k`, spread cap, FP/FN caps) + `assertNoLabelLeak` + schema, all pure and unit-tested | none |
-| **D2** | judge runner + rubric prompts; calibration execution; threshold derivation and freeze | yes — bounded, see below |
-| **D3** | counted calibration pair, `M10_D_SEMANTIC_JUDGE_REPORT.md`, STOP for verdict | yes — bounded |
+| **D1** | frozen corpus + labels + `CALIBRATION`/`VALIDATION_HOLDOUT` partition + exact threshold algorithm + integer error budgets + evidence rules + `assertNoLabelLeak` + schema; all pure and unit-tested | none |
+| **D2** | judge runner + rubric prompts; `CALIBRATION` execution; mechanical threshold derivation and source freeze | requires later authorization |
+| **D3** | holdout execution twice with frozen threshold; `M10_D_SEMANTIC_JUDGE_REPORT.md`; STOP for verdict | requires later authorization |
 
-D1 requires no model access at all. That boundary is deliberate: the corpus and
-the labels must exist and be frozen before the first judge call, or the
-calibration is not falsifiable.
+D1 requires no model access. Corpus, labels, partitions, algorithm, and policy
+must be frozen before the first judge call or calibration is not falsifiable.
 
-### D0.6.1 Model-call authorization requested for D2/D3
+### D0.6.1 Model-call status
 
-Not proceeding to any model call without explicit authorization. Scope requested:
-
-```text
-calibration surface   8 rubrics × 6 fixtures × k=3            = 144 samples / round
-rounds budgeted       3 (initial + 2 re-calibration)          ≈ 432 samples
-counted pair (D3)     2 × 144                                 = 288 samples
-requested ceiling     900 provider calls, local only
-model                 judge-only use case, pinned id, temperature 0.0
-recording             every call via executeObservedModelCall → recordGenerationProviderCall
-data                  frozen in-repo fixtures only — no reader data, no production data
-DB                    local Supabase only; no --linked; no production/shared DB
-```
-
-If the reviewer prefers zero model calls until D1 is ratified, D1 is fully
-executable without them.
+**No D2/D3 model-call authorization exists.** The prior 900-call estimate is
+withdrawn, not pending ratification: corpus matrix and split requirements changed
+its arithmetic. Any later request must calculate a new ceiling from the frozen D1
+manifest, specify judge-only use case, pinned model, temperature `0.0`,
+`executeObservedModelCall` recording, in-repo fixture-only data, local DB only,
+and no `--linked` / shared / production DB.
 
 ---
 
@@ -417,8 +492,8 @@ production / shared DB              NO
 production activation               NO
 real 1→50 generation pilot          NO — belongs to M10-F
 semantic-judge calibration          proposed, gated on this design being locked
-fixed / canned prose fixtures       YES — the only corpus source proposed
-judge / model calls                 requested for D2/D3 only, with the ceiling above
+fixed / canned prose fixtures       YES — frozen hand-authored / reconstruction corpus only
+judge / model calls                 NOT AUTHORIZED — no ceiling is ratified
 ```
 
 M10-C is not reopened by this document. §D0.0 reports that the C prose corpus is
@@ -428,25 +503,32 @@ exactly as `assertDeterministicProvider` requires.
 
 ---
 
-## D0.8 Open questions for the reviewer
+## D0.8 D0.1 correction record
 
-1. **Corpus premise.** §D0.0 contradicts the stated premise that D calibrates
-   from C prose. Confirm the substitution: frozen hand-authored fixtures as the
-   corpus, C output admitted only as an extreme negative control.
-2. **Rubric count.** 8 rubrics proposed (plan's 7 + `D-R7` split out so the
-   inherited Bab-49 obligation is individually gate-able). Confirm, or fold
-   `D-R7` back into `D-R8`.
-3. **D-OBS-6.** The `FAILED_REVIEW_REQUIRED` blueprint review workflow is
-   recorded as D scope but is an operational escalation, not a judge. Request:
-   split it out of D into an operational item.
-4. **Model-call authorization** for D2/D3 at the ceiling in §D0.6.1 — or an
-   instruction to execute D1 only and return for a second verdict.
-5. **Pre-registered numeric bounds.** `k`, spread cap, and FP/FN caps must be
-   fixed at D1 before data exists. Proposing that the implementation side drafts
-   them in D1 for reviewer ratification, rather than choosing them unilaterally.
+This amendment locks the seven reviewer-required corrections without changing the
+approved D0 foundation:
+
+1. D-R4 includes chapter-local N vs N-1/N-2 semantic repetition, separate from
+   existing continuity/causality codes.
+2. Counted-C prose is removed as a corpus fixture. A future extreme control, if
+   needed, is a separately frozen `reconstruction/provider-derived` fixture.
+3. `CALIBRATION` and `VALIDATION_HOLDOUT` partitions are frozen before calls;
+   threshold derivation cannot inspect holdout.
+4. Holdout uses correct, pre-registered integer budgets: strong FN = 0; weak FP
+   = 0. Each rubric/partition has at least 5 clear strong + 5 clear weak + 3
+   borderline fixtures.
+5. Threshold algorithm, score direction, rounding, and equality semantics are
+   exact and pre-registered in §D0.3.3.
+6. Raw model verdict is diagnostic only. Gate verdict derives mechanically from
+   median score and frozen threshold; instability creates `INCONCLUSIVE`.
+7. Fixture/content/input hashes, exact model id, policy identity, and
+   rubric-specific non-empty evidence minimums are mandatory. Confidence is
+   diagnostic only.
+
+D-OBS-6 is retained as `D-OPS-1`, a non-judge D obligation with disposition
+requirements before D PASS. The 900-call request is withdrawn.
 
 ---
 
-**Next step: STOP for reviewer verdict on this design. No judge implementation
-until judge inventory, label authority, calibration method, and PASS threshold
-policy are locked.**
+**Next step: STOP for D0.1 design-lock verdict. D1 stays HOLD until this
+docs-only corrective commit is reviewed. D2/D3 model calls remain unauthorized.**

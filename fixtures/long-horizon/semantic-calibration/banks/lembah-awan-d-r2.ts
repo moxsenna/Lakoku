@@ -336,7 +336,7 @@ export const LEMBAH_AWAN_D_R2: D1AuthoredBank = {
       chapters: [
         {
           chapterNumber: 9,
-          title: 'Bin Terbuka Dekat Pintu',
+          title: 'Bak Terbuka Dekat Pintu',
           paragraphs: [
             'Bak kayu berisi benih campuran diletakkan dekat pintu lumbung supaya mudah dijangkau saat orang datang tergesa. Tutupnya sudah lama patah dan tidak pernah diganti karena dianggap merepotkan. Siapa pun yang masuk bisa menciduk seciduk dua ciduk tanpa bertanya, dan Vina hanya mencatat bila kebetulan melihatnya. Kebiasaan itu berjalan sejak ayahnya masih hidup dan tidak pernah dipersoalkan dalam pertemuan mana pun.',
           ],

@@ -1,112 +1,83 @@
 import {
+  D1_EXPECTED_EVALUATION_CASE_COUNT,
   D1_EXPECTED_ROW_COUNT,
   D1_PARTITIONS,
+  D1_PARTITION_UNIVERSE,
   D1_ROWS_PER_RUBRIC_PARTITION,
   D1_RUBRICS,
+  D1_RUBRIC_CASE_SPECS,
+  D1_RUBRIC_CHAPTERS,
   D1_TIERS,
+  D1_TIER_COUNTS,
+  D1_UNIVERSE_IDS,
   type D1CorpusFixture,
+  type D1EvaluationCase,
   type D1Partition,
   type D1RubricId,
   type D1RubricRow,
   type D1Tier,
+  type D1UniverseId,
 } from './corpus'
-import { D1_SCENARIOS, paragraphForTier } from './contexts'
-import { SemanticCorpusManifestSchema, SemanticCorpusRubricRowSchema } from '../../../lib/narrative-qa/contracts/semantic-judge-contract'
+import { D1_AUTHORED_BANKS, D1_UNIVERSE_CONTEXT } from './contexts'
+import {
+  SemanticCorpusManifestSchema,
+  SemanticCorpusRubricRowSchema,
+  SemanticEvaluationCaseSchema,
+} from '../../../lib/narrative-qa/contracts/semantic-judge-contract'
 import { computeSha256, stableStringify } from '../../../lib/narrative-qa/scoring/canonical-serializer'
 
-const tierCount: Readonly<Record<D1Tier, number>> = {
-  STRONG: 5,
-  WEAK: 5,
-  BORDERLINE: 3,
+/**
+ * Independent freeze anchor. This literal is the authority; the computed hash
+ * must equal it, so the manifest can never silently re-freeze itself.
+ */
+export const D1_EXPECTED_MANIFEST_SHA256 = '3635fd3152bbdc1c36f41aaa3b2378f6e250b8ab532a49db96b4128f7e960e1e'
+
+/**
+ * Explicit ALLOWED_CONTROLLED_MUTATION register, keyed by derived fixtureId.
+ * Empty because the ratified corpus is fully independently authored. Any entry
+ * added here must be an intra-partition, intra-family, one-axis variant; the
+ * fence below rejects anything else, and CALIBRATION<->HOLDOUT is forbidden.
+ */
+export const D1_CONTROLLED_MUTATIONS: Readonly<
+  Record<string, { readonly axis: 'RUBRIC_STRENGTH'; readonly baseFixtureId: string }>
+> = Object.freeze({})
+
+const TIER_ORDINAL_LABEL: Readonly<Record<D1Tier, string>> = {
+  STRONG: 'a',
+  WEAK: 'b',
+  BORDERLINE: 'c',
 }
 
-function chapter(chapterNumber: number, title: string, prose: string): D1CorpusFixture['chapters'][number] {
-  return { chapterNumber, title, paragraphs: [prose] }
+/** Canonical fixture content covers reader prose and structural context. */
+export function canonicalFixtureContent(
+  fixture: Pick<D1CorpusFixture, 'chapters' | 'structuralContext'>,
+): string {
+  return stableStringify({ chapters: fixture.chapters, structuralContext: fixture.structuralContext })
 }
 
-function chaptersFor(
-  rubricId: D1RubricId,
-  tier: D1Tier,
-  variant: number,
-  partition: D1Partition,
-): D1CorpusFixture['chapters'] {
-  const scenario = D1_SCENARIOS[rubricId]
-  const suffix = `${partition === 'CALIBRATION' ? 'kalibrasi' : 'holdout'}-${variant + 1}`
-  const standard = [
-    chapter(18, 'Jembatan Menjelang Fajar', `${scenario.setup} Catatan ${suffix} menjaga konteks ini sebagai data cerita.`),
-    chapter(19, 'Harga Sebuah Nama', paragraphForTier(rubricId, tier, 19, variant)),
-    chapter(20, 'Gerbang yang Tersisa', `${scenario.payoff} Detail ${suffix} membedakan fixture ini dari fixture lain.`),
-  ]
-
-  if (rubricId === 'D-R4') {
-    return [
-      chapter(14, 'Arsip Berdebu', `${scenario.setup} Sari menemukan cap lilin biru di bawah daftar pengiriman.`),
-      chapter(15, 'Lorong Sunyi', paragraphForTier(rubricId, tier, 15, variant)),
-      chapter(16, 'Pertemuan Kedua', `${tier === 'WEAK' ? 'Damar kembali menyangkal cap lilin biru; Sari kembali menuduhnya, lalu keduanya pergi tanpa perubahan.' : `${paragraphForTier(rubricId, tier, 16, variant)} ${scenario.payoff}`}`),
-      chapter(30, 'Pintu Sidang', 'Sari membawa cap lilin ke tribunal dan memilih menguji asalnya, bukan mengulang tuduhan lama.'),
-      chapter(31, 'Saksi Palsu', paragraphForTier(rubricId, tier, 31, variant)),
-      chapter(32, 'Tribunal', `${scenario.payoff} Di sini cap lilin bukan pengulangan jawaban lama, melainkan bukti siapa yang memalsukan daftar. Variasi ${suffix}.`),
-    ]
-  }
-
-  if (rubricId === 'D-R6') {
-    return [
-      chapter(6, 'Kompas Milik Adik', `${scenario.setup} Jarumnya selalu berhenti ke arah rumah lama.`),
-      chapter(21, 'Janji yang Menunggu', paragraphForTier(rubricId, tier, 21, variant)),
-      chapter(34, 'Jarum dan Buku Besar', `${tier === 'WEAK' ? 'Sari berkata masalah kompas sudah selesai, lalu menyerahkannya tanpa membuka ledger atau menghadapi alasan ia menyembunyikan kebenaran.' : `${scenario.payoff} ${paragraphForTier(rubricId, tier, 34, variant)}`} Variasi ${suffix}.`),
-    ]
-  }
-
-  if (rubricId === 'D-R7') {
-    const bab49 = tier === 'STRONG'
-      ? 'Sari menaruh surat ibunya di meja. Ia mengakui marahnya tidak hilang, tetapi ia tidak lagi memakai marah itu untuk menghukum dirinya. Ketika ibunya meminta maaf, Sari tidak memberi pengampunan mudah; ia meminta mereka membangun kembali kepercayaan lewat kesaksian besok.'
-      : tier === 'WEAK'
-        ? 'Sari memeriksa daftar saksi, menghitung penjaga, lalu mengirim pesan agar gerbang timur dibuka saat pagi. Ia menyimpan surat ibunya tanpa membacanya lagi. Rencana pengadilan selesai disusun.'
-        : 'Sari berkata ia mendengar penjelasan ibunya dan matanya basah. Sebelum ia menjawab apakah hubungan mereka masih mungkin, pengawal mengetuk pintu dan membawa kabar sidang dimajukan.'
-    return [
-      chapter(45, 'Surat yang Disembunyikan', `${scenario.setup} Sari belum tahu apa yang akan ia lakukan dengan luka itu.`),
-      chapter(48, 'Malam Sebelum Sidang', paragraphForTier(rubricId, tier, 48, variant)),
-      chapter(49, 'Nama yang Dipilih', `${bab49} Variasi ${suffix}.`),
-    ]
-  }
-
-  if (rubricId === 'D-R8') {
-    const bab50 = tier === 'STRONG'
-      ? 'Di depan warga, Sari menyerahkan bukti kepada tiga saksi, bukan kepada amarah massa. Ia memilih proses yang lambat karena pertanyaan terakhirnya bukan lagi bagaimana menang, melainkan keadilan macam apa yang sanggup ia tinggali. Saat gerbang dibuka kembali, ia pulang untuk memulai pekerjaan itu.'
-      : tier === 'WEAK'
-        ? 'Regent jatuh. Sari melihat matahari, menaiki kuda, dan pergi ke utara. Tamat.'
-        : 'Sari memilih membawa bukti kepada saksi dan menolak kerusuhan. Warga mulai membubarkan diri, tetapi kisah berhenti sebelum terlihat harga pilihannya bagi kota atau keluarganya.'
-    return [
-      chapter(44, 'Dua Jalan di Alun-Alun', `${scenario.setup} Pilihan itu dibicarakan dengan saksi dan keluarga.`),
-      chapter(47, 'Harga Kesaksian', paragraphForTier(rubricId, tier, 47, variant)),
-      chapter(49, 'Pagi yang Ditahan', `${scenario.payoff} Namun jawaban belum diputuskan.`),
-      chapter(50, 'Gerbang Terbuka', `${bab50} Variasi ${suffix}.`),
-    ]
-  }
-
-  return standard
-}
-
-function justificationFor(rubricId: D1RubricId, tier: D1Tier, index: number): string {
-  const scenario = D1_SCENARIOS[rubricId]
-  const tierReason = tier === 'STRONG'
-    ? scenario.strong
-    : tier === 'WEAK'
-      ? scenario.weak
-      : scenario.borderline
-  return `${rubricId} ${tier.toLowerCase()} row ${index + 1}: ${tierReason} Review must judge ${scenario.focus} from prose, not structural context.`
-}
-
-export function canonicalFixtureContent(fixture: Pick<D1CorpusFixture, 'chapters'>): string {
-  return stableStringify(fixture.chapters)
-}
-
-export function computeFixtureContentHash(fixture: Pick<D1CorpusFixture, 'chapters'>): string {
+export function computeFixtureContentHash(
+  fixture: Pick<D1CorpusFixture, 'chapters' | 'structuralContext'>,
+): string {
   return computeSha256(canonicalFixtureContent(fixture))
 }
 
-function parseD1Rows(rows: readonly D1RubricRow[]): void {
-  for (const row of rows) SemanticCorpusRubricRowSchema.parse(row)
+/** Per-chapter hash so a full-chapter surface can be proven byte-for-byte. */
+export function computeChapterHashes(
+  chapters: D1CorpusFixture['chapters'],
+): Record<string, string> {
+  const hashes: Record<string, string> = {}
+  for (const chapter of chapters) {
+    hashes[String(chapter.chapterNumber)] = computeSha256(chapter.paragraphs.join('\n\n'))
+  }
+  return hashes
+}
+
+function selectAuthoredEntry(universeId: D1UniverseId, rubricId: D1RubricId, tier: D1Tier, ordinal: number) {
+  const bank = D1_AUTHORED_BANKS[universeId]?.[rubricId]
+  if (!bank) throw new Error(`Missing authored bank for ${universeId}/${rubricId}.`)
+  const entry = bank[tier][ordinal]
+  if (!entry) throw new Error(`Missing authored ${tier} fixture ${ordinal} for ${universeId}/${rubricId}.`)
+  return entry
 }
 
 function makeRow(
@@ -115,34 +86,53 @@ function makeRow(
   tier: D1Tier,
   index: number,
 ): D1RubricRow {
-  const key = `${partition.toLowerCase()}-${rubricId.toLowerCase()}-${tier.toLowerCase()}-${index + 1}`
-  const chapters = chaptersFor(rubricId, tier, index, partition)
+  const universeId = D1_PARTITION_UNIVERSE[partition]
+  const authored = selectAuthoredEntry(universeId, rubricId, tier, index)
+  // Identity is universe-scoped. No id encodes the partition, so no id can
+  // self-prove isolation; isolation is proven by content and universe.
+  const key = `${universeId}-${rubricId.toLowerCase()}-${TIER_ORDINAL_LABEL[tier]}${index + 1}`
+  const universeContext = D1_UNIVERSE_CONTEXT[universeId]
   const fixtureWithoutHash = {
     fixtureId: `d1-fixture-${key}`,
-    // Five variants share one base family; weak/borderline variants mutate one rubric axis.
-    fixtureFamilyId: `d1-family-${partition.toLowerCase()}-${rubricId.toLowerCase()}-${tier.toLowerCase()}`,
-    // One rubric-specific story lineage per partition, never crossing partitions.
-    lineageId: `d1-lineage-${partition.toLowerCase()}-${rubricId.toLowerCase()}`,
-    mutationSiblingId: `d1-sibling-${partition.toLowerCase()}-${rubricId.toLowerCase()}-${tier.toLowerCase()}-${index === 0 ? 'base' : `mutation-${index + 1}`}`,
+    universeId,
+    fixtureFamilyId: `d1-family-${universeId}-${rubricId.toLowerCase()}-${TIER_ORDINAL_LABEL[tier]}`,
+    lineageId: `d1-lineage-${universeId}-${rubricId.toLowerCase()}`,
+    mutationSiblingId: `d1-sibling-${key}`,
+    // Every authored fixture in the ratified corpus was written independently
+    // from a blank narrative spine, so no row declares a controlled-mutation
+    // base. D1_CONTROLLED_MUTATIONS is the only place a relation may be added,
+    // and assertD1ControlledMutations fences whatever is added there.
+    ...(D1_CONTROLLED_MUTATIONS[`d1-fixture-${key}`]
+      ? { mutationRelation: D1_CONTROLLED_MUTATIONS[`d1-fixture-${key}`] }
+      : {}),
     partition,
     provenance: 'human-authored' as const,
-    chapters,
+    chapters: authored.chapters,
     structuralContext: {
-      storyPromise: 'Sari membuktikan pengkhianatan Regent tanpa mewarisi kekerasannya.',
-      finalDramaticQuestion: 'Akankah Sari memilih keadilan yang bisa ia pertanggungjawabkan setelah pengkhianatan keluarganya?',
-      actPosition: rubricId === 'D-R7' || rubricId === 'D-R8' ? 'penutupan Bab 45–50' : 'tekanan pertengahan cerita',
-      setupAndPayoff: `${D1_SCENARIOS[rubricId].setup} ${D1_SCENARIOS[rubricId].payoff}`,
+      storyPromise: universeContext.storyPromise,
+      mainConflict: universeContext.mainConflict,
+      finalDramaticQuestion: universeContext.finalDramaticQuestion,
+      actPosition: rubricId === 'D-R7' || rubricId === 'D-R8' ? 'penutupan Bab 41-50' : 'tekanan pertengahan cerita',
+      activeThreadSummaries: universeContext.activeThreadSummaries,
+      resolvedThreadSummaries: universeContext.resolvedThreadSummaries,
+      payoffSchedule: universeContext.payoffSchedule,
+      lockedEndingKey: universeContext.lockedEndingKey,
     },
   }
-  const fixture: D1CorpusFixture = { ...fixtureWithoutHash, contentHash: computeFixtureContentHash(fixtureWithoutHash) }
+  const fixture: D1CorpusFixture = {
+    ...fixtureWithoutHash,
+    contentHash: computeFixtureContentHash(fixtureWithoutHash),
+    chapterHashes: computeChapterHashes(authored.chapters),
+  }
   return {
     rowId: `d1-row-${key}`,
     rubricId,
     partition,
+    universeId,
     tier,
     fixture,
-    reviewState: 'PENDING_REVIEW',
-    justification: justificationFor(rubricId, tier, index),
+    reviewState: 'RATIFIED',
+    justification: authored.justification,
   }
 }
 
@@ -150,49 +140,89 @@ function makeRow(
 export const D1_RUBRIC_ROWS: readonly D1RubricRow[] = Object.freeze(
   D1_PARTITIONS.flatMap((partition) => D1_RUBRICS.flatMap((rubricId) =>
     D1_TIERS.flatMap((tier) => Array.from(
-      { length: tierCount[tier] },
+      { length: D1_TIER_COUNTS[tier] },
       (_, index) => makeRow(rubricId, partition, tier, index),
     )),
   )),
 )
 
-export function computeD1ManifestHash(rows: readonly D1RubricRow[]): string {
-  parseD1Rows(rows)
-  return computeSha256(stableStringify(rows.map((row) => ({
+/**
+ * Frozen evaluation cases. D2 call ceiling is `evaluationCases.length × k`.
+ * Adding a case after scores exist is forbidden.
+ */
+export const D1_EVALUATION_CASES: readonly D1EvaluationCase[] = Object.freeze(
+  D1_RUBRIC_ROWS.flatMap((row) => D1_RUBRIC_CASE_SPECS[row.rubricId].map((spec): D1EvaluationCase => ({
+    caseId: `${row.rowId}-${spec.caseSuffix}`,
     rowId: row.rowId,
-    rubricId: row.rubricId,
-    partition: row.partition,
-    tier: row.tier,
-    reviewState: row.reviewState,
-    justification: row.justification,
     fixtureId: row.fixture.fixtureId,
-    fixtureFamilyId: row.fixture.fixtureFamilyId,
-    lineageId: row.fixture.lineageId,
-    mutationSiblingId: row.fixture.mutationSiblingId,
-    contentHash: row.fixture.contentHash,
-  }))))
+    rubricId: row.rubricId,
+    view: spec.view,
+    horizonKind: spec.horizonKind,
+    coverage: spec.coverage,
+  }))),
+)
+
+function parseD1Rows(rows: readonly D1RubricRow[]): void {
+  for (const row of rows) SemanticCorpusRubricRowSchema.parse(row)
+}
+
+export function computeD1ManifestHash(
+  rows: readonly D1RubricRow[],
+  evaluationCases: readonly D1EvaluationCase[],
+): string {
+  parseD1Rows(rows)
+  for (const evaluationCase of evaluationCases) SemanticEvaluationCaseSchema.parse(evaluationCase)
+  return computeSha256(stableStringify({
+    rows: rows.map((row) => ({
+      rowId: row.rowId,
+      rubricId: row.rubricId,
+      partition: row.partition,
+      universeId: row.universeId,
+      tier: row.tier,
+      reviewState: row.reviewState,
+      justification: row.justification,
+      fixtureId: row.fixture.fixtureId,
+      fixtureFamilyId: row.fixture.fixtureFamilyId,
+      lineageId: row.fixture.lineageId,
+      mutationSiblingId: row.fixture.mutationSiblingId,
+      mutationRelation: row.fixture.mutationRelation,
+      contentHash: row.fixture.contentHash,
+      chapterHashes: row.fixture.chapterHashes,
+    })),
+    evaluationCases,
+  }))
 }
 
 export interface D1Manifest {
-  schemaVersion: 1
+  schemaVersion: 2
   corpusId: 'M10-D1-semantic-calibration-v1'
   provenance: 'frozen human-authored fixture corpus'
   manifestHash: string
+  review: {
+    status: 'RATIFIED'
+    corpusCommit: '5a2ab2c'
+  }
   rows: readonly D1RubricRow[]
+  evaluationCases: readonly D1EvaluationCase[]
 }
 
 export const D1_MANIFEST: D1Manifest = Object.freeze({
-  schemaVersion: 1,
+  schemaVersion: 2,
   corpusId: 'M10-D1-semantic-calibration-v1',
   provenance: 'frozen human-authored fixture corpus',
-  manifestHash: computeD1ManifestHash(D1_RUBRIC_ROWS),
+  manifestHash: computeD1ManifestHash(D1_RUBRIC_ROWS, D1_EVALUATION_CASES),
+  review: Object.freeze({ status: 'RATIFIED', corpusCommit: '5a2ab2c' }),
   rows: D1_RUBRIC_ROWS,
+  evaluationCases: D1_EVALUATION_CASES,
 })
 
 export function assertD1Manifest(manifest: D1Manifest = D1_MANIFEST): void {
   SemanticCorpusManifestSchema.parse(manifest)
-  if (manifest.manifestHash !== computeD1ManifestHash(manifest.rows)) {
-    throw new Error('Frozen manifestHash does not match registered labels and fixture hashes.')
+  if (manifest.manifestHash !== computeD1ManifestHash(manifest.rows, manifest.evaluationCases)) {
+    throw new Error('Frozen manifestHash does not match registered labels, fixture hashes, and evaluation cases.')
+  }
+  if (manifest === D1_MANIFEST && manifest.manifestHash !== D1_EXPECTED_MANIFEST_SHA256) {
+    throw new Error(`D1 manifest drifted from frozen anchor: computed ${manifest.manifestHash}.`)
   }
 }
 
@@ -205,19 +235,112 @@ export function d1MatrixCount(
   return D1_RUBRIC_ROWS.filter((row) => row.rubricId === rubricId && row.partition === partition && row.tier === tier).length
 }
 
+const PARTITION_TOKEN_PATTERN = /calibration|holdout|validation/i
+
 export function assertD1CorpusIsolation(rows: readonly D1RubricRow[]): void {
   parseD1Rows(rows)
-  for (const field of ['fixtureFamilyId', 'lineageId', 'mutationSiblingId'] as const) {
-    const calibration = new Set(rows.filter((row) => row.partition === 'CALIBRATION').map((row) => row.fixture[field]))
-    const holdout = new Set(rows.filter((row) => row.partition === 'VALIDATION_HOLDOUT').map((row) => row.fixture[field]))
-    if ([...calibration].some((identity) => holdout.has(identity))) {
+  for (const field of ['fixtureId', 'fixtureFamilyId', 'lineageId', 'mutationSiblingId'] as const) {
+    if (rows.some((row) => PARTITION_TOKEN_PATTERN.test(row.fixture[field]))) {
+      throw new Error(`Semantic ${field} must not encode a partition token.`)
+    }
+    const left = new Set(rows.filter((row) => row.partition === 'CALIBRATION').map((row) => row.fixture[field]))
+    const right = new Set(rows.filter((row) => row.partition === 'VALIDATION_HOLDOUT').map((row) => row.fixture[field]))
+    if ([...left].some((identity) => right.has(identity))) {
       throw new Error(`Cross-partition ${field} is forbidden.`)
     }
+  }
+  if (rows.some((row) => PARTITION_TOKEN_PATTERN.test(row.rowId))) {
+    throw new Error('rowId must not encode a partition token.')
+  }
+  const universes = new Map<D1Partition, Set<D1UniverseId>>()
+  for (const row of rows) {
+    const seen = universes.get(row.partition) ?? new Set<D1UniverseId>()
+    seen.add(row.universeId)
+    universes.set(row.partition, seen)
+  }
+  const calibrationUniverses = universes.get('CALIBRATION') ?? new Set<D1UniverseId>()
+  const holdoutUniverses = universes.get('VALIDATION_HOLDOUT') ?? new Set<D1UniverseId>()
+  if ([...calibrationUniverses].some((universeId) => holdoutUniverses.has(universeId))) {
+    throw new Error('Cross-partition universeId is forbidden.')
   }
   const calibrationHashes = new Set(rows.filter((row) => row.partition === 'CALIBRATION').map((row) => row.fixture.contentHash))
   const holdoutHashes = new Set(rows.filter((row) => row.partition === 'VALIDATION_HOLDOUT').map((row) => row.fixture.contentHash))
   if ([...calibrationHashes].some((contentHash) => holdoutHashes.has(contentHash))) {
     throw new Error('Cross-partition contentHash is forbidden.')
+  }
+}
+
+/**
+ * Controlled-mutation fence. A declared relation is only legal as an
+ * intra-partition, intra-universe, intra-family, one-axis variant. A relation
+ * that crosses CALIBRATION and VALIDATION_HOLDOUT is always rejected, so no
+ * holdout row can inherit a calibration spine through lineage.
+ */
+export function assertD1ControlledMutations(rows: readonly D1RubricRow[] = D1_RUBRIC_ROWS): void {
+  parseD1Rows(rows)
+  const rowsByFixtureId = new Map(rows.map((row) => [row.fixture.fixtureId, row]))
+  for (const row of rows) {
+    const relation = row.fixture.mutationRelation
+    if (!relation) continue
+    if (relation.baseFixtureId === row.fixture.fixtureId) {
+      throw new Error(`Controlled mutation must not reference itself: ${row.fixture.fixtureId}.`)
+    }
+    const base = rowsByFixtureId.get(relation.baseFixtureId)
+    if (!base) {
+      throw new Error(`Controlled mutation base is not a registered fixture: ${relation.baseFixtureId}.`)
+    }
+    if (base.partition !== row.partition) {
+      throw new Error(`Controlled mutation must stay intra-partition: ${row.fixture.fixtureId}.`)
+    }
+    if (base.universeId !== row.universeId) {
+      throw new Error(`Controlled mutation must stay inside one universe: ${row.fixture.fixtureId}.`)
+    }
+    if (base.fixture.fixtureFamilyId !== row.fixture.fixtureFamilyId) {
+      throw new Error(`Controlled mutation must stay inside one family: ${row.fixture.fixtureId}.`)
+    }
+    if (base.rubricId !== row.rubricId) {
+      throw new Error(`Controlled mutation must stay inside one rubric: ${row.fixture.fixtureId}.`)
+    }
+    if (base.fixture.mutationRelation) {
+      throw new Error(`Controlled mutation base must itself be a base: ${relation.baseFixtureId}.`)
+    }
+  }
+  // Registered entries must correspond to real fixtures, so a stale key cannot
+  // silently stop being enforced.
+  for (const fixtureId of Object.keys(D1_CONTROLLED_MUTATIONS)) {
+    if (!rowsByFixtureId.get(fixtureId)?.fixture.mutationRelation) {
+      throw new Error(`Registered controlled mutation was not applied: ${fixtureId}.`)
+    }
+  }
+}
+
+export function assertD1EvaluationCases(
+  rows: readonly D1RubricRow[] = D1_RUBRIC_ROWS,
+  evaluationCases: readonly D1EvaluationCase[] = D1_EVALUATION_CASES,
+): void {
+  for (const evaluationCase of evaluationCases) SemanticEvaluationCaseSchema.parse(evaluationCase)
+  if (evaluationCases.length !== D1_EXPECTED_EVALUATION_CASE_COUNT) {
+    throw new Error(`Expected ${D1_EXPECTED_EVALUATION_CASE_COUNT} frozen evaluation cases.`)
+  }
+  const caseIds = evaluationCases.map((evaluationCase) => evaluationCase.caseId)
+  if (new Set(caseIds).size !== caseIds.length) throw new Error('Duplicate evaluation caseId.')
+  const rowsById = new Map(rows.map((row) => [row.rowId, row]))
+  for (const evaluationCase of evaluationCases) {
+    const row = rowsById.get(evaluationCase.rowId)
+    if (!row) throw new Error(`Evaluation case references unknown row: ${evaluationCase.rowId}.`)
+    if (row.rubricId !== evaluationCase.rubricId || row.fixture.fixtureId !== evaluationCase.fixtureId) {
+      throw new Error(`Evaluation case identity mismatch: ${evaluationCase.caseId}.`)
+    }
+    const covered = evaluationCase.coverage.mode === 'CONTIGUOUS'
+      ? Array.from(
+        { length: evaluationCase.coverage.toChapter - evaluationCase.coverage.fromChapter + 1 },
+        (_, index) => evaluationCase.coverage.mode === 'CONTIGUOUS' ? evaluationCase.coverage.fromChapter + index : 0,
+      )
+      : [...evaluationCase.coverage.chapterNumbers]
+    const authored = new Set(row.fixture.chapters.map((chapter) => chapter.chapterNumber))
+    if (covered.some((chapterNumber) => !authored.has(chapterNumber))) {
+      throw new Error(`Evaluation case ${evaluationCase.caseId} covers chapters the fixture does not author.`)
+    }
   }
 }
 
@@ -228,21 +351,37 @@ export function assertD1CorpusMatrix(rows: readonly D1RubricRow[] = D1_RUBRIC_RO
     if (rows.filter((row) => row.rubricId === rubricId && row.partition === partition).length !== D1_ROWS_PER_RUBRIC_PARTITION) {
       throw new Error(`Expected ${D1_ROWS_PER_RUBRIC_PARTITION} rows for ${rubricId}/${partition}.`)
     }
-    for (const tier of D1_TIERS) if (rows.filter((row) => row.rubricId === rubricId && row.partition === partition && row.tier === tier).length !== tierCount[tier]) {
+    for (const tier of D1_TIERS) if (rows.filter((row) => row.rubricId === rubricId && row.partition === partition && row.tier === tier).length !== D1_TIER_COUNTS[tier]) {
       throw new Error(`Invalid ${tier} count for ${rubricId}/${partition}.`)
     }
   }
   const fixtureIds = rows.map((row) => row.fixture.fixtureId)
   if (new Set(fixtureIds).size !== fixtureIds.length) throw new Error('Duplicate fixtureId.')
-  if (rows.some((row) => row.fixture.contentHash !== computeFixtureContentHash(row.fixture))) {
-    throw new Error('Frozen contentHash does not match canonical fixture content.')
+  for (const row of rows) {
+    if (row.fixture.contentHash !== computeFixtureContentHash(row.fixture)) {
+      throw new Error(`Frozen contentHash does not match canonical fixture content: ${row.fixture.fixtureId}.`)
+    }
+    const chapterHashes = computeChapterHashes(row.fixture.chapters)
+    if (stableStringify(row.fixture.chapterHashes) !== stableStringify(chapterHashes)) {
+      throw new Error(`Frozen chapterHashes do not match authored chapters: ${row.fixture.fixtureId}.`)
+    }
+    const authoredChapters = row.fixture.chapters.map((chapter) => chapter.chapterNumber)
+    const requiredChapters = D1_RUBRIC_CHAPTERS[row.rubricId]
+    if (stableStringify(authoredChapters) !== stableStringify(requiredChapters)) {
+      throw new Error(`Fixture ${row.fixture.fixtureId} must author chapters ${requiredChapters.join(', ')}.`)
+    }
   }
   if (new Set(rows.map((row) => row.fixture.contentHash)).size !== rows.length) throw new Error('Duplicate canonical fixture content.')
-  if (rows.some((row) => row.reviewState !== 'PENDING_REVIEW' || row.justification.length === 0)) {
-    throw new Error('Every D1 row needs PENDING_REVIEW and written justification.')
+  if (rows.some((row) => row.reviewState !== 'RATIFIED' || row.justification.length === 0)) {
+    throw new Error('Every D1 row needs RATIFIED review state and written justification.')
+  }
+  if (new Set(rows.map((row) => row.universeId)).size !== D1_UNIVERSE_IDS.length) {
+    throw new Error('Both authored universes must be represented.')
   }
   assertD1CorpusIsolation(rows)
+  assertD1ControlledMutations(rows)
 }
 
 assertD1CorpusMatrix()
+assertD1EvaluationCases()
 assertD1Manifest()

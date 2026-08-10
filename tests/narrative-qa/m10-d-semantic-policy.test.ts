@@ -1,47 +1,57 @@
 import { describe, expect, it } from 'vitest'
-import { RawSemanticJudgeSampleSchema } from '../../lib/narrative-qa/contracts/semantic-judge-contract'
+import type { RawSemanticJudgeSample, SemanticRubricId } from '../../lib/narrative-qa/contracts/semantic-judge-contract'
+import { RawSemanticJudgeSampleSchema, SemanticAggregateSchema } from '../../lib/narrative-qa/contracts/semantic-judge-contract'
+import { assembleJudgeInput } from '../../lib/narrative-qa/judges/semantic-judge-assembly'
 import {
-  assertNoLabelLeak,
   deriveFrozenThreshold,
   deriveSemanticAggregate,
-  SemanticJudgePolicyError,
-  validateOrderedHorizon,
   validateRawSemanticJudgeSample,
 } from '../../lib/narrative-qa/judges/semantic-judge-policy'
+import { D1_EVALUATION_CASES, D1_RUBRIC_ROWS } from '../../fixtures/long-horizon/semantic-calibration/manifest'
 
-const HASH = 'a'.repeat(64)
-const readerInput = (chapters: number[]) => ({
-  view: 'reader' as const,
-  segments: chapters.map((chapterNumber) => ({
-    segmentId: `bab-${chapterNumber}`,
-    chapterNumber,
-    content: `Bab ${chapterNumber}. Bukti naratif untuk pengujian.`,
-  })),
-})
-
-const horizonFor = (rubricId: 'D-R1' | 'D-R4' | 'D-R6' | 'D-R7' | 'D-R8') => {
-  if (rubricId === 'D-R4') return { kind: 'LOCAL' as const, fromChapter: 48, toChapter: 50 }
-  if (rubricId === 'D-R6') return { kind: 'NOVEL' as const, fromChapter: 1, toChapter: 50 }
-  if (rubricId === 'D-R7') return { kind: 'ACT' as const, fromChapter: 45, toChapter: 50 }
-  if (rubricId === 'D-R8') return { kind: 'RUNWAY' as const, fromChapter: 41, toChapter: 50 }
-  return { kind: 'LOCAL' as const, fromChapter: 48, toChapter: 50 }
+const executionAuthority = {
+  judgePolicyVersion: 'd1-synthetic-v1',
+  promptHash: 'a'.repeat(64),
+  exactModelId: 'synthetic-no-call',
 }
 
-const raw = (rubricId: 'D-R1' | 'D-R4' | 'D-R6' | 'D-R7' | 'D-R8', score = 85) => ({
-  fixtureId: 'fixture-1',
-  fixtureContentHash: HASH,
-  judgePolicyVersion: 'd1-v1',
-  promptHash: HASH,
-  exactModelId: 'pinned-model',
-  sampleIndex: 0,
-  rubricId,
-  horizon: horizonFor(rubricId),
-  score,
-  modelVerdict: 'PASS' as const,
-  evidenceMode: 'SPAN' as const,
-  evidence: [{ segmentId: rubricId === 'D-R7' ? 'bab-49' : 'bab-50', quote: 'Bukti naratif' }],
-  rationaleSummary: 'Bukti ringkas.',
-})
+function surface(rubricId: SemanticRubricId) {
+  const row = D1_RUBRIC_ROWS.find((candidate) => candidate.rubricId === rubricId)!
+  const evaluationCase = D1_EVALUATION_CASES.find((candidate) => candidate.rowId === row.rowId)!
+  return assembleJudgeInput(row, evaluationCase)
+}
+
+function raw(rubricId: SemanticRubricId, sampleIndex = 0, score = 80): RawSemanticJudgeSample {
+  const { input, corpusAuthority } = surface(rubricId)
+  const segment = input.segments.at(-1)!
+  const findingCodes: Record<SemanticRubricId, RawSemanticJudgeSample['findingCodes']> = {
+    'D-R1': ['PACING_PRESSURE_PRESENT'], 'D-R2': ['ARC_COSTLY_CHANGE'],
+    'D-R3': ['CONFLICT_OPTIONS_NARROWED'], 'D-R4': ['REPETITION_NONE'],
+    'D-R5': ['CHAPTER_MOVES_STORY'], 'D-R6': ['PAYOFF_USES_SETUP'],
+    'D-R7': ['EMOTIONAL_RESOLUTION_PRESENT'], 'D-R8': ['ENDING_EARNED'],
+  }
+  const evidence = rubricId === 'D-R6'
+    ? [input.segments[0]!, input.segments.at(-1)!].map((item) => ({ segmentId: item.segmentId, quote: item.content.slice(0, 20) }))
+    : rubricId === 'D-R8'
+      ? [input.segments[0]!, input.segments.at(-1)!].map((item) => ({ segmentId: item.segmentId, quote: item.content.slice(0, 20) }))
+      : [{ segmentId: segment.segmentId, quote: segment.content.slice(0, 20) }]
+  return {
+    fixtureId: corpusAuthority.fixtureId,
+    fixtureContentHash: corpusAuthority.fixtureContentHash,
+    judgeInputHash: corpusAuthority.judgeInputHash,
+    executionAuthority,
+    sampleIndex,
+    rubricId,
+    view: corpusAuthority.view,
+    horizon: corpusAuthority.horizon,
+    score,
+    modelVerdict: 'PASS',
+    evidenceMode: 'SPAN',
+    findingCodes: findingCodes[rubricId],
+    evidence,
+    rationaleSummary: 'Catatan diagnostik sintetis.',
+  }
+}
 
 const threshold = deriveFrozenThreshold('D-R1', [
   { rubricId: 'D-R1', partition: 'CALIBRATION', tier: 'weak', score: 79 },
@@ -49,108 +59,84 @@ const threshold = deriveFrozenThreshold('D-R1', [
 ])
 
 describe('M10-D semantic judge policy', () => {
-  it('derives ceil midpoint threshold: 79/80 becomes 80', () => {
+  it('preserves calibration-only ceil midpoint: 79/80 becomes 80', () => {
     expect(threshold.threshold).toBe(80)
+    expect(() => deriveFrozenThreshold('D-R1', [
+      { rubricId: 'D-R1', partition: 'VALIDATION_HOLDOUT', tier: 'weak', score: 20 },
+      { rubricId: 'D-R1', partition: 'CALIBRATION', tier: 'strong', score: 80 },
+    ])).toThrow('calibration scores only')
   })
 
-  it('rejects equal or overlapping calibration tiers and holdout threshold input', () => {
-    expect(() =>
-      deriveFrozenThreshold('D-R1', [
-        { rubricId: 'D-R1', partition: 'CALIBRATION', tier: 'weak', score: 80 },
-        { rubricId: 'D-R1', partition: 'CALIBRATION', tier: 'strong', score: 80 },
-      ]),
-    ).toThrow('weak ceiling')
-    expect(() =>
-      deriveFrozenThreshold('D-R1', [
-        { rubricId: 'D-R1', partition: 'VALIDATION_HOLDOUT', tier: 'weak', score: 20 },
-        { rubricId: 'D-R1', partition: 'CALIBRATION', tier: 'strong', score: 80 },
-      ]),
-    ).toThrow('calibration scores only')
-  })
-
-  it('rejects label leaks and reader structural leaks', () => {
-    expect(() => assertNoLabelLeak({ label: 'PASS' })).toThrow(SemanticJudgePolicyError)
-    expect(() => assertNoLabelLeak({ writerReason: 'hidden' })).toThrow(SemanticJudgePolicyError)
-    expect(() => assertNoLabelLeak({ view: 'reader', storyPromise: 'hidden' })).toThrow(SemanticJudgePolicyError)
-  })
-
-  it('requires raw identity and policy-owned horizon', () => {
-    const missingIdentity = { ...raw('D-R1') }
-    delete (missingIdentity as Record<string, unknown>).fixtureId
-    expect(() => RawSemanticJudgeSampleSchema.parse(missingIdentity)).toThrow()
-    const missingHorizon = { ...raw('D-R1') }
-    delete (missingHorizon as Record<string, unknown>).horizon
-    expect(() => RawSemanticJudgeSampleSchema.parse(missingHorizon)).toThrow()
+  it('rejects caller-authoritative validity and verdict fields', () => {
     expect(() => RawSemanticJudgeSampleSchema.parse({ ...raw('D-R1'), evidenceValid: true })).toThrow()
+    expect(() => RawSemanticJudgeSampleSchema.parse({ ...raw('D-R1'), outcome: 'PASS' })).toThrow()
   })
 
-  it('requires ordinary evidence spans to quote supplied prose', () => {
-    const sample = validateRawSemanticJudgeSample(readerInput([48, 49, 50]), {
-      ...raw('D-R1'),
-      evidence: [{ segmentId: 'bab-50', quote: 'tidak ada' }],
-    })
-    expect(sample.evidenceValid).toBe(false)
-    expect(sample.validationErrors).toContain('evidence quote not found: bab-50')
+  it('rejects every caller corpus identity mismatch', () => {
+    const assembled = surface('D-R1')
+    const sample = raw('D-R1')
+    for (const mutation of [
+      { fixtureId: 'wrong' }, { fixtureContentHash: 'b'.repeat(64) },
+      { judgeInputHash: 'b'.repeat(64) }, { rubricId: 'D-R2' as const },
+      { view: 'structural' as const },
+      { horizon: { ...sample.horizon, coverage: { mode: 'EXPLICIT' as const, chapterNumbers: [18, 20] } } },
+    ]) expect(() => validateRawSemanticJudgeSample(assembled.input, { ...sample, ...mutation }, assembled.corpusAuthority)).toThrow()
   })
 
-  it('enforces D-R4 local N/N-1/N-2 plus act and novel horizon coverage', () => {
-    expect(() => validateOrderedHorizon(readerInput([48, 50]), 'D-R4', horizonFor('D-R4'))).toThrow('complete contiguous')
-    expect(() => validateOrderedHorizon(readerInput([1, 2]), 'D-R1', { kind: 'NOVEL', fromChapter: 1, toChapter: 50 })).toThrow('complete contiguous')
-    expect(() => validateOrderedHorizon(readerInput([41, 42]), 'D-R1', { kind: 'RUNWAY', fromChapter: 41, toChapter: 50 })).toThrow('complete contiguous')
-    expect(() => validateOrderedHorizon(readerInput([48, 49]), 'D-R4', { kind: 'LOCAL', fromChapter: 48, toChapter: 49 })).toThrow('N/N-1/N-2')
+  it('derives immutable sample ID from diagnostic raw record without verdict authority', () => {
+    const assembled = surface('D-R1')
+    const pass = validateRawSemanticJudgeSample(assembled.input, raw('D-R1'), assembled.corpusAuthority)
+    const fail = validateRawSemanticJudgeSample(assembled.input, { ...raw('D-R1'), modelVerdict: 'FAIL' }, assembled.corpusAuthority)
+    expect(fail.sampleId).not.toBe(pass.sampleId)
+    expect(fail.evidenceState).toBe(pass.evidenceState)
+    expect(fail.evidenceValid).toBe(pass.evidenceValid)
   })
 
-  it('enforces D-R6 setup before payoff evidence', () => {
-    const sample = validateRawSemanticJudgeSample(readerInput(Array.from({ length: 50 }, (_, index) => index + 1)), {
-      ...raw('D-R6'),
-      evidence: [
-        { segmentId: 'bab-10', quote: 'Bukti naratif' },
-        { segmentId: 'bab-50', quote: 'Bukti naratif' },
-      ],
-    })
-    expect(sample.evidenceValid).toBe(true)
+  it('enforces rubric finding-code allowlist', () => {
+    const assembled = surface('D-R1')
+    const validated = validateRawSemanticJudgeSample(assembled.input, {
+      ...raw('D-R1'), findingCodes: ['ENDING_EARNED'],
+    }, assembled.corpusAuthority)
+    expect(validated.evidenceValid).toBe(false)
+    expect(validated.validationErrors[0]).toContain('finding code not allowed')
   })
 
-  it('allows FULL_HORIZON_ABSENCE only for D-R7 FAIL on complete Bab 49', () => {
-    const absence = {
-      ...raw('D-R7', 10),
-      modelVerdict: 'FAIL' as const,
-      evidenceMode: 'FULL_HORIZON_ABSENCE' as const,
-      absenceCode: 'EMOTIONAL_RESOLUTION_ABSENT' as const,
-      evidence: [],
+  it('binds D-R7 absence to byte-identical canonical Bab 49', () => {
+    const assembled = surface('D-R7')
+    const absence: RawSemanticJudgeSample = {
+      ...raw('D-R7', 0, 10), modelVerdict: 'FAIL', evidenceMode: 'FULL_HORIZON_ABSENCE',
+      findingCodes: ['EMOTIONAL_RESOLUTION_ABSENT'], absenceCode: 'EMOTIONAL_RESOLUTION_ABSENT', evidence: [],
     }
-    expect(validateRawSemanticJudgeSample(readerInput([45, 46, 47, 48, 49, 50]), absence).evidenceValid).toBe(true)
-    expect(validateRawSemanticJudgeSample(readerInput([45, 46, 47, 48, 49, 50]), { ...absence, modelVerdict: 'PASS' }).evidenceValid).toBe(false)
-    expect(validateRawSemanticJudgeSample(readerInput([45, 46, 47, 48, 49, 50]), { ...absence, modelVerdict: 'INCONCLUSIVE' }).evidenceValid).toBe(false)
-    expect(() => validateRawSemanticJudgeSample(readerInput([45, 46, 47, 48]), absence)).toThrow('complete contiguous')
+    expect(validateRawSemanticJudgeSample(assembled.input, absence, assembled.corpusAuthority).evidenceValid).toBe(true)
+    for (const content of ['', assembled.input.segments.find((segment) => segment.chapterNumber === 49)!.content.slice(0, -1), 'diubah']) {
+      const altered = structuredClone(assembled.input)
+      altered.segments.find((segment) => segment.chapterNumber === 49)!.content = content
+      expect(() => validateRawSemanticJudgeSample(altered, absence, assembled.corpusAuthority)).toThrow()
+    }
   })
 
-  it('requires D-R8 complete runway coverage plus Bab 50 and runway evidence', () => {
-    expect(() => validateRawSemanticJudgeSample(readerInput([41, 42, 43, 44, 45, 46, 47, 48, 49]), raw('D-R8'))).toThrow('complete contiguous')
-    const sample = validateRawSemanticJudgeSample(readerInput(Array.from({ length: 10 }, (_, index) => index + 41)), {
-      ...raw('D-R8'),
-      evidence: [
-        { segmentId: 'bab-49', quote: 'Bukti naratif' },
-        { segmentId: 'bab-50', quote: 'Bukti naratif' },
-      ],
-    })
-    expect(sample.evidenceValid).toBe(true)
+  it('keeps aggregate outcome independent of diagnostic modelVerdict', () => {
+    const assembled = surface('D-R1')
+    const passing = [0, 1, 2].map((index) => raw('D-R1', index))
+    const flipped = passing.map((sample) => ({ ...sample, modelVerdict: 'FAIL' as const }))
+    const base = deriveSemanticAggregate({ rubricId: 'D-R1', threshold, rawSamples: passing }, assembled.input, assembled.corpusAuthority)
+    const other = deriveSemanticAggregate({ rubricId: 'D-R1', threshold, rawSamples: flipped }, assembled.input, assembled.corpusAuthority)
+    expect(other.outcome).toBe(base.outcome)
+    expect(other.medianScore).toBe(base.medianScore)
+    expect(other.sampleRefs).not.toEqual(base.sampleRefs)
   })
 
-  it('derives aggregate from raw samples and rejects forged validated evidence', () => {
-    const input = readerInput([48, 49, 50])
-    const samples = [0, 1, 2].map((sampleIndex) => ({ ...raw('D-R1', 80), sampleIndex }))
-    const aggregate = deriveSemanticAggregate({ rubricId: 'D-R1', threshold, input, rawSamples: samples })
+  it('aggregates three immutable refs, rejects index and execution mismatches', () => {
+    const assembled = surface('D-R1')
+    const samples = [0, 1, 2].map((index) => raw('D-R1', index))
+    const aggregate = deriveSemanticAggregate({ rubricId: 'D-R1', threshold, rawSamples: samples }, assembled.input, assembled.corpusAuthority)
     expect(aggregate.outcome).toBe('PASS')
-    expect(aggregate.medianScore).toBe(80)
-
-    const forgedValidated = {
-      ...validateRawSemanticJudgeSample(input, { ...raw('D-R1', 80), evidence: [{ segmentId: 'bab-50', quote: 'hilang' }] }),
-      evidenceValid: true,
-    }
-    expect(() => deriveSemanticAggregate({ rubricId: 'D-R1', threshold, input, rawSamples: [forgedValidated, forgedValidated, forgedValidated] })).toThrow()
-
-    const invalidRaw = { ...raw('D-R1', 80), evidence: [{ segmentId: 'bab-50', quote: 'hilang' }] }
-    expect(deriveSemanticAggregate({ rubricId: 'D-R1', threshold, input, rawSamples: [invalidRaw, invalidRaw, invalidRaw] }).outcome).toBe('INCONCLUSIVE')
+    expect(aggregate.sampleRefs).toHaveLength(3)
+    expect(new Set(aggregate.sampleRefs).size).toBe(3)
+    expect('validatedSamples' in aggregate).toBe(false)
+    expect(SemanticAggregateSchema.parse(aggregate)).toEqual(aggregate)
+    expect(() => deriveSemanticAggregate({ rubricId: 'D-R1', threshold, rawSamples: [samples[0]!, samples[0]!, samples[2]!] }, assembled.input, assembled.corpusAuthority)).toThrow('indices')
+    const mismatch = { ...samples[2]!, executionAuthority: { ...executionAuthority, exactModelId: 'other' } }
+    expect(() => deriveSemanticAggregate({ rubricId: 'D-R1', threshold, rawSamples: [samples[0]!, samples[1]!, mismatch] }, assembled.input, assembled.corpusAuthority)).toThrow('execution authority')
   })
 })

@@ -23,6 +23,7 @@ import {
   type D1RubricId,
   type D1UniverseId,
 } from '../../fixtures/long-horizon/semantic-calibration/corpus'
+import { D1_AUTHORED_BANKS } from '../../fixtures/long-horizon/semantic-calibration/contexts'
 
 const BANK_DIR = 'fixtures/long-horizon/semantic-calibration/banks'
 
@@ -81,19 +82,22 @@ function listBankFiles(): string[] {
 
 const bankFiles = listBankFiles()
 
-const loaded = await Promise.all(bankFiles.map(async (file) => {
-  const module = (await import(`../../${file.replace(/\\/g, '/')}`)) as Record<string, unknown>
-  const bank = Object.values(module).find(
-    (value): value is D1AuthoredBank =>
-      typeof value === 'object' && value !== null && 'rubricId' in value && 'universeId' in value,
-  )
-  if (!bank) throw new Error(`${file}: no authored bank export found.`)
-  return { file, bank }
-}))
+/**
+ * Banks are bound from the frozen registry, not dynamically imported, so this
+ * gate inspects exactly the prose the corpus actually assembles. Disk
+ * enumeration is kept as the stricter guard: a bank file present on disk but
+ * absent from the registry fails instead of silently escaping inspection.
+ */
+const registered: { file: string, bank: D1AuthoredBank }[] = Object.values(D1_AUTHORED_BANKS)
+  .flatMap((byRubric) => Object.values(byRubric))
+  .map((bank) => ({ file: join(BANK_DIR, `${bank.universeId}-${bank.rubricId.toLowerCase()}.ts`), bank }))
+  .sort((left, right) => left.file.localeCompare(right.file))
+
+const loaded = registered
 
 describe('M10-D1 authored bank quality gate', () => {
   it('inspects every bank file present on disk', () => {
-    expect(loaded.length).toBe(bankFiles.length)
+    expect(loaded.map((entry) => basename(entry.file))).toEqual(bankFiles.map((file) => basename(file)))
   })
 
   for (const { file, bank } of loaded) {

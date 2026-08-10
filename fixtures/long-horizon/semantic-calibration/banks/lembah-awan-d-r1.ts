@@ -89,28 +89,28 @@ export const LEMBAH_AWAN_D_R1: D1AuthoredBank = {
       chapters: [
         {
           chapterNumber: 18,
-          title: 'Pintu Air Tersumbat Akar',
+          title: 'Daun Teh Berbau Kapur',
           paragraphs: [
-            'Akar beringin tua menyusup lewat celah batu dan mengunci daun pintu air pada terasering ketiga. Vina mencoba mengungkitnya dengan arit, tetapi mata besi itu hanya menggores lumut tanpa menggeser apa pun. Ia mengukur lebar celah dengan ranting, menandai batasnya memakai tali rafia, lalu menghitung berapa petak di bawah yang tidak akan menerima air pagi ini. Catatan kecil itu ia tulis di punggung kartu jatah miliknya sendiri.',
+            'Daun teh yang dibawa Danu pulang meninggalkan serbuk putih pada tikar dan berbau kapur setelah terkena embun. Vina membungkus tiga helai secara terpisah, lalu menandai petak asalnya berdasarkan ikatan keranjang Danu. Ia belum tahu bahan apa yang menempel, tetapi urutan petak memberinya arah untuk memeriksa apakah serbuk muncul sebelum atau sesudah daun melewati rumah timbang.',
           ],
         },
         {
           chapterNumber: 19,
-          title: 'Cetakan Lilin Kunci Gerbang',
+          title: 'Embun Melunturkan Serbuk',
           paragraphs: [
-            'Kunci gerbang saluran hanya ada satu, tergantung di ikat pinggang Mandor Bagas sepanjang hari kerja. Mbah Ripto masih menyimpan lilin bekas selamatan dan mengajari Vina menekan gigi kunci cadangan tua ke permukaannya sampai bentuknya tercetak jelas. Cetakan itu dibawa ke tukang besi di simpang bawah, yang menempanya selama dua jam sambil menolak dibayar di muka. Petang hari kunci baru itu masuk dan berputar penuh.',
+            'Vina mengusap satu helai dengan embun kebun dan satu lagi dengan air sumur. Hanya embun membuat serbuk berubah jingga. Bu Ningsih mengenali perubahan itu dari bahan penanda pagar yang dipakai kantor kebun. Mereka mendatangi petak asal dan menemukan bekas roda kecil menuju gudang timbang, sehingga penyelidikan bergeser dari daun ke perjalanan keranjang setelah panen.',
           ],
         },
         {
           chapterNumber: 20,
-          title: 'Giliran Terasering Atas',
+          title: 'Roda Troli Menuju Gudang',
           paragraphs: [
-            'Pukul empat pagi Vina membuka gerbang saluran sendiri, menahan daun besinya dengan batu pipih agar tidak menutup. Air mengalir melewati akar yang telah dipotong semalam, turun ke terasering atas untuk pertama kalinya sejak dua musim. Ia berdiri di pematang menghitung waktu memakai jam pasir milik Mbah Ripto, lalu menutup gerbang tepat setelah giliran tetangganya dimulai. Tidak ada satu petak pun di bawah yang kehilangan jatahnya.',
+            'Sebelum penimbangan pagi, Vina mengikuti bekas roda kecil bersama Danu dan dua pemetik. Troli berhenti di balik gudang, tempat seorang kru menyemprot keranjang dengan cairan penanda agar beratnya bertambah. Danu menahan keranjang pertama sebelum masuk timbangan, sementara para pemetik memanggil Bu Ningsih. Tiga helai daun kini telah membuka tindakan bersama pada titik kecurangan berlangsung.',
           ],
         },
       ],
       justification:
-        'Bab 18 leaves the gate jammed and Vina without tools, Bab 19 obtains a working duplicate key through the wax mould, and Bab 20 has her open the upper terrace on schedule without taking anyone else\u2019s turn.',
+        'Bab 18 isolates a residue by field origin, Bab 19 identifies its reaction and redirects the search to post-harvest transport, and Bab 20 reaches the active weighing fraud with witnesses.',
     },
     {
       chapters: [

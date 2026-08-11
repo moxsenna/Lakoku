@@ -69,7 +69,7 @@ D1-R2 must author and freeze these surfaces without waiting for this amendment:
 | D-R4 | reader | local N-2/N-1/N, contiguous act-local, contiguous runway Bab 41–50 |
 | D-R5 | reader | chapter within contiguous act context |
 | D-R7 | reader | contiguous Bab 45–50 |
-| D-R8 | reader and structural cases | contiguous Bab 41–50, identical titled reader surface |
+| D-R8 | reader and structural cases | contiguous Bab 41–50; reader-view topology per §7.4 |
 
 D-R6 remains structural and retains explicit setup/payoff chapters while its replacement
 novel-wide horizon is under review.
@@ -102,9 +102,9 @@ Proposed rubric application:
 | D-R4 | local case, contiguous act-local case, contiguous runway case, plus pre-registered cross-act repetition anchors |
 | D-R6 | explicit setup, bridge, and payoff chapters sufficient to expose the complete authored debt path |
 
-Exact anchor chapter numbers remain **UNFROZEN** in this proposal. They must be authored,
-manually reviewed, and registered before manifest refreeze. Sparse anchors may support
-`BOUNDED_NOVEL`; they must never be relabeled `NOVEL`.
+Exact anchor chapter numbers were **unfrozen at proposal time**; the ratified values are
+now fixed by §7.1. They must still be authored and manually reviewed before manifest
+refreeze. Sparse anchors may support `BOUNDED_NOVEL`; they must never be relabeled `NOVEL`.
 
 ## 5. Authority and gate effect
 

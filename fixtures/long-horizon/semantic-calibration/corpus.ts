@@ -131,7 +131,7 @@ export interface D1RubricRow {
  * non-RATIFIED row, so a wave in progress can never reach a judge surface.
  */
 export const D1_RUBRIC_REVIEW_STATE = {
-  'D-R1': 'PENDING_REVIEW',
+  'D-R1': 'RATIFIED',
   'D-R2': 'RATIFIED',
   'D-R3': 'RATIFIED',
   'D-R4': 'RATIFIED',

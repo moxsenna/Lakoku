@@ -128,7 +128,7 @@ describe('M10-D1 semantic calibration corpus', () => {
 
   it('separates reader and structural views and leaks no review metadata', () => {
     const reader = assembledFor('D-R4', '-local').assembled.input
-    const structural = assembledFor('D-R4', '-act').assembled.input
+    const structural = assembledFor('D-R4', '-bounded-novel').assembled.input
     expect(reader.view).toBe('reader')
     expect(structural.view).toBe('structural')
     expect('storyPromise' in reader).toBe(false)

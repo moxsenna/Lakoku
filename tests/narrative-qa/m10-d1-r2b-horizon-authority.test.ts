@@ -15,6 +15,9 @@ import {
 import { assembleJudgeInput } from '../../lib/narrative-qa/judges/semantic-judge-assembly'
 import { validateRubricCoverage } from '../../lib/narrative-qa/judges/semantic-judge-policy'
 import {
+  D1_EXPECTED_EVALUATION_CASE_COUNT,
+  D1_EXPECTED_ROW_COUNT,
+  D1_RUBRIC_CASE_SPECS,
   D1_RUBRIC_CHAPTERS,
   D1_RUBRIC_REVIEW_STATE,
   D1_TIER_COUNTS,
@@ -252,7 +255,7 @@ describe('M10-D1-R2B mechanical expansion inventory', () => {
 
   it('derives the ratified per-rubric missing-segment counts mechanically', () => {
     const expected: Readonly<Record<SemanticRubricId, number>> = {
-      'D-R1': 0, 'D-R2': 182, 'D-R3': 390, 'D-R4': 286,
+      'D-R1': 0, 'D-R2': 0, 'D-R3': 390, 'D-R4': 0,
       'D-R5': 0, 'D-R6': 0, 'D-R7': 0, 'D-R8': 0,
     }
     for (const { rubricId, missing } of perRubric) {
@@ -260,26 +263,78 @@ describe('M10-D1-R2B mechanical expansion inventory', () => {
     }
   })
 
-  it('derives 1,092 existing, 858 missing, and 1,950 post-expansion segments after D-R1/D-R5/D-R6/D-R7 authoring', () => {
+  it('derives 1,560 existing, 390 missing, and 1,950 post-expansion segments after the D-R2/D-R4 waves', () => {
     const existingSlots = perRubric.reduce((total, entry) => total + entry.existing.length, 0)
     const missingSlots = perRubric.reduce((total, entry) => total + entry.missing.length, 0)
     const targetSlots = perRubric.reduce((total, entry) => total + entry.target.length, 0)
 
-    expect(existingSlots).toBe(42)
-    expect(missingSlots).toBe(33)
+    expect(existingSlots).toBe(60)
+    expect(missingSlots).toBe(15)
     expect(targetSlots).toBe(D1_R2B_TARGET_CHAPTER_SLOTS)
     // Sum identity holds only because existing is a proven subset of target.
     expect(existingSlots + missingSlots).toBe(targetSlots)
 
-    expect(existingSlots * fixturesPerRubric).toBe(1_092)
-    expect(missingSlots * fixturesPerRubric).toBe(858)
+    expect(existingSlots * fixturesPerRubric).toBe(1_560)
+    expect(missingSlots * fixturesPerRubric).toBe(390)
     // Way 1: slots x fixtures. Way 2: existing segments + missing segments.
     expect(targetSlots * fixturesPerRubric).toBe(D1_R2B_POST_EXPANSION_SEGMENTS)
-    expect(1_092 + 858).toBe(D1_R2B_POST_EXPANSION_SEGMENTS)
+    expect(1_560 + 390).toBe(D1_R2B_POST_EXPANSION_SEGMENTS)
   })
 
-  it('claims target equality only for completed D-R1/D-R5/D-R6/D-R7/D-R8 waves', () => {
+  it('claims target equality for every wave except the still-open D-R3', () => {
     const complete = perRubric.filter((entry) => entry.missing.length === 0).map((entry) => entry.rubricId)
-    expect(complete).toEqual(['D-R1', 'D-R5', 'D-R6', 'D-R7', 'D-R8'])
+    expect(complete).toEqual(['D-R1', 'D-R2', 'D-R4', 'D-R5', 'D-R6', 'D-R7', 'D-R8'])
+  })
+})
+
+describe('M10-D1 Phase2e/Phase2f ratified case topology', () => {
+  it('holds D-R2 at one bounded-novel reader case over the exact ratified surface', () => {
+    expect(D1_RUBRIC_CASE_SPECS['D-R2']).toEqual([
+      {
+        caseSuffix: 'bounded-novel',
+        view: 'reader',
+        horizonKind: 'BOUNDED_NOVEL',
+        coverage: { mode: 'EXPLICIT', chapterNumbers: [9, 13, 14, 15, 16, 17, 18, 19, 20, 22] },
+      },
+    ])
+  })
+
+  it('holds D-R4 at the ratified local, bounded-novel, and runway three-case topology', () => {
+    expect(D1_RUBRIC_CASE_SPECS['D-R4']).toEqual([
+      {
+        caseSuffix: 'local',
+        view: 'reader',
+        horizonKind: 'LOCAL',
+        coverage: { mode: 'CONTIGUOUS', fromChapter: 14, toChapter: 16 },
+      },
+      {
+        caseSuffix: 'bounded-novel',
+        view: 'structural',
+        horizonKind: 'BOUNDED_NOVEL',
+        coverage: {
+          mode: 'EXPLICIT',
+          chapterNumbers: [6, 14, 15, 16, 32, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50],
+        },
+      },
+      {
+        caseSuffix: 'runway',
+        view: 'structural',
+        horizonKind: 'RUNWAY',
+        coverage: { mode: 'CONTIGUOUS', fromChapter: 41, toChapter: 50 },
+      },
+    ])
+  })
+
+  it('raises the frozen case ceiling from 234 to 260 while the row count stays 208', () => {
+    const derived = Object.values(D1_RUBRIC_CASE_SPECS)
+      .reduce((total, specs) => total + specs.length, 0) * D1_EXPECTED_ROW_COUNT / SEMANTIC_RUBRIC_IDS.length
+    expect(D1_EXPECTED_ROW_COUNT).toBe(208)
+    expect(derived).toBe(260)
+    expect(D1_EXPECTED_EVALUATION_CASE_COUNT).toBe(260)
+  })
+
+  it('keeps both expanded rubrics under reviewer hold until their hashes are approved', () => {
+    expect(D1_RUBRIC_REVIEW_STATE['D-R2']).toBe('PENDING_REVIEW')
+    expect(D1_RUBRIC_REVIEW_STATE['D-R4']).toBe('PENDING_REVIEW')
   })
 })

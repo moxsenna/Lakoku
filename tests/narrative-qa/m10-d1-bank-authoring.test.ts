@@ -177,6 +177,21 @@ describe('M10-D1 authored bank quality gate', () => {
         }
       })
 
+      it('keeps chapter-number metadata out of paragraph prose', () => {
+        for (const tier of D1_TIERS) {
+          bank[tier].forEach((fixture, index) => {
+            for (const chapter of fixture.chapters) {
+              for (const paragraph of chapter.paragraphs) {
+                expect(
+                  paragraph,
+                  `${tier}[${index}] bab ${chapter.chapterNumber} paragraph`,
+                ).not.toMatch(/\bBab\s+\d+\b/i)
+              }
+            }
+          })
+        }
+      })
+
       it('never borrows the other universe cast or place', () => {
         for (const [universeId, names] of Object.entries(UNIVERSE_NAMES)) {
           if (universeId === bank.universeId) continue

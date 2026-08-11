@@ -131,7 +131,7 @@ export interface D1RubricRow {
  * non-RATIFIED row, so a wave in progress can never reach a judge surface.
  */
 export const D1_RUBRIC_REVIEW_STATE = {
-  'D-R1': 'RATIFIED',
+  'D-R1': 'PENDING_REVIEW',
   'D-R2': 'RATIFIED',
   'D-R3': 'RATIFIED',
   'D-R4': 'RATIFIED',
@@ -143,7 +143,7 @@ export const D1_RUBRIC_REVIEW_STATE = {
 
 /** Chapter surface each rubric fixture must author, in exact order. */
 export const D1_RUBRIC_CHAPTERS: Readonly<Record<D1RubricId, readonly number[]>> = {
-  'D-R1': [18, 19, 20],
+  'D-R1': [6, 18, 19, 20, 32, 45],
   'D-R2': [9, 15, 22],
   'D-R3': [41, 43, 46],
   'D-R4': [14, 15, 16, 32],
@@ -166,7 +166,7 @@ export interface D1CaseSpec {
  */
 export const D1_RUBRIC_CASE_SPECS: Readonly<Record<D1RubricId, readonly D1CaseSpec[]>> = {
   'D-R1': [
-    { caseSuffix: 'act', view: 'reader', horizonKind: 'ACT', coverage: { mode: 'CONTIGUOUS', fromChapter: 18, toChapter: 20 } },
+    { caseSuffix: 'bounded-novel', view: 'reader', horizonKind: 'BOUNDED_NOVEL', coverage: { mode: 'EXPLICIT', chapterNumbers: [6, 18, 19, 20, 32, 45] } },
   ],
   'D-R2': [
     { caseSuffix: 'act', view: 'reader', horizonKind: 'ACT', coverage: { mode: 'EXPLICIT', chapterNumbers: [9, 15, 22] } },

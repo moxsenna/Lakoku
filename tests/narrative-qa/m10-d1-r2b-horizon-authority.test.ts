@@ -252,7 +252,7 @@ describe('M10-D1-R2B mechanical expansion inventory', () => {
 
   it('derives the ratified per-rubric missing-segment counts mechanically', () => {
     const expected: Readonly<Record<SemanticRubricId, number>> = {
-      'D-R1': 78, 'D-R2': 182, 'D-R3': 390, 'D-R4': 286,
+      'D-R1': 0, 'D-R2': 182, 'D-R3': 390, 'D-R4': 286,
       'D-R5': 52, 'D-R6': 78, 'D-R7': 78, 'D-R8': 0,
     }
     for (const { rubricId, missing } of perRubric) {
@@ -260,26 +260,26 @@ describe('M10-D1-R2B mechanical expansion inventory', () => {
     }
   })
 
-  it('derives 806 existing, 1,144 missing, and 1,950 post-expansion segments two independent ways', () => {
+  it('derives 884 existing, 1,066 missing, and 1,950 post-expansion segments after D-R1 authoring', () => {
     const existingSlots = perRubric.reduce((total, entry) => total + entry.existing.length, 0)
     const missingSlots = perRubric.reduce((total, entry) => total + entry.missing.length, 0)
     const targetSlots = perRubric.reduce((total, entry) => total + entry.target.length, 0)
 
-    expect(existingSlots).toBe(31)
-    expect(missingSlots).toBe(44)
+    expect(existingSlots).toBe(34)
+    expect(missingSlots).toBe(41)
     expect(targetSlots).toBe(D1_R2B_TARGET_CHAPTER_SLOTS)
     // Sum identity holds only because existing is a proven subset of target.
     expect(existingSlots + missingSlots).toBe(targetSlots)
 
-    expect(existingSlots * fixturesPerRubric).toBe(806)
-    expect(missingSlots * fixturesPerRubric).toBe(1_144)
+    expect(existingSlots * fixturesPerRubric).toBe(884)
+    expect(missingSlots * fixturesPerRubric).toBe(1_066)
     // Way 1: slots x fixtures. Way 2: existing segments + missing segments.
     expect(targetSlots * fixturesPerRubric).toBe(D1_R2B_POST_EXPANSION_SEGMENTS)
-    expect(806 + 1_144).toBe(D1_R2B_POST_EXPANSION_SEGMENTS)
+    expect(884 + 1_066).toBe(D1_R2B_POST_EXPANSION_SEGMENTS)
   })
 
-  it('does not yet claim per-rubric target equality; only D-R8 is complete', () => {
+  it('claims target equality only for completed D-R1 and D-R8 waves', () => {
     const complete = perRubric.filter((entry) => entry.missing.length === 0).map((entry) => entry.rubricId)
-    expect(complete).toEqual(['D-R8'])
+    expect(complete).toEqual(['D-R1', 'D-R8'])
   })
 })

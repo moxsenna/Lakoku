@@ -17,10 +17,21 @@ export const SemanticUniverseIdSchema = z.enum(['pesisir-utara', 'lembah-awan'])
 export const SemanticTierSchema = z.enum(['strong', 'weak', 'borderline'])
 /** D1 corpus labels are author-review labels, distinct from runtime semantic tiers. */
 export const SemanticCorpusTierSchema = z.enum(['STRONG', 'WEAK', 'BORDERLINE'])
-/** Human-review authority for the frozen D1 corpus. Ratified at corpus commit 5a2ab2c. */
-export const SemanticReviewLabelSchema = z.literal('RATIFIED')
+/**
+ * Human-review authority for one D1 corpus row. Newly authored or modified rows
+ * are PENDING_REVIEW; only the reviewer promotes a row to RATIFIED against exact
+ * content hashes. Representable is not executable: assembly accepts RATIFIED
+ * only and fails closed otherwise.
+ */
+export const SemanticReviewLabelSchema = z.enum(['PENDING_REVIEW', 'RATIFIED'])
+/** The only review state that may reach judge assembly or execution. */
+export const SEMANTIC_EXECUTABLE_REVIEW_STATE = 'RATIFIED' as const
 export const SemanticJudgeViewSchema = z.enum(['reader', 'structural'])
-export const SemanticHorizonKindSchema = z.enum(['LOCAL', 'ACT', 'NOVEL', 'RUNWAY'])
+/**
+ * BOUNDED_NOVEL is a pre-registered sparse novel-scale surface. It never claims
+ * Bab 1-50 completeness and may never be serialized as NOVEL.
+ */
+export const SemanticHorizonKindSchema = z.enum(['LOCAL', 'ACT', 'NOVEL', 'BOUNDED_NOVEL', 'RUNWAY'])
 export const SemanticEvidenceModeSchema = z.enum(['SPAN', 'FULL_HORIZON_ABSENCE'])
 /**
  * Diagnostic telemetry only. Policy never derives evidence validity, evidence
@@ -62,6 +73,46 @@ export const ExplicitCoverageSchema = z
   })
 
 export const SemanticCoverageSchema = z.union([ContiguousCoverageSchema, ExplicitCoverageSchema])
+
+/**
+ * D1-R2B authoring target registry, ratified in
+ * `docs/qa/m10/M10_D_D0_HORIZON_AMENDMENT_PROPOSAL.md` §7.1. This is the exact
+ * chapter set each fixture of a rubric must author once its wave completes.
+ *
+ * The registry is versioned and lives at the contract seam on purpose. Deriving
+ * it from the corpus would let an author silently widen the allowed horizon by
+ * adding chapters.
+ */
+export const D1_R2B_TARGET_CHAPTERS_V1 = Object.freeze({
+  'D-R1': Object.freeze([6, 18, 19, 20, 32, 45]),
+  'D-R2': Object.freeze([9, 13, 14, 15, 16, 17, 18, 19, 20, 22]),
+  'D-R3': Object.freeze([33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50]),
+  'D-R4': Object.freeze([6, 14, 15, 16, 32, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50]),
+  'D-R5': Object.freeze([23, 24, 25, 26]),
+  'D-R6': Object.freeze([6, 21, 34, 44, 46, 48]),
+  'D-R7': Object.freeze([45, 46, 47, 48, 49, 50]),
+  'D-R8': Object.freeze([41, 42, 43, 44, 45, 46, 47, 48, 49, 50]),
+}) as Readonly<Record<(typeof SEMANTIC_RUBRIC_IDS)[number], readonly number[]>>
+
+/**
+ * Evaluator authority for BOUNDED_NOVEL, ratified in §7.2. Only these four
+ * rubrics may declare a BOUNDED_NOVEL horizon, and each entry must equal the
+ * corresponding authoring target. A BOUNDED_NOVEL declared for any rubric absent
+ * from this registry is a hard policy failure, never a silently widened horizon.
+ */
+export const BOUNDED_NOVEL_CHAPTERS_V1 = Object.freeze({
+  'D-R1': D1_R2B_TARGET_CHAPTERS_V1['D-R1'],
+  'D-R2': D1_R2B_TARGET_CHAPTERS_V1['D-R2'],
+  'D-R4': D1_R2B_TARGET_CHAPTERS_V1['D-R4'],
+  'D-R6': D1_R2B_TARGET_CHAPTERS_V1['D-R6'],
+}) as Readonly<Partial<Record<(typeof SEMANTIC_RUBRIC_IDS)[number], readonly number[]>>>
+
+/** Total chapter slots the ratified registry declares across all 8 rubrics. */
+export const D1_R2B_TARGET_CHAPTER_SLOTS = 75
+/** Fixtures per rubric across both universes: 13 per universe. */
+export const D1_R2B_FIXTURES_PER_RUBRIC = 26
+/** Ratified post-expansion segment total: 75 slots x 26 fixtures. */
+export const D1_R2B_POST_EXPANSION_SEGMENTS = 1_950
 
 export const SemanticHorizonSchema = z
   .object({
@@ -350,6 +401,7 @@ export const SemanticAggregateRequestSchema = z
 export type SemanticRubricId = z.infer<typeof SemanticRubricIdSchema>
 export type SemanticUniverseId = z.infer<typeof SemanticUniverseIdSchema>
 export type SemanticJudgeView = z.infer<typeof SemanticJudgeViewSchema>
+export type SemanticReviewLabel = z.infer<typeof SemanticReviewLabelSchema>
 export type SemanticHorizonKind = z.infer<typeof SemanticHorizonKindSchema>
 export type SemanticCoverage = z.infer<typeof SemanticCoverageSchema>
 export type SemanticCorpusFixture = z.infer<typeof SemanticCorpusFixtureSchema>

@@ -1,4 +1,5 @@
 import {
+  SEMANTIC_EXECUTABLE_REVIEW_STATE,
   type SemanticCorpusAuthority,
   SemanticCorpusAuthoritySchema,
   SemanticCorpusRubricRowSchema,
@@ -23,6 +24,10 @@ export interface AssembledJudgeInput {
  * Builds the judge input purely from a frozen corpus row and its frozen
  * evaluation case. Prose never enters through the caller, so a caller cannot
  * substitute content while keeping a valid fixture hash.
+ *
+ * Review state is a hard gate, not a label. A row the reviewer has not promoted
+ * to RATIFIED is representable in the corpus but never assemblable, so newly
+ * authored prose can exist under review without becoming executable authority.
  */
 export function assembleJudgeInput(
   row: unknown,
@@ -31,6 +36,11 @@ export function assembleJudgeInput(
   const parsedRow = SemanticCorpusRubricRowSchema.parse(row)
   const parsedCase = SemanticEvaluationCaseSchema.parse(evaluationCase)
 
+  if (parsedRow.reviewState !== SEMANTIC_EXECUTABLE_REVIEW_STATE) {
+    throw new SemanticJudgePolicyError(
+      `corpus row ${parsedRow.rowId} is ${parsedRow.reviewState}; only ${SEMANTIC_EXECUTABLE_REVIEW_STATE} rows may be assembled`,
+    )
+  }
   if (parsedCase.rowId !== parsedRow.rowId) {
     throw new SemanticJudgePolicyError('evaluation case does not belong to this corpus row')
   }

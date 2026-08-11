@@ -1,4 +1,5 @@
 import {
+  BOUNDED_NOVEL_CHAPTERS_V1,
   type RawSemanticJudgeSample,
   RawSemanticJudgeSampleSchema,
   SEMANTIC_FINDING_CODES,
@@ -112,6 +113,28 @@ export function validateRubricCoverage(rubricId: SemanticRubricId, horizon: Sema
   const chapters = coverageChapters(horizon.coverage)
   if (horizon.kind === 'NOVEL' && (chapters[0] !== 1 || chapters[chapters.length - 1] !== 50 || chapters.length !== 50)) {
     throw new SemanticJudgePolicyError('novel horizon requires complete Bab 1 through Bab 50 coverage')
+  }
+  if (horizon.kind === 'BOUNDED_NOVEL') {
+    // Registry membership is checked before coverage, so an unregistered rubric
+    // can never reach a coverage comparison and pass by accident.
+    const registered = BOUNDED_NOVEL_CHAPTERS_V1[rubricId]
+    if (!registered) {
+      throw new SemanticJudgePolicyError(`bounded novel horizon is not registered for ${rubricId}`)
+    }
+    if (horizon.coverage.mode !== 'EXPLICIT') {
+      throw new SemanticJudgePolicyError('bounded novel horizon requires explicit pre-registered coverage')
+    }
+    if (
+      chapters.length !== registered.length ||
+      chapters.some((chapter, index) => chapter !== registered[index])
+    ) {
+      throw new SemanticJudgePolicyError(
+        `bounded novel horizon must supply the exact registered ${rubricId} chapters: ${registered.join(', ')}`,
+      )
+    }
+    if (chapters.length === 50) {
+      throw new SemanticJudgePolicyError('bounded novel horizon must never claim complete Bab 1 through Bab 50 coverage')
+    }
   }
   if (horizon.kind === 'RUNWAY') {
     if (horizon.coverage.mode !== 'CONTIGUOUS' || horizon.coverage.fromChapter !== 41 || horizon.coverage.toChapter !== 50) {

@@ -177,6 +177,21 @@ describe('M10-D1 authored bank quality gate', () => {
         }
       })
 
+      it('keeps injected placeholder tokens out of paragraph prose', () => {
+        for (const tier of D1_TIERS) {
+          bank[tier].forEach((fixture, index) => {
+            for (const chapter of fixture.chapters) {
+              for (const paragraph of chapter.paragraphs) {
+                expect(
+                  paragraph,
+                  `${tier}[${index}] bab ${chapter.chapterNumber} paragraph`,
+                ).not.toMatch(/\bcorak[a-z]+\d+\b/i)
+              }
+            }
+          })
+        }
+      })
+
       it('keeps chapter-number metadata out of paragraph prose', () => {
         for (const tier of D1_TIERS) {
           bank[tier].forEach((fixture, index) => {

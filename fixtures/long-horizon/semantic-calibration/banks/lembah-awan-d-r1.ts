@@ -88,7 +88,7 @@ export const LEMBAH_AWAN_D_R1: D1AuthoredBank = {
             'Enam rumah datang membawa bakul kosong ketika matahari baru menyentuh punggung bukit. Vina menakar benih kering itu dengan gelas kaleng, menuliskan nama penerima dan jumlahnya di buku bersampul cokelat, lalu meminta setiap orang membubuhkan cap jempol. Danu mengikat tiap bakul dengan tali rafia berbeda warna supaya tidak tertukar di jalan. Sebelum kabut naik lagi, seluruh benih yang tersisa sudah berada di tangan penanam, bukan di lantai lumbung.',
           ],
         },
-        { chapterNumber: 32, title: "Jadwal Pengeringan Bersama", paragraphs: ["Jeruji pinjaman membuat pengeringan berjalan lagi, lalu Vina menyusun giliran enam rumah berdasarkan kadar basah benih. Danu menempelkan jadwal pada tiang lumbung dan mengantar nampan sesuai warna tali. Pembagian itu mencegah tungku darurat kelebihan muatan. Kini setiap keluarga memiliki waktu pasti, sementara Vina dapat memeriksa hasil sebelum benih dibawa pulang."] },
+        { chapterNumber: 32, title: "Jadwal Pengeringan Bersama", paragraphs: ["Vina menyusun giliran enam rumah berdasarkan kadar basah benih. Danu menempelkan jadwal pada tiang lumbung dan mengantar nampan sesuai warna tali. Setiap rumah menerima jam tertulis pada secarik kertas. Sebelum nampan dibawa pulang, Vina meraba benih dan mencatat hasil pengeringan di samping nama pemiliknya."] },
         { chapterNumber: 45, title: "Tungku Baru Disepakati", paragraphs: ["Dalam pertemuan warga, enam penerima membawa catatan benih kering dan menyetujui menyumbang bata untuk tungku baru. Bu Ningsih menyerahkan jeruji sekolah sebagai ukuran, sedangkan Danu menawarkan tenaga pemasangan. Vina menutup tungku retak dengan lempung bertanda tanggal. Enam nama ditulis pada daftar penyumbang bata, dan Bu Ningsih menyimpan jeruji di balai sampai tungku baru selesai dipasang."] },
       ],
       justification:
@@ -118,8 +118,8 @@ export const LEMBAH_AWAN_D_R1: D1AuthoredBank = {
             'Sebelum penimbangan pagi, Vina mengikuti bekas roda kecil bersama Danu dan dua pemetik. Troli berhenti di balik gudang, tempat seorang kru menyemprot keranjang dengan cairan penanda agar beratnya bertambah. Danu menahan keranjang pertama sebelum masuk timbangan, sementara para pemetik memanggil Bu Ningsih. Tiga helai daun kini telah membuka tindakan bersama pada titik kecurangan berlangsung.',
           ],
         },
-        { chapterNumber: 32, title: "Jalur Troli Dijaga", paragraphs: ["Sesudah sumber serbuk mengarah ke gudang timbang, Vina mengatur dua pemetik berjaga pada tikungan troli selama tiga pagi. Mereka menandai jam lewat, jumlah keranjang, dan pekerja yang mendorongnya. Satu troli selalu berhenti di bangunan belakang. Daftar pengamatan itu membuat mereka dapat memilih waktu pemeriksaan tanpa mengganggu seluruh panen."] },
-        { chapterNumber: 45, title: "Upah Pemetik Dikoreksi", paragraphs: ["Catatan troli dan kesaksian pemetik dibawa ke meja timbang menjelang sidang. Bu Ningsih menghitung ulang berat sebelum cairan penanda disemprotkan, lalu pekerja meminta upah mereka dikoreksi. Vina menyerahkan kain bernoda sebagai pembanding. Mandor tak dapat lagi menyebut tambahan berat sebagai kelembapan, sehingga daftar pembayaran hari itu ditulis ulang di depan semua orang."] },
+        { chapterNumber: 32, title: "Jalur Troli Dijaga", paragraphs: ["Sesudah sumber serbuk mengarah ke gudang timbang, Vina mengatur dua pemetik berjaga pada tikungan troli selama tiga pagi. Mereka menandai jam lewat, jumlah keranjang, dan pekerja yang mendorongnya. Satu troli selalu berhenti di bangunan belakang. Vina melingkari jam ketika troli berhenti di bangunan belakang dan menulis waktu pemeriksaan di bawahnya."] },
+        { chapterNumber: 45, title: "Upah Pemetik Dikoreksi", paragraphs: ["Catatan troli dan kesaksian pemetik dibawa ke meja timbang menjelang sidang. Bu Ningsih menghitung ulang berat sebelum cairan penanda disemprotkan, lalu pekerja meminta upah mereka dikoreksi. Vina menyerahkan kain bernoda sebagai pembanding. Bu Ningsih menunjukkan hitungan berat sebelum penyemprotan; petugas lalu menulis ulang daftar pembayaran hari itu di depan semua orang."] },
       ],
       justification:
         'Bab 18 isolates a residue by field origin, Bab 19 identifies its reaction and redirects the search to post-harvest transport, and Bab 20 reaches the active weighing fraud with witnesses.',
@@ -149,7 +149,7 @@ export const LEMBAH_AWAN_D_R1: D1AuthoredBank = {
           ],
         },
         { chapterNumber: 32, title: "Empat Alamat Diperiksa", paragraphs: ["Daftar enam pemegang kartu membawa Vina melintasi jurang untuk memeriksa empat alamat yang tidak memiliki petak aktif. Dua rumah kosong, satu berubah menjadi kandang, dan satu dihuni perempuan tua. Ia mencatat keadaan tiap lokasi serta meminta kepala dusun membubuhkan paraf. Vina mencoret dua rumah kosong dan kandang dari daftarnya, lalu melingkari alamat perempuan tua."] },
-        { chapterNumber: 45, title: "Pemilik Kartu Menolak Jatah", paragraphs: ["Perempuan dari rumah keenam hadir menjelang sidang sambil membawa kartunya sendiri. Di depan warga ia menolak jatah yang dicatat atas namanya dan meminta air dikembalikan kepada para pemetik. Vina menyerahkan daftar alamat berparaf untuk menunjukkan pola serupa. Penolakan itu membuka koreksi resmi dan memaksa petugas menjelaskan siapa yang memakai empat kartu fiktif lainnya."] },
+        { chapterNumber: 45, title: "Pemilik Kartu Menolak Jatah", paragraphs: ["Perempuan dari rumah keenam hadir menjelang sidang sambil membawa kartunya sendiri. Di depan warga ia menolak jatah yang dicatat atas namanya dan meminta air dikembalikan kepada para pemetik. Vina menyerahkan daftar alamat berparaf untuk menunjukkan pola serupa. Petugas mencoret nama perempuan itu dari daftar penerima dan menulis formulir pemeriksaan untuk empat kartu lain."] },
       ],
       justification:
         'Bab 18 recovers a contract clause Vina did not know, Bab 19 turns it into six named card holders with plot locations, and Bab 20 converts one of those names into a cooperating witness holding her own card.',
@@ -181,14 +181,14 @@ export const LEMBAH_AWAN_D_R1: D1AuthoredBank = {
           ],
         },
         { chapterNumber: 32, title: "Pematang Dilewati Lagi", paragraphs: ["Beberapa bulan kemudian, Vina masih menyusuri petak sambil mengeluhkan air yang tipis, namun tidak membawa kartu atau mengukur lamanya aliran. Ia berhenti di bambu pembagi, memandang kanal, kemudian pulang sebelum penjaga datang. Kabut berganti hujan sore. Di rumah, kartu tetap terselip di dekat ketel tanpa satu goresan waktu pada permukaannya."] },
-        { chapterNumber: 45, title: "Rapat Berakhir Tanpa Nama", paragraphs: ["Ketika warga membahas jatah menjelang sidang, Vina mengatakan air keluarganya sering kurang tetapi tidak dapat menyebut tanggal atau durasi. Petugas meminta kartu pembanding, yang masih tersimpan lembap di dapur. Pembicaraan berpindah ke petak lain. Ia pulang dengan keluhan lama, tanpa permintaan tercatat dan tanpa orang yang ditugaskan memeriksa salurannya."] },
+        { chapterNumber: 45, title: "Rapat Berakhir Tanpa Nama", paragraphs: ["Ketika warga membahas jatah menjelang sidang, Vina mengatakan air keluarganya sering kurang tanpa menyebut tanggal atau durasi. Petugas meminta kartu pembanding, yang masih tersimpan lembap di dapur. Pembicaraan berpindah ke petak lain. Vina pulang; kartu pembanding tetap lembap di dapur, dan buku petugas tidak memuat permintaan atas petaknya."] },
       ],
       justification:
         'Across all three chapters Vina walks the same path, restates the same unrenewed-card worry, meets nobody, and returns holding nothing she did not already have.',
     },
     {
       chapters: [
-        { chapterNumber: 6, title: "Pasar Pertama Terlewat", paragraphs: ["Karsa dikabarkan singgah di pasar bawah membawa bibit gunung, namun Vina menunda turun karena ingin menyapu lumbung. Saat tiba, lapaknya sudah dibongkar dan tidak ada yang tahu tujuan berikutnya. Ia tidak meninggalkan pesan kepada pedagang sekitar. Jalan pulang berkabut, sementara pertanyaan tentang benih asing tetap hanya tersusun di kepalanya."] },
+        { chapterNumber: 6, title: "Pasar Pertama Terlewat", paragraphs: ["Karsa dikabarkan singgah di pasar bawah membawa bibit gunung, namun Vina menunda turun karena ingin menyapu lumbung. Saat tiba, lapaknya sudah dibongkar dan tidak ada yang tahu tujuan berikutnya. Ia tidak meninggalkan pesan kepada pedagang sekitar. Di jalan pulang yang berkabut, Vina tidak menulis pertanyaan tentang benih asing pada kertas mana pun."] },
         {
           chapterNumber: 18,
           title: 'Menunggu Pedagang Bibit',
@@ -210,15 +210,15 @@ export const LEMBAH_AWAN_D_R1: D1AuthoredBank = {
             'Untuk ketiga kalinya bangku di ujung simpang tetap kosong dan tikar lapak digulung rapi di sudut. Vina menunggu sambil memilin ujung selendangnya, mengulang dalam hati alasan mengapa ia perlu bicara dengan pedagang itu. Angin membawa bau kayu bakar dari dapur warung, lalu reda. Ia bangkit sebelum petang, menempuh jalan menanjak yang sama, dan tidak membawa nama, tanggal, atau janji apa pun ke rumahnya.',
           ],
         },
-        { chapterNumber: 32, title: "Tenda Hujan Kosong", paragraphs: ["Berbulan kemudian Vina kembali menunggu di simpang, tetapi tidak menanyakan jadwal Karsa kepada pemilik warung. Hujan membuat tikar pasar digulung lebih awal. Ia berteduh sampai petang lalu pulang tanpa nama penghubung atau tanggal kedatangan. Saat bangkit dari bangku, kedua tangannya hanya memegang ujung selendang yang basah."] },
-        { chapterNumber: 45, title: "Pikulan Lewat Jalan Lain", paragraphs: ["Menjelang pasar ditutup, seseorang mengatakan Karsa baru saja melewati jalur seberang membawa pikulan bibit. Vina mengejar sampai jembatan, tetapi pedagang itu sudah hilang di tikungan. Karena tak pernah mengatur pertemuan, ia tidak tahu kapan Karsa kembali. Vina kembali ke lumbung; karung bercoret kapur masih tertutup dan kantong sampelnya tetap kosong."] },
+        { chapterNumber: 32, title: "Tenda Hujan Kosong", paragraphs: ["Berbulan kemudian Vina kembali menunggu di simpang, tetapi tidak menanyakan jadwal Karsa kepada pemilik warung. Hujan membuat tikar pasar digulung lebih awal. Ia berteduh sampai petang lalu pulang; tidak ada nama penghubung atau tanggal kedatangan di bukunya. Saat bangkit dari bangku, kedua tangannya hanya memegang ujung selendang yang basah."] },
+        { chapterNumber: 45, title: "Pikulan Lewat Jalan Lain", paragraphs: ["Menjelang pasar ditutup, seseorang mengatakan Karsa baru saja melewati jalur seberang membawa pikulan bibit. Vina mengejar sampai jembatan, tetapi pedagang itu sudah hilang di tikungan. Ia tidak bertanya kepada pemilik warung kapan Karsa kembali, lalu turun dari jembatan dengan buku tetap tertutup. Vina kembali ke lumbung; karung bercoret kapur masih tertutup dan kantong sampelnya tetap kosong."] },
       ],
       justification:
         'Three consecutive chapters end with the trader absent, no meeting arranged, no information gathered, and the same unspoken question still held.',
     },
     {
       chapters: [
-        { chapterNumber: 6, title: "Hitungan Tanpa Pensil", paragraphs: ["Vina menghitung karung lumbung bawah menggunakan jari, lalu mengandalkan ingatan karena buku tertinggal di rumah. Jumlahnya terasa kurang satu, tetapi ia tidak membuka tumpukan belakang untuk memastikan. Setelah pintu dipalang, angka tersebut bercampur dengan daftar pekerjaan lain. Tidak ada tanda pada rak atau kertas yang dapat membantunya memulai pemeriksaan esok hari."] },
+        { chapterNumber: 6, title: "Hitungan Tanpa Pensil", paragraphs: ["Vina menghitung karung lumbung bawah menggunakan jari, lalu mengandalkan ingatan karena buku tertinggal di rumah. Jumlahnya terasa kurang satu, tetapi ia tidak membuka tumpukan belakang untuk memastikan. Setelah pintu dipalang, angka tersebut bercampur dengan daftar pekerjaan lain. Rak itu tidak diberi tanda, dan kertas hitungan tetap tertinggal di rumah."] },
         {
           chapterNumber: 18,
           title: 'Rak Lumbung Sore Itu',
@@ -241,14 +241,14 @@ export const LEMBAH_AWAN_D_R1: D1AuthoredBank = {
           ],
         },
         { chapterNumber: 32, title: "Rak Kembali Dihitung", paragraphs: ["Beberapa bulan kemudian, ia mengulangi hitungan pada rak yang sama dan memperoleh angka serupa. Vina masih tidak menulisnya, juga tidak meminta Danu menjadi saksi. Debu dibersihkan, karung dirapikan, kemudian lampu dipadamkan. Sesudah lampu padam, buku cokelat masih terbuka pada halaman kosong dan karung belakang tetap terikat."] },
-        { chapterNumber: 45, title: "Karung Lama Dipindahkan", paragraphs: ["Saat petugas memeriksa lumbung, karung yang dahulu dicurigai sudah dipindahkan ke lumbung atas. Vina tidak memiliki nomor, tanda, maupun catatan jumlah untuk mengenalinya. Ia menghitung rak kosong sekali lagi dan memperoleh hasil yang tak dapat dibandingkan. Petugas menutup pintu setelah Vina menunjuk tiga karung berbeda yang semuanya tanpa tanda."] },
+        { chapterNumber: 45, title: "Karung Lama Dipindahkan", paragraphs: ["Saat petugas memeriksa lumbung, karung yang dahulu dicurigai sudah dipindahkan ke lumbung atas. Karung yang dipindahkan tidak memiliki nomor atau tanda pada jahitannya. Vina menghitung rak kosong sekali lagi, tetapi tidak menuliskan angkanya. Petugas menutup pintu setelah Vina menunjuk tiga karung berbeda yang semuanya tanpa tanda."] },
       ],
       justification:
         'The count is identical in all three chapters, nothing is opened, nothing is written down, and no other person is involved, so her position is unchanged at the end.',
     },
     {
       chapters: [
-        { chapterNumber: 6, title: "Pertanyaan Kakak Ditunda", paragraphs: ["Danu bertanya apakah Vina akan melapor tentang jam air yang berkurang. Ia menjawab belum, lalu menyibukkan diri membilas cangkir agar pembicaraan selesai. Kakaknya tidak memaksa dan berangkat sebelum fajar. Tidak ada hari pertemuan yang dipilih, tidak pula nama orang yang akan ditemui. Masalah tersebut tinggal di antara mereka tanpa keputusan."] },
+        { chapterNumber: 6, title: "Pertanyaan Kakak Ditunda", paragraphs: ["Danu bertanya apakah Vina akan melapor tentang jam air yang berkurang. Ia menjawab belum, lalu menyibukkan diri membilas cangkir agar pembicaraan selesai. Kakaknya tidak memaksa dan berangkat sebelum fajar. Vina tidak menyebut hari pertemuan atau nama orang yang hendak ditemui. Keduanya membilas cangkir, membereskan meja, lalu Danu berangkat sebelum fajar."] },
         {
           chapterNumber: 18,
           title: 'Pertanyaan Danu di Dapur',
@@ -270,7 +270,7 @@ export const LEMBAH_AWAN_D_R1: D1AuthoredBank = {
             'Malam ketiga, kakaknya tidak lagi bertanya dan hanya makan sambil memandangi lampu yang berkedip. Vina hampir memulai sendiri, membuka mulut, lalu menutupnya kembali ketika terdengar suara anjing di halaman. Ia menyendok nasi yang sudah dingin dan meninggalkan piringnya setengah. Keduanya tidur lebih awal, dan urusan kantor saluran tetap berada di tempat yang sama seperti sebelum pertanyaan pertama diucapkan.',
           ],
         },
-        { chapterNumber: 32, title: "Makan Malam Tetap Sunyi", paragraphs: ["Beberapa bulan kemudian, topik yang sama muncul ketika Danu melihat kartu di meja. Vina kembali mengatakan waktunya tidak tepat dan mengalihkan percakapan ke hasil teh. Mereka makan sampai lampu habis minyak. Kakaknya tidur tanpa janji membantu, sedangkan Vina menyimpan kartu kembali. Danu masuk kamar tanpa memberi jawaban; kartu itu Vina selipkan ke bawah mangkuk dan tidak dibawanya ke balai."] },
+        { chapterNumber: 32, title: "Makan Malam Tetap Sunyi", paragraphs: ["Beberapa bulan kemudian, Danu melihat kartu di meja dan kembali menanyakan kantor saluran. Vina mengatakan waktunya tidak tepat, lalu mengalihkan percakapan ke hasil teh. Mereka makan sampai lampu habis minyak. Danu masuk kamar tanpa memberi jawaban; kartu itu Vina selipkan ke bawah mangkuk dan tidak dibawanya ke balai."] },
         { chapterNumber: 45, title: "Danu Berhenti Bertanya", paragraphs: ["Menjelang rapat warga, Danu tidak lagi menyebut jatah air dan menerima kerja tambahan di kebun mandor. Vina hampir memintanya menghadiri rapat, tetapi membatalkan ketika melihat kakaknya kelelahan. Ia pergi sendirian tanpa saksi keluarga. Di balai, kursi di samping Vina tetap kosong sampai rapat dibubarkan."] },
       ],
       justification:
@@ -300,7 +300,7 @@ export const LEMBAH_AWAN_D_R1: D1AuthoredBank = {
             'Cuaca belum berubah dan lantai lumbung masih menyisakan genangan tipis di dekat pintu. Vina menyusun ulang karung supaya tidak menyentuh air, menghitungnya sambil berjalan mundur, lalu berhenti di angka yang sama. Ia menimbang pergi meminta bantuan, tetapi jalan menurun terlalu licin sore itu. Ember di bawah bocoran diganti dengan yang lebih besar, dan segalanya di lumbung tetap seperti malam pertama hujan turun.',
           ],
         },
-        { chapterNumber: 32, title: "Sekam Basah Ditumpuk", paragraphs: ["Beberapa bulan kemudian, sekam masih basah dan Vina hanya memindahkan tumpukannya ke sudut yang sedikit tinggi. Ia mencoba satu sulutan, gagal, kemudian menutup pintu. Danu menawarkan mencari jeruji, tetapi Vina menyuruhnya menunggu cuaca. Tidak ada nampan kering atau rencana perbaikan yang terbentuk dari pekerjaan sore itu."] },
+        { chapterNumber: 32, title: "Sekam Basah Ditumpuk", paragraphs: ["Beberapa bulan kemudian, sekam masih basah dan Vina hanya memindahkan tumpukannya ke sudut yang sedikit tinggi. Ia mencoba satu sulutan, gagal, kemudian menutup pintu. Danu menawarkan mencari jeruji, tetapi Vina menyuruhnya menunggu cuaca. Sore itu tidak ada nampan kering yang keluar dari lumbung; pintunya ditutup kembali setelah ember dikosongkan."] },
         { chapterNumber: 45, title: "Benih Berjamur Dihitung", paragraphs: ["Ketika musim panen berakhir, beberapa nampan sudah berjamur dan Vina menghitung kerugiannya seorang diri. Ember tetap berada di bawah sambungan seng, kini berwarna karat. Ia membuang benih rusak lalu menyusun sisanya seperti biasa. Ia mengubur benih rusak di belakang lumbung, lalu mengembalikan ember karat ke bawah bocoran."] },
       ],
       justification:
@@ -310,7 +310,7 @@ export const LEMBAH_AWAN_D_R1: D1AuthoredBank = {
   BORDERLINE: [
     {
       chapters: [
-        { chapterNumber: 6, title: "Pesan di Pintu Jaga", paragraphs: ["Vina mendatangi rumah jaga saat pintunya terkunci dan menyelipkan daun kering bertuliskan namanya di celah bambu. Ia tidak menulis keperluan atau alamat rumah. Angin hampir menerbangkan pesan itu sebelum diselipkan lebih dalam. Ada upaya kecil meninggalkan jejak, tetapi belum ada waktu bertemu maupun bukti bahwa penjaga akan membacanya."] },
+        { chapterNumber: 6, title: "Pesan di Pintu Jaga", paragraphs: ["Vina mendatangi rumah jaga saat pintunya terkunci dan menyelipkan daun kering bertuliskan namanya di celah bambu. Ia tidak menulis keperluan atau alamat rumah. Angin hampir menerbangkan pesan itu sebelum diselipkan lebih dalam. Daun bertuliskan nama Vina terselip di celah bambu; pintu rumah jaga tetap terkunci sampai ia pulang."] },
         {
           chapterNumber: 18,
           title: 'Menunggu di Rumah Jaga',
@@ -332,15 +332,15 @@ export const LEMBAH_AWAN_D_R1: D1AuthoredBank = {
             'Menjelang petang Mbah Ripto akhirnya lewat di pematang, tergesa, dengan cangkul di bahu. Ia berhenti hanya cukup lama untuk menyebutkan bahwa pintu air pernah diubah jadwalnya pada awal bulan lalu, lalu berjanji akan mencari buku catatannya kapan-kapan. Vina menuliskan tanggal itu di punggung tangannya sebelum lupa. Satu keterangan lisan bertambah, tanpa buku, tanpa saksi lain, dan tanpa waktu bertemu yang ditentukan.',
           ],
         },
-        { chapterNumber: 32, title: "Buku Tua Disebutkan", paragraphs: ["Beberapa bulan kemudian, Mbah Ripto akhirnya menjawab bahwa buku jam lama mungkin tersimpan di lemari, namun kuncinya dibawa menantu ke dusun lain. Vina mencatat nama dusun tanpa menentukan hari perjalanan. Vina melingkari nama dusun itu, lalu menutup buku tanpa menuliskan tanggal keberangkatan."] },
-        { chapterNumber: 45, title: "Satu Halaman Dipinjam", paragraphs: ["Menjelang rapat warga penjaga memberi Vina satu halaman lepas dari buku tua, hanya memuat tiga tanggal. Ia belum memperoleh halaman musim berjalan untuk pembanding. Vina membungkus kertas itu dan berjanji kembali. Tiga tanggal pada halaman itu tidak mencantumkan musim berjalan; Vina membungkusnya kembali dan pulang."] },
+        { chapterNumber: 32, title: "Buku Tua Disebutkan", paragraphs: ["Beberapa bulan kemudian, Mbah Ripto akhirnya menjawab bahwa buku jam lama mungkin tersimpan di lemari, namun kuncinya dibawa menantu ke dusun lain. Vina mencatat nama dusun pada halaman bukunya; kolom tanggal keberangkatan dibiarkan kosong. Vina melingkari nama dusun itu, lalu menutup buku tanpa menuliskan tanggal keberangkatan."] },
+        { chapterNumber: 45, title: "Satu Halaman Dipinjam", paragraphs: ["Menjelang rapat warga penjaga memberi Vina satu halaman lepas dari buku tua, hanya memuat tiga tanggal. Penjaga tidak menyerahkan halaman musim berjalan. Vina membungkus kertas itu dan berjanji kembali. Halaman itu memuat tiga tanggal tanpa tahun musim; Vina membungkusnya kembali dan pulang."] },
       ],
       justification:
         'Bab 18 and Bab 19 end with no access and no reply; only in Bab 20 does she gain a single unverified spoken date with no document and no scheduled follow-up.',
     },
     {
       chapters: [
-        { chapterNumber: 6, title: "Nomor Antrean Disimpan", paragraphs: ["Pada kunjungan awal ke kantor mandor, Vina memperoleh nomor antrean sebelas sebelum loket mendadak tutup. Ia menyimpan kertas kecil tersebut meski petugas mengatakan daftar akan diulang. Nomor itu membuktikan ia pernah datang, tetapi tidak memberi akses pada buku jatah. Ia pulang dengan satu benda administratif yang mungkin berguna bila penolakan terus terjadi."] },
+        { chapterNumber: 6, title: "Nomor Antrean Disimpan", paragraphs: ["Pada kunjungan awal ke kantor mandor, Vina memperoleh nomor antrean sebelas sebelum loket mendadak tutup. Ia menyimpan kertas kecil tersebut meski petugas mengatakan daftar akan diulang. Kertas nomor sebelas tetap di lipatan kain ketika loket ditutup sebelum namanya dipanggil. Vina pulang sambil menggenggam kertas itu; buku jatah tidak dikeluarkan dari lemari."] },
         {
           chapterNumber: 18,
           title: 'Pintu Kantor Mandor',
@@ -362,15 +362,15 @@ export const LEMBAH_AWAN_D_R1: D1AuthoredBank = {
             'Pada pemanggilan terakhir, petugas membuka buku besar dan membalik halaman tepat di hadapan Vina selama beberapa detik. Ia sempat membaca satu baris: nomor petak miliknya tertulis dengan jatah dua jam, bukan empat seperti pada kartunya. Buku ditutup sebelum ia bisa mencatat, dan permintaan menyalin ditolak dengan alasan aturan. Ia pulang membawa satu angka dalam ingatan, tanpa salinan dan tanpa izin melihatnya lagi.',
           ],
         },
-        { chapterNumber: 32, title: "Catatan Loket Ditempel", paragraphs: ["Setelah kembali berkali-kali, Vina menempelkan nomor lama dan baru pada halaman buku cokelat beberapa bulan kemudian. Urutannya menunjukkan ia selalu tersisih sebelum dipanggil. Bu Ningsih menuliskan tanggal kunjungan terakhir sebagai saksi. Bu Ningsih membubuhkan paraf di bawah nomor antrean; kolom jatah pada halaman itu tetap kosong."] },
-        { chapterNumber: 45, title: "Petugas Memberi Salinan Pendek", paragraphs: ["Menjelang loket tutup seorang petugas akhirnya memberi salinan satu baris setelah melihat riwayat antrean Vina. Kertas itu mencantumkan dua jam untuk petaknya, tanpa alasan perubahan atau tanda tangan mandor. Pada salinan itu kolom pengesah kosong; Vina menunjukkannya kepada petugas, yang lalu menutup loket."] },
+        { chapterNumber: 32, title: "Catatan Loket Ditempel", paragraphs: ["Setelah kembali berkali-kali, Vina menempelkan nomor lama dan baru pada halaman buku cokelat beberapa bulan kemudian. Pada setiap tanggal yang ditulis, loket tutup sebelum nama Vina dipanggil. Bu Ningsih menuliskan tanggal kunjungan terakhir sebagai saksi. Bu Ningsih membubuhkan paraf di bawah nomor antrean; kolom jatah pada halaman itu tetap kosong."] },
+        { chapterNumber: 45, title: "Petugas Memberi Salinan Pendek", paragraphs: ["Menjelang loket tutup seorang petugas akhirnya memberi salinan satu baris setelah melihat riwayat antrean Vina. Kertas itu mencantumkan dua jam untuk petaknya; kolom alasan perubahan dan tanda tangan mandor kosong. Pada salinan itu kolom pengesah kosong; Vina menunjukkannya kepada petugas, yang lalu menutup loket."] },
       ],
       justification:
         'Two chapters of a frozen queue precede a glimpse of one contradicting figure that she may not copy, so the movement is real but late, small, and unrecorded.',
     },
     {
       chapters: [
-        { chapterNumber: 6, title: "Ranting Menandai Kanal", paragraphs: ["Ketika air petak ketiga berhenti, Vina menancapkan ranting pada batas terakhir tanah basah. Ia tidak menemukan penyebabnya, tetapi tanda itu memperlihatkan seberapa jauh aliran mundur. Kabut segera menutup lereng dan ia pulang. Ujung basah berhenti tepat di bawah simpul pertama; Vina meninggalkan ranting itu tertancap saat pulang."] },
+        { chapterNumber: 6, title: "Ranting Menandai Kanal", paragraphs: ["Ketika air petak ketiga berhenti, Vina menaruh ranting pada batas terakhir tanah basah. Ia mengukur jaraknya sampai simpul pertama, tetapi tidak mencatat penyebab aliran berhenti di bukunya. Kabut segera menutup lereng. Vina pulang setelah memastikan ranting tersebut tetap tertancap di ujung tanah yang lembap."] },
         {
           chapterNumber: 18,
           title: 'Air Berhenti di Petak Tiga',

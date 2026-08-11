@@ -135,9 +135,9 @@ export const D1_RUBRIC_REVIEW_STATE = {
   'D-R2': 'RATIFIED',
   'D-R3': 'RATIFIED',
   'D-R4': 'RATIFIED',
-  'D-R5': 'RATIFIED',
-  'D-R6': 'RATIFIED',
-  'D-R7': 'RATIFIED',
+  'D-R5': 'PENDING_REVIEW',
+  'D-R6': 'PENDING_REVIEW',
+  'D-R7': 'PENDING_REVIEW',
   'D-R8': 'RATIFIED',
 } satisfies Record<D1RubricId, SemanticReviewLabel>
 
@@ -147,9 +147,9 @@ export const D1_RUBRIC_CHAPTERS: Readonly<Record<D1RubricId, readonly number[]>>
   'D-R2': [9, 15, 22],
   'D-R3': [41, 43, 46],
   'D-R4': [14, 15, 16, 32],
-  'D-R5': [24, 25],
-  'D-R6': [6, 21, 34],
-  'D-R7': [45, 48, 49],
+  'D-R5': [23, 24, 25, 26],
+  'D-R6': [6, 21, 34, 44, 46, 48],
+  'D-R7': [45, 46, 47, 48, 49, 50],
   'D-R8': [41, 42, 43, 44, 45, 46, 47, 48, 49, 50],
 }
 
@@ -179,13 +179,13 @@ export const D1_RUBRIC_CASE_SPECS: Readonly<Record<D1RubricId, readonly D1CaseSp
     { caseSuffix: 'act', view: 'structural', horizonKind: 'ACT', coverage: { mode: 'EXPLICIT', chapterNumbers: [14, 16, 32] } },
   ],
   'D-R5': [
-    { caseSuffix: 'act', view: 'reader', horizonKind: 'ACT', coverage: { mode: 'CONTIGUOUS', fromChapter: 24, toChapter: 25 } },
+    { caseSuffix: 'act', view: 'reader', horizonKind: 'ACT', coverage: { mode: 'CONTIGUOUS', fromChapter: 23, toChapter: 26 } },
   ],
   'D-R6': [
-    { caseSuffix: 'act', view: 'reader', horizonKind: 'ACT', coverage: { mode: 'EXPLICIT', chapterNumbers: [6, 21, 34] } },
+    { caseSuffix: 'bounded-novel', view: 'reader', horizonKind: 'BOUNDED_NOVEL', coverage: { mode: 'EXPLICIT', chapterNumbers: [6, 21, 34, 44, 46, 48] } },
   ],
   'D-R7': [
-    { caseSuffix: 'act', view: 'reader', horizonKind: 'ACT', coverage: { mode: 'EXPLICIT', chapterNumbers: [45, 48, 49] } },
+    { caseSuffix: 'act', view: 'reader', horizonKind: 'ACT', coverage: { mode: 'EXPLICIT', chapterNumbers: [45, 46, 47, 48, 49, 50] } },
   ],
   'D-R8': [
     { caseSuffix: 'runway', view: 'structural', horizonKind: 'RUNWAY', coverage: { mode: 'CONTIGUOUS', fromChapter: 41, toChapter: 50 } },

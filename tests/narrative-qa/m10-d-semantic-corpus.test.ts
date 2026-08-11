@@ -119,9 +119,9 @@ describe('M10-D1 semantic calibration corpus', () => {
   })
 
   it('assembles exact real-corpus D-R6, D-R7, and D-R8 surfaces', () => {
-    expect(assembledFor('D-R6', '-act').assembled.input.segments.map((segment) => segment.chapterNumber)).toEqual([6, 21, 34])
+    expect(assembledFor('D-R6', '-bounded-novel').assembled.input.segments.map((segment) => segment.chapterNumber)).toEqual([6, 21, 34, 44, 46, 48])
     const dR7 = assembledFor('D-R7', '-act')
-    expect(dR7.assembled.input.segments.map((segment) => segment.chapterNumber)).toEqual([45, 48, 49])
+    expect(dR7.assembled.input.segments.map((segment) => segment.chapterNumber)).toEqual([45, 46, 47, 48, 49, 50])
     expect(dR7.assembled.corpusAuthority.chapterHashes['49']).toBe(dR7.row.fixture.chapterHashes['49'])
     expect(assembledFor('D-R8', '-runway').assembled.input.segments.map((segment) => segment.chapterNumber)).toEqual([41, 42, 43, 44, 45, 46, 47, 48, 49, 50])
   })

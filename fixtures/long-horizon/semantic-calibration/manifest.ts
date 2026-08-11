@@ -7,6 +7,7 @@ import {
   D1_RUBRICS,
   D1_RUBRIC_CASE_SPECS,
   D1_RUBRIC_CHAPTERS,
+  D1_RUBRIC_REVIEW_STATE,
   D1_TIERS,
   D1_TIER_COUNTS,
   D1_UNIVERSE_IDS,
@@ -131,7 +132,9 @@ function makeRow(
     universeId,
     tier,
     fixture,
-    reviewState: 'RATIFIED',
+    // Read from the rubric review-state authority. Authoring code never decides
+    // that a row has been reviewed.
+    reviewState: D1_RUBRIC_REVIEW_STATE[rubricId],
     justification: authored.justification,
   }
 }
@@ -372,8 +375,14 @@ export function assertD1CorpusMatrix(rows: readonly D1RubricRow[] = D1_RUBRIC_RO
     }
   }
   if (new Set(rows.map((row) => row.fixture.contentHash)).size !== rows.length) throw new Error('Duplicate canonical fixture content.')
-  if (rows.some((row) => row.reviewState !== 'RATIFIED' || row.justification.length === 0)) {
-    throw new Error('Every D1 row needs RATIFIED review state and written justification.')
+  // Review state must equal the declared rubric authority, so a row can never
+  // claim a state its rubric was not granted. A rubric under an open wave is
+  // legitimately PENDING_REVIEW here; assembly is what refuses to execute it.
+  if (rows.some((row) => row.reviewState !== D1_RUBRIC_REVIEW_STATE[row.rubricId])) {
+    throw new Error('Every D1 row must carry the review state declared for its rubric.')
+  }
+  if (rows.some((row) => row.justification.length === 0)) {
+    throw new Error('Every D1 row needs a written justification.')
   }
   if (new Set(rows.map((row) => row.universeId)).size !== D1_UNIVERSE_IDS.length) {
     throw new Error('Both authored universes must be represented.')

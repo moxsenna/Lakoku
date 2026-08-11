@@ -6,7 +6,12 @@
  * must never be supplied to a future judge input.
  */
 
-import type { SemanticCoverage, SemanticHorizonKind, SemanticJudgeView } from '../../../lib/narrative-qa/contracts/semantic-judge-contract'
+import type {
+  SemanticCoverage,
+  SemanticHorizonKind,
+  SemanticJudgeView,
+  SemanticReviewLabel,
+} from '../../../lib/narrative-qa/contracts/semantic-judge-contract'
 
 export const D1_PARTITIONS = ['CALIBRATION', 'VALIDATION_HOLDOUT'] as const
 export type D1Partition = (typeof D1_PARTITIONS)[number]
@@ -106,11 +111,35 @@ export interface D1RubricRow {
   universeId: D1UniverseId
   tier: D1Tier
   fixture: D1CorpusFixture
-  /** Human-review authority; ratified for the frozen corpus at commit 5a2ab2c. */
-  reviewState: 'RATIFIED'
+  /**
+   * Human-review authority for this row. Never a conclusion the authoring code
+   * reaches on its own; it is read from D1_RUBRIC_REVIEW_STATE, which the
+   * reviewer promotes wave by wave.
+   */
+  reviewState: SemanticReviewLabel
   /** Written independently for this rubric-row; never judge input. */
   justification: string
 }
+
+/**
+ * Per-rubric human-review authority. One D1-R2B wave rewrites all 26 fixtures of
+ * one rubric together, so review state is granular per rubric, not per row.
+ *
+ * A wave sets its rubric to PENDING_REVIEW in the same commit as its prose and
+ * registration change. Only the reviewer, against exact content hashes, promotes
+ * it back to RATIFIED in a status-only follow-up. Assembly rejects every
+ * non-RATIFIED row, so a wave in progress can never reach a judge surface.
+ */
+export const D1_RUBRIC_REVIEW_STATE = {
+  'D-R1': 'RATIFIED',
+  'D-R2': 'RATIFIED',
+  'D-R3': 'RATIFIED',
+  'D-R4': 'RATIFIED',
+  'D-R5': 'RATIFIED',
+  'D-R6': 'RATIFIED',
+  'D-R7': 'RATIFIED',
+  'D-R8': 'RATIFIED',
+} satisfies Record<D1RubricId, SemanticReviewLabel>
 
 /** Chapter surface each rubric fixture must author, in exact order. */
 export const D1_RUBRIC_CHAPTERS: Readonly<Record<D1RubricId, readonly number[]>> = {

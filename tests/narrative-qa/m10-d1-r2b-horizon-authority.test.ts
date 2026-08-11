@@ -14,7 +14,12 @@ import {
 } from '../../lib/narrative-qa/contracts/semantic-judge-contract'
 import { assembleJudgeInput } from '../../lib/narrative-qa/judges/semantic-judge-assembly'
 import { validateRubricCoverage } from '../../lib/narrative-qa/judges/semantic-judge-policy'
-import { D1_RUBRIC_CHAPTERS } from '../../fixtures/long-horizon/semantic-calibration/corpus'
+import {
+  D1_RUBRIC_CHAPTERS,
+  D1_RUBRIC_REVIEW_STATE,
+  D1_TIER_COUNTS,
+  D1_UNIVERSE_IDS,
+} from '../../fixtures/long-horizon/semantic-calibration/corpus'
 
 /**
  * D1-R2B horizon and review-state authority.
@@ -105,6 +110,19 @@ describe('M10-D1-R2B review-state authority', () => {
     expect(assembled.corpusAuthority.rubricId).toBe('D-R1')
   })
 
+  it('lets the real corpus express either state per rubric, not RATIFIED only', () => {
+    for (const rubricId of SEMANTIC_RUBRIC_IDS) {
+      expect(SemanticReviewLabelSchema.options, rubricId).toContain(D1_RUBRIC_REVIEW_STATE[rubricId])
+    }
+    // A wave sets its rubric to PENDING_REVIEW alongside its prose. That must be
+    // a legal corpus state, otherwise authoring code would have to change the
+    // review seam and the prose in one uncontrolled step.
+    const midWave = { ...D1_RUBRIC_REVIEW_STATE, 'D-R1': 'PENDING_REVIEW' as const }
+    expect(SemanticReviewLabelSchema.parse(midWave['D-R1'])).toBe('PENDING_REVIEW')
+    expect(() => assembleJudgeInput({ ...syntheticRow('RATIFIED'), reviewState: midWave['D-R1'] }, syntheticCase))
+      .toThrow(/only RATIFIED rows may be assembled/)
+  })
+
   it('never leaks the review state into the assembled judge surface', () => {
     const assembled = assembleJudgeInput(syntheticRow('RATIFIED'), syntheticCase)
     expect(JSON.stringify(assembled.input)).not.toMatch(/RATIFIED|PENDING_REVIEW|reviewState/i)
@@ -188,6 +206,13 @@ describe('M10-D1-R2B bounded-novel horizon authority', () => {
 })
 
 describe('M10-D1-R2B mechanical expansion inventory', () => {
+  /**
+   * Derived from the corpus matrix itself: 2 universes x (5 + 5 + 3) fixtures.
+   * The ratified constant is checked against this, never used to prove itself.
+   */
+  const fixturesPerRubric = D1_UNIVERSE_IDS.length
+    * Object.values(D1_TIER_COUNTS).reduce((total, count) => total + count, 0)
+
   const perRubric = SEMANTIC_RUBRIC_IDS.map((rubricId) => {
     const existing = D1_RUBRIC_CHAPTERS[rubricId]
     const target = D1_R2B_TARGET_CHAPTERS_V1[rubricId]
@@ -197,6 +222,13 @@ describe('M10-D1-R2B mechanical expansion inventory', () => {
       target,
       missing: target.filter((chapterNumber) => !existing.includes(chapterNumber)),
     }
+  })
+
+  it('derives fixtures-per-rubric from the corpus matrix and matches the ratified constant', () => {
+    expect(D1_UNIVERSE_IDS.length).toBe(2)
+    expect(Object.values(D1_TIER_COUNTS).reduce((total, count) => total + count, 0)).toBe(13)
+    expect(fixturesPerRubric).toBe(26)
+    expect(fixturesPerRubric).toBe(D1_R2B_FIXTURES_PER_RUBRIC)
   })
 
   it('registers a strictly ascending unique target for all 8 rubrics', () => {
@@ -224,7 +256,7 @@ describe('M10-D1-R2B mechanical expansion inventory', () => {
       'D-R5': 52, 'D-R6': 78, 'D-R7': 78, 'D-R8': 0,
     }
     for (const { rubricId, missing } of perRubric) {
-      expect(missing.length * D1_R2B_FIXTURES_PER_RUBRIC, rubricId).toBe(expected[rubricId])
+      expect(missing.length * fixturesPerRubric, rubricId).toBe(expected[rubricId])
     }
   })
 
@@ -239,10 +271,10 @@ describe('M10-D1-R2B mechanical expansion inventory', () => {
     // Sum identity holds only because existing is a proven subset of target.
     expect(existingSlots + missingSlots).toBe(targetSlots)
 
-    expect(existingSlots * D1_R2B_FIXTURES_PER_RUBRIC).toBe(806)
-    expect(missingSlots * D1_R2B_FIXTURES_PER_RUBRIC).toBe(1_144)
+    expect(existingSlots * fixturesPerRubric).toBe(806)
+    expect(missingSlots * fixturesPerRubric).toBe(1_144)
     // Way 1: slots x fixtures. Way 2: existing segments + missing segments.
-    expect(targetSlots * D1_R2B_FIXTURES_PER_RUBRIC).toBe(D1_R2B_POST_EXPANSION_SEGMENTS)
+    expect(targetSlots * fixturesPerRubric).toBe(D1_R2B_POST_EXPANSION_SEGMENTS)
     expect(806 + 1_144).toBe(D1_R2B_POST_EXPANSION_SEGMENTS)
   })
 

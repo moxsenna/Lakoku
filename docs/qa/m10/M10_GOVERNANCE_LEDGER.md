@@ -756,3 +756,154 @@ the next stages' scope.
 
 ---
 
+## Entry 11 — 2026-08-10 (reviewer verdicts: **D1-R2A PASS / CLOSED**; **D0 BOUNDED_NOVEL RATIFIED**; D1-R2B plan ratified after R3.1)
+
+Recorded by: implementation side, from three reviewer verdicts delivered in sequence.
+Branch `feature/m10-c-recovery`. No production, DB, migration, runtime, provider, or C
+evidence action was taken at any point in this entry.
+
+### 11.1 D1-R2A prose corpus — PASS / CLOSED
+
+Ratification anchor:
+
+```text
+072adb8948890ecf353aa1544a65aecc072e64a3
+```
+
+Path to closure:
+
+1. Word-count closure on the authored-bank gate reached `130/130` in
+   `tests/narrative-qa/m10-d1-bank-authoring.test.ts`.
+2. `1886281c184e11fc677171516eadbb36cc43c92b` — six-bank clone corrective, bank files only
+   (`lembah-awan-d-r{4,5,6,8}`, `pesisir-utara-d-r{4,8}`). Reviewer verdict: scope PASS,
+   prose ratification PARTIAL, D1-R2A HOLD.
+3. `072adb8` — D1-R2A.1 semantic label-leakage corrective. `lembah-awan-d-r8.ts` only,
+   WEAK `b1..b5` and BORDERLINE `c1..c3`, 80 paragraphs rewritten, diff `+80/-80`.
+   STRONG `a1..a5` and the other 15 banks byte-identical.
+
+**Root cause recorded — semantic label leakage.** The reviewer's HOLD proved that
+`five-gram = 0` and mechanical meta-leakage `= 0` produce a **false negative**. The prose
+contained evaluator conclusions in judge-visible paragraphs — telling the judge *why* the
+story was weak ("tidak berkaitan dengan konflik utama", "tidak menyiapkan jawaban akhir")
+rather than presenting facts from which the judge derives weakness itself. Mechanical
+scans cannot detect this class. Human semantic review of every authored paragraph is now a
+standing, non-optional gate.
+
+`runway` remaining in `justification` fields was ratified as legitimate: justification is
+human-review metadata and is excluded from judge input.
+
+Final disposition:
+
+```text
+L D-R8 STRONG a1..a5          RATIFIED
+L D-R8 WEAK b1..b5            RATIFIED
+L D-R8 BORDERLINE c1..c3      RATIFIED
+all rewritten D1-R2A prose    RATIFIED
+BLOCKER_CLONE                 CLOSED
+semantic evaluator leakage    CLOSED
+D1-R2A                        PASS / CLOSED
+```
+
+Two process failures disclosed during this work: an implementation agent produced
+token-substitution placeholder prose that **passed** the mechanical gate and self-reported
+green; a second automated attempt repeated the failure. Both were caught only by diff
+inspection and were discarded. Standing rule recorded: an agent's self-reported green gate
+is never sufficient evidence for prose quality.
+
+### 11.2 D0 horizon amendment — RATIFIED
+
+`docs/qa/m10/M10_D_D0_HORIZON_AMENDMENT_PROPOSAL.md`, disposition option 1.
+
+```text
+BOUNDED_NOVEL   RATIFIED for D-R1, D-R2, D-R4, D-R6
+condition       exact anchor surfaces authored, human-reviewed, and registered
+                before D1 manifest refreeze
+```
+
+Canonical meaning unchanged from the proposal: explicit pre-registered ordered chapter set;
+identical for all 13 fixtures in a rubric/universe bank; never claims Bab 1–50 and can
+never be serialized as `NOVEL`; structural view receives only D0-approved bounded context;
+manifest freezes exact chapter identities before any model call; any missing registered
+chapter hard-fails assembly.
+
+Ratification authorizes bounded-horizon schema/corpus work only. It does not release the
+manifest refreeze hold and does not authorize provider calls.
+
+### 11.3 D1-R2B plan — ratified at R3.1
+
+Three reviewer rounds. R2 returned 3 blockers plus 4 HIGH; R3 returned 3 further blockers
+plus 2 HIGH; R3.1 closed them. Corrections that changed substance:
+
+- **Inventory arithmetic was wrong in R2.** Claimed `+1,092 / 1,898`. Root cause: the
+  recon table listed D-R5 as `+0 (or +52)`; the widened D-R5 surface was selected but the
+  total carried from the `+0` variant. Corrected to `+1,144 / 1,950`, verified by two
+  independent derivations (`Σ per-rubric missing` and `75 slots × 26 fixtures`).
+- **Review-state widening moved before authoring.** `SemanticReviewLabelSchema` is
+  currently `z.literal('RATIFIED')`, which would force unreviewed prose to claim ratified
+  authority. Widening to `PENDING_REVIEW | RATIFIED` now precedes all Phase 2 work.
+- **Ratification sequence was circular.** The author cannot flip a row to `RATIFIED` in the
+  same wave that reports it, because the reviewer receives the report only after the STOP.
+  Each wave splits into `2x-A` authoring (rows `PENDING_REVIEW`, report exact hashes, STOP)
+  and `2x-B` ratification follow-up (status-only, hashes proven unchanged).
+- **Gate semantics split.** `assertD1Manifest()` currently throws at HEAD; the expected
+  hash froze at `605951e`, before the ratified prose corrections changed fixture content
+  hashes. This is an **expected governance hold**, not a regression, and the assertion is
+  never skipped, mocked, or weakened — it is the drift proof.
+- **Registry direction corrected.** R3 asserted `D1_RUBRIC_CHAPTERS ⊇ registry`, which is
+  impossible before authoring. Correct semantics: `existing ⊆ target`.
+- **Authoring target registry required for all 8 rubrics**, separate from the bounded
+  evaluator registry, so the inventory is fully mechanically derived.
+
+Ratified D1-R2B authority is recorded in
+`docs/qa/m10/M10_D_D0_HORIZON_AMENDMENT_PROPOSAL.md` §7: authoring target registry,
+bounded evaluator authority, inventory `806 → 1,950`, case topology `312`, D-R7 explicit
+coverage, D-R8 no-title wording, review-state authority.
+
+**312 locks corpus/case topology only. It is not authorization to run 312 model calls.**
+
+### 11.4 Known open defects carried forward
+
+```text
+D1_EXPECTED_MANIFEST_SHA256    stale, anchored at 605951e
+assertD1Manifest()             throws at HEAD (expected, refreeze HELD)
+D1_CONTROLLED_MUTATIONS        empty; family map not registered
+fixtureFamilyId                tier-wide; false independence claim
+stale topology row             L-D-R4 {a5,b5}; r4-a5 and r4-b5 must register independently
+D-R2 / D-R3 / D-R6 view        reader in corpus, structural per D0.2.2
+actPosition                    corpus max 500 vs judge input max 200
+D_OPS_1                        OPEN / UNRESOLVED
+```
+
+None are closed by this entry. Each is owned by a named later phase of D1-R2B.
+
+### 11.5 Status lock
+
+```text
+M10-A                          CLOSED
+M10-B                          CLOSED
+M10-C                          CLOSED (anchor 08532c8)
+
+D0 semantic judge design       LOCKED
+D0 BOUNDED_NOVEL amendment     RATIFIED
+D1-R1                          CLOSED
+D1-R2A prose corpus            PASS / CLOSED (anchor 072adb8)
+D1-R2B plan                    RATIFIED at R3.1
+D1-R2B Phase 0 docs            GO
+D1-R2B Phase 1A                GO
+D1 manifest refreeze           HELD
+D2 calibration                 NO-GO
+D2 / D3 / provider calls       FORBIDDEN
+D-OPS-1                        OPEN / UNRESOLVED
+
+M10-E                          GO (parallel, unchanged)
+M10-F                          BLOCKED until D + E PASS
+M10-G                          BLOCKED until F PASS
+
+production writes              FORBIDDEN
+production activation          FORBIDDEN
+DB / migration / runtime       NO ACTION
+C semantics / evidence         FROZEN
+```
+
+---
+

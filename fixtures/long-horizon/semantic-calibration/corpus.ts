@@ -136,7 +136,7 @@ export const D1_RUBRIC_REVIEW_STATE = {
   'D-R3': 'RATIFIED',
   'D-R4': 'RATIFIED',
   'D-R5': 'RATIFIED',
-  'D-R6': 'PENDING_REVIEW',
+  'D-R6': 'RATIFIED',
   'D-R7': 'RATIFIED',
   'D-R8': 'RATIFIED',
 } satisfies Record<D1RubricId, SemanticReviewLabel>

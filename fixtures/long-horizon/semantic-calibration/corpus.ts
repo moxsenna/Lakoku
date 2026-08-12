@@ -133,7 +133,7 @@ export interface D1RubricRow {
 export const D1_RUBRIC_REVIEW_STATE = {
   'D-R1': 'RATIFIED',
   'D-R2': 'RATIFIED',
-  'D-R3': 'RATIFIED',
+  'D-R3': 'PENDING_REVIEW',
   'D-R4': 'RATIFIED',
   'D-R5': 'RATIFIED',
   'D-R6': 'RATIFIED',
@@ -145,7 +145,7 @@ export const D1_RUBRIC_REVIEW_STATE = {
 export const D1_RUBRIC_CHAPTERS: Readonly<Record<D1RubricId, readonly number[]>> = {
   'D-R1': [6, 18, 19, 20, 32, 45],
   'D-R2': [9, 13, 14, 15, 16, 17, 18, 19, 20, 22],
-  'D-R3': [41, 43, 46],
+  'D-R3': [33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50],
   'D-R4': [6, 14, 15, 16, 32, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50],
   'D-R5': [23, 24, 25, 26],
   'D-R6': [6, 21, 34, 44, 46, 48],
@@ -172,7 +172,8 @@ export const D1_RUBRIC_CASE_SPECS: Readonly<Record<D1RubricId, readonly D1CaseSp
     { caseSuffix: 'bounded-novel', view: 'reader', horizonKind: 'BOUNDED_NOVEL', coverage: { mode: 'EXPLICIT', chapterNumbers: [9, 13, 14, 15, 16, 17, 18, 19, 20, 22] } },
   ],
   'D-R3': [
-    { caseSuffix: 'act', view: 'reader', horizonKind: 'ACT', coverage: { mode: 'EXPLICIT', chapterNumbers: [41, 43, 46] } },
+    { caseSuffix: 'act', view: 'reader', horizonKind: 'ACT', coverage: { mode: 'CONTIGUOUS', fromChapter: 33, toChapter: 40 } },
+    { caseSuffix: 'runway', view: 'structural', horizonKind: 'RUNWAY', coverage: { mode: 'CONTIGUOUS', fromChapter: 41, toChapter: 50 } },
   ],
   'D-R4': [
     { caseSuffix: 'local', view: 'reader', horizonKind: 'LOCAL', coverage: { mode: 'CONTIGUOUS', fromChapter: 14, toChapter: 16 } },
@@ -216,4 +217,4 @@ export const D1_TIER_COUNTS: Readonly<Record<D1Tier, number>> = {
 
 export const D1_ROWS_PER_RUBRIC_PARTITION = 13
 export const D1_EXPECTED_ROW_COUNT = 208
-export const D1_EXPECTED_EVALUATION_CASE_COUNT = 260
+export const D1_EXPECTED_EVALUATION_CASE_COUNT = 286

@@ -39,7 +39,7 @@ describe('M10-D1 semantic calibration corpus', () => {
     assertD1Manifest()
     assertD1CorpusMatrix()
     assertD1EvaluationCases()
-    expect(D1_MANIFEST.review).toEqual({ status: 'RATIFIED', corpusCommit: '5a2ab2c' })
+    expect(D1_MANIFEST.review).toEqual({ status: 'RATIFIED', corpusCommit: 'a3dc2cd' })
     expect(D1_RUBRIC_ROWS).toHaveLength(D1_EXPECTED_ROW_COUNT)
     expect(D1_EVALUATION_CASES).toHaveLength(D1_EXPECTED_EVALUATION_CASE_COUNT)
     for (const rubricId of D1_RUBRICS) for (const partition of D1_PARTITIONS) {

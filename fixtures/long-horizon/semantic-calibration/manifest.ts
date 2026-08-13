@@ -35,7 +35,7 @@ import { computeSha256, stableStringify } from '../../../lib/narrative-qa/scorin
  * Independent freeze anchor. This literal is the authority; the computed hash
  * must equal it, so the manifest can never silently re-freeze itself.
  */
-export const D1_EXPECTED_MANIFEST_SHA256 = '3635fd3152bbdc1c36f41aaa3b2378f6e250b8ab532a49db96b4128f7e960e1e'
+export const D1_EXPECTED_MANIFEST_SHA256 = 'fcfb6bbf07e36ecbb8781725af814abbd13f35aade1ffbe3c1b3d72174ef2185'
 
 export { D1_CONTROLLED_MUTATIONS } from './mutation-map'
 
@@ -198,7 +198,7 @@ export interface D1Manifest {
   manifestHash: string
   review: {
     status: 'RATIFIED'
-    corpusCommit: '5a2ab2c'
+    corpusCommit: 'a3dc2cd'
   }
   rows: readonly D1RubricRow[]
   evaluationCases: readonly D1EvaluationCase[]
@@ -209,7 +209,7 @@ export const D1_MANIFEST: D1Manifest = Object.freeze({
   corpusId: 'M10-D1-semantic-calibration-v1',
   provenance: 'frozen human-authored fixture corpus',
   manifestHash: computeD1ManifestHash(D1_RUBRIC_ROWS, D1_EVALUATION_CASES),
-  review: Object.freeze({ status: 'RATIFIED', corpusCommit: '5a2ab2c' }),
+  review: Object.freeze({ status: 'RATIFIED', corpusCommit: 'a3dc2cd' }),
   rows: D1_RUBRIC_ROWS,
   evaluationCases: D1_EVALUATION_CASES,
 })

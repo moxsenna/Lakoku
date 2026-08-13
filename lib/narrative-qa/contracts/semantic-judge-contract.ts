@@ -242,7 +242,7 @@ export const SemanticCorpusManifestSchema = z
     review: z
       .object({
         status: z.literal('RATIFIED'),
-        corpusCommit: z.literal('5a2ab2c'),
+        corpusCommit: z.literal('a3dc2cd'),
       })
       .strict(),
     rows: z.array(SemanticCorpusRubricRowSchema).min(1),

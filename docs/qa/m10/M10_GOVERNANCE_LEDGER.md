@@ -907,3 +907,67 @@ C semantics / evidence         FROZEN
 
 ---
 
+## Entry 12 — 2026-08-13 (D-OPS-1 reviewer-approved reclassification; M10-D closed)
+
+Reviewer approved disposition-only reclassification after the controlled D1 manifest
+refreeze closed at `a402d70`. Existing runtime evidence proves a real fail-closed
+lifecycle: reconciliation failure persists `generation_status='needs_review'` plus an
+audit event; next-chapter admission refuses before provider execution; failed
+reconciliation creates no replacement blueprint version. The remaining gap is an
+operator workflow, not detection or admission safety: no review queue, authorized
+resolution transaction, reviewer audit trail, validator rerun, or explicit admission
+reopening exists.
+
+D-OPS-1 is therefore reclassified to Reliability & Cost Hardening rather than falsely
+closed. The named target and deadline are:
+
+```text
+recordId          D-OPS-1
+status            RECLASSIFIED
+disposition       REVIEWER_APPROVED_RECLASSIFIED
+isReclassified    true
+
+targetMilestone   M10-E
+targetTask        E-OPS-1
+targetTitle       FAILED_REVIEW_REQUIRED human blueprint review workflow
+
+deadline          before M10-E may PASS/CLOSE;
+                  therefore before any M10-F real-model 1→50 pilot
+```
+
+Reviewer-ratified E-OPS-1 baseline acceptance contract:
+
+1. Queue lists every `needs_review` story exactly once.
+2. Detail shows failed chapter/act, findings, source event, and blueprint versions.
+3. Resolution is restricted to an authorized admin/reviewer.
+4. Resolution creates a new blueprint version; canonical history is never overwritten.
+5. Audit records reviewer identity, disposition, reason, timestamp, and source event.
+6. Spine, reveal, and ending validators rerun before release.
+7. Failure keeps admission blocked; success has explicit unblock proof.
+8. Reader language remains safe and hides technical details.
+9. Negative authorization, idempotency, audit, failure, and unblock tests pass.
+
+This disposition satisfies the non-judge D obligation through a reviewer-approved named
+target. It does not satisfy E-OPS-1 itself and authorizes no workflow implementation,
+provider/model call, production operation, DB change, migration, or runtime change.
+Frozen D1 authority remains unchanged: manifest
+`fcfb6bbf07e36ecbb8781725af814abbd13f35aade1ffbe3c1b3d72174ef2185`,
+`corpusCommit=a3dc2cd`, 208 rows, 1,950 segments, 312 cases, and the ratified mutation
+topology.
+
+```text
+D-OPS-1                      RECLASSIFIED → M10-E / E-OPS-1
+M10-D                         PASS / CLOSED
+M10-E                         GO / OPEN
+M10-E exit                    BLOCKED until E-OPS-1 CLOSED
+M10-F                         BLOCKED until M10-D + M10-E PASS
+M10-G                         BLOCKED until M10-F PASS
+
+D2 / D3 / provider calls      FORBIDDEN
+production writes             FORBIDDEN
+production activation         FORBIDDEN
+D1 manifest / corpus          FROZEN / UNCHANGED
+```
+
+---
+

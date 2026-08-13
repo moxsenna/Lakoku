@@ -182,9 +182,19 @@ describe('M10-D1 semantic calibration corpus', () => {
     expect('actPosition' in reader.input).toBe(false)
   })
 
-  it('keeps D-OPS-1 unresolved outside D1 pass authority', () => {
-    expect(D_OPS_1.status).toBe('OPEN')
-    expect(D_OPS_1.disposition).toBe('UNRESOLVED')
-    expect(D_OPS_1.finalPassGate).toContain('Blocks final D PASS')
+  it('records reviewer-approved D-OPS-1 reclassification without changing D1 authority', () => {
+    expect(D_OPS_1).toMatchObject({
+      recordId: 'D-OPS-1',
+      status: 'RECLASSIFIED',
+      disposition: 'REVIEWER_APPROVED_RECLASSIFIED',
+      isReclassified: true,
+      targetMilestone: 'M10-E',
+      targetTask: 'E-OPS-1',
+      targetTitle: 'FAILED_REVIEW_REQUIRED human blueprint review workflow',
+    })
+    expect(D_OPS_1.deadline).toContain('Before M10-E may PASS/CLOSE')
+    expect(D_OPS_1.finalPassGate).toContain('D obligation satisfied')
+    expect(D_OPS_1.finalPassGate).toContain('M10-E cannot PASS/CLOSE while E-OPS-1 remains OPEN')
+    expect(D_OPS_1.d1Impact).toContain('Does not change the frozen D1 corpus')
   })
 })

@@ -133,7 +133,7 @@ export interface D1RubricRow {
 export const D1_RUBRIC_REVIEW_STATE = {
   'D-R1': 'RATIFIED',
   'D-R2': 'RATIFIED',
-  'D-R3': 'PENDING_REVIEW',
+  'D-R3': 'RATIFIED',
   'D-R4': 'RATIFIED',
   'D-R5': 'RATIFIED',
   'D-R6': 'RATIFIED',

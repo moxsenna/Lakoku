@@ -141,6 +141,37 @@ describe('M10-D1 semantic calibration corpus', () => {
     }
   })
 
+  it('carries structural context into every converted D-R2, D-R3, and D-R6 case', () => {
+    for (const rubricId of ['D-R2', 'D-R3', 'D-R6'] as const) {
+      const row = D1_RUBRIC_ROWS.find((candidate) => candidate.rubricId === rubricId)!
+      const cases = D1_EVALUATION_CASES.filter((candidate) => candidate.rowId === row.rowId)
+      expect(cases.length).toBeGreaterThan(0)
+      for (const evaluationCase of cases) {
+        const { input } = assembleJudgeInput(row, evaluationCase)
+        expect(input.view, evaluationCase.caseId).toBe('structural')
+        expect('storyPromise' in input).toBe(true)
+        expect('actPosition' in input).toBe(true)
+      }
+    }
+  })
+
+  it('keeps D-R8 reader and structural runway cases prose-identical but judge-input distinct', () => {
+    const row = D1_RUBRIC_ROWS.find((candidate) => candidate.rubricId === 'D-R8')!
+    const structural = assembledFor('D-R8', '-runway').assembled
+    const reader = assembledFor('D-R8', '-runway-reader').assembled
+
+    // One fixture, one coverage: prose authority stays stable across both views.
+    expect(reader.corpusAuthority.fixtureContentHash).toBe(row.fixture.contentHash)
+    expect(reader.corpusAuthority.fixtureContentHash).toBe(structural.corpusAuthority.fixtureContentHash)
+    expect(reader.corpusAuthority.chapterHashes).toEqual(structural.corpusAuthority.chapterHashes)
+    expect(reader.input.segments).toEqual(structural.input.segments)
+    // Distinct views must never collapse to the same assembled judge surface.
+    expect(reader.corpusAuthority.judgeInputHash).not.toBe(structural.corpusAuthority.judgeInputHash)
+    expect(reader.input.view).toBe('reader')
+    expect('storyPromise' in reader.input).toBe(false)
+    expect('actPosition' in reader.input).toBe(false)
+  })
+
   it('keeps D-OPS-1 unresolved outside D1 pass authority', () => {
     expect(D_OPS_1.status).toBe('OPEN')
     expect(D_OPS_1.disposition).toBe('UNRESOLVED')

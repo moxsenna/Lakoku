@@ -11,6 +11,7 @@ import {
   SemanticHorizonKindSchema,
   SemanticReviewLabelSchema,
   type SemanticRubricId,
+  StructuralSemanticJudgeInputSchema,
 } from '../../lib/narrative-qa/contracts/semantic-judge-contract'
 import { assembleJudgeInput } from '../../lib/narrative-qa/judges/semantic-judge-assembly'
 import { validateRubricCoverage } from '../../lib/narrative-qa/judges/semantic-judge-policy'
@@ -287,11 +288,11 @@ describe('M10-D1-R2B mechanical expansion inventory', () => {
 })
 
 describe('M10-D1 Phase2g case topology', () => {
-  it('holds D-R2 at one bounded-novel reader case over the exact ratified surface', () => {
+  it('holds D-R2 at one bounded-novel structural case over the exact ratified surface', () => {
     expect(D1_RUBRIC_CASE_SPECS['D-R2']).toEqual([
       {
         caseSuffix: 'bounded-novel',
-        view: 'reader',
+        view: 'structural',
         horizonKind: 'BOUNDED_NOVEL',
         coverage: { mode: 'EXPLICIT', chapterNumbers: [9, 13, 14, 15, 16, 17, 18, 19, 20, 22] },
       },
@@ -324,14 +325,14 @@ describe('M10-D1 Phase2g case topology', () => {
     ])
   })
 
-  it('holds D-R3 at exact reader ACT and structural RUNWAY topology', () => {
+  it('holds D-R3 at exact structural ACT and structural RUNWAY topology', () => {
     expect(D1_RUBRIC_CHAPTERS['D-R3']).toEqual([
       33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
     ])
     expect(D1_RUBRIC_CASE_SPECS['D-R3']).toEqual([
       {
         caseSuffix: 'act',
-        view: 'reader',
+        view: 'structural',
         horizonKind: 'ACT',
         coverage: { mode: 'CONTIGUOUS', fromChapter: 33, toChapter: 40 },
       },
@@ -344,17 +345,68 @@ describe('M10-D1 Phase2g case topology', () => {
     ])
   })
 
-  it('raises the frozen case ceiling from 260 to 286 while the row count stays 208', () => {
+  it('raises the frozen case ceiling from 286 to 312 while the row count stays 208', () => {
     const derived = Object.values(D1_RUBRIC_CASE_SPECS)
       .reduce((total, specs) => total + specs.length, 0) * D1_EXPECTED_ROW_COUNT / SEMANTIC_RUBRIC_IDS.length
     expect(D1_EXPECTED_ROW_COUNT).toBe(208)
-    expect(derived).toBe(286)
-    expect(D1_EXPECTED_EVALUATION_CASE_COUNT).toBe(286)
+    expect(derived).toBe(312)
+    expect(D1_EXPECTED_EVALUATION_CASE_COUNT).toBe(312)
   })
 
-  it('keeps ratified prior waves executable and D-R3 under reviewer hold', () => {
+  it('adds the D-R8 reader runway case beside its ratified structural runway case', () => {
+    expect(D1_RUBRIC_CASE_SPECS['D-R8']).toEqual([
+      {
+        caseSuffix: 'runway',
+        view: 'structural',
+        horizonKind: 'RUNWAY',
+        coverage: { mode: 'CONTIGUOUS', fromChapter: 41, toChapter: 50 },
+      },
+      {
+        caseSuffix: 'runway-reader',
+        view: 'reader',
+        horizonKind: 'RUNWAY',
+        coverage: { mode: 'CONTIGUOUS', fromChapter: 41, toChapter: 50 },
+      },
+    ])
+  })
+
+  it('keeps every reviewed wave, including D-R3, executable', () => {
     expect(D1_RUBRIC_REVIEW_STATE['D-R2']).toBe('RATIFIED')
+    expect(D1_RUBRIC_REVIEW_STATE['D-R3']).toBe('RATIFIED')
     expect(D1_RUBRIC_REVIEW_STATE['D-R4']).toBe('RATIFIED')
-    expect(D1_RUBRIC_REVIEW_STATE['D-R3']).toBe('PENDING_REVIEW')
+  })
+
+  it('aligns the corpus and judge-input actPosition bounds so no legal row fails only at assembly', () => {
+    const overLong = 'x'.repeat(201)
+    const row = syntheticRow('RATIFIED')
+    const widened = {
+      ...row,
+      fixture: {
+        ...row.fixture,
+        structuralContext: { ...row.fixture.structuralContext, actPosition: overLong },
+      },
+    }
+    // Rejected by the corpus schema, not deferred to structural assembly.
+    expect(() => SemanticCorpusRubricRowSchema.parse(widened)).toThrow()
+    expect(() => StructuralSemanticJudgeInputSchema.parse({
+      view: 'structural',
+      segments: [{ segmentId: 's-1', chapterNumber: 18, content: 'Isi bab.' }],
+      storyPromise: 'Janji.',
+      mainConflict: 'Konflik.',
+      finalQuestion: 'Pertanyaan?',
+      activeThreadSummaries: [],
+      resolvedThreadSummaries: [],
+      payoffSchedule: [],
+      lockedEndingKey: 'kunci',
+      actPosition: overLong,
+    })).toThrow()
+  })
+
+  it('declares every converted D-R2, D-R3, and D-R6 case as a structural surface', () => {
+    for (const rubricId of ['D-R2', 'D-R3', 'D-R6'] as const) {
+      for (const spec of D1_RUBRIC_CASE_SPECS[rubricId]) {
+        expect(spec.view, `${rubricId}/${spec.caseSuffix}`).toBe('structural')
+      }
+    }
   })
 })

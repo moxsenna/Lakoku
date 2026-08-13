@@ -142,7 +142,10 @@ export const SemanticCorpusStructuralContextSchema = z
     storyPromise: z.string().min(1).max(4_000),
     mainConflict: z.string().min(1).max(4_000),
     finalDramaticQuestion: z.string().min(1).max(4_000),
-    actPosition: z.string().min(1).max(500),
+    // Aligned with StructuralSemanticJudgeInputSchema.actPosition. A wider corpus
+    // bound would let a legal corpus row fail only at assembly time; keeping both
+    // surfaces identical makes an over-long actPosition a corpus-authoring reject.
+    actPosition: z.string().min(1).max(200),
     activeThreadSummaries: z.array(z.string().min(1).max(2_000)).max(40),
     resolvedThreadSummaries: z.array(z.string().min(1).max(2_000)).max(40),
     payoffSchedule: z.array(z.string().min(1).max(2_000)).max(40),

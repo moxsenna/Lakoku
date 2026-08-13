@@ -169,10 +169,10 @@ export const D1_RUBRIC_CASE_SPECS: Readonly<Record<D1RubricId, readonly D1CaseSp
     { caseSuffix: 'bounded-novel', view: 'reader', horizonKind: 'BOUNDED_NOVEL', coverage: { mode: 'EXPLICIT', chapterNumbers: [6, 18, 19, 20, 32, 45] } },
   ],
   'D-R2': [
-    { caseSuffix: 'bounded-novel', view: 'reader', horizonKind: 'BOUNDED_NOVEL', coverage: { mode: 'EXPLICIT', chapterNumbers: [9, 13, 14, 15, 16, 17, 18, 19, 20, 22] } },
+    { caseSuffix: 'bounded-novel', view: 'structural', horizonKind: 'BOUNDED_NOVEL', coverage: { mode: 'EXPLICIT', chapterNumbers: [9, 13, 14, 15, 16, 17, 18, 19, 20, 22] } },
   ],
   'D-R3': [
-    { caseSuffix: 'act', view: 'reader', horizonKind: 'ACT', coverage: { mode: 'CONTIGUOUS', fromChapter: 33, toChapter: 40 } },
+    { caseSuffix: 'act', view: 'structural', horizonKind: 'ACT', coverage: { mode: 'CONTIGUOUS', fromChapter: 33, toChapter: 40 } },
     { caseSuffix: 'runway', view: 'structural', horizonKind: 'RUNWAY', coverage: { mode: 'CONTIGUOUS', fromChapter: 41, toChapter: 50 } },
   ],
   'D-R4': [
@@ -184,13 +184,14 @@ export const D1_RUBRIC_CASE_SPECS: Readonly<Record<D1RubricId, readonly D1CaseSp
     { caseSuffix: 'act', view: 'reader', horizonKind: 'ACT', coverage: { mode: 'CONTIGUOUS', fromChapter: 23, toChapter: 26 } },
   ],
   'D-R6': [
-    { caseSuffix: 'bounded-novel', view: 'reader', horizonKind: 'BOUNDED_NOVEL', coverage: { mode: 'EXPLICIT', chapterNumbers: [6, 21, 34, 44, 46, 48] } },
+    { caseSuffix: 'bounded-novel', view: 'structural', horizonKind: 'BOUNDED_NOVEL', coverage: { mode: 'EXPLICIT', chapterNumbers: [6, 21, 34, 44, 46, 48] } },
   ],
   'D-R7': [
     { caseSuffix: 'act', view: 'reader', horizonKind: 'ACT', coverage: { mode: 'EXPLICIT', chapterNumbers: [45, 46, 47, 48, 49, 50] } },
   ],
   'D-R8': [
     { caseSuffix: 'runway', view: 'structural', horizonKind: 'RUNWAY', coverage: { mode: 'CONTIGUOUS', fromChapter: 41, toChapter: 50 } },
+    { caseSuffix: 'runway-reader', view: 'reader', horizonKind: 'RUNWAY', coverage: { mode: 'CONTIGUOUS', fromChapter: 41, toChapter: 50 } },
   ],
 }
 
@@ -217,4 +218,4 @@ export const D1_TIER_COUNTS: Readonly<Record<D1Tier, number>> = {
 
 export const D1_ROWS_PER_RUBRIC_PARTITION = 13
 export const D1_EXPECTED_ROW_COUNT = 208
-export const D1_EXPECTED_EVALUATION_CASE_COUNT = 286
+export const D1_EXPECTED_EVALUATION_CASE_COUNT = 312

@@ -18,6 +18,8 @@ import { validateRubricCoverage } from '../../lib/narrative-qa/judges/semantic-j
 import {
   D1_EXPECTED_EVALUATION_CASE_COUNT,
   D1_EXPECTED_ROW_COUNT,
+  D1_PARTITIONS,
+  D1_PARTITION_UNIVERSE,
   D1_RUBRIC_CASE_SPECS,
   D1_RUBRIC_CHAPTERS,
   D1_RUBRIC_REVIEW_STATE,
@@ -25,7 +27,10 @@ import {
   D1_TIERS,
   D1_UNIVERSE_IDS,
 } from '../../fixtures/long-horizon/semantic-calibration/corpus'
-import { D1_AUTHORED_BANKS } from '../../fixtures/long-horizon/semantic-calibration/contexts'
+import {
+  D1_AUTHORED_BANKS,
+  D1_UNIVERSE_CONTEXT,
+} from '../../fixtures/long-horizon/semantic-calibration/contexts'
 
 /**
  * D1-R2B horizon and review-state authority.
@@ -406,6 +411,152 @@ describe('M10-D1 Phase2g case topology', () => {
     for (const rubricId of ['D-R2', 'D-R3', 'D-R6'] as const) {
       for (const spec of D1_RUBRIC_CASE_SPECS[rubricId]) {
         expect(spec.view, `${rubricId}/${spec.caseSuffix}`).toBe('structural')
+      }
+    }
+  })
+})
+
+/**
+ * Pre-refreeze executable proof of the Phase3 surface.
+ *
+ * The equivalent assertions in m10-d-semantic-corpus.test.ts run against the real
+ * manifest, but that module asserts its frozen anchor at import, so while the
+ * refreeze is held those assertions never execute. These materialize the same
+ * authored prose without importing the manifest, so the Phase3 assembly and hash
+ * guarantees stay a real MUST-PASS gate during the hold.
+ *
+ * Row identity metadata here is synthetic and deliberately not manifest authority;
+ * only chapters and structuralContext are real, because only those reach a judge.
+ */
+const TIER_ORDINAL_LABEL = { STRONG: 'a', WEAK: 'b', BORDERLINE: 'c' } as const
+
+function materializeRows() {
+  return D1_PARTITIONS.flatMap((partition) => {
+    const universeId = D1_PARTITION_UNIVERSE[partition]
+    const universeContext = D1_UNIVERSE_CONTEXT[universeId]
+    return SEMANTIC_RUBRIC_IDS.flatMap((rubricId) => D1_TIERS.flatMap((tier) => Array.from(
+      { length: D1_TIER_COUNTS[tier] },
+      (_, index) => {
+        const authored = D1_AUTHORED_BANKS[universeId][rubricId][tier][index]!
+        const key = `${universeId}-${rubricId.toLowerCase()}-${TIER_ORDINAL_LABEL[tier]}${index + 1}`
+        const chapterHashes = Object.fromEntries(
+          authored.chapters.map((chapter) => [String(chapter.chapterNumber), HEX64]),
+        )
+        return {
+          rowId: `row-materialized-${key}`,
+          rubricId,
+          partition,
+          universeId,
+          tier,
+          fixture: {
+            fixtureId: `fixture-materialized-${key}`,
+            universeId,
+            fixtureFamilyId: `family-materialized-${key}`,
+            lineageId: `lineage-materialized-${universeId}-${rubricId.toLowerCase()}`,
+            mutationSiblingId: `sibling-materialized-${key}`,
+            contentHash: HEX64,
+            chapterHashes,
+            partition,
+            provenance: 'human-authored' as const,
+            chapters: authored.chapters,
+            structuralContext: {
+              storyPromise: universeContext.storyPromise,
+              mainConflict: universeContext.mainConflict,
+              finalDramaticQuestion: universeContext.finalDramaticQuestion,
+              actPosition: rubricId === 'D-R7' || rubricId === 'D-R8'
+                ? 'penutupan Bab 41-50'
+                : 'tekanan pertengahan cerita',
+              activeThreadSummaries: universeContext.activeThreadSummaries,
+              resolvedThreadSummaries: universeContext.resolvedThreadSummaries,
+              payoffSchedule: universeContext.payoffSchedule,
+              lockedEndingKey: universeContext.lockedEndingKey,
+            },
+          },
+          reviewState: D1_RUBRIC_REVIEW_STATE[rubricId],
+          justification: authored.justification,
+        }
+      },
+    )))
+  })
+}
+
+function materializeCases(rows: ReturnType<typeof materializeRows>) {
+  return rows.flatMap((row) => D1_RUBRIC_CASE_SPECS[row.rubricId].map((spec) => ({
+    caseId: `${row.rowId}-${spec.caseSuffix}`,
+    rowId: row.rowId,
+    fixtureId: row.fixture.fixtureId,
+    rubricId: row.rubricId,
+    view: spec.view,
+    horizonKind: spec.horizonKind,
+    coverage: spec.coverage,
+  })))
+}
+
+describe('M10-D1 Phase3 executable surface proof (manifest-free)', () => {
+  const rows = materializeRows()
+  const cases = materializeCases(rows)
+
+  it('materializes the full 208-row, 312-case surface from authored prose', () => {
+    expect(rows).toHaveLength(D1_EXPECTED_ROW_COUNT)
+    expect(cases).toHaveLength(D1_EXPECTED_EVALUATION_CASE_COUNT)
+    expect(cases).toHaveLength(312)
+  })
+
+  it('assembles all 312 case surfaces, which is itself the label-leak gate', () => {
+    // assembleJudgeInput runs assertNoLabelLeak internally, so a successful
+    // assembly of every case is a positive leak-free result, not an absence of
+    // evidence. The explicit scan below keeps the failure message readable.
+    let assembled = 0
+    for (const evaluationCase of cases) {
+      const row = rows.find((candidate) => candidate.rowId === evaluationCase.rowId)!
+      const { input } = assembleJudgeInput(row, evaluationCase)
+      expect(JSON.stringify(input), evaluationCase.caseId)
+        .not.toMatch(/RATIFIED|PENDING_REVIEW|STRONG|WEAK|BORDERLINE|CALIBRATION|HOLDOUT|justification/i)
+      assembled += 1
+    }
+    expect(assembled).toBe(312)
+  })
+
+  it('gives every converted D-R2, D-R3, and D-R6 case a structural surface with full context', () => {
+    for (const rubricId of ['D-R2', 'D-R3', 'D-R6'] as const) {
+      const rubricCases = cases.filter((candidate) => candidate.rubricId === rubricId)
+      expect(rubricCases.length, rubricId).toBe(rubricId === 'D-R3' ? 52 : 26)
+      for (const evaluationCase of rubricCases) {
+        const row = rows.find((candidate) => candidate.rowId === evaluationCase.rowId)!
+        const { input } = assembleJudgeInput(row, evaluationCase)
+        expect(input.view, evaluationCase.caseId).toBe('structural')
+        expect('storyPromise' in input, evaluationCase.caseId).toBe(true)
+        expect('actPosition' in input, evaluationCase.caseId).toBe(true)
+      }
+    }
+  })
+
+  it('keeps all 26 D-R8 reader and structural runway pairs prose-identical but judge-input distinct', () => {
+    const dR8Rows = rows.filter((row) => row.rubricId === 'D-R8')
+    expect(dR8Rows).toHaveLength(26)
+    for (const row of dR8Rows) {
+      const structuralCase = cases.find(
+        (candidate) => candidate.rowId === row.rowId && candidate.caseId.endsWith('-runway'),
+      )!
+      const readerCase = cases.find(
+        (candidate) => candidate.rowId === row.rowId && candidate.caseId.endsWith('-runway-reader'),
+      )!
+      const structural = assembleJudgeInput(row, structuralCase)
+      const reader = assembleJudgeInput(row, readerCase)
+
+      // One fixture, one coverage: prose authority is identical across views.
+      expect(reader.input.segments, row.rowId).toEqual(structural.input.segments)
+      expect(reader.corpusAuthority.fixtureContentHash, row.rowId)
+        .toBe(structural.corpusAuthority.fixtureContentHash)
+      expect(reader.corpusAuthority.chapterHashes, row.rowId)
+        .toEqual(structural.corpusAuthority.chapterHashes)
+      // Distinct views must never collapse to one assembled judge surface.
+      expect(reader.corpusAuthority.judgeInputHash, row.rowId)
+        .not.toBe(structural.corpusAuthority.judgeInputHash)
+      expect(reader.input.view, row.rowId).toBe('reader')
+      expect(structural.input.view, row.rowId).toBe('structural')
+      for (const field of ['storyPromise', 'mainConflict', 'finalQuestion', 'actPosition', 'lockedEndingKey']) {
+        expect(field in reader.input, `${row.rowId}/${field}`).toBe(false)
       }
     }
   })

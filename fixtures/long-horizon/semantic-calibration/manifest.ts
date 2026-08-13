@@ -21,6 +21,10 @@ import {
 } from './corpus'
 import { D1_AUTHORED_BANKS, D1_UNIVERSE_CONTEXT } from './contexts'
 import {
+  D1_CONTROLLED_MUTATIONS,
+  d1FixtureFamilyId,
+} from './mutation-map'
+import {
   SemanticCorpusManifestSchema,
   SemanticCorpusRubricRowSchema,
   SemanticEvaluationCaseSchema,
@@ -33,15 +37,7 @@ import { computeSha256, stableStringify } from '../../../lib/narrative-qa/scorin
  */
 export const D1_EXPECTED_MANIFEST_SHA256 = '3635fd3152bbdc1c36f41aaa3b2378f6e250b8ab532a49db96b4128f7e960e1e'
 
-/**
- * Explicit ALLOWED_CONTROLLED_MUTATION register, keyed by derived fixtureId.
- * Empty because the ratified corpus is fully independently authored. Any entry
- * added here must be an intra-partition, intra-family, one-axis variant; the
- * fence below rejects anything else, and CALIBRATION<->HOLDOUT is forbidden.
- */
-export const D1_CONTROLLED_MUTATIONS: Readonly<
-  Record<string, { readonly axis: 'RUBRIC_STRENGTH'; readonly baseFixtureId: string }>
-> = Object.freeze({})
+export { D1_CONTROLLED_MUTATIONS } from './mutation-map'
 
 const TIER_ORDINAL_LABEL: Readonly<Record<D1Tier, string>> = {
   STRONG: 'a',
@@ -93,18 +89,17 @@ function makeRow(
   // self-prove isolation; isolation is proven by content and universe.
   const key = `${universeId}-${rubricId.toLowerCase()}-${TIER_ORDINAL_LABEL[tier]}${index + 1}`
   const universeContext = D1_UNIVERSE_CONTEXT[universeId]
+  const fixtureId = `d1-fixture-${key}`
   const fixtureWithoutHash = {
-    fixtureId: `d1-fixture-${key}`,
+    fixtureId,
     universeId,
-    fixtureFamilyId: `d1-family-${universeId}-${rubricId.toLowerCase()}-${TIER_ORDINAL_LABEL[tier]}`,
+    fixtureFamilyId: d1FixtureFamilyId(fixtureId),
     lineageId: `d1-lineage-${universeId}-${rubricId.toLowerCase()}`,
     mutationSiblingId: `d1-sibling-${key}`,
-    // Every authored fixture in the ratified corpus was written independently
-    // from a blank narrative spine, so no row declares a controlled-mutation
-    // base. D1_CONTROLLED_MUTATIONS is the only place a relation may be added,
-    // and assertD1ControlledMutations fences whatever is added there.
-    ...(D1_CONTROLLED_MUTATIONS[`d1-fixture-${key}`]
-      ? { mutationRelation: D1_CONTROLLED_MUTATIONS[`d1-fixture-${key}`] }
+    // Mutation metadata comes only from the ratified exact-fixture registry.
+    // Fixtures absent from it remain independent one-fixture families.
+    ...(D1_CONTROLLED_MUTATIONS[fixtureId]
+      ? { mutationRelation: D1_CONTROLLED_MUTATIONS[fixtureId] }
       : {}),
     partition,
     provenance: 'human-authored' as const,
@@ -306,6 +301,23 @@ export function assertD1ControlledMutations(rows: readonly D1RubricRow[] = D1_RU
     }
     if (base.fixture.mutationRelation) {
       throw new Error(`Controlled mutation base must itself be a base: ${relation.baseFixtureId}.`)
+    }
+  }
+  const rowsByFamily = new Map<string, D1RubricRow[]>()
+  for (const row of rows) {
+    const family = rowsByFamily.get(row.fixture.fixtureFamilyId) ?? []
+    family.push(row)
+    rowsByFamily.set(row.fixture.fixtureFamilyId, family)
+  }
+  for (const family of rowsByFamily.values()) {
+    if (family.length === 1) {
+      if (family[0]!.fixture.mutationRelation) throw new Error('Controlled mutation member cannot occupy an independent family.')
+      continue
+    }
+    const bases = family.filter((row) => !row.fixture.mutationRelation)
+    if (bases.length !== 1) throw new Error(`Controlled mutation family must have exactly one base: ${family[0]!.fixture.fixtureFamilyId}.`)
+    if (family.some((row) => row !== bases[0] && row.fixture.mutationRelation?.baseFixtureId !== bases[0]!.fixture.fixtureId)) {
+      throw new Error(`Controlled mutation members must point directly to family base: ${family[0]!.fixture.fixtureFamilyId}.`)
     }
   }
   // Registered entries must correspond to real fixtures, so a stale key cannot

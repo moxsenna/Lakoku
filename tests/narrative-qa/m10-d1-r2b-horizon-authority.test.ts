@@ -31,6 +31,11 @@ import {
   D1_AUTHORED_BANKS,
   D1_UNIVERSE_CONTEXT,
 } from '../../fixtures/long-horizon/semantic-calibration/contexts'
+import {
+  D1_CONTROLLED_MUTATION_GROUPS,
+  D1_CONTROLLED_MUTATIONS,
+  d1FixtureFamilyId,
+} from '../../fixtures/long-horizon/semantic-calibration/mutation-map'
 
 /**
  * D1-R2B horizon and review-state authority.
@@ -491,6 +496,37 @@ function materializeCases(rows: ReturnType<typeof materializeRows>) {
     coverage: spec.coverage,
   })))
 }
+
+describe('M10-D1 Phase4 controlled-mutation authority (manifest-free)', () => {
+  it('registers exact reviewed groups and keeps every member direct to one base', () => {
+    expect(D1_CONTROLLED_MUTATION_GROUPS).toHaveLength(52)
+    const members = D1_CONTROLLED_MUTATION_GROUPS.flatMap(([, ...memberFixtureIds]) => memberFixtureIds)
+    expect(Object.keys(D1_CONTROLLED_MUTATIONS)).toHaveLength(members.length)
+    expect(new Set(members).size).toBe(members.length)
+    for (const [baseFixtureId, ...memberFixtureIds] of D1_CONTROLLED_MUTATION_GROUPS) {
+      expect(D1_CONTROLLED_MUTATIONS[baseFixtureId], baseFixtureId).toBeUndefined()
+      for (const memberFixtureId of memberFixtureIds) {
+        expect(D1_CONTROLLED_MUTATIONS[memberFixtureId], memberFixtureId).toEqual({
+          axis: 'RUBRIC_STRENGTH',
+          baseFixtureId,
+        })
+        expect(d1FixtureFamilyId(memberFixtureId)).toBe(d1FixtureFamilyId(baseFixtureId))
+      }
+    }
+  })
+
+  it('keeps rewritten L-D-R4 a5 and b5 independent, not a fabricated pair', () => {
+    const a5 = 'd1-fixture-lembah-awan-d-r4-a5'
+    const b5 = 'd1-fixture-lembah-awan-d-r4-b5'
+    expect(D1_CONTROLLED_MUTATIONS[a5]).toBeUndefined()
+    expect(D1_CONTROLLED_MUTATIONS[b5]).toBeUndefined()
+    expect(d1FixtureFamilyId(a5)).toBe('d1-family-lembah-awan-d-r4-a5')
+    expect(d1FixtureFamilyId(b5)).toBe('d1-family-lembah-awan-d-r4-b5')
+    expect(d1FixtureFamilyId(a5)).not.toBe(d1FixtureFamilyId(b5))
+    expect(D1_CONTROLLED_MUTATION_GROUPS.flat()).not.toContain(a5)
+    expect(D1_CONTROLLED_MUTATION_GROUPS.flat()).not.toContain(b5)
+  })
+})
 
 describe('M10-D1 Phase3 executable surface proof (manifest-free)', () => {
   const rows = materializeRows()

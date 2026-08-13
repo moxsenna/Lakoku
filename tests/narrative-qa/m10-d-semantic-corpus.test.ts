@@ -83,6 +83,16 @@ describe('M10-D1 semantic calibration corpus', () => {
     }
   })
 
+  it('keeps rewritten L-D-R4 a5 and b5 as independent fixtures', () => {
+    const a5 = D1_RUBRIC_ROWS.find((row) => row.fixture.fixtureId === 'd1-fixture-lembah-awan-d-r4-a5')!
+    const b5 = D1_RUBRIC_ROWS.find((row) => row.fixture.fixtureId === 'd1-fixture-lembah-awan-d-r4-b5')!
+    expect(a5.fixture.mutationRelation).toBeUndefined()
+    expect(b5.fixture.mutationRelation).toBeUndefined()
+    expect(a5.fixture.fixtureFamilyId).toBe('d1-family-lembah-awan-d-r4-a5')
+    expect(b5.fixture.fixtureFamilyId).toBe('d1-family-lembah-awan-d-r4-b5')
+    expect(a5.fixture.fixtureFamilyId).not.toBe(b5.fixture.fixtureFamilyId)
+  })
+
   it('rejects a controlled mutation that crosses partitions', () => {
     const holdoutRow = D1_RUBRIC_ROWS.find((row) => row.partition === 'VALIDATION_HOLDOUT')!
     const calibrationRow = D1_RUBRIC_ROWS.find((row) => row.partition === 'CALIBRATION')!

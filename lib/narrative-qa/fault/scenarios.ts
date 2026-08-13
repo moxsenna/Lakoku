@@ -6,8 +6,9 @@
  *   - production code is never edited; faults enter through the injectable
  *     `deps` seam (`buildProductionMirrorDeps`) or through direct manipulation
  *     of HARNESS-OWNED rows on the isolated DB (legitimate fault setup);
- *   - a chapter is never "fixed" by hand: recovery must come from re-entering
- *     the production path (plan E.5 "continue without manual DB mutation");
+ *   - executable recovery uses the production path; historical PB2 is explicitly
+ *     limited to a manual pre-existing-residue proxy and proves neither internal
+ *     transaction rollback nor recovery without manual mutation;
  *   - no model calls in any scenario (deterministic provider only);
  *   - an invariant violation is recorded, never repaired or suppressed.
  *
@@ -881,22 +882,17 @@ export async function runFaultMatrix(input: RunFaultMatrixInput = {}): Promise<F
   }
   pubTrigger = (await submitHarnessChoice({ admin, storyId: PUBLICATION_STORY_ID, userId, chapterNumber: 46 })).choiceId
 
-  // PB2 — chapter row already exists (transaction failure after chapter insert
-  // but before state commit must fully roll back → the retry sees a conflict,
-  // never a half-committed canon).
-  //
-  // This scenario is structured differently from runScenario: the fault is DB
-  // state (an injected residue row), and the invariant check at the fault
-  // moment must ACCOUNT for that residue (it is the fault, not corruption).
-  // Recovery is: teardown the injected residue, then let the production path
-  // publish the chapter cleanly. That teardown is removal of INJECTED fault
-  // setup, never a repair of production output.
+  // PB2 — pre-existing chapter conflict/residue proxy. This historical case
+  // manually injects a chapter row, observes fail-closed publication, manually
+  // removes that injected setup, then retries cleanly. It does not prove
+  // transaction rollback after chapter insert but before state commit, and does
+  // not prove recovery without manual mutation.
   {
     const chapterNumber = 47
     const horizon = 46 // Bab 47 not yet published when the fault lands
 
-    // Fault setup: a chapter row exists without its state commit — the residue
-    // a torn transaction would leave if publication were not atomic.
+    // Fault setup: manually create a chapter row without matching state commit.
+    // This models pre-existing residue only; it does not induce a torn transaction.
     const { error: insertError } = await admin.from('chapters').insert({
       story_id: PUBLICATION_STORY_ID,
       number: chapterNumber,
@@ -947,8 +943,8 @@ export async function runFaultMatrix(input: RunFaultMatrixInput = {}): Promise<F
     scenarios.push({
       id: 'PB2_CHAPTER_INSERT_CONFLICT_ROLLBACK',
       faultClass: 'publication_db',
-      planBullet: 'transaction failure after chapter insert but before state commit — must fully rollback',
-      injectedBoundary: 'pre-existing chapter row at V3 atomic publication',
+      planBullet: 'pre-existing chapter conflict/residue proxy (historical PB2 schedule ID)',
+      injectedBoundary: 'manually injected pre-existing chapter residue before V3 publication; manual residue cleanup before retry',
       injectionReached: true,
       expectedDisposition: 'FAILED_CLOSED',
       observedDisposition: faultedOutcome === 'PUBLISHED' ? 'PUBLISHED' : 'FAILED_CLOSED',
@@ -971,9 +967,9 @@ export async function runFaultMatrix(input: RunFaultMatrixInput = {}): Promise<F
       invariants: [...midFaultInvariants, ...finalInvariants],
       invariantsPassed: allInvariantsPassed([...midFaultInvariants, ...finalInvariants]),
       notes: [
-        'Publication refused to commit canon on top of the torn residue row (failed closed).',
+        'Publication refused to commit canon on top of the manually injected pre-existing residue row (failed closed).',
         'The mid-fault check accounts for exactly 1 injected residue chapter row; the canon revision and all state stayed at the horizon.',
-        'Teardown removed the injected residue, then the clean production path published Bab 47.',
+        'Harness manually removed the injected residue before the clean production retry; PB2 does not prove no-manual-mutation recovery or internal transaction rollback.',
       ],
     })
   }
@@ -1061,8 +1057,7 @@ export async function runFaultMatrix(input: RunFaultMatrixInput = {}): Promise<F
     {
       planBullet: 'provider fallback succeeds',
       reason:
-        'Fallback ordering lives inside selectProvider (real-provider config). The deterministic '
-        + 'harness has a single provider; proving fallback needs the gateway path (M10-F).',
+        'Fallback needs a deterministic E2 fault seam without a real provider call; E1 has no such seam.',
     },
     {
       planBullet: 'stale lease reclamation',

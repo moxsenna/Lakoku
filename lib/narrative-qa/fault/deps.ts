@@ -31,9 +31,12 @@ import {
 import { selectProvider } from '@lakoku/ai-gateway/server'
 import { createAdminClient } from '../../supabase/admin'
 import { recordGenerationAttempt } from '../../observability/server'
-import { buildChapterBrief } from '../../story-engine/chapter-brief'
+import {
+  buildChapterBrief,
+  ChoiceHistoryEntrySchema,
+} from '../../story-engine/chapter-brief'
 import { parseStoryContractWithNormalization, type StoryContract } from '../../story-engine/story-contract'
-import { normalizeRouteState } from '../../story-engine/route-state'
+import { normalizeRouteState, RouteStateSchema } from '../../story-engine/route-state'
 import { resolveEnding } from '../../story-engine/ending-resolver'
 import { auditPlotDebts } from '../../story-engine/plot-debt'
 import {
@@ -65,16 +68,30 @@ const CONTRACT_SELECT =
 const READER_STATE_INTERNAL_SELECT =
   'user_id,story_id,status,current_chapter,jejak,ending_name,route_state,choice_history,locked_ending_key,updated_at' as const
 
-// Mirror of ReaderStateInternalSchema (personalized-generation.ts:135) — only
-// the parse surface defaultLoadReaderStateInternal uses. The parsed row is
-// shaped into the exported ReaderStateInternal type below.
-const ReaderStateInternalSchema = z.object({
+// Exact semantic mirror of ReaderStateInternalSchema
+// (personalized-generation.ts:138-149). Exported so E1 can detect mirror drift
+// without exporting production-private parser behavior.
+export const ReaderStateInternalMirrorSchema = z.object({
   user_id: z.string().uuid(),
   story_id: z.string().min(1),
   status: z.enum(['BARU', 'BERJALAN', 'SELESAI']),
-  current_chapter: z.number().int(),
+  current_chapter: z.number().int().positive(),
+  jejak: z.array(z.unknown()).default([]),
+  ending_name: z.string().nullable(),
+  route_state: RouteStateSchema,
+  choice_history: z.array(ChoiceHistoryEntrySchema).max(49).default([]),
+  locked_ending_key: z.string().nullable(),
   updated_at: z.string(),
-}).passthrough()
+}).strict()
+
+// Compile-time proof: inferred mirror output remains structurally assignable to
+// exported production type. Runtime parser stays private and unchanged.
+function _assertReaderStateMirrorAssignable(
+  value: z.output<typeof ReaderStateInternalMirrorSchema>,
+): ReaderStateInternal {
+  return value
+}
+void _assertReaderStateMirrorAssignable
 
 // Mirror of defaultLoadStoryGenerationContract (personalized-generation.ts:399).
 async function mirrorLoadStoryGenerationContract(storyId: string): Promise<StoryContract> {
@@ -114,12 +131,10 @@ async function mirrorLoadReaderStateInternal(
     .maybeSingle()
   if (error) throw new Error(`loadReaderStateInternal: ${error.message}`)
   if (!data) throw new Error(`loadReaderStateInternal: missing for ${userId}/${storyId}`)
-  const parsed = ReaderStateInternalSchema.parse({
+  return ReaderStateInternalMirrorSchema.parse({
     ...data,
     route_state: normalizeRouteState((data as { route_state: unknown }).route_state),
   })
-  // Structural passthrough parse → exported production type.
-  return parsed as unknown as ReaderStateInternal
 }
 
 // Mirror of defaultMarkReaderStateSelesai (personalized-generation.ts:557).

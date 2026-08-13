@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+vi.mock('server-only', () => ({}))
+import { ReaderStateInternalMirrorSchema } from '../../lib/narrative-qa/fault/deps'
 import {
   E1_EXECUTABLE_SCENARIO_IDS,
   evaluateE1Gate,
@@ -6,6 +9,10 @@ import {
   type E1Evidence,
   type E1ScenarioEvidence,
 } from '../../lib/narrative-qa/fault/evidence'
+import {
+  E1_E2_GAPS,
+  E1_HISTORICAL_REFERENCES,
+} from '../../scripts/m10-e-reliability'
 
 function passingScenario(id: (typeof E1_EXECUTABLE_SCENARIO_IDS)[number]): E1ScenarioEvidence {
   return {
@@ -41,16 +48,12 @@ function passingEvidence(): E1Evidence {
   return {
     version: 'm10-e1-fault-evidence/v1',
     baseGitSha: '832f758e3e414a381983b0bf1c78a4e7049ed503',
-    workingTreeDirty: true,
+    workingTreeDirty: false,
     seed: 'm10-e1-seed-v1',
     faultSchedule: [...E1_EXECUTABLE_SCENARIO_IDS],
     scenarios: E1_EXECUTABLE_SCENARIO_IDS.map(passingScenario),
-    historicalReferences: [{
-      id: 'PB4_SYNC_VS_WORKER_RACE',
-      disposition: 'N/A_CURRENT_RUNTIME',
-      reason: 'withGenerationSlot duplicate-target guard prevents second publication-seam entrant.',
-    }],
-    e2Gaps: [],
+    historicalReferences: E1_HISTORICAL_REFERENCES,
+    e2Gaps: E1_E2_GAPS,
     duplicatePublicationCount: 0,
     canonicalCorruptionCount: 0,
     unboundedRetryCount: 0,
@@ -99,19 +102,58 @@ describe('M10-E E1 evidence gate', () => {
     ]))
   })
 
-  it('excludes PB4 from executable catalog while retaining exact non-executable metadata', () => {
+  it('fails evidence produced from a dirty working tree', () => {
+    const evidence = passingEvidence()
+    evidence.workingTreeDirty = true
+
+    expect(evaluateE1Gate(evidence).failures).toContain('working tree must be clean')
+  })
+
+  it('binds PB4 to one E1 non-executable reference and an exact open E2 concurrency gap', () => {
     const evidence = passingEvidence()
     expect(E1_EXECUTABLE_SCENARIO_IDS).not.toContain('PB4_SYNC_VS_WORKER_RACE')
     expect(evidence.scenarios).toHaveLength(13)
     expect(evidence.historicalReferences).toContainEqual(expect.objectContaining({
       id: 'PB4_SYNC_VS_WORKER_RACE',
-      disposition: 'N/A_CURRENT_RUNTIME',
+      disposition: 'NOT_EXECUTABLE_E1',
+    }))
+    expect(evidence.e2Gaps).toContainEqual(expect.objectContaining({
+      id: 'PUBLICATION_CONCURRENCY_SYNC_VS_WORKER',
+      disposition: 'OPEN_E2',
     }))
     expect(evaluateE1Gate(evidence)).toEqual({ result: 'PASS', failures: [] })
 
     evidence.historicalReferences = []
     expect(evaluateE1Gate(evidence).failures).toContain(
-      'PB4_SYNC_VS_WORKER_RACE: expected exactly one N/A_CURRENT_RUNTIME metadata reference, observed 0',
+      'PB4_SYNC_VS_WORKER_RACE: expected exactly one NOT_EXECUTABLE_E1 metadata reference, observed 0',
+    )
+
+    const missingGap = passingEvidence()
+    missingGap.e2Gaps = missingGap.e2Gaps.filter((gap) => gap.id !== 'PUBLICATION_CONCURRENCY_SYNC_VS_WORKER')
+    expect(evaluateE1Gate(missingGap).failures).toContain(
+      'PUBLICATION_CONCURRENCY_SYNC_VS_WORKER: expected exactly one OPEN_E2 gap, observed 0',
+    )
+  })
+
+  it('requires exact open E2 gaps for PB2 transaction rollback and provider fallback', () => {
+    const evidence = passingEvidence()
+    expect(evidence.e2Gaps).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'TRANSACTION_ROLLBACK_AFTER_CHAPTER_INSERT_BEFORE_STATE_COMMIT',
+        disposition: 'OPEN_E2',
+      }),
+      expect.objectContaining({ id: 'PROVIDER_FALLBACK_SUCCEEDS', disposition: 'OPEN_E2' }),
+    ]))
+    expect(evidence.e2Gaps.find((gap) => gap.id === 'PROVIDER_FALLBACK_SUCCEEDS')?.reason)
+      .toContain('deterministic E2 fault seam required without real provider call')
+    expect(evidence.e2Gaps.find((gap) => gap.id === 'PROVIDER_FALLBACK_SUCCEEDS')?.reason)
+      .not.toContain('M10-F')
+
+    evidence.e2Gaps = evidence.e2Gaps.filter(
+      (gap) => gap.id !== 'TRANSACTION_ROLLBACK_AFTER_CHAPTER_INSERT_BEFORE_STATE_COMMIT',
+    )
+    expect(evaluateE1Gate(evidence).failures).toContain(
+      'TRANSACTION_ROLLBACK_AFTER_CHAPTER_INSERT_BEFORE_STATE_COMMIT: expected exactly one OPEN_E2 gap, observed 0',
     )
   })
 
@@ -145,6 +187,50 @@ describe('M10-E E1 evidence gate', () => {
     expect(evaluateE1Gate(missingSchedule).failures).toContain(
       'fault schedule does not exactly match executable E1 catalog',
     )
+  })
+})
+
+describe('M10-E E1 reader-state mirror', () => {
+  const validReaderState = {
+    user_id: '11111111-1111-4111-8111-111111111111',
+    story_id: 'story-1',
+    status: 'BERJALAN' as const,
+    current_chapter: 1,
+    ending_name: null,
+    route_state: {},
+    locked_ending_key: null,
+    updated_at: '2026-08-13T00:00:00.000Z',
+  }
+
+  it('matches production defaults and nullable fields', () => {
+    expect(ReaderStateInternalMirrorSchema.parse(validReaderState)).toEqual({
+      ...validReaderState,
+      jejak: [],
+      route_state: {
+        truth: 0,
+        risk: 0,
+        secrecy: 0,
+        empathy: 0,
+        trust: {},
+        evidence: [],
+        flags: {},
+        endingBias: {},
+      },
+      choice_history: [],
+    })
+  })
+
+  it('rejects unknown fields, non-positive chapters, malformed route state, and malformed choice history', () => {
+    expect(() => ReaderStateInternalMirrorSchema.parse({ ...validReaderState, extra: true })).toThrow()
+    expect(() => ReaderStateInternalMirrorSchema.parse({ ...validReaderState, current_chapter: 0 })).toThrow()
+    expect(() => ReaderStateInternalMirrorSchema.parse({
+      ...validReaderState,
+      route_state: { unknown: true },
+    })).toThrow()
+    expect(() => ReaderStateInternalMirrorSchema.parse({
+      ...validReaderState,
+      choice_history: [{ chapterNumber: 50 }],
+    })).toThrow()
   })
 })
 

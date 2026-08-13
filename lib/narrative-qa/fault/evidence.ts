@@ -52,7 +52,7 @@ export interface E1ScenarioEvidence {
 
 export interface E1CoverageMetadata {
   id: string
-  disposition: 'REPLACED_REFERENCE' | 'N/A_CURRENT_RUNTIME' | 'MISSING' | 'NOT_EXECUTED_E1' | 'N/A'
+  disposition: 'REPLACED_REFERENCE' | 'NOT_EXECUTABLE_E1' | 'OPEN_E2' | 'MISSING' | 'NOT_EXECUTED_E1' | 'N/A'
   reason: string
 }
 
@@ -85,6 +85,7 @@ export function evaluateE1Gate(evidence: E1Evidence): E1GateResult {
   const failures: string[] = []
   const expectedIds = new Set<string>(E1_EXECUTABLE_SCENARIO_IDS)
 
+  if (evidence.workingTreeDirty) failures.push('working tree must be clean')
   if (evidence.scenarios.length !== E1_EXECUTABLE_SCENARIO_IDS.length) {
     failures.push(`executable scenario count must be ${E1_EXECUTABLE_SCENARIO_IDS.length}, observed ${evidence.scenarios.length}`)
   }
@@ -144,10 +145,22 @@ export function evaluateE1Gate(evidence: E1Evidence): E1GateResult {
     }
   }
   const pb4References = evidence.historicalReferences.filter((reference) =>
-    reference.id === 'PB4_SYNC_VS_WORKER_RACE'
-    && reference.disposition === 'N/A_CURRENT_RUNTIME')
-  if (pb4References.length !== 1) {
-    failures.push(`PB4_SYNC_VS_WORKER_RACE: expected exactly one N/A_CURRENT_RUNTIME metadata reference, observed ${pb4References.length}`)
+    reference.id === 'PB4_SYNC_VS_WORKER_RACE')
+  const validPb4References = pb4References.filter((reference) =>
+    reference.disposition === 'NOT_EXECUTABLE_E1')
+  if (pb4References.length !== 1 || validPb4References.length !== 1) {
+    failures.push(`PB4_SYNC_VS_WORKER_RACE: expected exactly one NOT_EXECUTABLE_E1 metadata reference, observed ${validPb4References.length}`)
+  }
+  for (const gapId of [
+    'PUBLICATION_CONCURRENCY_SYNC_VS_WORKER',
+    'TRANSACTION_ROLLBACK_AFTER_CHAPTER_INSERT_BEFORE_STATE_COMMIT',
+    'PROVIDER_FALLBACK_SUCCEEDS',
+  ]) {
+    const matchingGaps = evidence.e2Gaps.filter((gap) => gap.id === gapId)
+    const validGaps = matchingGaps.filter((gap) => gap.disposition === 'OPEN_E2')
+    if (matchingGaps.length !== 1 || validGaps.length !== 1) {
+      failures.push(`${gapId}: expected exactly one OPEN_E2 gap, observed ${validGaps.length}`)
+    }
   }
   if (evidence.duplicatePublicationCount !== 0) {
     failures.push(`duplicate publication count must be 0, observed ${evidence.duplicatePublicationCount}`)

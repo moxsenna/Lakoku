@@ -18,24 +18,37 @@ export const E1_ARTIFACT_DIR = join('.zcode', 'artifacts', 'm10-e1')
 export const E1_RAW_EVIDENCE_PATH = join(E1_ARTIFACT_DIR, 'm10-e1-fault-evidence.raw.json')
 export const E1_NORMALIZED_EVIDENCE_PATH = join(E1_ARTIFACT_DIR, 'm10-e1-fault-evidence.normalized.json')
 
-const HISTORICAL_REFERENCES: E1CoverageMetadata[] = [
+export const E1_HISTORICAL_REFERENCES: E1CoverageMetadata[] = [
   { id: 'W2_EXACT_REPLAY_SAME_JOB', disposition: 'REPLACED_REFERENCE', reason: 'Current M10-C exact replay evidence is authority.' },
   { id: 'PB3_DUPLICATE_PUBLISH', disposition: 'REPLACED_REFERENCE', reason: 'Current M10-C replay/tamper evidence is authority.' },
   {
     id: 'PB4_SYNC_VS_WORKER_RACE',
-    disposition: 'N/A_CURRENT_RUNTIME',
+    disposition: 'NOT_EXECUTABLE_E1',
     reason:
-      'Current generateNextPersonalizedChapter call path enters withGenerationSlot before injectable PersonalizedGenerationDeps; '
-      + 'lib/runtime/generation-concurrency.ts acquireGenerationSlot rejects activeJobs.has(storyId:chapterNumber) as '
-      + 'CAPACITY_BUSY duplicateJob, so a second same-target contender cannot reach publishChapterSchema3. Publication concurrency remains open.',
+      'Same-process E1 cannot execute the cross-process sync-vs-worker publication race because process-local '
+      + 'withGenerationSlot blocks the second local contender before publishChapterSchema3; this does not make the runtime race inapplicable.',
   },
   { id: 'POST2_COMPLETION_AFTER_FAULTS', disposition: 'REPLACED_REFERENCE', reason: 'Completion check runs after schedule; it is not a fault scenario.' },
 ]
 
-const E2_GAPS: E1CoverageMetadata[] = [
+export const E1_E2_GAPS: E1CoverageMetadata[] = [
+  {
+    id: 'PUBLICATION_CONCURRENCY_SYNC_VS_WORKER',
+    disposition: 'OPEN_E2',
+    reason: 'Cross-process sync-vs-worker publication race requires an E2 concurrency harness.',
+  },
+  {
+    id: 'TRANSACTION_ROLLBACK_AFTER_CHAPTER_INSERT_BEFORE_STATE_COMMIT',
+    disposition: 'OPEN_E2',
+    reason: 'PB2 is a pre-existing chapter conflict/residue proxy; transaction rollback at the internal SQL boundary remains open for E2.',
+  },
   { id: 'MALFORMED_CHOICES_OUTPUT', disposition: 'MISSING', reason: 'Separate choice-provider fault seam required.' },
   { id: 'MALFORMED_STATE_PROPOSAL_DELTA', disposition: 'MISSING', reason: 'Materializer-level fault probe required.' },
-  { id: 'PROVIDER_FALLBACK_SUCCEEDS', disposition: 'N/A', reason: 'Deterministic single-provider E1 cannot prove fallback.' },
+  {
+    id: 'PROVIDER_FALLBACK_SUCCEEDS',
+    disposition: 'OPEN_E2',
+    reason: 'A deterministic E2 fault seam required without real provider call.',
+  },
   { id: 'STALE_LEASE_RECLAMATION', disposition: 'MISSING', reason: 'W3 proves ownership loss, not TTL reclamation.' },
   { id: 'CHECKPOINT_MISMATCH_CLASSES', disposition: 'NOT_EXECUTED_E1', reason: 'Related current M10-C reference only.' },
   { id: 'FAILURE_AFTER_APPLIER_BEFORE_TERMINALIZATION', disposition: 'MISSING', reason: 'No TypeScript seam inside atomic SQL publication.' },
@@ -98,8 +111,8 @@ export async function runM10E1Cli(): Promise<number> {
       ...(scenario.runtimeProviderAttempts ? { runtimeProviderAttempts: scenario.runtimeProviderAttempts } : {}),
       ...(scenario.checkpointRecovery ? { checkpointRecovery: scenario.checkpointRecovery } : {}),
     })),
-    historicalReferences: HISTORICAL_REFERENCES,
-    e2Gaps: E2_GAPS,
+    historicalReferences: E1_HISTORICAL_REFERENCES,
+    e2Gaps: E1_E2_GAPS,
     duplicatePublicationCount,
     canonicalCorruptionCount,
     unboundedRetryCount: run.scenarios.filter((scenario) =>

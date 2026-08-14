@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   E2_EVIDENCE_MATRIX,
@@ -5,13 +7,18 @@ import {
   E2_SCENARIO_IDS,
 } from '../../lib/narrative-qa/fault/e2/catalog'
 import { evaluateE2Gate } from '../../lib/narrative-qa/fault/e2/gate'
-import { normalizeE2Evidence } from '../../lib/narrative-qa/fault/e2/normalization'
+import {
+  hashNormalizedE2Evidence,
+  normalizeE2Evidence,
+} from '../../lib/narrative-qa/fault/e2/normalization'
 import {
   ANALYTICS_AUTHORITY_ANCHOR,
   ANALYTICS_REFERENCE_COMPONENT_IDS,
+  E2EvidenceSchema,
   OBSERVED_MODEL_CALL_ASSERTIONS,
   buildSourceUnchangedCompatibilityProof,
 } from '../../lib/narrative-qa/fault/e2/taxonomy'
+import { stableStringify } from '../../lib/narrative-qa/scoring/canonical-serializer'
 import type {
   E2Evidence,
   E2EvidenceRow,
@@ -22,6 +29,12 @@ import type {
   ProvenReferenceEvidence,
   ReviewRequiredEvidence,
 } from '../../lib/narrative-qa/fault/e2/taxonomy'
+
+const rawArtifactDirectory = process.env.M10_E2_RAW_ARTIFACT_DIR
+  ?? resolve(process.cwd(), '.zcode', 'artifacts', 'm10-e2')
+const rawArtifactPaths = [1, 2].map((run) =>
+  resolve(rawArtifactDirectory, `m10-e2-counted-run-${run}.raw.json`))
+const rawArtifactIt = rawArtifactPaths.every((path) => existsSync(path)) ? it : it.skip
 
 const EXPECTED_IDS = [
   'MALFORMED_CHOICES_OUTPUT',
@@ -452,6 +465,297 @@ describe('M10-E2 normalization', () => {
       sourceArtifact: 'artifact/checkpoint-versioning.tap',
       exactProperty: 'mismatched schema is rejected before publication',
     }))
+  })
+
+  const executedProof = (evidence: E2Evidence): ExecutedEvidence => {
+    const proof = evidence.rows[0].proof
+    if (proof.disposition !== 'EXECUTED') throw new Error('expected EXECUTED fixture')
+    return proof
+  }
+
+  const evidenceWithObserved = (observed: unknown): E2Evidence => {
+    const evidence = passingEvidence()
+    executedProof(evidence).immediateInvariants[0].detail.observed = observed
+    return evidence
+  }
+
+  it('strips generated IDs only from exact invariant DB snapshot collection rows', () => {
+    const evidence = evidenceWithObserved({
+      attempts: [{ id: 'generated-attempt', payload: { id: 'attempt-payload' } }],
+      commits: [{ id: 'generated-commit', payload: { id: 'commit-payload' } }],
+      events: [{ id: 'generated-event', payload: { id: 'event-payload' } }],
+      outbox: [{ id: 'generated-outbox', payload: { id: 'outbox-payload' } }],
+      checkpoints: [{ id: 'semantic-checkpoint-id' }],
+      story: { id: 'semantic-story-id' },
+      policy: {
+        attempts: [{ id: 'policy-attempt' }],
+        events: [{ id: 'policy-event' }],
+      },
+      directObjects: {
+        attempts: { id: 'semantic-direct-attempt' },
+        commits: { id: 'semantic-direct-commit' },
+        events: { id: 'semantic-direct-event' },
+        outbox: { id: 'semantic-direct-outbox' },
+      },
+    })
+
+    const serialized = JSON.stringify(normalizeE2Evidence(evidence))
+    for (const generatedId of ['generated-attempt', 'generated-commit', 'generated-event', 'generated-outbox']) {
+      expect(serialized).not.toContain(generatedId)
+    }
+    for (const semanticId of [
+      'attempt-payload',
+      'commit-payload',
+      'event-payload',
+      'outbox-payload',
+      'semantic-checkpoint-id',
+      'semantic-story-id',
+      'policy-attempt',
+      'policy-event',
+      'semantic-direct-attempt',
+      'semantic-direct-commit',
+      'semantic-direct-event',
+      'semantic-direct-outbox',
+    ]) {
+      expect(serialized).toContain(semanticId)
+    }
+
+    for (const collection of ['attempts', 'commits', 'events', 'outbox']) {
+      const directObjectEvidence = evidenceWithObserved({
+        [collection]: { id: `semantic-direct-${collection}` },
+      })
+      expect(JSON.stringify(normalizeE2Evidence(directObjectEvidence))).toContain(
+        `semantic-direct-${collection}`,
+      )
+    }
+  })
+
+  it('strips only allowlisted operational fields at exact snapshot row paths', () => {
+    const operationalFields = {
+      created_at: 'volatile',
+      updated_at: 'volatile',
+      expires_at: 'volatile',
+      available_at: 'volatile',
+      claimed_at: 'volatile',
+      deadline_at: 'volatile',
+      heartbeat_at: 'volatile',
+      completed_at: 'volatile',
+      started_at: 'volatile',
+      ended_at: 'volatile',
+      elapsed_ms: 17,
+    }
+    const first = evidenceWithObserved({
+      attempts: [{ id: 'run-1', ...operationalFields, authority_at: 'semantic-a', processed_at: 'semantic-b' }],
+      checkpoints: [{ id: 'checkpoint-semantic', ...operationalFields }],
+      jobs: [{ id: 'job-semantic', ...operationalFields }],
+      reader_state: [{ ...operationalFields, payload: { created_at: 'nested-semantic' } }],
+      story: { ...operationalFields },
+      authority_at: 'outer-semantic-a',
+    })
+    const second = evidenceWithObserved({
+      attempts: [{
+        id: 'run-2',
+        ...Object.fromEntries(Object.keys(operationalFields).map((key) => [key, 'different-volatile'])),
+        authority_at: 'semantic-a',
+        processed_at: 'semantic-b',
+      }],
+      checkpoints: [{
+        id: 'checkpoint-semantic',
+        ...Object.fromEntries(Object.keys(operationalFields).map((key) => [key, 'different-volatile'])),
+      }],
+      jobs: [{
+        id: 'job-semantic',
+        ...Object.fromEntries(Object.keys(operationalFields).map((key) => [key, 'different-volatile'])),
+      }],
+      reader_state: [{
+        ...Object.fromEntries(Object.keys(operationalFields).map((key) => [key, 'different-volatile'])),
+        payload: { created_at: 'nested-semantic' },
+      }],
+      story: Object.fromEntries(
+        Object.keys(operationalFields).map((key) => [key, 'different-volatile']),
+      ),
+      authority_at: 'outer-semantic-a',
+    })
+    expect(hashNormalizedE2Evidence(first)).toBe(hashNormalizedE2Evidence(second))
+
+    const mutateObservedSnapshot = (
+      mutate: (snapshot: Record<string, unknown>) => void,
+    ): E2Evidence => {
+      const changed = structuredClone(first)
+      const observed = executedProof(changed).immediateInvariants[0].detail.observed
+      if (observed === null || typeof observed !== 'object' || Array.isArray(observed)) {
+        throw new Error('expected observed snapshot object')
+      }
+      mutate(observed as Record<string, unknown>)
+      return changed
+    }
+    const mutateFirstAttempt = (
+      snapshot: Record<string, unknown>,
+      key: string,
+      value: string,
+    ): void => {
+      const attempts = snapshot.attempts
+      if (!Array.isArray(attempts) || attempts.length === 0
+        || attempts[0] === null || typeof attempts[0] !== 'object' || Array.isArray(attempts[0])) {
+        throw new Error('expected first attempt snapshot row')
+      }
+      ;(attempts[0] as Record<string, unknown>)[key] = value
+    }
+
+    const semanticMutations = [
+      mutateObservedSnapshot((snapshot) => mutateFirstAttempt(snapshot, 'authority_at', 'semantic-changed')),
+      mutateObservedSnapshot((snapshot) => mutateFirstAttempt(snapshot, 'processed_at', 'semantic-changed')),
+      mutateObservedSnapshot((snapshot) => { snapshot.authority_at = 'outer-semantic-changed' }),
+      mutateObservedSnapshot((snapshot) => {
+        const readerState = snapshot.reader_state
+        if (!Array.isArray(readerState) || readerState.length === 0
+          || readerState[0] === null || typeof readerState[0] !== 'object' || Array.isArray(readerState[0])) {
+          throw new Error('expected first reader_state snapshot row')
+        }
+        const payload = (readerState[0] as Record<string, unknown>).payload
+        if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+          throw new Error('expected reader_state payload')
+        }
+        ;(payload as Record<string, unknown>).created_at = 'nested-semantic-changed'
+      }),
+    ]
+    for (const changed of semanticMutations) {
+      expect(hashNormalizedE2Evidence(first)).not.toBe(hashNormalizedE2Evidence(changed))
+    }
+  })
+
+  it('aliases correlation IDs across all exact expected and observed snapshot rows', () => {
+    const snapshot = (correlation: string, commitCorrelation = correlation) => ({
+      attempts: [{ id: 'attempt-generated', correlation_id: correlation }],
+      commits: [{ id: 'commit-generated', correlation_id: commitCorrelation }],
+      checkpoints: [{
+        id: 'checkpoint-semantic',
+        correlation_id: correlation,
+        payload: { correlation_id: 'nested-semantic' },
+      }],
+      story: { id: 'story-semantic', correlation_id: correlation },
+    })
+    const evidencePair = (correlation: string, commitCorrelation = correlation) => {
+      const evidence = passingEvidence()
+      const detail = executedProof(evidence).immediateInvariants[0].detail
+      detail.expected = snapshot(correlation, commitCorrelation)
+      detail.observed = snapshot(correlation, commitCorrelation)
+      return evidence
+    }
+    const first = evidencePair('uuid-run-1')
+    const equivalent = evidencePair('uuid-run-2')
+    const internallyMismatched = evidencePair('uuid-run-3-a', 'uuid-run-3-b')
+    const crossSideMismatched = evidencePair('uuid-run-4')
+    const crossSideDetail = executedProof(crossSideMismatched).immediateInvariants[0].detail
+    crossSideDetail.observed = snapshot('uuid-run-4-observed')
+
+    expect(normalizeE2Evidence(first)).toEqual(normalizeE2Evidence(equivalent))
+    expect(JSON.stringify(normalizeE2Evidence(first))).toContain('nested-semantic')
+    expect(hashNormalizedE2Evidence(first)).not.toBe(hashNormalizedE2Evidence(internallyMismatched))
+    expect(hashNormalizedE2Evidence(first)).not.toBe(hashNormalizedE2Evidence(crossSideMismatched))
+  })
+
+  it('re-normalizes mandatory inline synthetic sanitized real-shaped contract fixture', () => {
+    // Synthetic sanitized fixture shaped from ignored artifacts m10-e2-counted-run-{1,2}.raw.json.
+    // This is permanent contract coverage, not captured-run evidence.
+    const capturedSnapshot = (run: string, timestamp: string, elapsedMs: number) => ({
+      attempts: [{
+        id: `attempt-${run}`,
+        correlation_id: `correlation-${run}`,
+        created_at: timestamp,
+        elapsed_ms: elapsedMs,
+        ended_at: timestamp,
+        story_id: 'story-captured',
+        workflow_phase: 'publication',
+      }],
+      commits: [{
+        id: `commit-${run}`,
+        correlation_id: `correlation-${run}`,
+        created_at: timestamp,
+        story_id: 'story-captured',
+        state_delta_hash: 'captured-delta-hash',
+      }],
+      checkpoints: [{
+        id: 'checkpoint-semantic',
+        correlation_id: `correlation-${run}`,
+        created_at: timestamp,
+        expires_at: timestamp,
+        updated_at: timestamp,
+        payload: { created_at: 'checkpoint-payload-semantic' },
+      }],
+      jobs: [{
+        id: 'job-semantic',
+        correlation_id: `correlation-${run}`,
+        available_at: timestamp,
+        claimed_at: timestamp,
+        created_at: timestamp,
+        deadline_at: timestamp,
+        heartbeat_at: timestamp,
+        updated_at: timestamp,
+      }],
+      story: { id: 'story-semantic', created_at: timestamp },
+      events: [{ id: `event-${run}`, created_at: timestamp, payload: { id: 'captured-choice' } }],
+      outbox: [{ id: `outbox-${run}`, created_at: timestamp, payload: { id: 'captured-notification' } }],
+    })
+    const first = evidenceWithObserved(capturedSnapshot('run-1', '2026-08-14T17:05:34.377879+00:00', 7))
+    const second = evidenceWithObserved(capturedSnapshot('run-2', '2026-08-14T17:07:30.810883+00:00', 5))
+
+    expect(normalizeE2Evidence(first)).toEqual(normalizeE2Evidence(second))
+    expect(hashNormalizedE2Evidence(first)).toBe(hashNormalizedE2Evidence(second))
+  })
+
+  rawArtifactIt('re-normalizes actual raw envelopes when both counted-run artifacts exist', () => {
+    const evidencePair = rawArtifactPaths.map((path) => {
+      const envelope: unknown = JSON.parse(readFileSync(path, 'utf8'))
+      if (envelope === null || typeof envelope !== 'object' || !('evidence' in envelope)) {
+        throw new Error(`raw artifact envelope missing evidence: ${path}`)
+      }
+      return E2EvidenceSchema.parse(envelope.evidence)
+    })
+
+    for (const evidence of evidencePair) {
+      const rowIndex = evidence.rows.findIndex(({ id }) => id === 'COMMIT_LEDGER_PROVENANCE_MISMATCH')
+      expect(rowIndex).toBe(EXPECTED_IDS.indexOf('COMMIT_LEDGER_PROVENANCE_MISMATCH'))
+
+      const sourceRow = evidence.rows[rowIndex]
+      if (sourceRow?.proof.disposition !== 'EXECUTED') {
+        throw new Error('COMMIT_LEDGER_PROVENANCE_MISMATCH must contain EXECUTED proof')
+      }
+      const invariant = sourceRow.proof.immediateInvariants.find(
+        ({ code }) => code === 'FULL_REPLAY_SNAPSHOT_UNCHANGED',
+      )
+      expect(invariant).toBeDefined()
+      expect(invariant?.detail).toHaveProperty('expected')
+      expect(invariant?.detail).toHaveProperty('observed')
+
+      const snapshotCorrelations = (snapshot: unknown): [unknown, unknown] => {
+        if (snapshot === null || typeof snapshot !== 'object') {
+          throw new Error('FULL_REPLAY_SNAPSHOT_UNCHANGED side must be an object')
+        }
+        const record = snapshot as Record<string, unknown>
+        const attempts = record.attempts
+        const commits = record.commits
+        if (!Array.isArray(attempts) || !Array.isArray(commits)
+          || attempts.length === 0 || commits.length === 0) {
+          throw new Error('FULL_REPLAY_SNAPSHOT_UNCHANGED must exercise attempts and commits')
+        }
+        return [
+          (attempts[0] as Record<string, unknown>).correlation_id,
+          (commits[0] as Record<string, unknown>).correlation_id,
+        ]
+      }
+      const expectedCorrelations = snapshotCorrelations(invariant?.detail.expected)
+      const observedCorrelations = snapshotCorrelations(invariant?.detail.observed)
+      expect(expectedCorrelations[0]).toEqual(expectedCorrelations[1])
+      expect(observedCorrelations[0]).toEqual(observedCorrelations[1])
+      expect(expectedCorrelations).toEqual(observedCorrelations)
+    }
+
+    const [first, second] = evidencePair
+    expect(stableStringify(normalizeE2Evidence(first))).toBe(
+      stableStringify(normalizeE2Evidence(second)),
+    )
+    expect(hashNormalizedE2Evidence(first)).toBe(hashNormalizedE2Evidence(second))
   })
 
   it('preserves array order as semantic evidence', () => {

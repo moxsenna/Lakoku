@@ -1,8 +1,12 @@
 # M10-E E3A + E4 Reliability and Economics Design
 
 **Date:** 2026-08-13  
-**Status:** Approved architecture; implementation not yet started  
+**Status:** Approved architecture; R1 amended 2026-08-15; implementation not yet started
 **Closure anchor preserved:** `914cf30f42d4e7f293df79e0d66c014331a696ba` (`M10-E E2 PASS / CLOSED`)
+
+### Amendment history
+
+- **R1 — 2026-08-15 — reviewer-authorized:** adds explicit `chapterStageExchangeabilityAssumption` authority for pooled `stageId` probabilities; freezes expected-cost comparator semantics to maximum of per-chapter means and successful-50-chapter-run conditional novel mean; separates started-attempt generation spend diagnostic; binds `novelCostConditioning = SUCCESSFUL_50_CHAPTER_RUN`; preserves judge, retry-overhead, p95, equality-pass, and E2 closure locks.
 
 ## 1. Objective
 
@@ -316,7 +320,7 @@ centralStageFailureProbability[stageId] =
   sum(observedEligibleEvents across chapters/executions)
 ```
 
-Model input probability key is `stageId`, never `(chapterNumber, stageId)`. Every occurrence of same stage in chapters `1..50` uses same central pooled probability. Per-`(chapterNumber, stageId)` failure distributions remain diagnostic and sensitivity evidence only; they cannot populate, replace, blend with, or impute pooled central probability. Assumptions may populate sensitivity lower/upper values or explicit counterfactual scenarios only. Missing or insufficient pooled central evidence or applicable-cell coverage yields `HOLD` for affected profile and stratum.
+Model input probability key is `stageId`, never `(chapterNumber, stageId)`. Every occurrence of same stage in chapters `1..50` uses same central pooled probability only under valid `chapterStageExchangeabilityAssumption` authority defined in §10. Per-`(chapterNumber, stageId)` failure distributions remain diagnostic and sensitivity evidence only; they cannot populate, replace, blend with, or impute pooled central probability. Strong chapter effects remain mandatory diagnostic/sensitivity findings and must be reported. Assumptions may populate sensitivity lower/upper values or explicit counterfactual scenarios only; `chapterStageExchangeabilityAssumption` authorizes reuse of measured pooled central probabilities but never supplies or repairs those probabilities. Missing or insufficient pooled central evidence or applicable-cell coverage yields `HOLD` for affected profile and stratum. Missing, malformed, hash-mismatched, unsupported-scope exchangeability authority, or evidence demonstrating an incompatible stratum yields `FAIL`.
 
 ### Dimensions
 
@@ -404,14 +408,17 @@ Every E.3 economics metric stores value or numerator, denominator where applicab
 | first-attempt baseline cost | central modeled cost of reached `PROSE_PRIMARY` and first reached `STRUCTURED_OUTPUT` provider calls | eligible chapter generation units, with covered/eligible count | chapters entering frozen generation topology |
 | retry/fallback cost | central modeled sum of reached `PROSE_RETRY`, `PROVIDER_FALLBACK`, and `STRUCTURED_RETRY` provider calls; runtime recovery nodes excluded because provider call is `NOT_APPLICABLE` | eligible chapter generation units, with covered/eligible count | chapters entering generation under bound retry/fallback policy |
 | retry-overhead percentage | central modeled retry/fallback provider cost | central modeled baseline provider cost | same complete chapter generation set and canonical currency |
-| expected chapter cost | central modeled generation provider-node cost for chapter; judge excluded | eligible modeled generation provider nodes for that chapter, all required complete | each chapter `1..50` |
+| expected chapter cost | arithmetic mean of complete modeled generation spend for chapter; judge excluded | count of modeled iterations that start that chapter and have complete sampled generation spend through that chapter's success or terminal failure boundary | each chapter `1..50`; `maxExpectedCostPerChapter` selects maximum of these 50 equally weighted per-chapter means, never pooled chapter observations |
 | chapter cost p50/p95 | interpolated modeled generation chapter-cost sample value; judge excluded | complete modeled chapter executions in selected profile | chapter executions with complete generation provider-node costs |
-| modeled novel generation cost | sum of all sampled generation provider-node costs across completed chapters `1..50`; judge excluded | complete modeled 50-chapter generation iterations | successful 50-chapter generation under bound stratum |
+| `expectedGenerationCostPerSuccessfulNovelRun` | arithmetic mean of modeled generation cost over iterations successfully completing chapters `1..50`; judge excluded | count of successful modeled 50-chapter generation iterations only | successful 50-chapter generation under bound stratum; terminally failed or partial iterations excluded |
+| `expectedGenerationSpendPerStartedNovelAttempt` | arithmetic mean generation spend accumulated across all started modeled novel iterations, including partial terminal failures; judge excluded | count of all started modeled novel iterations | diagnostic only; does not compare to `maxExpectedCostPerNovel` in V1 |
 | modeled judge total | sum of one sampled cost for every required judge evaluation | complete judge-plan samples after successful 50-chapter generation | exact ordered judge plan bound to model authority |
-| modeled total novel cost | modeled generation novel cost plus modeled judge total in same iteration | complete successful generation iterations with complete judge samples | combined budget-applicable modeled novel costs |
+| modeled total novel cost | successful iteration generation cost plus modeled judge total in same iteration | complete successful generation iterations with complete judge samples | combined budget-applicable modeled novel costs |
 | judge-evaluation cost | central modeled judge total | required judge evaluations, with priced/eligible count | judge plan bound to one successful modeled novel execution |
 
 Unavailable counts equal eligible calls minus covered calls and remain explicit; they never alter sums by acting as zero.
+
+Every modeled or observed arithmetic mean in this specification uses exact sum coefficients first, then divides by complete included count at intermediate scale exactly `20`, then applies `HALF_UP` once to money scale exactly `8`. Denominator, included count, excluded incomplete count, eligible count, and coverage ratio are explicit. No hidden default, pooled-observation weighting, or intermediate per-sample rounding is allowed.
 
 Retry overhead definition:
 
@@ -431,7 +438,18 @@ Edge cases:
 
 Fault-injection schedule frequency is not an empirical incidence rate and cannot become a model probability.
 
-Central model parameters must come from `ObservedValue` measurements meeting selected profile completeness. `AssumedValue` inputs carrying explicit source/provenance and rationale are permitted only for sensitivity lower/upper values or separately named counterfactual scenarios. They cannot support central estimates.
+Central model probabilities must come from `ObservedValue` measurements meeting selected profile completeness. `AssumedValue` probability inputs carrying explicit source/provenance and rationale are permitted only for sensitivity lower/upper values or separately named counterfactual scenarios. They cannot supply, replace, or repair central measured probabilities.
+
+Pooled reuse requires distinct `chapterStageExchangeabilityAssumption` authority. Authority contract binds:
+
+- `provenance` exactly `ASSUMPTION`;
+- scope exactly one `stageId` within one exact execution profile plus compatible retry/fallback, topology, task, provider-model, and pricing-policy stratum across chapters `1..50`;
+- rationale stating chapter occurrences are assumed exchangeable for central pooled hazard;
+- authority version;
+- source/decision reference;
+- canonical authority hash.
+
+This authority is model authority, never observed truth. It authorizes applying one separately measured pooled central hazard to chapter occurrences in its exact scope; it never substitutes for missing measured pooled central numerator, denominator, probability, profile threshold, or applicable-cell coverage. Missing, malformed, canonical-hash mismatch, unsupported scope, or evidence demonstrating observations belong to an incompatible stratum is `FAIL`. Strong chapter effects remain diagnostic/sensitivity evidence and must be reported. V1 remains valid only under explicit exchangeability assumption. Future chapter-conditioned probability model requires assumption and model version bump plus full rerun; no silent reinterpretation.
 
 Every pooled stage probability records:
 
@@ -444,9 +462,10 @@ Every pooled stage probability records:
 - observation and authority/source references;
 - applicability and reached-node boundary;
 - diagnostic per-cell values, sensitivity lower/upper values, and their provenance;
-- optional counterfactual scenario ID, never merged into central output.
+- optional counterfactual scenario ID, never merged into central output;
+- exact `chapterStageExchangeabilityAssumption` version, scope, source/decision reference, and canonical hash.
 
-Per-cell values never replace pooled central probability. Stage pools or provider/model/policy strata never merge across incompatible identities.
+Per-cell values never replace pooled central probability. Stage pools or provider/model/policy strata never merge across incompatible identities. Normalized model input, model artifact, report, tests, gate output, and acceptance evidence bind and verify same exchangeability-assumption version and hash.
 
 Observed full-novel completion remains separately reported and never replaced by modeled completion.
 
@@ -459,6 +478,7 @@ Model artifact binds:
 - `modelVersion`;
 - execution profile, exact compatible policy-stratum identity, and completeness thresholds/result;
 - pooled probability input keyed only by `stageId`, plus applicable `(chapterNumber, stageId)` coverage map;
+- exact `chapterStageExchangeabilityAssumption` authority version, exact scope, source/decision reference, and canonical hash for each pooled `stageId` probability;
 - frozen stage-catalog version and hash;
 - frozen task-mapping version and hash;
 - exact `providerModelPolicyId` for model stratum;
@@ -570,15 +590,24 @@ Judge cost plan is separate frozen post-novel authority:
 - pricing-derived judge fallback distributions remain distinct `MODELED_FROM_PRICING` and cannot merge with `OBSERVED` entries;
 - compatible judge provider/model strata cannot merge; different `providerModelPolicyId` bindings generate separate models and artifacts.
 
-Per iteration cost identities are frozen:
+Per iteration and aggregate cost identities are frozen:
 
 ```text
-modeledGenerationNovelCost = sum(all sampled generation provider-node costs)
-modeledJudgeTotal          = sum(all required judge evaluation samples)
-modeledTotalNovelCost      = modeledGenerationNovelCost + modeledJudgeTotal
+iterationGenerationSpend = sum(all sampled generation provider-node costs reached before success or terminal failure)
+successfulIterationGenerationCost = iterationGenerationSpend only when chapters 1..50 complete
+modeledJudgeTotal = sum(all required judge evaluation samples after successful chapter 50)
+modeledTotalNovelCost = successfulIterationGenerationCost + modeledJudgeTotal
+
+expectedGenerationCostPerSuccessfulNovelRun =
+  exact sum(successfulIterationGenerationCost) /
+  count(successful modeled iterations completing chapters 1..50)
+
+expectedGenerationSpendPerStartedNovelAttempt =
+  exact sum(iterationGenerationSpend across every started modeled iteration) /
+  count(all started modeled iterations)
 ```
 
-`modeledGenerationNovelCost` and expected chapter cost exclude judge. `modeledJudgeTotal` feeds judge comparator. `p95CostGuardrail` uses `modeledTotalNovelCost` across complete successful generation-plus-judge iterations.
+`expectedGenerationCostPerSuccessfulNovelRun` is mandatory comparator for `maxExpectedCostPerNovel`; it excludes judge and all terminally failed or partial iterations from its exact conditional denominator. `expectedGenerationSpendPerStartedNovelAttempt` includes partial terminal failures and is separate diagnostic only. `modeledJudgeTotal` feeds judge comparator. `p95CostGuardrail` uses `modeledTotalNovelCost` across complete successful generation-plus-judge iterations. Every mean follows §9 exact coefficient sum, scale-20 division, and money-scale-8 `HALF_UP` rule.
 
 Version-1 correlation contract assumes independent PRNG draws across generation nodes, chapters, and judge evaluation cost samples. This independence and deterministic judge execution are explicit `ASSUMPTION` values, appear in artifacts and reports, and are not production truth. No fixture frequency, topology shape, independence assumption, judge-success assumption, or modeled output may be claimed as measured production incidence or correlation.
 
@@ -590,9 +619,12 @@ Monte Carlo produces at minimum:
 - probability of at least one terminal failure;
 - expected retry count;
 - expected `generationProviderCallCount`, `judgeProviderCallCount`, and `totalProviderCallCount`;
-- expected chapter generation cost, modeled generation novel cost, modeled judge total, and modeled combined total novel cost by provenance class;
-- p50/p95 modeled generation novel cost and combined total novel cost using §9 `percentile_cont` linear interpolation;
-- lower/central/upper sensitivity results, where central uses only observed profile probabilities and lower/upper may use assumptions.
+- each chapter `1..50` arithmetic-mean expected generation cost and their maximum, with exact successful/completed per-chapter denominators;
+- `expectedGenerationCostPerSuccessfulNovelRun`, conditioned only on successful modeled iterations completing chapters `1..50`, judge excluded;
+- diagnostic `expectedGenerationSpendPerStartedNovelAttempt` across all started modeled iterations including partial terminal failures;
+- modeled judge total and modeled combined total novel cost by provenance class;
+- p50/p95 successful modeled generation cost and combined total novel cost using §9 `percentile_cont` linear interpolation;
+- lower/central/upper sensitivity results, where central uses only observed profile probabilities under bound `chapterStageExchangeabilityAssumption` authority and lower/upper may use assumed probabilities.
 
 Outputs are always `MODELED`; they never become observed truth.
 
@@ -622,9 +654,10 @@ Approved authority also binds:
 - exact pricing snapshot version and canonical hash;
 - measured token-evidence schema version, observation-set version, and canonical hash;
 - retry/fallback policy ID, version, and canonical hash;
-- approved product unit-economics decision-basis ID, version, and canonical hash.
+- approved product unit-economics decision-basis ID, version, and canonical hash;
+- `novelCostConditioning` exactly `SUCCESSFUL_50_CHAPTER_RUN` for `maxExpectedCostPerNovel`.
 
-All four bound bases are required and hash-verified. Any absent, superseded, mismatched, or unverifiable binding makes E0 authority invalid. No default values. No inferred values. No use of current spend, pricing, or model outputs as ceilings. Pricing estimates remain `MODELED_FROM_PRICING` model inputs even when their snapshot is bound by E0; binding does not convert estimates into observations or business authority.
+All four bound bases and exact novel-cost conditioning are required and hash-verified. Any absent, superseded, mismatched, or unverifiable binding makes E0 authority invalid. No default values. No inferred values. No use of current spend, pricing, or model outputs as ceilings. Pricing estimates remain `MODELED_FROM_PRICING` model inputs even when their snapshot is bound by E0; binding does not convert estimates into observations or business authority. If business later wants a ceiling on spend per started novel attempt, contract requires separate business dimension, authority/model version bump, and full rerun. V1 must not silently reinterpret `maxExpectedCostPerNovel` or `novelCostConditioning`.
 
 Absence or unapproved authority always yields:
 
@@ -659,7 +692,7 @@ HOLD
 `FAIL` includes:
 
 - malformed evidence;
-- authority/hash mismatch;
+- authority/hash mismatch, including missing, malformed, hash-mismatched, unsupported-scope `chapterStageExchangeabilityAssumption` or evidence demonstrating incompatible bound stratum;
 - semantic identity conflict;
 - token arithmetic inconsistency;
 - decimal coefficient overflow above `10^38 - 1`;
@@ -693,8 +726,8 @@ Frozen modeled and observed comparators:
 
 | Ceiling | Mandatory central modeled comparator | Separate observed comparator when complete observations exist |
 |---|---|---|
-| `maxExpectedCostPerChapter` | maximum central modeled expected generation cost among chapters `1..50` | maximum across complete observed chapter generation costs |
-| `maxExpectedCostPerNovel` | central modeled generation cost for one successful 50-chapter novel; judge excluded | maximum across complete observed 50-chapter generation totals; judge excluded |
+| `maxExpectedCostPerChapter` | maximum across chapters `1..50` of each chapter's arithmetic mean complete modeled generation cost; judge excluded | maximum across chapter numbers `1..50` of arithmetic mean complete observed generation costs for that chapter; judge excluded |
+| `maxExpectedCostPerNovel` | `expectedGenerationCostPerSuccessfulNovelRun`: arithmetic mean modeled generation cost among iterations successfully completing chapters `1..50`; judge excluded | arithmetic mean complete observed 50-chapter generation totals among successful novel runs; judge excluded |
 | `maxJudgeEvaluationCostPerNovel` | central modeled judge total sampled from exact post-novel judge plan | maximum judge cost per complete observed novel |
 | `maxRetryOverheadPercentage` | central modeled retry cost divided by central modeled baseline cost, expressed as percentage | maximum retry-overhead percentage per complete observed novel |
 | `p95CostGuardrail` when authority includes it | `percentile_cont(0.95)` over combined `modeledTotalNovelCost = modeledGenerationNovelCost + modeledJudgeTotal` | `percentile_cont(0.95)` over complete observed combined generation-plus-judge novel total costs |
@@ -702,17 +735,20 @@ Frozen modeled and observed comparators:
 Observed completeness boundaries:
 
 - complete observed chapter generation cost includes every reached prose or structured generation provider call, including retry and fallback, for one chapter in canonical currency; runtime-only nodes contribute no provider cost because frozen topology marks provider call `NOT_APPLICABLE`;
-- complete observed 50-chapter generation total includes complete observed chapter generation costs for chapters `1..50` under one novel execution;
+- observed comparator for `maxExpectedCostPerChapter` first groups complete chapter costs by `chapterNumber`, calculates one arithmetic mean per chapter from exact sum coefficients divided by complete count, then takes maximum across chapter numbers `1..50`; this max of per-chapter means gives each chapter one comparator value and never pools observations across chapters or selects a single-sample maximum;
+- complete observed 50-chapter generation total includes complete observed chapter generation costs for chapters `1..50` under one successful novel execution;
+- observed comparator for `maxExpectedCostPerNovel` is arithmetic mean of complete observed 50-chapter generation totals among successful runs only; terminally failed or partial runs never enter this exact conditional denominator;
+- `expectedGenerationSpendPerStartedNovelAttempt` observed diagnostic, when available, is arithmetic mean generation spend across all started observed novel attempts, including partial terminal failures, with complete spend coverage through each attempt's terminal boundary; it never compares to `maxExpectedCostPerNovel` in V1;
 - complete observed judge cost includes every required judge task for one complete observed novel;
 - complete observed retry overhead has complete baseline and retry cost for one complete observed novel and uses frozen ratio rules;
 - complete observed novel total cost used by p95 includes complete observed 50-chapter generation total plus complete observed judge cost for same novel;
-- incomplete observations are excluded from max and p95 sets, never treated as zero, and reported through included count, excluded count, eligible count, and coverage ratio; an empty complete-observation set yields no observed comparator.
+- incomplete observations are excluded from mean, max, and p95 sets, never treated as zero, and reported through included count, excluded count, eligible count, and coverage ratio; an empty complete-observation set yields no observed comparator.
 
-Comparison is exact decimal `comparator <= ceiling`; equality passes. Central modeled comparator is mandatory for every authority dimension and must be complete across all required tasks, stages, chapters, retries, fallbacks, recoveries, distributions, and pricing inputs. Missing modeled input or incomplete modeled comparator cannot produce `PASS` and yields corresponding engineering `HOLD`. Actual observed comparators stay separate and never substitute for modeled comparators. For each ceiling, if its complete-observation set is non-empty, observed comparator is mandatory and evaluated alongside modeled comparator. Any present complete observed maximum or p95 above its ceiling yields `FAIL`; equality passes. Incomplete observations remain excluded and cannot create an observed breach or pass, but their included, excluded, eligible counts and coverage ratio are mandatory output. Absence or exclusion of incomplete observed values does not excuse, alter, or substitute mandatory modeled comparator.
+Every observed mean uses exact sum coefficients, division by complete included count at intermediate scale `20`, and `HALF_UP` to money scale `8`. Comparison is exact decimal `comparator <= ceiling`; equality passes. Central modeled comparator is mandatory for every authority dimension and must be complete across all required tasks, stages, chapters, retries, fallbacks, recoveries, distributions, and pricing inputs. Missing modeled input or incomplete modeled comparator cannot produce `PASS` and yields corresponding engineering `HOLD`. Actual observed comparators stay separate and never substitute for modeled comparators. Observed mean breach for `maxExpectedCostPerChapter` or `maxExpectedCostPerNovel` yields `FAIL` only when valid E0 authority exists and comparable complete observations exist; equality passes. Observed single-sample maxima and observed maxima for these two expected ceilings remain diagnostics only and never fail expected-cost ceilings. Judge maximum, retry-overhead maximum, and p95 observed comparator rules remain unchanged and fail above valid corresponding ceilings when complete. Incomplete observations remain excluded and cannot create observed breach or pass, but included, excluded, eligible counts and coverage ratio are mandatory output. Absence or exclusion of incomplete observed values does not excuse, alter, or substitute mandatory modeled comparator.
 
 - Missing/unapproved E0 authority produces exact blocked result.
-- Valid approved authority plus every complete modeled comparator within ceiling, and every present complete observed comparable within ceiling, produces `PASS`.
-- Valid approved authority plus any modeled or present observed comparable above ceiling produces `FAIL`.
+- Valid approved authority plus every complete modeled comparator within ceiling, and every applicable present complete observed comparable within ceiling, produces `PASS`.
+- Valid approved authority plus any modeled comparator above ceiling, either expected-cost observed mean above its ceiling when comparable complete observations exist, or unchanged judge-maximum/retry-maximum/p95 observed comparator above ceiling produces `FAIL`.
 - Missing comparable required modeled measurement cannot produce `PASS`; engineering gate reports corresponding `HOLD`/gap.
 - Pricing estimates remain `MODELED_FROM_PRICING` inputs throughout budget evaluation.
 
@@ -722,7 +758,7 @@ Comparison is exact decimal `comparator <= ceiling`; equality passes. Central mo
 
 | Required evidence/metric | `CONTRACT_FIXTURE` completeness | `RELEASE_EVIDENCE` completeness | Missing/below-threshold effect |
 |---|---|---|---|
-| Frozen stage catalog and pooled central stage probabilities | within one compatible policy stratum, exact declared coverage and `>=1` eligible event per `stageId` pool; central probabilities `OBSERVED` from fixture and keyed only by `stageId` | within one compatible policy stratum, authorized observations and `>=30` eligible events per `stageId` pool; central probabilities `OBSERVED` and keyed only by `stageId` | selected-profile/stratum `engineeringGate = HOLD`; model central output unavailable |
+| Frozen stage catalog, pooled central stage probabilities, and chapter-stage exchangeability authority | within one compatible policy stratum, exact declared coverage and `>=1` eligible event per `stageId` pool; central probabilities `OBSERVED` from fixture and keyed only by `stageId`; exact scoped `chapterStageExchangeabilityAssumption` version/hash valid | within one compatible policy stratum, authorized observations and `>=30` eligible events per `stageId` pool; central probabilities `OBSERVED` and keyed only by `stageId`; exact scoped assumption version/hash valid | missing measured probability/coverage gives selected-profile/stratum `HOLD`; missing, malformed, hash-mismatched, unsupported-scope assumption or evidence of incompatible stratum gives `FAIL` |
 | Applicable `(chapter, stage)` coverage | every applicable cell represented according to declared fixture topology; per-cell values diagnostic/sensitivity only | every applicable cell represented by `>=1` eligible event; no 30-per-cell requirement; per-cell values diagnostic/sensitivity only | selected-profile/stratum `engineeringGate = HOLD`; per-cell values cannot replace pooled central probability |
 | Policy/provider-model strata | one exact compatible policy and provider/model stratum per model/artifact; no merging | same; multiple strata produce separate models/artifacts | mixed stratum is invalid; missing identity/coverage `HOLD` and semantic merge `FAIL` |
 | Complete 50-chapter executions | fixture declares exact intended novel coverage; no release claim | `>=10` complete chapter `1..50` novel executions within same stratum | release readiness `HOLD`; release profile `engineeringGate = HOLD` |
@@ -738,11 +774,11 @@ Comparison is exact decimal `comparator <= ceiling`; equality passes. Central mo
 | Actual provider cost and coverage | separate `OBSERVED` state; may be `MISSING` if modeled comparator remains complete | separate authorized `OBSERVED` state and coverage | actual comparator omitted, never zero; does not replace modeled requirement |
 | Pricing-estimated generation provider, retry/fallback provider, and judge costs | complete `MODELED_FROM_PRICING` inputs for all required provider-call units; runtime nodes `NOT_APPLICABLE` | complete `MODELED_FROM_PRICING` inputs bound to release policy and judge plan | budget comparator incomplete; `engineeringGate = HOLD`; budget cannot pass |
 | Baseline cost, retry cost, retry-overhead percentage | complete central modeled components | complete central modeled components | budget comparator incomplete; `engineeringGate = HOLD` |
-| Expected chapter generation costs `1..50`, generation novel cost, judge total, combined total-novel p95 | all frozen modeled comparators complete; expected chapter/novel generation exclude judge, judge comparator uses judge total, p95 uses combined total | same from release profile observations, exact judge plan, and bound pricing | budget comparator incomplete; `engineeringGate = HOLD`; budget cannot pass |
+| Expected chapter generation means `1..50`, `expectedGenerationCostPerSuccessfulNovelRun`, started-attempt spend diagnostic, judge total, combined total-novel p95 | all frozen modeled comparators complete; chapter ceiling uses max of 50 per-chapter means; novel ceiling uses successful-50-chapter conditional mean; expected generation comparators exclude judge; started-attempt mean remains diagnostic; p95 uses combined successful total | same from release profile observations, exact successful-run conditioning, exact judge plan, and bound pricing; incomplete samples excluded with coverage | budget comparator incomplete; `engineeringGate = HOLD`; budget cannot pass |
 | Generation provider-node cost distributions | every reachable `(chapterNumber, stageId, taskId, attemptClass, providerModelPolicyId)` generation provider key has complete empirical or distinct pricing-derived fallback distribution | same, with authorized observations and explicit pricing fallback provenance | selected-profile/stratum `engineeringGate = HOLD`; central economics model unavailable |
 | Post-novel judge plan and distributions | exact ordered judge authority and every `(judgeTaskId, evaluationIndex, providerModelPolicyId)` distribution complete; judge reliability explicitly assumed/out of scope | same, with authorized inputs and explicit provenance | missing plan/task/provider/distribution `HOLD`; judge comparator and combined p95 unavailable |
-| Complete observed budget comparators | complete observations included; incomplete excluded with coverage; fixture label prohibits release claim | complete observations included; incomplete excluded with coverage | absent set produces no observed comparator; any present breach FAILs; modeled comparator remains mandatory |
-| Topology and correlation authority | frozen topology version/hash; independent draws explicit `ASSUMPTION` | same; no production-truth claim | missing/mismatched authority `FAIL`; unsupported rate or correlation claim `FAIL` |
+| Complete observed budget comparators | chapter max-of-means and successful-novel mean use complete observations; judge/retry maxima and total p95 unchanged; incomplete excluded with coverage; fixture label prohibits release claim | same using authorized observations and frozen exact mean denominators | absent set produces no observed comparator; applicable present breach under valid E0 `FAIL`s; expected-cost observed maxima remain diagnostic only; modeled comparator remains mandatory |
+| Topology, correlation, and chapter-stage exchangeability authority | frozen topology version/hash; independent draws and exact per-stage chapter exchangeability explicit `ASSUMPTION` authorities with version/hash | same; strong chapter effects reported; no production-truth claim | missing/malformed/mismatched/unsupported authority or incompatible-stratum evidence `FAIL`; unsupported rate or correlation claim `FAIL` |
 | Sensitivity lower/upper and counterfactual provenance | complete where required; assumptions allowed only here | complete where required; assumptions allowed only here | model completeness `HOLD`; assumptions never repair central evidence |
 | Raw/normalized artifacts, hashes, deterministic report | complete and reproducible | complete and reproducible from authorized observations | `engineeringGate = HOLD` or `FAIL` on mismatch |
 
@@ -775,6 +811,7 @@ Artifacts bind:
 - schema versions;
 - execution profile, exact policy/provider-model stratum, and profile-completeness result;
 - pooled `stageId` probability inputs plus applicable-cell coverage;
+- exact `chapterStageExchangeabilityAssumption` authorities, scopes, versions, source/decision references, and canonical hashes;
 - frozen stage-catalog version and hash;
 - frozen task-mapping version and hash;
 - `topologyVersion` and canonical `topologyHash`;
@@ -786,7 +823,8 @@ Artifacts bind:
 - observation hash;
 - aggregate hash;
 - model authority and model hash;
-- budget authority hash or explicit absence;
+- all 50 modeled and observed per-chapter mean values and exact denominators, `maxExpectedCostPerChapter` comparator, `expectedGenerationCostPerSuccessfulNovelRun` with successful-run denominator, and modeled/observed `expectedGenerationSpendPerStartedNovelAttempt` diagnostics with all-started-attempt denominator and incomplete coverage;
+- budget authority hash or explicit absence, including exact `novelCostConditioning`;
 - engineering and budget gates;
 - ordered reason codes;
 - report hash.
@@ -795,7 +833,7 @@ Normalization is path-specific:
 
 - remove raw timestamps and elapsed runtime only at declared operational paths;
 - alias operational IDs while preserving equality/mismatch graphs;
-- preserve monetary values, currencies, pricing identities, chapter/task identity, probability inputs, assumptions, and authority timestamps;
+- preserve monetary values, currencies, pricing identities, chapter/task identity, probability inputs, exact mean conditioning/denominators, `chapterStageExchangeabilityAssumption` versions/hashes/scopes, assumptions, and authority timestamps;
 - preserve array order only where contract declares it semantic; otherwise sort before serialization.
 
 Raw/normalized validator recomputes:
@@ -839,7 +877,7 @@ M10-E = OPEN
 
 until E0 approval exists.
 
-Report cannot claim real-provider economics when input fixture is synthetic or isolated. `CONTRACT_FIXTURE` data proves plumbing, arithmetic, determinism, and engineering contract correctness only. Report shows pooled stage probabilities and per-cell coverage separately, never presents diagnostic per-cell probabilities as central model inputs, and never merges policy/provider-model strata. Version-1 conditional topology, independent generation-node/chapter/judge-cost draws, deterministic judge execution, pricing-derived fallback distributions, sensitivity values, counterfactuals, and all modeled outputs are assumptions/models, not measured production truth. Report must label each and prohibit claims of production incidence, correlation, reliability, or economics unless separately supported by authorized `RELEASE_EVIDENCE`. Report must show execution profile and separate fields:
+Report cannot claim real-provider economics when input fixture is synthetic or isolated. `CONTRACT_FIXTURE` data proves plumbing, arithmetic, determinism, and engineering contract correctness only. Report shows pooled stage probabilities and per-cell coverage separately, binds and displays every `chapterStageExchangeabilityAssumption` version/hash/scope/source, states exchangeability is model authority rather than observed truth, reports strong chapter effects as diagnostic/sensitivity findings, never presents diagnostic per-cell probabilities as central model inputs, and never merges policy/provider-model strata. Report also shows 50 modeled and observed per-chapter mean denominators, maximum of per-chapter means, successful-run conditional modeled and observed novel means, started-attempt spend diagnostics, and incomplete-sample coverage. Version-1 conditional topology, chapter-stage exchangeability, independent generation-node/chapter/judge-cost draws, deterministic judge execution, pricing-derived fallback distributions, sensitivity values, counterfactuals, and all modeled outputs are assumptions/models, not measured production truth. Report must label each and prohibit claims of production incidence, correlation, reliability, or economics unless separately supported by authorized `RELEASE_EVIDENCE`. Report must show execution profile and separate fields:
 
 ```text
 engineeringGate
@@ -901,8 +939,10 @@ Initial implementation should support deterministic fixture input and governed d
 - both execution-profile schemas and threshold boundaries;
 - contract fixture declared-topology cell coverage and `0/1` eligible-event-per-`stageId`-pool enforcement;
 - release evidence `29/30/31` eligible-event-per-stage-pool, `0/1` per applicable `(chapter, stage)` cell, and `9/10/11` complete-novel vectors;
-- pooled central probability key is only `stageId`; every chapter occurrence reuses same probability;
-- per-cell diagnostic probability cannot replace pooled central input;
+- pooled central probability key is only `stageId`; every chapter occurrence reuses same measured probability only under exact scoped `chapterStageExchangeabilityAssumption`;
+- exchangeability authority provenance exactly `ASSUMPTION`, exact one-stage/one-profile/compatible-stratum/chapter-`1..50` scope, rationale, version, source/decision reference, and canonical hash validation;
+- missing, malformed, hash-mismatched, unsupported-scope exchangeability authority and evidence demonstrating incompatible stratum fail; missing measured pooled central probability remains `HOLD` and cannot be repaired by assumption;
+- per-cell diagnostic probability cannot replace pooled central input; strong chapter effects remain reported diagnostic/sensitivity evidence;
 - compatible policy/provider-model stratum separation and mixed-stratum rejection;
 - explicit numerator, denominator, and eligibility boundary for every E.3 metric;
 - frozen baseline/retry/fallback provider-cost grouping and runtime `NOT_APPLICABLE` exclusion;
@@ -931,7 +971,8 @@ Initial implementation should support deterministic fixture input and governed d
 - incomplete generation skips judge plan and draws; complete generation samples every judge evaluation;
 - pricing-derived fallback distributions remain distinct; missing task/provider/judge distribution or coverage HOLDs;
 - separate provider/model strata produce separate models/artifacts and never merge;
-- independent generation-node/chapter/judge-cost draw and deterministic judge-execution assumptions are bound and reported, never represented as observed production correlation or judge reliability;
+- independent generation-node/chapter/judge-cost draw, deterministic judge-execution, and chapter-stage exchangeability assumptions are bound and reported, never represented as observed production correlation, chapter invariance, or judge reliability;
+- exchangeability version/hash mutation changes model input/artifact hashes; chapter-conditioned model or assumption change requires version bump and full rerun;
 - analytical method accepted only for independent Bernoulli completion without retries/recovery/fallback/cost;
 - Monte Carlo deterministic vectors;
 - observed versus modeled completion separation;
@@ -943,14 +984,19 @@ Initial implementation should support deterministic fixture input and governed d
 
 - absent authority gives exact blocked code;
 - no hidden defaults;
-- E0 pricing, token-evidence, retry/fallback-policy, and unit-economics-basis version/hash binding mutations fail;
+- E0 pricing, token-evidence, retry/fallback-policy, unit-economics-basis version/hash, and exact `novelCostConditioning = SUCCESSFUL_50_CHAPTER_RUN` binding mutations fail;
 - approved values compare exactly;
 - each ceiling and each frozen comparator boundary: below, equal, above;
-- maximum expected chapter comparator selects maximum across all chapters `1..50`;
-- expected chapter and modeled novel generation comparators exclude judge; modeled judge comparator uses exact judge-plan total; modeled retry-overhead is generation-only; modeled total-cost p95 uses combined generation-plus-judge cost per iteration;
-- observed chapter generation max, observed 50-chapter generation-total max, observed judge-per-novel max, observed retry-overhead-per-novel max, and observed novel-total p95 use only complete observations;
+- `maxExpectedCostPerChapter` modeled comparator calculates exact arithmetic mean generation cost separately for every chapter `1..50`, then selects maximum of those 50 means; no pooled-observation weighting;
+- observed chapter comparator groups complete observations by chapter number, computes exact arithmetic mean per chapter, then takes maximum of per-chapter means; single-sample maxima remain diagnostic;
+- `maxExpectedCostPerNovel` uses `expectedGenerationCostPerSuccessfulNovelRun`, exact modeled mean among successful 50-chapter iterations only; terminal failures/partials excluded from denominator;
+- observed novel expected-cost comparator uses exact arithmetic mean complete generation totals among successful observed 50-chapter runs only; observed maxima remain diagnostic;
+- modeled and observed `expectedGenerationSpendPerStartedNovelAttempt` include partial terminal failures and remain separate diagnostics that never compare to `maxExpectedCostPerNovel` in V1;
+- exact mean vectors sum coefficients then divide by complete count at intermediate scale `20`, `HALF_UP` to money scale `8`;
+- expected chapter and novel generation comparators exclude judge; modeled judge comparator uses exact judge-plan total; modeled retry-overhead is generation-only; modeled total-cost p95 uses combined generation-plus-judge cost per successful iteration;
+- observed judge-per-novel max, observed retry-overhead-per-novel max, and observed novel-total p95 use only complete observations;
 - incomplete observed comparables are excluded with included/excluded/eligible counts and coverage ratio;
-- each present complete observed max/p95 breach fails independently and equality passes;
+- with valid E0 and comparable complete observations, expected-cost mean breach fails; unchanged judge/retry max and p95 breach fails independently; equality passes;
 - absent observed comparable never substitutes for modeled comparator;
 - unavailable modeled comparable evidence never passes;
 - optional p95 handling requires explicit authority shape;
@@ -997,7 +1043,7 @@ Package engineering contract is complete when:
 10. With no E0 authority, `budgetGate` equals `BLOCKED_E0_COST_CEILING_NOT_APPROVED`.
 11. `CONTRACT_FIXTURE` can independently reach engineering PASS within one compatible policy stratum using at least one eligible event per pooled `stageId` and every applicable `(chapter, stage)` cell represented according to declared fixture topology, while release readiness stays HOLD.
 12. `RELEASE_EVIDENCE` uses authorized measured observations within one compatible policy stratum, requires at least 30 eligible events per pooled `stageId`, at least one eligible event per applicable `(chapter, stage)` cell, and 10 complete 50-chapter novel executions; no 30-per-cell rule applies.
-13. Every central stage probability is OBSERVED, pooled across eligible chapters/executions, and keyed only by `stageId`; each chapter occurrence uses same pooled value, per-cell distributions remain diagnostics/sensitivity only, and assumptions cannot replace central input.
+13. Every central stage probability is OBSERVED, pooled across eligible chapters/executions, and keyed only by `stageId`; each chapter occurrence uses same pooled value only under valid exact-scope `chapterStageExchangeabilityAssumption` with provenance `ASSUMPTION`, rationale, version, source/decision reference, and canonical hash. Authority is model authority, never observed truth, cannot replace missing measured pooled input, and missing/malformed/hash-mismatched/unsupported authority or incompatible-stratum evidence fails. Strong chapter effects remain reported diagnostics/sensitivity; chapter-conditioned change requires assumption/model version bump and full rerun.
 14. Policy and provider/model strata never merge; multiple strata produce separate models, artifacts, hashes, reports, and gates.
 15. All E.3 reliability/economics metrics include explicit numerator or value, denominator, and eligibility boundary, including prose regeneration on choice retry, ownership-loss recovery, recovery p50/p95, and empirical chapter-stage failure distribution.
 16. Canonical artifacts serialize money at scale 8, probability at 12, percentage at 6, and latency milliseconds at 3 using `HALF_UP`; shorter valid inputs canonicalize to fixed scale and all zero values remain fixed-scale.
@@ -1005,15 +1051,16 @@ Package engineering contract is complete when:
 18. Generation cost distributions use exact `(chapterNumber, stageId, taskId, attemptClass, providerModelPolicyId)` keys; missing task/provider distribution or coverage produces `HOLD`, and pricing-derived fallback remains distinct.
 19. Exact ordered post-novel judge plan binds `(judgeTaskId, evaluationIndex, providerModelPolicyId)` distributions; successful 50-chapter iterations sample every required judge cost with no judge reliability outcome draw, while judge reliability remains explicit out-of-scope assumption.
 20. Provider-call metrics expose `generationProviderCallCount`, `judgeProviderCallCount`, and `totalProviderCallCount`; runtime-only nodes are topology-authorized `NOT_APPLICABLE` and prove zero provider calls.
-21. Expected chapter and expected novel generation comparators exclude judge, judge comparator uses modeled judge total, and `p95CostGuardrail` uses combined modeled generation-plus-judge total per iteration.
-22. Model authority binds `topologyVersion`, `topologyHash`, task mapping, pooled probabilities, policy/provider-model stratum, generation and judge cost-distribution provenance/coverage, and independent generation-node/chapter/judge-cost draws as explicit assumption; none may be claimed as production truth.
-23. E0 authority binds verified versions and hashes for pricing, measured token evidence, retry/fallback policy, and approved product unit-economics decision basis.
-24. Budget evaluation uses complete frozen central modeled comparators; separate complete observed max/p95 comparators fail above ceilings and pass at equality, incomplete observations are excluded with coverage, and pricing inputs remain `MODELED_FROM_PRICING`.
-25. Overall M10-E remains OPEN and G2-BUDGET remains OPEN.
-26. Adapter needs no production runtime/schema mutation; otherwise affected measurement is explicit MISSING/HOLD.
-27. Validated artifact pair and deterministic report are produced.
-28. E1/E2 authority, hashes, versions, semantics, and closure remain unchanged.
-29. No production/shared/linked DB or real provider/model access occurs.
+21. `maxExpectedCostPerChapter` uses maximum of 50 exact modeled per-chapter generation means and matching observed maximum of exact per-chapter means; `maxExpectedCostPerNovel` uses modeled and observed arithmetic mean generation cost conditioned only on successful 50-chapter runs. Expected comparators exclude judge, incomplete samples are excluded with coverage, and all means use exact coefficient sum, scale-20 division, then money-scale-8 `HALF_UP`.
+22. `expectedGenerationSpendPerStartedNovelAttempt` is separate modeled and, when available, observed diagnostic across all started attempts including partial terminal failures; it never compares to `maxExpectedCostPerNovel` in V1. New started-attempt spend ceiling requires separate business dimension, authority/model version bump, and full rerun.
+23. Model authority binds `topologyVersion`, `topologyHash`, task mapping, pooled probabilities, each `chapterStageExchangeabilityAssumption` version/hash/scope, policy/provider-model stratum, generation and judge cost-distribution provenance/coverage, and independent generation-node/chapter/judge-cost draws as explicit assumption; none may be claimed as production truth.
+24. E0 authority binds verified versions and hashes for pricing, measured token evidence, retry/fallback policy, approved product unit-economics decision basis, and `novelCostConditioning = SUCCESSFUL_50_CHAPTER_RUN`.
+25. Budget evaluation uses complete frozen central modeled comparators; with valid E0 and comparable complete observations, expected-cost observed means fail above ceilings while observed expected-cost maxima remain diagnostics; judge/retry maxima and p95 rules remain unchanged; equality passes and pricing inputs remain `MODELED_FROM_PRICING`.
+26. Overall M10-E remains OPEN and G2-BUDGET remains OPEN.
+27. Adapter needs no production runtime/schema mutation; otherwise affected measurement is explicit MISSING/HOLD.
+28. Validated artifact pair and deterministic report are produced.
+29. E1/E2 authority, hashes, versions, semantics, and closure remain unchanged.
+30. No production/shared/linked DB or real provider/model access occurs.
 
 ## 19. Stop conditions
 
@@ -1024,6 +1071,9 @@ Stop package and request review if:
 - cost coverage would require treating missing as zero;
 - decimal or Monte Carlo authority is non-deterministic;
 - mixed currency requires unapproved conversion;
+- `chapterStageExchangeabilityAssumption` is missing, malformed, hash-mismatched, unsupported in scope, or contradicted by evidence of incompatible bound stratum;
+- chapter-conditioned central modeling is required without approved assumption/model version bump and full rerun;
+- `maxExpectedCostPerNovel` would need reinterpretation as started-attempt spend; this requires separate business dimension, authority/model version bump, and full rerun;
 - E1/E2 authority would need modification;
 - numeric E0 ceilings are needed to continue engineering work;
 - any production/shared/linked access becomes necessary;

@@ -53,17 +53,28 @@ describe('M10-E1 exact final fixture cleanup', () => {
   })
   it('deletes and verifies exhaustive story-owned surfaces using exact harness IDs', async () => {
     const seam = adminSeam()
-    const proof = await cleanupAndVerifyFaultHarnessStories(seam.admin as never)
+    const proof = await cleanupAndVerifyFaultHarnessStories(seam.admin as never, undefined, () => undefined)
 
     expect(proof.completed).toBe(true)
     expect(proof.targets.map((target) => target.target)).toEqual([...FAULT_STORY_IDS, 'outbox'])
+    const elevatedOnlyTables = new Set([
+      'generation_provider_calls',
+      'generation_job_attempts',
+      'generation_jobs',
+      'chapter_state_commits',
+      'reader_plot_debt_closures',
+      'reader_plot_debt_progress',
+      'credit_ledger',
+    ])
     for (const target of E1_EXACT_CLEANUP_TARGETS) {
-      expect(seam.operations).toContainEqual({
-        table: target.table,
-        action: 'delete',
-        column: target.column,
-        values: [...target.values],
-      })
+      if (!elevatedOnlyTables.has(target.table)) {
+        expect(seam.operations).toContainEqual({
+          table: target.table,
+          action: 'delete',
+          column: target.column,
+          values: [...target.values],
+        })
+      }
       expect(seam.operations).toContainEqual({
         table: target.table,
         action: 'select',
@@ -78,7 +89,7 @@ describe('M10-E1 exact final fixture cleanup', () => {
     'fails reset proof when exact %s residue remains',
     async (table) => {
       const seam = adminSeam({ residueByTable: { [table]: [{ id: `${table}-residue` }] } })
-      await expect(cleanupAndVerifyFaultHarnessStories(seam.admin as never)).rejects.toThrow(
+      await expect(cleanupAndVerifyFaultHarnessStories(seam.admin as never, undefined, () => undefined)).rejects.toThrow(
         `reset verification found mutable story residue: ${table}`,
       )
     },
@@ -86,7 +97,7 @@ describe('M10-E1 exact final fixture cleanup', () => {
 
   it('propagates exact table deletion errors', async () => {
     const seam = adminSeam({ deleteErrorTable: 'story_events' })
-    await expect(cleanupAndVerifyFaultHarnessStories(seam.admin as never)).rejects.toThrow(
+    await expect(cleanupAndVerifyFaultHarnessStories(seam.admin as never, undefined, () => undefined)).rejects.toThrow(
       'story_events cleanup failed: story_events denied',
     )
   })

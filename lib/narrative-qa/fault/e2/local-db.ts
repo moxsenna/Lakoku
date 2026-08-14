@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readdirSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { readdirSync, readFileSync, realpathSync } from 'node:fs'
+import { dirname, isAbsolute, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { E2EvidenceRow, E2ScenarioId } from './taxonomy'
 
@@ -85,12 +85,58 @@ export function assertLoopbackDatabaseUrl(value: string): void {
   }
 }
 
+interface LocalStatusInvocation {
+  executable: string
+  args: string[]
+}
+
+interface PackageIdentity {
+  name?: string
+  version?: string
+  packageManager?: string
+}
+
+const GOVERNED_PNPM_VERSION = '11.7.0'
+
+function isWithin(root: string, candidate: string): boolean {
+  const pathFromRoot = relative(root, candidate)
+  return pathFromRoot === '' || (!pathFromRoot.startsWith('..') && !isAbsolute(pathFromRoot))
+}
+
+function resolveWindowsCorepackEntry(): string {
+  const nodeRoot = realpathSync(dirname(process.execPath))
+  const corepackRoot = realpathSync(join(nodeRoot, 'node_modules', 'corepack'))
+  const corepackPackagePath = realpathSync(join(corepackRoot, 'package.json'))
+  const corepackEntry = realpathSync(join(corepackRoot, 'dist', 'corepack.js'))
+  if (!isWithin(nodeRoot, corepackRoot)
+    || !isWithin(corepackRoot, corepackPackagePath)
+    || !isWithin(corepackRoot, corepackEntry)) {
+    throw new Error('Windows Corepack entrypoint escapes current Node installation')
+  }
+  const corepackPackage = JSON.parse(readFileSync(corepackPackagePath, 'utf8')) as PackageIdentity
+  if (corepackPackage.name !== 'corepack' || !corepackPackage.version) {
+    throw new Error('Windows Corepack package identity mismatch')
+  }
+  const projectPackage = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as PackageIdentity
+  if (projectPackage.packageManager !== `pnpm@${GOVERNED_PNPM_VERSION}`) {
+    throw new Error(`Governed packageManager must be pnpm@${GOVERNED_PNPM_VERSION}`)
+  }
+  return corepackEntry
+}
+
+export function localStatusInvocation(
+  projectRoot: string,
+  platform: NodeJS.Platform = process.platform,
+): LocalStatusInvocation {
+  const commandArgs = ['exec', 'supabase', 'status', '--workdir', projectRoot, '-o', 'json']
+  return platform === 'win32'
+    ? { executable: process.execPath, args: [resolveWindowsCorepackEntry(), 'pnpm', ...commandArgs] }
+    : { executable: 'pnpm', args: commandArgs }
+}
+
 function localStatus(projectRoot: string): Required<SupabaseStatus> {
-  const executable = process.platform === 'win32' ? 'cmd.exe' : 'pnpm'
-  const args = process.platform === 'win32'
-    ? ['/d', '/s', '/c', `pnpm exec supabase status --workdir ${projectRoot} -o json`]
-    : ['exec', 'supabase', 'status', '--workdir', projectRoot, '-o', 'json']
-  const raw = execFileSync(executable, args, {
+  const invocation = localStatusInvocation(projectRoot)
+  const raw = execFileSync(invocation.executable, invocation.args, {
     cwd: process.cwd(),
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -274,6 +320,131 @@ function assertDedicatedCleanDatabase(container: string, password: string): void
   const counts = JSON.parse(output) as DedicatedDatabaseCounts
   if (Object.values(counts).some((count) => count !== 0)) {
     throw new Error(`M10-E2 requires dedicated clean DB before mutation; observed ${JSON.stringify(counts)}`)
+  }
+}
+
+const E1_GOVERNED_STORY_IDS = [
+  'm10c-e-provider',
+  'm10c-e-worker',
+  'm10c-e-pub',
+  'm10c-e-post',
+] as const
+const E1_GOVERNED_USER_ID = '99999999-9999-4999-9999-99999999c000'
+
+function assertExactE1CleanupIdentity(storyIds: readonly string[], userId: string): void {
+  if (JSON.stringify(storyIds) !== JSON.stringify(E1_GOVERNED_STORY_IDS)
+    || userId !== E1_GOVERNED_USER_ID) {
+    throw new Error(`Governed E1 cleanup identity mismatch: ${JSON.stringify({ storyIds, userId })}`)
+  }
+}
+
+/**
+ * Test-only operational seam for rows protected from service_role cleanup.
+ * Every authority check runs immediately before exact-ID elevated mutation.
+ */
+export function cleanupM10E1GovernedDisposableResidue(
+  storyIds: readonly string[],
+  userId: string,
+): void {
+  assertExactE1CleanupIdentity(storyIds, userId)
+  const governedProjectRoot = 'C:\\Users\\bimap\\.zcode\\tmp\\m10-e2-task3-supabase'
+  const projectRoot = process.env.LAKOKU_E2_DISPOSABLE_PROJECT
+  if (!projectRoot || projectRoot.replaceAll('/', '\\').toLowerCase() !== governedProjectRoot.toLowerCase()) {
+    throw new Error(`Governed disposable project root required, received ${projectRoot ?? '<missing>'}`)
+  }
+  const status = localStatus(projectRoot)
+  const config = localProjectConfig(projectRoot)
+  if (config.projectId !== 'lakoku-m10-e2-task3' || config.apiPort !== '57321' || config.dbPort !== '57322') {
+    throw new Error(`Governed disposable identity mismatch: ${JSON.stringify(config)}`)
+  }
+  if (new URL(status.API_URL).port !== config.apiPort) {
+    throw new Error(`Local API status port ${new URL(status.API_URL).port} does not match config port ${config.apiPort}`)
+  }
+  const databaseUrl = new URL(status.DB_URL)
+  const password = decodeURIComponent(databaseUrl.password)
+  if (!password) throw new Error('Local Supabase DB_URL missing credentials')
+  const container = databaseContainer(status.DB_URL, config)
+  const authority = migrationAuthority(container, password, projectRoot)
+  verifyRpcAuthority(container, password, authority.copiedSql)
+
+  const storyIdSql = storyIds.map((storyId) => `'${storyId}'`).join(',')
+  const output = runPsql(container, password, `
+    do $authority$
+    declare v_grants text[];
+    begin
+      select array_agg(privilege_type order by privilege_type) into v_grants
+      from information_schema.role_table_grants
+      where table_schema='public'
+        and table_name='generation_provider_calls'
+        and grantee='service_role';
+      if v_grants is distinct from array['INSERT','SELECT']::text[] then
+        raise exception 'M10_E1_PROVIDER_CALL_GRANT_AUTHORITY_MISMATCH: %', v_grants;
+      end if;
+    end
+    $authority$;
+    begin;
+    lock table public.credit_ledger in share row exclusive mode;
+    do $credit_authority$
+    declare v_unexpected_refs text[];
+    begin
+      select array_agg(ref order by ref) into v_unexpected_refs
+      from public.credit_ledger
+      where user_id='${userId}'::uuid
+        and ref<>'m10c:harness-grant:${userId}';
+      if v_unexpected_refs is not null then
+        raise exception 'M10_E1_UNEXPECTED_SAME_USER_CREDIT_REFS: %', v_unexpected_refs;
+      end if;
+    end
+    $credit_authority$;
+    select pg_catalog.set_config('lakoku.generation_provider_retention_delete', 'v1', true);
+    delete from public.generation_provider_calls where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.generation_job_attempts where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.story_events where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.idempotency_keys where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.commercial_generation_intents where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.credit_reservations where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.chapter_state_commits where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.chapter_generation_checkpoints where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.reader_plot_debt_closures where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.reader_plot_debt_progress where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.choice_outcomes where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.chapters where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.generation_leases where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.generation_jobs where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.retrieval_logs where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.act_rollups where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.timeline_events where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.knowledge_scopes where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.facts_ledger where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.secrets_reveals where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.story_threads where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.character_aliases where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.character_voice_sheets where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.reader_states where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.chapter_blueprints where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.story_generation_contracts where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.character_states where character_id=any(array[${storyIds.flatMap((storyId) => [`'${storyId}:char:hero'`, `'${storyId}:char:rival'`]).join(',')}]::text[]);
+    delete from public.characters where story_id=any(array[${storyIdSql}]::text[]);
+    delete from public.outbox where payload->>'story_id'=any(array[${storyIdSql}]::text[]);
+    delete from public.stories where id=any(array[${storyIdSql}]::text[]);
+    delete from public.credit_ledger
+    where user_id='${userId}'::uuid
+      and ref='m10c:harness-grant:${userId}';
+    delete from auth.users where id='${userId}'::uuid;
+    commit;
+    select json_build_object(
+      'provider_calls',(select count(*) from public.generation_provider_calls where story_id=any(array[${storyIdSql}]::text[])),
+      'credit_rows',(select count(*) from public.credit_ledger where user_id='${userId}'::uuid),
+      'auth_users',(select count(*) from auth.users where id='${userId}'::uuid)
+    );
+  `).trim()
+  const counts = JSON.parse(output.split(/\r?\n/).find((line) => line.startsWith('{')) ?? '') as {
+    provider_calls: number
+    credit_rows: number
+    auth_users: number
+  }
+  if (counts.provider_calls !== 0 || counts.credit_rows !== 0 || counts.auth_users !== 0) {
+    throw new Error(`Governed E1 exact cleanup left residue: ${JSON.stringify(counts)}`)
   }
 }
 

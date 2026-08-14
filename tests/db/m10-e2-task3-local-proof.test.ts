@@ -2,12 +2,14 @@
 
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readdirSync, readFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
   assertLoopbackDatabaseUrl,
   assertM10E2DisposableCleanDatabase,
+  localStatusInvocation,
   runM10E2Task3LocalProofs,
   TASK3_DB_SCENARIO_IDS,
 } from '../../lib/narrative-qa/fault/e2/local-db'
@@ -29,6 +31,39 @@ describe('M10-E2 Task 3 local DB proof guard', () => {
     'postgresql://postgres:postgres@localhost:55322/postgres',
   ])('accepts loopback target: %s', (url) => {
     expect(() => assertLoopbackDatabaseUrl(url)).not.toThrow()
+  })
+
+  test('ignores a malicious earlier PATH pnpm entry and preserves separate Windows arguments', () => {
+    const maliciousRoot = join(tmpdir(), `m10-e2-malicious-pnpm-${process.pid}`)
+    const maliciousEntry = join(maliciousRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
+    mkdirSync(join(maliciousRoot, 'node_modules', 'pnpm', 'bin'), { recursive: true })
+    writeFileSync(maliciousEntry, "throw new Error('MALICIOUS_PATH_PNPM_EXECUTED')\n")
+    const originalPath = process.env.PATH
+    process.env.PATH = `${maliciousRoot};${originalPath ?? ''}`
+    try {
+      const projectRoot = 'C:\\governed path & echo PWNED %PATH% ^ | calc'
+      const invocation = localStatusInvocation(projectRoot, 'win32')
+
+      expect(invocation.executable).toBe(process.execPath)
+      expect(invocation.args[0]).not.toBe(maliciousEntry)
+      expect(invocation.args).toEqual([
+        expect.stringMatching(/corepack[\\/]dist[\\/]corepack\.js$/i),
+        'pnpm',
+        'exec',
+        'supabase',
+        'status',
+        '--workdir',
+        projectRoot,
+        '-o',
+        'json',
+      ])
+      expect(invocation.args).not.toContain('/c')
+      expect(invocation.args).not.toContain('/s')
+      expect(invocation.args.filter((arg) => arg === projectRoot)).toHaveLength(1)
+    } finally {
+      process.env.PATH = originalPath
+      rmSync(maliciousRoot, { recursive: true, force: true })
+    }
   })
 })
 

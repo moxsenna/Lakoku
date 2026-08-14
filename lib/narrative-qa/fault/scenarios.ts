@@ -53,6 +53,7 @@ import {
   PERSISTENT_SHORT_PRODUCTION_WRITE_CEILING,
 } from './provider'
 import { allInvariantsPassed, checkPostFaultInvariants } from './invariants'
+import { cleanupM10E1GovernedDisposableResidue } from './e2/local-db'
 import type { InvariantCheckResultV1 } from './invariants'
 import type { E1Disposition, E1ScenarioId } from './evidence'
 
@@ -454,8 +455,24 @@ function exactCleanupTargets(
 
 export const E1_EXACT_CLEANUP_TARGETS = exactCleanupTargets(FAULT_STORY_IDS, HARNESS_USER_ID)
 
-async function deleteAndVerifyExactTargets(admin: Admin, targets: readonly ExactCleanupTarget[]): Promise<void> {
+const ELEVATED_ONLY_CLEANUP_TABLES = new Set([
+  'generation_provider_calls',
+  'generation_job_attempts',
+  'generation_jobs',
+  'chapter_state_commits',
+  'reader_plot_debt_closures',
+  'reader_plot_debt_progress',
+  'credit_ledger',
+])
+
+async function deleteAndVerifyExactTargets(
+  admin: Admin,
+  targets: readonly ExactCleanupTarget[],
+  elevatedCleanup?: () => void,
+): Promise<void> {
+  elevatedCleanup?.()
   for (const target of targets) {
+    if (ELEVATED_ONLY_CLEANUP_TABLES.has(target.table)) continue
     const { error } = await admin.from(target.table).delete().in(target.column, [...target.values])
     if (error) throw new FaultScenarioError(`${target.table} cleanup failed: ${error.message}`)
   }
@@ -471,10 +488,15 @@ async function deleteAndVerifyExactTargets(admin: Admin, targets: readonly Exact
 export async function cleanupAndVerifyFaultHarnessStories(
   admin: Admin,
   userId = HARNESS_USER_ID,
+  elevatedCleanup: (storyIds: readonly string[], exactUserId: string) => void = cleanupM10E1GovernedDisposableResidue,
 ): Promise<FaultRunResultV1['resetProof']> {
   assertIsolatedTarget()
   for (const storyId of FAULT_STORY_IDS) assertHarnessStoryId(storyId)
-  await deleteAndVerifyExactTargets(admin, exactCleanupTargets(FAULT_STORY_IDS, userId))
+  await deleteAndVerifyExactTargets(
+    admin,
+    exactCleanupTargets(FAULT_STORY_IDS, userId),
+    () => elevatedCleanup(FAULT_STORY_IDS, userId),
+  )
   return {
     completed: true,
     targets: [

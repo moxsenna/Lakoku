@@ -268,6 +268,14 @@ describe('M10-E2 telemetry reviewer-authorized composite reference', () => {
         "{ table: 'outbox', column: 'payload->>other_id', values: storyIds }",
       ),
       (content: string) => content.replace(
+        "  'credit_ledger',\n])\n\nasync function deleteAndVerifyExactTargets",
+        '])\n\nasync function deleteAndVerifyExactTargets',
+      ),
+      (content: string) => content.replace(
+        '): Promise<void> {\n  elevatedCleanup?.()\n  for (const target of targets) {',
+        '): Promise<void> {\n  for (const target of targets) {',
+      ),
+      (content: string) => content.replace(
         'admin.from(target.table).delete().in(target.column, [...target.values])',
         'admin.from(target.table).delete().in(target.column, [])',
       ),

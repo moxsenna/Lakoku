@@ -22,23 +22,30 @@ type ObservedChoiceProbe = Readonly<{
   runChoice: ChoiceProbe
 }>
 
+type ExternalCallCounts = Record<ExternalCallKind, number>
+
 function createExternalCallAuthority(): Readonly<{
   authority: ExternalCallAuthority
-  sealAndReadCount: () => number
+  sealAndReadCounts: () => ExternalCallCounts
 }> {
-  let count = 0
+  const counts: ExternalCallCounts = {
+    MODEL_SDK: 0,
+    FETCH: 0,
+    TELEMETRY_RECORDER_FETCH: 0,
+    CANDIDATE_EXECUTE: 0,
+  }
   let sealed = false
   const authority: ExternalCallAuthority = Object.freeze({
-    recordExternalCall(_kind: ExternalCallKind): void {
+    recordExternalCall(kind: ExternalCallKind): void {
       if (sealed) throw new Error('E2_EXTERNAL_CALL_AUTHORITY_SEALED')
-      count += 1
+      counts[kind] += 1
     },
   })
   return Object.freeze({
     authority,
-    sealAndReadCount(): number {
+    sealAndReadCounts(): ExternalCallCounts {
       sealed = true
-      return count
+      return { ...counts }
     },
   })
 }
@@ -94,14 +101,16 @@ export async function proveMalformedChoicesOutput(input: ObservedChoiceProbe): P
   } catch {
     rejected = true
   }
-  const observedExternalCalls = externalCalls.sealAndReadCount()
+  const observedExternalCalls = externalCalls.sealAndReadCounts()
 
-  return executedRow('MALFORMED_CHOICES_OUTPUT', 'MALFORMED_CHOICES_REJECTED', [
+  const diagnosticInvariants = [
     invariant('MALFORMED_CHOICES_REJECTED', true, rejected),
     invariant('CANDIDATE_TRACE', 'choice:0,choice:1', trace.map((entry) => `${entry.kind}:${entry.fallbackIndex}`).join(',')),
     invariant('BOUNDED_CANDIDATE_CALLS', 2, trace.length),
-    invariant('ACTUAL_NETWORK_MODEL_CALLS', 0, observedExternalCalls),
-  ])
+    invariant('FORBIDDEN_MODEL_OR_CANDIDATE_CALLS', 0, observedExternalCalls.MODEL_SDK + observedExternalCalls.CANDIDATE_EXECUTE),
+    invariant('UNEXPECTED_NETWORK_CALLS', 0, observedExternalCalls.FETCH),
+  ]
+  return executedRow('MALFORMED_CHOICES_OUTPUT', 'MALFORMED_CHOICES_REJECTED', diagnosticInvariants)
 }
 
 export async function proveProviderFallbackSucceeds(input: ObservedChoiceProbe): Promise<E2EvidenceRow> {
@@ -147,7 +156,7 @@ export async function proveProviderFallbackSucceeds(input: ObservedChoiceProbe):
   } catch {
     result = undefined
   }
-  const observedExternalCalls = externalCalls.sealAndReadCount()
+  const observedExternalCalls = externalCalls.sealAndReadCounts()
   const observedTrace = trace.map((entry) => `${entry.kind}:${entry.fallbackIndex}`).join(',')
   const finalized = result && typeof result === 'object'
     ? result as { choicePrompt?: unknown; choices?: unknown; outcomes?: unknown }
@@ -168,12 +177,14 @@ export async function proveProviderFallbackSucceeds(input: ObservedChoiceProbe):
       && (outcome as { isEnding?: unknown }).isEnding === false)
       ? 'FINALIZED_CHOICE_BRANCH_VALID'
       : 'FINALIZED_CHOICE_BRANCH_INVALID'
-  return executedRow('PROVIDER_FALLBACK_SUCCEEDS', 'PRODUCTION_FINALIZED_CHOICE_BRANCH_VALID', [
+  const diagnosticInvariants = [
     invariant('EXACT_CANDIDATE_TRACE', 'choice:0,choice:1', observedTrace),
     invariant('BOUNDED_CANDIDATE_CALLS', 2, trace.length),
     invariant('FINALIZED_CHOICE_BRANCH', 'FINALIZED_CHOICE_BRANCH_VALID', semanticResult),
-    invariant('ACTUAL_NETWORK_MODEL_CALLS', 0, observedExternalCalls),
-  ])
+    invariant('FORBIDDEN_MODEL_OR_CANDIDATE_CALLS', 0, observedExternalCalls.MODEL_SDK + observedExternalCalls.CANDIDATE_EXECUTE),
+    invariant('UNEXPECTED_NETWORK_CALLS', 0, observedExternalCalls.FETCH),
+  ]
+  return executedRow('PROVIDER_FALLBACK_SUCCEEDS', 'PRODUCTION_FINALIZED_CHOICE_BRANCH_VALID', diagnosticInvariants)
 }
 
 export async function proveMalformedStateProposalDelta(input: {

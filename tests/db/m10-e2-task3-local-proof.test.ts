@@ -7,9 +7,13 @@ import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
   assertLoopbackDatabaseUrl,
+  assertM10E2DisposableCleanDatabase,
   runM10E2Task3LocalProofs,
   TASK3_DB_SCENARIO_IDS,
 } from '../../lib/narrative-qa/fault/e2/local-db'
+import { E2_SCENARIO_IDS } from '../../lib/narrative-qa/fault/e2/catalog'
+import { evaluateE2Gate } from '../../lib/narrative-qa/fault/e2/gate'
+import type { E2EvidenceRow } from '../../lib/narrative-qa/fault/e2/taxonomy'
 
 describe('M10-E2 Task 3 local DB proof guard', () => {
   test.each([
@@ -52,6 +56,14 @@ function setDblink(present: boolean): void {
       ? 'create extension if not exists dblink with schema extensions'
       : 'drop extension if exists dblink',
   ])
+}
+
+function runDisposableSql(input: string, variables: string[] = []): string {
+  return execFileSync('docker', [
+    'exec', '-i', '-e', 'PGPASSWORD=postgres', 'supabase_db_lakoku-m10-e2-task3',
+    'psql', '-X', '-A', '-t', '-h', '127.0.0.1', '-U', 'supabase_admin', '-d', 'postgres',
+    '-v', 'ON_ERROR_STOP=1', ...variables,
+  ], { input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] })
 }
 
 describe.skipIf(process.env.LAKOKU_LOCAL_DB_TEST !== '1')('M10-E2 Task 3 local DB proofs', () => {
@@ -99,6 +111,7 @@ describe.skipIf(process.env.LAKOKU_LOCAL_DB_TEST !== '1')('M10-E2 Task 3 local D
         recovered: true,
       })
       if (row.proof.disposition === 'EXECUTED') {
+        expect(row.proof.observedOutcome, row.id).toBe(row.proof.expectedOutcome)
         expect(
           row.proof.immediateInvariants.every((invariant) => invariant.passed),
           row.id,
@@ -135,6 +148,48 @@ describe.skipIf(process.env.LAKOKU_LOCAL_DB_TEST !== '1')('M10-E2 Task 3 local D
       canonicalCorruptionCount: 0,
       unboundedRetryCount: 0,
     })
+
+    const mutatedRows = result.rows.map((row, index): E2EvidenceRow => index === 0 && row.proof.disposition === 'EXECUTED'
+      ? { ...row, proof: { ...row.proof, observedOutcome: 'OBSERVED_INVARIANT_FAILURE' } }
+      : row)
+    const mutatedSha = 'b'.repeat(40)
+    const mutatedIds = new Set(mutatedRows.map((row) => row.id))
+    const mutatedFixtures = E2_SCENARIO_IDS.filter((id) => !mutatedIds.has(id)).map((id): E2EvidenceRow => ({
+      id,
+      proof: { disposition: 'N/A_PROVEN', callPathProof: {
+        entrypoint: 'fixture', exactCallPath: ['fixture'], inspectedCurrentSources: ['fixture'], terminalFinding: 'fixture',
+      } },
+    }))
+    expect(evaluateE2Gate({
+      version: 'm10-e2-fault-evidence/v1', baseGitSha: mutatedSha, workingTreeDirty: false,
+      seed: 'm10-e2-seed-v1', faultSchedule: [...E2_SCENARIO_IDS], rows: [...mutatedFixtures, ...mutatedRows]
+        .sort((a, b) => E2_SCENARIO_IDS.indexOf(a.id) - E2_SCENARIO_IDS.indexOf(b.id)),
+      safetyCounters: result.safetyCounters, resetProof: result.resetProof,
+      e1Regression: { baseGitSha: mutatedSha, result: 'PASS' },
+    }).failures).toContain('STALE_LEASE_RECLAMATION: EXECUTED expected and observed outcomes differ')
+
+    const task3Ids = new Set(result.rows.map((row) => row.id))
+    const fixtureRows = E2_SCENARIO_IDS.filter((id) => !task3Ids.has(id)).map((id): E2EvidenceRow => ({
+      id,
+      proof: {
+        disposition: 'N/A_PROVEN',
+        callPathProof: {
+          entrypoint: 'fixture', exactCallPath: ['fixture'], inspectedCurrentSources: ['fixture'], terminalFinding: 'fixture',
+        },
+      },
+    }))
+    const sha = 'a'.repeat(40)
+    const partialGate = evaluateE2Gate({
+      version: 'm10-e2-fault-evidence/v1', baseGitSha: sha, workingTreeDirty: false,
+      seed: 'm10-e2-seed-v1', faultSchedule: [...E2_SCENARIO_IDS], rows: [...fixtureRows, ...result.rows]
+        .sort((a, b) => E2_SCENARIO_IDS.indexOf(a.id) - E2_SCENARIO_IDS.indexOf(b.id)),
+      safetyCounters: result.safetyCounters, resetProof: result.resetProof,
+      e1Regression: { baseGitSha: sha, result: 'PASS' },
+    })
+    expect(partialGate.result).toBe('FAIL')
+    expect(partialGate.failures).toContain(
+      'MALFORMED_CHOICES_OUTPUT: disposition must be EXECUTED, observed N/A_PROVEN',
+    )
   }, 120_000)
 
   test.each([true, false])('restores exact dblink pre-state after fresh cleanup: %s', async (initiallyPresent) => {
@@ -146,6 +201,43 @@ describe.skipIf(process.env.LAKOKU_LOCAL_DB_TEST !== '1')('M10-E2 Task 3 local D
       expect(dblinkPresent()).toBe(initiallyPresent)
     } finally {
       setDblink(original)
+    }
+  }, 120_000)
+
+  test('rejects unexpected same-prefix trigger without deleting it', async () => {
+    assertM10E2DisposableCleanDatabase()
+    const triggerName = 'm10_e2_task3_unowned_mutation'
+    const cleanupSql = readFileSync(join(
+      process.cwd(), 'lib', 'narrative-qa', 'fault', 'e2', 'local-db-cleanup.sql',
+    ), 'utf8')
+    const variables = [
+      '-v', 'task3_run_nonce=m10-e2-task3-run-v1',
+      '-v', 'task3_project_id=lakoku-m10-e2-task3',
+    ]
+    try {
+      runDisposableSql(`
+        create function public.${triggerName}() returns trigger language plpgsql as $$
+        begin return new; end
+        $$;
+        create trigger ${triggerName} before insert on public.outbox
+        for each row execute function public.${triggerName}();
+      `)
+      expect(() => runDisposableSql(cleanupSql, variables)).toThrow(/M10_E2_TASK3_UNEXPECTED_PREFIX_TRIGGER/)
+      expect(runDisposableSql(`
+        select exists(
+          select 1 from pg_trigger t
+          join pg_class c on c.oid=t.tgrelid
+          join pg_namespace n on n.oid=c.relnamespace
+          where not t.tgisinternal and t.tgname='${triggerName}'
+            and n.nspname='public' and c.relname='outbox'
+        )
+      `).trim()).toBe('t')
+    } finally {
+      runDisposableSql(`
+        drop trigger if exists ${triggerName} on public.outbox;
+        drop function if exists public.${triggerName}();
+      `)
+      assertM10E2DisposableCleanDatabase()
     }
   }, 120_000)
 })

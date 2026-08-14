@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { E2_EVIDENCE_MATRIX, E2_SCENARIO_IDS } from '../../lib/narrative-qa/fault/e2/catalog'
+import {
+  E2_EVIDENCE_MATRIX,
+  E2_NORMATIVE_DISPOSITION_BY_ID,
+  E2_SCENARIO_IDS,
+} from '../../lib/narrative-qa/fault/e2/catalog'
 import { evaluateE2Gate } from '../../lib/narrative-qa/fault/e2/gate'
 import { normalizeE2Evidence } from '../../lib/narrative-qa/fault/e2/normalization'
-import { buildSourceUnchangedCompatibilityProof } from '../../lib/narrative-qa/fault/e2/taxonomy'
+import {
+  ANALYTICS_AUTHORITY_ANCHOR,
+  ANALYTICS_REFERENCE_COMPONENT_IDS,
+  OBSERVED_MODEL_CALL_ASSERTIONS,
+  buildSourceUnchangedCompatibilityProof,
+} from '../../lib/narrative-qa/fault/e2/taxonomy'
 import type {
   E2Evidence,
   E2EvidenceRow,
@@ -114,10 +123,54 @@ function reviewRequired(): ReviewRequiredEvidence {
   }
 }
 
+function analyticsReference(): ProvenReferenceEvidence {
+  const paths = [
+    'lib/narrative-qa/fault/evidence.ts',
+    'lib/narrative-qa/fault/scenarios.ts',
+    'tests/narrative-qa/m10-e1-fault-evidence.test.ts',
+    'lib/runtime/personalized-generation.ts',
+  ]
+  const observedPaths = [
+    'tests/ai-gateway/observed-model-call.test.ts',
+    'lib/ai-gateway/observed-model-call.server.ts',
+    'lib/ai-gateway/gateway-provider.ts',
+  ]
+  const component = (id: string, componentPaths: string[], assertions: string[]) => {
+    const sourceTestIndex = id === ANALYTICS_REFERENCE_COMPONENT_IDS[0] ? 2 : 0
+    return {
+      id,
+      sourceCommit: ANALYTICS_AUTHORITY_ANCHOR,
+      sourceTest: componentPaths[sourceTestIndex],
+      sourceTestBlobSha: String(sourceTestIndex + 3).repeat(40),
+    authorityBlobs: componentPaths.map((path, index) => ({ path, blobSha: String(index + 3).repeat(40) })),
+    exactAssertions: assertions,
+    exactProperty: 'exact authority property',
+      compatibilityProofs: componentPaths.map((path, index) => buildSourceUnchangedCompatibilityProof({
+        method: 'SOURCE_UNCHANGED',
+        currentHeadSha: 'a'.repeat(40),
+        relevantCurrentSource: path,
+        sourceBlobSha: String(index + 3).repeat(40),
+        currentBlobSha: String(index + 3).repeat(40),
+      })),
+    }
+  }
+  return {
+    disposition: 'PROVEN_REFERENCE',
+    referenceComponents: [
+      component(ANALYTICS_REFERENCE_COMPONENT_IDS[0], paths, ['POST1_ANALYTICS_FAILURE_AFTER_PUBLISH']),
+      component(ANALYTICS_REFERENCE_COMPONENT_IDS[1], observedPaths, [...OBSERVED_MODEL_CALL_ASSERTIONS]),
+    ],
+  }
+}
+
 function passingRows(): E2EvidenceRow[] {
-  return E2_SCENARIO_IDS.map((id, index) => ({
+  return E2_SCENARIO_IDS.map((id) => ({
     id,
-    proof: index === 0 ? executed() : index === 1 ? provenReference() : naProven(),
+    proof: id === 'ANALYTICS_OBSERVABILITY_INJECTED'
+      ? analyticsReference()
+      : E2_NORMATIVE_DISPOSITION_BY_ID[id] === 'PROVEN_REFERENCE'
+        ? provenReference()
+        : executed(),
   }))
 }
 
@@ -157,6 +210,11 @@ describe('M10-E2 normative catalog', () => {
     expect(E2_EVIDENCE_MATRIX).toHaveLength(19)
     expect(E2_EVIDENCE_MATRIX.map((entry) => entry.id)).toEqual(EXPECTED_IDS)
     expect(new Set(E2_EVIDENCE_MATRIX.map((entry) => entry.reviewerBullet)).size).toBe(19)
+    expect(E2_EVIDENCE_MATRIX.map((entry) => entry.normativeDisposition)).toEqual([
+      'EXECUTED', 'EXECUTED', 'EXECUTED', 'EXECUTED', 'EXECUTED', 'EXECUTED', 'EXECUTED',
+      'PROVEN_REFERENCE', 'PROVEN_REFERENCE', 'EXECUTED', 'EXECUTED', 'EXECUTED', 'EXECUTED',
+      'EXECUTED', 'EXECUTED', 'EXECUTED', 'EXECUTED', 'PROVEN_REFERENCE', 'EXECUTED',
+    ])
   })
 })
 
@@ -245,19 +303,21 @@ describe('M10-E2 disposition proof mutations', () => {
 
   it('fails malformed PROVEN_REFERENCE authority under both compatibility methods', () => {
     const evidence = passingEvidence()
-    const proof = row(evidence, 'MALFORMED_STATE_PROPOSAL_DELTA').proof
-    if (proof.disposition !== 'PROVEN_REFERENCE') throw new Error('expected PROVEN_REFERENCE fixture')
+    const proof = row(evidence, 'CHECKPOINT_SCHEMA_MISMATCH').proof
+    if (proof.disposition !== 'PROVEN_REFERENCE' || proof.referenceComponents) throw new Error('expected legacy PROVEN_REFERENCE fixture')
     proof.sourceArtifact = undefined
     proof.exactAssertion = undefined
     expect(evaluateE2Gate(evidence).result).toBe('FAIL')
 
     const semantic = passingEvidence()
-    row(semantic, 'MALFORMED_STATE_PROPOSAL_DELTA').proof = {
+    row(semantic, 'CHECKPOINT_SCHEMA_MISMATCH').proof = {
       ...provenReference(),
       compatibilityProof: {
         method: 'SEMANTIC_COMPARE',
         currentHeadSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         relevantCurrentSource: 'lib/runtime/checkpoint-schema-v3.ts',
+        sourceBlobSha: '2'.repeat(40),
+        currentBlobSha: '3'.repeat(40),
         comparison: 'Current result mapping compared with source assertion.',
         equivalent: false,
       },
@@ -265,8 +325,9 @@ describe('M10-E2 disposition proof mutations', () => {
     expect(evaluateE2Gate(semantic).result).toBe('FAIL')
 
     const invalidEqualBlobs = passingEvidence()
-    const invalidBlobProof = row(invalidEqualBlobs, 'MALFORMED_STATE_PROPOSAL_DELTA').proof
+    const invalidBlobProof = row(invalidEqualBlobs, 'CHECKPOINT_SCHEMA_MISMATCH').proof
     if (invalidBlobProof.disposition !== 'PROVEN_REFERENCE'
+      || !invalidBlobProof.compatibilityProof
       || invalidBlobProof.compatibilityProof.method !== 'SOURCE_UNCHANGED') {
       throw new Error('expected SOURCE_UNCHANGED fixture')
     }
@@ -285,7 +346,7 @@ describe('M10-E2 disposition proof mutations', () => {
     })).toThrow()
 
     const invalidTestBlob = passingEvidence()
-    const invalidTestBlobProof = row(invalidTestBlob, 'MALFORMED_STATE_PROPOSAL_DELTA').proof
+    const invalidTestBlobProof = row(invalidTestBlob, 'CHECKPOINT_SCHEMA_MISMATCH').proof
     if (invalidTestBlobProof.disposition !== 'PROVEN_REFERENCE') throw new Error('expected PROVEN_REFERENCE fixture')
     invalidTestBlobProof.sourceTestBlobSha = 'arbitrary-test-sha'
     expect(evaluateE2Gate(invalidTestBlob)).toEqual({
@@ -294,51 +355,61 @@ describe('M10-E2 disposition proof mutations', () => {
     })
 
     const staleHead = passingEvidence()
-    const staleProof = row(staleHead, 'MALFORMED_STATE_PROPOSAL_DELTA').proof
-    if (staleProof.disposition !== 'PROVEN_REFERENCE') throw new Error('expected PROVEN_REFERENCE fixture')
+    const staleProof = row(staleHead, 'CHECKPOINT_SCHEMA_MISMATCH').proof
+    if (staleProof.disposition !== 'PROVEN_REFERENCE' || !staleProof.compatibilityProof) throw new Error('expected legacy PROVEN_REFERENCE fixture')
     staleProof.compatibilityProof.currentHeadSha = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
     expect(evaluateE2Gate(staleHead).failures).toContain(
-      'MALFORMED_STATE_PROPOSAL_DELTA: PROVEN_REFERENCE compatibility proof must bind to evidence base Git SHA',
+      'CHECKPOINT_SCHEMA_MISMATCH: PROVEN_REFERENCE compatibility proof must bind to evidence base Git SHA',
     )
   })
 
-  it('fails malformed N/A_PROVEN exact current call-path proof', () => {
-    const evidence = passingEvidence()
-    const proof = row(evidence, 'PROVIDER_FALLBACK_SUCCEEDS').proof
-    if (proof.disposition !== 'N/A_PROVEN') throw new Error('expected N/A_PROVEN fixture')
-    proof.callPathProof.exactCallPath = []
-    expect(evaluateE2Gate(evidence).result).toBe('FAIL')
+  it('fails N/A_PROVEN substitution where EXECUTED or PROVEN_REFERENCE is required', () => {
+    const substitutions: Array<{ id: E2ScenarioId; proof: E2EvidenceRow['proof']; failure: string }> = [
+      {
+        id: 'MALFORMED_CHOICES_OUTPUT',
+        proof: naProven(),
+        failure: 'MALFORMED_CHOICES_OUTPUT: disposition must be EXECUTED, observed N/A_PROVEN',
+      },
+      {
+        id: 'PROVIDER_FALLBACK_SUCCEEDS',
+        proof: naProven(),
+        failure: 'PROVIDER_FALLBACK_SUCCEEDS: disposition must be EXECUTED, observed N/A_PROVEN',
+      },
+      {
+        id: 'ANALYTICS_OBSERVABILITY_INJECTED',
+        proof: naProven(),
+        failure: 'ANALYTICS_OBSERVABILITY_INJECTED: disposition must be PROVEN_REFERENCE, observed N/A_PROVEN',
+      },
+    ]
+    for (const substitution of substitutions) {
+      const evidence = passingEvidence()
+      row(evidence, substitution.id).proof = substitution.proof
+      expect(evaluateE2Gate(evidence)).toEqual(expect.objectContaining({ result: 'FAIL' }))
+      expect(evaluateE2Gate(evidence).failures).toContain(substitution.failure)
+    }
   })
 
-  it('forces OPEN_DEFECT and REVIEW_REQUIRED to HOLD with prescribed details', () => {
-    const open = passingEvidence()
-    row(open, 'PROVIDER_FALLBACK_SUCCEEDS').proof = openDefect()
-    expect(evaluateE2Gate(open)).toEqual(expect.objectContaining({ result: 'HOLD' }))
-
-    const malformedOpen = passingEvidence()
-    const openProof = openDefect()
-    openProof.defect.exactRootCause = ''
-    row(malformedOpen, 'PROVIDER_FALLBACK_SUCCEEDS').proof = openProof
-    expect(evaluateE2Gate(malformedOpen).result).toBe('FAIL')
-
-    const review = passingEvidence()
-    row(review, 'PROVIDER_FALLBACK_SUCCEEDS').proof = reviewRequired()
-    expect(evaluateE2Gate(review)).toEqual(expect.objectContaining({ result: 'HOLD' }))
-
-    const malformedReview = passingEvidence()
-    const reviewProof = reviewRequired()
-    reviewProof.review.exactSourceOrSqlBoundary = ''
-    row(malformedReview, 'PROVIDER_FALLBACK_SUCCEEDS').proof = reviewProof
-    expect(evaluateE2Gate(malformedReview).result).toBe('FAIL')
+  it('returns HOLD for structurally valid OPEN_DEFECT or REVIEW_REQUIRED despite normative closure disposition', () => {
+    const holds: E2EvidenceRow['proof'][] = [openDefect(), reviewRequired()]
+    for (const proof of holds) {
+      const evidence = passingEvidence()
+      row(evidence, 'PROVIDER_FALLBACK_SUCCEEDS').proof = proof
+      expect(evaluateE2Gate(evidence)).toEqual({
+        result: 'HOLD',
+        failures: [`PROVIDER_FALLBACK_SUCCEEDS: ${proof.disposition} blocks PASS`],
+      })
+    }
   })
 
-  it('prioritizes malformed proof FAIL over another row HOLD', () => {
+  it('fails malformed hold evidence instead of classifying it as HOLD', () => {
     const evidence = passingEvidence()
-    row(evidence, 'PROVIDER_FALLBACK_SUCCEEDS').proof = openDefect()
-    const executedProof = row(evidence, 'MALFORMED_CHOICES_OUTPUT').proof
-    if (executedProof.disposition !== 'EXECUTED') throw new Error('expected EXECUTED fixture')
-    executedProof.injectionReached = false
-    expect(evaluateE2Gate(evidence).result).toBe('FAIL')
+    const proof = openDefect()
+    proof.defect.exactRootCause = ''
+    row(evidence, 'PROVIDER_FALLBACK_SUCCEEDS').proof = proof
+    expect(evaluateE2Gate(evidence)).toEqual({
+      result: 'FAIL',
+      failures: ['PROVIDER_FALLBACK_SUCCEEDS: OPEN_DEFECT prescribed details are incomplete'],
+    })
   })
 })
 
@@ -376,7 +447,7 @@ describe('M10-E2 normalization', () => {
       immediateInvariants: [passingInvariant('IMMEDIATE_SAFE')],
       recoveryInvariants: [passingInvariant('RECOVERY_SAFE')],
     }))
-    expect(normalized.rows[1].proof).toEqual(expect.objectContaining({
+    expect(normalized.rows[7].proof).toEqual(expect.objectContaining({
       disposition: 'PROVEN_REFERENCE',
       sourceArtifact: 'artifact/checkpoint-versioning.tap',
       exactProperty: 'mismatched schema is rejected before publication',

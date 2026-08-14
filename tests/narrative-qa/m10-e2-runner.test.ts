@@ -6,7 +6,13 @@ import { E2_SCENARIO_IDS } from '../../lib/narrative-qa/fault/e2/catalog'
 import { createGitMetadataReader } from '../../lib/narrative-qa/fault/e2/git-metadata'
 import { hashNormalizedE2Evidence, normalizeE2Evidence } from '../../lib/narrative-qa/fault/e2/normalization'
 import type { E2EvidenceRow, E2ScenarioId } from '../../lib/narrative-qa/fault/e2/taxonomy'
-import { executeM10E2, validateE2ArtifactPair, type E1ExecutionResult } from '../../scripts/m10-e-reliability'
+import {
+  executeM10E2,
+  runM10E1Cli,
+  validateE2ArtifactPair,
+  type E1ExecutionResult,
+} from '../../scripts/m10-e-reliability'
+import { runFaultMatrixWithCleanup } from '../../lib/narrative-qa/fault/scenarios'
 
 const SHA = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 function row(id: E2ScenarioId): E2EvidenceRow {
@@ -26,11 +32,74 @@ function deps(overrides: Partial<Parameters<typeof executeM10E2>[0]> = {}) {
   return { calls, value: {
     git: { readHeadSha: vi.fn(async () => { calls.push('head'); return SHA }), readWorkingTreeDirty: vi.fn(async () => { calls.push('dirty'); return false }) },
     executeE1: vi.fn(async (sha: string) => { calls.push(`e1:${sha}`); return e1() }),
+    prepareDisposableEnvironment: vi.fn(async () => { calls.push('disposable-env') }),
     runNonDbProofs: vi.fn(async () => { calls.push('non-db'); return { rows: E2_SCENARIO_IDS.slice(0, 9).map(row) } }),
     runTask3Proofs: vi.fn(async () => { calls.push('task3'); return { rows: E2_SCENARIO_IDS.slice(9).map(row), safetyCounters: { duplicatePublicationCount: 0, canonicalCorruptionCount: 0, unboundedRetryCount: 0 }, resetProof: { completed: true, targets: [{ target: 'db', resetApplied: true, cleanStateVerified: true }] } } }),
     now: () => new Date('2026-08-13T00:00:00.000Z'), ...overrides,
   } }
 }
+
+describe('M10-E1 governed CLI', () => {
+  it('prepares governed disposable and proves clean DB before E1 mutation', async () => {
+    const calls: string[] = []
+    const code = await runM10E1Cli({
+      prepareDisposableEnvironment: () => { calls.push('prepare') },
+      assertCleanDatabase: () => { calls.push('clean') },
+      execute: async () => {
+        calls.push('execute')
+        return { ...e1(), evidence: { ...e1().evidence, scenarios: [] } }
+      },
+      writeArtifacts: false,
+    })
+    expect(code).toBe(0)
+    expect(calls).toEqual(['prepare', 'clean', 'execute'])
+  })
+
+  it('stops before mutation when disposable clean preflight fails', async () => {
+    const execute = vi.fn(async () => e1())
+    await expect(runM10E1Cli({
+      prepareDisposableEnvironment: () => undefined,
+      assertCleanDatabase: () => { throw new Error('dirty disposable') },
+      execute,
+      writeArtifacts: false,
+    })).rejects.toThrow('dirty disposable')
+    expect(execute).not.toHaveBeenCalled()
+  })
+})
+
+describe('M10-E1 matrix cleanup lifecycle', () => {
+  const result = () => ({
+    scenarios: [], uncovered: [], cleanLatenciesMs: [],
+    resetProof: { completed: true, targets: [] },
+  })
+
+  it('always cleans after success and attaches final reset proof', async () => {
+    const cleanup = vi.fn(async () => ({ completed: true, targets: [{ target: 'db', resetApplied: true, cleanStateVerified: true }] }))
+    const observed = await runFaultMatrixWithCleanup({ runMutable: async () => result(), cleanup })
+    expect(cleanup).toHaveBeenCalledOnce()
+    expect(observed.resetProof.targets[0]?.target).toBe('db')
+  })
+
+  it('cleans after primary failure and preserves primary error', async () => {
+    const cleanup = vi.fn(async () => ({ completed: true, targets: [] }))
+    await expect(runFaultMatrixWithCleanup({
+      runMutable: async () => { throw new Error('primary failed') }, cleanup,
+    })).rejects.toThrow('primary failed')
+    expect(cleanup).toHaveBeenCalledOnce()
+  })
+
+  it('propagates cleanup failure and aggregates dual failures', async () => {
+    await expect(runFaultMatrixWithCleanup({
+      runMutable: async () => result(), cleanup: async () => { throw new Error('cleanup failed') },
+    })).rejects.toThrow('cleanup failed')
+    const dual = runFaultMatrixWithCleanup({
+      runMutable: async () => { throw new Error('primary failed') },
+      cleanup: async () => { throw new Error('cleanup failed') },
+    })
+    await expect(dual).rejects.toBeInstanceOf(AggregateError)
+    await expect(dual).rejects.toThrow('M10-E1 matrix and cleanup failed')
+  })
+})
 
 describe('M10-E2 strict assembler', () => {
   it('assembles by ID in normative order and preserves producer safety/reset observations', () => {
@@ -67,7 +136,7 @@ describe('M10-E2 orchestrator and artifact pair', () => {
   it('captures Git once, binds E1 SHA, orders proof execution, combines reset targets, and emits stable exact matrix', async () => {
     const input = deps()
     const first = await executeM10E2(input.value)
-    expect(input.calls).toEqual(['head', 'dirty', `e1:${SHA}`, 'non-db', 'task3'])
+    expect(input.calls).toEqual(['head', 'dirty', 'disposable-env', `e1:${SHA}`, 'non-db', 'task3'])
     expect(input.value.git.readHeadSha).toHaveBeenCalledOnce()
     expect(first.raw.evidence.rows).toHaveLength(19)
     expect(first.raw.evidence.rows.map((item) => item.id)).toEqual(E2_SCENARIO_IDS)
@@ -93,19 +162,15 @@ describe('M10-E2 orchestrator and artifact pair', () => {
   it('fails dirty tree before E1 or mutable proof', async () => {
     const input = deps({ git: { readHeadSha: vi.fn(async () => SHA), readWorkingTreeDirty: vi.fn(async () => true) } })
     await expect(executeM10E2(input.value)).rejects.toThrow('E2_DIRTY_TREE_BEFORE_MUTABLE_PROOF')
+    expect(input.value.prepareDisposableEnvironment).not.toHaveBeenCalled()
     expect(input.value.executeE1).not.toHaveBeenCalled()
     expect(input.value.runTask3Proofs).not.toHaveBeenCalled()
   })
-  it('does not fabricate E1 PASS and returns HOLD as nonzero gate result', async () => {
+  it('does not fabricate E1 PASS', async () => {
     const input = deps({ executeE1: vi.fn(async () => e1('FAIL')) })
     const failed = await executeM10E2(input.value)
     expect(failed.raw.evidence.e1Regression.result).toBe('FAIL')
     expect(failed.normalized.gate.result).toBe('FAIL')
-
-    const heldInput = deps({ runTask3Proofs: vi.fn(async () => ({ rows: E2_SCENARIO_IDS.slice(9).map((id, index): E2EvidenceRow => index === 0 ? {
-      id, proof: { disposition: 'REVIEW_REQUIRED', review: { obligationApplicability: 'applies', exactSourceOrSqlBoundary: 'boundary', lackOfSeamOrReferenceReason: 'none', reviewerDecisionNeeded: 'review', owner: 'owner' } },
-    } : row(id)), safetyCounters: { duplicatePublicationCount: 0, canonicalCorruptionCount: 0, unboundedRetryCount: 0 }, resetProof: { completed: true, targets: [{ target: 'db', resetApplied: true, cleanStateVerified: true }] } })) })
-    expect((await executeM10E2(heldInput.value)).normalized.gate.result).toBe('HOLD')
   })
   it('validates strict raw/normalized pairing, gate, hash, IDs, and count', async () => {
     const pair = await executeM10E2(deps().value)

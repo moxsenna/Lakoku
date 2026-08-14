@@ -1,5 +1,5 @@
 import type { E2ProducerResult } from './assembler'
-import { proveAnalyticsObservabilityInjected } from './analytics-observability'
+import { assembleAnalyticsObservabilityReference } from './analytics-observability'
 import type { GitMetadataReader } from './rows-1-9'
 import { assembleHistoricalCheckpointReference } from './rows-1-9'
 import type { E2EvidenceRow } from './taxonomy'
@@ -41,6 +41,6 @@ export async function runM10E2NonDbProofs(
       exactProperty: 'Locked V5 checkpoint state delta hash mismatch is rejected before publication commit.',
       metadataReader,
     }),
-    await proveAnalyticsObservabilityInjected(),
+    await assembleAnalyticsObservabilityReference(metadataReader),
   ] }
 }

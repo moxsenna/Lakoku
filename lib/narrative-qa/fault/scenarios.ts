@@ -28,7 +28,7 @@ import {
 } from '../../runtime/generation-jobs'
 import { claimedJobToPartialContext } from '../../runtime/generation-job-execution'
 import { resolveCommercialWorkerPreflight } from '../../commercial/worker-preflight.server'
-import { harnessProposalFor, HARNESS_TOTAL_CHAPTERS } from '../harness/fixture'
+import { CHARACTERS, harnessProposalFor, HARNESS_TOTAL_CHAPTERS } from '../harness/fixture'
 import { submitHarnessChoice } from '../harness/choice'
 import { ensureHarnessCreditGrant, prepareCommercialChapterPreflight } from '../harness/commercial'
 import {
@@ -36,7 +36,6 @@ import {
   assertHarnessStoryId,
   assertIsolatedTarget,
   assertChapterUnlockPricingConfigured,
-  cleanupHarnessStory,
   ensureHarnessUser,
   seedHarnessStory,
 } from '../harness/seed'
@@ -403,6 +402,88 @@ async function advanceClean(
   return { trigger, latencies }
 }
 
+interface ExactCleanupTarget {
+  table: string
+  column: string
+  values: readonly string[]
+}
+
+const STORY_ID_CLEANUP_TABLES = [
+  'generation_provider_calls',
+  'generation_job_attempts',
+  'story_events',
+  'idempotency_keys',
+  'commercial_generation_intents',
+  'credit_reservations',
+  'chapter_state_commits',
+  'chapter_generation_checkpoints',
+  'reader_plot_debt_closures',
+  'reader_plot_debt_progress',
+  'choice_outcomes',
+  'chapters',
+  'generation_leases',
+  'generation_jobs',
+  'retrieval_logs',
+  'act_rollups',
+  'timeline_events',
+  'knowledge_scopes',
+  'facts_ledger',
+  'secrets_reveals',
+  'story_threads',
+  'character_aliases',
+  'character_voice_sheets',
+  'reader_states',
+  'chapter_blueprints',
+  'story_generation_contracts',
+  'characters',
+] as const
+
+function exactCleanupTargets(
+  storyIds: readonly string[],
+  userId?: string,
+): ExactCleanupTarget[] {
+  const characterIds = storyIds.flatMap((storyId) => CHARACTERS.map((character) => `${storyId}:${character.id}`))
+  return [
+    ...STORY_ID_CLEANUP_TABLES.map((table) => ({ table, column: 'story_id', values: storyIds })),
+    { table: 'character_states', column: 'character_id', values: characterIds },
+    { table: 'outbox', column: 'payload->>story_id', values: storyIds },
+    { table: 'stories', column: 'id', values: storyIds },
+    ...(userId ? [{ table: 'credit_ledger', column: 'ref', values: [`m10c:harness-grant:${userId}`] }] : []),
+  ]
+}
+
+export const E1_EXACT_CLEANUP_TARGETS = exactCleanupTargets(FAULT_STORY_IDS, HARNESS_USER_ID)
+
+async function deleteAndVerifyExactTargets(admin: Admin, targets: readonly ExactCleanupTarget[]): Promise<void> {
+  for (const target of targets) {
+    const { error } = await admin.from(target.table).delete().in(target.column, [...target.values])
+    if (error) throw new FaultScenarioError(`${target.table} cleanup failed: ${error.message}`)
+  }
+  for (const target of targets) {
+    const { data, error } = await admin.from(target.table).select(target.column).in(target.column, [...target.values])
+    if (error) throw new FaultScenarioError(`${target.table} reset verification failed: ${error.message}`)
+    if ((data ?? []).length > 0) {
+      throw new FaultScenarioError(`reset verification found mutable story residue: ${target.table}`)
+    }
+  }
+}
+
+export async function cleanupAndVerifyFaultHarnessStories(
+  admin: Admin,
+  userId = HARNESS_USER_ID,
+): Promise<FaultRunResultV1['resetProof']> {
+  assertIsolatedTarget()
+  for (const storyId of FAULT_STORY_IDS) assertHarnessStoryId(storyId)
+  await deleteAndVerifyExactTargets(admin, exactCleanupTargets(FAULT_STORY_IDS, userId))
+  return {
+    completed: true,
+    targets: [
+      ...FAULT_STORY_IDS.map((target) => ({ target, resetApplied: true, cleanStateVerified: true })),
+      { target: 'outbox', resetApplied: true, cleanStateVerified: true },
+    ],
+  }
+}
+
 async function resetStory(admin: Admin, storyId: string, userId: string): Promise<{
   target: string
   resetApplied: boolean
@@ -410,20 +491,8 @@ async function resetStory(admin: Admin, storyId: string, userId: string): Promis
 }> {
   assertHarnessStoryId(storyId)
   trace(`reset ${storyId}`)
-  await cleanupHarnessStory(admin, storyId)
-  const residueReads = await Promise.all([
-    admin.from('stories').select('id').eq('id', storyId),
-    admin.from('chapters').select('story_id').eq('story_id', storyId),
-    admin.from('reader_states').select('story_id').eq('story_id', storyId),
-    admin.from('generation_jobs').select('story_id').eq('story_id', storyId),
-    admin.from('generation_leases').select('story_id').eq('story_id', storyId),
-    admin.from('chapter_generation_checkpoints').select('story_id').eq('story_id', storyId),
-    admin.from('chapter_state_commits').select('story_id').eq('story_id', storyId),
-  ])
-  const residueError = residueReads.find((result) => result.error)?.error
-  if (residueError) throw new FaultScenarioError(`reset verification failed: ${residueError.message}`)
-  const cleanStateVerified = residueReads.every((result) => (result.data ?? []).length === 0)
-  if (!cleanStateVerified) throw new FaultScenarioError(`reset verification found mutable story residue: ${storyId}`)
+  await deleteAndVerifyExactTargets(admin, exactCleanupTargets([storyId]))
+  const cleanStateVerified = true
   await seedHarnessStory({ admin, storyId, userId })
   trace(`reset ${storyId} done`)
   return { target: storyId, resetApplied: true, cleanStateVerified }
@@ -619,7 +688,7 @@ export interface RunFaultMatrixInput {
   reseed?: boolean
 }
 
-export async function runFaultMatrix(input: RunFaultMatrixInput = {}): Promise<FaultRunResultV1> {
+async function runFaultMatrixMutable(input: RunFaultMatrixInput): Promise<FaultRunResultV1> {
   assertDeterministicProvider()
   assertIsolatedTarget()
 
@@ -1119,7 +1188,48 @@ export async function runFaultMatrix(input: RunFaultMatrixInput = {}): Promise<F
     resetProof: {
       completed: resetTargets.length === 3
         && resetTargets.every((target) => target.resetApplied && target.cleanStateVerified),
-      targets: resetTargets,
+      targets: [],
     },
   }
+}
+
+export async function runFaultMatrixWithCleanup(input: {
+  runMutable: () => Promise<FaultRunResultV1>
+  cleanup: () => Promise<FaultRunResultV1['resetProof']>
+}): Promise<FaultRunResultV1> {
+  let result: FaultRunResultV1 | undefined
+  let primaryError: unknown
+  try {
+    result = await input.runMutable()
+  } catch (error) {
+    primaryError = error
+  }
+
+  let resetProof: FaultRunResultV1['resetProof'] | undefined
+  try {
+    resetProof = await input.cleanup()
+  } catch (cleanupError) {
+    if (primaryError !== undefined) {
+      throw new AggregateError([primaryError, cleanupError], 'M10-E1 matrix and cleanup failed')
+    }
+    throw cleanupError
+  }
+  if (primaryError !== undefined) throw primaryError
+  if (!result) throw new FaultScenarioError('matrix completed without result')
+  return {
+    ...result,
+    resetProof: {
+      completed: result.resetProof.completed && resetProof.completed,
+      targets: resetProof.targets,
+    },
+  }
+}
+
+export async function runFaultMatrix(input: RunFaultMatrixInput = {}): Promise<FaultRunResultV1> {
+  const admin = input.admin ?? createAdminClient()
+  const userId = input.userId ?? HARNESS_USER_ID
+  return runFaultMatrixWithCleanup({
+    runMutable: () => runFaultMatrixMutable({ ...input, admin, userId }),
+    cleanup: () => cleanupAndVerifyFaultHarnessStories(admin, userId),
+  })
 }

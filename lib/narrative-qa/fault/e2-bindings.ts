@@ -104,7 +104,12 @@ async function choice(
       workflowPhase: 'CHOICES_INITIAL',
       providerRuntime: { candidateTransport: guardedTransport },
     },
-  ))
+  ), (request) => {
+    const url = typeof request === 'string' || request instanceof URL ? String(request) : request.url
+    return new URL(url).pathname.endsWith('/rest/v1/rpc/record_generation_provider_call_v2')
+      ? 'TELEMETRY_RECORDER_FETCH'
+      : 'FETCH'
+  })
 }
 function checkpoint(overrides: Partial<ChapterGenerationCheckpoint> = {}): ChapterGenerationCheckpoint {
   return {

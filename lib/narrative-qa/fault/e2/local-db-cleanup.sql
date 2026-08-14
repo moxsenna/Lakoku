@@ -12,9 +12,28 @@ declare
     'm10-e2-task3:stale-v3','m10-e2-task3:stale-v5','m10-e2-task3:provenance',
     'm10-e2-task3:outbox'
   ];
-  v_trigger record;
   v_dblink_preexisting boolean;
 begin
+  -- Prefix is shared namespace, not cleanup ownership. Refuse unknown names or owner tables.
+  if exists (
+    select 1
+    from pg_trigger t
+    join pg_class c on c.oid=t.tgrelid
+    join pg_namespace n on n.oid=c.relnamespace
+    where not t.tgisinternal
+      and t.tgname like 'm10_e2_task3_%'
+      and not (
+        (t.tgname in ('m10_e2_task3_hold_race_1','m10_e2_task3_hold_race_2','m10_e2_task3_fail_commit')
+          and n.nspname='public' and c.relname='chapter_state_commits')
+        or (t.tgname='m10_e2_task3_fail_terminal'
+          and n.nspname='public' and c.relname='generation_jobs')
+        or (t.tgname='m10_e2_task3_fail_outbox'
+          and n.nspname='public' and c.relname='outbox')
+      )
+  ) then
+    raise exception 'M10_E2_TASK3_UNEXPECTED_PREFIX_TRIGGER';
+  end if;
+
   select (raw_user_meta_data->>'m10_e2_task3_dblink_preexisting')::boolean
   into v_dblink_preexisting
   from auth.users
@@ -23,15 +42,11 @@ begin
       'm10_e2_task3_nonce', current_setting('m10.task3_run_nonce'),
       'm10_e2_task3_project', current_setting('m10.task3_project_id')
     );
-  for v_trigger in
-    select n.nspname schema_name, c.relname table_name, t.tgname trigger_name
-    from pg_trigger t
-    join pg_class c on c.oid=t.tgrelid
-    join pg_namespace n on n.oid=c.relnamespace
-    where not t.tgisinternal and t.tgname like 'm10_e2_task3_%'
-  loop
-    execute format('drop trigger if exists %I on %I.%I',v_trigger.trigger_name,v_trigger.schema_name,v_trigger.table_name);
-  end loop;
+  drop trigger if exists m10_e2_task3_hold_race_1 on public.chapter_state_commits;
+  drop trigger if exists m10_e2_task3_hold_race_2 on public.chapter_state_commits;
+  drop trigger if exists m10_e2_task3_fail_commit on public.chapter_state_commits;
+  drop trigger if exists m10_e2_task3_fail_terminal on public.generation_jobs;
+  drop trigger if exists m10_e2_task3_fail_outbox on public.outbox;
 
   delete from public.outbox where payload->>'story_id'=any(v_stories);
   delete from public.story_events where story_id=any(v_stories);
@@ -85,7 +100,20 @@ begin
     or exists(select 1 from public.story_events where story_id=any(v_stories))
     or exists(select 1 from public.outbox where payload->>'story_id'=any(v_stories))
     or exists(select 1 from public.idempotency_keys where story_id=any(v_stories))
-    or exists(select 1 from pg_trigger where not tgisinternal and tgname like 'm10_e2_task3_%')
+    or exists(
+      select 1
+      from pg_trigger t
+      join pg_class c on c.oid=t.tgrelid
+      join pg_namespace n on n.oid=c.relnamespace
+      where not t.tgisinternal and (
+        (t.tgname in ('m10_e2_task3_hold_race_1','m10_e2_task3_hold_race_2','m10_e2_task3_fail_commit')
+          and n.nspname='public' and c.relname='chapter_state_commits')
+        or (t.tgname='m10_e2_task3_fail_terminal'
+          and n.nspname='public' and c.relname='generation_jobs')
+        or (t.tgname='m10_e2_task3_fail_outbox'
+          and n.nspname='public' and c.relname='outbox')
+      )
+    )
     or exists(select 1 from auth.users where id='e2000000-0000-4000-8000-000000000001'
       and raw_user_meta_data @> jsonb_build_object('m10_e2_task3_nonce', current_setting('m10.task3_run_nonce')))
   then

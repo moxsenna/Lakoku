@@ -41,6 +41,7 @@ interface DedicatedDatabaseCounts {
   leases: number
   checkpoints: number
   commits: number
+  outbox: number
 }
 
 interface SqlProofResult {
@@ -266,13 +267,31 @@ function assertDedicatedCleanDatabase(container: string, password: string): void
       'jobs',(select count(*) from public.generation_jobs),
       'leases',(select count(*) from public.generation_leases),
       'checkpoints',(select count(*) from public.chapter_generation_checkpoints),
-      'commits',(select count(*) from public.chapter_state_commits)
+      'commits',(select count(*) from public.chapter_state_commits),
+      'outbox',(select count(*) from public.outbox)
     );
   `).trim()
   const counts = JSON.parse(output) as DedicatedDatabaseCounts
   if (Object.values(counts).some((count) => count !== 0)) {
     throw new Error(`M10-E2 requires dedicated clean DB before mutation; observed ${JSON.stringify(counts)}`)
   }
+}
+
+export function assertM10E2DisposableCleanDatabase(): void {
+  const governedProjectRoot = 'C:\\Users\\bimap\\.zcode\\tmp\\m10-e2-task3-supabase'
+  const projectRoot = process.env.LAKOKU_E2_DISPOSABLE_PROJECT
+  if (!projectRoot || projectRoot.replaceAll('/', '\\').toLowerCase() !== governedProjectRoot.toLowerCase()) {
+    throw new Error(`Governed disposable project root required, received ${projectRoot ?? '<missing>'}`)
+  }
+  const status = localStatus(projectRoot)
+  const config = localProjectConfig(projectRoot)
+  if (config.projectId !== 'lakoku-m10-e2-task3' || config.apiPort !== '57321' || config.dbPort !== '57322') {
+    throw new Error(`Governed disposable identity mismatch: ${JSON.stringify(config)}`)
+  }
+  const databaseUrl = new URL(status.DB_URL)
+  const password = decodeURIComponent(databaseUrl.password)
+  if (!password) throw new Error('Local Supabase DB_URL missing credentials')
+  assertDedicatedCleanDatabase(databaseContainer(status.DB_URL, config), password)
 }
 
 function parseProof(stdout: string): SqlProofResult {

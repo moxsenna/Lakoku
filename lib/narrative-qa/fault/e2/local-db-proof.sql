@@ -59,7 +59,8 @@ returns jsonb language sql immutable as $fn$
 $fn$;
 
 create or replace function pg_temp.executed(
-  p_outcome text,
+  p_expected_outcome text,
+  p_observed_outcome text,
   p_immediate jsonb,
   p_recovery jsonb
 ) returns jsonb language sql immutable as $fn$
@@ -68,8 +69,8 @@ create or replace function pg_temp.executed(
     'injectionReached', not exists(
       select 1 from jsonb_array_elements(p_immediate) item where (item->>'passed')::boolean is distinct from true
     ),
-    'expectedOutcome', p_outcome,
-    'observedOutcome', jsonb_build_object('immediate',p_immediate,'recovery',p_recovery)::text,
+    'expectedOutcome', p_expected_outcome,
+    'observedOutcome', p_observed_outcome,
     'immediateInvariants', p_immediate,
     'recoveryExpected', jsonb_array_length(p_recovery)>0,
     'recovered', not exists(
@@ -415,6 +416,14 @@ begin
   );
   insert into task3_results values (4,'STALE_LEASE_RECLAMATION',pg_temp.executed(
     'STALE_JOB_RECLAIMED',
+    case when (recovered->>'recovered_count')::integer=1
+      and old_heartbeat->>'reason'='OWNERSHIP_LOST'
+      and (select status from public.generation_leases where id=l)='EXPIRED'
+      and (select canon_state_revision from public.stories where id=s)=0
+      and (claim->>'claimed')::boolean
+      and (claim->'job'->>'claim_token')::uuid<>old_claim
+      and (new_lease->>'ok')::boolean
+    then 'STALE_JOB_RECLAIMED' else 'STALE_JOB_RECLAMATION_FAILED' end,
     jsonb_build_array(
       pg_temp.inv('RECOVERED_COUNT','1'::jsonb,to_jsonb((recovered->>'recovered_count')::integer)),
       pg_temp.inv('OLD_OWNER_FENCED','"OWNERSHIP_LOST"'::jsonb,to_jsonb(old_heartbeat->>'reason')),
@@ -458,6 +467,11 @@ begin
   replay := public.publish_chapter_v2(s,2,'Bab Dua','["Paragraf lokal."]'::jsonb,
     'Ke mana kamu melangkah?',pg_temp.choices(),pg_temp.outcomes(),l,'m10-e2-task3:v2:key');
   insert into task3_results values(10,'PUBLICATION_V2_UNCERTAINTY_RETRY',pg_temp.executed('EXACT_RETRY',
+    case when (first->>'ok')::boolean
+      and (select count(*) from public.chapters where story_id=s)=1
+      and (select count(*) from public.story_events where story_id=s)=1
+      and (select count(*) from public.outbox where payload @> jsonb_build_object('story_id',s,'chapter_number',2))=1
+      and first=replay then 'EXACT_RETRY' else 'EXACT_RETRY_FAILED' end,
     jsonb_build_array(
       pg_temp.inv('FIRST_PUBLICATION_OK','true'::jsonb,to_jsonb((first->>'ok')::boolean)),
       pg_temp.inv('ONE_CHAPTER','1'::jsonb,to_jsonb((select count(*) from public.chapters where story_id=s))),
@@ -486,6 +500,11 @@ begin
   select publication_result into first from public.chapter_state_commits where story_id=s and chapter_number=2;
   replay := pg_temp.publish_v3(s,a,l);
   insert into task3_results values(11,'PUBLICATION_V3_UNCERTAINTY_RETRY',pg_temp.executed('EXACT_RETRY',
+    case when (first->>'ok')::boolean
+      and (select count(*) from public.chapters where story_id=s)=1
+      and (select count(*) from public.chapter_state_commits where story_id=s)=1
+      and (select canon_state_revision from public.stories where id=s)=1
+      and first=replay then 'EXACT_RETRY' else 'EXACT_RETRY_FAILED' end,
     jsonb_build_array(
       pg_temp.inv('FIRST_PUBLICATION_OK','true'::jsonb,to_jsonb((first->>'ok')::boolean)),
       pg_temp.inv('ONE_CHAPTER','1'::jsonb,to_jsonb((select count(*) from public.chapters where story_id=s))),
@@ -514,6 +533,11 @@ begin
   select publication_result into first from public.generation_jobs where id=j;
   replay := pg_temp.publish_v5(s,j,l);
   insert into task3_results values(12,'PUBLICATION_V5_UNCERTAINTY_RETRY',pg_temp.executed('EXACT_RETRY',
+    case when (first->>'ok')::boolean
+      and (select count(*) from public.chapters where story_id=s)=1
+      and (select count(*) from public.chapter_state_commits where story_id=s)=1
+      and (select count(*) from public.generation_job_attempts where job_id=j)=1
+      and first=replay then 'EXACT_RETRY' else 'EXACT_RETRY_FAILED' end,
     jsonb_build_array(
       pg_temp.inv('FIRST_PUBLICATION_OK','true'::jsonb,to_jsonb((first->>'ok')::boolean)),
       pg_temp.inv('ONE_CHAPTER','1'::jsonb,to_jsonb((select count(*) from public.chapters where story_id=s))),
@@ -614,6 +638,8 @@ begin
     sync_result := null; worker_result := null; sync_error := null; worker_error := null;
   end loop;
   insert into task3_results values(13,'PUBLICATION_CONCURRENCY_SYNC_VS_WORKER',pg_temp.executed('ONE_DB_WINNER_BOTH_ORDERS',
+    case when winners='["sync","worker"]'::jsonb and no_deadlock
+      then 'ONE_DB_WINNER_BOTH_ORDERS' else 'PUBLICATION_RACE_FAILED' end,
     jsonb_build_array(
       pg_temp.inv('WINNER_ORDER','["sync","worker"]'::jsonb,winners),
       pg_temp.inv('ONE_CANONICAL_WINNER_EACH','true'::jsonb,'true'::jsonb),
@@ -652,6 +678,10 @@ begin
   execute 'drop trigger m10_e2_task3_fail_commit on public.chapter_state_commits';
   retry := pg_temp.publish_v3(s,a,l);
   insert into task3_results values(14,'TRANSACTION_ROLLBACK_AFTER_CHAPTER_INSERT_BEFORE_STATE_COMMIT',pg_temp.executed('INJECTED_ROLLBACK',
+    case when failed->>'message'='M10_E2_FAIL_BEFORE_COMMIT_LEDGER'
+      and before_state=after_state and (retry->>'ok')::boolean
+      and (select count(*) from public.chapter_state_commits where story_id=s)=1
+      then 'INJECTED_ROLLBACK' else 'INJECTED_ROLLBACK_FAILED' end,
     jsonb_build_array(
       pg_temp.inv('FAILPOINT_REACHED','"M10_E2_FAIL_BEFORE_COMMIT_LEDGER"'::jsonb,to_jsonb(failed->>'message')),
       pg_temp.inv('FULL_SNAPSHOT_UNCHANGED',before_state,after_state)
@@ -685,6 +715,10 @@ begin
   execute 'drop trigger m10_e2_task3_fail_terminal on public.generation_jobs';
   retry := pg_temp.publish_v5(s,j,l);
   insert into task3_results values(15,'TRANSACTION_ROLLBACK_AFTER_STATE_APPLIER_BEFORE_TERMINALIZATION',pg_temp.executed('INJECTED_ROLLBACK',
+    case when failed->>'message'='M10_E2_FAIL_TERMINALIZATION'
+      and before_state=after_state and (retry->>'ok')::boolean
+      and (select status from public.generation_jobs where id=j)='SUCCEEDED'
+      then 'INJECTED_ROLLBACK' else 'INJECTED_ROLLBACK_FAILED' end,
     jsonb_build_array(
       pg_temp.inv('FAILPOINT_REACHED','"M10_E2_FAIL_TERMINALIZATION"'::jsonb,to_jsonb(failed->>'message')),
       pg_temp.inv('FULL_SNAPSHOT_UNCHANGED',before_state,after_state)
@@ -711,6 +745,12 @@ begin
   r3 := pg_temp.try_call(format('select pg_temp.publish_v3(%L,%L::uuid,%L::uuid)',s3,a,l3));
   r5 := pg_temp.try_call(format('select pg_temp.publish_v5(%L,%L::uuid,%L::uuid)',s5,j,l5));
   insert into task3_results values(16,'STALE_CANON_REVISION',pg_temp.executed('STALE_FENCED',
+    case when r3->>'message'='PROVENANCE_CONFLICT' and r5->>'message'='STALE_CANON_REVISION'
+      and (select count(*) from public.chapters where story_id in(s3,s5))=0
+      and (select count(*) from public.chapter_state_commits where story_id in(s3,s5))=0
+      and (select sum(canon_state_revision) from public.stories where id in(s3,s5))=2
+      and (select count(*)=2 from public.chapter_generation_checkpoints where story_id in(s3,s5) and status='PROSE_READY')
+      then 'STALE_FENCED' else 'STALE_FENCE_FAILED' end,
     jsonb_build_array(
       pg_temp.inv('V3_STALE_FENCED','"PROVENANCE_CONFLICT"'::jsonb,to_jsonb(r3->>'message')),
       pg_temp.inv('V5_STALE_FENCED','"STALE_CANON_REVISION"'::jsonb,to_jsonb(r5->>'message')),
@@ -736,6 +776,11 @@ begin
   mismatch := pg_temp.try_call(format('select pg_temp.publish_v5(%L,%L::uuid,%L::uuid)',s,j,l));
   after_replay := pg_temp.snapshot(s);
   insert into task3_results values(17,'COMMIT_LEDGER_PROVENANCE_MISMATCH',pg_temp.executed('PROVENANCE_CONFLICT',
+    case when mismatch->>'message'='PROVENANCE_CONFLICT' and before_replay=after_replay
+      and (select count(*) from public.chapters where story_id=s)=1
+      and (select count(*) from public.chapter_state_commits where story_id=s)=1
+      and (select canon_state_revision from public.stories where id=s)=1
+      and (first->>'ok')::boolean then 'PROVENANCE_CONFLICT' else 'PROVENANCE_CHECK_FAILED' end,
     jsonb_build_array(
       pg_temp.inv('LEDGER_REPLAY_MISMATCH_REJECTED','"PROVENANCE_CONFLICT"'::jsonb,to_jsonb(mismatch->>'message')),
       pg_temp.inv('FULL_REPLAY_SNAPSHOT_UNCHANGED',before_replay,after_replay),
@@ -767,6 +812,12 @@ begin
   execute 'drop trigger m10_e2_task3_fail_outbox on public.outbox';
   retry := pg_temp.publish_v3(s,a,l);
   insert into task3_results values(19,'NOTIFICATION_OUTBOX_FAILURE',pg_temp.executed('OUTBOX_FAILURE_ROLLBACK',
+    case when failed->>'message'='M10_E2_FAIL_OUTBOX' and before_state=after_state
+      and (retry->>'ok')::boolean
+      and (select count(*) from public.outbox where payload @> jsonb_build_object('story_id',s,'chapter_number',2))=1
+      and (select count(*) from public.chapters where story_id=s)=1
+      and (select count(*) from public.chapter_state_commits where story_id=s)=1
+      then 'OUTBOX_FAILURE_ROLLBACK' else 'OUTBOX_ROLLBACK_FAILED' end,
     jsonb_build_array(
       pg_temp.inv('FAILPOINT_REACHED','"M10_E2_FAIL_OUTBOX"'::jsonb,to_jsonb(failed->>'message')),
       pg_temp.inv('FULL_SNAPSHOT_UNCHANGED',before_state,after_state)

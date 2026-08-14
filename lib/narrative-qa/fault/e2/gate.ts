@@ -1,7 +1,12 @@
 import { stableStringify } from '../../scoring/canonical-serializer'
-import { E2_SCENARIO_IDS } from './catalog'
-import { E2EvidenceSchema } from './taxonomy'
-import type { E2Evidence, E2EvidenceRow, E2Proof } from './taxonomy'
+import { E2_NORMATIVE_DISPOSITION_BY_ID, E2_SCENARIO_IDS } from './catalog'
+import {
+  ANALYTICS_AUTHORITY_ANCHOR,
+  ANALYTICS_REFERENCE_COMPONENT_IDS,
+  E2EvidenceSchema,
+  OBSERVED_MODEL_CALL_ASSERTIONS,
+} from './taxonomy'
+import type { E2Evidence, E2EvidenceRow, E2Proof, ProvenReferenceComponent } from './taxonomy'
 
 export const E2_FIXED_SEED = 'm10-e2-seed-v1' as const
 
@@ -53,24 +58,12 @@ function validateExecuted(row: E2EvidenceRow, proof: Extract<E2Proof, { disposit
   return failures
 }
 
-function validateProvenReference(
+function validateCompatibility(
   row: E2EvidenceRow,
-  proof: Extract<E2Proof, { disposition: 'PROVEN_REFERENCE' }>,
+  compatibility: NonNullable<Extract<E2Proof, { disposition: 'PROVEN_REFERENCE' }>['compatibilityProof']>,
   evidenceBaseGitSha: string,
 ): string[] {
   const failures: string[] = []
-  if (!isGitSha(proof.sourceCommit)) {
-    failures.push(`${row.id}: PROVEN_REFERENCE source commit must be a full Git SHA`)
-  }
-  if (!present(proof.sourceTest)) failures.push(`${row.id}: PROVEN_REFERENCE source test is required`)
-  if (!isGitSha(proof.sourceTestBlobSha)) {
-    failures.push(`${row.id}: PROVEN_REFERENCE source test blob must be a full Git SHA`)
-  }
-  if (!present(proof.sourceArtifact) && !present(proof.exactAssertion)) {
-    failures.push(`${row.id}: PROVEN_REFERENCE source artifact or exact assertion is required`)
-  }
-  if (!present(proof.exactProperty)) failures.push(`${row.id}: PROVEN_REFERENCE exact property is required`)
-  const compatibility = proof.compatibilityProof
   if (!isGitSha(compatibility.currentHeadSha) || compatibility.currentHeadSha !== evidenceBaseGitSha) {
     failures.push(`${row.id}: PROVEN_REFERENCE compatibility proof must bind to evidence base Git SHA`)
   }
@@ -83,9 +76,101 @@ function validateProvenReference(
     } else if (compatibility.sourceBlobSha !== compatibility.currentBlobSha) {
       failures.push(`${row.id}: PROVEN_REFERENCE current source must be unchanged`)
     }
-  } else if (!present(compatibility.comparison) || !compatibility.equivalent) {
-    failures.push(`${row.id}: PROVEN_REFERENCE semantic comparison must prove equivalence`)
+  } else {
+    if (!isGitSha(compatibility.sourceBlobSha) || !isGitSha(compatibility.currentBlobSha)) {
+      failures.push(`${row.id}: PROVEN_REFERENCE semantic comparison blob hashes must be full Git SHAs`)
+    }
+    if (!present(compatibility.comparison) || !compatibility.equivalent) {
+      failures.push(`${row.id}: PROVEN_REFERENCE semantic comparison must prove equivalence`)
+    }
   }
+  return failures
+}
+
+function validateReferenceComponent(
+  row: E2EvidenceRow,
+  component: ProvenReferenceComponent,
+  evidenceBaseGitSha: string,
+): string[] {
+  const failures: string[] = []
+  if (!isGitSha(component.sourceCommit)) failures.push(`${row.id}: PROVEN_REFERENCE component source commit must be a full Git SHA`)
+  if (!present(component.sourceTest) || !isGitSha(component.sourceTestBlobSha)) failures.push(`${row.id}: PROVEN_REFERENCE component source test authority is malformed`)
+  if (!present(component.exactProperty) || component.exactAssertions.length === 0) failures.push(`${row.id}: PROVEN_REFERENCE component exact authority is incomplete`)
+  if (component.authorityBlobs.length === 0 || component.authorityBlobs.some((blob) => !present(blob.path) || !isGitSha(blob.blobSha))) {
+    failures.push(`${row.id}: PROVEN_REFERENCE component authority blobs are incomplete`)
+  }
+  if (!component.authorityBlobs.some((blob) => blob.path === component.sourceTest && blob.blobSha === component.sourceTestBlobSha)) {
+    failures.push(`${row.id}: PROVEN_REFERENCE component test blob must match authority blob`)
+  }
+  if (component.compatibilityProofs.length === 0) failures.push(`${row.id}: PROVEN_REFERENCE component current compatibility is required`)
+  for (const compatibility of component.compatibilityProofs) {
+    failures.push(...validateCompatibility(row, compatibility, evidenceBaseGitSha))
+    const sourceBlob = component.authorityBlobs.find((blob) => blob.path === compatibility.relevantCurrentSource)
+    if (!sourceBlob || sourceBlob.blobSha !== compatibility.sourceBlobSha) {
+      failures.push(`${row.id}: PROVEN_REFERENCE compatibility source blob must match authority blob`)
+    }
+  }
+  return failures
+}
+
+function validateAnalyticsComposite(
+  row: E2EvidenceRow,
+  components: ProvenReferenceComponent[],
+  evidenceBaseGitSha: string,
+): string[] {
+  const failures: string[] = []
+  if (stableStringify(components.map((component) => component.id)) !== stableStringify(ANALYTICS_REFERENCE_COMPONENT_IDS)) {
+    failures.push(`${row.id}: PROVEN_REFERENCE telemetry requires exact dual authority components`)
+  }
+  for (const component of components) {
+    failures.push(...validateReferenceComponent(row, component, evidenceBaseGitSha))
+    if (component.sourceCommit !== ANALYTICS_AUTHORITY_ANCHOR) failures.push(`${row.id}: PROVEN_REFERENCE telemetry authority anchor is wrong`)
+  }
+  const e1 = components.find((component) => component.id === ANALYTICS_REFERENCE_COMPONENT_IDS[0])
+  if (!e1 || !e1.exactAssertions.includes('POST1_ANALYTICS_FAILURE_AFTER_PUBLISH')) {
+    failures.push(`${row.id}: PROVEN_REFERENCE E1 POST1 authority is missing`)
+  }
+  const requiredE1CurrentPaths = [
+    'lib/narrative-qa/fault/evidence.ts',
+    'lib/narrative-qa/fault/scenarios.ts',
+    'tests/narrative-qa/m10-e1-fault-evidence.test.ts',
+    'lib/runtime/personalized-generation.ts',
+  ]
+  if (!e1 || stableStringify(e1.compatibilityProofs.map((proof) => proof.relevantCurrentSource)) !== stableStringify(requiredE1CurrentPaths)) {
+    failures.push(`${row.id}: PROVEN_REFERENCE E1 gate, scenario, test, and production compatibility is required`)
+  }
+  const observed = components.find((component) => component.id === ANALYTICS_REFERENCE_COMPONENT_IDS[1])
+  if (!observed || stableStringify(observed.exactAssertions) !== stableStringify(OBSERVED_MODEL_CALL_ASSERTIONS)) {
+    failures.push(`${row.id}: PROVEN_REFERENCE observed-model-call exact assertions are wrong`)
+  }
+  const requiredObservedPaths = [
+    'tests/ai-gateway/observed-model-call.test.ts',
+    'lib/ai-gateway/observed-model-call.server.ts',
+    'lib/ai-gateway/gateway-provider.ts',
+  ]
+  if (!observed || stableStringify(observed.compatibilityProofs.map((proof) => proof.relevantCurrentSource)) !== stableStringify(requiredObservedPaths)) {
+    failures.push(`${row.id}: PROVEN_REFERENCE observed-model-call test, primitive, and consumer compatibility is required`)
+  }
+  return failures
+}
+
+function validateProvenReference(
+  row: E2EvidenceRow,
+  proof: Extract<E2Proof, { disposition: 'PROVEN_REFERENCE' }>,
+  evidenceBaseGitSha: string,
+): string[] {
+  if (proof.referenceComponents) {
+    if (row.id !== 'ANALYTICS_OBSERVABILITY_INJECTED') return [`${row.id}: composite PROVEN_REFERENCE is not authorized`]
+    return validateAnalyticsComposite(row, proof.referenceComponents, evidenceBaseGitSha)
+  }
+  const failures: string[] = []
+  if (!isGitSha(proof.sourceCommit)) failures.push(`${row.id}: PROVEN_REFERENCE source commit must be a full Git SHA`)
+  if (!present(proof.sourceTest)) failures.push(`${row.id}: PROVEN_REFERENCE source test is required`)
+  if (!isGitSha(proof.sourceTestBlobSha)) failures.push(`${row.id}: PROVEN_REFERENCE source test blob must be a full Git SHA`)
+  if (!present(proof.sourceArtifact) && !present(proof.exactAssertion)) failures.push(`${row.id}: PROVEN_REFERENCE source artifact or exact assertion is required`)
+  if (!present(proof.exactProperty)) failures.push(`${row.id}: PROVEN_REFERENCE exact property is required`)
+  if (!proof.compatibilityProof) failures.push(`${row.id}: PROVEN_REFERENCE compatibility proof is required`)
+  else failures.push(...validateCompatibility(row, proof.compatibilityProof, evidenceBaseGitSha))
   return failures
 }
 
@@ -193,13 +278,21 @@ export function evaluateE2Gate(input: unknown): E2GateResult {
   if (evidence.e1Regression.baseGitSha !== evidence.baseGitSha) {
     failures.push('E1 regression must use same base Git SHA')
   }
+  const held: E2EvidenceRow[] = []
   for (const evidenceRow of evidence.rows) {
-    failures.push(...validateProof(evidenceRow, evidence.baseGitSha))
+    const proofFailures = validateProof(evidenceRow, evidence.baseGitSha)
+    failures.push(...proofFailures)
+
+    const normativeDisposition = E2_NORMATIVE_DISPOSITION_BY_ID[evidenceRow.id]
+    if (evidenceRow.proof.disposition === 'OPEN_DEFECT'
+      || evidenceRow.proof.disposition === 'REVIEW_REQUIRED') {
+      if (proofFailures.length === 0) held.push(evidenceRow)
+    } else if (evidenceRow.proof.disposition !== normativeDisposition) {
+      failures.push(`${evidenceRow.id}: disposition must be ${normativeDisposition}, observed ${evidenceRow.proof.disposition}`)
+    }
   }
 
   if (failures.length > 0) return { result: 'FAIL', failures }
-  const held = evidence.rows.filter((row) =>
-    row.proof.disposition === 'OPEN_DEFECT' || row.proof.disposition === 'REVIEW_REQUIRED')
   if (held.length > 0) {
     return {
       result: 'HOLD',

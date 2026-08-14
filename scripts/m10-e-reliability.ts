@@ -7,6 +7,7 @@ import {
   E2RawArtifactEnvelopeSchema,
   E2_SCENARIO_IDS,
   assembleE2Evidence,
+  assertM10E2DisposableCleanDatabase,
   createWorkingTreeGitReader,
   evaluateE1Gate,
   evaluateE2Gate,
@@ -51,6 +52,33 @@ export const E1_E2_GAPS: E1CoverageMetadata[] = [
   { id: 'FAILURE_AFTER_APPLIER_BEFORE_TERMINALIZATION', disposition: 'MISSING', reason: 'No TypeScript seam inside atomic SQL publication.' },
   { id: 'NOTIFICATION_OUTBOX_FAILURE', disposition: 'N/A', reason: 'Current V3/V5 call path writes no notification/outbox row.' },
 ]
+
+const E2_DISPOSABLE_PROJECT_ROOT = 'C:\\Users\\bimap\\.zcode\\tmp\\m10-e2-task3-supabase'
+
+export function bootstrapM10E2DisposableEnv(): void {
+  const projectRoot = process.env.LAKOKU_E2_DISPOSABLE_PROJECT
+  if (!projectRoot || projectRoot.replaceAll('/', '\\').toLowerCase() !== E2_DISPOSABLE_PROJECT_ROOT.toLowerCase()) {
+    throw new Error(`Governed disposable project root required, received ${projectRoot ?? '<missing>'}`)
+  }
+  const output = execFileSync('pnpm', [
+    'exec', 'supabase', 'status', '--workdir', projectRoot, '-o', 'env',
+  ], {
+    cwd: process.cwd(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32',
+  })
+  const env = new Map<string, string>()
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.match(/^([A-Z0-9_]+)=(?:"([^"]*)"|(.*))$/)
+    if (match) env.set(match[1], match[2] ?? match[3] ?? '')
+  }
+  const apiUrl = env.get('API_URL')
+  const serviceRoleKey = env.get('SERVICE_ROLE_KEY')
+  if (!apiUrl || new URL(apiUrl).hostname !== '127.0.0.1' || new URL(apiUrl).port !== '57321' || !serviceRoleKey) {
+    throw new Error('Governed disposable Supabase API 127.0.0.1:57321 with service role key required')
+  }
+  process.env.SUPABASE_URL = apiUrl
+  process.env.NEXT_PUBLIC_SUPABASE_URL = apiUrl
+  process.env.SUPABASE_SERVICE_ROLE_KEY = serviceRoleKey
+}
 
 export function bootstrapLocalSupabaseEnv(): void {
   if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -120,12 +148,20 @@ export async function executeM10E1(input: {
   }
 }
 
-export async function runM10E1Cli(): Promise<number> {
-  bootstrapLocalSupabaseEnv()
-  const result = await executeM10E1()
-  mkdirSync(E1_ARTIFACT_DIR, { recursive: true })
-  writeFileSync(E1_RAW_EVIDENCE_PATH, `${stableStringify({ ...result.evidence, gate: result.gate, normalizedHash: result.normalizedHash })}\n`, 'utf8')
-  writeFileSync(E1_NORMALIZED_EVIDENCE_PATH, `${stableStringify({ evidence: result.normalized, gate: result.gate, normalizedHash: result.normalizedHash })}\n`, 'utf8')
+export async function runM10E1Cli(input: {
+  prepareDisposableEnvironment?: () => Promise<void> | void
+  assertCleanDatabase?: () => Promise<void> | void
+  execute?: () => Promise<E1ExecutionResult>
+  writeArtifacts?: boolean
+} = {}): Promise<number> {
+  await (input.prepareDisposableEnvironment ?? bootstrapM10E2DisposableEnv)()
+  await (input.assertCleanDatabase ?? assertM10E2DisposableCleanDatabase)()
+  const result = await (input.execute ?? executeM10E1)()
+  if (input.writeArtifacts !== false) {
+    mkdirSync(E1_ARTIFACT_DIR, { recursive: true })
+    writeFileSync(E1_RAW_EVIDENCE_PATH, `${stableStringify({ ...result.evidence, gate: result.gate, normalizedHash: result.normalizedHash })}\n`, 'utf8')
+    writeFileSync(E1_NORMALIZED_EVIDENCE_PATH, `${stableStringify({ evidence: result.normalized, gate: result.gate, normalizedHash: result.normalizedHash })}\n`, 'utf8')
+  }
   console.log(`M10-E E1 result: ${result.gate.result}`)
   console.log(`scenarios: ${result.evidence.scenarios.length}/${E1_EXECUTABLE_SCENARIO_IDS.length}`)
   console.log(`baseGitSha: ${result.evidence.baseGitSha}`)
@@ -161,6 +197,7 @@ export function validateE2ArtifactPair(rawInput: unknown, normalizedInput: unkno
 
 export interface E2ExecutionDeps {
   git: { readHeadSha: () => Promise<string>; readWorkingTreeDirty: () => Promise<boolean> }
+  prepareDisposableEnvironment: () => Promise<void> | void
   executeE1: (baseGitSha: string) => Promise<E1ExecutionResult>
   runNonDbProofs: (baseGitSha: string) => Promise<E2ProducerResult>
   runTask3Proofs: () => Promise<E2ProducerResult>
@@ -171,6 +208,7 @@ export async function executeM10E2(deps: E2ExecutionDeps): Promise<E2ArtifactPai
   const baseGitSha = await deps.git.readHeadSha()
   const workingTreeDirty = await deps.git.readWorkingTreeDirty()
   if (workingTreeDirty) throw new Error('E2_DIRTY_TREE_BEFORE_MUTABLE_PROOF')
+  await deps.prepareDisposableEnvironment()
   const now = deps.now ?? (() => new Date())
   const startedAt = now().toISOString()
   const e1 = await deps.executeE1(baseGitSha)
@@ -191,7 +229,6 @@ export async function executeM10E2(deps: E2ExecutionDeps): Promise<E2ArtifactPai
 }
 
 export async function runM10E2Cli(): Promise<number> {
-  bootstrapLocalSupabaseEnv()
   const {
     createM10E2NonDbBindings,
     runM10E2NonDbProofs,
@@ -199,6 +236,7 @@ export async function runM10E2Cli(): Promise<number> {
   } = await import('../lib/narrative-qa/fault')
   const pair = await executeM10E2({
     git: createWorkingTreeGitReader(),
+    prepareDisposableEnvironment: bootstrapM10E2DisposableEnv,
     executeE1: (sha) => executeM10E1({ baseGitSha: sha, workingTreeDirty: false }),
     runNonDbProofs: (sha) => runM10E2NonDbProofs(sha, createM10E2NonDbBindings()),
     runTask3Proofs: runM10E2Task3LocalProofs,

@@ -24,7 +24,7 @@ export {
 export { hashNormalizedE2Evidence, normalizeE2Evidence } from './e2/normalization'
 export { runM10E2NonDbProofs } from './e2/non-db'
 export type { M10E2NonDbBindings } from './e2/non-db'
-export { runM10E2Task3LocalProofs } from './e2/local-db'
+export { assertM10E2DisposableCleanDatabase, runM10E2Task3LocalProofs } from './e2/local-db'
 export { createM10E2NonDbBindings } from './e2-bindings'
 export type { M10E2BindingFaultProbe } from './e2-bindings'
 export { withScopedExternalCallGuard } from './e2/external-call-guard'

@@ -34,6 +34,18 @@ export const E2_SCENARIO_ID_VALUES = [
 
 export type E2ScenarioId = (typeof E2_SCENARIO_ID_VALUES)[number]
 
+export const ANALYTICS_AUTHORITY_ANCHOR = '9a5ce2162ba4f292c5a29897f2e02d689d383c45' as const
+export const ANALYTICS_REFERENCE_COMPONENT_IDS = [
+  'E1_POST1_AFTER_PUBLISH',
+  'OBSERVED_MODEL_CALL_BEST_EFFORT',
+] as const
+export const OBSERVED_MODEL_CALL_ASSERTIONS = [
+  'preserves success and original errors when recorder fails',
+  'bounds recorder wait and preserves success when recorder never resolves',
+  'bounds recorder wait and preserves original error when recorder never resolves',
+  'handles recorder rejection after timeout without exposing it',
+] as const
+
 export interface E2InvariantResult {
   code: string
   passed: boolean
@@ -67,19 +79,36 @@ export type ReferenceCompatibilityProof =
       method: 'SEMANTIC_COMPARE'
       currentHeadSha: string
       relevantCurrentSource: string
+      sourceBlobSha: string
+      currentBlobSha: string
       comparison: string
       equivalent: boolean
     }
 
-export interface ProvenReferenceEvidence {
-  disposition: 'PROVEN_REFERENCE'
+export interface ProvenReferenceComponent {
+  id: string
   sourceCommit: string
   sourceTest: string
   sourceTestBlobSha: string
+  authorityBlobs: Array<{
+    path: string
+    blobSha: string
+  }>
+  exactAssertions: string[]
+  exactProperty: string
+  compatibilityProofs: ReferenceCompatibilityProof[]
+}
+
+export interface ProvenReferenceEvidence {
+  disposition: 'PROVEN_REFERENCE'
+  sourceCommit?: string
+  sourceTest?: string
+  sourceTestBlobSha?: string
   sourceArtifact?: string
   exactAssertion?: string
-  exactProperty: string
-  compatibilityProof: ReferenceCompatibilityProof
+  exactProperty?: string
+  compatibilityProof?: ReferenceCompatibilityProof
+  referenceComponents?: ProvenReferenceComponent[]
 }
 
 export interface NaProvenEvidence {
@@ -201,6 +230,8 @@ const ReferenceCompatibilityProofSchema = z.discriminatedUnion('method', [
     method: z.literal('SEMANTIC_COMPARE'),
     currentHeadSha: GitShaSchema,
     relevantCurrentSource: z.string(),
+    sourceBlobSha: GitShaSchema,
+    currentBlobSha: GitShaSchema,
     comparison: z.string(),
     equivalent: z.boolean(),
   }),
@@ -219,13 +250,23 @@ const E2ProofSchema = z.discriminatedUnion('disposition', [
   }),
   z.strictObject({
     disposition: z.literal('PROVEN_REFERENCE'),
-    sourceCommit: z.string(),
-    sourceTest: z.string(),
-    sourceTestBlobSha: GitShaSchema,
+    sourceCommit: z.string().optional(),
+    sourceTest: z.string().optional(),
+    sourceTestBlobSha: GitShaSchema.optional(),
     sourceArtifact: z.string().optional(),
     exactAssertion: z.string().optional(),
-    exactProperty: z.string(),
-    compatibilityProof: ReferenceCompatibilityProofSchema,
+    exactProperty: z.string().optional(),
+    compatibilityProof: ReferenceCompatibilityProofSchema.optional(),
+    referenceComponents: z.array(z.strictObject({
+      id: z.string(),
+      sourceCommit: z.string(),
+      sourceTest: z.string(),
+      sourceTestBlobSha: GitShaSchema,
+      authorityBlobs: z.array(z.strictObject({ path: z.string(), blobSha: GitShaSchema })),
+      exactAssertions: z.array(z.string()),
+      exactProperty: z.string(),
+      compatibilityProofs: z.array(ReferenceCompatibilityProofSchema),
+    })).optional(),
   }),
   z.strictObject({
     disposition: z.literal('N/A_PROVEN'),

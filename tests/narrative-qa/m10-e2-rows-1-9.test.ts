@@ -167,7 +167,7 @@ describe('M10-E2 rows 1-3 production seam proofs', () => {
     })
     expect(row).toMatchObject({ id: 'MALFORMED_CHOICES_OUTPUT', proof: { disposition: 'EXECUTED' } })
     expect(evidenceInvariant(row, 'MALFORMED_CHOICES_REJECTED')).toMatchObject({ passed: true })
-    expect(evidenceInvariant(row, 'ACTUAL_NETWORK_MODEL_CALLS')).toMatchObject({
+    expect(evidenceInvariant(row, 'FORBIDDEN_MODEL_OR_CANDIDATE_CALLS')).toMatchObject({
       passed: true,
       detail: { expected: 0, observed: 0 },
     })
@@ -222,7 +222,7 @@ describe('M10-E2 rows 1-3 production seam proofs', () => {
     expect(row).toMatchObject({ id: 'PROVIDER_FALLBACK_SUCCEEDS', proof: { disposition: 'EXECUTED' } })
     expect(evidenceInvariant(row, 'EXACT_CANDIDATE_TRACE').detail.observed).toBe('choice:0,choice:1')
     expect(evidenceInvariant(row, 'BOUNDED_CANDIDATE_CALLS').detail.observed).toBe(2)
-    expect(evidenceInvariant(row, 'ACTUAL_NETWORK_MODEL_CALLS').detail.observed).toBe(0)
+    expect(evidenceInvariant(row, 'FORBIDDEN_MODEL_OR_CANDIDATE_CALLS').detail.observed).toBe(0)
     expect(streamTextMock).not.toHaveBeenCalled()
     expect(generateTextMock).not.toHaveBeenCalled()
   })
@@ -235,8 +235,8 @@ describe('M10-E2 rows 1-3 production seam proofs', () => {
       },
     })
 
-    expect(evidenceInvariant(row, 'ACTUAL_NETWORK_MODEL_CALLS')).toEqual({
-      code: 'ACTUAL_NETWORK_MODEL_CALLS',
+    expect(evidenceInvariant(row, 'FORBIDDEN_MODEL_OR_CANDIDATE_CALLS')).toEqual({
+      code: 'FORBIDDEN_MODEL_OR_CANDIDATE_CALLS',
       passed: false,
       detail: { expected: 0, observed: 1 },
     })
@@ -343,6 +343,7 @@ describe('M10-E2 rows 4-9 checkpoint proofs', () => {
       metadataReader: mutatedReader,
     })
     if (mutated.proof.disposition !== 'PROVEN_REFERENCE'
+      || !mutated.proof.compatibilityProof
       || mutated.proof.compatibilityProof.method !== 'SOURCE_UNCHANGED') throw new Error('expected reference')
     expect(mutated.proof.compatibilityProof.sourceBlobSha)
       .not.toBe(mutated.proof.compatibilityProof.currentBlobSha)

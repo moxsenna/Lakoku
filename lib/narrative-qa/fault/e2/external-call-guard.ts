@@ -1,4 +1,4 @@
-export type ExternalCallKind = 'MODEL_SDK' | 'FETCH' | 'CANDIDATE_EXECUTE'
+export type ExternalCallKind = 'MODEL_SDK' | 'FETCH' | 'TELEMETRY_RECORDER_FETCH' | 'CANDIDATE_EXECUTE'
 
 export interface ExternalCallAuthority {
   recordExternalCall: (kind: ExternalCallKind) => void
@@ -22,13 +22,14 @@ async function acquireGlobalPatchScope(): Promise<() => void> {
 export async function withScopedExternalCallGuard<T>(
   authority: ExternalCallAuthority,
   run: () => Promise<T> | T,
+  classifyFetch: (input: Parameters<typeof fetch>[0]) => ExternalCallKind = () => 'FETCH',
 ): Promise<T> {
   const release = await acquireGlobalPatchScope()
   const originalFetch = globalThis.fetch
   const ownershipToken = Symbol('m10-e2-external-call-guard')
   const blockedFetch = Object.assign(
-    async () => {
-      authority.recordExternalCall('FETCH')
+    async (input: Parameters<typeof fetch>[0]) => {
+      authority.recordExternalCall(classifyFetch(input))
       throw new Error('E2_NETWORK_DENIED')
     },
     { [FETCH_GUARD_OWNER]: ownershipToken },

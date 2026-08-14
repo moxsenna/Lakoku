@@ -4,7 +4,9 @@ vi.mock('server-only', () => ({}))
 vi.mock('@lakoku/narrative-core', async () => import('@/lib/narrative/index'))
 
 import { createM10E2NonDbBindings } from '../../lib/narrative-qa/fault/e2-bindings'
-import type { E2EvidenceRow } from '../../lib/narrative-qa/fault/e2/taxonomy'
+import { evaluateE2Gate } from '../../lib/narrative-qa/fault/e2/gate'
+import { E2_SCENARIO_IDS } from '../../lib/narrative-qa/fault/e2/catalog'
+import type { E2EvidenceRow, E2ScenarioId } from '../../lib/narrative-qa/fault/e2/taxonomy'
 
 function invariant(row: E2EvidenceRow, code: string) {
   if (row.proof.disposition !== 'EXECUTED') throw new Error(`expected EXECUTED ${row.id}`)
@@ -23,31 +25,37 @@ async function rowFor(
   return row
 }
 
+function gateForRows(rows: E2EvidenceRow[]) {
+  const sha = 'a'.repeat(40)
+  const remaining = E2_SCENARIO_IDS.filter((id) => !rows.some((row) => row.id === id))
+    .map((id: E2ScenarioId): E2EvidenceRow => ({
+      id,
+      proof: {
+        disposition: 'N/A_PROVEN',
+        callPathProof: {
+          entrypoint: 'fixture', exactCallPath: ['fixture'], inspectedCurrentSources: ['fixture'], terminalFinding: 'fixture',
+        },
+      },
+    }))
+  return evaluateE2Gate({
+    version: 'm10-e2-fault-evidence/v1', baseGitSha: sha, workingTreeDirty: false,
+    seed: 'm10-e2-seed-v1', faultSchedule: [...E2_SCENARIO_IDS], rows: [...rows, ...remaining]
+      .sort((a, b) => E2_SCENARIO_IDS.indexOf(a.id) - E2_SCENARIO_IDS.indexOf(b.id)),
+    safetyCounters: { duplicatePublicationCount: 0, canonicalCorruptionCount: 0, unboundedRetryCount: 0 },
+    resetProof: { completed: true, targets: [{ target: 'fixture', resetApplied: true, cleanStateVerified: true }] },
+    e1Regression: { baseGitSha: sha, result: 'PASS' },
+  })
+}
+
 describe('M10-E2 production non-DB bindings external-call authority', () => {
-  it('keeps zero-call invariant for synthetic production binding', async () => {
+  it('reports successful parser and finalizer probes as passing EXECUTED evidence', async () => {
     const rows = await createM10E2NonDbBindings().runRows1To7()
     for (const id of ['MALFORMED_CHOICES_OUTPUT', 'PROVIDER_FALLBACK_SUCCEEDS'] as const) {
       const row = rows.find((candidate) => candidate.id === id)
       if (!row) throw new Error(`missing ${id}`)
-      expect(invariant(row, 'ACTUAL_NETWORK_MODEL_CALLS')).toMatchObject({
-        passed: true,
-        detail: { expected: 0, observed: 0 },
-      })
-      if (id === 'PROVIDER_FALLBACK_SUCCEEDS') {
-        expect(row.proof).toMatchObject({
-          expectedOutcome: 'PRODUCTION_FINALIZED_CHOICE_BRANCH_VALID',
-          observedOutcome: 'PRODUCTION_FINALIZED_CHOICE_BRANCH_VALID',
-        })
-        expect(invariant(row, 'EXACT_CANDIDATE_TRACE').detail.observed).toBe('choice:0,choice:1')
-        expect(invariant(row, 'BOUNDED_CANDIDATE_CALLS').detail.observed).toBe(2)
-        expect(invariant(row, 'FINALIZED_CHOICE_BRANCH')).toMatchObject({
-          passed: true,
-          detail: {
-            expected: 'FINALIZED_CHOICE_BRANCH_VALID',
-            observed: 'FINALIZED_CHOICE_BRANCH_VALID',
-          },
-        })
-      }
+      expect(row.proof.disposition).toBe('EXECUTED')
+      if (row.proof.disposition !== 'EXECUTED') throw new Error(`expected EXECUTED ${id}`)
+      expect(row.proof.immediateInvariants.every((item) => item.passed)).toBe(true)
     }
   }, 20_000)
 
@@ -61,17 +69,19 @@ describe('M10-E2 production non-DB bindings external-call authority', () => {
         observed: 'FINALIZED_CHOICE_BRANCH_INVALID',
       },
     })
-    expect(invariant(row, 'ACTUAL_NETWORK_MODEL_CALLS')).toMatchObject({
+    expect(invariant(row, 'FORBIDDEN_MODEL_OR_CANDIDATE_CALLS')).toMatchObject({
       passed: true,
       detail: { expected: 0, observed: 0 },
     })
+    expect(row.proof.disposition).toBe('EXECUTED')
+    expect(gateForRows([row])).toMatchObject({ result: 'FAIL' })
   }, 20_000)
 
   it('blocks and counts fetch attempt through actual production gateway binding', async () => {
     const originalFetch = globalThis.fetch
     const row = await rowFor('MALFORMED_CHOICES_OUTPUT', 'FETCH')
 
-    const calls = invariant(row, 'ACTUAL_NETWORK_MODEL_CALLS')
+    const calls = invariant(row, 'UNEXPECTED_NETWORK_CALLS')
     expect(calls.passed).toBe(false)
     expect(calls.detail.expected).toBe(0)
     expect(calls.detail.observed).toBeGreaterThan(0)
@@ -82,11 +92,21 @@ describe('M10-E2 production non-DB bindings external-call authority', () => {
     const originalFetch = globalThis.fetch
     const row = await rowFor('PROVIDER_FALLBACK_SUCCEEDS', 'CANDIDATE_EXECUTE')
 
-    const calls = invariant(row, 'ACTUAL_NETWORK_MODEL_CALLS')
+    const calls = invariant(row, 'FORBIDDEN_MODEL_OR_CANDIDATE_CALLS')
     expect(calls.passed).toBe(false)
     expect(calls.detail.expected).toBe(0)
     expect(calls.detail.observed).toBeGreaterThan(0)
     expect(invariant(row, 'FINALIZED_CHOICE_BRANCH').passed).toBe(false)
     expect(globalThis.fetch).toBe(originalFetch)
   }, 20_000)
+
+  it('does not let partial production-bound rows substitute N/A_PROVEN for remaining normative evidence', async () => {
+    const producerRows = await createM10E2NonDbBindings().runRows1To7()
+    const result = gateForRows(producerRows)
+    expect(result.result).toBe('FAIL')
+    expect(result.failures).toContain(
+      'ANALYTICS_OBSERVABILITY_INJECTED: disposition must be PROVEN_REFERENCE, observed N/A_PROVEN',
+    )
+  }, 20_000)
+
 })

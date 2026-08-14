@@ -141,6 +141,14 @@ export interface FaultRunResultV1 {
   uncovered: UncoveredFaultV1[]
   /** Per-chapter clean-path latencies observed while advancing the stories. */
   cleanLatenciesMs: number[]
+  resetProof: {
+    completed: boolean
+    targets: Array<{
+      target: string
+      resetApplied: boolean
+      cleanStateVerified: boolean
+    }>
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -395,12 +403,30 @@ async function advanceClean(
   return { trigger, latencies }
 }
 
-async function resetStory(admin: Admin, storyId: string, userId: string): Promise<void> {
+async function resetStory(admin: Admin, storyId: string, userId: string): Promise<{
+  target: string
+  resetApplied: boolean
+  cleanStateVerified: boolean
+}> {
   assertHarnessStoryId(storyId)
   trace(`reset ${storyId}`)
   await cleanupHarnessStory(admin, storyId)
+  const residueReads = await Promise.all([
+    admin.from('stories').select('id').eq('id', storyId),
+    admin.from('chapters').select('story_id').eq('story_id', storyId),
+    admin.from('reader_states').select('story_id').eq('story_id', storyId),
+    admin.from('generation_jobs').select('story_id').eq('story_id', storyId),
+    admin.from('generation_leases').select('story_id').eq('story_id', storyId),
+    admin.from('chapter_generation_checkpoints').select('story_id').eq('story_id', storyId),
+    admin.from('chapter_state_commits').select('story_id').eq('story_id', storyId),
+  ])
+  const residueError = residueReads.find((result) => result.error)?.error
+  if (residueError) throw new FaultScenarioError(`reset verification failed: ${residueError.message}`)
+  const cleanStateVerified = residueReads.every((result) => (result.data ?? []).length === 0)
+  if (!cleanStateVerified) throw new FaultScenarioError(`reset verification found mutable story residue: ${storyId}`)
   await seedHarnessStory({ admin, storyId, userId })
   trace(`reset ${storyId} done`)
+  return { target: storyId, resetApplied: true, cleanStateVerified }
 }
 
 function outcomeCodeOf(result: GenerateResult): string {
@@ -606,11 +632,12 @@ export async function runFaultMatrix(input: RunFaultMatrixInput = {}): Promise<F
   const scenarios: FaultScenarioResultV1[] = []
   const cleanLatenciesMs: number[] = []
   const uncovered: UncoveredFaultV1[] = []
+  const resetTargets: FaultRunResultV1['resetProof']['targets'] = []
 
   // =========================================================================
   // Provider / structured-output class — sync mode, early horizon.
   // =========================================================================
-  await resetStory(admin, PROVIDER_STORY_ID, userId)
+  resetTargets.push(await resetStory(admin, PROVIDER_STORY_ID, userId))
   const providerWarmup = await advanceClean('sync', admin, PROVIDER_STORY_ID, userId, 1, 2, null)
   cleanLatenciesMs.push(...providerWarmup.latencies)
   let providerTrigger = providerWarmup.trigger
@@ -711,7 +738,7 @@ export async function runFaultMatrix(input: RunFaultMatrixInput = {}): Promise<F
   // Worker / checkpoint class — worker mode, MID horizon (plan DoD: "recovery
   // from checkpoint demonstrated at mid and late horizons").
   // =========================================================================
-  await resetStory(admin, WORKER_STORY_ID, userId)
+  resetTargets.push(await resetStory(admin, WORKER_STORY_ID, userId))
   const workerWarmup = await advanceClean('worker', admin, WORKER_STORY_ID, userId, 1, 24, null)
   cleanLatenciesMs.push(...workerWarmup.latencies)
   const workerTrigger = workerWarmup.trigger
@@ -849,7 +876,7 @@ export async function runFaultMatrix(input: RunFaultMatrixInput = {}): Promise<F
   // =========================================================================
   // Publication / DB class — sync mode, LATE horizon, completing to Bab 50.
   // =========================================================================
-  await resetStory(admin, PUBLICATION_STORY_ID, userId)
+  resetTargets.push(await resetStory(admin, PUBLICATION_STORY_ID, userId))
   const pubWarmup = await advanceClean('sync', admin, PUBLICATION_STORY_ID, userId, 1, 45, null)
   cleanLatenciesMs.push(...pubWarmup.latencies)
   let pubTrigger = pubWarmup.trigger
@@ -1085,5 +1112,14 @@ export async function runFaultMatrix(input: RunFaultMatrixInput = {}): Promise<F
     },
   )
 
-  return { scenarios, uncovered, cleanLatenciesMs }
+  return {
+    scenarios,
+    uncovered,
+    cleanLatenciesMs,
+    resetProof: {
+      completed: resetTargets.length === 3
+        && resetTargets.every((target) => target.resetApplied && target.cleanStateVerified),
+      targets: resetTargets,
+    },
+  }
 }

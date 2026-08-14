@@ -329,7 +329,7 @@ Freeze and hash:
 - attempt classes: primary/retry/fallback;
 - retry-count stages;
 - `M10_E_CUMULATIVE_MODEL_V1`, `M10_E_MONTE_CARLO_V1`, PRNG/method/numeric identities;
-- ordered judge-plan authority;
+- ordered judge-plan authority whose canonical sequence identity is exact `(judgeTaskId, evaluationIndex, providerModelPolicyId)` for every evaluation;
 - independent-draw and deterministic-judge assumptions;
 - one exact `chapterStageExchangeabilityAssumption` per stage.
 
@@ -342,12 +342,12 @@ Exchangeability scope binds one `stageId`, one profile, one complete compatible 
 - Exact stage order/hash, task-map hash, topology hash, model authority hash.
 - Every success/failure path: prose retry/fallback/checkpoint, structured retry, ownership recovery, publication recovery, nonterminal post-publish.
 - Provider-call and retry-counter truth table for all stages.
-- Judge plan exact ordered `(judgeTaskId, evaluationIndex)` sequence.
+- Judge plan exact ordered `(judgeTaskId, evaluationIndex, providerModelPolicyId)` sequence; every evaluation binds exact provider/model policy.
 - Exchangeability one-stage/exact-scope validation for all 11 stages.
 
 Negative/mutation cases:
 
-- reorder/duplicate/remove/add stage; edge change; `POST_PUBLISH` made terminal; fallback counted as retry; runtime node given provider call; wrong task/attempt class; assumption spans multiple stages/profiles/strata or chapters other than `1..50`; missing rationale/ref/hash; topology/model version unchanged after semantic mutation.
+- reorder/duplicate/remove/add stage; edge change; `POST_PUBLISH` made terminal; fallback counted as retry; runtime node given provider call; wrong task/attempt class; judge evaluation reorder/duplicate/missing `providerModelPolicyId`/policy mismatch; assumption spans multiple stages/profiles/strata or chapters other than `1..50`; missing rationale/ref/hash; topology/model version unchanged after semantic mutation.
 
 Acceptance:
 
@@ -447,12 +447,25 @@ Generation distribution key:
 
 Required exhaustive coverage is `50 × 5 = 250` generation provider-node keys. Runtime nodes have no cost distribution. Judge key is exact `(judgeTaskId, evaluationIndex, providerModelPolicyId)` from ordered judge plan.
 
-Entries within one distribution are either all `OBSERVED`, or all `MODELED_FROM_PRICING` fallback bound to one matching snapshot hash. Sort by numeric money value then observation ID UTF-8 bytes. Inverse-CDF selection contract is `floor(c × n / 2^32)`.
+Entries within one distribution are either all `OBSERVED`, or all `MODELED_FROM_PRICING` fallback bound to one matching snapshot hash. Selection freezes empirical-cost precedence per exact distribution key:
+
+```text
+if complete valid empirical distribution exists:
+    select OBSERVED
+    reject pricing fallback as selectable authority for same key
+else if empirical evidence is explicitly unavailable and valid pricing fallback exists:
+    select MODELED_FROM_PRICING
+else:
+    HOLD
+```
+
+“Empirical unavailable” is explicit coverage state, not caller preference. Pricing cannot replace incomplete-but-present empirical evidence without that evidence being classified unavailable under contract. Sort selected entries by numeric money value then observation ID UTF-8 bytes. Inverse-CDF selection contract is `floor(c × n / 2^32)`.
 
 ## Tests written with P5
 
 - Snapshot canonical hash/effective interval/provider-model matching.
 - Actual versus estimated provenance separation and missing coexistence.
+- Empirical-before-pricing selection: complete valid `OBSERVED` wins; pricing fallback is selected only after explicit empirical-unavailable state; neither source yields `HOLD`.
 - All 250 key coverage and exact judge-key coverage.
 - Numeric sorting vector containing `2.00000000` and `10.00000000`.
 - Inverse-CDF first/last/boundary indexes.
@@ -460,7 +473,7 @@ Entries within one distribution are either all `OBSERVED`, or all `MODELED_FROM_
 
 Negative/mutation cases:
 
-- pricing snapshot used as observed spend/E0; missing price defaulted to zero; empirical/pricing entries mixed; wrong task/attempt class; missing one of 250 keys; extra runtime key; empty distribution; mismatched pricing hash/effective interval; lexical sorting; judge plan reorder/duplicate/missing key; unauthorized currency conversion.
+- pricing snapshot used as observed spend/E0; missing price defaulted to zero; empirical/pricing entries mixed; pricing selected for convenience while complete valid empirical authority exists; incomplete empirical evidence silently bypassed without explicit unavailable classification; wrong task/attempt class; missing one of 250 keys; extra runtime key; empty distribution; mismatched pricing hash/effective interval; lexical sorting; judge plan reorder/duplicate/missing key/policy mismatch; unauthorized currency conversion.
 
 Acceptance:
 
@@ -550,13 +563,21 @@ E0 authority strict schema binds policy/version/currency/status/reviewer/effecti
 novelCostConditioning = SUCCESSFUL_50_CHAPTER_RUN
 ```
 
-No defaults. `null`, absent, unapproved, superseded, or unverifiable authority returns exactly:
+No defaults. Classification is exact:
 
 ```text
-BLOCKED_E0_COST_CEILING_NOT_APPROVED
+E0 object absent, or explicit authority status is not approved:
+    engineering contract may still PASS
+    budgetGate = BLOCKED_E0_COST_CEILING_NOT_APPROVED
+
+E0 object supplied but malformed, superseded, unverifiable,
+hash/binding-mismatched, wrong novelCostConditioning, or bound to
+wrong pricing/token/policy/unit-economics authority:
+    engineeringGate = FAIL
+    never normalize defect into ordinary E0 absence/unapproved state
 ```
 
-Approved-authority evaluator compares modeled mandatory comparators and present complete observed comparators using R1 semantics. Expected chapter/novel observed single-sample maxima stay diagnostics. Judge/retry maxima and total p95 retain approved failure behavior. Equality passes.
+A supplied superseded authority is invalid current authority and fails validation. Only no E0 object or structurally valid explicit non-approved status uses blocked budget classification. Approved-authority evaluator compares modeled mandatory comparators and present complete observed comparators using R1 semantics. Expected chapter/novel observed single-sample maxima stay diagnostics. Judge/retry maxima and total p95 retain approved failure behavior. Equality passes.
 
 Engineering gate precedence:
 
@@ -568,7 +589,8 @@ Fixture engineering PASS maps release readiness to `HOLD`, never `READY`. No res
 
 ## Tests written with P7
 
-- Exact absent-E0 blocked result and empty comparisons.
+- Exact absent/structurally valid explicit-unapproved E0 blocked result and empty comparisons while engineering may PASS.
+- Supplied malformed, superseded, unverifiable, hash/binding-mismatched, wrong-conditioning, or wrong bound-authority E0 causes engineering `FAIL`, never blocked-as-absence normalization.
 - Strict E0 binding mutations.
 - Below/equal/above for each modeled comparator and each applicable observed comparator.
 - Chapter max-of-means, successful-novel mean, started-attempt diagnostic separation.
@@ -577,7 +599,7 @@ Fixture engineering PASS maps release readiness to `HOLD`, never `READY`. No res
 
 Negative/mutation cases:
 
-- environment/default ceilings; pricing/current spend/model output as authority; wrong hash/currency/conditioning; superseded authority; observed maximum fails expected ceiling; started-attempt diagnostic compared; fixture mapped READY; blocked budget mapped M10-E PASS; safety count ignored; missing exchangeability classified HOLD instead of FAIL.
+- environment/default ceilings; pricing/current spend/model output as authority; wrong hash/currency/conditioning; supplied malformed/superseded/unverifiable authority collapsed into absent/unapproved blocked state; observed maximum fails expected ceiling; started-attempt diagnostic compared; fixture mapped READY; blocked budget mapped M10-E PASS; safety count ignored; missing exchangeability classified HOLD instead of FAIL.
 
 Acceptance:
 
@@ -737,11 +759,12 @@ Closure authority binds:
 - approved spec SHA `af28b45dcd62544f12415476aa62bd3a09fd8f7e`;
 - E2 closure SHA `914cf30f42d4e7f293df79e0d66c014331a696ba`;
 - exact E2 19-row ID/order/dispositions;
-- reviewed closure file blob hashes for catalog, gate, normalization, artifacts, E2 runner, and closure-reference tests;
+- frozen protected E1/E2 path-to-blob manifest sourced from exact plan base `143a01a0b0b2f0848ade235fd6bdc3dc3588f01d`: every tracked path under `lib/narrative-qa/fault/**`, `scripts/m10-e-reliability.ts`, `scripts/m10-e-reliability-cli.ts`, `scripts/m10-e-reliability-e2-cli.ts`, every named focused `tests/narrative-qa/m10-e1-*` and `tests/narrative-qa/m10-e2-*` regression, plus `tests/db/m10-e1-disposable-cleanup-auth-regression.test.ts` and `tests/db/m10-e2-task3-local-proof.test.ts`;
+- literal manifest entries store exact path and exact blob SHA from `git ls-tree -r 143a01a...`; tests prove fixture manifest is complete against frozen protected path set and contains no dynamically accepted current-HEAD additions;
 - expected focused E1/E2 test list;
 - explicit prohibition on using E1/E2 fault schedule frequencies as central probabilities.
 
-Regression verifies both SHAs resolve as Git objects, frozen blob identities/catalog/dispositions match, protected current semantics remain compatible, and focused tests remain green. It does not require descendant files to be byte-equal when existing approved post-anchor corrections are part of current authority; manifest must bind exact reviewed blobs chosen from closure authority rather than guessing all-tree equality.
+Regression verifies both SHAs resolve as Git objects and requires `current blob == approved manifest blob` for every protected E1/E2 path. No semantic-compatibility substitute. Only a separately reviewer-approved replacement authority may change one manifest entry; replacement must bind old blob, new blob, decision reference, approving reviewer, and replacement SHA before implementation consumes it. Without that explicit replacement, any byte difference is `FAIL` and STOP. Catalog IDs/order/dispositions and focused tests remain separate mandatory checks.
 
 ## Tests written with P10
 
@@ -749,19 +772,23 @@ Regression verifies both SHAs resolve as Git objects, frozen blob identities/cat
 - Exact pool/cell/distribution/judge/mean counts.
 - Fixture reaches engineering PASS only while release HOLD and budget blocked.
 - Release profile cannot be constructed by relabeling fixture.
-- Git authority/object/blob/catalog/disposition checks.
+- Git authority/object/exact protected-blob/catalog/disposition checks, with separately approved replacement manifest semantics tested.
+- Both governed DB regressions are manifest-bound and executed only against exact governed disposable target.
 - E1/E2 fault frequency cannot enter observation/model inputs.
 
 Negative/mutation cases:
 
-- missing stage/cell/key/judge entry; mixed stratum; fabricated release label/count; safety count positive; missing authority; SHA/blob/catalog/order/disposition mutation; fixture observation ref points into E2 schedule; protected E1/E2 semantic edit; closure test omitted.
+- missing stage/cell/key/judge entry; mixed stratum; fabricated release label/count; safety count positive; missing authority; SHA/blob/catalog/order/disposition mutation; current protected blob differs but claims semantic compatibility; replacement lacks reviewer decision/old-new blobs/replacement SHA; fixture observation ref points into E2 schedule; protected E1/E2 edit; governed DB regression omitted; closure test omitted.
 
 Acceptance:
 
 ```bash
 pnpm exec vitest run tests/narrative-qa/m10-e-reliability-fixture.test.ts tests/narrative-qa/m10-e-e1-e2-closure-regression.test.ts
 pnpm exec vitest run tests/narrative-qa/m10-e1-fault-evidence.test.ts tests/narrative-qa/m10-e2-bindings.test.ts tests/narrative-qa/m10-e2-evidence.test.ts tests/narrative-qa/m10-e2-external-call-guard.test.ts tests/narrative-qa/m10-e2-reset-cleanup.test.ts tests/narrative-qa/m10-e2-rows-1-9.test.ts tests/narrative-qa/m10-e2-runner.test.ts tests/narrative-qa/m10-e2-telemetry-reference.test.ts
+LAKOKU_LOCAL_DB_TEST=1 pnpm exec vitest run tests/db/m10-e1-disposable-cleanup-auth-regression.test.ts tests/db/m10-e2-task3-local-proof.test.ts
 ```
+
+Run final command only after existing governed disposable-root preflight confirms exact approved project root, project ID, loopback ports, container labels, clean-state proof, and migration/RPC authority. Never run it against `lakoku-v2`, shared, linked, or production DB.
 
 STOP if approved SHAs/blobs cannot be verified, E1/E2 semantics must change, fixture needs fault frequency as incidence, or fixture needs fabricated release volume.
 
@@ -777,8 +804,11 @@ Create:
 - `scripts/m10-e-e3a-e4-cli.ts`
 - `scripts/m10-e-e3a-e4-compare.ts`
 - `scripts/m10-e-e3a-e4-compare-cli.ts`
+- `scripts/m10-e-e3a-e4-allowlist.ts`
+- `scripts/m10-e-e3a-e4-allowlist-cli.ts`
 - `tests/narrative-qa/m10-e-e3a-e4-runner.test.ts`
 - `tests/narrative-qa/m10-e-e3a-e4-counted-comparison.test.ts`
+- `tests/narrative-qa/m10-e-e3a-e4-allowlist.test.ts`
 - `tests/narrative-qa/m10-e-reliability-security-regression.test.ts`
 
 Modify:
@@ -791,7 +821,8 @@ Add scripts:
 ```json
 "m10:e:e3a-e4": "node scripts/run-smoke.cjs scripts/m10-e-e3a-e4-cli.ts",
 "m10:e:e3a-e4:compare": "node scripts/run-smoke.cjs scripts/m10-e-e3a-e4-compare-cli.ts",
-"test:m10:e:e3a-e4": "pnpm exec vitest run tests/narrative-qa/m10-e-reliability-*.test.ts tests/narrative-qa/m10-e-e1-e2-closure-regression.test.ts tests/narrative-qa/m10-e-e3a-e4-runner.test.ts tests/narrative-qa/m10-e-e3a-e4-counted-comparison.test.ts"
+"m10:e:e3a-e4:allowlist": "node scripts/run-smoke.cjs scripts/m10-e-e3a-e4-allowlist-cli.ts",
+"test:m10:e:e3a-e4": "pnpm exec vitest run tests/narrative-qa/m10-e-reliability-*.test.ts tests/narrative-qa/m10-e-e1-e2-closure-regression.test.ts tests/narrative-qa/m10-e-e3a-e4-runner.test.ts tests/narrative-qa/m10-e-e3a-e4-counted-comparison.test.ts tests/narrative-qa/m10-e-e3a-e4-allowlist.test.ts"
 ```
 
 Do not add command to generic `smoke` or `test` chain before reviewer acceptance.
@@ -842,10 +873,12 @@ Runner exits `0` only for exact fixture engineering PASS plus release HOLD and b
 - Two execution instances may have different physical IDs but identical normalized artifact bytes, model bytes/hash, semantic hash, report bytes/hash, and counted evidence.
 - Counted comparator accepts exactly two execution directories, validates both complete artifact/report sets first, checks every deterministic equality and raw operational-only difference, scans entire E3A/E4 artifact root for forbidden `RELEASE_EVIDENCE`, and exits nonzero on mismatch.
 - Comparator tests cover missing/corrupt pair, changed normalized/model/report/count bytes, semantic raw change, allowed operational raw change, extra third argument, and forbidden release artifact.
+- Allowlist auditor computes Git diff from exact plan base `143a01a0b0b2f0848ade235fd6bdc3dc3588f01d` to implementation HEAD and requires every changed path to match explicit P1–P11 create/modify allowlist plus this plan file’s reviewer-authorized plan-only amendment commit. It rejects deletions/renames and any `lib/narrative-qa/fault/**`, `lib/ai-gateway/**`, `lib/runtime/**`, `supabase/**`, migration/RPC, E5, client/API, or unlisted path. It also verifies base resolves and is ancestor of HEAD.
+- Allowlist tests cover one allowed path, unlisted path, protected path, rename, deletion, wrong/non-ancestor base, and omission of generated tracked report/package changes.
 
 Negative/mutation cases:
 
-- wrong spec/closure SHA; dirty tree; unauthorized source; release profile; environment-supplied E0/provider/DB authority; early artifact write; placeholder report hash; corrupt semantic/final pair; normalized/model/report/count mismatch; non-operational raw mismatch; third comparator directory; forbidden release artifact; positive safety count; omitted E1/E2 regression; overclaiming status.
+- wrong spec/closure SHA; dirty tree; unauthorized source; release profile; environment-supplied E0/provider/DB authority; early artifact write; placeholder report hash; corrupt semantic/final pair; normalized/model/report/count mismatch; non-operational raw mismatch; third comparator directory; forbidden release artifact; positive safety count; omitted E1/E2 or governed DB regression; allowlist base changed/non-ancestor; unlisted/protected/renamed/deleted implementation path; overclaiming status.
 
 Counted output must include:
 
@@ -869,7 +902,7 @@ Acceptance:
 
 ## Final acceptance sequence
 
-Run from exact clean implementation SHA. Counted run directories remain untracked/ignored and unique.
+Run from exact clean implementation SHA. Counted run directories remain untracked/ignored and unique. Before governed DB command, run existing disposable-root preflight and STOP unless exact approved root/project/loopback ports/container labels/clean-state/migration-RPC authority match; command below never targets ordinary `lakoku-v2`, shared, linked, or production DB.
 
 ```bash
 git status --short
@@ -877,6 +910,8 @@ git diff --check
 pnpm run test:m10:e:e3a-e4
 pnpm exec vitest run tests/narrative-qa/m10-e1-fault-evidence.test.ts
 pnpm exec vitest run tests/narrative-qa/m10-e2-bindings.test.ts tests/narrative-qa/m10-e2-evidence.test.ts tests/narrative-qa/m10-e2-external-call-guard.test.ts tests/narrative-qa/m10-e2-reset-cleanup.test.ts tests/narrative-qa/m10-e2-rows-1-9.test.ts tests/narrative-qa/m10-e2-runner.test.ts tests/narrative-qa/m10-e2-telemetry-reference.test.ts
+LAKOKU_LOCAL_DB_TEST=1 pnpm exec vitest run tests/db/m10-e1-disposable-cleanup-auth-regression.test.ts tests/db/m10-e2-task3-local-proof.test.ts
+pnpm run m10:e:e3a-e4:allowlist -- 143a01a0b0b2f0848ade235fd6bdc3dc3588f01d HEAD
 pnpm typecheck
 pnpm lint
 pnpm run m10:e:e3a-e4

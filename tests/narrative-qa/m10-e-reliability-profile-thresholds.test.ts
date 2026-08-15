@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { aggregateReliabilityObservations, createChapterStageExchangeabilityAuthorities } from '../../lib/narrative-qa/reliability'
+import { aggregateReliabilityObservations, createChapterStageExchangeabilityAuthorities, createFixtureTopologyAuthority } from '../../lib/narrative-qa/reliability'
 import { validSet } from './m10-e-reliability-measurements.test'
 
 function repeatedStageSet(profile: 'CONTRACT_FIXTURE' | 'RELEASE_EVIDENCE', count: number) {
   const set = validSet()
   set.executionProfile = profile
   set.exchangeabilityAuthorities = createChapterStageExchangeabilityAuthorities(profile, set.compatibleStratum)
+  if (profile === 'RELEASE_EVIDENCE') {
+    set.declaredApplicableCells = Array.from({ length: 50 }, (_, chapter) => set.exchangeabilityAuthorities.map(({ stageId }) => ({ chapterNumber: chapter + 1, stageId }))).flat()
+  }
   set.stageOutcomes = Array.from({ length: count }, (_, index) => ({
     ...structuredClone(set.stageOutcomes[0]!), observationId: `stage_${index}`, stageExecutionAlias: `stage_${index}`,
     providerCallAlias: `call_${index}`, outcome: index === 0 ? 'FAILURE' as const : 'SUCCESS' as const,
@@ -18,6 +21,8 @@ function repeatedStageSet(profile: 'CONTRACT_FIXTURE' | 'RELEASE_EVIDENCE', coun
     ...structuredClone(set.logicalGenerationUnits[0]!), observationId: `unit_${index}`, logicalUnitAlias: `unit_${index}`,
     terminalOutcome: index === 0 ? 'FAILURE' as const : 'SUCCESS' as const,
   }))
+  set.chapterExecutions[0]!.generationCost = { state: 'PRESENT', value: `${count}.00000000` }
+  set.novelExecutions[0]!.generationCost = { state: 'PRESENT', value: `${count}.00000000` }
   return set
 }
 
@@ -40,19 +45,40 @@ describe('M10-E profile completeness thresholds', () => {
 
   it.each([[9, false], [10, true], [11, true]] as const)('release complete novel count %i completeness is %s', (count, expected) => {
     const set = repeatedStageSet('RELEASE_EVIDENCE', 30)
-    set.novelExecutions = Array.from({ length: count }, (_, index) => ({
+    set.novelExecutions = [set.novelExecutions[0]!, ...Array.from({ length: count }, (_, index) => ({
       ...structuredClone(set.novelExecutions[0]!), observationId: `novel_${index}`, novelExecutionAlias: `novel_${index}`,
-      terminalOutcome: 'SUCCESS' as const, completedChapterNumbers: Array.from({ length: 50 }, (_value, chapter) => chapter + 1),
-    }))
+      storyAlias: `story_${index}`, terminalOutcome: 'SUCCESS' as const, completedChapterNumbers: Array.from({ length: 50 }, (_value, chapter) => chapter + 1), generationCost: { state: 'PRESENT' as const, value: '0.00000000' },
+    }))]
     expect(aggregateReliabilityObservations(set).profileCompleteness.completeNovels).toMatchObject({ minimum: 10, observed: count, complete: expected })
   })
 
-  it('does not repair empty observed pool with exchangeability authority', () => {
+  it('rejects duplicate, extra, missing, and impossible fixture cells against exact fixture topology authority', () => {
+    for (const mutate of [
+      (set: ReturnType<typeof validSet>) => { set.declaredApplicableCells.push(set.declaredApplicableCells[0]!) },
+      (set: ReturnType<typeof validSet>) => { set.declaredApplicableCells.push({ chapterNumber: 1, stageId: 'PROSE_RETRY' }) },
+      (set: ReturnType<typeof validSet>) => { set.declaredApplicableCells = [] },
+      (set: ReturnType<typeof validSet>) => { set.fixtureTopologyAuthority = createFixtureTopologyAuthority([{ chapterNumber: 1, stageId: 'PROSE_RETRY' }]) },
+    ]) {
+      const set = structuredClone(validSet())
+      mutate(set)
+      expect(() => aggregateReliabilityObservations(set)).toThrow()
+    }
+  })
+
+  it('requires release declaration to contain exact 50 by applicable stage cells', () => {
+    const set = repeatedStageSet('RELEASE_EVIDENCE', 30)
+    set.declaredApplicableCells = set.declaredApplicableCells.slice(1)
+    expect(() => aggregateReliabilityObservations(set)).toThrow(/release applicable cells/i)
+  })
+
+  it('does not repair empty observed pool with exchangeability authority or forge observation refs', () => {
     const aggregate = aggregateReliabilityObservations(repeatedStageSet('CONTRACT_FIXTURE', 0))
     const probability = aggregate.centralStageFailureProbabilities.find((metric) => metric.stageId === 'PROSE_PRIMARY')!
     expect(probability.failureProbability.provenance).toBe('OBSERVED')
     expect(probability.failureProbability.value.state).toBe('MISSING')
     expect(probability.denominator).toBe(0)
+    expect(probability.observationRefs).toEqual([])
+    expect(probability.counts).toEqual({ includedCount: 0, excludedCount: 0, unavailableCount: 0, eligibleCount: 0 })
   })
 
   it('rejects missing, malformed, or incompatible exchangeability rather than holding', () => {

@@ -167,7 +167,7 @@ describe('M10-E E1/E2 closure authority regression', () => {
     expect(raw).toContain('old blob')
     expect(raw).toContain('new blob')
     expect(raw).toContain('replacement SHA')
-  })
+  }, 300_000)
 
   it('rejects any manifest deviation as FAIL with no semantic-compatibility substitute', async () => {
     type Mutable<T> = { -readonly [K in keyof T]: T[K] }

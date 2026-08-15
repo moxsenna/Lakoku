@@ -32,15 +32,35 @@ export interface AggregateMetric {
   readonly partialObservedValue?: MeasurementState<number | CanonicalDecimal>
 }
 
+export const P4_ENGINEERING_REASON_ORDER = [
+  'DUPLICATE_PUBLICATION_DETECTED', 'CANONICAL_CORRUPTION_DETECTED', 'STAGE_POOL_THRESHOLD_NOT_MET', 'APPLICABLE_CELL_COVERAGE_INCOMPLETE',
+  'COMPLETE_NOVEL_THRESHOLD_NOT_MET', 'RETRY_RECOVERY_FALLBACK_COVERAGE_INCOMPLETE', 'PUBLICATION_INVARIANT_COVERAGE_INCOMPLETE',
+  'LATENCY_COVERAGE_INCOMPLETE', 'TOKEN_COVERAGE_INCOMPLETE', 'PROVIDER_JUDGE_COUNT_COVERAGE_INCOMPLETE', 'COST_COVERAGE_INCOMPLETE',
+] as const
+export type P4EngineeringReason = (typeof P4_ENGINEERING_REASON_ORDER)[number]
 export type ReliabilityEvidenceClassification = Readonly<
-  | { engineeringGate: 'PASS' | 'HOLD'; reasonCodes: readonly string[]; aggregate: ReturnType<typeof aggregateReliabilityObservations> }
+  | { engineeringGate: 'PASS' | 'HOLD' | 'FAIL'; reasonCodes: readonly P4EngineeringReason[]; aggregate: ReturnType<typeof aggregateReliabilityObservations> }
   | { engineeringGate: 'FAIL'; reasonCodes: readonly ['MALFORMED_EVIDENCE']; error: string }
 >
 
 export function classifyReliabilityObservations(input: unknown): ReliabilityEvidenceClassification {
   try {
     const aggregate = aggregateReliabilityObservations(input)
-    return deepFreeze({ engineeringGate: aggregate.profileCompleteness.engineeringGate, reasonCodes: aggregate.profileCompleteness.reasonCodes, aggregate })
+    const metric = (id: RequiredMetricId) => aggregate.requiredMetrics.find((item) => item.metricId === id)
+    const missing = (ids: readonly RequiredMetricId[]) => ids.some((id) => metric(id)?.value.state !== 'PRESENT')
+    const reasons = new Set<P4EngineeringReason>(aggregate.profileCompleteness.reasonCodes)
+    if ((metric('DUPLICATE_PUBLICATION_COUNT')?.numerator ?? 0) !== 0) reasons.add('DUPLICATE_PUBLICATION_DETECTED')
+    if ((metric('CANONICAL_CORRUPTION_COUNT')?.numerator ?? 0) !== 0) reasons.add('CANONICAL_CORRUPTION_DETECTED')
+    if (missing(['RETRY_SUCCESS_RATE', 'CHECKPOINT_REUSE_RATE', 'PROSE_REGENERATION_ON_CHOICE_RETRY_RATE', 'OWNERSHIP_LOSS_RECOVERY_RATE', 'RECOVERY_SUCCESS_RATE', 'PROVIDER_FALLBACK_RATE'])) reasons.add('RETRY_RECOVERY_FALLBACK_COVERAGE_INCOMPLETE')
+    if (metric('DUPLICATE_PUBLICATION_COUNT')?.denominator === 0 || metric('CANONICAL_CORRUPTION_COUNT')?.denominator === 0) reasons.add('PUBLICATION_INVARIANT_COVERAGE_INCOMPLETE')
+    if (missing(['GENERATION_LATENCY_P50', 'GENERATION_LATENCY_P95', 'RECOVERY_LATENCY_P50', 'RECOVERY_LATENCY_P95'])) reasons.add('LATENCY_COVERAGE_INCOMPLETE')
+    if (missing(['INPUT_TOKEN_USAGE', 'OUTPUT_TOKEN_USAGE', 'TOTAL_TOKEN_USAGE'])) reasons.add('TOKEN_COVERAGE_INCOMPLETE')
+    if (missing(['GENERATION_PROVIDER_CALL_COUNT', 'JUDGE_PROVIDER_CALL_COUNT', 'TOTAL_PROVIDER_CALL_COUNT'])) reasons.add('PROVIDER_JUDGE_COUNT_COVERAGE_INCOMPLETE')
+    const judgeCostIncomplete = aggregate.requiredMetrics.find((item) => item.metricId === 'FULL_NOVEL_COMPLETION_RATE')?.numerator !== 0 && metric('JUDGE_EVALUATION_COST')?.value.state !== 'PRESENT'
+    if (missing(['PRICING_ESTIMATED_COST', 'PRICING_COST_COVERAGE_RATIO']) || judgeCostIncomplete) reasons.add('COST_COVERAGE_INCOMPLETE')
+    const reasonCodes = P4_ENGINEERING_REASON_ORDER.filter((reason) => reasons.has(reason))
+    const safetyFailure = reasonCodes.some((reason) => reason === 'DUPLICATE_PUBLICATION_DETECTED' || reason === 'CANONICAL_CORRUPTION_DETECTED')
+    return deepFreeze({ engineeringGate: safetyFailure ? 'FAIL' as const : reasonCodes.length === 0 ? 'PASS' as const : 'HOLD' as const, reasonCodes, aggregate })
   } catch (error) {
     return deepFreeze({ engineeringGate: 'FAIL' as const, reasonCodes: ['MALFORMED_EVIDENCE'] as const, error: error instanceof Error ? error.message : 'Unknown malformed evidence' })
   }
@@ -89,7 +109,11 @@ export function aggregateReliabilityObservations(input: unknown) {
     const observations = set.stageOutcomes.filter((item) => item.chapterNumber === chapterNumber && item.stageId === stageId)
     const failures = observations.filter((item) => item.outcome === 'FAILURE').length
     return deepFreeze({ chapterNumber, stageId, numerator: failures, denominator: observations.length,
-      failureProbability: probabilityState(failures, observations.length), eligibilityBoundary: 'reached finalized stage outcomes at same chapter and stage', observationRefs: observations.map(ref) })
+      failureProbability: probabilityState(failures, observations.length), eligibilityBoundary: 'reached finalized stage outcomes at same chapter and stage',
+      counts: extendedCounts(observations.length, 0, observations.length), coverageRatio: ratioOf(BigInt(observations.length), BigInt(observations.length || 1)),
+      provenance: 'OBSERVED' as const, executionProfile: set.executionProfile, compatibleStratum: set.compatibleStratum,
+      providerModelPolicyId: set.compatibleStratum.providerModelPolicyId, sourceAuthorityHash: set.observationSourceAuthority.canonicalHash,
+      sourceRefs: utf8Sort([...new Set(observations.map((item) => item.sourceRef))]), observationRefs: utf8Sort(observations.map(ref)) })
   })
   const centralStageFailureProbabilities = STAGE_IDS.map((stageId) => {
     const observations = set.stageOutcomes.filter((item) => item.stageId === stageId)
@@ -119,7 +143,7 @@ export function aggregateReliabilityObservations(input: unknown) {
     engineeringGate: reasonCodes.length === 0 ? 'PASS' as const : 'HOLD' as const, reasonCodes,
   })
 
-  const dimensionedMetrics = buildDimensionedMetrics(set)
+  const dimensionedMetrics = buildDimensionedMetrics(set, requiredMetrics)
   return deepFreeze({
     executionProfile: set.executionProfile, compatibleStratum: set.compatibleStratum, requiredMetrics, dimensionedMetrics,
     centralStageFailureProbabilities, chapterStageDiagnostics, profileCompleteness,
@@ -235,18 +259,37 @@ function judgeCostMetric(set: ReliabilityObservationSet): AggregateMetric {
   const value = values.length < set.judgeEvaluations.length ? missingMeasurement<Money>('OBSERVATION_COVERAGE_INCOMPLETE', 'Judge cost requires complete sampled judge plan coverage') : presentMeasurement(sumDecimals(values, 'MONEY'))
   return metric('JUDGE_EVALUATION_COST', value, value.state === 'PRESENT' ? value.value : 0, set.judgeEvaluations.length, 'required judge evaluations after successful complete novel', counts(values.length, set.judgeEvaluations.length), 'OBSERVED', set.judgeEvaluations.map(ref))
 }
-function buildDimensionedMetrics(set: ReliabilityObservationSet) {
-  const groups: Array<{ scope: 'TASK' | 'CHAPTER' | 'NOVEL'; dimensionKey: string; taskId?: string; chapterNumber?: number; calls: ReliabilityObservationSet['providerCalls']; stages: ReliabilityObservationSet['stageOutcomes'] }> = []
+function buildDimensionedMetrics(set: ReliabilityObservationSet, requiredMetrics: readonly AggregateMetric[]) {
+  type Group = { scope: 'TASK' | 'CHAPTER' | 'NOVEL_EXECUTION' | 'SOURCE' | 'PROVIDER_MODEL_POLICY'; dimensionKey: string; taskId?: string; chapterNumber?: number; novelExecutionAlias?: string; sourceRef?: string; calls: ReliabilityObservationSet['providerCalls']; stages: ReliabilityObservationSet['stageOutcomes'] }
+  const groups: Group[] = []
   for (const taskId of ['CHAPTER_PROSE', 'CHAPTER_STRUCTURED_OUTPUT', 'RUNTIME_RECOVERY'] as const) groups.push({ scope: 'TASK', dimensionKey: `TASK.${taskId}`, taskId, calls: set.providerCalls.filter((call) => call.taskId === taskId), stages: set.stageOutcomes.filter((stage) => stage.taskId === taskId) })
   for (let chapterNumber = 1; chapterNumber <= 50; chapterNumber += 1) groups.push({ scope: 'CHAPTER', dimensionKey: `CHAPTER.${String(chapterNumber).padStart(2, '0')}`, chapterNumber, calls: set.providerCalls.filter((call) => call.chapterNumber === chapterNumber), stages: set.stageOutcomes.filter((stage) => stage.chapterNumber === chapterNumber) })
-  groups.push({ scope: 'NOVEL', dimensionKey: 'NOVEL.ALL_EXECUTIONS', calls: set.providerCalls, stages: set.stageOutcomes })
-  return groups.flatMap((group) => [
-    countMetric('RETRY_COUNT', group.stages.filter((stage) => ['PROSE_RETRY', 'CHECKPOINT_RECOVERY', 'STRUCTURED_RETRY', 'OWNERSHIP_RECOVERY', 'PUBLICATION_RECOVERY'].includes(stage.stageId)).length, group.stages.length, 'reached frozen retry-counter stages in canonical dimension scope', group.stages.map(ref), group.stages.length),
-    countMetric('GENERATION_PROVIDER_CALL_COUNT', group.calls.length, group.calls.length, 'reached generation provider nodes in exact identity scope', group.calls.map(ref), group.calls.length),
-    tokenMetric('INPUT_TOKEN_USAGE', group.calls, 'inputTokens'), tokenMetric('OUTPUT_TOKEN_USAGE', group.calls, 'outputTokens'), tokenMetric('TOTAL_TOKEN_USAGE', group.calls, 'totalTokens'),
-    costMetric('ACTUAL_PROVIDER_COST', group.calls, 'actualCost', 'OBSERVED'), costMetric('PRICING_ESTIMATED_COST', group.calls, 'estimatedCost', 'MODELED_FROM_PRICING'),
-  ].map((item) => ({ ...item, scope: group.scope, dimensionKey: group.dimensionKey, taskId: group.taskId, chapterNumber: group.chapterNumber,
-    providerModelPolicyId: set.compatibleStratum.providerModelPolicyId, actualCostSource: group.calls[0]?.actualCostSource ?? null, pricingSnapshotHash: set.compatibleStratum.pricingSnapshotHash })))
+  for (const novelExecutionAlias of utf8Sort(set.novelExecutions.map((novel) => novel.novelExecutionAlias))) groups.push({ scope: 'NOVEL_EXECUTION', dimensionKey: `NOVEL_EXECUTION.${novelExecutionAlias}`, novelExecutionAlias, calls: set.providerCalls.filter((call) => call.novelExecutionAlias === novelExecutionAlias), stages: set.stageOutcomes.filter((stage) => stage.novelExecutionAlias === novelExecutionAlias) })
+  for (const source of set.observationSourceAuthority.normalizedSources) groups.push({ scope: 'SOURCE', dimensionKey: `SOURCE.${source.sourceRef}`, sourceRef: source.sourceRef, calls: set.providerCalls.filter((call) => call.sourceRef === source.sourceRef), stages: set.stageOutcomes.filter((stage) => stage.sourceRef === source.sourceRef) })
+  groups.push({ scope: 'PROVIDER_MODEL_POLICY', dimensionKey: `PROVIDER_MODEL_POLICY.${set.compatibleStratum.providerModelPolicyId}`, calls: set.providerCalls, stages: set.stageOutcomes })
+  const directMetricIds = ['RETRY_COUNT', 'GENERATION_PROVIDER_CALL_COUNT', 'INPUT_TOKEN_USAGE', 'OUTPUT_TOKEN_USAGE', 'TOTAL_TOKEN_USAGE', 'ACTUAL_PROVIDER_COST', 'PRICING_ESTIMATED_COST', 'ACTUAL_COST_COVERAGE_RATIO', 'PRICING_COST_COVERAGE_RATIO'] as const
+  const copiedMetricIds = [...new Set(requiredMetrics.map((metric) => metric.metricId))].filter((metricId) => !directMetricIds.includes(metricId as (typeof directMetricIds)[number]))
+  const metricIds: readonly RequiredMetricId[] = [...directMetricIds, ...copiedMetricIds]
+  return groups.flatMap((group) => metricIds.map((metricId) => {
+    const item = metricId === 'RETRY_COUNT' ? countMetric(metricId, group.stages.filter((stage) => ['PROSE_RETRY', 'CHECKPOINT_RECOVERY', 'STRUCTURED_RETRY', 'OWNERSHIP_RECOVERY', 'PUBLICATION_RECOVERY'].includes(stage.stageId)).length, group.stages.length, 'reached frozen retry-counter stages in canonical dimension scope', group.stages.map(ref), group.stages.length)
+      : metricId === 'GENERATION_PROVIDER_CALL_COUNT' ? countMetric(metricId, group.calls.length, group.calls.length, 'reached generation provider nodes in exact identity scope', group.calls.map(ref), group.calls.length)
+        : metricId === 'INPUT_TOKEN_USAGE' ? tokenMetric(metricId, group.calls, 'inputTokens')
+          : metricId === 'OUTPUT_TOKEN_USAGE' ? tokenMetric(metricId, group.calls, 'outputTokens')
+            : metricId === 'TOTAL_TOKEN_USAGE' ? tokenMetric(metricId, group.calls, 'totalTokens')
+              : metricId === 'ACTUAL_PROVIDER_COST' ? costMetric(metricId, group.calls, 'actualCost', 'OBSERVED')
+                : metricId === 'PRICING_ESTIMATED_COST' ? costMetric(metricId, group.calls, 'estimatedCost', 'MODELED_FROM_PRICING')
+                  : metricId === 'ACTUAL_COST_COVERAGE_RATIO' ? coverageMetric(metricId, group.calls, 'actualCost', 'OBSERVED')
+                    : metricId === 'PRICING_COST_COVERAGE_RATIO' ? coverageMetric(metricId, group.calls, 'estimatedCost', 'MODELED_FROM_PRICING')
+                      : copyRequiredMetric(metricId, requiredMetrics)
+    return { ...item, scope: group.scope, dimensionKey: group.dimensionKey, taskId: group.taskId, chapterNumber: group.chapterNumber, novelExecutionAlias: group.novelExecutionAlias,
+      sourceRef: group.sourceRef, executionProfile: set.executionProfile, providerModelPolicyId: set.compatibleStratum.providerModelPolicyId, compatibleStratum: set.compatibleStratum,
+      sourceAuthorityHash: set.observationSourceAuthority.canonicalHash, actualCostSource: group.calls[0]?.actualCostSource ?? null, pricingSnapshotHash: set.compatibleStratum.pricingSnapshotHash }
+  }))
+}
+function copyRequiredMetric(metricId: RequiredMetricId, metrics: readonly AggregateMetric[]): AggregateMetric {
+  const metric = metrics.find((candidate) => candidate.metricId === metricId)
+  if (!metric) throw new Error(`Missing canonical required metric ${metricId}`)
+  return metric
 }
 function perNovelJudgeMaximum(set: ReliabilityObservationSet) {
   const eligible = set.novelExecutions.filter(isSuccessfulCompleteNovel)

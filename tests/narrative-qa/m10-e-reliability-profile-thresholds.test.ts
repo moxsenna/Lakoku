@@ -2,27 +2,53 @@ import { describe, expect, it } from 'vitest'
 import { aggregateReliabilityObservations, classifyReliabilityObservations, createChapterStageExchangeabilityAuthorities, createFixtureTopologyAuthority } from '../../lib/narrative-qa/reliability'
 import { addSuccessfulCompleteNovel, validSet } from './m10-e-reliability-measurements.test'
 
+function appendCopies<T extends Record<string, unknown>>(target: T[], source: T[], index: number): void {
+  target.push(...structuredClone(source).map((item) => Object.fromEntries(Object.entries(item).map(([field, value]) => [field,
+    typeof value === 'string' && (field === 'observationId' || field === 'storyAlias' || field.endsWith('Alias')) ? `${value}_${index}` : value])) as T))
+}
+
 function repeatedStageSet(profile: 'CONTRACT_FIXTURE' | 'RELEASE_EVIDENCE', count: number) {
+  const template = validSet()
   const set = validSet()
+  set.providerCalls = []; set.stageOutcomes = []; set.logicalGenerationUnits = []; set.recoveryActions = []; set.publicationAttempts = []
+  set.canonicalInvariantChecks = []; set.chapterExecutions = []; set.novelExecutions = []; set.judgeEvaluations = []
+  for (let index = 0; index < count; index += 1) {
+    appendCopies(set.providerCalls, template.providerCalls, index); appendCopies(set.stageOutcomes, template.stageOutcomes, index)
+    appendCopies(set.logicalGenerationUnits, template.logicalGenerationUnits, index); appendCopies(set.recoveryActions, template.recoveryActions, index)
+    appendCopies(set.publicationAttempts, template.publicationAttempts, index); appendCopies(set.canonicalInvariantChecks, template.canonicalInvariantChecks, index)
+    appendCopies(set.chapterExecutions, template.chapterExecutions, index); appendCopies(set.novelExecutions, template.novelExecutions, index)
+    appendCopies(set.judgeEvaluations, template.judgeEvaluations, index)
+  }
   set.executionProfile = profile
   set.exchangeabilityAuthorities = createChapterStageExchangeabilityAuthorities(profile, set.compatibleStratum)
-  if (profile === 'RELEASE_EVIDENCE') {
-    set.declaredApplicableCells = Array.from({ length: 50 }, (_, chapter) => set.exchangeabilityAuthorities.map(({ stageId }) => ({ chapterNumber: chapter + 1, stageId }))).flat()
-  }
-  set.stageOutcomes = Array.from({ length: count }, (_, index) => ({
-    ...structuredClone(set.stageOutcomes[0]!), observationId: `stage_${index}`, stageExecutionAlias: `stage_${index}`,
-    providerCallAlias: `call_${index}`, outcome: index === 0 ? 'FAILURE' as const : 'SUCCESS' as const,
-  }))
-  set.providerCalls = Array.from({ length: count }, (_, index) => ({
-    ...structuredClone(set.providerCalls[0]!), observationId: `call_${index}`, callAlias: `call_${index}`,
-    stageExecutionAlias: `stage_${index}`, logicalUnitAlias: `unit_${index}`, outcome: index === 0 ? 'FAILURE' as const : 'SUCCESS' as const,
-  }))
-  set.logicalGenerationUnits = Array.from({ length: count }, (_, index) => ({
-    ...structuredClone(set.logicalGenerationUnits[0]!), observationId: `unit_${index}`, logicalUnitAlias: `unit_${index}`,
-    terminalOutcome: index === 0 ? 'FAILURE' as const : 'SUCCESS' as const,
-  }))
-  set.chapterExecutions[0]!.generationCost = { state: 'PRESENT', value: `${count}.00000000` }
-  set.novelExecutions[0]!.generationCost = { state: 'PRESENT', value: `${count}.00000000` }
+  if (profile === 'RELEASE_EVIDENCE') set.declaredApplicableCells = Array.from({ length: 50 }, (_, chapter) => set.exchangeabilityAuthorities.map(({ stageId }) => ({ chapterNumber: chapter + 1, stageId }))).flat()
+  return set
+}
+
+function fullFixtureSet() {
+  const set = validSet()
+  const chapter = set.chapterExecutions[0]!
+  const path = [
+    ['PROSE_PRIMARY', 'FAILURE', 'CHAPTER_PROSE'], ['PROSE_RETRY', 'FAILURE', 'CHAPTER_PROSE'], ['PROVIDER_FALLBACK', 'FAILURE', 'CHAPTER_PROSE'], ['CHECKPOINT_RECOVERY', 'SUCCESS', 'RUNTIME_RECOVERY'],
+    ['STRUCTURED_OUTPUT', 'FAILURE', 'CHAPTER_STRUCTURED_OUTPUT'], ['STRUCTURED_RETRY', 'SUCCESS', 'CHAPTER_STRUCTURED_OUTPUT'], ['OWNERSHIP', 'FAILURE', 'RUNTIME_RECOVERY'], ['OWNERSHIP_RECOVERY', 'SUCCESS', 'RUNTIME_RECOVERY'],
+    ['PUBLICATION', 'FAILURE', 'RUNTIME_RECOVERY'], ['PUBLICATION_RECOVERY', 'SUCCESS', 'RUNTIME_RECOVERY'], ['POST_PUBLISH', 'SUCCESS', 'RUNTIME_RECOVERY'],
+  ] as const
+  set.providerCalls = []; set.stageOutcomes = []; set.logicalGenerationUnits = []; set.recoveryActions = []
+  let proseAttempt = 0; let structuredAttempt = 0
+  path.forEach(([stageId, outcome, taskId], index) => {
+    const stageExecutionAlias = `full_stage_${index}`
+    const provider = taskId !== 'RUNTIME_RECOVERY'
+    const callAlias = provider ? `full_call_${index}` : null
+    set.stageOutcomes.push({ sourceRef: 'fixture.telemetry', observationId: `full_stage_obs_${index}`, stageExecutionAlias, storyAlias: chapter.storyAlias, novelExecutionAlias: chapter.novelExecutionAlias, chapterExecutionAlias: chapter.chapterExecutionAlias, chapterNumber: 1, stageId, taskId, outcome, providerCallAlias: callAlias as string | null, reachedAt: `2026-08-15T00:00:${String(index * 2).padStart(2, '0')}.000Z`, finalizedAt: `2026-08-15T00:00:${String(index * 2 + 1).padStart(2, '0')}.000Z` })
+    if (provider) { const prose = taskId === 'CHAPTER_PROSE'; const attemptNumber = prose ? ++proseAttempt : ++structuredAttempt; set.providerCalls.push({ ...structuredClone(validSet().providerCalls[0]!), observationId: `full_call_obs_${index}`, callAlias: callAlias!, stageExecutionAlias, logicalUnitAlias: prose ? 'full_prose' : 'full_structured', stageId, taskId, attemptNumber, fallbackIndex: stageId === 'PROVIDER_FALLBACK' ? 1 : 0, outcome, safeErrorCode: null, startedAt: `2026-08-15T00:00:${String(index * 2).padStart(2, '0')}.000Z`, endedAt: `2026-08-15T00:00:${String(index * 2 + 1).padStart(2, '0')}.000Z` }) }
+    if (['PROSE_RETRY', 'CHECKPOINT_RECOVERY', 'STRUCTURED_RETRY', 'OWNERSHIP_RECOVERY', 'PUBLICATION_RECOVERY'].includes(stageId)) set.recoveryActions.push({ sourceRef: 'fixture.telemetry', observationId: `recovery_obs_${index}`, recoveryAlias: `recovery_${index}`, storyAlias: chapter.storyAlias, novelExecutionAlias: chapter.novelExecutionAlias, chapterExecutionAlias: chapter.chapterExecutionAlias, chapterNumber: 1, stageExecutionAlias, stageId, taskId, recoveryKind: stageId === 'OWNERSHIP_RECOVERY' ? 'OWNERSHIP_LOSS' : stageId === 'CHECKPOINT_RECOVERY' ? 'CHECKPOINT_RESUME' : 'RETRY', terminalOutcome: outcome, checkpointDecisionObserved: true, reusedExactValidCheckpoint: true, choiceRetryAfterValidProseCheckpoint: stageId === 'PROSE_RETRY', regeneratedProse: stageId === 'PROSE_RETRY', manualDatabaseMutation: false, startedAt: `2026-08-15T00:00:${String(index * 2).padStart(2, '0')}.000Z`, endedAt: `2026-08-15T00:00:${String(index * 2 + 1).padStart(2, '0')}.000Z`, elapsedMilliseconds: { state: 'PRESENT', value: '1000.000' } })
+  })
+  set.logicalGenerationUnits.push({ ...structuredClone(validSet().logicalGenerationUnits[0]!), observationId: 'full_prose_obs', logicalUnitAlias: 'full_prose', attemptCount: 3, terminalOutcome: 'FAILURE', fallbackInvoked: true, endedAt: '2026-08-15T00:00:05.000Z', elapsedMilliseconds: { state: 'PRESENT', value: '5000.000' } }, { ...structuredClone(validSet().logicalGenerationUnits[1]!), observationId: 'full_structured_obs', logicalUnitAlias: 'full_structured', attemptCount: 2, terminalOutcome: 'SUCCESS', fallbackEligible: false, endedAt: '2026-08-15T00:00:11.000Z', elapsedMilliseconds: { state: 'PRESENT', value: '9000.000' } })
+  set.publicationAttempts = [{ sourceRef: 'fixture.telemetry', observationId: 'publication_obs', publicationAttemptAlias: 'publication_a', storyAlias: chapter.storyAlias, novelExecutionAlias: chapter.novelExecutionAlias, chapterExecutionAlias: chapter.chapterExecutionAlias, chapterNumber: 1, outcome: 'SUCCESS', producedDuplicateCanonicalPublication: false, attemptedAt: '2026-08-15T00:00:18.000Z' }]
+  set.canonicalInvariantChecks = [{ sourceRef: 'fixture.telemetry', observationId: 'invariant_obs', invariantCheckAlias: 'invariant_a', storyAlias: chapter.storyAlias, novelExecutionAlias: chapter.novelExecutionAlias, chapterExecutionAlias: chapter.chapterExecutionAlias, chapterNumber: 1, outcome: 'VALID', checkedAt: '2026-08-15T00:00:22.000Z' }]
+  chapter.generationCost = { state: 'PRESENT', value: '5.00000000' }; chapter.endedAt = '2026-08-15T00:00:22.000Z'
+  set.novelExecutions[0]!.generationCost = { state: 'PRESENT', value: '5.00000000' }; set.novelExecutions[0]!.endedAt = chapter.endedAt
+  set.declaredApplicableCells = path.map(([stageId]) => ({ chapterNumber: 1, stageId })); set.fixtureTopologyAuthority = createFixtureTopologyAuthority(set.declaredApplicableCells)
   return set
 }
 
@@ -83,6 +109,26 @@ describe('M10-E profile completeness thresholds', () => {
     const incomplete = aggregateReliabilityObservations(repeatedStageSet('CONTRACT_FIXTURE', 0)).profileCompleteness
     expect(incomplete.engineeringGate).toBe('HOLD')
     expect(incomplete.reasonCodes).toEqual(['STAGE_POOL_THRESHOLD_NOT_MET', 'APPLICABLE_CELL_COVERAGE_INCOMPLETE'])
+  })
+
+  it('classifies complete P4 contract fixture PASS and orders HOLD/FAIL reasons exactly', () => {
+    const complete = fullFixtureSet()
+    const completeResult = classifyReliabilityObservations(complete)
+    if ('error' in completeResult) throw new Error(completeResult.error)
+    expect(completeResult).toMatchObject({ engineeringGate: 'PASS', reasonCodes: [] })
+
+    const hold = fullFixtureSet()
+    hold.recoveryActions = []
+    expect(classifyReliabilityObservations(hold)).toMatchObject({ engineeringGate: 'HOLD', reasonCodes: [
+      'RETRY_RECOVERY_FALLBACK_COVERAGE_INCOMPLETE', 'LATENCY_COVERAGE_INCOMPLETE',
+    ] })
+
+    const fail = fullFixtureSet()
+    fail.publicationAttempts[0]!.producedDuplicateCanonicalPublication = true
+    fail.canonicalInvariantChecks[0]!.outcome = 'CORRUPT'
+    expect(classifyReliabilityObservations(fail)).toMatchObject({ engineeringGate: 'FAIL', reasonCodes: [
+      'DUPLICATE_PUBLICATION_DETECTED', 'CANONICAL_CORRUPTION_DETECTED',
+    ] })
   })
 
   it('classifies malformed authority FAIL without converting coverage HOLD', () => {

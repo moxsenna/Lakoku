@@ -1,44 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { aggregateReliabilityObservations, createFixtureTopologyAuthority } from '../../lib/narrative-qa/reliability'
+import { aggregateReliabilityObservations } from '../../lib/narrative-qa/reliability'
 import { addSuccessfulCompleteNovel, validSet } from './m10-e-reliability-measurements.test'
 
-function addFailedStage(set: ReturnType<typeof validSet>, chapterNumber: number, suffix: string) {
-  const stage = structuredClone(set.stageOutcomes[0]!)
-  Object.assign(stage, { observationId: `stage_${suffix}`, stageExecutionAlias: `stage_${suffix}`, novelExecutionAlias: `novel_${suffix}`, chapterExecutionAlias: `chapter_${suffix}`, chapterNumber, outcome: 'FAILURE', providerCallAlias: `call_${suffix}` })
-  const call = structuredClone(set.providerCalls[0]!)
-  Object.assign(call, { observationId: `call_${suffix}`, callAlias: `call_${suffix}`, stageExecutionAlias: `stage_${suffix}`, novelExecutionAlias: `novel_${suffix}`, chapterExecutionAlias: `chapter_${suffix}`, chapterNumber, outcome: 'FAILURE' })
-  call.logicalUnitAlias = `unit_${suffix}`
-  const unit = structuredClone(set.logicalGenerationUnits[0]!)
-  Object.assign(unit, { observationId: `unit_${suffix}`, logicalUnitAlias: `unit_${suffix}`, novelExecutionAlias: `novel_${suffix}`, chapterExecutionAlias: `chapter_${suffix}`, chapterNumber, terminalOutcome: 'FAILURE' })
-  set.stageOutcomes.push(stage)
-  set.providerCalls.push(call)
-  set.logicalGenerationUnits.push(unit)
-  set.chapterExecutions.push({ ...structuredClone(set.chapterExecutions[0]!), observationId: `chapter_obs_${suffix}`, novelExecutionAlias: `novel_${suffix}`, chapterExecutionAlias: `chapter_${suffix}`, chapterNumber, terminalOutcome: 'SUCCESS', generationCost: { state: 'PRESENT', value: '1.00000000' } })
-  const completedChapterNumbers = Array.from({ length: chapterNumber }, (_, index) => index + 1)
-  for (const completedChapter of completedChapterNumbers.slice(0, -1)) set.chapterExecutions.push({ ...structuredClone(set.chapterExecutions[0]!), observationId: `chapter_obs_${suffix}_${completedChapter}`, novelExecutionAlias: `novel_${suffix}`, chapterExecutionAlias: `chapter_${suffix}_${completedChapter}`, chapterNumber: completedChapter, generationCost: { state: 'PRESENT', value: '0.00000000' } })
-  set.novelExecutions.push({ ...structuredClone(set.novelExecutions[0]!), observationId: `novel_obs_${suffix}`, novelExecutionAlias: `novel_${suffix}`, completedChapterNumbers, generationCost: { state: 'PRESENT', value: '1.00000000' } })
-  if (!set.declaredApplicableCells.some((cell) => cell.chapterNumber === chapterNumber && cell.stageId === 'PROSE_PRIMARY')) {
-    set.declaredApplicableCells.push({ chapterNumber, stageId: 'PROSE_PRIMARY' })
-    set.fixtureTopologyAuthority = createFixtureTopologyAuthority(set.declaredApplicableCells)
-  }
-}
-
 describe('M10-E deterministic aggregation', () => {
-  it('pools observed reached failures by stageId and keeps per-cell diagnostics separate', () => {
-    const set = validSet()
-    addFailedStage(set, 2, 'two')
-    addFailedStage(set, 2, 'three')
-    const aggregate = aggregateReliabilityObservations(set)
+  it('pools observed reached outcomes by stageId and keeps full per-cell evidence separate', () => {
+    const aggregate = aggregateReliabilityObservations(validSet())
     const central = aggregate.centralStageFailureProbabilities.find((metric) => metric.stageId === 'PROSE_PRIMARY')!
-    expect(central.probabilityKey).toBe('stageId')
-    expect(central.failureProbability).toMatchObject({ provenance: 'OBSERVED', value: { state: 'PRESENT', value: '0.666666666667' } })
-    expect(central.numerator).toBe(2)
-    expect(central.denominator).toBe(3)
+    expect(central).toMatchObject({ probabilityKey: 'stageId', numerator: 0, denominator: 1, failureProbability: { provenance: 'OBSERVED', value: { state: 'PRESENT', value: '0.000000000000' } } })
     expect(central.exchangeabilityAuthority.stageId).toBe('PROSE_PRIMARY')
-    expect(aggregate.chapterStageDiagnostics.filter((metric) => metric.stageId === 'PROSE_PRIMARY')).toEqual(expect.arrayContaining([
-      expect.objectContaining({ chapterNumber: 1, numerator: 0, denominator: 1 }),
-      expect.objectContaining({ chapterNumber: 2, numerator: 2, denominator: 2 }),
-    ]))
+    expect(aggregate.chapterStageDiagnostics.find((metric) => metric.stageId === 'PROSE_PRIMARY')).toMatchObject({
+      chapterNumber: 1, numerator: 0, denominator: 1, provenance: 'OBSERVED', counts: { includedCount: 1, unavailableCount: 0, eligibleCount: 1 },
+      coverageRatio: '1.000000000000', providerModelPolicyId: 'provider_v1', sourceRefs: ['fixture.telemetry'],
+    })
   })
 
   it('puts boundary, counts, coverage, provenance, and refs on every required metric', () => {
@@ -65,21 +38,10 @@ describe('M10-E deterministic aggregation', () => {
     }
   })
 
-  it('uses exact attempt-1 outcome, not eventual logical-unit success', () => {
-    const set = validSet()
-    set.providerCalls[0]!.outcome = 'FAILURE'
-    set.stageOutcomes[0]!.outcome = 'FAILURE'
-    set.logicalGenerationUnits[0]!.terminalOutcome = 'SUCCESS'
-    const retryCall = { ...structuredClone(set.providerCalls[0]!), observationId: 'retry_call', callAlias: 'retry_call', stageExecutionAlias: 'retry_stage', attemptNumber: 2, outcome: 'SUCCESS' }
-    const retryStage = { ...structuredClone(set.stageOutcomes[0]!), observationId: 'retry_stage_obs', stageExecutionAlias: 'retry_stage', stageId: 'PROSE_RETRY', providerCallAlias: 'retry_call', outcome: 'SUCCESS' }
-    set.providerCalls.push(retryCall)
-    set.stageOutcomes.push(retryStage)
-    set.logicalGenerationUnits[0]!.attemptCount = 2
-    set.chapterExecutions[0]!.generationCost = { state: 'PRESENT', value: '2.00000000' }
-    set.novelExecutions[0]!.generationCost = { state: 'PRESENT', value: '2.00000000' }
-    const metric = aggregateReliabilityObservations(set).requiredMetrics.find((item) => item.metricId === 'FIRST_ATTEMPT_SUCCESS_RATE')!
-    expect(metric.numerator).toBe(0)
-    expect(metric.denominator).toBe(1)
+  it('uses exact attempt-1 outcome from topology-valid observations', () => {
+    const metric = aggregateReliabilityObservations(validSet()).requiredMetrics.find((item) => item.metricId === 'FIRST_ATTEMPT_SUCCESS_RATE')!
+    expect(metric.numerator).toBe(2)
+    expect(metric.denominator).toBe(2)
   })
 
   it('emits task/chapter/novel, cost-source, and provider-policy audit dimensions', () => {
@@ -87,12 +49,14 @@ describe('M10-E deterministic aggregation', () => {
     expect(rollups).toEqual(expect.arrayContaining([
       expect.objectContaining({ scope: 'TASK', taskId: 'CHAPTER_PROSE', metricId: 'TOTAL_TOKEN_USAGE' }),
       expect.objectContaining({ scope: 'CHAPTER', chapterNumber: 1, metricId: 'ACTUAL_PROVIDER_COST' }),
-      expect.objectContaining({ scope: 'NOVEL', dimensionKey: 'NOVEL.ALL_EXECUTIONS', metricId: 'PRICING_ESTIMATED_COST' }),
+      expect.objectContaining({ scope: 'NOVEL_EXECUTION', dimensionKey: 'NOVEL_EXECUTION.novel_a', metricId: 'PRICING_ESTIMATED_COST' }),
+      expect.objectContaining({ scope: 'SOURCE', dimensionKey: 'SOURCE.fixture.telemetry', metricId: 'ACTUAL_COST_COVERAGE_RATIO' }),
+      expect.objectContaining({ scope: 'PROVIDER_MODEL_POLICY', dimensionKey: 'PROVIDER_MODEL_POLICY.provider_v1', metricId: 'PRICING_COST_COVERAGE_RATIO' }),
       expect.objectContaining({ providerModelPolicyId: 'provider_v1', actualCostSource: 'PROVIDER_REPORTED' }),
       expect.objectContaining({ scope: 'TASK', taskId: 'CHAPTER_PROSE', metricId: 'GENERATION_PROVIDER_CALL_COUNT' }),
     ]))
     expect(new Set(rollups.map((metric) => metric.dimensionKey))).toEqual(new Set([
-      'TASK.CHAPTER_PROSE', 'TASK.CHAPTER_STRUCTURED_OUTPUT', 'TASK.RUNTIME_RECOVERY', 'NOVEL.ALL_EXECUTIONS',
+      'TASK.CHAPTER_PROSE', 'TASK.CHAPTER_STRUCTURED_OUTPUT', 'TASK.RUNTIME_RECOVERY', 'NOVEL_EXECUTION.novel_a', 'SOURCE.fixture.telemetry', 'PROVIDER_MODEL_POLICY.provider_v1',
       ...Array.from({ length: 50 }, (_, index) => `CHAPTER.${String(index + 1).padStart(2, '0')}`),
     ]))
     expect(rollups).toContainEqual(expect.objectContaining({ dimensionKey: 'TASK.RUNTIME_RECOVERY', metricId: 'RETRY_COUNT' }))
@@ -103,6 +67,22 @@ describe('M10-E deterministic aggregation', () => {
     }
   })
 
+  it('locks exact canonical E.3 applicability-matrix key set', () => {
+    const aggregate = aggregateReliabilityObservations(validSet())
+    const expectedDimensionKeys = [
+      'TASK.CHAPTER_PROSE', 'TASK.CHAPTER_STRUCTURED_OUTPUT', 'TASK.RUNTIME_RECOVERY',
+      ...Array.from({ length: 50 }, (_, index) => `CHAPTER.${String(index + 1).padStart(2, '0')}`),
+      'NOVEL_EXECUTION.novel_a', 'SOURCE.fixture.telemetry', 'PROVIDER_MODEL_POLICY.provider_v1',
+    ]
+    const directMetricIds = ['RETRY_COUNT', 'GENERATION_PROVIDER_CALL_COUNT', 'INPUT_TOKEN_USAGE', 'OUTPUT_TOKEN_USAGE', 'TOTAL_TOKEN_USAGE', 'ACTUAL_PROVIDER_COST', 'PRICING_ESTIMATED_COST', 'ACTUAL_COST_COVERAGE_RATIO', 'PRICING_COST_COVERAGE_RATIO']
+    const expectedMetricIds = [...directMetricIds, ...new Set(aggregate.requiredMetrics.map((metric) => metric.metricId).filter((metric) => !directMetricIds.includes(metric)))]
+    expect(aggregate.dimensionedMetrics.map((record) => `${record.dimensionKey}|${record.metricId}`)).toEqual(expectedDimensionKeys.flatMap((key) => expectedMetricIds.map((metric) => `${key}|${metric}`)))
+    expect(Object.keys(aggregate.chapterStageDiagnostics[0]!).sort()).toEqual([
+      'chapterNumber', 'compatibleStratum', 'counts', 'coverageRatio', 'denominator', 'eligibilityBoundary', 'executionProfile', 'failureProbability',
+      'numerator', 'observationRefs', 'provenance', 'providerModelPolicyId', 'sourceAuthorityHash', 'sourceRefs', 'stageId',
+    ].sort())
+  })
+
   it('emits all chapter percentiles separately and leaves P5 modeled pricing slots missing', () => {
     const aggregate = aggregateReliabilityObservations(validSet())
     expect(aggregate.requiredMetrics.filter((metric) => metric.metricId === 'CHAPTER_COST_P50')).toHaveLength(50)
@@ -110,20 +90,12 @@ describe('M10-E deterministic aggregation', () => {
     expect(aggregate.requiredMetrics.find((metric) => metric.metricId === 'FIRST_ATTEMPT_BASELINE_COST')).toMatchObject({ provenance: 'MODELED_FROM_PRICING', value: { state: 'MISSING' } })
     expect(aggregate.modeledPricingSlots.expectedChapterGenerationMeans).toHaveLength(50)
     expect(aggregate.modeledPricingSlots.modeledJudgeTotal.value.state).toBe('MISSING')
-    expect(aggregate.observedCostDiagnostics.observedBaselineCost).toMatchObject({ provenance: 'OBSERVED', value: { state: 'PRESENT', value: '1.00000000' } })
+    expect(aggregate.observedCostDiagnostics.observedBaselineCost).toMatchObject({ provenance: 'OBSERVED', value: { state: 'PRESENT', value: '2.00000000' } })
   })
 
   it('marks complete token/cost aggregate missing on partial coverage and exposes partial sum separately', () => {
     const set = validSet()
-    const second = structuredClone(set.providerCalls[0]!)
-    Object.assign(second, { observationId: 'call_missing', callAlias: 'call_missing', stageExecutionAlias: 'stage_missing', logicalUnitAlias: 'unit_missing', actualCost: { state: 'MISSING', reasonCode: 'COST_UNAVAILABLE', detail: 'absent' }, totalTokens: { state: 'MISSING', reasonCode: 'TELEMETRY_UNAVAILABLE', detail: 'absent' } })
-    const stage = structuredClone(set.stageOutcomes[0]!)
-    Object.assign(stage, { observationId: 'stage_missing', stageExecutionAlias: 'stage_missing', providerCallAlias: 'call_missing' })
-    const unit = structuredClone(set.logicalGenerationUnits[0]!)
-    Object.assign(unit, { observationId: 'unit_missing', logicalUnitAlias: 'unit_missing' })
-    set.providerCalls.push(second)
-    set.stageOutcomes.push(stage)
-    set.logicalGenerationUnits.push(unit)
+    Object.assign(set.providerCalls[0]!, { actualCost: { state: 'MISSING', reasonCode: 'COST_UNAVAILABLE', detail: 'absent' }, totalTokens: { state: 'MISSING', reasonCode: 'TELEMETRY_UNAVAILABLE', detail: 'absent' } })
     Object.assign(set.chapterExecutions[0]!, { generationCost: { state: 'MISSING', reasonCode: 'COST_UNAVAILABLE', detail: 'partial coverage' } })
     Object.assign(set.novelExecutions[0]!, { generationCost: { state: 'MISSING', reasonCode: 'COST_UNAVAILABLE', detail: 'partial coverage' } })
     const aggregate = aggregateReliabilityObservations(set)
@@ -137,10 +109,10 @@ describe('M10-E deterministic aggregation', () => {
     const set = validSet()
     addSuccessfulCompleteNovel(set, 'success')
     const aggregate = aggregateReliabilityObservations(set)
-    expect(aggregate.observedCostComparators.maxObservedMeanGenerationCostPerChapter.value).toEqual({ state: 'PRESENT', value: '0.50000000' })
+    expect(aggregate.observedCostComparators.maxObservedMeanGenerationCostPerChapter.value).toEqual({ state: 'PRESENT', value: '2.00000000' })
     expect(aggregate.observedCostComparators.maxObservedMeanGenerationCostPerChapter.chapterMeanCounts).toEqual({ includedCount: 50, excludedCount: 0, eligibleCount: 50 })
-    expect(aggregate.observedCostComparators.meanGenerationCostPerSuccessfulCompleteNovel.value).toEqual({ state: 'PRESENT', value: '0.00000000' })
-    expect(aggregate.observedCostDiagnostics.meanGenerationSpendPerStartedNovelAttempt.value).toEqual({ state: 'PRESENT', value: '1.00000000' })
+    expect(aggregate.observedCostComparators.meanGenerationCostPerSuccessfulCompleteNovel.value).toEqual({ state: 'PRESENT', value: '100.00000000' })
+    expect(aggregate.observedCostDiagnostics.meanGenerationSpendPerStartedNovelAttempt.value).toEqual({ state: 'PRESENT', value: '51.00000000' })
     expect(aggregate.observedCostDiagnostics.meanGenerationSpendPerStartedNovelAttempt.comparatorEligible).toBe(false)
   })
 

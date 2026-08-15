@@ -21,10 +21,11 @@ import {
   type JudgePlanAuthority,
 } from './authorities'
 import { canonicalizeDecimal, type CanonicalDecimal } from './decimal'
-import { getStageSemantics } from './topology'
+import { getStageSemantics, getStageTransition } from './topology'
 
 const OBSERVATION_ID = z.string().min(1).max(256)
-const TIMESTAMP = z.string().datetime({ offset: true })
+const SOURCE_REF = z.string().regex(/^[a-z][a-z0-9_.-]{0,127}$/)
+const TIMESTAMP = z.string().datetime({ offset: true }).regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/, 'Timestamp precision must not exceed exact microseconds')
 const CURRENCY = z.string().regex(/^[A-Z]{3}$/)
 const presentOrMissingSchema = <T>(valueSchema: z.ZodType<T>) => z.discriminatedUnion('state', [
   z.strictObject({ state: z.literal('PRESENT'), value: valueSchema }),
@@ -33,7 +34,7 @@ const presentOrMissingSchema = <T>(valueSchema: z.ZodType<T>) => z.discriminated
 const TOKEN_STATE = presentOrMissingSchema(COUNT_SCHEMA)
 const MONEY_STATE = presentOrMissingSchema(z.string().transform((value) => canonicalizeDecimal(value, 'MONEY')))
 const LATENCY_STATE = measurementStateSchema(z.string().transform((value) => canonicalizeDecimal(value, 'LATENCY_MILLISECONDS')))
-const BASE = { observationId: OBSERVATION_ID, storyAlias: SAFE_ALIAS_SCHEMA, novelExecutionAlias: SAFE_ALIAS_SCHEMA }
+const BASE = { observationId: OBSERVATION_ID, sourceRef: SOURCE_REF, storyAlias: SAFE_ALIAS_SCHEMA, novelExecutionAlias: SAFE_ALIAS_SCHEMA }
 const CHAPTER_BASE = { ...BASE, chapterExecutionAlias: SAFE_ALIAS_SCHEMA, chapterNumber: CHAPTER_NUMBER_SCHEMA }
 
 export const PROVIDER_CALL_OBSERVATION_SCHEMA = z.strictObject({
@@ -98,9 +99,11 @@ export const JUDGE_EVALUATION_OBSERVATION_SCHEMA = z.strictObject({
 })
 export type JudgeEvaluationObservation = z.infer<typeof JUDGE_EVALUATION_OBSERVATION_SCHEMA>
 
+const SOURCE_IDENTITY_SCHEMA = z.strictObject({ sourceRef: SOURCE_REF, sourceIdentity: z.string().min(1).max(256) })
 const SOURCE_AUTHORITY_SCHEMA = z.strictObject({
   authorityVersion: z.literal('M10_E_OBSERVATION_SOURCE_V1'), sourceKind: z.literal('AUTHORIZED_TELEMETRY_OBSERVATIONS'),
   excludedSources: z.tuple([z.literal('E1_FAULT_INJECTION_FREQUENCY'), z.literal('E2_FAULT_INJECTION_FREQUENCY')]),
+  normalizedSources: z.array(SOURCE_IDENTITY_SCHEMA).min(1),
   decisionRef: z.string().min(1), canonicalHash: SHA256_SCHEMA,
 })
 const TIMING_AUTHORITY_SCHEMA = z.strictObject({
@@ -113,9 +116,13 @@ const AUTHORITY_REF = 'docs/superpowers/specs/2026-08-13-m10-e-e3a-e4-reliabilit
 function createHashedAuthority<T extends Record<string, unknown>>(payload: T): T & { canonicalHash: string } {
   return deepFreeze({ ...payload, canonicalHash: computeSha256(stableStringify(payload)) })
 }
-export function createObservationSourceAuthority(): ObservationSourceAuthority {
+export function createObservationSourceAuthority(sources: readonly z.infer<typeof SOURCE_IDENTITY_SCHEMA>[] = [{ sourceRef: 'fixture.telemetry', sourceIdentity: 'ISOLATED_CONTRACT_FIXTURE_TELEMETRY_V1' }]): ObservationSourceAuthority {
+  const normalizedSources = z.array(SOURCE_IDENTITY_SCHEMA).min(1).parse(sources)
+    .sort((left, right) => Buffer.compare(Buffer.from(`${left.sourceRef}\0${left.sourceIdentity}`, 'utf8'), Buffer.from(`${right.sourceRef}\0${right.sourceIdentity}`, 'utf8')))
+  assertUnique(normalizedSources.map((source) => source.sourceRef), 'source reference')
+  if (normalizedSources.some((source) => isFaultDerivedSource(source.sourceRef) || isFaultDerivedSource(source.sourceIdentity))) throw new Error('Fault schedule/frequency source cannot authorize E.3 observations')
   return createHashedAuthority({ authorityVersion: 'M10_E_OBSERVATION_SOURCE_V1' as const, sourceKind: 'AUTHORIZED_TELEMETRY_OBSERVATIONS' as const,
-    excludedSources: ['E1_FAULT_INJECTION_FREQUENCY', 'E2_FAULT_INJECTION_FREQUENCY'] as const, decisionRef: AUTHORITY_REF })
+    excludedSources: ['E1_FAULT_INJECTION_FREQUENCY', 'E2_FAULT_INJECTION_FREQUENCY'] as const, normalizedSources, decisionRef: AUTHORITY_REF })
 }
 export function createTimingSourceAuthority(): TimingSourceAuthority {
   return createHashedAuthority({ authorityVersion: 'M10_E_EXACT_ELAPSED_TIME_V1' as const, sourceKind: 'START_END_TIMESTAMPS' as const,
@@ -158,14 +165,15 @@ export function validateReliabilityObservationSet(value: unknown): ReliabilityOb
   const parsed = SET_SCHEMA.parse(value)
   const authorities = validateChapterStageExchangeabilityAuthorities(parsed.exchangeabilityAuthorities, parsed.executionProfile, parsed.compatibleStratum)
   const judgePlan = validateJudgePlanAuthority(parsed.judgePlanAuthority, parsed.compatibleStratum.providerModelPolicyId)
-  validateExactAuthority(parsed.observationSourceAuthority, createObservationSourceAuthority(), 'Observation source')
   validateExactAuthority(parsed.timingSourceAuthority, createTimingSourceAuthority(), 'Timing source')
   validateFixtureTopology(parsed)
-  assertUnique([
+  const allObservations = [
     ...parsed.providerCalls, ...parsed.stageOutcomes, ...parsed.logicalGenerationUnits, ...parsed.recoveryActions,
     ...parsed.publicationAttempts, ...parsed.canonicalInvariantChecks, ...parsed.chapterExecutions, ...parsed.novelExecutions,
     ...parsed.judgeEvaluations,
-  ].map((item) => item.observationId), 'global observation ID')
+  ]
+  assertUnique(allObservations.map((item) => item.observationId), 'global observation ID')
+  validateObservationSources(parsed.observationSourceAuthority, allObservations)
   assertUnique(parsed.providerCalls.map((item) => item.callAlias), 'provider-call alias')
   assertUnique(parsed.stageOutcomes.map((item) => item.stageExecutionAlias), 'stage-execution alias')
   assertUnique(parsed.logicalGenerationUnits.map((item) => item.logicalUnitAlias), 'logical-unit alias')
@@ -198,7 +206,7 @@ export function validateReliabilityObservationSet(value: unknown): ReliabilityOb
     if (semantics.providerCall.state === 'APPLICABLE') {
       if (calls.length !== 1 || stage.providerCallAlias !== calls[0]?.callAlias) throw new Error('Applicable reached stage requires exactly one matching provider call')
     } else if (calls.length !== 0 || stage.providerCallAlias !== null) throw new Error('Runtime stage cannot contain provider call')
-    if (calls[0] && !sameChapterIdentity(stage, calls[0])) throw new Error('Stage/provider-call identity mismatch')
+    if (calls[0] && (!sameChapterIdentity(stage, calls[0]) || calls[0].stageId !== stage.stageId || calls[0].taskId !== stage.taskId || calls[0].outcome !== stage.outcome)) throw new Error('Stage/provider-call identity or outcome mismatch')
   }
   for (const call of parsed.providerCalls) {
     if (!parsed.stageOutcomes.some((stage) => stage.stageExecutionAlias === call.stageExecutionAlias)) throw new Error('Extra provider call without reached stage')
@@ -210,6 +218,8 @@ export function validateReliabilityObservationSet(value: unknown): ReliabilityOb
       .sort((left, right) => left.attemptNumber - right.attemptNumber)
     if (attempts.length !== unit.attemptCount || attempts.some((call, index) => call.attemptNumber !== index + 1)) throw new Error('Provider attempts must be contiguous and unique from 1')
     if (attempts.some((call) => call.taskId !== unit.taskId || !sameChapterIdentity(unit, call))) throw new Error('Logical-unit/provider-call identity mismatch')
+    const finalAttempt = attempts.at(-1)
+    if (!finalAttempt || finalAttempt.outcome !== unit.terminalOutcome) throw new Error('Logical-unit terminal outcome must equal final provider attempt')
     if (unit.fallbackInvoked !== attempts.some((call) => call.fallbackIndex > 0 || call.stageId === 'PROVIDER_FALLBACK')) throw new Error('Fallback identity mismatch')
   }
   for (const recovery of parsed.recoveryActions) {
@@ -269,8 +279,7 @@ function validateExecutionIdentitiesAndCosts(set: z.infer<typeof SET_SCHEMA>, ju
     const stages = set.stageOutcomes.filter((item) => item.chapterExecutionAlias === chapter.chapterExecutionAlias)
     const calls = set.providerCalls.filter((item) => item.chapterExecutionAlias === chapter.chapterExecutionAlias)
     if ([...stages, ...calls].some((item) => !sameChapterIdentity(chapter, item))) throw new Error('Chapter child identity mismatch')
-    const terminalFailure = stages.some((stage) => stage.outcome === 'FAILURE' && ['CHECKPOINT_RECOVERY', 'STRUCTURED_RETRY', 'OWNERSHIP_RECOVERY', 'PUBLICATION_RECOVERY'].includes(stage.stageId))
-    if ((chapter.terminalOutcome === 'FAILURE') !== terminalFailure) throw new Error('Chapter outcome conflicts with linked terminal stage outcomes')
+    validateChapterTopologyPath(chapter, stages)
     assertCostMatchesCalls(chapter.generationCost, calls, 'Chapter generation cost')
   }
   for (const novel of set.novelExecutions) {
@@ -280,6 +289,7 @@ function validateExecutionIdentitiesAndCosts(set: z.infer<typeof SET_SCHEMA>, ju
     if (linked.some((item) => item.storyAlias !== novel.storyAlias)) throw new Error('Novel child story identity mismatch')
     const linkedNumbers = [...linked].sort((left, right) => left.chapterNumber - right.chapterNumber).map((item) => item.chapterNumber)
     if (new Set(linkedNumbers).size !== linkedNumbers.length || stableStringify(linkedNumbers) !== stableStringify(novel.completedChapterNumbers)) throw new Error('Novel completed chapters must equal exact unique linked chapter sequence')
+    if (novel.terminalOutcome === 'SUCCESS' && linked.some((item) => item.terminalOutcome !== 'SUCCESS')) throw new Error('Successful novel requires every linked chapter outcome SUCCESS')
     if (novel.terminalOutcome === 'PARTIAL_FAILURE' && linked.every((item) => item.terminalOutcome === 'SUCCESS') && linked.length === 50) throw new Error('Partial novel must contain terminal chapter failure or stop before chapter 50')
     assertCostMatchesCalls(novel.generationCost, set.providerCalls.filter((item) => item.novelExecutionAlias === novel.novelExecutionAlias), 'Novel generation cost')
   }
@@ -298,6 +308,42 @@ function validateExecutionIdentitiesAndCosts(set: z.infer<typeof SET_SCHEMA>, ju
     if (judge.providerModelPolicyId !== set.compatibleStratum.providerModelPolicyId) throw new Error('Judge evaluation not in exact judge plan')
   }
 }
+function validateChapterTopologyPath(chapter: z.infer<typeof CHAPTER_EXECUTION_OBSERVATION_SCHEMA>, stages: readonly StageOutcomeObservation[]): void {
+  if (stages.length === 0) throw new Error('Chapter requires reached topology path')
+  const ordered = [...stages].sort((left, right) => timestampMicroseconds(left.reachedAt) < timestampMicroseconds(right.reachedAt) ? -1 : timestampMicroseconds(left.reachedAt) > timestampMicroseconds(right.reachedAt) ? 1 : Buffer.compare(Buffer.from(left.stageExecutionAlias), Buffer.from(right.stageExecutionAlias)))
+  let expectedStageId: (typeof STAGE_VALUES)[number] | null = 'PROSE_PRIMARY'
+  let terminalEffect: 'TERMINAL_FAILURE' | 'CHAPTER_COMPLETE' | null = null
+  for (const stage of ordered) {
+    if (terminalEffect !== null) throw new Error('Reached stage exists after logical topology terminal')
+    if (stage.stageId !== expectedStageId) throw new Error(`Reached topology path expected ${String(expectedStageId)} but observed ${stage.stageId}`)
+    const transition = getStageTransition(stage.stageId, stage.outcome)
+    if (transition.chapterEffect === 'CONTINUE') {
+      if (transition.nextStageIds.length !== 1) throw new Error('Nonterminal reached stage requires exact frozen successor')
+      expectedStageId = transition.nextStageIds[0]!
+    } else {
+      if (transition.nextStageIds.length !== 0) throw new Error('Terminal reached stage cannot declare successor')
+      terminalEffect = transition.chapterEffect
+      expectedStageId = null
+    }
+  }
+  if (terminalEffect === null || expectedStageId !== null) throw new Error(`Chapter topology path missing required successor ${String(expectedStageId)}`)
+  const derivedOutcome = terminalEffect === 'CHAPTER_COMPLETE' ? 'SUCCESS' : 'FAILURE'
+  if (chapter.terminalOutcome !== derivedOutcome) throw new Error('Chapter outcome conflicts with final topology traversal effect')
+}
+
+function validateObservationSources(authority: ObservationSourceAuthority, observations: readonly { sourceRef: string }[]): void {
+  const { canonicalHash: _hash, ...payload } = authority
+  if (computeSha256(stableStringify(payload)) !== authority.canonicalHash) throw new Error('Observation source authority hash mismatch')
+  const expected = createObservationSourceAuthority(authority.normalizedSources)
+  if (stableStringify(authority) !== stableStringify(expected)) throw new Error('Observation source authority normalized identity mismatch')
+  const allowedRefs = new Set(authority.normalizedSources.map((source) => source.sourceRef))
+  for (const observation of observations) {
+    if (isFaultDerivedSource(observation.sourceRef)) throw new Error('E1/E2 fault schedule/frequency source cannot supply E.3 observation')
+    if (!allowedRefs.has(observation.sourceRef)) throw new Error('Observation sourceRef is not bound by source authority')
+  }
+}
+function isFaultDerivedSource(value: string): boolean { return /(?:^|[_.-])e[12](?:[_.-]|$)|fault.*(?:schedule|frequency)|(?:schedule|frequency).*fault/i.test(value) }
+
 function requireChapterParent(item: { chapterExecutionAlias: string; storyAlias: string; novelExecutionAlias: string; chapterNumber: number }, chapters: Map<string, z.infer<typeof CHAPTER_EXECUTION_OBSERVATION_SCHEMA>>): void {
   const parent = chapters.get(item.chapterExecutionAlias)
   if (!parent || !sameChapterIdentity(item, parent)) throw new Error('Observation chapter parent identity mismatch')
@@ -329,8 +375,8 @@ function timestampMicroseconds(value: string): bigint {
   if (!match) throw new Error('Invalid exact timestamp')
   const year = BigInt(match[1]!), month = BigInt(match[2]!), day = BigInt(match[3]!)
   const hour = BigInt(match[4]!), minute = BigInt(match[5]!), second = BigInt(match[6]!)
-  const fraction = (match[7] ?? '').padEnd(9, '0')
-  const micros = (BigInt(fraction) + BigInt("500")) / BigInt("1000")
+  const fraction = (match[7] ?? '').padEnd(6, '0')
+  const micros = BigInt(fraction)
   const offset = match[8] === 'Z' ? BigInt("0") : (match[8]![0] === '-' ? -BigInt("1") : BigInt("1")) * (BigInt(match[8]!.slice(1, 3)) * BigInt("60") + BigInt(match[8]!.slice(4, 6)))
   return (((daysFromCivil(year, month, day) * BigInt("24") + hour) * BigInt("60") + minute - offset) * BigInt("60") + second) * BigInt("1000000") + micros
 }

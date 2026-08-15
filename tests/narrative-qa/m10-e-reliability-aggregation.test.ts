@@ -1,20 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import { aggregateReliabilityObservations, createFixtureTopologyAuthority } from '../../lib/narrative-qa/reliability'
-import { validSet } from './m10-e-reliability-measurements.test'
+import { addSuccessfulCompleteNovel, validSet } from './m10-e-reliability-measurements.test'
 
 function addFailedStage(set: ReturnType<typeof validSet>, chapterNumber: number, suffix: string) {
   const stage = structuredClone(set.stageOutcomes[0]!)
-  Object.assign(stage, { observationId: `stage_${suffix}`, stageExecutionAlias: `stage_${suffix}`, chapterExecutionAlias: `chapter_${suffix}`, chapterNumber, outcome: 'FAILURE', providerCallAlias: `call_${suffix}` })
+  Object.assign(stage, { observationId: `stage_${suffix}`, stageExecutionAlias: `stage_${suffix}`, novelExecutionAlias: `novel_${suffix}`, chapterExecutionAlias: `chapter_${suffix}`, chapterNumber, outcome: 'FAILURE', providerCallAlias: `call_${suffix}` })
   const call = structuredClone(set.providerCalls[0]!)
-  Object.assign(call, { observationId: `call_${suffix}`, callAlias: `call_${suffix}`, stageExecutionAlias: `stage_${suffix}`, chapterExecutionAlias: `chapter_${suffix}`, chapterNumber, outcome: 'FAILURE' })
+  Object.assign(call, { observationId: `call_${suffix}`, callAlias: `call_${suffix}`, stageExecutionAlias: `stage_${suffix}`, novelExecutionAlias: `novel_${suffix}`, chapterExecutionAlias: `chapter_${suffix}`, chapterNumber, outcome: 'FAILURE' })
   call.logicalUnitAlias = `unit_${suffix}`
   const unit = structuredClone(set.logicalGenerationUnits[0]!)
-  Object.assign(unit, { observationId: `unit_${suffix}`, logicalUnitAlias: `unit_${suffix}`, chapterExecutionAlias: `chapter_${suffix}`, chapterNumber, terminalOutcome: 'FAILURE' })
+  Object.assign(unit, { observationId: `unit_${suffix}`, logicalUnitAlias: `unit_${suffix}`, novelExecutionAlias: `novel_${suffix}`, chapterExecutionAlias: `chapter_${suffix}`, chapterNumber, terminalOutcome: 'FAILURE' })
   set.stageOutcomes.push(stage)
   set.providerCalls.push(call)
   set.logicalGenerationUnits.push(unit)
-  const totalCost = `${set.providerCalls.length}.00000000`
-  set.novelExecutions[0]!.generationCost = { state: 'PRESENT', value: totalCost }
+  set.chapterExecutions.push({ ...structuredClone(set.chapterExecutions[0]!), observationId: `chapter_obs_${suffix}`, novelExecutionAlias: `novel_${suffix}`, chapterExecutionAlias: `chapter_${suffix}`, chapterNumber, terminalOutcome: 'SUCCESS', generationCost: { state: 'PRESENT', value: '1.00000000' } })
+  const completedChapterNumbers = Array.from({ length: chapterNumber }, (_, index) => index + 1)
+  for (const completedChapter of completedChapterNumbers.slice(0, -1)) set.chapterExecutions.push({ ...structuredClone(set.chapterExecutions[0]!), observationId: `chapter_obs_${suffix}_${completedChapter}`, novelExecutionAlias: `novel_${suffix}`, chapterExecutionAlias: `chapter_${suffix}_${completedChapter}`, chapterNumber: completedChapter, generationCost: { state: 'PRESENT', value: '0.00000000' } })
+  set.novelExecutions.push({ ...structuredClone(set.novelExecutions[0]!), observationId: `novel_obs_${suffix}`, novelExecutionAlias: `novel_${suffix}`, completedChapterNumbers, generationCost: { state: 'PRESENT', value: '1.00000000' } })
   if (!set.declaredApplicableCells.some((cell) => cell.chapterNumber === chapterNumber && cell.stageId === 'PROSE_PRIMARY')) {
     set.declaredApplicableCells.push({ chapterNumber, stageId: 'PROSE_PRIMARY' })
     set.fixtureTopologyAuthority = createFixtureTopologyAuthority(set.declaredApplicableCells)
@@ -85,15 +87,30 @@ describe('M10-E deterministic aggregation', () => {
     expect(rollups).toEqual(expect.arrayContaining([
       expect.objectContaining({ scope: 'TASK', taskId: 'CHAPTER_PROSE', metricId: 'TOTAL_TOKEN_USAGE' }),
       expect.objectContaining({ scope: 'CHAPTER', chapterNumber: 1, metricId: 'ACTUAL_PROVIDER_COST' }),
-      expect.objectContaining({ scope: 'NOVEL', novelExecutionAlias: 'novel_a', metricId: 'PRICING_ESTIMATED_COST' }),
+      expect.objectContaining({ scope: 'NOVEL', dimensionKey: 'NOVEL.ALL_EXECUTIONS', metricId: 'PRICING_ESTIMATED_COST' }),
       expect.objectContaining({ providerModelPolicyId: 'provider_v1', actualCostSource: 'PROVIDER_REPORTED' }),
       expect.objectContaining({ scope: 'TASK', taskId: 'CHAPTER_PROSE', metricId: 'GENERATION_PROVIDER_CALL_COUNT' }),
     ]))
+    expect(new Set(rollups.map((metric) => metric.dimensionKey))).toEqual(new Set([
+      'TASK.CHAPTER_PROSE', 'TASK.CHAPTER_STRUCTURED_OUTPUT', 'TASK.RUNTIME_RECOVERY', 'NOVEL.ALL_EXECUTIONS',
+      ...Array.from({ length: 50 }, (_, index) => `CHAPTER.${String(index + 1).padStart(2, '0')}`),
+    ]))
+    expect(rollups).toContainEqual(expect.objectContaining({ dimensionKey: 'TASK.RUNTIME_RECOVERY', metricId: 'RETRY_COUNT' }))
     for (const metric of rollups) {
       expect(metric.counts.eligibleCount).toBe(metric.counts.includedCount + metric.counts.excludedCount)
       expect(metric.eligibilityBoundary).not.toBe('')
       expect(metric.observationRefs).toBeDefined()
     }
+  })
+
+  it('emits all chapter percentiles separately and leaves P5 modeled pricing slots missing', () => {
+    const aggregate = aggregateReliabilityObservations(validSet())
+    expect(aggregate.requiredMetrics.filter((metric) => metric.metricId === 'CHAPTER_COST_P50')).toHaveLength(50)
+    expect(aggregate.requiredMetrics.filter((metric) => metric.metricId === 'CHAPTER_COST_P95')).toHaveLength(50)
+    expect(aggregate.requiredMetrics.find((metric) => metric.metricId === 'FIRST_ATTEMPT_BASELINE_COST')).toMatchObject({ provenance: 'MODELED_FROM_PRICING', value: { state: 'MISSING' } })
+    expect(aggregate.modeledPricingSlots.expectedChapterGenerationMeans).toHaveLength(50)
+    expect(aggregate.modeledPricingSlots.modeledJudgeTotal.value.state).toBe('MISSING')
+    expect(aggregate.observedCostDiagnostics.observedBaselineCost).toMatchObject({ provenance: 'OBSERVED', value: { state: 'PRESENT', value: '1.00000000' } })
   })
 
   it('marks complete token/cost aggregate missing on partial coverage and exposes partial sum separately', () => {
@@ -118,16 +135,10 @@ describe('M10-E deterministic aggregation', () => {
 
   it('computes observed max of per-chapter means and successful-complete conditional novel mean', () => {
     const set = validSet()
-    set.chapterExecutions.push(
-      { ...structuredClone(set.chapterExecutions[0]!), observationId: 'chapter_1b', chapterExecutionAlias: 'chapter_1b', generationCost: { state: 'PRESENT', value: '0.00000000' } },
-      { ...structuredClone(set.chapterExecutions[0]!), observationId: 'chapter_2', chapterExecutionAlias: 'chapter_2', chapterNumber: 2, generationCost: { state: 'PRESENT', value: '0.00000000' } },
-    )
-    const successful = structuredClone(set.novelExecutions[0]!)
-    Object.assign(successful, { observationId: 'novel_success', novelExecutionAlias: 'novel_success', terminalOutcome: 'SUCCESS', completedChapterNumbers: Array.from({ length: 50 }, (_, i) => i + 1), generationCost: { state: 'PRESENT', value: '0.00000000' } })
-    set.novelExecutions.push(successful)
+    addSuccessfulCompleteNovel(set, 'success')
     const aggregate = aggregateReliabilityObservations(set)
-    expect(aggregate.observedCostComparators.maxObservedMeanGenerationCostPerChapter.value.state).toBe('MISSING')
-    expect(aggregate.observedCostComparators.maxObservedMeanGenerationCostPerChapter.chapterMeanCounts).toEqual({ includedCount: 2, excludedCount: 48, eligibleCount: 50 })
+    expect(aggregate.observedCostComparators.maxObservedMeanGenerationCostPerChapter.value).toEqual({ state: 'PRESENT', value: '0.50000000' })
+    expect(aggregate.observedCostComparators.maxObservedMeanGenerationCostPerChapter.chapterMeanCounts).toEqual({ includedCount: 50, excludedCount: 0, eligibleCount: 50 })
     expect(aggregate.observedCostComparators.meanGenerationCostPerSuccessfulCompleteNovel.value).toEqual({ state: 'PRESENT', value: '0.00000000' })
     expect(aggregate.observedCostDiagnostics.meanGenerationSpendPerStartedNovelAttempt.value).toEqual({ state: 'PRESENT', value: '1.00000000' })
     expect(aggregate.observedCostDiagnostics.meanGenerationSpendPerStartedNovelAttempt.comparatorEligible).toBe(false)

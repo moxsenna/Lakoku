@@ -32,6 +32,20 @@ export interface AggregateMetric {
   readonly partialObservedValue?: MeasurementState<number | CanonicalDecimal>
 }
 
+export type ReliabilityEvidenceClassification = Readonly<
+  | { engineeringGate: 'PASS' | 'HOLD'; reasonCodes: readonly string[]; aggregate: ReturnType<typeof aggregateReliabilityObservations> }
+  | { engineeringGate: 'FAIL'; reasonCodes: readonly ['MALFORMED_EVIDENCE']; error: string }
+>
+
+export function classifyReliabilityObservations(input: unknown): ReliabilityEvidenceClassification {
+  try {
+    const aggregate = aggregateReliabilityObservations(input)
+    return deepFreeze({ engineeringGate: aggregate.profileCompleteness.engineeringGate, reasonCodes: aggregate.profileCompleteness.reasonCodes, aggregate })
+  } catch (error) {
+    return deepFreeze({ engineeringGate: 'FAIL' as const, reasonCodes: ['MALFORMED_EVIDENCE'] as const, error: error instanceof Error ? error.message : 'Unknown malformed evidence' })
+  }
+}
+
 export function aggregateReliabilityObservations(input: unknown) {
   const set = validateReliabilityObservationSet(input)
   const calls = sortProviderCallObservationsUtf8(set.providerCalls)
@@ -63,10 +77,11 @@ export function aggregateReliabilityObservations(input: unknown) {
     coverageMetric('ACTUAL_COST_COVERAGE_RATIO', calls, 'actualCost', 'OBSERVED'), coverageMetric('PRICING_COST_COVERAGE_RATIO', calls, 'estimatedCost', 'MODELED_FROM_PRICING'),
     rate('EMPIRICAL_CHAPTER_STAGE_FAILURE_DISTRIBUTION', set.stageOutcomes.filter((item) => item.outcome === 'FAILURE').length, set.stageOutcomes.length, 'reached finalized stage outcomes at exact chapter-stage cells', set.stageOutcomes.map(ref)),
     countMetric('OBSERVED_COMPLETED_NOVEL_COUNT', novels.filter(isSuccessfulCompleteNovel).length, novels.length, 'valid complete chapter 1..50 novel executions among started novels', novels.map(ref), novels.length),
-    costClassMetric('FIRST_ATTEMPT_BASELINE_COST', calls.filter((call) => call.stageId === 'PROSE_PRIMARY' || call.stageId === 'STRUCTURED_OUTPUT'), 'first reached PROSE_PRIMARY and STRUCTURED_OUTPUT provider calls'),
-    costClassMetric('RETRY_FALLBACK_COST', calls.filter((call) => ['PROSE_RETRY', 'PROVIDER_FALLBACK', 'STRUCTURED_RETRY'].includes(call.stageId)), 'reached prose retry, provider fallback, and structured retry provider calls'),
-    retryOverheadMetric(calls),
-    chapterCostPercentile('CHAPTER_COST_P50', set, '0.50'), chapterCostPercentile('CHAPTER_COST_P95', set, '0.95'),
+    modeledUnavailableMetric('FIRST_ATTEMPT_BASELINE_COST', 'P5 pricing selection required for modeled first-attempt baseline'),
+    modeledUnavailableMetric('RETRY_FALLBACK_COST', 'P5 pricing selection required for modeled retry/fallback cost'),
+    modeledUnavailableMetric('RETRY_OVERHEAD_PERCENTAGE', 'P5 modeled baseline and retry costs required'),
+    ...Array.from({ length: 50 }, (_, index) => chapterCostPercentile('CHAPTER_COST_P50', set, '0.50', index + 1)),
+    ...Array.from({ length: 50 }, (_, index) => chapterCostPercentile('CHAPTER_COST_P95', set, '0.95', index + 1)),
     judgeCostMetric(set),
   ]
 
@@ -82,7 +97,7 @@ export function aggregateReliabilityObservations(input: unknown) {
     const authority = set.exchangeabilityAuthorities.find((item) => item.stageId === stageId)
     if (!authority) throw new Error(`Missing exchangeability authority for ${stageId}`)
     return deepFreeze({ probabilityKey: 'stageId' as const, stageId, numerator: failures, denominator: observations.length,
-      failureProbability: observedValue(probabilityState(failures, observations.length), observations.length > 0 ? observations.map(ref) : [authority.decisionRef]),
+      failureProbability: observedValue(probabilityState(failures, observations.length), observations.map(ref)),
       eligibilityBoundary: 'eligible reached finalized stage outcomes pooled across chapters and executions in exact profile stratum',
       counts: extendedCounts(observations.length, 0, observations.length), coverageRatio: ratioOf(BigInt(observations.length), BigInt(observations.length || 1)),
       observationRefs: observations.map(ref), exchangeabilityAuthority: authority })
@@ -91,11 +106,17 @@ export function aggregateReliabilityObservations(input: unknown) {
   const poolMinimum = set.executionProfile === 'RELEASE_EVIDENCE' ? 30 : 1
   const completeNovelMinimum = set.executionProfile === 'RELEASE_EVIDENCE' ? 10 : 0
   const completeNovelCount = novels.filter(isSuccessfulCompleteNovel).length
+  const stagePools = centralStageFailureProbabilities.map((item) => ({ stageId: item.stageId, minimum: poolMinimum, observed: item.denominator, complete: item.denominator >= poolMinimum }))
+  const applicableCells = chapterStageDiagnostics.map((item) => ({ chapterNumber: item.chapterNumber, stageId: item.stageId, minimum: 1, observed: item.denominator, complete: item.denominator >= 1 }))
+  const completeNovels = { minimum: completeNovelMinimum, observed: completeNovelCount, complete: completeNovelCount >= completeNovelMinimum }
+  const reasonCodes = [
+    ...(stagePools.some((item) => !item.complete) ? ['STAGE_POOL_THRESHOLD_NOT_MET' as const] : []),
+    ...(applicableCells.some((item) => !item.complete) ? ['APPLICABLE_CELL_COVERAGE_INCOMPLETE' as const] : []),
+    ...(!completeNovels.complete ? ['COMPLETE_NOVEL_THRESHOLD_NOT_MET' as const] : []),
+  ]
   const profileCompleteness = deepFreeze({
-    executionProfile: set.executionProfile, exactCompatibleStratum: set.compatibleStratum,
-    stagePools: centralStageFailureProbabilities.map((item) => ({ stageId: item.stageId, minimum: poolMinimum, observed: item.denominator, complete: item.denominator >= poolMinimum })),
-    applicableCells: chapterStageDiagnostics.map((item) => ({ chapterNumber: item.chapterNumber, stageId: item.stageId, minimum: 1, observed: item.denominator, complete: item.denominator >= 1 })),
-    completeNovels: { minimum: completeNovelMinimum, observed: completeNovelCount, complete: completeNovelCount >= completeNovelMinimum },
+    executionProfile: set.executionProfile, exactCompatibleStratum: set.compatibleStratum, stagePools, applicableCells, completeNovels,
+    engineeringGate: reasonCodes.length === 0 ? 'PASS' as const : 'HOLD' as const, reasonCodes,
   })
 
   const dimensionedMetrics = buildDimensionedMetrics(set)
@@ -104,12 +125,25 @@ export function aggregateReliabilityObservations(input: unknown) {
     centralStageFailureProbabilities, chapterStageDiagnostics, profileCompleteness,
     observedCostComparators: {
       maxObservedMeanGenerationCostPerChapter: chapterComparator(set),
-      observedJudgeCostMaximum: observedMaximumCost(set.judgeEvaluations.map((item) => item.cost), set.judgeEvaluations.map(ref), 'observed judge-evaluation maximum diagnostic only'),
-      observedRetryOverheadMaximum: observedMaximumCost(calls.filter((item) => item.attemptNumber > 1).map((item) => item.actualCost), calls.filter((item) => item.attemptNumber > 1).map(ref), 'observed retry/fallback cost maximum diagnostic only'),
+      observedJudgeCostMaximum: perNovelJudgeMaximum(set),
+      observedRetryOverheadMaximum: perNovelRetryOverheadMaximum(set),
       observedCombinedNovelCostP95: combinedNovelP95(set),
       meanGenerationCostPerSuccessfulCompleteNovel: novelCostMean(set, true),
     },
-    observedCostDiagnostics: { meanGenerationSpendPerStartedNovelAttempt: { ...startedAttemptSpend(set), comparatorEligible: false as const } },
+    modeledPricingSlots: {
+      firstAttemptBaselineCost: unavailablePricingSlot(set, 'P5 pricing selection required for modeled first-attempt baseline'),
+      retryFallbackCost: unavailablePricingSlot(set, 'P5 pricing selection required for modeled retry/fallback cost'),
+      retryOverheadPercentage: unavailablePricingSlot(set, 'P5 modeled baseline and retry costs required'),
+      expectedChapterGenerationMeans: Array.from({ length: 50 }, (_, index) => ({ chapterNumber: index + 1, ...unavailablePricingSlot(set, 'P5/P6 modeled chapter mean unavailable') })),
+      expectedGenerationCostPerSuccessfulNovelRun: unavailablePricingSlot(set, 'P5/P6 modeled successful-novel mean unavailable'),
+      modeledJudgeTotal: unavailablePricingSlot(set, 'P5/P6 modeled judge total unavailable'),
+      modeledCombinedTotalNovelCostP95: unavailablePricingSlot(set, 'P5/P6 modeled combined p95 unavailable'),
+    },
+    observedCostDiagnostics: {
+      meanGenerationSpendPerStartedNovelAttempt: { ...startedAttemptSpend(set), comparatorEligible: false as const },
+      observedBaselineCost: costClassMetric('FIRST_ATTEMPT_BASELINE_COST', calls.filter((call) => call.stageId === 'PROSE_PRIMARY' || call.stageId === 'STRUCTURED_OUTPUT'), 'observed actual first-attempt diagnostic'),
+      observedRetryFallbackCost: costClassMetric('RETRY_FALLBACK_COST', calls.filter((call) => ['PROSE_RETRY', 'PROVIDER_FALLBACK', 'STRUCTURED_RETRY'].includes(call.stageId)), 'observed actual retry/fallback diagnostic'),
+    },
   })
 }
 
@@ -183,18 +217,18 @@ function costMeanResult(value: Money | null, included: number, eligible: number,
     eligibilityBoundary: boundary, counts: counts(included, eligible), coverageRatio: ratioOf(BigInt(included), BigInt(eligible || 1)), provenance: 'OBSERVED' as const, observationRefs: utf8Sort(refs) })
 }
 function extendedCounts(includedCount: number, unavailableCount: number, eligibleCount: number) { return { includedCount, excludedCount: eligibleCount - includedCount - unavailableCount, unavailableCount, eligibleCount } }
-function costClassMetric(metricId: RequiredMetricId, calls: ReliabilityObservationSet['providerCalls'], boundary: string): AggregateMetric { return costMetric(metricId, calls, 'actualCost', 'OBSERVED') && { ...costMetric(metricId, calls, 'actualCost', 'OBSERVED'), eligibilityBoundary: boundary } }
-function retryOverheadMetric(calls: ReliabilityObservationSet['providerCalls']): AggregateMetric {
-  const baseline = calls.filter((call) => call.stageId === 'PROSE_PRIMARY' || call.stageId === 'STRUCTURED_OUTPUT').flatMap((call) => call.actualCost.state === 'PRESENT' ? [call.actualCost.value] : [])
-  const retry = calls.filter((call) => ['PROSE_RETRY', 'PROVIDER_FALLBACK', 'STRUCTURED_RETRY'].includes(call.stageId)).flatMap((call) => call.actualCost.state === 'PRESENT' ? [call.actualCost.value] : [])
-  const eligible = baseline.length + retry.length
-  const value = baseline.length === 0 ? missingMeasurement<CanonicalDecimal<'PERCENTAGE'>>('COST_UNAVAILABLE', 'Retry overhead requires positive complete baseline') : presentMeasurement(percentageMoney(sumDecimals(retry, 'MONEY'), sumDecimals(baseline, 'MONEY')))
-  return metric('RETRY_OVERHEAD_PERCENTAGE', value, retry.length, baseline.length, 'retry/fallback provider cost divided by first-attempt baseline provider cost', counts(eligible, eligible), 'OBSERVED', calls.map(ref))
+function modeledUnavailableMetric(metricId: RequiredMetricId, detail: string): AggregateMetric {
+  return metric(metricId, missingMeasurement('COST_UNAVAILABLE', detail), 0, 0, 'modeled pricing slot; actual pricing selection and calculation belongs to P5', counts(0, 0), 'MODELED_FROM_PRICING', [])
 }
+function unavailablePricingSlot(set: ReliabilityObservationSet, detail: string) {
+  return deepFreeze({ provenance: 'MODELED_FROM_PRICING' as const, value: missingMeasurement<Money>('COST_UNAVAILABLE', detail), pricingSnapshotHash: set.compatibleStratum.pricingSnapshotHash, observationRefs: [] as string[] })
+}
+function costClassMetric(metricId: RequiredMetricId, calls: ReliabilityObservationSet['providerCalls'], boundary: string): AggregateMetric { return costMetric(metricId, calls, 'actualCost', 'OBSERVED') && { ...costMetric(metricId, calls, 'actualCost', 'OBSERVED'), eligibilityBoundary: boundary } }
 function percentageMoney(numerator: Money, denominator: Money): CanonicalDecimal<'PERCENTAGE'> { return percentageOf(BigInt(numerator.replace('.', '')), BigInt(denominator.replace('.', ''))) }
-function chapterCostPercentile(metricId: RequiredMetricId, set: ReliabilityObservationSet, quantile: '0.50' | '0.95'): AggregateMetric {
-  const values = set.chapterExecutions.flatMap((item) => item.generationCost.state === 'PRESENT' ? [item.generationCost.value] : [])
-  return metric(metricId, percentileCont(values, quantile, 'MONEY'), values.length === 0 ? 0 : values[0]!, set.chapterExecutions.length, 'complete observed chapter generation costs; judge excluded', counts(values.length, set.chapterExecutions.length), 'OBSERVED', set.chapterExecutions.map(ref))
+function chapterCostPercentile(metricId: RequiredMetricId, set: ReliabilityObservationSet, quantile: '0.50' | '0.95', chapterNumber: number): AggregateMetric & { chapterNumber: number } {
+  const executions = set.chapterExecutions.filter((item) => item.chapterNumber === chapterNumber)
+  const values = executions.flatMap((item) => item.generationCost.state === 'PRESENT' ? [item.generationCost.value] : [])
+  return { ...metric(metricId, percentileCont(values, quantile, 'MONEY'), values.length === 0 ? 0 : values[0]!, executions.length, `complete observed chapter ${chapterNumber} generation costs; judge excluded`, counts(values.length, executions.length), 'OBSERVED', executions.map(ref)), chapterNumber }
 }
 function judgeCostMetric(set: ReliabilityObservationSet): AggregateMetric {
   const values = set.judgeEvaluations.flatMap((item) => item.cost.state === 'PRESENT' ? [item.cost.value] : [])
@@ -202,17 +236,39 @@ function judgeCostMetric(set: ReliabilityObservationSet): AggregateMetric {
   return metric('JUDGE_EVALUATION_COST', value, value.state === 'PRESENT' ? value.value : 0, set.judgeEvaluations.length, 'required judge evaluations after successful complete novel', counts(values.length, set.judgeEvaluations.length), 'OBSERVED', set.judgeEvaluations.map(ref))
 }
 function buildDimensionedMetrics(set: ReliabilityObservationSet) {
-  const groups: Array<{ scope: 'TASK' | 'CHAPTER' | 'NOVEL'; taskId?: string; chapterNumber?: number; novelExecutionAlias?: string; calls: ReliabilityObservationSet['providerCalls'] }> = []
-  for (const taskId of ['CHAPTER_PROSE', 'CHAPTER_STRUCTURED_OUTPUT'] as const) groups.push({ scope: 'TASK', taskId, calls: set.providerCalls.filter((call) => call.taskId === taskId) })
-  for (const chapterNumber of [...new Set(set.providerCalls.map((call) => call.chapterNumber))].sort((a, b) => a - b)) groups.push({ scope: 'CHAPTER', chapterNumber, calls: set.providerCalls.filter((call) => call.chapterNumber === chapterNumber) })
-  for (const novelExecutionAlias of utf8Sort([...new Set(set.providerCalls.map((call) => call.novelExecutionAlias))])) groups.push({ scope: 'NOVEL', novelExecutionAlias, calls: set.providerCalls.filter((call) => call.novelExecutionAlias === novelExecutionAlias) })
+  const groups: Array<{ scope: 'TASK' | 'CHAPTER' | 'NOVEL'; dimensionKey: string; taskId?: string; chapterNumber?: number; calls: ReliabilityObservationSet['providerCalls']; stages: ReliabilityObservationSet['stageOutcomes'] }> = []
+  for (const taskId of ['CHAPTER_PROSE', 'CHAPTER_STRUCTURED_OUTPUT', 'RUNTIME_RECOVERY'] as const) groups.push({ scope: 'TASK', dimensionKey: `TASK.${taskId}`, taskId, calls: set.providerCalls.filter((call) => call.taskId === taskId), stages: set.stageOutcomes.filter((stage) => stage.taskId === taskId) })
+  for (let chapterNumber = 1; chapterNumber <= 50; chapterNumber += 1) groups.push({ scope: 'CHAPTER', dimensionKey: `CHAPTER.${String(chapterNumber).padStart(2, '0')}`, chapterNumber, calls: set.providerCalls.filter((call) => call.chapterNumber === chapterNumber), stages: set.stageOutcomes.filter((stage) => stage.chapterNumber === chapterNumber) })
+  groups.push({ scope: 'NOVEL', dimensionKey: 'NOVEL.ALL_EXECUTIONS', calls: set.providerCalls, stages: set.stageOutcomes })
   return groups.flatMap((group) => [
+    countMetric('RETRY_COUNT', group.stages.filter((stage) => ['PROSE_RETRY', 'CHECKPOINT_RECOVERY', 'STRUCTURED_RETRY', 'OWNERSHIP_RECOVERY', 'PUBLICATION_RECOVERY'].includes(stage.stageId)).length, group.stages.length, 'reached frozen retry-counter stages in canonical dimension scope', group.stages.map(ref), group.stages.length),
     countMetric('GENERATION_PROVIDER_CALL_COUNT', group.calls.length, group.calls.length, 'reached generation provider nodes in exact identity scope', group.calls.map(ref), group.calls.length),
     tokenMetric('INPUT_TOKEN_USAGE', group.calls, 'inputTokens'), tokenMetric('OUTPUT_TOKEN_USAGE', group.calls, 'outputTokens'), tokenMetric('TOTAL_TOKEN_USAGE', group.calls, 'totalTokens'),
     costMetric('ACTUAL_PROVIDER_COST', group.calls, 'actualCost', 'OBSERVED'), costMetric('PRICING_ESTIMATED_COST', group.calls, 'estimatedCost', 'MODELED_FROM_PRICING'),
-  ].map((item) => ({ ...item, ...group, calls: undefined, providerModelPolicyId: set.compatibleStratum.providerModelPolicyId, actualCostSource: group.calls[0]?.actualCostSource ?? null, pricingSnapshotHash: set.compatibleStratum.pricingSnapshotHash })))
+  ].map((item) => ({ ...item, scope: group.scope, dimensionKey: group.dimensionKey, taskId: group.taskId, chapterNumber: group.chapterNumber,
+    providerModelPolicyId: set.compatibleStratum.providerModelPolicyId, actualCostSource: group.calls[0]?.actualCostSource ?? null, pricingSnapshotHash: set.compatibleStratum.pricingSnapshotHash })))
 }
-function observedMaximumCost(states: readonly MeasurementState<Money>[], refs: string[], boundary: string) { const values = states.flatMap((item) => item.state === 'PRESENT' ? [item.value] : []); const maximum = values.reduce<Money | null>((current, value) => current === null || compareDecimals(value, current, 'MONEY') > 0 ? value : current, null); return costMeanResult(maximum, values.length, states.length, boundary, refs) }
-function combinedNovelP95(set: ReliabilityObservationSet) { const values = set.novelExecutions.flatMap((novel) => { if (novel.generationCost.state !== 'PRESENT') return []; const judges = set.judgeEvaluations.filter((judge) => judge.novelExecutionAlias === novel.novelExecutionAlias); if (judges.some((judge) => judge.cost.state !== 'PRESENT')) return []; return [sumDecimals([novel.generationCost.value, ...judges.flatMap((judge) => judge.cost.state === 'PRESENT' ? [judge.cost.value] : [])], 'MONEY')] }); return { value: percentileCont(values, '0.95', 'MONEY'), denominator: values.length, eligibilityBoundary: 'complete observed successful novel generation plus complete judge costs', counts: counts(values.length, set.novelExecutions.length), coverageRatio: ratioOf(BigInt(values.length), BigInt(set.novelExecutions.length || 1)), provenance: 'OBSERVED' as const, observationRefs: utf8Sort([...set.novelExecutions.map(ref), ...set.judgeEvaluations.map(ref)]) } }
+function perNovelJudgeMaximum(set: ReliabilityObservationSet) {
+  const eligible = set.novelExecutions.filter(isSuccessfulCompleteNovel)
+  const totals = eligible.flatMap((novel) => { const judges = set.judgeEvaluations.filter((item) => item.novelExecutionAlias === novel.novelExecutionAlias); return judges.length === set.judgePlanAuthority.evaluations.length && judges.every((item) => item.cost.state === 'PRESENT') ? [sumDecimals(judges.flatMap((item) => item.cost.state === 'PRESENT' ? [item.cost.value] : []), 'MONEY')] : [] })
+  const maximum = totals.reduce<Money | null>((current, value) => current === null || compareDecimals(value, current, 'MONEY') > 0 ? value : current, null)
+  return costMeanResult(maximum, totals.length, eligible.length, 'maximum complete exact judge-plan total per successful complete novel', [...eligible.map(ref), ...set.judgeEvaluations.map(ref)])
+}
+function perNovelRetryOverheadMaximum(set: ReliabilityObservationSet) {
+  const eligible = set.novelExecutions.filter(isSuccessfulCompleteNovel)
+  const values = eligible.flatMap((novel) => {
+    const calls = set.providerCalls.filter((call) => call.novelExecutionAlias === novel.novelExecutionAlias)
+    if (calls.some((call) => call.actualCost.state !== 'PRESENT')) return []
+    const baseline = calls.filter((call) => call.stageId === 'PROSE_PRIMARY' || call.stageId === 'STRUCTURED_OUTPUT').flatMap((call) => call.actualCost.state === 'PRESENT' ? [call.actualCost.value] : [])
+    const retry = calls.filter((call) => ['PROSE_RETRY', 'PROVIDER_FALLBACK', 'STRUCTURED_RETRY'].includes(call.stageId)).flatMap((call) => call.actualCost.state === 'PRESENT' ? [call.actualCost.value] : [])
+    const baselineTotal = sumDecimals(baseline, 'MONEY')
+    if (baseline.length === 0 || baselineTotal === '0.00000000') return []
+    return [percentageMoney(sumDecimals(retry, 'MONEY'), baselineTotal)]
+  })
+  const maximum = values.reduce<CanonicalDecimal<'PERCENTAGE'> | null>((current, value) => current === null || compareDecimals(value, current, 'PERCENTAGE') > 0 ? value : current, null)
+  return deepFreeze({ value: maximum === null ? missingMeasurement<CanonicalDecimal<'PERCENTAGE'>>('COST_UNAVAILABLE', 'No complete observed per-novel retry overhead') : presentMeasurement(maximum), denominator: values.length,
+    eligibilityBoundary: 'maximum retry/fallback actual cost divided by baseline actual cost per successful complete novel', counts: counts(values.length, eligible.length), coverageRatio: ratioOf(BigInt(values.length), BigInt(eligible.length || 1)), provenance: 'OBSERVED' as const, observationRefs: utf8Sort([...eligible.map(ref), ...set.providerCalls.map(ref)]) })
+}
+function combinedNovelP95(set: ReliabilityObservationSet) { const eligible = set.novelExecutions.filter(isSuccessfulCompleteNovel); const values = eligible.flatMap((novel) => { if (novel.generationCost.state !== 'PRESENT') return []; const judges = set.judgeEvaluations.filter((judge) => judge.novelExecutionAlias === novel.novelExecutionAlias); if (judges.length !== set.judgePlanAuthority.evaluations.length || judges.some((judge) => judge.cost.state !== 'PRESENT')) return []; return [sumDecimals([novel.generationCost.value, ...judges.flatMap((judge) => judge.cost.state === 'PRESENT' ? [judge.cost.value] : [])], 'MONEY')] }); return { value: percentileCont(values, '0.95', 'MONEY'), denominator: values.length, eligibilityBoundary: 'successful complete chapter 1..50 novel with complete generation total and exact complete judge plan', counts: counts(values.length, eligible.length), coverageRatio: ratioOf(BigInt(values.length), BigInt(eligible.length || 1)), provenance: 'OBSERVED' as const, observationRefs: utf8Sort([...eligible.map(ref), ...set.judgeEvaluations.map(ref)]) } }
 function utf8Sort(values: readonly string[]): string[] { return [...values].sort((left, right) => Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'))) }
 function deepFreeze<T>(value: T): T { if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) { for (const nested of Object.values(value)) deepFreeze(nested); Object.freeze(value) }; return value }

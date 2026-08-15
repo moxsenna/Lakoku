@@ -215,7 +215,11 @@ export function observedValueSchema<T>(valueSchema: z.ZodType<T>) {
   return z.strictObject({
     provenance: z.literal('OBSERVED'),
     value: measurementStateSchema(valueSchema),
-    observationRefs: OBSERVATION_REFERENCES_SCHEMA,
+    observationRefs: z.array(OBSERVATION_REFERENCE_SCHEMA),
+  }).superRefine((input, context) => {
+    if (input.value.state !== 'MISSING' && input.observationRefs.length === 0) {
+      context.addIssue({ code: 'custom', message: 'Present observed value requires observation reference', path: ['observationRefs'] })
+    }
   }).transform((input) => observedValue(input.value, input.observationRefs))
 }
 
@@ -254,7 +258,8 @@ export function businessAuthorityValueSchema<T>(valueSchema: z.ZodType<T>) {
 
 export function observedValue<T>(value: MeasurementState<T>, refs: readonly string[]): ObservedValue<T> {
   const parsedValue = parseMeasurementState(value)
-  const parsedRefs = OBSERVATION_REFERENCES_SCHEMA.parse(refs).slice().sort()
+  const parsedRefs = z.array(OBSERVATION_REFERENCE_SCHEMA).parse(refs).slice().sort()
+  if (parsedValue.state !== 'MISSING' && parsedRefs.length === 0) throw new Error('Present observed value requires observation reference')
   const result: ObservedValue<T> = { provenance: 'OBSERVED', value: parsedValue, observationRefs: parsedRefs, [observedBrand]: true }
   return deepFreeze(result)
 }

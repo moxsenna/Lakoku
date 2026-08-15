@@ -117,6 +117,7 @@ describe('M10-E reliability contracts', () => {
     expect(observed.observationRefs).toEqual(['obs-1', 'obs-2'])
     expect(Object.isFrozen(observed)).toBe(true)
     expect(() => observedValue(presentMeasurement(0), [])).toThrow()
+    expect(observedValue(missingMeasurement('OBSERVATION_COVERAGE_INCOMPLETE', 'empty observed pool'), []).observationRefs).toEqual([])
     expect(() => observedValue(presentMeasurement(0), [''])).toThrow()
     expect(assumedValue('0.1', assumption)).toMatchObject({ provenance: 'ASSUMPTION' })
     expect(modeledValue('0.2', model, 'a'.repeat(64))).toMatchObject({ provenance: 'MODELED' })

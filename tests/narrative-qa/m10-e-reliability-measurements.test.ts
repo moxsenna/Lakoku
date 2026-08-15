@@ -6,6 +6,8 @@ import {
   createChapterStageExchangeabilityAuthorities,
   createFixtureTopologyAuthority,
   createJudgePlanAuthority,
+  createObservationSourceAuthority,
+  createTimingSourceAuthority,
   getStageSemantics,
   sortProviderCallObservationsUtf8,
   validateReliabilityObservationSet,
@@ -30,11 +32,21 @@ function getRuntimeAuthority() {
   return applicability.authority
 }
 
+export function addSuccessfulCompleteNovel(set: ReturnType<typeof validSet>, suffix: string, generationCost = '0.00000000') {
+  const novelExecutionAlias = `novel_${suffix}`
+  const storyAlias = `story_${suffix}`
+  set.novelExecutions.push({ ...structuredClone(set.novelExecutions[0]!), observationId: `novel_obs_${suffix}`, novelExecutionAlias, storyAlias, terminalOutcome: 'SUCCESS', completedChapterNumbers: Array.from({ length: 50 }, (_, index) => index + 1), generationCost: present(generationCost) })
+  for (let chapterNumber = 1; chapterNumber <= 50; chapterNumber += 1) set.chapterExecutions.push({ ...structuredClone(set.chapterExecutions[0]!), observationId: `chapter_obs_${suffix}_${chapterNumber}`, novelExecutionAlias, storyAlias, chapterExecutionAlias: `chapter_${suffix}_${chapterNumber}`, chapterNumber, generationCost: present('0.00000000') })
+  set.judgeEvaluations.push(...set.judgePlanAuthority.evaluations.map((entry, index) => ({ observationId: `judge_obs_${suffix}_${index}`, judgeEvaluationAlias: `judge_${suffix}_${index}`, storyAlias, novelExecutionAlias, ...entry, outcome: 'SUCCESS', cost: present('0.00000000'), currency: 'IDR', startedAt: '2026-08-15T00:00:01.000Z', endedAt: '2026-08-15T00:00:02.000Z' })))
+}
+
 export function validSet() {
   return {
     executionProfile: 'CONTRACT_FIXTURE' as ExecutionProfile,
     compatibleStratum: stratum,
     exchangeabilityAuthorities: createChapterStageExchangeabilityAuthorities('CONTRACT_FIXTURE', stratum),
+    observationSourceAuthority: createObservationSourceAuthority(),
+    timingSourceAuthority: createTimingSourceAuthority(),
     fixtureTopologyAuthority: createFixtureTopologyAuthority([{ chapterNumber: 1, stageId: 'PROSE_PRIMARY' }]),
     judgePlanAuthority: createJudgePlanAuthority('provider_v1', 'IDR'),
     declaredApplicableCells: [{ chapterNumber: 1, stageId: 'PROSE_PRIMARY' as (typeof M10_E_STAGE_CATALOG_V1.stages)[number] }],
@@ -108,25 +120,46 @@ describe('M10-E strict reliability measurements', () => {
     }
   })
 
-  it('allows judges only on successful complete novel with exact judge plan entry', () => {
+  it('allows judges only on successful complete novel with exact complete ordered judge plan', () => {
     const set = validSet()
     set.novelExecutions[0]!.terminalOutcome = 'SUCCESS'
     set.novelExecutions[0]!.completedChapterNumbers = Array.from({ length: 50 }, (_, index) => index + 1)
-    set.judgeEvaluations.push({
-      observationId: 'judge_obs', judgeEvaluationAlias: 'judge_a', storyAlias: 'story_a', novelExecutionAlias: 'novel_a',
-      judgeTaskId: 'D-R1', evaluationIndex: 0, providerModelPolicyId: 'provider_v1', outcome: 'SUCCESS',
-      cost: present('1.00000000'), currency: 'IDR', startedAt: '2026-08-15T00:00:01.000Z', endedAt: '2026-08-15T00:00:02.000Z',
-    })
+    for (let chapterNumber = 2; chapterNumber <= 50; chapterNumber += 1) {
+      set.chapterExecutions.push({ ...structuredClone(set.chapterExecutions[0]!), observationId: `chapter_obs_${chapterNumber}`, chapterExecutionAlias: `chapter_${chapterNumber}`, chapterNumber, generationCost: present('0.00000000') })
+    }
+    set.judgeEvaluations = set.judgePlanAuthority.evaluations.map((entry, index) => ({
+      observationId: `judge_obs_${index}`, judgeEvaluationAlias: `judge_${index}`, storyAlias: 'story_a', novelExecutionAlias: 'novel_a',
+      ...entry, outcome: 'SUCCESS', cost: present('1.00000000'), currency: 'IDR',
+      startedAt: '2026-08-15T00:00:01.000Z', endedAt: '2026-08-15T00:00:02.000Z',
+    }))
     expect(() => validateReliabilityObservationSet(set)).not.toThrow()
     for (const mutate of [
-      (copy: ReturnType<typeof validSet>) => { copy.novelExecutions[0]!.terminalOutcome = 'PARTIAL_FAILURE' },
-      (copy: ReturnType<typeof validSet>) => { copy.judgeEvaluations[0]!.evaluationIndex = 9 },
-      (copy: ReturnType<typeof validSet>) => { copy.judgeEvaluations[0]!.providerModelPolicyId = 'other' },
+      (copy: typeof set) => { copy.novelExecutions[0]!.terminalOutcome = 'PARTIAL_FAILURE' },
+      (copy: typeof set) => { copy.judgeEvaluations[0]!.evaluationIndex = 9 },
+      (copy: typeof set) => { copy.judgeEvaluations[0]!.providerModelPolicyId = 'other' },
+      (copy: typeof set) => { copy.judgeEvaluations.pop() },
+      (copy: typeof set) => { copy.judgeEvaluations.reverse() },
     ]) {
       const copy = structuredClone(set)
       mutate(copy)
       expect(() => validateReliabilityObservationSet(copy)).toThrow()
     }
+  })
+
+  it('binds authorized observation source and exact fractional elapsed time', () => {
+    const set = validSet()
+    set.providerCalls[0]!.startedAt = '2026-08-15T00:00:00.000123Z'
+    set.providerCalls[0]!.endedAt = '2026-08-15T00:00:01.234690Z'
+    set.providerCalls[0]!.elapsedMilliseconds = present('1234.567')
+    expect(() => validateReliabilityObservationSet(set)).not.toThrow()
+
+    const elapsedMismatch = structuredClone(set)
+    elapsedMismatch.providerCalls[0]!.elapsedMilliseconds = present('1234.568')
+    expect(() => validateReliabilityObservationSet(elapsedMismatch)).toThrow(/elapsed/i)
+
+    const sourceMismatch = structuredClone(set)
+    Object.assign(sourceMismatch.observationSourceAuthority, { sourceKind: 'E1_FAULT_INJECTION_FREQUENCY' })
+    expect(() => validateReliabilityObservationSet(sourceMismatch)).toThrow()
   })
 
   it('rejects NOT_APPLICABLE provider measurements', () => {

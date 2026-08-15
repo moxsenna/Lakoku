@@ -98,6 +98,29 @@ export const JUDGE_EVALUATION_OBSERVATION_SCHEMA = z.strictObject({
 })
 export type JudgeEvaluationObservation = z.infer<typeof JUDGE_EVALUATION_OBSERVATION_SCHEMA>
 
+const SOURCE_AUTHORITY_SCHEMA = z.strictObject({
+  authorityVersion: z.literal('M10_E_OBSERVATION_SOURCE_V1'), sourceKind: z.literal('AUTHORIZED_TELEMETRY_OBSERVATIONS'),
+  excludedSources: z.tuple([z.literal('E1_FAULT_INJECTION_FREQUENCY'), z.literal('E2_FAULT_INJECTION_FREQUENCY')]),
+  decisionRef: z.string().min(1), canonicalHash: SHA256_SCHEMA,
+})
+const TIMING_AUTHORITY_SCHEMA = z.strictObject({
+  authorityVersion: z.literal('M10_E_EXACT_ELAPSED_TIME_V1'), sourceKind: z.literal('START_END_TIMESTAMPS'),
+  arithmetic: z.literal('EXACT_GREGORIAN_BIGINT_MICROSECONDS'), decisionRef: z.string().min(1), canonicalHash: SHA256_SCHEMA,
+})
+export type ObservationSourceAuthority = z.infer<typeof SOURCE_AUTHORITY_SCHEMA>
+export type TimingSourceAuthority = z.infer<typeof TIMING_AUTHORITY_SCHEMA>
+const AUTHORITY_REF = 'docs/superpowers/specs/2026-08-13-m10-e-e3a-e4-reliability-economics-design.md'
+function createHashedAuthority<T extends Record<string, unknown>>(payload: T): T & { canonicalHash: string } {
+  return deepFreeze({ ...payload, canonicalHash: computeSha256(stableStringify(payload)) })
+}
+export function createObservationSourceAuthority(): ObservationSourceAuthority {
+  return createHashedAuthority({ authorityVersion: 'M10_E_OBSERVATION_SOURCE_V1' as const, sourceKind: 'AUTHORIZED_TELEMETRY_OBSERVATIONS' as const,
+    excludedSources: ['E1_FAULT_INJECTION_FREQUENCY', 'E2_FAULT_INJECTION_FREQUENCY'] as const, decisionRef: AUTHORITY_REF })
+}
+export function createTimingSourceAuthority(): TimingSourceAuthority {
+  return createHashedAuthority({ authorityVersion: 'M10_E_EXACT_ELAPSED_TIME_V1' as const, sourceKind: 'START_END_TIMESTAMPS' as const,
+    arithmetic: 'EXACT_GREGORIAN_BIGINT_MICROSECONDS' as const, decisionRef: AUTHORITY_REF })
+}
 const CELL_SCHEMA = z.strictObject({ chapterNumber: CHAPTER_NUMBER_SCHEMA, stageId: STAGE_ID_SCHEMA })
 const FIXTURE_TOPOLOGY_AUTHORITY_SCHEMA = z.strictObject({
   authorityVersion: z.literal('M10_E_FIXTURE_TOPOLOGY_V1'), decisionRef: z.string().min(1), cells: z.array(CELL_SCHEMA).min(1), canonicalHash: SHA256_SCHEMA,
@@ -113,6 +136,8 @@ const SET_SCHEMA = z.strictObject({
   executionProfile: EXECUTION_PROFILE_SCHEMA,
   compatibleStratum: COMPATIBLE_STRATUM_IDENTITY_SCHEMA,
   exchangeabilityAuthorities: z.array(z.unknown()),
+  observationSourceAuthority: SOURCE_AUTHORITY_SCHEMA,
+  timingSourceAuthority: TIMING_AUTHORITY_SCHEMA,
   fixtureTopologyAuthority: FIXTURE_TOPOLOGY_AUTHORITY_SCHEMA,
   judgePlanAuthority: z.unknown(),
   declaredApplicableCells: z.array(CELL_SCHEMA),
@@ -133,6 +158,8 @@ export function validateReliabilityObservationSet(value: unknown): ReliabilityOb
   const parsed = SET_SCHEMA.parse(value)
   const authorities = validateChapterStageExchangeabilityAuthorities(parsed.exchangeabilityAuthorities, parsed.executionProfile, parsed.compatibleStratum)
   const judgePlan = validateJudgePlanAuthority(parsed.judgePlanAuthority, parsed.compatibleStratum.providerModelPolicyId)
+  validateExactAuthority(parsed.observationSourceAuthority, createObservationSourceAuthority(), 'Observation source')
+  validateExactAuthority(parsed.timingSourceAuthority, createTimingSourceAuthority(), 'Timing source')
   validateFixtureTopology(parsed)
   assertUnique([
     ...parsed.providerCalls, ...parsed.stageOutcomes, ...parsed.logicalGenerationUnits, ...parsed.recoveryActions,
@@ -142,6 +169,10 @@ export function validateReliabilityObservationSet(value: unknown): ReliabilityOb
   assertUnique(parsed.providerCalls.map((item) => item.callAlias), 'provider-call alias')
   assertUnique(parsed.stageOutcomes.map((item) => item.stageExecutionAlias), 'stage-execution alias')
   assertUnique(parsed.logicalGenerationUnits.map((item) => item.logicalUnitAlias), 'logical-unit alias')
+  assertUnique(parsed.recoveryActions.map((item) => item.recoveryAlias), 'recovery alias')
+  assertUnique(parsed.publicationAttempts.map((item) => item.publicationAttemptAlias), 'publication-attempt alias')
+  assertUnique(parsed.canonicalInvariantChecks.map((item) => item.invariantCheckAlias), 'invariant-check alias')
+  assertUnique(parsed.judgeEvaluations.map((item) => item.judgeEvaluationAlias), 'judge-evaluation alias')
 
   const currency = firstCurrency(parsed)
   if (new Set(parsed.providerCalls.map((call) => call.actualCostSource)).size > 1) throw new Error('Mixed actual cost sources cannot be aggregated in one exact stratum')
@@ -154,6 +185,7 @@ export function validateReliabilityObservationSet(value: unknown): ReliabilityOb
     if (call.providerModelPolicyId !== parsed.compatibleStratum.providerModelPolicyId) throw new Error('Provider/model policy conflicts with compatible stratum')
     if (call.pricingSnapshotHash !== parsed.compatibleStratum.pricingSnapshotHash) throw new Error('Pricing snapshot conflicts with compatible stratum')
     assertTime(call.startedAt, call.endedAt)
+    assertElapsed(call.startedAt, call.endedAt, call.elapsedMilliseconds)
     if (semantics.attemptClass === 'FALLBACK' ? call.fallbackIndex < 1 : call.fallbackIndex !== 0) throw new Error('Fallback index conflicts with frozen stage semantics')
     if (call.inputTokens.state === 'PRESENT' && call.outputTokens.state === 'PRESENT' && call.totalTokens.state === 'PRESENT'
       && call.inputTokens.value + call.outputTokens.value !== call.totalTokens.value) throw new Error('Provider token total mismatch')
@@ -173,6 +205,7 @@ export function validateReliabilityObservationSet(value: unknown): ReliabilityOb
   }
   for (const unit of parsed.logicalGenerationUnits) {
     assertTime(unit.startedAt, unit.endedAt)
+    assertElapsed(unit.startedAt, unit.endedAt, unit.elapsedMilliseconds)
     const attempts = parsed.providerCalls.filter((call) => call.logicalUnitAlias === unit.logicalUnitAlias)
       .sort((left, right) => left.attemptNumber - right.attemptNumber)
     if (attempts.length !== unit.attemptCount || attempts.some((call, index) => call.attemptNumber !== index + 1)) throw new Error('Provider attempts must be contiguous and unique from 1')
@@ -184,6 +217,7 @@ export function validateReliabilityObservationSet(value: unknown): ReliabilityOb
     const stage = parsed.stageOutcomes.find((item) => item.stageExecutionAlias === recovery.stageExecutionAlias)
     if (!stage || !sameChapterIdentity(recovery, stage) || stage.stageId !== recovery.stageId || recovery.taskId !== semantics.taskId || semantics.retryCounterEffect !== 'INCREMENT') throw new Error('Recovery action must bind exact reached retry-counter stage')
     assertTime(recovery.startedAt, recovery.endedAt)
+    assertElapsed(recovery.startedAt, recovery.endedAt, recovery.elapsedMilliseconds)
     if (recovery.reusedExactValidCheckpoint && !recovery.checkpointDecisionObserved) throw new Error('Checkpoint reuse requires observed checkpoint decision')
     if (recovery.regeneratedProse && !recovery.choiceRetryAfterValidProseCheckpoint) throw new Error('Prose regeneration flag requires eligible choice retry')
   }
@@ -228,6 +262,7 @@ function validateExecutionIdentitiesAndCosts(set: z.infer<typeof SET_SCHEMA>, ju
   const chapters = new Map(set.chapterExecutions.map((item) => [item.chapterExecutionAlias, item]))
   assertUnique(set.novelExecutions.map((item) => item.novelExecutionAlias), 'novel execution alias')
   assertUnique(set.chapterExecutions.map((item) => item.chapterExecutionAlias), 'chapter execution alias')
+  for (const item of [...set.providerCalls, ...set.stageOutcomes, ...set.logicalGenerationUnits, ...set.recoveryActions, ...set.publicationAttempts, ...set.canonicalInvariantChecks]) requireChapterParent(item, chapters)
   for (const chapter of set.chapterExecutions) {
     const novel = novels.get(chapter.novelExecutionAlias)
     if (!novel || novel.storyAlias !== chapter.storyAlias) throw new Error('Chapter parent novel identity mismatch')
@@ -243,15 +278,24 @@ function validateExecutionIdentitiesAndCosts(set: z.infer<typeof SET_SCHEMA>, ju
     if (novel.terminalOutcome === 'SUCCESS' && novel.completedChapterNumbers.length !== 50) throw new Error('Successful novel must complete chapters 1..50')
     const linked = set.chapterExecutions.filter((item) => item.novelExecutionAlias === novel.novelExecutionAlias)
     if (linked.some((item) => item.storyAlias !== novel.storyAlias)) throw new Error('Novel child story identity mismatch')
+    const linkedNumbers = [...linked].sort((left, right) => left.chapterNumber - right.chapterNumber).map((item) => item.chapterNumber)
+    if (new Set(linkedNumbers).size !== linkedNumbers.length || stableStringify(linkedNumbers) !== stableStringify(novel.completedChapterNumbers)) throw new Error('Novel completed chapters must equal exact unique linked chapter sequence')
+    if (novel.terminalOutcome === 'PARTIAL_FAILURE' && linked.every((item) => item.terminalOutcome === 'SUCCESS') && linked.length === 50) throw new Error('Partial novel must contain terminal chapter failure or stop before chapter 50')
     assertCostMatchesCalls(novel.generationCost, set.providerCalls.filter((item) => item.novelExecutionAlias === novel.novelExecutionAlias), 'Novel generation cost')
   }
   for (const recovery of set.recoveryActions) requireChapterParent(recovery, chapters)
   for (const publication of set.publicationAttempts) requireChapterParent(publication, chapters)
   for (const check of set.canonicalInvariantChecks) requireChapterParent(check, chapters)
+  const eligibleNovels = set.novelExecutions.filter((novel) => novel.terminalOutcome === 'SUCCESS' && novel.completedChapterNumbers.length === 50)
+  for (const novel of eligibleNovels) {
+    const judges = set.judgeEvaluations.filter((judge) => judge.novelExecutionAlias === novel.novelExecutionAlias)
+    const actualPlan = judges.map(({ judgeTaskId, evaluationIndex, providerModelPolicyId }) => ({ judgeTaskId, evaluationIndex, providerModelPolicyId }))
+    if (stableStringify(actualPlan) !== stableStringify(judgePlan.evaluations)) throw new Error('Successful complete novel requires exact complete ordered judge plan')
+  }
   for (const judge of set.judgeEvaluations) {
     const novel = novels.get(judge.novelExecutionAlias)
     if (!novel || novel.storyAlias !== judge.storyAlias || novel.terminalOutcome !== 'SUCCESS' || novel.completedChapterNumbers.length !== 50) throw new Error('Judge requires matching successful complete novel')
-    if (judge.providerModelPolicyId !== set.compatibleStratum.providerModelPolicyId || !judgePlan.evaluations.some((item) => item.judgeTaskId === judge.judgeTaskId && item.evaluationIndex === judge.evaluationIndex && item.providerModelPolicyId === judge.providerModelPolicyId)) throw new Error('Judge evaluation not in exact judge plan')
+    if (judge.providerModelPolicyId !== set.compatibleStratum.providerModelPolicyId) throw new Error('Judge evaluation not in exact judge plan')
   }
 }
 function requireChapterParent(item: { chapterExecutionAlias: string; storyAlias: string; novelExecutionAlias: string; chapterNumber: number }, chapters: Map<string, z.infer<typeof CHAPTER_EXECUTION_OBSERVATION_SCHEMA>>): void {
@@ -270,7 +314,34 @@ function utf8SortCells<T extends { chapterNumber: number; stageId: string }>(cel
 function sameChapterIdentity(left: { storyAlias: string; novelExecutionAlias: string; chapterExecutionAlias: string; chapterNumber: number }, right: { storyAlias: string; novelExecutionAlias: string; chapterExecutionAlias: string; chapterNumber: number }): boolean {
   return left.storyAlias === right.storyAlias && left.novelExecutionAlias === right.novelExecutionAlias && left.chapterExecutionAlias === right.chapterExecutionAlias && left.chapterNumber === right.chapterNumber
 }
-function assertTime(start: string, end: string): void { if (Date.parse(end) < Date.parse(start)) throw new Error('Observation end time precedes start time') }
+function validateExactAuthority<T>(actual: T, expected: T, label: string): void {
+  if (stableStringify(actual) !== stableStringify(expected)) throw new Error(`${label} authority mismatch`)
+}
+function assertTime(start: string, end: string): void { if (timestampMicroseconds(end) < timestampMicroseconds(start)) throw new Error('Observation end time precedes start time') }
+function assertElapsed(start: string, end: string, elapsed: z.infer<typeof LATENCY_STATE>): void {
+  if (elapsed.state !== 'PRESENT') return
+  const micros = timestampMicroseconds(end) - timestampMicroseconds(start)
+  const expected = `${micros / BigInt("1000")}.${(micros % BigInt("1000")).toString().padStart(3, '0')}`
+  if (elapsed.value !== expected) throw new Error('Elapsed milliseconds mismatch exact timestamp authority')
+}
+function timestampMicroseconds(value: string): bigint {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/.exec(value)
+  if (!match) throw new Error('Invalid exact timestamp')
+  const year = BigInt(match[1]!), month = BigInt(match[2]!), day = BigInt(match[3]!)
+  const hour = BigInt(match[4]!), minute = BigInt(match[5]!), second = BigInt(match[6]!)
+  const fraction = (match[7] ?? '').padEnd(9, '0')
+  const micros = (BigInt(fraction) + BigInt("500")) / BigInt("1000")
+  const offset = match[8] === 'Z' ? BigInt("0") : (match[8]![0] === '-' ? -BigInt("1") : BigInt("1")) * (BigInt(match[8]!.slice(1, 3)) * BigInt("60") + BigInt(match[8]!.slice(4, 6)))
+  return (((daysFromCivil(year, month, day) * BigInt("24") + hour) * BigInt("60") + minute - offset) * BigInt("60") + second) * BigInt("1000000") + micros
+}
+function daysFromCivil(yearValue: bigint, monthValue: bigint, day: bigint): bigint {
+  const year = yearValue - (monthValue <= BigInt("2") ? BigInt("1") : BigInt("0"))
+  const era = year >= BigInt("0") ? year / BigInt("400") : (year - BigInt("399")) / BigInt("400")
+  const yearOfEra = year - era * BigInt("400")
+  const month = monthValue + (monthValue > BigInt("2") ? -BigInt("3") : BigInt("9"))
+  const dayOfYear = (BigInt("153") * month + BigInt("2")) / BigInt("5") + day - BigInt("1")
+  return era * BigInt("146097") + (yearOfEra * BigInt("365") + yearOfEra / BigInt("4") - yearOfEra / BigInt("100") + dayOfYear) - BigInt("719468")
+}
 function assertUnique(values: readonly string[], label: string): void { if (new Set(values).size !== values.length) throw new Error(`Duplicate ${label}`) }
 function firstCurrency(set: z.infer<typeof SET_SCHEMA>): string | null { return set.providerCalls[0]?.currency ?? set.chapterExecutions[0]?.currency ?? set.novelExecutions[0]?.currency ?? set.judgeEvaluations[0]?.currency ?? null }
 function deepFreeze<T>(value: T): T { if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) { for (const nested of Object.values(value)) deepFreeze(nested); Object.freeze(value) }; return value }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { aggregateReliabilityObservations, createChapterStageExchangeabilityAuthorities, createFixtureTopologyAuthority } from '../../lib/narrative-qa/reliability'
-import { validSet } from './m10-e-reliability-measurements.test'
+import { aggregateReliabilityObservations, classifyReliabilityObservations, createChapterStageExchangeabilityAuthorities, createFixtureTopologyAuthority } from '../../lib/narrative-qa/reliability'
+import { addSuccessfulCompleteNovel, validSet } from './m10-e-reliability-measurements.test'
 
 function repeatedStageSet(profile: 'CONTRACT_FIXTURE' | 'RELEASE_EVIDENCE', count: number) {
   const set = validSet()
@@ -45,10 +45,7 @@ describe('M10-E profile completeness thresholds', () => {
 
   it.each([[9, false], [10, true], [11, true]] as const)('release complete novel count %i completeness is %s', (count, expected) => {
     const set = repeatedStageSet('RELEASE_EVIDENCE', 30)
-    set.novelExecutions = [set.novelExecutions[0]!, ...Array.from({ length: count }, (_, index) => ({
-      ...structuredClone(set.novelExecutions[0]!), observationId: `novel_${index}`, novelExecutionAlias: `novel_${index}`,
-      storyAlias: `story_${index}`, terminalOutcome: 'SUCCESS' as const, completedChapterNumbers: Array.from({ length: 50 }, (_value, chapter) => chapter + 1), generationCost: { state: 'PRESENT' as const, value: '0.00000000' },
-    }))]
+    for (let index = 0; index < count; index += 1) addSuccessfulCompleteNovel(set, `release_${index}`)
     expect(aggregateReliabilityObservations(set).profileCompleteness.completeNovels).toMatchObject({ minimum: 10, observed: count, complete: expected })
   })
 
@@ -78,7 +75,20 @@ describe('M10-E profile completeness thresholds', () => {
     expect(probability.failureProbability.value.state).toBe('MISSING')
     expect(probability.denominator).toBe(0)
     expect(probability.observationRefs).toEqual([])
+    expect(probability.failureProbability.observationRefs).toEqual([])
     expect(probability.counts).toEqual({ includedCount: 0, excludedCount: 0, unavailableCount: 0, eligibleCount: 0 })
+  })
+
+  it('classifies coverage deficiency HOLD with deterministic reason codes', () => {
+    const incomplete = aggregateReliabilityObservations(repeatedStageSet('CONTRACT_FIXTURE', 0)).profileCompleteness
+    expect(incomplete.engineeringGate).toBe('HOLD')
+    expect(incomplete.reasonCodes).toEqual(['STAGE_POOL_THRESHOLD_NOT_MET', 'APPLICABLE_CELL_COVERAGE_INCOMPLETE'])
+  })
+
+  it('classifies malformed authority FAIL without converting coverage HOLD', () => {
+    const malformed = repeatedStageSet('CONTRACT_FIXTURE', 1)
+    malformed.exchangeabilityAuthorities = malformed.exchangeabilityAuthorities.slice(1)
+    expect(classifyReliabilityObservations(malformed)).toMatchObject({ engineeringGate: 'FAIL', reasonCodes: ['MALFORMED_EVIDENCE'] })
   })
 
   it('rejects missing, malformed, or incompatible exchangeability rather than holding', () => {

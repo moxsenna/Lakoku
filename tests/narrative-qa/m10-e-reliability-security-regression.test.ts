@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -9,7 +9,6 @@ import {
 const ROOT = resolve(process.cwd())
 
 function listLibFiles(): string[] {
-  const { readdirSync } = require('node:fs') as typeof import('node:fs')
   const files: string[] = []
   const pending = [join(ROOT, 'lib', 'narrative-qa', 'reliability')]
   while (pending.length > 0) {

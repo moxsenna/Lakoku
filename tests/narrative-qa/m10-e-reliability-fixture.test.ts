@@ -15,7 +15,6 @@ import {
   computeReliabilitySemanticHash,
   computeReportHash,
   deriveObservedChapterCostMeans,
-  renderReliabilityReport,
   assertReliabilityReportHasNoProhibitedClaims,
   assertReliabilityReportHasNoPrivateData,
   runCumulativeModel,
@@ -35,7 +34,6 @@ import {
   FIXTURE_GENERATION_DISTRIBUTION_KEY_COUNT,
   FIXTURE_SEED,
   FIXTURE_SOURCE_AUTHORITY,
-  FIXTURE_SPEC_SHA,
   FIXTURE_STAGE_POOL_COUNT,
   FIXTURE_DECLARED_APPLICABLE_CELL_COUNT,
   buildModelInputRecordFixture,
@@ -56,7 +54,6 @@ import closureAuthorityJson from '../../fixtures/m10-e/e1-e2-closure-authority.j
 
 const FIXTURE_DIR = resolve(process.cwd(), 'fixtures/m10-e')
 const HEX64 = /^[0-9a-f]{64}$/
-const HEX40 = /^[0-9a-f]{40}$/
 const MODEL_TIMEOUT = 180_000
 
 function itSlow(name: string, fn: () => void): void {

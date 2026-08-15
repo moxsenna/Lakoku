@@ -9,7 +9,7 @@
  * E3A/E4 artifact root for a forbidden RELEASE_EVIDENCE artifact.
  */
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { validateReliabilityArtifactPair } from '../lib/narrative-qa/reliability'
 import { stableStringify } from '../lib/narrative-qa/scoring/canonical-serializer'
@@ -52,7 +52,6 @@ function collectFiles(directory: string, io: M10EE3AE4ComparisonFileIO): string[
 }
 
 function defaultListFiles(directory: string): string[] {
-  const { readdirSync } = require('node:fs') as typeof import('node:fs')
   return readdirSync(directory, { withFileTypes: true }).map((entry) => `${entry.name}${entry.isDirectory() ? '/' : ''}`)
 }
 

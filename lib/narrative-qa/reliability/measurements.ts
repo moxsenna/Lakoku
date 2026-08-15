@@ -105,6 +105,7 @@ const SOURCE_IDENTITY_SCHEMA = z.strictObject({
   sourceRef: SOURCE_REF,
   sourceArtifactType: z.enum(['CONTRACT_FIXTURE_OBSERVATIONS', 'REVIEWER_AUTHORIZED_MEASURED_EVIDENCE']),
   sourceArtifactHash: SOURCE_ARTIFACT_HASH_SCHEMA,
+  sourceArtifactContent: z.string().min(1),
   sourceSchemaVersion: z.string().min(1).max(128),
   authorizationDecisionRef: z.string().min(1).max(512),
 })
@@ -128,8 +129,9 @@ function createHashedAuthority<T extends Record<string, unknown>>(payload: T): T
 export const CONTRACT_FIXTURE_SOURCE_ARTIFACT = deepFreeze({
   sourceRef: 'fixture.telemetry', sourceArtifactType: 'CONTRACT_FIXTURE_OBSERVATIONS' as const,
   sourceArtifactHash: 'a14dd4f6f5a29158d28007bac717d4b1b69c7a5cdcdeb14588e8c06d1d4a0ee3',
-  sourceSchemaVersion: 'M10_E_CONTRACT_FIXTURE_OBSERVATIONS_V1', authorizationDecisionRef: AUTHORITY_REF,
+  sourceArtifactContent: 'M10_E_CONTRACT_FIXTURE_OBSERVATIONS_V1', sourceSchemaVersion: 'M10_E_CONTRACT_FIXTURE_OBSERVATIONS_V1', authorizationDecisionRef: AUTHORITY_REF,
 })
+export const TRUSTED_RELEASE_SOURCE_REGISTRY = deepFreeze([] as readonly z.infer<typeof SOURCE_IDENTITY_SCHEMA>[])
 const DENIED_FAULT_ARTIFACT_TYPES = new Set(['E1_FAULT_EVIDENCE', 'E1_CLOSURE_EVIDENCE', 'E2_FAULT_EVIDENCE', 'E2_CLOSURE_EVIDENCE'])
 const DENIED_FAULT_ARTIFACT_HASHES = new Set(['914cf30f42d4e7f293df79e0d66c014331a696ba', '039280c7adbd660923847c5b1d856cfb3204083e'])
 export function createObservationSourceAuthority(
@@ -139,9 +141,12 @@ export function createObservationSourceAuthority(
   const normalizedSources = z.array(SOURCE_IDENTITY_SCHEMA).min(1).parse(sources)
     .sort((left, right) => Buffer.compare(Buffer.from(`${left.sourceRef}\0${left.sourceArtifactHash}`, 'utf8'), Buffer.from(`${right.sourceRef}\0${right.sourceArtifactHash}`, 'utf8')))
   assertUnique(normalizedSources.map((source) => source.sourceRef), 'source reference')
-  if (normalizedSources.some(isDeniedSourceArtifact)) throw new Error('E1/E2 fault or closure artifact cannot authorize E.3 observations')
-  if (executionProfile === 'CONTRACT_FIXTURE' && (normalizedSources.length !== 1 || stableStringify(normalizedSources[0]) !== stableStringify(CONTRACT_FIXTURE_SOURCE_ARTIFACT))) throw new Error('Contract fixture source must use exact frozen artifact identity')
-  if (executionProfile === 'RELEASE_EVIDENCE' && normalizedSources.some((source) => source.sourceArtifactType !== 'REVIEWER_AUTHORIZED_MEASURED_EVIDENCE')) throw new Error('Release evidence requires reviewer-authorized measured-evidence artifact')
+  for (const source of normalizedSources) {
+    if (computeSha256(source.sourceArtifactContent) !== source.sourceArtifactHash) throw new Error('Source artifact content hash mismatch')
+    if (isDeniedSourceArtifact(source)) throw new Error('E1/E2 fault or closure artifact cannot authorize E.3 observations')
+  }
+  if (executionProfile === 'CONTRACT_FIXTURE' && (normalizedSources.length !== 1 || stableStringify(normalizedSources[0]) !== stableStringify(CONTRACT_FIXTURE_SOURCE_ARTIFACT))) throw new Error('Contract fixture source must use exact frozen artifact identity and content')
+  if (executionProfile === 'RELEASE_EVIDENCE' && normalizedSources.some((source) => !TRUSTED_RELEASE_SOURCE_REGISTRY.some((trusted) => stableStringify(trusted) === stableStringify(source)))) throw new Error('Release evidence source artifact is unverified by trusted registry')
   return createHashedAuthority({ authorityVersion: 'M10_E_OBSERVATION_SOURCE_V2' as const, sourceKind: 'ARTIFACT_BOUND_TELEMETRY_OBSERVATIONS' as const,
     executionProfile, excludedSources: ['E1_FAULT_INJECTION_FREQUENCY', 'E2_FAULT_INJECTION_FREQUENCY'] as const, normalizedSources, decisionRef: AUTHORITY_REF })
 }

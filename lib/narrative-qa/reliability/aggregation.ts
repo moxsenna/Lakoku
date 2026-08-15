@@ -127,20 +127,12 @@ export function aggregateReliabilityObservations(input: unknown) {
       observationRefs: observations.map(ref), exchangeabilityAuthority: authority })
   })
 
-  const poolMinimum = set.executionProfile === 'RELEASE_EVIDENCE' ? 30 : 1
-  const completeNovelMinimum = set.executionProfile === 'RELEASE_EVIDENCE' ? 10 : 0
-  const completeNovelCount = novels.filter(isSuccessfulCompleteNovel).length
-  const stagePools = centralStageFailureProbabilities.map((item) => ({ stageId: item.stageId, minimum: poolMinimum, observed: item.denominator, complete: item.denominator >= poolMinimum }))
-  const applicableCells = chapterStageDiagnostics.map((item) => ({ chapterNumber: item.chapterNumber, stageId: item.stageId, minimum: 1, observed: item.denominator, complete: item.denominator >= 1 }))
-  const completeNovels = { minimum: completeNovelMinimum, observed: completeNovelCount, complete: completeNovelCount >= completeNovelMinimum }
-  const reasonCodes = [
-    ...(stagePools.some((item) => !item.complete) ? ['STAGE_POOL_THRESHOLD_NOT_MET' as const] : []),
-    ...(applicableCells.some((item) => !item.complete) ? ['APPLICABLE_CELL_COVERAGE_INCOMPLETE' as const] : []),
-    ...(!completeNovels.complete ? ['COMPLETE_NOVEL_THRESHOLD_NOT_MET' as const] : []),
-  ]
-  const profileCompleteness = deepFreeze({
-    executionProfile: set.executionProfile, exactCompatibleStratum: set.compatibleStratum, stagePools, applicableCells, completeNovels,
-    engineeringGate: reasonCodes.length === 0 ? 'PASS' as const : 'HOLD' as const, reasonCodes,
+  const profileCompleteness = evaluateProfileThresholds({
+    executionProfile: set.executionProfile,
+    stagePools: centralStageFailureProbabilities.map((item) => ({ stageId: item.stageId, observed: item.denominator })),
+    applicableCells: chapterStageDiagnostics.map((item) => ({ chapterNumber: item.chapterNumber, stageId: item.stageId, observed: item.denominator })),
+    observedCompleteNovels: novels.filter(isSuccessfulCompleteNovel).length,
+    exactCompatibleStratum: set.compatibleStratum,
   })
 
   const dimensionedMetrics = buildDimensionedMetrics(set, requiredMetrics)
@@ -169,6 +161,26 @@ export function aggregateReliabilityObservations(input: unknown) {
       observedRetryFallbackCost: costClassMetric('RETRY_FALLBACK_COST', calls.filter((call) => ['PROSE_RETRY', 'PROVIDER_FALLBACK', 'STRUCTURED_RETRY'].includes(call.stageId)), 'observed actual retry/fallback diagnostic'),
     },
   })
+}
+
+export function evaluateProfileThresholds(input: Readonly<{
+  executionProfile: ReliabilityObservationSet['executionProfile']
+  stagePools: readonly Readonly<{ stageId: string; observed: number }>[]
+  applicableCells: readonly Readonly<{ chapterNumber: number; stageId: string; observed: number }>[]
+  observedCompleteNovels: number
+  exactCompatibleStratum?: ReliabilityObservationSet['compatibleStratum']
+}>) {
+  const poolMinimum = input.executionProfile === 'RELEASE_EVIDENCE' ? 30 : 1
+  const completeNovelMinimum = input.executionProfile === 'RELEASE_EVIDENCE' ? 10 : 0
+  const stagePools = input.stagePools.map((item) => ({ ...item, minimum: poolMinimum, complete: item.observed >= poolMinimum }))
+  const applicableCells = input.applicableCells.map((item) => ({ ...item, minimum: 1, complete: item.observed >= 1 }))
+  const completeNovels = { minimum: completeNovelMinimum, observed: input.observedCompleteNovels, complete: input.observedCompleteNovels >= completeNovelMinimum }
+  const reasonCodes = [
+    ...(stagePools.some((item) => !item.complete) ? ['STAGE_POOL_THRESHOLD_NOT_MET' as const] : []),
+    ...(applicableCells.some((item) => !item.complete) ? ['APPLICABLE_CELL_COVERAGE_INCOMPLETE' as const] : []),
+    ...(!completeNovels.complete ? ['COMPLETE_NOVEL_THRESHOLD_NOT_MET' as const] : []),
+  ]
+  return deepFreeze({ executionProfile: input.executionProfile, exactCompatibleStratum: input.exactCompatibleStratum ?? null, stagePools, applicableCells, completeNovels, engineeringGate: reasonCodes.length === 0 ? 'PASS' as const : 'HOLD' as const, reasonCodes, hypotheticalThresholdEvaluation: input.executionProfile === 'RELEASE_EVIDENCE' })
 }
 
 function rate(metricId: RequiredMetricId, numerator: number, denominator: number, boundary: string, refs: string[]): AggregateMetric {

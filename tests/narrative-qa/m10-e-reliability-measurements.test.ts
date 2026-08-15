@@ -3,6 +3,8 @@ import {
   M10_E_STAGE_CATALOG_V1,
   M10_E_TASK_MAPPING_V1,
   M10_E_TOPOLOGY_V1,
+  CONTRACT_FIXTURE_SOURCE_ARTIFACT,
+  TRUSTED_RELEASE_SOURCE_REGISTRY,
   createChapterStageExchangeabilityAuthorities,
   createFixtureTopologyAuthority,
   createJudgePlanAuthority,
@@ -204,10 +206,13 @@ describe('M10-E strict reliability measurements', () => {
       copied.providerCalls[0]!.sourceRef = sourceRef
       expect(() => validateReliabilityObservationSet(copied)).toThrow(/fault schedule\/frequency/i)
     }
-    for (const sourceArtifactHash of ['914cf30f42d4e7f293df79e0d66c014331a696ba', '039280c7adbd660923847c5b1d856cfb3204083e']) {
-      expect(() => createObservationSourceAuthority('RELEASE_EVIDENCE', [{ sourceRef: 'innocent.telemetry', sourceArtifactType: 'REVIEWER_AUTHORIZED_MEASURED_EVIDENCE', sourceArtifactHash, sourceSchemaVersion: 'MEASURED_V1', authorizationDecisionRef: 'review/approved' }])).toThrow(/E1\/E2 fault or closure artifact/i)
+    expect(TRUSTED_RELEASE_SOURCE_REGISTRY).toEqual([])
+    for (const [sourceArtifactContent, sourceArtifactHash] of [['E1_FAULT_ARTIFACT_CONTENT_V1', 'fc2ef2345023f1376f33e0b36b1a28a61f2e004139005f73a77952bc11ffaa2b'], ['E2_FAULT_ARTIFACT_CONTENT_V1', 'd5428e913a2646b1ef3618286b75bb9ac43ece13c3fd53ce27a4f3be4ae467b0']]) {
+      expect(() => createObservationSourceAuthority('RELEASE_EVIDENCE', [{ sourceRef: 'innocent.telemetry', sourceArtifactType: 'REVIEWER_AUTHORIZED_MEASURED_EVIDENCE', sourceArtifactHash, sourceArtifactContent, sourceSchemaVersion: 'MEASURED_V1', authorizationDecisionRef: 'review/approved' }])).toThrow(/unverified by trusted registry/i)
     }
-    expect(() => createObservationSourceAuthority('CONTRACT_FIXTURE', [{ sourceRef: 'fixture.telemetry', sourceArtifactType: 'CONTRACT_FIXTURE_OBSERVATIONS', sourceArtifactHash: 'b'.repeat(64), sourceSchemaVersion: 'M10_E_CONTRACT_FIXTURE_OBSERVATIONS_V1', authorizationDecisionRef: 'innocent' }])).toThrow(/exact frozen artifact identity/i)
+    expect(() => createObservationSourceAuthority('RELEASE_EVIDENCE', [{ sourceRef: 'caller.telemetry', sourceArtifactType: 'REVIEWER_AUTHORIZED_MEASURED_EVIDENCE', sourceArtifactHash: CONTRACT_FIXTURE_SOURCE_ARTIFACT.sourceArtifactHash, sourceArtifactContent: CONTRACT_FIXTURE_SOURCE_ARTIFACT.sourceArtifactContent, sourceSchemaVersion: 'CALLER_V1', authorizationDecisionRef: 'caller/claims-approved' }])).toThrow(/unverified by trusted registry/i)
+    expect(() => createObservationSourceAuthority('CONTRACT_FIXTURE', [{ ...CONTRACT_FIXTURE_SOURCE_ARTIFACT, sourceArtifactContent: `${CONTRACT_FIXTURE_SOURCE_ARTIFACT.sourceArtifactContent}_mutated` }])).toThrow(/content hash mismatch/i)
+    expect(createObservationSourceAuthority()).toMatchObject({ executionProfile: 'CONTRACT_FIXTURE', normalizedSources: [CONTRACT_FIXTURE_SOURCE_ARTIFACT] })
   })
 
   it('rejects skipped, extra, call-stage, logical-terminal, and novel outcome topology mutations', () => {

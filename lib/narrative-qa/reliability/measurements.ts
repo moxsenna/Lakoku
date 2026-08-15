@@ -13,6 +13,7 @@ import {
   TASK_ID_SCHEMA,
   measurementStateSchema,
   type CompatibleStratumIdentity,
+  type ExecutionProfile,
 } from './contracts'
 import {
   validateChapterStageExchangeabilityAuthorities,
@@ -99,9 +100,17 @@ export const JUDGE_EVALUATION_OBSERVATION_SCHEMA = z.strictObject({
 })
 export type JudgeEvaluationObservation = z.infer<typeof JUDGE_EVALUATION_OBSERVATION_SCHEMA>
 
-const SOURCE_IDENTITY_SCHEMA = z.strictObject({ sourceRef: SOURCE_REF, sourceIdentity: z.string().min(1).max(256) })
+const SOURCE_ARTIFACT_HASH_SCHEMA = z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/)
+const SOURCE_IDENTITY_SCHEMA = z.strictObject({
+  sourceRef: SOURCE_REF,
+  sourceArtifactType: z.enum(['CONTRACT_FIXTURE_OBSERVATIONS', 'REVIEWER_AUTHORIZED_MEASURED_EVIDENCE']),
+  sourceArtifactHash: SOURCE_ARTIFACT_HASH_SCHEMA,
+  sourceSchemaVersion: z.string().min(1).max(128),
+  authorizationDecisionRef: z.string().min(1).max(512),
+})
 const SOURCE_AUTHORITY_SCHEMA = z.strictObject({
-  authorityVersion: z.literal('M10_E_OBSERVATION_SOURCE_V1'), sourceKind: z.literal('AUTHORIZED_TELEMETRY_OBSERVATIONS'),
+  authorityVersion: z.literal('M10_E_OBSERVATION_SOURCE_V2'), sourceKind: z.literal('ARTIFACT_BOUND_TELEMETRY_OBSERVATIONS'),
+  executionProfile: EXECUTION_PROFILE_SCHEMA,
   excludedSources: z.tuple([z.literal('E1_FAULT_INJECTION_FREQUENCY'), z.literal('E2_FAULT_INJECTION_FREQUENCY')]),
   normalizedSources: z.array(SOURCE_IDENTITY_SCHEMA).min(1),
   decisionRef: z.string().min(1), canonicalHash: SHA256_SCHEMA,
@@ -116,13 +125,25 @@ const AUTHORITY_REF = 'docs/superpowers/specs/2026-08-13-m10-e-e3a-e4-reliabilit
 function createHashedAuthority<T extends Record<string, unknown>>(payload: T): T & { canonicalHash: string } {
   return deepFreeze({ ...payload, canonicalHash: computeSha256(stableStringify(payload)) })
 }
-export function createObservationSourceAuthority(sources: readonly z.infer<typeof SOURCE_IDENTITY_SCHEMA>[] = [{ sourceRef: 'fixture.telemetry', sourceIdentity: 'ISOLATED_CONTRACT_FIXTURE_TELEMETRY_V1' }]): ObservationSourceAuthority {
+export const CONTRACT_FIXTURE_SOURCE_ARTIFACT = deepFreeze({
+  sourceRef: 'fixture.telemetry', sourceArtifactType: 'CONTRACT_FIXTURE_OBSERVATIONS' as const,
+  sourceArtifactHash: 'a14dd4f6f5a29158d28007bac717d4b1b69c7a5cdcdeb14588e8c06d1d4a0ee3',
+  sourceSchemaVersion: 'M10_E_CONTRACT_FIXTURE_OBSERVATIONS_V1', authorizationDecisionRef: AUTHORITY_REF,
+})
+const DENIED_FAULT_ARTIFACT_TYPES = new Set(['E1_FAULT_EVIDENCE', 'E1_CLOSURE_EVIDENCE', 'E2_FAULT_EVIDENCE', 'E2_CLOSURE_EVIDENCE'])
+const DENIED_FAULT_ARTIFACT_HASHES = new Set(['914cf30f42d4e7f293df79e0d66c014331a696ba', '039280c7adbd660923847c5b1d856cfb3204083e'])
+export function createObservationSourceAuthority(
+  executionProfile: ExecutionProfile = 'CONTRACT_FIXTURE',
+  sources: readonly z.infer<typeof SOURCE_IDENTITY_SCHEMA>[] = [CONTRACT_FIXTURE_SOURCE_ARTIFACT],
+): ObservationSourceAuthority {
   const normalizedSources = z.array(SOURCE_IDENTITY_SCHEMA).min(1).parse(sources)
-    .sort((left, right) => Buffer.compare(Buffer.from(`${left.sourceRef}\0${left.sourceIdentity}`, 'utf8'), Buffer.from(`${right.sourceRef}\0${right.sourceIdentity}`, 'utf8')))
+    .sort((left, right) => Buffer.compare(Buffer.from(`${left.sourceRef}\0${left.sourceArtifactHash}`, 'utf8'), Buffer.from(`${right.sourceRef}\0${right.sourceArtifactHash}`, 'utf8')))
   assertUnique(normalizedSources.map((source) => source.sourceRef), 'source reference')
-  if (normalizedSources.some((source) => isFaultDerivedSource(source.sourceRef) || isFaultDerivedSource(source.sourceIdentity))) throw new Error('Fault schedule/frequency source cannot authorize E.3 observations')
-  return createHashedAuthority({ authorityVersion: 'M10_E_OBSERVATION_SOURCE_V1' as const, sourceKind: 'AUTHORIZED_TELEMETRY_OBSERVATIONS' as const,
-    excludedSources: ['E1_FAULT_INJECTION_FREQUENCY', 'E2_FAULT_INJECTION_FREQUENCY'] as const, normalizedSources, decisionRef: AUTHORITY_REF })
+  if (normalizedSources.some(isDeniedSourceArtifact)) throw new Error('E1/E2 fault or closure artifact cannot authorize E.3 observations')
+  if (executionProfile === 'CONTRACT_FIXTURE' && (normalizedSources.length !== 1 || stableStringify(normalizedSources[0]) !== stableStringify(CONTRACT_FIXTURE_SOURCE_ARTIFACT))) throw new Error('Contract fixture source must use exact frozen artifact identity')
+  if (executionProfile === 'RELEASE_EVIDENCE' && normalizedSources.some((source) => source.sourceArtifactType !== 'REVIEWER_AUTHORIZED_MEASURED_EVIDENCE')) throw new Error('Release evidence requires reviewer-authorized measured-evidence artifact')
+  return createHashedAuthority({ authorityVersion: 'M10_E_OBSERVATION_SOURCE_V2' as const, sourceKind: 'ARTIFACT_BOUND_TELEMETRY_OBSERVATIONS' as const,
+    executionProfile, excludedSources: ['E1_FAULT_INJECTION_FREQUENCY', 'E2_FAULT_INJECTION_FREQUENCY'] as const, normalizedSources, decisionRef: AUTHORITY_REF })
 }
 export function createTimingSourceAuthority(): TimingSourceAuthority {
   return createHashedAuthority({ authorityVersion: 'M10_E_EXACT_ELAPSED_TIME_V1' as const, sourceKind: 'START_END_TIMESTAMPS' as const,
@@ -173,7 +194,7 @@ export function validateReliabilityObservationSet(value: unknown): ReliabilityOb
     ...parsed.judgeEvaluations,
   ]
   assertUnique(allObservations.map((item) => item.observationId), 'global observation ID')
-  validateObservationSources(parsed.observationSourceAuthority, allObservations)
+  validateObservationSources(parsed.executionProfile, parsed.observationSourceAuthority, allObservations)
   assertUnique(parsed.providerCalls.map((item) => item.callAlias), 'provider-call alias')
   assertUnique(parsed.stageOutcomes.map((item) => item.stageExecutionAlias), 'stage-execution alias')
   assertUnique(parsed.logicalGenerationUnits.map((item) => item.logicalUnitAlias), 'logical-unit alias')
@@ -331,18 +352,24 @@ function validateChapterTopologyPath(chapter: z.infer<typeof CHAPTER_EXECUTION_O
   if (chapter.terminalOutcome !== derivedOutcome) throw new Error('Chapter outcome conflicts with final topology traversal effect')
 }
 
-function validateObservationSources(authority: ObservationSourceAuthority, observations: readonly { sourceRef: string }[]): void {
+function validateObservationSources(executionProfile: ExecutionProfile, authority: ObservationSourceAuthority, observations: readonly { sourceRef: string }[]): void {
   const { canonicalHash: _hash, ...payload } = authority
   if (computeSha256(stableStringify(payload)) !== authority.canonicalHash) throw new Error('Observation source authority hash mismatch')
-  const expected = createObservationSourceAuthority(authority.normalizedSources)
-  if (stableStringify(authority) !== stableStringify(expected)) throw new Error('Observation source authority normalized identity mismatch')
-  const allowedRefs = new Set(authority.normalizedSources.map((source) => source.sourceRef))
+  const expected = createObservationSourceAuthority(executionProfile, authority.normalizedSources)
+  if (stableStringify(authority) !== stableStringify(expected)) throw new Error('Observation source authority normalized artifact identity mismatch')
+  const allowedSources = new Map(authority.normalizedSources.map((source) => [source.sourceRef, source]))
   for (const observation of observations) {
     if (isFaultDerivedSource(observation.sourceRef)) throw new Error('E1/E2 fault schedule/frequency source cannot supply E.3 observation')
-    if (!allowedRefs.has(observation.sourceRef)) throw new Error('Observation sourceRef is not bound by source authority')
+    const source = allowedSources.get(observation.sourceRef)
+    if (!source) throw new Error('Observation sourceRef is not bound by source artifact authority')
+    if (isDeniedSourceArtifact(source)) throw new Error('E1/E2 fault or closure artifact cannot supply E.3 observation')
   }
 }
-function isFaultDerivedSource(value: string): boolean { return /(?:^|[_.-])e[12](?:[_.-]|$)|fault.*(?:schedule|frequency)|(?:schedule|frequency).*fault/i.test(value) }
+function isDeniedSourceArtifact(source: { sourceRef: string; sourceArtifactType: string; sourceArtifactHash: string; sourceSchemaVersion: string }): boolean {
+  return isFaultDerivedSource(source.sourceRef) || isFaultDerivedSource(source.sourceArtifactType) || isFaultDerivedSource(source.sourceSchemaVersion)
+    || DENIED_FAULT_ARTIFACT_TYPES.has(source.sourceArtifactType) || DENIED_FAULT_ARTIFACT_HASHES.has(source.sourceArtifactHash)
+}
+function isFaultDerivedSource(value: string): boolean { return /(?:^|[_.-])e[12](?:[_.-]|$)|fault|closure/i.test(value) }
 
 function requireChapterParent(item: { chapterExecutionAlias: string; storyAlias: string; novelExecutionAlias: string; chapterNumber: number }, chapters: Map<string, z.infer<typeof CHAPTER_EXECUTION_OBSERVATION_SCHEMA>>): void {
   const parent = chapters.get(item.chapterExecutionAlias)

@@ -74,13 +74,29 @@ describe('M10-E deterministic aggregation', () => {
       ...Array.from({ length: 50 }, (_, index) => `CHAPTER.${String(index + 1).padStart(2, '0')}`),
       'NOVEL_EXECUTION.novel_a', 'SOURCE.fixture.telemetry', 'PROVIDER_MODEL_POLICY.provider_v1',
     ]
-    const directMetricIds = ['RETRY_COUNT', 'GENERATION_PROVIDER_CALL_COUNT', 'INPUT_TOKEN_USAGE', 'OUTPUT_TOKEN_USAGE', 'TOTAL_TOKEN_USAGE', 'ACTUAL_PROVIDER_COST', 'PRICING_ESTIMATED_COST', 'ACTUAL_COST_COVERAGE_RATIO', 'PRICING_COST_COVERAGE_RATIO']
-    const expectedMetricIds = [...directMetricIds, ...new Set(aggregate.requiredMetrics.map((metric) => metric.metricId).filter((metric) => !directMetricIds.includes(metric)))]
-    expect(aggregate.dimensionedMetrics.map((record) => `${record.dimensionKey}|${record.metricId}`)).toEqual(expectedDimensionKeys.flatMap((key) => expectedMetricIds.map((metric) => `${key}|${metric}`)))
+    expect(new Set(aggregate.dimensionedMetrics.map((record) => record.dimensionKey))).toEqual(new Set(expectedDimensionKeys))
+    expect(aggregate.dimensionedMetrics.filter((record) => record.dimensionKey === 'TASK.CHAPTER_PROSE').map((record) => record.metricId)).toEqual([
+      'FIRST_ATTEMPT_SUCCESS_RATE', 'RETRY_SUCCESS_RATE', 'TERMINAL_FAILURE_RATE', 'CHECKPOINT_REUSE_RATE', 'PROSE_REGENERATION_ON_CHOICE_RETRY_RATE', 'OWNERSHIP_LOSS_RECOVERY_RATE', 'RECOVERY_SUCCESS_RATE', 'PROVIDER_FALLBACK_RATE', 'RETRY_COUNT', 'GENERATION_PROVIDER_CALL_COUNT', 'GENERATION_LATENCY_P50', 'GENERATION_LATENCY_P95', 'RECOVERY_LATENCY_P50', 'RECOVERY_LATENCY_P95', 'INPUT_TOKEN_USAGE', 'OUTPUT_TOKEN_USAGE', 'TOTAL_TOKEN_USAGE', 'ACTUAL_PROVIDER_COST', 'PRICING_ESTIMATED_COST', 'ACTUAL_COST_COVERAGE_RATIO', 'PRICING_COST_COVERAGE_RATIO', 'EMPIRICAL_CHAPTER_STAGE_FAILURE_DISTRIBUTION',
+    ])
+    expect(aggregate.dimensionedMetrics.some((record) => record.scope === 'TASK' && record.metricId === 'FULL_NOVEL_COMPLETION_RATE')).toBe(false)
     expect(Object.keys(aggregate.chapterStageDiagnostics[0]!).sort()).toEqual([
       'chapterNumber', 'compatibleStratum', 'counts', 'coverageRatio', 'denominator', 'eligibilityBoundary', 'executionProfile', 'failureProbability',
       'numerator', 'observationRefs', 'provenance', 'providerModelPolicyId', 'sourceAuthorityHash', 'sourceRefs', 'stageId',
     ].sort())
+  })
+
+  it('keeps divergent chapter, task, novel, source, and policy metrics bound to exact group refs', () => {
+    const set = validSet()
+    set.providerCalls[0]!.inputTokens = { state: 'PRESENT', value: 90 }
+    set.providerCalls[0]!.totalTokens = { state: 'PRESENT', value: 95 }
+    const aggregate = aggregateReliabilityObservations(set)
+    const find = (dimensionKey: string, metricId: string) => aggregate.dimensionedMetrics.find((item) => item.dimensionKey === dimensionKey && item.metricId === metricId)!
+    expect(find('TASK.CHAPTER_PROSE', 'INPUT_TOKEN_USAGE')).toMatchObject({ numerator: 90, denominator: 1, counts: { includedCount: 1, excludedCount: 0, eligibleCount: 1 }, observationRefs: ['call_obs'], value: { state: 'PRESENT', value: 90 } })
+    expect(find('TASK.CHAPTER_STRUCTURED_OUTPUT', 'INPUT_TOKEN_USAGE')).toMatchObject({ numerator: 10, denominator: 1, observationRefs: ['call_structured_obs'], value: { state: 'PRESENT', value: 10 } })
+    expect(find('CHAPTER.02', 'INPUT_TOKEN_USAGE')).toMatchObject({ denominator: 0, observationRefs: [], value: { state: 'MISSING', reasonCode: 'OBSERVATION_COVERAGE_INCOMPLETE' } })
+    expect(find('NOVEL_EXECUTION.novel_a', 'GENERATION_PROVIDER_CALL_COUNT')).toMatchObject({ numerator: 2, denominator: 2, observationRefs: ['call_obs', 'call_structured_obs'] })
+    expect(find('SOURCE.fixture.telemetry', 'GENERATION_PROVIDER_CALL_COUNT').observationRefs).toEqual(['call_obs', 'call_structured_obs'])
+    expect(find('PROVIDER_MODEL_POLICY.provider_v1', 'GENERATION_PROVIDER_CALL_COUNT').observationRefs).toEqual(['call_obs', 'call_structured_obs'])
   })
 
   it('emits all chapter percentiles separately and leaves P5 modeled pricing slots missing', () => {

@@ -194,7 +194,7 @@ describe('M10-E strict reliability measurements', () => {
     }
   })
 
-  it('binds every observation sourceRef to exact normalized authority and rejects copied fault rows', () => {
+  it('binds every observation sourceRef to exact normalized artifact authority and rejects relabeled fault artifacts', () => {
     const unbound = structuredClone(validSet())
     unbound.providerCalls[0]!.sourceRef = 'other.telemetry'
     expect(() => validateReliabilityObservationSet(unbound)).toThrow(/sourceRef/i)
@@ -204,6 +204,10 @@ describe('M10-E strict reliability measurements', () => {
       copied.providerCalls[0]!.sourceRef = sourceRef
       expect(() => validateReliabilityObservationSet(copied)).toThrow(/fault schedule\/frequency/i)
     }
+    for (const sourceArtifactHash of ['914cf30f42d4e7f293df79e0d66c014331a696ba', '039280c7adbd660923847c5b1d856cfb3204083e']) {
+      expect(() => createObservationSourceAuthority('RELEASE_EVIDENCE', [{ sourceRef: 'innocent.telemetry', sourceArtifactType: 'REVIEWER_AUTHORIZED_MEASURED_EVIDENCE', sourceArtifactHash, sourceSchemaVersion: 'MEASURED_V1', authorizationDecisionRef: 'review/approved' }])).toThrow(/E1\/E2 fault or closure artifact/i)
+    }
+    expect(() => createObservationSourceAuthority('CONTRACT_FIXTURE', [{ sourceRef: 'fixture.telemetry', sourceArtifactType: 'CONTRACT_FIXTURE_OBSERVATIONS', sourceArtifactHash: 'b'.repeat(64), sourceSchemaVersion: 'M10_E_CONTRACT_FIXTURE_OBSERVATIONS_V1', authorizationDecisionRef: 'innocent' }])).toThrow(/exact frozen artifact identity/i)
   })
 
   it('rejects skipped, extra, call-stage, logical-terminal, and novel outcome topology mutations', () => {

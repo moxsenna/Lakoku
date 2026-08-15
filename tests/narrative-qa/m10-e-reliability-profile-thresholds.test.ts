@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { aggregateReliabilityObservations, classifyReliabilityObservations, createChapterStageExchangeabilityAuthorities, createFixtureTopologyAuthority } from '../../lib/narrative-qa/reliability'
+import { aggregateReliabilityObservations, classifyReliabilityObservations, createChapterStageExchangeabilityAuthorities, createFixtureTopologyAuthority, createObservationSourceAuthority } from '../../lib/narrative-qa/reliability'
 import { addSuccessfulCompleteNovel, validSet } from './m10-e-reliability-measurements.test'
 
 function appendCopies<T extends Record<string, unknown>>(target: T[], source: T[], index: number): void {
@@ -20,6 +20,9 @@ function repeatedStageSet(profile: 'CONTRACT_FIXTURE' | 'RELEASE_EVIDENCE', coun
     appendCopies(set.judgeEvaluations, template.judgeEvaluations, index)
   }
   set.executionProfile = profile
+  if (profile === 'RELEASE_EVIDENCE') {
+    set.observationSourceAuthority = createObservationSourceAuthority('RELEASE_EVIDENCE', [{ sourceRef: 'fixture.telemetry', sourceArtifactType: 'REVIEWER_AUTHORIZED_MEASURED_EVIDENCE', sourceArtifactHash: 'b'.repeat(64), sourceSchemaVersion: 'M10_E_MEASURED_EVIDENCE_V1', authorizationDecisionRef: 'review/E3-release-evidence' }])
+  }
   set.exchangeabilityAuthorities = createChapterStageExchangeabilityAuthorities(profile, set.compatibleStratum)
   if (profile === 'RELEASE_EVIDENCE') set.declaredApplicableCells = Array.from({ length: 50 }, (_, chapter) => set.exchangeabilityAuthorities.map(({ stageId }) => ({ chapterNumber: chapter + 1, stageId }))).flat()
   return set
@@ -49,6 +52,44 @@ function fullFixtureSet() {
   chapter.generationCost = { state: 'PRESENT', value: '5.00000000' }; chapter.endedAt = '2026-08-15T00:00:22.000Z'
   set.novelExecutions[0]!.generationCost = { state: 'PRESENT', value: '5.00000000' }; set.novelExecutions[0]!.endedAt = chapter.endedAt
   set.declaredApplicableCells = path.map(([stageId]) => ({ chapterNumber: 1, stageId })); set.fixtureTopologyAuthority = createFixtureTopologyAuthority(set.declaredApplicableCells)
+  return set
+}
+
+function jointCompleteReleaseSet() {
+  const template = fullFixtureSet()
+  const set = validSet()
+  set.providerCalls = []; set.stageOutcomes = []; set.logicalGenerationUnits = []; set.recoveryActions = []; set.publicationAttempts = []; set.canonicalInvariantChecks = []; set.chapterExecutions = []; set.novelExecutions = []; set.judgeEvaluations = []
+  const rewrite = <T extends Record<string, unknown>>(item: T, novelIndex: number, chapterNumber: number): T => {
+    const suffix = `${novelIndex}_${chapterNumber}`
+    return Object.fromEntries(Object.entries(structuredClone(item)).map(([field, value]) => {
+      if (field === 'novelExecutionAlias') return [field, `release_novel_${novelIndex}`]
+      if (field === 'storyAlias') return [field, `release_story_${novelIndex}`]
+      if (field === 'chapterNumber') return [field, chapterNumber]
+      if (field === 'observationId' || field.endsWith('Alias')) return [field, value === null ? null : `${String(value)}_${suffix}`]
+      return [field, value]
+    })) as T
+  }
+  const basicTemplate = validSet()
+  for (let novelIndex = 0; novelIndex < 10; novelIndex += 1) {
+    const chapterTemplate = novelIndex === 0 ? template : basicTemplate
+    const chapterCost = novelIndex === 0 ? '5.00000000' : '2.00000000'
+    const novelCost = novelIndex === 0 ? '250.00000000' : '100.00000000'
+    set.novelExecutions.push({ ...structuredClone(chapterTemplate.novelExecutions[0]!), sourceRef: 'fixture.telemetry', observationId: `release_novel_obs_${novelIndex}`, novelExecutionAlias: `release_novel_${novelIndex}`, storyAlias: `release_story_${novelIndex}`, terminalOutcome: 'SUCCESS', completedChapterNumbers: Array.from({ length: 50 }, (_, index) => index + 1), generationCost: { state: 'PRESENT', value: novelCost } })
+    for (let chapterNumber = 1; chapterNumber <= 50; chapterNumber += 1) {
+      set.chapterExecutions.push({ ...rewrite(chapterTemplate.chapterExecutions[0]!, novelIndex, chapterNumber), generationCost: { state: 'PRESENT', value: chapterCost } })
+      set.providerCalls.push(...chapterTemplate.providerCalls.map((item) => rewrite(item, novelIndex, chapterNumber)))
+      set.stageOutcomes.push(...chapterTemplate.stageOutcomes.map((item) => rewrite(item, novelIndex, chapterNumber)))
+      set.logicalGenerationUnits.push(...chapterTemplate.logicalGenerationUnits.map((item) => rewrite(item, novelIndex, chapterNumber)))
+      set.recoveryActions.push(...chapterTemplate.recoveryActions.map((item) => rewrite(item, novelIndex, chapterNumber)))
+      set.publicationAttempts.push(...chapterTemplate.publicationAttempts.map((item) => rewrite(item, novelIndex, chapterNumber)))
+      set.canonicalInvariantChecks.push(...chapterTemplate.canonicalInvariantChecks.map((item) => rewrite(item, novelIndex, chapterNumber)))
+    }
+    set.judgeEvaluations.push(...set.judgePlanAuthority.evaluations.map((entry, index) => ({ sourceRef: 'fixture.telemetry', observationId: `release_judge_obs_${novelIndex}_${index}`, judgeEvaluationAlias: `release_judge_${novelIndex}_${index}`, storyAlias: `release_story_${novelIndex}`, novelExecutionAlias: `release_novel_${novelIndex}`, ...entry, outcome: 'SUCCESS' as const, cost: { state: 'PRESENT' as const, value: '0.00000000' }, currency: 'IDR', startedAt: '2026-08-15T00:00:01.000Z', endedAt: '2026-08-15T00:00:02.000Z' })))
+  }
+  set.executionProfile = 'RELEASE_EVIDENCE'
+  set.exchangeabilityAuthorities = createChapterStageExchangeabilityAuthorities('RELEASE_EVIDENCE', set.compatibleStratum)
+  set.observationSourceAuthority = createObservationSourceAuthority('RELEASE_EVIDENCE', [{ sourceRef: 'fixture.telemetry', sourceArtifactType: 'REVIEWER_AUTHORIZED_MEASURED_EVIDENCE', sourceArtifactHash: 'b'.repeat(64), sourceSchemaVersion: 'M10_E_MEASURED_EVIDENCE_V1', authorizationDecisionRef: 'review/E3-release-evidence' }])
+  set.declaredApplicableCells = Array.from({ length: 50 }, (_, chapter) => set.exchangeabilityAuthorities.map(({ stageId }) => ({ chapterNumber: chapter + 1, stageId }))).flat()
   return set
 }
 
@@ -130,6 +171,47 @@ describe('M10-E profile completeness thresholds', () => {
       'DUPLICATE_PUBLICATION_DETECTED', 'CANONICAL_CORRUPTION_DETECTED',
     ] })
   })
+
+  it('classifies one jointly complete release contract PASS and exact release mutations', () => {
+    const complete = jointCompleteReleaseSet()
+    expect(classifyReliabilityObservations(complete)).toMatchObject({ engineeringGate: 'PASS', reasonCodes: [] })
+
+    const pool = structuredClone(complete)
+    const removeNovel = 'release_novel_9'
+    pool.providerCalls = pool.providerCalls.filter((item) => item.novelExecutionAlias !== removeNovel)
+    pool.stageOutcomes = pool.stageOutcomes.filter((item) => item.novelExecutionAlias !== removeNovel)
+    pool.logicalGenerationUnits = pool.logicalGenerationUnits.filter((item) => item.novelExecutionAlias !== removeNovel)
+    pool.chapterExecutions = pool.chapterExecutions.filter((item) => item.novelExecutionAlias !== removeNovel)
+    pool.novelExecutions = pool.novelExecutions.filter((item) => item.novelExecutionAlias !== removeNovel)
+    pool.judgeEvaluations = pool.judgeEvaluations.filter((item) => item.novelExecutionAlias !== removeNovel)
+    expect(classifyReliabilityObservations(pool)).toMatchObject({ engineeringGate: 'HOLD', reasonCodes: ['COMPLETE_NOVEL_THRESHOLD_NOT_MET'] })
+
+    const cell = structuredClone(complete)
+    cell.providerCalls = cell.providerCalls.filter((item) => !(item.novelExecutionAlias === 'release_novel_0' && item.chapterNumber === 50))
+    cell.stageOutcomes = cell.stageOutcomes.filter((item) => !(item.novelExecutionAlias === 'release_novel_0' && item.chapterNumber === 50))
+    cell.logicalGenerationUnits = cell.logicalGenerationUnits.filter((item) => !(item.novelExecutionAlias === 'release_novel_0' && item.chapterNumber === 50))
+    cell.recoveryActions = cell.recoveryActions.filter((item) => !(item.novelExecutionAlias === 'release_novel_0' && item.chapterNumber === 50))
+    cell.publicationAttempts = cell.publicationAttempts.filter((item) => !(item.novelExecutionAlias === 'release_novel_0' && item.chapterNumber === 50))
+    cell.canonicalInvariantChecks = cell.canonicalInvariantChecks.filter((item) => !(item.novelExecutionAlias === 'release_novel_0' && item.chapterNumber === 50))
+    cell.chapterExecutions = cell.chapterExecutions.filter((item) => !(item.novelExecutionAlias === 'release_novel_0' && item.chapterNumber === 50))
+    cell.novelExecutions[0]!.completedChapterNumbers = Array.from({ length: 49 }, (_, index) => index + 1)
+    cell.novelExecutions[0]!.terminalOutcome = 'PARTIAL_FAILURE'
+    cell.novelExecutions[0]!.generationCost = { state: 'PRESENT', value: '245.00000000' }
+    cell.judgeEvaluations = cell.judgeEvaluations.filter((item) => item.novelExecutionAlias !== 'release_novel_0')
+    expect(classifyReliabilityObservations(cell)).toMatchObject({ engineeringGate: 'HOLD', reasonCodes: ['APPLICABLE_CELL_COVERAGE_INCOMPLETE', 'COMPLETE_NOVEL_THRESHOLD_NOT_MET'] })
+
+    const surface = structuredClone(complete)
+    surface.recoveryActions = []
+    expect(classifyReliabilityObservations(surface)).toMatchObject({ engineeringGate: 'HOLD', reasonCodes: ['RETRY_RECOVERY_FALLBACK_COVERAGE_INCOMPLETE', 'LATENCY_COVERAGE_INCOMPLETE'] })
+
+    const safety = structuredClone(complete)
+    safety.publicationAttempts[0]!.producedDuplicateCanonicalPublication = true
+    expect(classifyReliabilityObservations(safety)).toMatchObject({ engineeringGate: 'FAIL', reasonCodes: ['DUPLICATE_PUBLICATION_DETECTED'] })
+
+    const malformed = structuredClone(complete)
+    malformed.observationSourceAuthority.canonicalHash = '0'.repeat(64)
+    expect(classifyReliabilityObservations(malformed)).toMatchObject({ engineeringGate: 'FAIL', reasonCodes: ['MALFORMED_EVIDENCE'] })
+  }, 20_000)
 
   it('classifies malformed authority FAIL without converting coverage HOLD', () => {
     const malformed = repeatedStageSet('CONTRACT_FIXTURE', 1)

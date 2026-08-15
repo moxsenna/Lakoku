@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CHAPTER_SEQUENCE,
   M10_E_STAGE_CATALOG_V1,
   M10_E_TOPOLOGY_V1,
   canonicalAuthorityHash,
   getStageSemantics,
+  getStageTransition,
+  isJudgePlanEligible,
   nextReachedStages,
   validateTopologyAuthority,
   type StageId,
@@ -15,7 +18,7 @@ function rehash<T extends Record<string, unknown>>(value: T): T {
 
 describe('M10-E frozen topology', () => {
   it('freezes topology identity, exact edges, and reachability', () => {
-    expect(M10_E_TOPOLOGY_V1.canonicalHash).toBe('30a06a2f79cda4812addb23cccc65edcbb96ddd8969a21617b362c23e0108937')
+    expect(M10_E_TOPOLOGY_V1.canonicalHash).toBe('cd4703496d575571534dedf13307f4f25efdcb581ad1ed29fb1799f28207113f')
     expect(() => validateTopologyAuthority(M10_E_TOPOLOGY_V1)).not.toThrow()
     expect(nextReachedStages('PROSE_PRIMARY', 'FAILURE')).toEqual(['PROSE_RETRY'])
     expect(nextReachedStages('PROSE_RETRY', 'FAILURE')).toEqual(['PROVIDER_FALLBACK'])
@@ -30,30 +33,28 @@ describe('M10-E frozen topology', () => {
     expect(nextReachedStages('POST_PUBLISH', 'FAILURE')).toEqual([])
   })
 
-  it('covers every prose, structured, ownership, publication, and post-publish path', () => {
-    expect(nextReachedStages('PROSE_PRIMARY', 'SUCCESS')).toEqual(['STRUCTURED_OUTPUT'])
-    expect(nextReachedStages('PROSE_RETRY', 'SUCCESS')).toEqual(['STRUCTURED_OUTPUT'])
-    expect(nextReachedStages('PROVIDER_FALLBACK', 'SUCCESS')).toEqual(['STRUCTURED_OUTPUT'])
-    expect(nextReachedStages('CHECKPOINT_RECOVERY', 'FAILURE')).toEqual([])
-    expect(nextReachedStages('STRUCTURED_RETRY', 'FAILURE')).toEqual([])
-    expect(nextReachedStages('OWNERSHIP_RECOVERY', 'FAILURE')).toEqual([])
-    expect(nextReachedStages('PUBLICATION_RECOVERY', 'FAILURE')).toEqual([])
-    expect(nextReachedStages('POST_PUBLISH', 'SUCCESS')).toEqual([])
+  it('makes recovery and retry terminal effects outcome-aware', () => {
+    for (const stageId of ['CHECKPOINT_RECOVERY', 'STRUCTURED_RETRY', 'OWNERSHIP_RECOVERY', 'PUBLICATION_RECOVERY'] as const) {
+      expect(getStageTransition(stageId, 'SUCCESS')).toMatchObject({ chapterEffect: 'CONTINUE' })
+      expect(getStageTransition(stageId, 'FAILURE')).toEqual({ nextStageIds: [], chapterEffect: 'TERMINAL_FAILURE' })
+    }
+    expect(getStageTransition('POST_PUBLISH', 'SUCCESS')).toEqual({ nextStageIds: [], chapterEffect: 'CHAPTER_COMPLETE' })
+    expect(getStageTransition('POST_PUBLISH', 'FAILURE')).toEqual({ nextStageIds: [], chapterEffect: 'CHAPTER_COMPLETE' })
   })
 
   it('returns provider applicability and retry-counter truth table for all stages', () => {
     const expected = {
-      PROSE_PRIMARY: ['CHAPTER_PROSE', 'PRIMARY', 'APPLICABLE', false, 'NONE'],
-      PROSE_RETRY: ['CHAPTER_PROSE', 'RETRY', 'APPLICABLE', true, 'NONE'],
-      PROVIDER_FALLBACK: ['CHAPTER_PROSE', 'FALLBACK', 'APPLICABLE', false, 'NONE'],
-      CHECKPOINT_RECOVERY: ['RUNTIME_RECOVERY', null, 'NOT_APPLICABLE', true, 'FAILURE_TERMINAL'],
-      STRUCTURED_OUTPUT: ['CHAPTER_STRUCTURED_OUTPUT', 'PRIMARY', 'APPLICABLE', false, 'NONE'],
-      STRUCTURED_RETRY: ['CHAPTER_STRUCTURED_OUTPUT', 'RETRY', 'APPLICABLE', true, 'FAILURE_TERMINAL'],
-      OWNERSHIP: ['RUNTIME_RECOVERY', null, 'NOT_APPLICABLE', false, 'NONE'],
-      OWNERSHIP_RECOVERY: ['RUNTIME_RECOVERY', null, 'NOT_APPLICABLE', true, 'FAILURE_TERMINAL'],
-      PUBLICATION: ['RUNTIME_RECOVERY', null, 'NOT_APPLICABLE', false, 'NONE'],
-      PUBLICATION_RECOVERY: ['RUNTIME_RECOVERY', null, 'NOT_APPLICABLE', true, 'FAILURE_TERMINAL'],
-      POST_PUBLISH: ['RUNTIME_RECOVERY', null, 'NOT_APPLICABLE', false, 'NONTERMINAL_COMPLETION'],
+      PROSE_PRIMARY: ['CHAPTER_PROSE', 'PRIMARY', 'APPLICABLE', false],
+      PROSE_RETRY: ['CHAPTER_PROSE', 'RETRY', 'APPLICABLE', true],
+      PROVIDER_FALLBACK: ['CHAPTER_PROSE', 'FALLBACK', 'APPLICABLE', false],
+      CHECKPOINT_RECOVERY: ['RUNTIME_RECOVERY', null, 'NOT_APPLICABLE', true],
+      STRUCTURED_OUTPUT: ['CHAPTER_STRUCTURED_OUTPUT', 'PRIMARY', 'APPLICABLE', false],
+      STRUCTURED_RETRY: ['CHAPTER_STRUCTURED_OUTPUT', 'RETRY', 'APPLICABLE', true],
+      OWNERSHIP: ['RUNTIME_RECOVERY', null, 'NOT_APPLICABLE', false],
+      OWNERSHIP_RECOVERY: ['RUNTIME_RECOVERY', null, 'NOT_APPLICABLE', true],
+      PUBLICATION: ['RUNTIME_RECOVERY', null, 'NOT_APPLICABLE', false],
+      PUBLICATION_RECOVERY: ['RUNTIME_RECOVERY', null, 'NOT_APPLICABLE', true],
+      POST_PUBLISH: ['RUNTIME_RECOVERY', null, 'NOT_APPLICABLE', false],
     } as const
 
     for (const stageId of M10_E_STAGE_CATALOG_V1.stages) {
@@ -63,7 +64,6 @@ describe('M10-E frozen topology', () => {
         semantics.attemptClass,
         semantics.providerCall.state,
         semantics.retryCounterEffect === 'INCREMENT',
-        semantics.terminalEffect,
       ]).toEqual(expected[stageId])
       if (semantics.providerCall.state === 'NOT_APPLICABLE') {
         expect(semantics.providerCall.authority.stageId).toBe(stageId)
@@ -71,21 +71,27 @@ describe('M10-E frozen topology', () => {
     }
   })
 
-  it('marks judge eligible only after successful post-publish completion', () => {
-    expect(getStageSemantics('POST_PUBLISH').judgeEligibility).toBe('AFTER_CHAPTER_50_COMPLETION')
-    for (const stageId of M10_E_STAGE_CATALOG_V1.stages.filter((id) => id !== 'POST_PUBLISH')) {
-      expect(getStageSemantics(stageId).judgeEligibility).toBe('NOT_ELIGIBLE')
+  it('requires complete chapters 1..50 before judge eligibility', () => {
+    const chapterComplete = getStageTransition('POST_PUBLISH', 'FAILURE')
+    for (let chapterNumber = 1; chapterNumber <= 49; chapterNumber += 1) {
+      expect(isJudgePlanEligible(chapterComplete, chapterNumber, CHAPTER_SEQUENCE.slice(0, chapterNumber))).toBe(false)
     }
+    expect(isJudgePlanEligible(chapterComplete, 50, CHAPTER_SEQUENCE)).toBe(true)
+    expect(isJudgePlanEligible(chapterComplete, 50, CHAPTER_SEQUENCE.slice(1))).toBe(false)
+
+    const terminalFailure = getStageTransition('PUBLICATION_RECOVERY', 'FAILURE')
+    expect(isJudgePlanEligible(terminalFailure, 50, CHAPTER_SEQUENCE)).toBe(false)
+    expect(terminalFailure.nextStageIds).toEqual([])
   })
 
-  it('rejects edge, terminal, retry, provider, task, attempt, and version-preserving mutations', () => {
+  it('rejects edge, outcome effect, retry, provider, task, attempt, and version-preserving mutations', () => {
     const mutateCases: Array<(copy: typeof M10_E_TOPOLOGY_V1) => void> = [
       (copy) => { copy.nodes.reverse() },
       (copy) => { copy.nodes[1] = copy.nodes[0]! },
       (copy) => { copy.nodes.pop() },
       (copy) => { copy.nodes.push(copy.nodes[0]!) },
-      (copy) => { copy.nodes[0]!.onFailure = [] },
-      (copy) => { copy.nodes[10]!.terminalEffect = 'FAILURE_TERMINAL' },
+      (copy) => { copy.nodes[0]!.transitions.FAILURE.nextStageIds = [] },
+      (copy) => { copy.nodes[10]!.transitions.FAILURE.chapterEffect = 'TERMINAL_FAILURE' },
       (copy) => { copy.nodes[2]!.retryCounterEffect = 'INCREMENT' },
       (copy) => { copy.nodes[6]!.providerCallState = 'APPLICABLE' },
       (copy) => { copy.nodes[0]!.taskId = 'RUNTIME_RECOVERY' },

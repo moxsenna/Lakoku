@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { stableStringify } from '../scoring/canonical-serializer'
 import {
+  CHAPTER_NUMBER_SCHEMA,
   NOT_APPLICABLE_AUTHORITY_SCHEMA,
   STAGE_ID_SCHEMA,
   canonicalAuthorityHash,
@@ -9,24 +10,24 @@ import {
   type StageId,
   type TaskId,
 } from './contracts'
-import { M10_E_TASK_MAPPING_V1 } from './authorities'
+import { M10_E_TOPOLOGY_V1 } from './authorities'
 
 const AUTHORITY_DECISION_REF = 'docs/superpowers/specs/2026-08-13-m10-e-e3a-e4-reliability-economics-design.md'
 export type StageOutcome = 'SUCCESS' | 'FAILURE'
 export type RetryCounterEffect = 'NONE' | 'INCREMENT'
-export type TerminalEffect = 'NONE' | 'FAILURE_TERMINAL' | 'NONTERMINAL_COMPLETION'
-export type JudgeEligibility = 'NOT_ELIGIBLE' | 'AFTER_CHAPTER_50_COMPLETION'
+export type ChapterEffect = 'CONTINUE' | 'TERMINAL_FAILURE' | 'CHAPTER_COMPLETE'
 
+const TRANSITION_SCHEMA = z.strictObject({
+  nextStageIds: z.array(STAGE_ID_SCHEMA).max(1),
+  chapterEffect: z.enum(['CONTINUE', 'TERMINAL_FAILURE', 'CHAPTER_COMPLETE']),
+})
 const TOPOLOGY_NODE_SCHEMA = z.strictObject({
   stageId: STAGE_ID_SCHEMA,
-  onSuccess: z.array(STAGE_ID_SCHEMA).max(1),
-  onFailure: z.array(STAGE_ID_SCHEMA).max(1),
   taskId: z.enum(['CHAPTER_PROSE', 'CHAPTER_STRUCTURED_OUTPUT', 'RUNTIME_RECOVERY']),
   providerCallState: z.enum(['APPLICABLE', 'NOT_APPLICABLE']),
   attemptClass: z.enum(['PRIMARY', 'RETRY', 'FALLBACK']).nullable(),
   retryCounterEffect: z.enum(['NONE', 'INCREMENT']),
-  terminalEffect: z.enum(['NONE', 'FAILURE_TERMINAL', 'NONTERMINAL_COMPLETION']),
-  judgeEligibility: z.enum(['NOT_ELIGIBLE', 'AFTER_CHAPTER_50_COMPLETION']),
+  transitions: z.strictObject({ SUCCESS: TRANSITION_SCHEMA, FAILURE: TRANSITION_SCHEMA }),
 })
 const TOPOLOGY_SCHEMA = z.strictObject({
   authorityVersion: z.literal('M10_E_TOPOLOGY_V1'),
@@ -36,53 +37,6 @@ const TOPOLOGY_SCHEMA = z.strictObject({
   canonicalHash: z.string().regex(/^[0-9a-f]{64}$/),
 })
 
-const TOPOLOGY_PAYLOAD = {
-  authorityVersion: 'M10_E_TOPOLOGY_V1' as const,
-  decisionRef: AUTHORITY_DECISION_REF,
-  entryStageId: 'PROSE_PRIMARY' as const,
-  nodes: [
-    node('PROSE_PRIMARY', ['STRUCTURED_OUTPUT'], ['PROSE_RETRY'], 'NONE', 'NONE'),
-    node('PROSE_RETRY', ['STRUCTURED_OUTPUT'], ['PROVIDER_FALLBACK'], 'INCREMENT', 'NONE'),
-    node('PROVIDER_FALLBACK', ['STRUCTURED_OUTPUT'], ['CHECKPOINT_RECOVERY'], 'NONE', 'NONE'),
-    node('CHECKPOINT_RECOVERY', ['STRUCTURED_OUTPUT'], [], 'INCREMENT', 'FAILURE_TERMINAL'),
-    node('STRUCTURED_OUTPUT', ['OWNERSHIP'], ['STRUCTURED_RETRY'], 'NONE', 'NONE'),
-    node('STRUCTURED_RETRY', ['OWNERSHIP'], [], 'INCREMENT', 'FAILURE_TERMINAL'),
-    node('OWNERSHIP', ['PUBLICATION'], ['OWNERSHIP_RECOVERY'], 'NONE', 'NONE'),
-    node('OWNERSHIP_RECOVERY', ['PUBLICATION'], [], 'INCREMENT', 'FAILURE_TERMINAL'),
-    node('PUBLICATION', ['POST_PUBLISH'], ['PUBLICATION_RECOVERY'], 'NONE', 'NONE'),
-    node('PUBLICATION_RECOVERY', ['POST_PUBLISH'], [], 'INCREMENT', 'FAILURE_TERMINAL'),
-    node('POST_PUBLISH', [], [], 'NONE', 'NONTERMINAL_COMPLETION', 'AFTER_CHAPTER_50_COMPLETION'),
-  ],
-}
-
-export const M10_E_TOPOLOGY_V1 = deepFreeze({
-  ...TOPOLOGY_PAYLOAD,
-  canonicalHash: canonicalAuthorityHash(TOPOLOGY_PAYLOAD),
-})
-
-function node(
-  stageId: StageId,
-  onSuccess: StageId[],
-  onFailure: StageId[],
-  retryCounterEffect: RetryCounterEffect,
-  terminalEffect: TerminalEffect,
-  judgeEligibility: JudgeEligibility = 'NOT_ELIGIBLE',
-) {
-  const mapping = M10_E_TASK_MAPPING_V1.mapping.find((row) => row.stageId === stageId)
-  if (!mapping) throw new Error(`Missing task mapping for ${stageId}`)
-  return {
-    stageId,
-    onSuccess,
-    onFailure,
-    taskId: mapping.taskId,
-    providerCallState: mapping.providerCallState,
-    attemptClass: mapping.attemptClass,
-    retryCounterEffect,
-    terminalEffect,
-    judgeEligibility,
-  }
-}
-
 export interface StageSemantics {
   readonly stageId: StageId
   readonly taskId: TaskId
@@ -91,13 +45,20 @@ export interface StageSemantics {
     | Readonly<{ state: 'APPLICABLE' }>
     | Readonly<{ state: 'NOT_APPLICABLE'; authority: NotApplicableAuthority }>
   readonly retryCounterEffect: RetryCounterEffect
-  readonly terminalEffect: TerminalEffect
-  readonly judgeEligibility: JudgeEligibility
+}
+
+export interface StageTransition {
+  readonly nextStageIds: readonly StageId[]
+  readonly chapterEffect: ChapterEffect
+}
+
+export function getStageTransition(stageId: StageId, outcome: StageOutcome): StageTransition {
+  const transition = findNode(stageId).transitions[outcome]
+  return deepFreeze({ nextStageIds: [...transition.nextStageIds], chapterEffect: transition.chapterEffect })
 }
 
 export function nextReachedStages(stageId: StageId, outcome: StageOutcome): readonly StageId[] {
-  const topologyNode = findNode(stageId)
-  return outcome === 'SUCCESS' ? topologyNode.onSuccess : topologyNode.onFailure
+  return getStageTransition(stageId, outcome).nextStageIds
 }
 
 export function getStageSemantics(stageId: StageId): StageSemantics {
@@ -111,9 +72,17 @@ export function getStageSemantics(stageId: StageId): StageSemantics {
     attemptClass: topologyNode.attemptClass as AttemptClass | null,
     providerCall,
     retryCounterEffect: topologyNode.retryCounterEffect,
-    terminalEffect: topologyNode.terminalEffect,
-    judgeEligibility: topologyNode.judgeEligibility,
   })
+}
+
+export function isJudgePlanEligible(
+  transition: StageTransition,
+  chapterNumber: number,
+  completedChapterNumbers: readonly number[],
+): boolean {
+  const chapter = CHAPTER_NUMBER_SCHEMA.parse(chapterNumber)
+  if (transition.chapterEffect !== 'CHAPTER_COMPLETE' || chapter !== 50) return false
+  return completedChapterNumbers.length === 50 && completedChapterNumbers.every((value, index) => value === index + 1)
 }
 
 export function validateTopologyAuthority(value: unknown): typeof M10_E_TOPOLOGY_V1 {

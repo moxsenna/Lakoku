@@ -5,6 +5,7 @@ import {
   M10_E_MONTE_CARLO_V1,
   M10_E_STAGE_CATALOG_V1,
   M10_E_TASK_MAPPING_V1,
+  M10_E_TOPOLOGY_V1,
   canonicalAuthorityHash,
   createChapterStageExchangeabilityAuthorities,
   createJudgePlanAuthority,
@@ -24,7 +25,7 @@ const stratum: CompatibleStratumIdentity = {
   retryFallbackPolicyId: 'retry_policy_v1',
   retryFallbackPolicyHash: HASH_A,
   topologyVersion: 'M10_E_TOPOLOGY_V1',
-  topologyHash: HASH_B,
+  topologyHash: M10_E_TOPOLOGY_V1.canonicalHash,
   stageCatalogVersion: 'M10_E_STAGE_CATALOG_V1',
   stageCatalogHash: M10_E_STAGE_CATALOG_V1.canonicalHash,
   taskMappingVersion: 'M10_E_TASK_MAPPING_V1',
@@ -88,12 +89,17 @@ describe('M10-E reliability authorities', () => {
     })
     expect(M10_E_MONTE_CARLO_V1.canonicalHash).toBe('0aab4a2b31d09a359595a577a6fb5a9094d907ff7049da8de130659c0739a088')
     expect(() => validateMonteCarloAuthority(M10_E_MONTE_CARLO_V1)).not.toThrow()
-    expect(M10_E_CUMULATIVE_MODEL_V1.canonicalHash).toBe('7e6d8a570f1b5fbcc5388a588a750339dfc2cb82a2d71017b06cefdf6840a54e')
+    expect(M10_E_CUMULATIVE_MODEL_V1.topologyHash).toBe(M10_E_TOPOLOGY_V1.canonicalHash)
+    expect(M10_E_CUMULATIVE_MODEL_V1.canonicalHash).toBe('aea651b77f04954acd858256a6de3b950761d858e854ea14e85edf6ad4c14067')
     expect(() => validateCumulativeModelAuthority(M10_E_CUMULATIVE_MODEL_V1)).not.toThrow()
 
     const mutation = structuredClone(M10_E_CUMULATIVE_MODEL_V1)
     mutation.monteCarlo.iterations = 99999
     expect(() => validateCumulativeModelAuthority(rehash(mutation))).toThrow()
+
+    const topologyMutation = structuredClone(M10_E_CUMULATIVE_MODEL_V1)
+    topologyMutation.topologyHash = HASH_B
+    expect(() => validateCumulativeModelAuthority(rehash(topologyMutation))).toThrow()
   })
 
   it('freezes exact ordered judge triplets and rejects sequence or policy mutations', () => {
@@ -127,6 +133,25 @@ describe('M10-E reliability authorities', () => {
     expect(assumptions.every((item) => item.chapters.join(',') === CHAPTER_SEQUENCE.join(','))).toBe(true)
     expect(assumptions.every((item) => !('centralProbability' in item))).toBe(true)
     expect(() => validateChapterStageExchangeabilityAuthorities(assumptions, 'CONTRACT_FIXTURE', stratum)).not.toThrow()
+  })
+
+  it.each([
+    ['stage catalog', 'stageCatalogVersion', 'stageCatalogHash', 'M10_E_STAGE_CATALOG_V1', M10_E_STAGE_CATALOG_V1.canonicalHash],
+    ['task mapping', 'taskMappingVersion', 'taskMappingHash', 'M10_E_TASK_MAPPING_V1', M10_E_TASK_MAPPING_V1.canonicalHash],
+    ['topology', 'topologyVersion', 'topologyHash', 'M10_E_TOPOLOGY_V1', M10_E_TOPOLOGY_V1.canonicalHash],
+  ] as const)('rejects false %s version/hash pairs', (_name, versionKey, hashKey, correctVersion, correctHash) => {
+    const wrongHash = structuredClone(stratum)
+    wrongHash[hashKey] = HASH_B === correctHash ? HASH_A : HASH_B
+    expect(() => createChapterStageExchangeabilityAuthorities('CONTRACT_FIXTURE', wrongHash)).toThrow()
+
+    const wrongVersion = structuredClone(stratum)
+    wrongVersion[versionKey] = `${correctVersion}_WRONG`
+    wrongVersion[hashKey] = correctHash
+    expect(() => createChapterStageExchangeabilityAuthorities('CONTRACT_FIXTURE', wrongVersion)).toThrow()
+
+    const valid = createChapterStageExchangeabilityAuthorities('CONTRACT_FIXTURE', stratum)
+    expect(() => validateChapterStageExchangeabilityAuthorities(valid, 'CONTRACT_FIXTURE', wrongHash)).toThrow()
+    expect(() => validateChapterStageExchangeabilityAuthorities(valid, 'CONTRACT_FIXTURE', wrongVersion)).toThrow()
   })
 
   it('rejects exchangeability authority spanning wrong scope or missing authority fields', () => {

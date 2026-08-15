@@ -62,6 +62,48 @@ export const M10_E_TASK_MAPPING_V1 = freezeHashed({
   ],
 })
 
+export const M10_E_TOPOLOGY_V1 = freezeHashed({
+  authorityVersion: 'M10_E_TOPOLOGY_V1' as const,
+  decisionRef: AUTHORITY_DECISION_REF,
+  entryStageId: 'PROSE_PRIMARY' as const,
+  nodes: [
+    topologyNode('PROSE_PRIMARY', ['STRUCTURED_OUTPUT'], ['PROSE_RETRY'], 'NONE'),
+    topologyNode('PROSE_RETRY', ['STRUCTURED_OUTPUT'], ['PROVIDER_FALLBACK'], 'INCREMENT'),
+    topologyNode('PROVIDER_FALLBACK', ['STRUCTURED_OUTPUT'], ['CHECKPOINT_RECOVERY'], 'NONE'),
+    topologyNode('CHECKPOINT_RECOVERY', ['STRUCTURED_OUTPUT'], [], 'INCREMENT', 'TERMINAL_FAILURE'),
+    topologyNode('STRUCTURED_OUTPUT', ['OWNERSHIP'], ['STRUCTURED_RETRY'], 'NONE'),
+    topologyNode('STRUCTURED_RETRY', ['OWNERSHIP'], [], 'INCREMENT', 'TERMINAL_FAILURE'),
+    topologyNode('OWNERSHIP', ['PUBLICATION'], ['OWNERSHIP_RECOVERY'], 'NONE'),
+    topologyNode('OWNERSHIP_RECOVERY', ['PUBLICATION'], [], 'INCREMENT', 'TERMINAL_FAILURE'),
+    topologyNode('PUBLICATION', ['POST_PUBLISH'], ['PUBLICATION_RECOVERY'], 'NONE'),
+    topologyNode('PUBLICATION_RECOVERY', ['POST_PUBLISH'], [], 'INCREMENT', 'TERMINAL_FAILURE'),
+    topologyNode('POST_PUBLISH', [], [], 'NONE', 'CHAPTER_COMPLETE', 'CHAPTER_COMPLETE'),
+  ],
+})
+
+function topologyNode(
+  stageId: (typeof STAGE_IDS)[number],
+  successNextStageIds: (typeof STAGE_IDS)[number][],
+  failureNextStageIds: (typeof STAGE_IDS)[number][],
+  retryCounterEffect: 'NONE' | 'INCREMENT',
+  failureChapterEffect: 'CONTINUE' | 'TERMINAL_FAILURE' | 'CHAPTER_COMPLETE' = 'CONTINUE',
+  successChapterEffect: 'CONTINUE' | 'CHAPTER_COMPLETE' = 'CONTINUE',
+) {
+  const mapping = M10_E_TASK_MAPPING_V1.mapping.find((row) => row.stageId === stageId)
+  if (!mapping) throw new Error(`Missing task mapping for ${stageId}`)
+  return {
+    stageId,
+    taskId: mapping.taskId,
+    providerCallState: mapping.providerCallState,
+    attemptClass: mapping.attemptClass,
+    retryCounterEffect,
+    transitions: {
+      SUCCESS: { nextStageIds: successNextStageIds, chapterEffect: successChapterEffect },
+      FAILURE: { nextStageIds: failureNextStageIds, chapterEffect: failureChapterEffect },
+    },
+  }
+}
+
 export const M10_E_MONTE_CARLO_V1 = freezeHashed({
   authorityVersion: 'M10_E_MONTE_CARLO_V1' as const,
   methodVersion: 'M10_E_MONTE_CARLO_V1' as const,
@@ -132,6 +174,7 @@ const CUMULATIVE_MODEL_SCHEMA = z.strictObject({
   taskMappingVersion: z.literal('M10_E_TASK_MAPPING_V1'),
   taskMappingHash: SHA256_SCHEMA,
   topologyVersion: z.literal('M10_E_TOPOLOGY_V1'),
+  topologyHash: SHA256_SCHEMA,
   probabilityKey: z.literal('stageId'),
   centralProbabilityProvenance: z.literal('OBSERVED_ONLY'),
   novelCostConditioning: z.literal('SUCCESSFUL_50_CHAPTER_RUN'),
@@ -148,7 +191,8 @@ export const M10_E_CUMULATIVE_MODEL_V1 = freezeHashed({
   stageCatalogHash: M10_E_STAGE_CATALOG_V1.canonicalHash,
   taskMappingVersion: 'M10_E_TASK_MAPPING_V1' as const,
   taskMappingHash: M10_E_TASK_MAPPING_V1.canonicalHash,
-  topologyVersion: 'M10_E_TOPOLOGY_V1' as const,
+  topologyVersion: M10_E_TOPOLOGY_V1.authorityVersion,
+  topologyHash: M10_E_TOPOLOGY_V1.canonicalHash,
   probabilityKey: 'stageId' as const,
   centralProbabilityProvenance: 'OBSERVED_ONLY' as const,
   novelCostConditioning: 'SUCCESSFUL_50_CHAPTER_RUN' as const,
@@ -214,7 +258,7 @@ export function createChapterStageExchangeabilityAuthorities(
   compatibleStratum: CompatibleStratumIdentity,
 ): ChapterStageExchangeabilityAuthority[] {
   const profile = EXECUTION_PROFILE_SCHEMA.parse(executionProfile)
-  const stratum = COMPATIBLE_STRATUM_IDENTITY_SCHEMA.parse(compatibleStratum)
+  const stratum = validateCompatibleStratumAuthorityBindings(compatibleStratum)
   return deepFreeze(STAGE_IDS.map((stageId) => freezeHashed({
     provenance: 'ASSUMPTION' as const,
     authorityVersion: 'M10_E_CHAPTER_STAGE_EXCHANGEABILITY_V1' as const,
@@ -237,6 +281,44 @@ export function validateChapterStageExchangeabilityAuthorities(
   const expected = createChapterStageExchangeabilityAuthorities(executionProfile, compatibleStratum)
   assertSemanticIdentity(parsed, expected, 'Chapter-stage exchangeability authority set')
   return deepFreeze(parsed)
+}
+
+function validateCompatibleStratumAuthorityBindings(value: CompatibleStratumIdentity): CompatibleStratumIdentity {
+  const stratum = COMPATIBLE_STRATUM_IDENTITY_SCHEMA.parse(value)
+  assertVersionHashPair(
+    stratum.stageCatalogVersion,
+    stratum.stageCatalogHash,
+    M10_E_STAGE_CATALOG_V1.authorityVersion,
+    M10_E_STAGE_CATALOG_V1.canonicalHash,
+    'Stage catalog',
+  )
+  assertVersionHashPair(
+    stratum.taskMappingVersion,
+    stratum.taskMappingHash,
+    M10_E_TASK_MAPPING_V1.authorityVersion,
+    M10_E_TASK_MAPPING_V1.canonicalHash,
+    'Task mapping',
+  )
+  assertVersionHashPair(
+    stratum.topologyVersion,
+    stratum.topologyHash,
+    M10_E_TOPOLOGY_V1.authorityVersion,
+    M10_E_TOPOLOGY_V1.canonicalHash,
+    'Topology',
+  )
+  return stratum
+}
+
+function assertVersionHashPair(
+  version: string,
+  hash: string,
+  expectedVersion: string,
+  expectedHash: string,
+  label: string,
+): void {
+  if (version !== expectedVersion || hash !== expectedHash) {
+    throw new Error(`${label} version/hash pair does not match frozen V1 authority`)
+  }
 }
 
 export function validateStageCatalogAuthority(value: unknown): typeof M10_E_STAGE_CATALOG_V1 {

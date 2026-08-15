@@ -50,11 +50,30 @@ describe('M10-E exact decimal authority', () => {
     expect(() => subtractDecimals(money('1'), money('2'), 'MONEY')).toThrow()
     expect(multiplyDecimals(money('1.25'), money('2'), 'MONEY')).toBe('2.50000000')
     expect(divideDecimals(money('1'), money('8'), 'MONEY')).toBe('0.12500000')
+    const maximumMoney = money('999999999999999999999999999999.99999999')
+    expect(divideDecimals(maximumMoney, maximumMoney, 'MONEY')).toBe('1.00000000')
+    expect(divideDecimals(money('500000000000000000000000000000'), money('250000000000000000000000000000'), 'MONEY')).toBe('2.00000000')
+    expect(() => divideDecimals(money('999999999999999999999999999999.99999999'), money('0.00000001'), 'MONEY')).toThrow()
     expect(() => divideDecimals(money('1'), money('0'), 'MONEY')).toThrow()
     expect(sumDecimals([money('0.004'), money('0.004'), money('0.004')], 'MONEY')).toBe('0.01200000')
     expect(ratioOf('1', '3')).toBe('0.333333333333')
     expect(percentageOf('1', '8')).toBe('12.500000')
     expect(decimalMean([money('1'), money('2'), money('2')], 'MONEY')).toBe('1.66666667')
+  })
+
+  it('aggregates exact coefficients before final rounding and uses HALF_UP, not HALF_EVEN', () => {
+    expect(convertDecimal('0.000000005', 'MONEY')).toBe('0.00000001')
+    expect(convertDecimal('0.000000025', 'MONEY')).toBe('0.00000003')
+    expect(decimalMean([money('0.00000000'), money('0.00000001')], 'MONEY')).toBe('0.00000001')
+    expect(decimalMean([money('0.00000001'), money('0.00000001'), money('0.00000000')], 'MONEY')).toBe('0.00000001')
+  })
+
+  it('fails stored and intermediate overflow without saturation', () => {
+    const maximumMoney = money('999999999999999999999999999999.99999999')
+    expect(() => addDecimals(maximumMoney, money('0.00000001'), 'MONEY')).toThrow(/10\^38 - 1/)
+    expect(() => sumDecimals([maximumMoney, money('0.00000001')], 'MONEY')).toThrow(/10\^38 - 1/)
+    expect(() => multiplyDecimals(maximumMoney, money('2'), 'MONEY')).toThrow(/10\^38 - 1/)
+    expect(() => divideDecimals(maximumMoney, money('0.00000001'), 'MONEY')).toThrow(/10\^38 - 1/)
   })
 
   it('uses percentile_cont interpolation, not nearest rank', () => {

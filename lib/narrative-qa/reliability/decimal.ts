@@ -212,16 +212,68 @@ function parseWholeCount(value: string | bigint): bigint {
 
 function divideExact(numerator: ExactDecimal, denominator: ExactDecimal, resultScale: number): ExactDecimal {
   if (denominator.coefficient === BigInt(0)) throw new RangeError('Division by zero')
+  const commonDivisor = greatestCommonDivisor(numerator.coefficient, denominator.coefficient)
+  let reducedNumerator = numerator.coefficient / commonDivisor
+  let reducedDenominator = denominator.coefficient / commonDivisor
   const exponent = resultScale + denominator.scale - numerator.scale
-  let scaledNumerator = numerator.coefficient
-  let scaledDenominator = denominator.coefficient
-  if (exponent >= 0) scaledNumerator *= powerOfTen(exponent)
-  else scaledDenominator *= powerOfTen(-exponent)
-  assertCoefficient(scaledNumerator)
-  assertCoefficient(scaledDenominator)
-  const coefficient = divideHalfUp(scaledNumerator, scaledDenominator)
+
+  if (exponent >= 0) {
+    const scaled = scaleByPowerOfTenAfterCancellation(reducedNumerator, reducedDenominator, exponent)
+    reducedNumerator = scaled.scaled
+    reducedDenominator = scaled.opposite
+  } else {
+    const scaled = scaleByPowerOfTenAfterCancellation(reducedDenominator, reducedNumerator, -exponent)
+    reducedDenominator = scaled.scaled
+    reducedNumerator = scaled.opposite
+  }
+
+  assertCoefficient(reducedNumerator)
+  assertCoefficient(reducedDenominator)
+  const coefficient = divideHalfUp(reducedNumerator, reducedDenominator)
   assertCoefficient(coefficient)
   return { coefficient, scale: resultScale }
+}
+
+function scaleByPowerOfTenAfterCancellation(
+  value: bigint,
+  opposite: bigint,
+  exponent: number,
+): { scaled: bigint; opposite: bigint } {
+  let reducedOpposite = opposite
+  let remainingTwos = exponent
+  let remainingFives = exponent
+  while (remainingTwos > 0 && reducedOpposite % BigInt(2) === BigInt(0)) {
+    reducedOpposite /= BigInt(2)
+    remainingTwos -= 1
+  }
+  while (remainingFives > 0 && reducedOpposite % BigInt(5) === BigInt(0)) {
+    reducedOpposite /= BigInt(5)
+    remainingFives -= 1
+  }
+
+  let scaled = value
+  while (remainingTwos > 0) {
+    scaled *= BigInt(2)
+    assertCoefficient(scaled)
+    remainingTwos -= 1
+  }
+  while (remainingFives > 0) {
+    scaled *= BigInt(5)
+    assertCoefficient(scaled)
+    remainingFives -= 1
+  }
+  return { scaled, opposite: reducedOpposite }
+}
+
+function greatestCommonDivisor(left: bigint, right: bigint): bigint {
+  let a = left
+  let b = right
+  while (b !== BigInt(0)) {
+    const remainder = a % b
+    a = b
+    b = remainder
+  }
+  return a
 }
 
 function rescaleExact(value: ExactDecimal, targetScale: number): ExactDecimal {

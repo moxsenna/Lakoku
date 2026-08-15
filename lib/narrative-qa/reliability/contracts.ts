@@ -253,8 +253,9 @@ export function businessAuthorityValueSchema<T>(valueSchema: z.ZodType<T>) {
 }
 
 export function observedValue<T>(value: MeasurementState<T>, refs: readonly string[]): ObservedValue<T> {
+  const parsedValue = parseMeasurementState(value)
   const parsedRefs = OBSERVATION_REFERENCES_SCHEMA.parse(refs).slice().sort()
-  const result: ObservedValue<T> = { provenance: 'OBSERVED', value, observationRefs: parsedRefs, [observedBrand]: true }
+  const result: ObservedValue<T> = { provenance: 'OBSERVED', value: parsedValue, observationRefs: parsedRefs, [observedBrand]: true }
   return deepFreeze(result)
 }
 
@@ -279,7 +280,7 @@ export function modeledValue<T>(value: T, authority: ModelAuthority, inputHash: 
 export function pricingDerivedValue<T>(value: MeasurementState<T>, pricingSnapshotHash: string): PricingDerivedValue<T> {
   const result: PricingDerivedValue<T> = {
     provenance: 'MODELED_FROM_PRICING',
-    value,
+    value: parseMeasurementState(value),
     pricingSnapshotHash: SHA256_SCHEMA.parse(pricingSnapshotHash),
     [pricingBrand]: true,
   }
@@ -310,6 +311,29 @@ export function notApplicableMeasurement<T>(authority: NotApplicableAuthority): 
 
 export function sortReasonCodes<T extends MissingReasonCode>(codes: readonly T[]): T[] {
   return [...codes].sort((left, right) => MISSING_REASON_CODES.indexOf(left) - MISSING_REASON_CODES.indexOf(right))
+}
+
+function parseMeasurementState<T>(value: MeasurementState<T>): MeasurementState<T> {
+  if (value === null || typeof value !== 'object' || !('state' in value)) throw new Error('Invalid measurement state')
+  switch (value.state) {
+    case 'PRESENT': {
+      const parsed = z.strictObject({ state: z.literal('PRESENT'), value: z.custom<T>() }).parse(value)
+      return deepFreeze({ state: parsed.state, value: structuredClone(parsed.value) })
+    }
+    case 'MISSING':
+      return deepFreeze(z.strictObject({
+        state: z.literal('MISSING'),
+        reasonCode: MISSING_REASON_CODE_SCHEMA,
+        detail: z.string().min(1),
+      }).parse(value))
+    case 'NOT_APPLICABLE':
+      return deepFreeze(z.strictObject({
+        state: z.literal('NOT_APPLICABLE'),
+        authority: NOT_APPLICABLE_AUTHORITY_SCHEMA,
+      }).parse(value))
+    default:
+      throw new Error('Invalid measurement state')
+  }
 }
 
 function deepFreeze<T>(value: T): Readonly<T> {

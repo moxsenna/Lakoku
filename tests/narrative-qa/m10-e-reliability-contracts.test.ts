@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { describe, expect, it } from 'vitest'
 import {
   ASSUMPTION_AUTHORITY_SCHEMA,
@@ -19,15 +20,21 @@ import {
   TASK_IDS,
   TASK_ID_SCHEMA,
   assumedValue,
+  assumedValueSchema,
   businessAuthorityValue,
+  businessAuthorityValueSchema,
   canonicalAuthorityHash,
   chapterNumber,
+  measurementStateSchema,
   missingMeasurement,
   modeledValue,
+  modeledValueSchema,
   notApplicableMeasurement,
   observedValue,
+  observedValueSchema,
   presentMeasurement,
   pricingDerivedValue,
+  pricingDerivedValueSchema,
   sortReasonCodes,
 } from '../../lib/narrative-qa/reliability'
 
@@ -123,6 +130,76 @@ describe('M10-E reliability contracts', () => {
     expect(ASSUMPTION_AUTHORITY_SCHEMA.parse(assumption)).toEqual(assumption)
     expect(MODEL_AUTHORITY_SCHEMA.parse(model)).toEqual(model)
     expect(E0_APPROVAL_AUTHORITY_SCHEMA.parse(approval)).toEqual(approval)
+  })
+
+  it('strictly validates and copies caller measurement states in observed and pricing constructors', () => {
+    const hash = 'b'.repeat(64)
+    const malformedStates = [
+      { state: 'PRESENT', value: '1', extra: true },
+      { state: 'MISSING', reasonCode: 'WRONG_REASON', detail: 'missing' },
+      { state: 'MISSING', reasonCode: 'COST_UNAVAILABLE', detail: '' },
+      { state: 'MISSING', reasonCode: 'COST_UNAVAILABLE', detail: 'missing', extra: true },
+      { state: 'NOT_APPLICABLE', authority: { authorityVersion: 'M10_E_TOPOLOGY_V1' } },
+      { state: 'UNKNOWN', value: '1' },
+    ]
+    for (const malformed of malformedStates) {
+      expect(() => Reflect.apply(observedValue, undefined, [malformed, ['obs-1']])).toThrow()
+      expect(() => Reflect.apply(pricingDerivedValue, undefined, [malformed, hash])).toThrow()
+    }
+
+    const mutable = { state: 'PRESENT' as const, value: { calls: 0 } }
+    const observed = observedValue(mutable, ['obs-1'])
+    const priced = pricingDerivedValue(mutable, hash)
+    expect(observed.value).not.toBe(mutable)
+    expect(priced.value).not.toBe(mutable)
+    expect(Object.isFrozen(observed.value)).toBe(true)
+    expect(Object.isFrozen(priced.value)).toBe(true)
+    if (observed.value.state === 'PRESENT' && priced.value.state === 'PRESENT') {
+      expect(observed.value.value).not.toBe(mutable.value)
+      expect(priced.value.value).not.toBe(mutable.value)
+      expect(Object.isFrozen(observed.value.value)).toBe(true)
+      expect(Object.isFrozen(priced.value.value)).toBe(true)
+    }
+  })
+
+  it('strictly parses every provenance wrapper schema and rejects forged wrappers', () => {
+    const assumption = hashAuthority({ authorityVersion: 'a/v1', rationale: 'Sensitivity only', decisionRef: 'D-1' })
+    const model = hashAuthority({ authorityVersion: 'm/v1', modelVersion: 'model/v1', decisionRef: 'D-2' })
+    const approval = hashAuthority({
+      authorityVersion: 'e0/v1',
+      approvalStatus: 'APPROVED' as const,
+      policyId: 'policy',
+      policyVersion: '1',
+      decisionRef: 'D-3',
+    })
+    const schemasAndInputs = [
+      [observedValueSchema(z.string()), { provenance: 'OBSERVED', value: { state: 'PRESENT', value: '1' }, observationRefs: ['obs-1'] }],
+      [assumedValueSchema(z.string()), { provenance: 'ASSUMPTION', value: '1', source: assumption }],
+      [modeledValueSchema(z.string()), { provenance: 'MODELED', value: '1', modelAuthority: model, inputHash: 'a'.repeat(64) }],
+      [pricingDerivedValueSchema(z.string()), { provenance: 'MODELED_FROM_PRICING', value: { state: 'PRESENT', value: '1' }, pricingSnapshotHash: 'b'.repeat(64) }],
+      [businessAuthorityValueSchema(z.string()), { provenance: 'BUSINESS_AUTHORITY', value: '1', approval }],
+    ] as const
+
+    for (const [schema, input] of schemasAndInputs) {
+      expect(schema.parse(input)).toMatchObject(input)
+      expect(() => schema.parse({ ...input, extra: true })).toThrow()
+      expect(() => schema.parse({ ...input, provenance: 'FORGED' })).toThrow()
+    }
+  })
+
+  it('keeps present-only boundaries distinct and provenance non-substitutable at runtime', () => {
+    const presentOnly = z.strictObject({ state: z.literal('PRESENT'), value: z.number() })
+    expect(presentOnly.parse(presentMeasurement(0))).toEqual({ state: 'PRESENT', value: 0 })
+    expect(() => presentOnly.parse(missingMeasurement('COST_UNAVAILABLE', 'cost absent'))).toThrow()
+    expect(measurementStateSchema(z.number()).parse({ state: 'PRESENT', value: 0 })).toEqual({ state: 'PRESENT', value: 0 })
+
+    for (const zeroKind of ['calls', 'tokens', 'failures', 'cost']) {
+      expect(observedValue(presentMeasurement(0), [`${zeroKind}-0`]).value).toEqual({ state: 'PRESENT', value: 0 })
+    }
+
+    const priced = pricingDerivedValue(presentMeasurement('0.00000000'), 'b'.repeat(64))
+    expect(() => observedValueSchema(z.string()).parse(priced)).toThrow()
+    expect(() => businessAuthorityValueSchema(z.string()).parse(priced)).toThrow()
   })
 
   it('rejects forged provenance and unknown keys through strict schemas', () => {

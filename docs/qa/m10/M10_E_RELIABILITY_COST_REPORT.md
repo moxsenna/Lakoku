@@ -3,7 +3,7 @@
 - schemaVersion = `M10_E_RELIABILITY_SEMANTIC_PAYLOAD_V1`
 - executionProfile = `CONTRACT_FIXTURE`
 - sourceAuthority = `CONTRACT_FIXTURE`
-- baseGitSha = `92fe089f29ddb700bee1368625d015096cbb8499e8bbb4bbf3a597b28c956fad`
+- baseGitSha = `1b1f21e4c708a21f70bf088f5375e1078ae71dce09be36dcb86c5f1293c88b70`
 - gitDirty = `false`
 - e2ClosureReference = `dbae9f377f2dd17d7032b348523f58201d98d73e9e9fc1b120be186981051410`
 - compatibleStratum = provider `provider_v1`, pricing `pricing_v1`/`de7a4bb8aa2812345a093523f03a6b4f358e772dba1ed84b7674b2fc68eba1d8`, retry `retry_v1`/`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`

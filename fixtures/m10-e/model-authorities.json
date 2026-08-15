@@ -1,0 +1,579 @@
+{
+  "stageCatalog": {
+    "authorityVersion": "M10_E_STAGE_CATALOG_V1",
+    "decisionRef": "docs/superpowers/specs/2026-08-13-m10-e-e3a-e4-reliability-economics-design.md",
+    "stages": [
+      "PROSE_PRIMARY",
+      "PROSE_RETRY",
+      "PROVIDER_FALLBACK",
+      "CHECKPOINT_RECOVERY",
+      "STRUCTURED_OUTPUT",
+      "STRUCTURED_RETRY",
+      "OWNERSHIP",
+      "OWNERSHIP_RECOVERY",
+      "PUBLICATION",
+      "PUBLICATION_RECOVERY",
+      "POST_PUBLISH"
+    ],
+    "canonicalHash": "42b18988a77d3b210d283d30a97622c41309a120cd0d92c546984883c57204bd"
+  },
+  "taskMapping": {
+    "authorityVersion": "M10_E_TASK_MAPPING_V1",
+    "decisionRef": "docs/superpowers/specs/2026-08-13-m10-e-e3a-e4-reliability-economics-design.md",
+    "mapping": [
+      {
+        "stageId": "PROSE_PRIMARY",
+        "taskId": "CHAPTER_PROSE",
+        "providerCallState": "APPLICABLE",
+        "attemptClass": "PRIMARY"
+      },
+      {
+        "stageId": "PROSE_RETRY",
+        "taskId": "CHAPTER_PROSE",
+        "providerCallState": "APPLICABLE",
+        "attemptClass": "RETRY"
+      },
+      {
+        "stageId": "PROVIDER_FALLBACK",
+        "taskId": "CHAPTER_PROSE",
+        "providerCallState": "APPLICABLE",
+        "attemptClass": "FALLBACK"
+      },
+      {
+        "stageId": "CHECKPOINT_RECOVERY",
+        "taskId": "RUNTIME_RECOVERY",
+        "providerCallState": "NOT_APPLICABLE",
+        "attemptClass": null
+      },
+      {
+        "stageId": "STRUCTURED_OUTPUT",
+        "taskId": "CHAPTER_STRUCTURED_OUTPUT",
+        "providerCallState": "APPLICABLE",
+        "attemptClass": "PRIMARY"
+      },
+      {
+        "stageId": "STRUCTURED_RETRY",
+        "taskId": "CHAPTER_STRUCTURED_OUTPUT",
+        "providerCallState": "APPLICABLE",
+        "attemptClass": "RETRY"
+      },
+      {
+        "stageId": "OWNERSHIP",
+        "taskId": "RUNTIME_RECOVERY",
+        "providerCallState": "NOT_APPLICABLE",
+        "attemptClass": null
+      },
+      {
+        "stageId": "OWNERSHIP_RECOVERY",
+        "taskId": "RUNTIME_RECOVERY",
+        "providerCallState": "NOT_APPLICABLE",
+        "attemptClass": null
+      },
+      {
+        "stageId": "PUBLICATION",
+        "taskId": "RUNTIME_RECOVERY",
+        "providerCallState": "NOT_APPLICABLE",
+        "attemptClass": null
+      },
+      {
+        "stageId": "PUBLICATION_RECOVERY",
+        "taskId": "RUNTIME_RECOVERY",
+        "providerCallState": "NOT_APPLICABLE",
+        "attemptClass": null
+      },
+      {
+        "stageId": "POST_PUBLISH",
+        "taskId": "RUNTIME_RECOVERY",
+        "providerCallState": "NOT_APPLICABLE",
+        "attemptClass": null
+      }
+    ],
+    "canonicalHash": "48f44fbeaa537258908cf701d1398d09bf678f7c7368fbd65cc8e28d1618ead8"
+  },
+  "topology": {
+    "authorityVersion": "M10_E_TOPOLOGY_V1",
+    "decisionRef": "docs/superpowers/specs/2026-08-13-m10-e-e3a-e4-reliability-economics-design.md",
+    "entryStageId": "PROSE_PRIMARY",
+    "nodes": [
+      {
+        "stageId": "PROSE_PRIMARY",
+        "taskId": "CHAPTER_PROSE",
+        "providerCallState": "APPLICABLE",
+        "attemptClass": "PRIMARY",
+        "retryCounterEffect": "NONE",
+        "transitions": {
+          "SUCCESS": {
+            "nextStageIds": [
+              "STRUCTURED_OUTPUT"
+            ],
+            "chapterEffect": "CONTINUE"
+          },
+          "FAILURE": {
+            "nextStageIds": [
+              "PROSE_RETRY"
+            ],
+            "chapterEffect": "CONTINUE"
+          }
+        }
+      },
+      {
+        "stageId": "PROSE_RETRY",
+        "taskId": "CHAPTER_PROSE",
+        "providerCallState": "APPLICABLE",
+        "attemptClass": "RETRY",
+        "retryCounterEffect": "INCREMENT",
+        "transitions": {
+          "SUCCESS": {
+            "nextStageIds": [
+              "STRUCTURED_OUTPUT"
+            ],
+            "chapterEffect": "CONTINUE"
+          },
+          "FAILURE": {
+            "nextStageIds": [
+              "PROVIDER_FALLBACK"
+            ],
+            "chapterEffect": "CONTINUE"
+          }
+        }
+      },
+      {
+        "stageId": "PROVIDER_FALLBACK",
+        "taskId": "CHAPTER_PROSE",
+        "providerCallState": "APPLICABLE",
+        "attemptClass": "FALLBACK",
+        "retryCounterEffect": "NONE",
+        "transitions": {
+          "SUCCESS": {
+            "nextStageIds": [
+              "STRUCTURED_OUTPUT"
+            ],
+            "chapterEffect": "CONTINUE"
+          },
+          "FAILURE": {
+            "nextStageIds": [
+              "CHECKPOINT_RECOVERY"
+            ],
+            "chapterEffect": "CONTINUE"
+          }
+        }
+      },
+      {
+        "stageId": "CHECKPOINT_RECOVERY",
+        "taskId": "RUNTIME_RECOVERY",
+        "providerCallState": "NOT_APPLICABLE",
+        "attemptClass": null,
+        "retryCounterEffect": "INCREMENT",
+        "transitions": {
+          "SUCCESS": {
+            "nextStageIds": [
+              "STRUCTURED_OUTPUT"
+            ],
+            "chapterEffect": "CONTINUE"
+          },
+          "FAILURE": {
+            "nextStageIds": [],
+            "chapterEffect": "TERMINAL_FAILURE"
+          }
+        }
+      },
+      {
+        "stageId": "STRUCTURED_OUTPUT",
+        "taskId": "CHAPTER_STRUCTURED_OUTPUT",
+        "providerCallState": "APPLICABLE",
+        "attemptClass": "PRIMARY",
+        "retryCounterEffect": "NONE",
+        "transitions": {
+          "SUCCESS": {
+            "nextStageIds": [
+              "OWNERSHIP"
+            ],
+            "chapterEffect": "CONTINUE"
+          },
+          "FAILURE": {
+            "nextStageIds": [
+              "STRUCTURED_RETRY"
+            ],
+            "chapterEffect": "CONTINUE"
+          }
+        }
+      },
+      {
+        "stageId": "STRUCTURED_RETRY",
+        "taskId": "CHAPTER_STRUCTURED_OUTPUT",
+        "providerCallState": "APPLICABLE",
+        "attemptClass": "RETRY",
+        "retryCounterEffect": "INCREMENT",
+        "transitions": {
+          "SUCCESS": {
+            "nextStageIds": [
+              "OWNERSHIP"
+            ],
+            "chapterEffect": "CONTINUE"
+          },
+          "FAILURE": {
+            "nextStageIds": [],
+            "chapterEffect": "TERMINAL_FAILURE"
+          }
+        }
+      },
+      {
+        "stageId": "OWNERSHIP",
+        "taskId": "RUNTIME_RECOVERY",
+        "providerCallState": "NOT_APPLICABLE",
+        "attemptClass": null,
+        "retryCounterEffect": "NONE",
+        "transitions": {
+          "SUCCESS": {
+            "nextStageIds": [
+              "PUBLICATION"
+            ],
+            "chapterEffect": "CONTINUE"
+          },
+          "FAILURE": {
+            "nextStageIds": [
+              "OWNERSHIP_RECOVERY"
+            ],
+            "chapterEffect": "CONTINUE"
+          }
+        }
+      },
+      {
+        "stageId": "OWNERSHIP_RECOVERY",
+        "taskId": "RUNTIME_RECOVERY",
+        "providerCallState": "NOT_APPLICABLE",
+        "attemptClass": null,
+        "retryCounterEffect": "INCREMENT",
+        "transitions": {
+          "SUCCESS": {
+            "nextStageIds": [
+              "PUBLICATION"
+            ],
+            "chapterEffect": "CONTINUE"
+          },
+          "FAILURE": {
+            "nextStageIds": [],
+            "chapterEffect": "TERMINAL_FAILURE"
+          }
+        }
+      },
+      {
+        "stageId": "PUBLICATION",
+        "taskId": "RUNTIME_RECOVERY",
+        "providerCallState": "NOT_APPLICABLE",
+        "attemptClass": null,
+        "retryCounterEffect": "NONE",
+        "transitions": {
+          "SUCCESS": {
+            "nextStageIds": [
+              "POST_PUBLISH"
+            ],
+            "chapterEffect": "CONTINUE"
+          },
+          "FAILURE": {
+            "nextStageIds": [
+              "PUBLICATION_RECOVERY"
+            ],
+            "chapterEffect": "CONTINUE"
+          }
+        }
+      },
+      {
+        "stageId": "PUBLICATION_RECOVERY",
+        "taskId": "RUNTIME_RECOVERY",
+        "providerCallState": "NOT_APPLICABLE",
+        "attemptClass": null,
+        "retryCounterEffect": "INCREMENT",
+        "transitions": {
+          "SUCCESS": {
+            "nextStageIds": [
+              "POST_PUBLISH"
+            ],
+            "chapterEffect": "CONTINUE"
+          },
+          "FAILURE": {
+            "nextStageIds": [],
+            "chapterEffect": "TERMINAL_FAILURE"
+          }
+        }
+      },
+      {
+        "stageId": "POST_PUBLISH",
+        "taskId": "RUNTIME_RECOVERY",
+        "providerCallState": "NOT_APPLICABLE",
+        "attemptClass": null,
+        "retryCounterEffect": "NONE",
+        "transitions": {
+          "SUCCESS": {
+            "nextStageIds": [],
+            "chapterEffect": "CHAPTER_COMPLETE"
+          },
+          "FAILURE": {
+            "nextStageIds": [],
+            "chapterEffect": "CHAPTER_COMPLETE"
+          }
+        }
+      }
+    ],
+    "canonicalHash": "cd4703496d575571534dedf13307f4f25efdcb581ad1ed29fb1799f28207113f"
+  },
+  "monteCarlo": {
+    "authorityVersion": "M10_E_MONTE_CARLO_V1",
+    "methodVersion": "M10_E_MONTE_CARLO_V1",
+    "decisionRef": "docs/superpowers/specs/2026-08-13-m10-e-e3a-e4-reliability-economics-design.md",
+    "iterations": 100000,
+    "probabilitySemantic": "FAILURE_PROBABILITY",
+    "chapterOrder": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50
+    ],
+    "stageOrder": [
+      "PROSE_PRIMARY",
+      "PROSE_RETRY",
+      "PROVIDER_FALLBACK",
+      "CHECKPOINT_RECOVERY",
+      "STRUCTURED_OUTPUT",
+      "STRUCTURED_RETRY",
+      "OWNERSHIP",
+      "OWNERSHIP_RECOVERY",
+      "PUBLICATION",
+      "PUBLICATION_RECOVERY",
+      "POST_PUBLISH"
+    ],
+    "skippedNodeDraws": "NONE",
+    "reachedProviderNodeDrawOrder": [
+      "STAGE_OUTCOME_UINT32",
+      "PROVIDER_COST_UINT32"
+    ],
+    "reachedRuntimeNodeDrawOrder": [
+      "STAGE_OUTCOME_UINT32"
+    ],
+    "judgeEvaluationDrawOrder": [
+      "PROVIDER_COST_UINT32"
+    ],
+    "prng": {
+      "algorithmId": "xoshiro128**",
+      "algorithmVersion": 1,
+      "seedEncoding": "EXACT_UTF8",
+      "seedDigest": "SHA-256",
+      "seedToStateVersion": "SHA256_BYTES_0_15_FOUR_UINT32_BIG_ENDIAN_V1",
+      "allZeroStateReplacement": [
+        "0x6d2b79f5",
+        "0x00000000",
+        "0x00000000",
+        "0x00000000"
+      ],
+      "wordArithmetic": "UINT32_MODULO_2_POW_32",
+      "nextWordOperations": "U=ROTL(S1*5,7)*9;T=S1<<9;S2^=S0;S3^=S1;S1^=S2;S0^=S3;S2^=T;S3=ROTL(S3,11);RETURN_U",
+      "uniformDivisor": "4294967296"
+    },
+    "analyticalMethodEligibility": "INDEPENDENT_BERNOULLI_WITHOUT_RETRY_RECOVERY_FALLBACK_OR_COST_ONLY",
+    "outcomeComparator": "UINT32_LT_FLOOR_FAILURE_PROBABILITY_TIMES_2_POW_32",
+    "boundaryDrawConsumption": "P_ZERO_AND_P_ONE_REACHED_NODES_CONSUME_ONE_OUTCOME_DRAW",
+    "costSampling": "SORT_NUMERIC_MONEY_THEN_UTF8_OBSERVATION_ID_INVERSE_EMPIRICAL_CDF",
+    "percentileMethod": "PERCENTILE_CONT_LINEAR_INTERPOLATION",
+    "numeric": {
+      "probabilityScale": 12,
+      "moneyScale": 8,
+      "percentageScale": 6,
+      "latencyMillisecondsScale": 3,
+      "intermediateScale": 20,
+      "roundingMode": "HALF_UP_TIES_AWAY_FROM_ZERO",
+      "coefficientLimit": "99999999999999999999999999999999999999",
+      "binaryFloatingPointAuthority": false
+    },
+    "canonicalHash": "0aab4a2b31d09a359595a577a6fb5a9094d907ff7049da8de130659c0739a088"
+  },
+  "cumulativeModel": {
+    "authorityVersion": "M10_E_CUMULATIVE_MODEL_V1",
+    "modelVersion": "M10_E_CUMULATIVE_MODEL_V1",
+    "decisionRef": "docs/superpowers/specs/2026-08-13-m10-e-e3a-e4-reliability-economics-design.md",
+    "stageCatalogVersion": "M10_E_STAGE_CATALOG_V1",
+    "stageCatalogHash": "42b18988a77d3b210d283d30a97622c41309a120cd0d92c546984883c57204bd",
+    "taskMappingVersion": "M10_E_TASK_MAPPING_V1",
+    "taskMappingHash": "48f44fbeaa537258908cf701d1398d09bf678f7c7368fbd65cc8e28d1618ead8",
+    "topologyVersion": "M10_E_TOPOLOGY_V1",
+    "topologyHash": "cd4703496d575571534dedf13307f4f25efdcb581ad1ed29fb1799f28207113f",
+    "probabilityKey": "stageId",
+    "centralProbabilityProvenance": "OBSERVED_ONLY",
+    "novelCostConditioning": "SUCCESSFUL_50_CHAPTER_RUN",
+    "monteCarlo": {
+      "authorityVersion": "M10_E_MONTE_CARLO_V1",
+      "methodVersion": "M10_E_MONTE_CARLO_V1",
+      "decisionRef": "docs/superpowers/specs/2026-08-13-m10-e-e3a-e4-reliability-economics-design.md",
+      "iterations": 100000,
+      "probabilitySemantic": "FAILURE_PROBABILITY",
+      "chapterOrder": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50
+      ],
+      "stageOrder": [
+        "PROSE_PRIMARY",
+        "PROSE_RETRY",
+        "PROVIDER_FALLBACK",
+        "CHECKPOINT_RECOVERY",
+        "STRUCTURED_OUTPUT",
+        "STRUCTURED_RETRY",
+        "OWNERSHIP",
+        "OWNERSHIP_RECOVERY",
+        "PUBLICATION",
+        "PUBLICATION_RECOVERY",
+        "POST_PUBLISH"
+      ],
+      "skippedNodeDraws": "NONE",
+      "reachedProviderNodeDrawOrder": [
+        "STAGE_OUTCOME_UINT32",
+        "PROVIDER_COST_UINT32"
+      ],
+      "reachedRuntimeNodeDrawOrder": [
+        "STAGE_OUTCOME_UINT32"
+      ],
+      "judgeEvaluationDrawOrder": [
+        "PROVIDER_COST_UINT32"
+      ],
+      "prng": {
+        "algorithmId": "xoshiro128**",
+        "algorithmVersion": 1,
+        "seedEncoding": "EXACT_UTF8",
+        "seedDigest": "SHA-256",
+        "seedToStateVersion": "SHA256_BYTES_0_15_FOUR_UINT32_BIG_ENDIAN_V1",
+        "allZeroStateReplacement": [
+          "0x6d2b79f5",
+          "0x00000000",
+          "0x00000000",
+          "0x00000000"
+        ],
+        "wordArithmetic": "UINT32_MODULO_2_POW_32",
+        "nextWordOperations": "U=ROTL(S1*5,7)*9;T=S1<<9;S2^=S0;S3^=S1;S1^=S2;S0^=S3;S2^=T;S3=ROTL(S3,11);RETURN_U",
+        "uniformDivisor": "4294967296"
+      },
+      "analyticalMethodEligibility": "INDEPENDENT_BERNOULLI_WITHOUT_RETRY_RECOVERY_FALLBACK_OR_COST_ONLY",
+      "outcomeComparator": "UINT32_LT_FLOOR_FAILURE_PROBABILITY_TIMES_2_POW_32",
+      "boundaryDrawConsumption": "P_ZERO_AND_P_ONE_REACHED_NODES_CONSUME_ONE_OUTCOME_DRAW",
+      "costSampling": "SORT_NUMERIC_MONEY_THEN_UTF8_OBSERVATION_ID_INVERSE_EMPIRICAL_CDF",
+      "percentileMethod": "PERCENTILE_CONT_LINEAR_INTERPOLATION",
+      "numeric": {
+        "probabilityScale": 12,
+        "moneyScale": 8,
+        "percentageScale": 6,
+        "latencyMillisecondsScale": 3,
+        "intermediateScale": 20,
+        "roundingMode": "HALF_UP_TIES_AWAY_FROM_ZERO",
+        "coefficientLimit": "99999999999999999999999999999999999999",
+        "binaryFloatingPointAuthority": false
+      },
+      "canonicalHash": "0aab4a2b31d09a359595a577a6fb5a9094d907ff7049da8de130659c0739a088"
+    },
+    "independentDrawAssumption": {
+      "provenance": "ASSUMPTION",
+      "authorityVersion": "M10_E_INDEPENDENT_DRAW_ASSUMPTION_V1",
+      "decisionRef": "docs/superpowers/specs/2026-08-13-m10-e-e3a-e4-reliability-economics-design.md",
+      "rationale": "Generation-node outcomes, chapters, generation costs, and judge cost samples use independent PRNG draws in model version 1.",
+      "canonicalHash": "f2b813fbcf77e2761fa7746147ebb7741fb478cc0199a6bee71bfa2eec9dbe62"
+    },
+    "deterministicJudgeAssumption": {
+      "provenance": "ASSUMPTION",
+      "authorityVersion": "M10_E_DETERMINISTIC_JUDGE_ASSUMPTION_V1",
+      "decisionRef": "docs/superpowers/specs/2026-08-13-m10-e-e3a-e4-reliability-economics-design.md",
+      "rationale": "Every required judge evaluation is traversed deterministically after successful chapter 50; judge reliability is out of scope.",
+      "canonicalHash": "1b8424bee6ad2656979118980e98390b72612f121d7deb1a7e446a2d0f2b25cf"
+    },
+    "canonicalHash": "aea651b77f04954acd858256a6de3b950761d858e854ea14e85edf6ad4c14067"
+  }
+}

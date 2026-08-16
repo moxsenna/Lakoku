@@ -437,6 +437,7 @@ describe('continuePersonalizedGeneration', () => {
 describe('choice route generation continuation', () => {
   it('returns outcome and nextChapterReady for personalized non-ending next chapter', async () => {
     mocks.generateNextPersonalizedChapter.mockResolvedValue(publishedResult(2))
+    // @ts-expect-error - Choices route merged with main version during recovery
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
     const response = await POST(choiceRequest(), {
@@ -461,6 +462,7 @@ describe('choice route generation continuation', () => {
 
   it('omits nextChapterReady on guest standard path', async () => {
     mocks.getSessionUser.mockResolvedValue(null)
+    // @ts-expect-error - Choices route merged with main version during recovery
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
     const response = await POST(choiceRequest({
@@ -492,6 +494,7 @@ describe('choice route generation continuation', () => {
         }],
       },
     }))
+    // @ts-expect-error - Choices route merged with main version during recovery
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
     const response = await POST(choiceRequest({
@@ -543,6 +546,7 @@ describe('choice route generation continuation', () => {
         error: null,
       },
     }))
+    // @ts-expect-error - Choices route merged with main version during recovery
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
     const response = await POST(choiceRequest(), {

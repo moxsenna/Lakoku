@@ -186,10 +186,10 @@ export async function resumeCommercialOperation(
   const jobId = queueParsed.data.job_id
 
   const { nextChapterReady } = await continuePersonalizedGeneration({
-    jobId,
     storyId: input.storyId,
     userId: input.userId,
     chapterNumber: intent.chapter_number,
+    correlationId: queueParsed.data.correlation_id || '',
   })
 
   return {

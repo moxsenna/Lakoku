@@ -520,10 +520,10 @@ export async function runContractAndGeneration(input: {
 
     // Kick worker via after() and race 25s
     const { nextChapterReady } = await continuePersonalizedGeneration({
-      jobId,
       storyId: input.storyId,
       userId: input.userId,
       chapterNumber: 1,
+      correlationId: parsedQueue.data.correlation_id || '',
     })
 
     if (!nextChapterReady) {

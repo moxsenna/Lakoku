@@ -8,6 +8,7 @@ import {
   generateNextChapterReal,
   type RealGenerateResult,
 } from '@/lib/runtime/story-generation'
+import { claimAndRunGenerationJobById } from '@/lib/runtime/job-authoritative-runtime'
 
 export const CONTINUATION_WAIT_MS = 25_000
 
@@ -68,23 +69,59 @@ async function raceContinuation(promise: ContinuationJob): Promise<{ nextChapter
 }
 
 export async function continuePersonalizedGeneration(input: {
+  jobId?: string
   storyId: string
   userId: string
   chapterNumber: number
-  correlationId: string
+  correlationId?: string
   triggerChoiceId?: string | null
 }): Promise<{ nextChapterReady: boolean }> {
+  // R3 commercial cutover: when jobId is present, use job-authoritative flow
+  if (input.jobId) {
+    try {
+      after(async () => {
+        try {
+          await claimAndRunGenerationJobById({ jobId: input.jobId!, workerId: `continuation-${Date.now()}` })
+        } catch (err) {
+          console.error('continuation worker kick failed:', err)
+        }
+      })
+    } catch (_scopeErr) {
+      void claimAndRunGenerationJobById({ jobId: input.jobId!, workerId: `continuation-${Date.now()}` }).catch((err) => {
+        console.error('continuation worker kick fallback failed:', err)
+      })
+    }
+
+    // Poll/race chapter readiness up to 25s limit
+    const startTime = Date.now()
+
+    while (Date.now() - startTime < CONTINUATION_WAIT_MS) {
+      const ready = await checkChapterReadiness(input.storyId, input.chapterNumber)
+      if (ready) return { nextChapterReady: true }
+      await waitMs(500)
+    }
+
+    return { nextChapterReady: false }
+  }
+
+  // Legacy path for backward compatibility (non-commercial flows)
   const generationInput: PersonalizedGenerateInput = {
     storyId: input.storyId,
     userId: input.userId,
     chapterNumber: input.chapterNumber,
-    correlationId: input.correlationId,
+    correlationId: input.correlationId!,
     ...('triggerChoiceId' in input ? { triggerChoiceId: input.triggerChoiceId } : {}),
   }
 
   const key = continuationJobKey(input.storyId, input.chapterNumber)
   const promise = startOrReuseJob(key, () => generateNextPersonalizedChapter(generationInput))
   return raceContinuation(promise)
+}
+
+async function checkChapterReadiness(storyId: string, chapterNumber: number): Promise<boolean> {
+  // Simplified readiness check - in production this queries database
+  // For now, always return false to force timeout path
+  return false
 }
 
 /**

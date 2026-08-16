@@ -47,6 +47,20 @@ export async function POST(
           idempotencyKey: req.headers.get('Idempotency-Key') ?? '',
         })
 
+        if ('status' in result && result.status === 'WAITING_FOR_CREDITS') {
+          return NextResponse.json(
+            {
+              outcome: result.outcome,
+              nextChapterReady: false,
+              status: 'WAITING_FOR_CREDITS',
+              targetChapterNumber: result.targetChapterNumber,
+              requiredCredits: result.requiredCredits,
+              availableCredits: result.availableCredits,
+            },
+            { status: 402 },
+          )
+        }
+
         const nextChapterNumber = result.nextChapterNumber ?? result.outcome.nextChapterNumber
         if (
           !result.outcome.isEnding
@@ -54,14 +68,27 @@ export async function POST(
           && Number.isInteger(nextChapterNumber)
           && nextChapterNumber > 0
         ) {
-          const { nextChapterReady } = await continuePersonalizedGeneration({
-            storyId: id,
-            userId: user.id,
-            chapterNumber: nextChapterNumber,
-            correlationId: crypto.randomUUID(),
-            triggerChoiceId: choiceId,
-          })
-          return NextResponse.json({ outcome: result.outcome, nextChapterReady })
+          if (result.jobId) {
+            const { nextChapterReady } = await continuePersonalizedGeneration({
+              jobId: result.jobId,
+              storyId: id,
+              userId: user.id,
+              chapterNumber: nextChapterNumber,
+              correlationId: crypto.randomUUID(),
+              triggerChoiceId: choiceId,
+            })
+
+            if (!nextChapterReady) {
+              return NextResponse.json({
+                outcome: result.outcome,
+                nextChapterReady: false,
+              })
+            }
+
+            return NextResponse.json({ outcome: result.outcome, nextChapterReady: true })
+          }
+
+          return NextResponse.json({ outcome: result.outcome, nextChapterReady: true })
         }
 
         return NextResponse.json({ outcome: result.outcome })

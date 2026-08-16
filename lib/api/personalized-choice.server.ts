@@ -35,7 +35,7 @@ const ReaderStateSchema = z.object({
   route_state: RouteStateSchema,
   choice_history: z.array(ChoiceHistoryEntrySchema).max(49),
   locked_ending_key: z.string().nullable(),
-  updated_at: z.iso.datetime({ offset: true }),
+  updated_at: z.string().min(1),
 }).strict()
 const OutcomeInternalSchema = z.object({
   story_id: z.string().min(1),
@@ -56,10 +56,32 @@ const ChapterChoiceSchema = z.object({
     hint: z.string().trim().min(1).optional(),
   }).strict()).min(1),
 }).strict()
-const RpcResultSchema = z.object({
-  outcome: ChoiceOutcomeSchema,
-  nextChapterNumber: z.number().int().positive().nullable(),
-  replayed: z.boolean(),
+
+const AuthorizeIntentResultSchema = z.union([
+  z.object({
+    ok: z.literal(true),
+    status: z.enum(['AUTHORIZED', 'QUEUED']),
+    replayed: z.boolean().optional(),
+    amount: z.number().int().nonnegative(),
+  }).strict(),
+  z.object({
+    ok: z.literal(false),
+    reason: z.literal('INSUFFICIENT_CREDITS'),
+    available: z.number().int().nonnegative(),
+    required: z.number().int().positive(),
+  }).strict(),
+  z.object({
+    ok: z.literal(false),
+    reason: z.string(),
+  }).passthrough(),
+])
+
+const QueueJobResultSchema = z.object({
+  ok: z.boolean(),
+  status: z.string(),
+  replayed: z.boolean().optional(),
+  job_id: z.string().uuid(),
+  correlation_id: z.string().uuid(),
 }).strict()
 
 export type PersonalizedChoiceErrorCode =
@@ -74,10 +96,16 @@ export type PersonalizedChoiceErrorCode =
   | 'POSITION_CONFLICT'
   | 'STALE_READER_STATE'
   | 'INVALID_STORED_DATA'
+  | 'INSUFFICIENT_CREDITS'
   | 'INTERNAL_ERROR'
 
 export class PersonalizedChoiceError extends Error {
-  constructor(public readonly code: PersonalizedChoiceErrorCode) {
+  constructor(
+    public readonly code: PersonalizedChoiceErrorCode,
+    public readonly requiredCredits?: number,
+    public readonly availableCredits?: number,
+    public readonly targetChapterNumber?: number,
+  ) {
     super(code)
     this.name = 'PersonalizedChoiceError'
   }
@@ -95,6 +123,11 @@ export interface ApplyPersonalizedChoiceResult {
   outcome: ChoiceOutcome
   nextChapterNumber: number | null
   replayed: boolean
+  jobId?: string
+  status?: 'READY' | 'PENDING' | 'WAITING_FOR_CREDITS'
+  requiredCredits?: number
+  availableCredits?: number
+  targetChapterNumber?: number
 }
 
 function invalidStoredData(): PersonalizedChoiceError {
@@ -174,7 +207,7 @@ export async function applyPersonalizedChoice(
 
   const metadata = parseStored(StoryMetadataSchema, metadataData)
   const personalized = metadata.owner_user_id === input.userId
-    && metadata.visibility === 'private'
+    && (metadata.visibility === 'private' || metadata.visibility === 'unlisted')
     && (metadata.story_mode === 'personalized_ai' || metadata.story_mode === 'premium_instance')
   if (!personalized) throw new PersonalizedChoiceError('NOT_PERSONALIZED_STORY')
 
@@ -235,7 +268,8 @@ export async function applyPersonalizedChoice(
     consequence: outcome.consequence[0],
   })
 
-  const { data, error } = await admin.rpc('apply_personalized_choice_v2', {
+  // STEP 1: Apply choice durably to DB via apply_personalized_choice_v2 (SQL)
+  const { data: rpcData, error: rpcError } = await admin.rpc('apply_personalized_choice_v2', {
     p_user_id: input.userId,
     p_story_id: input.storyId,
     p_chapter_number: input.chapterNumber,
@@ -246,11 +280,133 @@ export async function applyPersonalizedChoice(
     p_history_entry: historyEntry,
     p_jejak_entry: jejakEntry,
   })
-  if (error) {
-    if (error.message.includes('COMMERCIAL_INTENT_CONFLICT')) {
+  if (rpcError) {
+    if (rpcError.message.includes('COMMERCIAL_INTENT_CONFLICT')) {
       throw new PersonalizedChoiceError('CHOICE_CONFLICT')
     }
-    throw mapRpcError(error.message)
+    throw mapRpcError(rpcError.message)
   }
-  return parseStored(RpcResultSchema, data)
+
+  const result = parseStored(z.object({
+    outcome: ChoiceOutcomeSchema,
+    nextChapterNumber: z.number().int().positive().nullable(),
+    replayed: z.boolean(),
+  }), rpcData)
+
+  const targetChapter = result.nextChapterNumber ?? outcome.nextChapterNumber
+
+  if (outcome.isEnding || !targetChapter) {
+    return {
+      outcome: result.outcome,
+      nextChapterNumber: targetChapter,
+      replayed: result.replayed,
+    }
+  }
+
+  // STEP 2: Commercial Intent & Job Queueing (personalized_ai only; premium_instance uses authenticated queueing)
+  if (targetChapter >= 4 && metadata.story_mode === 'personalized_ai') {
+    // Bab 4+: Quote-preserving commercial authorization & atomic queueing
+    const { data: authData, error: authErr } = await admin.rpc('authorize_commercial_generation_intent_v1', {
+      p_user_id: input.userId,
+      p_story_id: input.storyId,
+      p_chapter_number: targetChapter,
+    })
+
+    if (authErr?.message === 'SUCCEEDED_JOB_PRESENT') {
+      return {
+        outcome: result.outcome,
+        nextChapterNumber: targetChapter,
+        replayed: true,
+      }
+    }
+
+    if (authErr || !authData) {
+      throw new PersonalizedChoiceError('INTERNAL_ERROR')
+    }
+
+    const authParsed = AuthorizeIntentResultSchema.safeParse(authData)
+    if (!authParsed.success) {
+      throw new PersonalizedChoiceError('INTERNAL_ERROR')
+    }
+
+    if (authParsed.data.ok === false) {
+      if (
+        authParsed.data.reason === 'INSUFFICIENT_CREDITS' &&
+        'required' in authParsed.data &&
+        typeof authParsed.data.required === 'number' &&
+        'available' in authParsed.data &&
+        typeof authParsed.data.available === 'number'
+      ) {
+        return {
+          outcome: result.outcome,
+          nextChapterNumber: targetChapter,
+          replayed: result.replayed,
+          status: 'WAITING_FOR_CREDITS',
+          requiredCredits: authParsed.data.required,
+          availableCredits: authParsed.data.available,
+        }
+      }
+      if (authParsed.data.reason === 'RESERVATION_ALREADY_CAPTURED') {
+        return {
+          outcome: result.outcome,
+          nextChapterNumber: targetChapter,
+          replayed: true,
+        }
+      }
+      throw new PersonalizedChoiceError('INTERNAL_ERROR')
+    }
+
+    // Atomic Queueing
+    const { data: queueData, error: queueErr } = await admin.rpc('queue_authorized_commercial_generation_v1', {
+      p_user_id: input.userId,
+      p_story_id: input.storyId,
+      p_chapter_number: targetChapter,
+    })
+
+    if (queueErr || !queueData) {
+      throw new PersonalizedChoiceError('INTERNAL_ERROR')
+    }
+
+    const queueParsed = QueueJobResultSchema.safeParse(queueData)
+    if (!queueParsed.success || !queueParsed.data.ok) {
+      throw new PersonalizedChoiceError('INTERNAL_ERROR')
+    }
+
+    return {
+      outcome: result.outcome,
+      nextChapterNumber: targetChapter,
+      replayed: result.replayed,
+      jobId: queueParsed.data.job_id,
+    }
+  } else {
+    // Included Bab 2-3: Enqueue via authenticated request-scoped Supabase client
+    const cookieClient = await createCookieClient()
+    const { data: enqueueData, error: enqueueErr } = await cookieClient.rpc('enqueue_generation_job_v1', {
+      p_story_id: input.storyId,
+      p_chapter_number: targetChapter,
+      p_generation_kind: 'personalized',
+      p_trigger_choice_id: input.choiceId,
+    })
+
+    if (enqueueErr || !enqueueData) {
+      throw new PersonalizedChoiceError('INTERNAL_ERROR')
+    }
+
+    const jobId = typeof enqueueData === 'object' && enqueueData !== null
+      ? (
+          typeof (enqueueData as { jobId?: unknown }).jobId === 'string'
+            ? (enqueueData as { jobId: string }).jobId
+            : (typeof (enqueueData as { job_id?: unknown }).job_id === 'string'
+                ? (enqueueData as { job_id: string }).job_id
+                : undefined)
+        )
+      : undefined
+
+    return {
+      outcome: result.outcome,
+      nextChapterNumber: targetChapter,
+      replayed: result.replayed,
+      jobId,
+    }
+  }
 }

@@ -75,6 +75,26 @@ vi.mock('@/lib/api/taste-profile', () => ({
 const runsLocalDb = process.env.LAKOKU_LOCAL_DB_TEST === '1'
 const describeLocalDb = runsLocalDb ? describe : describe.skip
 
+// Only use mocks for non-DATABASE tests; for local DB integration tests, use real implementations
+vi.mock('@lakoku/ai-gateway/server', () => ({
+  selectProvider: mocks.selectProvider,
+}))
+
+if (!runsLocalDb) {
+  vi.mock('@/lib/story-engine/contract-generation.server', () => ({
+    createResilientStoryContract: mocks.createResilientStoryContract,
+  }))
+  vi.mock('@/lib/runtime/personalized-generation', () => ({
+    generateNextPersonalizedChapter: mocks.generateNextPersonalizedChapter,
+  }))
+  vi.mock('@/lib/runtime/generation-worker', () => ({
+    claimAndRunGenerationJobById: mocks.claimAndRunGenerationJobById,
+  }))
+  vi.mock('@/lib/api/generation-continuation.server', () => ({
+    continuePersonalizedGeneration: vi.fn(async () => ({ nextChapterReady: false })),
+  }))
+}
+
 describeLocalDb('Commercial Creation Cutover E2E', () => {
   const idempotencyKey = '00000000-0000-4000-8000-e2e000000001'
   let admin: ReturnType<typeof createAdminClient>

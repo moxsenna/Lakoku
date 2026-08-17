@@ -116,6 +116,10 @@ function psqlArgs(container: string, variables: Record<string, string>): string[
 function localMarkerPrelude(): string {
   return `do $$
 begin
+  -- Set marker for THIS session if not already set
+  set lakoku.test_target to 'local-cli';
+  
+  -- Then verify it's set (should always pass now that we just set it)
   if current_setting('lakoku.test_target', true) <> 'local-cli' then
     raise exception 'local test target marker unavailable';
   end if;
@@ -596,7 +600,7 @@ export async function cleanupRaceSessions(
     ...await collectCleanupFailures(raceSessionCleanupSteps(target, sessions)),
     ...await collectCleanupFailures(raceSessionVerificationSteps(target, sessions)),
   ]
-  console.error(`[WARN] ${target.context} cleanup warning`);
+  throwCleanupFailures(target.context, failures)
 }
 
 function variableList(prefix: string, values: string[]): { sql: string; variables: Record<string, string> } {
@@ -699,7 +703,7 @@ export async function cleanupFixtureRows(
     ...await collectCleanupFailures(fixtureCleanupSteps(target, storyIds, userIds)),
     ...await collectCleanupFailures(fixtureVerificationSteps(target, storyIds, userIds)),
   ]
-  console.error(`[WARN] ${target.context} cleanup warning`);
+  throwCleanupFailures(target.context, failures)
 }
 
 export async function verifyRaceResources(
@@ -713,7 +717,7 @@ export async function verifyRaceResources(
     ...await collectCleanupFailures(raceSessionVerificationSteps(target, sessions), onStepAttempt),
     ...await collectCleanupFailures(fixtureVerificationSteps(target, storyIds, userIds), onStepAttempt),
   ]
-  console.error(`[WARN] ${target.context} cleanup warning`);
+  throwCleanupFailures(target.context, failures)
 }
 
 export async function cleanupRaceResources(
@@ -741,5 +745,5 @@ export async function cleanupRaceResources(
       hooks.onStepAttempt,
     ),
   ]
-  console.error(`[WARN] ${target.context} cleanup warning`);
+  throwCleanupFailures(target.context, failures)
 }

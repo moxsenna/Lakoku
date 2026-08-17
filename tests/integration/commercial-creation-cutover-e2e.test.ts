@@ -56,31 +56,11 @@ vi.mock('@/lib/supabase/server', () => ({
 vi.mock('@lakoku/ai-gateway/server', () => ({
   selectProvider: mocks.selectProvider,
 }))
-vi.mock('@/lib/story-engine/contract-generation.server', () => ({
-  createResilientStoryContract: mocks.createResilientStoryContract,
-}))
-vi.mock('@/lib/runtime/personalized-generation', () => ({
-  generateNextPersonalizedChapter: mocks.generateNextPersonalizedChapter,
-}))
-vi.mock('@/lib/runtime/generation-worker', () => ({
-  claimAndRunGenerationJobById: mocks.claimAndRunGenerationJobById,
-}))
-vi.mock('@/lib/api/generation-continuation.server', () => ({
-  continuePersonalizedGeneration: vi.fn(async () => ({ nextChapterReady: false })),
-}))
-vi.mock('@/lib/api/taste-profile', () => ({
-  getTasteProfileForUser: vi.fn(async () => createDefaultTasteProfile()),
-}))
 
-const runsLocalDb = process.env.LAKOKU_LOCAL_DB_TEST === '1'
-const describeLocalDb = runsLocalDb ? describe : describe.skip
-
-// Only use mocks for non-DATABASE tests; for local DB integration tests, use real implementations
-vi.mock('@lakoku/ai-gateway/server', () => ({
-  selectProvider: mocks.selectProvider,
-}))
-
-if (!runsLocalDb) {
+// Conditionally mock implementation modules based on LAKOKU_LOCAL_DB_TEST flag
+// When running with real DB (LAKOKU_LOCAL_DB_TEST=1), we want actual implementations
+// When mocking externally (unit test mode), use mocks for these heavy modules
+if (process.env.LAKOKU_LOCAL_DB_TEST !== '1') {
   vi.mock('@/lib/story-engine/contract-generation.server', () => ({
     createResilientStoryContract: mocks.createResilientStoryContract,
   }))
@@ -94,6 +74,12 @@ if (!runsLocalDb) {
     continuePersonalizedGeneration: vi.fn(async () => ({ nextChapterReady: false })),
   }))
 }
+vi.mock('@/lib/api/taste-profile', () => ({
+  getTasteProfileForUser: vi.fn(async () => createDefaultTasteProfile()),
+}))
+
+const runsLocalDb = process.env.LAKOKU_LOCAL_DB_TEST === '1'
+const describeLocalDb = runsLocalDb ? describe : describe.skip
 
 describeLocalDb('Commercial Creation Cutover E2E', () => {
   const idempotencyKey = '00000000-0000-4000-8000-e2e000000001'

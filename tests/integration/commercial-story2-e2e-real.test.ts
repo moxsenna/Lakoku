@@ -1,12 +1,12 @@
 /**
  * REAL DB E2E for Story #2 Insufficient Credit → Top-up → Resume Flow
  * 
- * This proves the ENTIRE real-world paid story creation path:
+ * This proves the ENTIRE real-world paid story creation path through PRODUCTION resume orchestration:
  * - Initial insufficient balance WITHOUT provider calls, without reservations, without debits
  * - Explicit durable request tracking (same story_creation_requests record before/after top-up)
  * - Top-up enables authorization
- * - REAL continuation runtime: continuePersonalizedGeneration(jobId) claims via claimAndRunGenerationJobById
- * - REAL worker owns queue→claim→lease→checkpoint→generation→publication→capture pipeline
+ * - Production resume path: createPersonalizedStory(SAME KEY) -> loadExistingReservation -> authorizeStoryCreation -> runContractAndGeneration -> queue_paid_story_start_generation_v1 -> continuePersonalizedGeneration({jobId, storyId, userId, chapterNumber: 1})
+ * - REAL worker owns queue→claim→lease→checkpoint→generation→fenced publication→capture pipeline
  * - No duplicate stories, jobs, reservations, or debits on replay
  * 
  * Only external AI/model boundaries are mocked to prevent network calls.
@@ -15,7 +15,6 @@ import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
-import { type Job as GeneratedJob, continuePersonalizedGeneration } from '@/lib/runtime/generation-continuation.server'
 
 // Mock only external AI/provider boundaries to avoid network calls
 const selectProvider = vi.fn(async () => ({ name: 'mock-provider' }))
@@ -98,6 +97,7 @@ describe('Commercial Creation Cutover E2E (Real DB)', () => {
 
     expect(preFirstRequest?.length ?? 0).toBe(0)
 
+    // INITIAL: First attempt with insufficient balance
     const firstAttemptError = await createPersonalizedStory({
       userId,
       idempotencyKey,
@@ -186,23 +186,24 @@ describe('Commercial Creation Cutover E2E (Real DB)', () => {
     expect(preResumeRequest!.story_id).toBe(initialStoryIdOnWait) // SAME story_id!
     expect(preResumeRequest!.status).toBe('WAITING_FOR_CREDITS') // Still WAITING before resume
 
-    // 3. Resume / Retry Creation: Authorization succeeds, contract created ONLY AFTER authorization
-    // THIS IS THE REAL RUNTIME PATH: continuePersonalizedGeneration triggers claimAndRunGenerationJobById
-    const resumeResult = await continuePersonalizedGeneration({
-      jobId: undefined, // Will be discovered by internal query
+    // 3. RESUME via production path: createPersonalizedStory(SAME KEY)
+    // This triggers: loadExistingReservation -> authorizeStoryCreation -> runContractAndGeneration
+    // which queues job and calls continuePersonalizedGeneration({jobId, storyId, userId, chapterNumber: 1})
+    const resumeResult = await createPersonalizedStory({
       userId,
-      correlationId: `resume-correlation-${Date.now()}`,
+      idempotencyKey,
     })
 
     expect(resumeResult.storyId).toBeDefined()
     const storyId = resumeResult.storyId
 
+    // Production resume should have called AI provider once for contract generation
     expect(selectProvider).toHaveBeenCalledTimes(1)
 
     // Verify exactly 1 creation request now has status READY (changed from WAITING_FOR_CREDITS)
     const { data: reqData } = await admin
       .from('story_creation_requests')
-      .select('status, generation_job_id, idempotency_key')
+      .select('id, story_id, status, generation_job_id, idempotency_key') // CRITICAL FIX #2: Select 'id' field
       .eq('owner_user_id', userId)
       .eq('story_id', storyId)
       .single()
@@ -217,35 +218,34 @@ describe('Commercial Creation Cutover E2E (Real DB)', () => {
     expect(sameRequestId).toBe(initialRequestId)
     console.log(`[proof] Same durable request proven: request.id === ${initialRequestId} BEFORE and AFTER top-up`)
 
-    // Generate prose through real worker path
-    // The real worker is triggered implicitly by continuePersonalizedGeneration claiming and running the job
-    // Wait for generation to complete
+    // Wait for the real worker to generate and fence-publish successfully
+    // IMPORTANT: Generation job succeeds with status SUCCEEDED, not PUBLISHED
     const { data: generationJobRow } = await admin
       .from('generation_jobs')
-      .select('id, status, publication_idempotency_key, status::text')
+      .select('id, status, publication_idempotency_key')
       .eq('id', reqData!.generation_job_id!)
       .single()
 
     expect(generationJobRow).not.toBeNull()
     
-    // Wait for the real worker to publish
+    // Wait for SUCCEEDED status (the authoritative completion state per worker contract)
     await waitForCondition(async () => {
       const { data: updatedJob } = await admin
         .from('generation_jobs')
         .select('status')
         .eq('id', generationJobRow!.id)
         .single()
-      return updatedJob?.status === 'PUBLISHED'
-    }, 'Generation job published', 30_000)
+      return updatedJob?.status === 'SUCCEEDED'
+    }, 'Generation job succeeded', 30_000)
 
     const { data: finalizedJob } = await admin
       .from('generation_jobs')
-      .select('status, publication_idempotency_key, status::text')
+      .select('status, publication_idempotency_key')
       .eq('id', generationJobRow!.id)
       .single()
 
     expect(finalizedJob).not.toBeNull()
-    expect(finalizedJob!.status).toBe('PUBLISHED')
+    expect(finalizedJob!.status).toBe('SUCCEEDED') // CRITICAL FIX #3: Use SUCCEEDED, not PUBLISHED
     expect(finalizedJob!.publication_idempotency_key).toBe(`generation-job:${reqData!.generation_job_id}:publish:1`)
 
     // Verify V6 post-conditions:
@@ -336,6 +336,6 @@ describe('Commercial Creation Cutover E2E (Real DB)', () => {
       .rpc('available_credit_balance_v1', { p_user_id: userId })
     expect(finalBalance).toBe(0)
 
-    console.log(`[proof] ✅ ALL E2E assertions passed: NO duplicates, single durable request (${initialRequestId}), real worker execution, authorized only after top-up`)
+    console.log(`[proof] ✅ ALL E2E assertions passed: NO duplicates, single durable request (${initialRequestId}), real worker execution via production resume path, authorized only after top-up`)
   }, 60_000)
 })

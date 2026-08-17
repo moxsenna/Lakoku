@@ -344,7 +344,7 @@ from public.generation_jobs where id = '${jobId}'::uuid;`
 
     console.log('[race] Case 1 PASSED: Queue-vs-recovery single owner, single claim, single job, single reservation!')
   } finally {
-    cleanupRaceSessions(target, sessions)
+    await cleanupRaceSessions(target, sessions) // CRITICAL FIX #5: Add await for fail-closed cleanup
     await cleanupFixtureRows(target, [storyId], [userId])
   }
 }
@@ -465,7 +465,7 @@ async function runCase2_ConcurrentExactClaim(target: RaceTarget): Promise<void> 
 
     console.log(`[race] Case 2 PASSED: Exactly one exact-claim won, loser fenced with claimed=false!`)
   } finally {
-    cleanupRaceSessions(target, sessions)
+    await cleanupRaceSessions(target, sessions) // CRITICAL FIX #5: Add await for fail-closed cleanup
     await cleanupFixtureRows(target, [storyId], [userId])
   }
 }

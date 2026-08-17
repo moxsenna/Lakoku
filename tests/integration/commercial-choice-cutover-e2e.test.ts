@@ -125,7 +125,15 @@ describeLocalDb('Commercial Choice Cutover E2E', () => {
     })
     if (outcomeErr) console.error('outcomeErr:', outcomeErr)
 
-    // 1. Initial State: User has 0 credits. Choice application succeeds (durable in DB), but intent authorization returns WAITING_FOR_CREDITS
+    // 1. Seed partial balance (4 credits). Cost to unlock chapter 5 is 8.
+    await admin.rpc('grant_credits_v1', {
+      p_user_id: userId,
+      p_ref: `seed-balance-choice-e2e-${Date.now()}`,
+      p_credits: 4,
+      p_reason: 'TEST_GRANT',
+    })
+
+    // 1a. Choice application succeeds (durable in DB), but intent authorization returns WAITING_FOR_CREDITS
     const result = await applyPersonalizedChoice({
       userId,
       storyId,
@@ -136,7 +144,18 @@ describeLocalDb('Commercial Choice Cutover E2E', () => {
 
     expect(result.status).toBe('WAITING_FOR_CREDITS')
     expect(result.requiredCredits).toBe(8)
-    expect(result.availableCredits).toBe(0)
+    expect(result.availableCredits).toBe(4)
+
+    // Verify NO reservation captured yet; balance untouched at 4 before resume attempt
+    const { data: earlyReservations } = await admin
+      .from('credit_reservations')
+      .select('id')
+      .eq('user_id', userId)
+    expect(earlyReservations?.length ?? 0).toBe(0)
+
+    const { data: earlyBalance } = await admin
+      .rpc('available_credit_balance_v1', { p_user_id: userId })
+    expect(earlyBalance).toBe(4)
 
     // Verify intent created in DB with status WAITING_FOR_CREDITS
     const { data: intentData } = await admin
@@ -153,7 +172,7 @@ describeLocalDb('Commercial Choice Cutover E2E', () => {
     expect(intentData!.generation_job_id).toBeNull()
 
     // 2. Resume without choiceId (caller cannot supply choiceId; reads exact intent from DB)
-    // 2a. Before top-up: resume throws INSUFFICIENT_CREDITS
+    // 2a. Before top-up: resume throws INSUFFICIENT_CREDITS with available balance still 4
     await expect(
       resumeCommercialOperation({
         userId,
@@ -162,17 +181,21 @@ describeLocalDb('Commercial Choice Cutover E2E', () => {
     ).rejects.toMatchObject({
       code: 'INSUFFICIENT_CREDITS',
       requiredCredits: 8,
-      availableCredits: 0,
+      availableCredits: 4,
       targetChapterNumber: 5,
     })
 
-    // 2b. Top-up: Add 8 credits via RPC
+    // 2b. Top-up 4 credits (4 -> 8)
     await admin.rpc('grant_credits_v1', {
       p_user_id: userId,
       p_ref: `topup-choice-e2e-${Date.now()}`,
-      p_credits: 8,
+      p_credits: 4,
       p_reason: 'TEST_GRANT',
     })
+
+    const { data: balanceAfterTopup } = await admin
+      .rpc('available_credit_balance_v1', { p_user_id: userId })
+    expect(balanceAfterTopup).toBe(8)
 
     // 2c. Resume after top-up: Authorizes intent & queues Bab 5 job atomically
     const resumeRes = await resumeCommercialOperation({
@@ -388,5 +411,19 @@ describeLocalDb('Commercial Choice Cutover E2E', () => {
       .eq('user_id', userId)
       .eq('reason', 'unlock_chapter')
     expect(finalLedger?.length).toBe(1)
+
+    // - Final balance exactly 0 (4 + 4 - 8); one intent FULFILLED, no duplicate jobs/intents/chapters
+    const { data: finalBalance } = await admin
+      .rpc('available_credit_balance_v1', { p_user_id: userId })
+    expect(finalBalance).toBe(0)
+
+    const { data: finalIntent } = await admin
+      .from('commercial_generation_intents')
+      .select('status')
+      .eq('user_id', userId)
+      .eq('story_id', storyId)
+      .eq('chapter_number', 5)
+      .single()
+    expect(finalIntent?.status).toBe('FULFILLED')
   }, 30_000)
 })

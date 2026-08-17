@@ -120,7 +120,15 @@ describeLocalDb('Commercial Creation Cutover E2E', () => {
       welcome_credit_granted_at: new Date().toISOString(),
     })
 
-    // 1. Initial State: User has 0 credits. Creation MUST fail authorization without calling AI providers.
+    // 1. Initial State: User has 20 credits (cost 24). Creation MUST fail authorization
+    //    without calling AI providers and WITHOUT capturing/partially debiting the balance.
+    await admin.rpc('grant_credits_v1', {
+      p_user_id: userId,
+      p_ref: `seed-balance-e2e-${Date.now()}`,
+      p_credits: 20,
+      p_reason: 'TEST_GRANT',
+    })
+
     await expect(
       createPersonalizedStory({
         userId,
@@ -129,7 +137,7 @@ describeLocalDb('Commercial Creation Cutover E2E', () => {
     ).rejects.toMatchObject({
       code: 'INSUFFICIENT_CREDITS',
       requiredCredits: 24,
-      availableCredits: 0,
+      availableCredits: 20,
     })
 
     expect(mocks.selectProvider).not.toHaveBeenCalled()
@@ -142,11 +150,29 @@ describeLocalDb('Commercial Creation Cutover E2E', () => {
       .eq('user_id', userId)
     expect(earlyJobs?.length ?? 0).toBe(0)
 
-    // 2. Grant 24 credits (Top-up) via RPC
+    // Verify NO capture: zero reservations and zero debits; balance untouched at 20
+    const { data: earlyReservations } = await admin
+      .from('credit_reservations')
+      .select('id')
+      .eq('user_id', userId)
+    expect(earlyReservations?.length ?? 0).toBe(0)
+
+    const { data: earlyDebits } = await admin
+      .from('credit_ledger')
+      .select('delta')
+      .eq('user_id', userId)
+      .eq('reason', 'story_start')
+    expect(earlyDebits?.length ?? 0).toBe(0)
+
+    const { data: balanceAfterReject } = await admin
+      .rpc('available_credit_balance_v1', { p_user_id: userId })
+    expect(balanceAfterReject).toBe(20)
+
+    // 2. Top-up 4 credits via RPC (20 -> 24, exactly the STORY_START quote)
     await admin.rpc('grant_credits_v1', {
       p_user_id: userId,
       p_ref: `topup-e2e-1-${Date.now()}`,
-      p_credits: 24,
+      p_credits: 4,
       p_reason: 'TEST_GRANT',
     })
 
@@ -371,5 +397,23 @@ describeLocalDb('Commercial Creation Cutover E2E', () => {
       .eq('user_id', userId)
       .eq('reason', 'story_start')
     expect(finalLedger?.length).toBe(1)
+
+    // - No duplicate story: exactly 2 stories owned (starter prev + this one),
+    //   exactly 1 creation request, final balance exactly 0 (20 + 4 - 24)
+    const { data: ownedStories } = await admin
+      .from('stories')
+      .select('id')
+      .eq('owner_user_id', userId)
+    expect(ownedStories?.length).toBe(2)
+
+    const { data: finalRequests } = await admin
+      .from('story_creation_requests')
+      .select('id')
+      .eq('owner_user_id', userId)
+    expect(finalRequests?.length).toBe(1)
+
+    const { data: finalBalance } = await admin
+      .rpc('available_credit_balance_v1', { p_user_id: userId })
+    expect(finalBalance).toBe(0)
   }, 60_000)
 })

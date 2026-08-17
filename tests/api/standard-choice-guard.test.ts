@@ -96,7 +96,6 @@ beforeEach(() => {
 describe('standard public ownership guard', () => {
   it('does NOT trigger generation for non-owner on public standard story', async () => {
     mocks.isStoryOwnedBy.mockResolvedValue(false)
-    // @ts-expect-error - Choices route merged with main version during recovery
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
     const response = await POST(choiceRequest(), {
@@ -115,7 +114,6 @@ describe('standard public ownership guard', () => {
 
   it('triggers generation for owner on private standard story', async () => {
     mocks.isStoryOwnedBy.mockResolvedValue(true)
-    // @ts-expect-error - Choices route merged with main version during recovery
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
     const response = await POST(choiceRequest(), {
@@ -138,7 +136,6 @@ describe('standard public ownership guard', () => {
 
   it('forwards exact triggerChoiceId from choice submission to generator', async () => {
     mocks.isStoryOwnedBy.mockResolvedValue(true)
-    // @ts-expect-error - Choices route merged with main version during recovery
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
     await POST(choiceRequest({ chapterNumber: 1, choiceId }), {

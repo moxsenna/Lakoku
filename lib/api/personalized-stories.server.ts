@@ -518,8 +518,11 @@ export async function runContractAndGeneration(input: {
 
     const jobId = parsedQueue.data.job_id
 
-    // Kick worker via after() and race 25s
+    // Kick worker via after() and race 25s.
+    // jobId is mandatory: commercial path must claim the EXACT queued job,
+    // never fall back into legacy generateNextPersonalizedChapter.
     const { nextChapterReady } = await continuePersonalizedGeneration({
+      jobId,
       storyId: input.storyId,
       userId: input.userId,
       chapterNumber: 1,

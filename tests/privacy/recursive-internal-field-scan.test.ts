@@ -341,7 +341,6 @@ describe('reader route response privacy', () => {
     routeMocks.getSessionUser.mockResolvedValueOnce(null)
 
     const [{ POST: choice }, { GET: status }, { POST: create }, { POST: clone }] = await Promise.all([
-    // @ts-expect-error - Choices route merged with main version during recovery
       import('@/app/api/stories/[id]/choices/route'),
       import('@/app/api/stories/[id]/chapters/[number]/status/route'),
       import('@/app/api/stories/personalized/route'),

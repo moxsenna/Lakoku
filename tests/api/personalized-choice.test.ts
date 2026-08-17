@@ -449,7 +449,6 @@ describe('applyPersonalizedChoice', () => {
 describe('personalized choice route dispatch', () => {
   it('preserves anonymous standard story behavior without personalized lookup', async () => {
     mocks.getSessionUser.mockResolvedValue(null)
-    // @ts-expect-error - Choices route merged with main version during recovery
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
     const response = await POST(request({ id: 'demo:standard', body: {
@@ -467,7 +466,6 @@ describe('personalized choice route dispatch', () => {
   it('returns generic 404 for anonymous guessed private story without admin lookup', async () => {
     mocks.getSessionUser.mockResolvedValue(null)
     mocks.queryChoiceOutcome.mockResolvedValue(null)
-    // @ts-expect-error - Choices route merged with main version during recovery
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
     const response = await POST(request(), { params: Promise.resolve({ id: storyId }) })
@@ -485,7 +483,6 @@ describe('personalized choice route dispatch', () => {
     })
     mocks.getSessionUser.mockResolvedValue({ id: userB })
     mocks.cookieFactory.mockResolvedValue(cookie.client)
-    // @ts-expect-error - Choices route merged with main version during recovery
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
     const response = await POST(request(), { params: Promise.resolve({ id: storyId }) })
@@ -505,7 +502,6 @@ describe('personalized choice route dispatch', () => {
       story: { data: { id: 'demo:standard' }, error: null },
     }).client)
     mocks.adminFactory.mockReturnValue(fixture.client)
-    // @ts-expect-error - Choices route merged with main version during recovery
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
     const response = await POST(request({ id: 'demo:standard', body: {
@@ -525,7 +521,6 @@ describe('personalized choice route dispatch', () => {
       story: { data: { id: 'demo:unlisted' }, error: null },
     }).client)
     mocks.adminFactory.mockReturnValue(fixture.client)
-    // @ts-expect-error - Choices route merged with main version during recovery
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
     const response = await POST(request({ id: 'demo:unlisted', body: {
@@ -559,7 +554,6 @@ describe('personalized choice route dispatch', () => {
       },
     })
     mocks.adminFactory.mockReturnValue(fixture.client)
-    // @ts-expect-error - Choices route merged with main version during recovery
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
     const response = await POST(request(), { params: Promise.resolve({ id: storyId }) })
@@ -572,7 +566,6 @@ describe('personalized choice route dispatch', () => {
   it('requires idempotency key only after owned personalized mode is established', async () => {
     const fixture = personalizedDb()
     mocks.adminFactory.mockReturnValue(fixture.client)
-    // @ts-expect-error - Choices route merged with main version during recovery
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
     const response = await POST(request({ key: null }), { params: Promise.resolve({ id: storyId }) })
@@ -587,7 +580,6 @@ describe('personalized choice route dispatch', () => {
   it('maps typed conflicts to sanitized 409 responses', async () => {
     const fixture = personalizedDb({ rpc: { data: null, error: { message: 'STALE_READER_STATE secret row dump' } } })
     mocks.adminFactory.mockReturnValue(fixture.client)
-    // @ts-expect-error - Choices route merged with main version during recovery
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
     const response = await POST(request(), { params: Promise.resolve({ id: storyId }) })
@@ -613,7 +605,6 @@ describe('personalized choice route dispatch', () => {
       },
     })
     mocks.adminFactory.mockReturnValue(fixture.client)
-    // @ts-expect-error - Choices route merged with main version during recovery
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
     const response = await POST(request(), { params: Promise.resolve({ id: storyId }) })

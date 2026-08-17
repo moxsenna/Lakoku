@@ -8,7 +8,8 @@ import {
   generateNextChapterReal,
   type RealGenerateResult,
 } from '@/lib/runtime/story-generation'
-import { claimAndRunGenerationJobById } from '@/lib/runtime/job-authoritative-runtime'
+import { claimAndRunGenerationJobById } from '@/lib/runtime/generation-worker'
+import { createAdminClient } from '@/lib/supabase/admin'
 
 export const CONTINUATION_WAIT_MS = 25_000
 
@@ -87,7 +88,7 @@ export async function continuePersonalizedGeneration(input: {
         }
       })
     } catch (_scopeErr) {
-      void claimAndRunGenerationJobById({ jobId: input.jobId!, workerId: `continuation-${Date.now()}` }).catch((err) => {
+      void claimAndRunGenerationJobById({ jobId: input.jobId!, workerId: `continuation-${Date.now()}` }).catch((err: unknown) => {
         console.error('continuation worker kick fallback failed:', err)
       })
     }
@@ -99,6 +100,11 @@ export async function continuePersonalizedGeneration(input: {
       const ready = await checkChapterReadiness(input.storyId, input.chapterNumber)
       if (ready) return { nextChapterReady: true }
       await waitMs(500)
+    }
+
+    // Final readiness check after polling window expires
+    if (await checkChapterReadiness(input.storyId, input.chapterNumber)) {
+      return { nextChapterReady: true }
     }
 
     return { nextChapterReady: false }
@@ -119,9 +125,21 @@ export async function continuePersonalizedGeneration(input: {
 }
 
 async function checkChapterReadiness(storyId: string, chapterNumber: number): Promise<boolean> {
-  // Simplified readiness check - in production this queries database
-  // For now, always return false to force timeout path
-  return false
+  const admin = createAdminClient()
+
+  const { data, error } = await admin
+    .from('chapters')
+    .select('number')
+    .eq('story_id', storyId)
+    .eq('number', chapterNumber)
+    .maybeSingle()
+
+  if (error) {
+    // fail closed / not-ready, preserving existing continuation semantics
+    return false
+  }
+
+  return Boolean(data)
 }
 
 /**

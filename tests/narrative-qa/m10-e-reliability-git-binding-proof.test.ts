@@ -90,7 +90,7 @@ describe('M10-E R1-D raw Git/E2 binding', () => {
 
     for (const testCase of malformedCases) {
       const result = GIT_SHA_SCHEMA.safeParse(testCase.sha)
-      expect(result.success).toBe(false, `Should reject ${testCase.name}`)
+      expect(result.success).toBe(false)
     }
   })
 

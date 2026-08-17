@@ -74,6 +74,7 @@ export function renderReliabilityReport(artifact: ValidatedReliabilitySemanticAr
   sections.push(kv('baseGitSha', artifact.baseGitSha))
   sections.push(kv('gitDirty', String(artifact.gitDirty)))
   sections.push(kv('e2ClosureReference', artifact.e2ClosureReference))
+  sections.push(line('Pengikatan SHA: `baseGitSha` adalah SHA Git mentah 40-heksa pada HEAD saat artefak generasi/sumber dibuat. SHA run akhir yang dihitung dicatat di status CLI dan diverifikasi comparator pada push; komit dokumen ini tidak pernah mengikat SHA komitnya sendiri sebagai SHA generasi.'))
   sections.push(`- compatibleStratum = provider \`${stratum.providerModelPolicyId}\`, pricing \`${stratum.pricingPolicyVersion}\`/\`${stratum.pricingSnapshotHash}\`, retry \`${stratum.retryFallbackPolicyId}\`/\`${stratum.retryFallbackPolicyHash}\``)
   sections.push(kv('stageCatalogVersion', `${stratum.stageCatalogVersion}#${stratum.stageCatalogHash}`))
   sections.push(kv('taskMappingVersion', `${stratum.taskMappingVersion}#${stratum.taskMappingHash}`))
@@ -145,6 +146,10 @@ export function renderReliabilityReport(artifact: ValidatedReliabilitySemanticAr
   sections.push(measurementLine('maxExpectedCostPerChapter', result.maxExpectedCostPerChapter, 'MODELED'))
   sections.push(measurementLine('expectedGenerationCostPerSuccessfulNovelRun', result.successfulRunGenerationMean, `MODELED; successful-run denominator ${result.successfulRunCount}`))
   sections.push(measurementLine('modeledJudgeTotal', result.modeledJudgeTotal, 'MODELED'))
+  sections.push(measurementLine('modeledFirstAttemptBaselineCost', result.modeledFirstAttemptBaselineCost, 'MODELED'))
+  sections.push(measurementLine('modeledRetryFallbackCost', result.modeledRetryFallbackCost, 'MODELED'))
+  sections.push(measurementLine('modeledRetryOverheadPercentage', result.modeledRetryOverheadPercentage, 'MODELED'))
+  sections.push(kv('costComponentDenominator', String(result.costComponentDenominator)))
   sections.push(kv('expectedGenerationSpendPerStartedNovelAttempt', `${result.startedAttemptGenerationSpendDiagnostic} (MODELED diagnostic; started-attempt denominator ${result.startedAttemptCount})`))
   sections.push(kv('generationCostP50', String(result.generationCostP50.state === 'PRESENT' ? result.generationCostP50.value : result.generationCostP50.state)))
   sections.push(kv('generationCostP95', String(result.generationCostP95.state === 'PRESENT' ? result.generationCostP95.value : result.generationCostP95.state)))
@@ -161,12 +166,32 @@ export function renderReliabilityReport(artifact: ValidatedReliabilitySemanticAr
 
   // 7. Sensitivity bands
   sections.push(`## 7. Pita Sensitivitas (Sensitivity Bands)`)
-  sections.push(kv('sensitivity.generationCost.p50', String(result.generationCostP50.state === 'PRESENT' ? result.generationCostP50.value : result.generationCostP50.state)))
-  sections.push(kv('sensitivity.generationCost.p95', String(result.generationCostP95.state === 'PRESENT' ? result.generationCostP95.value : result.generationCostP95.state)))
-  sections.push(kv('sensitivity.combinedTotalNovelCost.p50', String(result.combinedTotalNovelCostP50.state === 'PRESENT' ? result.combinedTotalNovelCostP50.value : result.combinedTotalNovelCostP50.state)))
-  sections.push(kv('sensitivity.combinedTotalNovelCost.p95', String(result.combinedTotalNovelCostP95.state === 'PRESENT' ? result.combinedTotalNovelCostP95.value : result.combinedTotalNovelCostP95.state)))
-  sections.push(line('Pita lower/upper berbasis probabilitas asumsi tidak dapat dihasilkan oleh model V1: probabilitas pusat asumsi dilarang oleh kontrak (hanya OBSERVED).'))
-  sections.push(line('Band dilaporkan hanya sebagai rentang persentil model; bukan jaminan produksi, bukan korelasi terukur.'))
+  const bands = result.sensitivityBands
+  if (bands === null) {
+    sections.push(kv('sensitivityBands', 'TIDAK_TERSEDIA'))
+    sections.push(line('Pita sensitivitas lower/central/upper tidak tersedia: input sensitivitas tidak diberikan; gerbang teknikal menahan tanpa pita lengkap.'))
+  } else {
+    sections.push(line('Probabilitas lower/upper adalah ASSUMPTION eksplisit; pita central memakai hanya probabilitas OBSERVED.'))
+    for (const band of ['lower', 'central', 'upper'] as const) {
+      const value = bands[band]
+      const prefix = `sensitivity.${band}.`
+      sections.push(kv(`${prefix}completionProbability`, String(value.completionProbability)))
+      sections.push(kv(`${prefix}terminalFailureProbability`, String(value.terminalFailureProbability)))
+      sections.push(kv(`${prefix}expectedRetryCount`, String(value.expectedRetryCount)))
+      sections.push(kv(`${prefix}expectedGenerationProviderCallCount`, String(value.expectedGenerationProviderCallCount)))
+      sections.push(kv(`${prefix}expectedJudgeProviderCallCount`, String(value.expectedJudgeProviderCallCount)))
+      sections.push(kv(`${prefix}expectedTotalProviderCallCount`, String(value.expectedTotalProviderCallCount)))
+      sections.push(measurementLine(`${prefix}maxExpectedCostPerChapter`, value.maxExpectedCostPerChapter, 'MODELED'))
+      sections.push(measurementLine(`${prefix}modeledFirstAttemptBaselineCost`, value.modeledFirstAttemptBaselineCost, 'MODELED'))
+      sections.push(measurementLine(`${prefix}modeledRetryFallbackCost`, value.modeledRetryFallbackCost, 'MODELED'))
+      sections.push(measurementLine(`${prefix}modeledRetryOverheadPercentage`, value.modeledRetryOverheadPercentage, 'MODELED'))
+      sections.push(measurementLine(`${prefix}successfulRunGenerationMean`, value.successfulRunGenerationMean, 'MODELED'))
+      sections.push(measurementLine(`${prefix}modeledJudgeTotal`, value.modeledJudgeTotal, 'MODELED'))
+      sections.push(measurementLine(`${prefix}modeledCombinedTotalNovelCostP95`, value.modeledCombinedTotalNovelCostP95, 'MODELED'))
+      sections.push(kv(`${prefix}costComponentDenominator`, String(value.costComponentDenominator)))
+    }
+  }
+  sections.push(line('Pita dilaporkan sebagai rentang model yang deterministik; bukan jaminan produksi dan bukan korelasi terukur.'))
 
   // 8. Engineering gate
   sections.push(`## 8. Gerbang Teknikal (Engineering Gate)`)

@@ -4,6 +4,7 @@ import { missingMeasurement, presentMeasurement, type MeasurementState } from '.
 import {
   COMPATIBLE_STRATUM_IDENTITY_SCHEMA,
   EXECUTION_PROFILE_SCHEMA,
+  GIT_SHA_SCHEMA,
   SHA256_SCHEMA,
   STAGE_ID_SCHEMA,
   type CompatibleStratumIdentity,
@@ -80,7 +81,6 @@ export const SOURCE_AUTHORITIES = ['CONTRACT_FIXTURE', 'GOVERNED_DISPOSABLE_LOCA
 export type ReliabilitySourceAuthority = (typeof SOURCE_AUTHORITIES)[number]
 
 const CURRENCY_SCHEMA = z.string().regex(/^[A-Z]{3}$/)
-const CANONICAL_PERCENTAGE_SCHEMA = z.string().regex(/^(0|[1-9][0-9]*)\.\d{6}$/)
 
 export interface ReliabilityAuthoritiesSection {
   readonly stageCatalog: typeof M10_E_STAGE_CATALOG_V1
@@ -112,6 +112,11 @@ export interface ReliabilityModelInputRecord {
   readonly judgePlan: JudgePlanAuthority
   readonly seed: string
   readonly iterations: 100000
+  readonly sensitivity?: readonly Readonly<{
+    stageId: string
+    lower: Readonly<{ provenance: 'ASSUMPTION'; value: string; source: unknown }>
+    upper: Readonly<{ provenance: 'ASSUMPTION'; value: string; source: unknown }>
+  }>[]
 }
 
 const COST_DISTRIBUTION_RECORD_SCHEMA = z.strictObject({
@@ -139,6 +144,11 @@ const MODEL_INPUT_RECORD_SCHEMA = z.strictObject({
   judgePlan: z.unknown(),
   seed: z.string().min(1),
   iterations: z.literal(100000),
+  sensitivity: z.array(z.strictObject({
+    stageId: STAGE_ID_SCHEMA,
+    lower: z.strictObject({ provenance: z.literal('ASSUMPTION'), value: z.string().min(1), source: z.unknown() }),
+    upper: z.strictObject({ provenance: z.literal('ASSUMPTION'), value: z.string().min(1), source: z.unknown() }),
+  })).optional(),
 })
 
 export function toCumulativeModelInput(record: ReliabilityModelInputRecord): CumulativeModelInput {
@@ -158,6 +168,7 @@ export function toCumulativeModelInput(record: ReliabilityModelInputRecord): Cum
     judgePlan: parsed.judgePlan as JudgePlanAuthority,
     seed: parsed.seed,
     iterations: parsed.iterations,
+    sensitivity: parsed.sensitivity as unknown as CumulativeModelInput['sensitivity'],
   }
 }
 
@@ -198,9 +209,9 @@ const SEMANTIC_PAYLOAD_SCHEMA = z.strictObject({
   executionProfile: EXECUTION_PROFILE_SCHEMA,
   compatibleStratum: COMPATIBLE_STRATUM_IDENTITY_SCHEMA,
   sourceAuthority: z.enum(SOURCE_AUTHORITIES),
-  baseGitSha: SHA256_SCHEMA,
+  baseGitSha: GIT_SHA_SCHEMA,
   gitDirty: z.boolean(),
-  e2ClosureReference: SHA256_SCHEMA,
+  e2ClosureReference: GIT_SHA_SCHEMA,
   authorities: z.unknown(),
   completeness: z.unknown(),
   observations: z.unknown(),
@@ -280,6 +291,43 @@ export interface ReliabilityNormalizedEnvelope {
 
 const MODEL_OUTPUT_CACHE = new Map<string, ModeledCumulativeOutput>()
 
+// Test-only instrumentation for performance verification
+let _cacheHitCount = 0
+let _cacheMissCount = 0
+const _inputHashesSeen = new Set<string>()
+
+/**
+ * Get cache instrumentation metrics.
+ * Returns read-only copy to prevent mutation during test execution.
+ */
+export function getCacheMetrics(): Readonly<{
+  fullModelInvocationCount: number
+  cacheHitCount: number
+  inputHashesSeen: readonly string[]
+}> {
+  return {
+    fullModelInvocationCount: _cacheMissCount, // counts actual model runs
+    cacheHitCount: _cacheHitCount,
+    inputHashesSeen: [..._inputHashesSeen].sort(),
+  }
+}
+
+/**
+ * Reset cache and instrumentation metrics.
+ * Call at start of each test suite to ensure fresh state.
+ */
+export function resetCacheAndMetrics(): void {
+  MODEL_OUTPUT_CACHE.clear()
+  _cacheHitCount = 0
+  _cacheMissCount = 0
+  _inputHashesSeen.clear()
+}
+
+/**
+ * Recompute canonical model input hash from semantic payload fields.
+ * This determines cache key: same hash -> reuse cached output.
+ * Changed any semantic input -> cache miss -> recompute.
+ */
 export function recomputeModelInputHash(input: CumulativeModelInput): string {
   const payload = {
     executionProfile: input.executionProfile,
@@ -299,14 +347,41 @@ export function recomputeModelInputHash(input: CumulativeModelInput): string {
     judgePlan: input.judgePlan,
     seed: input.seed,
     iterations: input.iterations,
+    sensitivity: input.sensitivity !== undefined ? [...input.sensitivity].sort((left, right) => (left.stageId < right.stageId ? -1 : 1)).map((item) => ({
+      stageId: item.stageId,
+      lower: { provenance: item.lower.provenance, value: item.lower.value, source: item.lower.source },
+      upper: { provenance: item.upper.provenance, value: item.upper.value, source: item.upper.source },
+    })) : [],
   }
   return computeSha256(stableStringify(payload))
 }
 
+/**
+ * Run Monte Carlo model with exact input-hash memoization.
+ *
+ * Cache layer ensures that identical semantic model inputs reuse cached outputs,
+ * preventing unnecessary recomputation during negative tests and validation chains.
+ *
+ * - Same input hash -> retrieve cached output (cache hit)
+ * - Different semantic input (cost distribution, stage probability, seed, etc.) -> recompute (cache miss)
+ *
+ * This acceleration layer does NOT affect trust: artifact validator still proves
+ * input hash -> model recomputation/retrieval -> output hash -> semantic hash chain.
+ */
 function runModelMemoized(input: CumulativeModelInput): ModeledCumulativeOutput {
   const key = recomputeModelInputHash(input)
+
+  // Track all input hashes seen for instrumentation
+  _inputHashesSeen.add(key)
+
   const cached = MODEL_OUTPUT_CACHE.get(key)
-  if (cached !== undefined) return cached
+  if (cached !== undefined) {
+    _cacheHitCount++
+    return cached
+  }
+
+  // Cache miss: run full 100k Monte Carlo simulation
+  _cacheMissCount++
   const output = runCumulativeModel(input)
   MODEL_OUTPUT_CACHE.set(key, output)
   return output
@@ -375,6 +450,11 @@ function stripOwnHash(value: Record<string, unknown>): unknown {
   return payload
 }
 
+// Barrel re-exports for testing convenience - exposes functions from sibling modules
+export { aggregateReliabilityObservations } from './aggregation'
+export { validateReliabilityObservationSet, type ReliabilityObservationSet, type Money } from './measurements'
+export { assertReliabilityReportHasNoProhibitedClaims, assertReliabilityReportHasNoPrivateData } from './report'
+export { runCumulativeModel } from './cumulative-model'
 function validateAuthoritiesSection(parsed: z.infer<typeof SEMANTIC_PAYLOAD_SCHEMA>): void {
   const authorities = parsed.authorities as ReliabilityAuthoritiesSection
   const stratum = parsed.compatibleStratum
@@ -399,11 +479,7 @@ function assertModeledComparators(modeled: ModeledBudgetComparators, result: Mod
   assertEqualStringified(modeled.maxExpectedCostPerNovel, result.successfulRunGenerationMean, 'modeled novel comparator')
   assertEqualStringified(modeled.maxJudgeEvaluationCostPerNovel, result.modeledJudgeTotal, 'modeled judge comparator')
   assertEqualStringified(modeled.combinedTotalNovelCostP95, result.combinedTotalNovelCostP95, 'modeled p95 comparator')
-  if (modeled.maxRetryOverheadPercentage.state === 'PRESENT') {
-    if (!CANONICAL_PERCENTAGE_SCHEMA.safeParse(modeled.maxRetryOverheadPercentage.value).success) {
-      throw new Error('Modeled retry-overhead comparator must be canonical percentage scale 6')
-    }
-  }
+  assertEqualStringified(modeled.maxRetryOverheadPercentage, result.modeledRetryOverheadPercentage, 'modeled retry-overhead comparator')
 }
 
 function assertVersionHashPair(

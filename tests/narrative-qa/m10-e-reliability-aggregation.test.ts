@@ -24,8 +24,8 @@ describe('M10-E deterministic aggregation', () => {
       'CANONICAL_CORRUPTION_COUNT', 'GENERATION_LATENCY_P50', 'GENERATION_LATENCY_P95', 'RECOVERY_LATENCY_P50',
       'RECOVERY_LATENCY_P95', 'INPUT_TOKEN_USAGE', 'OUTPUT_TOKEN_USAGE', 'TOTAL_TOKEN_USAGE',
       'ACTUAL_PROVIDER_COST', 'PRICING_ESTIMATED_COST', 'ACTUAL_COST_COVERAGE_RATIO', 'PRICING_COST_COVERAGE_RATIO',
-      'EMPIRICAL_CHAPTER_STAGE_FAILURE_DISTRIBUTION', 'OBSERVED_COMPLETED_NOVEL_COUNT', 'FIRST_ATTEMPT_BASELINE_COST',
-      'RETRY_FALLBACK_COST', 'RETRY_OVERHEAD_PERCENTAGE', 'CHAPTER_COST_P50', 'CHAPTER_COST_P95', 'JUDGE_EVALUATION_COST',
+      'EMPIRICAL_CHAPTER_STAGE_FAILURE_DISTRIBUTION', 'OBSERVED_COMPLETED_NOVEL_COUNT',
+      'CHAPTER_COST_P50', 'CHAPTER_COST_P95', 'JUDGE_EVALUATION_COST',
     ]))
     for (const metric of aggregate.requiredMetrics) {
       expect(metric.eligibilityBoundary.length).toBeGreaterThan(0)
@@ -99,14 +99,14 @@ describe('M10-E deterministic aggregation', () => {
     expect(find('PROVIDER_MODEL_POLICY.provider_v1', 'GENERATION_PROVIDER_CALL_COUNT').observationRefs).toEqual(['call_obs', 'call_structured_obs'])
   })
 
-  it('emits all chapter percentiles separately and leaves P5 modeled pricing slots missing', () => {
+  it('emits all chapter percentiles separately and leaves modeled pricing slots missing', () => {
     const aggregate = aggregateReliabilityObservations(validSet())
     expect(aggregate.requiredMetrics.filter((metric) => metric.metricId === 'CHAPTER_COST_P50')).toHaveLength(50)
     expect(aggregate.requiredMetrics.filter((metric) => metric.metricId === 'CHAPTER_COST_P95')).toHaveLength(50)
-    expect(aggregate.requiredMetrics.find((metric) => metric.metricId === 'FIRST_ATTEMPT_BASELINE_COST')).toMatchObject({ provenance: 'MODELED_FROM_PRICING', value: { state: 'MISSING' } })
     expect(aggregate.modeledPricingSlots.expectedChapterGenerationMeans).toHaveLength(50)
     expect(aggregate.modeledPricingSlots.modeledJudgeTotal.value.state).toBe('MISSING')
     expect(aggregate.observedCostDiagnostics.observedBaselineCost).toMatchObject({ provenance: 'OBSERVED', value: { state: 'PRESENT', value: '2.00000000' } })
+    expect(aggregate.observedCostDiagnostics.observedRetryFallbackCost).toMatchObject({ provenance: 'OBSERVED', value: { state: 'PRESENT' } })
   })
 
   it('marks complete token/cost aggregate missing on partial coverage and exposes partial sum separately', () => {

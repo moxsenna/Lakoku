@@ -235,7 +235,9 @@ describe('M10-E E3A/E4 runner orchestration', () => {
     expect(payload.artifactSemanticHash).toMatch(/^[0-9a-f]{64}$/)
     expect(payload.artifactSemanticHash).toBe(computeSha256(stableStringify(hashDagPayload)))
     expect(payload.sourceAuthority).toBe('CONTRACT_FIXTURE')
-    expect(payload.e2ClosureReference).toBe(computeSha256(FIXTURE_E2_CLOSURE_SHA))
+    // proof D: e2ClosureReference is raw Git SHA (40 hex), not SHA-256-of-SHA
+    expect(payload.e2ClosureReference).toBe(FIXTURE_E2_CLOSURE_SHA)
+    expect(payload.e2ClosureReference.length).toBe(40)
     expect(result.pair.normalized.normalization.removedOperationalFields).toEqual([
       'startedAt', 'finishedAt', 'elapsedMilliseconds', 'artifactDirectoryPath',
     ])

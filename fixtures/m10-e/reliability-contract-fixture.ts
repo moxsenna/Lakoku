@@ -22,6 +22,7 @@ import {
   M10_E_TASK_MAPPING_V1,
   M10_E_TOPOLOGY_V1,
   aggregateReliabilityObservations,
+  assumedValue,
   canonicalAuthorityHash,
   classifyReliabilityObservations,
   computeCostDistributionHash,
@@ -37,28 +38,34 @@ import {
   finalizeReliabilitySemanticPayload,
   generationCostKey,
   judgeCostKey,
+  multiplyDecimals,
   observedCostEntry,
-  percentageOf,
-  presentMeasurement,
   renderReliabilityReport,
   runCumulativeModel,
   sortCostDistributionEntries,
+  STAGE_IDS,
+  subtractDecimals,
   toCumulativeModelInput,
   validateReliabilityArtifactPair,
   validateReliabilityObservationSet,
   validateReliabilitySemanticArtifact,
+  type AssumedValue,
+  type AssumptionAuthority,
   type BudgetGateInput,
   type CanonicalDecimal,
   type ChapterStageExchangeabilityAuthority,
   type CompatibleStratumIdentity,
   type EngineeringGateInput,
+  type EngineeringGateVerdict,
   type ModeledBudgetComparators,
   type ObservedBudgetComparators,
   type PricingSnapshot,
   type ReliabilityObservationSet,
   type ReliabilitySemanticPayload,
+  type SensitivityProbabilityInput,
   type ValidatedReliabilityArtifactPair,
 } from '../../lib/narrative-qa/reliability'
+import { convertDecimal } from '../../lib/narrative-qa/reliability/decimal'
 import {
   deriveObservedChapterCostMeans,
   type ReliabilityModelInputRecord,
@@ -76,14 +83,14 @@ import type {
 } from '../../lib/narrative-qa/reliability/measurements'
 
 type Money = CanonicalDecimal<'MONEY'>
-type Percentage = CanonicalDecimal<'PERCENTAGE'>
+type Probability = CanonicalDecimal<'PROBABILITY'>
 
 export const FIXTURE_CURRENCY = 'IDR'
-export const FIXTURE_BASE_GIT_SHA = 'b'.repeat(64)
+export const FIXTURE_BASE_GIT_SHA = 'b'.repeat(40)
 export const FIXTURE_DIRTY = false
 export const FIXTURE_SPEC_SHA = 'af28b45dcd62544f12415476aa62bd3a09fd8f7e'
 export const FIXTURE_E2_CLOSURE_SHA = '914cf30f42d4e7f293df79e0d66c014331a696ba'
-export const FIXTURE_E2_CLOSURE_REFERENCE = computeSha256(FIXTURE_E2_CLOSURE_SHA)
+export const FIXTURE_E2_CLOSURE_REFERENCE = FIXTURE_E2_CLOSURE_SHA
 export const FIXTURE_SEED = 'M10_E_CONTRACT_FIXTURE_SEED_V1'
 export const FIXTURE_SOURCE_AUTHORITY = 'CONTRACT_FIXTURE'
 export const FIXTURE_E0_AUTHORITY = null
@@ -613,6 +620,7 @@ export function buildModelInputRecordFixture(observations: ReliabilityObservatio
     judgePlan: observations.judgePlanAuthority,
     seed: FIXTURE_SEED,
     iterations: 100000,
+    sensitivity: buildSensitivityInputFixture(observations),
   }
   return record
 }
@@ -671,26 +679,71 @@ function judgeDistributionRecords(observations: ReliabilityObservationSet): Reli
   return records
 }
 
-function fixtureModeledRetryOverhead(): Percentage {
-  return percentageOf(BigInt('6500000000'), BigInt('3750000000'))
+const SENSITIVITY_BAND_AUTHORITY_VERSION = 'M10_E_SENSITIVITY_BAND_AUTHORITY_V1'
+const SENSITIVITY_BAND_DECISION_REF = 'docs/superpowers/specs/2026-08-13-m10-e-e3a-e4-reliability-economics-design.md §11 line 627 sensitivity bands'
+
+/**
+ * Deterministic lower/upper band inputs derived from the exact OBSERVED central
+ * probabilities: lower = half of central; upper = mirror reflection
+ * 1 - 0.5*(1 - central). The multiplicative construction keeps every band inside
+ * [0,1] for any central including 1.0. Both bands are explicit ASSUMPTION with a
+ * frozen authority each; the central band uses only the OBSERVED probabilities.
+ */
+export function buildSensitivityInputFixture(observations: ReliabilityObservationSet): readonly SensitivityProbabilityInput[] {
+  const aggregate = aggregateReliabilityObservations(observations)
+  const centralByStage = new Map(aggregate.centralStageFailureProbabilities.map((item) => [item.stageId, item.failureProbability]))
+  return STAGE_IDS.map((stageId) => {
+    // failureProbability is ObservedValue<MeasurementState<Probability>>; probObs.value is MeasurementState<Probability>
+    const probObs = centralByStage.get(stageId)!
+    const probState = probObs.value
+    if (probState.state !== 'PRESENT') {
+      throw new Error('Expected all stage probabilities to be PRESENT in contract fixture')
+    }
+    // probState.value is already CanonicalDecimal<'PROBABILITY'> from ratioOf() in aggregation, no conversion needed
+    const central = probState.value as Probability
+    const halfProbability = convertDecimal('0.5', 'PROBABILITY')
+    const oneProbability = convertDecimal('1', 'PROBABILITY')
+    const lower = multiplyDecimals(central, halfProbability, 'PROBABILITY')
+    const upper = subtractDecimals(oneProbability, multiplyDecimals(subtractDecimals(oneProbability, central, 'PROBABILITY'), halfProbability, 'PROBABILITY'), 'PROBABILITY')
+    return {
+      stageId,
+      lower: assumedValue(lower, sensitivityBandAuthority(stageId, 'lower', lower, central)),
+      upper: assumedValue(upper, sensitivityBandAuthority(stageId, 'upper', upper, central)),
+    }
+  })
+}
+
+function sensitivityBandAuthority(stageId: string, band: 'lower' | 'upper', value: Probability, central: Probability): AssumptionAuthority {
+  const payload = {
+    authorityVersion: SENSITIVITY_BAND_AUTHORITY_VERSION,
+    decisionRef: SENSITIVITY_BAND_DECISION_REF,
+    rationale: `Sensitivity ${band} band probability for stage ${stageId}: ${value} (asumsi setengah-lipat dari pusat OBSERVED ${central}); bukan observasi.`,
+  }
+  return { ...payload, canonicalHash: canonicalAuthorityHash(payload) }
 }
 
 export function buildSemanticPayloadFixture(options: Readonly<{
   baseGitSha?: string
   gitDirty?: boolean
   e2ClosureReference?: string
+  engineeringGate?: Readonly<{ input: EngineeringGateInput; result: EngineeringGateVerdict }>
 } | undefined> = undefined): ReliabilitySemanticPayload {
   const observations = buildReliabilityObservationFixture()
   const aggregate = aggregateReliabilityObservations(observations)
   const classification = classifyReliabilityObservations(observations)
   const modelRecord = buildModelInputRecordFixture(observations)
-  const modelOutput = runCumulativeModel(toCumulativeModelInput(modelRecord))
+  const modelInput = toCumulativeModelInput(modelRecord)
+  const modelOutput = runCumulativeModel(modelInput)
+  const determinismOutput = runCumulativeModel(modelInput)
+  if (determinismOutput.inputHash !== modelOutput.inputHash || determinismOutput.outputHash !== modelOutput.outputHash) {
+    throw new Error('M10E_E3A_E4_NON_DETERMINISTIC_MODEL_OUTPUT: identical direct model runs produced different output hashes')
+  }
   const observedChapters = deriveObservedChapterCostMeans(observations)
   const modeledComparators: ModeledBudgetComparators = {
     maxExpectedCostPerChapter: modelOutput.result.maxExpectedCostPerChapter,
     maxExpectedCostPerNovel: modelOutput.result.successfulRunGenerationMean,
     maxJudgeEvaluationCostPerNovel: modelOutput.result.modeledJudgeTotal,
-    maxRetryOverheadPercentage: presentMeasurement<Percentage>(fixtureModeledRetryOverhead()),
+    maxRetryOverheadPercentage: modelOutput.result.modeledRetryOverheadPercentage,
     combinedTotalNovelCostP95: modelOutput.result.combinedTotalNovelCostP95,
   }
   const observedComparators: ObservedBudgetComparators = aggregate.observedCostComparators
@@ -702,19 +755,17 @@ export function buildSemanticPayloadFixture(options: Readonly<{
     observedComparators,
   }
   const budgetResult = evaluateBudgetGate(budgetInput)
-  const engineeringInput: EngineeringGateInput = {
+  const engineeringInputBase: Omit<EngineeringGateInput, 'artifactPairValid' | 'determinismVerified'> = {
     executionProfile: observations.executionProfile,
     evidence: { engineeringGate: classification.engineeringGate, reasonCodes: classification.reasonCodes },
     modeledOutputPresent: true,
-    modeledComparatorsComplete: true,
+    modeledComparatorsComplete: Object.values(modeledComparators).every((value) => value.state === 'PRESENT'),
+    sensitivityBandsComplete: modelOutput.result.sensitivityBands !== null,
     modelRunDefect: null,
     budget: budgetResult,
-    artifactPairValid: true,
-    determinismVerified: true,
     e1E2ClosureRegression: false,
     requiredHumanAuthorityPresent: true,
   }
-  const gateResult = evaluateEngineeringGate(engineeringInput)
   const independentDrawPayload = {
     authorityVersion: 'M10_E_INDEPENDENT_DRAW_ASSUMPTION_V1',
     decisionRef: AUTHORITY_DECISION_REF,
@@ -725,8 +776,8 @@ export function buildSemanticPayloadFixture(options: Readonly<{
     canonicalHash: canonicalAuthorityHash(independentDrawPayload),
   }
   const exchangeability = observations.exchangeabilityAuthorities as readonly ChapterStageExchangeabilityAuthority[]
-  return finalizeReliabilitySemanticPayload({
-    schemaVersion: 'M10_E_RELIABILITY_SEMANTIC_PAYLOAD_V1',
+  const makePayloadFields = (engineeringGate: Readonly<{ input: EngineeringGateInput; result: EngineeringGateVerdict }>): Omit<ReliabilitySemanticPayload, 'artifactSemanticHash'> => ({
+    schemaVersion: 'M10_E_RELIABILITY_SEMANTIC_PAYLOAD_V1' as const,
     executionProfile: observations.executionProfile,
     compatibleStratum: observations.compatibleStratum,
     sourceAuthority: FIXTURE_SOURCE_AUTHORITY,
@@ -762,23 +813,36 @@ export function buildSemanticPayloadFixture(options: Readonly<{
       observedDiagnostics: aggregate.observedCostDiagnostics,
     },
     budget: { input: budgetInput, result: budgetResult },
-    engineeringGate: { input: engineeringInput, result: gateResult },
-    reasonCodes: gateResult.reasonCodes,
+    engineeringGate,
+    reasonCodes: engineeringGate.result.reasonCodes,
   })
+  if (options?.engineeringGate !== undefined) {
+    return finalizeReliabilitySemanticPayload(makePayloadFields(options.engineeringGate))
+  }
+  // Two-pass derivation: the provisional payload must HOLD until an actual
+  // artifact-pair validation succeeds; only then may the final gate PASS.
+  const provisionalInput: EngineeringGateInput = { ...engineeringInputBase, artifactPairValid: null, determinismVerified: true }
+  const provisionalResult = evaluateEngineeringGate(provisionalInput)
+  if (provisionalResult.engineeringGate !== 'HOLD') {
+    throw new Error('M10E_E3A_E4_PROVISIONAL_GATE_MUST_HOLD: provisional fixture payload without artifact-pair proof must HOLD')
+  }
+  const provisionalPayload = finalizeReliabilitySemanticPayload(makePayloadFields({ input: provisionalInput, result: provisionalResult }))
+  buildFixtureEnvelopes(provisionalPayload)
+  const finalInput: EngineeringGateInput = { ...engineeringInputBase, artifactPairValid: true, determinismVerified: true }
+  const finalResult = evaluateEngineeringGate(finalInput)
+  if (finalResult.engineeringGate !== 'PASS') {
+    throw new Error('M10E_E3A_E4_FINAL_GATE_MUST_PASS: fixture final engineering gate did not PASS after artifact-pair proof')
+  }
+  return finalizeReliabilitySemanticPayload(makePayloadFields({ input: finalInput, result: finalResult }))
 }
 
-export function buildValidatedArtifactPairFixture(options: Readonly<{
-  baseGitSha?: string
-  gitDirty?: boolean
-  e2ClosureReference?: string
-} | undefined> = undefined): Readonly<{
+export function buildFixtureEnvelopes(payload: ReliabilitySemanticPayload): Readonly<{
   artifact: ReturnType<typeof validateReliabilitySemanticArtifact>
   reportBytes: string
   pair: ValidatedReliabilityArtifactPair
   raw: unknown
   normalized: unknown
 }> {
-  const payload = buildSemanticPayloadFixture(options)
   const artifact = validateReliabilitySemanticArtifact(payload)
   const reportBytes = renderReliabilityReport(artifact)
   const reportHash = computeReportHash(reportBytes)
@@ -807,6 +871,21 @@ export function buildValidatedArtifactPairFixture(options: Readonly<{
   }
   const pair = validateReliabilityArtifactPair({ raw, normalized, reportBytes })
   return { artifact, reportBytes, pair, raw, normalized }
+}
+
+export function buildValidatedArtifactPairFixture(options: Readonly<{
+  baseGitSha?: string
+  gitDirty?: boolean
+  e2ClosureReference?: string
+  engineeringGate?: Readonly<{ input: EngineeringGateInput; result: EngineeringGateVerdict }>
+} | undefined> = undefined): Readonly<{
+  artifact: ReturnType<typeof validateReliabilitySemanticArtifact>
+  reportBytes: string
+  pair: ValidatedReliabilityArtifactPair
+  raw: unknown
+  normalized: unknown
+}> {
+  return buildFixtureEnvelopes(buildSemanticPayloadFixture(options))
 }
 
 export function rawEnvelopeForMutation(pair: Readonly<{ raw: unknown }>): Record<string, unknown> {

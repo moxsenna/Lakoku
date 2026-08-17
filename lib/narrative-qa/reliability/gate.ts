@@ -41,6 +41,7 @@ export interface EngineeringGateInput {
   }>
   readonly modeledOutputPresent: boolean
   readonly modeledComparatorsComplete: boolean
+  readonly sensitivityBandsComplete: boolean
   readonly modelRunDefect: string | null
   readonly budget: BudgetEvaluationResult
   readonly artifactPairValid: boolean | null
@@ -110,6 +111,7 @@ export function evaluateEngineeringGate(input: EngineeringGateInput): Engineerin
   }
   if (!input.modeledOutputPresent) holds.push('MODEL_UNAVAILABLE')
   if (!input.modeledComparatorsComplete) holds.push('MISSING_MEASUREMENT')
+  if (!input.sensitivityBandsComplete) holds.push('MISSING_MEASUREMENT')
   if (input.budget.status === 'APPROVED_EVALUATED' && input.budget.comparisons.some((comparison) => comparison.modeled.outcome === 'INCOMPLETE')) {
     holds.push('MISSING_MEASUREMENT')
   }

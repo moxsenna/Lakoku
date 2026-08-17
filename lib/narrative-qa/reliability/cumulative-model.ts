@@ -1,11 +1,13 @@
 import { z } from 'zod'
 import { computeSha256, stableStringify } from '../scoring/canonical-serializer'
 import {
+  ASSUMPTION_AUTHORITY_SCHEMA,
   CHAPTER_SEQUENCE,
   COMPATIBLE_STRATUM_IDENTITY_SCHEMA,
   STAGE_IDS,
   missingMeasurement,
   presentMeasurement,
+  type AssumedValue,
   type AttemptClass,
   type CompatibleStratumIdentity,
   type ExecutionProfile,
@@ -24,8 +26,11 @@ import {
   type JudgePlanAuthority,
 } from './authorities'
 import {
+  canonicalizeDecimal,
   decimalMean,
+  divideDecimals,
   failureProbabilityThreshold,
+  percentageOf,
   percentileCont,
   ratioOf,
   type CanonicalDecimal,
@@ -42,6 +47,7 @@ import {
 
 type Money = CanonicalDecimal<'MONEY'>
 type Probability = CanonicalDecimal<'PROBABILITY'>
+type Percentage = CanonicalDecimal<'PERCENTAGE'>
 
 const MONEY_SCALE = BigInt(100000000)
 const EXPECTED_COUNT_SCALE = BigInt(1000000)
@@ -49,9 +55,21 @@ const EXPECTED_COUNT_SCALE = BigInt(1000000)
 declare const expectedCountBrand: unique symbol
 export type ExpectedCount = string & { readonly [expectedCountBrand]: 'M10_E_EXPECTED_COUNT_SCALE_6' }
 
+// Spec §9 baseline/retry cost classes over the frozen generation provider
+// nodes: first-attempt baseline = PROSE_PRIMARY + STRUCTURED_OUTPUT;
+// retry/fallback = PROSE_RETRY + PROVIDER_FALLBACK + STRUCTURED_RETRY.
+const FIRST_ATTEMPT_STAGES: ReadonlySet<StageId> = new Set<StageId>(['PROSE_PRIMARY', 'STRUCTURED_OUTPUT'])
+const RETRY_FALLBACK_STAGES: ReadonlySet<StageId> = new Set<StageId>(['PROSE_RETRY', 'PROVIDER_FALLBACK', 'STRUCTURED_RETRY'])
+
 export interface CentralStageProbabilityInput {
   readonly stageId: StageId
   readonly observed: ObservedValue<Probability>
+}
+
+export interface SensitivityProbabilityInput {
+  readonly stageId: StageId
+  readonly lower: AssumedValue<Probability>
+  readonly upper: AssumedValue<Probability>
 }
 
 export interface ModelCostDistributionSet {
@@ -68,6 +86,7 @@ export interface CumulativeModelInput {
   readonly judgePlan: JudgePlanAuthority
   readonly seed: string
   readonly iterations: number
+  readonly sensitivity?: readonly SensitivityProbabilityInput[]
 }
 
 export interface IterationResult {
@@ -81,6 +100,8 @@ export interface IterationResult {
   readonly chapterSpendCoefficients: readonly bigint[]
   readonly chapterReachedFlags: readonly boolean[]
   readonly iterationSpendCoefficient: bigint
+  readonly baselineCostCoefficient: bigint
+  readonly retryFallbackCostCoefficient: bigint
   readonly successfulGenerationCostCoefficient: bigint | null
   readonly judgeTotalCoefficient: bigint | null
 }
@@ -116,6 +137,32 @@ export interface CumulativeModelResult {
   readonly generationCostP95: MeasurementState<Money>
   readonly combinedTotalNovelCostP50: MeasurementState<Money>
   readonly combinedTotalNovelCostP95: MeasurementState<Money>
+  readonly modeledFirstAttemptBaselineCost: MeasurementState<Money>
+  readonly modeledRetryFallbackCost: MeasurementState<Money>
+  readonly modeledRetryOverheadPercentage: MeasurementState<Percentage>
+  readonly costComponentDenominator: number
+  readonly sensitivityBands: Readonly<{
+    lower: CumulativeSensitivityBandResult
+    central: CumulativeSensitivityBandResult
+    upper: CumulativeSensitivityBandResult
+  }> | null
+}
+
+export interface CumulativeSensitivityBandResult {
+  readonly completionProbability: Probability
+  readonly terminalFailureProbability: Probability
+  readonly expectedRetryCount: ExpectedCount
+  readonly expectedGenerationProviderCallCount: ExpectedCount
+  readonly expectedJudgeProviderCallCount: ExpectedCount
+  readonly expectedTotalProviderCallCount: ExpectedCount
+  readonly successfulRunGenerationMean: MeasurementState<Money>
+  readonly modeledJudgeTotal: MeasurementState<Money>
+  readonly maxExpectedCostPerChapter: MeasurementState<Money>
+  readonly modeledCombinedTotalNovelCostP95: MeasurementState<Money>
+  readonly modeledFirstAttemptBaselineCost: MeasurementState<Money>
+  readonly modeledRetryFallbackCost: MeasurementState<Money>
+  readonly modeledRetryOverheadPercentage: MeasurementState<Percentage>
+  readonly costComponentDenominator: number
 }
 
 export interface ModeledCumulativeOutput {
@@ -152,6 +199,31 @@ interface PreparedModel {
   readonly judgePlan: JudgePlanAuthority
 }
 
+interface ProbabilityProbe {
+  readonly stageId: StageId
+  readonly probability: Probability
+}
+
+interface SimulationAccumulation {
+  readonly completionCount: number
+  readonly terminalFailureCount: number
+  readonly retryTotal: number
+  readonly generationProviderCallTotal: number
+  readonly judgeProviderCallTotal: number
+  readonly outcomeDrawTotal: number
+  readonly costDrawTotal: number
+  readonly judgeCostDrawTotal: number
+  readonly chapterSpendSums: readonly bigint[]
+  readonly chapterReachedCounts: readonly number[]
+  readonly chapterValueCoefficients: readonly (readonly bigint[])[]
+  readonly successfulGenerationCosts: readonly bigint[]
+  readonly startedAttemptSpends: readonly bigint[]
+  readonly judgeTotals: readonly bigint[]
+  readonly combinedTotals: readonly bigint[]
+  readonly baselineTotal: bigint
+  readonly retryFallbackTotal: bigint
+}
+
 function buildCostSampler(distribution: CostDistribution): CostSampler {
   if (distribution.entries.length === 0) throw new Error('Cost sampler requires at least one entry')
   return Object.freeze({
@@ -165,11 +237,28 @@ function sampleCostCoefficient(sampler: CostSampler, rng: Xoshiro128StarStarRun)
   return sampler.coefficients[index]!
 }
 
-export function prepareModel(input: CumulativeModelInput): PreparedModel {
-  const thresholds = new Map<StageId, bigint>()
-  for (const item of input.centralStageProbabilities) {
+export function centralProbes(input: CumulativeModelInput): ProbabilityProbe[] {
+  return input.centralStageProbabilities.map((item) => {
     if (item.observed.value.state !== 'PRESENT') throw new Error(`Central probability for ${item.stageId} is not present`)
-    thresholds.set(item.stageId, failureProbabilityThreshold(item.observed.value.value))
+    return { stageId: item.stageId, probability: item.observed.value.value }
+  })
+}
+
+export function bandProbes(input: CumulativeModelInput, band: 'lower' | 'upper'): ProbabilityProbe[] {
+  if (input.sensitivity === undefined) throw new Error(`Sensitivity ${band} band requires sensitivity input`)
+  return [...input.sensitivity]
+    .sort((left, right) => (left.stageId < right.stageId ? -1 : 1))
+    .map((item) => ({ stageId: item.stageId, probability: item[band].value }))
+}
+
+export function prepareModel(input: CumulativeModelInput): PreparedModel {
+  return prepareModelForProbes(input, centralProbes(input))
+}
+
+function prepareModelForProbes(input: CumulativeModelInput, probes: readonly ProbabilityProbe[]): PreparedModel {
+  const thresholds = new Map<StageId, bigint>()
+  for (const probe of probes) {
+    thresholds.set(probe.stageId, failureProbabilityThreshold(probe.probability))
   }
   const stages = new Map<StageId, PreparedStage>()
   const transitions = new Map<StageId, Readonly<{ SUCCESS: PreparedTransition; FAILURE: PreparedTransition }>>()
@@ -235,6 +324,8 @@ export function simulateIteration(prepared: PreparedModel, rng: Xoshiro128StarSt
   const chapterSpendCoefficients = new Array<bigint>(50).fill(BigInt(0))
   const chapterReachedFlags = new Array<boolean>(50).fill(false)
   let iterationSpendCoefficient = BigInt(0)
+  let baselineCostCoefficient = BigInt(0)
+  let retryFallbackCostCoefficient = BigInt(0)
   let retryCount = 0
   let generationProviderCallCount = 0
   let outcomeDrawCount = 0
@@ -260,6 +351,13 @@ export function simulateIteration(prepared: PreparedModel, rng: Xoshiro128StarSt
         generationProviderCallCount += 1
         iterationSpendCoefficient += cost
         chapterSpendCoefficients[chapterNumber - 1] = chapterSpendCoefficients[chapterNumber - 1] + cost
+        if (FIRST_ATTEMPT_STAGES.has(stageId)) {
+          baselineCostCoefficient += cost
+        } else if (RETRY_FALLBACK_STAGES.has(stageId)) {
+          retryFallbackCostCoefficient += cost
+        } else {
+          throw new Error(`Provider-applicable stage outside modeled cost classes: ${stageId}`)
+        }
       }
       if (stage.retryIncrement) retryCount += 1
       const transition: Readonly<{ SUCCESS: PreparedTransition; FAILURE: PreparedTransition }> = prepared.transitions.get(stageId)!
@@ -305,6 +403,8 @@ export function simulateIteration(prepared: PreparedModel, rng: Xoshiro128StarSt
     chapterSpendCoefficients,
     chapterReachedFlags,
     iterationSpendCoefficient,
+    baselineCostCoefficient,
+    retryFallbackCostCoefficient,
     successfulGenerationCostCoefficient,
     judgeTotalCoefficient,
   })
@@ -354,6 +454,27 @@ function validateCumulativeModelInput(input: CumulativeModelInput): void {
       throw new Error(`Central probability for ${item.stageId} must be PRESENT, missing pools cannot populate the model`)
     }
   }
+  if (input.sensitivity !== undefined) {
+    if (input.sensitivity.length !== STAGE_IDS.length) {
+      throw new Error('Sensitivity requires exactly one lower/upper probability pair per model stage')
+    }
+    const sensitivityStageIds = new Set<string>()
+    for (const item of input.sensitivity) {
+      if (sensitivityStageIds.has(item.stageId)) throw new Error(`Duplicate sensitivity probability for stage ${item.stageId}`)
+      sensitivityStageIds.add(item.stageId)
+      if (!STAGE_IDS.includes(item.stageId)) throw new Error(`Unknown stage in sensitivity probability: ${item.stageId}`)
+      for (const band of ['lower', 'upper'] as const) {
+        const assumed = item[band]
+        if (assumed.provenance !== 'ASSUMPTION') {
+          throw new Error(`Sensitivity ${band} probability for ${item.stageId} must be ASSUMPTION`)
+        }
+        ASSUMPTION_AUTHORITY_SCHEMA.parse(assumed.source)
+        if (canonicalizeDecimal(assumed.value, 'PROBABILITY') !== assumed.value) {
+          throw new Error(`Sensitivity ${band} probability for ${item.stageId} must be canonical probability scale 12`)
+        }
+      }
+    }
+  }
   const requiredGenerationKeys = getAllGenerationCostKeys(input.compatibleStratum.providerModelPolicyId)
   const requiredJudgeKeys = getAllJudgeCostKeys(input.compatibleStratum.providerModelPolicyId)
   const providedKeys = new Set(input.costDistributions.distributions.keys())
@@ -372,8 +493,23 @@ function validateCumulativeModelInput(input: CumulativeModelInput): void {
       throw new Error(`Cost distribution currency mismatch: ${distribution.currency}`)
     }
     if (distribution.entries.length === 0) throw new Error('Cost distribution must not be empty')
-    if (distribution.provenance !== 'OBSERVED') {
-      throw new Error('Model requires selected OBSERVED cost distributions; pricing fallback must be selected before model input')
+    if (distribution.provenance === 'OBSERVED') {
+      for (const entry of distribution.entries) {
+        if (entry.provenance !== 'OBSERVED') {
+          throw new Error(`Cost distribution ${formatCostDistributionKey(distribution.key)} mixes empirical and pricing-derived entries`)
+        }
+      }
+    } else if (distribution.provenance === 'MODELED_FROM_PRICING') {
+      for (const entry of distribution.entries) {
+        if (entry.provenance !== 'MODELED_FROM_PRICING') {
+          throw new Error(`Cost distribution ${formatCostDistributionKey(distribution.key)} mixes pricing-derived and empirical entries`)
+        }
+        if (entry.pricingSnapshotHash !== input.compatibleStratum.pricingSnapshotHash) {
+          throw new Error(`Pricing-derived cost distribution ${formatCostDistributionKey(distribution.key)} must carry the selected stratum pricing snapshot hash`)
+        }
+      }
+    } else {
+      throw new Error('Model requires selected OBSERVED or pricing-derived (MODELED_FROM_PRICING) cost distributions')
     }
   }
   if (input.judgePlan.currency !== input.costDistributions.currency) {
@@ -381,9 +517,8 @@ function validateCumulativeModelInput(input: CumulativeModelInput): void {
   }
 }
 
-export function runCumulativeModel(input: CumulativeModelInput): ModeledCumulativeOutput {
-  validateCumulativeModelInput(input)
-  const prepared = prepareModel(input)
+function simulateModel(input: CumulativeModelInput, probes: readonly ProbabilityProbe[]): SimulationAccumulation {
+  const prepared = prepareModelForProbes(input, probes)
   const rng = createXoshiro128StarStar(seedXoshiro128StarStar(input.seed))
 
   let completionCount = 0
@@ -394,6 +529,8 @@ export function runCumulativeModel(input: CumulativeModelInput): ModeledCumulati
   let outcomeDrawTotal = 0
   let costDrawTotal = 0
   let judgeCostDrawTotal = 0
+  let baselineTotal = BigInt(0)
+  let retryFallbackTotal = BigInt(0)
   const chapterSpendSums = new Array<bigint>(50).fill(BigInt(0))
   const chapterReachedCounts = new Array<number>(50).fill(0)
   const chapterValueCoefficients: bigint[][] = Array.from({ length: 50 }, () => [])
@@ -411,6 +548,8 @@ export function runCumulativeModel(input: CumulativeModelInput): ModeledCumulati
     outcomeDrawTotal += result.outcomeDrawCount
     costDrawTotal += result.costDrawCount
     judgeCostDrawTotal += result.judgeCostDrawCount
+    baselineTotal += result.baselineCostCoefficient
+    retryFallbackTotal += result.retryFallbackCostCoefficient
     if (result.completed) {
       completionCount += 1
       if (result.successfulGenerationCostCoefficient !== null) successfulGenerationCosts.push(result.successfulGenerationCostCoefficient)
@@ -429,11 +568,37 @@ export function runCumulativeModel(input: CumulativeModelInput): ModeledCumulati
     }
   }
 
+  return Object.freeze({
+    completionCount,
+    terminalFailureCount,
+    retryTotal,
+    generationProviderCallTotal,
+    judgeProviderCallTotal,
+    outcomeDrawTotal,
+    costDrawTotal,
+    judgeCostDrawTotal,
+    chapterSpendSums,
+    chapterReachedCounts,
+    chapterValueCoefficients,
+    successfulGenerationCosts,
+    startedAttemptSpends,
+    judgeTotals,
+    combinedTotals,
+    baselineTotal,
+    retryFallbackTotal,
+  })
+}
+
+function buildChapterStatistics(acc: SimulationAccumulation): Readonly<{
+  chapterMeans: readonly MeasurementState<Money>[]
+  chapterCostP50: readonly MeasurementState<Money>[]
+  chapterCostP95: readonly MeasurementState<Money>[]
+}> {
   const chapterMeans: MeasurementState<Money>[] = []
   const chapterCostP50: MeasurementState<Money>[] = []
   const chapterCostP95: MeasurementState<Money>[] = []
   for (let chapterIndex = 0; chapterIndex < 50; chapterIndex += 1) {
-    const values = chapterValueCoefficients[chapterIndex].map(coefficientToMoney)
+    const values = acc.chapterValueCoefficients[chapterIndex].map(coefficientToMoney)
     if (values.length === 0) {
       const missing = missingMeasurement<Money>('OBSERVATION_COVERAGE_INCOMPLETE', `Chapter ${chapterIndex + 1} was never reached`)
       chapterMeans.push(missing)
@@ -445,49 +610,127 @@ export function runCumulativeModel(input: CumulativeModelInput): ModeledCumulati
     chapterCostP50.push(percentileCont(values, '0.50', 'MONEY'))
     chapterCostP95.push(percentileCont(values, '0.95', 'MONEY'))
   }
-  const maxExpectedCostPerChapter = maxMoney(chapterMeans)
+  return Object.freeze({ chapterMeans, chapterCostP50, chapterCostP95 })
+}
 
-  const successfulRunCount = completionCount
+// Spec §9 cost components: per eligible reached chapter generation unit, the
+// modeled first-attempt baseline and retry/fallback means divide the total
+// sampled coefficients by the summed reached-chapter denominator; the
+// retry-overhead percentage is retry/fallback over baseline, explicitly
+// unavailable when the modeled baseline total is zero.
+function buildCostComponents(acc: SimulationAccumulation): Readonly<{
+  costComponentDenominator: number
+  modeledFirstAttemptBaselineCost: MeasurementState<Money>
+  modeledRetryFallbackCost: MeasurementState<Money>
+  modeledRetryOverheadPercentage: MeasurementState<Percentage>
+}> {
+  const denominator = acc.chapterReachedCounts.reduce((sum, count) => sum + count, 0)
+  if (denominator === 0) {
+    return Object.freeze({
+      costComponentDenominator: 0,
+      modeledFirstAttemptBaselineCost: missingMeasurement<Money>('OBSERVATION_COVERAGE_INCOMPLETE', 'Modeled first-attempt baseline cost requires at least one reached chapter'),
+      modeledRetryFallbackCost: missingMeasurement<Money>('OBSERVATION_COVERAGE_INCOMPLETE', 'Modeled retry/fallback cost requires at least one reached chapter'),
+      modeledRetryOverheadPercentage: missingMeasurement<Percentage>('COST_UNAVAILABLE', 'Modeled retry-overhead percentage requires modeled baseline cost above zero'),
+    })
+  }
+  const modeledFirstAttemptBaselineCost = presentMeasurement(divideDecimals(coefficientToMoney(acc.baselineTotal), `${denominator}.00000000` as Money, 'MONEY'))
+  const modeledRetryFallbackCost = presentMeasurement(divideDecimals(coefficientToMoney(acc.retryFallbackTotal), `${denominator}.00000000` as Money, 'MONEY'))
+  const modeledRetryOverheadPercentage = acc.baselineTotal === BigInt(0)
+    ? missingMeasurement<Percentage>('COST_UNAVAILABLE', 'Modeled retry-overhead percentage requires modeled baseline cost above zero')
+    : presentMeasurement(percentageOf(acc.retryFallbackTotal, acc.baselineTotal))
+  return Object.freeze({ costComponentDenominator: denominator, modeledFirstAttemptBaselineCost, modeledRetryFallbackCost, modeledRetryOverheadPercentage })
+}
+
+function buildSensitivityBandResult(input: CumulativeModelInput, acc: SimulationAccumulation): CumulativeSensitivityBandResult {
+  const chapterStatistics = buildChapterStatistics(acc)
+  const costComponents = buildCostComponents(acc)
+  const successfulRunCount = acc.completionCount
   const successfulRunGenerationMean = successfulRunCount === 0
     ? missingMeasurement<Money>('OBSERVATION_COVERAGE_INCOMPLETE', 'Successful-run generation mean requires at least one successful run')
-    : presentMeasurement(decimalMean(successfulGenerationCosts.map(coefficientToMoney), 'MONEY'))
-  const startedAttemptGenerationSpendDiagnostic = decimalMean(startedAttemptSpends.map(coefficientToMoney), 'MONEY')
-  const modeledJudgeTotal = judgeTotals.length === 0
+    : presentMeasurement(decimalMean(acc.successfulGenerationCosts.map(coefficientToMoney), 'MONEY'))
+  const modeledJudgeTotal = acc.judgeTotals.length === 0
     ? missingMeasurement<Money>('OBSERVATION_COVERAGE_INCOMPLETE', 'Modeled judge total requires at least one successful run')
-    : presentMeasurement(decimalMean(judgeTotals.map(coefficientToMoney), 'MONEY'))
+    : presentMeasurement(decimalMean(acc.judgeTotals.map(coefficientToMoney), 'MONEY'))
+  return Object.freeze({
+    completionProbability: ratioOf(BigInt(acc.completionCount), BigInt(input.iterations)),
+    terminalFailureProbability: ratioOf(BigInt(acc.terminalFailureCount), BigInt(input.iterations)),
+    expectedRetryCount: expectedCount(acc.retryTotal, input.iterations),
+    expectedGenerationProviderCallCount: expectedCount(acc.generationProviderCallTotal, input.iterations),
+    expectedJudgeProviderCallCount: expectedCount(acc.judgeProviderCallTotal, input.iterations),
+    expectedTotalProviderCallCount: expectedCount(acc.generationProviderCallTotal + acc.judgeProviderCallTotal, input.iterations),
+    successfulRunGenerationMean,
+    modeledJudgeTotal,
+    maxExpectedCostPerChapter: maxMoney(chapterStatistics.chapterMeans),
+    modeledCombinedTotalNovelCostP95: percentileCont(acc.combinedTotals.map(coefficientToMoney), '0.95', 'MONEY'),
+    modeledFirstAttemptBaselineCost: costComponents.modeledFirstAttemptBaselineCost,
+    modeledRetryFallbackCost: costComponents.modeledRetryFallbackCost,
+    modeledRetryOverheadPercentage: costComponents.modeledRetryOverheadPercentage,
+    costComponentDenominator: costComponents.costComponentDenominator,
+  })
+}
 
-  const result: CumulativeModelResult = Object.freeze({
+function buildCumulativeResult(input: CumulativeModelInput, acc: SimulationAccumulation): Omit<CumulativeModelResult, 'sensitivityBands'> {
+  const chapterStatistics = buildChapterStatistics(acc)
+  const maxExpectedCostPerChapter = maxMoney(chapterStatistics.chapterMeans)
+
+  const successfulRunCount = acc.completionCount
+  const successfulRunGenerationMean = successfulRunCount === 0
+    ? missingMeasurement<Money>('OBSERVATION_COVERAGE_INCOMPLETE', 'Successful-run generation mean requires at least one successful run')
+    : presentMeasurement(decimalMean(acc.successfulGenerationCosts.map(coefficientToMoney), 'MONEY'))
+  const startedAttemptGenerationSpendDiagnostic = decimalMean(acc.startedAttemptSpends.map(coefficientToMoney), 'MONEY')
+  const modeledJudgeTotal = acc.judgeTotals.length === 0
+    ? missingMeasurement<Money>('OBSERVATION_COVERAGE_INCOMPLETE', 'Modeled judge total requires at least one successful run')
+    : presentMeasurement(decimalMean(acc.judgeTotals.map(coefficientToMoney), 'MONEY'))
+  const costComponents = buildCostComponents(acc)
+
+  return Object.freeze({
     executionProfile: input.executionProfile,
     compatibleStratum: input.compatibleStratum,
     modelVersion: M10_E_CUMULATIVE_MODEL_V1.modelVersion,
     iterations: input.iterations,
     seed: input.seed,
-    completionProbability: ratioOf(BigInt(completionCount), BigInt(input.iterations)),
-    completionCount,
-    terminalFailureProbability: ratioOf(BigInt(terminalFailureCount), BigInt(input.iterations)),
-    terminalFailureCount,
-    expectedRetryCount: expectedCount(retryTotal, input.iterations),
-    expectedGenerationProviderCallCount: expectedCount(generationProviderCallTotal, input.iterations),
-    expectedJudgeProviderCallCount: expectedCount(judgeProviderCallTotal, input.iterations),
-    expectedTotalProviderCallCount: expectedCount(generationProviderCallTotal + judgeProviderCallTotal, input.iterations),
-    totalOutcomeDrawCount: outcomeDrawTotal,
-    totalCostDrawCount: costDrawTotal,
-    totalJudgeCostDrawCount: judgeCostDrawTotal,
-    chapterMeans,
-    chapterMeanDenominators: chapterReachedCounts,
-    chapterCostP50,
-    chapterCostP95,
+    completionProbability: ratioOf(BigInt(acc.completionCount), BigInt(input.iterations)),
+    completionCount: acc.completionCount,
+    terminalFailureProbability: ratioOf(BigInt(acc.terminalFailureCount), BigInt(input.iterations)),
+    terminalFailureCount: acc.terminalFailureCount,
+    expectedRetryCount: expectedCount(acc.retryTotal, input.iterations),
+    expectedGenerationProviderCallCount: expectedCount(acc.generationProviderCallTotal, input.iterations),
+    expectedJudgeProviderCallCount: expectedCount(acc.judgeProviderCallTotal, input.iterations),
+    expectedTotalProviderCallCount: expectedCount(acc.generationProviderCallTotal + acc.judgeProviderCallTotal, input.iterations),
+    totalOutcomeDrawCount: acc.outcomeDrawTotal,
+    totalCostDrawCount: acc.costDrawTotal,
+    totalJudgeCostDrawCount: acc.judgeCostDrawTotal,
+    chapterMeans: chapterStatistics.chapterMeans,
+    chapterMeanDenominators: acc.chapterReachedCounts,
+    chapterCostP50: chapterStatistics.chapterCostP50,
+    chapterCostP95: chapterStatistics.chapterCostP95,
     maxExpectedCostPerChapter,
     successfulRunGenerationMean,
     successfulRunCount,
     startedAttemptGenerationSpendDiagnostic,
     startedAttemptCount: input.iterations,
     modeledJudgeTotal,
-    generationCostP50: percentileCont(successfulGenerationCosts.map(coefficientToMoney), '0.50', 'MONEY'),
-    generationCostP95: percentileCont(successfulGenerationCosts.map(coefficientToMoney), '0.95', 'MONEY'),
-    combinedTotalNovelCostP50: percentileCont(combinedTotals.map(coefficientToMoney), '0.50', 'MONEY'),
-    combinedTotalNovelCostP95: percentileCont(combinedTotals.map(coefficientToMoney), '0.95', 'MONEY'),
+    generationCostP50: percentileCont(acc.successfulGenerationCosts.map(coefficientToMoney), '0.50', 'MONEY'),
+    generationCostP95: percentileCont(acc.successfulGenerationCosts.map(coefficientToMoney), '0.95', 'MONEY'),
+    combinedTotalNovelCostP50: percentileCont(acc.combinedTotals.map(coefficientToMoney), '0.50', 'MONEY'),
+    combinedTotalNovelCostP95: percentileCont(acc.combinedTotals.map(coefficientToMoney), '0.95', 'MONEY'),
+    modeledFirstAttemptBaselineCost: costComponents.modeledFirstAttemptBaselineCost,
+    modeledRetryFallbackCost: costComponents.modeledRetryFallbackCost,
+    modeledRetryOverheadPercentage: costComponents.modeledRetryOverheadPercentage,
+    costComponentDenominator: costComponents.costComponentDenominator,
   })
+}
+
+export function runCumulativeModel(input: CumulativeModelInput): ModeledCumulativeOutput {
+  validateCumulativeModelInput(input)
+  const central = simulateModel(input, centralProbes(input))
+  const centralResult = buildCumulativeResult(input, central)
+  const sensitivityBands = input.sensitivity === undefined ? null : {
+    lower: buildSensitivityBandResult(input, simulateModel(input, bandProbes(input, 'lower'))),
+    central: buildSensitivityBandResult(input, central),
+    upper: buildSensitivityBandResult(input, simulateModel(input, bandProbes(input, 'upper'))),
+  }
+  const result = Object.freeze({ ...centralResult, sensitivityBands })
   const outputHash = computeSha256(stableStringify(result))
   return Object.freeze({
     provenance: 'MODELED' as const,
@@ -517,6 +760,11 @@ function computeInputHash(input: CumulativeModelInput): string {
     judgePlan: input.judgePlan,
     seed: input.seed,
     iterations: input.iterations,
+    sensitivity: input.sensitivity !== undefined ? [...input.sensitivity].sort((left, right) => (left.stageId < right.stageId ? -1 : 1)).map((item) => ({
+      stageId: item.stageId,
+      lower: { provenance: item.lower.provenance, value: item.lower.value, source: item.lower.source },
+      upper: { provenance: item.upper.provenance, value: item.upper.value, source: item.upper.source },
+    })) : [],
   }
   return computeSha256(stableStringify(payload))
 }

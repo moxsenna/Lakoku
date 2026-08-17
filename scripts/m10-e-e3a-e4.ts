@@ -19,7 +19,7 @@
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { computeSha256, stableStringify } from '../lib/narrative-qa/scoring/canonical-serializer'
+import { stableStringify } from '../lib/narrative-qa/scoring/canonical-serializer'
 import { createWorkingTreeGitReader } from '../lib/narrative-qa/fault/e2/git-metadata'
 import {
   aggregateReliabilityObservations,
@@ -27,11 +27,7 @@ import {
   assertReliabilityReportHasNoProhibitedClaims,
   classifyReliabilityObservations,
   computeReportHash,
-  evaluateBudgetGate,
-  evaluateEngineeringGate,
   normalizeExecutionMetadata,
-  percentageOf,
-  presentMeasurement,
   renderReliabilityReport,
   runCumulativeModel,
   toCumulativeModelInput,
@@ -59,7 +55,6 @@ import {
   FIXTURE_GENERATION_DISTRIBUTION_KEY_COUNT,
   FIXTURE_SPEC_SHA,
   FIXTURE_STAGE_POOL_COUNT,
-  buildModelInputRecordFixture,
   buildReliabilityObservationFixture,
   buildSemanticPayloadFixture,
   expectedJudgeDistributionKeyCount,
@@ -245,7 +240,7 @@ function buildModeledComparators(output: ModeledCumulativeOutput): ModeledBudget
     maxExpectedCostPerChapter: output.result.maxExpectedCostPerChapter,
     maxExpectedCostPerNovel: output.result.successfulRunGenerationMean,
     maxJudgeEvaluationCostPerNovel: output.result.modeledJudgeTotal,
-    maxRetryOverheadPercentage: presentMeasurement<CanonicalDecimal<'PERCENTAGE'>>(percentageOf(BigInt('6500000000'), BigInt('3750000000'))),
+    maxRetryOverheadPercentage: output.result.modeledRetryOverheadPercentage,
     combinedTotalNovelCostP95: output.result.combinedTotalNovelCostP95,
   }
 }
@@ -294,44 +289,26 @@ export async function executeM10EE3AE4(input: M10EE3AE4RunnerInput = {}): Promis
     throw new Error(`M10E_E3A_E4_SAFETY_COUNTER_BREACH: duplicates ${duplicatePublicationCount}, corruption ${canonicalCorruptionCount}`)
   }
 
-  // Step 6-7: aggregate and build/validate cost distributions and normalized model input.
+  // Step 6-7: aggregate the validated observations into the evidence set.
   const aggregate = aggregateReliabilityObservations(observations)
-  const modelRecord = buildModelInputRecordFixture(observations)
 
-  // Step 8: exactly 100000 deterministic iterations.
-  const modelOutput = runCumulativeModel(toCumulativeModelInput(modelRecord))
-
-  // Step 9: engineering and budget gates with E0 authority explicitly null.
-  const budgetInput: BudgetGateInput = {
-    e0Authority: FIXTURE_E0_AUTHORITY,
-    currency: FIXTURE_CURRENCY,
-    compatibleStratum: observations.compatibleStratum,
-    modeledComparators: buildModeledComparators(modelOutput),
-    observedComparators: aggregate.observedCostComparators,
-  }
-  const budgetResult = evaluateBudgetGate(budgetInput)
-  const engineeringInput: EngineeringGateInput = {
-    executionProfile: observations.executionProfile,
-    evidence: { engineeringGate: classification.engineeringGate, reasonCodes: classification.reasonCodes },
-    modeledOutputPresent: true,
-    modeledComparatorsComplete: true,
-    modelRunDefect: null,
-    budget: budgetResult,
-    artifactPairValid: true,
-    determinismVerified: true,
-    e1E2ClosureRegression: false,
-    requiredHumanAuthorityPresent: true,
-  }
-  const gateResult = evaluateEngineeringGate(engineeringInput)
-
-  // Step 10: build the full normalized semantic payload excluding only declared hash-DAG fields.
-  // The payload schema types baseGitSha as a SHA-256 digest, so the raw 40-hex Git commit SHA is
-  // bound through its digest; the raw SHA is printed in the counted status block for reviewers.
+  // Step 8-10: the fixture performs the single two-pass derivation — direct double-run
+  // determinism proof, provisional HOLD, artifact-pair validation, then the final PASS
+  // gate — binding the raw 40-hex Git SHAs. The payload schema types baseGitSha and
+  // e2ClosureReference as raw Git commit SHAs (GIT_SHA_SCHEMA, 40-hex), never as
+  // SHA-256 digests of themselves; the counted status block also reports the raw SHA.
   const payload = buildSemanticPayloadFixture({
-    baseGitSha: computeSha256(baseGitSha),
+    baseGitSha,
     gitDirty: workingTreeDirty,
-    e2ClosureReference: computeSha256(FIXTURE_E2_CLOSURE_SHA),
+    e2ClosureReference: FIXTURE_E2_CLOSURE_SHA,
   })
+  const modelOutput = payload.model.output
+  const budgetResult = payload.budget.result
+  const engineeringInput = payload.engineeringGate.input
+  const gateResult = payload.engineeringGate.result
+  if (engineeringInput.artifactPairValid !== true || engineeringInput.determinismVerified !== true) {
+    throw new Error('M10E_E3A_E4_DERIVED_PROOF_MISSING: gate completeness must come from real artifact-pair and determinism proofs')
+  }
 
   // Step 11: recompute authorities, observations, aggregation, model output, gates, and semantic payload.
   const artifact = validateReliabilitySemanticArtifact(payload)
@@ -372,8 +349,8 @@ export async function executeM10EE3AE4(input: M10EE3AE4RunnerInput = {}): Promis
     { path: M10_E_COST_REPORT_FILE, data: reportBytes },
   ])
 
-  const modeledComparators = buildModeledComparators(modelOutput)
-  const observedComparators = aggregate.observedCostComparators
+  const modeledComparators = payload.comparators.modeled
+  const observedComparators = payload.comparators.observed
   const comparatorMeasurements = [
     modeledComparators.maxExpectedCostPerChapter,
     modeledComparators.maxExpectedCostPerNovel,

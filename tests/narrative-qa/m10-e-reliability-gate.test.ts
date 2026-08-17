@@ -165,6 +165,7 @@ function verdict(input: Partial<EngineeringGateInput> = {}) {
     evidence: { engineeringGate: 'PASS', reasonCodes: [] },
     modeledOutputPresent: true,
     modeledComparatorsComplete: true,
+    sensitivityBandsComplete: true,
     modelRunDefect: null,
     budget: blockedBudget(),
     artifactPairValid: true,

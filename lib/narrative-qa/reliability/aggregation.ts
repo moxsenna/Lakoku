@@ -97,9 +97,6 @@ export function aggregateReliabilityObservations(input: unknown) {
     coverageMetric('ACTUAL_COST_COVERAGE_RATIO', calls, 'actualCost', 'OBSERVED'), coverageMetric('PRICING_COST_COVERAGE_RATIO', calls, 'estimatedCost', 'MODELED_FROM_PRICING'),
     rate('EMPIRICAL_CHAPTER_STAGE_FAILURE_DISTRIBUTION', set.stageOutcomes.filter((item) => item.outcome === 'FAILURE').length, set.stageOutcomes.length, 'reached finalized stage outcomes at exact chapter-stage cells', set.stageOutcomes.map(ref)),
     countMetric('OBSERVED_COMPLETED_NOVEL_COUNT', novels.filter(isSuccessfulCompleteNovel).length, novels.length, 'valid complete chapter 1..50 novel executions among started novels', novels.map(ref), novels.length),
-    modeledUnavailableMetric('FIRST_ATTEMPT_BASELINE_COST', 'P5 pricing selection required for modeled first-attempt baseline'),
-    modeledUnavailableMetric('RETRY_FALLBACK_COST', 'P5 pricing selection required for modeled retry/fallback cost'),
-    modeledUnavailableMetric('RETRY_OVERHEAD_PERCENTAGE', 'P5 modeled baseline and retry costs required'),
     ...Array.from({ length: 50 }, (_, index) => chapterCostPercentile('CHAPTER_COST_P50', set, '0.50', index + 1)),
     ...Array.from({ length: 50 }, (_, index) => chapterCostPercentile('CHAPTER_COST_P95', set, '0.95', index + 1)),
     judgeCostMetric(set),
@@ -147,9 +144,6 @@ export function aggregateReliabilityObservations(input: unknown) {
       meanGenerationCostPerSuccessfulCompleteNovel: novelCostMean(set, true),
     },
     modeledPricingSlots: {
-      firstAttemptBaselineCost: unavailablePricingSlot(set, 'P5 pricing selection required for modeled first-attempt baseline'),
-      retryFallbackCost: unavailablePricingSlot(set, 'P5 pricing selection required for modeled retry/fallback cost'),
-      retryOverheadPercentage: unavailablePricingSlot(set, 'P5 modeled baseline and retry costs required'),
       expectedChapterGenerationMeans: Array.from({ length: 50 }, (_, index) => ({ chapterNumber: index + 1, ...unavailablePricingSlot(set, 'P5/P6 modeled chapter mean unavailable') })),
       expectedGenerationCostPerSuccessfulNovelRun: unavailablePricingSlot(set, 'P5/P6 modeled successful-novel mean unavailable'),
       modeledJudgeTotal: unavailablePricingSlot(set, 'P5/P6 modeled judge total unavailable'),
@@ -253,9 +247,6 @@ function costMeanResult(value: Money | null, included: number, eligible: number,
     eligibilityBoundary: boundary, counts: counts(included, eligible), coverageRatio: ratioOf(BigInt(included), BigInt(eligible || 1)), provenance: 'OBSERVED' as const, observationRefs: utf8Sort(refs) })
 }
 function extendedCounts(includedCount: number, unavailableCount: number, eligibleCount: number) { return { includedCount, excludedCount: eligibleCount - includedCount - unavailableCount, unavailableCount, eligibleCount } }
-function modeledUnavailableMetric(metricId: RequiredMetricId, detail: string): AggregateMetric {
-  return metric(metricId, missingMeasurement('COST_UNAVAILABLE', detail), 0, 0, 'modeled pricing slot; actual pricing selection and calculation belongs to P5', counts(0, 0), 'MODELED_FROM_PRICING', [])
-}
 function unavailablePricingSlot(set: ReliabilityObservationSet, detail: string) {
   return deepFreeze({ provenance: 'MODELED_FROM_PRICING' as const, value: missingMeasurement<Money>('COST_UNAVAILABLE', detail), pricingSnapshotHash: set.compatibleStratum.pricingSnapshotHash, observationRefs: [] as string[] })
 }

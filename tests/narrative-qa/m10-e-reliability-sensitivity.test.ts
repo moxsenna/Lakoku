@@ -40,7 +40,12 @@ describe('M10-E R1-B explicit sensitivity bands', () => {
   })
 
   /** Build a valid AssumptionAuthority object for sensitivity testing */
-  function buildSensitivityBandAuthority(stageId: string, band: 'lower' | 'upper', value: string, uniqueIdentifier?: string): any {
+  function buildSensitivityBandAuthority(stageId: string, band: 'lower' | 'upper', value: string, uniqueIdentifier?: string): {
+    authorityVersion: string
+    decisionRef: string
+    rationale: string
+    canonicalHash: string
+  } {
     const payload = {
       authorityVersion: SENSITIVITY_BAND_AUTHORITY_VERSION,
       decisionRef: `${SENSITIVITY_BAND_DECISION_REF}_${stageId}_${band}${uniqueIdentifier ? `_${uniqueIdentifier}` : ''}`,

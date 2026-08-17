@@ -111,7 +111,33 @@ async function runCase1_QueueVsRecovery(target: RaceTarget): Promise<void> {
   check(jobRow.length > 0, `No job found for race target`)
   const jobId = jobRow
 
+  // CRITICAL FIX: Query actual eligible set BEFORE releasing barrier
+  // This proves we're racing for THE RIGHT job, not any eligible job
+  const eligibleBeforeBarrier = execLocalPsql(
+    target,
+    `select id::text from public.generation_jobs
+where status in ('QUEUED','RETRY_WAIT')
+  and available_at <= clock_timestamp()
+  and deadline_at > clock_timestamp()
+  and attempt_count < max_attempts
+order by id;`
+  ).trim().split('\n').filter(Boolean).map((line: string) => line.trim())
+
   console.log(`[race] Case 1 job_id=${jobId}, barrier=${barrier}`)
+  console.log(`[race] Case 1 PRE-RACE ELIGIBLE SET VERIFICATION:`)
+  console.log(`  [race] eligible_ids_before_barrier: ${JSON.stringify(eligibleBeforeBarrier)}`)
+  console.log(`  [race] eligible_count_before_barrier: ${eligibleBeforeBarrier.length}`)
+
+  // MUST have exactly 1 eligible job AND it must be our target
+  check(
+    eligibleBeforeBarrier.length === 1,
+    `Case 1 FAILED: Expected exactly 1 eligible claimable job before race, got ${eligibleBeforeBarrier.length}. Eligible jobs: ${JSON.stringify(eligibleBeforeBarrier)}`
+  )
+  check(
+    eligibleBeforeBarrier[0] === jobId,
+    `Case 1 FAILED: Target job ${jobId} not equal to only eligible job ${eligibleBeforeBarrier[0]}`
+  )
+  console.log(`  [race] ✅ Pre-race eligibility proved: target_job_id equals sole eligible job`)
 
   const sessions: RunningPsql[] = []
   try {
@@ -179,13 +205,17 @@ async function runCase1_QueueVsRecovery(target: RaceTarget): Promise<void> {
 
     console.log(`[race] Case 1 parsed results:`)
     console.log(`  [race] target_job_id: ${jobId}`)
-    console.log(`  [race] eligible_claimable_jobs_before_race: 1 (explicitly seeded)`)
+    console.log(`  [race] eligible_claimable_jobs_before_race: ${eligibleBeforeBarrier.length} (queried, not hardcoded)`)
     console.log(`  [race] A_claimed: ${aParsed.claimed}`)
     console.log(`  [race] A_job_id: ${aParsed.job_id || 'N/A'}`)
     console.log(`  [race] A_claim_token: ${aParsed.claim_token || 'N/A'}`)
     console.log(`  [race] B_claimed: ${bParsed.claimed}`)
     console.log(`  [race] B_job_id: ${bParsed.job_id || 'N/A'}`)
     console.log(`  [race] B_claim_token: ${bParsed.claim_token || 'N/A'}`)
+
+    // CRITICAL FIX: Don't check loser's job_id when claimed=false
+    // Loser normally has claimed=false and NO job_id returned
+    // The proof comes from PRE-RACE eligibility query proving we raced for THE ONLY eligible job
 
     const aClaimed = aParsed.claimed
     const bClaimed = bParsed.claimed
@@ -195,16 +225,6 @@ async function runCase1_QueueVsRecovery(target: RaceTarget): Promise<void> {
       (aClaimed && !bClaimed) || (!aClaimed && bClaimed),
       `Case 1 FAILED: Both claimed=${aClaimed}/${bClaimed}. Exactly one must win!`
     )
-
-    // PROOF: Verify both were contesting SAME target job
-    // If A succeeded, A's job_id must equal target_job_id
-    // If B succeeded, B's job_id MUST equal target_job_id (not a different eligible job!)
-    if (aClaimed && bParsed.job_id) {
-      check(bParsed.job_id === jobId, `Case 1 FAILED: Loser B also attempted claim on DIFFERENT job (got ${bParsed.job_id}, expected ${jobId})`)
-    }
-    if (bClaimed && aParsed.job_id) {
-      check(aParsed.job_id === jobId, `Case 1 FAILED: Loser A also attempted claim on DIFFERENT job (got ${aParsed.job_id}, expected ${jobId})`)
-    }
 
     // After race: final verification
     let finalWorker = 'NONE'
@@ -217,20 +237,38 @@ async function runCase1_QueueVsRecovery(target: RaceTarget): Promise<void> {
 
     console.log(`[race] Case 1 final job state: ${finalJobRow}`)
 
-    const finalWorkerMatch = finalJobRow.match(/worker_id\s*\|\s*([^|]+)/)
-    if (finalWorkerMatch) {
-      finalWorker = finalWorkerMatch[1].trim()
-    }
+    // CRITICAL FIX: Parse pipe-delimited format from psql -qAt output
+    // Format: worker-request-path|<uuid>
+    // Not literal column names like "worker_id | value"
+    const parts = finalJobRow.split('|').map(v => v.trim())
+    console.log(`[race] Case 1 parsed pipe parts: ${JSON.stringify(parts)}`)
 
-    const finalTokenMatch = finalJobRow.match(/claim_token\s*\|\s*([^|]+)\|/)
-    if (finalTokenMatch) {
-      finalClaimToken = finalTokenMatch[1]
-    } else if (finalJobRow.includes('NULL') || !finalJobRow.includes('|')) {
+    if (parts.length >= 2) {
+      finalWorker = parts[0]
+      finalClaimToken = parts[1] === 'NULL' ? null : parts[1]
+    } else if (parts.length === 1 && (parts[0].includes('NULL') || !parts[0].includes('|'))) {
       finalClaimToken = null
     }
 
     console.log(`[race] Case 1 final_worker: ${finalWorker}`)
     console.log(`[race] Case 1 final_claim_token: ${finalClaimToken || 'NULL'}`)
+
+    // Assert against winning contender's actual worker_id and claim_token
+    const winningWorker = aClaimed ? 'worker-request-path' : 'worker-recovery-path'
+    const winningParsed = aClaimed ? aParsed : bParsed
+
+    check(
+      finalWorker === winningWorker,
+      `Case 1 FAILED: Final worker ${finalWorker} != expected winner ${winningWorker}`
+    )
+    check(
+      winningParsed.job_id === jobId,
+      `Case 1 FAILED: Winner's job_id ${winningParsed.job_id} != target_job_id ${jobId}`
+    )
+    check(
+      winningParsed.claim_token === finalClaimToken,
+      `Case 1 FAILED: Winner's claim_token ${winningParsed.claim_token} != final_claim_token ${finalClaimToken}`
+    )
 
     // Verify exactly one RUNNING job
     const runningCount = parseInt(
@@ -409,7 +447,7 @@ async function main() {
   const target = verifyLocalRaceTarget(CONTEXT)
   await runCase1_QueueVsRecovery(target)
   await runCase2_ConcurrentExactClaim(target)
-  
+
   // Final verdict output for R3 readiness assessment
   console.log('')
   console.log('[VERDICT] COMMERCIAL CUTOVER TWO-SESSION RACE RESULTS:')

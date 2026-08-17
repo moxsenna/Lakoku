@@ -114,18 +114,7 @@ function psqlArgs(container: string, variables: Record<string, string>): string[
 }
 
 function localMarkerPrelude(): string {
-  return `do $$
-begin
-  -- Set marker for THIS session if not already set
-  set lakoku.test_target to 'local-cli';
-  
-  -- Then verify it's set (should always pass now that we just set it)
-  if current_setting('lakoku.test_target', true) <> 'local-cli' then
-    raise exception 'local test target marker unavailable';
-  end if;
-end
-$$;
-`
+  return `set lakoku.test_target = 'local-cli';`
 }
 
 export function execLocalPsql(

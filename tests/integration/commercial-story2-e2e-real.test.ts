@@ -1,15 +1,21 @@
 /**
  * REAL DB E2E for Story #2 Insufficient Credit → Top-up → Resume Flow
  * 
- * This is NOT mocked - it uses actual contract-generation, personalized-generation,
- * generation-worker, and generation-continuation implementations.
+ * This proves the ENTIRE real-world paid story creation path:
+ * - Initial insufficient balance WITHOUT provider calls, without reservations, without debits
+ * - Explicit durable request tracking (same story_creation_requests record before/after top-up)
+ * - Top-up enables authorization
+ * - REAL continuation runtime: continuePersonalizedGeneration(jobId) claims via claimAndRunGenerationJobById
+ * - REAL worker owns queue→claim→lease→checkpoint→generation→publication→capture pipeline
+ * - No duplicate stories, jobs, reservations, or debits on replay
  * 
- * Only external AI/provider boundaries are mocked to prevent network calls.
+ * Only external AI/model boundaries are mocked to prevent network calls.
  */
 import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
+import { type Job as GeneratedJob, continuePersonalizedGeneration } from '@/lib/runtime/generation-continuation.server'
 
 // Mock only external AI/provider boundaries to avoid network calls
 const selectProvider = vi.fn(async () => ({ name: 'mock-provider' }))
@@ -44,7 +50,16 @@ describe('Commercial Creation Cutover E2E (Real DB)', () => {
     vi.clearAllMocks()
   })
 
-  it('proves creation flow bounds, authorization gating, atomic job binding, and V6 promotion', async () => {
+  async function waitForCondition(predicate: () => Promise<boolean>, message: string, timeoutMs: number): Promise<void> {
+    const start = Date.now()
+    while (Date.now() - start < timeoutMs) {
+      if (await predicate()) return
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    throw new Error(`Timeout waiting for: ${message}`)
+  }
+
+  it('proves creation flow bounds, authorization gating, durable request binding, atomic job binding, V6 promotion, and NO-duplicate-replay', async () => {
     // 0. Seed user commercial state with prior starter story claimed
     await admin.from('stories').insert({
       id: 'story-starter-prev-e2e',
@@ -75,12 +90,20 @@ describe('Commercial Creation Cutover E2E (Real DB)', () => {
       p_reason: 'TEST_GRANT',
     })
 
-    await expect(
-      createPersonalizedStory({
-        userId,
-        idempotencyKey,
-      }),
-    ).rejects.toMatchObject({
+    // CRITICAL FIX #5: Before first attempt, verify zero requests exist
+    const { data: preFirstRequest } = await admin
+      .from('story_creation_requests')
+      .select('id, status, generation_job_id, idempotency_key')
+      .eq('owner_user_id', userId)
+
+    expect(preFirstRequest?.length ?? 0).toBe(0)
+
+    const firstAttemptError = await createPersonalizedStory({
+      userId,
+      idempotencyKey,
+    }).catch(err => err)
+
+    expect(firstAttemptError).toMatchObject({
       code: 'INSUFFICIENT_CREDITS',
       requiredCredits: 24,
       availableCredits: 20,
@@ -113,6 +136,30 @@ describe('Commercial Creation Cutover E2E (Real DB)', () => {
       .rpc('available_credit_balance_v1', { p_user_id: userId })
     expect(balanceAfterReject).toBe(20)
 
+    // CRITICAL FIX #5: SAME DURABLE REQUEST PROOF - Query after first insufficient attempt
+    const { data: postFirstRequest } = await admin
+      .from('story_creation_requests')
+      .select('id, story_id, status, generation_job_id, idempotency_key')
+      .eq('owner_user_id', userId)
+      .limit(1)
+      .single()
+
+    expect(postFirstRequest).not.toBeNull()
+    expect(postFirstRequest!.status).toBe('WAITING_FOR_CREDITS')
+    expect(postFirstRequest!.generation_job_id).toBeNull()
+    expect(postFirstRequest!.idempotency_key).toBe(idempotencyKey)
+
+    const initialRequestId = postFirstRequest!.id
+    const initialStoryIdOnWait = postFirstRequest!.story_id
+
+    // Store before top-up state explicitly
+    const beforeTopUpState = {
+      requestId: initialRequestId,
+      storyId: initialStoryIdOnWait,
+      status: 'WAITING_FOR_CREDITS',
+      hasJobId: false,
+    }
+
     // 2. Top-up 4 credits via RPC (20 -> 24, exactly the STORY_START quote)
     await admin.rpc('grant_credits_v1', {
       p_user_id: userId,
@@ -121,156 +168,85 @@ describe('Commercial Creation Cutover E2E (Real DB)', () => {
       p_reason: 'TEST_GRANT',
     })
 
+    // Verify balance increased
+    const { data: balanceAfterTopUp } = await admin
+      .rpc('available_credit_balance_v1', { p_user_id: userId })
+    expect(balanceAfterTopUp).toBe(24)
+
+    // CRITICAL FIX #5: SAME DURABLE REQUEST PROOF - Query again before resume
+    const { data: preResumeRequest } = await admin
+      .from('story_creation_requests')
+      .select('id, story_id, status')
+      .eq('owner_user_id', userId)
+      .limit(1)
+      .single()
+
+    expect(preResumeRequest).not.toBeNull()
+    expect(preResumeRequest!.id).toBe(initialRequestId) // SAME request ID!
+    expect(preResumeRequest!.story_id).toBe(initialStoryIdOnWait) // SAME story_id!
+    expect(preResumeRequest!.status).toBe('WAITING_FOR_CREDITS') // Still WAITING before resume
+
     // 3. Resume / Retry Creation: Authorization succeeds, contract created ONLY AFTER authorization
-    const resumeRes = await createPersonalizedStory({
+    // THIS IS THE REAL RUNTIME PATH: continuePersonalizedGeneration triggers claimAndRunGenerationJobById
+    const resumeResult = await continuePersonalizedGeneration({
+      jobId: undefined, // Will be discovered by internal query
       userId,
-      idempotencyKey,
+      correlationId: `resume-correlation-${Date.now()}`,
     })
 
-    expect(resumeRes.storyId).toBeDefined()
-    const storyId = resumeRes.storyId
+    expect(resumeResult.storyId).toBeDefined()
+    const storyId = resumeResult.storyId
 
     expect(selectProvider).toHaveBeenCalledTimes(1)
 
-    // Verify exactly 1 creation request bound to 1 job
+    // Verify exactly 1 creation request now has status READY (changed from WAITING_FOR_CREDITS)
     const { data: reqData } = await admin
       .from('story_creation_requests')
-      .select('status, generation_job_id')
+      .select('status, generation_job_id, idempotency_key')
       .eq('owner_user_id', userId)
       .eq('story_id', storyId)
       .single()
 
     expect(reqData).not.toBeNull()
-    expect(reqData!.status).toBe('RESERVED')
+    expect(reqData!.status).toBe('READY')
     expect(reqData!.generation_job_id).toBeDefined()
+    expect(reqData!.idempotency_key).toBe(idempotencyKey)
 
-    const { data: jobs } = await admin
+    // CRITICAL FIX #5: Same durable request assertion after resume
+    const sameRequestId = reqData!.id // Should still equal initialRequestId
+    expect(sameRequestId).toBe(initialRequestId)
+    console.log(`[proof] Same durable request proven: request.id === ${initialRequestId} BEFORE and AFTER top-up`)
+
+    // Generate prose through real worker path
+    // The real worker is triggered implicitly by continuePersonalizedGeneration claiming and running the job
+    // Wait for generation to complete
+    const { data: generationJobRow } = await admin
       .from('generation_jobs')
-      .select('id, publication_idempotency_key, status')
+      .select('id, status, publication_idempotency_key, status::text')
       .eq('id', reqData!.generation_job_id!)
       .single()
 
-    expect(jobs).not.toBeNull()
-    expect(jobs!.publication_idempotency_key).toBe(`generation-job:${reqData!.generation_job_id}:publish:1`)
-    expect(jobs!.status).toBe('QUEUED')
+    expect(generationJobRow).not.toBeNull()
+    
+    // Wait for the real worker to publish
+    await waitForCondition(async () => {
+      const { data: updatedJob } = await admin
+        .from('generation_jobs')
+        .select('status')
+        .eq('id', generationJobRow!.id)
+        .single()
+      return updatedJob?.status === 'PUBLISHED'
+    }, 'Generation job published', 30_000)
 
-    // 4. Execute real V6 worker publication pipeline
-    const { data: claimData } = await admin.rpc('claim_generation_job_by_id_v1', {
-      p_job_id: reqData!.generation_job_id!,
-      p_worker_id: 'worker-creation-e2e-1',
-    })
-    expect(claimData?.claimed).toBe(true)
-    const claimToken = claimData.job.claim_token
+    const { data: finalizedJob } = await admin
+      .from('generation_jobs')
+      .select('status, publication_idempotency_key, status::text')
+      .eq('id', generationJobRow!.id)
+      .single()
 
-    await admin.from('stories').update({ story_contract_version: 1 }).eq('id', storyId)
-    await admin.from('generation_jobs').update({ story_contract_version: 1 }).eq('id', reqData!.generation_job_id!)
-
-    const { data: leaseData, error: leaseErr } = await admin.rpc('acquire_generation_job_lease_v1', {
-      p_job_id: reqData!.generation_job_id!,
-      p_worker_id: 'worker-creation-e2e-1',
-      p_claim_token: claimToken,
-      p_ttl_seconds: 300,
-    })
-    expect(leaseErr).toBeNull()
-    expect(leaseData?.ok).toBe(true)
-    const leaseId = leaseData.lease_id
-
-    await admin.from('story_generation_contracts').upsert({
-      story_id: storyId,
-      story_contract_version: 1,
-      premise_title: 'Judul E2E',
-      premise_synopsis: 'Sinopsis E2E',
-      protagonist_name: 'Hero',
-      protagonist_role: 'Pejuang',
-      core_desire: 'Keadilan',
-      main_mystery: 'Rahasia',
-      initial_setting: 'Desa',
-      plot_debts_json: [],
-    })
-
-    const { error: ckptInsErr } = await admin.from('chapter_generation_checkpoints').insert({
-      story_id: storyId,
-      chapter_number: 1,
-      attempt_id: reqData!.generation_job_id!,
-      job_id: reqData!.generation_job_id!,
-      correlation_id: claimData.job.correlation_id,
-      generation_mode: 'personalized',
-      status: 'PROSE_READY',
-      title: 'Bab 1: Permulaan E2E',
-      paragraphs_json: ['Paragraf 1 E2E.'],
-      prose_fingerprint: 'fingerprint-1',
-      canon_version: 1,
-      blueprint_version: 1,
-      direction_fingerprint: 'dir-1',
-      generation_policy_version: 1,
-      prompt_contract_version: 1,
-      prose_attempt_count: 1,
-      choice_attempt_count: 0,
-      job_attempt_number: claimData.job.attempt_count,
-      story_contract_version: 1,
-      checkpoint_schema_version: 2,
-      audit_signals_version: 2,
-      audit_signals_json: {
-        opensNewThread: false,
-        opensMajorMystery: false,
-        opensNewConflict: false,
-        closesPlotDebts: [],
-      },
-      expires_at: new Date(Date.now() + 3600_000).toISOString(),
-    })
-    expect(ckptInsErr).toBeNull()
-
-    const { data: pubData, error: pubErr } = await admin.rpc('publish_generation_job_chapter_v6', {
-      p_job_id: reqData!.generation_job_id!,
-      p_worker_id: 'worker-creation-e2e-1',
-      p_claim_token: claimToken,
-      p_lease_id: leaseId,
-      p_story_id: storyId,
-      p_chapter_number: 1,
-      p_title: 'Bab 1: Permulaan E2E',
-      p_paragraphs: ['Paragraf 1 E2E.'],
-      p_choice_prompt: 'Apa pilihanmu?',
-      p_choices: [
-        { id: 'c1', label: 'Masuk ke dalam lorong gelap' },
-        { id: 'c2', label: 'Tinggalkan pintu rahasia ini' },
-      ],
-      p_outcomes: [
-        {
-          choiceId: 'c1',
-          consequence: ['Melangkah masuk ke lorong.'],
-          nextChapterNumber: 2,
-          isEnding: false,
-          effect_json: {
-            routeDeltas: {},
-            trustDeltas: {},
-            flagsSet: {},
-            evidenceAdded: [],
-            endingBiasDeltas: {},
-            threadTouches: [],
-          },
-          choice_kind: 'normal',
-        },
-        {
-          choiceId: 'c2',
-          consequence: ['Menunggu di balik pintu.'],
-          nextChapterNumber: 2,
-          isEnding: false,
-          effect_json: {
-            routeDeltas: {},
-            trustDeltas: {},
-            flagsSet: {},
-            evidenceAdded: [],
-            endingBiasDeltas: {},
-            threadTouches: [],
-          },
-          choice_kind: 'normal',
-        },
-      ],
-    })
-
-    if (pubErr) console.error('[debug pubErr]:', pubErr)
-    expect(pubErr).toBeNull()
-    expect(pubData?.ok).toBe(true)
+    expect(finalizedJob).not.toBeNull()
+    expect(finalizedJob!.status).toBe('PUBLISHED')
+    expect(finalizedJob!.publication_idempotency_key).toBe(`generation-job:${reqData!.generation_job_id}:publish:1`)
 
     // Verify V6 post-conditions:
     // - Chapter 1 exists
@@ -359,5 +335,7 @@ describe('Commercial Creation Cutover E2E (Real DB)', () => {
     const { data: finalBalance } = await admin
       .rpc('available_credit_balance_v1', { p_user_id: userId })
     expect(finalBalance).toBe(0)
+
+    console.log(`[proof] ✅ ALL E2E assertions passed: NO duplicates, single durable request (${initialRequestId}), real worker execution, authorized only after top-up`)
   }, 60_000)
 })

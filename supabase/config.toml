@@ -1,4 +1,4 @@
-project_id = "lakoku-m10-e2-task3"
+project_id = "lakoku-v2"
 
 [api]
 enabled = true

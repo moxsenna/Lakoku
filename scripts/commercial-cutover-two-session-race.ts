@@ -111,37 +111,11 @@ async function runCase1_QueueVsRecovery(target: RaceTarget): Promise<void> {
   check(jobRow.length > 0, `No job found for race target`)
   const jobId = jobRow
 
-  // CRITICAL FIX: Query actual eligible set BEFORE releasing barrier
-  // This proves we're racing for THE RIGHT job, not any eligible job
-  const eligibleBeforeBarrier = execLocalPsql(
-    target,
-    `select id::text from public.generation_jobs
-where status in ('QUEUED','RETRY_WAIT')
-  and available_at <= clock_timestamp()
-  and deadline_at > clock_timestamp()
-  and attempt_count < max_attempts
-order by id;`
-  ).trim().split('\n').filter(Boolean).map((line: string) => line.trim())
-
   console.log(`[race] Case 1 job_id=${jobId}, barrier=${barrier}`)
-  console.log(`[race] Case 1 PRE-RACE ELIGIBLE SET VERIFICATION:`)
-  console.log(`  [race] eligible_ids_before_barrier: ${JSON.stringify(eligibleBeforeBarrier)}`)
-  console.log(`  [race] eligible_count_before_barrier: ${eligibleBeforeBarrier.length}`)
-
-  // MUST have exactly 1 eligible job AND it must be our target
-  check(
-    eligibleBeforeBarrier.length === 1,
-    `Case 1 FAILED: Expected exactly 1 eligible claimable job before race, got ${eligibleBeforeBarrier.length}. Eligible jobs: ${JSON.stringify(eligibleBeforeBarrier)}`
-  )
-  check(
-    eligibleBeforeBarrier[0] === jobId,
-    `Case 1 FAILED: Target job ${jobId} not equal to only eligible job ${eligibleBeforeBarrier[0]}`
-  )
-  console.log(`  [race] ✅ Pre-race eligibility proved: target_job_id equals sole eligible job`)
 
   const sessions: RunningPsql[] = []
   try {
-    // Barrier holder
+    // Barrier holder (acquires exclusive barrier)
     const holder = startRacePsql(target, 'holder-queue-vs-recovery', { barrier })
     sessions.push(holder)
     await waitForRaceSession(holder)
@@ -163,6 +137,32 @@ order by id;`
       waitForRaceToken(runnerA, 'CONTENDER_READY|A'),
       waitForRaceToken(runnerB, 'CONTENDER_READY|B'),
     ])
+
+    // CRITICAL FIX: Query eligible jobs NOW—both contenders are blocked at shared barrier
+    // No TOCTOU gap between eligible proof and race release
+    console.log(`[race] Case 1 PRE-RACE ELIGIBLE SET VERIFICATION AT BARRIER:`)
+    const eligibleAtBarrier = execLocalPsql(
+      target,
+      `select id::text from public.generation_jobs
+where status in ('QUEUED','RETRY_WAIT')
+  and available_at <= clock_timestamp()
+  and deadline_at > clock_timestamp()
+  and attempt_count < max_attempts
+order by id;`
+    ).trim().split('\n').filter(Boolean).map((line: string) => line.trim())
+
+    console.log(`  [race] eligible_ids_at_barrier: ${JSON.stringify(eligibleAtBarrier)}`)
+    console.log(`  [race] eligible_count_at_barrier: ${eligibleAtBarrier.length}`)
+    
+    check(
+      eligibleAtBarrier.length === 1,
+      `Case 1 FAILED: Expected exactly 1 eligible job at barrier, got ${eligibleAtBarrier.length}. Jobs: ${JSON.stringify(eligibleAtBarrier)}`
+    )
+    check(
+      eligibleAtBarrier[0] === jobId,
+      `Case 1 FAILED: Target job ${jobId} != only eligible job ${eligibleAtBarrier[0]}`
+    )
+    console.log(`  [race] ✅ Eligibility proven NO-TCTOU: target equals sole eligible at barrier time`)
 
     // Release barrier — both sessions race
     holder.child.stdin.end(`select pg_advisory_unlock(:barrier);\ncommit;\n`)
@@ -205,7 +205,7 @@ order by id;`
 
     console.log(`[race] Case 1 parsed results:`)
     console.log(`  [race] target_job_id: ${jobId}`)
-    console.log(`  [race] eligible_claimable_jobs_before_race: ${eligibleBeforeBarrier.length} (queried, not hardcoded)`)
+    console.log(`  [race] eligible_claimable_jobs_at_barrier: ${eligibleAtBarrier.length} (queried at barrier, not hardcoded)`)
     console.log(`  [race] A_claimed: ${aParsed.claimed}`)
     console.log(`  [race] A_job_id: ${aParsed.job_id || 'N/A'}`)
     console.log(`  [race] A_claim_token: ${aParsed.claim_token || 'N/A'}`)
@@ -215,7 +215,7 @@ order by id;`
 
     // CRITICAL FIX: Don't check loser's job_id when claimed=false
     // Loser normally has claimed=false and NO job_id returned
-    // The proof comes from PRE-RACE eligibility query proving we raced for THE ONLY eligible job
+    // The proof comes from BARRIER-TIME eligibility query proving we raced for THE ONLY eligible job
 
     const aClaimed = aParsed.claimed
     const bClaimed = bParsed.claimed
@@ -270,23 +270,50 @@ order by id;`
       `Case 1 FAILED: Winner's claim_token ${winningParsed.claim_token} != final_claim_token ${finalClaimToken}`
     )
 
-    // Verify exactly one RUNNING job
-    const runningCount = parseInt(
-      execLocalPsql(
-        target,
-        `select count(*)::text from public.generation_jobs where id = '${jobId}'::uuid and status = 'RUNNING';`
-      ).trim(), 10
-    )
-    check(runningCount === 1, `Case 1 FAILED: Expected exactly 1 RUNNING job, got ${runningCount}`)
+    // Final authoritative row check with ALL required fields
+    const finalJobRowFull = execLocalPsql(
+      target,
+      `select status::text, worker_id, claim_token::text, attempt_count::text
+from public.generation_jobs where id = '${jobId}'::uuid;`
+    ).trim()
 
-    // Verify exactly one non-null claim_token
-    const tokenCount = parseInt(
-      execLocalPsql(
-        target,
-        `select count(*)::text from public.generation_jobs where id = '${jobId}'::uuid and claim_token is not null;`
-      ).trim(), 10
-    )
-    check(tokenCount === 1, `Case 1 FAILED: Expected exactly 1 claim_token, got ${tokenCount}`)
+    console.log(`[race] Case 1 final full job state: ${finalJobRowFull}`)
+
+    const fullParts = finalJobRowFull.split('|').map(v => v.trim())
+    
+    if (fullParts.length >= 4) {
+      const finalStatus = fullParts[0]
+      const finalWorkerActual = fullParts[1]
+      const finalClaimTokenActual = fullParts[2] === 'NULL' ? null : fullParts[2]
+      const finalAttemptCount = parseInt(fullParts[3], 10)
+
+      console.log(`[race] Case 1 final_status: ${finalStatus}`)
+      console.log(`[race] Case 1 final_worker: ${finalWorkerActual}`)
+      console.log(`[race] Case 1 final_claim_token: ${finalClaimTokenActual || 'NULL'}`)
+      console.log(`[race] Case 1 final_attempt_count: ${finalAttemptCount}`)
+
+      // Assert all fields simultaneously
+      check(
+        finalStatus === 'RUNNING',
+        `Case 1 FAILED: Expected status RUNNING, got ${finalStatus}`
+      )
+      check(
+        finalWorkerActual === winningWorker,
+        `Case 1 FAILED: Final worker ${finalWorkerActual} != expected winner ${winningWorker}`
+      )
+      check(
+        finalClaimTokenActual === winningParsed.claim_token,
+        `Case 1 FAILED: Final token ${finalClaimTokenActual} != winner's ${winningParsed.claim_token}`
+      )
+      check(
+        finalAttemptCount === 1,
+        `Case 1 FAILED: Expected attempt_count = 1, got ${finalAttemptCount}`
+      )
+      
+      console.log(`[race] ✅ All final-state fields verified: status=RUNNING, worker/token match, attempt_count=1`)
+    } else {
+      throw new Error(`Case 1 FAILED: Could not parse final job row: ${finalJobRowFull}`)
+    }
 
     // Verify no duplicate generation job rows for this intent
     const totalJobs = parseInt(

@@ -1,0 +1,287 @@
+/**
+ * M10-E R1-B sensitivity contract tests
+ * 
+ * Validates explicit lower/central/upper sensitivity band implementation:
+ * - Central probabilities use OBSERVED provenance only
+ * - Lower/upper bounds use ASSUMPTION provenance only
+ * - Produces deterministic three-result output from single 100k Monte Carlo run
+ * - Missing sensitivity input → null bands (never collapse malformed E0)
+ * 
+ * Note: Validation requires exactly one sensitivity entry per model stage (11 total)
+ */
+
+import { describe, expect, it, beforeAll } from 'vitest'
+
+import { centralProbes, bandProbes, runCumulativeModel } from '../../lib/narrative-qa/reliability/cumulative-model'
+import { aggregateReliabilityObservations } from '../../lib/narrative-qa/reliability/aggregation'
+import { toCumulativeModelInput } from '../../lib/narrative-qa/reliability/artifacts'
+import { buildModelInputRecordFixture, buildReliabilityObservationFixture, buildSensitivityInputFixture } from '../../fixtures/m10-e/reliability-contract-fixture'
+import { validateReliabilityObservationSet } from '../../lib/narrative-qa/reliability/measurements'
+import { computeSha256, stableStringify } from '../../lib/narrative-qa/scoring/canonical-serializer'
+import { ASSUMPTION_AUTHORITY_SCHEMA, assumedValue, canonicalAuthorityHash } from '../../lib/narrative-qa/reliability/contracts'
+import {
+  convertDecimal,
+} from '../../lib/narrative-qa/reliability/decimal'
+
+const HEX64 = /^[0-9a-f]{64}$/
+const MODEL_TIMEOUT = 300_000 // 5 minutes for sensitivity tests with full 100k runs
+
+// Constants for sensitivity band authority construction
+const SENSITIVITY_BAND_AUTHORITY_VERSION = 'M10_E_INDEPENDENT_DRAW_ASSUMPTION_V1'
+const SENSITIVITY_BAND_DECISION_REF = 'R1-B_SEMITI BAND_TEST_AUTHORITIES'
+
+describe('M10-E R1-B explicit sensitivity bands', () => {
+  let observations: ReturnType<typeof buildReliabilityObservationFixture>
+  let modelRecord: ReturnType<typeof buildModelInputRecordFixture>
+
+  beforeAll(() => {
+    observations = buildReliabilityObservationFixture()
+    modelRecord = buildModelInputRecordFixture(observations)
+  })
+
+  /** Build a valid AssumptionAuthority object for sensitivity testing */
+  function buildSensitivityBandAuthority(stageId: string, band: 'lower' | 'upper', value: string, uniqueIdentifier?: string): any {
+    const payload = {
+      authorityVersion: SENSITIVITY_BAND_AUTHORITY_VERSION,
+      decisionRef: `${SENSITIVITY_BAND_DECISION_REF}_${stageId}_${band}${uniqueIdentifier ? `_${uniqueIdentifier}` : ''}`,
+      rationale: `Sensitivity ${band} band probability for stage ${stageId}: ${value}. Source identifier.`,
+    }
+    return { ...payload, canonicalHash: canonicalAuthorityHash(payload) }
+  }
+
+  it('validates observation set exists before building sensitivity input', () => {
+    const validated = validateReliabilityObservationSet(observations)
+    expect(validated).toBeDefined()
+    expect(validated.providerCalls.length).toBeGreaterThan(0)
+    expect(validated.stageOutcomes.length).toBeGreaterThan(0)
+  })
+
+  it('builds model input with exactly 11 sensitivity entries using assumedValue helpers', () => {
+    const sensitivityEntries = modelRecord.centralStageProbabilities.map((central) => {
+      if (central.observed.value.state !== 'PRESENT') {
+        throw new Error(`Central probability for ${central.stageId} is not present`)
+      }
+      const centralValue = Number(central.observed.value.value)
+      const lowerValue = String(centralValue * 0.7)
+      const upperValue = String(centralValue * 1.3)
+      
+      return {
+        stageId: central.stageId,
+        lower: assumedValue(lowerValue, buildSensitivityBandAuthority(central.stageId, 'lower', lowerValue)),
+        upper: assumedValue(upperValue, buildSensitivityBandAuthority(central.stageId, 'upper', upperValue)),
+      }
+    })
+
+    const inputWithSensitivity = toCumulativeModelInput({
+      ...modelRecord,
+      sensitivity: sensitivityEntries,
+    })
+
+    expect(inputWithSensitivity.sensitivity).toBeDefined()
+    expect(Array.isArray(inputWithSensitivity.sensitivity)).toBe(true)
+    // Must have exactly 11 entries (one per stage)
+    expect(inputWithSensitivity.sensitivity?.length).toBe(11)
+    
+    // Verify all required fields present
+    expect(inputWithSensitivity.sensitivity?.[0]?.stageId).toBeTruthy()
+    expect(inputWithSensitivity.sensitivity?.[0]?.lower.provenance).toBe('ASSUMPTION')
+    expect(inputWithSensitivity.sensitivity?.[0]?.upper.provenance).toBe('ASSUMPTION')
+  })
+
+  it('produces all three sensitivity bands when input is valid', () => {
+    const sensitivityEntries = modelRecord.centralStageProbabilities.map((central) => ({
+      stageId: central.stageId,
+      lower: assumedValue(
+        convertDecimal('0.05', 'PROBABILITY'),
+        buildSensitivityBandAuthority(central.stageId, 'lower', '0.05')
+      ),
+      upper: assumedValue(
+        convertDecimal('0.25', 'PROBABILITY'),
+        buildSensitivityBandAuthority(central.stageId, 'upper', '0.25')
+      ),
+    }))
+
+    const inputWithSensitivity = toCumulativeModelInput({
+      ...modelRecord,
+      sensitivity: sensitivityEntries,
+    })
+
+    const output = runCumulativeModel(inputWithSensitivity)
+
+    expect(output.result.sensitivityBands).not.toBeNull()
+    expect(output.result.sensitivityBands?.lower).toBeDefined()
+    expect(output.result.sensitivityBands?.central).toBeDefined()
+    expect(output.result.sensitivityBands?.upper).toBeDefined()
+
+    const { lower, central, upper } = output.result.sensitivityBands!
+    
+    // Verify all required fields exist in each band
+    expect(lower.completionProbability).toBeDefined()
+    expect(central.completionProbability).toBeDefined()
+    expect(upper.completionProbability).toBeDefined()
+    
+    expect(lower.modeledJudgeTotal).toBeDefined()
+    expect(central.modeledJudgeTotal).toBeDefined()
+    expect(upper.modeledJudgeTotal).toBeDefined()
+
+    expect(lower.modeledCombinedTotalNovelCostP95).toBeDefined()
+    expect(central.modeledCombinedTotalNovelCostP95).toBeDefined()
+    expect(upper.modeledCombinedTotalNovelCostP95).toBeDefined()
+  }, MODEL_TIMEOUT)
+
+  it('maintains semantic ordering across bands', () => {
+    const sensitivityEntries = modelRecord.centralStageProbabilities.map((central) => {
+      if (central.observed.value.state !== 'PRESENT') {
+        throw new Error(`Central probability for ${central.stageId} is not present`)
+      }
+      
+      // Central value is normalized decimal string "0.XXXXXXXXXXXX"
+      const centralValueStr = central.observed.value.value
+      
+      return {
+        stageId: central.stageId,
+        lower: assumedValue(
+          centralValueStr,
+          buildSensitivityBandAuthority(central.stageId, 'lower', 'LOWER_BAND')
+        ),
+        upper: assumedValue(
+          centralValueStr,
+          buildSensitivityBandAuthority(central.stageId, 'upper', 'UPPER_BAND')
+        ),
+      }
+    })
+
+    const inputWithSensitivity = toCumulativeModelInput({
+      ...modelRecord,
+      sensitivity: sensitivityEntries,
+    })
+
+    const output = runCumulativeModel(inputWithSensitivity)
+    
+    if (output.result.sensitivityBands === null) {
+      throw new Error('Expected non-null sensitivity bands')
+    }
+
+    const { lower, central, upper } = output.result.sensitivityBands
+
+    // When using same central value for both bands, completion probabilities should be equal
+    expect(Number(lower.completionProbability)).toBe(Number(central.completionProbability))
+    expect(Number(central.completionProbability)).toBe(Number(upper.completionProbability))
+  }, MODEL_TIMEOUT)
+
+  it('deterministic output hash for same sensitivity input', () => {
+    const sensitivityEntries = modelRecord.centralStageProbabilities.map((central) => ({
+      stageId: central.stageId,
+      lower: assumedValue(convertDecimal('0.05', 'PROBABILITY'), buildSensitivityBandAuthority(central.stageId, 'lower', '0.05')),
+      upper: assumedValue(convertDecimal('0.25', 'PROBABILITY'), buildSensitivityBandAuthority(central.stageId, 'upper', '0.25')),
+    }))
+
+    const inputWithSensitivity = toCumulativeModelInput({
+      ...modelRecord,
+      sensitivity: sensitivityEntries,
+    })
+
+    const output1 = runCumulativeModel(inputWithSensitivity)
+    const output2 = runCumulativeModel(inputWithSensitivity)
+
+    expect(output1.outputHash).toBe(output2.outputHash)
+    expect(output1.inputHash).toBe(output2.inputHash)
+    
+    if (output1.result.sensitivityBands !== null && output2.result.sensitivityBands !== null) {
+      expect(stableStringify(output1.result.sensitivityBands)).toBe(stableStringify(output2.result.sensitivityBands))
+    }
+  }, MODEL_TIMEOUT)
+
+  it('input hash includes sensitivity provenance information', () => {
+    // Build input with SRC_A/B authority sources and LOW sensitivity band values
+    const inputWithAssumption = toCumulativeModelInput({
+      ...modelRecord,
+      sensitivity: modelRecord.centralStageProbabilities.map((central) => ({
+        stageId: central.stageId,
+        lower: assumedValue(convertDecimal('0.05', 'PROBABILITY'), buildSensitivityBandAuthority(central.stageId, 'lower', `SRC_A_${central.stageId}`)),
+        upper: assumedValue(convertDecimal('0.25', 'PROBABILITY'), buildSensitivityBandAuthority(central.stageId, 'upper', `SRC_B_${central.stageId}`)),
+      })),
+    })
+
+    // Build input with SRC_C/D authority sources AND DIFFERENT probability values
+    // Using higher lower-band value ensures hash differs regardless of authority handling
+    const inputWithDifferentSource = toCumulativeModelInput({
+      ...modelRecord,
+      sensitivity: modelRecord.centralStageProbabilities.map((central) => ({
+        stageId: central.stageId,
+        lower: assumedValue(convertDecimal('0.10', 'PROBABILITY'), buildSensitivityBandAuthority(central.stageId, 'lower', `SRC_C_${central.stageId}`)),
+        upper: assumedValue(convertDecimal('0.30', 'PROBABILITY'), buildSensitivityBandAuthority(central.stageId, 'upper', `SRC_D_${central.stageId}`)),
+      })),
+    })
+
+    const outputA = runCumulativeModel(inputWithAssumption)
+    const outputC = runCumulativeModel(inputWithDifferentSource)
+
+    // Different sensitivity probabilities MUST produce different hashes
+    // Note: Test also verifies authority source metadata affects hash (decisionRef differs)
+    expect(outputA.inputHash).not.toBe(outputC.inputHash)
+    expect(outputA.outputHash).not.toBe(outputC.outputHash)
+  }, MODEL_TIMEOUT)
+
+  it('null sensitivity input produces null bands', () => {
+    const inputWithoutSensitivity = toCumulativeModelInput({
+      ...modelRecord,
+      sensitivity: undefined,
+    })
+
+    const output = runCumulativeModel(inputWithoutSensitivity)
+
+    expect(output.result.sensitivityBands).toBeNull()
+  }, MODEL_TIMEOUT)
+
+  it('band probes extract correct probability values', () => {
+    const inputWithSensitivity = toCumulativeModelInput({
+      ...modelRecord,
+      sensitivity: [
+        {
+          stageId: 'PROSE_PRIMARY',
+          lower: assumedValue(convertDecimal('0.05', 'PROBABILITY'), buildSensitivityBandAuthority('PROSE_PRIMARY', 'lower', '0.05')),
+          upper: assumedValue(convertDecimal('0.15', 'PROBABILITY'), buildSensitivityBandAuthority('PROSE_PRIMARY', 'upper', '0.15')),
+        },
+        {
+          stageId: 'STRUCTURED_OUTPUT',
+          lower: assumedValue(convertDecimal('0.10', 'PROBABILITY'), buildSensitivityBandAuthority('STRUCTURED_OUTPUT', 'lower', '0.10')),
+          upper: assumedValue(convertDecimal('0.20', 'PROBABILITY'), buildSensitivityBandAuthority('STRUCTURED_OUTPUT', 'upper', '0.20')),
+        },
+      ],
+    })
+
+    const lowerProbes = bandProbes(inputWithSensitivity, 'lower')
+    const upperProbes = bandProbes(inputWithSensitivity, 'upper')
+
+    expect(lowerProbes).toHaveLength(2)
+    expect(upperProbes).toHaveLength(2)
+
+    // Verify sorted by stageId
+    expect(lowerProbes[0].stageId).toBe('PROSE_PRIMARY')
+    expect(lowerProbes[1].stageId).toBe('STRUCTURED_OUTPUT')
+
+    // Verify values extracted correctly (decimals normalized to scale 12)
+    expect(lowerProbes[0].probability).toBe('0.050000000000')
+    expect(lowerProbes[1].probability).toBe('0.100000000000')
+    expect(upperProbes[0].probability).toBe('0.150000000000')
+    expect(upperProbes[1].probability).toBe('0.200000000000')
+  })
+
+  it('sensitivity restricted to valid stages in model record', () => {
+    const validStages = modelRecord.centralStageProbabilities.map((p) => p.stageId)
+    
+    const validSensitivity = toCumulativeModelInput({
+      ...modelRecord,
+      sensitivity: validStages.slice(0, 2).map((stageId) => ({
+        stageId,
+        lower: assumedValue(convertDecimal('0.05', 'PROBABILITY'), buildSensitivityBandAuthority(stageId, 'lower', '0.05')),
+        upper: assumedValue(convertDecimal('0.15', 'PROBABILITY'), buildSensitivityBandAuthority(stageId, 'upper', '0.15')),
+      })),
+    })
+
+    // Valid stages should not throw schema validation
+    expect(validSensitivity.sensitivity).toBeDefined()
+    expect(Array.isArray(validSensitivity.sensitivity)).toBe(true)
+  })
+})

@@ -35,7 +35,7 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
   const faultyProvider: any = {
     name: 'faulty-deterministic-v1',
     
-    async generatePlan(input, _options) {
+    async generatePlan(input: any, _options: any) {
       const { chapterNumber, blueprint } = input
       return {
         storyId: input.snapshot.storyId,
@@ -52,7 +52,7 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
       }
     },
     
-    async writeChapter(input, _options) {
+    async writeChapter(input: any, _options: any) {
       const { snapshot, plan } = input
       return {
         draft: `[FAILOVER MODE] Draft for ${plan.chapterGoal}\n\n` +
@@ -62,11 +62,11 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
       }
     },
     
-    async evaluateSemanticContinuity(_input, _options) {
+    async evaluateSemanticContinuity(_input: any, _options: any) {
       return { ok: true, score: 0.85 }
     },
     
-    async generateChoices(input, _options) {
+    async generateChoices(input: any, _options: any) {
       // INVALID CHOICE OUTPUT (missing required field threadTouches)
       // This will fail production validator, causing RETRY_WAIT → eventually terminal failure
       const choices = [
@@ -239,8 +239,9 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
       .eq('id', jobRow!.id)
       .single()
 
-    expect(retryJob.status).toBe('RETRY_WAIT')
-    expect(retryJob.error_code).toBe('CHOICE_GENERATION_FAILED')
+    expect(retryJob).not.toBeNull()
+    expect(retryJob!.status).toBe('RETRY_WAIT')
+    expect(retryJob!.error_code).toBe('CHOICE_GENERATION_FAILED')
 
     // PROVE: During RETRY_WAIT, reservation may be ACTIVE but debit must be ZERO
     const { data: resAtRetry } = await admin
@@ -294,8 +295,9 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
       .eq('id', jobRow!.id)
       .single()
 
-    expect(terminalJob.status).toBe('FAILED')
-    expect(['CHOICE_GENERATION_FAILED', 'MAX_ATTEMPTS_EXCEEDED']).toContain(terminalJob.error_code)
+    expect(terminalJob).not.toBeNull()
+    expect(terminalJob!.status).toBe('FAILED')
+    expect(['CHOICE_GENERATION_FAILED', 'MAX_ATTEMPTS_EXCEEDED']).toContain(terminalJob!.error_code)
 
     // === PHASE 4: Terminal failure post-conditions ===
     
@@ -356,8 +358,9 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
       .eq('id', storyId)
       .single()
     
-    expect(storyAfterFail.generation_status).toBeOneOf(['failed', 'ready']) // Depends on implementation
-    expect(storyAfterFail.commercial_origin).toBeNull() // Never became PAID_START
+    expect(storyAfterFail).not.toBeNull()
+    expect(storyAfterFail!.generation_status).toBeOneOf(['failed', 'ready']) // Depends on implementation
+    expect(storyAfterFail!.commercial_origin).toBeNull() // Never became PAID_START
 
     console.log(`[proof] ✅ FAILURE NO-BURN VERIFIED: RETRY_WAIT had zero debits, terminal FAILED released reservation, balance restored to ${initialBalance}, zero duplicates across all domains`)
   }, 180_000)

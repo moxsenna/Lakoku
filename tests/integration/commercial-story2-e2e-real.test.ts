@@ -56,7 +56,7 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
   const testProvider: any = {
     name: 'test-deterministic-valid-v1',
     
-    async generatePlan(input, _options) {
+    async generatePlan(input: any, _options: any) {
       const { chapterNumber, blueprint } = input
       return {
         storyId: input.snapshot.storyId,
@@ -73,7 +73,7 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
       }
     },
     
-    async writeChapter(input, _options) {
+    async writeChapter(input: any, _options: any) {
       const { snapshot, plan, mode, paragraphStyle, contextMode } = input
       return {
         draft: `[${mode.toUpperCase()}] Scene draft for ${plan.chapterGoal}\n\n` +
@@ -83,11 +83,11 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
       }
     },
     
-    async evaluateSemanticContinuity(_input, _options) {
+    async evaluateSemanticContinuity(_input: any, _options: any) {
       return { ok: true, score: 0.95 }
     },
     
-    async generateChoices(input, _options) {
+    async generateChoices(input: any, _options: any) {
       // VALID CHOICE OUTPUT MATCHING PRODUCTION CONTRACT
       // This is a golden fixture derived from passing choice tests
       const choices = [
@@ -377,8 +377,8 @@ describe('Commercial Story #2 Success E2E (Real DB)', () => {
       .single()
 
     expect(finalizedJob).not.toBeNull()
-    expect(finalizedJob.status).toBe('SUCCEEDED') // MANDATORY
-    expect(finalizedJob.publication_idempotency_key).toBe(`generation-job:${reqData!.generation_job_id}:publish:1`)
+    expect(finalizedJob!.status).toBe('SUCCEEDED') // MANDATORY
+    expect(finalizedJob!.publication_idempotency_key).toBe(`generation-job:${reqData!.generation_job_id}:publish:1`)
 
     // Wait for creation request to reach READY state after SUCCEEDED job
     await waitForCondition(
@@ -414,9 +414,9 @@ describe('Commercial Story #2 Success E2E (Real DB)', () => {
       .eq('ref', `story-start:${userId}:${storyId}`)
       .single()
     expect(startRes).not.toBeNull()
-    expect(startRes.ref).toBe(`story-start:${userId}:${storyId}`)
-    expect(startRes.status).toBe('CAPTURED')
-    expect(startRes.amount).toBe(24)
+    expect(startRes!.ref).toBe(`story-start:${userId}:${storyId}`)
+    expect(startRes!.status).toBe('CAPTURED')
+    expect(startRes!.amount).toBe(24)
 
     // 3. Exactly one -24 debit with reason story_start
     const { data: ledgerEntries } = await admin
@@ -435,8 +435,8 @@ describe('Commercial Story #2 Success E2E (Real DB)', () => {
       .single()
     
     expect(storyData).not.toBeNull()
-    expect(storyData.commercial_origin).toBe('PAID_START')
-    expect(storyData.generation_status).toBe('ready')
+    expect(storyData!.commercial_origin).toBe('PAID_START')
+    expect(storyData!.generation_status).toBe('ready')
 
     // 5. Final balance = 0 (20 + 4 - 24 = 0)
     const { data: finalBalance } = await admin

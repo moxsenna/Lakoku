@@ -34,10 +34,10 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
   const faultyProvider = {
     name: 'faulty-deterministic-v1',
     
-    async generatePlan(input, _options) {
-      const { chapterNumber, blueprint } = input
+    async generatePlan(_input: any, _options: any) {
+      const { chapterNumber, blueprint } = _input
       return {
-        storyId: input.snapshot.storyId,
+        storyId: _input.snapshot.storyId,
         chapterNumber,
         phase: blueprint.phase,
         chapterGoal: `Chapter ${chapterNumber} goal`,
@@ -51,8 +51,8 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
       }
     },
     
-    async writeChapter(input, _options) {
-      const { snapshot, plan } = input
+    async writeChapter(_input: any, _options: any) {
+      const { snapshot, plan } = _input
       return {
         draft: `[FAILOVER MODE] Draft for Chapter 1\n\n` +
                `In the world of ${snapshot.storyId}...`,

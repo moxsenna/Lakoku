@@ -55,7 +55,7 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
   const testProvider: any = {
     name: 'test-deterministic-valid-v1',
     
-    async generatePlan(_input, _options) {
+    async generatePlan(_input: any, _options: any) {
       const { chapterNumber, blueprint } = _input
       return {
         storyId: _input.snapshot.storyId,
@@ -72,7 +72,7 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
       }
     },
     
-    async writeChapter(_input, _options) {
+    async writeChapter(_input: any, _options: any) {
       const { snapshot, plan } = _input
       return {
         draft: `[GENERATION] Scene draft for Chapter ${1}\n\n` +

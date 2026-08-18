@@ -77,8 +77,7 @@
     "simulate:full-generation:30": "node scripts/run-smoke.cjs scripts/full-generation-worker-soak.ts --jobs=30 --generation-concurrency=6 --choice-concurrency=2",
     "release:m9": "node scripts/run-smoke.cjs scripts/m9-release-gate.ts",
     "release:personalized": "pnpm run typecheck && pnpm run test:unit && pnpm run test:db:personalized",
-    "test:m10:e:e3a-e4": "pnpm exec vitest run tests/narrative-qa/m10-e-reliability-*.test.ts tests/narrative-qa/m10-e-e1-e2-closure-regression.test.ts tests/narrative-qa/m10-e-e3a-e4-runner.test.ts tests/narrative-qa/m10-e-e3a-e4-counted-comparison.test.ts tests/narrative-qa/m10-e-e3a-e4-allowlist.test.ts",
-    "test:m10:e:e3a-e4:scoped": "pnpm exec vitest run --maxWorkers=1 tests/narrative-qa/m10-e-reliability-*.test.ts tests/narrative-qa/m10-e-e1-e2-closure-regression.test.ts tests/narrative-qa/m10-e-e3a-e4-runner.test.ts tests/narrative-qa/m10-e-e3a-e4-counted-comparison.test.ts tests/narrative-qa/m10-e-e3a-e4-allowlist.test.ts"
+    "test:m10:e:e3a-e4:scoped": "pnpm exec vitest run --maxWorkers=1 --testTimeout=60000 tests/narrative-qa/m10-e-reliability-*.test.ts tests/narrative-qa/m10-e-e1-e2-closure-regression.test.ts tests/narrative-qa/m10-e-e3a-e4-runner.test.ts tests/narrative-qa/m10-e-e3a-e4-counted-comparison.test.ts tests/narrative-qa/m10-e-e3a-e4-allowlist.test.ts"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.5",

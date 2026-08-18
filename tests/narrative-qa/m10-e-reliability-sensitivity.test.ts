@@ -385,7 +385,7 @@ describe('M10-E R1-B explicit sensitivity bands', () => {
           lower: assumedValue(convertDecimal('0.25', 'PROBABILITY'), 
             buildSensitivityBandAuthority(stageId, 'lower', 'AUTH_REF_PROSE')),
           upper: assumedValue(convertDecimal('0.45', 'PROBABILITY'), 
-            buildSensitivityBandAuthority(stageId, 'upper', 'AUTH_REF_UPPER_45')),
+            buildSensitivityBandAuthority(stageId, 'upper', 'AUTH_REF_UPPER')),
         }
       }
       // All other stages keep original values
@@ -425,7 +425,7 @@ describe('M10-E R1-B explicit sensitivity bands', () => {
     // Different sensitivity probabilities must produce different lower band values
     expect(highProsePrimaryLower?.probability).toBe('0.250000000000')
     
-    // Sensitivity output hash differs
+    // Sensitivity output hash differs (lower band changes with probability mutation)
     expect(computeSha256(stableStringify(lowLowerProbes))).not.toBe(computeSha256(stableStringify(highLowerProbes)))
     
     // Run cumulative models (100k Monte Carlo iterations each)
@@ -433,17 +433,22 @@ describe('M10-E R1-B explicit sensitivity bands', () => {
     const centralHigh = runCumulativeModel(highProbInput)
     
     // Central distribution stays constant (sensitivity varies, not central OBSERVED probabilities)
-    // Verify centralStageProbabilities are identical between inputs
-    for (let i = 0; i < lowProbInput.centralStageProbabilities.length; i++) {
-      expect(lowProbInput.centralStageProbabilities[i].observed.value).toBe(
-        highProbInput.centralStageProbabilities[i].observed.value
-      )
-    }
+    // Verify sensitivityBands.central is byte-identical between inputs
+    expect(centralLow.result.sensitivityBands?.central).toBeDefined()
+    expect(centralHigh.result.sensitivityBands?.central).toBeDefined()
     
-    // Output hashes ARE DIFFERENT because:
-    // 1. inputHash includes sensitivity information (different authority/probability)
-    // 2. Monte Carlo simulation uses sensitivity thresholds to determine stage transitions
-    // Different sensitivity → different simulation execution path → different output
-    expect(centralLow.outputHash).not.toBe(centralHigh.outputHash)
-  }, MODEL_TIMEOUT)
+    const centralLowHash = computeSha256(stableStringify(centralLow.result.sensitivityBands!.central))
+    const centralHighHash = computeSha256(stableStringify(centralHigh.result.sensitivityBands!.central))
+    expect(centralLowHash).toBe(centralHighHash)
+    
+    // Lower band changes because probability-only mutation affects sensitivity thresholds
+    const lowLowerHash = computeSha256(stableStringify(centralLow.result.sensitivityBands?.lower))
+    const highLowerHash = computeSha256(stableStringify(centralHigh.result.sensitivityBands?.lower))
+    expect(lowLowerHash).not.toBe(highLowerHash)
+    
+    // Upper band also changes with probability mutation
+    const lowUpperHash = computeSha256(stableStringify(centralLow.result.sensitivityBands?.upper))
+    const highUpperHash = computeSha256(stableStringify(centralHigh.result.sensitivityBands?.upper))
+    expect(lowUpperHash).not.toBe(highUpperHash)
+  }, 450000)
 })

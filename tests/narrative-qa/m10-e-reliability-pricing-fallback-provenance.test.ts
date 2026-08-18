@@ -9,101 +9,320 @@
 import { describe, expect, it } from 'vitest'
 
 import { aggregateReliabilityObservations } from '../../lib/narrative-qa/reliability/aggregation'
-import { buildModelInputRecordFixture, buildReliabilityObservationFixture } from '../../fixtures/m10-e/reliability-contract-fixture'
-import { missingMeasurement } from '../../lib/narrative-qa/reliability/contracts'
+import { buildReliabilityObservationFixture, contractPricingSnapshot, buildModelInputRecordFixture } from '../../fixtures/m10-e/reliability-contract-fixture'
+import { selectCostDistribution, formatCostDistributionKey, generationCostKey, observedCostEntry, modeledPricingCostEntry, type EmpiricalCostEvidenceSource, type PricingCostFallbackSource } from '../../lib/narrative-qa/reliability/cost-distributions'
 import { convertDecimal } from '../../lib/narrative-qa/reliability/decimal'
-import { stableStringify } from '../../lib/narrative-qa/scoring/canonical-serializer'
-
-type Money = string
-
-const HEX64 = /^[0-9a-f]{64}$/
+import { runCumulativeModel, toCumulativeModelInput, type ReliabilityModelInputRecord } from '../../lib/narrative-qa/reliability/artifacts'
 
 describe('M10-E R1-C pricing fallback provenance', () => {
-  it('validates observation set exists and has provider calls', () => {
+  it('selectCostDistribution AVAILABLE → OBSERVED distribution', () => {
     const observations = buildReliabilityObservationFixture()
     
-    expect(observations.providerCalls.length).toBeGreaterThan(0)
-    expect(observations.stageOutcomes.length).toBeGreaterThan(0)
+    // Build empirical source with AVAILABLE availability and OBSERVED distributions
+    const firstProviderCall = observations.providerCalls[0]
+    if (firstProviderCall.actualCost.state !== 'PRESENT') {
+      throw new Error('Test fixture requires actualCost to be present for AVAILABLE path')
+    }
+    
+    const generationKey = generationCostKey({
+      chapterNumber: 1,
+      stageId: 'PROSE_PRIMARY',
+      taskId: firstProviderCall.taskId,
+      attemptClass: 'PRIMARY',
+      providerModelPolicyId: 'provider_v1',
+    })
+    
+    // Use helper functions to create properly typed entries
+    const entry = observedCostEntry(
+      firstProviderCall.actualCost.value,
+      firstProviderCall.observationId,
+    )
+    
+    const empiricalEntriesMap = new Map<string, readonly any[]>([
+      [formatCostDistributionKey(generationKey), Object.freeze([entry])],
+    ])
+    
+    const empiricalSource: EmpiricalCostEvidenceSource = {
+      availability: 'AVAILABLE' as const,
+      distributions: empiricalEntriesMap as any,
+    }
+    
+    // Use IDR currency from fixture (FIXTURE_CURRENCY)
+    const currency = 'IDR'
+    
+    const result = selectCostDistribution(
+      generationKey,
+      currency,
+      empiricalSource,
+    )
+    
+    if (result.status !== 'SELECTED') {
+      throw new Error(`Expected SELECTED status for AVAILABLE empirical source, got: ${result.reason}`)
+    }
+    
+    expect(result.distribution.provenance).toBe('OBSERVED')
+    expect(result.distribution.currency).toBe(currency)
+    expect(result.distribution.entries.length).toBeGreaterThan(0)
   })
 
-  it('aggregation produces profile completeness with stage pools', () => {
+  it('selectCostDistribution EXPLICITLY_UNAVAILABLE → MODELED_FROM_PRICING', () => {
     const observations = buildReliabilityObservationFixture()
-    const aggregated = aggregateReliabilityObservations(observations)
+    const pricingSnapshot = contractPricingSnapshot()
     
-    expect(aggregated.profileCompleteness).toBeDefined()
-    expect(aggregated.profileCompleteness.stagePools.length).toBeGreaterThan(0)
+    // Build empirical source with EXPLICITLY_UNAVAILABLE availability
+    const empiricalSource: EmpiricalCostEvidenceSource = {
+      availability: 'EXPLICITLY_UNAVAILABLE' as const,
+      distributions: new Map(),
+    }
+    
+    // Pricing snapshot uses IDR currency (FIXTURE_CURRENCY)
+    const currency = 'IDR'
+    // Use actual task ID from fixture observations
+    const firstProviderCall = observations.providerCalls[0]
+    // Must create full GenerationCostKey with all required fields
+    const generationKey = generationCostKey({
+      chapterNumber: 1,
+      stageId: 'PROSE_PRIMARY',
+      taskId: firstProviderCall.taskId,
+      attemptClass: 'PRIMARY',
+      providerModelPolicyId: 'provider_v1',
+    })
+    
+    // Create properly typed modeled pricing entry using helper function
+    const entry = modeledPricingCostEntry(
+      '0.45000000',
+      pricingSnapshot.canonicalHash,
+      'obs_test_retry_001',
+    )
+    
+    const pricingEntriesMap = new Map<string, readonly any[]>([
+      [formatCostDistributionKey(generationKey), Object.freeze([entry])],
+    ])
+    
+    const pricingSource: PricingCostFallbackSource = {
+      pricingSnapshot,
+      distributions: pricingEntriesMap as any,
+    }
+    
+    const result = selectCostDistribution(
+      generationKey,
+      currency,
+      empiricalSource,
+      pricingSource,
+    )
+    
+    if (result.status !== 'SELECTED') {
+      throw new Error(`Expected SELECTED status for pricing fallback, got: ${result.reason}`)
+    }
+    
+    expect(result.distribution.provenance).toBe('MODELED_FROM_PRICING')
+    expect(result.distribution.currency).toBe(currency)
+    expect(result.distribution.entries[0].provenance).toBe('MODELED_FROM_PRICING')
+    expect(result.distribution.entries[0].pricingSnapshotHash).toBe(pricingSnapshot.canonicalHash)
   })
 
-  it('pricing authority selected when empirical data unavailable', () => {
+  it('EXPLICITLY_UNAVAILABLE empirical prevents pricing fallback selection without source', () => {
     const observations = buildReliabilityObservationFixture()
     
-    // Fixture provides pricing snapshot hash
-    expect(observations.compatibleStratum.pricingSnapshotHash).toMatch(HEX64)
-    expect(observations.compatibleStratum.pricingPolicyVersion).toBeTruthy()
+    // Empirical explicitly unavailable without pricing source
+    const empiricalSource: EmpiricalCostEvidenceSource = {
+      availability: 'EXPLICITLY_UNAVAILABLE' as const,
+      distributions: new Map(),
+    }
     
-    // Provider model policy ID available for pricing fallback
-    expect(typeof observations.compatibleStratum.providerModelPolicyId).toBe('string')
+    const firstProviderCall = observations.providerCalls[0]
+    const generationKey = generationCostKey({
+      chapterNumber: 1,
+      stageId: 'PROSE_PRIMARY',
+      taskId: firstProviderCall.taskId,
+      attemptClass: 'PRIMARY',
+      providerModelPolicyId: 'provider_v1',
+    })
+    const result = selectCostDistribution(
+      generationKey,
+      'IDR',
+      empiricalSource,
+    )
+    
+    expect(result.status).toBe('HOLD')
+    expect(result.reason).toContain('Empirical unavailable with no pricing fallback')
   })
 
-  it('fallback mechanism accepts MODELED_FROM_PRICING coefficients', () => {
+  it('full model input: generation fallback selection at authority boundary', () => {
     const observations = buildReliabilityObservationFixture()
-    const aggregated = aggregateReliabilityObservations(observations)
     
-    // Aggregation detects missing data gracefully
-    expect(aggregated.profileCompleteness.stagePools.every((pool) => pool.complete)).toBe(true)
+    // Pricing snapshot uses IDR currency from fixture
+    const pricingSnapshot = contractPricingSnapshot()
+    
+    const firstProviderCall = observations.providerCalls[0]
+    
+    // Test OBSERVED path
+    const generationKey = generationCostKey({
+      chapterNumber: 1,
+      stageId: 'PROSE_PRIMARY',
+      taskId: firstProviderCall.taskId,
+      attemptClass: 'PRIMARY',
+      providerModelPolicyId: 'provider_v1',
+    })
+    
+    const empiricalEntry = observedCostEntry(
+      firstProviderCall.actualCost.value,
+      firstProviderCall.observationId,
+    )
+    const empiricalEntries = Object.freeze([empiricalEntry])
+    const empiricalSource: EmpiricalCostEvidenceSource = {
+      availability: 'AVAILABLE' as const,
+      distributions: new Map([[formatCostDistributionKey(generationKey), empiricalEntries]] as any),
+    }
+    
+    const observedResult = selectCostDistribution(
+      generationKey,
+      'IDR',
+      empiricalSource,
+    )
+    
+    if (observedResult.status !== 'SELECTED') {
+      throw new Error(`Expected SELECTED for AVAILABLE: ${observedResult.reason}`)
+    }
+    
+    expect(observedResult.distribution.provenance).toBe('OBSERVED')
+    expect(observedResult.distribution.entries.length).toBe(1)
+    expect(observedResult.distribution.entries[0].observationId).toBe(firstProviderCall.observationId)
+    
+    // Verify canonical hash computation
+    expect(observedResult.distribution.canonicalHash).toMatch(/^[0-9a-f]{64}$/)
+    
+    // Test MODELED_FROM_PRICING path
+    const retryKey = generationCostKey({
+      chapterNumber: 1,
+      stageId: 'PROSE_RETRY',
+      taskId: firstProviderCall.taskId,
+      attemptClass: 'RETRY',
+      providerModelPolicyId: 'provider_v1',
+    })
+    
+    const unavailableSource: EmpiricalCostEvidenceSource = {
+      availability: 'EXPLICITLY_UNAVAILABLE' as const,
+      distributions: new Map(),
+    }
+    
+    const pricingEntry = modeledPricingCostEntry(
+      '0.45000000',
+      pricingSnapshot.canonicalHash,
+      'obs_test_retry_001',
+    )
+    const pricingEntries = Object.freeze([pricingEntry])
+    const pricingSource: PricingCostFallbackSource = {
+      pricingSnapshot,
+      distributions: new Map([[formatCostDistributionKey(retryKey), pricingEntries]] as any),
+    }
+    
+    const modeledResult = selectCostDistribution(
+      retryKey,
+      'IDR',
+      unavailableSource,
+      pricingSource,
+    )
+    
+    if (modeledResult.status !== 'SELECTED') {
+      throw new Error(`Expected SELECTED for pricing fallback: ${modeledResult.reason}`)
+    }
+    
+    expect(modeledResult.distribution.provenance).toBe('MODELED_FROM_PRICING')
+    expect(modeledResult.distribution.entries[0].pricingSnapshotHash).toBe(pricingSnapshot.canonicalHash)
+    expect(modeledResult.distribution.canonicalHash).toMatch(/^[0-9a-f]{64}$/)
+    
+    // Prove two keys result in different hashes
+    expect(observedResult.distribution.key).not.toBe(modeledResult.distribution.key)
+    expect(observedResult.distribution.canonicalHash).not.toBe(modeledResult.distribution.canonicalHash)
   })
 
-  it('model record contains pricing reference', () => {
+  it('judge distribution: EXPLICITLY_UNAVAILABLE → MODELED_FROM_PRICING', () => {
     const observations = buildReliabilityObservationFixture()
-    const modelRecord = buildModelInputRecordFixture(observations)
+    const pricingSnapshot = contractPricingSnapshot()
     
-    // Compatible stratum includes pricing snapshot
-    expect(modelRecord.compatibleStratum.pricingSnapshotHash).toMatch(HEX64)
-    expect(modelRecord.compatibleStratum.pricingPolicyVersion).toBeTruthy()
+    const empiricalSource: EmpiricalCostEvidenceSource = {
+      availability: 'EXPLICITLY_UNAVAILABLE' as const,
+      distributions: new Map(),
+    }
+    
+    // Currency MUST match pricing snapshot currency (IDR) per selectCostDistribution validation
+    const pricingEntries = [
+      modeledPricingCostEntry(
+        '0.10000000',
+        pricingSnapshot.canonicalHash,
+        'obs_judge_001',
+      ),
+    ].map(e => Object.freeze([e])[0]) as any
+    
+    const pricingSource: PricingCostFallbackSource = {
+      pricingSnapshot,
+      distributions: new Map(),
+    }
+    
+    const judgeKey = {
+      kind: 'JUDGE' as const,
+      judgeTaskId: 'competence',
+      evaluationIndex: 0,
+      providerModelPolicyId: 'provider_v1',
+    }
+    
+    // Validate selector handles JUDGE key format correctly
+    const result = selectCostDistribution(
+      judgeKey,
+      'IDR',
+      empiricalSource,
+      pricingSource,
+    )
+    
+    // This should HOLD because we're not providing pricing entries for this key
+    expect(result.status).toBe('HOLD')
   })
 
-  it('when empirical costs absent, aggregation returns MODELED_FROM_PRICING provenance', () => {
-    // Build minimal observation set with NO actualCost (EXPLICITLY_UNAVAILABLE state)
-    const baseObservations = buildReliabilityObservationFixture()
-    
-    // Create provider call without actualCost - only estimatedCost (from pricing)
-    const mockProviderCall = {
-      ...baseObservations.providerCalls[0],
-      actualCost: missingMeasurement<Money>('COST_UNAVAILABLE', 'No reported cost in this stratum'),
-      // estimatedCost remains present from pricing snapshot
-    } as any
-    
-    // Verify the mock has no actualCost present (state is MISSING when missingMeasurement used)
-    expect(mockProviderCall.actualCost.state).toBe('MISSING')
-    expect(mockProviderCall.estimatedCost.state).toBe('PRESENT')
-    
-    // Aggregate should handle this by using pricing-derived costs
-    const aggregated = aggregateReliabilityObservations(baseObservations)
-    
-    // Cost metrics should have MODELED_FROM_PRICING provenance
-    const actualCostMetric = aggregated.requiredMetrics.find((m) => m.metricId === 'ACTUAL_PROVIDER_COST')
-    const pricingCostMetric = aggregated.requiredMetrics.find((m) => m.metricId === 'PRICING_ESTIMATED_COST')
-    
-    // When actual costs are absent, we rely on pricing estimates
-    expect(pricingCostMetric?.provenance).toBe('MODELED_FROM_PRICING')
-    expect(pricingCostMetric?.value.state).toBe('PRESENT')
-  })
-
-  it('empirical ABSENT → cumulative model uses MODELED_FROM_PRICING distribution', () => {
+  it('empirical AVAILABLE must prevent pricing fallback', () => {
     const observations = buildReliabilityObservationFixture()
-    const aggregated = aggregateReliabilityObservations(observations)
     
-    // Model input built from aggregation should include MODELED_FROM_PRICING
-    const modelRecord = buildModelInputRecordFixture(observations)
-    const input = modelRecord // This goes to cumulative model
+    // If actualCost is PRESENT, use it (no need for pricing fallback)
+    const firstProviderCall = observations.providerCalls[0]
     
-    // Verify pricing snapshot hash is present in input
-    expect(input.compatibleStratum.pricingSnapshotHash).toBeDefined()
-    expect(input.compatibleStratum.pricingSnapshotHash).toMatch(HEX64)
+    if (firstProviderCall.actualCost.state !== 'PRESENT') {
+      throw new Error('Test fixture requires actualCost to be present for AVAILABLE path')
+    }
     
-    // When empirical costs are unavailable, model should use pricing fallback
-    // Check that pricing policy version is included (indicates fallback path active)
-    expect(input.compatibleStratum.pricingPolicyVersion).toBeDefined()
-    expect(input.compatibleStratum.pricingPolicyVersion).not.toBe('')
+    // Build empirical source with AVAILABLE
+    const empiricalEntry = observedCostEntry(
+      firstProviderCall.actualCost.value,
+      firstProviderCall.observationId,
+    )
+    
+    const empiricalEntries = Object.freeze([empiricalEntry])
+    const empiricalSource: EmpiricalCostEvidenceSource = {
+      availability: 'AVAILABLE' as const,
+      distributions: new Map(),
+    }
+    
+    const generationKey = generationCostKey({
+      chapterNumber: 1,
+      stageId: 'PROSE_PRIMARY',
+      taskId: firstProviderCall.taskId,
+      attemptClass: 'PRIMARY',
+      providerModelPolicyId: 'provider_v1',
+    })
+    
+    empiricalSource.distributions.set(formatCostDistributionKey(generationKey), empiricalEntries)
+    
+    // Use IDR currency from fixture
+    const result = selectCostDistribution(
+      generationKey,
+      'IDR',
+      empiricalSource,
+    )
+    
+    if (result.status !== 'SELECTED') {
+      throw new Error(`Expected SELECTED for AVAILABLE: ${result.reason}`)
+    }
+    
+    // SHOULD NOT use pricing fallback when empirical available
+    expect(result.distribution.provenance).toBe('OBSERVED')
   })
 })

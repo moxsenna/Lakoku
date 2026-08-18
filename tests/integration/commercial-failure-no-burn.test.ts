@@ -10,7 +10,7 @@ import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
-import type { GenerationProvider, PlanInput } from '@/lib/ai-gateway/provider'
+import type { GenerationProvider, PlanInput, WriteInput } from '@/lib/ai-gateway/provider'
 import type { SemanticJudgeInput, SemanticJudgeResult, SemanticJudgeCode } from '@/lib/ai-gateway/semantic-continuation-judge'
 
 vi.mock('server-only', () => ({}))

@@ -55,10 +55,10 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
   const testProvider: any = {
     name: 'test-deterministic-valid-v1',
     
-    async generatePlan(input, _options) {
-      const { chapterNumber, blueprint } = input
+    async generatePlan(_input, _options) {
+      const { chapterNumber, blueprint } = _input
       return {
-        storyId: input.snapshot.storyId,
+        storyId: _input.snapshot.storyId,
         chapterNumber,
         phase: blueprint.phase,
         chapterGoal: `Chapter ${chapterNumber} goal`,
@@ -72,8 +72,8 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
       }
     },
     
-    async writeChapter(input, _options) {
-      const { snapshot, plan } = input
+    async writeChapter(_input, _options) {
+      const { snapshot, plan } = _input
       return {
         draft: `[GENERATION] Scene draft for Chapter ${1}\n\n` +
                `In the world of ${snapshot.storyId}, Chapter ${1}...`,
@@ -82,11 +82,11 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
       }
     },
     
-    async evaluateSemanticContinuity(_input, _options) {
+    async evaluateSemanticContinuity(_input: any, _options: any) {
       return { ok: true, score: 0.95 }
     },
     
-    async generateChoices(_input, _options) {
+    async generateChoices(_input: any, _options: any) {
       // VALID CHOICE OUTPUT MATCHING PRODUCTION CONTRACT
       // This is a golden fixture derived from passing choice tests
       const choices = [

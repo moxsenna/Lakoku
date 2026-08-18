@@ -378,6 +378,37 @@ export async function executeClaimedJob(
       if (!finish.ok) {
         return { ok: false, outcome: 'OWNERSHIP_LOST', jobId: job.id, reason: finish.reason }
       }
+      
+      // CRITICAL: Worker requested RETRY_WAIT, but RPC may return FAILED if:
+      // - attempt_count reached max_attempts
+      // - retry window/deadline exhausted
+      // Use ACTUAL finish.status, not requested outcome
+      if (finish.status === 'FAILED' || finish.status === 'CANCELLED') {
+        // TERMINAL COMMERCIAL FINALIZATION on forced terminal state
+        try {
+          const finalizationResult = await finalizeTerminalCommercialGeneration(job.id)
+          console.log('GENERATION_WORKER_RETRY_FORCED_TERMINAL', {
+            jobId: job.id,
+            requestedOutcome: 'RETRY_WAIT',
+            actualStatus: finish.status,
+            finalizationResult: finalizationResult.ok ? 'success' : `failure:${finalizationResult.reason}`,
+          })
+        } catch (err) {
+          console.error('GENERATION_WORKER_RETRY_TERMINAL_FINALIZE_EXCEPTION', {
+            jobId: job.id,
+            errorName: err instanceof Error ? err.name : 'UNKNOWN',
+          })
+        }
+        
+        console.log('GENERATION_WORKER_FORCED_FAILED', {
+          jobId: job.id,
+          reason: 'MAX_ATTEMPTS_EXHAUSTED',
+          status: finish.status,
+        })
+        return { ok: false, outcome: 'FAILED', jobId: job.id, reason: 'MAX_ATTEMPTS_EXHAUSTED' }
+      }
+      
+      // Actual RETRY_WAIT - reservation stays ACTIVE, no finalization
       console.log('GENERATION_WORKER_RETRY_WAIT', {
         jobId: job.id,
         reason: normalized.reason,
@@ -431,10 +462,10 @@ export async function executeClaimedJob(
         } else {
           // All success cases have ref at minimum
           const hasOp = 'operation' in finalizationResult && finalizationResult.operation !== undefined
-          const opVal: string = hasOp ? finalizationResult.operation : 'unknown'
-          const prevStatus = ('previous_status' in finalizationResult && finalizationResult.previous_status !== undefined) ? finalizationResult.previous_status : undefined
-          const newStatus = ('new_status' in finalizationResult && finalizationResult.new_status !== undefined) ? finalizationResult.new_status : undefined
-          const chNum = ('chapter_number' in finalizationResult && finalizationResult.chapter_number !== undefined) ? finalizationResult.chapter_number : undefined
+          const opVal: string = hasOp ? finalizationResult.operation! : 'NO_COMMERCIAL_BINDING'
+          const prevStatus = ('previous_status' in finalizationResult && finalizationResult.previous_status !== undefined) ? finalizationResult.previous_status! : undefined
+          const newStatus = ('new_status' in finalizationResult && finalizationResult.new_status !== undefined) ? finalizationResult.new_status! : undefined
+          const chNum = ('chapter_number' in finalizationResult && finalizationResult.chapter_number !== undefined) ? finalizationResult.chapter_number! : undefined
           
           console.log('GENERATION_WORKER_TERMINAL_FINALIZED', {
             jobId: job.id,

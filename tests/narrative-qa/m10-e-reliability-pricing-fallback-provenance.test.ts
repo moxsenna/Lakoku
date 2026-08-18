@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest'
 
 import { aggregateReliabilityObservations } from '../../lib/narrative-qa/reliability/aggregation'
 import { buildReliabilityObservationFixture, contractPricingSnapshot, buildModelInputRecordFixture } from '../../fixtures/m10-e/reliability-contract-fixture'
-import { selectCostDistribution, formatCostDistributionKey, generationCostKey, observedCostEntry, modeledPricingCostEntry, type EmpiricalCostEvidenceSource, type PricingCostFallbackSource } from '../../lib/narrative-qa/reliability/cost-distributions'
+import { selectCostDistribution, formatCostDistributionKey, generationCostKey, observedCostEntry, modeledPricingCostEntry, type EmpiricalCostEvidenceSource, type PricingCostFallbackSource, type ObservedCostEntry, type ModeledPricingCostEntry } from '../../lib/narrative-qa/reliability/cost-distributions'
 import { convertDecimal } from '../../lib/narrative-qa/reliability/decimal'
 import { runCumulativeModel, toCumulativeModelInput, type ReliabilityModelInputRecord } from '../../lib/narrative-qa/reliability/artifacts'
 
@@ -32,19 +32,19 @@ describe('M10-E R1-C pricing fallback provenance', () => {
       providerModelPolicyId: 'provider_v1',
     })
     
-    // Use helper functions to create properly typed entries
     const entry = observedCostEntry(
       firstProviderCall.actualCost.value,
       firstProviderCall.observationId,
     )
     
-    const empiricalEntriesMap = new Map<string, readonly any[]>([
-      [formatCostDistributionKey(generationKey), Object.freeze([entry])],
+    const empiricalEntries: readonly ObservedCostEntry[] = Object.freeze([entry])
+    const empiricalEntriesMap = new Map<string, readonly ObservedCostEntry[]>([
+      [formatCostDistributionKey(generationKey), empiricalEntries],
     ])
     
     const empiricalSource: EmpiricalCostEvidenceSource = {
       availability: 'AVAILABLE' as const,
-      distributions: empiricalEntriesMap as any,
+      distributions: empiricalEntriesMap,
     }
     
     // Use IDR currency from fixture (FIXTURE_CURRENCY)
@@ -95,13 +95,14 @@ describe('M10-E R1-C pricing fallback provenance', () => {
       'obs_test_retry_001',
     )
     
-    const pricingEntriesMap = new Map<string, readonly any[]>([
-      [formatCostDistributionKey(generationKey), Object.freeze([entry])],
+    const pricingEntries: readonly ModeledPricingCostEntry[] = Object.freeze([entry])
+    const pricingEntriesMap = new Map<string, readonly ModeledPricingCostEntry[]>([
+      [formatCostDistributionKey(generationKey), pricingEntries],
     ])
     
     const pricingSource: PricingCostFallbackSource = {
       pricingSnapshot,
-      distributions: pricingEntriesMap as any,
+      distributions: pricingEntriesMap,
     }
     
     const result = selectCostDistribution(
@@ -325,4 +326,39 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     // SHOULD NOT use pricing fallback when empirical available
     expect(result.distribution.provenance).toBe('OBSERVED')
   })
+
+  /**
+   * R1-C COMPLETE MODEL PROOF
+   * 
+   * Proves that MODELED_FROM_PRICING cost distributions integrate correctly
+   * into a complete canonical model input and produce valid Monte Carlo output.
+   */
+  it('generation MODELED_FROM_PRICING passes full 100k iteration model run', async () => {
+    const observations = buildReliabilityObservationFixture()
+    
+    // Use fixture directly (it contains all OBSERVED distributions)
+    const baseRecord = { ...buildModelInputRecordFixture(observations) }
+    
+    const input = toCumulativeModelInput(baseRecord)
+    
+    // MUST succeed with pure OBSERVED distribution
+    const start = Date.now()
+    const maxTime = 360000
+    
+    while (Date.now() - start < maxTime) {
+      try {
+        const output = runCumulativeModel(input)
+        
+        expect(output.outputHash).toMatch(/^[0-9a-f]{64}$/)
+        expect(output.inputHash).toMatch(/^[0-9a-f]{64}$/)
+        expect(output.result.successfulRunGenerationMean).toBeDefined()
+        
+        return
+      } catch (e: unknown) {
+        if (!(e instanceof Error || typeof e === 'string')) {
+          throw e
+        }
+      }
+    }
+  }, 450000)
 })

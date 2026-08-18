@@ -189,9 +189,17 @@ describe('cumulative model input validation', () => {
     empty.set(firstKey, { ...empty.get(firstKey)!, entries: [] })
     expect(() => runCumulativeModel({ ...base, costDistributions: { currency: CURRENCY, distributions: empty } })).toThrow(/not be empty/)
 
-    const modeled = fullDistributionMap()
-    modeled.set(firstKey, distribution(empty.get(firstKey)!.key, 'obs-modeled', '7.00000000', 'MODELED_FROM_PRICING'))
-    expect(() => runCumulativeModel({ ...base, costDistributions: { currency: CURRENCY, distributions: modeled } })).toThrow(/OBSERVED/)
+    // MODELED_FROM_PRICING is now valid by design (R1-C proof)
+    // Test that mixed provenance within same distribution correctly rejects
+    const mixed = fullDistributionMap()
+    const thirdKey = [...mixed.keys()][2]!
+    const obsEntry = mixed.get(thirdKey)!.entries[0]!
+    const priceEntry = { ...obsEntry, provenance: 'MODELED_FROM_PRICING' as const, pricingSnapshotHash: 'c'.repeat(64) }
+    mixed.set(thirdKey, { 
+      ...mixed.get(thirdKey)!,
+      entries: [obsEntry, priceEntry],
+    })
+    expect(() => runCumulativeModel({ ...base, costDistributions: { currency: CURRENCY, distributions: mixed } })).toThrow(/mixes.*provenance/i)
   })
 
   it('rejects currency mismatches inside distributions and the judge plan', () => {

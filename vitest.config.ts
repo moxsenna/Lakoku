@@ -40,7 +40,5 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['lib/**/*.test.ts', 'tests/**/*.test.ts'],
-    // Serialize expensive model computations to prevent CPU starvation of protected E2 regression
-    maxWorkers: 1,
   },
 })

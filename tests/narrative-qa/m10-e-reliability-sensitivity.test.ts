@@ -289,4 +289,106 @@ describe('M10-E R1-B explicit sensitivity bands', () => {
     expect(validSensitivity.sensitivity).toBeDefined()
     expect(Array.isArray(validSensitivity.sensitivity)).toBe(true)
   })
+
+  it('input hash includes sensitivity provenance information', () => {
+    const canonicalInput = toCumulativeModelInput(modelRecord)
+    
+    const inputWithSensitivity = toCumulativeModelInput({
+      ...modelRecord,
+      sensitivity: [
+        {
+          stageId: 'PROSE_PRIMARY',
+          lower: assumedValue(convertDecimal('0.05', 'PROBABILITY'), buildSensitivityBandAuthority('PROSE_PRIMARY', 'lower', '0.05')),
+          upper: assumedValue(convertDecimal('0.15', 'PROBABILITY'), buildSensitivityBandAuthority('PROSE_PRIMARY', 'upper', '0.15')),
+        },
+      ],
+    })
+    
+    // Hash changes when ANY component of sensitivity changes (authority or value)
+    const canonicalHash = computeSha256(stableStringify(canonicalInput))
+    const sensitivityHash = computeSha256(stableStringify(inputWithSensitivity))
+    
+    expect(canonicalHash).not.toBe(sensitivityHash)
+  })
+
+  it('same probability + changed authority → inputHash changes but numeric output unchanged', () => {
+    const sameProbAuthority1 = buildSensitivityBandAuthority('PROSE_PRIMARY', 'lower', '0.05')
+    const sameProbAuthority2 = buildSensitivityBandAuthority('PROSE_PRIMARY', 'lower', '0.05_different_source')
+    
+    const input1 = toCumulativeModelInput({
+      ...modelRecord,
+      sensitivity: [
+        {
+          stageId: 'PROSE_PRIMARY',
+          lower: assumedValue(convertDecimal('0.05', 'PROBABILITY'), sameProbAuthority1),
+          upper: assumedValue(convertDecimal('0.15', 'PROBABILITY'), buildSensitivityBandAuthority('PROSE_PRIMARY', 'upper', '0.15')),
+        },
+      ],
+    })
+    
+    const input2 = toCumulativeModelInput({
+      ...modelRecord,
+      sensitivity: [
+        {
+          stageId: 'PROSE_PRIMARY',
+          lower: assumedValue(convertDecimal('0.05', 'PROBABILITY'), sameProbAuthority2),
+          upper: assumedValue(convertDecimal('0.15', 'PROBABILITY'), buildSensitivityBandAuthority('PROSE_PRIMARY', 'upper', '0.15')),
+        },
+      ],
+    })
+    
+    // Same probability should produce identical numeric output (central result unchanged)
+    const centralOutput1 = runCumulativeModel(input1)
+    const centralOutput2 = runCumulativeModel(input2)
+    
+    expect(centralOutput1.outputHash).toBe(centralOutput2.outputHash)
+    
+    // But semantic hashes differ (proving authority is part of canonical key)
+    const hash1 = computeSha256(stableStringify(input1))
+    const hash2 = computeSha256(stableStringify(input2))
+    
+    expect(hash1).not.toBe(hash2)
+  })
+
+  it('same authority + changed sensitivity probability → sensitivity result changes, central unchanged', () => {
+    const sameAuthority = buildSensitivityBandAuthority('PROSE_PRIMARY', 'lower', '0.05_authority_ref')
+    
+    const lowProbInput = toCumulativeModelInput({
+      ...modelRecord,
+      sensitivity: [
+        {
+          stageId: 'PROSE_PRIMARY',
+          lower: assumedValue(convertDecimal('0.05', 'PROBABILITY'), sameAuthority),
+          upper: assumedValue(convertDecimal('0.15', 'PROBABILITY'), buildSensitivityBandAuthority('PROSE_PRIMARY', 'upper', '0.15')),
+        },
+      ],
+    })
+    
+    const highProbInput = toCumulativeModelInput({
+      ...modelRecord,
+      sensitivity: [
+        {
+          stageId: 'PROSE_PRIMARY',
+          lower: assumedValue(convertDecimal('0.25', 'PROBABILITY'), sameAuthority),
+          upper: assumedValue(convertDecimal('0.45', 'PROBABILITY'), buildSensitivityBandAuthority('PROSE_PRIMARY', 'upper', '0.45')),
+        },
+      ],
+    })
+    
+    // Different probabilities change sensitivity band probes (lower/upper vary)
+    const lowLowerProbes = bandProbes(lowProbInput, 'lower')
+    const highLowerProbes = bandProbes(highProbInput, 'lower')
+    
+    expect(lowLowerProbes[0].probability).toBe('0.050000000000')
+    expect(highLowerProbes[0].probability).toBe('0.250000000000')
+    
+    // Sensitivity output hash differs
+    expect(computeSha256(stableStringify(lowLowerProbes))).not.toBe(computeSha256(stableStringify(highLowerProbes)))
+    
+    // Central result stays constant (only sensitivity varies, not central distribution)
+    const centralLow = runCumulativeModel(lowProbInput)
+    const centralHigh = runCumulativeModel(highProbInput)
+    
+    expect(centralLow.outputHash).toBe(centralHigh.outputHash)
+  })
 })

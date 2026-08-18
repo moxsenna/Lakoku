@@ -26,7 +26,6 @@ import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
-import type { PlanInput, WriteInput, ChoiceProviderInput, SemanticJudgeInput } from '@/lib/ai-gateway/provider'
 
 // Mock server-only and supabase/server BEFORE any other imports
 vi.mock('server-only', () => ({}))
@@ -56,7 +55,7 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
   const testProvider: any = {
     name: 'test-deterministic-valid-v1',
     
-    async generatePlan(input: PlanInput, _options: any) {
+    async generatePlan(input, _options) {
       const { chapterNumber, blueprint } = input
       return {
         storyId: input.snapshot.storyId,
@@ -73,21 +72,21 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
       }
     },
     
-    async writeChapter(input: WriteInput, _options: any) {
+    async writeChapter(input, _options) {
       const { snapshot, plan } = input
       return {
-        draft: `[${input.mode.toUpperCase()}] Scene draft for ${plan.chapterGoal}\n\n` +
-               `In the world of ${snapshot.storyTitle}, Chapter ${plan.chapterNumber}...`,
+        draft: `[GENERATION] Scene draft for Chapter ${1}\n\n` +
+               `In the world of ${snapshot.storyId}, Chapter ${1}...`,
         usageEstimate: 500,
         estimatedDurationMs: 5000,
       }
     },
     
-    async evaluateSemanticContinuity(_input: SemanticJudgeInput, _options: any) {
+    async evaluateSemanticContinuity(_input, _options) {
       return { ok: true, score: 0.95 }
     },
     
-    async generateChoices(_input: ChoiceProviderInput, _options: any) {
+    async generateChoices(_input, _options) {
       // VALID CHOICE OUTPUT MATCHING PRODUCTION CONTRACT
       // This is a golden fixture derived from passing choice tests
       const choices = [

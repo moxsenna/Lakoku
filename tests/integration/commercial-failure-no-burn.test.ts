@@ -61,11 +61,11 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
       }
     },
     
-    async evaluateSemanticContinuity(_input, _options) {
+    async evaluateSemanticContinuity(_input: any, _options: any) {
       return { ok: true, score: 0.85 }
     },
     
-    async generateChoices(_input, _options) {
+    async generateChoices(_input: any, _options: any) {
       // INVALID CHOICE OUTPUT (missing required field threadTouches)
       // This will fail production validator, causing RETRY_WAIT → eventually terminal failure
       const choices = [

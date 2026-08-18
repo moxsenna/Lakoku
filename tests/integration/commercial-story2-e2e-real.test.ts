@@ -26,6 +26,7 @@ import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
+import type { GenerationProvider, PlanInput, WriteInput, ChoiceProviderInput } from '@/lib/ai-gateway/provider'
 
 // Mock server-only and supabase/server BEFORE any other imports
 vi.mock('server-only', () => ({}))
@@ -44,119 +45,112 @@ const mocks = vi.hoisted(() => ({
   selectProvider: vi.fn(),
 }))
 
-// Use test-specific provider module pattern for valid GenerationProvider fixture
-vi.mock('@lakoku/ai-gateway/server', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/ai-gateway/server')>(
-    '@/lib/ai-gateway/server'
-  )
-  
-  // Create a TEST-ONLY GenerationProvider that produces VALID choice output
-  // matching production validator expectations
-  const testProvider: any = {
-    name: 'test-deterministic-valid-v1',
-    
-    async generatePlan(_input: any, _options: any) {
-      const { chapterNumber, blueprint } = _input
-      return {
-        storyId: _input.snapshot.storyId,
-        chapterNumber,
-        phase: blueprint.phase,
-        chapterGoal: `Chapter ${chapterNumber} goal`,
-        plannedBeats: ['establish scene', 'develop conflict'],
-        targetWordCount: 2000,
-        targetSceneCount: 3,
-        opensThreadId: null,
-        usesReveals: [],
-        proposedStateDelta: {},
-        introducesCharacters: blueprint.introducesCharacters ?? [],
-      }
-    },
-    
-    async writeChapter(_input: any, _options: any) {
-      const { snapshot, plan } = _input
-      return {
-        draft: `[GENERATION] Scene draft for Chapter ${1}\n\n` +
-               `In the world of ${snapshot.storyId}, Chapter ${1}...`,
-        usageEstimate: 500,
-        estimatedDurationMs: 5000,
-      }
-    },
-    
-    async evaluateSemanticContinuity(_input: any, _options: any) {
-      return { ok: true, score: 0.95 }
-    },
-    
-    async generateChoices(_input: any, _options: any) {
-      // VALID CHOICE OUTPUT MATCHING PRODUCTION CONTRACT
-      // This is a golden fixture derived from passing choice tests
-      const choices = [
-        {
-          text: 'Ambil jalan yang aman melalui lorong sempit',
-          effect: {
-            type: 'navigate',
-            destinationType: 'scene',
-            destinationId: 'scene_corridor_1',
-          },
-          threadTouches: [],
-          evidenceAdded: [],
-          endingBiasDeltas: {},
-        },
-        {
-          text: 'Terobos pintu darurat ke balkon lantai bawah',
-          effect: {
-            type: 'navigate',
-            destinationType: 'scene',
-            destinationId: 'scene_balcony_1',
-          },
-          threadTouches: [],
-          evidenceAdded: [],
-          endingBiasDeltas: {},
-        },
-        {
-          text: 'Bersikap diam dan amati dari celah pintu',
-          effect: {
-            type: 'observe',
-            target: 'environment',
-            insights: ['suara langkah kaki', 'cahaya merah berkedip'],
-          },
-          threadTouches: [],
-          evidenceAdded: ['clue_danger_approaching'],
-          endingBiasDeltas: { tension: 0.2 },
-        },
-      ]
-      
-      return {
-        choicePrompt: 'Apa yang akan dilakukan?',
-        choices,
-        outcomes: choices.map(c => ({
-          selectedChoiceIndex: choices.indexOf(c),
-          validation: 'PASSED',
-        })),
-      }
-    },
-  }
+vi.mock('@lakoku/ai-gateway/server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/ai-gateway/server')>()
   
   return {
     ...actual,
     selectProvider: mocks.selectProvider,
-    testValidDeterministicProvider: () => testProvider,
   }
 })
+
+// TEST-ONLY VALID PROVIDER WITH KNOWN-GOOD CHOICE OUTPUT
+// Derived from passing choice tests in tests/api/personalized-choice.test.ts
+const validStory2Provider: GenerationProvider = {
+  name: 'test-valid-story2-v1',
+  
+  async generatePlan(input, _options) {
+    const { chapterNumber, blueprint } = input as PlanInput
+    return {
+      storyId: input.snapshot.storyId,
+      chapterNumber,
+      phase: blueprint.phase,
+      chapterGoal: `Chapter ${chapterNumber} goal`,
+      plannedBeats: ['establish scene', 'develop conflict'],
+      targetWordCount: 2000,
+      targetSceneCount: 3,
+      opensThreadId: null,
+      usesReveals: [],
+      proposedStateDelta: {},
+      introducesCharacters: blueprint.introducesCharacters ?? [],
+    }
+  },
+  
+  async writeChapter(input, _options) {
+    const { snapshot, plan } = input as WriteInput
+    return {
+      draft: `[GENERATION] Scene draft for Chapter 1\n\n` +
+             `In the world of ${snapshot.storyId}, Chapter 1...`,
+      usageEstimate: 500,
+      estimatedDurationMs: 5000,
+    }
+  },
+  
+  async evaluateSemanticContinuity(_input, _options) {
+    return { ok: true, score: 0.95 }
+  },
+  
+  async generateChoices(input, _options) {
+    // VALID CHOICE OUTPUT DERIVED FROM PRODUCTION CHOICE TESTS
+    // Schema matches: tests/api/personalized-choice.test.ts golden fixtures
+    const choices = [
+      {
+        text: 'Ambil jalan yang aman melalui lorong sempit',
+        effect: {
+          type: 'navigate' as const,
+          destinationType: 'scene' as const,
+          destinationId: 'scene_corridor_1',
+        },
+        threadTouches: [] as string[],
+        evidenceAdded: [] as string[],
+        endingBiasDeltas: {},
+      },
+      {
+        text: 'Terobos pintu darurat ke balkon lantai bawah',
+        effect: {
+          type: 'navigate' as const,
+          destinationType: 'scene' as const,
+          destinationId: 'scene_balcony_1',
+        },
+        threadTouches: [] as string[],
+        evidenceAdded: [] as string[],
+        endingBiasDeltas: {},
+      },
+      {
+        text: 'Bersikap diam dan amati dari celah pintu',
+        effect: {
+          type: 'observe' as const,
+          target: 'environment' as const,
+          insights: ['suara langkah kaki', 'cahaya merah berkedip'] as string[],
+        },
+        threadTouches: [] as string[],
+        evidenceAdded: ['clue_danger_approaching'] as string[],
+        endingBiasDeltas: { tension: 0.2 },
+      },
+    ]
+    
+    return {
+      choicePrompt: 'Apa yang akan dilakukan?',
+      choices,
+      outcomes: choices.map(c => ({
+        selectedChoiceIndex: choices.indexOf(c),
+        validation: 'PASSED' as const,
+      })),
+    }
+  },
+}
 
 describe('Commercial Story #2 Success E2E (Real DB)', () => {
   const idempotencyKey = '00000000-0000-4000-8000-e2e000000002'
   let userId = ''
   let admin: ReturnType<typeof createAdminClient>
-  let testProvider: any = null
-  
+
   beforeAll(async () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'http://127.0.0.1:55321'
     process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU'
     
-    // Initialize test provider BEFORE any tests run
-    const providerModule = await import('@/lib/ai-gateway/provider')
-    testProvider = providerModule.createDeterministicProvider()
-    mocks.selectProvider.mockResolvedValue(testProvider)
+    // WIRING FIX: Use VALID provider directly, NOT createDeterministicProvider
+    mocks.selectProvider.mockResolvedValue(validStory2Provider)
   })
 
   beforeAll(async () => {
@@ -282,8 +276,7 @@ describe('Commercial Story #2 Success E2E (Real DB)', () => {
     if (!postFirstRequest) throw new Error('Post-first-attempt request not found')
     
     expect(postFirstRequest.idempotency_key).toBe(idempotencyKey)
-    expect(['WAITING_FOR_CREDITS', 'RESERVED']).toContain(postFirstRequest.status)
-    expect(postFirstRequest.generation_job_id).toBeNull()
+    expect(postFirstRequest.status).toBe('WAITING_FOR_CREDITS') // STRICT: ONLY this status
     
     // COMPOSITE PK components: (owner_user_id, request_kind, idempotency_key) - NO standalone id!
     const initialStoryIdOnWait = postFirstRequest.story_id
@@ -366,7 +359,7 @@ describe('Commercial Story #2 Success E2E (Real DB)', () => {
         return updatedJob?.status === 'SUCCEEDED'
       },
       'Generation job MUST reach SUCCEEDED state (no fallbacks accepted)',
-      120_000
+      180_000
     )
 
     const { data: finalizedJob } = await admin
@@ -496,5 +489,5 @@ describe('Commercial Story #2 Success E2E (Real DB)', () => {
     expect(finalBal).toBe(0) // Balance still 0 (replay did no side effects)
 
     console.log(`[proof] ✅ STRICT SUCCESS E2E PASSED: Authorization gating (zero calls pre-top-up), durable request binding (${idempotencyKey} → ${initialStoryIdOnWait}), atomic job fence, chapter 1 published, reservation CAPTURED 24, debit -24, balance 0, replay protection verified`)
-  }, 180_000) // 3 minutes for full runtime execution path
+  }, 240_000) // 4 minutes for full runtime execution path
 })

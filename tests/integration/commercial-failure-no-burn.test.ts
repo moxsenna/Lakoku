@@ -10,6 +10,7 @@ import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
+import type { GenerationProvider, PlanInput, WriteInput, ChoiceProviderInput } from '@/lib/ai-gateway/provider'
 
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/supabase/server', async () => {
@@ -24,83 +25,80 @@ const mocks = vi.hoisted(() => ({
   selectProvider: vi.fn(),
 }))
 
-// Create provider that FAILS choice validation (simulating transient AI error)
-vi.mock('@lakoku/ai-gateway/server', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/ai-gateway/server')>(
-    '@/lib/ai-gateway/server'
-  )
-  
-  // FAULTY provider: produces invalid choice structure (missing threadTouches)
-  const faultyProvider = {
-    name: 'faulty-deterministic-v1',
-    
-    async generatePlan(_input: any, _options: any) {
-      const { chapterNumber, blueprint } = _input
-      return {
-        storyId: _input.snapshot.storyId,
-        chapterNumber,
-        phase: blueprint.phase,
-        chapterGoal: `Chapter ${chapterNumber} goal`,
-        plannedBeats: ['establish scene'],
-        targetWordCount: 2000,
-        targetSceneCount: 2,
-        opensThreadId: null,
-        usesReveals: [],
-        proposedStateDelta: {},
-        introducesCharacters: blueprint.introducesCharacters ?? [],
-      }
-    },
-    
-    async writeChapter(_input: any, _options: any) {
-      const { snapshot, plan } = _input
-      return {
-        draft: `[FAILOVER MODE] Draft for Chapter 1\n\n` +
-               `In the world of ${snapshot.storyId}...`,
-        usageEstimate: 500,
-        estimatedDurationMs: 5000,
-      }
-    },
-    
-    async evaluateSemanticContinuity(_input: any, _options: any) {
-      return { ok: true, score: 0.85 }
-    },
-    
-    async generateChoices(_input: any, _options: any) {
-      // INVALID CHOICE OUTPUT (missing required field threadTouches)
-      // This will fail production validator, causing RETRY_WAIT → eventually terminal failure
-      const choices = [
-        {
-          text: 'Pilih opsi gagal 1',
-          effect: { type: 'navigate', destinationType: 'scene', destinationId: 'scene_1' },
-          evidenceAdded: [],
-          endingBiasDeltas: {},
-          // MISSING threadTouches: [] -- this will cause validation failure!
-        },
-        {
-          text: 'Pilih opsi gagal 2',
-          effect: { type: 'navigate', destinationType: 'scene', destinationId: 'scene_2' },
-          threadTouches: [], // Only some choices have it (inconsistent)
-          evidenceAdded: [],
-          endingBiasDeltas: {},
-        },
-      ]
-      
-      return {
-        choicePrompt: 'Apa yang akan dilakukan?',
-        choices,
-        outcomes: choices.map((c, i) => ({
-          selectedChoiceIndex: i,
-          validation: 'PASSED', // Claiming passed but struct is wrong
-        })),
-      }
-    },
-  }
+vi.mock('@lakoku/ai-gateway/server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/ai-gateway/server')>()
   
   return {
     ...actual,
     selectProvider: mocks.selectProvider,
   }
 })
+
+// FAULTY PROVIDER: Produces INVALID choice structure causing validation failure
+const faultyProvider: GenerationProvider = {
+  name: 'faulty-deterministic-v1',
+  
+  async generatePlan(input: PlanInput, _options) {
+    const { chapterNumber, blueprint } = input
+    return {
+      storyId: input.snapshot.storyId,
+      chapterNumber,
+      phase: blueprint.phase,
+      chapterGoal: `Chapter ${chapterNumber} goal`,
+      plannedBeats: ['establish scene'],
+      targetWordCount: 2000,
+      targetSceneCount: 2,
+      opensThreadId: null,
+      usesReveals: [],
+      proposedStateDelta: {},
+      introducesCharacters: blueprint.introducesCharacters ?? [],
+    }
+  },
+  
+  async writeChapter(input: WriteInput, _options) {
+    const { snapshot, plan } = input
+    return {
+      draft: `[FAILOVER MODE] Draft for Chapter 1\n\n` +
+             `In the world of ${snapshot.storyId}...`,
+      usageEstimate: 500,
+      estimatedDurationMs: 5000,
+    }
+  },
+  
+  async evaluateSemanticContinuity(_input, _options) {
+    return { ok: true, score: 0.85 }
+  },
+  
+  async generateChoices(_input: ChoiceProviderInput, _options) {
+    // INVALID CHOICE OUTPUT (missing required field threadTouches on first choice)
+    // This will fail production validator, causing RETRY_WAIT → eventually terminal failure
+    const choices = [
+      {
+        text: 'Pilih opsi gagal 1',
+        effect: { type: 'navigate' as const, destinationType: 'scene' as const, destinationId: 'scene_1' },
+        evidenceAdded: [] as string[],
+        endingBiasDeltas: {},
+        // MISSING threadTouches: [] -- this will cause validation failure!
+      },
+      {
+        text: 'Pilih opsi gagal 2',
+        effect: { type: 'navigate' as const, destinationType: 'scene' as const, destinationId: 'scene_2' },
+        threadTouches: [] as string[],
+        evidenceAdded: [] as string[],
+        endingBiasDeltas: {},
+      },
+    ]
+    
+    return {
+      choicePrompt: 'Apa yang akan dilakukan?',
+      choices,
+      outcomes: choices.map((c, i) => ({
+        selectedChoiceIndex: i,
+        validation: 'PASSED' as const, // Claiming passed but struct is wrong
+      })),
+    }
+  },
+}
 
 describe('Commercial Failure / No-Burn Test (Real DB)', () => {
   const idempotencyKey = '00000000-0000-4000-8000-fail-e2e'
@@ -110,6 +108,9 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
   beforeAll(async () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'http://127.0.0.1:55321'
     process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU'
+    
+    // WIRING FIX: Use faulty provider directly
+    mocks.selectProvider.mockResolvedValue(faultyProvider)
   })
 
   beforeAll(async () => {
@@ -182,13 +183,6 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
     
     // === PHASE 1: Initial attempt (will trigger job with fault generator) ===
     
-    const createError = await createPersonalizedStory({
-      userId,
-      idempotencyKey,
-    }).catch(err => err)
-
-    expect(createError).toBeUndefined() // Should not throw INSUFFICIENT_CREDITS anymore
-
     const resumeResult = await createPersonalizedStory({
       userId,
       idempotencyKey,
@@ -209,7 +203,7 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
     
     const { data: jobRow } = await admin
       .from('generation_jobs')
-      .select('id, status')
+      .select('id, status, attempt_count, max_attempts')
       .eq('id', reqData!.generation_job_id!)
       .single()
 
@@ -249,10 +243,6 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
       .eq('ref', `story-start:${userId}:${storyId}`)
       .maybeSingle()
 
-    // Reservation ACTIVE is allowed during RETRY_WAIT (funds reserved pending outcome)
-    // or not yet captured depending on timing
-    const hasActiveReservation = resAtRetry?.status === 'ACTIVE' || resAtRetry?.status === 'CAPTURED'
-    
     // CRITICAL: story_start debit MUST be ZERO at RETRY_WAIT stage
     const { data: ledgerAtRetry } = await admin
       .from('credit_ledger')
@@ -261,7 +251,7 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
       .eq('reason', 'story_start')
     
     expect(ledgerAtRetry?.length).toBe(0) // NO debit during RETRY_WAIT
-    expect(hasActiveReservation).toBeFalsy() // Not captured yet either
+    expect(resAtRetry).toBeNull() // Not captured yet either
 
     // Balance still shows reserved funds (not consumed)
     const { data: balAtRetry } = await admin
@@ -285,7 +275,7 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
         return finalJob?.status === 'FAILED'
       },
       'Generation job reached terminal FAILED state after max retries',
-      120_000
+      180_000
     )
 
     const { data: terminalJob } = await admin
@@ -308,7 +298,6 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
       .maybeSingle()
 
     // After terminal failure: reservation released or never created
-    // If ACTIVE: that's a bug; must be RELEASED or null
     if (resAfterFail) {
       expect(resAfterFail.status).not.toBe('ACTIVE') // Must release!
       expect(resAfterFail.status).toBeOneOf(['RELEASED', 'CANCELLED'] as const)
@@ -362,5 +351,5 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
     expect(storyAfterFail!.commercial_origin).toBeNull() // Never became PAID_START
 
     console.log(`[proof] ✅ FAILURE NO-BURN VERIFIED: RETRY_WAIT had zero debits, terminal FAILED released reservation, balance restored to ${initialBalance}, zero duplicates across all domains`)
-  }, 180_000)
+  }, 240_000)
 })

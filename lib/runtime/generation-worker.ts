@@ -10,7 +10,6 @@
  */
 import 'server-only'
 import { resolveCommercialWorkerPreflight } from '@/lib/commercial/worker-preflight.server'
-import { createAdminClient } from '@/lib/supabase/admin'
 import {
   acquireGenerationJobLease,
   claimGenerationJob,
@@ -34,6 +33,7 @@ import {
   SEMANTIC_JUDGE_UNAVAILABLE,
 } from '@lakoku/ai-gateway'
 import { retryWindowFitsJobDeadline } from '@/lib/runtime/choice-execution-budget'
+import { finalizeTerminalCommercialGeneration } from './generation-jobs'
 
 // Re-export ClaimedGenerationJob type for callers (recovery route).
 export type { ClaimedGenerationJob }
@@ -417,49 +417,33 @@ export async function executeClaimedJob(
     // TERMINAL COMMERCIAL FINALIZATION: Release ACTIVE reservation on FAILED state
     if (finish.status === 'FAILED' || finish.status === 'CANCELLED') {
       try {
-        const admin = createAdminClient()
-        const finalizationResult = await admin.rpc('finalize_terminal_commercial_generation_v1', {
-          p_job_id: job.id,
-        })
+        const finalizationResult = await finalizeTerminalCommercialGeneration(job.id)
         
-        // Log terminal finalization result
-        if (finalizationResult && typeof finalizationResult === 'object' && 'ok' in finalizationResult) {
-          const fin = finalizationResult as Record<string, unknown>
+        // Log terminal finalization result - simple property access with optional chaining
+        if (!finalizationResult.ok) {
+          const reason = finalizationResult.reason
+          const status = ('status' in finalizationResult && finalizationResult.status !== undefined) ? finalizationResult.status : undefined
+          console.error('GENERATION_WORKER_TERMINAL_FINALIZE_FAILED', {
+            jobId: job.id,
+            reason: reason,
+            status: status,
+          })
+        } else {
+          // All success cases have ref at minimum
+          const hasOp = 'operation' in finalizationResult && finalizationResult.operation !== undefined
+          const opVal: string = hasOp ? finalizationResult.operation : 'unknown'
+          const prevStatus = ('previous_status' in finalizationResult && finalizationResult.previous_status !== undefined) ? finalizationResult.previous_status : undefined
+          const newStatus = ('new_status' in finalizationResult && finalizationResult.new_status !== undefined) ? finalizationResult.new_status : undefined
+          const chNum = ('chapter_number' in finalizationResult && finalizationResult.chapter_number !== undefined) ? finalizationResult.chapter_number : undefined
           
-          if (fin.ok === true && fin.operation === 'STORY_START') {
-            console.log('GENERATION_WORKER_TERMINAL_FINALIZED', {
-              jobId: job.id,
-              operation: 'STORY_START',
-              ref: fin.ref as string,
-              previous_status: (fin.previous_status as string | undefined),
-              new_status: (fin.new_status as string | undefined),
-            })
-          } else if (fin.ok === true && fin.operation === 'CHAPTER_UNLOCK') {
-            console.log('GENERATION_WORKER_TERMINAL_FINALIZED', {
-              jobId: job.id,
-              operation: 'CHAPTER_UNLOCK',
-              ref: fin.ref as string,
-              chapter_number: (fin.chapter_number as number | undefined),
-              previous_status: (fin.previous_status as string | undefined),
-              new_status: (fin.new_status as string | undefined),
-            })
-          } else if (fin.ok === true && fin.already_released === true) {
-            console.log('GENERATION_WORKER_TERMINAL_FINALIZE_ALREADY_RELEASED', {
-              jobId: job.id,
-              ref: (fin.ref as string | undefined),
-            })
-          } else if (fin.ok === true && fin.reservation_not_found === true) {
-            console.log('GENERATION_WORKER_TERMINAL_FINALIZE_NO_RESERVATION', {
-              jobId: job.id,
-              ref: (fin.ref as string | undefined),
-            })
-          } else if (fin.ok === false && fin.reason === 'CAPTURED_INARIANT_VIOLATION') {
-            console.error('GENERATION_WORKER_TERMINAL_FINALIZE_CAPTURED_INVARIANT', {
-              jobId: job.id,
-              reason: (fin.reason as string),
-              status: (fin.status as string | undefined),
-            })
-          }
+          console.log('GENERATION_WORKER_TERMINAL_FINALIZED', {
+            jobId: job.id,
+            operation: opVal,
+            ref: finalizationResult.ref,
+            previous_status: prevStatus,
+            new_status: newStatus,
+            chapter_number: chNum,
+          })
         }
       } catch (err) {
         console.error('GENERATION_WORKER_TERMINAL_FINALIZE_EXCEPTION', {

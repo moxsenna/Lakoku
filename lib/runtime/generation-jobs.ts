@@ -528,13 +528,35 @@ export async function cancelGenerationJob(
   if (result.ok && result.status === 'CANCELLED') {
     // TERMINAL COMMERCIAL FINALIZATION on CANCELLED state
     try {
-      const admin = createAdminClient()
-      await admin.rpc('finalize_terminal_commercial_generation_v1', {
-        p_job_id: parsed.jobId,
-      })
-      console.log('GENERATION_JOB_CANCELLATION_FINALIZED', {
-        jobId: parsed.jobId,
-      })
+      const finalizationResult = await finalizeTerminalCommercialGeneration(parsed.jobId)
+      
+      if (!finalizationResult.ok) {
+        if (finalizationResult.reason === 'CAPTURED_INARIANT_VIOLATION') {
+          console.error('GENERATION_JOB_CANCELLATION_FINALIZE_CAPTURED_INVARIANT', {
+            jobId: parsed.jobId,
+            reason: finalizationResult.reason,
+            status: ('status' in finalizationResult ? finalizationResult.status : undefined),
+          })
+        } else if ('reason' in finalizationResult) {
+          console.error('GENERATION_JOB_CANCELLATION_FINALIZE_FAILED', {
+            jobId: parsed.jobId,
+            reason: finalizationResult.reason,
+          })
+        }
+      } else {
+        // Discriminated union - operation is only available on operation variants
+        if ('operation' in finalizationResult) {
+          console.log('GENERATION_JOB_CANCELLATION_FINALIZED', {
+            jobId: parsed.jobId,
+            operation: finalizationResult.operation,
+          })
+        } else {
+          console.log('GENERATION_JOB_CANCELLATION_FINALIZED', {
+            jobId: parsed.jobId,
+            operation: 'unknown',
+          })
+        }
+      }
     } catch (err) {
       console.error('GENERATION_JOB_CANCELLATION_FINALIZE_EXCEPTION', {
         jobId: parsed.jobId,
@@ -660,7 +682,7 @@ export async function publishGenerationJobChapterV3(
   input: PublishGenerationJobChapterV3Input,
 ): Promise<PublishGenerationJobChapterResult> {
   const parsed = PublicationV3InputSchema.parse(input)
-  const raw = RawPublicationResultSchema.parse(await callRpc('publish_generation_job_chapter_v3', {
+  const raw = RawPublicationResultSchema.parse(callRpc('publish_generation_job_chapter_v3', {
     p_job_id: parsed.jobId,
     p_worker_id: parsed.workerId,
     p_claim_token: parsed.claimToken,
@@ -690,7 +712,7 @@ export async function publishGenerationJobChapterV4(
     effect_json: outcome.effect,
     choice_kind: outcome.choiceKind,
   }))
-  const raw = RawPublicationResultSchema.parse(await callRpc('publish_generation_job_chapter_v4', {
+  const raw = RawPublicationResultSchema.parse(callRpc('publish_generation_job_chapter_v4', {
     p_job_id: parsed.jobId,
     p_worker_id: parsed.workerId,
     p_claim_token: parsed.claimToken,
@@ -707,4 +729,85 @@ export async function publishGenerationJobChapterV4(
     p_closures: parsed.closures,
   }))
   return normalizePublicationResult(raw)
+}
+
+// Terminal Commercial Finalization Helper
+export type TerminalFinalizationResult =
+  | { ok: true; operation: 'STORY_START'; ref: string; previous_status?: string; new_status?: string }
+  | { ok: true; operation: 'CHAPTER_UNLOCK'; ref: string; chapter_number: number; intent_reset?: string; previous_status?: string; new_status?: string }
+  | { ok: true; already_released: boolean; ref: string; status?: string }
+  | { ok: true; reservation_not_found: boolean; ref: string; operation?: string; chapter_number?: number }
+  | { ok: false; reason: 'JOB_NOT_FOUND' }
+  | { ok: false; reason: 'NON_TERMINAL_STATE'; status: string }
+  | { ok: false; reason: 'CAPTURED_INARIANT_VIOLATION'; ref: string; status: string };
+
+export async function finalizeTerminalCommercialGeneration(
+  jobId: string,
+): Promise<TerminalFinalizationResult> {
+  const admin = createAdminClient()
+  
+  const raw = await admin.rpc('finalize_terminal_commercial_generation_v1', {
+    p_job_id: jobId,
+  }) as unknown as Record<string, unknown>
+  
+  if (!raw || typeof raw !== 'object') {
+    return { ok: false, reason: 'JOB_NOT_FOUND' }
+  }
+  
+  // Parse result from RPC response shape
+  const result = raw
+  
+  if ((result.ok as boolean | undefined) === false) {
+    const resultWithType = result as TerminalFinalizationResult
+    return resultWithType
+  }
+  
+  // Success case - map to appropriate union member
+  if ((result.already_released as boolean | undefined)) {
+    return {
+      ok: true,
+      already_released: true,
+      ref: (result.ref as string),
+      status: (result.status as string | undefined),
+    } as TerminalFinalizationResult
+  }
+  
+  if ((result.reservation_not_found as boolean | undefined)) {
+    return {
+      ok: true,
+      reservation_not_found: true,
+      ref: (result.ref as string),
+      operation: (result.operation as string | undefined),
+      chapter_number: (result.chapter_number as number | undefined),
+    } as TerminalFinalizationResult
+  }
+  
+  if ((result.operation as string) === 'STORY_START') {
+    return {
+      ok: true,
+      operation: 'STORY_START',
+      ref: (result.ref as string),
+      previous_status: (result.previous_status as string | undefined),
+      new_status: (result.new_status as string | undefined),
+    } as TerminalFinalizationResult
+  }
+  
+  if ((result.operation as string) === 'CHAPTER_UNLOCK') {
+    return {
+      ok: true,
+      operation: 'CHAPTER_UNLOCK',
+      ref: (result.ref as string),
+      chapter_number: (result.chapter_number as number),
+      intent_reset: (result.intent_reset as string | undefined),
+      previous_status: (result.previous_status as string | undefined),
+      new_status: (result.new_status as string | undefined),
+    } as TerminalFinalizationResult
+  }
+  
+  // Fallback
+  return {
+    ok: true,
+    already_released: true,
+    ref: (result.ref as string),
+  }
 }

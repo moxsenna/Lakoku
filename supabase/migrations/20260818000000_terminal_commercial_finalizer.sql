@@ -1,14 +1,13 @@
--- Terminal Commercial Finalization
+-- Terminal Commercial Finalization (R2: Canonical Schema Version)
 -- 
--- PURPOSE: Release ACTIVE credit_reservations when generation jobs reach terminal FAILED/CANCELLED state
--- 
--- This fixes PRODUCT P0 gap where finish_generation_job_attempt_v1 releases
--- generation_leases but NOT credit_reservations on terminal failure.
+-- Fixes PRODUCT P0: RELEASE ACTIVE credit_reservations when generation jobs
+-- reach terminal FAILED/CANCELLED state.
 --
--- SUPPORTS: STORY_START (personalized story creation) + CHAPTER_UNLOCK (chapter generation)
--- IDEMPOTENT: Yes - can be called multiple times safely
--- CONCURRENCY SAFE: Uses FOR UPDATE / SKIP LOCKED pattern
--- NO DEBIT: Never creates ledger entries, only releases reservations
+-- Uses real database schema:
+--   generation_jobs(id, story_id, chapter_number, user_id, generation_kind, status)
+--   commercial_generation_intents(user_id, story_id, chapter_number, generation_job_id, status)
+--   credit_reservations(id, user_id, story_id, chapter_number, reservation_kind, amount, status, ref)
+--   story_creation_requests(owner_user_id, request_kind, idempotency_key, story_id, status)
 
 create or replace function public.finalize_terminal_commercial_generation_v1(
   p_job_id uuid
@@ -19,125 +18,132 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_job public.generation_jobs%rowtype;
+  v_job_id uuid := p_job_id;
   v_now timestamptz := pg_catalog.clock_timestamp();
-  v_reservation_record record;
+  
+  -- Phase A: Non-locking immutable identity pre-read
+  v_story_id text;
+  v_chapter_number integer;
+  v_user_id uuid;
+  v_generation_kind text;
+  v_trigger_choice_id text;
+  v_current_status text;
+  
+  -- Phase B: Lock order U->S->M->Q (user advisory first)
   v_canonical_ref text;
+  v_reservation_record record;
+  v_was_released boolean := false;
+  
 begin
-  -- Load job with exclusive lock
-  select j.* into v_job
-  from public.generation_jobs j
-  where j.id = p_job_id
-  for update;
-
+  -- ===========================================================================
+  -- PHASE A: Non-locking immutable identity pre-read
+  -- ===========================================================================
+  select gj.story_id, gj.chapter_number, gj.user_id, gj.generation_kind, 
+         gj.trigger_choice_id, gj.status
+  into v_story_id, v_chapter_number, v_user_id, v_generation_kind, 
+       v_trigger_choice_id, v_current_status
+  from public.generation_jobs gj
+  where gj.id = v_job_id;
+  
   if not found then
     return pg_catalog.jsonb_build_object('ok', false, 'reason', 'JOB_NOT_FOUND');
   end if;
-
+  
   -- Validate terminal state (only FAILED or CANCELLED trigger release)
-  if v_job.status not in ('FAILED', 'CANCELLED') then
+  if v_current_status not in ('FAILED', 'CANCELLED') then
     return pg_catalog.jsonb_build_object(
       'ok', false,
       'reason', 'NON_TERMINAL_STATE',
-      'status', v_job.status
+      'status', v_current_status
     );
   end if;
-
-  -- Attempt to identify and release STORY_START reservation
-  if v_job.request_kind = 'personalized' and v_job.chapter_number is null then
-    -- Derive canonical ref from job provenance (not client input)
-    v_canonical_ref := 'story-start:' || v_job.owner_user_id::text || ':' || v_job.story_id;
+  
+  -- Determine which commercial operation this job belongs to
+  -- Path A: CHAPTER_UNLOCK (has commercial_generation_intents binding)
+  -- Path B: STORY_START (no explicit binding, derive from story/creator relationship
+  
+  if v_chapter_number >= 4 and v_trigger_choice_id is not null then
+    -- Likely CHAPTER_UNLOCK: check for exact intents binding
     
-    select * into v_reservation_record
-    from public.credit_reservations
-    where ref = v_canonical_ref
-    for update skip locked;
+    -- Acquire user advisory lock FIRST (canonical U->S->M->Q ordering)
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtext(v_user_id::text)
+    );
     
-    if found then
-      -- Only release ACTIVE reservations; CAPTURED is terminal already
-      if v_reservation_record.status = 'ACTIVE' then
-        update public.credit_reservations
-        set status = 'RELEASED',
-            released_at = v_now,
-            release_reason = case when v_job.last_error_code in ('MAX_ATTEMPTS_EXCEEDED', 'GENERATION_RETRY_EXHAUSTED', 'CHOICE_GENERATION_FAILED')
-              then 'TERMINAL_FAILURE' else 'CANCELLED' end
-        where id = v_reservation_record.id;
-        
-        return pg_catalog.jsonb_build_object(
-          'ok', true,
-          'operation', 'STORY_START',
-          'ref', v_canonical_ref,
-          'previous_status', v_reservation_record.status,
-          'new_status', 'RELEASED'
-        );
-      elsif v_reservation_record.status = 'RELEASED' then
-        -- Idempotent: already released
-        return pg_catalog.jsonb_build_object(
-          'ok', true,
-          'operation', 'STORY_START',
-          'ref', v_canonical_ref,
-          'already_released', true
-        );
-      else
-        -- CAPTURED or EXPIRED: invariant violation
-        return pg_catalog.jsonb_build_object(
-          'ok', false,
-          'reason', 'CAPTURED_INARIANT_VIOLATION',
-          'ref', v_canonical_ref,
-          'status', v_reservation_record.status
-        );
-      end if;
-    else
-      -- Reservation never created or already removed
+    -- Re-read job FOR UPDATE under user lock (validate identity)
+    select gj.story_id, gj.chapter_number, gj.status
+    into v_story_id, v_chapter_number, v_current_status
+    from public.generation_jobs gj
+    where gj.id = v_job_id
+    for update;
+    
+    -- Verify terminal state still holds after re-reading under lock
+    if v_current_status not in ('FAILED', 'CANCELLED') then
       return pg_catalog.jsonb_build_object(
         'ok', true,
-        'operation', 'STORY_START',
-        'ref', v_canonical_ref,
-        'reservation_not_found', true
+        'operation', 'CHAPTER_UNLOCK',
+        'ref', 'chapter-reservation:' || v_user_id::text || ':' || v_story_id || ':' || v_chapter_number::text,
+        'already_processed', true
       );
     end if;
-
-  -- Handle CHAPTER_UNLOCK reservation
-  elsif v_job.request_kind = 'choice' and v_job.chapter_number is not null then
-    v_canonical_ref := 'chapter-reservation:' || v_job.owner_user_id::text || ':' || v_job.story_id || ':' || v_job.chapter_number::text;
     
-    select * into v_reservation_record
-    from public.credit_reservations
-    where ref = v_canonical_ref
-    for update skip locked;
+    -- Find canonical reservation via INTENTS binding
+    v_canonical_ref := 'chapter-reservation:' || v_user_id::text || ':' || v_story_id || ':' || v_chapter_number::text;
     
-    if found then
-      if v_reservation_record.status = 'ACTIVE' then
-        update public.credit_reservations
-        set status = 'RELEASED',
-            released_at = v_now,
-            release_reason = case when v_job.last_error_code in ('MAX_ATTEMPTS_EXCEEDED', 'GENERATION_RETRY_EXHAUSTED', 'CHOICE_GENERATION_FAILED')
-              then 'TERMINAL_FAILURE' else 'CANCELLED' end
-        where id = v_reservation_record.id;
-        
-        return pg_catalog.jsonb_build_object(
-          'ok', true,
-          'operation', 'CHAPTER_UNLOCK',
-          'ref', v_canonical_ref,
-          'chapter_number', v_job.chapter_number,
-          'previous_status', v_reservation_record.status,
-          'new_status', 'RELEASED'
-        );
-      elsif v_reservation_record.status = 'RELEASED' then
-        -- Idempotent: already released
-        return pg_catalog.jsonb_build_object(
-          'ok', true,
-          'operation', 'CHAPTER_UNLOCK',
-          'ref', v_canonical_ref,
-          'chapter_number', v_job.chapter_number,
-          'already_released', true
-        );
-      else
-        -- CAPTURED or EXPIRED
+    select r.* into v_reservation_record
+    from public.credit_reservations r
+    where r.ref = v_canonical_ref
+    and r.user_id = v_user_id
+    and r.story_id = v_story_id
+    and r.chapter_number = v_chapter_number
+    for update;
+    
+    if found and v_reservation_record.status = 'ACTIVE' then
+      -- Release ACTIVE -> RELEASED
+      update public.credit_reservations
+      set status = 'RELEASED',
+          updated_at = v_now
+      where id = v_reservation_record.id;
+      
+      v_was_released := true;
+      
+      -- Also transition intent to retryable state (WAITING_FOR_CREDITS)
+      -- so authorize_commercial_generation_intent_v1 can re-queue replacement
+      update public.commercial_generation_intents cgi
+      set status = 'WAITING_FOR_CREDITS'
+      where cgi.generation_job_id = v_job_id
+      and cgi.user_id = v_user_id
+      and cgi.story_id = v_story_id
+      and cgi.chapter_number = v_chapter_number
+      and cgi.status = 'QUEUED';
+      
+      return pg_catalog.jsonb_build_object(
+        'ok', true,
+        'operation', 'CHAPTER_UNLOCK',
+        'ref', v_canonical_ref,
+        'chapter_number', v_chapter_number,
+        'intent_reset', 'WAITING_FOR_CREDITS',
+        'previous_status', v_reservation_record.status,
+        'new_status', 'RELEASED'
+      );
+      
+    elsif found then
+      -- Already released/captured/expired: idempotent success or invariant check
+      if v_reservation_record.status = 'CAPTURED' then
         return pg_catalog.jsonb_build_object(
           'ok', false,
           'reason', 'CAPTURED_INARIANT_VIOLATION',
           'ref', v_canonical_ref,
+          'chapter_number', v_chapter_number,
+          'status', v_reservation_record.status
+        );
+      else
+        return pg_catalog.jsonb_build_object(
+          'ok', true,
+          'operation', 'CHAPTER_UNLOCK',
+          'ref', v_canonical_ref,
+          'chapter_number', v_chapter_number,
+          'already_released', (v_reservation_record.status = 'RELEASED'),
           'status', v_reservation_record.status
         );
       end if;
@@ -146,27 +152,103 @@ begin
         'ok', true,
         'operation', 'CHAPTER_UNLOCK',
         'ref', v_canonical_ref,
-        'chapter_number', v_job.chapter_number,
+        'chapter_number', v_chapter_number,
         'reservation_not_found', true
       );
     end if;
-
+    
   else
-    -- Unsupported request kind or chapter configuration
-    return pg_catalog.jsonb_build_object(
-      'ok', true,
-      'reason', 'NO_CANONICAL_RESERVATION',
-      'request_kind', v_job.request_kind,
-      'chapter_number', v_job.chapter_number
+    -- Path B: STORY_START (BAB1 personalized, no explicit binding table)
+    -- Derive via job.user_id = story.owner_user_id AND job.story_id == story.id
+    
+    -- Acquire user advisory lock FIRST
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtext(v_user_id::text)
     );
+    
+    -- Acquire story-level share lock (S)
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtext(v_story_id::text)
+    );
+    
+    -- Re-read job FOR UPDATE under locks (validate identity)
+    select gj.story_id, gj.chapter_number, gj.status
+    into v_story_id, v_chapter_number, v_current_status
+    from public.generation_jobs gj
+    where gj.id = v_job_id
+    for update;
+    
+    if v_current_status not in ('FAILED', 'CANCELLED') then
+      return pg_catalog.jsonb_build_object(
+        'ok', true,
+        'operation', 'STORY_START',
+        'ref', 'story-start:' || v_user_id::text || ':' || v_story_id,
+        'already_processed', true
+      );
+    end if;
+    
+    -- Construct canonical STORY_START reservation ref
+    v_canonical_ref := 'story-start:' || v_user_id::text || ':' || v_story_id;
+    
+    select r.* into v_reservation_record
+    from public.credit_reservations r
+    where r.ref = v_canonical_ref
+    and r.user_id = v_user_id
+    and r.story_id = v_story_id
+    and r.chapter_number is null  -- STORY_START has NULL chapter_number
+    and r.reservation_kind = 'STORY_START'
+    for update;
+    
+    if found and v_reservation_record.status = 'ACTIVE' then
+      -- Release ACTIVE -> RELEASED
+      update public.credit_reservations
+      set status = 'RELEASED',
+          updated_at = v_now
+      where id = v_reservation_record.id;
+      
+      v_was_released := true;
+      
+      return pg_catalog.jsonb_build_object(
+        'ok', true,
+        'operation', 'STORY_START',
+        'ref', v_canonical_ref,
+        'previous_status', v_reservation_record.status,
+        'new_status', 'RELEASED'
+      );
+      
+    elsif found then
+      if v_reservation_record.status = 'CAPTURED' then
+        return pg_catalog.jsonb_build_object(
+          'ok', false,
+          'reason', 'CAPTURED_INARIANT_VIOLATION',
+          'ref', v_canonical_ref,
+          'status', v_reservation_record.status
+        );
+      else
+        return pg_catalog.jsonb_build_object(
+          'ok', true,
+          'operation', 'STORY_START',
+          'ref', v_canonical_ref,
+          'already_released', (v_reservation_record.status = 'RELEASED'),
+          'status', v_reservation_record.status
+        );
+      end if;
+    else
+      return pg_catalog.jsonb_build_object(
+        'ok', true,
+        'operation', 'STORY_START',
+        'ref', v_canonical_ref,
+        'reservation_not_found', true
+      );
+    end if;
   end if;
 end;
 $$;
 
--- Reconciliation RPC: catches orphaned ACTIVE reservations after terminal jobs
--- Used by recovery tick or background reconciliation process
+-- Reconciliation RPC: catch-up for orphaned ACTIVE reservations after terminal jobs
+-- Used by recovery tick OR separate background process
 create or replace function public.reconcile_terminal_commercial_reservations_v1(
-  p_batch_size integer default 100
+  p_batch_size integer default 50
 )
 returns jsonb
 language plpgsql
@@ -174,74 +256,76 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_job public.generation_jobs%rowtype;
-  v_now timestamptz := pg_catalog.clock_timestamp();
   v_reconciled_count integer := 0;
-  v_reconciled_refs text[];
+  v_job_ids uuid[];
+  v_now timestamptz := pg_catalog.clock_timestamp();
+  
+  -- Candidate jobs: terminal state with possible orphaned ACTIVE reservations
+  candidate_cursor cursor for
+    select gj.id, gj.user_id, gj.story_id, gj.chapter_number, gj.status
+    from public.generation_jobs gj
+    where gj.status in ('FAILED', 'CANCELLED')
+    order by gj.updated_at asc
+    limit p_batch_size
+    for update skip locked;
+    
+  v_candidate record;
   v_canonical_ref text;
   v_reservation_record record;
+  
 begin
-  if p_batch_size is null or p_batch_size < 1 or p_batch_size > 500 then
+  if p_batch_size is null or p_batch_size < 1 or p_batch_size > 200 then
     return pg_catalog.jsonb_build_object('reconciled_count', 0);
   end if;
-
-  -- Find all terminal jobs that may have unreleased commercial reservations
-  -- Use batch processing to avoid lock contention
-  for v_job in
-    select j.*
-    from public.generation_jobs j
-    where j.status in ('FAILED', 'CANCELLED')
-    order by j.updated_at asc
-    limit p_batch_size
-    for update of j skip locked
+  
+  open candidate_cursor;
   loop
-    v_reconciled_refs := array_append(coalesce(v_reconciled_refs, '{}'::text[]), v_job.id::text);
-    v_reconciled_count := v_reconciled_count + 1;
+    fetch next in candidate_cursor into v_candidate;
+    exit when not found;
     
-    -- Try STORY_START path
-    if v_job.request_kind = 'personalized' and v_job.chapter_number is null then
-      v_canonical_ref := 'story-start:' || v_job.owner_user_id::text || ':' || v_job.story_id;
+    v_canonical_ref := null;
+    v_reservation_record := null;
+    
+    -- Determine reservation ref based on operation type
+    if v_candidate.chapter_number is not null and v_candidate.chapter_number >= 4 then
+      v_canonical_ref := 'chapter-reservation:' || v_candidate.user_id::text || ':' || v_candidate.story_id || ':' || v_candidate.chapter_number::text;
+    else
+      v_canonical_ref := 'story-start:' || v_candidate.user_id::text || ':' || v_candidate.story_id;
+    end if;
+    
+    -- Try to acquire user lock
+    begin
+      perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(v_candidate.user_id::text));
       
+      -- Find ACTIVE reservation
       select r.* into v_reservation_record
       from public.credit_reservations r
       where r.ref = v_canonical_ref
+      and r.user_id = v_candidate.user_id
       and r.status = 'ACTIVE'
       for update skip locked;
       
       if found and v_reservation_record.status = 'ACTIVE' then
+        -- Release it
         update public.credit_reservations
         set status = 'RELEASED',
-            released_at = v_now,
+            updated_at = v_now,
             release_reason = 'RECONCILIATION'
         where id = v_reservation_record.id;
         
-        continue;
+        v_reconciled_count := v_reconciled_count + 1;
+        v_job_ids := array_append(coalesce(v_job_ids, '{}'::uuid[]), v_candidate.id);
       end if;
-    end if;
-    
-    -- Try CHAPTER_UNLOCK path
-    if v_job.request_kind = 'choice' and v_job.chapter_number is not null then
-      v_canonical_ref := 'chapter-reservation:' || v_job.owner_user_id::text || ':' || v_job.story_id || ':' || v_job.chapter_number::text;
-      
-      select r.* into v_reservation_record
-      from public.credit_reservations r
-      where r.ref = v_canonical_ref
-      and r.status = 'ACTIVE'
-      for update skip locked;
-      
-      if found and v_reservation_record.status = 'ACTIVE' then
-        update public.credit_reservations
-        set status = 'RELEASED',
-            released_at = v_now,
-            release_reason = 'RECONCILIATION'
-        where id = v_reservation_record.id;
-      end if;
-    end if;
+    exception when others then
+      -- Skip failed locks, try next batch item
+      continue;
+    end;
   end loop;
-
+  close candidate_cursor;
+  
   return pg_catalog.jsonb_build_object(
     'reconciled_count', v_reconciled_count,
-    'refs_reconciled', v_reconciled_refs
+    'job_ids_reconciled', v_job_ids
   );
 end;
 $$;

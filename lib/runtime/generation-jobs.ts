@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { createAdminClient } from '@lakoku/db'
+import { createAdminClient } from '@/lib/supabase/admin'
 import {
   GenerationJobError,
   extractGenerationJobRpcError,
@@ -520,9 +520,31 @@ export async function cancelGenerationJob(
     p_job_id: parsed.jobId,
     p_reason: parsed.reason,
   }))
-  return CancelResultSchema.parse(raw.ok
+  
+  const result = CancelResultSchema.parse(raw.ok
     ? { ok: true, status: raw.status }
     : { ok: false, reason: raw.reason })
+  
+  if (result.ok && result.status === 'CANCELLED') {
+    // TERMINAL COMMERCIAL FINALIZATION on CANCELLED state
+    try {
+      const admin = createAdminClient()
+      await admin.rpc('finalize_terminal_commercial_generation_v1', {
+        p_job_id: parsed.jobId,
+      })
+      console.log('GENERATION_JOB_CANCELLATION_FINALIZED', {
+        jobId: parsed.jobId,
+      })
+    } catch (err) {
+      console.error('GENERATION_JOB_CANCELLATION_FINALIZE_EXCEPTION', {
+        jobId: parsed.jobId,
+        errorName: err instanceof Error ? err.name : 'UNKNOWN',
+      })
+      // Non-critical: cancellation already succeeded
+    }
+  }
+  
+  return result
 }
 
 export async function recoverStaleGenerationJobs(

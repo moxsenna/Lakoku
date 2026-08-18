@@ -298,11 +298,7 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
 
     // === PHASE 4: Terminal failure post-conditions ===
     
-    // NOTE: Current implementation has NO terminal commercial finalizer RPC.
-    // finish_generation_job_attempt_v1 releases generation_leases but NOT credit_reservations.
-    // Reservation remains ACTIVE after terminal FAILED state.
-    // This IS THE BUG we're proving exists and needs implementation.
-    
+    // 1. Reservation MUST BE RELEASED on terminal FAILED (terminal finalizer releases it)
     const { data: resAfterFail, error: resFailError } = await admin
       .from('credit_reservations')
       .select('ref, status, amount')
@@ -313,16 +309,13 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
     
     expect(resAfterFail).not.toBeNull() // Must exist
     
-    // CURRENT BEHAVIOR: Reservation stays ACTIVE (BUG - no terminal finalizer)
-    // EXPECTED BEHAVIOR: Should be RELEASED/CANCELLED after terminal FAILED
-    // For now, document this as known gap
-    console.log(
-      `[KNOWN_GAP] Reservation status at terminal FAILED:`,
-      resAfterFail?.status,
-      '(Expected: RELEASED, Actual: ACTIVE due to missing terminal commercial finalizer)'
-    )
+    // TERMINAL FINALIZER PROOF: Reservation released after terminal FAILED
+    expect(resAfterFail!.status).toBe('RELEASED')
+    expect(resAfterFail!.amount).toBe(24)
     
-    // CRITICAL: story_start debit count = 0 (NO credit burn even though reservation active)
+    console.log(`[proof] Terminal finalizer released reservation after FAILED`)
+    
+    // CRITICAL: story_start debit count = 0 (NO credit burn even though reservation was active during retries)
     const { data: ledgerAfterFail, error: ledgerFailError } = await admin
       .from('credit_ledger')
       .select('delta')
@@ -335,21 +328,16 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
     
     console.log(`[proof] Credit ledger verified: zero story_start debits on terminal failure`)
     
-    // Balance shows reserved funds (not debited), so reduced from initial
+    // Balance fully restored (no debit occurred)
     const { data: balAfterFail, error: balFailError } = await admin
       .rpc('available_credit_balance_v1', { p_user_id: userId })
     
     if (balFailError) throw new Error(`Failed to query balance after failure: ${JSON.stringify(balFailError)}`)
     
-    // After terminal failure: balance reduced by reservation amount (24), not fully restored
-    // because no terminal finalizer exists yet
-    expect(balAfterFail).toBe(initialBalance - 24)
+    // After terminal failure + release: balance fully restored to initial amount
+    expect(balAfterFail).toBe(initialBalance)
     
-    console.log(
-      `[proof] Balance after terminal FAILED with ACTIVE reservation:`,
-      balAfterFail,
-      `(initial ${initialBalance} - reserved ${24})`
-    )
+    console.log(`[proof] Balance after terminal FAILED with RELEASED reservation: ${balAfterFail} (full restoration)`)
 
     // 4. Zero duplicate jobs/reservations/requests
     const { data: jobCountAfterFail } = await admin

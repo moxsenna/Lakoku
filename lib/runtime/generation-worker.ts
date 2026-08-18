@@ -10,6 +10,7 @@
  */
 import 'server-only'
 import { resolveCommercialWorkerPreflight } from '@/lib/commercial/worker-preflight.server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import {
   acquireGenerationJobLease,
   claimGenerationJob,
@@ -412,6 +413,64 @@ export async function executeClaimedJob(
     if (!finish.ok) {
       return { ok: false, outcome: 'OWNERSHIP_LOST', jobId: job.id, reason: finish.reason }
     }
+    
+    // TERMINAL COMMERCIAL FINALIZATION: Release ACTIVE reservation on FAILED state
+    if (finish.status === 'FAILED' || finish.status === 'CANCELLED') {
+      try {
+        const admin = createAdminClient()
+        const finalizationResult = await admin.rpc('finalize_terminal_commercial_generation_v1', {
+          p_job_id: job.id,
+        })
+        
+        // Log terminal finalization result
+        if (finalizationResult && typeof finalizationResult === 'object' && 'ok' in finalizationResult) {
+          const fin = finalizationResult as Record<string, unknown>
+          
+          if (fin.ok === true && fin.operation === 'STORY_START') {
+            console.log('GENERATION_WORKER_TERMINAL_FINALIZED', {
+              jobId: job.id,
+              operation: 'STORY_START',
+              ref: fin.ref as string,
+              previous_status: (fin.previous_status as string | undefined),
+              new_status: (fin.new_status as string | undefined),
+            })
+          } else if (fin.ok === true && fin.operation === 'CHAPTER_UNLOCK') {
+            console.log('GENERATION_WORKER_TERMINAL_FINALIZED', {
+              jobId: job.id,
+              operation: 'CHAPTER_UNLOCK',
+              ref: fin.ref as string,
+              chapter_number: (fin.chapter_number as number | undefined),
+              previous_status: (fin.previous_status as string | undefined),
+              new_status: (fin.new_status as string | undefined),
+            })
+          } else if (fin.ok === true && fin.already_released === true) {
+            console.log('GENERATION_WORKER_TERMINAL_FINALIZE_ALREADY_RELEASED', {
+              jobId: job.id,
+              ref: (fin.ref as string | undefined),
+            })
+          } else if (fin.ok === true && fin.reservation_not_found === true) {
+            console.log('GENERATION_WORKER_TERMINAL_FINALIZE_NO_RESERVATION', {
+              jobId: job.id,
+              ref: (fin.ref as string | undefined),
+            })
+          } else if (fin.ok === false && fin.reason === 'CAPTURED_INARIANT_VIOLATION') {
+            console.error('GENERATION_WORKER_TERMINAL_FINALIZE_CAPTURED_INVARIANT', {
+              jobId: job.id,
+              reason: (fin.reason as string),
+              status: (fin.status as string | undefined),
+            })
+          }
+        }
+      } catch (err) {
+        console.error('GENERATION_WORKER_TERMINAL_FINALIZE_EXCEPTION', {
+          jobId: job.id,
+          errorName: err instanceof Error ? err.name : 'UNKNOWN',
+          errorMessage: err instanceof Error ? err.message : String(err),
+        })
+        // Non-critical: worker should still return FAILED even if finalization fails
+      }
+    }
+    
     console.log('GENERATION_WORKER_FAILED', {
       jobId: job.id,
       reason: normalized.reason,

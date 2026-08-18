@@ -59,7 +59,7 @@ begin
   
   return pg_catalog.jsonb_build_object(
     'candidates', coalesce(v_results, '[]'::jsonb),
-    'count', (pg_catalog.jsonb_array_length(v_results) ?? 0)
+    'count', coalesce(pg_catalog.jsonb_array_length(v_results), 0)
   );
 end;
 $$;

@@ -11,8 +11,10 @@
  *  1. Verify bearer secret; FAIL CLOSED when LAKOKU_RECOVERY_SECRET is unset.
  *  2. recover_stale_generation_jobs_v1 (requeue leases from dead workers).
  *  3. Bounded processing via after(): global-pop claim + run up to N jobs.
- *  4. Return 202 immediately; never leak job detail to caller.
- *  5. Safe under overlapping ticks (claim uses FOR UPDATE SKIP LOCKED).
+ *  4. Discover terminal jobs with ACTIVE reservations (J discovery RPC).
+ *  5. Loop candidates through finalize_terminal_commercial_generation_v1.
+ *  6. Return 202 immediately; never leak job detail to caller.
+ *  7. Safe under overlapping ticks (claim uses FOR UPDATE SKIP LOCKED).
  */
 import { after } from 'next/server'
 import { NextResponse, type NextRequest } from 'next/server'
@@ -21,6 +23,8 @@ import {
   recoverStaleGenerationJobs,
   claimAndRunAvailableJobs,
   isGenerationWorkerEnabled,
+  listTerminalCommercialFinalizationCandidates,
+  finalizeTerminalCommercialGeneration,
 } from '@lakoku/runtime'
 import { safeErrorInfo } from '@/lib/observability/safe-error'
 
@@ -82,9 +86,44 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       try {
         const recovered = await recoverStaleGenerationJobs({ batchSize: DEFAULT_RECOVERY_BATCH })
         const run = await claimAndRunAvailableJobs({ maxJobs: maxJobsPerTick() })
+        
+        // J + G: Discover terminal jobs with ACTIVE reservations and finalize them
+        const discovery = await listTerminalCommercialFinalizationCandidates(10)
+        let finalizedCount = 0
+        let failedCount = 0
+        
+        for (const candidate of discovery.candidates) {
+          try {
+            const result = await finalizeTerminalCommercialGeneration(candidate.job_id)
+            if (result.ok) {
+              console.log('GENERATION_RECOVER_TERMINAL_FINALIZED', {
+                jobId: candidate.job_id,
+                outcome: result.outcome,
+                operation: ('operation' in result ? result.operation : undefined),
+              })
+              finalizedCount++
+            } else {
+              console.log('GENERATION_RECOVER_TERMINAL_FAILURE', {
+                jobId: candidate.job_id,
+                reason: result.reason,
+              })
+              failedCount++
+            }
+          } catch (err) {
+            console.error('GENERATION_RECOVER_TERMINAL_EXCEPTION', {
+              jobId: candidate.job_id,
+              errorName: err instanceof Error ? err.name : 'UNKNOWN',
+            })
+            failedCount++
+          }
+        }
+        
         console.log('GENERATION_RECOVER_TICK', {
           recoveredCount: recovered.recoveredCount,
           ran: run.ran,
+          discoveryCount: discovery.count,
+          finalizedCount,
+          failedCount,
           elapsedMs: Date.now() - startedAt,
         })
       } catch (err) {

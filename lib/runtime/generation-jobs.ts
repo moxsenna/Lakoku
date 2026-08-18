@@ -512,6 +512,70 @@ export async function finishGenerationJobAttempt(
     : { ok: false, reason: raw.reason })
 }
 
+// Centralized terminal finish + commercial finalization
+export async function finishAttemptAndFinalizeIfTerminal(
+  input: FinishGenerationJobAttemptInput & { jobId: string },
+): Promise<{
+  ok: true
+  status: 'SUCCEEDED' | 'RETRY_WAIT' | 'FAILED' | 'CANCELLED'
+} | {
+  ok: false
+  reason: string
+}> {
+  const finish = await finishGenerationJobAttempt({
+    jobId: input.jobId,
+    workerId: input.workerId,
+    claimToken: input.claimToken,
+    outcome: input.outcome,
+    availableAt: input.availableAt,
+    errorCode: input.errorCode,
+    errorClass: input.errorClass,
+    workflowPhase: input.workflowPhase,
+    providerId: input.providerId,
+    modelId: input.modelId,
+    startedAt: input.startedAt,
+    endedAt: input.endedAt,
+    elapsedMs: input.elapsedMs,
+    leaseAgeMs: input.leaseAgeMs,
+    leaseRemainingMs: input.leaseRemainingMs,
+    retryDecision: input.retryDecision,
+  })
+  
+  if (!finish.ok) {
+    return finish
+  }
+  
+  // TERMINAL STATE: execute commercial finalization
+  if (finish.status === 'FAILED' || finish.status === 'CANCELLED') {
+    try {
+      const finalizationResult = await finalizeTerminalCommercialGeneration(input.jobId)
+      
+      if (!finalizationResult.ok) {
+        console.error('GENERATION_JOB_TERMINAL_FINALIZE_FAILED', {
+          jobId: input.jobId,
+          reason: finalizationResult.reason,
+          status: ('status' in finalizationResult ? finalizationResult.status : undefined),
+        })
+      } else {
+        console.log('GENERATION_JOB_TERMINAL_FINALIZED', {
+          jobId: input.jobId,
+          outcome: finalizationResult.outcome,
+          ref: ('ref' in finalizationResult ? finalizationResult.ref : undefined),
+        })
+      }
+    } catch (err) {
+      console.error('GENERATION_JOB_TERMINAL_FINALIZE_EXCEPTION', {
+        jobId: input.jobId,
+        errorName: err instanceof Error ? err.name : 'UNKNOWN',
+        errorMessage: err instanceof Error ? err.message : String(err),
+      })
+      // Non-critical: job is already TERMINATED
+    }
+  }
+  
+  return finish
+}
+
 export async function cancelGenerationJob(
   input: CancelGenerationJobInput,
 ): Promise<CancelGenerationJobResult> {
@@ -731,78 +795,122 @@ export async function publishGenerationJobChapterV4(
   return normalizePublicationResult(raw)
 }
 
-// Terminal Commercial Finalization - Zod Schemas
+// Terminal Commercial Finalization - Zod Schemas (R2: outcome-based discrimination)
 
-const TerminalFinalizationSuccessSchema = z.discriminatedUnion('ok', [
-  z.object({
-    ok: z.literal(true),
-    operation: z.literal('STORY_START'),
-    ref: z.string(),
-    previous_status: z.string().optional(),
-    new_status: z.string().optional(),
-  }),
-  z.object({
-    ok: z.literal(true),
-    operation: z.literal('CHAPTER_UNLOCK'),
-    ref: z.string(),
-    chapter_number: z.number().int(),
-    intent_reset: z.string().optional(),
-    previous_status: z.string().optional(),
-    new_status: z.string().optional(),
-  }),
-  z.object({
-    ok: z.literal(true),
-    already_released: z.literal(true),
-    ref: z.string(),
-    status: z.string().optional(),
-  }),
-  z.object({
-    ok: z.literal(true),
-    reservation_not_found: z.literal(true),
-    ref: z.string(),
-    operation: z.string().optional(),
-    chapter_number: z.number().int().optional(),
-  }),
+// Success outcomes
+const ReleasedStoryStartSchema = z.object({
+  ok: z.literal(true),
+  outcome: z.literal('RELEASED'),
+  operation: z.literal('STORY_START'),
+  ref: z.string(),
+  previous_status: z.string(),
+  new_status: z.literal('RELEASED'),
+})
+
+const ReleasedChapterSchema = z.object({
+  ok: z.literal(true),
+  outcome: z.literal('RELEASED'),
+  operation: z.literal('CHAPTER_UNLOCK'),
+  ref: z.string(),
+  chapter_number: z.number().int(),
+  intent_reset: z.string().optional(),
+  previous_status: z.string(),
+  new_status: z.literal('RELEASED'),
+})
+
+const AlreadyReleasedSchema = z.object({
+  ok: z.literal(true),
+  outcome: z.literal('ALREADY_RELEASED'),
+  ref: z.string(),
+  status: z.literal('RELEASED'),
+})
+
+const AlreadyNonActiveSchema = z.object({
+  ok: z.literal(true),
+  outcome: z.literal('ALREADY_NON_ACTIVE'),
+  ref: z.string(),
+  status: z.literal('EXPIRED'),
+})
+
+const NoCommercialBindingSchema = z.object({
+  ok: z.literal(true),
+  outcome: z.literal('NO_COMMERCIAL_BINDING'),
+  job_id: z.string(),
+})
+
+const SuccessSchema = z.union([
+  ReleasedStoryStartSchema,
+  ReleasedChapterSchema,
+  AlreadyReleasedSchema,
+  AlreadyNonActiveSchema,
+  NoCommercialBindingSchema,
 ])
 
-const TerminalFinalizationFailureSchema = z.discriminatedUnion('ok', [
-  z.object({
-    ok: z.literal(false),
-    reason: z.literal('JOB_NOT_FOUND'),
-  }),
-  z.object({
-    ok: z.literal(false),
-    reason: z.literal('NON_TERMINAL_STATE'),
-    status: z.string(),
-  }),
-  z.object({
-    ok: z.literal(false),
-    reason: z.literal('PROVENANCE_CONFLICT'),
-    ref: z.string(),
-  }),
-  z.object({
-    ok: z.literal(false),
-    reason: z.literal('RESERVATION_MISSING'),
-    ref: z.string(),
-    operation: z.string(),
-    chapter_number: z.number().int().optional(),
-  }),
-  z.object({
-    ok: z.literal(false),
-    reason: z.literal('CAPTURED_INVARIANT_VIOLATION'),
-    ref: z.string(),
-    status: z.string().optional(),
-  }),
-  z.object({
-    ok: z.literal(false),
-    reason: z.literal('NO_COMMERCIAL_BINDING'),
-    ref: z.string(),
-  }),
+// Failure outcomes
+const JobNotFoundSchema = z.object({
+  ok: z.literal(false),
+  reason: z.literal('JOB_NOT_FOUND'),
+})
+
+const NonTerminalStateSchema = z.object({
+  ok: z.literal(false),
+  reason: z.literal('NON_TERMINAL_STATE'),
+  status: z.string(),
+})
+
+const ProvenanceConflictSchema = z.object({
+  ok: z.literal(false),
+  reason: z.literal('PROVENANCE_CONFLICT'),
+  job_id: z.string(),
+  operation: z.string().optional(),
+  chapter_number: z.number().int().optional(),
+})
+
+const ReservationMissingSchema = z.object({
+  ok: z.literal(false),
+  reason: z.literal('RESERVATION_MISSING'),
+  ref: z.string(),
+  operation: z.string(),
+  chapter_number: z.number().int().optional(),
+})
+
+const CapturedInvariantViolationSchema = z.object({
+  ok: z.literal(false),
+  reason: z.literal('CAPTURED_INVARIANT_VIOLATION'),
+  ref: z.string(),
+  status: z.string(),
+})
+
+const ReservationAmountMismatchSchema = z.object({
+  ok: z.literal(false),
+  reason: z.literal('RESERVATION_AMOUNT_MISMATCH'),
+  ref: z.string(),
+  operation: z.string(),
+  chapter_number: z.number().int().optional(),
+  expected_amount: z.number(),
+  actual_amount: z.number(),
+})
+
+const UnknownReservationStateSchema = z.object({
+  ok: z.literal(false),
+  reason: z.literal('UNKNOWN_RESERVATION_STATE'),
+  ref: z.string(),
+  status: z.string(),
+})
+
+const FailureSchema = z.union([
+  JobNotFoundSchema,
+  NonTerminalStateSchema,
+  ProvenanceConflictSchema,
+  ReservationMissingSchema,
+  CapturedInvariantViolationSchema,
+  ReservationAmountMismatchSchema,
+  UnknownReservationStateSchema,
 ])
 
 export type TerminalFinalizationResult =
-  | z.infer<typeof TerminalFinalizationSuccessSchema>
-  | z.infer<typeof TerminalFinalizationFailureSchema>
+  | z.infer<typeof SuccessSchema>
+  | z.infer<typeof FailureSchema>
 
 export async function finalizeTerminalCommercialGeneration(
   jobId: string,
@@ -816,11 +924,11 @@ export async function finalizeTerminalCommercialGeneration(
     { p_job_id: parsedJobId },
   )
   
-  // Parse through discriminated union schemas
+  // Parse through discriminated union schemas (outcome-based)
   try {
-    return TerminalFinalizationSuccessSchema.parse(raw)
+    return SuccessSchema.parse(raw)
   } catch {
     // Try failure schema
-    return TerminalFinalizationFailureSchema.parse(raw)
+    return FailureSchema.parse(raw)
   }
 }

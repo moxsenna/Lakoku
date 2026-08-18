@@ -14,7 +14,7 @@ import {
   acquireGenerationJobLease,
   claimGenerationJob,
   claimGenerationJobById,
-  finishGenerationJobAttempt,
+  finishAttemptAndFinalizeIfTerminal,
   heartbeatGenerationJob,
   type ClaimedGenerationJob,
 } from '@/lib/runtime/generation-jobs'
@@ -33,7 +33,6 @@ import {
   SEMANTIC_JUDGE_UNAVAILABLE,
 } from '@lakoku/ai-gateway'
 import { retryWindowFitsJobDeadline } from '@/lib/runtime/choice-execution-budget'
-import { finalizeTerminalCommercialGeneration } from './generation-jobs'
 
 // Re-export ClaimedGenerationJob type for callers (recovery route).
 export type { ClaimedGenerationJob }
@@ -219,7 +218,7 @@ export async function executeClaimedJob(
       })
 
       if (authDecision.status !== 'AUTHORIZED') {
-        const finish = await finishGenerationJobAttempt({
+        const finish = await finishAttemptAndFinalizeIfTerminal({
           jobId: job.id,
           workerId: job.workerId,
           claimToken: job.claimToken,
@@ -249,7 +248,7 @@ export async function executeClaimedJob(
       jobContext = claimedJobToPartialContext(job, leaseId, controller.signal)
     } catch (err) {
       if (err instanceof Error && err.name === 'GenerationDeadlineError') {
-        const finish = await finishGenerationJobAttempt({
+        const finish = await finishAttemptAndFinalizeIfTerminal({
           jobId: job.id,
           workerId: job.workerId,
           claimToken: job.claimToken,
@@ -357,7 +356,7 @@ export async function executeClaimedJob(
     })
     if (normalized.retryable && retryFitsDeadline) {
       const availableAt = new Date(availableAtMs).toISOString()
-      const finish = await finishGenerationJobAttempt({
+      const finish = await finishAttemptAndFinalizeIfTerminal({
         jobId: job.id,
         workerId: job.workerId,
         claimToken: job.claimToken,
@@ -375,6 +374,7 @@ export async function executeClaimedJob(
         leaseRemainingMs: null,
         retryDecision: 'RETRY_BACKOFF',
       })
+      
       if (!finish.ok) {
         return { ok: false, outcome: 'OWNERSHIP_LOST', jobId: job.id, reason: finish.reason }
       }
@@ -384,22 +384,6 @@ export async function executeClaimedJob(
       // - retry window/deadline exhausted
       // Use ACTUAL finish.status, not requested outcome
       if (finish.status === 'FAILED' || finish.status === 'CANCELLED') {
-        // TERMINAL COMMERCIAL FINALIZATION on forced terminal state
-        try {
-          const finalizationResult = await finalizeTerminalCommercialGeneration(job.id)
-          console.log('GENERATION_WORKER_RETRY_FORCED_TERMINAL', {
-            jobId: job.id,
-            requestedOutcome: 'RETRY_WAIT',
-            actualStatus: finish.status,
-            finalizationResult: finalizationResult.ok ? 'success' : `failure:${finalizationResult.reason}`,
-          })
-        } catch (err) {
-          console.error('GENERATION_WORKER_RETRY_TERMINAL_FINALIZE_EXCEPTION', {
-            jobId: job.id,
-            errorName: err instanceof Error ? err.name : 'UNKNOWN',
-          })
-        }
-        
         console.log('GENERATION_WORKER_FORCED_FAILED', {
           jobId: job.id,
           reason: 'MAX_ATTEMPTS_EXHAUSTED',
@@ -423,7 +407,7 @@ export async function executeClaimedJob(
       }
     }
 
-    const finish = await finishGenerationJobAttempt({
+    const finish = await finishAttemptAndFinalizeIfTerminal({
       jobId: job.id,
       workerId: job.workerId,
       claimToken: job.claimToken,
@@ -443,47 +427,6 @@ export async function executeClaimedJob(
     })
     if (!finish.ok) {
       return { ok: false, outcome: 'OWNERSHIP_LOST', jobId: job.id, reason: finish.reason }
-    }
-    
-    // TERMINAL COMMERCIAL FINALIZATION: Release ACTIVE reservation on FAILED state
-    if (finish.status === 'FAILED' || finish.status === 'CANCELLED') {
-      try {
-        const finalizationResult = await finalizeTerminalCommercialGeneration(job.id)
-        
-        // Log terminal finalization result - simple property access with optional chaining
-        if (!finalizationResult.ok) {
-          const reason = finalizationResult.reason
-          const status = ('status' in finalizationResult && finalizationResult.status !== undefined) ? finalizationResult.status : undefined
-          console.error('GENERATION_WORKER_TERMINAL_FINALIZE_FAILED', {
-            jobId: job.id,
-            reason: reason,
-            status: status,
-          })
-        } else {
-          // All success cases have ref at minimum
-          const hasOp = 'operation' in finalizationResult && finalizationResult.operation !== undefined
-          const opVal: string = hasOp ? finalizationResult.operation! : 'NO_COMMERCIAL_BINDING'
-          const prevStatus = ('previous_status' in finalizationResult && finalizationResult.previous_status !== undefined) ? finalizationResult.previous_status! : undefined
-          const newStatus = ('new_status' in finalizationResult && finalizationResult.new_status !== undefined) ? finalizationResult.new_status! : undefined
-          const chNum = ('chapter_number' in finalizationResult && finalizationResult.chapter_number !== undefined) ? finalizationResult.chapter_number! : undefined
-          
-          console.log('GENERATION_WORKER_TERMINAL_FINALIZED', {
-            jobId: job.id,
-            operation: opVal,
-            ref: finalizationResult.ref,
-            previous_status: prevStatus,
-            new_status: newStatus,
-            chapter_number: chNum,
-          })
-        }
-      } catch (err) {
-        console.error('GENERATION_WORKER_TERMINAL_FINALIZE_EXCEPTION', {
-          jobId: job.id,
-          errorName: err instanceof Error ? err.name : 'UNKNOWN',
-          errorMessage: err instanceof Error ? err.message : String(err),
-        })
-        // Non-critical: worker should still return FAILED even if finalization fails
-      }
     }
     
     console.log('GENERATION_WORKER_FAILED', {

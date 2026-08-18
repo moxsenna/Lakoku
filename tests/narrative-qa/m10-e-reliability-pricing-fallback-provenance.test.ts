@@ -73,8 +73,8 @@ describe('M10-E R1-C pricing fallback provenance', () => {
       // estimatedCost remains present from pricing snapshot
     } as any
     
-    // Verify the mock has no actualCost present
-    expect(mockProviderCall.actualCost.state).toBe('ABSENT')
+    // Verify the mock has no actualCost present (state is MISSING when missingMeasurement used)
+    expect(mockProviderCall.actualCost.state).toBe('MISSING')
     expect(mockProviderCall.estimatedCost.state).toBe('PRESENT')
     
     // Aggregate should handle this by using pricing-derived costs

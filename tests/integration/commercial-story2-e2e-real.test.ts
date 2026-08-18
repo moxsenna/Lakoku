@@ -26,7 +26,8 @@ import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
-import type { GenerationProvider, PlanInput, WriteInput, ChoiceProviderInput } from '@/lib/ai-gateway/provider'
+import type { GenerationProvider, PlanInput } from '@/lib/ai-gateway/provider'
+import type { SemanticJudgeInput, SemanticJudgeResult, SemanticJudgeCode } from '@/lib/ai-gateway/semantic-continuation-judge'
 
 // Mock server-only and supabase/server BEFORE any other imports
 vi.mock('server-only', () => ({}))
@@ -59,7 +60,7 @@ vi.mock('@lakoku/ai-gateway/server', async (importOriginal) => {
 const validStory2Provider: GenerationProvider = {
   name: 'test-valid-story2-v1',
   
-  async generatePlan(input, _options) {
+  async generatePlan(input) {
     const { chapterNumber, blueprint } = input as PlanInput
     return {
       storyId: input.snapshot.storyId,
@@ -76,8 +77,8 @@ const validStory2Provider: GenerationProvider = {
     }
   },
   
-  async writeChapter(input, _options) {
-    const { snapshot, plan } = input as WriteInput
+  async writeChapter(input) {
+    const { snapshot } = input as WriteInput
     return {
       draft: `[GENERATION] Scene draft for Chapter 1\n\n` +
              `In the world of ${snapshot.storyId}, Chapter 1...`,
@@ -86,11 +87,11 @@ const validStory2Provider: GenerationProvider = {
     }
   },
   
-  async evaluateSemanticContinuity(_input, _options) {
-    return { ok: true, score: 0.95 }
+  async evaluateSemanticContinuity(_input: SemanticJudgeInput): Promise<SemanticJudgeResult> {
+    return { verdict: 'PASS' as const, codes: [] as SemanticJudgeCode[] }
   },
   
-  async generateChoices(input, _options) {
+  async generateChoices(_input) {
     // VALID CHOICE OUTPUT DERIVED FROM PRODUCTION CHOICE TESTS
     // Schema matches: tests/api/personalized-choice.test.ts golden fixtures
     const choices = [
@@ -151,9 +152,7 @@ describe('Commercial Story #2 Success E2E (Real DB)', () => {
     
     // WIRING FIX: Use VALID provider directly, NOT createDeterministicProvider
     mocks.selectProvider.mockResolvedValue(validStory2Provider)
-  })
-
-  beforeAll(async () => {
+    
     admin = createAdminClient()
     try { await admin.rpc('reload_schema_cache_v1') } catch {}
 

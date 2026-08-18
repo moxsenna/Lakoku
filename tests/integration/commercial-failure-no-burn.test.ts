@@ -10,7 +10,8 @@ import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
-import type { GenerationProvider, PlanInput, WriteInput, ChoiceProviderInput } from '@/lib/ai-gateway/provider'
+import type { GenerationProvider, PlanInput } from '@/lib/ai-gateway/provider'
+import type { SemanticJudgeInput, SemanticJudgeResult, SemanticJudgeCode } from '@/lib/ai-gateway/semantic-continuation-judge'
 
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/supabase/server', async () => {
@@ -38,8 +39,8 @@ vi.mock('@lakoku/ai-gateway/server', async (importOriginal) => {
 const faultyProvider: GenerationProvider = {
   name: 'faulty-deterministic-v1',
   
-  async generatePlan(input: PlanInput, _options) {
-    const { chapterNumber, blueprint } = input
+  async generatePlan(input) {
+    const { chapterNumber, blueprint } = input as PlanInput
     return {
       storyId: input.snapshot.storyId,
       chapterNumber,
@@ -55,8 +56,8 @@ const faultyProvider: GenerationProvider = {
     }
   },
   
-  async writeChapter(input: WriteInput, _options) {
-    const { snapshot, plan } = input
+  async writeChapter(input) {
+    const { snapshot } = input as WriteInput
     return {
       draft: `[FAILOVER MODE] Draft for Chapter 1\n\n` +
              `In the world of ${snapshot.storyId}...`,
@@ -65,11 +66,11 @@ const faultyProvider: GenerationProvider = {
     }
   },
   
-  async evaluateSemanticContinuity(_input, _options) {
-    return { ok: true, score: 0.85 }
+  async evaluateSemanticContinuity(_input: SemanticJudgeInput): Promise<SemanticJudgeResult> {
+    return { verdict: 'PASS' as const, codes: [] as SemanticJudgeCode[] }
   },
   
-  async generateChoices(_input: ChoiceProviderInput, _options) {
+  async generateChoices(_input) {
     // INVALID CHOICE OUTPUT (missing required field threadTouches on first choice)
     // This will fail production validator, causing RETRY_WAIT → eventually terminal failure
     const choices = [
@@ -111,9 +112,7 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
     
     // WIRING FIX: Use faulty provider directly
     mocks.selectProvider.mockResolvedValue(faultyProvider)
-  })
-
-  beforeAll(async () => {
+    
     admin = createAdminClient()
     try { await admin.rpc('reload_schema_cache_v1') } catch {}
 

@@ -40,5 +40,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['lib/**/*.test.ts', 'tests/**/*.test.ts'],
+    // Extended timeout for expensive model computations (E2 telemetry references, sensitivity bands)
+    testTimeout: 10_000,
   },
 })

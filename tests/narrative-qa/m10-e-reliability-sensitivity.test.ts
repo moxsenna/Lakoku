@@ -18,7 +18,7 @@ import { toCumulativeModelInput } from '../../lib/narrative-qa/reliability/artif
 import { buildModelInputRecordFixture, buildReliabilityObservationFixture, buildSensitivityInputFixture } from '../../fixtures/m10-e/reliability-contract-fixture'
 import { validateReliabilityObservationSet } from '../../lib/narrative-qa/reliability/measurements'
 import { computeSha256, stableStringify } from '../../lib/narrative-qa/scoring/canonical-serializer'
-import { ASSUMPTION_AUTHORITY_SCHEMA, assumedValue, canonicalAuthorityHash } from '../../lib/narrative-qa/reliability/contracts'
+import { ASSUMPTION_AUTHORITY_SCHEMA, assumedValue, canonicalAuthorityHash, STAGE_IDS } from '../../lib/narrative-qa/reliability/contracts'
 import {
   convertDecimal,
 } from '../../lib/narrative-qa/reliability/decimal'
@@ -311,69 +311,95 @@ describe('M10-E R1-B explicit sensitivity bands', () => {
     expect(canonicalHash).not.toBe(sensitivityHash)
   })
 
-  it('same probability + changed authority → inputHash changes but numeric output unchanged', () => {
-    const sameProbAuthority1 = buildSensitivityBandAuthority('PROSE_PRIMARY', 'lower', '0.05')
-    const sameProbAuthority2 = buildSensitivityBandAuthority('PROSE_PRIMARY', 'lower', '0.05_different_source')
+  it('same probability + changed authority → semantic hash changes but numeric output unchanged', () => {
+    // Build complete 11-stage sensitivity for input1 (using default values)
+    const sensitivityWithAuthority1 = STAGE_IDS.map((stageId) => ({
+      stageId,
+      lower: assumedValue(convertDecimal('0.05', 'PROBABILITY'), 
+        buildSensitivityBandAuthority(stageId, 'lower', `0.05_${stageId}_authorA`)),
+      upper: assumedValue(convertDecimal('0.15', 'PROBABILITY'), 
+        buildSensitivityBandAuthority(stageId, 'upper', `0.15_${stageId}_authorA`)),
+    }))
     
-    const input1 = toCumulativeModelInput({
-      ...modelRecord,
-      sensitivity: [
-        {
-          stageId: 'PROSE_PRIMARY',
-          lower: assumedValue(convertDecimal('0.05', 'PROBABILITY'), sameProbAuthority1),
-          upper: assumedValue(convertDecimal('0.15', 'PROBABILITY'), buildSensitivityBandAuthority('PROSE_PRIMARY', 'upper', '0.15')),
-        },
-      ],
+    // Build complete 11-stage sensitivity for input2 with only PROSE_PRIMARY authority different
+    const sensitivityWithAuthority2 = STAGE_IDS.map((stageId) => {
+      if (stageId === 'PROSE_PRIMARY') {
+        return {
+          stageId,
+          lower: assumedValue(convertDecimal('0.05', 'PROBABILITY'), 
+            buildSensitivityBandAuthority(stageId, 'lower', `0.05_${stageId}_authorB`)),
+          upper: assumedValue(convertDecimal('0.15', 'PROBABILITY'), 
+            buildSensitivityBandAuthority(stageId, 'upper', `0.15_${stageId}_authorA`)),
+        }
+      }
+      // All other stages use identical authority and value as input1
+      return {
+        stageId,
+        lower: assumedValue(convertDecimal('0.05', 'PROBABILITY'), 
+          buildSensitivityBandAuthority(stageId, 'lower', `0.05_${stageId}_authorA`)),
+        upper: assumedValue(convertDecimal('0.15', 'PROBABILITY'), 
+          buildSensitivityBandAuthority(stageId, 'upper', `0.15_${stageId}_authorA`)),
+      }
     })
     
-    const input2 = toCumulativeModelInput({
-      ...modelRecord,
-      sensitivity: [
-        {
-          stageId: 'PROSE_PRIMARY',
-          lower: assumedValue(convertDecimal('0.05', 'PROBABILITY'), sameProbAuthority2),
-          upper: assumedValue(convertDecimal('0.15', 'PROBABILITY'), buildSensitivityBandAuthority('PROSE_PRIMARY', 'upper', '0.15')),
-        },
-      ],
-    })
+    const input1 = toCumulativeModelInput({ ...modelRecord, sensitivity: sensitivityWithAuthority1 })
+    const input2 = toCumulativeModelInput({ ...modelRecord, sensitivity: sensitivityWithAuthority2 })
     
-    // Same probability should produce identical numeric output (central result unchanged)
-    const centralOutput1 = runCumulativeModel(input1)
-    const centralOutput2 = runCumulativeModel(input2)
-    
-    expect(centralOutput1.outputHash).toBe(centralOutput2.outputHash)
-    
-    // But semantic hashes differ (proving authority is part of canonical key)
+    // Semantic hashes differ (authority component changed)
     const hash1 = computeSha256(stableStringify(input1))
     const hash2 = computeSha256(stableStringify(input2))
-    
     expect(hash1).not.toBe(hash2)
+    
+    // But central numeric output stays constant (probability values unchanged across all stages)
+    const centralOutput1 = runCumulativeModel(input1)
+    const centralOutput2 = runCumulativeModel(input2)
+    expect(centralOutput1.outputHash).toBe(centralOutput2.outputHash)
   })
 
   it('same authority + changed sensitivity probability → sensitivity result changes, central unchanged', () => {
-    const sameAuthority = buildSensitivityBandAuthority('PROSE_PRIMARY', 'lower', '0.05_authority_ref')
-    
-    const lowProbInput = toCumulativeModelInput({
-      ...modelRecord,
-      sensitivity: [
-        {
-          stageId: 'PROSE_PRIMARY',
-          lower: assumedValue(convertDecimal('0.05', 'PROBABILITY'), sameAuthority),
-          upper: assumedValue(convertDecimal('0.15', 'PROBABILITY'), buildSensitivityBandAuthority('PROSE_PRIMARY', 'upper', '0.15')),
-        },
-      ],
+    // Build complete 11-stage sensitivity with low probabilities
+    const lowProbSensitivity = STAGE_IDS.map((stageId) => {
+      if (stageId === 'PROSE_PRIMARY') {
+        return {
+          stageId,
+          lower: assumedValue(convertDecimal('0.05', 'PROBABILITY'), 
+            buildSensitivityBandAuthority(stageId, 'lower', 'AUTH_REF_PROSE')),
+          upper: assumedValue(convertDecimal('0.15', 'PROBABILITY'), 
+            buildSensitivityBandAuthority(stageId, 'upper', 'AUTH_REF_UPPER')),
+        }
+      }
+      return {
+        stageId,
+        lower: assumedValue(convertDecimal('0.05', 'PROBABILITY'), 
+          buildSensitivityBandAuthority(stageId, 'lower', `0.05_${stageId}`)),
+        upper: assumedValue(convertDecimal('0.15', 'PROBABILITY'), 
+          buildSensitivityBandAuthority(stageId, 'upper', `0.15_${stageId}`)),
+      }
     })
     
-    const highProbInput = toCumulativeModelInput({
-      ...modelRecord,
-      sensitivity: [
-        {
-          stageId: 'PROSE_PRIMARY',
-          lower: assumedValue(convertDecimal('0.25', 'PROBABILITY'), sameAuthority),
-          upper: assumedValue(convertDecimal('0.45', 'PROBABILITY'), buildSensitivityBandAuthority('PROSE_PRIMARY', 'upper', '0.45')),
-        },
-      ],
+    // Build complete 11-stage sensitivity with high probabilities for PROSE_PRIMARY only
+    const highProbSensitivity = STAGE_IDS.map((stageId) => {
+      if (stageId === 'PROSE_PRIMARY') {
+        return {
+          stageId,
+          lower: assumedValue(convertDecimal('0.25', 'PROBABILITY'), 
+            buildSensitivityBandAuthority(stageId, 'lower', 'AUTH_REF_PROSE')),
+          upper: assumedValue(convertDecimal('0.45', 'PROBABILITY'), 
+            buildSensitivityBandAuthority(stageId, 'upper', 'AUTH_REF_UPPER_45')),
+        }
+      }
+      // All other stages keep original values
+      return {
+        stageId,
+        lower: assumedValue(convertDecimal('0.05', 'PROBABILITY'), 
+          buildSensitivityBandAuthority(stageId, 'lower', `0.05_${stageId}`)),
+        upper: assumedValue(convertDecimal('0.15', 'PROBABILITY'), 
+          buildSensitivityBandAuthority(stageId, 'upper', `0.15_${stageId}`)),
+      }
     })
+    
+    const lowProbInput = toCumulativeModelInput({ ...modelRecord, sensitivity: lowProbSensitivity })
+    const highProbInput = toCumulativeModelInput({ ...modelRecord, sensitivity: highProbSensitivity })
     
     // Different probabilities change sensitivity band probes (lower/upper vary)
     const lowLowerProbes = bandProbes(lowProbInput, 'lower')

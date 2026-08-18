@@ -26,7 +26,7 @@ import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
-import { createDeterministicProvider } from '@/lib/ai-gateway/provider'
+import type { PlanInput, WriteInput, ChoiceProviderInput, SemanticJudgeInput } from '@/lib/ai-gateway/provider'
 
 // Mock server-only and supabase/server BEFORE any other imports
 vi.mock('server-only', () => ({}))
@@ -56,7 +56,7 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
   const testProvider: any = {
     name: 'test-deterministic-valid-v1',
     
-    async generatePlan(input: any, _options: any) {
+    async generatePlan(input: PlanInput, _options: any) {
       const { chapterNumber, blueprint } = input
       return {
         storyId: input.snapshot.storyId,
@@ -73,21 +73,21 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
       }
     },
     
-    async writeChapter(input: any, _options: any) {
-      const { snapshot, plan, mode, paragraphStyle, contextMode } = input
+    async writeChapter(input: WriteInput, _options: any) {
+      const { snapshot, plan } = input
       return {
-        draft: `[${mode.toUpperCase()}] Scene draft for ${plan.chapterGoal}\n\n` +
+        draft: `[${input.mode.toUpperCase()}] Scene draft for ${plan.chapterGoal}\n\n` +
                `In the world of ${snapshot.storyTitle}, Chapter ${plan.chapterNumber}...`,
         usageEstimate: 500,
         estimatedDurationMs: 5000,
       }
     },
     
-    async evaluateSemanticContinuity(_input: any, _options: any) {
+    async evaluateSemanticContinuity(_input: SemanticJudgeInput, _options: any) {
       return { ok: true, score: 0.95 }
     },
     
-    async generateChoices(input: any, _options: any) {
+    async generateChoices(_input: ChoiceProviderInput, _options: any) {
       // VALID CHOICE OUTPUT MATCHING PRODUCTION CONTRACT
       // This is a golden fixture derived from passing choice tests
       const choices = [
@@ -149,14 +149,14 @@ describe('Commercial Story #2 Success E2E (Real DB)', () => {
   let userId = ''
   let admin: ReturnType<typeof createAdminClient>
   let testProvider: any = null
-
+  
   beforeAll(async () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'http://127.0.0.1:55321'
     process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU'
     
     // Initialize test provider BEFORE any tests run
     const providerModule = await import('@/lib/ai-gateway/provider')
-    testProvider = createDeterministicProvider()
+    testProvider = providerModule.createDeterministicProvider()
     mocks.selectProvider.mockResolvedValue(testProvider)
   })
 

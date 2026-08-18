@@ -10,7 +10,7 @@ import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
-import { createDeterministicProvider } from '@/lib/ai-gateway/provider'
+import type { PlanInput, WriteInput, ChoiceProviderInput, SemanticJudgeInput } from '@/lib/ai-gateway/provider'
 
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/supabase/server', async () => {
@@ -32,10 +32,10 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
   )
   
   // FAULTY provider: produces invalid choice structure (missing threadTouches)
-  const faultyProvider: any = {
+  const faultyProvider = {
     name: 'faulty-deterministic-v1',
     
-    async generatePlan(input: any, _options: any) {
+    async generatePlan(input: PlanInput, _options: any) {
       const { chapterNumber, blueprint } = input
       return {
         storyId: input.snapshot.storyId,
@@ -52,7 +52,7 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
       }
     },
     
-    async writeChapter(input: any, _options: any) {
+    async writeChapter(input: WriteInput, _options: any) {
       const { snapshot, plan } = input
       return {
         draft: `[FAILOVER MODE] Draft for ${plan.chapterGoal}\n\n` +
@@ -62,11 +62,11 @@ vi.mock('@lakoku/ai-gateway/server', async () => {
       }
     },
     
-    async evaluateSemanticContinuity(_input: any, _options: any) {
+    async evaluateSemanticContinuity(_input: SemanticJudgeInput, _options: any) {
       return { ok: true, score: 0.85 }
     },
     
-    async generateChoices(input: any, _options: any) {
+    async generateChoices(_input: ChoiceProviderInput, _options: any) {
       // INVALID CHOICE OUTPUT (missing required field threadTouches)
       // This will fail production validator, causing RETRY_WAIT → eventually terminal failure
       const choices = [

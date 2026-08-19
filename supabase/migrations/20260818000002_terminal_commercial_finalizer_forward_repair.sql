@@ -239,8 +239,8 @@ begin
   -- ===========================================================================
   -- PHASE Q: Last-row lock + FULL REVALIDATION (MUST BE LAST BEFORE MUTATIONS)
   -- ===========================================================================
-  select s.* 
-  into v_story_record
+  select s.*, gj.generation_kind, gj.trigger_choice_id, gj.status as job_status
+  into v_story_record, v_generation_kind, v_trigger_choice_id, v_current_status
   from public.generation_jobs gj
   join public.stories s on s.id = gj.story_id and s.owner_user_id = gj.user_id
   where gj.id = v_job_id

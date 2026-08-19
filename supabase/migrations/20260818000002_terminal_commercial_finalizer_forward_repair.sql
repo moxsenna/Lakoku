@@ -44,6 +44,10 @@ declare
   v_reservation_record record;
   v_canonical_ref text;
   
+  -- Reservation existence flags (must capture FOUND state explicitly)
+  v_story_reservation_found boolean;
+  v_chapter_reservation_found boolean;
+  
   -- Amount validation constants (canonical prices)
   constant_story_start_amount integer := 24;
   
@@ -151,6 +155,9 @@ begin
       and coalesce(r.chapter_number, 0) = 1
     for update;
     
+    -- Capture FOUND state BEFORE binding SELECT
+    v_story_reservation_found := found;
+    
     -- 4) Revalidate binding under lock
     select scr.* into v_binding_record
     from public.story_creation_requests scr
@@ -169,6 +176,17 @@ begin
       );
     end if;
     
+    -- Check reservation existence AFTER both SELECTs complete
+    if not v_story_reservation_found then
+      return pg_catalog.jsonb_build_object(
+        'ok', false,
+        'reason', 'RESERVATION_MISSING',
+        'ref', v_canonical_ref,
+        'operation', 'STORY_START',
+        'chapter_number', 1
+      );
+    end if;
+    
   else
     -- CHAPTER_UNLOCK path
     v_canonical_ref := 'chapter-reservation:' || v_user_id::text || ':' || v_story_id || ':' || v_chapter_number::text;
@@ -182,6 +200,9 @@ begin
       and r.chapter_number = v_chapter_number
       and r.reservation_kind = 'CHAPTER_UNLOCK'
     for update;
+    
+    -- Capture FOUND state BEFORE binding SELECT
+    v_chapter_reservation_found := found;
     
     -- 4) Revalidate binding under lock with trigger_choice_id check
     select cgi.* into v_binding_record
@@ -202,23 +223,9 @@ begin
         'chapter_number', v_chapter_number
       );
     end if;
-  end if;
-  
-  -- ===========================================================================
-  -- PHASE C: Process result based on reservation state
-  -- ===========================================================================
-  
-  if not found then
-    -- No matching reservation found => reservation missing for bound job
-    if v_story_binding_exists then
-      return pg_catalog.jsonb_build_object(
-        'ok', false,
-        'reason', 'RESERVATION_MISSING',
-        'ref', v_canonical_ref,
-        'operation', 'STORY_START',
-        'chapter_number', 1
-      );
-    else
+    
+    -- Check reservation existence AFTER both SELECTs complete
+    if not v_chapter_reservation_found then
       return pg_catalog.jsonb_build_object(
         'ok', false,
         'reason', 'RESERVATION_MISSING',
@@ -227,6 +234,80 @@ begin
         'chapter_number', v_chapter_number
       );
     end if;
+  end if;
+  
+  -- ===========================================================================
+  -- PHASE Q: Last-row lock + FULL REVALIDATION (MUST BE LAST BEFORE MUTATIONS)
+  -- ===========================================================================
+  
+  select gj.* 
+  into v_story_record
+  from public.generation_jobs gj
+  where gj.id = v_job_id
+  for update;
+  
+  if not found then
+    return pg_catalog.jsonb_build_object(
+      'ok', false,
+      'reason', 'JOB_NOT_FOUND',
+      'operation', 'Q_LOCK'
+    );
+  end if;
+  
+  -- Revalidate all critical fields under Q lock
+  if v_story_record.user_id != v_user_id then
+    return pg_catalog.jsonb_build_object(
+      'ok', false,
+      'reason', 'REVALIDATION_USER_MISMATCH',
+      'stored_user_id', v_story_record.user_id::text,
+      'expected_user_id', v_user_id::text
+    );
+  end if;
+  
+  if v_story_record.story_id != v_story_id then
+    return pg_catalog.jsonb_build_object(
+      'ok', false,
+      'reason', 'REVALIDATION_STORY_MISMATCH',
+      'stored_story_id', v_story_record.story_id,
+      'expected_story_id', v_story_id
+    );
+  end if;
+  
+  if coalesce(v_story_record.chapter_number, -1) != coalesce(v_chapter_number, -1) then
+    return pg_catalog.jsonb_build_object(
+      'ok', false,
+      'reason', 'REVALIDATION_CHAPTER_MISMATCH',
+      'stored_chapter_number', v_story_record.chapter_number,
+      'expected_chapter_number', v_chapter_number
+    );
+  end if;
+  
+  if v_story_record.generation_kind != v_generation_kind then
+    return pg_catalog.jsonb_build_object(
+      'ok', false,
+      'reason', 'REVALIDATION_KIND_MISMATCH',
+      'stored_generation_kind', v_story_record.generation_kind,
+      'expected_generation_kind', v_generation_kind
+    );
+  end if;
+  
+  if v_trigger_choice_id is not null and v_story_record.trigger_choice_id != v_trigger_choice_id then
+    return pg_catalog.jsonb_build_object(
+      'ok', false,
+      'reason', 'REVALIDATION_TRIGGER_CHOICE_MISMATCH',
+      'stored_trigger_choice_id', v_story_record.trigger_choice_id,
+      'expected_trigger_choice_id', v_trigger_choice_id
+    );
+  end if;
+  
+  -- Terminal state must be preserved
+  if v_story_record.status not in ('FAILED', 'CANCELLED') then
+    return pg_catalog.jsonb_build_object(
+      'ok', false,
+      'reason', 'REVALIDATION_STATUS_CHANGED',
+      'stored_status', v_story_record.status,
+      'expected_statuses', 'FAILED or CANCELLED'
+    );
   end if;
   
   -- Check reservation amount before processing
@@ -366,11 +447,11 @@ begin
   -- Uses SKIP LOCKED for safe concurrent discovery
   select pg_catalog.jsonb_agg(
     pg_catalog.jsonb_build_object(
-      'job_id', gj.id,
-      'user_id', gj.user_id,
-      'story_id', gj.story_id,
-      'chapter_number', gj.chapter_number,
-      'status', gj.status
+      'job_id', candidates.job_id,
+      'user_id', candidates.user_id,
+      'story_id', candidates.story_id,
+      'chapter_number', candidates.chapter_number,
+      'status', candidates.status
     )
   ) into v_results
   from (
@@ -384,14 +465,30 @@ begin
         and coalesce(r.chapter_number, 0) = coalesce(gj.chapter_number, 0)
         and r.status = 'ACTIVE'
         and (
-          -- STORY_START pattern
+          -- STORY_START pattern requires exact binding validation
           (r.reservation_kind = 'STORY_START' 
             and coalesce(r.chapter_number, 0) = 1
-            and gj.chapter_number = 1)
+            and gj.chapter_number = 1
+            and exists (
+              select 1 from public.story_creation_requests scr
+              where scr.generation_job_id = gj.id
+                and scr.owner_user_id = gj.user_id
+                and scr.story_id = gj.story_id
+                and scr.request_kind = 'personalized'
+            )
+          )
           or
-          -- CHAPTER_UNLOCK pattern
+          -- CHAPTER_UNLOCK pattern requires exact binding validation
           (r.reservation_kind = 'CHAPTER_UNLOCK'
-            and r.chapter_number = gj.chapter_number)
+            and r.chapter_number = gj.chapter_number
+            and exists (
+              select 1 from public.commercial_generation_intents cgi
+              where cgi.generation_job_id = gj.id
+                and cgi.user_id = gj.user_id
+                and cgi.story_id = gj.story_id
+                and cgi.chapter_number = gj.chapter_number
+            )
+          )
         )
     )
     order by gj.updated_at asc

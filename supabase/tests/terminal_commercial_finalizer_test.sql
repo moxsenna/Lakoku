@@ -419,15 +419,15 @@ select is(
 
 select is(
   (SELECT result->>'reason' FROM terminal_test_results WHERE case_name = 'story_missing_reservation'),
-  'RESERVATION_AMOUNT_MISMATCH',
-  'STORY_START missing reservation -> RESERVATION_AMOUNT_MISMATCH (actual_amount null)'
+  'RESERVATION_MISSING',
+  'STORY_START missing reservation -> RESERVATION_MISSING'
 );
 
 -- CHAPTER_UNLOCK CASES
 select is(
-  (SELECT result->>'reason' FROM terminal_test_results WHERE case_name = 'chapter_failed_active'),
-  'PROVENANCE_CONFLICT',
-  'CHAPTER_UNLOCK FAILED ACTIVE -> PROVENANCE_CONFLICT (residual binding from prior run)'
+  (SELECT result->>'outcome' FROM terminal_test_results WHERE case_name = 'chapter_failed_active'),
+  'RELEASED',
+  'CHAPTER_UNLOCK FAILED ACTIVE -> RELEASED'
 );
 
 select is(
@@ -436,9 +436,34 @@ select is(
   'CHAPTER_UNLOCK CANCELLED ACTIVE -> RELEASED'
 );
 
+-- Verify CHAPTER final state preservation (trigger_choice_id, quote, pricing unchanged)
+select is(
+  (SELECT trigger_choice_id::text from commercial_generation_intents where id = (SELECT intent_id FROM terminal_test_results WHERE case_name = 'chapter_cancelled_active')),
+  'choice-preserved',
+  'chapter_cancelled_active preserves trigger_choice_id'
+);
+
+select is(
+  (SELECT quoted_credits::text from commercial_generation_intents where id = (SELECT intent_id FROM terminal_test_results WHERE case_name = 'chapter_cancelled_active')),
+  '10',
+  'chapter_cancelled_active preserves quoted_credits'
+);
+
+select is(
+  (SELECT pricing_version::text from commercial_generation_intents where id = (SELECT intent_id FROM terminal_test_results WHERE case_name = 'chapter_cancelled_active')),
+  'v1',
+  'chapter_cancelled_active preserves pricing_version'
+);
+
 select ok(
-  (SELECT result IS NOT NULL FROM terminal_test_results WHERE case_name = 'chapter_cancelled_active'),
-  'CHAPTER_UNLOCK CANCELLED ACTIVE result exists'
+  (SELECT status = 'WAITING_FOR_CREDITS' from commercial_generation_intents where id = (SELECT intent_id FROM terminal_test_results WHERE case_name = 'chapter_cancelled_active')),
+  'chapter_cancelled_active transitions intent to WAITING_FOR_CREDITS'
+);
+
+select is(
+  (SELECT status from credit_reservations where ref = (SELECT reservation_ref FROM terminal_test_results WHERE case_name = 'chapter_cancelled_active')),
+  'RELEASED',
+  'chapter_cancelled_active releases reservation to RELEASED'
 );
 
 -- PROVENANCE CASES

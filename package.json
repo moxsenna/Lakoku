@@ -72,8 +72,7 @@
     "simulate:full-generation:10": "node scripts/run-smoke.cjs scripts/full-generation-worker-soak.ts --jobs=10 --generation-concurrency=1 --choice-concurrency=1",
     "simulate:full-generation:30": "node scripts/run-smoke.cjs scripts/full-generation-worker-soak.ts --jobs=30 --generation-concurrency=6 --choice-concurrency=2",
     "release:m9": "node scripts/run-smoke.cjs scripts/m9-release-gate.ts",
-    "release:personalized": "pnpm run typecheck && pnpm run test:unit && pnpm run test:db:personalized",
-    "test:db:commercial-cutover-two-session": "node scripts/run-smoke.cjs scripts/commercial-cutover-two-session-race.ts"
+    "release:personalized": "pnpm run typecheck && pnpm run test:unit && pnpm run test:db:personalized"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.5",

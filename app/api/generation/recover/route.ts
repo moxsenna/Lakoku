@@ -19,11 +19,8 @@
 import { after } from 'next/server'
 import { NextResponse, type NextRequest } from 'next/server'
 import { timingSafeEqual } from 'node:crypto'
-import {
-  recoverStaleGenerationJobs,
-  claimAndRunAvailableJobs,
-  isGenerationWorkerEnabled,
-} from '@/lib/runtime/generation-jobs'
+import { recoverStaleGenerationJobs } from '@/lib/runtime/generation-jobs'
+import { claimAndRunAvailableJobs, isGenerationWorkerEnabled } from '@/lib/runtime/generation-worker'
 import {
   listTerminalCommercialFinalizationCandidates,
   finalizeTerminalCommercialGeneration,

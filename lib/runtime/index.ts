@@ -21,7 +21,3 @@ export * from './generation-mode'
 export * from './choice-concurrency'
 export * from './choice-error-taxonomy'
 export * from './chapter-generation-checkpoint.pure'
-
-// Terminal commercial finalization RPCs
-export { listTerminalCommercialFinalizationCandidates } from './generation-jobs.server'
-export { finalizeTerminalCommercialGeneration } from './generation-jobs'

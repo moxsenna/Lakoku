@@ -23,9 +23,11 @@ import {
   recoverStaleGenerationJobs,
   claimAndRunAvailableJobs,
   isGenerationWorkerEnabled,
+} from '@/lib/runtime/generation-jobs'
+import {
   listTerminalCommercialFinalizationCandidates,
   finalizeTerminalCommercialGeneration,
-} from '@lakoku/runtime'
+} from '@lakoku/runtime/server'
 import { safeErrorInfo } from '@/lib/observability/safe-error'
 
 export const dynamic = 'force-dynamic'

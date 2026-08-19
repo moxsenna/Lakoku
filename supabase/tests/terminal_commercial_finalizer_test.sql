@@ -378,7 +378,7 @@ END $$;
 alter table generation_jobs enable trigger generation_jobs_enforce_state_v1_trigger;
 
 -- Recalculate plan count based on actual tests
-select plan(14);
+select plan(18);
 
 -- STORY_START CASES
 select is(

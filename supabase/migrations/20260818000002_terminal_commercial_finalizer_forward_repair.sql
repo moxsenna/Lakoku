@@ -201,17 +201,20 @@ begin
       and r.reservation_kind = 'CHAPTER_UNLOCK'
     for update;
     
+    raise notice 'DEBUG Reservation found=%, status=%', found, v_reservation_record.status;
+    
     -- Capture FOUND state BEFORE binding SELECT
     v_chapter_reservation_found := found;
     
-    -- 4) Revalidate binding under lock with trigger_choice_id check
+    -- 4) Revalidate binding under lock with trigger_choice_id check (only if present)
+    -- When v_trigger_choice_id is NULL (job has no trigger), match ANY intent trigger value
     select cgi.* into v_binding_record
     from public.commercial_generation_intents cgi
     where cgi.generation_job_id = v_job_id
       and cgi.user_id = v_user_id
       and cgi.story_id = v_story_id
       and cgi.chapter_number = v_chapter_number
-      and cgi.trigger_choice_id = coalesce(v_trigger_choice_id, '')
+      and (v_trigger_choice_id is null or cgi.trigger_choice_id = v_trigger_choice_id)
     for update;
     
     if not found then
@@ -255,7 +258,7 @@ begin
     end if;
     
     -- Revalidate ownership and identity under Q lock
-    if v_q_owner_user_id != v_user_id then
+    if v_q_owner_user_id IS DISTINCT FROM v_user_id then
       return pg_catalog.jsonb_build_object(
         'ok', false,
         'reason', 'REVALIDATION_USER_MISMATCH',
@@ -264,7 +267,7 @@ begin
       );
     end if;
     
-    if v_q_story_id != v_story_id then
+    if v_q_story_id IS DISTINCT FROM v_story_id then
       return pg_catalog.jsonb_build_object(
         'ok', false,
         'reason', 'REVALIDATION_STORY_MISMATCH',
@@ -310,6 +313,19 @@ begin
     end if;
   elsif v_intent_binding_exists and v_chapter_reservation_found then
     -- CHAPTER_UNLOCK: validate amount matches intent.quoted_credits
+    -- Ensure quoted_credits is not NULL before comparison
+    if v_binding_record.quoted_credits is null then
+      return pg_catalog.jsonb_build_object(
+        'ok', false,
+        'reason', 'RESERVATION_AMOUNT_MISMATCH',
+        'ref', v_canonical_ref,
+        'operation', 'CHAPTER_UNLOCK',
+        'chapter_number', v_chapter_number,
+        'expected_amount', 'INTENT_QUOTES_NULL',
+        'actual_amount', v_reservation_record.amount
+      );
+    end if;
+    
     if coalesce(v_reservation_record.amount, 0) != v_binding_record.quoted_credits then
       return pg_catalog.jsonb_build_object(
         'ok', false,

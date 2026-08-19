@@ -64,9 +64,9 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     expect(result.distribution.provenance).toBe('MODELED_FROM_PRICING')
     expect(result.distribution.currency).toBe(currency)
     // MODELED_FROM_PRICING entries have pricingSnapshotHash; OBSERVED entries don't
-    const entry = result.distribution.entries[0]!
-    if (entry.provenance === 'MODELED_FROM_PRICING') {
-      expect(entry.pricingSnapshotHash).toBe(pricingSnapshot.canonicalHash)
+    const actualEntry = result.distribution.entries[0]!
+    if (actualEntry.provenance === 'MODELED_FROM_PRICING') {
+      expect(actualEntry.pricingSnapshotHash).toBe(pricingSnapshot.canonicalHash)
     }
   })
 

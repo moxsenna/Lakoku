@@ -306,8 +306,29 @@ begin
     );
   end if;
   
+  
+  -- Check reservation existence FIRST before any amount/status operations
+  
+  if v_story_binding_exists and not v_story_reservation_found then
+    return pg_catalog.jsonb_build_object(
+      'ok', false,
+      'reason', 'RESERVATION_MISSING',
+      'ref', v_canonical_ref,
+      'operation', 'STORY_START',
+      'chapter_number', 1
+    );
+  elsif v_intent_binding_exists and not v_chapter_reservation_found then
+    return pg_catalog.jsonb_build_object(
+      'ok', false,
+      'reason', 'RESERVATION_MISSING',
+      'ref', v_canonical_ref,
+      'operation', 'CHAPTER_UNLOCK',
+      'chapter_number', v_chapter_number
+    );
+  end if;
+  
   -- Check reservation amount before processing
-  if v_story_binding_exists then
+  if v_story_binding_exists and v_story_reservation_found then
     -- STORY_START: validate amount matches canonical price
     if coalesce(v_reservation_record.amount, 0) != constant_story_start_amount then
       return pg_catalog.jsonb_build_object(
@@ -319,7 +340,7 @@ begin
         'actual_amount', v_reservation_record.amount
       );
     end if;
-  elsif v_intent_binding_exists then
+  elsif v_intent_binding_exists and v_chapter_reservation_found then
     -- CHAPTER_UNLOCK: validate amount matches intent.quoted_credits
     if coalesce(v_reservation_record.amount, 0) != v_binding_record.quoted_credits then
       return pg_catalog.jsonb_build_object(
@@ -332,6 +353,11 @@ begin
         'actual_amount', v_reservation_record.amount
       );
     end if;
+  end if;
+  
+  -- Verify reservation status exists before switching
+  if v_reservation_record.status is null then
+    raise exception 'reservation_record is NULL after validation';
   end if;
   
   -- Check reservation status

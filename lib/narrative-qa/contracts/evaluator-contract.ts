@@ -182,6 +182,10 @@ export interface M10ArtifactManifestV1 {
   stage: 'B' | 'C' | 'D' | 'E' | 'F' | 'G'
   /** SHA the stage actually executed from. NOT the M10-A closure anchor. */
   baselineSha: string
+  /** HEAD commit the stage ran against, derived at runtime from git. */
+  headSha: string
+  /** Whether the working tree was dirty when the stage ran. */
+  workingTreeDirty: boolean
   m10aClosureAnchor: string
   runId: string
   startedAt: string

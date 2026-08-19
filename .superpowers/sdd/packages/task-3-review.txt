@@ -1,0 +1,1735 @@
+---LOG---
+---STAT---
+ .superpowers/sdd/progress.md                       |   3 +-
+ .../act-rollup-lifecycle-audit.test.ts             |  73 ++++
+ tests/narrative-qa/blueprint-version-audit.test.ts |  70 ++++
+ .../chapter50-finalization-audit.test.ts           |  99 ++++++
+ tests/narrative-qa/choice-history-pressure.test.ts | 174 ++++++++++
+ tests/narrative-qa/context-pressure.test.ts        | 103 ++++++
+ .../narrative-qa/ending-lock-parity-audit.test.ts  |  96 ++++++
+ .../narrative-qa/plot-debt-lifecycle-audit.test.ts | 151 +++++++++
+ tests/narrative-qa/sample-builder.ts               | 374 +++++++++++++++++++++
+ tests/narrative-qa/story-bible-audit.test.ts       | 267 +++++++++++++++
+ tests/narrative-qa/thread-signal-audit.test.ts     | 123 +++++++
+ .../narrative-qa/writer-propagation-audit.test.ts  | 123 +++++++
+ 12 files changed, 1655 insertions(+), 1 deletion(-)
+---DIFF---
+diff --git a/tests/narrative-qa/act-rollup-lifecycle-audit.test.ts b/tests/narrative-qa/act-rollup-lifecycle-audit.test.ts
+new file mode 100644
+index 0000000..9512790
+--- /dev/null
++++ b/tests/narrative-qa/act-rollup-lifecycle-audit.test.ts
+@@ -0,0 +1,73 @@
++/**
++ * M10-A Task 3 — Act rollup lifecycle.
++ *
++ * Rollup di-seed saat authoring (act 1), tidak pernah di-update (tidak ada
++ * kolom updated_at, tidak ada migration update), tidak pernah sampai ke writer
++ * prompt (ContinuationContext tanpa field actRollups). Detector menembak saat
++ * jalur mati / konsumen tak terbukti; diam saat rollup mencapai prompt.
++ */
++import { describe, expect, it } from 'vitest'
++import { auditActRollupLifecycle } from '../../lib/narrative-qa/act-rollup-audit'
++import { actRollupSample, rollupEntry } from './sample-builder'
++import { detailOf } from './sample-builder'
++
++describe('act-rollup-lifecycle-audit', () => {
++  it('rollup di-seed act boundary, tidak pernah di-update, tidak sampai prompt -> DEAD_PATH_CANDIDATE', () => {
++    const findings = auditActRollupLifecycle(actRollupSample({
++      rollups: [rollupEntry(1, 1, 10, null)],
++    }))
++
++    const deadPath = findings.find((f) => f.code === 'DEAD_PATH_CANDIDATE')
++    expect(deadPath).toBeDefined()
++    expect(deadPath?.severity).toBe('MEDIUM')
++    expect(detailOf(deadPath as NonNullable<typeof deadPath>).neverUpdated).toBe(true)
++    expect(detailOf(deadPath as NonNullable<typeof deadPath>).actNumbers).toEqual([1])
++  })
++
++  it('rollup ada di compiled packet tapi writer prompt tanpa section rollup -> CONSUMER_UNPROVEN', () => {
++    const findings = auditActRollupLifecycle(actRollupSample({
++      rollups: [rollupEntry(1, 1, 10, null)],
++      compilerIncludesRollups: true,
++      writerPromptIncludesRollups: false,
++    }))
++
++    const consumer = findings.find((f) => f.code === 'CONSUMER_UNPROVEN')
++    expect(consumer).toBeDefined()
++    expect(consumer?.severity).toBe('LOW')
++    expect(detailOf(consumer as NonNullable<typeof consumer>).writerPromptIncludesRollups).toBe(false)
++  })
++
++  it('rollup pernah di-update -> bukan DEAD_PATH_CANDIDATE, tetap CONSUMER_UNPROVEN', () => {
++    const findings = auditActRollupLifecycle(actRollupSample({
++      rollups: [rollupEntry(1, 1, 10, 30)],
++    }))
++
++    expect(findings.some((f) => f.code === 'DEAD_PATH_CANDIDATE')).toBe(false)
++    expect(findings.some((f) => f.code === 'CONSUMER_UNPROVEN')).toBe(true)
++  })
++
++  it('rollup mencapai writer prompt -> tidak ada finding (jalur hidup)', () => {
++    const findings = auditActRollupLifecycle(actRollupSample({
++      rollups: [rollupEntry(1, 1, 10, null)],
++      writerPromptIncludesRollups: true,
++    }))
++    expect(findings).toEqual([])
++  })
++
++  it('tidak ada rollup -> DEAD_PATH tidak menembak, CONSUMER_UNPROVEN tetap menembak (semantik saat ini)', () => {
++    // Detector CONSUMER_UNPROVEN hanya mengecek flag compiler/prompt, bukan
++    // keberadaan rollup — dengan packet yang menyertakan section rollup kosong
++    // dan prompt tanpa section rollup, finding tetap ter-emit.
++    const findings = auditActRollupLifecycle(actRollupSample({ rollups: [] }))
++    expect(findings.some((f) => f.code === 'DEAD_PATH_CANDIDATE')).toBe(false)
++    expect(findings.some((f) => f.code === 'CONSUMER_UNPROVEN')).toBe(true)
++  })
++
++  it('compiler tidak memasukkan rollup ke packet -> tidak ada CONSUMER_UNPROVEN', () => {
++    const findings = auditActRollupLifecycle(actRollupSample({
++      rollups: [rollupEntry(1, 1, 10, null)],
++      compilerIncludesRollups: false,
++    }))
++    expect(findings.some((f) => f.code === 'CONSUMER_UNPROVEN')).toBe(false)
++  })
++})
+diff --git a/tests/narrative-qa/blueprint-version-audit.test.ts b/tests/narrative-qa/blueprint-version-audit.test.ts
+new file mode 100644
+index 0000000..66e96ae
+--- /dev/null
++++ b/tests/narrative-qa/blueprint-version-audit.test.ts
+@@ -0,0 +1,70 @@
++/**
++ * M10-A Task 3 — Blueprint version resolution divergence.
++ *
++ * Multi-version resolution: runtime & compiler resolve versi tertinggi
++ * (descending), buildChapterBrief memakai find() pertama tanpa sort versi.
++ * Detector menembak saat resolusi lintas path berbeda; diam saat semua path
++ * menyetujui versi yang sama.
++ */
++import { describe, expect, it } from 'vitest'
++import { auditBlueprintVersions } from '../../lib/narrative-qa/blueprint-audit'
++import { blueprintEntry } from './sample-builder'
++import { detailOf } from './sample-builder'
++
++describe('blueprint-version-audit', () => {
++  it('BLUEPRINT_VERSION_RESOLUTION_DIVERGENCE HIGH saat brief resolve v1 tapi runtime/compiler v2', () => {
++    const findings = auditBlueprintVersions([
++      blueprintEntry(20, 2, 'runtime'),
++      blueprintEntry(20, 2, 'compiler'),
++      blueprintEntry(20, 1, 'brief'),
++    ])
++
++    expect(findings).toHaveLength(1)
++    const divergence = findings[0]
++    expect(divergence.code).toBe('BLUEPRINT_VERSION_RESOLUTION_DIVERGENCE')
++    expect(divergence.severity).toBe('HIGH')
++    expect(divergence.domain).toBe('Blueprint')
++    expect(detailOf(divergence).chapterNumber).toBe(20)
++    // Detail tersortir per source: brief < compiler < runtime.
++    expect(detailOf(divergence).resolvedVersions).toEqual({ brief: 1, compiler: 2, runtime: 2 })
++  })
++
++  it('tidak ada finding saat semua path resolve versi yang sama', () => {
++    const findings = auditBlueprintVersions([
++      blueprintEntry(20, 2, 'runtime'),
++      blueprintEntry(20, 2, 'compiler'),
++      blueprintEntry(20, 2, 'brief'),
++    ])
++    expect(findings).toEqual([])
++  })
++
++  it('divergence pada satu chapter tidak memengaruhi chapter lain yang selaras', () => {
++    const findings = auditBlueprintVersions([
++      blueprintEntry(20, 2, 'runtime'),
++      blueprintEntry(20, 1, 'brief'),
++      blueprintEntry(21, 3, 'runtime'),
++      blueprintEntry(21, 3, 'compiler'),
++      blueprintEntry(21, 3, 'brief'),
++    ])
++
++    expect(findings).toHaveLength(1)
++    expect(detailOf(findings[0]).chapterNumber).toBe(20)
++  })
++
++  it('chapter dengan satu path resolusi tidak pernah memicu divergence', () => {
++    const findings = auditBlueprintVersions([
++      blueprintEntry(20, 2, 'runtime'),
++      blueprintEntry(21, 1, 'brief'),
++    ])
++    expect(findings).toEqual([])
++  })
++
++  it('kompiler vs runtime beda versi (keduanya bukan brief) tetap terdeteksi', () => {
++    const findings = auditBlueprintVersions([
++      blueprintEntry(20, 3, 'runtime'),
++      blueprintEntry(20, 2, 'compiler'),
++    ])
++    expect(findings).toHaveLength(1)
++    expect(detailOf(findings[0]).resolvedVersions).toEqual({ compiler: 2, runtime: 3 })
++  })
++})
+diff --git a/tests/narrative-qa/chapter50-finalization-audit.test.ts b/tests/narrative-qa/chapter50-finalization-audit.test.ts
+new file mode 100644
+index 0000000..b95197c
+--- /dev/null
++++ b/tests/narrative-qa/chapter50-finalization-audit.test.ts
+@@ -0,0 +1,99 @@
++/**
++ * M10-A Task 3 — Chapter 50 finalization.
++ *
++ * Bab 50 publish + reader state SELESAI (deterministik) -> bersih; publish ok
++ * tapi SELESAI tidak ditandai -> FINAL_READER_STATE_STALE + reconciliation gap;
++ * gagal sekali lalu pulih -> bersih (karakterisasi recovery deterministik);
++ * sukses ganda -> FINAL_CHAPTER_DUPLICATE_STATE_RISK.
++ */
++import { describe, expect, it } from 'vitest'
++import { auditChapter50Finalization } from '../../lib/narrative-qa/chapter50-audit'
++import { attempt, finalizationSample } from './sample-builder'
++import { detailOf } from './sample-builder'
++
++describe('chapter50-finalization-audit', () => {
++  it('ch50 published + reader state SELESAI deterministik -> tidak ada finding', () => {
++    const findings = auditChapter50Finalization(finalizationSample({
++      attempts: [attempt(1, true)],
++      readerStateMarkedSelesai: true,
++      selesaiMarkDeterministic: true,
++    }))
++    expect(findings).toEqual([])
++  })
++
++  it('publish ok tapi reader state bukan SELESAI -> FINAL_READER_STATE_STALE HIGH + reconciliation gap BLOCKER', () => {
++    const findings = auditChapter50Finalization(finalizationSample({
++      attempts: [attempt(1, true)],
++      readerStateMarkedSelesai: false,
++    }))
++
++    const stale = findings.find((f) => f.code === 'FINAL_READER_STATE_STALE')
++    expect(stale).toBeDefined()
++    expect(stale?.severity).toBe('HIGH')
++
++    const gap = findings.find((f) => f.code === 'FINAL_STATE_RECONCILIATION_GAP')
++    expect(gap).toBeDefined()
++    expect(gap?.severity).toBe('BLOCKER')
++    expect(detailOf(gap as NonNullable<typeof gap>).readerStateMarkedSelesai).toBe(false)
++  })
++
++  it('publish gagal sekali (TRANSIENT) lalu pulih + SELESAI deterministik -> bersih (karakterisasi)', () => {
++    const findings = auditChapter50Finalization(finalizationSample({
++      attempts: [attempt(1, false, 'TRANSIENT'), attempt(2, true)],
++      readerStateMarkedSelesai: true,
++      selesaiMarkDeterministic: true,
++    }))
++    expect(findings).toEqual([])
++  })
++
++  it('recovery via CHAPTER_EXISTS setelah kegagalan non-exists -> bersih', () => {
++    const findings = auditChapter50Finalization(finalizationSample({
++      attempts: [attempt(1, false, 'FAILED'), attempt(2, true, 'CHAPTER_EXISTS')],
++      readerStateMarkedSelesai: true,
++      selesaiMarkDeterministic: true,
++    }))
++    expect(findings).toEqual([])
++  })
++
++  it('duplicate success attempts -> FINAL_CHAPTER_DUPLICATE_STATE_RISK MEDIUM', () => {
++    const findings = auditChapter50Finalization(finalizationSample({
++      attempts: [attempt(1, true), attempt(2, true)],
++      readerStateMarkedSelesai: true,
++      selesaiMarkDeterministic: true,
++    }))
++
++    const dup = findings.find((f) => f.code === 'FINAL_CHAPTER_DUPLICATE_STATE_RISK')
++    expect(dup).toBeDefined()
++    expect(dup?.severity).toBe('MEDIUM')
++    expect(detailOf(dup as NonNullable<typeof dup>).successfulAttempts).toEqual([1, 2])
++  })
++
++  it('single success -> tidak ada duplicate state risk', () => {
++    const findings = auditChapter50Finalization(finalizationSample({
++      attempts: [attempt(1, true)],
++      readerStateMarkedSelesai: true,
++      selesaiMarkDeterministic: true,
++    }))
++    expect(findings.some((f) => f.code === 'FINAL_CHAPTER_DUPLICATE_STATE_RISK')).toBe(false)
++  })
++
++  it('SELESAI ditandai tapi best-effort (bukan deterministik) -> FINAL_STATE_RECONCILIATION_GAP MEDIUM', () => {
++    const findings = auditChapter50Finalization(finalizationSample({
++      attempts: [attempt(1, true)],
++      readerStateMarkedSelesai: true,
++      selesaiMarkDeterministic: false,
++    }))
++
++    const gaps = findings.filter((f) => f.code === 'FINAL_STATE_RECONCILIATION_GAP')
++    expect(gaps).toHaveLength(1)
++    expect(gaps[0].severity).toBe('MEDIUM')
++  })
++
++  it('semua attempt gagal dan SELESAI tidak ditandai -> tidak ada finding (tidak ada yang publish)', () => {
++    const findings = auditChapter50Finalization(finalizationSample({
++      attempts: [attempt(1, false, 'TRANSIENT'), attempt(2, false, 'TRANSIENT')],
++      readerStateMarkedSelesai: false,
++    }))
++    expect(findings).toEqual([])
++  })
++})
+diff --git a/tests/narrative-qa/choice-history-pressure.test.ts b/tests/narrative-qa/choice-history-pressure.test.ts
+new file mode 100644
+index 0000000..876547a
+--- /dev/null
++++ b/tests/narrative-qa/choice-history-pressure.test.ts
+@@ -0,0 +1,174 @@
++/**
++ * M10-A Task 3 — Choice history pressure detectors.
++ *
++ * Menguji auditChoiceHistory atas 49 pilihan realistis (fixture
++ * generateSyntheticChoices yang diadaptasi: consequence string -> string[]),
++ * tekanan di 10/20/30/40/50, truncation pilihan terbaru, duplikat, dan tekanan
++ * budget, plus karakterisasi slice 4096-char pada summary brief.
++ */
++import { describe, expect, it } from 'vitest'
++import {
++  auditChoiceHistory,
++  estimateChoiceTokens,
++} from '../../lib/narrative-qa/choice-history-audit'
++import { choiceItem, syntheticChoiceItems } from './sample-builder'
++import { detailOf } from './sample-builder'
++
++describe('choice-history-pressure-audit — 49 pilihan realistis', () => {
++  const full = syntheticChoiceItems(49)
++
++  it('fixture menghasilkan 49 entri chapter kontigu 1..49', () => {
++    expect(full).toHaveLength(49)
++    expect(full[0].chapterNumber).toBe(1)
++    expect(full[48].chapterNumber).toBe(49)
++    for (let i = 1; i < full.length; i++) {
++      expect(full[i].chapterNumber).toBe(full[i - 1].chapterNumber + 1)
++    }
++    expect(full.every((c) => Array.isArray(c.consequence))).toBe(true)
++  })
++
++  it('tekanan di 10/20/30/40/50: history append-only tidak memicu RECENT_LOSS', () => {
++    // 50 pilihan agar chapter 50 memiliki entri yang terlihat (bukan truncation).
++    const series = syntheticChoiceItems(50)
++    for (const chapter of [10, 20, 30, 40, 50]) {
++      const items = series.filter((c) => c.chapterNumber <= chapter)
++      const findings = auditChoiceHistory(items, { expectedLatestChapter: chapter })
++      expect(findings.some((f) => f.code === 'CHOICE_HISTORY_RECENT_LOSS'), `chapter ${chapter}`).toBe(false)
++    }
++  })
++
++  it('49 pilihan penuh di bawah budget default 2500: tidak ada BUDGET_PRESSURE', () => {
++    const findings = auditChoiceHistory(full)
++    expect(findings.some((f) => f.code === 'CHOICE_HISTORY_BUDGET_PRESSURE')).toBe(false)
++  })
++
++  it('estimasi token konsisten dengan model chars/4 (prose-dominant proxy)', () => {
++    // label 23 + consequence 47 + effectSummary 25 + flags 9 + 3 separator = 107 char -> ceil(107/4) = 27.
++    expect(estimateChoiceTokens(full[0])).toBe(27)
++  })
++})
++
++describe('choice-history-pressure-audit — detector', () => {
++  it('CHOICE_HISTORY_RECENT_LOSS HIGH saat entri terbaru lebih tua dari expected', () => {
++    const items = syntheticChoiceItems(10)
++    const findings = auditChoiceHistory(items, { expectedLatestChapter: 12 })
++    const recentLoss = findings.find((f) => f.code === 'CHOICE_HISTORY_RECENT_LOSS')
++
++    expect(recentLoss).toBeDefined()
++    expect(recentLoss?.severity).toBe('HIGH')
++    expect(detailOf(recentLoss as NonNullable<typeof recentLoss>).latestVisibleChapter).toBe(10)
++    expect(detailOf(recentLoss as NonNullable<typeof recentLoss>).expectedLatestChapter).toBe(12)
++  })
++
++  it('CHOICE_HISTORY_RECENT_LOSS MEDIUM saat ada celah urutan chapter', () => {
++    const items = [
++      choiceItem(1, 'A', ['x']),
++      choiceItem(2, 'B', ['y']),
++      choiceItem(4, 'D', ['w']),
++    ]
++    const findings = auditChoiceHistory(items, { expectedLatestChapter: 4 })
++    const gaps = findings.filter((f) => f.code === 'CHOICE_HISTORY_RECENT_LOSS')
++
++    // Tidak ada HIGH (terbaru == expected), ada MEDIUM untuk celah 2 -> 4.
++    expect(gaps).toHaveLength(1)
++    expect(gaps[0].severity).toBe('MEDIUM')
++    expect(detailOf(gaps[0]).fromChapter).toBe(2)
++    expect(detailOf(gaps[0]).toChapter).toBe(4)
++  })
++
++  it('CHOICE_HISTORY_RECENT_LOSS MEDIUM saat history kosong tapi chapter > 1 diharapkan', () => {
++    const findings = auditChoiceHistory([], { expectedLatestChapter: 5 })
++    const recentLoss = findings.find((f) => f.code === 'CHOICE_HISTORY_RECENT_LOSS')
++    expect(recentLoss).toBeDefined()
++    expect(recentLoss?.severity).toBe('MEDIUM')
++  })
++
++  it('CHOICE_HISTORY_DUPLICATE_PREVIOUS MEDIUM saat label+consequence kembar berurutan', () => {
++    const items = [
++      choiceItem(1, 'Konfrontasi', ['Menuduh Raka'], 'e1'),
++      choiceItem(2, 'Konfrontasi', ['Menuduh Raka'], 'e2'),
++    ]
++    const findings = auditChoiceHistory(items)
++    const dup = findings.find((f) => f.code === 'CHOICE_HISTORY_DUPLICATE_PREVIOUS')
++
++    expect(dup).toBeDefined()
++    expect(dup?.severity).toBe('MEDIUM')
++    expect(detailOf(dup as NonNullable<typeof dup>).chapterA).toBe(1)
++    expect(detailOf(dup as NonNullable<typeof dup>).chapterB).toBe(2)
++  })
++
++  it('tidak ada DUPLICATE_PREVIOUS saat label sama tapi consequence berbeda', () => {
++    const items = [
++      choiceItem(1, 'Konfrontasi', ['Menuduh Raka'], 'e1'),
++      choiceItem(2, 'Konfrontasi', ['Berdamai'], 'e2'),
++    ]
++    expect(auditChoiceHistory(items).some((f) => f.code === 'CHOICE_HISTORY_DUPLICATE_PREVIOUS')).toBe(false)
++  })
++
++  it('CHOICE_HISTORY_BUDGET_PRESSURE HIGH saat estimasi chars/4 > declaredBudget', () => {
++    const items = [
++      choiceItem(1, 'x'.repeat(100), ['y'.repeat(100)], 'z'.repeat(100)),
++      choiceItem(2, 'x'.repeat(100), ['y'.repeat(100)], 'z'.repeat(100)),
++      choiceItem(3, 'x'.repeat(100), ['y'.repeat(100)], 'z'.repeat(100)),
++    ]
++    const findings = auditChoiceHistory(items, { declaredBudget: 10 })
++    const pressure = findings.find((f) => f.code === 'CHOICE_HISTORY_BUDGET_PRESSURE')
++
++    expect(pressure).toBeDefined()
++    expect(pressure?.severity).toBe('HIGH')
++    expect(detailOf(pressure as NonNullable<typeof pressure>).declaredBudget).toBe(10)
++    expect(detailOf(pressure as NonNullable<typeof pressure>).entryCount).toBe(3)
++  })
++
++  it('BUDGET_PRESSURE menembak pada jumlah chapter tinggi (150 pilihan, budget default)', () => {
++    const items = syntheticChoiceItems(150)
++    const findings = auditChoiceHistory(items)
++    const pressure = findings.find((f) => f.code === 'CHOICE_HISTORY_BUDGET_PRESSURE')
++
++    expect(pressure).toBeDefined()
++    expect(pressure?.severity).toBe('HIGH')
++    expect(detailOf(pressure as NonNullable<typeof pressure>).entryCount).toBe(150)
++  })
++})
++
++describe('choice-history-pressure-audit — karakterisasi slice 4096 char', () => {
++  it('49 pilihan realistis muat di bawah cap 4096 char — pilihan terbaru tidak hilang', () => {
++    const full = syntheticChoiceItems(49)
++
++    // Replikasi summarizeChoiceHistory: urut chapter DESC lalu slice 4096 char.
++    const joined = [...full]
++      .sort((a, b) => b.chapterNumber - a.chapterNumber)
++      .map((c) => `${c.label} ${c.consequence.join(' ')}`)
++      .join('\n')
++
++    expect(joined.length).toBeLessThan(4096)
++    // Masih muat penuh: pilihan terbaru DAN tertua sama-sama terlihat.
++    expect(joined).toContain('Pilihan realistis Bab 49')
++    expect(joined).toContain('Pilihan realistis Bab 1')
++  })
++
++  it('history melebihi cap 4096: pilihan TERBARU tetap ada, tertua terpotong', () => {
++    const long = syntheticChoiceItems(60)
++
++    const joined = [...long]
++      .sort((a, b) => b.chapterNumber - a.chapterNumber)
++      .map((c) => `${c.label} ${c.consequence.join(' ')}`)
++      .join('\n')
++    const sliced = joined.slice(0, 4096)
++
++    expect(joined.length).toBeGreaterThan(4096)
++    expect(sliced).toContain('Pilihan realistis Bab 60')
++    // Entri tertua (chapter 1..5) jatuh dari slice; gunakan suffix Konsekuensi
++    // agar tidak bentrok substring dengan 'Bab 10'/'Bab 50' dst.
++    expect(sliced).not.toContain('Pilihan realistis Bab 1 Konsekuensi')
++    expect(sliced).not.toContain('Pilihan realistis Bab 5 Konsekuensi')
++  })
++
++  it('history asli (source of truth) tetap memuat pilihan Bab 49 — truncation hanya di summary', () => {
++    const full = syntheticChoiceItems(49)
++    expect(full[full.length - 1].chapterNumber).toBe(49)
++    // Detector tetap melihat semua entri; RECENT_LOSS tidak menembak.
++    const findings = auditChoiceHistory(full, { expectedLatestChapter: 49 })
++    expect(findings.some((f) => f.code === 'CHOICE_HISTORY_RECENT_LOSS')).toBe(false)
++  })
++})
+diff --git a/tests/narrative-qa/context-pressure.test.ts b/tests/narrative-qa/context-pressure.test.ts
+new file mode 100644
+index 0000000..46c5ede
+--- /dev/null
++++ b/tests/narrative-qa/context-pressure.test.ts
+@@ -0,0 +1,103 @@
++/**
++ * M10-A Task 3 — Context pressure detectors.
++ *
++ * Karakterisasi pertumbuhan canon lintas milestone dan detector tekanan
++ * budget: overshoot, load-bearing, eviction fakta/rollup. Detector diuji atas
++ * sample sintetis sesuai interface CanonContextSample.
++ */
++import { describe, expect, it } from 'vitest'
++import {
++  analyzeContextSample,
++  buildContextPressureMilestone,
++} from '../../lib/narrative-qa/context-pressure-audit'
++import { runStoryBibleAudit } from '../../lib/narrative-qa/story-bible-audit'
++import { growingContextSample, stressContextSample } from './sample-builder'
++import { detailOf } from './sample-builder'
++
++describe('context-pressure-audit — pertumbuhan canon lintas milestone', () => {
++  const chapters = [10, 30, 45, 50]
++  const milestones = chapters.map((ch) => buildContextPressureMilestone(growingContextSample(ch)))
++
++  it('actualUsed tumbuh monoton seiring chapter (fakta/thread/timeline/rollup bertambah)', () => {
++    expect(milestones[0].actualUsed).toBeGreaterThan(0)
++    for (let i = 1; i < milestones.length; i++) {
++      expect(milestones[i].actualUsed).toBeGreaterThan(milestones[i - 1].actualUsed)
++    }
++  })
++
++  it('loadBearingIncluded bertambah di setiap milestone (fakta load-bearing tumbuh)', () => {
++    const counts = milestones.map((m) => m.loadBearingIncluded)
++    expect(counts[0]).toBeGreaterThan(0)
++    for (let i = 1; i < counts.length; i++) {
++      expect(counts[i]).toBeGreaterThan(counts[i - 1])
++    }
++  })
++
++  it('rollupsIncluded tumbuh setelah act 1 (chapter > 10) dan act 2 (chapter > 25)', () => {
++    // Chapter 10: belum ada rollup; 30/45/50: act 1 + act 2 sudah di-seed.
++    expect(milestones.map((m) => m.rollupsIncluded)).toEqual([0, 2, 2, 2])
++    expect(milestones.map((m) => m.rollupsExcluded)).toEqual([0, 0, 0, 0])
++  })
++
++  it('tidak ada detector yang menembak pada sample pertumbuhan yang bersih', () => {
++    for (const m of milestones) {
++      expect(m.detectorsTriggered).toEqual([])
++    }
++  })
++})
++
++describe('context-pressure-audit — stress budget totalBudget=4000', () => {
++  it('CONTEXT_DECLARED_BUDGET_OVERSHOOT menembak saat actual > declared', () => {
++    const findings = analyzeContextSample(stressContextSample(4500))
++    const overshoot = findings.find((f) => f.code === 'CONTEXT_DECLARED_BUDGET_OVERSHOOT')
++
++    expect(overshoot).toBeDefined()
++    expect(overshoot?.severity).toBe('HIGH')
++    expect(detailOf(overshoot as NonNullable<typeof overshoot>).used).toBeGreaterThan(
++      detailOf(overshoot as NonNullable<typeof overshoot>).declared as number,
++    )
++  })
++
++  it('LOAD_BEARING_PRESSURE menembak saat load-bearing >= 25% budget', () => {
++    // 1500/4000 = 0.375 -> menembak; 900/4000 = 0.225 -> tidak.
++    expect(analyzeContextSample(stressContextSample(1500)).some((f) => f.code === 'LOAD_BEARING_PRESSURE')).toBe(true)
++    expect(analyzeContextSample(stressContextSample(3000)).some((f) => f.code === 'LOAD_BEARING_PRESSURE')).toBe(true)
++    expect(analyzeContextSample(stressContextSample(4500)).some((f) => f.code === 'LOAD_BEARING_PRESSURE')).toBe(true)
++    expect(analyzeContextSample(stressContextSample(900)).some((f) => f.code === 'LOAD_BEARING_PRESSURE')).toBe(false)
++  })
++
++  it('RELEVANT_FACT_EVICTION + ROLLUP_EVICTION_PRESSURE menembak di keempat kasus stress', () => {
++    for (const cost of [900, 1500, 3000, 4500]) {
++      const findings = analyzeContextSample(stressContextSample(cost))
++      expect(findings.some((f) => f.code === 'RELEVANT_FACT_EVICTION'), `cost ${cost}`).toBe(true)
++      expect(findings.some((f) => f.code === 'ROLLUP_EVICTION_PRESSURE'), `cost ${cost}`).toBe(true)
++    }
++  })
++
++  it('kasus 900 token: eviction tanpa overshoot dan tanpa load-bearing pressure (karakterisasi batas)', () => {
++    const findings = analyzeContextSample(stressContextSample(900))
++    const codes = findings.map((f) => f.code)
++    expect(codes).toContain('RELEVANT_FACT_EVICTION')
++    expect(codes).toContain('ROLLUP_EVICTION_PRESSURE')
++    expect(codes).not.toContain('CONTEXT_DECLARED_BUDGET_OVERSHOOT')
++    expect(codes).not.toContain('LOAD_BEARING_PRESSURE')
++  })
++
++  it('detectorsTriggered pada milestone non-empty saat detector menembak (regresi buildContextPressureMilestone)', () => {
++    const milestone = buildContextPressureMilestone(stressContextSample(1500))
++    expect(milestone.detectorsTriggered.length).toBeGreaterThan(0)
++    expect(milestone.detectorsTriggered).toContain('RELEVANT_FACT_EVICTION')
++    expect(milestone.detectorsTriggered).toContain('ROLLUP_EVICTION_PRESSURE')
++    expect(milestone.detectorsTriggered).toContain('CONTEXT_DECLARED_BUDGET_OVERSHOOT')
++  })
++
++  it('overshoot tidak auto-fail: executionStatus tetap SUCCESS (karakterisasi, bukan error)', () => {
++    const report = runStoryBibleAudit({
++      contextSamples: [stressContextSample(4500)],
++    })
++    expect(report.executionStatus).toBe('SUCCESS')
++    expect(report.findings.some((f) => f.code === 'CONTEXT_DECLARED_BUDGET_OVERSHOOT')).toBe(true)
++    // Overshoot HIGH -> verdict HOLD adalah hasil audit, bukan kegagalan detector.
++    expect(report.auditVerdict).toBe('HOLD')
++  })
++})
+diff --git a/tests/narrative-qa/ending-lock-parity-audit.test.ts b/tests/narrative-qa/ending-lock-parity-audit.test.ts
+new file mode 100644
+index 0000000..0a753ff
+--- /dev/null
++++ b/tests/narrative-qa/ending-lock-parity-audit.test.ts
+@@ -0,0 +1,96 @@
++/**
++ * M10-A Task 3 — Ending lock durability (plan §12).
++ *
++ * Bab 44 tanpa lock -> Bab 45 resolve A + lock -> Bab 46+ tetap A (tidak ada
++ * ENDING_LOCK_POST45_SWITCH) -> retry Bab 45 dengan kandidat berbeda ->
++ * ENDING_LOCK_RETRY_DIVERGENCE BLOCKER; chapter >= 45 resolve tanpa lock ->
++ * ENDING_LOCK_NOT_DURABLE; publish path v2 di Bab 45 ->
++ * ENDING_LOCK_WORKER_LEGACY_PARITY_RISK.
++ */
++import { describe, expect, it } from 'vitest'
++import { auditEndingLocks, ENDING_LOCK_CHAPTER } from '../../lib/narrative-qa/ending-audit'
++import { endingEntry } from './sample-builder'
++import { detailOf } from './sample-builder'
++
++describe('ending-lock-parity-audit — lifecycle Bab 44 -> 50 (plan §12)', () => {
++  it('Bab 44 tanpa lock: belum masuk jendela lock, bersih', () => {
++    const findings = auditEndingLocks([endingEntry(44, 'ending_A', null)])
++    expect(findings).toEqual([])
++  })
++
++  it('Bab 45 resolve A + lock -> Bab 46+ resolve tetap A: tidak ada POST45_SWITCH', () => {
++    const findings = auditEndingLocks([
++      endingEntry(45, 'ending_A', 'ending_A'),
++      endingEntry(46, 'ending_A', 'ending_A'),
++      endingEntry(47, 'ending_A', 'ending_A'),
++      endingEntry(50, 'ending_A', 'ending_A'),
++    ])
++    expect(findings).toEqual([])
++  })
++
++  it('retry Bab 45 dengan kandidat berbeda tanpa lock -> ENDING_LOCK_RETRY_DIVERGENCE BLOCKER', () => {
++    const findings = auditEndingLocks([
++      endingEntry(45, 'ending_A', null),
++      endingEntry(45, 'ending_B', null),
++    ])
++
++    const retry = findings.find((f) => f.code === 'ENDING_LOCK_RETRY_DIVERGENCE')
++    expect(retry).toBeDefined()
++    expect(retry?.severity).toBe('BLOCKER')
++    expect(detailOf(retry as NonNullable<typeof retry>).chapterNumber).toBe(45)
++    expect(detailOf(retry as NonNullable<typeof retry>).resolvedEndingIds).toEqual(['ending_A', 'ending_B'])
++  })
++
++  it('retry Bab 45 dengan kandidat SAMA tanpa lock -> tidak ada divergence', () => {
++    const findings = auditEndingLocks([
++      endingEntry(45, 'ending_A', null),
++      endingEntry(45, 'ending_A', null),
++    ])
++    expect(findings.some((f) => f.code === 'ENDING_LOCK_RETRY_DIVERGENCE')).toBe(false)
++  })
++})
++
++describe('ending-lock-parity-audit — durability detectors', () => {
++  it(`chapter >= ${ENDING_LOCK_CHAPTER} resolve tanpa lock -> ENDING_LOCK_NOT_DURABLE HIGH`, () => {
++    const findings = auditEndingLocks([endingEntry(45, 'ending_A', null)])
++
++    const notDurable = findings.find((f) => f.code === 'ENDING_LOCK_NOT_DURABLE')
++    expect(notDurable).toBeDefined()
++    expect(notDurable?.severity).toBe('HIGH')
++    expect(detailOf(notDurable as NonNullable<typeof notDurable>).chapterNumber).toBe(45)
++    expect(detailOf(notDurable as NonNullable<typeof notDurable>).lockedEndingId).toBeNull()
++  })
++
++  it('chapter di bawah 45 dengan resolve tanpa lock -> bukan NOT_DURABLE', () => {
++    const findings = auditEndingLocks([endingEntry(44, 'ending_A', null)])
++    expect(findings.some((f) => f.code === 'ENDING_LOCK_NOT_DURABLE')).toBe(false)
++  })
++
++  it('chapter > 45 resolve berbeda dari lock -> ENDING_LOCK_POST45_SWITCH BLOCKER', () => {
++    const findings = auditEndingLocks([
++      endingEntry(45, 'ending_A', 'ending_A'),
++      endingEntry(46, 'ending_B', 'ending_A'),
++    ])
++
++    const postSwitch = findings.find((f) => f.code === 'ENDING_LOCK_POST45_SWITCH')
++    expect(postSwitch).toBeDefined()
++    expect(postSwitch?.severity).toBe('BLOCKER')
++    expect(detailOf(postSwitch as NonNullable<typeof postSwitch>).chapterNumber).toBe(46)
++    expect(detailOf(postSwitch as NonNullable<typeof postSwitch>).resolvedEndingId).toBe('ending_B')
++    expect(detailOf(postSwitch as NonNullable<typeof postSwitch>).lockedEndingId).toBe('ending_A')
++  })
++
++  it('publish path v2 di Bab 45 -> ENDING_LOCK_WORKER_LEGACY_PARITY_RISK MEDIUM', () => {
++    const findings = auditEndingLocks([endingEntry(45, 'ending_A', 'ending_A', 'v2')])
++
++    const parity = findings.find((f) => f.code === 'ENDING_LOCK_WORKER_LEGACY_PARITY_RISK')
++    expect(parity).toBeDefined()
++    expect(parity?.severity).toBe('MEDIUM')
++    expect(detailOf(parity as NonNullable<typeof parity>).publishPath).toBe('v2')
++  })
++
++  it('publish path v4 di Bab 45 -> tidak ada parity risk', () => {
++    const findings = auditEndingLocks([endingEntry(45, 'ending_A', 'ending_A', 'v4')])
++    expect(findings.some((f) => f.code === 'ENDING_LOCK_WORKER_LEGACY_PARITY_RISK')).toBe(false)
++  })
++})
+diff --git a/tests/narrative-qa/plot-debt-lifecycle-audit.test.ts b/tests/narrative-qa/plot-debt-lifecycle-audit.test.ts
+new file mode 100644
+index 0000000..07ff366
+--- /dev/null
++++ b/tests/narrative-qa/plot-debt-lifecycle-audit.test.ts
+@@ -0,0 +1,151 @@
++/**
++ * M10-A Task 3 — Plot debt lifecycle (plan §10).
++ *
++ * Lifecycle debt "main_mystery": diperkenalkan Bab 5 (OPEN) -> progress Bab 10
++ * (per-milestone) -> milestone kedua Bab 20 -> close Bab 35 (ledger) ->
++ * reload Bab 36 (contract status basi). Ditambah deteksi close tidak
++ * terpersist, milestone memory gap, dan progress tidak terpersist.
++ *
++ * Semantik saat ini (reviewer-confirmed): PROGRESS_NOT_PERSISTED ditekan saat
++ * progress per-milestone ada — PLOT_DEBT_MILESTONE_MEMORY_GAP yang menembak.
++ */
++import { describe, expect, it } from 'vitest'
++import { auditPlotDebts } from '../../lib/narrative-qa/plot-debt-audit'
++import { mainMysteryDebt, plotDebtSample } from './sample-builder'
++import { detailOf } from './sample-builder'
++
++const DEBT = mainMysteryDebt()
++
++function codesFor(overrides: Parameters<typeof plotDebtSample>[0]): string[] {
++  return auditPlotDebts(plotDebtSample({ debts: [DEBT], ...overrides })).map((f) => f.code)
++}
++
++describe('plot-debt-lifecycle-audit — plan §10 lifecycle', () => {
++  it('Bab 5: debt OPEN tanpa milestone jatuh tempo -> bersih (no finding)', () => {
++    expect(codesFor({ chapter: 5 })).toEqual([])
++  })
++
++  it('Bab 10: progress per-milestone pertama tercatat -> bersih', () => {
++    const codes = codesFor({
++      chapter: 10,
++      progressedMilestones: [{ debtId: 'main_mystery', milestoneIndex: 0, progressedAt: 10 }],
++    })
++    expect(codes).toEqual([])
++  })
++
++  it('Bab 20: kedua milestone tercatat -> bersih', () => {
++    const codes = codesFor({
++      chapter: 20,
++      progressedMilestones: [
++        { debtId: 'main_mystery', milestoneIndex: 0, progressedAt: 10 },
++        { debtId: 'main_mystery', milestoneIndex: 1, progressedAt: 20 },
++      ],
++    })
++    expect(codes).toEqual([])
++  })
++
++  it('Bab 20: hanya milestone kedua tercatat -> PLOT_DEBT_MILESTONE_MEMORY_GAP (bukan PROGRESS_NOT_PERSISTED)', () => {
++    const findings = auditPlotDebts(plotDebtSample({
++      chapter: 20,
++      debts: [DEBT],
++      progressedMilestones: [{ debtId: 'main_mystery', milestoneIndex: 1, progressedAt: 20 }],
++    }))
++
++    const gap = findings.find((f) => f.code === 'PLOT_DEBT_MILESTONE_MEMORY_GAP')
++    expect(gap).toBeDefined()
++    expect(gap?.severity).toBe('MEDIUM')
++    expect(detailOf(gap as NonNullable<typeof gap>).missingMilestones).toEqual([{ milestoneIndex: 0, milestoneChapter: 10 }])
++    // Progress per-milestone ada -> PROGRESS_NOT_PERSISTED ditekan.
++    expect(findings.some((f) => f.code === 'PLOT_DEBT_PROGRESS_NOT_PERSISTED')).toBe(false)
++  })
++
++  it('Bab 35: close dipersist (ledger + proposed + audit signals) -> tidak ada CLOSE_NOT_PERSISTED', () => {
++    const findings = auditPlotDebts(plotDebtSample({
++      chapter: 35,
++      debts: [DEBT],
++      ledgerClosedIds: ['main_mystery'],
++      closesProposed: ['main_mystery'],
++      auditSignalsClosesPlotDebts: ['main_mystery'],
++      progressedMilestones: [
++        { debtId: 'main_mystery', milestoneIndex: 0, progressedAt: 10 },
++        { debtId: 'main_mystery', milestoneIndex: 1, progressedAt: 20 },
++      ],
++    }))
++    expect(findings.some((f) => f.code === 'PLOT_DEBT_CLOSE_NOT_PERSISTED')).toBe(false)
++  })
++
++  it('Bab 36: reload contract, status masih open walau ledger closed -> PLOT_DEBT_NEXT_CHAPTER_STATE_STALE HIGH', () => {
++    const findings = auditPlotDebts(plotDebtSample({
++      chapter: 36,
++      debts: [DEBT], // status 'open' — contract tidak pernah dimutasi
++      ledgerClosedIds: ['main_mystery'],
++      closesProposed: ['main_mystery'],
++      auditSignalsClosesPlotDebts: ['main_mystery'],
++      progressedMilestones: [
++        { debtId: 'main_mystery', milestoneIndex: 0, progressedAt: 10 },
++        { debtId: 'main_mystery', milestoneIndex: 1, progressedAt: 20 },
++      ],
++    }))
++
++    const stale = findings.find((f) => f.code === 'PLOT_DEBT_NEXT_CHAPTER_STATE_STALE')
++    expect(stale).toBeDefined()
++    expect(stale?.severity).toBe('HIGH')
++    expect(detailOf(stale as NonNullable<typeof stale>).contractStatus).toBe('open')
++    expect(detailOf(stale as NonNullable<typeof stale>).ledgerState).toBe('closed')
++  })
++})
++
++describe('plot-debt-lifecycle-audit — persistence detectors', () => {
++  it('PLOT_DEBT_CLOSE_NOT_PERSISTED BLOCKER saat closure diusulkan tapi tidak ada di ledger maupun signals', () => {
++    const findings = auditPlotDebts(plotDebtSample({
++      chapter: 35,
++      debts: [DEBT],
++      closesProposed: ['main_mystery'],
++      progressedMilestones: [
++        { debtId: 'main_mystery', milestoneIndex: 0, progressedAt: 10 },
++        { debtId: 'main_mystery', milestoneIndex: 1, progressedAt: 20 },
++      ],
++    }))
++
++    const close = findings.find((f) => f.code === 'PLOT_DEBT_CLOSE_NOT_PERSISTED')
++    expect(close).toBeDefined()
++    expect(close?.severity).toBe('BLOCKER')
++    expect(findings).toHaveLength(1)
++  })
++
++  it('PLOT_DEBT_CLOSE_NOT_PERSISTED MEDIUM saat closure ada di signals tapi tidak di ledger', () => {
++    const findings = auditPlotDebts(plotDebtSample({
++      chapter: 35,
++      debts: [DEBT],
++      closesProposed: ['main_mystery'],
++      auditSignalsClosesPlotDebts: ['main_mystery'],
++      progressedMilestones: [
++        { debtId: 'main_mystery', milestoneIndex: 0, progressedAt: 10 },
++        { debtId: 'main_mystery', milestoneIndex: 1, progressedAt: 20 },
++      ],
++    }))
++
++    const close = findings.find((f) => f.code === 'PLOT_DEBT_CLOSE_NOT_PERSISTED')
++    expect(close).toBeDefined()
++    expect(close?.severity).toBe('MEDIUM')
++  })
++
++  it('PLOT_DEBT_PROGRESS_NOT_PERSISTED HIGH saat milestone jatuh tempo tanpa progress apa pun', () => {
++    const findings = auditPlotDebts(plotDebtSample({
++      chapter: 10,
++      debts: [DEBT],
++    }))
++
++    const progress = findings.find((f) => f.code === 'PLOT_DEBT_PROGRESS_NOT_PERSISTED')
++    expect(progress).toBeDefined()
++    expect(progress?.severity).toBe('HIGH')
++    expect(detailOf(progress as NonNullable<typeof progress>).dueMilestones).toEqual([10])
++    expect(detailOf(progress as NonNullable<typeof progress>).contractStatus).toBe('open')
++  })
++
++  it('MILESTONE_MEMORY_GAP hanya menembak saat SEBAGIAN milestone tercatat — tanpa progress sama sekali tidak', () => {
++    const noProgress = auditPlotDebts(plotDebtSample({ chapter: 20, debts: [DEBT] }))
++    expect(noProgress.some((f) => f.code === 'PLOT_DEBT_MILESTONE_MEMORY_GAP')).toBe(false)
++    expect(noProgress.some((f) => f.code === 'PLOT_DEBT_PROGRESS_NOT_PERSISTED')).toBe(true)
++  })
++})
+diff --git a/tests/narrative-qa/sample-builder.ts b/tests/narrative-qa/sample-builder.ts
+new file mode 100644
+index 0000000..020ed52
+--- /dev/null
++++ b/tests/narrative-qa/sample-builder.ts
+@@ -0,0 +1,374 @@
++/**
++ * M10-A Task 3 — shared sample builders untuk test detector narrative-qa.
++ *
++ * Semua builder menghasilkan input minimal yang sesuai dengan interface ekspor
++ * ASLI tiap modul detector (bukan tipe produksi lain). Fixture
++ * fixtures/long-horizon/story-bible-pressure.ts dipakai hanya di mana bentuknya
++ * sejajar (choice history — dengan adaptasi consequence: string -> string[]).
++ */
++import type { ChoiceHistoryItem } from '../../lib/narrative-qa/choice-history-audit'
++import type {
++  CanonContextSample,
++  ContextActRollupSample,
++  ContextFact,
++  ContextThreadSample,
++  ContextTimelineSample,
++} from '../../lib/narrative-qa/context-pressure-audit'
++import type {
++  BlueprintResolutionSource,
++  BlueprintVersionEntry,
++} from '../../lib/narrative-qa/blueprint-audit'
++import type { ThreadAuditSample, ThreadSample } from '../../lib/narrative-qa/thread-audit'
++import type {
++  PlotDebtAuditSample,
++  PlotDebtState,
++} from '../../lib/narrative-qa/plot-debt-audit'
++import type { EndingFixtureEntry } from '../../lib/narrative-qa/ending-audit'
++import type {
++  ActRollupEntry,
++  ActRollupLifecycleSample,
++} from '../../lib/narrative-qa/act-rollup-audit'
++import type {
++  FinalizationSample,
++  PublishAttempt,
++} from '../../lib/narrative-qa/chapter50-audit'
++import type { ContractFieldTrace } from '../../lib/narrative-qa/propagation-audit'
++import type { StoryBibleAuditFinding } from '../../lib/narrative-qa/story-bible-audit-contract'
++import { generateSyntheticChoices } from '../../fixtures/long-horizon/story-bible-pressure'
++
++/**
++ * Detail finding tidak diekspos sebagai field (contract StoryBibleAuditFinding
++ * tidak punya `detail`); detail hidup di observation evidence
++ * PURE_CHARACTERIZATION sebagai JSON. Helper ini mengekstraknya agar test bisa
++ * memeriksa nilai detail tanpa bergantung pada bentuk non-kontrak.
++ */
++export function detailOf(finding: StoryBibleAuditFinding): Record<string, unknown> {
++  const observation = finding.evidence.find(
++    (e) => e.evidenceClass === 'PURE_CHARACTERIZATION',
++  )?.observation
++  if (!observation) return {}
++  const json = observation.slice(observation.indexOf(':') + 1).trim()
++  try {
++    return JSON.parse(json) as Record<string, unknown>
++  } catch {
++    return {}
++  }
++}
++
++// ---------------------------------------------------------------------------
++// Choice history (interface: ChoiceHistoryItem — consequence adalah string[])
++// ---------------------------------------------------------------------------
++
++export function choiceItem(
++  chapterNumber: number,
++  label: string,
++  consequence: string[],
++  effectSummary = '',
++  flags: string[] = [],
++): ChoiceHistoryItem {
++  return { chapterNumber, label, consequence, effectSummary, flags }
++}
++
++/** Adaptasi generateSyntheticChoices(n): consequence string -> string[]. */
++export function syntheticChoiceItems(count: number): ChoiceHistoryItem[] {
++  return generateSyntheticChoices(count).map((c) => ({
++    chapterNumber: c.chapterNumber,
++    label: c.label,
++    consequence: [c.consequence],
++    effectSummary: c.effectSummary,
++    flags: c.flags,
++  }))
++}
++
++// ---------------------------------------------------------------------------
++// Context pressure (interface: CanonContextSample)
++// ---------------------------------------------------------------------------
++
++export function fact(
++  id: string,
++  statement: string,
++  isLoadBearing: boolean,
++  included?: boolean,
++): ContextFact {
++  return { id, statement, isLoadBearing, paidOff: false, included }
++}
++
++export function threadSample(
++  id: string,
++  title: string,
++  status = 'DEVELOPING',
++): ContextThreadSample {
++  return { id, title, status }
++}
++
++export function timelineSample(chapterNumber: number, description: string): ContextTimelineSample {
++  return { chapterNumber, ordinal: 1, description, isFlashback: false }
++}
++
++export function rollupSample(
++  actNumber: number,
++  summary: string,
++  included?: boolean,
++): ContextActRollupSample {
++  return { actNumber, summary, included }
++}
++
++export function contextSample(overrides: Partial<CanonContextSample>): CanonContextSample {
++  return {
++    chapter: 10,
++    declaredBudget: 4000,
++    facts: [],
++    threads: [],
++    timeline: [],
++    actRollups: [],
++    choiceHistory: [],
++    ...overrides,
++  }
++}
++
++/**
++ * Sample canon yang tumbuh seiring chapter: fakta, load-bearing, thread,
++ * timeline, dan rollup bertambah. Tidak ada exclusion, tidak ada overshoot —
++ * dipakai untuk karakterisasi pertumbuhan lintas milestone.
++ */
++export function growingContextSample(chapter: number): CanonContextSample {
++  const facts: ContextFact[] = []
++  const factCount = chapter * 2
++  for (let i = 1; i <= factCount; i++) {
++    facts.push(fact(`fact_${i}`, `Fakta penting nomor ${i} yang sudah terbentuk`, i % 4 === 0))
++  }
++  const threads: ContextThreadSample[] = []
++  const threadCount = Math.min(10, Math.floor(chapter / 5) + 2)
++  for (let i = 1; i <= threadCount; i++) {
++    threads.push(threadSample(`thread_${i}`, `Alur Konflik Utama ${i}`))
++  }
++  const timeline: ContextTimelineSample[] = []
++  const timelineCount = Math.min(chapter, 20)
++  for (let i = 1; i <= timelineCount; i++) {
++    timeline.push(timelineSample(i, `Peristiwa utama di bab ${i}`))
++  }
++  const actRollups: ContextActRollupSample[] = []
++  if (chapter > 10) {
++    actRollups.push(rollupSample(1, 'Keluarga kerajaan runtuh akibat pengkhianatan penasihat utama.'))
++  }
++  if (chapter > 25) {
++    actRollups.push(rollupSample(2, 'Perjalanan pengasingan dan pengumpulan sekutu rahasia di perbatasan.'))
++  }
++  return contextSample({
++    chapter,
++    facts,
++    threads,
++    timeline,
++    actRollups,
++  })
++}
++
++/**
++ * Sample stress dengan totalBudget=4000: biaya load-bearing bervariasi
++ * (900/1500/3000/4500) dan ada fakta/rollup yang ter-exclude sehingga detector
++ * eviction menembak (budget >= 90% terpakai).
++ *
++ * Konstanta biaya: statement 400 char = 100 token, thread 40 char = 10 token,
++ * timeline 40 char = 10 token, rollup 60 char = 15 token.
++ * Biaya non-load-bearing tetap = 2600 (fakta) + 50 (thread) + 80 (timeline) +
++ * 30 (rollup) = 2760.
++ */
++export function stressContextSample(
++  loadBearingCost: number,
++  declaredBudget = 4000,
++): CanonContextSample {
++  const loadBearingFacts: ContextFact[] = []
++  const loadBearingCount = Math.ceil(loadBearingCost / 100)
++  for (let i = 1; i <= loadBearingCount; i++) {
++    loadBearingFacts.push(fact(`lb_${i}`, 'x'.repeat(400), true))
++  }
++  const regularFacts: ContextFact[] = []
++  for (let i = 1; i <= 26; i++) {
++    regularFacts.push(fact(`fact_${i}`, 'x'.repeat(400), false, i <= 4 ? false : undefined))
++  }
++  const threads: ContextThreadSample[] = []
++  for (let i = 1; i <= 5; i++) {
++    threads.push(threadSample(`thread_${i}`, 't'.repeat(40)))
++  }
++  const timeline: ContextTimelineSample[] = []
++  for (let i = 1; i <= 8; i++) {
++    timeline.push(timelineSample(i, 't'.repeat(40)))
++  }
++  const actRollups: ContextActRollupSample[] = [
++    rollupSample(1, 'r'.repeat(60), false),
++    rollupSample(2, 'r'.repeat(60)),
++  ]
++  return contextSample({
++    chapter: 50,
++    declaredBudget,
++    facts: [...loadBearingFacts, ...regularFacts],
++    threads,
++    timeline,
++    actRollups,
++  })
++}
++
++// ---------------------------------------------------------------------------
++// Blueprint (interface: BlueprintVersionEntry)
++// ---------------------------------------------------------------------------
++
++export function blueprintEntry(
++  chapterNumber: number,
++  version: number,
++  source: BlueprintResolutionSource,
++): BlueprintVersionEntry {
++  return { chapterNumber, version, source, beats: [`beat_${chapterNumber}_${version}`] }
++}
++
++// ---------------------------------------------------------------------------
++// Thread (interface: ThreadAuditSample)
++// ---------------------------------------------------------------------------
++
++export function thread(
++  id: string,
++  openedChapter: number,
++  lastTouchedChapter: number,
++  stale = false,
++  status = 'DEVELOPING',
++): ThreadSample {
++  return {
++    id,
++    title: `Thread ${id}`,
++    status,
++    openedChapter,
++    lastTouchedChapter,
++    isMainMystery: false,
++    stale,
++    staleSinceChapter: stale ? lastTouchedChapter : null,
++  }
++}
++
++export function threadAuditSample(overrides: Partial<ThreadAuditSample>): ThreadAuditSample {
++  return {
++    chapter: 41,
++    threads: [],
++    ...overrides,
++  }
++}
++
++// ---------------------------------------------------------------------------
++// Plot debt (interface: PlotDebtAuditSample)
++// ---------------------------------------------------------------------------
++
++export function plotDebtState(
++  id: string,
++  introducedAt: number,
++  mustProgressBy: number[],
++  mustCloseBy: number,
++  status: PlotDebtState['status'] = 'open',
++): PlotDebtState {
++  return { id, introducedAt, mustProgressBy, mustCloseBy, status }
++}
++
++/** Debt utama sesuai plan §10: diperkenalkan Bab 5, progress [10, 20], close 35. */
++export function mainMysteryDebt(): PlotDebtState {
++  return plotDebtState('main_mystery', 5, [10, 20], 35)
++}
++
++export function plotDebtSample(overrides: Partial<PlotDebtAuditSample>): PlotDebtAuditSample {
++  return {
++    chapter: 10,
++    debts: [],
++    ledgerClosedIds: [],
++    closesProposed: [],
++    auditSignalsClosesPlotDebts: [],
++    progressRecordedThisChapter: [],
++    progressedMilestones: [],
++    ...overrides,
++  }
++}
++
++// ---------------------------------------------------------------------------
++// Ending (interface: EndingFixtureEntry)
++// ---------------------------------------------------------------------------
++
++export function endingEntry(
++  chapterNumber: number,
++  resolvedEndingId: string | null,
++  lockedEndingId: string | null,
++  publishPath?: 'v4' | 'v2',
++): EndingFixtureEntry {
++  return { chapterNumber, resolvedEndingId, lockedEndingId, publishPath }
++}
++
++// ---------------------------------------------------------------------------
++// Act rollup (interface: ActRollupLifecycleSample)
++// ---------------------------------------------------------------------------
++
++export function rollupEntry(
++  actNumber: number,
++  coversFromChapter: number,
++  coversToChapter: number,
++  updatedAtChapter: number | null,
++): ActRollupEntry {
++  return {
++    actNumber,
++    summary: `Ringkasan act ${actNumber}`,
++    coversFromChapter,
++    coversToChapter,
++    updatedAtChapter,
++  }
++}
++
++export function actRollupSample(overrides: Partial<ActRollupLifecycleSample>): ActRollupLifecycleSample {
++  return {
++    rollups: [],
++    snapshotReadsRollups: true,
++    compilerIncludesRollups: true,
++    writerPromptIncludesRollups: false,
++    seededAtAuthoring: true,
++    ...overrides,
++  }
++}
++
++// ---------------------------------------------------------------------------
++// Chapter 50 (interface: FinalizationSample)
++// ---------------------------------------------------------------------------
++
++export function attempt(n: number, success: boolean, reason?: string): PublishAttempt {
++  return reason == null ? { attempt: n, success } : { attempt: n, success, reason }
++}
++
++export function finalizationSample(overrides: Partial<FinalizationSample>): FinalizationSample {
++  return {
++    chapter: 50,
++    attempts: [],
++    readerStateMarkedSelesai: false,
++    selesaiMarkDeterministic: true,
++    ...overrides,
++  }
++}
++
++// ---------------------------------------------------------------------------
++// Propagation (interface: ContractFieldTrace)
++// ---------------------------------------------------------------------------
++
++export function contractTrace(
++  field: string,
++  persisted: boolean,
++  inChapterBrief: boolean,
++  inPreProseBrief: boolean,
++  inContinuation: boolean,
++  inWriterPrompt: boolean,
++  note = '',
++): ContractFieldTrace {
++  return {
++    field,
++    persisted,
++    inChapterBrief,
++    inPreProseBrief,
++    inContinuation,
++    inWriterPrompt,
++    note,
++  }
++}
++
++/** Trace ideal: field terpropagasi contract -> brief -> prompt. */
++export function fullyPropagatedTrace(field: string): ContractFieldTrace {
++  return contractTrace(field, true, true, true, true, true)
++}
+diff --git a/tests/narrative-qa/story-bible-audit.test.ts b/tests/narrative-qa/story-bible-audit.test.ts
+new file mode 100644
+index 0000000..42ec5cb
+--- /dev/null
++++ b/tests/narrative-qa/story-bible-audit.test.ts
+@@ -0,0 +1,267 @@
++/**
++ * M10-A Task 3 — runStoryBibleAudit aggregate behavior.
++ *
++ * Test memverifikasi KORAKTENAN detector, bukan kesehatan Lakoku: verifikator
++ * menjalankan seluruh detector atas input sah, memeriksa verdict, status
++ * eksekusi, matrix 17 domain, dan hipotesis logging retrieval.
++ */
++import { describe, expect, it } from 'vitest'
++import {
++  buildSourceOfTruthMatrix,
++  domainStatuses,
++  runStoryBibleAudit,
++} from '../../lib/narrative-qa/story-bible-audit'
++import { AUDIT_DOMAINS } from '../../lib/narrative-qa/story-bible-audit-contract'
++import type { AuditStatus } from '../../lib/narrative-qa/story-bible-audit-contract'
++import { buildSyntheticStoryContract } from '../../fixtures/long-horizon/story-bible-pressure'
++import {
++  actRollupSample,
++  attempt,
++  blueprintEntry,
++  contractTrace,
++  endingEntry,
++  finalizationSample,
++  fullyPropagatedTrace,
++  mainMysteryDebt,
++  plotDebtSample,
++  rollupEntry,
++  syntheticChoiceItems,
++  thread,
++  threadAuditSample,
++} from './sample-builder'
++import type { StoryBibleAuditInputs } from '../../lib/narrative-qa/story-bible-audit'
++
++const ALLOWED_STATUSES: AuditStatus[] = [
++  'PROVEN_E2E',
++  'PROVEN_READ_ONLY',
++  'WRITE_PATH_UNPROVEN',
++  'CONSUMER_UNPROVEN',
++  'PARITY_RISK',
++  'BOUNDED_LOSS_RISK',
++  'DEAD_PATH_CANDIDATE',
++  'AMBIGUOUS',
++]
++
++/** Input lintas modul yang seluruhnya bersih — tidak ada finding apa pun. */
++function cleanInputs(): StoryBibleAuditInputs {
++  return {
++    choiceHistory: {
++      items: syntheticChoiceItems(5),
++      expectedLatestChapter: 5,
++    },
++    contextSamples: [
++      {
++        chapter: 10,
++        declaredBudget: 4000,
++        facts: [{ id: 'f1', statement: 'Fakta singkat', isLoadBearing: false }],
++        threads: [{ id: 't1', title: 'Alur', status: 'DEVELOPING' }],
++        timeline: [{ chapterNumber: 5, ordinal: 1, description: 'Peristiwa' }],
++        actRollups: [],
++        choiceHistory: [],
++      },
++    ],
++    blueprintVersions: [
++      blueprintEntry(20, 2, 'runtime'),
++      blueprintEntry(20, 2, 'compiler'),
++      blueprintEntry(20, 2, 'brief'),
++    ],
++    threadSample: threadAuditSample({
++      threads: [thread('t1', 1, 40)],
++      threadContextAdvancedThreadIds: ['t1'],
++      threadContextOpensNewThread: true,
++      expectedAdvanceThreadIds: ['t1'],
++      newThreadIds: [],
++      validatorReceivesDraftSignals: true,
++    }),
++    plotDebtSample: plotDebtSample({
++      chapter: 10,
++      debts: [mainMysteryDebt()],
++      progressedMilestones: [{ debtId: 'main_mystery', milestoneIndex: 0, progressedAt: 10 }],
++    }),
++    endingFixtures: [
++      endingEntry(44, null, null),
++      endingEntry(45, 'ending_A', 'ending_A'),
++      endingEntry(46, 'ending_A', 'ending_A'),
++    ],
++    propagation: {
++      traces: [contractTrace('corePromise', true, true, true, true, true)],
++      retrievalLogInvoked: true,
++      contextPacketConsumerProven: true,
++    },
++    actRollupSample: actRollupSample({
++      rollups: [rollupEntry(1, 1, 10, null)],
++      writerPromptIncludesRollups: true,
++    }),
++    chapter50Sample: finalizationSample({
++      attempts: [attempt(1, true)],
++      readerStateMarkedSelesai: true,
++    }),
++  }
++}
++
++describe('runStoryBibleAudit', () => {
++  it('executionStatus SUCCESS dan auditVerdict PASS pada input valid yang bersih', () => {
++    const report = runStoryBibleAudit(cleanInputs(), { baselineSha: 'abc123', now: new Date('2026-01-01T00:00:00.000Z') })
++
++    expect(report.executionStatus).toBe('SUCCESS')
++    expect(report.auditVerdict).toBe('PASS')
++    expect(report.findings).toEqual([])
++    expect(report.summary.totalFindings).toBe(0)
++    expect(report.baselineSha).toBe('abc123')
++    expect(report.timestamp).toBe('2026-01-01T00:00:00.000Z')
++  })
++
++  it('auditVerdict HOLD ketika ada finding BLOCKER (retry ending divergen)', () => {
++    const report = runStoryBibleAudit({
++      endingFixtures: [
++        endingEntry(45, 'ending_A', null),
++        endingEntry(45, 'ending_B', null),
++      ],
++    })
++
++    expect(report.executionStatus).toBe('SUCCESS')
++    expect(report.auditVerdict).toBe('HOLD')
++    expect(report.summary.blocker).toBeGreaterThan(0)
++    expect(report.findings.some((f) => f.code === 'ENDING_LOCK_RETRY_DIVERGENCE')).toBe(true)
++  })
++
++  it('auditVerdict HOLD ketika ada finding HIGH (context overshoot)', () => {
++    const report = runStoryBibleAudit({
++      contextSamples: [
++        {
++          chapter: 50,
++          declaredBudget: 4000,
++          facts: [{ id: 'f1', statement: 'x'.repeat(20000), isLoadBearing: false }],
++          threads: [],
++          timeline: [],
++          actRollups: [],
++          choiceHistory: [],
++        },
++      ],
++    })
++
++    expect(report.auditVerdict).toBe('HOLD')
++    expect(report.findings.some((f) => f.code === 'CONTEXT_DECLARED_BUDGET_OVERSHOOT')).toBe(true)
++  })
++
++  it('executionStatus ERROR ketika satu grup input melempar, finding grup lain tetap ada', () => {
++    // Getter yang melempar saat analyzeContextSample membaca `included`.
++    const throwingSample = {
++      chapter: 10,
++      declaredBudget: 4000,
++      facts: [
++        {
++          id: 'fact_boom',
++          statement: 'Fakta',
++          isLoadBearing: false,
++          get included(): boolean | undefined {
++            throw new Error('simulated detector failure')
++          },
++        },
++      ],
++      threads: [],
++      timeline: [],
++      actRollups: [],
++      choiceHistory: [],
++    }
++
++    const report = runStoryBibleAudit({
++      contextSamples: [throwingSample],
++      // Trace bersih agar satu-satunya finding adalah INFO retrieval-log —
++      // verdict tetap PASS walau executionStatus ERROR.
++      propagation: {
++        traces: [fullyPropagatedTrace('corePromise')],
++        retrievalLogInvoked: false,
++        contextPacketConsumerProven: true,
++      },
++    })
++
++    expect(report.executionStatus).toBe('ERROR')
++    // Finding dari modul lain tetap terkumpul walau satu modul error.
++    expect(report.findings.some((f) => f.code === 'RETRIEVAL_LOG_WRITE_PATH_UNPROVEN')).toBe(true)
++    expect(report.auditVerdict).toBe('PASS')
++  })
++
++  it('executionStatus SUCCESS tanpa input apa pun (semua grup opsional)', () => {
++    const report = runStoryBibleAudit({})
++    expect(report.executionStatus).toBe('SUCCESS')
++    expect(report.auditVerdict).toBe('PASS')
++    expect(report.findings).toEqual([])
++  })
++
++  it('deterministik: dua eksekusi input sama menghasilkan findings identik', () => {
++    const inputs: StoryBibleAuditInputs = {
++      endingFixtures: [
++        endingEntry(45, 'ending_A', null),
++        endingEntry(45, 'ending_B', null),
++      ],
++      propagation: { retrievalLogInvoked: false },
++    }
++    const a = runStoryBibleAudit(inputs)
++    const b = runStoryBibleAudit(inputs)
++    expect(b.findings).toEqual(a.findings)
++    expect(b.summary).toEqual(a.summary)
++  })
++})
++
++describe('buildSourceOfTruthMatrix', () => {
++  it('matrix memiliki tepat 17 baris dengan domain urutan AUDIT_DOMAINS', () => {
++    const matrix = buildSourceOfTruthMatrix()
++    expect(matrix).toHaveLength(17)
++    expect(matrix.map((row) => row.domain)).toEqual([...AUDIT_DOMAINS])
++  })
++
++  it('semua status baris berasal dari himpunan AuditStatus yang diizinkan', () => {
++    const matrix = buildSourceOfTruthMatrix()
++    for (const row of matrix) {
++      expect(ALLOWED_STATUSES).toContain(row.status)
++      expect(row.evidence.length).toBeGreaterThan(0)
++    }
++  })
++
++  it('domainStatuses memetakan semua 17 domain', () => {
++    const statuses = domainStatuses()
++    expect(Object.keys(statuses)).toHaveLength(17)
++    for (const domain of AUDIT_DOMAINS) {
++      expect(ALLOWED_STATUSES).toContain(statuses[domain])
++    }
++  })
++
++  it('RETRIEVAL_LOG_WRITE_PATH_UNPROVEN ter-emit saat retrievalLogInvoked=false, tidak saat true', () => {
++    const withUnproven = runStoryBibleAudit({ propagation: { retrievalLogInvoked: false } })
++    const withProven = runStoryBibleAudit({ propagation: { retrievalLogInvoked: true } })
++
++    expect(withUnproven.findings.some((f) => f.code === 'RETRIEVAL_LOG_WRITE_PATH_UNPROVEN')).toBe(true)
++    expect(withProven.findings.some((f) => f.code === 'RETRIEVAL_LOG_WRITE_PATH_UNPROVEN')).toBe(false)
++  })
++})
++
++describe('StoryContract fixture (plan §18 StoryContract)', () => {
++  const contract = buildSyntheticStoryContract()
++
++  it('chapterTargets tepat 50 target', () => {
++    expect(contract.chapterTargets).toHaveLength(50)
++    expect(contract.totalChapters).toBe(50)
++    expect(contract.chapterTargets[0].chapterNumber).toBe(1)
++    expect(contract.chapterTargets[49].chapterNumber).toBe(50)
++  })
++
++  it('actPlan kontigu 1 -> 50 tanpa celah', () => {
++    const acts = [...contract.actPlan].sort((a, b) => a.actNumber - b.actNumber)
++    expect(acts[0].actNumber).toBe(1)
++    expect(acts[0].fromChapter).toBe(1)
++    for (let i = 1; i < acts.length; i++) {
++      expect(acts[i].fromChapter).toBe(acts[i - 1].toChapter + 1)
++    }
++    expect(acts[acts.length - 1].toChapter).toBe(50)
++  })
++
++  it('closureRunway cutoff 35/40/45/48/49/50 sesuai plan', () => {
++    expect(contract.closureRunway.noNewMajorConflictAfter).toBe(35)
++    expect(contract.closureRunway.noNewThreadAfter).toBe(40)
++    expect(contract.closureRunway.endingLockChapter).toBe(45)
++    expect(contract.closureRunway.mainMysteryResolveBy).toBe(48)
++    expect(contract.closureRunway.emotionalResolutionChapter).toBe(49)
++    expect(contract.closureRunway.finalEndingChapter).toBe(50)
++  })
++})
+diff --git a/tests/narrative-qa/thread-signal-audit.test.ts b/tests/narrative-qa/thread-signal-audit.test.ts
+new file mode 100644
+index 0000000..ebcdb26
+--- /dev/null
++++ b/tests/narrative-qa/thread-signal-audit.test.ts
+@@ -0,0 +1,123 @@
++/**
++ * M10-A Task 3 — Thread signal disconnect.
++ *
++ * Production: ThreadContext hardcode advancedThreadIds: [] dan
++ * opensNewThread: false di kedua path generasi; validator memakai nilai itu
++ * verbatim; `stale` tidak dipakai seleksi konteks. Detector menembak saat
++ * sinyal tidak tersambung; diam saat semua sinyal ter-wire dengan benar.
++ */
++import { describe, expect, it } from 'vitest'
++import { auditThreadSignals } from '../../lib/narrative-qa/thread-audit'
++import { thread, threadAuditSample } from './sample-builder'
++import { detailOf } from './sample-builder'
++
++describe('thread-signal-audit — advancement disconnect', () => {
++  it('validatorReceivesDraftSignals=false + expected advances -> THREAD_ADVANCEMENT_SIGNAL_DISCONNECTED', () => {
++    const findings = auditThreadSignals(threadAuditSample({
++      chapter: 41,
++      threads: [thread('t1', 1, 40)],
++      expectedAdvanceThreadIds: ['t1'],
++      threadContextAdvancedThreadIds: [],
++      validatorReceivesDraftSignals: false,
++    }))
++
++    const advancement = findings.filter((f) => f.code === 'THREAD_ADVANCEMENT_SIGNAL_DISCONNECTED')
++    // HIGH: thread yang diharapkan maju tidak ada di advanced set.
++    // MEDIUM: sinyal draft tidak pernah sampai ke validator.
++    expect(advancement).toHaveLength(2)
++    expect(advancement.some((f) => f.severity === 'HIGH')).toBe(true)
++    expect(advancement.some((f) => f.severity === 'MEDIUM')).toBe(true)
++    const high = advancement.find((f) => f.severity === 'HIGH')
++    expect(detailOf(high as NonNullable<typeof high>).expectedToAdvance).toEqual(['t1'])
++  })
++
++  it('draft maju tapi tidak ada di threadContext -> tetap HIGH (runtime hardcode [])', () => {
++    const findings = auditThreadSignals(threadAuditSample({
++      chapter: 41,
++      threads: [thread('t1', 1, 40)],
++      draftAdvancedThreadIds: ['t1'],
++      threadContextAdvancedThreadIds: [],
++      expectedAdvanceThreadIds: ['t1'],
++      validatorReceivesDraftSignals: true,
++    }))
++
++    expect(findings.some((f) => f.code === 'THREAD_ADVANCEMENT_SIGNAL_DISCONNECTED' && f.severity === 'HIGH')).toBe(true)
++  })
++})
++
++describe('thread-signal-audit — open signal disconnect', () => {
++  it('opensNewThread=false padahal ada thread baru -> THREAD_OPEN_SIGNAL_DISCONNECTED HIGH', () => {
++    const findings = auditThreadSignals(threadAuditSample({
++      chapter: 5,
++      threads: [thread('t_new', 5, 5)],
++      threadContextOpensNewThread: false,
++    }))
++
++    const open = findings.find((f) => f.code === 'THREAD_OPEN_SIGNAL_DISCONNECTED')
++    expect(open).toBeDefined()
++    expect(open?.severity).toBe('HIGH')
++    expect(detailOf(open as NonNullable<typeof open>).newThreadIds).toEqual(['t_new'])
++    expect(detailOf(open as NonNullable<typeof open>).threadContextOpensNewThread).toBe(false)
++  })
++
++  it('newThreadIds eksplisit di-supply -> THREAD_OPEN_SIGNAL_DISCONNECTED tetap menembak', () => {
++    const findings = auditThreadSignals(threadAuditSample({
++      chapter: 5,
++      threads: [],
++      newThreadIds: ['t_1', 't_2'],
++      threadContextOpensNewThread: false,
++    }))
++    const open = findings.find((f) => f.code === 'THREAD_OPEN_SIGNAL_DISCONNECTED')
++    expect(detailOf(open as NonNullable<typeof open>).newThreadIds).toEqual(['t_1', 't_2'])
++  })
++
++  it('opensNewThread=true dengan thread baru -> tidak ada open disconnect', () => {
++    const findings = auditThreadSignals(threadAuditSample({
++      chapter: 5,
++      threads: [thread('t_new', 5, 5)],
++      threadContextOpensNewThread: true,
++    }))
++    expect(findings.some((f) => f.code === 'THREAD_OPEN_SIGNAL_DISCONNECTED')).toBe(false)
++  })
++})
++
++describe('thread-signal-audit — staleness', () => {
++  it('thread stale ada -> THREAD_STALENESS_NOT_LOAD_BEARING LOW (stale tidak dipakai seleksi konteks)', () => {
++    const findings = auditThreadSignals(threadAuditSample({
++      chapter: 30,
++      threads: [
++        thread('t_stale', 1, 10, true),
++        thread('t_active', 1, 28),
++      ],
++    }))
++
++    const stale = findings.find((f) => f.code === 'THREAD_STALENESS_NOT_LOAD_BEARING')
++    expect(stale).toBeDefined()
++    expect(stale?.severity).toBe('LOW')
++    expect(detailOf(stale as NonNullable<typeof stale>).staleThreadIds).toEqual(['t_stale'])
++  })
++
++  it('tidak ada thread stale -> tidak ada staleness finding', () => {
++    const findings = auditThreadSignals(threadAuditSample({
++      chapter: 30,
++      threads: [thread('t_active', 1, 28)],
++    }))
++    expect(findings.some((f) => f.code === 'THREAD_STALENESS_NOT_LOAD_BEARING')).toBe(false)
++  })
++})
++
++describe('thread-signal-audit — semua sinyal ter-wire', () => {
++  it('tidak ada finding saat seluruh sinyal tersambung dengan benar', () => {
++    const findings = auditThreadSignals(threadAuditSample({
++      chapter: 41,
++      threads: [thread('t1', 1, 40)],
++      draftAdvancedThreadIds: ['t1'],
++      threadContextAdvancedThreadIds: ['t1'],
++      threadContextOpensNewThread: true,
++      expectedAdvanceThreadIds: ['t1'],
++      newThreadIds: [],
++      validatorReceivesDraftSignals: true,
++    }))
++    expect(findings).toEqual([])
++  })
++})
+diff --git a/tests/narrative-qa/writer-propagation-audit.test.ts b/tests/narrative-qa/writer-propagation-audit.test.ts
+new file mode 100644
+index 0000000..a92b3bd
+--- /dev/null
++++ b/tests/narrative-qa/writer-propagation-audit.test.ts
+@@ -0,0 +1,123 @@
++/**
++ * M10-A Task 3 — Writer propagation audit.
++ *
++ * Field StoryContract yang persist tapi tidak pernah prompt-visible ->
++ * DEPENDENCY_DECLARED_BUT_UNUSED (HIGH saat mati sebelum brief, MEDIUM saat
++ * mati sebelum prompt); field yang terpropagasi contract -> brief -> prompt
++ * bersih; CONTEXT_PACKET_CONSUMER_UNPROVEN dan RETRIEVAL_LOG_WRITE_PATH_UNPROVEN
++ * sesuai flag input.
++ */
++import { describe, expect, it } from 'vitest'
++import {
++  auditPropagation,
++  DEFAULT_CONTRACT_FIELD_TRACES,
++} from '../../lib/narrative-qa/propagation-audit'
++import { contractTrace, fullyPropagatedTrace } from './sample-builder'
++import { detailOf } from './sample-builder'
++
++describe('writer-propagation-audit — default trace table', () => {
++  it('corePromise/mainConflict/finalQuestion persist tapi tak pernah prompt-visible -> HIGH', () => {
++    const findings = auditPropagation()
++    const highFields = findings
++      .filter((f) => f.code === 'DEPENDENCY_DECLARED_BUT_UNUSED' && f.severity === 'HIGH')
++      .map((f) => detailOf(f).field)
++
++    expect(highFields).toContain('corePromise')
++    expect(highFields).toContain('mainConflict')
++    expect(highFields).toContain('finalQuestion')
++    expect(highFields).toHaveLength(3)
++  })
++
++  it('field yang sampai ke brief tapi mati sebelum prompt -> DEPENDENCY_DECLARED_BUT_UNUSED MEDIUM', () => {
++    const findings = auditPropagation()
++    const mediumFields = findings
++      .filter((f) => f.code === 'DEPENDENCY_DECLARED_BUT_UNUSED' && f.severity === 'MEDIUM')
++      .map((f) => detailOf(f).field)
++
++    expect(mediumFields).toContain('plotDebts')
++    expect(mediumFields).toContain('endingCandidates')
++    expect(mediumFields).toContain('closureRunway')
++    expect(mediumFields).toContain('lockedEndingKey (reader_states)')
++  })
++
++  it('chapterTargets/emotionalTurn/expectedThreadMovement terpropagasi ke prompt -> tidak ada finding', () => {
++    const findings = auditPropagation()
++    const unusedFields = findings
++      .filter((f) => f.code === 'DEPENDENCY_DECLARED_BUT_UNUSED')
++      .map((f) => detailOf(f).field)
++
++    expect(unusedFields).not.toContain('chapterTargets[n]')
++    expect(unusedFields).not.toContain('emotionalTurn')
++    expect(unusedFields).not.toContain('expectedThreadMovement')
++  })
++
++  it('trace default memuat 10 field contract', () => {
++    expect(DEFAULT_CONTRACT_FIELD_TRACES).toHaveLength(10)
++    expect(DEFAULT_CONTRACT_FIELD_TRACES.every((t) => t.persisted)).toBe(true)
++  })
++})
++
++describe('writer-propagation-audit — trace custom', () => {
++  it('field terpropagasi contract -> brief -> prompt -> tidak ada finding', () => {
++    const findings = auditPropagation({
++      traces: [fullyPropagatedTrace('corePromise')],
++      retrievalLogInvoked: true,
++      contextPacketConsumerProven: true,
++    })
++    expect(findings).toEqual([])
++  })
++
++  it('field tidak persist -> diabaikan, tidak ada finding', () => {
++    const findings = auditPropagation({
++      traces: [contractTrace('staleField', false, true, true, true, true)],
++      retrievalLogInvoked: true,
++      contextPacketConsumerProven: true,
++    })
++    expect(findings).toEqual([])
++  })
++
++  it('field sampai ContinuationContext tapi tidak ke prompt -> MEDIUM', () => {
++    const findings = auditPropagation({
++      traces: [contractTrace('fieldX', true, false, false, true, false)],
++      retrievalLogInvoked: true,
++      contextPacketConsumerProven: true,
++    })
++
++    expect(findings).toHaveLength(1)
++    expect(findings[0].code).toBe('DEPENDENCY_DECLARED_BUT_UNUSED')
++    expect(findings[0].severity).toBe('MEDIUM')
++  })
++
++  it('trace chapterTargets dengan jalur brief -> preProse -> prompt utuh -> bersih', () => {
++    const findings = auditPropagation({
++      traces: [
++        contractTrace('chapterTargets[n]', true, true, true, false, true),
++        contractTrace('emotionalTurn', true, true, false, false, true),
++        contractTrace('expectedThreadMovement', true, true, false, false, true),
++      ],
++      retrievalLogInvoked: true,
++      contextPacketConsumerProven: true,
++    })
++    expect(findings).toEqual([])
++  })
++})
++
++describe('writer-propagation-audit — packet consumer & retrieval log', () => {
++  it('CONTEXT_PACKET_CONSUMER_UNPROVEN ter-emit saat contextPacketConsumerProven=false', () => {
++    const findings = auditPropagation({ contextPacketConsumerProven: false })
++    const packet = findings.find((f) => f.code === 'CONTEXT_PACKET_CONSUMER_UNPROVEN')
++    expect(packet).toBeDefined()
++    expect(packet?.severity).toBe('INFO')
++    expect(detailOf(packet as NonNullable<typeof packet>).packetSectionsDropped).toEqual(['actRollups', 'contextBudgetReport', 'storyContractSummary'])
++  })
++
++  it('CONTEXT_PACKET_CONSUMER_UNPROVEN tidak ter-emit saat consumer proven', () => {
++    const findings = auditPropagation({ contextPacketConsumerProven: true })
++    expect(findings.some((f) => f.code === 'CONTEXT_PACKET_CONSUMER_UNPROVEN')).toBe(false)
++  })
++
++  it('RETRIEVAL_LOG_WRITE_PATH_UNPROVEN ter-emit saat retrievalLogInvoked=false, tidak saat true', () => {
++    expect(auditPropagation({ retrievalLogInvoked: false }).some((f) => f.code === 'RETRIEVAL_LOG_WRITE_PATH_UNPROVEN')).toBe(true)
++    expect(auditPropagation({ retrievalLogInvoked: true }).some((f) => f.code === 'RETRIEVAL_LOG_WRITE_PATH_UNPROVEN')).toBe(false)
++  })
++})

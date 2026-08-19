@@ -1,0 +1,2695 @@
+---STAT---
+ fixtures/long-horizon/story-bible-pressure.ts | 256 ++++++++++++
+ lib/narrative-qa/act-rollup-audit.ts          | 167 ++++++++
+ lib/narrative-qa/blueprint-audit.ts           | 126 ++++++
+ lib/narrative-qa/chapter50-audit.ts           | 172 ++++++++
+ lib/narrative-qa/choice-history-audit.ts      | 196 +++++++++
+ lib/narrative-qa/context-pressure-audit.ts    | 235 +++++++++++
+ lib/narrative-qa/ending-audit.ts              | 195 +++++++++
+ lib/narrative-qa/plot-debt-audit.ts           | 215 ++++++++++
+ lib/narrative-qa/propagation-audit.ts         | 299 ++++++++++++++
+ lib/narrative-qa/story-bible-audit.ts         | 550 ++++++++++++++++++++++++++
+ lib/narrative-qa/thread-audit.ts              | 204 ++++++++++
+ 11 files changed, 2615 insertions(+)
+---DIFF---
+diff --git a/fixtures/long-horizon/story-bible-pressure.ts b/fixtures/long-horizon/story-bible-pressure.ts
+new file mode 100644
+index 0000000..e9ced70
+--- /dev/null
++++ b/fixtures/long-horizon/story-bible-pressure.ts
+@@ -0,0 +1,256 @@
++import type { CanonSnapshot } from '../../lib/narrative/types'
++import type { StoryContract, PlotDebt } from '../../lib/story-engine/story-contract'
++
++/**
++ * Fixture sintetis long-horizon untuk audit M10-A.
++ * Pure data — tidak menyentuh DB, tidak ada import server-only.
++ */
++
++export interface ChoiceHistoryItemFixture {
++  chapterNumber: number
++  choiceId: string
++  label: string
++  consequence: string
++  effectSummary: string
++  flags: string[]
++}
++
++export function generateSyntheticChoices(count: number): ChoiceHistoryItemFixture[] {
++  const choices: ChoiceHistoryItemFixture[] = []
++  for (let i = 1; i <= count; i++) {
++    choices.push({
++      chapterNumber: i,
++      choiceId: `choice_ch_${i}`,
++      label: `Pilihan realistis Bab ${i}`,
++      consequence: `Konsekuensi naratif nyata untuk keputusan Bab ${i}`,
++      effectSummary: `Efek jangka panjang Bab ${i}`,
++      flags: [`flag_ch_${i}`],
++    })
++  }
++  return choices
++}
++
++/** CanonSnapshot yang tumbuh seiring chapter — fakta, thread, timeline, rollup bertambah. */
++export function buildSyntheticCanonSnapshot(chapterNumber: number): CanonSnapshot {
++  const factsCount = Math.floor(chapterNumber * 1.5)
++  const facts = []
++  for (let i = 1; i <= factsCount; i++) {
++    facts.push({
++      id: `fact_${i}`,
++      storyId: 'synthetic_story_audit',
++      statement: `Fakta penting nomor ${i} yang sudah terbentuk`,
++      subjectCharacterId: i % 2 === 0 ? 'char_mc' : null,
++      establishedChapter: Math.max(1, Math.floor(i / 1.5)),
++      salience: i % 3 === 0 ? 3 : 2,
++      loadBearing: i % 4 === 0,
++      paidOff: false,
++    })
++  }
++
++  const threadCount = Math.min(10, Math.floor(chapterNumber / 5) + 2)
++  const threads: CanonSnapshot['threads'] = []
++  for (let i = 1; i <= threadCount; i++) {
++    threads.push({
++      id: `thread_${i}`,
++      title: `Alur Konflik Utama ${i}`,
++      status: i === 1 ? 'RESOLVED' : 'DEVELOPING',
++      openedChapter: Math.max(1, chapterNumber - (i % 5) - 2),
++      lastTouchedChapter: Math.max(1, chapterNumber - (i % 5)),
++      payoffWindow: null,
++      isMainMystery: i === 1,
++      stale: chapterNumber - Math.max(1, chapterNumber - (i % 5)) > 6,
++      staleSinceChapter: chapterNumber - Math.max(1, chapterNumber - (i % 5)) > 6
++        ? Math.max(1, chapterNumber - (i % 5))
++        : null,
++    })
++  }
++
++  const actRollups = []
++  if (chapterNumber > 10) {
++    actRollups.push({
++      actNumber: 1,
++      summary: 'Keluarga kerajaan runtuh akibat pengkhianatan penasihat utama.',
++      stateDelta: { reputasiProtagonist: 'hancur' },
++      coversFromChapter: 1,
++      coversToChapter: 10,
++    })
++  }
++  if (chapterNumber > 25) {
++    actRollups.push({
++      actNumber: 2,
++      summary: 'Perjalanan pengasingan dan pengumpulan sekutu rahasia di perbatasan.',
++      stateDelta: { dukunganFraksi: 'bayangan' },
++      coversFromChapter: 11,
++      coversToChapter: 25,
++    })
++  }
++
++  const blueprints = []
++  if (chapterNumber >= 20) {
++    blueprints.push({
++      chapterNumber: 20,
++      version: 1,
++      phase: 'RISING',
++      chapterGoal: 'Versi pertama blueprint bab 20',
++      mandatoryBeats: ['Beat awal'],
++      forbiddenReveals: [],
++      allowedStateDelta: {},
++      introducesCharacters: [],
++      reconciledFromVersion: null,
++      reconciliationReason: null,
++    })
++    blueprints.push({
++      chapterNumber: 20,
++      version: 2,
++      phase: 'RISING',
++      chapterGoal: 'Versi kedua blueprint bab 20 (rekon)',
++      mandatoryBeats: ['Beat awal', 'Beat rekon'],
++      forbiddenReveals: ['secret_1'],
++      allowedStateDelta: {},
++      introducesCharacters: [],
++      reconciledFromVersion: 1,
++      reconciliationReason: 'Reconciliation setelah kontrak cerita diperbarui',
++    })
++  }
++
++  return {
++    storyId: 'synthetic_story_audit',
++    characters: [
++      {
++        id: 'char_mc',
++        storyId: 'synthetic_story_audit',
++        canonicalName: 'Arya',
++        role: 'Protagonist',
++        motivation: 'Merebut kembali keadilan keluarga',
++        introducedChapter: 1,
++        status: 'ALIVE',
++      },
++      {
++        id: 'char_antagonist',
++        storyId: 'synthetic_story_audit',
++        canonicalName: 'Patih Brama',
++        role: 'Antagonist',
++        motivation: 'Mempertahankan kekuasaan absolut',
++        introducedChapter: 1,
++        status: 'ALIVE',
++      },
++    ],
++    aliases: [
++      { characterId: 'char_mc', alias: 'Sang Bayangan', aliasType: 'TITLE' },
++      { characterId: 'char_antagonist', alias: 'Patih Tangan Besi', aliasType: 'NICKNAME' },
++    ],
++    voiceSheets: [
++      {
++        characterId: 'char_mc',
++        register: 'FORMAL_RESERVED',
++        speechHabits: ['Bicara singkat', 'Menggunakan metafora alam'],
++        forbiddenWords: ['gaul', 'santai'],
++        sampleLines: ['"Keadilan tidak pernah datang sendiri."'],
++      },
++    ],
++    facts,
++    knowledge: [
++      { characterId: 'char_mc', factId: 'fact_1', knownFromChapter: 1 },
++      { characterId: 'char_antagonist', factId: 'fact_2', knownFromChapter: 2 },
++    ],
++    secrets: [
++      {
++        id: 'secret_1',
++        description: 'Identitas asli Arya adalah pewaris tahta sah',
++        revealGateChapter: 35,
++        revealed: chapterNumber >= 35,
++      },
++    ],
++    timeline: Array.from({ length: Math.min(chapterNumber, 20) }, (_, idx) => ({
++      chapterNumber: idx + 1,
++      ordinal: 1,
++      description: `Peristiwa utama di bab ${idx + 1}`,
++      isFlashback: false,
++      occursAt: null,
++    })),
++    threads,
++    actRollups,
++    blueprints,
++  }
++}
++
++/** StoryContract sintetis 50 bab dengan plot debt yang sesuai PlotDebtSchema asli. */
++export function buildSyntheticStoryContract(): StoryContract {
++  const plotDebts: PlotDebt[] = [
++    {
++      id: 'main_mystery',
++      question: 'Misteri cincin stempel mendiang Raja',
++      introducedAt: 5,
++      mustProgressBy: [10, 20],
++      mustCloseBy: 35,
++      status: 'open',
++    },
++    {
++      id: 'debt_2',
++      question: 'Penindasan rakyat oleh pasukan penjaga',
++      introducedAt: 12,
++      mustProgressBy: [25],
++      mustCloseBy: 45,
++      status: 'open',
++    },
++  ]
++
++  const chapterTargets = Array.from({ length: 50 }, (_, i) => ({
++    chapterNumber: i + 1,
++    phase: i + 1 <= 10 ? 'SETUP' : i + 1 <= 25 ? 'RISING' : i + 1 <= 40 ? 'CLIMAX' : 'RESOLUTION',
++    goal: `Tujuan naratif bab ${i + 1}`,
++    mustInclude: [`Elemen wajib bab ${i + 1}`],
++    mustNotReveal: i + 1 < 35 ? ['secret_1'] : [],
++    emotionalTurn: `Perubahan emosi bab ${i + 1}`,
++    expectedThreadMovement: [`Pergerakan alur bab ${i + 1}`],
++  }))
++
++  return {
++    storyId: 'synthetic_story_audit',
++    totalChapters: 50,
++    title: 'Bayangan Tahta',
++    genre: 'NARRATIVE_FANTASY',
++    tone: 'DRAMATIC',
++    styleProfile: 'lakoku_mobile_drama_v1',
++    mainCharacter: {
++      name: 'Arya',
++      role: 'Pewaris tahta yang bersembunyi',
++      wound: 'Dikhianati orang kepercayaan keluarga',
++      desire: 'Mengembalikan keadilan atas nama mendiang ayah',
++    },
++    corePromise: 'Perjuangan membongkar kebenaran pengkhianatan istana.',
++    mainConflict: 'Arya vs Patih Brama dalam perebutan bukti pengkhianatan.',
++    finalQuestion: 'Apakah Arya akan mengorbankan dendam pribadi demi kedamaian negeri?',
++    plotDebts,
++    actPlan: [
++      { actNumber: 1, fromChapter: 1, toChapter: 10, goal: 'Pengkhianatan terbongkar' },
++      { actNumber: 2, fromChapter: 11, toChapter: 25, goal: 'Pengasingan & sekutu' },
++      { actNumber: 3, fromChapter: 26, toChapter: 40, goal: 'Kembali merebut istana' },
++      { actNumber: 4, fromChapter: 41, toChapter: 50, goal: 'Resolusi & takhta' },
++    ],
++    chapterTargets,
++    endingCandidates: [
++      {
++        key: 'ending_A',
++        name: 'Keadilan dan Mahkota',
++        condition: 'Arya merebut takhta dan menghukum Patih Brama',
++        requiredClosure: ['main_mystery'],
++      },
++      {
++        key: 'ending_B',
++        name: 'Pengasingan Sukarela',
++        condition: 'Arya memilih kedamaian dan menyerahkan takhta',
++        requiredClosure: ['main_mystery'],
++      },
++    ],
++    revealRunway: [{ secretId: 'secret_1', revealGateChapter: 35 }],
++    closureRunway: {
++      noNewMajorConflictAfter: 35,
++      noNewThreadAfter: 40,
++      endingLockChapter: 45,
++      mainMysteryResolveBy: 48,
++      emotionalResolutionChapter: 49,
++      finalEndingChapter: 50,
++    },
++  }
++}
+diff --git a/lib/narrative-qa/act-rollup-audit.ts b/lib/narrative-qa/act-rollup-audit.ts
+new file mode 100644
+index 0000000..58da08f
+--- /dev/null
++++ b/lib/narrative-qa/act-rollup-audit.ts
+@@ -0,0 +1,167 @@
++/**
++ * M10-A Task 2 — Act rollup lifecycle detectors.
++ *
++ * Answers: who creates act rollups, when are they updated, who reads them, and
++ * whether the summary reaches the writer after compile.
++ *
++ * Evidence cited (source strings):
++ *   - supabase/migrations/20260707000000_core_runtime_baseline.sql :: act_rollups —
++ *     table: id, story_id, act_number, summary, state_delta (jsonb), covers_from_chapter,
++ *     covers_to_chapter, created_at; UNIQUE (story_id, act_number).
++ *   - lib/authoring/compile.ts :: compileSnapshot (seed) — creates exactly ONE
++ *     rollup (act 1) with `summary: premise.synopsis (fase ...)`, stateDelta {},
++ *     coversFromChapter/ToChapter from ACTS[0] — "agar rollup chain punya titik awal".
++ *   - lib/authoring/persist.ts :: snapshotPersistenceRows (seed path) — maps
++ *     s.actRollups to act_rollups rows (act_number, summary, state_delta,
++ *     covers_from_chapter, covers_to_chapter).
++ *   - lib/narrative/loader.ts :: loadCanonSnapshot — reads act_rollups into
++ *     CanonSnapshot.actRollups (source-string evidence only; loader is server-only).
++ *   - lib/narrative/compiler.ts :: compileContext — keeps act rollups whose
++ *     coversToChapter < targetChapter, budgets them under rollupsSummaries (0.25),
++ *     keeps newest-first and drops oldest into excludedIds over cap.
++ *   - lib/narrative/continuation-context.ts :: buildContinuationContext — the
++ *     ContinuationContext type has NO actRollups field; rollups die at the packet.
++ *   - lib/prose/prompt-engine/build-writer-prompt.ts :: buildWriterPrompt — layer 3
++ *     emits threads, facts, timeline, routeStateSummary — no rollup section.
++ */
++
++import type {
++  AuditSeverity,
++  StoryBibleAuditFinding,
++  StructuredEvidence,
++} from './story-bible-audit-contract'
++
++export interface ActRollupEntry {
++  actNumber: number
++  summary: string
++  coversFromChapter: number
++  coversToChapter: number
++  /** Chapter at which this rollup was last updated; null = never updated. */
++  updatedAtChapter: number | null
++}
++
++export interface ActRollupLifecycleSample {
++  rollups: ActRollupEntry[]
++  /** loadCanonSnapshot reads act_rollups into the snapshot. */
++  snapshotReadsRollups: boolean
++  /** compileContext includes rollups in the packet (cap/trim). */
++  compilerIncludesRollups: boolean
++  /** Writer prompt (buildWriterPrompt) contains a rollup summary section. */
++  writerPromptIncludesRollups: boolean
++  /** Rollups were seeded at story creation (authoring compile). */
++  seededAtAuthoring: boolean
++}
++
++export const ACT_ROLLUP_AUDIT_EVIDENCE: StructuredEvidence[] = [
++  {
++    source: 'supabase/migrations/20260707000000_core_runtime_baseline.sql :: act_rollups',
++    evidenceClass: 'SCHEMA_CONTRACT',
++    observation:
++      'act_rollups columns: id, story_id, act_number, summary, state_delta jsonb, covers_from_chapter, covers_to_chapter, created_at; UNIQUE(story_id, act_number); no updated_at column — mutation means row replacement, and no migration found that inserts/updates it after baseline.',
++  },
++  {
++    source: 'lib/authoring/compile.ts :: compileSnapshot',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Seeds exactly one rollup (act 1): summary = `premise.synopsis (fase <phase>)`, stateDelta {}, covers range from ACTS[0] — comment: "Seed act rollup (act 1) agar rollup chain punya titik awal".',
++  },
++  {
++    source: 'lib/authoring/persist.ts :: snapshotPersistenceRows',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Maps s.actRollups -> act_rollups rows (act_number, summary, state_delta, covers_from_chapter, covers_to_chapter) during story-bible persistence.',
++  },
++  {
++    source: 'lib/narrative/loader.ts :: loadCanonSnapshot',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Reads `act_rollups` into CanonSnapshot.actRollups (server-only module; cited as source string, never imported by audit code).',
++  },
++  {
++    source: 'lib/narrative/compiler.ts :: compileContext',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'actRollups = rollups where coversToChapter < targetChapter, sorted by actNumber; budgeted under BUDGET_ALLOCATION.rollupsSummaries (0.25); newest kept first, oldest dropped into excludedIds when over cap.',
++  },
++  {
++    source: 'lib/narrative/continuation-context.ts :: buildContinuationContext',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'ContinuationContext has NO actRollups field — the projected context handed to the writer path contains only openThreads, anchorFacts, recentTimeline, routeStateSummary, mustNotReveal.',
++  },
++  {
++    source: 'lib/prose/prompt-engine/build-writer-prompt.ts :: buildWriterPrompt',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Layer-3 story-state block renders threads, facts, timeline, routeStateSummary only; no act-rollup summary section exists in the writer prompt.',
++  },
++]
++
++/**
++ * Emit act-rollup lifecycle findings.
++ * - DEAD_PATH_CANDIDATE: rollups exist (seeded at authoring), are never updated,
++ *   and never reach the writer prompt — the whole chain is write-once, read-almost,
++ *   consumed-never.
++ * - CONSUMER_UNPROVEN: rollups reach the compiled packet but the writer prompt has
++ *   no rollup section, so the compiled summaries have no proven consumer.
++ */
++export function auditActRollupLifecycle(
++  sample: ActRollupLifecycleSample,
++): StoryBibleAuditFinding[] {
++  const findings: StoryBibleAuditFinding[] = []
++
++  const neverUpdated = sample.rollups.every((r) => r.updatedAtChapter == null)
++
++  if (sample.rollups.length > 0 && sample.seededAtAuthoring && neverUpdated && !sample.writerPromptIncludesRollups) {
++    findings.push(baseFinding('DEAD_PATH_CANDIDATE', 'MEDIUM', {
++      detail: {
++        rollupCount: sample.rollups.length,
++        actNumbers: sample.rollups.map((r) => r.actNumber),
++        neverUpdated: true,
++      },
++      risk: `${sample.rollups.length} act rollup(s) (acts ${sample.rollups.map((r) => r.actNumber).join(', ')}) were seeded at authoring, never updated (no updated_at column, no update migration found), and never reach the writer prompt. The rollup chain has no proven living path.`,
++      followUp: 'Confirm whether act rollups are meant to be maintained during generation; if yes, add an update trigger (e.g. at act boundaries) and a prompt consumer; if no, mark the domain as write-once seed data.',
++    }))
++  }
++
++  if (sample.compilerIncludesRollups && !sample.writerPromptIncludesRollups) {
++    findings.push(baseFinding('CONSUMER_UNPROVEN', 'LOW', {
++      detail: {
++        snapshotReadsRollups: sample.snapshotReadsRollups,
++        compilerIncludesRollups: true,
++        writerPromptIncludesRollups: false,
++      },
++      risk: 'compileContext budgets 25% of the packet to rollup summaries and trims them oldest-first, but buildContinuationContext drops actRollups before the writer prompt — the compiled summaries have no proven consumer after compile.',
++      followUp: 'Either surface rollup summaries in the continuation/writer layer (they exist to compress prior acts) or reallocate the 0.25 rollupsSummaries budget.',
++    }))
++  }
++
++  return findings
++}
++
++function baseFinding(
++  code: string,
++  severity: AuditSeverity,
++  args: { detail: Record<string, unknown>; risk: string; followUp: string },
++): StoryBibleAuditFinding {
++  return {
++    code,
++    severity,
++    domain: 'Act Rollup',
++    status: code === 'DEAD_PATH_CANDIDATE' ? 'DEAD_PATH_CANDIDATE' : 'CONSUMER_UNPROVEN',
++    sourceOfTruth: ['act_rollups'],
++    producers: ['lib/authoring/compile.ts :: compileSnapshot (seed)', 'lib/authoring/persist.ts :: snapshotPersistenceRows'],
++    consumers: ['lib/narrative/loader.ts :: loadCanonSnapshot', 'lib/narrative/compiler.ts :: compileContext'],
++    validators: ['lib/narrative/compiler.ts :: compileContext (rollupsSummaries cap)'],
++    evidence: [
++      ...ACT_ROLLUP_AUDIT_EVIDENCE,
++      {
++        source: `lib/narrative-qa/act-rollup-audit.ts :: ${code}`,
++        evidenceClass: 'PURE_CHARACTERIZATION',
++        observation: `Detector emitted from input data: ${JSON.stringify(args.detail)}`,
++      } satisfies StructuredEvidence,
++    ],
++    risk: args.risk,
++    recommendedFollowUp: args.followUp,
++  }
++}
+diff --git a/lib/narrative-qa/blueprint-audit.ts b/lib/narrative-qa/blueprint-audit.ts
+new file mode 100644
+index 0000000..f7d17af
+--- /dev/null
++++ b/lib/narrative-qa/blueprint-audit.ts
+@@ -0,0 +1,126 @@
++/**
++ * M10-A Task 2 — Blueprint version resolution divergence detector.
++ *
++ * The same chapter blueprint can be resolved by three different code paths. This
++ * module compares the versions each path resolved for a chapter and emits
++ * BLUEPRINT_VERSION_RESOLUTION_DIVERGENCE when they differ.
++ *
++ * Evidence cited (source strings):
++ *   - lib/runtime/personalized-generation.ts :: resolveBlueprint — filters
++ *     blueprints for the chapter, sorts by `b.version` DESCENDING, takes [0];
++ *     falls back to a deterministic derived blueprint when canon has none.
++ *   - lib/narrative/compiler.ts :: latestBlueprint — same descending-version
++ *     resolution (sort by version desc, candidates[0]).
++ *   - lib/story-engine/chapter-brief.ts :: buildChapterBrief — uses
++ *     `snapshot.blueprints.find(...)` (first match in array order) with NO
++ *     version sort, so it can resolve a DIFFERENT (older) version than the
++ *     runtime/compiler when multiple versions exist for the chapter.
++ */
++
++import type {
++  AuditSeverity,
++  StoryBibleAuditFinding,
++  StructuredEvidence,
++} from './story-bible-audit-contract'
++
++export type BlueprintResolutionSource = 'runtime' | 'compiler' | 'brief'
++
++export interface BlueprintVersionEntry {
++  chapterNumber: number
++  version: number
++  source: BlueprintResolutionSource
++  beats: string[]
++}
++
++export const BLUEPRINT_AUDIT_EVIDENCE: StructuredEvidence[] = [
++  {
++    source: 'lib/runtime/personalized-generation.ts :: resolveBlueprint',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Runtime resolution: filter by chapterNumber, `.sort((a, b) => b.version - a.version)[0]` — highest version wins; derived-blueprint fallback when canon has none.',
++  },
++  {
++    source: 'lib/narrative/compiler.ts :: latestBlueprint',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Compiler resolution: filter by chapterNumber, sort by `b.version - a.version` descending, take candidates[0] — highest version wins; returns null when absent.',
++  },
++  {
++    source: 'lib/story-engine/chapter-brief.ts :: buildChapterBrief',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Brief resolution: `snapshot.blueprints.find((candidate) => candidate.chapterNumber === chapterNumber)` — first array match, NO version ordering. Diverges from runtime/compiler when multiple versions exist for one chapter.',
++  },
++]
++
++/**
++ * Group version entries by chapter and emit BLUEPRINT_VERSION_RESOLUTION_DIVERGENCE
++ * per chapter whose resolved versions differ across sources.
++ */
++export function auditBlueprintVersions(
++  entries: BlueprintVersionEntry[],
++): StoryBibleAuditFinding[] {
++  const findings: StoryBibleAuditFinding[] = []
++
++  const byChapter = new Map<number, BlueprintVersionEntry[]>()
++  for (const entry of entries) {
++    const list = byChapter.get(entry.chapterNumber) ?? []
++    list.push(entry)
++    byChapter.set(entry.chapterNumber, list)
++  }
++
++  const chapters = [...byChapter.keys()].sort((a, b) => a - b)
++  for (const chapter of chapters) {
++    const chapterEntries = byChapter.get(chapter) ?? []
++    const resolved = new Map<BlueprintResolutionSource, number>()
++    for (const entry of chapterEntries) {
++      resolved.set(entry.source, entry.version)
++    }
++    const distinctVersions = new Set(resolved.values())
++    if (distinctVersions.size <= 1) continue
++
++    const detail = Object.fromEntries(
++      [...resolved.entries()]
++        .sort((a, b) => a[0].localeCompare(b[0]))
++        .map(([source, version]) => [source, version]),
++    )
++    findings.push(baseFinding('BLUEPRINT_VERSION_RESOLUTION_DIVERGENCE', 'HIGH', {
++      detail: { chapterNumber: chapter, resolvedVersions: detail },
++      risk: `Chapter ${chapter} blueprint resolves to different versions across paths (${JSON.stringify(detail)}). Runtime and compiler pick the highest version; buildChapterBrief takes the first array match — a stale blueprint can drive the chapter goal/beats while the compiler compiles a newer one.`,
++      followUp: 'Align buildChapterBrief with resolveBlueprint/latestBlueprint (highest version wins) or verify the loader guarantees single-version blueprint rows per chapter.',
++    }))
++  }
++
++  return findings
++}
++
++function baseFinding(
++  code: string,
++  severity: AuditSeverity,
++  args: { detail: Record<string, unknown>; risk: string; followUp: string },
++): StoryBibleAuditFinding {
++  return {
++    code,
++    severity,
++    domain: 'Blueprint',
++    status: 'PARITY_RISK',
++    sourceOfTruth: ['chapter_blueprints'],
++    producers: ['lib/authoring/compile.ts (blueprint generation)', 'lib/authoring/persist.ts'],
++    consumers: [
++      'lib/runtime/personalized-generation.ts :: resolveBlueprint',
++      'lib/narrative/compiler.ts :: latestBlueprint',
++      'lib/story-engine/chapter-brief.ts :: buildChapterBrief',
++    ],
++    validators: ['lib/story-engine/story-contract.ts :: StoryContractSchema (blueprint-adjacent)'],
++    evidence: [
++      ...BLUEPRINT_AUDIT_EVIDENCE,
++      {
++        source: `lib/narrative-qa/blueprint-audit.ts :: ${code}`,
++        evidenceClass: 'PURE_CHARACTERIZATION',
++        observation: `Detector emitted from input data: ${JSON.stringify(args.detail)}`,
++      } satisfies StructuredEvidence,
++    ],
++    risk: args.risk,
++    recommendedFollowUp: args.followUp,
++  }
++}
+diff --git a/lib/narrative-qa/chapter50-audit.ts b/lib/narrative-qa/chapter50-audit.ts
+new file mode 100644
+index 0000000..be34db1
+--- /dev/null
++++ b/lib/narrative-qa/chapter50-audit.ts
+@@ -0,0 +1,172 @@
++/**
++ * M10-A Task 2 — Chapter 50 finalization detectors.
++ *
++ * Characterizes the final-chapter publish sequence: deterministic vs best-effort
++ * reconciliation of the reader state (status SELESAI, current_chapter 50, ending
++ * name/key) against chapter publication.
++ *
++ * Evidence cited (source strings):
++ *   - lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter —
++ *     chapter-50 durability block: after publish ok OR CHAPTER_EXISTS, marks
++ *     reader state SELESAI via markReaderStateSelesai (defaultMarkReaderStateSelesai
++ *     writes status SELESAI, ending_name, locked_ending_key, current_chapter 50,
++ *     updated_at); non-exists publish failures return WITHOUT marking SELESAI.
++ *   - lib/runtime/lifecycle.ts :: publishChapterV2 — the sync publish path does
++ *     not touch reader state; the SELESAI mark is a separate best-effort call
++ *     after the fact.
++ *   - supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql
++ *     :: publish_generation_job_chapter_v4 — publication is atomic + idempotent
++ *     via dual-hash (publication_payload_hash + closure_payload_hash); retries of
++ *     the same payload return the cached result, so multiple attempts can report
++ *     success for one physical publish.
++ */
++
++import type {
++  AuditSeverity,
++  StoryBibleAuditFinding,
++  StructuredEvidence,
++} from './story-bible-audit-contract'
++
++export interface PublishAttempt {
++  attempt: number
++  success: boolean
++  /** Outcome reason when known (CHAPTER_EXISTS / TRANSIENT / FAILED...). */
++  reason?: string
++}
++
++export interface FinalizationSample {
++  chapter: number
++  attempts: PublishAttempt[]
++  /** Reader state was marked SELESAI (current_chapter 50 + ending fields). */
++  readerStateMarkedSelesai: boolean
++  /**
++   * true when the markReaderStateSelesai call is guaranteed (deterministic
++   * reconciliation); false when it is best-effort / conditional.
++   */
++  selesaiMarkDeterministic: boolean
++}
++
++export const CHAPTER50_AUDIT_EVIDENCE: StructuredEvidence[] = [
++  {
++    source: 'lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Chapter-50 durability block: when chapterNumber === TOTAL_PERSONALIZED_CHAPTERS and publish ok OR reason CHAPTER_EXISTS, it runs markReaderStateSelesai (status SELESAI, ending_name, locked_ending_key, current_chapter 50); non-exists failures return early without the SELESAI mark. Reconciliation also records a generation attempt (PUBLISHED).',
++  },
++  {
++    source: 'lib/runtime/lifecycle.ts :: publishChapterV2',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Sync publish path (publish_chapter_v2 RPC) publishes the chapter only; the SELESAI reader-state mark is a separate call issued by the caller after the fact — two writes, no shared transaction.',
++  },
++  {
++    source: 'supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Publication is atomic and idempotent: retries with the same payload hashes return the cached publication_result (dual-hash fast path), so the same physical publish can surface as multiple successful attempts.',
++  },
++  {
++    source: 'lib/runtime/personalized-generation.ts :: defaultMarkReaderStateSelesai',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Updates reader_states to { status: SELESAI, ending_name, locked_ending_key, current_chapter: 50, updated_at } filtered by user_id + story_id; throws on DB error (not best-effort).',
++  },
++]
++
++/**
++ * Emit finalization findings over the publish-attempt sequence.
++ * - FINAL_STATE_RECONCILIATION_GAP: chapter 50 published successfully but the
++ *   reader state was not reconciled to SELESAI (or the reconciliation is
++ *   best-effort/conditional rather than deterministic).
++ * - FINAL_CHAPTER_DUPLICATE_STATE_RISK: multiple attempts report success for the
++ *   final chapter — idempotent publish returns cached success, so one physical
++ *   chapter can appear as several successes.
++ * - FINAL_READER_STATE_STALE: success exists in the sequence but the reader state
++ *   is not marked SELESAI, leaving the reader stuck on chapter 49 with a stale
++ *   current_chapter.
++ */
++export function auditChapter50Finalization(
++  sample: FinalizationSample,
++): StoryBibleAuditFinding[] {
++  const findings: StoryBibleAuditFinding[] = []
++
++  const successes = sample.attempts.filter((a) => a.success)
++  const lastAttempt = sample.attempts[sample.attempts.length - 1]
++
++  // --- Reconciliation gap ---
++  if (successes.length > 0 && !sample.readerStateMarkedSelesai) {
++    findings.push(baseFinding('FINAL_STATE_RECONCILIATION_GAP', 'BLOCKER', {
++      detail: {
++        chapter: sample.chapter,
++        successfulAttempts: successes.map((a) => a.attempt),
++        readerStateMarkedSelesai: false,
++      },
++      risk: `Chapter ${sample.chapter} published (attempts ${successes.map((a) => a.attempt).join(', ')} succeeded) but the reader state was never marked SELESAI. The chapter write and the reader-state write are separate (publish_chapter_v2 RPC + markReaderStateSelesai), so a crash between them strands the reader.`,
++      followUp: 'Make the SELESAI mark deterministic — either inside the publish transaction or as a retried reconciliation job keyed by chapter-exists.',
++    }))
++  }
++
++  if (successes.length > 0 && sample.readerStateMarkedSelesai && !sample.selesaiMarkDeterministic) {
++    findings.push(baseFinding('FINAL_STATE_RECONCILIATION_GAP', 'MEDIUM', {
++      detail: {
++        chapter: sample.chapter,
++        selesaiMarkDeterministic: false,
++      },
++      risk: `Chapter ${sample.chapter} published and reader state was marked SELESAI, but the mark is best-effort (separate call after publish). Reconciliation is not guaranteed by the transaction, so failure windows remain.`,
++      followUp: 'Confirm the SELESAI mark is retried on CHAPTER_EXISTS recovery paths, or fold it into the atomic publish.',
++    }))
++  }
++
++  // --- Duplicate state risk ---
++  if (successes.length > 1) {
++    findings.push(baseFinding('FINAL_CHAPTER_DUPLICATE_STATE_RISK', 'MEDIUM', {
++      detail: {
++        chapter: sample.chapter,
++        successfulAttempts: successes.map((a) => a.attempt),
++      },
++      risk: `${successes.length} attempts report success for chapter ${sample.chapter}. The v4 RPC returns cached publication_result for retries with identical hashes, so multiple success records can map to one physical publish — but any divergent re-publish attempt is an IDEMPOTENCY_CONFLICT.`,
++      followUp: 'Ensure retries reuse the exact publication payload (dual-hash idempotency) and audit logs distinguish cached-success from first-publish.',
++    }))
++  }
++
++  // --- Reader state stale ---
++  if (successes.length > 0 && !sample.readerStateMarkedSelesai && lastAttempt?.success) {
++    findings.push(baseFinding('FINAL_READER_STATE_STALE', 'HIGH', {
++      detail: {
++        chapter: sample.chapter,
++        lastAttempt: lastAttempt.attempt,
++      },
++      risk: `Last attempt (${lastAttempt.attempt}) succeeded for chapter ${sample.chapter} but reader state is stale (no SELESAI / current_chapter 50). The reader cannot advance past chapter 49 and ending_name/locked_ending_key are not finalized.`,
++      followUp: 'Trigger the SELESAI reconciliation immediately after the final publish success (or CHAPTER_EXISTS recovery).',
++    }))
++  }
++
++  return findings
++}
++
++function baseFinding(
++  code: string,
++  severity: AuditSeverity,
++  args: { detail: Record<string, unknown>; risk: string; followUp: string },
++): StoryBibleAuditFinding {
++  return {
++    code,
++    severity,
++    domain: 'Chapter',
++    status: severity === 'BLOCKER' ? 'BOUNDED_LOSS_RISK' : 'PARITY_RISK',
++    sourceOfTruth: ['chapters', 'reader_states'],
++    producers: ['lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter (chapter 50 block)'],
++    consumers: ['lib/runtime/lifecycle.ts :: publishChapterV2'],
++    validators: ['supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4 (dual-hash idempotency)'],
++    evidence: [
++      ...CHAPTER50_AUDIT_EVIDENCE,
++      {
++        source: `lib/narrative-qa/chapter50-audit.ts :: ${code}`,
++        evidenceClass: 'PURE_CHARACTERIZATION',
++        observation: `Detector emitted from input data: ${JSON.stringify(args.detail)}`,
++      } satisfies StructuredEvidence,
++    ],
++    risk: args.risk,
++    recommendedFollowUp: args.followUp,
++  }
++}
+diff --git a/lib/narrative-qa/choice-history-audit.ts b/lib/narrative-qa/choice-history-audit.ts
+new file mode 100644
+index 0000000..58fe3c8
+--- /dev/null
++++ b/lib/narrative-qa/choice-history-audit.ts
+@@ -0,0 +1,196 @@
++/**
++ * M10-A Task 2 — Choice History characterization detectors.
++ *
++ * Pure deterministic analyzers over a list of choice-history items. Findings are
++ * EMITTED by rules from the input data — never pre-pushed because the audit plan
++ * suspects them.
++ *
++ * Budget model: token estimate = chars / 4 (prose-dominant Indonesian text proxy;
++ * distinct from the compiler's word-count proxy — this module owns its own metric
++ * so tests stay hermetic).
++ *
++ * Evidence cited (source strings only; no server-only imports):
++ *   - lib/story-engine/chapter-brief.ts :: summarizeChoiceHistory — sorts history
++ *     + previousChoice and slices the joined summary at 4096 chars; the oldest
++ *     entries silently drop off the brief once history outgrows the cap.
++ *   - lib/runtime/choice-context.ts :: choiceNarrativeContextFromReader — passes
++ *     the FULL reader_states.choice_history through un-truncated; no budget
++ *     trimming happens before the brief summarizes it.
++ *   - lib/runtime/continuation-context.server.ts :: loadContinuationContextForChapter —
++ *     reader_states.choice_history is the declared source of truth for the
++ *     previous choice (fail-closed TRIGGER_CHOICE_REQUIRED_FOR_NON_FIRST_CHAPTER).
++ */
++
++import type {
++  AuditSeverity,
++  StoryBibleAuditFinding,
++  StructuredEvidence,
++} from './story-bible-audit-contract'
++
++export interface ChoiceHistoryItem {
++  chapterNumber: number
++  label: string
++  consequence: string[]
++  effectSummary: string
++  flags: string[]
++}
++
++export interface ChoiceHistoryAuditOptions {
++  /** Declared per-chapter budget for the choice summary (token estimate). */
++  declaredBudget?: number
++  /**
++   * Latest chapter that SHOULD have a visible history entry. When supplied and
++   * the newest entry is older, CHOICE_HISTORY_RECENT_LOSS fires.
++   */
++  expectedLatestChapter?: number
++}
++
++export const CHOICE_HISTORY_AUDIT_EVIDENCE: StructuredEvidence[] = [
++  {
++    source: 'lib/story-engine/chapter-brief.ts :: summarizeChoiceHistory',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'History + previousChoice are sorted by chapterNumber and joined, then `.slice(0, 4096)` truncates the summary — the oldest entries silently fall out of the chapter brief once history outgrows 4096 chars. No truncation signal is recorded anywhere.',
++  },
++  {
++    source: 'lib/runtime/choice-context.ts :: choiceNarrativeContextFromReader',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Full reader_states.choice_history array is passed through un-truncated; previousChoice is the last entry (or the triggerChoiceId match). No budget enforcement exists before the brief summarizes.',
++  },
++  {
++    source: 'lib/runtime/continuation-context.server.ts :: loadContinuationContextForChapter',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Choice history is the declared source of truth for the previous choice; the loader is fail-closed (TRIGGER_CHOICE_REQUIRED_FOR_NON_FIRST_CHAPTER) when chapter N-1 had choices but no trigger was supplied.',
++  },
++]
++
++export function estimateChoiceTokens(item: ChoiceHistoryItem): number {
++  const text = [
++    item.label,
++    ...item.consequence,
++    item.effectSummary,
++    ...item.flags,
++  ].join(' ')
++  return Math.ceil(text.length / 4)
++}
++
++/**
++ * Emit findings over a list of choice-history items.
++ * - CHOICE_HISTORY_RECENT_LOSS: newest visible entry older than expectedLatestChapter
++ *   (or a gap in the chapter sequence) — the reader's most recent choice never
++ *   reaches the next brief.
++ * - CHOICE_HISTORY_DUPLICATE_PREVIOUS: two consecutive entries share label AND
++ *   consequence — a sign the same branch was recorded twice.
++ * - CHOICE_HISTORY_BUDGET_PRESSURE: cumulative estimated tokens exceed the
++ *   declared budget; the brief's 4096-char slice will drop oldest entries.
++ */
++export function auditChoiceHistory(
++  items: ChoiceHistoryItem[],
++  options: ChoiceHistoryAuditOptions = {},
++): StoryBibleAuditFinding[] {
++  const findings: StoryBibleAuditFinding[] = []
++  const declaredBudget = options.declaredBudget ?? 2500
++
++  const sorted = [...items].sort((a, b) => a.chapterNumber - b.chapterNumber)
++
++  // --- Recent loss ---
++  if (sorted.length > 0) {
++    const latestVisible = sorted[sorted.length - 1].chapterNumber
++    const expected = options.expectedLatestChapter ?? latestVisible
++    if (latestVisible < expected) {
++      findings.push(baseFinding('CHOICE_HISTORY_RECENT_LOSS', 'HIGH', {
++        risk: `Latest visible choice history entry is chapter ${latestVisible}, but chapter ${expected} is expected. The most recent reader choice cannot reach the next chapter brief (summarizeChoiceHistory only sees recorded entries).`,
++        detail: { latestVisibleChapter: latestVisible, expectedLatestChapter: expected },
++        followUp: 'Verify the choice branch for chapter N-1 is appended to reader_states.choice_history before chapter N is generated (publish path).',
++      }))
++    }
++    // Sequence gap: missing intermediate chapters mean history is not append-only.
++    for (let i = 1; i < sorted.length; i++) {
++      if (sorted[i].chapterNumber !== sorted[i - 1].chapterNumber + 1) {
++        findings.push(baseFinding('CHOICE_HISTORY_RECENT_LOSS', 'MEDIUM', {
++          risk: `Choice history chapter sequence jumps from ${sorted[i - 1].chapterNumber} to ${sorted[i].chapterNumber}; intermediate chapter choices are missing from the history used by the brief.`,
++          detail: {
++            fromChapter: sorted[i - 1].chapterNumber,
++            toChapter: sorted[i].chapterNumber,
++          },
++          followUp: 'Confirm entries are append-only per chapter and no cleanup job truncates the middle of the history.',
++        }))
++      }
++    }
++  } else if (options.expectedLatestChapter != null && options.expectedLatestChapter > 1) {
++    findings.push(baseFinding('CHOICE_HISTORY_RECENT_LOSS', 'MEDIUM', {
++      risk: `Choice history is empty while chapter ${options.expectedLatestChapter} is expected to carry a visible entry.`,
++      detail: { expectedLatestChapter: options.expectedLatestChapter },
++      followUp: 'Confirm the first reader choice is recorded at the end of chapter 1.',
++    }))
++  }
++
++  // --- Duplicate previous ---
++  for (let i = 1; i < sorted.length; i++) {
++    const prev = sorted[i - 1]
++    const current = sorted[i]
++    if (
++      prev.label === current.label
++      && JSON.stringify(prev.consequence) === JSON.stringify(current.consequence)
++    ) {
++      findings.push(baseFinding('CHOICE_HISTORY_DUPLICATE_PREVIOUS', 'MEDIUM', {
++        risk: `Consecutive chapters ${prev.chapterNumber} and ${current.chapterNumber} record the same choice label and consequence; the same branch appears twice in the history the writer prompt summarizes.`,
++        detail: {
++          chapterA: prev.chapterNumber,
++          chapterB: current.chapterNumber,
++          label: current.label,
++        },
++        followUp: 'Confirm the choice branch append at publish is keyed by chapter and cannot double-insert.',
++      }))
++    }
++  }
++
++  // --- Budget pressure ---
++  const totalTokens = sorted.reduce((sum, item) => sum + estimateChoiceTokens(item), 0)
++  if (totalTokens > declaredBudget) {
++    findings.push(baseFinding('CHOICE_HISTORY_BUDGET_PRESSURE', 'HIGH', {
++      risk: `Choice history estimated tokens (${totalTokens}) exceed declared budget (${declaredBudget}). summarizeChoiceHistory caps the joined text at 4096 chars, so oldest entries will be dropped from the brief without any explicit eviction signal.`,
++      detail: {
++        estimatedTokens: totalTokens,
++        declaredBudget,
++        entryCount: sorted.length,
++      },
++      followUp: 'Introduce an explicit truncation/eviction policy for choice history that records dropped entries (e.g. retrieval log) instead of silent .slice(0, 4096).',
++    }))
++  }
++
++  return findings
++}
++
++function baseFinding(
++  code: string,
++  severity: AuditSeverity,
++  args: {
++    risk: string
++    detail: Record<string, unknown>
++    followUp: string
++  },
++): StoryBibleAuditFinding {
++  return {
++    code,
++    severity,
++    domain: 'Choice History',
++    status: 'BOUNDED_LOSS_RISK',
++    sourceOfTruth: ['reader_states.choice_history'],
++    producers: ['lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter (publish path)'],
++    consumers: ['lib/story-engine/chapter-brief.ts :: summarizeChoiceHistory'],
++    validators: ['lib/runtime/continuation-context.server.ts :: loadContinuationContextForChapter (fail-closed trigger gate)'],
++    evidence: [
++      ...CHOICE_HISTORY_AUDIT_EVIDENCE,
++      {
++        source: `lib/narrative-qa/choice-history-audit.ts :: ${code}`,
++        evidenceClass: 'PURE_CHARACTERIZATION',
++        observation: `Detector emitted from input data: ${JSON.stringify(args.detail)}`,
++      } satisfies StructuredEvidence,
++    ],
++    risk: args.risk,
++    recommendedFollowUp: args.followUp,
++  }
++}
+diff --git a/lib/narrative-qa/context-pressure-audit.ts b/lib/narrative-qa/context-pressure-audit.ts
+new file mode 100644
+index 0000000..8ed2eee
+--- /dev/null
++++ b/lib/narrative-qa/context-pressure-audit.ts
+@@ -0,0 +1,235 @@
++/**
++ * M10-A Task 2 — Context pressure detectors over a synthetic growing canon.
++ *
++ * Pure analyzers. Input is a self-contained `CanonContextSample` (NOT the real
++ * CanonSnapshot — fixtures/long-horizon/story-bible-pressure.ts is uncommitted and
++ * not wired to production types). Findings are EMITTED from the sample; the
++ * evidence strings cite the real production compiler so reports can trace rules
++ * to code.
++ *
++ * Evidence cited:
++ *   - lib/narrative/compiler.ts :: compileContext — budget allocation
++ *     (BUDGET_ALLOCATION: rollupsSummaries 0.25, facts 0.15), load-bearing facts
++ *     are NEVER trimmed, other facts and rollups are trimmed oldest-first into
++ *     `excludedIds`, and the report is a deterministic `estimateTokens` word proxy.
++ *   - lib/narrative/compiler.ts :: BUDGET_ALLOCATION — per-section caps.
++ *   - lib/narrative/loader.ts :: persistRetrievalLog — excluded/included ids are
++ *     meant to be persisted to retrieval_logs (write function exists; callers
++ *     unproven — see propagation-audit).
++ */
++
++import type {
++  AuditSeverity,
++  ContextPressureMilestone,
++  StoryBibleAuditFinding,
++  StructuredEvidence,
++} from './story-bible-audit-contract'
++
++export interface ContextFact {
++  id: string
++  statement: string
++  isLoadBearing: boolean
++  paidOff?: boolean
++  establishedChapter?: number
++  included?: boolean
++}
++
++export interface ContextThreadSample {
++  id: string
++  title: string
++  status: string
++}
++
++export interface ContextTimelineSample {
++  chapterNumber: number
++  ordinal: number
++  description: string
++  isFlashback?: boolean
++}
++
++export interface ContextActRollupSample {
++  actNumber: number
++  summary: string
++  included?: boolean
++}
++
++export interface CanonContextSample {
++  chapter: number
++  /** Declared budget in token estimate units. */
++  declaredBudget: number
++  facts: ContextFact[]
++  threads: ContextThreadSample[]
++  timeline: ContextTimelineSample[]
++  actRollups: ContextActRollupSample[]
++  choiceHistory: { chapterNumber: number; label: string }[]
++}
++
++export const CONTEXT_PRESSURE_AUDIT_EVIDENCE: StructuredEvidence[] = [
++  {
++    source: 'lib/narrative/compiler.ts :: compileContext',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Facts cap = floor(totalBudget * 0.15), rollups cap = floor(totalBudget * 0.25). Load-bearing unpaid facts are always included and never counted against trim; other facts are trimmed into excludedIds when over cap; rollups are kept newest-first and the oldest dropped into excludedIds when over cap.',
++  },
++  {
++    source: 'lib/narrative/compiler.ts :: BUDGET_ALLOCATION',
++    evidenceClass: 'SCHEMA_CONTRACT',
++    observation:
++      'rollupsSummaries: 0.25, facts: 0.15, currentState: 0.2, blueprint: 0.1, t0Canon: 0.15, safety: 0.05, retrievalInstructions: 0.1.',
++  },
++  {
++    source: 'lib/narrative/loader.ts :: persistRetrievalLog',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'includedIds/excludedIds/budgetReport from the compiled packet are designed to be persisted to retrieval_logs; the write is append-only best-effort (failures ignored).',
++  },
++]
++
++/**
++ * Deterministic token estimate for this audit: chars / 4.
++ */
++export function estimateContextTokens(text: string): number {
++  const t = text.trim()
++  if (!t) return 0
++  return Math.ceil(t.length / 4)
++}
++
++/** Token cost of the full sample as compiled (excluding choice history). */
++export function estimateSampleUsed(sample: CanonContextSample): number {
++  const factsCost = sample.facts.reduce((sum, f) => sum + estimateContextTokens(f.statement), 0)
++  const threadsCost = sample.threads.reduce((sum, t) => sum + estimateContextTokens(t.title), 0)
++  const timelineCost = sample.timeline.reduce(
++    (sum, e) => sum + estimateContextTokens(e.description),
++    0,
++  )
++  const rollupsCost = sample.actRollups.reduce(
++    (sum, r) => sum + estimateContextTokens(r.summary),
++    0,
++  )
++  return factsCost + threadsCost + timelineCost + rollupsCost
++}
++
++/** Build a contract-compatible milestone row for one sample (reporting use). */
++export function buildContextPressureMilestone(
++  sample: CanonContextSample,
++): ContextPressureMilestone {
++  const loadBearing = sample.facts.filter((f) => f.isLoadBearing)
++  const excludedFacts = sample.facts.filter((f) => f.included === false)
++  const excludedRollups = sample.actRollups.filter((r) => r.included === false)
++  return {
++    chapter: sample.chapter,
++    declaredBudget: sample.declaredBudget,
++    actualUsed: estimateSampleUsed(sample),
++    factsIncluded: sample.facts.length - excludedFacts.length,
++    factsExcluded: excludedFacts.length,
++    loadBearingIncluded: loadBearing.filter((f) => f.included !== false).length,
++    rollupsIncluded: sample.actRollups.length - excludedRollups.length,
++    rollupsExcluded: excludedRollups.length,
++    threadsRetained: sample.threads.length,
++    timelineRetained: sample.timeline.length,
++    writerLayer3CharLength: 0,
++    detectorsTriggered: [],
++  }
++}
++
++/**
++ * Emit context-pressure findings for one chapter sample.
++ * - CONTEXT_DECLARED_BUDGET_OVERSHOOT: estimated used > declared budget.
++ * - LOAD_BEARING_PRESSURE: load-bearing facts alone consume a dominant share of
++ *   the budget (>= 25% = the facts section cap), squeezing trimmable content.
++ * - RELEVANT_FACT_EVICTION: facts are marked excluded while budget is tight
++ *   (>= 90% of declared budget used) — relevant facts drop out of the packet.
++ * - ROLLUP_EVICTION_PRESSURE: act rollups are excluded while budget is tight.
++ */
++export function analyzeContextSample(
++  sample: CanonContextSample,
++): StoryBibleAuditFinding[] {
++  const findings: StoryBibleAuditFinding[] = []
++  const used = estimateSampleUsed(sample)
++  const declared = sample.declaredBudget
++  const budgetRatio = declared > 0 ? used / declared : 1
++  const loadBearing = sample.facts.filter((f) => f.isLoadBearing)
++  const loadBearingCost = loadBearing.reduce(
++    (sum, f) => sum + estimateContextTokens(f.statement),
++    0,
++  )
++  const excludedFacts = sample.facts.filter((f) => f.included === false)
++  const excludedRollups = sample.actRollups.filter((r) => r.included === false)
++
++  // --- Declared budget overshoot ---
++  if (used > declared) {
++    findings.push(baseFinding('CONTEXT_DECLARED_BUDGET_OVERSHOOT', 'HIGH', {
++      detail: { used, declared, chapter: sample.chapter },
++      risk: `Chapter ${sample.chapter} context cost ${used} exceeds declared budget ${declared} (ratio ${budgetRatio.toFixed(2)}). compileContext would trim facts/rollups into excludedIds and the packet never records the overshoot itself.`,
++      followUp: 'Compare declaredBudget against the compiler totalBudget parameter (DEFAULT_BUDGET = 4000) and against the writer layer-3 4800-char trim in buildWriterPrompt.',
++    }))
++  }
++
++  // --- Load-bearing pressure ---
++  if (loadBearing.length > 0 && declared > 0 && loadBearingCost / declared >= 0.25) {
++    findings.push(baseFinding('LOAD_BEARING_PRESSURE', 'MEDIUM', {
++      detail: {
++        loadBearingCost,
++        declared,
++        loadBearingCount: loadBearing.length,
++      },
++      risk: `Load-bearing unpaid facts cost ${loadBearingCost} tokens (>= 25% of declared budget ${declared}). compileContext never trims them, so the trimmable facts/rollups sections bear the full squeeze.`,
++      followUp: 'Monitor load-bearing fact growth; consider payoff/eviction policy (paidOff flag) so unpaid load-bearing facts do not crowd out relevant context.',
++    }))
++  }
++
++  // --- Relevant fact eviction ---
++  if (excludedFacts.length > 0 && budgetRatio >= 0.9) {
++    findings.push(baseFinding('RELEVANT_FACT_EVICTION', 'MEDIUM', {
++      detail: {
++        excludedCount: excludedFacts.length,
++        excludedIds: excludedFacts.map((f) => f.id),
++        budgetRatio: Number(budgetRatio.toFixed(2)),
++      },
++      risk: `${excludedFacts.length} non-load-bearing facts are excluded while budget is ${Math.round(budgetRatio * 100)}% used. compileContext pushes their ids to excludedIds -> retrieval_logs, but no consumer re-ranks them before the writer prompt.`,
++      followUp: 'Verify excluded fact ids reach retrieval_logs (persistRetrievalLog call sites) and that a re-ranking pass exists for tight-budget chapters.',
++    }))
++  }
++
++  // --- Rollup eviction ---
++  if (excludedRollups.length > 0 && budgetRatio >= 0.9) {
++    findings.push(baseFinding('ROLLUP_EVICTION_PRESSURE', 'MEDIUM', {
++      detail: {
++        excludedCount: excludedRollups.length,
++        excludedActs: excludedRollups.map((r) => r.actNumber),
++        budgetRatio: Number(budgetRatio.toFixed(2)),
++      },
++      risk: `${excludedRollups.length} act rollup summaries are excluded while budget is ${Math.round(budgetRatio * 100)}% used; compileContext keeps newest-first and drops oldest.`,
++      followUp: 'Confirm rollup summaries are compressed (not dropped) when over cap, and that excluded rollups are logged.',
++    }))
++  }
++
++  return findings
++}
++
++function baseFinding(
++  code: string,
++  severity: AuditSeverity,
++  args: { detail: Record<string, unknown>; risk: string; followUp: string },
++): StoryBibleAuditFinding {
++  return {
++    code,
++    severity,
++    domain: 'Facts',
++    status: 'BOUNDED_LOSS_RISK',
++    sourceOfTruth: ['facts_ledger', 'act_rollups'],
++    producers: ['lib/narrative/loader.ts :: loadCanonSnapshot'],
++    consumers: ['lib/narrative/compiler.ts :: compileContext'],
++    validators: ['lib/narrative/compiler.ts :: compileContext (deterministic budget report)'],
++    evidence: [
++      ...CONTEXT_PRESSURE_AUDIT_EVIDENCE,
++      {
++        source: `lib/narrative-qa/context-pressure-audit.ts :: ${code}`,
++        evidenceClass: 'PURE_CHARACTERIZATION',
++        observation: `Detector emitted from input data: ${JSON.stringify(args.detail)}`,
++      } satisfies StructuredEvidence,
++    ],
++    risk: args.risk,
++    recommendedFollowUp: args.followUp,
++  }
++}
+diff --git a/lib/narrative-qa/ending-audit.ts b/lib/narrative-qa/ending-audit.ts
+new file mode 100644
+index 0000000..e1d94af
+--- /dev/null
++++ b/lib/narrative-qa/ending-audit.ts
+@@ -0,0 +1,195 @@
++/**
++ * M10-A Task 2 — Ending lock durability detectors.
++ *
++ * Input is a sequence of ending fixture entries { chapterNumber, resolvedEndingId,
++ * lockedEndingId }. Findings are EMITTED from the sequence.
++ *
++ * Evidence cited (source strings):
++ *   - lib/story-engine/ending-resolver.ts :: resolveEnding — throws before
++ *     endingLockChapter; with lockedEndingKey returns that candidate verbatim;
++ *     otherwise ranks endingCandidates by routeState.endingBias and picks the
++ *     top (tie-broken by index, then key).
++ *   - lib/runtime/personalized-generation.ts :: ENDING_LOCK_CHAPTER (= 45) —
++ *     the lock is written once at chapter 45 (persist_ending_lock_v1 via
++ *     defaultPersistEndingLock), and reused on retries via reader.locked_ending_key.
++ *   - supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql
++ *     :: publish_generation_job_chapter_v4 — INVALID_ENDING_LOCK_TARGET unless
++ *     generation_kind = 'personalized' AND chapter_number = 45; calls
++ *     persist_ending_lock_v1 re-entrantly under advisory locks E1 (120713) + E2
++ *     (130600); lock + chapter + closures commit in ONE transaction.
++ *   - lib/runtime/lifecycle.ts :: publishChapterV2 — the sync (legacy) publish
++ *     path takes NO ending-lock parameter at all.
++ *   - lib/runtime/generation-jobs.ts :: publishGenerationJobChapterV3/V4 — the
++ *     worker paths carry p_ending_key / p_ending_name.
++ */
++
++import type {
++  AuditSeverity,
++  StoryBibleAuditFinding,
++  StructuredEvidence,
++} from './story-bible-audit-contract'
++
++export interface EndingFixtureEntry {
++  chapterNumber: number
++  resolvedEndingId: string | null
++  lockedEndingId: string | null
++  /** Publish path used for this attempt: v4 worker vs v2 legacy sync. */
++  publishPath?: 'v4' | 'v2'
++}
++
++export const ENDING_LOCK_CHAPTER = 45
++
++export const ENDING_AUDIT_EVIDENCE: StructuredEvidence[] = [
++  {
++    source: 'lib/story-engine/ending-resolver.ts :: resolveEnding',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Throws if chapterNumber < closureRunway.endingLockChapter; lockedEndingKey != null returns that candidate verbatim (after validating it exists); otherwise ranks candidates by routeState.endingBias descending with index/key tie-breaks — so a RETRY before the lock is persisted can resolve a DIFFERENT ending when bias changes.',
++  },
++  {
++    source: 'lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'ENDING_LOCK_CHAPTER = 45; lock is written once at chapter 45 via persist_ending_lock_v1 (defaultPersistEndingLock) only when reader.locked_ending_key is null; retries reuse the persisted lock through lockedEndingKey.',
++  },
++  {
++    source: 'supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Ending lock payload is rejected (INVALID_ENDING_LOCK_TARGET) unless generation_kind = personalized and chapter = 45; persist_ending_lock_v1 is invoked re-entrantly inside the same transaction under advisory locks E1 (120713) and E2 (130600); lock, chapter, and closure ledger commit atomically.',
++  },
++  {
++    source: 'lib/runtime/lifecycle.ts :: publishChapterV2',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'The sync/legacy publish path (publish_chapter_v2 RPC) accepts NO ending lock arguments — an ending lock can only ever be persisted by the worker v4 path (or the standalone persist_ending_lock_v1 call).',
++  },
++  {
++    source: 'lib/runtime/generation-jobs.ts :: publishGenerationJobChapterV4',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Worker path maps endingLock { key, name } to p_ending_key / p_ending_name; null when the chapter is not the lock chapter or the lock was already persisted.',
++  },
++]
++
++/**
++ * Emit ending-lock findings over a sequence of fixture entries.
++ * - ENDING_LOCK_NOT_DURABLE: chapter >= 45 with a resolved ending but no persisted
++ *   lock (lockedEndingId null) — the lock is not durable across retries.
++ * - ENDING_LOCK_RETRY_DIVERGENCE: the same chapter resolves to DIFFERENT ending
++ *   ids across attempts (retry of chapter 45) while no lock was persisted.
++ * - ENDING_LOCK_POST45_SWITCH: a chapter after 45 resolves an ending that differs
++ *   from the locked one — the lock did not hold.
++ * - ENDING_LOCK_WORKER_LEGACY_PARITY_RISK: a lock-chapter attempt ran through the
++ *   legacy sync path (publishChapterV2), which cannot persist a lock.
++ */
++export function auditEndingLocks(
++  entries: EndingFixtureEntry[],
++): StoryBibleAuditFinding[] {
++  const findings: StoryBibleAuditFinding[] = []
++
++  // --- Not durable ---
++  for (const entry of entries) {
++    if (entry.chapterNumber >= ENDING_LOCK_CHAPTER && entry.resolvedEndingId && !entry.lockedEndingId) {
++      findings.push(baseFinding('ENDING_LOCK_NOT_DURABLE', 'HIGH', {
++        detail: {
++          chapterNumber: entry.chapterNumber,
++          resolvedEndingId: entry.resolvedEndingId,
++          lockedEndingId: entry.lockedEndingId,
++        },
++        risk: `Chapter ${entry.chapterNumber} resolved ending "${entry.resolvedEndingId}" but no lock was persisted (lockedEndingId null). A retry re-resolves via routeState.endingBias ranking and can diverge; the lock only becomes durable when persist_ending_lock_v1 commits.`,
++        followUp: 'Confirm the chapter-45 lock write (persist_ending_lock_v1) is executed and committed before the chapter is published; on retry, lockedEndingKey must come from reader.locked_ending_key.',
++      }))
++    }
++  }
++
++  // --- Retry divergence ---
++  const byChapter = new Map<number, EndingFixtureEntry[]>()
++  for (const entry of entries) {
++    const list = byChapter.get(entry.chapterNumber) ?? []
++    list.push(entry)
++    byChapter.set(entry.chapterNumber, list)
++  }
++  for (const [chapter, chapterEntries] of byChapter) {
++    if (chapterEntries.length < 2) continue
++    const resolved = new Set(
++      chapterEntries.map((e) => e.resolvedEndingId).filter((id): id is string => id != null),
++    )
++    if (resolved.size > 1) {
++      findings.push(baseFinding('ENDING_LOCK_RETRY_DIVERGENCE', 'BLOCKER', {
++        detail: {
++          chapterNumber: chapter,
++          resolvedEndingIds: [...resolved],
++        },
++        risk: `Retries of chapter ${chapter} resolved DIFFERENT endings (${[...resolved].join(', ')}) with no lock persisted in between. resolveEnding ranks by routeState.endingBias, so an unlocked retry can pick a different candidate and change the story ending.`,
++        followUp: 'Persist the ending lock at chapter 45 BEFORE any retry can re-resolve; retries must pass lockedEndingKey.',
++      }))
++    }
++  }
++
++  // --- Post-lock switch ---
++  for (const entry of entries) {
++    if (
++      entry.chapterNumber > ENDING_LOCK_CHAPTER
++      && entry.lockedEndingId
++      && entry.resolvedEndingId
++      && entry.resolvedEndingId !== entry.lockedEndingId
++    ) {
++      findings.push(baseFinding('ENDING_LOCK_POST45_SWITCH', 'BLOCKER', {
++        detail: {
++          chapterNumber: entry.chapterNumber,
++          resolvedEndingId: entry.resolvedEndingId,
++          lockedEndingId: entry.lockedEndingId,
++        },
++        risk: `Chapter ${entry.chapterNumber} resolved "${entry.resolvedEndingId}" while the lock says "${entry.lockedEndingId}". resolveEnding returns the locked candidate verbatim when lockedEndingKey is provided — a mismatch means the lock was bypassed or the wrong key was supplied.`,
++        followUp: 'Trace how lockedEndingKey reached this chapter; it must come from reader.locked_ending_key or the persisted lock.',
++      }))
++    }
++  }
++
++  // --- Worker/legacy parity risk ---
++  for (const entry of entries) {
++    if (
++      entry.chapterNumber === ENDING_LOCK_CHAPTER
++      && entry.publishPath === 'v2'
++    ) {
++      findings.push(baseFinding('ENDING_LOCK_WORKER_LEGACY_PARITY_RISK', 'MEDIUM', {
++        detail: {
++          chapterNumber: entry.chapterNumber,
++          publishPath: entry.publishPath,
++        },
++        risk: `Lock-chapter ${entry.chapterNumber} ran through the legacy sync path (publishChapterV2), which cannot persist an ending lock. The v4 worker path is the only publication path that can atomically persist the lock with the chapter.`,
++        followUp: 'Route the lock chapter (45) through publishGenerationJobChapterV4; treat v2 publication of chapter 45 as a parity gap.',
++      }))
++    }
++  }
++
++  return findings
++}
++
++function baseFinding(
++  code: string,
++  severity: AuditSeverity,
++  args: { detail: Record<string, unknown>; risk: string; followUp: string },
++): StoryBibleAuditFinding {
++  return {
++    code,
++    severity,
++    domain: 'Ending',
++    status: severity === 'BLOCKER' ? 'WRITE_PATH_UNPROVEN' : 'PARITY_RISK',
++    sourceOfTruth: ['reader_states.locked_ending_key'],
++    producers: ['lib/runtime/personalized-generation.ts :: defaultPersistEndingLock (persist_ending_lock_v1)'],
++    consumers: ['lib/story-engine/ending-resolver.ts :: resolveEnding', 'lib/story-engine/chapter-brief.ts :: endingKeyFor'],
++    validators: ['supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4 (INVALID_ENDING_LOCK_TARGET)'],
++    evidence: [
++      ...ENDING_AUDIT_EVIDENCE,
++      {
++        source: `lib/narrative-qa/ending-audit.ts :: ${code}`,
++        evidenceClass: 'PURE_CHARACTERIZATION',
++        observation: `Detector emitted from input data: ${JSON.stringify(args.detail)}`,
++      } satisfies StructuredEvidence,
++    ],
++    risk: args.risk,
++    recommendedFollowUp: args.followUp,
++  }
++}
+diff --git a/lib/narrative-qa/plot-debt-audit.ts b/lib/narrative-qa/plot-debt-audit.ts
+new file mode 100644
+index 0000000..f6e1ab8
+--- /dev/null
++++ b/lib/narrative-qa/plot-debt-audit.ts
+@@ -0,0 +1,215 @@
++/**
++ * M10-A Task 2 — Plot debt persistence detectors.
++ *
++ * Traces the real plot-debt path: contract plotDebts (pure projection), the
++ * closure ledger (reader_plot_debt_closures), checkpoint audit signals
++ * (closesPlotDebts), and the v4 publication RPC that persists closures atomically.
++ *
++ * Evidence cited (source strings):
++ *   - lib/story-engine/story-contract.ts :: PlotDebtSchema — actual shape is
++ *     { id, question, introducedAt, mustProgressBy: number[], mustCloseBy, status:
++ *     'open'|'progressing'|'closed' } (note: NO openedChapter/milestones/closedChapter
++ *     fields — the plan brief sketch does not match the committed schema).
++ *   - lib/story-engine/plot-debt-closure.ts :: resolveDebtClosures — pure
++ *     projection: ledger of closed ids + accepted proposals projected onto debts
++ *     via projectClosedDebts; contract rows are never mutated.
++ *   - lib/story-engine/plot-debt.ts :: auditPlotDebts — deterministic per-chapter
++ *     audit (MAJOR_MYSTERY_AFTER_35, THREAD_AFTER_40, ENDING_NOT_LOCKED,
++ *     MAIN_MYSTERY_OPEN, OPEN_CONFLICT_AT_END, NEW_CONFLICT_AT_END).
++ *   - lib/story-engine/chapter-brief.ts :: buildChapterBrief — plotDebtsToProgress
++ *     / plotDebtsToClose computed from contract debt.status and milestones ONLY;
++ *     the reader closure ledger is not consulted, so a closed-in-ledger debt still
++ *     shows as open in the next chapter brief.
++ *   - supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql
++ *     :: publish_generation_job_chapter_v4 — atomically inserts reader_plot_debt_closures
++ *     (on conflict do nothing), verifies checkpoint closesPlotDebts matches the
++ *     caller payload exactly (CHECKPOINT_CLOSURE_PAYLOAD_MISMATCH), validates
++ *     DEBT_CLOSURE_DEADLINE_VIOLATION / MAIN_MYSTERY_UNRESOLVED / OPEN_DEBT_AT_END.
++ */
++
++import type {
++  AuditSeverity,
++  StoryBibleAuditFinding,
++  StructuredEvidence,
++} from './story-bible-audit-contract'
++
++export type PlotDebtStatus = 'open' | 'progressing' | 'closed'
++
++export interface PlotDebtState {
++  id: string
++  introducedAt: number
++  mustProgressBy: number[]
++  mustCloseBy: number
++  status: PlotDebtStatus
++}
++
++export interface PlotDebtAuditSample {
++  chapter: number
++  debts: PlotDebtState[]
++  /** Debt ids already closed in the reader ledger (reader_plot_debt_closures). */
++  ledgerClosedIds: string[]
++  /** Closure proposals made by this chapter's draft. */
++  closesProposed: string[]
++  /** closesPlotDebts carried by the checkpoint audit signals. */
++  auditSignalsClosesPlotDebts: string[]
++  /** Debts with a recorded progress signal this chapter. */
++  progressRecordedThisChapter: string[]
++}
++
++export const PLOT_DEBT_AUDIT_EVIDENCE: StructuredEvidence[] = [
++  {
++    source: 'lib/story-engine/story-contract.ts :: PlotDebtSchema',
++    evidenceClass: 'SCHEMA_CONTRACT',
++    observation:
++      'Actual plot debt shape: { id, question, introducedAt, mustProgressBy: chapter[], mustCloseBy, status: open|progressing|closed }. No openedChapter/milestones/closedChapter fields exist in the committed schema.',
++  },
++  {
++    source: 'lib/story-engine/plot-debt-closure.ts :: resolveDebtClosures',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Closures are decided PURELY in memory: ledger closed ids + accepted proposals are projected via projectClosedDebts; the input debts are never mutated, so contract rows keep status open/progressing until a persistence step writes the ledger.',
++  },
++  {
++    source: 'lib/story-engine/chapter-brief.ts :: buildChapterBrief',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'plotDebtsToClose = open debts with mustCloseBy <= chapter; plotDebtsToProgress = remaining open debts with a mustProgressBy milestone <= chapter. Computed from CONTRACT status only — reader_plot_debt_closures is not read here.',
++  },
++  {
++    source: 'lib/story-engine/plot-debt.ts :: auditPlotDebts',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Deterministic per-chapter debt audit with CLOSURE_RUNWAY constants (noNewMajorConflictAfter 35, noNewThreadAfter 40, endingLockChapter 45, mainMysteryResolveBy 48, finalEndingChapter 50).',
++  },
++  {
++    source: 'supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'The v4 RPC canonicalizes p_closures, requires checkpoint audit signals closesPlotDebts to match exactly (CHECKPOINT_CLOSURE_PAYLOAD_MISMATCH), validates ledger conflicts (DEBT_CLOSURE_CONFLICT), and inserts reader_plot_debt_closures rows in the same transaction (on conflict do nothing).',
++  },
++  {
++    source: 'lib/runtime/personalized-generation.ts :: derivePlotDebtAuditFlags',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Audit flags (opensNewThread/opensMajorMystery/opensNewConflict/endingLocked) are derived from draft + findings + state delta, then persisted into checkpoint audit signals V2; closures flow from the checkpoint to the v4 publication call.',
++  },
++]
++
++/**
++ * Emit plot-debt persistence findings for one chapter sample.
++ * - PLOT_DEBT_PROGRESS_NOT_PERSISTED: a debt has a mustProgressBy milestone at or
++ *   before this chapter, is still contract-open, and no progress was recorded.
++ * - PLOT_DEBT_CLOSE_NOT_PERSISTED: a closure was proposed but never persisted
++ *   (absent from both the ledger and the checkpoint audit signals).
++ * - PLOT_DEBT_NEXT_CHAPTER_STATE_STALE: debt is closed in the ledger while the
++ *   contract row still says open/progressing — the next chapter brief derives
++ *   plotDebtsToProgress/ToClose from the stale contract status.
++ * - PLOT_DEBT_MILESTONE_MEMORY_GAP: a mustProgressBy milestone chapter has passed
++ *   with neither progress nor closure recorded anywhere (no memory of it).
++ */
++export function auditPlotDebts(sample: PlotDebtAuditSample): StoryBibleAuditFinding[] {
++  const findings: StoryBibleAuditFinding[] = []
++
++  const ledger = new Set(sample.ledgerClosedIds)
++  const proposed = new Set(sample.closesProposed)
++  const signaled = new Set(sample.auditSignalsClosesPlotDebts)
++  const progressed = new Set(sample.progressRecordedThisChapter)
++
++  for (const debt of sample.debts) {
++    const dueMilestones = debt.mustProgressBy.filter((m) => m <= sample.chapter)
++    const closedInLedger = ledger.has(debt.id)
++
++    // --- Close not persisted ---
++    if (proposed.has(debt.id) && !ledger.has(debt.id) && !signaled.has(debt.id)) {
++      findings.push(baseFinding('PLOT_DEBT_CLOSE_NOT_PERSISTED', 'BLOCKER', {
++        detail: { chapter: sample.chapter, debtId: debt.id, mustCloseBy: debt.mustCloseBy },
++        risk: `Debt "${debt.id}" closure proposed at chapter ${sample.chapter} but persisted nowhere: absent from reader_plot_debt_closures ledger AND from checkpoint closesPlotDebts. The v4 RPC would reject the publish with CHECKPOINT_CLOSURE_PAYLOAD_MISMATCH or the closure silently vanishes.`,
++        followUp: 'Ensure closesPlotDebts flows draft -> checkpoint audit signals -> v4 p_closures in the same generation attempt.',
++      }))
++    } else if (proposed.has(debt.id) && signaled.has(debt.id) && !ledger.has(debt.id)) {
++      findings.push(baseFinding('PLOT_DEBT_CLOSE_NOT_PERSISTED', 'MEDIUM', {
++        detail: { chapter: sample.chapter, debtId: debt.id },
++        risk: `Debt "${debt.id}" closure reached checkpoint signals but not the reader ledger. The v4 RPC inserts ledger rows transactionally, so this indicates a pre-v4 path (publishChapterV2 sync) or a retry that re-proposed after the ledger write failed.`,
++        followUp: 'Verify which publish path was used; v2 sync path has no closure ledger.',
++      }))
++    }
++
++    // --- Progress not persisted ---
++    if (dueMilestones.length > 0 && !closedInLedger && debt.status === 'open' && !progressed.has(debt.id)) {
++      findings.push(baseFinding('PLOT_DEBT_PROGRESS_NOT_PERSISTED', 'HIGH', {
++        detail: {
++          chapter: sample.chapter,
++          debtId: debt.id,
++          dueMilestones,
++          contractStatus: debt.status,
++        },
++        risk: `Debt "${debt.id}" has milestone(s) ${dueMilestones.join(', ')} at or before chapter ${sample.chapter}, contract status is still 'open', and no progress signal was recorded. The milestone passes without a durable trace; buildChapterBrief will keep demanding progress in later chapters.`,
++        followUp: 'Persist a progress signal (status transitioning to progressing, or an explicit progress record) when a milestone chapter is reached.',
++      }))
++    }
++
++    // --- Milestone memory gap ---
++    const missedMilestones = dueMilestones.filter(
++      () => !progressed.has(debt.id) && !closedInLedger,
++    )
++    if (missedMilestones.length > 0 && dueMilestones.length > missedMilestones.length) {
++      // Some milestones met, some not: partial memory.
++      findings.push(baseFinding('PLOT_DEBT_MILESTONE_MEMORY_GAP', 'MEDIUM', {
++        detail: {
++          chapter: sample.chapter,
++          debtId: debt.id,
++          missedMilestones,
++          dueMilestones,
++        },
++        risk: `Debt "${debt.id}" met part of its milestones but ${missedMilestones.join(', ')} have no trace (neither progress nor closure). The milestone history is incomplete, so contract-status-based briefs cannot distinguish met vs skipped milestones.`,
++        followUp: 'Introduce a per-debt milestone ledger so met milestones are queryable by the brief builder.',
++      }))
++    }
++
++    // --- Next chapter state stale ---
++    if (closedInLedger && debt.status !== 'closed') {
++      findings.push(baseFinding('PLOT_DEBT_NEXT_CHAPTER_STATE_STALE', 'HIGH', {
++        detail: {
++          chapter: sample.chapter,
++          debtId: debt.id,
++          contractStatus: debt.status,
++          ledgerState: 'closed',
++        },
++        risk: `Debt "${debt.id}" is closed in the reader ledger but the contract row still says '${debt.status}'. buildChapterBrief derives plotDebtsToProgress/plotDebtsToClose from contract status only, so the NEXT chapter brief may demand progress/closure on an already-closed debt.`,
++        followUp: 'Either project the ledger over contract status (projectClosedDebts) before building the brief, or sync contract status on closure.',
++      }))
++    }
++  }
++
++  return findings
++}
++
++function baseFinding(
++  code: string,
++  severity: AuditSeverity,
++  args: { detail: Record<string, unknown>; risk: string; followUp: string },
++): StoryBibleAuditFinding {
++  return {
++    code,
++    severity,
++    domain: 'Plot Debt',
++    status: severity === 'BLOCKER' ? 'WRITE_PATH_UNPROVEN' : 'BOUNDED_LOSS_RISK',
++    sourceOfTruth: ['story_generation_contracts.plot_debts_json', 'reader_plot_debt_closures'],
++    producers: [
++      'lib/story-engine/plot-debt-closure.ts :: resolveDebtClosures',
++      'lib/runtime/personalized-generation.ts :: derivePlotDebtAuditFlags',
++    ],
++    consumers: ['lib/story-engine/chapter-brief.ts :: buildChapterBrief'],
++    validators: ['supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4'],
++    evidence: [
++      ...PLOT_DEBT_AUDIT_EVIDENCE,
++      {
++        source: `lib/narrative-qa/plot-debt-audit.ts :: ${code}`,
++        evidenceClass: 'PURE_CHARACTERIZATION',
++        observation: `Detector emitted from input data: ${JSON.stringify(args.detail)}`,
++      } satisfies StructuredEvidence,
++    ],
++    risk: args.risk,
++    recommendedFollowUp: args.followUp,
++  }
++}
+diff --git a/lib/narrative-qa/propagation-audit.ts b/lib/narrative-qa/propagation-audit.ts
+new file mode 100644
+index 0000000..5a9488b
+--- /dev/null
++++ b/lib/narrative-qa/propagation-audit.ts
+@@ -0,0 +1,299 @@
++/**
++ * M10-A Task 2 — Story-contract field propagation detectors.
++ *
++ * Traces StoryContract fields (corePromise, mainConflict, finalQuestion,
++ * chapterTargets[n], emotionalTurn, expectedThreadMovement, plotDebts,
++ * endingCandidates, closureRunway, ...) through ChapterBrief -> PreProseBrief ->
++ * ContinuationContext -> writer prompt, using trace records derived from reading
++ * the real code. Findings are emitted per trace record; the default trace table
++ * below encodes the code-reading conclusions as DATA, so the detectors stay
++ * deterministic and testable.
++ *
++ * Evidence cited (source strings):
++ *   - lib/story-engine/story-contract.ts :: StoryContractSchema — the declared
++ *     contract surface (chapterTargets.length(50), plotDebts, endingCandidates,
++ *     closureRunway, revealRunway, corePromise/mainConflict/finalQuestion).
++ *   - lib/story-engine/chapter-brief.ts :: buildChapterBrief — maps chapterTargets
++ *     goal/mustInclude/emotionalTurn/expectedThreadMovement into mustInclude,
++ *     closureRunway into allowedNewThread/allowedMajorNewConflict/endingRunway/
++ *     lockEnding, plotDebts into plotDebtsToProgress/plotDebtsToClose,
++ *     resolveEnding(endingCandidates) into lockedEndingKey.
++ *   - lib/story-engine/pre-prose-brief.ts :: buildPreProseChapterBrief — consumes
++ *     brief.chapterGoal, mustNotInclude, mustNotReveal, routeStateSummary,
++ *     lockedEndingKey; previousChoice hierarchy.
++ *   - lib/ai-gateway/gateway-provider.ts :: buildPrompt — the writer prompt is
++ *     built ONLY from `plan` + `continuation`; the ChapterBrief/PreProseChapterBrief
++ *     is NOT passed into buildWriterPrompt, so brief-only fields (lockedEndingKey,
++ *     plotDebtsToProgress/ToClose, endingRunway) never appear in the writer prompt.
++ *   - lib/prose/prompt-engine/build-writer-prompt.ts :: buildWriterPrompt — layer
++ *     comment claims "[1] INVARIAN CANON (... ending terkunci)" but the layer-1
++ *     code emits only names + mustNotReveal; no locked-ending instruction exists.
++ *   - lib/runtime/loader.ts :: persistRetrievalLog — write function exists and is
++ *     wired into deps, but has NO production call sites (see RETRIEVAL_LOG finder).
++ *   - lib/narrative/compiler.ts :: ChapterContextPacket — carries actRollups and
++ *     contextBudgetReport; lib/narrative/continuation-context.ts :: buildContinuationContext
++ *     projects only facts/threads/timeline/routeState, dropping rollups and the
++ *     budget report before the writer prompt.
++ */
++
++import type {
++  AuditSeverity,
++  StoryBibleAuditFinding,
++  StructuredEvidence,
++} from './story-bible-audit-contract'
++
++export interface ContractFieldTrace {
++  field: string
++  /** Declared on the persisted story contract (StoryContractSchema). */
++  persisted: boolean
++  /** Reaches ChapterBrief (buildChapterBrief output). */
++  inChapterBrief: boolean
++  /** Reaches PreProseChapterBrief. */
++  inPreProseBrief: boolean
++  /** Reaches ContinuationContext (projected from the compiled packet). */
++  inContinuation: boolean
++  /** Appears in the writer prompt (buildWriterPrompt output). */
++  inWriterPrompt: boolean
++  /** Evidence note for this field's path. */
++  note: string
++}
++
++/**
++ * Default trace table — conclusions from reading the production code, expressed
++ * as data. Consumers (tests/CLI/reports) may override per field.
++ */
++export const DEFAULT_CONTRACT_FIELD_TRACES: ContractFieldTrace[] = [
++  {
++    field: 'corePromise',
++    persisted: true,
++    inChapterBrief: false,
++    inPreProseBrief: false,
++    inContinuation: false,
++    inWriterPrompt: false,
++    note: 'StoryContractSchema declares it; contract-persistence.server.ts persists it into voice sample_lines; no generation-path consumer found.',
++  },
++  {
++    field: 'mainConflict',
++    persisted: true,
++    inChapterBrief: false,
++    inPreProseBrief: false,
++    inContinuation: false,
++    inWriterPrompt: false,
++    note: 'Persisted into facts_ledger (contract-persistence.server.ts); never read by brief/continuation/writer prompt.',
++  },
++  {
++    field: 'finalQuestion',
++    persisted: true,
++    inChapterBrief: false,
++    inPreProseBrief: false,
++    inContinuation: false,
++    inWriterPrompt: false,
++    note: 'Persisted into facts_ledger and referenced by secret rows; never surfaces in the writer prompt.',
++  },
++  {
++    field: 'chapterTargets[n]',
++    persisted: true,
++    inChapterBrief: true,
++    inPreProseBrief: true,
++    inContinuation: false,
++    inWriterPrompt: true,
++    note: 'buildChapterBrief maps target.goal -> chapterGoal, mustInclude/emotionalTurn/expectedThreadMovement -> mustInclude; goal flows brief -> preProse -> plan -> writer layer 4.',
++  },
++  {
++    field: 'emotionalTurn',
++    persisted: true,
++    inChapterBrief: true,
++    inPreProseBrief: false,
++    inContinuation: false,
++    inWriterPrompt: true,
++    note: 'Folded into ChapterBrief.mustInclude (buildChapterBrief line ~276); reaches writer via plan beats/goal, losing its distinct identity.',
++  },
++  {
++    field: 'expectedThreadMovement',
++    persisted: true,
++    inChapterBrief: true,
++    inPreProseBrief: false,
++    inContinuation: false,
++    inWriterPrompt: true,
++    note: 'Folded into ChapterBrief.mustInclude (line ~277); same identity-loss as emotionalTurn.',
++  },
++  {
++    field: 'plotDebts',
++    persisted: true,
++    inChapterBrief: true,
++    inPreProseBrief: false,
++    inContinuation: false,
++    inWriterPrompt: false,
++    note: 'plotDebtsToProgress/plotDebtsToClose land on the brief; preProse drops them and buildWriterPrompt has no debt section.',
++  },
++  {
++    field: 'endingCandidates',
++    persisted: true,
++    inChapterBrief: true,
++    inPreProseBrief: true,
++    inContinuation: false,
++    inWriterPrompt: false,
++    note: 'resolveEnding picks lockedEndingKey -> brief.lockedEndingKey -> preProse.lockedEndingKey; the writer prompt never receives the lock (layer-1 comment claims it does).',
++  },
++  {
++    field: 'closureRunway',
++    persisted: true,
++    inChapterBrief: true,
++    inPreProseBrief: false,
++    inContinuation: false,
++    inWriterPrompt: false,
++    note: 'Drives brief policy (allowedNewThread/allowedMajorNewConflict/endingRunway/lockEnding); never prompt-visible itself.',
++  },
++  {
++    field: 'lockedEndingKey (reader_states)',
++    persisted: true,
++    inChapterBrief: true,
++    inPreProseBrief: true,
++    inContinuation: false,
++    inWriterPrompt: false,
++    note: 'buildWriterPrompt layer-1 comment says "ending terkunci" is an invariant, but the code emits only names + mustNotReveal.',
++  },
++]
++
++export const PROPAGATION_AUDIT_EVIDENCE: StructuredEvidence[] = [
++  {
++    source: 'lib/story-engine/story-contract.ts :: StoryContractSchema',
++    evidenceClass: 'SCHEMA_CONTRACT',
++    observation:
++      'Declares corePromise (800), mainConflict (800), finalQuestion (500), chapterTargets (exactly 50, each with goal/mustInclude/mustNotReveal/emotionalTurn/expectedThreadMovement), plotDebts, endingCandidates (2..8), closureRunway, revealRunway.',
++  },
++  {
++    source: 'lib/story-engine/chapter-brief.ts :: buildChapterBrief',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Consumes chapterTargets (goal, mustInclude, emotionalTurn, expectedThreadMovement, mustNotReveal), closureRunway (allowedNewThread/allowedMajorNewConflict/endingRunway/lockEnding), plotDebts (plotDebtsToProgress/ToClose), endingCandidates via resolveEnding -> lockedEndingKey.',
++  },
++  {
++    source: 'lib/ai-gateway/gateway-provider.ts :: buildPrompt',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'buildWriterPrompt is called with ONLY plan-derived fields + continuation; the ChapterBrief / PreProseChapterBrief object is not passed to the prompt builder at all (grep: no `brief` reference in gateway-provider.ts).',
++  },
++  {
++    source: 'lib/prose/prompt-engine/build-writer-prompt.ts :: buildWriterPrompt',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Layer-1 header comment claims "[1] INVARIAN CANON (... ending terkunci)" but the emitted block contains only character names + mustNotReveal — no locked-ending instruction line exists.',
++  },
++  {
++    source: 'lib/narrative/loader.ts :: persistRetrievalLog',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Write function exists (append-only insert into retrieval_logs, failures ignored) and is wired into PersonalizedGenerationDeps.defaultDeps, but no production call site invokes it.',
++  },
++  {
++    source: 'lib/narrative/compiler.ts :: ChapterContextPacket / lib/narrative/continuation-context.ts :: buildContinuationContext',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Packet carries actRollups + contextBudgetReport + storyContractSummary; buildContinuationContext projects only loadBearingFacts, relevantFacts, activeThreads, recentTimeline, routeStateSummary, mustNotReveal — rollups and the budget report never reach the writer prompt.',
++  },
++]
++
++export interface PropagationInput {
++  traces?: ContractFieldTrace[]
++  /** Claimed write-path flags; defaults encode the code-reading result. */
++  retrievalLogInvoked?: boolean
++  retrievalLogConsumers?: string[]
++  contextPacketConsumerProven?: boolean
++}
++
++/**
++ * Emit propagation findings.
++ * - DEPENDENCY_DECLARED_BUT_UNUSED: field persisted but never prompt-visible
++ *   (per trace row); severity HIGH when it never leaves the contract, MEDIUM when
++ *   it reaches a brief but dies before the prompt, INFO for partial identity loss.
++ * - RETRIEVAL_LOG_WRITE_PATH_UNPROVEN: retrieval_logs write function exists but no
++ *   invocation found in production code.
++ * - CONTEXT_PACKET_CONSUMER_UNPROVEN: compiled packet sections (act rollups,
++ *   budget report) are not consumed by the writer path.
++ */
++export function auditPropagation(input: PropagationInput = {}): StoryBibleAuditFinding[] {
++  const findings: StoryBibleAuditFinding[] = []
++  const traces = input.traces ?? DEFAULT_CONTRACT_FIELD_TRACES
++
++  for (const trace of traces) {
++    if (!trace.persisted || trace.inWriterPrompt) continue
++
++    if (!trace.inChapterBrief && !trace.inPreProseBrief && !trace.inContinuation) {
++      findings.push(baseFinding(
++        'DEPENDENCY_DECLARED_BUT_UNUSED',
++        'HIGH',
++        {
++          detail: { field: trace.field, trace },
++          risk: `Contract field "${trace.field}" is persisted but never reaches ChapterBrief, PreProseBrief, ContinuationContext, or the writer prompt. It is declared in StoryContractSchema and persisted (contract-persistence.server.ts) yet invisible to generation.`,
++          followUp: `Decide the real consumer for "${trace.field}" or drop it from the contract surface.`,
++        },
++      ))
++    } else if (!trace.inWriterPrompt) {
++      findings.push(baseFinding(
++        'DEPENDENCY_DECLARED_BUT_UNUSED',
++        'MEDIUM',
++        {
++          detail: { field: trace.field, trace },
++          risk: `Contract field "${trace.field}" propagates to a brief but never reaches the writer prompt (buildWriterPrompt receives only plan + continuation). ${trace.note}`,
++          followUp: `Bridge "${trace.field}" into ContinuationContext or the writer prompt, or record the intentional omission.`,
++        },
++      ))
++    }
++  }
++
++  // --- Retrieval log write path ---
++  if (input.retrievalLogInvoked === false) {
++    findings.push(baseFinding(
++      'RETRIEVAL_LOG_WRITE_PATH_UNPROVEN',
++      'INFO',
++      {
++        detail: { consumers: input.retrievalLogConsumers ?? [] },
++        risk: 'persistRetrievalLog (lib/narrative/loader.ts) is defined and wired into PersonalizedGenerationDeps but never invoked in production code — excluded/included ids and budget reports are computed by compileContext and then dropped.',
++        followUp: 'Invoke persistRetrievalLog after compileContext in the generation path (personalized + standard) so exclusions become observable.',
++      },
++    ))
++  }
++
++  // --- Context packet consumer ---
++  if (input.contextPacketConsumerProven === false) {
++    findings.push(baseFinding(
++      'CONTEXT_PACKET_CONSUMER_UNPROVEN',
++      'INFO',
++      {
++        detail: { packetSectionsDropped: ['actRollups', 'contextBudgetReport', 'storyContractSummary'] },
++        risk: 'ChapterContextPacket sections (actRollups, contextBudgetReport, storyContractSummary) are compiled but buildContinuationContext projects only facts/threads/timeline/routeState — the compiled rollup summaries and budget report never reach the writer prompt.',
++        followUp: 'Either feed rollup summaries into the continuation/writer layer or remove them from the packet contract.',
++      },
++    ))
++  }
++
++  return findings
++}
++
++function baseFinding(
++  code: string,
++  severity: AuditSeverity,
++  args: { detail: Record<string, unknown>; risk: string; followUp: string },
++): StoryBibleAuditFinding {
++  return {
++    code,
++    severity,
++    domain: 'Story Contract',
++    status: severity === 'HIGH' ? 'WRITE_PATH_UNPROVEN' : 'CONSUMER_UNPROVEN',
++    sourceOfTruth: ['story_generation_contracts'],
++    producers: ['lib/story-engine/story-contract.ts :: StoryContractSchema', 'lib/story-engine/chapter-brief.ts :: buildChapterBrief'],
++    consumers: ['lib/story-engine/pre-prose-brief.ts :: buildPreProseChapterBrief', 'lib/ai-gateway/gateway-provider.ts :: buildPrompt'],
++    validators: ['lib/ai-gateway/gateway.ts :: generatePlan (plan schema)'],
++    evidence: [
++      ...PROPAGATION_AUDIT_EVIDENCE,
++      {
++        source: `lib/narrative-qa/propagation-audit.ts :: ${code}`,
++        evidenceClass: 'PURE_CHARACTERIZATION',
++        observation: `Detector emitted from trace data: ${JSON.stringify(args.detail)}`,
++      } satisfies StructuredEvidence,
++    ],
++    risk: args.risk,
++    recommendedFollowUp: args.followUp,
++  }
++}
+diff --git a/lib/narrative-qa/story-bible-audit.ts b/lib/narrative-qa/story-bible-audit.ts
+new file mode 100644
+index 0000000..1584b2d
+--- /dev/null
++++ b/lib/narrative-qa/story-bible-audit.ts
+@@ -0,0 +1,550 @@
++/**
++ * M10-A Task 2 — Story Bible dataflow audit entrypoint.
++ *
++ * Aggregates all characterization detectors into an AuditReportArtifact and
++ * builds the 17-domain source-of-truth matrix. Pure module: no server imports,
++ * no I/O. Findings are produced by the per-domain detectors from the supplied
++ * inputs; the matrix rows encode evidence gathered by reading the production code
++ * (source-string citations).
++ */
++
++import type {
++  AuditReportArtifact,
++  AuditStatus,
++  AuditVerdict,
++  DomainSourceMatrixRow,
++  ExecutionStatus,
++  StoryBibleAuditFinding,
++  StructuredEvidence,
++} from './story-bible-audit-contract'
++import { auditChoiceHistory, type ChoiceHistoryItem } from './choice-history-audit'
++import {
++  analyzeContextSample,
++  buildContextPressureMilestone,
++  type CanonContextSample,
++} from './context-pressure-audit'
++import {
++  auditBlueprintVersions,
++  type BlueprintVersionEntry,
++} from './blueprint-audit'
++import { auditThreadSignals, type ThreadAuditSample } from './thread-audit'
++import { auditPlotDebts, type PlotDebtAuditSample } from './plot-debt-audit'
++import { auditEndingLocks, type EndingFixtureEntry } from './ending-audit'
++import {
++  auditPropagation,
++  DEFAULT_CONTRACT_FIELD_TRACES,
++  type ContractFieldTrace,
++  type PropagationInput,
++} from './propagation-audit'
++import {
++  auditActRollupLifecycle,
++  type ActRollupLifecycleSample,
++} from './act-rollup-audit'
++import {
++  auditChapter50Finalization,
++  type FinalizationSample,
++} from './chapter50-audit'
++import type { ContextPressureReportArtifact } from './story-bible-audit-contract'
++
++export interface StoryBibleAuditInputs {
++  choiceHistory?: { items: ChoiceHistoryItem[]; expectedLatestChapter?: number }
++  contextSamples?: CanonContextSample[]
++  blueprintVersions?: BlueprintVersionEntry[]
++  threadSample?: ThreadAuditSample
++  plotDebtSample?: PlotDebtAuditSample
++  endingFixtures?: EndingFixtureEntry[]
++  propagation?: PropagationInput
++  actRollupSample?: ActRollupLifecycleSample
++  chapter50Sample?: FinalizationSample
++}
++
++export interface StoryBibleAuditOptions {
++  baselineSha?: string
++  now?: Date
++}
++
++const DEFAULT_BASELINE_SHA = 'b7961311cf70b91cb7245149e400075c4e454d74'
++
++/**
++ * Run every detector over the supplied inputs and aggregate into an
++ * AuditReportArtifact. Verdict HOLD iff any finding is BLOCKER or HIGH.
++ * A thrown detector is caught per-module; any throw flips executionStatus to
++ * ERROR without discarding findings from modules that succeeded.
++ */
++export function runStoryBibleAudit(
++  inputs: StoryBibleAuditInputs,
++  options: StoryBibleAuditOptions = {},
++): AuditReportArtifact {
++  const findings: StoryBibleAuditFinding[] = []
++  const errors: string[] = []
++
++  const run = (name: string, fn: () => StoryBibleAuditFinding[]): void => {
++    try {
++      findings.push(...fn())
++    } catch (err) {
++      errors.push(`${name}: ${err instanceof Error ? err.message : String(err)}`)
++    }
++  }
++
++  if (inputs.choiceHistory) {
++    run('choice-history-audit', () => auditChoiceHistory(
++      inputs.choiceHistory!.items,
++      { expectedLatestChapter: inputs.choiceHistory!.expectedLatestChapter },
++    ))
++  }
++  for (const sample of inputs.contextSamples ?? []) {
++    run('context-pressure-audit', () => analyzeContextSample(sample))
++  }
++  if (inputs.blueprintVersions) {
++    run('blueprint-audit', () => auditBlueprintVersions(inputs.blueprintVersions!))
++  }
++  if (inputs.threadSample) {
++    run('thread-audit', () => auditThreadSignals(inputs.threadSample!))
++  }
++  if (inputs.plotDebtSample) {
++    run('plot-debt-audit', () => auditPlotDebts(inputs.plotDebtSample!))
++  }
++  if (inputs.endingFixtures) {
++    run('ending-audit', () => auditEndingLocks(inputs.endingFixtures!))
++  }
++  if (inputs.propagation) {
++    run('propagation-audit', () => auditPropagation(inputs.propagation!))
++  }
++  if (inputs.actRollupSample) {
++    run('act-rollup-audit', () => auditActRollupLifecycle(inputs.actRollupSample!))
++  }
++  if (inputs.chapter50Sample) {
++    run('chapter50-audit', () => auditChapter50Finalization(inputs.chapter50Sample!))
++  }
++
++  const executionStatus: ExecutionStatus = errors.length > 0 ? 'ERROR' : 'SUCCESS'
++  const summary = {
++    blocker: countBySeverity(findings, 'BLOCKER'),
++    high: countBySeverity(findings, 'HIGH'),
++    medium: countBySeverity(findings, 'MEDIUM'),
++    low: countBySeverity(findings, 'LOW'),
++    info: countBySeverity(findings, 'INFO'),
++    totalFindings: findings.length,
++  }
++  const auditVerdict: AuditVerdict =
++    summary.blocker > 0 || summary.high > 0 ? 'HOLD' : 'PASS'
++
++  return {
++    executionStatus,
++    auditVerdict,
++    baselineSha: options.baselineSha ?? DEFAULT_BASELINE_SHA,
++    timestamp: (options.now ?? new Date()).toISOString(),
++    summary,
++    matrix: buildSourceOfTruthMatrix(),
++    findings,
++  }
++}
++
++/**
++ * Convenience: build the context-pressure report artifact (milestones +
++ * choice-history pressure per sample) alongside the finding audit.
++ */
++export function buildContextPressureReport(
++  samples: CanonContextSample[],
++  choiceHistory: { chapter: number; items: ChoiceHistoryItem[] }[],
++  options: StoryBibleAuditOptions = {},
++): ContextPressureReportArtifact {
++  const milestones = samples.map(buildContextPressureMilestone)
++  const choiceHistoryPressure = choiceHistory.map(({ chapter, items }) => {
++    const findings = auditChoiceHistory(items, { expectedLatestChapter: chapter })
++    const totalChoices = items.length
++    return {
++      chapter,
++      totalChoicesAvailable: totalChoices,
++      visibleChoicesCount: totalChoices,
++      truncatedChoicesCount: 0,
++      duplicatePreviousDetected: findings.some(
++        (f) => f.code === 'CHOICE_HISTORY_DUPLICATE_PREVIOUS',
++      ),
++      estimatedTokenPressure: items.reduce(
++        (sum, item) => sum + Math.ceil(
++          [item.label, ...item.consequence, item.effectSummary, ...item.flags].join(' ').length / 4,
++        ),
++        0,
++      ),
++      detectorsTriggered: [...new Set(findings.map((f) => f.code))],
++    }
++  })
++  const hasHigh = milestones.some(
++    (m) => m.actualUsed > m.declaredBudget,
++  ) || choiceHistoryPressure.some((c) => c.estimatedTokenPressure > 2500)
++  return {
++    executionStatus: 'SUCCESS',
++    auditVerdict: hasHigh ? 'HOLD' : 'PASS',
++    baselineSha: options.baselineSha ?? DEFAULT_BASELINE_SHA,
++    timestamp: (options.now ?? new Date()).toISOString(),
++    milestones,
++    choiceHistoryPressure,
++  }
++}
++
++function countBySeverity(
++  findings: StoryBibleAuditFinding[],
++  severity: StoryBibleAuditFinding['severity'],
++): number {
++  return findings.filter((f) => f.severity === severity).length
++}
++
++// ---------------------------------------------------------------------------
++// Source-of-truth matrix (17 domains)
++// ---------------------------------------------------------------------------
++
++const MATRIX_ROWS: Array<Omit<DomainSourceMatrixRow, 'evidence'> & { evidence: StructuredEvidence[] }> = [
++  {
++    domain: 'Character',
++    fields: ['canonicalName', 'role', 'motivation', 'introducedChapter', 'status'],
++    sourceOfTruth: 'characters + character_states (status)',
++    createdBy: ['lib/authoring/compile.ts'],
++    writtenBy: ['lib/authoring/persist.ts :: snapshotPersistenceRows'],
++    readBy: ['lib/narrative/loader.ts :: loadCanonSnapshot'],
++    promptConsumer: ['lib/ai-gateway/gateway-provider.ts :: activeCharacterNames'],
++    validator: ['lib/narrative/continuity-checks.ts :: runContinuityChecks (CONT_STRUCTURED_MENTION_UNKNOWN)'],
++    updateTrigger: 'authoring story-bible replace',
++    persistence: 'characters / character_states tables',
++    workerPath: 'loader -> snapshot -> activeCharacterNames',
++    legacySyncPath: 'same (snapshot shared)',
++    status: 'PROVEN_E2E',
++    evidence: [
++      src('lib/narrative/loader.ts :: loadCanonSnapshot', 'characters + character_states read; status resolved as-of throughChapter'),
++      src('lib/ai-gateway/gateway-provider.ts :: activeCharacterNames', 'names reach writer prompt layer 1'),
++      src('lib/narrative/continuity-checks.ts :: runContinuityChecks', 'unknown structured mentions rejected'),
++    ],
++  },
++  {
++    domain: 'Voice',
++    fields: ['register', 'speechHabits', 'forbiddenWords', 'sampleLines'],
++    sourceOfTruth: 'character_voice_sheets',
++    createdBy: ['lib/authoring/compile.ts'],
++    writtenBy: ['lib/authoring/persist.ts'],
++    readBy: ['lib/narrative/loader.ts :: loadCanonSnapshot'],
++    promptConsumer: ['lib/ai-gateway/gateway-provider.ts :: voiceGuidance'],
++    validator: ['lib/narrative/compiler.ts :: compileContext (voiceSheets section)'],
++    updateTrigger: 'authoring story-bible replace',
++    persistence: 'character_voice_sheets table',
++    workerPath: 'loader -> voiceGuidance -> writer prompt layer 5',
++    legacySyncPath: 'same',
++    status: 'PROVEN_E2E',
++    evidence: [
++      src('lib/ai-gateway/gateway-provider.ts :: voiceGuidance', 'voice sheets -> writer prompt voice instruction'),
++      src('lib/narrative/compiler.ts :: compileContext', 'voiceSheets budgeted but prompt uses snapshot directly'),
++    ],
++  },
++  {
++    domain: 'Facts',
++    fields: ['statement', 'salience', 'loadBearing', 'paidOff', 'establishedChapter'],
++    sourceOfTruth: 'facts_ledger',
++    createdBy: ['lib/authoring/compile.ts'],
++    writtenBy: ['lib/authoring/persist.ts', 'lib/story-engine/contract-persistence.server.ts'],
++    readBy: ['lib/narrative/loader.ts :: loadCanonSnapshot'],
++    promptConsumer: ['lib/narrative/compiler.ts :: compileContext -> anchorFacts -> writer prompt layer 3'],
++    validator: ['lib/narrative/compiler.ts :: compileContext (load-bearing never trimmed)'],
++    updateTrigger: 'authoring replace; contract persistence',
++    persistence: 'facts_ledger table',
++    workerPath: 'loader -> compileContext -> buildContinuationContext.anchorFacts -> buildWriterPrompt layer 3',
++    legacySyncPath: 'same',
++    status: 'PROVEN_E2E',
++    evidence: [
++      src('lib/narrative/compiler.ts :: compileContext', 'loadBearingFacts/relevantFacts with caps + exclusion ids'),
++      src('lib/narrative/continuation-context.ts :: buildContinuationContext', 'anchorFacts projected (CAP_FACTS = 6)'),
++      src('lib/prose/prompt-engine/build-writer-prompt.ts :: buildWriterPrompt', 'facts rendered in layer 3'),
++    ],
++  },
++  {
++    domain: 'Knowledge',
++    fields: ['characterId', 'factId', 'knownFromChapter'],
++    sourceOfTruth: 'knowledge_scopes',
++    createdBy: ['lib/authoring/compile.ts'],
++    writtenBy: ['lib/authoring/persist.ts'],
++    readBy: ['lib/narrative/loader.ts :: loadCanonSnapshot'],
++    promptConsumer: [],
++    validator: ['lib/narrative/continuity-checks.ts (knowledge assertions path, schema only)'],
++    updateTrigger: 'authoring replace',
++    persistence: 'knowledge_scopes table',
++    workerPath: 'loader -> snapshot; no prompt/validator consumer found beyond Layer B (unverified)',
++    legacySyncPath: 'same',
++    status: 'CONSUMER_UNPROVEN',
++    evidence: [
++      src('lib/narrative/loader.ts :: loadCanonSnapshot', 'knowledge_scopes loaded into snapshot'),
++      src('lib/narrative/types.ts :: KnowledgeScope', 'shape only; no downstream projection found'),
++    ],
++  },
++  {
++    domain: 'Secret',
++    fields: ['description', 'revealGateChapter', 'revealed'],
++    sourceOfTruth: 'secrets_reveals',
++    createdBy: ['lib/authoring/compile.ts'],
++    writtenBy: ['lib/authoring/persist.ts'],
++    readBy: ['lib/narrative/loader.ts :: loadCanonSnapshot'],
++    promptConsumer: ['lib/narrative/continuation-context.ts :: buildContinuationContext (mustNotReveal) -> writer prompt layer 1'],
++    validator: ['lib/ai-gateway/gateway.ts :: projectChoiceInput (pendingReveals never trimmed)'],
++    updateTrigger: 'authoring replace',
++    persistence: 'secrets_reveals table',
++    workerPath: 'loader -> mustNotReveal -> layer 1; choice provider pendingReveals',
++    legacySyncPath: 'same',
++    status: 'PROVEN_E2E',
++    evidence: [
++      src('lib/narrative/continuation-context.ts :: buildContinuationContext', 'mustNotReveal = secrets with revealGateChapter > n'),
++      src('lib/ai-gateway/gateway.ts :: projectChoiceInput', 'pendingReveals: all unrevealed secrets + gate, never trimmed'),
++      src('lib/prose/prompt-engine/build-writer-prompt.ts :: buildWriterPrompt', 'layer 1 forbidden-reveal block'),
++    ],
++  },
++  {
++    domain: 'Timeline',
++    fields: ['chapterNumber', 'ordinal', 'description', 'isFlashback', 'occursAt'],
++    sourceOfTruth: 'timeline_events',
++    createdBy: ['lib/authoring/compile.ts (seed)'],
++    writtenBy: ['lib/authoring/persist.ts'],
++    readBy: ['lib/narrative/loader.ts :: loadCanonSnapshot'],
++    promptConsumer: ['lib/narrative/continuation-context.ts :: buildContinuationContext (recentTimeline) -> writer prompt layer 3'],
++    validator: ['lib/narrative/continuation-context.ts (established-only filter, no flashback)'],
++    updateTrigger: 'authoring replace',
++    persistence: 'timeline_events table',
++    workerPath: 'loader -> snapshot.timeline -> recentTimeline (CAP_TIMELINE = 5) -> layer 3',
++    legacySyncPath: 'same',
++    status: 'PROVEN_E2E',
++    evidence: [
++      src('lib/narrative/continuation-context.ts :: buildContinuationContext', 'recentTimeline sorted desc, CAP_TIMELINE = 5'),
++      src('lib/prose/prompt-engine/build-writer-prompt.ts :: buildWriterPrompt', 'timeline rendered in layer 3, trimmed first on overflow'),
++    ],
++  },
++  {
++    domain: 'Thread',
++    fields: ['status', 'openedChapter', 'lastTouchedChapter', 'payoffWindow', 'isMainMystery', 'stale'],
++    sourceOfTruth: 'story_threads',
++    createdBy: ['lib/authoring/compile.ts'],
++    writtenBy: ['lib/authoring/persist.ts'],
++    readBy: ['lib/narrative/loader.ts :: loadCanonSnapshot'],
++    promptConsumer: ['lib/narrative/compiler.ts :: compileContext (currentState.activeThreads) -> openThreads -> layer 3'],
++    validator: ['lib/ai-gateway/generate.ts :: runLayerA', 'lib/narrative/threads.ts :: validateThreadLifecycle'],
++    updateTrigger: 'authoring replace (no runtime mutation found)',
++    persistence: 'story_threads table',
++    workerPath: 'threadContext advancedThreadIds: [] / opensNewThread: false (hardcoded)',
++    legacySyncPath: 'same hardcoded empties (lib/runtime/story-generation.ts)',
++    status: 'PARITY_RISK',
++    evidence: [
++      src('lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter', 'threadContext = { threads, advancedThreadIds: [], opensNewThread: false }'),
++      src('lib/ai-gateway/generate.ts :: runLayerA', 'validateThreadLifecycle consumes threadCtx verbatim'),
++      src('lib/narrative/threads.ts :: validateThreadLifecycle', 'THREAD_STALE_UNADDRESSED / THREAD_PAYOFF_NOT_ADVANCED against empty advanced set'),
++    ],
++  },
++  {
++    domain: 'Act Rollup',
++    fields: ['actNumber', 'summary', 'stateDelta', 'coversFromChapter', 'coversToChapter'],
++    sourceOfTruth: 'act_rollups',
++    createdBy: ['lib/authoring/compile.ts (seed act 1)'],
++    writtenBy: ['lib/authoring/persist.ts :: snapshotPersistenceRows'],
++    readBy: ['lib/narrative/loader.ts :: loadCanonSnapshot'],
++    promptConsumer: [],
++    validator: ['lib/narrative/compiler.ts :: compileContext (rollupsSummaries cap 0.25)'],
++    updateTrigger: 'none found (no update migration/insert after seed)',
++    persistence: 'act_rollups table',
++    workerPath: 'compileContext keeps rollups in packet; buildContinuationContext drops them',
++    legacySyncPath: 'same',
++    status: 'DEAD_PATH_CANDIDATE',
++    evidence: [
++      src('lib/authoring/compile.ts :: compileSnapshot', 'seeds only act-1 rollup'),
++      src('lib/narrative/continuation-context.ts :: buildContinuationContext', 'ContinuationContext has no actRollups field'),
++      src('lib/prose/prompt-engine/build-writer-prompt.ts :: buildWriterPrompt', 'no rollup section in layer 3'),
++    ],
++  },
++  {
++    domain: 'Blueprint',
++    fields: ['chapterNumber', 'version', 'phase', 'chapterGoal', 'mandatoryBeats', 'forbiddenReveals', 'reconciledFromVersion'],
++    sourceOfTruth: 'chapter_blueprints',
++    createdBy: ['lib/authoring/compile.ts (deterministic template)'],
++    writtenBy: ['lib/authoring/persist.ts'],
++    readBy: ['lib/narrative/loader.ts :: loadCanonSnapshot'],
++    promptConsumer: ['lib/runtime/personalized-generation.ts :: resolveBlueprint', 'lib/story-engine/chapter-brief.ts :: buildChapterBrief'],
++    validator: ['lib/narrative/compiler.ts :: latestBlueprint'],
++    updateTrigger: 'authoring replace; reconciliation checkpoint (lib/narrative/reconciliation.ts)',
++    persistence: 'chapter_blueprints table',
++    workerPath: 'resolveBlueprint (version desc) -> brief find() (no version sort)',
++    legacySyncPath: 'same',
++    status: 'PARITY_RISK',
++    evidence: [
++      src('lib/runtime/personalized-generation.ts :: resolveBlueprint', 'highest version wins'),
++      src('lib/narrative/compiler.ts :: latestBlueprint', 'highest version wins'),
++      src('lib/story-engine/chapter-brief.ts :: buildChapterBrief', 'snapshot.blueprints.find(...) first match, no version sort'),
++    ],
++  },
++  {
++    domain: 'Story Contract',
++    fields: ['corePromise', 'mainConflict', 'finalQuestion', 'chapterTargets', 'plotDebts', 'endingCandidates', 'closureRunway', 'revealRunway'],
++    sourceOfTruth: 'story_generation_contracts',
++    createdBy: ['lib/story-engine/contract-generation.server.ts'],
++    writtenBy: ['lib/story-engine/contract-persistence.server.ts'],
++    readBy: ['lib/runtime/personalized-generation.ts :: loadStoryGenerationContract'],
++    promptConsumer: ['lib/story-engine/chapter-brief.ts :: buildChapterBrief', 'lib/story-engine/ending-resolver.ts :: resolveEnding'],
++    validator: ['lib/story-engine/story-contract.ts :: StoryContractSchema'],
++    updateTrigger: 'contract generation / persistence',
++    persistence: 'story_generation_contracts table',
++    workerPath: 'chapterTargets/closureRunway/plotDebts -> brief; corePromise/mainConflict/finalQuestion -> canon only',
++    legacySyncPath: 'same',
++    status: 'BOUNDED_LOSS_RISK',
++    evidence: [
++      src('lib/story-engine/story-contract.ts :: StoryContractSchema', 'declares all 17-domain contract fields'),
++      src('lib/story-engine/contract-persistence.server.ts', 'corePromise/mainConflict/finalQuestion persisted into canon rows'),
++      src('lib/ai-gateway/gateway-provider.ts :: buildPrompt', 'brief/preProse not passed to writer prompt'),
++    ],
++  },
++  {
++    domain: 'Reader Route',
++    fields: ['route_state', 'endingBias', 'flags', 'routeDeltas'],
++    sourceOfTruth: 'reader_states.route_state',
++    createdBy: ['choice outcome application (publish path)'],
++    writtenBy: ['lib/runtime/lifecycle.ts :: publishChapterV2 (outcomes)'],
++    readBy: ['lib/runtime/choice-context.ts :: choiceNarrativeContextFromReader'],
++    promptConsumer: ['lib/story-engine/chapter-brief.ts :: summarizeRouteStateForPrompt -> routeStateSummary -> layer 3'],
++    validator: ['lib/story-engine/route-state.ts :: RouteStateSchema'],
++    updateTrigger: 'choice branch publish (publish_chapter_v2)',
++    persistence: 'reader_states.route_state',
++    workerPath: 'reader_states -> routeStateSummary -> writer layer 3; endingBias -> resolveEnding',
++    legacySyncPath: 'same',
++    status: 'PROVEN_E2E',
++    evidence: [
++      src('lib/runtime/choice-context.ts :: choiceNarrativeContextFromReader', 'route_state -> RouteState'),
++      src('lib/story-engine/chapter-brief.ts :: buildChapterBrief', 'routeStateSummary -> brief -> layer 3'),
++      src('lib/story-engine/ending-resolver.ts :: resolveEnding', 'routeState.endingBias ranks endings'),
++    ],
++  },
++  {
++    domain: 'Choice History',
++    fields: ['chapterNumber', 'choiceId', 'label', 'consequence', 'effectSummary'],
++    sourceOfTruth: 'reader_states.choice_history',
++    createdBy: ['choice branch publish'],
++    writtenBy: ['lib/runtime/lifecycle.ts :: publishChapterV2 (choice_history append)'],
++    readBy: ['lib/runtime/choice-context.ts :: choiceNarrativeContextFromReader'],
++    promptConsumer: ['lib/story-engine/chapter-brief.ts :: summarizeChoiceHistory (4096-char cap) -> layer 2'],
++    validator: ['lib/runtime/continuation-context.server.ts :: loadContinuationContextForChapter (trigger gate)'],
++    updateTrigger: 'choice branch publish',
++    persistence: 'reader_states.choice_history',
++    workerPath: 'choice_history -> previousChoice + summary -> layer 2',
++    legacySyncPath: 'same',
++    status: 'PROVEN_E2E',
++    evidence: [
++      src('lib/runtime/continuation-context.server.ts :: loadContinuationContextForChapter', 'choice_history is source of truth; fail-closed trigger'),
++      src('lib/story-engine/chapter-brief.ts :: summarizeChoiceHistory', 'slices at 4096 chars; oldest entries dropped silently'),
++    ],
++  },
++  {
++    domain: 'Ending',
++    fields: ['locked_ending_key', 'ending_name', 'endingBias'],
++    sourceOfTruth: 'reader_states.locked_ending_key (persist_ending_lock_v1)',
++    createdBy: ['lib/story-engine/ending-resolver.ts :: resolveEnding'],
++    writtenBy: ['lib/runtime/personalized-generation.ts :: defaultPersistEndingLock (persist_ending_lock_v1)'],
++    readBy: ['lib/runtime/personalized-generation.ts :: loadReaderStateInternal'],
++    promptConsumer: ['lib/story-engine/chapter-brief.ts :: endingKeyFor -> brief.lockedEndingKey'],
++    validator: ['supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4 (INVALID_ENDING_LOCK_TARGET)'],
++    updateTrigger: 'chapter 45 personalized publish (v4)',
++    persistence: 'reader_states.locked_ending_key + ending_name',
++    workerPath: 'v4 RPC persists lock atomically at ch45',
++    legacySyncPath: 'publishChapterV2 has no ending lock (PARITY_RISK)',
++    status: 'PARITY_RISK',
++    evidence: [
++      src('lib/story-engine/ending-resolver.ts :: resolveEnding', 'lockedEndingKey early-returns candidate'),
++      src('lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter', 'ENDING_LOCK_CHAPTER = 45; lock written once'),
++      src('lib/runtime/lifecycle.ts :: publishChapterV2', 'no ending lock parameter'),
++    ],
++  },
++  {
++    domain: 'Plot Debt',
++    fields: ['id', 'introducedAt', 'mustProgressBy', 'mustCloseBy', 'status'],
++    sourceOfTruth: 'story_generation_contracts.plot_debts_json + reader_plot_debt_closures (ledger)',
++    createdBy: ['lib/story-engine/contract-generation.server.ts'],
++    writtenBy: ['supabase v4 RPC insert into reader_plot_debt_closures'],
++    readBy: ['lib/story-engine/plot-debt-closure.ts :: resolveDebtClosures', 'lib/story-engine/plot-debt.ts :: auditPlotDebts'],
++    promptConsumer: ['lib/story-engine/chapter-brief.ts :: buildChapterBrief (plotDebtsToProgress/ToClose)'],
++    validator: ['supabase v4 RPC closure validation (DEBT_CLOSURE_DEADLINE_VIOLATION, MAIN_MYSTERY_UNRESOLVED, OPEN_DEBT_AT_END)'],
++    updateTrigger: 'chapter publish with closures (v4)',
++    persistence: 'reader_plot_debt_closures (ledger); contract status never mutated',
++    workerPath: 'auditSignals.closesPlotDebts -> v4 p_closures -> ledger',
++    legacySyncPath: 'v2 sync publish has no closure ledger',
++    status: 'BOUNDED_LOSS_RISK',
++    evidence: [
++      src('lib/story-engine/plot-debt-closure.ts :: resolveDebtClosures', 'pure projection; contract never mutated'),
++      src('lib/story-engine/chapter-brief.ts :: buildChapterBrief', 'debt lists from contract status only'),
++      src('supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql', 'atomic ledger insert + checkpoint closure binding'),
++    ],
++  },
++  {
++    domain: 'Chapter',
++    fields: ['number', 'title', 'paragraphs', 'choices', 'choice_prompt'],
++    sourceOfTruth: 'chapters',
++    createdBy: ['lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter'],
++    writtenBy: ['lib/runtime/lifecycle.ts :: publishChapterV2 (publish_chapter_v2 RPC)'],
++    readBy: ['lib/runtime/continuation-context.server.ts :: loadPreviousChapterRow'],
++    promptConsumer: ['lib/narrative/continuation-context.ts :: buildContinuationContext (previousChapter excerpt)'],
++    validator: ['supabase v4 RPC publication proof (idempotency_keys)'],
++    updateTrigger: 'per-chapter publish',
++    persistence: 'chapters table',
++    workerPath: 'v4 RPC (publish_generation_job_chapter_v4)',
++    legacySyncPath: 'publish_chapter_v2 (lifecycle.ts)',
++    status: 'PROVEN_E2E',
++    evidence: [
++      src('lib/runtime/lifecycle.ts :: publishChapterV2', 'atomic idempotent publish_chapter_v2'),
++      src('supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql', 'publication proof via idempotency_keys'),
++    ],
++  },
++  {
++    domain: 'Checkpoint',
++    fields: ['checkpoint_schema_version', 'status', 'audit_signals_json', 'audit_signals_version', 'closesPlotDebts'],
++    sourceOfTruth: 'chapter_generation_checkpoints',
++    createdBy: ['lib/runtime/personalized-generation.ts (PROSE_READY / RUNNING_CHOICES)'],
++    writtenBy: ['lib/runtime/personalized-generation.ts :: persistProseReadyCheckpoint / markCheckpointStatus'],
++    readBy: ['supabase v4 RPC (transition_checkpoint_published_atomic_v4)'],
++    promptConsumer: [],
++    validator: ['supabase migrations is_valid_checkpoint_audit_signals_v2'],
++    updateTrigger: 'generation attempts + publish',
++    persistence: 'chapter_generation_checkpoints table',
++    workerPath: 'v4 atomic checkpoint -> PUBLISHED',
++    legacySyncPath: 'no checkpoint (v2 sync path)',
++    status: 'PROVEN_E2E',
++    evidence: [
++      src('supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: transition_checkpoint_published_atomic_v4', 'atomic PUBLISHED transition under fencing'),
++      src('lib/runtime/personalized-generation.ts :: persistProseReadyCheckpoint', 'checkpoint written per attempt'),
++    ],
++  },
++  {
++    domain: 'Retrieval',
++    fields: ['included_ids', 'excluded_ids', 'budget_report'],
++    sourceOfTruth: 'retrieval_logs',
++    createdBy: ['lib/narrative/compiler.ts :: compileContext (includedIds/excludedIds)'],
++    writtenBy: ['lib/narrative/loader.ts :: persistRetrievalLog (no production call sites)'],
++    readBy: [],
++    promptConsumer: [],
++    validator: [],
++    updateTrigger: 'none (write never invoked)',
++    persistence: 'retrieval_logs table',
++    workerPath: 'compileContext computes; persistRetrievalLog never called',
++    legacySyncPath: 'same',
++    status: 'DEAD_PATH_CANDIDATE',
++    evidence: [
++      src('lib/narrative/loader.ts :: persistRetrievalLog', 'write function defined; grep finds no invocation'),
++      src('lib/runtime/personalized-generation.ts :: defaultDeps', 'persistRetrievalLog wired into deps only'),
++    ],
++  },
++]
++
++function src(source: string, observation: string): StructuredEvidence {
++  return { source, evidenceClass: 'SOURCE_TRACE', observation }
++}
++
++/** All 17 domains, in contract order, with statuses from the evidence above. */
++export function buildSourceOfTruthMatrix(): DomainSourceMatrixRow[] {
++  return MATRIX_ROWS.map((row) => ({ ...row, evidence: [...row.evidence] }))
++}
++
++/** Statuses per domain (map from the matrix) — convenience for tests/reports. */
++export function domainStatuses(): Record<string, AuditStatus> {
++  const out: Record<string, AuditStatus> = {}
++  for (const row of MATRIX_ROWS) out[row.domain] = row.status
++  return out
++}
++
++export { DEFAULT_CONTRACT_FIELD_TRACES }
++export type { ContractFieldTrace }
+diff --git a/lib/narrative-qa/thread-audit.ts b/lib/narrative-qa/thread-audit.ts
+new file mode 100644
+index 0000000..e59bd0a
+--- /dev/null
++++ b/lib/narrative-qa/thread-audit.ts
+@@ -0,0 +1,204 @@
++/**
++ * M10-A Task 2 — Thread signal disconnect detectors.
++ *
++ * Traces the REAL production thread-signal path and characterizes the disconnects
++ * found there. Both generation paths build a ThreadContext with hardcoded empty
++ * signals and the validator consumes exactly those values.
++ *
++ * Evidence cited (source strings):
++ *   - lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter
++ *     (line ~808): `const threadContext: ThreadContext = { threads: snapshot.threads,
++ *     advancedThreadIds: [], opensNewThread: false }`.
++ *   - lib/runtime/story-generation.ts :: generateNextChapterReal (line ~817):
++ *     identical `advancedThreadIds: [], opensNewThread: false` construction.
++ *   - lib/ai-gateway/generate.ts :: runLayerA — validateThreadLifecycle is fed
++ *     `threadCtx.advancedThreadIds` / `threadCtx.opensNewThread` verbatim.
++ *   - lib/ai-gateway/schemas.ts :: ChapterDraftSchema — only `opensNewThread`
++ *     optional field parsed; `advancedThreadIds` is NOT part of the parsed draft
++ *     schema, so draft signals cannot reach the validator via parseDraft either.
++ *   - lib/narrative/threads.ts :: validateThreadLifecycle — emits
++ *     THREAD_STALE_UNADDRESSED / THREAD_PAYOFF_NOT_ADVANCED / THREAD_NEW_FORBIDDEN
++ *     against the (always empty) advanced set.
++ *   - lib/narrative/compiler.ts :: compileContext — activeThreads filtered ONLY
++ *     by status (RESOLVED/ABANDONED_APPROVED excluded); the `stale` flag plays no
++ *     role in context selection.
++ */
++
++import type {
++  AuditSeverity,
++  StoryBibleAuditFinding,
++  StructuredEvidence,
++} from './story-bible-audit-contract'
++
++export interface ThreadSample {
++  id: string
++  title: string
++  status: string
++  openedChapter: number
++  lastTouchedChapter: number
++  isMainMystery?: boolean
++  stale?: boolean
++  staleSinceChapter?: number | null
++}
++
++export interface ThreadAuditSample {
++  chapter: number
++  threads: ThreadSample[]
++  /** Threads the draft actually advanced (from ChapterDraft, if captured). */
++  draftAdvancedThreadIds?: string[]
++  /** advancedThreadIds the runtime put into ThreadContext (hardcoded [] in prod). */
++  threadContextAdvancedThreadIds?: string[]
++  /** opensNewThread the runtime put into ThreadContext (hardcoded false in prod). */
++  threadContextOpensNewThread?: boolean
++  /** Threads that should have advanced this chapter (e.g. PAYOFF_DUE at ch >= 41). */
++  expectedAdvanceThreadIds?: string[]
++  /** New thread(s) introduced this chapter (openedChapter === chapter). */
++  newThreadIds?: string[]
++  /**
++   * true when draft signals are captured and actually reach validateThreadLifecycle
++   * (production today: false — see schemas.ts evidence).
++   */
++  validatorReceivesDraftSignals?: boolean
++}
++
++export const THREAD_AUDIT_EVIDENCE: StructuredEvidence[] = [
++  {
++    source: 'lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      '`const threadContext: ThreadContext = { threads: snapshot.threads, advancedThreadIds: [], opensNewThread: false }` — the personalized path hardcodes empty advancement/open signals regardless of the draft.',
++  },
++  {
++    source: 'lib/runtime/story-generation.ts :: generateNextChapterReal',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Same hardcoded construction: `{ threads: snapshot.threads, advancedThreadIds: [], opensNewThread: false }` in the standard generation path.',
++  },
++  {
++    source: 'lib/ai-gateway/generate.ts :: runLayerA',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'validateThreadLifecycle({ threads: threadCtx.threads, chapter, advancedThreadIds: threadCtx.advancedThreadIds, opensNewThread: threadCtx.opensNewThread }) — the validator consumes the ThreadContext values verbatim, so hardcoded empties mean THREAD_STALE_UNADDRESSED / THREAD_PAYOFF_NOT_ADVANCED never fire on real drafts.',
++  },
++  {
++    source: 'lib/ai-gateway/schemas.ts :: ChapterDraftSchema',
++    evidenceClass: 'SCHEMA_CONTRACT',
++    observation:
++      'Only `opensNewThread` is an optional parsed field; `advancedThreadIds` has no schema slot, so draft-level advancement cannot flow into the validator through parseDraft.',
++  },
++  {
++    source: 'lib/narrative/threads.ts :: validateThreadLifecycle',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'Validates THREAD_BUDGET_EXCEEDED, THREAD_NEW_FORBIDDEN, THREAD_STALE_UNADDRESSED (staleSinceChapter >= STALE_CALLBACK_WINDOW and id not in advanced set), THREAD_PAYOFF_NOT_ADVANCED (ch >= 41 must advance >= 1 PAYOFF_DUE thread).',
++  },
++  {
++    source: 'lib/narrative/compiler.ts :: compileContext',
++    evidenceClass: 'SOURCE_TRACE',
++    observation:
++      'activeThreads = threads where status not RESOLVED/ABANDONED_APPROVED, sorted by id. The `stale` flag is ignored in context selection — stale threads stay in the packet and the writer prompt (via continuation.openThreads).',
++  },
++]
++
++/**
++ * Emit thread signal findings for one chapter sample.
++ * - THREAD_ADVANCEMENT_SIGNAL_DISCONNECTED: (a) threads expected to advance this
++ *   chapter while the thread context carries no advanced ids; (b) draft signals
++ *   never reach the validator (validatorReceivesDraftSignals === false).
++ * - THREAD_OPEN_SIGNAL_DISCONNECTED: opensNewThread is false while a new thread
++ *   exists for the chapter (or newThreadIds supplied).
++ * - THREAD_STALENESS_NOT_LOAD_BEARING: stale threads exist but context selection
++ *   ignores the stale flag (they remain in the packet/prompt).
++ */
++export function auditThreadSignals(
++  sample: ThreadAuditSample,
++): StoryBibleAuditFinding[] {
++  const findings: StoryBibleAuditFinding[] = []
++
++  const advanced = new Set(sample.threadContextAdvancedThreadIds ?? [])
++  const expected = sample.expectedAdvanceThreadIds ?? []
++  const expectedToAdvance = expected.filter((id) => !advanced.has(id))
++
++  // --- Advancement disconnect ---
++  if (expectedToAdvance.length > 0) {
++    findings.push(baseFinding('THREAD_ADVANCEMENT_SIGNAL_DISCONNECTED', 'HIGH', {
++      detail: {
++        chapter: sample.chapter,
++        expectedToAdvance: expectedToAdvance,
++        threadContextAdvancedThreadIds: sample.threadContextAdvancedThreadIds ?? [],
++      },
++      risk: `Chapter ${sample.chapter} expected to advance thread(s) ${expectedToAdvance.join(', ')} but the runtime ThreadContext carries advancedThreadIds=${JSON.stringify(sample.threadContextAdvancedThreadIds ?? [])}. validateThreadLifecycle therefore cannot emit THREAD_PAYOFF_NOT_ADVANCED / THREAD_STALE_UNADDRESSED for real drafts.`,
++      followUp: 'Wire draft-derived advancedThreadIds into ThreadContext (or validate from the draft itself) so thread lifecycle checks observe actual draft signals.',
++    }))
++  }
++
++  if (sample.validatorReceivesDraftSignals === false) {
++    findings.push(baseFinding('THREAD_ADVANCEMENT_SIGNAL_DISCONNECTED', 'MEDIUM', {
++      detail: {
++        chapter: sample.chapter,
++        validatorReceivesDraftSignals: false,
++      },
++      risk: 'Draft advancement signals never reach validateThreadLifecycle: ChapterDraftSchema has no advancedThreadIds slot and both runtime paths hardcode []. The validator always sees an empty advanced set.',
++      followUp: 'Either extend the parsed draft schema with advancedThreadIds or run thread lifecycle validation against draft fields directly.',
++    }))
++  }
++
++  // --- Open-signal disconnect ---
++  const newThreads = sample.newThreadIds ?? sample.threads.filter(
++    (t) => t.openedChapter === sample.chapter,
++  ).map((t) => t.id)
++  const opensNewThread = sample.threadContextOpensNewThread ?? false
++  if (newThreads.length > 0 && !opensNewThread) {
++    findings.push(baseFinding('THREAD_OPEN_SIGNAL_DISCONNECTED', 'HIGH', {
++      detail: {
++        chapter: sample.chapter,
++        newThreadIds: newThreads,
++        threadContextOpensNewThread: opensNewThread,
++      },
++      risk: `Thread(s) ${newThreads.join(', ')} opened at chapter ${sample.chapter} while the runtime ThreadContext reports opensNewThread=false. THREAD_NEW_FORBIDDEN (ch >= 41 / budget full) is computed against the wrong signal, so forbidden new threads can publish undetected.`,
++      followUp: 'Derive opensNewThread from the draft (parsed opensNewThread field / proposedStateDelta) instead of the hardcoded false.',
++    }))
++  }
++
++  // --- Staleness not load-bearing ---
++  const staleThreads = sample.threads.filter((t) => t.stale === true)
++  if (staleThreads.length > 0) {
++    findings.push(baseFinding('THREAD_STALENESS_NOT_LOAD_BEARING', 'LOW', {
++      detail: {
++        chapter: sample.chapter,
++        staleThreadIds: staleThreads.map((t) => t.id),
++      },
++      risk: `${staleThreads.length} thread(s) carry the stale flag but compileContext filters activeThreads by status only, so stale threads remain in the packet and writer prompt. Staleness is not load-bearing for context selection.`,
++      followUp: 'Decide whether stale threads should be demoted/excluded from the packet or explicitly carried with a staleness marker in the prompt.',
++    }))
++  }
++
++  return findings
++}
++
++function baseFinding(
++  code: string,
++  severity: AuditSeverity,
++  args: { detail: Record<string, unknown>; risk: string; followUp: string },
++): StoryBibleAuditFinding {
++  return {
++    code,
++    severity,
++    domain: 'Thread',
++    status: 'PARITY_RISK',
++    sourceOfTruth: ['story_threads'],
++    producers: ['lib/narrative/threads.ts :: refreshStaleness (staleness flag)'],
++    consumers: ['lib/narrative/compiler.ts :: compileContext (currentState.activeThreads)'],
++    validators: ['lib/ai-gateway/generate.ts :: runLayerA', 'lib/narrative/threads.ts :: validateThreadLifecycle'],
++    evidence: [
++      ...THREAD_AUDIT_EVIDENCE,
++      {
++        source: `lib/narrative-qa/thread-audit.ts :: ${code}`,
++        evidenceClass: 'PURE_CHARACTERIZATION',
++        observation: `Detector emitted from input data: ${JSON.stringify(args.detail)}`,
++      } satisfies StructuredEvidence,
++    ],
++    risk: args.risk,
++    recommendedFollowUp: args.followUp,
++  }
++}

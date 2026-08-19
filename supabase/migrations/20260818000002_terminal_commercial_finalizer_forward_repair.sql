@@ -493,11 +493,9 @@ begin
             )
           )
         )
-    ) candidates
     order by gj.updated_at asc
     limit p_batch_size
-    for update skip locked
-  ) candidates;
+    for update skip locked;
   
   return pg_catalog.jsonb_build_object(
     'candidates', coalesce(v_results, '[]'::jsonb),

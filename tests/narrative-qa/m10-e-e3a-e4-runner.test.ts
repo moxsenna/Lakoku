@@ -231,39 +231,65 @@ describe('M10-E E3A/E4 runner orchestration', () => {
     expect(writeArtifacts).not.toHaveBeenCalled()
   })
 
-  it('rejects mutated closureAuthorityJson.baseGitSha before any telemetry or artifact work', async () => {
-    const writeArtifacts = vi.fn()
-    const git = realGit()
-    // Mutate baseGitSha to invalid value
-    const mutatedAuthority = { ...CLOSURE_AUTHORITY_JSON, baseGitSha: 'x'.repeat(40) } as typeof CLOSURE_AUTHORITY_JSON
-    await expect(executeM10EE3AE4({ 
-      git,
-      telemetry: fakeTelemetry(),
+  it('mutates semantic.baseGitSha → validateReliabilitySemanticArtifact throws (R1-D proof)', async () => {
+    const { buildReliabilityObservationFixture } = await import('../../fixtures/m10-e/reliability-contract-fixture')
+    const { validateReliabilitySemanticArtifact, computeReliabilitySemanticHash, stripOwnHash } = await import('../../lib/narrative-qa/reliability/artifacts')
+    const observations = buildReliabilityObservationFixture()
+    // Build a complete valid semantic artifact
+    const { buildReliabilitySemanticArtifact } = await import('../../lib/narrative-qa/reliability/artifacts')
+    const validArtifact = await buildReliabilitySemanticArtifact({
       now: () => new Date('2026-08-15T12:00:00.000Z'),
-      executionInstanceId: 'run-mutated-base-git-sha',
-      fixture: buildReliabilityObservationFixture(),
-      closureAuthorityJson: mutatedAuthority,
-      writeArtifacts,
-    })).rejects.toThrow('M10E_E3A_E4_CLOSURE_AUTHORITY_FAILED')
-    expect(writeArtifacts).not.toHaveBeenCalled()
-  })
+      executionProfile: 'CONTRACT_FIXTURE',
+      fixture: observations,
+      closureAuthorityJson: CLOSURE_AUTHORITY_JSON,
+      writeArtifacts: vi.fn(),
+    })
+    // Deep clone valid semantic artifact
+    const cloned = JSON.parse(JSON.stringify(validArtifact)) as unknown
+    // Change semantic.baseGitSha to another valid raw 40-hex SHA
+    const mutatedWithBaseGitSha = {
+      ...cloned,
+      semantic: {
+        ...cloned.semantic,
+        baseGitSha: 'b'.repeat(40),
+      },
+    }
+    // Leave artifactSemanticHash stale (don't recompute)
+    // validateReliabilitySemanticArtifact(mutated) MUST THROW
+    await expect(async () => {
+      validateReliabilitySemanticArtifact(mutatedWithBaseGitSha.semantic as unknown)
+    }).rejects.toThrow(/hash/i)
+  }, 180000)
 
-  it('rejects mutated closureAuthorityJson.e2ClosureReference before any telemetry or artifact work', async () => {
-    const writeArtifacts = vi.fn()
-    const git = realGit()
-    // Mutate e2ClosureReference to invalid value
-    const mutatedAuthority = { ...CLOSURE_AUTHORITY_JSON, e2ClosureReference: 'y'.repeat(40) } as typeof CLOSURE_AUTHORITY_JSON
-    await expect(executeM10EE3AE4({ 
-      git,
-      telemetry: fakeTelemetry(),
+  it('mutates semantic.e2ClosureReference → validateReliabilitySemanticArtifact throws (R1-D proof)', async () => {
+    const { buildReliabilityObservationFixture } = await import('../../fixtures/m10-e/reliability-contract-fixture')
+    const { validateReliabilitySemanticArtifact, computeReliabilitySemanticHash, stripOwnHash } = await import('../../lib/narrative-qa/reliability/artifacts')
+    const observations = buildReliabilityObservationFixture()
+    // Build a complete valid semantic artifact
+    const { buildReliabilitySemanticArtifact } = await import('../../lib/narrative-qa/reliability/artifacts')
+    const validArtifact = await buildReliabilitySemanticArtifact({
       now: () => new Date('2026-08-15T12:00:00.000Z'),
-      executionInstanceId: 'run-mutated-e2-closure-reference',
-      fixture: buildReliabilityObservationFixture(),
-      closureAuthorityJson: mutatedAuthority,
-      writeArtifacts,
-    })).rejects.toThrow('M10E_E3A_E4_CLOSURE_AUTHORITY_FAILED')
-    expect(writeArtifacts).not.toHaveBeenCalled()
-  })
+      executionProfile: 'CONTRACT_FIXTURE',
+      fixture: observations,
+      closureAuthorityJson: CLOSURE_AUTHORITY_JSON,
+      writeArtifacts: vi.fn(),
+    })
+    // Deep clone valid semantic artifact
+    const cloned = JSON.parse(JSON.stringify(validArtifact)) as unknown
+    // Change semantic.e2ClosureReference to another valid raw 40-hex SHA
+    const mutatedWithE2ClosureRef = {
+      ...cloned,
+      semantic: {
+        ...cloned.semantic,
+        e2ClosureReference: 'c'.repeat(40),
+      },
+    }
+    // Leave artifactSemanticHash stale (don't recompute)
+    // validateReliabilitySemanticArtifact(mutated) MUST THROW
+    await expect(async () => {
+      validateReliabilitySemanticArtifact(mutatedWithE2ClosureRef.semantic as unknown)
+    }).rejects.toThrow(/hash/i)
+  }, 180000)
 
   it('rejects an unsafe projection (nonzero counters, wrong source, or missing observations)', async () => {
     const git = fakeGit()

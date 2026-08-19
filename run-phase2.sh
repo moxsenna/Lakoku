@@ -75,13 +75,10 @@ if [ $? -ne 0 ]; then echo "FAILED: Phase2C-E1-E2-closure"; OVERALL_STATUS=1; fi
 # PHASE-2D: Governed DB regressions (both expectedFocusedTests from e1-e2-closure-authority.json)
 echo "## PHASE-2D: GOVERNED DB REGRESSION #1 ##"
 echo "Note: Requires LAKOKU_LOCAL_DB_TEST=1 env var + 'supabase_db_lakoku-m10-e2-task3' Docker container on port 57322"
-output=$(LAKOKU_LOCAL_DB_TEST=1 pnpm exec vitest run --config vitest.config.ts \
-    tests/db/m10-e1-disposable-cleanup-auth-regression.test.ts 2>&1 || true)
-echo "$output"
-if echo "$output" | grep -q "skipped"; then
-    echo "✓ Phase2D-DB-e1-disposable-cleanup: SKIP (requires Docker setup)"
-elif echo "$output" | grep -qE "(FAIL|failed)"; then
-    echo "FAILED: Phase2D-DB-e1-disposable-cleanup"; OVERALL_STATUS=1; fi
+if ! LAKOKU_LOCAL_DB_TEST=1 pnpm exec vitest run --config vitest.config.ts \
+    tests/db/m10-e1-disposable-cleanup-auth-regression.test.ts 2>&1; then
+    echo "FAILED: Phase2D-DB-e1-disposable-cleanup"; OVERALL_STATUS=1
+fi
 
 echo "## PHASE-2D: GOVERNED DB REGRESSION #2 ##"
 pnpm exec vitest run --config vitest.config.ts \

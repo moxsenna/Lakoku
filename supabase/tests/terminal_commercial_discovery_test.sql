@@ -1,0 +1,449 @@
+-- Terminal Commercial Discovery RPC Tests (pgTAP)
+-- Tests list_terminal_commercial_finalization_candidates_v1() discovery logic
+-- Architecture: Results persist into TEMP table, assertions at TOP-LEVEL
+
+begin;
+
+create extension if not exists pgtap with schema extensions;
+set local search_path = public, extensions;
+
+create temp table discovery_test_results (
+  case_name text primary key,
+  result jsonb
+);
+
+-- ===========================================================================
+-- TEST CASES FOR DISCOVERY RPC
+-- ===========================================================================
+
+DO $$
+DECLARE
+  v_user_id UUID := '80000000-0000-4000-8000-000000000100';
+  v_result JSONB;
+BEGIN
+  -- Test 1: Empty results - no commercial jobs exist
+  DELETE FROM commercial_generation_intents;
+  DELETE FROM story_creation_requests;
+  DELETE FROM generation_jobs;
+  
+  v_result := public.list_terminal_commercial_finalization_candidates_v1(50);
+  
+  INSERT INTO discovery_test_results (case_name, result)
+  VALUES ('empty_no_jobs', v_result);
+END $$;
+
+DO $$
+DECLARE
+  v_story_id TEXT := 'tst-discovery-1-' || gen_random_uuid()::TEXT;
+  v_user_id UUID := '80000000-0000-4000-8000-0000000100';
+  v_job_id UUID := gen_random_uuid();
+  v_result JSONB;
+BEGIN
+  -- Test 2: FAILED STORY with exact SCR binding + ACTIVE reservation -> INCLUDED
+  INSERT INTO auth.users (id, email, aud, created_at, updated_at) 
+  VALUES (v_user_id, 'test-discovery-failed-story@example.com', 'authenticated', now(), now())
+  ON CONFLICT (id) DO UPDATE SET updated_at = now();
+  
+  INSERT INTO stories (id, owner_user_id, title, visibility, story_mode, generation_status, total_chapters, status, current_chapter)
+  VALUES (v_story_id, v_user_id, 'Test Discovery Failed Story', 'private', 'personalized_ai', 'creating_contract', 50, 'BARU', 0);
+  
+  INSERT INTO generation_jobs (id, user_id, story_id, generation_kind, chapter_number, status, attempt_count, max_attempts, deadline_at, publication_idempotency_key)
+  VALUES (v_job_id, v_user_id, v_story_id, 'personalized', 1, 'FAILED', 3, 3, now() + interval '1 hour', 'generation-job:' || v_job_id::TEXT);
+  
+  INSERT INTO story_creation_requests (generation_job_id, owner_user_id, story_id, request_kind, idempotency_key, request_hash, status, created_at)
+  VALUES (v_job_id, v_user_id, v_story_id, 'personalized', 'discovery-failed-story', md5('discovery-failed-story'), 'RESERVED', now());
+  
+  INSERT INTO credit_reservations (user_id, story_id, ref, reservation_kind, chapter_number, amount, status, expires_at)
+  VALUES (v_user_id, v_story_id, 'story-start:' || v_user_id::TEXT || ':' || v_story_id, 'STORY_START', 1, 24, 'ACTIVE', now() + interval '30 minutes');
+  
+  v_result := public.list_terminal_commercial_finalization_candidates_v1(50);
+  
+  INSERT INTO discovery_test_results (case_name, result)
+  VALUES ('failed_story_with_binding_active_reservation', v_result);
+END $$;
+
+DO $$
+DECLARE
+  v_story_id TEXT := 'tst-discovery-2-' || gen_random_uuid()::TEXT;
+  v_user_id UUID := '80000000-0000-4000-8000-0000000200';
+  v_job_id UUID := gen_random_uuid();
+  v_chapter INT := 7;
+  v_intent_id UUID := gen_random_uuid();
+  v_result JSONB;
+BEGIN
+  -- Test 3: CANCELLED CHAPTER with exact CGI binding + ACTIVE reservation -> INCLUDED
+  INSERT INTO auth.users (id, email, aud, created_at, updated_at) 
+  VALUES (v_user_id, 'test-discovery-cancelled-chapter@example.com', 'authenticated', now(), now())
+  ON CONFLICT (id) DO UPDATE SET updated_at = now();
+  
+  INSERT INTO stories (id, owner_user_id, title, visibility, story_mode, generation_status, total_chapters, status, current_chapter)
+  VALUES (v_story_id, v_user_id, 'Test Discovery Cancelled Chapter', 'private', 'personalized_ai', 'creating_contract', 50, 'BARU', 0);
+  
+  INSERT INTO generation_jobs (id, user_id, story_id, generation_kind, chapter_number, status, attempt_count, max_attempts, deadline_at, publication_idempotency_key, trigger_choice_id)
+  VALUES (v_job_id, v_user_id, v_story_id, 'personalized', v_chapter, 'CANCELLED', 2, 3, now() + interval '1 hour', 'generation-job:' || v_job_id::TEXT, 'choice-discovery-match');
+  
+  INSERT INTO commercial_generation_intents (id, generation_job_id, user_id, story_id, chapter_number, trigger_choice_id, quoted_credits, pricing_version, status)
+  VALUES (v_intent_id, v_job_id, v_user_id, v_story_id, v_chapter, 'choice-discovery-match', 10, 'v1', 'QUEUED');
+  
+  INSERT INTO credit_reservations (user_id, story_id, ref, reservation_kind, chapter_number, amount, status, expires_at)
+  VALUES (v_user_id, v_story_id, 'chapter-reservation:' || v_user_id::TEXT || ':' || v_story_id || ':' || v_chapter::TEXT, 'CHAPTER_UNLOCK', v_chapter, 10, 'ACTIVE', now() + interval '30 minutes');
+  
+  v_result := public.list_terminal_commercial_finalization_candidates_v1(50);
+  
+  INSERT INTO discovery_test_results (case_name, result)
+  VALUES ('cancelled_chapter_with_binding_active_reservation', v_result);
+END $$;
+
+DO $$
+DECLARE
+  v_story_id TEXT := 'tst-discovery-3-' || gen_random_uuid()::TEXT;
+  v_user_id UUID := '80000000-0000-4000-8000-0000000300';
+  v_job_id UUID := gen_random_uuid();
+  v_chapter INT := 8;
+  v_intent_id UUID := gen_random_uuid();
+  v_result JSONB;
+BEGIN
+  -- Test 4: Trigger-choice mismatch -> EXCLUDED (job has NULL, intent has value)
+  INSERT INTO auth.users (id, email, aud, created_at, updated_at) 
+  VALUES (v_user_id, 'test-discovery-trigger-mismatch@example.com', 'authenticated', now(), now())
+  ON CONFLICT (id) DO UPDATE SET updated_at = now();
+  
+  INSERT INTO stories (id, owner_user_id, title, visibility, story_mode, generation_status, total_chapters, status, current_chapter)
+  VALUES (v_story_id, v_user_id, 'Test Discovery Trigger Mismatch', 'private', 'personalized_ai', 'creating_contract', 50, 'BARU', 0);
+  
+  -- Job has NULL trigger_choice_id
+  INSERT INTO generation_jobs (id, user_id, story_id, generation_kind, chapter_number, status, attempt_count, max_attempts, deadline_at, publication_idempotency_key, trigger_choice_id)
+  VALUES (v_job_id, v_user_id, v_story_id, 'personalized', v_chapter, 'FAILED', 3, 3, now() + interval '1 hour', 'generation-job:' || v_job_id::TEXT, NULL);
+  
+  -- Intent has non-NULL trigger_choice_id
+  INSERT INTO commercial_generation_intents (id, generation_job_id, user_id, story_id, chapter_number, trigger_choice_id, quoted_credits, pricing_version, status)
+  VALUES (v_intent_id, v_job_id, v_user_id, v_story_id, v_chapter, 'choice-mismatch', 12, 'v1', 'QUEUED');
+  
+  INSERT INTO credit_reservations (user_id, story_id, ref, reservation_kind, chapter_number, amount, status, expires_at)
+  VALUES (v_user_id, v_story_id, 'chapter-reservation:' || v_user_id::TEXT || ':' || v_story_id || ':' || v_chapter::TEXT, 'CHAPTER_UNLOCK', v_chapter, 12, 'ACTIVE', now() + interval '30 minutes');
+  
+  v_result := public.list_terminal_commercial_finalization_candidates_v1(50);
+  
+  INSERT INTO discovery_test_results (case_name, result)
+  VALUES ('trigger_choice_mismatch_null_vs_value', v_result);
+END $$;
+
+DO $$
+DECLARE
+  v_story_id TEXT := 'tst-discovery-4-' || gen_random_uuid()::TEXT;
+  v_user_id UUID := '80000000-0000-4000-8000-0000000400';
+  v_job_id UUID := gen_random_uuid();
+  v_chapter INT := 9;
+  v_intent_id UUID := gen_random_uuid();
+  v_result JSONB;
+BEGIN
+  -- Test 5: FAILED job with attempt_count < max_attempts -> STILL DISCOVERED (protects deadline/preflight/cancel)
+  INSERT INTO auth.users (id, email, aud, created_at, updated_at) 
+  VALUES (v_user_id, 'test-discovery-attempt-under-max@example.com', 'authenticated', now(), now())
+  ON CONFLICT (id) DO UPDATE SET updated_at = now();
+  
+  INSERT INTO stories (id, owner_user_id, title, visibility, story_mode, generation_status, total_chapters, status, current_chapter)
+  VALUES (v_story_id, v_user_id, 'Test Discovery Attempt Under Max', 'private', 'personalized_ai', 'creating_contract', 50, 'BARU', 0);
+  
+  INSERT INTO generation_jobs (id, user_id, story_id, generation_kind, chapter_number, status, attempt_count, max_attempts, deadline_at, publication_idempotency_key, trigger_choice_id)
+  VALUES (v_job_id, v_user_id, v_story_id, 'personalized', v_chapter, 'FAILED', 1, 3, now() + interval '1 hour', 'generation-job:' || v_job_id::TEXT, 'choice-under-max');
+  
+  INSERT INTO commercial_generation_intents (id, generation_job_id, user_id, story_id, chapter_number, trigger_choice_id, quoted_credits, pricing_version, status)
+  VALUES (v_intent_id, v_job_id, v_user_id, v_story_id, v_chapter, 'choice-under-max', 8, 'v1', 'QUEUED');
+  
+  INSERT INTO credit_reservations (user_id, story_id, ref, reservation_kind, chapter_number, amount, status, expires_at)
+  VALUES (v_user_id, v_story_id, 'chapter-reservation:' || v_user_id::TEXT || ':' || v_story_id || ':' || v_chapter::TEXT, 'CHAPTER_UNLOCK', v_chapter, 8, 'ACTIVE', now() + interval '30 minutes');
+  
+  v_result := public.list_terminal_commercial_finalization_candidates_v1(50);
+  
+  INSERT INTO discovery_test_results (case_name, result)
+  VALUES ('failed_under_max_attempts_included', v_result);
+END $$;
+
+DO $$
+DECLARE
+  v_story_id TEXT := 'tst-discovery-5-' || gen_random_uuid()::TEXT;
+  v_user_id UUID := '80000000-0000-4000-8000-0000000500';
+  v_job_id UUID := gen_random_uuid();
+  v_result JSONB;
+BEGIN
+  -- Test 6: FAILED job WITHOUT SCR/CGI binding -> EXCLUDED
+  INSERT INTO auth.users (id, email, aud, created_at, updated_at) 
+  VALUES (v_user_id, 'test-discovery-no-binding@example.com', 'authenticated', now(), now())
+  ON CONFLICT (id) DO UPDATE SET updated_at = now();
+  
+  INSERT INTO stories (id, owner_user_id, title, visibility, story_mode, generation_status, total_chapters, status, current_chapter)
+  VALUES (v_story_id, v_user_id, 'Test Discovery No Binding', 'private', 'personalized_ai', 'creating_contract', 50, 'BARU', 0);
+  
+  INSERT INTO generation_jobs (id, user_id, story_id, generation_kind, chapter_number, status, attempt_count, max_attempts, deadline_at, publication_idempotency_key)
+  VALUES (v_job_id, v_user_id, v_story_id, 'personalized', 1, 'FAILED', 3, 3, now() + interval '1 hour', 'generation-job:' || v_job_id::TEXT);
+  
+  -- No story_creation_requests
+  -- No credit_reservations
+  
+  v_result := public.list_terminal_commercial_finalization_candidates_v1(50);
+  
+  INSERT INTO discovery_test_results (case_name, result)
+  VALUES ('failed_job_without_binding_excluded', v_result);
+END $$;
+
+DO $$
+DECLARE
+  v_story_id TEXT := 'tst-discovery-6-' || gen_random_uuid()::TEXT;
+  v_user_id UUID := '80000000-0000-4000-8000-0000000600';
+  v_job_id UUID := gen_random_uuid();
+  v_result JSONB;
+BEGIN
+  -- Test 7: FAILED job with RELEASED reservation -> EXCLUDED
+  INSERT INTO auth.users (id, email, aud, created_at, updated_at) 
+  VALUES (v_user_id, 'test-discovery-released@example.com', 'authenticated', now(), now())
+  ON CONFLICT (id) DO UPDATE SET updated_at = now();
+  
+  INSERT INTO stories (id, owner_user_id, title, visibility, story_mode, generation_status, total_chapters, status, current_chapter)
+  VALUES (v_story_id, v_user_id, 'Test Discovery Released', 'private', 'personalized_ai', 'creating_contract', 50, 'BARU', 0);
+  
+  INSERT INTO generation_jobs (id, user_id, story_id, generation_kind, chapter_number, status, attempt_count, max_attempts, deadline_at, publication_idempotency_key)
+  VALUES (v_job_id, v_user_id, v_story_id, 'personalized', 1, 'FAILED', 3, 3, now() + interval '1 hour', 'generation-job:' || v_job_id::TEXT);
+  
+  INSERT INTO story_creation_requests (generation_job_id, owner_user_id, story_id, request_kind, idempotency_key, request_hash, status, created_at)
+  VALUES (v_job_id, v_user_id, v_story_id, 'personalized', 'discovery-released', md5('discovery-released'), 'RESERVED', now());
+  
+  -- Reservation is RELEASED, not ACTIVE
+  INSERT INTO credit_reservations (user_id, story_id, ref, reservation_kind, chapter_number, amount, status, expires_at)
+  VALUES (v_user_id, v_story_id, 'story-start:' || v_user_id::TEXT || ':' || v_story_id, 'STORY_START', 1, 24, 'RELEASED', now() + interval '30 minutes');
+  
+  v_result := public.list_terminal_commercial_finalization_candidates_v1(50);
+  
+  INSERT INTO discovery_test_results (case_name, result)
+  VALUES ('failed_job_with_released_reservation_excluded', v_result);
+END $$;
+
+DO $$
+DECLARE
+  v_story_id TEXT := 'tst-discovery-7-' || gen_random_uuid()::TEXT;
+  v_user_id UUID := '80000000-0000-4000-8000-0000000700';
+  v_job_id UUID := gen_random_uuid();
+  v_result JSONB;
+BEGIN
+  -- Test 8: RUNNING job -> EXCLUDED (not terminal state)
+  INSERT INTO auth.users (id, email, aud, created_at, updated_at) 
+  VALUES (v_user_id, 'test-discovery-running@example.com', 'authenticated', now(), now())
+  ON CONFLICT (id) DO UPDATE SET updated_at = now();
+  
+  INSERT INTO stories (id, owner_user_id, title, visibility, story_mode, generation_status, total_chapters, status, current_chapter)
+  VALUES (v_story_id, v_user_id, 'Test Discovery Running', 'private', 'personalized_ai', 'creating_contract', 50, 'BARU', 0);
+  
+  INSERT INTO generation_jobs (id, user_id, story_id, generation_kind, chapter_number, status, attempt_count, max_attempts, deadline_at, publication_idempotency_key, claim_token, claimed_at, heartbeat_at, worker_id)
+  VALUES (v_job_id, v_user_id, v_story_id, 'personalized', 1, 'RUNNING', 1, 3, now() + interval '1 hour', 'generation-job:' || v_job_id::TEXT, gen_random_uuid(), now(), now(), 'worker-test');
+  
+  INSERT INTO story_creation_requests (generation_job_id, owner_user_id, story_id, request_kind, idempotency_key, request_hash, status, created_at)
+  VALUES (v_job_id, v_user_id, v_story_id, 'personalized', 'discovery-running', md5('discovery-running'), 'RESERVED', now());
+  
+  INSERT INTO credit_reservations (user_id, story_id, ref, reservation_kind, chapter_number, amount, status, expires_at)
+  VALUES (v_user_id, v_story_id, 'story-start:' || v_user_id::TEXT || ':' || v_story_id, 'STORY_START', 1, 24, 'ACTIVE', now() + interval '30 minutes');
+  
+  v_result := public.list_terminal_commercial_finalization_candidates_v1(50);
+  
+  INSERT INTO discovery_test_results (case_name, result)
+  VALUES ('running_job_excluded', v_result);
+END $$;
+
+DO $$
+DECLARE
+  v_story_id TEXT := 'tst-discovery-8-' || gen_random_uuid()::TEXT;
+  v_user_id UUID := '80000000-0000-4000-8000-0000000800';
+  v_job_id UUID := gen_random_uuid();
+  v_chapter INT := 10;
+  v_intent_id UUID := gen_random_uuid();
+  v_result JSONB;
+BEGIN
+  -- Test 9: Both NULL trigger_choice_id values -> INCLUDED (exact NULL-safe equality matches)
+  INSERT INTO auth.users (id, email, aud, created_at, updated_at) 
+  VALUES (v_user_id, 'test-discovery-both-null@example.com', 'authenticated', now(), now())
+  ON CONFLICT (id) DO UPDATE SET updated_at = now();
+  
+  INSERT INTO stories (id, owner_user_id, title, visibility, story_mode, generation_status, total_chapters, status, current_chapter)
+  VALUES (v_story_id, v_user_id, 'Test Discovery Both NULL', 'private', 'personalized_ai', 'creating_contract', 50, 'BARU', 0);
+  
+  -- Both job and intent have NULL trigger_choice_id
+  INSERT INTO generation_jobs (id, user_id, story_id, generation_kind, chapter_number, status, attempt_count, max_attempts, deadline_at, publication_idempotency_key, trigger_choice_id)
+  VALUES (v_job_id, v_user_id, v_story_id, 'personalized', v_chapter, 'FAILED', 3, 3, now() + interval '1 hour', 'generation-job:' || v_job_id::TEXT, NULL);
+  
+  INSERT INTO commercial_generation_intents (id, generation_job_id, user_id, story_id, chapter_number, trigger_choice_id, quoted_credits, pricing_version, status)
+  VALUES (v_intent_id, v_job_id, v_user_id, v_story_id, v_chapter, NULL, 15, 'v1', 'QUEUED');
+  
+  INSERT INTO credit_reservations (user_id, story_id, ref, reservation_kind, chapter_number, amount, status, expires_at)
+  VALUES (v_user_id, v_story_id, 'chapter-reservation:' || v_user_id::TEXT || ':' || v_story_id || ':' || v_chapter::TEXT, 'CHAPTER_UNLOCK', v_chapter, 15, 'ACTIVE', now() + interval '30 minutes');
+  
+  v_result := public.list_terminal_commercial_finalization_candidates_v1(50);
+  
+  INSERT INTO discovery_test_results (case_name, result)
+  VALUES ('both_null_trigger_choice_included', v_result);
+END $$;
+
+DO $$
+DECLARE
+  v_story_id TEXT := 'tst-discovery-9-' || gen_random_uuid()::TEXT;
+  v_user_id UUID := '80000000-0000-4000-8000-0000000900';
+  v_job_id UUID := gen_random_uuid();
+  v_chapter INT := 11;
+  v_intent_id UUID := gen_random_uuid();
+  v_result JSONB;
+BEGIN
+  -- Test 10: Different non-NULL trigger_choice_id values -> EXCLUDED
+  INSERT INTO auth.users (id, email, aud, created_at, updated_at) 
+  VALUES (v_user_id, 'test-discovery-different-trigger@example.com', 'authenticated', now(), now())
+  ON CONFLICT (id) DO UPDATE SET updated_at = now();
+  
+  INSERT INTO stories (id, owner_user_id, title, visibility, story_mode, generation_status, total_chapters, status, current_chapter)
+  VALUES (v_story_id, v_user_id, 'Test Discovery Different Trigger', 'private', 'personalized_ai', 'creating_contract', 50, 'BARU', 0);
+  
+  -- Job has different trigger_choice than intent
+  INSERT INTO generation_jobs (id, user_id, story_id, generation_kind, chapter_number, status, attempt_count, max_attempts, deadline_at, publication_idempotency_key, trigger_choice_id)
+  VALUES (v_job_id, v_user_id, v_story_id, 'personalized', v_chapter, 'FAILED', 3, 3, now() + interval '1 hour', 'generation-job:' || v_job_id::TEXT, 'choice-job-value');
+  
+  INSERT INTO commercial_generation_intents (id, generation_job_id, user_id, story_id, chapter_number, trigger_choice_id, quoted_credits, pricing_version, status)
+  VALUES (v_intent_id, v_job_id, v_user_id, v_story_id, v_chapter, 'choice-intent-value', 20, 'v1', 'QUEUED');
+  
+  INSERT INTO credit_reservations (user_id, story_id, ref, reservation_kind, chapter_number, amount, status, expires_at)
+  VALUES (v_user_id, v_story_id, 'chapter-reservation:' || v_user_id::TEXT || ':' || v_story_id || ':' || v_chapter::TEXT, 'CHAPTER_UNLOCK', v_chapter, 20, 'ACTIVE', now() + interval '30 minutes');
+  
+  v_result := public.list_terminal_commercial_finalization_candidates_v1(50);
+  
+  INSERT INTO discovery_test_results (case_name, result)
+  VALUES ('different_non_null_trigger_excluded', v_result);
+END $$;
+
+-- ===========================================================================
+-- ASSERTIONS
+-- ===========================================================================
+
+select plan(20);
+
+-- Test 1: Empty results - should return count = 0
+select is(
+  (result->>'count')::int,
+  0,
+  'empty_no_jobs returns count 0'
+);
+
+-- Test 2: FAILED STORY with exact binding + ACTIVE -> included (count >= 1)
+select ok(
+  (result->>'count')::int >= 1,
+  'failed_story_with_binding_active_reservation includes job in discovery'
+);
+
+-- Verify the returned candidate has correct fields
+select is(
+  (result->>'candidates')::jsonb ? 'job_id',
+  'true',
+  'failed_story_with_binding_active_reservation includes job_id field'
+);
+
+select is(
+  (SELECT (result->'candidates'->0)->>'status' FROM discovery_test_results WHERE case_name = 'failed_story_with_binding_active_reservation'),
+  'FAILED',
+  'failed_story_with_binding_active_reservation reports FAILED status'
+);
+
+-- Test 3: CANCELLED CHAPTER with exact binding + ACTIVE -> included
+select ok(
+  (result->>'count')::int >= 1,
+  'cancelled_chapter_with_binding_active_reservation includes job in discovery'
+);
+
+select is(
+  (SELECT (result->'candidates'->0)->>'status' FROM discovery_test_results WHERE case_name = 'cancelled_chapter_with_binding_active_reservation'),
+  'CANCELLED',
+  'cancelled_chapter_with_binding_active_reservation reports CANCELLED status'
+);
+
+-- Test 4: Trigger-choice mismatch (NULL vs non-NULL) -> excluded
+select is(
+  (result->>'count')::int,
+  0,
+  'trigger_choice_mismatch_null_vs_value excludes mismatched triggers'
+);
+
+-- Test 5: FAILED job with attempt_count < max_attempts -> STILL INCLUDED
+select ok(
+  (result->>'count')::int >= 1,
+  'failed_under_max_attempts_included discovers FAILED job even though attempt_count < max_attempts'
+);
+
+-- Test 6: FAILED job WITHOUT binding -> excluded
+select is(
+  (result->>'count')::int,
+  0,
+  'failed_job_without_binding_excluded removes jobs lacking commercial binding'
+);
+
+-- Test 7: FAILED job with RELEASED reservation -> excluded
+select is(
+  (result->>'count')::int,
+  0,
+  'failed_job_with_released_reservation_excluded filters out non-ACTIVE reservations'
+);
+
+-- Test 8: RUNNING job -> excluded
+select is(
+  (result->>'count')::int,
+  0,
+  'running_job_excluded only discovers FAILED/CANCELLED states'
+);
+
+-- Test 9: Both NULL trigger_choice_id values -> included (IS NOT DISTINCT FROM matches)
+select ok(
+  (result->>'count')::int >= 1,
+  'both_null_trigger_choice_included allows both NULLs to match under IS NOT DISTINCT FROM semantics'
+);
+
+-- Test 10: Different non-NULL trigger_choice_id values -> excluded
+select is(
+  (result->>'count')::int,
+  0,
+  'different_non_null_trigger_excluded requires exact trigger_choice_id equality'
+);
+
+-- ===========================================================================
+-- ADDITIONAL VALIDATION: Verify candidate structure
+-- ===========================================================================
+
+-- Validate that candidates include all required fields from TypeScript interface
+select ok(
+  (SELECT (result->'candidates'->0 ? 'job_id') FROM discovery_test_results WHERE case_name = 'failed_story_with_binding_active_reservation'),
+  'candidate contains job_id field'
+);
+
+select ok(
+  (SELECT (result->'candidates'->0 ? 'user_id') FROM discovery_test_results WHERE case_name = 'failed_story_with_binding_active_reservation'),
+  'candidate contains user_id field'
+);
+
+select ok(
+  (SELECT (result->'candidates'->0 ? 'story_id') FROM discovery_test_results WHERE case_name = 'failed_story_with_binding_active_reservation'),
+  'candidate contains story_id field'
+);
+
+select ok(
+  (SELECT (result->'candidates'->0 ? 'chapter_number') FROM discovery_test_results WHERE case_name = 'failed_story_with_binding_active_reservation'),
+  'candidate contains chapter_number field'
+);
+
+select ok(
+  (SELECT (result->'candidates'->0 ? 'status') FROM discovery_test_results WHERE case_name = 'failed_story_with_binding_active_reservation'),
+  'candidate contains status field'
+);
+
+select ok(
+  (SELECT (result->'candidates'->0 ? 'generation_kind') FROM discovery_test_results WHERE case_name = 'failed_story_with_binding_active_reservation'),
+  'candidate contains generation_kind field'
+);
+
+select ok(
+  (SELECT (result->'candidates'->0 ? 'trigger_choice_id') FROM discovery_test_results WHERE case_name = 'failed_story_with_binding_active_reservation'),
+  'candidate contains trigger_choice_id field'
+);
+
+select * from finish();
+rollback;

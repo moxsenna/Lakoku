@@ -201,20 +201,18 @@ begin
       and r.reservation_kind = 'CHAPTER_UNLOCK'
     for update;
     
-    raise notice 'DEBUG Reservation found=%, status=%', found, v_reservation_record.status;
-    
     -- Capture FOUND state BEFORE binding SELECT
     v_chapter_reservation_found := found;
     
-    -- 4) Revalidate binding under lock with trigger_choice_id check (only if present)
-    -- When v_trigger_choice_id is NULL (job has no trigger), match ANY intent trigger value
+    -- 4) Revalidate binding under lock with EXACT trigger_choice_id match
+    -- Commercial queue requires exact NULL-safe equality: job and intent must have same trigger
     select cgi.* into v_binding_record
     from public.commercial_generation_intents cgi
     where cgi.generation_job_id = v_job_id
       and cgi.user_id = v_user_id
       and cgi.story_id = v_story_id
       and cgi.chapter_number = v_chapter_number
-      and (v_trigger_choice_id is null or cgi.trigger_choice_id = v_trigger_choice_id)
+      and cgi.trigger_choice_id IS NOT DISTINCT FROM v_trigger_choice_id
     for update;
     
     if not found then
@@ -240,39 +238,80 @@ begin
   end if;
   
   -- ===========================================================================
-  -- PHASE Q: Last-row lock + FULL REVALIDATION (MUST BE LAST BEFORE MUTATIONS)
+  -- PHASE Q: Last-row job lock + FULL REVALIDATION (MUST BE LAST BEFORE MUTATIONS)
   -- ===========================================================================
+  -- Acquire dedicated rowlock on generation_jobs after U->S->M->BINDING locks acquired
   declare
-    v_q_story_id text;
-    v_q_owner_user_id uuid;
+    v_locked_job public.generation_jobs%rowtype;
   begin
-    select s.id, s.owner_user_id 
-    into v_q_story_id, v_q_owner_user_id
+    select gj.*
+    into v_locked_job
     from public.generation_jobs gj
-    join public.stories s on s.id = gj.story_id and s.owner_user_id = gj.user_id
     where gj.id = v_job_id
-    for update;
+    for update of gj;
   
     if not found then
-      return pg_catalog.jsonb_build_object('ok', false, 'reason', 'JOB_NOT_FOUND', 'operation', 'Q_LOCK');
+      return pg_catalog.jsonb_build_object(
+        'ok', false, 
+        'reason', 'JOB_NOT_FOUND',
+        'operation', 'Q_LOCK'
+      );
     end if;
     
-    -- Revalidate ownership and identity under Q lock
-    if v_q_owner_user_id IS DISTINCT FROM v_user_id then
+    -- Revalidate all critical fields under Q lock using NULL-safe comparisons
+    -- Fail closed if any identity changed since Phase A
+    if v_locked_job.user_id IS DISTINCT FROM v_user_id then
       return pg_catalog.jsonb_build_object(
         'ok', false,
         'reason', 'REVALIDATION_USER_MISMATCH',
-        'stored_user_id', v_q_owner_user_id::text,
+        'stored_user_id', v_locked_job.user_id::text,
         'expected_user_id', v_user_id::text
       );
     end if;
     
-    if v_q_story_id IS DISTINCT FROM v_story_id then
+    if v_locked_job.story_id IS DISTINCT FROM v_story_id then
       return pg_catalog.jsonb_build_object(
         'ok', false,
         'reason', 'REVALIDATION_STORY_MISMATCH',
-        'stored_story_id', v_q_story_id,
+        'stored_story_id', v_locked_job.story_id,
         'expected_story_id', v_story_id
+      );
+    end if;
+    
+    if v_locked_job.chapter_number IS DISTINCT FROM v_chapter_number then
+      return pg_catalog.jsonb_build_object(
+        'ok', false,
+        'reason', 'REVALIDATION_CHAPTER_MISMATCH',
+        'stored_chapter', v_locked_job.chapter_number,
+        'expected_chapter', v_chapter_number
+      );
+    end if;
+    
+    if v_locked_job.generation_kind IS DISTINCT FROM v_generation_kind then
+      return pg_catalog.jsonb_build_object(
+        'ok', false,
+        'reason', 'REVALIDATION_KIND_MISMATCH',
+        'stored_kind', v_locked_job.generation_kind,
+        'expected_kind', v_generation_kind
+      );
+    end if;
+    
+    if v_locked_job.trigger_choice_id IS DISTINCT FROM v_trigger_choice_id then
+      return pg_catalog.jsonb_build_object(
+        'ok', false,
+        'reason', 'REVALIDATION_TRIGGER_MISMATCH',
+        'stored_trigger', v_locked_job.trigger_choice_id,
+        'expected_trigger', v_trigger_choice_id
+      );
+    end if;
+    
+    -- Terminal state must be preserved (job status cannot change mid-finalization)
+    if v_locked_job.status NOT IN ('FAILED', 'CANCELLED') then
+      return pg_catalog.jsonb_build_object(
+        'ok', false,
+        'reason', 'REVALIDATION_STATUS_CHANGED',
+        'stored_status', v_locked_job.status,
+        'expected_statuses', 'FAILED or CANCELLED'
       );
     end if;
   end;
@@ -337,11 +376,6 @@ begin
         'actual_amount', v_reservation_record.amount
       );
     end if;
-  end if;
-  
-  -- Verify reservation status exists before switching
-  if v_reservation_record.status is null then
-    raise exception 'reservation_record is NULL after validation';
   end if;
   
   -- Check reservation status
@@ -450,25 +484,24 @@ begin
   end if;
   
   -- Discover terminal jobs with matching ACTIVE reservations
-  -- Uses SKIP LOCKED for safe concurrent discovery
+  -- Skip attempt_count check: ANY FAILED/CANCELLED commercial job must be recovered
   select pg_catalog.jsonb_agg(
     pg_catalog.jsonb_build_object(
       'job_id', candidates.job_id,
       'user_id', candidates.user_id,
       'story_id', candidates.story_id,
       'chapter_number', candidates.chapter_number,
+      'status', candidates.status,
       'generation_kind', candidates.generation_kind,
-      'trigger_choice_id', candidates.trigger_choice_id,
-      'updated_at', candidates.updated_at
+      'trigger_choice_id', candidates.trigger_choice_id
     )
   ) into v_results
   from (
     select gj.id AS job_id, gj.user_id AS user_id, gj.story_id AS story_id,
-           gj.chapter_number AS chapter_number, gj.generation_kind AS generation_kind,
-           gj.trigger_choice_id AS trigger_choice_id, gj.updated_at AS updated_at
+           gj.chapter_number AS chapter_number, gj.status AS status,
+           gj.generation_kind AS generation_kind, gj.trigger_choice_id AS trigger_choice_id
     from public.generation_jobs gj
-    where gj.status in ('FAILED', 'CANCELLED')
-      and gj.attempt_count >= gj.max_attempts
+    where gj.status IN ('FAILED', 'CANCELLED')
       and exists (
         select 1 from public.credit_reservations r
         where r.user_id = gj.user_id
@@ -476,10 +509,10 @@ begin
           and r.chapter_number = gj.chapter_number
           and r.status = 'ACTIVE'
           and (
-            -- STORY_START pattern: chapter=1, ref format, requires SCR binding
+            -- STORY_START pattern: exact canonical binding
             (r.reservation_kind = 'STORY_START'
               and r.chapter_number = 1
-              and r.ref like 'story-start:%%'
+              and r.ref = 'story-start:' || gj.user_id::text || ':' || gj.story_id
               and gj.chapter_number = 1
               and exists (
                 select 1 from public.story_creation_requests scr
@@ -490,21 +523,23 @@ begin
               )
             )
             or
-            -- CHAPTER_UNLOCK pattern requires exact binding validation
+            -- CHAPTER_UNLOCK pattern: exact trigger_choice_id match
             (r.reservation_kind = 'CHAPTER_UNLOCK'
               and r.chapter_number = gj.chapter_number
+              and r.ref = 'chapter-reservation:' || gj.user_id::text || ':' || gj.story_id || ':' || gj.chapter_number::text
               and exists (
                 select 1 from public.commercial_generation_intents cgi
                 where cgi.generation_job_id = gj.id
                   and cgi.user_id = gj.user_id
                   and cgi.story_id = gj.story_id
                   and cgi.chapter_number = gj.chapter_number
+                  and cgi.trigger_choice_id IS NOT DISTINCT FROM gj.trigger_choice_id
               )
             )
           )
         )
     ) candidates
-    order by gj.updated_at asc
+    order by candidates.updated_at asc
     limit p_batch_size
     for update skip locked;
   

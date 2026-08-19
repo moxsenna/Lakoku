@@ -257,8 +257,9 @@ BEGIN
   INSERT INTO stories (id, owner_user_id, title, visibility, story_mode, generation_status, total_chapters, status, current_chapter)
   VALUES (v_story_id, v_user_id, 'Test Chapter Failed Active', 'private', 'personalized_ai', 'creating_contract', 50, 'BARU', 0);
   
-  INSERT INTO generation_jobs (id, user_id, story_id, generation_kind, chapter_number, status, attempt_count, max_attempts, deadline_at, publication_idempotency_key)
-  VALUES (v_job_id, v_user_id, v_story_id, 'personalized', v_chapter, 'FAILED', 3, 3, now() + interval '1 hour', 'generation-job:' || v_job_id::TEXT || ':publish:' || v_chapter::TEXT);
+  -- Add trigger_choice_id to match intent for exact NULL-safe equality validation
+  INSERT INTO generation_jobs (id, user_id, story_id, generation_kind, chapter_number, status, attempt_count, max_attempts, deadline_at, publication_idempotency_key, trigger_choice_id)
+  VALUES (v_job_id, v_user_id, v_story_id, 'personalized', v_chapter, 'FAILED', 3, 3, now() + interval '1 hour', 'generation-job:' || v_job_id::TEXT || ':publish:' || v_chapter::TEXT, 'choice-test');
   
   INSERT INTO commercial_generation_intents (id, generation_job_id, user_id, story_id, chapter_number, trigger_choice_id, quoted_credits, pricing_version, status)
   VALUES (v_intent_id, v_job_id, v_user_id, v_story_id, v_chapter, 'choice-test', 8, 'v1', 'QUEUED');
@@ -486,9 +487,10 @@ select is(
   'non-existent job -> JOB_NOT_FOUND'
 );
 
-select ok(
-  (SELECT result IS NOT NULL FROM terminal_test_results WHERE case_name = 'job_running'),
-  'running job returns error result'
+select is(
+  (SELECT result->>'reason' FROM terminal_test_results WHERE case_name = 'job_running'),
+  'NON_TERMINAL_STATE',
+  'running job returns NON_TERMINAL_STATE rejection'
 );
 
 select * from finish();

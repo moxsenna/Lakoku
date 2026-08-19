@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient } from '@lakoku/db'
 import {
   GenerationJobError,
   extractGenerationJobRpcError,

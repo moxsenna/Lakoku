@@ -5,7 +5,7 @@
  */
 import 'server-only'
 import { z } from 'zod'
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@lakoku/db'
 
 const UuidSchema = z.string().uuid()
 
@@ -25,7 +25,7 @@ export async function listTerminalCommercialFinalizationCandidates(
   }>
   count: number
 }> {
-  const client = await createClient()
+  const client = createAdminClient()
   
   const { data, error } = await client.rpc(
     'list_terminal_commercial_finalization_candidates_v1',

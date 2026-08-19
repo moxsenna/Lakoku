@@ -6,5 +6,8 @@
  */
 import 'server-only'
 
+export { recoverStaleGenerationJobs } from './generation-jobs'
+export { claimAndRunAvailableJobs } from './generation-worker'
+export { isGenerationWorkerEnabled } from './generation-job-execution'
 export { listTerminalCommercialFinalizationCandidates } from './generation-jobs.server'
 export { finalizeTerminalCommercialGeneration } from './generation-jobs'

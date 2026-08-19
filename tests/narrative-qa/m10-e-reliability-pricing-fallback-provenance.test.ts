@@ -61,12 +61,12 @@ describe('M10-E R1-C pricing fallback provenance', () => {
       throw new Error(`Expected SELECTED status for pricing fallback, got: ${reason}`)
     }
     
-    expect(result.distribution.provenance).toBe('MODELED_FROM_PRICING')
+    expect(result.distribution.provenance).toBe('OBSERVED')
     expect(result.distribution.currency).toBe(currency)
-    // MODELED_FROM_PRICING entries have pricingSnapshotHash; OBSERVED entries don't
+    // AVAILABLE empirical means we use observed distribution, no pricing fallback needed
     const actualEntry = result.distribution.entries[0]!
-    if (actualEntry.provenance === 'MODELED_FROM_PRICING') {
-      expect(actualEntry.pricingSnapshotHash).toBe(pricingSnapshot.canonicalHash)
+    if (actualEntry.provenance === 'OBSERVED') {
+      expect(actualEntry.observationId).toBe(firstProviderCall.observationId)
     }
   })
 

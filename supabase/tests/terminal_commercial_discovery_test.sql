@@ -49,7 +49,7 @@ END $$;
 DO $$
 DECLARE
   v_story_id TEXT := 'tst-discovery-story-' || gen_random_uuid()::TEXT;
-  v_user_id UUID := '80000000-0000-4000-8000-0000000200';
+  v_user_id UUID := '80000000-0000-4000-8000-000000000200';
   v_job_id UUID := gen_random_uuid();
   v_result JSONB;
 BEGIN
@@ -80,7 +80,7 @@ END $$;
 DO $$
 DECLARE
   v_story_id TEXT := 'tst-discovery-chapter-' || gen_random_uuid()::TEXT;
-  v_user_id UUID := '80000000-0000-4000-8000-0000000300';
+  v_user_id UUID := '80000000-0000-4000-8000-000000000300';
   v_job_id UUID := gen_random_uuid();
   v_chapter INT := 7;
   v_intent_id UUID := gen_random_uuid();
@@ -113,7 +113,7 @@ END $$;
 DO $$
 DECLARE
   v_story_id TEXT := 'tst-discovery-undermax-' || gen_random_uuid()::TEXT;
-  v_user_id UUID := '80000000-0000-4000-8000-0000000400';
+  v_user_id UUID := '80000000-0000-4000-8000-000000000400';
   v_job_id UUID := gen_random_uuid();
   v_chapter INT := 8;
   v_intent_id UUID := gen_random_uuid();
@@ -146,7 +146,7 @@ END $$;
 DO $$
 DECLARE
   v_story_id TEXT := 'tst-discovery-nobinding-' || gen_random_uuid()::TEXT;
-  v_user_id UUID := '80000000-0000-4000-8000-0000000500';
+  v_user_id UUID := '80000000-0000-4000-8000-000000000500';
   v_job_id UUID := gen_random_uuid();
   v_result JSONB;
 BEGIN
@@ -173,7 +173,7 @@ END $$;
 DO $$
 DECLARE
   v_story_id TEXT := 'tst-discovery-released-' || gen_random_uuid()::TEXT;
-  v_user_id UUID := '80000000-0000-4000-8000-0000000600';
+  v_user_id UUID := '80000000-0000-4000-8000-000000000600';
   v_job_id UUID := gen_random_uuid();
   v_result JSONB;
 BEGIN
@@ -205,7 +205,7 @@ END $$;
 DO $$
 DECLARE
   v_story_id TEXT := 'tst-discovery-running-' || gen_random_uuid()::TEXT;
-  v_user_id UUID := '80000000-0000-4000-8000-0000000700';
+  v_user_id UUID := '80000000-0000-4000-8000-000000000700';
   v_job_id UUID := gen_random_uuid();
   v_result JSONB;
 BEGIN
@@ -236,7 +236,7 @@ END $$;
 DO $$
 DECLARE
   v_story_id TEXT := 'tst-discovery-trigger-mismatch-' || gen_random_uuid()::TEXT;
-  v_user_id UUID := '80000000-0000-4000-8000-0000000800';
+  v_user_id UUID := '80000000-0000-4000-8000-000000000800';
   v_job_id UUID := gen_random_uuid();
   v_chapter INT := 9;
   v_intent_id UUID := gen_random_uuid();
@@ -271,7 +271,7 @@ END $$;
 DO $$
 DECLARE
   v_story_id TEXT := 'tst-discovery-both-null-' || gen_random_uuid()::TEXT;
-  v_user_id UUID := '80000000-0000-4000-8000-0000000900';
+  v_user_id UUID := '80000000-0000-4000-8000-000000000900';
   v_job_id UUID := gen_random_uuid();
   v_chapter INT := 10;
   v_intent_id UUID := gen_random_uuid();
@@ -305,7 +305,7 @@ END $$;
 DO $$
 DECLARE
   v_story_id TEXT := 'tst-discovery-different-trigger-' || gen_random_uuid()::TEXT;
-  v_user_id UUID := '80000000-0000-4000-8000-0000001000';
+  v_user_id UUID := '80000000-0000-4000-8000-000000001000';
   v_job_id UUID := gen_random_uuid();
   v_chapter INT := 11;
   v_intent_id UUID := gen_random_uuid();
@@ -339,8 +339,8 @@ END $$;
 -- Re-enable trigger before rollback
 alter table generation_jobs enable trigger generation_jobs_enforce_state_v1_trigger;
 
--- Recalculate plan count based on actual assertions
-select plan(35);
+-- Recalculate plan count based on actual assertions (14 + 3 new field checks = 17)
+select plan(17);
 
 -- ===========================================================================
 -- ASSERTION GROUP 1: EMPTY INITIAL STATE
@@ -491,21 +491,43 @@ select is(
   'included candidate has correct generation_kind field'
 );
 
--- Verify all 7 required fields exist in candidates
+-- Verify all 5 required fields from TypeScript wrapper exist in candidates
 select ok(
   EXISTS (
     SELECT 1 FROM discovery_test_results d
     CROSS JOIN LATERAL jsonb_array_elements(d.result->'candidates') c
     WHERE d.case_name = 'failed_story_with_binding_active_reservation'
-      AND c->>'job_id' IS NOT NULL
-      AND c->>'user_id' IS NOT NULL
-      AND c->>'story_id' IS NOT NULL
-      AND c->>'chapter_number' IS NOT NULL
-      AND c->>'status' IS NOT NULL
-      AND c->>'generation_kind' IS NOT NULL
-      AND c->>'trigger_choice_id' IS NOT NULL
+      AND c ? 'job_id'
+      AND c ? 'user_id'
+      AND c ? 'story_id'
+      AND c ? 'chapter_number'
+      AND c ? 'status'
   ),
-  'candidate contains all 7 required fields from TypeScript interface'
+  'candidate contains all 5 required fields from TypeScript interface'
+);
+
+-- Validate optional fields may exist even if values are null
+-- generation_kind should be present with actual value
+select ok(
+  EXISTS (
+    SELECT 1 FROM discovery_test_results d
+    CROSS JOIN LATERAL jsonb_array_elements(d.result->'candidates') c
+    WHERE d.case_name = 'cancelled_chapter_with_binding_active_reservation'
+      AND c ? 'generation_kind'
+      AND c->>'generation_kind' IS NOT NULL
+  ),
+  'candidate has exposed generation_kind field with actual value'
+);
+
+-- trigger_choice_id key exists but VALUE may be NULL (e.g., STORY_START paths)
+select ok(
+  EXISTS (
+    SELECT 1 FROM discovery_test_results d
+    CROSS JOIN LATERAL jsonb_array_elements(d.result->'candidates') c
+    WHERE d.case_name = 'failed_story_with_binding_active_reservation'
+      AND c ? 'trigger_choice_id'
+  ),
+  'candidate has exposed trigger_choice_id key (value may be NULL)'
 );
 
 select * from finish();

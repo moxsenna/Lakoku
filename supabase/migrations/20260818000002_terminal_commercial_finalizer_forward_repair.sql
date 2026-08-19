@@ -497,11 +497,16 @@ begin
     )
   ) into v_results
   from (
-    select gj.id AS job_id, gj.user_id AS user_id, gj.story_id AS story_id,
-           gj.chapter_number AS chapter_number, gj.status AS status,
-           gj.generation_kind AS generation_kind, gj.trigger_choice_id AS trigger_choice_id
+    select gj.id as job_id,
+           gj.user_id,
+           gj.story_id,
+           gj.chapter_number,
+           gj.status,
+           gj.generation_kind,
+           gj.trigger_choice_id,
+           gj.updated_at
     from public.generation_jobs gj
-    where gj.status IN ('FAILED', 'CANCELLED')
+    where gj.status in ('FAILED', 'CANCELLED')
       and exists (
         select 1 from public.credit_reservations r
         where r.user_id = gj.user_id
@@ -538,10 +543,10 @@ begin
             )
           )
         )
-    ) candidates
-    order by candidates.updated_at asc
+    order by gj.updated_at asc
     limit p_batch_size
-    for update skip locked;
+    for update of gj skip locked
+  ) candidates;
   
   return pg_catalog.jsonb_build_object(
     'candidates', coalesce(v_results, '[]'::jsonb),

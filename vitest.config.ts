@@ -40,5 +40,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['lib/**/*.test.ts', 'tests/**/*.test.ts'],
+    pool: 'forks',
+    isolate: true, // Test isolation - each test file runs in separate VM context
   },
 })

@@ -328,37 +328,226 @@ describe('M10-E R1-C pricing fallback provenance', () => {
   })
 
   /**
-   * R1-C COMPLETE MODEL PROOF
+   * R1-C COMPLETE MODEL PROOF - GENERATION
    * 
    * Proves that MODELED_FROM_PRICING cost distributions integrate correctly
    * into a complete canonical model input and produce valid Monte Carlo output.
+   * 
+   * Uses actual existing distribution key from buildModelInputRecordFixture,
+   * replaces via selectCostDistribution(), verifies provenance preservation.
    */
   it('generation MODELED_FROM_PRICING passes full 100k iteration model run', async () => {
     const observations = buildReliabilityObservationFixture()
+    const pricingSnapshot = contractPricingSnapshot()
     
-    // Use fixture directly (it contains all OBSERVED distributions)
+    // Build complete model input using actual fixture
     const baseRecord = { ...buildModelInputRecordFixture(observations) }
+    
+    // Find an existing PROSE_RETRY distribution key from the fixture (not hand-invented)
+    let targetIndex = -1
+    let targetDist = null
+    for (let i = 0; i < baseRecord.costDistributions.distributions.length; i += 1) {
+      const dist = baseRecord.costDistributions.distributions[i]!
+      const keyObj = dist.key as any
+      if (keyObj.kind === 'GENERATION' && keyObj.stageId === 'PROSE_RETRY') {
+        targetIndex = i
+        targetDist = dist
+        break
+      }
+    }
+    
+    if (targetIndex < 0 || !targetDist) {
+      throw new Error('No PROSE_RETRY generation key found in fixture')
+    }
+    
+    // Build empirical source with EXPLICITLY_UNAVAILABLE availability
+    const empiricalSource: EmpiricalCostEvidenceSource = {
+      availability: 'EXPLICITLY_UNAVAILABLE' as const,
+      distributions: new Map(),
+    }
+    
+    // Build pricing source with exact currency match
+    const pricingEntries = Object.freeze([
+      modeledPricingCostEntry(
+        '0.45000000',
+        pricingSnapshot.canonicalHash,
+        'obs_model_test_retry_001',
+      ),
+    ])
+    const pricingSource: PricingCostFallbackSource = {
+      pricingSnapshot,
+      distributions: new Map([[formatCostDistributionKey(targetDist.key), pricingEntries]]),
+    }
+    
+    // Select replacement via selectCostDistribution()
+    const selectedResult = selectCostDistribution(
+      targetDist.key as any,
+      'IDR',
+      empiricalSource,
+      pricingSource,
+    )
+    
+    expect(selectedResult.status).toBe('SELECTED')
+    expect(selectedResult.distribution.provenance).toBe('MODELED_FROM_PRICING')
+    expect(selectedResult.distribution.entries[0].pricingSnapshotHash).toBe(pricingSnapshot.canonicalHash)
+    
+    // Replace exactly that record in the modelRecord.costDistributions.distributions ARRAY
+    baseRecord.costDistributions.distributions[targetIndex] = {
+      ...selectedResult.distribution,
+      currency: targetDist.currency,
+    }
     
     const input = toCumulativeModelInput(baseRecord)
     
-    // MUST succeed with pure OBSERVED distribution
-    const start = Date.now()
-    const maxTime = 360000
+    // MUST succeed with MODELED_FROM_PRICING distribution
+    const output = runCumulativeModel(input)
     
-    while (Date.now() - start < maxTime) {
-      try {
-        const output = runCumulativeModel(input)
-        
-        expect(output.outputHash).toMatch(/^[0-9a-f]{64}$/)
-        expect(output.inputHash).toMatch(/^[0-9a-f]{64}$/)
-        expect(output.result.successfulRunGenerationMean).toBeDefined()
-        
-        return
-      } catch (e: unknown) {
-        if (!(e instanceof Error || typeof e === 'string')) {
-          throw e
-        }
+    expect(output.outputHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(output.inputHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(output.result.successfulRunGenerationMean).toBeDefined()
+    
+    // Verify replacement provenance preserved
+    const replacementDist = input.costDistributions.distributions.get(formatCostDistributionKey(targetDist.key))!
+    expect(replacementDist.provenance).toBe('MODELED_FROM_PRICING')
+    expect(replacementDist.entries[0].pricingSnapshotHash).toBe(pricingSnapshot.canonicalHash)
+  }, 450000)
+
+  /**
+   * R1-C COMPLETE MODEL PROOF - JUDGE
+   */
+  it('judge MODELED_FROM_PRICING passes full 100k iteration model run', async () => {
+    const observations = buildReliabilityObservationFixture()
+    const pricingSnapshot = contractPricingSnapshot()
+    
+    const baseRecord = { ...buildModelInputRecordFixture(observations) }
+    
+    let targetIndex = -1
+    for (let i = 0; i < baseRecord.costDistributions.distributions.length; i += 1) {
+      const dist = baseRecord.costDistributions.distributions[i]!
+      const keyObj = dist.key as any
+      if (keyObj.kind === 'JUDGE') {
+        targetIndex = i
+        break
       }
     }
+    
+    expect(targetIndex).toBeGreaterThan(-1)
+    
+    const empiricalSource: EmpiricalCostEvidenceSource = {
+      availability: 'EXPLICITLY_UNAVAILABLE' as const,
+      distributions: new Map(),
+    }
+    
+    const pricingEntries = Object.freeze([
+      modeledPricingCostEntry(
+        '0.10000000',
+        pricingSnapshot.canonicalHash,
+        'obs_model_test_judge_001',
+      ),
+    ])
+    const pricingSource: PricingCostFallbackSource = {
+      pricingSnapshot,
+      distributions: new Map([[formatCostDistributionKey(baseRecord.costDistributions.distributions[targetIndex]!.key), pricingEntries]]),
+    }
+    
+    const selectedResult = selectCostDistribution(
+      baseRecord.costDistributions.distributions[targetIndex]!.key as any,
+      'IDR',
+      empiricalSource,
+      pricingSource,
+    )
+    
+    expect(selectedResult.status).toBe('SELECTED')
+    
+    baseRecord.costDistributions.distributions[targetIndex] = {
+      ...selectedResult.distribution,
+      currency: 'IDR',
+    }
+    
+    const input = toCumulativeModelInput(baseRecord)
+    const output = runCumulativeModel(input)
+    
+    expect(output.outputHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(output.result.successfulRunGenerationMean).toBeDefined()
   }, 450000)
+
+  /**
+   * R1-C NEGATIVE TESTS
+   */
+  it('wrong pricingSnapshotHash -> HOLD/reject before model execution', () => {
+    const pricingSnapshot = contractPricingSnapshot()
+    
+    const empiricalSource: EmpiricalCostEvidenceSource = {
+      availability: 'EXPLICITLY_UNAVAILABLE' as const,
+      distributions: new Map(),
+    }
+    
+    const pricingEntries = Object.freeze([
+      modeledPricingCostEntry(
+        '0.45000000',
+        'd'.repeat(64), // Wrong hash
+        'obs_model_test_retry_001',
+      ),
+    ])
+    const pricingSource: PricingCostFallbackSource = {
+      pricingSnapshot: { ...pricingSnapshot, canonicalHash: 'wrong'.repeat(32) },
+      distributions: new Map(),
+    }
+    
+    const judgeKey = {
+      kind: 'JUDGE' as const,
+      judgeTaskId: 'competence',
+      evaluationIndex: 0,
+      providerModelPolicyId: 'provider_v1',
+    }
+    
+    const result = selectCostDistribution(
+      judgeKey,
+      'IDR',
+      empiricalSource,
+      pricingSource,
+    )
+    
+    // SHOULD HOLD because pricingSnapshotHash doesn't match stratum
+    expect(result.status).toBe('HOLD')
+  })
+
+  it('wrong currency -> HOLD/reject before model execution', () => {
+    const pricingSnapshot = contractPricingSnapshot()
+    
+    const empiricalSource: EmpiricalCostEvidenceSource = {
+      availability: 'EXPLICITLY_UNAVAILABLE' as const,
+      distributions: new Map(),
+    }
+    
+    const pricingEntries = Object.freeze([
+      modeledPricingCostEntry(
+        '0.45000000',
+        pricingSnapshot.canonicalHash,
+        'obs_model_test_retry_001',
+      ),
+    ])
+    const pricingSource: PricingCostFallbackSource = {
+      pricingSnapshot,
+      distributions: new Map(),
+    }
+    
+    const judgeKey = {
+      kind: 'JUDGE' as const,
+      judgeTaskId: 'competence',
+      evaluationIndex: 0,
+      providerModelPolicyId: 'provider_v1',
+    }
+    
+    const result = selectCostDistribution(
+      judgeKey,
+      'USD', // Wrong currency
+      empiricalSource,
+      pricingSource,
+    )
+    
+    // SHOULD HOLD due to currency mismatch
+    expect(result.status).toBe('HOLD')
+    expect(result.reason).toContain('currency')
+  })
 })

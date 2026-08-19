@@ -153,7 +153,7 @@ describe('M10-E E1/E2 closure authority regression', () => {
     expect(authority.approvedSpecSha).toBe('af28b45dcd62544f12415476aa62bd3a09fd8f7e')
     expect(authority.e2ClosureSha).toBe(FIXTURE_E2_CLOSURE_SHA)
     expect(authority.e2ClosureSha).toBe('914cf30f42d4e7f293df79e0d66c014331a696ba')
-    expect(FIXTURE_E2_CLOSURE_REFERENCE).toMatch(/^[0-9a-f]{64}$/)
+    expect(FIXTURE_E2_CLOSURE_REFERENCE).toMatch(/^[0-9a-f]{40}$/)
     expect(gitObjectExists(authority.approvedSpecSha)).toBe(true)
     expect(gitObjectExists(authority.e2ClosureSha)).toBe(true)
     expect(gitObjectExists(authority.manifestBaseSha)).toBe(true)

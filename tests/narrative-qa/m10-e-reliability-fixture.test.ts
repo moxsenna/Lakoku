@@ -89,10 +89,7 @@ beforeAll(() => {
   resetCacheAndMetrics()
 }, 60_000)
 
-// Skip expensive fixture tests during Phase-1 verification - they're covered by other suites
-const describeIfNotPhase1Skip = process.env.SKIP_PHASE1_FIXTURES === 'true' ? describe.skip : describe
-
-describeIfNotPhase1Skip('M10-E contract reliability fixture', () => {
+describe('M10-E contract reliability fixture', () => {
   itSlow('strict-parses as a validated semantic artifact with deterministic hashes', () => {
     const payload = buildSemanticPayloadFixture()
     const artifact = validateReliabilitySemanticArtifact(payload)

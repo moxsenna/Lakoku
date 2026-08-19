@@ -199,7 +199,7 @@ describe('cumulative model input validation', () => {
       ...mixed.get(thirdKey)!,
       entries: [obsEntry, priceEntry],
     })
-    expect(() => runCumulativeModel({ ...base, costDistributions: { currency: CURRENCY, distributions: mixed } })).toThrow(/mixes.*provenance/i)
+    expect(() => runCumulativeModel({ ...base, costDistributions: { currency: CURRENCY, distributions: mixed } })).toThrow(/mixes empirical/)
   })
 
   it('rejects currency mismatches inside distributions and the judge plan', () => {

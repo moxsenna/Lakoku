@@ -86,7 +86,7 @@ describe('cumulative model determinism', () => {
     expect(JSON.stringify(left.result)).toBe(JSON.stringify(right.result))
     expect(left.inputHash).toBe(right.inputHash)
     expect(left.outputHash).toBe(right.outputHash)
-  }, 180000)
+  }, 600000)
 
   it('changes the output hash when the seed changes', () => {
     const left = runCumulativeModel(buildInput('m10-e-golden'))

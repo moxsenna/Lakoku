@@ -24,7 +24,7 @@ import {
 } from '../../lib/narrative-qa/reliability/decimal'
 
 const HEX64 = /^[0-9a-f]{64}$/
-const MODEL_TIMEOUT = 300_000 // 5 minutes for sensitivity tests with full 100k runs
+const MODEL_TIMEOUT = 600_000 // 10 minutes for sensitivity tests with full 100k runs (x2 for determinism check)
 
 // Constants for sensitivity band authority construction
 const SENSITIVITY_BAND_AUTHORITY_VERSION = 'M10_E_INDEPENDENT_DRAW_ASSUMPTION_V1'

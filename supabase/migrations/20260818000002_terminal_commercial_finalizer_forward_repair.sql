@@ -39,7 +39,6 @@ declare
   v_intent_binding_exists boolean := false;
   
   -- Lock acquisition variables
-  v_job_record record;
   v_story_record record;
   v_binding_record record;
   v_reservation_record record;
@@ -212,7 +211,7 @@ begin
       and cgi.user_id = v_user_id
       and cgi.story_id = v_story_id
       and cgi.chapter_number = v_chapter_number
-      and cgi.trigger_choice_id = v_trigger_choice_id
+      and cgi.trigger_choice_id = coalesce(v_trigger_choice_id, '')
     for update;
     
     if not found then
@@ -240,8 +239,8 @@ begin
   -- ===========================================================================
   -- PHASE Q: Last-row lock + FULL REVALIDATION (MUST BE LAST BEFORE MUTATIONS)
   -- ===========================================================================
-  select gj.*, s.* 
-  into v_job_record, v_story_record
+  select s.* 
+  into v_story_record
   from public.generation_jobs gj
   join public.stories s on s.id = gj.story_id and s.owner_user_id = gj.user_id
   where gj.id = v_job_id
@@ -448,46 +447,53 @@ begin
       'user_id', candidates.user_id,
       'story_id', candidates.story_id,
       'chapter_number', candidates.chapter_number,
-      'status', candidates.status
+      'generation_kind', candidates.generation_kind,
+      'trigger_choice_id', candidates.trigger_choice_id,
+      'updated_at', candidates.updated_at
     )
   ) into v_results
   from (
-    select gj.id, gj.user_id, gj.story_id, gj.chapter_number, gj.status
+    select gj.id AS job_id, gj.user_id AS user_id, gj.story_id AS story_id,
+           gj.chapter_number AS chapter_number, gj.generation_kind AS generation_kind,
+           gj.trigger_choice_id AS trigger_choice_id, gj.updated_at AS updated_at
     from public.generation_jobs gj
     where gj.status in ('FAILED', 'CANCELLED')
-    and exists (
-      select 1 from public.credit_reservations r
-      where r.user_id = gj.user_id
-        and r.story_id = gj.story_id
-        and coalesce(r.chapter_number, 0) = coalesce(gj.chapter_number, 0)
-        and r.status = 'ACTIVE'
-        and (
-          -- STORY_START pattern requires exact binding validation
-          (r.reservation_kind = 'STORY_START' 
-            and coalesce(r.chapter_number, 0) = 1
-            and gj.chapter_number = 1
-            and exists (
-              select 1 from public.story_creation_requests scr
-              where scr.generation_job_id = gj.id
-                and scr.owner_user_id = gj.user_id
-                and scr.story_id = gj.story_id
-                and scr.request_kind = 'personalized'
+      and gj.attempt_count >= gj.max_attempts
+      and exists (
+        select 1 from public.credit_reservations r
+        where r.user_id = gj.user_id
+          and r.story_id = gj.story_id
+          and r.chapter_number = gj.chapter_number
+          and r.status = 'ACTIVE'
+          and (
+            -- STORY_START pattern: chapter=1, ref format, requires SCR binding
+            (r.reservation_kind = 'STORY_START'
+              and r.chapter_number = 1
+              and r.ref like 'story-start:%%'
+              and gj.chapter_number = 1
+              and exists (
+                select 1 from public.story_creation_requests scr
+                where scr.generation_job_id = gj.id
+                  and scr.owner_user_id = gj.user_id
+                  and scr.story_id = gj.story_id
+                  and scr.request_kind = 'personalized'
+              )
             )
-          )
-          or
-          -- CHAPTER_UNLOCK pattern requires exact binding validation
-          (r.reservation_kind = 'CHAPTER_UNLOCK'
-            and r.chapter_number = gj.chapter_number
-            and exists (
-              select 1 from public.commercial_generation_intents cgi
-              where cgi.generation_job_id = gj.id
-                and cgi.user_id = gj.user_id
-                and cgi.story_id = gj.story_id
-                and cgi.chapter_number = gj.chapter_number
+            or
+            -- CHAPTER_UNLOCK pattern requires exact binding validation
+            (r.reservation_kind = 'CHAPTER_UNLOCK'
+              and r.chapter_number = gj.chapter_number
+              and exists (
+                select 1 from public.commercial_generation_intents cgi
+                where cgi.generation_job_id = gj.id
+                  and cgi.user_id = gj.user_id
+                  and cgi.story_id = gj.story_id
+                  and cgi.chapter_number = gj.chapter_number
+              )
             )
           )
         )
-    )
+    ) candidates
     order by gj.updated_at asc
     limit p_batch_size
     for update skip locked

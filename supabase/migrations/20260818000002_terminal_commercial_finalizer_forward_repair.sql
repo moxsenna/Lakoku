@@ -493,6 +493,7 @@ begin
             )
           )
         )
+    ) candidates
     order by gj.updated_at asc
     limit p_batch_size
     for update skip locked;

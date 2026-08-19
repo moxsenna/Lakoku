@@ -39,6 +39,7 @@ declare
   v_intent_binding_exists boolean := false;
   
   -- Lock acquisition variables
+  v_job_record record;
   v_story_record record;
   v_binding_record record;
   v_reservation_record record;
@@ -239,19 +240,15 @@ begin
   -- ===========================================================================
   -- PHASE Q: Last-row lock + FULL REVALIDATION (MUST BE LAST BEFORE MUTATIONS)
   -- ===========================================================================
-  
-  select gj.* 
-  into v_story_record
+  select gj.*, s.* 
+  into v_job_record, v_story_record
   from public.generation_jobs gj
+  join public.stories s on s.id = gj.story_id and s.owner_user_id = gj.user_id
   where gj.id = v_job_id
   for update;
   
   if not found then
-    return pg_catalog.jsonb_build_object(
-      'ok', false,
-      'reason', 'JOB_NOT_FOUND',
-      'operation', 'Q_LOCK'
-    );
+    return pg_catalog.jsonb_build_object('ok', false, 'reason', 'JOB_NOT_FOUND', 'operation', 'Q_LOCK');
   end if;
   
   -- Revalidate all critical fields under Q lock

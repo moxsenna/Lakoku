@@ -173,7 +173,7 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     const empiricalEntries = Object.freeze([empiricalEntry])
     const empiricalSource: EmpiricalCostEvidenceSource = {
       availability: 'AVAILABLE' as const,
-      distributions: new Map([[formatCostDistributionKey(generationKey), empiricalEntries]] as any),
+      distributions: new Map([[formatCostDistributionKey(generationKey), empiricalEntries]] as Map<string, readonly ObservedCostEntry[]>),
     }
     
     const observedResult = selectCostDistribution(
@@ -215,7 +215,7 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     const pricingEntries = Object.freeze([pricingEntry])
     const pricingSource: PricingCostFallbackSource = {
       pricingSnapshot,
-      distributions: new Map([[formatCostDistributionKey(retryKey), pricingEntries]] as any),
+      distributions: new Map([[formatCostDistributionKey(retryKey), pricingEntries]] as Map<string, readonly ObservedCostEntry[]>),
     }
     
     const modeledResult = selectCostDistribution(
@@ -254,7 +254,7 @@ describe('M10-E R1-C pricing fallback provenance', () => {
         pricingSnapshot.canonicalHash,
         'obs_judge_001',
       ),
-    ].map(e => Object.freeze([e])[0]) as any
+    ].map((e) => Object.freeze([e])[0]) as readonly ModeledPricingCostEntry[]
     
     const pricingSource: PricingCostFallbackSource = {
       pricingSnapshot,
@@ -348,7 +348,7 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     let targetDist = null
     for (let i = 0; i < baseRecord.costDistributions.distributions.length; i += 1) {
       const dist = baseRecord.costDistributions.distributions[i]!
-      const keyObj = dist.key as any
+      const keyObj: CostDistributionKey = dist.key
       if (keyObj.kind === 'GENERATION' && keyObj.stageId === 'PROSE_RETRY') {
         targetIndex = i
         targetDist = dist
@@ -381,7 +381,7 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     
     // Select replacement via selectCostDistribution()
     const selectedResult = selectCostDistribution(
-      targetDist.key as any,
+      targetDist.key as CostDistributionKey,
       'IDR',
       empiricalSource,
       pricingSource,
@@ -424,7 +424,7 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     let targetIndex = -1
     for (let i = 0; i < baseRecord.costDistributions.distributions.length; i += 1) {
       const dist = baseRecord.costDistributions.distributions[i]!
-      const keyObj = dist.key as any
+      const keyObj: CostDistributionKey = dist.key
       if (keyObj.kind === 'JUDGE') {
         targetIndex = i
         break
@@ -450,8 +450,10 @@ describe('M10-E R1-C pricing fallback provenance', () => {
       distributions: new Map([[formatCostDistributionKey(baseRecord.costDistributions.distributions[targetIndex]!.key), pricingEntries]]),
     }
     
+    expect(targetIndex).toBeGreaterThan(-1)
+    
     const selectedResult = selectCostDistribution(
-      baseRecord.costDistributions.distributions[targetIndex]!.key as any,
+      targetIndex >= 0 ? baseRecord.costDistributions.distributions[targetIndex]!.key : (() => { throw new Error('No JUDGE distribution found') })(),
       'IDR',
       empiricalSource,
       pricingSource,

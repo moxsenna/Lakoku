@@ -214,6 +214,23 @@ describe('M10-E E3A/E4 runner orchestration', () => {
     expect(writeArtifacts).not.toHaveBeenCalled()
   })
 
+  it('rejects mutated closureAuthorityJson.e2ClosureSha before any telemetry or artifact work', async () => {
+    const writeArtifacts = vi.fn()
+    const git = realGit()
+    // Mutate e2ClosureSha to invalid value
+    const mutatedAuthority = { ...CLOSURE_AUTHORITY_JSON, e2ClosureSha: 'w'.repeat(40) } as typeof CLOSURE_AUTHORITY_JSON
+    await expect(executeM10EE3AE4({ 
+      git,
+      telemetry: fakeTelemetry(),
+      now: () => new Date('2026-08-15T12:00:00.000Z'),
+      executionInstanceId: 'run-mutated-closure',
+      fixture: buildReliabilityObservationFixture(),
+      closureAuthorityJson: mutatedAuthority,
+      writeArtifacts,
+    })).rejects.toThrow('M10E_E3A_E4_CLOSURE_AUTHORITY_FAILED')
+    expect(writeArtifacts).not.toHaveBeenCalled()
+  })
+
   it('rejects an unsafe projection (nonzero counters, wrong source, or missing observations)', async () => {
     const git = fakeGit()
     const nonzero = vi.fn(() => ({

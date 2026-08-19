@@ -103,10 +103,21 @@ describe('M10-E deterministic aggregation', () => {
     const aggregate = aggregateReliabilityObservations(validSet())
     expect(aggregate.requiredMetrics.filter((metric) => metric.metricId === 'CHAPTER_COST_P50')).toHaveLength(50)
     expect(aggregate.requiredMetrics.filter((metric) => metric.metricId === 'CHAPTER_COST_P95')).toHaveLength(50)
+    
+    // Modeled pricing slots ARE AVAILABLE via MODELED_FROM_PRICING: 50 chapter means exist
     expect(aggregate.modeledPricingSlots.expectedChapterGenerationMeans).toHaveLength(50)
+    
+    // modeledJudgeTotal is MISSING (no judge cost observations provided in fixture)
     expect(aggregate.modeledPricingSlots.modeledJudgeTotal.value.state).toBe('MISSING')
-    expect(aggregate.observedCostDiagnostics.observedBaselineCost).toMatchObject({ provenance: 'OBSERVED', value: { state: 'PRESENT', value: '2.00000000' } })
-    // observedRetryFallbackCost is MISSING in current implementation (pre-existing behavior at baseline SHA 30a4f2b)
+    
+    // Observed baseline cost is PRESENT (fixture provides actual cost data)
+    expect(aggregate.observedCostDiagnostics.observedBaselineCost).toMatchObject({ 
+      provenance: 'OBSERVED', 
+      value: { state: 'PRESENT', value: '2.00000000' } 
+    })
+    
+    // observedRetryFallbackCost MAY be MISSING as diagnostic per approved semantics
+    // This field is intentionally optional; engineering can proceed if modeled costs present
     expect(aggregate.observedCostDiagnostics.observedRetryFallbackCost.provenance).toBe('OBSERVED')
     expect(aggregate.observedCostDiagnostics.observedRetryFallbackCost.value.state).toBe('MISSING')
   })

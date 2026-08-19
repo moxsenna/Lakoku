@@ -72,11 +72,16 @@ pnpm exec vitest run --config vitest.config.ts \
     --maxWorkers=1 --testTimeout=1800000
 if [ $? -ne 0 ]; then echo "FAILED: Phase2C-E1-E2-closure"; OVERALL_STATUS=1; fi
 
-# PHASE-2D: Governed DB regressions
-echo "## PHASE-2D: GOVERNED DB REGRESSIONS ##"
+# PHASE-2D: Governed DB regressions (both expectedFocusedTests from e1-e2-closure-authority.json)
+echo "## PHASE-2D: GOVERNED DB REGRESSION #1 ##"
 pnpm exec vitest run --config vitest.config.ts \
-    tests/db/m10-c-r3-2-positive-reconciled.test.ts
-if [ $? -ne 0 ]; then echo "FAILED: Phase2D-DB-positive-reconciled"; OVERALL_STATUS=1; fi
+    tests/db/m10-e1-disposable-cleanup-auth-regression.test.ts
+if [ $? -ne 0 ]; then echo "FAILED: Phase2D-DB-e1-disposable-cleanup"; OVERALL_STATUS=1; fi
+
+echo "## PHASE-2D: GOVERNED DB REGRESSION #2 ##"
+pnpm exec vitest run --config vitest.config.ts \
+    tests/db/m10-e2-task3-local-proof.test.ts
+if [ $? -ne 0 ]; then echo "FAILED: Phase2D-DB-e2-task3-local-proof"; OVERALL_STATUS=1; fi
 
 echo ""
 echo "=========================================="

@@ -270,28 +270,28 @@ END $$;
 
 DO $$
 DECLARE
-  v_story_id TEXT := 'tst-discovery-both-null-' || gen_random_uuid()::TEXT;
+  v_story_id TEXT := 'tst-discovery-both-same-' || gen_random_uuid()::TEXT;
   v_user_id UUID := '80000000-0000-4000-8000-000000000900';
   v_job_id UUID := gen_random_uuid();
   v_chapter INT := 10;
   v_intent_id UUID := gen_random_uuid();
   v_result JSONB;
 BEGIN
-  -- Test 9: Both NULL trigger_choice_id values -> INCLUDED (IS NOT DISTINCT FROM matches NULL=NULL)
+  -- Test 9: Both identical non-NULL trigger_choice_id values -> INCLUDED (exact match)
   
   INSERT INTO auth.users (id, email, aud, created_at, updated_at) 
-  VALUES (v_user_id, 'test-both-null-example@example.com', 'authenticated', now(), now())
+  VALUES (v_user_id, 'test-both-match-example@example.com', 'authenticated', now(), now())
   ON CONFLICT (id) DO UPDATE SET updated_at = now();
   
   INSERT INTO stories (id, owner_user_id, title, visibility, story_mode, generation_status, total_chapters, status, current_chapter)
-  VALUES (v_story_id, v_user_id, 'Test Both NULL', 'private', 'personalized_ai', 'creating_contract', 50, 'BARU', 0);
+  VALUES (v_story_id, v_user_id, 'Test Both Match', 'private', 'personalized_ai', 'creating_contract', 50, 'BARU', 0);
   
-  -- Both job and intent have NULL trigger_choice_id
+  -- Both job and intent have SAME trigger_choice_id value
   INSERT INTO generation_jobs (id, user_id, story_id, generation_kind, chapter_number, status, attempt_count, max_attempts, deadline_at, publication_idempotency_key, trigger_choice_id)
-  VALUES (v_job_id, v_user_id, v_story_id, 'personalized', v_chapter, 'FAILED', 3, 3, now() + interval '1 hour', 'generation-job:' || v_job_id::TEXT || ':publish:' || v_chapter::TEXT, NULL);
+  VALUES (v_job_id, v_user_id, v_story_id, 'personalized', v_chapter, 'FAILED', 3, 3, now() + interval '1 hour', 'generation-job:' || v_job_id::TEXT || ':publish:' || v_chapter::TEXT, 'choice-identical');
   
   INSERT INTO commercial_generation_intents (id, generation_job_id, user_id, story_id, chapter_number, trigger_choice_id, quoted_credits, pricing_version, status)
-  VALUES (v_intent_id, v_job_id, v_user_id, v_story_id, v_chapter, NULL, 15, 'v1', 'QUEUED');
+  VALUES (v_intent_id, v_job_id, v_user_id, v_story_id, v_chapter, 'choice-identical', 15, 'v1', 'QUEUED');
   
   INSERT INTO credit_reservations (user_id, story_id, ref, reservation_kind, chapter_number, amount, status, expires_at)
   VALUES (v_user_id, v_story_id, 'chapter-reservation:' || v_user_id::TEXT || ':' || v_story_id || ':' || v_chapter::TEXT, 'CHAPTER_UNLOCK', v_chapter, 15, 'ACTIVE', now() + interval '30 minutes');
@@ -299,7 +299,7 @@ BEGIN
   v_result := public.list_terminal_commercial_finalization_candidates_v1(50);
   
   INSERT INTO discovery_test_results (case_name, target_job_id, result)
-  VALUES ('both_null_trigger_choice_included', v_job_id, v_result);
+  VALUES ('both_same_non_null_trigger_included', v_job_id, v_result);
 END $$;
 
 DO $$
@@ -339,8 +339,8 @@ END $$;
 -- Re-enable trigger before rollback
 alter table generation_jobs enable trigger generation_jobs_enforce_state_v1_trigger;
 
--- Recalculate plan count based on actual assertions (16 total)
-select plan(16);
+-- Recalculate plan count based on actual assertions (16 + 1 new = 17)
+select plan(17);
 
 -- ===========================================================================
 -- ASSERTION GROUP 1: EMPTY INITIAL STATE
@@ -400,15 +400,15 @@ select ok(
   'failed_under_max_attempts_included discovers job even though attempt_count < max_attempts'
 );
 
--- Test 9: Both NULL trigger_choice_id -> included (IS NOT DISTINCT FROM matches)
+-- Test 9: Both SAME non-NULL trigger_choice_id values -> included (exact match)
 select ok(
   EXISTS (
     SELECT 1 FROM discovery_test_results d
     CROSS JOIN LATERAL jsonb_array_elements(d.result->'candidates') c
-    WHERE d.case_name = 'both_null_trigger_choice_included'
+    WHERE d.case_name = 'both_same_non_null_trigger_included'
       AND c->>'job_id' = d.target_job_id::text
   ),
-  'both_null_trigger_choice_included allows both NULLs to match under IS NOT DISTINCT FROM semantics'
+  'both_same_non_null_trigger_included requires exact trigger_choice_id equality for inclusion'
 );
 
 -- ===========================================================================

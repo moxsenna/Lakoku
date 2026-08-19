@@ -239,47 +239,40 @@ begin
   -- ===========================================================================
   -- PHASE Q: Last-row lock + FULL REVALIDATION (MUST BE LAST BEFORE MUTATIONS)
   -- ===========================================================================
-  select s.* 
-  into v_story_record
-  from public.generation_jobs gj
-  join public.stories s on s.id = gj.story_id and s.owner_user_id = gj.user_id
-  where gj.id = v_job_id
-  for update;
+  declare
+    v_q_story_id text;
+    v_q_owner_user_id uuid;
+  begin
+    select s.id, s.owner_user_id 
+    into v_q_story_id, v_q_owner_user_id
+    from public.generation_jobs gj
+    join public.stories s on s.id = gj.story_id and s.owner_user_id = gj.user_id
+    where gj.id = v_job_id
+    for update;
   
-  if not found then
-    return pg_catalog.jsonb_build_object('ok', false, 'reason', 'JOB_NOT_FOUND', 'operation', 'Q_LOCK');
-  end if;
-  
-  -- Revalidate all critical fields under Q lock
-  -- Note: job-level fields (generation_kind, trigger_choice_id, status) already captured in Phase A
-  -- We revalidate story-level fields here to ensure no concurrent modifications occurred
-  if v_story_record.user_id != v_user_id then
-    return pg_catalog.jsonb_build_object(
-      'ok', false,
-      'reason', 'REVALIDATION_USER_MISMATCH',
-      'stored_user_id', v_story_record.user_id::text,
-      'expected_user_id', v_user_id::text
-    );
-  end if;
-  
-  if v_story_record.story_id != v_story_id then
-    return pg_catalog.jsonb_build_object(
-      'ok', false,
-      'reason', 'REVALIDATION_STORY_MISMATCH',
-      'stored_story_id', v_story_record.story_id,
-      'expected_story_id', v_story_id
-    );
-  end if;
-  
-  -- Terminal state must be preserved (job status)
-  if v_current_status not in ('FAILED', 'CANCELLED') then
-    return pg_catalog.jsonb_build_object(
-      'ok', false,
-      'reason', 'REVALIDATION_STATUS_CHANGED',
-      'stored_status', v_current_status,
-      'expected_statuses', 'FAILED or CANCELLED'
-    );
-  end if;
+    if not found then
+      return pg_catalog.jsonb_build_object('ok', false, 'reason', 'JOB_NOT_FOUND', 'operation', 'Q_LOCK');
+    end if;
+    
+    -- Revalidate ownership and identity under Q lock
+    if v_q_owner_user_id != v_user_id then
+      return pg_catalog.jsonb_build_object(
+        'ok', false,
+        'reason', 'REVALIDATION_USER_MISMATCH',
+        'stored_user_id', v_q_owner_user_id::text,
+        'expected_user_id', v_user_id::text
+      );
+    end if;
+    
+    if v_q_story_id != v_story_id then
+      return pg_catalog.jsonb_build_object(
+        'ok', false,
+        'reason', 'REVALIDATION_STORY_MISMATCH',
+        'stored_story_id', v_q_story_id,
+        'expected_story_id', v_story_id
+      );
+    end if;
+  end;
   
   
   -- Check reservation existence FIRST before any amount/status operations

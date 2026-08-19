@@ -81,9 +81,6 @@ function elevatedFixtureCleanup(): void {
   `)
 }
 
-// Note: This is a governed DB regression requiring LAKOKU_LOCAL_DB_TEST=1 env var
-// AND a running Docker instance named "supabase_db_lakoku-m10-e2-task3" on port 57322
-// See: D-OPS-1 (Phase-2B final corrective work)
 describe.skipIf(process.env.LAKOKU_LOCAL_DB_TEST !== '1')(
   'M10-E1 governed disposable cleanup auth regression',
   () => {

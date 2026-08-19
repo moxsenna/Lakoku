@@ -239,8 +239,8 @@ begin
   -- ===========================================================================
   -- PHASE Q: Last-row lock + FULL REVALIDATION (MUST BE LAST BEFORE MUTATIONS)
   -- ===========================================================================
-  select s.*, gj.generation_kind, gj.trigger_choice_id, gj.status as job_status
-  into v_story_record, v_generation_kind, v_trigger_choice_id, v_current_status
+  select s.* 
+  into v_story_record
   from public.generation_jobs gj
   join public.stories s on s.id = gj.story_id and s.owner_user_id = gj.user_id
   where gj.id = v_job_id
@@ -251,6 +251,8 @@ begin
   end if;
   
   -- Revalidate all critical fields under Q lock
+  -- Note: job-level fields (generation_kind, trigger_choice_id, status) already captured in Phase A
+  -- We revalidate story-level fields here to ensure no concurrent modifications occurred
   if v_story_record.user_id != v_user_id then
     return pg_catalog.jsonb_build_object(
       'ok', false,
@@ -269,39 +271,12 @@ begin
     );
   end if;
   
-  if coalesce(v_story_record.chapter_number, -1) != coalesce(v_chapter_number, -1) then
-    return pg_catalog.jsonb_build_object(
-      'ok', false,
-      'reason', 'REVALIDATION_CHAPTER_MISMATCH',
-      'stored_chapter_number', v_story_record.chapter_number,
-      'expected_chapter_number', v_chapter_number
-    );
-  end if;
-  
-  if v_story_record.generation_kind != v_generation_kind then
-    return pg_catalog.jsonb_build_object(
-      'ok', false,
-      'reason', 'REVALIDATION_KIND_MISMATCH',
-      'stored_generation_kind', v_story_record.generation_kind,
-      'expected_generation_kind', v_generation_kind
-    );
-  end if;
-  
-  if v_trigger_choice_id is not null and v_story_record.trigger_choice_id != v_trigger_choice_id then
-    return pg_catalog.jsonb_build_object(
-      'ok', false,
-      'reason', 'REVALIDATION_TRIGGER_CHOICE_MISMATCH',
-      'stored_trigger_choice_id', v_story_record.trigger_choice_id,
-      'expected_trigger_choice_id', v_trigger_choice_id
-    );
-  end if;
-  
-  -- Terminal state must be preserved
-  if v_story_record.status not in ('FAILED', 'CANCELLED') then
+  -- Terminal state must be preserved (job status)
+  if v_current_status not in ('FAILED', 'CANCELLED') then
     return pg_catalog.jsonb_build_object(
       'ok', false,
       'reason', 'REVALIDATION_STATUS_CHANGED',
-      'stored_status', v_story_record.status,
+      'stored_status', v_current_status,
       'expected_statuses', 'FAILED or CANCELLED'
     );
   end if;

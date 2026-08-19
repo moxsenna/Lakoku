@@ -1,0 +1,158 @@
+==========================================
+PHASE-2 CANONICAL GATE SUITE
+==========================================
+
+## PHASE-2A: CHEAP RELIABILITY TESTS ##
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90mD:/Coding/lakoku v2/.worktrees/m10-e-e1-fault-harness[39m
+
+ [32m✓[39m tests/narrative-qa/m10-e-reliability-artifacts.test.ts [2m([22m[2m52 tests[22m[2m)[22m[33m 16220[2mms[22m[39m
+     [33m[2m✓[22m[39m validates the frozen fixture payload deterministically [33m 1059[2mms[22m[39m
+     [33m[2m✓[22m[39m freezes the validated artifact tree [33m 549[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects an aggregate hash that does not recompute [33m 506[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects an observed budget comparator mutation [33m 473[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects an observed cost diagnostics mutation [33m 485[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a modeled chapter comparator mutation [33m 417[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a retry-overhead comparator outside canonical percentage scale [33m 820[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a budget result that does not recompute [33m 686[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a budget currency foreign to the observation currency [33m 492[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects an e0 authority that changes the budget evaluation [33m 493[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a stored engineering gate verdict that does not recompute [33m 356[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a gate evidence classification that diverges from completeness [33m 400[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a completeness classification that diverges from gate evidence [33m 377[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects stored gate reason codes that do not recompute [33m 374[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects an artifact pair validity flip [33m 388[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a model input iterations deviation [33m 360[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects an unknown central stage probability key [33m 347[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a model output hash mutation [33m 383[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a model result mutation on a cache hit [33m 342[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects an observed chapter cost mean mutation [33m 364[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects an observed chapter mean denominator mutation [33m 475[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects an aggregate metric mutation [33m 351[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects an artifact semantic hash mutation [33m 451[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a model cost-distribution canonical hash mutation after a full model rerun [33m 376[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a raw report hash mutation [33m 985[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a normalized execution alias that diverges from the raw alias map [33m 986[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a normalized semantic mutation [33m 690[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects report bytes whose hash does not bind both envelopes [33m 908[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m52 passed[39m[22m[90m (52)[39m
+[2m   Start at [22m 20:44:22
+[2m   Duration [22m 194.12s[2m (transform 1.24s, setup 0ms, import 176.93s, tests 16.22s, environment 0ms)[22m
+
+## PHASE-2A-aggregation ##
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90mD:/Coding/lakoku v2/.worktrees/m10-e-e1-fault-harness[39m
+
+ [32m✓[39m tests/narrative-qa/m10-e-reliability-aggregation.test.ts [2m([22m[2m28 tests[22m[2m)[22m[33m 909[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m28 passed[39m[22m[90m (28)[39m
+[2m   Start at [22m 20:47:43
+[2m   Duration [22m 2.78s[2m (transform 895ms, setup 0ms, import 1.33s, tests 909ms, environment 0ms)[22m
+
+## PHASE-2A-model-validation ##
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90mD:/Coding/lakoku v2/.worktrees/m10-e-e1-fault-harness[39m
+
+ [32m✓[39m tests/narrative-qa/m10-e-reliability-model.test.ts [2m([22m[2m17 tests[22m[2m)[22m[33m 48673[2mms[22m[39m
+     [33m[2m✓[22m[39m ignores a smuggled fault-schedule frequency field [33m 865[2mms[22m[39m
+     [33m[2m✓[22m[39m completes every iteration with p=0 and pins exact cost, count, and draw vectors [33m 15091[2mms[22m[39m
+     [33m[2m✓[22m[39m terminates every iteration with p=1, skips later chapters and the judge plan, and still samples the failing provider node cost [33m 502[2mms[22m[39m
+     [33m[2m✓[22m[39m aggregates linkage between draws, completions, and expected counts with rare failures [33m 15941[2mms[22m[39m
+     [33m[2m✓[22m[39m binds provenance, authority, and hashes on the modeled output [33m 16144[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m17 passed[39m[22m[90m (17)[39m
+[2m   Start at [22m 20:47:50
+[2m   Duration [22m 50.25s[2m (transform 616ms, setup 0ms, import 948ms, tests 48.67s, environment 0ms)[22m
+
+## PHASE-2B: EXPENSIVE SENSITIVITY/MODEL TESTS ##
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90mD:/Coding/lakoku v2/.worktrees/m10-e-e1-fault-harness[39m
+
+ [32m✓[39m tests/narrative-qa/m10-e-reliability-model-determinism.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 262216[2mms[22m[39m
+     [33m[2m✓[22m[39m produces byte-identical output across two independent runs of the same input [33m 27497[2mms[22m[39m
+     [33m[2m✓[22m[39m is insensitive to the order of central stage probabilities [33m 31741[2mms[22m[39m
+     [33m[2m✓[22m[39m changes the output hash when the seed changes [33m 31934[2mms[22m[39m
+     [33m[2m✓[22m[39m changes the output hash when a central probability changes [33m 31232[2mms[22m[39m
+     [33m[2m✓[22m[39m changes the output hash when the sampling surface changes [33m 45487[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps the same input hash when only observation identifiers change [33m 31940[2mms[22m[39m
+     [33m[2m✓[22m[39m ignores a smuggled fault-schedule frequency field end to end [33m 31259[2mms[22m[39m
+     [33m[2m✓[22m[39m is insensitive to the map entry order of cost distributions [33m 31115[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m8 passed[39m[22m[90m (8)[39m
+[2m   Start at [22m 20:48:43
+[2m   Duration [22m 263.52s[2m (transform 506ms, setup 0ms, import 760ms, tests 262.22s, environment 0ms)[22m
+
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90mD:/Coding/lakoku v2/.worktrees/m10-e-e1-fault-harness[39m
+
+ [32m✓[39m tests/narrative-qa/m10-e-reliability-sensitivity.test.ts [2m([22m[2m12 tests[22m[2m)[22m[33m 515646[2mms[22m[39m
+     [33m[2m✓[22m[39m produces all three sensitivity bands when input is valid [33m 39828[2mms[22m[39m
+     [33m[2m✓[22m[39m maintains semantic ordering across bands [33m 55004[2mms[22m[39m
+     [33m[2m✓[22m[39m deterministic output hash for same sensitivity input [33m 108398[2mms[22m[39m
+     [33m[2m✓[22m[39m input hash includes sensitivity provenance information [33m 77501[2mms[22m[39m
+     [33m[2m✓[22m[39m null sensitivity input produces null bands [33m 14145[2mms[22m[39m
+     [33m[2m✓[22m[39m same probability + changed authority → semantic hash changes but numeric output unchanged [33m 97676[2mms[22m[39m
+     [33m[2m✓[22m[39m same authority + changed sensitivity probability → sensitivity result changes, central unchanged [33m 122695[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m12 passed[39m[22m[90m (12)[39m
+[2m   Start at [22m 20:53:10
+[2m   Duration [22m 518.19s[2m (transform 609ms, setup 0ms, import 830ms, tests 515.65s, environment 0ms)[22m
+
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90mD:/Coding/lakoku v2/.worktrees/m10-e-e1-fault-harness[39m
+
+ [32m✓[39m tests/narrative-qa/m10-e-reliability-pricing-fallback-provenance.test.ts [2m([22m[2m10 tests[22m[2m)[22m[33m 106527[2mms[22m[39m
+     [33m[2m✓[22m[39m generation MODELED_FROM_PRICING passes full 100k iteration model run [33m 49481[2mms[22m[39m
+     [33m[2m✓[22m[39m judge MODELED_FROM_PRICING passes full 100k iteration model run [33m 56720[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m10 passed[39m[22m[90m (10)[39m
+[2m   Start at [22m 21:01:55
+[2m   Duration [22m 108.94s[2m (transform 1.02s, setup 0ms, import 1.56s, tests 106.53s, environment 0ms)[22m
+
+## PHASE-2C: PROTECTED E1/E2 NARRATIVE REGRESSIONS ##
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90mD:/Coding/lakoku v2/.worktrees/m10-e-e1-fault-harness[39m
+
+ [32m✓[39m tests/narrative-qa/m10-e-e1-e2-closure-regression.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 35454[2mms[22m[39m
+     [33m[2m✓[22m[39m binds every frozen protected E1/E2 blob through the manifest base with no current-HEAD additions [33m 4823[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects any manifest deviation as FAIL with no semantic-compatibility substitute [33m 30322[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m4 passed[39m[22m[90m (4)[39m
+[2m   Start at [22m 21:03:51
+[2m   Duration [22m 38.28s[2m (transform 1.35s, setup 0ms, import 2.06s, tests 35.45s, environment 0ms)[22m
+
+## PHASE-2D: GOVERNED DB REGRESSION #1 ##
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90mD:/Coding/lakoku v2/.worktrees/m10-e-e1-fault-harness[39m
+
+ [2m[90m↓[39m[22m tests/db/m10-e1-disposable-cleanup-auth-regression.test.ts [2m([22m[2m1 test[22m[2m | [22m[33m1 skipped[39m[2m)[22m
+
+[2m Test Files [22m [33m1 skipped[39m[90m (1)[39m
+[2m      Tests [22m [33m1 skipped[39m[90m (1)[39m
+[2m   Start at [22m 21:04:34
+[2m   Duration [22m 6.88s[2m (transform 4.38s, setup 0ms, import 5.62s, tests 0ms, environment 0ms)[22m
+
+## PHASE-2D: GOVERNED DB REGRESSION #2 ##
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90mD:/Coding/lakoku v2/.worktrees/m10-e-e1-fault-harness[39m
+
+ [32m✓[39m tests/db/m10-e2-task3-local-proof.test.ts [2m([22m[2m10 tests[22m[2m | [22m[33m4 skipped[39m[2m)[22m[32m 68[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m6 passed[39m[22m[2m | [22m[33m4 skipped[39m[90m (10)[39m
+[2m   Start at [22m 21:04:44
+[2m   Duration [22m 1.30s[2m (transform 227ms, setup 0ms, import 406ms, tests 68ms, environment 0ms)[22m
+
+
+==========================================
+PHASE-2 FINAL SUMMARY
+==========================================
+✅ PHASE-2 COMPLETE: 0 FAIL / 0 SKIP

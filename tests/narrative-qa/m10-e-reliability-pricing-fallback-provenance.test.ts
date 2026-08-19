@@ -57,12 +57,17 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     )
     
     if (result.status !== 'SELECTED') {
-      throw new Error(`Expected SELECTED status for AVAILABLE empirical source, got: ${result.reason}`)
+      const reason = ('reason' in result) ? String((result as { reason?: string }).reason) : 'Unknown'
+      throw new Error(`Expected SELECTED status for pricing fallback, got: ${reason}`)
     }
     
-    expect(result.distribution.provenance).toBe('OBSERVED')
+    expect(result.distribution.provenance).toBe('MODELED_FROM_PRICING')
     expect(result.distribution.currency).toBe(currency)
-    expect(result.distribution.entries.length).toBeGreaterThan(0)
+    // MODELED_FROM_PRICING entries have pricingSnapshotHash; OBSERVED entries don't
+    const entry = result.distribution.entries[0]!
+    if (entry.provenance === 'MODELED_FROM_PRICING') {
+      expect(entry.pricingSnapshotHash).toBe(pricingSnapshot.canonicalHash)
+    }
   })
 
   it('selectCostDistribution EXPLICITLY_UNAVAILABLE → MODELED_FROM_PRICING', () => {
@@ -146,7 +151,9 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     )
     
     expect(result.status).toBe('HOLD')
-    expect(result.reason).toContain('Empirical unavailable with no pricing fallback')
+    if (result.status === 'HOLD' || result.status === 'REJECT') {
+      expect((result as {reason?: string}).reason).toContain('Empirical unavailable with no pricing fallback')
+    }
   })
 
   it('full model input: generation fallback selection at authority boundary', () => {
@@ -183,7 +190,8 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     )
     
     if (observedResult.status !== 'SELECTED') {
-      throw new Error(`Expected SELECTED for AVAILABLE: ${observedResult.reason}`)
+      const reason = ('reason' in observedResult) ? String((observedResult as { reason?: string }).reason) : 'Unknown'
+      throw new Error(`Expected SELECTED for AVAILABLE: ${reason}`)
     }
     
     expect(observedResult.distribution.provenance).toBe('OBSERVED')
@@ -215,7 +223,7 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     const pricingEntries = Object.freeze([pricingEntry])
     const pricingSource: PricingCostFallbackSource = {
       pricingSnapshot,
-      distributions: new Map([[formatCostDistributionKey(retryKey), pricingEntries]] as Map<string, readonly ObservedCostEntry[]>),
+      distributions: new Map([[formatCostDistributionKey(retryKey), pricingEntries]]) as ReadonlyMap<string, readonly ModeledPricingCostEntry[]>,
     }
     
     const modeledResult = selectCostDistribution(

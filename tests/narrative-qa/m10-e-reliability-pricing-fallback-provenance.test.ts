@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest'
 
 import { aggregateReliabilityObservations } from '../../lib/narrative-qa/reliability/aggregation'
 import { buildReliabilityObservationFixture, contractPricingSnapshot, buildModelInputRecordFixture } from '../../fixtures/m10-e/reliability-contract-fixture'
-import { selectCostDistribution, formatCostDistributionKey, generationCostKey, observedCostEntry, modeledPricingCostEntry, type EmpiricalCostEvidenceSource, type PricingCostFallbackSource, type ObservedCostEntry, type ModeledPricingCostEntry } from '../../lib/narrative-qa/reliability/cost-distributions'
+import { selectCostDistribution, formatCostDistributionKey, generationCostKey, observedCostEntry, modeledPricingCostEntry, type EmpiricalCostEvidenceSource, type PricingCostFallbackSource, type ObservedCostEntry, type ModeledPricingCostEntry, type CostDistributionKey } from '../../lib/narrative-qa/reliability/cost-distributions'
 import { convertDecimal } from '../../lib/narrative-qa/reliability/decimal'
 import { runCumulativeModel, toCumulativeModelInput, type ReliabilityModelInputRecord } from '../../lib/narrative-qa/reliability/artifacts'
 
@@ -94,13 +94,13 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     })
     
     // Create properly typed modeled pricing entry using helper function
-    const entry = modeledPricingCostEntry(
+    const pricingEntry1 = modeledPricingCostEntry(
       '0.45000000',
       pricingSnapshot.canonicalHash,
       'obs_test_retry_001',
     )
     
-    const pricingEntries: readonly ModeledPricingCostEntry[] = Object.freeze([entry])
+    const pricingEntries: readonly ModeledPricingCostEntry[] = Object.freeze([pricingEntry1])
     const pricingEntriesMap = new Map<string, readonly ModeledPricingCostEntry[]>([
       [formatCostDistributionKey(generationKey), pricingEntries],
     ])
@@ -124,7 +124,12 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     expect(result.distribution.provenance).toBe('MODELED_FROM_PRICING')
     expect(result.distribution.currency).toBe(currency)
     expect(result.distribution.entries[0].provenance).toBe('MODELED_FROM_PRICING')
-    expect(result.distribution.entries[0].pricingSnapshotHash).toBe(pricingSnapshot.canonicalHash)
+    const selectedEntry = result.distribution.entries[0] as ModeledPricingCostEntry
+    if (selectedEntry.provenance === 'MODELED_FROM_PRICING') {
+      expect(selectedEntry.pricingSnapshotHash).toBe(pricingSnapshot.canonicalHash)
+    } else {
+      throw new Error(`Expected MODELED_FROM_PRICING but got: ${selectedEntry.provenance}`)
+    }
   })
 
   it('EXPLICITLY_UNAVAILABLE empirical prevents pricing fallback selection without source', () => {
@@ -151,7 +156,7 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     )
     
     expect(result.status).toBe('HOLD')
-    if (result.status === 'HOLD' || result.status === 'REJECT') {
+    if (result.status === 'HOLD') {
       expect((result as {reason?: string}).reason).toContain('Empirical unavailable with no pricing fallback')
     }
   })
@@ -174,13 +179,13 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     })
     
     const empiricalEntry = observedCostEntry(
-      firstProviderCall.actualCost.value,
+      firstProviderCall.actualCost.state === 'PRESENT' ? firstProviderCall.actualCost.value : (() => { throw new Error('Test fixture requires actualCost to be present') })(),
       firstProviderCall.observationId,
     )
     const empiricalEntries = Object.freeze([empiricalEntry])
     const empiricalSource: EmpiricalCostEvidenceSource = {
       availability: 'AVAILABLE' as const,
-      distributions: new Map([[formatCostDistributionKey(generationKey), empiricalEntries]] as Map<string, readonly ObservedCostEntry[]>),
+      distributions: new Map<string, readonly ObservedCostEntry[]>([[formatCostDistributionKey(generationKey), empiricalEntries]] as [string, readonly ObservedCostEntry[]][]),
     }
     
     const observedResult = selectCostDistribution(
@@ -238,7 +243,10 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     }
     
     expect(modeledResult.distribution.provenance).toBe('MODELED_FROM_PRICING')
-    expect(modeledResult.distribution.entries[0].pricingSnapshotHash).toBe(pricingSnapshot.canonicalHash)
+    const selectedEntry = modeledResult.distribution.entries[0] as ModeledPricingCostEntry
+    if (selectedEntry.provenance === 'MODELED_FROM_PRICING') {
+      expect(selectedEntry.pricingSnapshotHash).toBe(pricingSnapshot.canonicalHash)
+    }
     expect(modeledResult.distribution.canonicalHash).toMatch(/^[0-9a-f]{64}$/)
     
     // Prove two keys result in different hashes
@@ -271,7 +279,7 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     
     const judgeKey = {
       kind: 'JUDGE' as const,
-      judgeTaskId: 'competence',
+      judgeTaskId: 'D-R1' as const,
       evaluationIndex: 0,
       providerModelPolicyId: 'provider_v1',
     }
@@ -300,15 +308,11 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     
     // Build empirical source with AVAILABLE
     const empiricalEntry = observedCostEntry(
-      firstProviderCall.actualCost.value,
+      firstProviderCall.actualCost.state === 'PRESENT' ? firstProviderCall.actualCost.value : (() => { throw new Error('Test fixture requires actualCost to be present') })(),
       firstProviderCall.observationId,
     )
     
     const empiricalEntries = Object.freeze([empiricalEntry])
-    const empiricalSource: EmpiricalCostEvidenceSource = {
-      availability: 'AVAILABLE' as const,
-      distributions: new Map(),
-    }
     
     const generationKey = generationCostKey({
       chapterNumber: 1,
@@ -318,7 +322,10 @@ describe('M10-E R1-C pricing fallback provenance', () => {
       providerModelPolicyId: 'provider_v1',
     })
     
-    empiricalSource.distributions.set(formatCostDistributionKey(generationKey), empiricalEntries)
+    const empiricalSource: EmpiricalCostEvidenceSource = {
+      availability: 'AVAILABLE' as const,
+      distributions: new Map([[formatCostDistributionKey(generationKey), empiricalEntries]] as [string, readonly ObservedCostEntry[]][]),
+    }
     
     // Use IDR currency from fixture
     const result = selectCostDistribution(
@@ -349,7 +356,7 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     const pricingSnapshot = contractPricingSnapshot()
     
     // Build complete model input using actual fixture
-    const baseRecord = { ...buildModelInputRecordFixture(observations) }
+    const baseRecord = buildModelInputRecordFixture(observations)
     
     // Find an existing PROSE_RETRY distribution key from the fixture (not hand-invented)
     let targetIndex = -1
@@ -375,13 +382,12 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     }
     
     // Build pricing source with exact currency match
-    const pricingEntries = Object.freeze([
-      modeledPricingCostEntry(
-        '0.45000000',
-        pricingSnapshot.canonicalHash,
-        'obs_model_test_retry_001',
-      ),
-    ])
+    const pricingEntry = modeledPricingCostEntry(
+      '0.45000000',
+      pricingSnapshot.canonicalHash,
+      'obs_model_test_retry_001',
+    )
+    const pricingEntries = Object.freeze([pricingEntry])
     const pricingSource: PricingCostFallbackSource = {
       pricingSnapshot,
       distributions: new Map([[formatCostDistributionKey(targetDist.key), pricingEntries]]),
@@ -389,23 +395,34 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     
     // Select replacement via selectCostDistribution()
     const selectedResult = selectCostDistribution(
-      targetDist.key as CostDistributionKey,
+      targetDist.key,
       'IDR',
       empiricalSource,
       pricingSource,
     )
     
-    expect(selectedResult.status).toBe('SELECTED')
+    if (selectedResult.status !== 'SELECTED') throw new Error('Expected SELECTED for MODELED_FROM_PRICING')
+
     expect(selectedResult.distribution.provenance).toBe('MODELED_FROM_PRICING')
-    expect(selectedResult.distribution.entries[0].pricingSnapshotHash).toBe(pricingSnapshot.canonicalHash)
+    const distributionEntry = selectedResult.distribution.entries[0] as ModeledPricingCostEntry
+    if (distributionEntry.provenance === 'MODELED_FROM_PRICING') {
+      expect(distributionEntry.pricingSnapshotHash).toBe(pricingSnapshot.canonicalHash)
+    }
+
+    // Replace exactly that record in the modelRecord.costDistributions.distributions ARRAY using immutable pattern
+    const newDistributionRecords = baseRecord.costDistributions.distributions.map((d, idx) =>
+      idx === targetIndex ? selectedResult.distribution : d)
     
-    // Replace exactly that record in the modelRecord.costDistributions.distributions ARRAY
-    baseRecord.costDistributions.distributions[targetIndex] = {
-      ...selectedResult.distribution,
-      currency: targetDist.currency,
+    // Create new record with updated costDistributions using spread operator
+    const updatedRecord = {
+      ...baseRecord,
+      costDistributions: Object.freeze({
+        currency: baseRecord.costDistributions.currency,
+        distributions: Object.freeze(newDistributionRecords),
+      }),
     }
     
-    const input = toCumulativeModelInput(baseRecord)
+    const input = toCumulativeModelInput(updatedRecord)
     
     // MUST succeed with MODELED_FROM_PRICING distribution
     const output = runCumulativeModel(input)
@@ -417,7 +434,10 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     // Verify replacement provenance preserved
     const replacementDist = input.costDistributions.distributions.get(formatCostDistributionKey(targetDist.key))!
     expect(replacementDist.provenance).toBe('MODELED_FROM_PRICING')
-    expect(replacementDist.entries[0].pricingSnapshotHash).toBe(pricingSnapshot.canonicalHash)
+    const replacedEntry = replacementDist.entries[0] as ModeledPricingCostEntry
+    if (replacedEntry.provenance === 'MODELED_FROM_PRICING') {
+      expect(replacedEntry.pricingSnapshotHash).toBe(pricingSnapshot.canonicalHash)
+    }
   }, 450000)
 
   /**
@@ -427,7 +447,7 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     const observations = buildReliabilityObservationFixture()
     const pricingSnapshot = contractPricingSnapshot()
     
-    const baseRecord = { ...buildModelInputRecordFixture(observations) }
+    const baseRecord = buildModelInputRecordFixture(observations)
     
     let targetIndex = -1
     for (let i = 0; i < baseRecord.costDistributions.distributions.length; i += 1) {
@@ -446,35 +466,40 @@ describe('M10-E R1-C pricing fallback provenance', () => {
       distributions: new Map(),
     }
     
-    const pricingEntries = Object.freeze([
-      modeledPricingCostEntry(
-        '0.10000000',
-        pricingSnapshot.canonicalHash,
-        'obs_model_test_judge_001',
-      ),
-    ])
+    const pricingEntry = modeledPricingCostEntry(
+      '0.10000000',
+      pricingSnapshot.canonicalHash,
+      'obs_model_test_judge_001',
+    )
+    const pricingEntries = Object.freeze([pricingEntry])
     const pricingSource: PricingCostFallbackSource = {
       pricingSnapshot,
       distributions: new Map([[formatCostDistributionKey(baseRecord.costDistributions.distributions[targetIndex]!.key), pricingEntries]]),
     }
     
-    expect(targetIndex).toBeGreaterThan(-1)
-    
     const selectedResult = selectCostDistribution(
-      targetIndex >= 0 ? baseRecord.costDistributions.distributions[targetIndex]!.key : (() => { throw new Error('No JUDGE distribution found') })(),
+      baseRecord.costDistributions.distributions[targetIndex]!.key,
       'IDR',
       empiricalSource,
       pricingSource,
     )
     
-    expect(selectedResult.status).toBe('SELECTED')
+    if (selectedResult.status !== 'SELECTED') throw new Error('Expected SELECTED for JUDGE MODELED_FROM_PRICING')
+
+    // Use immutable pattern to construct replacement record
+    const newDistributionRecords = baseRecord.costDistributions.distributions.map((d, idx) =>
+      idx === targetIndex ? selectedResult.distribution : d)
     
-    baseRecord.costDistributions.distributions[targetIndex] = {
-      ...selectedResult.distribution,
-      currency: 'IDR',
+    // Create new record with updated costDistributions using spread operator
+    const updatedRecord = {
+      ...baseRecord,
+      costDistributions: Object.freeze({
+        currency: baseRecord.costDistributions.currency,
+        distributions: Object.freeze(newDistributionRecords),
+      }),
     }
     
-    const input = toCumulativeModelInput(baseRecord)
+    const input = toCumulativeModelInput(updatedRecord)
     const output = runCumulativeModel(input)
     
     expect(output.outputHash).toMatch(/^[0-9a-f]{64}$/)
@@ -492,25 +517,26 @@ describe('M10-E R1-C pricing fallback provenance', () => {
       distributions: new Map(),
     }
     
-    const pricingEntries = Object.freeze([
-      modeledPricingCostEntry(
-        '0.45000000',
-        'd'.repeat(64), // Wrong hash
-        'obs_model_test_retry_001',
-      ),
-    ])
-    const pricingSource: PricingCostFallbackSource = {
-      pricingSnapshot: { ...pricingSnapshot, canonicalHash: 'wrong'.repeat(32) },
-      distributions: new Map(),
-    }
-    
     const judgeKey = {
       kind: 'JUDGE' as const,
-      judgeTaskId: 'competence',
+      judgeTaskId: 'D-R1' as const,
       evaluationIndex: 0,
       providerModelPolicyId: 'provider_v1',
     }
-    
+
+    // Create pricing entry with WRONG hash
+    const pricingEntry = modeledPricingCostEntry(
+      '0.45000000',
+      'd'.repeat(64), // Wrong hash (should match pricingSnapshot.canonicalHash)
+      'obs_model_test_retry_001',
+    )
+
+    // But pricingSource uses correct canonical hash
+    const pricingSource: PricingCostFallbackSource = {
+      pricingSnapshot, // Correct hash here
+      distributions: new Map([[formatCostDistributionKey(judgeKey), Object.freeze([pricingEntry])]]),
+    }
+
     const result = selectCostDistribution(
       judgeKey,
       'IDR',
@@ -520,6 +546,9 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     
     // SHOULD HOLD because pricingSnapshotHash doesn't match stratum
     expect(result.status).toBe('HOLD')
+    if (result.status === 'HOLD') {
+      expect(result.reason).toContain('Pricing snapshot hash')
+    }
   })
 
   it('wrong currency -> HOLD/reject before model execution', () => {
@@ -544,7 +573,7 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     
     const judgeKey = {
       kind: 'JUDGE' as const,
-      judgeTaskId: 'competence',
+      judgeTaskId: 'D-R1' as const,
       evaluationIndex: 0,
       providerModelPolicyId: 'provider_v1',
     }
@@ -558,6 +587,8 @@ describe('M10-E R1-C pricing fallback provenance', () => {
     
     // SHOULD HOLD due to currency mismatch
     expect(result.status).toBe('HOLD')
-    expect(result.reason).toContain('currency')
+    if (result.status === 'HOLD') {
+      expect(result.reason).toContain('currency')
+    }
   })
 })

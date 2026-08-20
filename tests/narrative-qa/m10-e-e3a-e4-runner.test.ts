@@ -25,6 +25,7 @@ import {
   executeM10EE3AE4,
   type M10EE3AE4GitReader,
 } from '../../scripts/m10-e-e3a-e4'
+import { validateReliabilitySemanticArtifact, type ValidatedReliabilitySemanticArtifact } from '../../lib/narrative-qa/reliability/artifacts'
 
 vi.mock('server-only', () => ({}))
 
@@ -232,63 +233,31 @@ describe('M10-E E3A/E4 runner orchestration', () => {
   })
 
   it('mutates semantic.baseGitSha → validateReliabilitySemanticArtifact throws (R1-D proof)', async () => {
-    const { buildReliabilityObservationFixture } = await import('../../fixtures/m10-e/reliability-contract-fixture')
-    const { validateReliabilitySemanticArtifact, computeReliabilitySemanticHash, stripOwnHash } = await import('../../lib/narrative-qa/reliability/artifacts')
-    const observations = buildReliabilityObservationFixture()
-    // Build a complete valid semantic artifact
-    const { buildReliabilitySemanticArtifact } = await import('../../lib/narrative-qa/reliability/artifacts')
-    const validArtifact = await buildReliabilitySemanticArtifact({
-      now: () => new Date('2026-08-15T12:00:00.000Z'),
-      executionProfile: 'CONTRACT_FIXTURE',
-      fixture: observations,
-      closureAuthorityJson: CLOSURE_AUTHORITY_JSON,
-      writeArtifacts: vi.fn(),
-    })
-    // Deep clone valid semantic artifact
-    const cloned = JSON.parse(JSON.stringify(validArtifact)) as unknown
-    // Change semantic.baseGitSha to another valid raw 40-hex SHA
-    const mutatedWithBaseGitSha = {
-      ...cloned,
-      semantic: {
-        ...cloned.semantic,
-        baseGitSha: 'b'.repeat(40),
-      },
+    const result = await runSuccessfully()
+    const valid = result.raw.semantic
+
+    const badBaseGitSha = {
+      ...valid,
+      baseGitSha: 'b'.repeat(40),
     }
-    // Leave artifactSemanticHash stale (don't recompute)
-    // validateReliabilitySemanticArtifact(mutated) MUST THROW
-    await expect(async () => {
-      validateReliabilitySemanticArtifact(mutatedWithBaseGitSha.semantic as unknown)
-    }).rejects.toThrow(/hash/i)
+
+    expect(() =>
+      validateReliabilitySemanticArtifact(badBaseGitSha)
+    ).toThrow(/hash/i)
   }, 180000)
 
   it('mutates semantic.e2ClosureReference → validateReliabilitySemanticArtifact throws (R1-D proof)', async () => {
-    const { buildReliabilityObservationFixture } = await import('../../fixtures/m10-e/reliability-contract-fixture')
-    const { validateReliabilitySemanticArtifact, computeReliabilitySemanticHash, stripOwnHash } = await import('../../lib/narrative-qa/reliability/artifacts')
-    const observations = buildReliabilityObservationFixture()
-    // Build a complete valid semantic artifact
-    const { buildReliabilitySemanticArtifact } = await import('../../lib/narrative-qa/reliability/artifacts')
-    const validArtifact = await buildReliabilitySemanticArtifact({
-      now: () => new Date('2026-08-15T12:00:00.000Z'),
-      executionProfile: 'CONTRACT_FIXTURE',
-      fixture: observations,
-      closureAuthorityJson: CLOSURE_AUTHORITY_JSON,
-      writeArtifacts: vi.fn(),
-    })
-    // Deep clone valid semantic artifact
-    const cloned = JSON.parse(JSON.stringify(validArtifact)) as unknown
-    // Change semantic.e2ClosureReference to another valid raw 40-hex SHA
-    const mutatedWithE2ClosureRef = {
-      ...cloned,
-      semantic: {
-        ...cloned.semantic,
-        e2ClosureReference: 'c'.repeat(40),
-      },
+    const result = await runSuccessfully()
+    const valid = result.raw.semantic
+
+    const badE2Closure = {
+      ...valid,
+      e2ClosureReference: 'c'.repeat(40),
     }
-    // Leave artifactSemanticHash stale (don't recompute)
-    // validateReliabilitySemanticArtifact(mutated) MUST THROW
-    await expect(async () => {
-      validateReliabilitySemanticArtifact(mutatedWithE2ClosureRef.semantic as unknown)
-    }).rejects.toThrow(/hash/i)
+
+    expect(() =>
+      validateReliabilitySemanticArtifact(badE2Closure)
+    ).toThrow(/hash/i)
   }, 180000)
 
   it('rejects an unsafe projection (nonzero counters, wrong source, or missing observations)', async () => {

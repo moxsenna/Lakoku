@@ -795,6 +795,37 @@ export async function publishGenerationJobChapterV4(
   return normalizePublicationResult(raw)
 }
 
+export async function publishGenerationJobChapterV6(
+  input: PublishGenerationJobChapterV4Input,
+): Promise<PublishGenerationJobChapterResult> {
+  const parsed = PublicationV4InputSchema.parse(input)
+  const outcomes = parsed.outcomes.map((outcome) => ({
+    choiceId: outcome.choiceId,
+    consequence: outcome.consequence,
+    nextChapterNumber: outcome.nextChapterNumber,
+    isEnding: outcome.isEnding,
+    effect_json: outcome.effect,
+    choice_kind: outcome.choiceKind,
+  }))
+  const raw = RawPublicationResultSchema.parse(await callRpc('publish_generation_job_chapter_v6', {
+    p_job_id: parsed.jobId,
+    p_worker_id: parsed.workerId,
+    p_claim_token: parsed.claimToken,
+    p_lease_id: parsed.leaseId,
+    p_story_id: parsed.storyId,
+    p_chapter_number: parsed.chapterNumber,
+    p_title: parsed.title,
+    p_paragraphs: parsed.paragraphs,
+    p_choice_prompt: parsed.choicePrompt,
+    p_choices: parsed.choices,
+    p_outcomes: outcomes,
+    p_ending_key: parsed.endingLock?.key ?? null,
+    p_ending_name: parsed.endingLock?.name ?? null,
+    p_closures: parsed.closures,
+  }))
+  return normalizePublicationResult(raw)
+}
+
 // Terminal Commercial Finalization - Zod Schemas (R2: outcome-based discrimination)
 
 // Success outcomes

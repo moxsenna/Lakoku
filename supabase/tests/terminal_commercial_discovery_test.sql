@@ -339,8 +339,8 @@ END $$;
 -- Re-enable trigger before rollback
 alter table generation_jobs enable trigger generation_jobs_enforce_state_v1_trigger;
 
--- Recalculate plan count based on actual assertions (16 + 1 new = 17)
-select plan(17);
+-- Recalculate plan count based on actual assertions (16 total after Test 9 replacement)
+select plan(16);
 
 -- ===========================================================================
 -- ASSERTION GROUP 1: EMPTY INITIAL STATE

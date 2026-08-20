@@ -47,7 +47,7 @@ const faultyProvider: GenerationProvider = {
       phase: blueprint.phase,
       chapterGoal: `Chapter ${chapterNumber} goal`,
       plannedBeats: ['establish scene'],
-      targetWordCount: 2000,
+      targetWordCount: 900,
       targetSceneCount: 2,
       opensThreadId: null,
       usesReveals: [],

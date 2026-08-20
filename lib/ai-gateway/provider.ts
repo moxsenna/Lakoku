@@ -206,6 +206,34 @@ function activeCharacters(snapshot: CanonSnapshot, chapter: number) {
  * seling dialog, show-don't-tell kasar — cukup untuk smoke/validator, bukan
  * kualitas editorial. Seed demo reader punya generator sendiri.
  */
+function splitDeterministicParagraph(text: string, maxChars = 400): string[] {
+  const words = text.trim().split(/\s+/).filter(Boolean)
+  const parts: string[] = []
+  let current = ''
+
+  for (const word of words) {
+    if (word.length > maxChars) {
+      if (current) parts.push(current)
+      for (let offset = 0; offset < word.length; offset += maxChars) {
+        parts.push(word.slice(offset, offset + maxChars))
+      }
+      current = ''
+      continue
+    }
+
+    const next = current ? `${current} ${word}` : word
+    if (next.length <= maxChars) {
+      current = next
+    } else {
+      parts.push(current)
+      current = word
+    }
+  }
+
+  if (current) parts.push(current)
+  return parts
+}
+
 function buildParagraphs(
   beats: string[],
   names: string[],
@@ -254,7 +282,7 @@ function buildParagraphs(
     const chunk = Array.from({ length: pack }, (_, offset) => {
       return pool[(idx + offset) % pool.length]!
     }).join(' ')
-    paragraphs.push(chunk)
+    paragraphs.push(...splitDeterministicParagraph(chunk))
     words += chunk.split(/\s+/).filter(Boolean).length
     idx += pack
     if (paragraphs.length >= 35 && words >= targetWords) break

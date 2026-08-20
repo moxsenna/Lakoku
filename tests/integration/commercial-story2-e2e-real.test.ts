@@ -26,8 +26,7 @@ import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
-import type { GenerationProvider, PlanInput, WriteInput } from '@/lib/ai-gateway/provider'
-import type { SemanticJudgeInput, SemanticJudgeResult, SemanticJudgeCode } from '@/lib/ai-gateway/semantic-continuation-judge'
+import { createDeterministicProvider } from '@/lib/ai-gateway/provider'
 
 // Mock server-only and supabase/server BEFORE any other imports
 vi.mock('server-only', () => ({}))
@@ -55,91 +54,7 @@ vi.mock('@lakoku/ai-gateway/server', async (importOriginal) => {
   }
 })
 
-// TEST-ONLY VALID PROVIDER WITH KNOWN-GOOD CHOICE OUTPUT
-// Derived from passing choice tests in tests/api/personalized-choice.test.ts
-const validStory2Provider: GenerationProvider = {
-  name: 'test-valid-story2-v1',
-  
-  async generatePlan(input) {
-    const { chapterNumber, blueprint } = input as PlanInput
-    return {
-      storyId: input.snapshot.storyId,
-      chapterNumber,
-      phase: blueprint.phase,
-      chapterGoal: `Chapter ${chapterNumber} goal`,
-      plannedBeats: ['establish scene', 'develop conflict'],
-      targetWordCount: 2000,
-      targetSceneCount: 3,
-      opensThreadId: null,
-      usesReveals: [],
-      proposedStateDelta: {},
-      introducesCharacters: blueprint.introducesCharacters ?? [],
-    }
-  },
-  
-  async writeChapter(input) {
-    const { snapshot } = input as WriteInput
-    return {
-      draft: `[GENERATION] Scene draft for Chapter 1\n\n` +
-             `In the world of ${snapshot.storyId}, Chapter 1...`,
-      usageEstimate: 500,
-      estimatedDurationMs: 5000,
-    }
-  },
-  
-  async evaluateSemanticContinuity(_input: SemanticJudgeInput): Promise<SemanticJudgeResult> {
-    return { verdict: 'PASS' as const, codes: [] as SemanticJudgeCode[] }
-  },
-  
-  async generateChoices(_input) {
-    // VALID CHOICE OUTPUT DERIVED FROM PRODUCTION CHOICE TESTS
-    // Schema matches: tests/api/personalized-choice.test.ts golden fixtures
-    const choices = [
-      {
-        text: 'Ambil jalan yang aman melalui lorong sempit',
-        effect: {
-          type: 'navigate' as const,
-          destinationType: 'scene' as const,
-          destinationId: 'scene_corridor_1',
-        },
-        threadTouches: [] as string[],
-        evidenceAdded: [] as string[],
-        endingBiasDeltas: {},
-      },
-      {
-        text: 'Terobos pintu darurat ke balkon lantai bawah',
-        effect: {
-          type: 'navigate' as const,
-          destinationType: 'scene' as const,
-          destinationId: 'scene_balcony_1',
-        },
-        threadTouches: [] as string[],
-        evidenceAdded: [] as string[],
-        endingBiasDeltas: {},
-      },
-      {
-        text: 'Bersikap diam dan amati dari celah pintu',
-        effect: {
-          type: 'observe' as const,
-          target: 'environment' as const,
-          insights: ['suara langkah kaki', 'cahaya merah berkedip'] as string[],
-        },
-        threadTouches: [] as string[],
-        evidenceAdded: ['clue_danger_approaching'] as string[],
-        endingBiasDeltas: { tension: 0.2 },
-      },
-    ]
-    
-    return {
-      choicePrompt: 'Apa yang akan dilakukan?',
-      choices,
-      outcomes: choices.map(c => ({
-        selectedChoiceIndex: choices.indexOf(c),
-        validation: 'PASSED' as const,
-      })),
-    }
-  },
-}
+const validStory2Provider = createDeterministicProvider()
 
 describe('Commercial Story #2 Success E2E (Real DB)', () => {
   const idempotencyKey = '00000000-0000-4000-8000-e2e000000002'
@@ -150,7 +65,6 @@ describe('Commercial Story #2 Success E2E (Real DB)', () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'http://127.0.0.1:55321'
     process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU'
     
-    // WIRING FIX: Use VALID provider directly, NOT createDeterministicProvider
     mocks.selectProvider.mockResolvedValue(validStory2Provider)
     
     admin = createAdminClient()

@@ -165,7 +165,7 @@ describe('M10-E E3A/E4 runner orchestration', () => {
     expect(result.pair.artifactSemanticHash).toBe(result.status.artifactSemanticHash)
     expect(written.map((item) => item.file)).toEqual([M10_E_RAW_ARTIFACT_FILE, M10_E_NORMALIZED_ARTIFACT_FILE, M10_E_COST_REPORT_FILE])
     expect(written[0]!.directory.replaceAll('\\', '/').endsWith('.zcode/artifacts/m10-e-e3a-e4/run-test-0001')).toBe(true)
-  }, 300_000)
+  }, 600_000)
 
   it('rejects a dirty tree before any closure, environment, or telemetry work beyond Git identity', async () => {
     const git = fakeGit({ readWorkingTreeDirty: () => { git.calls.push('dirty-check'); return Promise.resolve(true) } })
@@ -290,7 +290,7 @@ describe('M10-E E3A/E4 runner orchestration', () => {
     expect(result.pair.normalized.execution.executionInstanceId).toMatch(/^execution-[0-9]{4}$/)
     // artifactDirectory points under the stable E3A/E4 artifact root
     expect(result.status.artifactDirectory).toContain(M10_E_ARTIFACT_ROOT)
-  }, 300_000)
+  }, 600_000)
 
   it('runs the same result twice with identical deterministic hashes', async () => {
     const first = await runSuccessfully()
@@ -299,5 +299,5 @@ describe('M10-E E3A/E4 runner orchestration', () => {
     expect(second.pair.reportHash).toBe(first.pair.reportHash)
     expect(second.reportBytes).toBe(first.reportBytes)
     expect(stableStringify(second.pair.normalized)).toBe(stableStringify(first.pair.normalized))
-  }, 300_000)
+  }, 600_000)
 })

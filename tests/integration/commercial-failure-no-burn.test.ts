@@ -10,8 +10,9 @@ import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
-import type { GenerationProvider, PlanInput, WriteInput } from '@/lib/ai-gateway/provider'
+import { createDeterministicProvider, type GenerationProvider, type PlanInput } from '@/lib/ai-gateway/provider'
 import type { SemanticJudgeInput, SemanticJudgeResult, SemanticJudgeCode } from '@/lib/ai-gateway/semantic-continuation-judge'
+import { claimAndRunAvailableJobs } from '@lakoku/runtime/server'
 
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/supabase/server', async () => {
@@ -36,6 +37,7 @@ vi.mock('@lakoku/ai-gateway/server', async (importOriginal) => {
 })
 
 // FAULTY PROVIDER: Produces INVALID choice structure causing validation failure
+const deterministicProvider = createDeterministicProvider()
 const faultyProvider: GenerationProvider = {
   name: 'faulty-deterministic-v1',
   
@@ -57,13 +59,7 @@ const faultyProvider: GenerationProvider = {
   },
   
   async writeChapter(input) {
-    const { snapshot } = input as WriteInput
-    return {
-      draft: `[FAILOVER MODE] Draft for Chapter 1\n\n` +
-             `In the world of ${snapshot.storyId}...`,
-      usageEstimate: 500,
-      estimatedDurationMs: 5000,
-    }
+    return deterministicProvider.writeChapter(input)
   },
   
   async evaluateSemanticContinuity(_input: SemanticJudgeInput): Promise<SemanticJudgeResult> {
@@ -152,7 +148,7 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
       tropes: [],
       story_mode: 'personalized_ai',
       visibility: 'private',
-      status: 'published',
+      status: 'BARU',
       commercial_origin: 'STARTER_FREE',
     })
 
@@ -227,13 +223,13 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
 
     const { data: retryJob } = await admin
       .from('generation_jobs')
-      .select('status, attempt_count, max_attempts, error_code')
+      .select('status, attempt_count, max_attempts, last_error_code')
       .eq('id', jobRow!.id)
       .single()
 
     expect(retryJob).not.toBeNull()
     expect(retryJob!.status).toBe('RETRY_WAIT')
-    expect(retryJob!.error_code).toBe('CHOICE_GENERATION_FAILED')
+    expect(retryJob!.last_error_code).toBe('CHOICE_GENERATION_FAILED')
 
     // PROVE: During RETRY_WAIT, reservation MUST BE ACTIVE (required by queue_paid_story_start_generation_v1)
     const { data: resAtRetry, error: resError } = await admin
@@ -269,8 +265,44 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
     // BUT NEVER shows negative value from debit
     expect(balAtRetry!).toBeGreaterThanOrEqual(0)
 
-    // === PHASE 3: Wait for terminal failure (max attempts exhausted) ===
-    
+    // === PHASE 3: Drive production recovery ticks until max attempts exhaust ===
+
+    const remainingAttempts = retryJob!.max_attempts - retryJob!.attempt_count
+    for (let tickIndex = 0; tickIndex < remainingAttempts; tickIndex++) {
+      const { data: currentJob, error: currentJobError } = await admin
+        .from('generation_jobs')
+        .select('status, attempt_count, max_attempts, available_at')
+        .eq('id', jobRow!.id)
+        .single()
+
+      if (currentJobError) {
+        throw new Error(`Failed to query generation job before recovery tick: ${JSON.stringify(currentJobError)}`)
+      }
+      if (currentJob!.status === 'FAILED') break
+
+      expect(currentJob!.status).toBe('RETRY_WAIT')
+      expect(currentJob!.attempt_count).toBeLessThan(currentJob!.max_attempts)
+
+      const eligibleAt = Date.parse(currentJob!.available_at)
+      const waitMs = Math.max(0, eligibleAt - Date.now())
+      if (waitMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, waitMs + 100))
+      }
+
+      const tick = await claimAndRunAvailableJobs({
+        maxJobs: 1,
+        workerIdPrefix: 'test-commercial-no-burn',
+      })
+
+      expect(tick.ran).toBe(1)
+      expect(tick.results[0]?.jobId).toBe(jobRow!.id)
+      expect(tick.results[0]?.outcome).toBe(
+        currentJob!.attempt_count + 1 >= currentJob!.max_attempts
+          ? 'FAILED'
+          : 'RETRY_WAIT',
+      )
+    }
+
     await waitForCondition(
       async () => {
         const { data: finalJob } = await admin
@@ -278,23 +310,23 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
           .select('status')
           .eq('id', jobRow!.id)
           .single()
-        
-        // Job must eventually reach FAILED terminal state
+
         return finalJob?.status === 'FAILED'
       },
       'Generation job reached terminal FAILED state after max retries',
-      180_000
+      5_000,
     )
 
     const { data: terminalJob } = await admin
       .from('generation_jobs')
-      .select('status, error_code, error_reason')
+      .select('status, last_error_code, last_error_class')
       .eq('id', jobRow!.id)
       .single()
 
     expect(terminalJob).not.toBeNull()
     expect(terminalJob!.status).toBe('FAILED')
-    expect(['CHOICE_GENERATION_FAILED', 'MAX_ATTEMPTS_EXCEEDED']).toContain(terminalJob!.error_code)
+    expect(terminalJob!.last_error_code).toBe('GENERATION_RETRY_EXHAUSTED')
+    expect(terminalJob!.last_error_class).toBe('TERMINAL')
 
     // === PHASE 4: Terminal failure post-conditions ===
     
@@ -356,7 +388,18 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
     
     expect(reqCount).toBe(1) // Single durable request
 
-    // 5. Story status reflects failure
+    // Terminal failure releases money but preserves retryable story/request shell.
+    // Same-key retry may reactivate reservation and bind a replacement job.
+    const { data: requestAfterFail } = await admin
+      .from('story_creation_requests')
+      .select('status, generation_job_id')
+      .eq('owner_user_id', userId)
+      .eq('story_id', storyId)
+      .single()
+
+    expect(requestAfterFail?.status).toBe('RESERVED')
+    expect(requestAfterFail?.generation_job_id).toBe(jobRow!.id)
+
     const { data: storyAfterFail } = await admin
       .from('stories')
       .select('generation_status, commercial_origin')
@@ -364,9 +407,9 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
       .single()
     
     expect(storyAfterFail).not.toBeNull()
-    expect(storyAfterFail!.generation_status).toBeOneOf(['failed', 'ready']) // Depends on implementation
-    expect(storyAfterFail!.commercial_origin).toBeNull() // Never became PAID_START
+    expect(storyAfterFail!.generation_status).toBe('creating_contract')
+    expect(storyAfterFail!.commercial_origin).toBe('PENDING_PAID_START')
 
-    console.log(`[proof] ✅ FAILURE NO-BURN VERIFIED: RETRY_WAIT had zero debits, terminal FAILED released reservation, balance restored to ${initialBalance}, zero duplicates across all domains`)
-  }, 240_000)
+    console.log(`[proof] ✅ FAILURE NO-BURN VERIFIED: RETRY_WAIT had zero debits, terminal FAILED released reservation, balance restored to ${initialBalance}, retryable shell preserved, zero duplicates across all domains`)
+  }, 300_000)
 })

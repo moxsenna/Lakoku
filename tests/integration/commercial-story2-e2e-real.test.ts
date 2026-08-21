@@ -95,7 +95,7 @@ describe('Commercial Story #2 Success E2E (Real DB)', () => {
 
   it('proves strict SUCCEEDED success contract with authorization gating, durable binding, atomic execution', async () => {
     // === SETUP: Seed user commercial state with prior starter story claimed ===
-    await admin.from('stories').insert({
+    const { error: starterStoryError } = await admin.from('stories').insert({
       id: 'story-starter-prev-e2e',
       owner_user_id: userId,
       title: 'Starter Story Prev',
@@ -104,16 +104,34 @@ describe('Commercial Story #2 Success E2E (Real DB)', () => {
       tropes: [],
       story_mode: 'personalized_ai',
       visibility: 'private',
-      status: 'published',
+      status: 'BARU',
       commercial_origin: 'STARTER_FREE',
     })
+    expect(starterStoryError).toBeNull()
 
-    await admin.from('account_commercial_states').upsert({
+    const { error: accountStateError } = await admin.from('account_commercial_states').upsert({
       user_id: userId,
       starter_story_id: 'story-starter-prev-e2e',
       starter_claimed_at: new Date().toISOString(),
       welcome_credit_granted_at: new Date().toISOString(),
     })
+    expect(accountStateError).toBeNull()
+
+    const { data: starterStories } = await admin
+      .from('stories')
+      .select('id, commercial_origin')
+      .eq('owner_user_id', userId)
+    expect(starterStories).toEqual([{
+      id: 'story-starter-prev-e2e',
+      commercial_origin: 'STARTER_FREE',
+    }])
+
+    const { data: accountState } = await admin
+      .from('account_commercial_states')
+      .select('starter_story_id')
+      .eq('user_id', userId)
+      .single()
+    expect(accountState?.starter_story_id).toBe('story-starter-prev-e2e')
 
     // === PHASE 1: Pre-first-attempt state verification ===
     

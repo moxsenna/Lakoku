@@ -79,8 +79,9 @@ pnpm exec vitest run --config vitest.config.ts \
     --maxWorkers=1 --testTimeout=1800000
 if [ $? -ne 0 ]; then echo "FAILED: Phase2C-E1-E2-narrative"; OVERALL_STATUS=1; fi
 
-# Verify no tests were skipped
-SKIPPED_TESTS=$(pnpm exec vitest run --config vitest.config.ts \
+# Verify no tests were skipped (machine-readable: numPendingTests > 0 or numFailedTests > 0)
+VITEST_JSON=$(mktemp)
+pnpm exec vitest run --config vitest.config.ts \
     tests/narrative-qa/m10-e1-fault-evidence.test.ts \
     tests/narrative-qa/m10-e2-bindings.test.ts \
     tests/narrative-qa/m10-e2-evidence.test.ts \
@@ -89,10 +90,17 @@ SKIPPED_TESTS=$(pnpm exec vitest run --config vitest.config.ts \
     tests/narrative-qa/m10-e2-rows-1-9.test.ts \
     tests/narrative-qa/m10-e2-runner.test.ts \
     tests/narrative-qa/m10-e2-telemetry-reference.test.ts \
-    --maxWorkers=1 --testTimeout=1800000 2>&1 | grep -E "SKIP|Skipped" | wc -l)
-if [ "$SKIPPED_TESTS" -gt 0 ]; then
-    echo "❌ FAILED: $SKIPPED_TESTS tests skipped in Phase2C"
-    OVERALL_STATUS=1
+    --maxWorkers=1 --testTimeout=1800000 --reporter=json --outputFile="$VITEST_JSON" 2>&1 || true
+
+if [ -f "$VITEST_JSON" ]; then
+    SKIPPED=$(node -e "const r=require('$VITEST_JSON');console.log((r.meta?.numPendingTests||0)+(r.meta?.numSkippedTests||0))")
+    if [ "$SKIPPED" -gt 0 ]; then
+        echo "❌ FAILED: $SKIPPED tests skipped in Phase2C"
+        OVERALL_STATUS=1
+    fi
+    rm -f "$VITEST_JSON"
+else
+    echo "⚠️ Could not parse Vitest JSON report for skip detection"
 fi
 
 # PHASE-2E: E3A/E4 authority gates (R1-D mutations + counted comparison + allowlist)
@@ -135,20 +143,20 @@ fi
 
 # ESLint on changed files
 echo "## PHASE-2G: ESLINT CHANGED FILES ##"
-pnpm run lint 2>&1 | tee -a phase2-eslint.log || true
-ESLINT_ERRORS=$(grep -E "error TS|✖.*errors" phase2-eslint.log 2>/dev/null | wc -l)
-if [ "$ESLINT_ERRORS" -gt 0 ]; then
-    echo "⚠️ ESLINT found $ESLINT_ERRORS errors"
+if ! pnpm run lint; then
+    echo "FAILED: ESLint found errors"
+    OVERALL_STATUS=1
 else
     echo "✅ ESLINT: 0 errors"
 fi
 
 # Git diff --check
 echo "## PHASE-2H: GIT DIFF CHECK ##"
-if git diff --check 2>&1; then
+if git diff --check; then
     echo "✅ Git diff: No whitespace/errors"
 else
-    echo "⚠️ Git diff warnings found (may be non-critical)"
+    echo "FAILED: Git diff --check found whitespace issues"
+    OVERALL_STATUS=1
 fi
 
 echo ""

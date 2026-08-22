@@ -80,8 +80,8 @@ describe('M10-E cache contract - same input produces same output', () => {
     const observations: unknown = buildReliabilityObservationFixture()
     const modelRecord = buildModelInputRecordFixture(observations as never)
     
-    const payloadA = Object.assign({ ...buildPayload(modelRecord) as {}, baseGitSha: 'a'.repeat(40) }) as unknown
-    const payloadB = Object.assign({ ...buildPayload(modelRecord) as {}, baseGitSha: 'b'.repeat(40) }) as unknown
+    const payloadA = Object.assign(Object.create(null), buildPayload(modelRecord), { baseGitSha: 'a'.repeat(40) })
+    const payloadB = Object.assign(Object.create(null), buildPayload(modelRecord), { baseGitSha: 'b'.repeat(40) })
     
     const artifactA = finalizeReliabilitySemanticPayload(payloadA as never)
     const artifactB = finalizeReliabilitySemanticPayload(payloadB as never)

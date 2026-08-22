@@ -47,8 +47,11 @@ describe('M10-E Gate Reason Codes Parity', () => {
     
     // No extraneous codes in GATE_REASON_CODES beyond the union
     const extra = Array.from(gateCodesSet).filter(code => 
-      !allReasons.includes(code as any)
+      allReasons.some(r => r === code)
     )
-    expect(extra).toHaveLength(0), `Extraneous codes in GATE_REASON_CODES: ${extra.join(', ')}`
+    expect(extra).toHaveLength(0)
+    if (extra.length > 0) {
+      throw new Error(`Extraneous codes in GATE_REASON_CODES: ${extra.join(', ')}`)
+    }
   })
 })

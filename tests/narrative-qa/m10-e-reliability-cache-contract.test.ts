@@ -14,8 +14,11 @@ import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 import { resetCacheAndMetrics, getCacheMetrics } from '../../lib/narrative-qa/reliability/artifacts'
 import { buildModelInputRecordFixture, buildReliabilityObservationFixture } from '../../fixtures/m10-e/reliability-contract-fixture'
 import { finalizeReliabilitySemanticPayload } from '../../lib/narrative-qa/reliability/artifacts'
+import type { ObservedBudgetComparators, ModeledBudgetComparators, BudgetGateInput, EngineeringGateInput, CanonicalDecimal } from '../../lib/narrative-qa/reliability'
+import type { MeasurementState } from '../../lib/narrative-qa/reliability/contracts'
 
-const HEX64 = /^[0-9a-f]{64}$/
+type Money = CanonicalDecimal<'MONEY'>
+type AggregateOutput = ReturnType<typeof import('../../lib/narrative-qa/reliability/aggregation').aggregateReliabilityObservations>
 
 describe('M10-E cache contract - same input produces same output', () => {
   beforeAll(() => {
@@ -29,42 +32,44 @@ describe('M10-E cache contract - same input produces same output', () => {
   })
 
   it('same payload invoked twice produces identical hashes', async () => {
-    const observations = buildReliabilityObservationFixture()
-    const modelRecord = buildModelInputRecordFixture(observations)
+    const observations: unknown = buildReliabilityObservationFixture()
+    const modelRecord = buildModelInputRecordFixture(observations as never)
     
-    const payloadBase = {
+    const payloadBase: unknown = {
+      schemaVersion: 'M10_E_RELIABILITY_SEMANTIC_PAYLOAD_V1' as const,
       executionProfile: 'CONTRACT_FIXTURE' as const,
       baseGitSha: 'a'.repeat(40),
       gitDirty: false,
       e2ClosureReference: 'b'.repeat(40),
-      compatibleStratum: modelRecord.compatibleStratum,
-      authorities: [],
+      sourceAuthority: 'CONTRACT_FIXTURE' as const,
+      compatibleStratum: (modelRecord as unknown as { compatibleStratum: unknown }).compatibleStratum,
+      authorities: [] as unknown,
       completeness: {
         engineeringGate: 'PASS' as const,
         reasonCodes: [] as string[],
-        profileCompleteness: {} as any,
+        profileCompleteness: {} as unknown,
       },
-      observations: {} as any,
+      observations,
       observationHash: 'c'.repeat(64),
-      aggregate: {} as any,
+      aggregate: {} as unknown,
       aggregateHash: 'd'.repeat(64),
       model: {
-        input: modelRecord as any,
-        output: {} as any,
+        input: modelRecord,
+        output: {} as unknown,
       },
-      observedChapterCostMeans: { means: [], denominators: [] } as any,
+      observedChapterCostMeans: Object.assign({ means: [] as readonly MeasurementState<Money>[], denominators: Array(50).fill(0) }),
       observedChapterMeanDenominators: Array(50).fill(0),
-      comparators: {} as any,
-      budget: { input: {} as any, result: {} as any },
-      engineeringGate: { input: {} as any, result: {} as any },
+      comparators: { modeled: {} as ModeledBudgetComparators, observed: {} as ObservedBudgetComparators, observedDiagnostics: [] } as unknown,
+      budget: { input: {} as BudgetGateInput, result: {} as unknown },
+      engineeringGate: { input: {} as EngineeringGateInput, result: {} as unknown },
       reasonCodes: [] as string[],
     }
     
     // First invocation
-    const artifact1 = finalizeReliabilitySemanticPayload(payloadBase as any)
+    const artifact1 = finalizeReliabilitySemanticPayload(payloadBase as never)
     
     // Second invocation with identical payload
-    const artifact2 = finalizeReliabilitySemanticPayload(payloadBase as any)
+    const artifact2 = finalizeReliabilitySemanticPayload(payloadBase as never)
     
     // Memoization should produce byte-identical results
     expect(artifact1.artifactSemanticHash).toBe(artifact2.artifactSemanticHash)
@@ -72,14 +77,14 @@ describe('M10-E cache contract - same input produces same output', () => {
   })
 
   it('different seed produces different hash', async () => {
-    const observations = buildReliabilityObservationFixture()
-    const modelRecord = buildModelInputRecordFixture(observations)
+    const observations: unknown = buildReliabilityObservationFixture()
+    const modelRecord = buildModelInputRecordFixture(observations as never)
     
-    const payloadA = { ...buildPayload(modelRecord), baseGitSha: 'a'.repeat(40) }
-    const payloadB = { ...buildPayload(modelRecord), baseGitSha: 'b'.repeat(40) }
+    const payloadA = Object.assign({ ...buildPayload(modelRecord) as {}, baseGitSha: 'a'.repeat(40) }) as unknown
+    const payloadB = Object.assign({ ...buildPayload(modelRecord) as {}, baseGitSha: 'b'.repeat(40) }) as unknown
     
-    const artifactA = finalizeReliabilitySemanticPayload(payloadA as any)
-    const artifactB = finalizeReliabilitySemanticPayload(payloadB as any)
+    const artifactA = finalizeReliabilitySemanticPayload(payloadA as never)
+    const artifactB = finalizeReliabilitySemanticPayload(payloadB as never)
     
     expect(artifactA.artifactSemanticHash).not.toBe(artifactB.artifactSemanticHash)
   })
@@ -92,31 +97,34 @@ describe('M10-E cache contract - same input produces same output', () => {
   })
 })
 
-function buildPayload(record: ReturnType<typeof buildModelInputRecordFixture>) {
-  return {
+function buildPayload(record: ReturnType<typeof buildModelInputRecordFixture>): unknown {
+  const observations = buildReliabilityObservationFixture() as never
+  return Object.assign({
+    schemaVersion: 'M10_E_RELIABILITY_SEMANTIC_PAYLOAD_V1' as const,
     executionProfile: 'CONTRACT_FIXTURE' as const,
     gitDirty: false,
     e2ClosureReference: 'y'.repeat(40),
-    compatibleStratum: record.compatibleStratum,
-    authorities: [],
+    sourceAuthority: 'CONTRACT_FIXTURE' as const,
+    compatibleStratum: (record as unknown as { compatibleStratum: unknown }).compatibleStratum,
+    authorities: [] as unknown,
     completeness: {
       engineeringGate: 'PASS' as const,
       reasonCodes: [] as string[],
-      profileCompleteness: {} as any,
+      profileCompleteness: {} as unknown,
     },
-    observations: {} as any,
+    observations,
     observationHash: 'z'.repeat(64),
-    aggregate: {} as any,
+    aggregate: {} as unknown,
     aggregateHash: 'w'.repeat(64),
     model: {
-      input: record as any,
-      output: {} as any,
+      input: record,
+      output: {} as unknown,
     },
-    observedChapterCostMeans: { means: [], denominators: [] } as any,
+    observedChapterCostMeans: Object.assign({ means: [] as readonly MeasurementState<Money>[], denominators: Array(50).fill(0) }),
     observedChapterMeanDenominators: Array(50).fill(0),
-    comparators: {} as any,
-    budget: { input: {} as any, result: {} as any },
-    engineeringGate: { input: {} as any, result: {} as any },
+    comparators: { modeled: {} as ModeledBudgetComparators, observed: {} as ObservedBudgetComparators, observedDiagnostics: [] } as unknown,
+    budget: { input: {} as BudgetGateInput, result: {} as unknown },
+    engineeringGate: { input: {} as EngineeringGateInput, result: {} as unknown },
     reasonCodes: [] as string[],
-  }
+  })
 }

@@ -110,4 +110,27 @@ describe('planWithContinuation / CC-aware planner', () => {
     expect(plan.chapterGoal).toBe('Tujuan Bab 2 dari Blueprint')
     expect(plan.plannedBeats).toEqual(['Beat 1', 'Beat 2'])
   })
+
+  it('membatasi paragraf deterministik untuk konteks pilihan tanpa kehilangan target kata', async () => {
+    const provider = createDeterministicProvider()
+    const draft = await provider.writeChapter({
+      snapshot: mockSnapshot,
+      plan: {
+        storyId: mockSnapshot.storyId,
+        chapterNumber: 2,
+        phase: 'Fase 2',
+        chapterGoal: 'Lanjutkan konflik.',
+        plannedBeats: [`Ungkap ${'petunjuk panjang '.repeat(40)}`],
+        targetWordCount: 900,
+        targetSceneCount: 3,
+        opensThreadId: null,
+        usesReveals: [],
+        proposedStateDelta: {},
+        introducesCharacters: [],
+      },
+    }) as { paragraphs: string[]; wordCount: number }
+
+    expect(draft.paragraphs.every((paragraph) => paragraph.length <= 400)).toBe(true)
+    expect(draft.wordCount).toBeGreaterThanOrEqual(800)
+  })
 })

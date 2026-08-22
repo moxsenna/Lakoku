@@ -26,7 +26,7 @@ const mocks = vi.hoisted(() => ({
   generateNextChapterReal: vi.fn(),
   publishGenerationJobChapterV2: vi.fn(),
   publishGenerationJobChapterV3: vi.fn(),
-  publishGenerationJobChapterV4: vi.fn(),
+  publishGenerationJobChapterV6: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
@@ -59,7 +59,7 @@ vi.mock('@/lib/runtime/generation-jobs', async () => {
     ...actual,
     publishGenerationJobChapterV2: mocks.publishGenerationJobChapterV2,
     publishGenerationJobChapterV3: mocks.publishGenerationJobChapterV3,
-    publishGenerationJobChapterV4: mocks.publishGenerationJobChapterV4,
+    publishGenerationJobChapterV6: mocks.publishGenerationJobChapterV6,
   }
 })
 vi.mock('@/lib/runtime/story-generation', async () => {
@@ -677,7 +677,7 @@ describe('generateNextPersonalizedChapter', () => {
       debtsStatus: 'open',
       lockedEndingKey: null,
     })
-    mocks.publishGenerationJobChapterV4.mockResolvedValueOnce({
+    mocks.publishGenerationJobChapterV6.mockResolvedValueOnce({
       jobId: PERSONALIZED_JOB_CONTEXT.jobId,
       chapterNumber: 12,
       seq: 9,
@@ -693,7 +693,7 @@ describe('generateNextPersonalizedChapter', () => {
     }, deps)).resolves.toMatchObject({ ok: true, fromCheckpoint: true })
 
     expect(deps.auditPlotDebts).not.toHaveBeenCalled()
-    expect(mocks.publishGenerationJobChapterV4).toHaveBeenCalledWith(
+    expect(mocks.publishGenerationJobChapterV6).toHaveBeenCalledWith(
       expect.objectContaining({ closures: storedArtifact.closesPlotDebts }),
     )
   })
@@ -706,7 +706,7 @@ describe('generateNextPersonalizedChapter', () => {
       closesPlotDebts: [{ debtId: 'main_mystery', closureForm: 'SUBVERTED' as const }],
     }
     const { deps } = makeDeps({ chapterNumber: 12, auditArtifact })
-    mocks.publishGenerationJobChapterV4.mockResolvedValueOnce({
+    mocks.publishGenerationJobChapterV6.mockResolvedValueOnce({
       jobId: PERSONALIZED_JOB_CONTEXT.jobId,
       chapterNumber: 12,
       seq: 9,
@@ -725,7 +725,7 @@ describe('generateNextPersonalizedChapter', () => {
       [{ auditSignals: unknown; auditSignalsVersion: number }]
     >
     const persisted = persistCalls[0]?.[0]
-    const published = mocks.publishGenerationJobChapterV4.mock.calls[0]?.[0] as {
+    const published = mocks.publishGenerationJobChapterV6.mock.calls[0]?.[0] as {
       closures: unknown
     }
     expect(persisted.auditSignals).toBe(auditArtifact)
@@ -736,7 +736,7 @@ describe('generateNextPersonalizedChapter', () => {
   it('reuses same-job earlier-attempt prose with current claim identity and skips prose provider', async () => {
     const checkpoint = personalizedCheckpoint()
     const { deps, capture } = makeDeps({ chapterNumber: 12, checkpoint })
-    mocks.publishGenerationJobChapterV4.mockResolvedValueOnce({
+    mocks.publishGenerationJobChapterV6.mockResolvedValueOnce({
       jobId: PERSONALIZED_JOB_CONTEXT.jobId,
       chapterNumber: 12,
       seq: 9,
@@ -793,7 +793,7 @@ describe('generateNextPersonalizedChapter', () => {
       checkpoint: personalizedCheckpoint(overrides),
       rejectStaleCheckpoint: true,
     })
-    mocks.publishGenerationJobChapterV4.mockResolvedValueOnce({
+    mocks.publishGenerationJobChapterV6.mockResolvedValueOnce({
       jobId: PERSONALIZED_JOB_CONTEXT.jobId,
       chapterNumber: 12,
       seq: 9,
@@ -816,7 +816,7 @@ describe('generateNextPersonalizedChapter', () => {
 
   it('persists fresh worker prose before first choice using complete freshness and current identity', async () => {
     const { deps, capture } = makeDeps({ chapterNumber: 12 })
-    mocks.publishGenerationJobChapterV4.mockResolvedValueOnce({
+    mocks.publishGenerationJobChapterV6.mockResolvedValueOnce({
       jobId: PERSONALIZED_JOB_CONTEXT.jobId,
       chapterNumber: 12,
       seq: 9,
@@ -865,7 +865,7 @@ describe('generateNextPersonalizedChapter', () => {
           PUBLISHED: { ok: false, outcome: 'OWNERSHIP_LOST', errorCode: 'GENERATION_JOB_OWNERSHIP_LOST', disposition: 'OWNERSHIP_LOST' },
         },
       })
-      mocks.publishGenerationJobChapterV4.mockResolvedValueOnce({
+      mocks.publishGenerationJobChapterV6.mockResolvedValueOnce({
         jobId: PERSONALIZED_JOB_CONTEXT.jobId,
         chapterNumber,
         seq: 9,
@@ -894,7 +894,7 @@ describe('generateNextPersonalizedChapter', () => {
       if (args.status === 'PUBLISHED') throw new Error('checkpoint unavailable')
       return { ok: true, outcome: 'UPDATED' as const, checkpointAttemptId: PERSONALIZED_JOB_CONTEXT.jobId }
     })
-    mocks.publishGenerationJobChapterV4.mockResolvedValueOnce({
+    mocks.publishGenerationJobChapterV6.mockResolvedValueOnce({
       jobId: PERSONALIZED_JOB_CONTEXT.jobId,
       chapterNumber: 50,
       seq: 9,
@@ -918,7 +918,7 @@ describe('generateNextPersonalizedChapter', () => {
       debtsStatus: 'closed',
     })
     deps.markReaderStateSelesai.mockRejectedValueOnce(new Error('reader state unavailable'))
-    mocks.publishGenerationJobChapterV4.mockResolvedValueOnce({
+    mocks.publishGenerationJobChapterV6.mockResolvedValueOnce({
       jobId: PERSONALIZED_JOB_CONTEXT.jobId,
       chapterNumber: 50,
       seq: 9,
@@ -943,7 +943,7 @@ describe('generateNextPersonalizedChapter', () => {
       debtsStatus: 'closed',
     })
     deps.recordGenerationAttempt.mockRejectedValueOnce(new Error('telemetry unavailable'))
-    mocks.publishGenerationJobChapterV4.mockResolvedValueOnce({
+    mocks.publishGenerationJobChapterV6.mockResolvedValueOnce({
       jobId: PERSONALIZED_JOB_CONTEXT.jobId,
       chapterNumber: 50,
       seq: 9,
@@ -988,17 +988,17 @@ describe('generateNextPersonalizedChapter', () => {
       },
     })
     expect(deps.generateChoiceBranch).not.toHaveBeenCalled()
-    expect(mocks.publishGenerationJobChapterV4).not.toHaveBeenCalled()
+    expect(mocks.publishGenerationJobChapterV6).not.toHaveBeenCalled()
   })
 
-  it('generates prose once, resumes same fingerprint after exhausted choices, and publishes V4 once', async () => {
+  it('generates prose once, resumes same fingerprint after exhausted choices, and publishes V6 once', async () => {
     const checkpointState = { current: null as ChapterGenerationCheckpoint | null }
     const { deps } = makeDeps({
       chapterNumber: 12,
       checkpointState,
       choiceResults: [null, null, branchFor(12)],
     })
-    mocks.publishGenerationJobChapterV4.mockResolvedValueOnce({
+    mocks.publishGenerationJobChapterV6.mockResolvedValueOnce({
       jobId: PERSONALIZED_JOB_CONTEXT.jobId,
       chapterNumber: 12,
       seq: 9,
@@ -1033,7 +1033,7 @@ describe('generateNextPersonalizedChapter', () => {
       status: 'CHOICES_RETRY_WAIT',
     }))
     expect(deps.generateChapter).toHaveBeenCalledTimes(1)
-    expect(mocks.publishGenerationJobChapterV4).not.toHaveBeenCalled()
+    expect(mocks.publishGenerationJobChapterV6).not.toHaveBeenCalled()
 
     const retry = await generateNextPersonalizedChapter(input, deps)
     expect(retry).toMatchObject({ ok: true, fromCheckpoint: true, chapterNumber: 12, seq: 9 })
@@ -1046,15 +1046,15 @@ describe('generateNextPersonalizedChapter', () => {
       paragraphs: persistedProse.paragraphs,
       proseFingerprint: savedFingerprint,
     })
-    expect(mocks.publishGenerationJobChapterV4).toHaveBeenCalledTimes(1)
-    expect(mocks.publishGenerationJobChapterV4).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mocks.publishGenerationJobChapterV6).toHaveBeenCalledTimes(1)
+    expect(mocks.publishGenerationJobChapterV6).toHaveBeenCalledWith(expect.objectContaining({
       jobId: PERSONALIZED_JOB_CONTEXT.jobId,
       storyId: STORY_A,
       chapterNumber: 12,
       title: persistedProse.title,
       paragraphs: persistedProse.paragraphs,
     }))
-    const published = mocks.publishGenerationJobChapterV4.mock.calls[0]?.[0] as {
+    const published = mocks.publishGenerationJobChapterV6.mock.calls[0]?.[0] as {
       title: string
       paragraphs: string[]
     }
@@ -1080,7 +1080,7 @@ describe('generateNextPersonalizedChapter', () => {
       status: 'CHOICES_RETRY_WAIT',
       jobContext: PERSONALIZED_JOB_CONTEXT,
     }))
-    expect(mocks.publishGenerationJobChapterV4).not.toHaveBeenCalled()
+    expect(mocks.publishGenerationJobChapterV6).not.toHaveBeenCalled()
   })
 
   it('runs lease → canon → contract → reader → brief → generate → safe → choices → publishV2 → telemetry for chapter < 50', async () => {
@@ -1254,7 +1254,7 @@ describe('generateNextPersonalizedChapter', () => {
       lockedEndingKey: 'publish-truth',
       debtsStatus: 'closed',
     })
-    mocks.publishGenerationJobChapterV4.mockResolvedValueOnce({
+    mocks.publishGenerationJobChapterV6.mockResolvedValueOnce({
       jobId: PERSONALIZED_JOB_CONTEXT.jobId,
       chapterNumber: 50,
       seq: 9,
@@ -1274,8 +1274,8 @@ describe('generateNextPersonalizedChapter', () => {
     expect(deps.selectProvider).toHaveBeenCalledTimes(1)
     expect(deps.generateChoiceBranch).not.toHaveBeenCalled()
     expect(deps.resolveEnding).toHaveBeenCalledTimes(1)
-    expect(mocks.publishGenerationJobChapterV4).toHaveBeenCalledTimes(1)
-    expect(mocks.publishGenerationJobChapterV4).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mocks.publishGenerationJobChapterV6).toHaveBeenCalledTimes(1)
+    expect(mocks.publishGenerationJobChapterV6).toHaveBeenCalledWith(expect.objectContaining({
       jobId: PERSONALIZED_JOB_CONTEXT.jobId,
       storyId: STORY_A,
       chapterNumber: 50,
@@ -1356,7 +1356,7 @@ describe('generateNextPersonalizedChapter', () => {
     const { deps } = makeDeps({ chapterNumber: 12 })
     const controller = new AbortController()
     let rejectPublish: ((reason: unknown) => void) | undefined
-    mocks.publishGenerationJobChapterV4.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+    mocks.publishGenerationJobChapterV6.mockImplementationOnce(() => new Promise((_resolve, reject) => {
       rejectPublish = reject
     }))
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -1381,7 +1381,7 @@ describe('generateNextPersonalizedChapter', () => {
   it('classifies untyped V4 errors as TRANSIENT without logging secret sentinel', async () => {
     const { deps } = makeDeps({ chapterNumber: 12 })
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    mocks.publishGenerationJobChapterV4.mockRejectedValueOnce(new Error('network secret sentinel'))
+    mocks.publishGenerationJobChapterV6.mockRejectedValueOnce(new Error('network secret sentinel'))
     const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
 
     const result = await generateNextPersonalizedChapter({
@@ -1404,7 +1404,7 @@ describe('generateNextPersonalizedChapter', () => {
       debtsStatus: 'closed',
     })
     const { GenerationJobError } = await import('@/lib/runtime/generation-jobs')
-    mocks.publishGenerationJobChapterV4.mockRejectedValueOnce(
+    mocks.publishGenerationJobChapterV6.mockRejectedValueOnce(
       new GenerationJobError('CHAPTER_EXISTS'),
     )
     const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
@@ -1558,7 +1558,7 @@ describe('generateNextPersonalizedChapter', () => {
       lockedEndingKey: null,
       debtsStatus: 'progressing',
     })
-    mocks.publishGenerationJobChapterV4.mockResolvedValueOnce({
+    mocks.publishGenerationJobChapterV6.mockResolvedValueOnce({
       ok: true,
       jobId: '00000000-0000-4000-8000-000000000001',
       chapterNumber: 45,
@@ -1588,7 +1588,7 @@ describe('generateNextPersonalizedChapter', () => {
     expect(result.ok).toBe(true)
     expect(deps.resolveEnding).toHaveBeenCalledTimes(1)
     expect(deps.persistEndingLock).not.toHaveBeenCalled()
-    expect(mocks.publishGenerationJobChapterV4).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mocks.publishGenerationJobChapterV6).toHaveBeenCalledWith(expect.objectContaining({
       jobId: '00000000-0000-4000-8000-000000000001',
       workerId: 'worker-x',
       claimToken: '00000000-0000-4000-8000-000000000002',
@@ -1602,7 +1602,7 @@ describe('generateNextPersonalizedChapter', () => {
 
   it('worker non-45 chapter always publishes V3 with null ending lock', async () => {
     const { deps } = makeDeps({ chapterNumber: 12 })
-    mocks.publishGenerationJobChapterV4.mockResolvedValueOnce({
+    mocks.publishGenerationJobChapterV6.mockResolvedValueOnce({
       ok: true,
       jobId: '00000000-0000-4000-8000-000000000001',
       chapterNumber: 12,
@@ -1629,7 +1629,7 @@ describe('generateNextPersonalizedChapter', () => {
       },
     }, deps)
 
-    expect(mocks.publishGenerationJobChapterV4).toHaveBeenCalledWith(
+    expect(mocks.publishGenerationJobChapterV6).toHaveBeenCalledWith(
       expect.objectContaining({ chapterNumber: 12, endingLock: null }),
     )
     expect(deps.persistEndingLock).not.toHaveBeenCalled()
@@ -2109,7 +2109,7 @@ describe('generateNextPersonalizedChapter', () => {
     expect(deps.markCheckpointStatus).not.toHaveBeenCalled()
     expect(deps.generateChoiceBranch).not.toHaveBeenCalled()
     expect(deps.publishChapterV2).not.toHaveBeenCalled()
-    expect(mocks.publishGenerationJobChapterV4).not.toHaveBeenCalled()
+    expect(mocks.publishGenerationJobChapterV6).not.toHaveBeenCalled()
   })
 
   it('ch45 abort skips checkpoint, ending-lock write, choices, and publish', async () => {
@@ -2161,7 +2161,7 @@ describe('generateNextPersonalizedChapter', () => {
     expect(deps.generateChoiceBranch).not.toHaveBeenCalled()
     expect(deps.persistEndingLock).not.toHaveBeenCalled()
     expect(deps.publishChapterV2).not.toHaveBeenCalled()
-    expect(mocks.publishGenerationJobChapterV4).not.toHaveBeenCalled()
+    expect(mocks.publishGenerationJobChapterV6).not.toHaveBeenCalled()
     expect(capture.calls).not.toContain('persistEndingLock')
     expect(capture.calls).not.toContain('publishV2')
   })
@@ -2169,7 +2169,7 @@ describe('generateNextPersonalizedChapter', () => {
   it('passes the exact worker signal into personalized prose execution', async () => {
     const { deps } = makeDeps({ chapterNumber: 12 })
     const controller = new AbortController()
-    mocks.publishGenerationJobChapterV4.mockResolvedValueOnce({
+    mocks.publishGenerationJobChapterV6.mockResolvedValueOnce({
       jobId: '00000000-0000-4000-8000-000000000001',
       chapterNumber: 12,
       seq: 9,

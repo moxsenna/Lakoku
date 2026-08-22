@@ -14,7 +14,7 @@ import {
   acquireGenerationJobLease,
   claimGenerationJob,
   claimGenerationJobById,
-  finishGenerationJobAttempt,
+  finishAttemptAndFinalizeIfTerminal,
   heartbeatGenerationJob,
   type ClaimedGenerationJob,
 } from '@/lib/runtime/generation-jobs'
@@ -218,7 +218,7 @@ export async function executeClaimedJob(
       })
 
       if (authDecision.status !== 'AUTHORIZED') {
-        const finish = await finishGenerationJobAttempt({
+        const finish = await finishAttemptAndFinalizeIfTerminal({
           jobId: job.id,
           workerId: job.workerId,
           claimToken: job.claimToken,
@@ -248,7 +248,7 @@ export async function executeClaimedJob(
       jobContext = claimedJobToPartialContext(job, leaseId, controller.signal)
     } catch (err) {
       if (err instanceof Error && err.name === 'GenerationDeadlineError') {
-        const finish = await finishGenerationJobAttempt({
+        const finish = await finishAttemptAndFinalizeIfTerminal({
           jobId: job.id,
           workerId: job.workerId,
           claimToken: job.claimToken,
@@ -356,7 +356,7 @@ export async function executeClaimedJob(
     })
     if (normalized.retryable && retryFitsDeadline) {
       const availableAt = new Date(availableAtMs).toISOString()
-      const finish = await finishGenerationJobAttempt({
+      const finish = await finishAttemptAndFinalizeIfTerminal({
         jobId: job.id,
         workerId: job.workerId,
         claimToken: job.claimToken,
@@ -374,9 +374,25 @@ export async function executeClaimedJob(
         leaseRemainingMs: null,
         retryDecision: 'RETRY_BACKOFF',
       })
+      
       if (!finish.ok) {
         return { ok: false, outcome: 'OWNERSHIP_LOST', jobId: job.id, reason: finish.reason }
       }
+      
+      // CRITICAL: Worker requested RETRY_WAIT, but RPC may return FAILED if:
+      // - attempt_count reached max_attempts
+      // - retry window/deadline exhausted
+      // Use ACTUAL finish.status, not requested outcome
+      if (finish.status === 'FAILED' || finish.status === 'CANCELLED') {
+        console.log('GENERATION_WORKER_FORCED_FAILED', {
+          jobId: job.id,
+          reason: 'MAX_ATTEMPTS_EXHAUSTED',
+          status: finish.status,
+        })
+        return { ok: false, outcome: 'FAILED', jobId: job.id, reason: 'MAX_ATTEMPTS_EXHAUSTED' }
+      }
+      
+      // Actual RETRY_WAIT - reservation stays ACTIVE, no finalization
       console.log('GENERATION_WORKER_RETRY_WAIT', {
         jobId: job.id,
         reason: normalized.reason,
@@ -391,7 +407,7 @@ export async function executeClaimedJob(
       }
     }
 
-    const finish = await finishGenerationJobAttempt({
+    const finish = await finishAttemptAndFinalizeIfTerminal({
       jobId: job.id,
       workerId: job.workerId,
       claimToken: job.claimToken,
@@ -412,6 +428,7 @@ export async function executeClaimedJob(
     if (!finish.ok) {
       return { ok: false, outcome: 'OWNERSHIP_LOST', jobId: job.id, reason: finish.reason }
     }
+    
     console.log('GENERATION_WORKER_FAILED', {
       jobId: job.id,
       reason: normalized.reason,

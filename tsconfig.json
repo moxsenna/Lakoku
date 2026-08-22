@@ -41,6 +41,9 @@
       "@lakoku/runtime": [
         "./lib/runtime/index.ts"
       ],
+      "@lakoku/runtime/server": [
+        "./lib/runtime/server.ts"
+      ],
       "@lakoku/db": [
         "./lib/supabase/index.ts"
       ],

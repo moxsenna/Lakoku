@@ -32,6 +32,10 @@ export default defineConfig({
         replacement: fileURLToPath(new URL('./lib/runtime/index.ts', import.meta.url)),
       },
       {
+        find: /^@lakoku\/runtime\/server$/,
+        replacement: fileURLToPath(new URL('./lib/runtime/server.ts', import.meta.url)),
+      },
+      {
         find: /^@lakoku\/db$/,
         replacement: fileURLToPath(new URL('./lib/supabase/index.ts', import.meta.url)),
       },
@@ -40,5 +44,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['lib/**/*.test.ts', 'tests/**/*.test.ts'],
+    pool: 'forks',
+    isolate: true, // Test isolation - each test file runs in separate VM context
   },
 })

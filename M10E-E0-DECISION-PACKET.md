@@ -155,12 +155,10 @@ Current budget gate evaluation returns `BLOCKED_E0_COST_CEILING_NOT_APPROVED` pe
 
 Approval mechanism:
 1. Product manager selects ONE ceiling option above (**Recommending: Loose $200**)
-2. Finance approves corresponding spend authorization
-3. Engineer submits resolution via `admin_review_resolutions` RPC
-4. Database function `resolve_blueprint_review_v1` records approval with hash binding
-5. Budget gate transitions to `APPROVED_EVALUATED`, permits RELEASE_EVIDENCE profile
+2. Finance approves corresponding spend authorization via separate business governance ledger entry
+3. Business decision recorded independently through product/finance approval channel (NOT E5 blueprint resolution workflow)
 
-Until this cycle completes, M10-E stays OPEN and M10-F production pilot remains FORBIDDEN.
+**Critical Domain Boundary:** E0 budget authority resolves separately as product/finance decision. E5 implementation remains ignorant of monetary values—only implements nine E-OPS-1 acceptance criteria for failure review queue processing without any awareness of cost numbers or budget ceilings. No assertion that E0 blocks M10-E/F unless exact authority proves it. Status remains: M10-E OPEN pending counted pair closure; E0 business decision runs in parallel; production FORBIDDEN until all conditions satisfied.
 
 ---
 
@@ -177,9 +175,10 @@ Until this cycle completes, M10-E stays OPEN and M10-F production pilot remains 
 **Timeline for Approval Cycle:**
 - Day 0: Submission of this decision packet
 - Day 1–2: Product/Finance review meeting
-- Day 3: BUSINESS_AUTHORITY signature obtained
-- Day 4: Engineer invokes `resolve_blueprint_review_v1` with approval hash
-- Day 5+: M10-E budget gate GREEN, M10-F pilot authorized
+- Day 3: BUSINESS_AUTHORITY signature obtained via separate governance ledger (parallel to E5 implementation)
+- Day 4+: Business decision recorded; M10-F pilot authorization proceeds if all conditions met
+
+**Note:** E0 approval does NOT block E5 implementation or F pilot execution—only represents operational expense consideration. E5 blueprint workflow can proceed with nine acceptance criteria independently.
 
 ---
 

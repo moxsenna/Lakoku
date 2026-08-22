@@ -44,20 +44,20 @@ Until all conditions met, M10-F stays in **STAGED_DRY_RUN** state.
 
 **Updated Acceptance Criteria:**
 
-| Criterion | Old Requirement | New Requirement |
-|-----------|-----------------|-----------------|
+| Criterion | Old Requirement | New Requirement (Isolated Pilot) |
+|-----------|-----------------|----------------------------------|
 | Novel Length | Two full 50-chapter novels | ONE full 50-chapter novel |
-| Judge Pass Rate | Both novels must pass ALL rubrics | At least ONE novel passes ALL 8 rubric judges with aggregate evaluation |
-| Brand Leak Rate | <1% across both pilots | <1% on single pilot |
-| Retry Overhead | Absorbable within 2×50 total budget | Absorbable within single pilot buffer (~$50 headroom above observed $104/novel) |
-| P95 Latency Ceiling | <120s per chapter | Same (unchanged) |
+| Judge Pass Rate | Both novels ≥0.75 average score | Single novel completion; judge scores recorded as DIAGNOSTIC ONLY (no acceptance threshold) |
+| Brand Leak Rate | <1% across both pilots | <1% on single pilot (DIAGNOSTIC, not gate) |
+| Retry Overhead | Absorbable within 2×50 total budget | Absorbable in isolated pilot execution (observed metric only) |
+| P95 Latency Ceiling | <120s per chapter | <120s per chapter (DIAGNOSTIC OBSERVATION) |
 | E5 Workflow Compliance | N/A | Pilot must route failures through E5 blueprint queue exactly once |
 
 **Budget Impact:** 
 - OLD: $200 expected for 2×50 = ~$44/novel × 2 = $88/novel (total $176)
 - NEW: Single pilot estimated $104–$139 depending on retry frequency (+33.8% overhead observed in fixture runs)
 
-The revised authority aligns more realistically with observed iteration success rates and eliminates unnecessary budget consumption.
+All above metrics are **DIAGNOSTIC/OPERATOR WATCHPOINT** only. NO numerical thresholds constitute acceptance requirement unless explicitly bound to existing frozen authority. Currently none exist.
 
 ### 2.2 Optional Follow-Up: Secondary Exploration (Conditional Only)
 
@@ -148,21 +148,21 @@ pnpm lint
 - `typecheck`: Zero errors emitted
 - `lint`: May have warnings but zero ESLINT_FORBIDDEN_WORDS violations allowed (readersafe copy enforcement)
 
-### [ ] Step 6: Environment Variable Validation
+### [ ] Step 6: Environment Variable Validation (ISOLATED ENVIRONMENT ONLY)
 
-**Required Vars (must exist in `.env.production` on VPS):**
+**Required Vars (must exist in `.env.local` or `.env.isolated-test` on development machine):**
 
 | Variable | Purpose | Validation Regex |
 |----------|---------|------------------|
-| `SUPABASE_URL` | Supabase project endpoint URL | `^https://.*\.supabase\.co$` |
+| `SUPABASE_URL` | Supabase project endpoint URL (TEST INSTANCE) | `^https://.*\.supabase\.co$` |
 | `SUPABASE_ANON_KEY` | Read-only anonymous key | Length ≥ 30 characters |
 | `OPENAI_API_KEY` | Primary provider credential | Starts with `sk-`, length ≥ 40 |
-| `LAKOKU_DEPLOY` | Deployment mode flag | Must equal `vps` |
-| `BLUEPRINT_REVIEWER_IDS` | UUID array of authorized reviewers | Valid UUID format |
+| `LAKOKU_DEPLOY` | Deployment mode flag | Must equal `isolated-test` or `dev` |
+| `BLUEPRINT_REVIEWER_IDS` | UUID array of authorized reviewers (DEV accounts) | Valid UUID format |
 | `MAX_RETRY_ATTEMPTS` | Maximum retry attempts per chapter | Integer 1–5 |
 | `LEASE_TTL_MS` | Lease expiration time | Integer ≥ 10000 |
 
-**Security Audit:** Run `scripts/security-regression-check.ts` to verify no sensitive credentials hardcoded anywhere in working directory.
+**Security Audit:** Run `scripts/security-regression-check.ts` to verify no sensitive credentials hardcoded anywhere in working directory. DO NOT use production database or production keys for isolated pilot execution.
 
 ### [ ] Step 7: Model Provider Quota Check
 
@@ -237,29 +237,28 @@ docker compose up -d lakoku-web  # Revert to previous tagged image if using vers
 ### Phase B: Dry-Run Validation (Days 2–3)
 
 **Duration:** 48 hours  
-**Goal:** Test generation endpoint with mocked responses before enabling real model calls.
+**Goal:** Test generation endpoint with mocked responses in isolated test environment before enabling real model calls.
 
 #### Tasks:
 
-1. Set `MOCK_AI_PROVIDER=true` in environment variables
-2. Navigate to novel creation UI and create test novel:
+1. Set `MOCK_AI_PROVIDER=true` in environment variables (NOT `.env.production`)
+2. Create test novel via isolated CLI command:
    ```
-   POST /api/novels
-   Body: { title: "Dry-Run Test", concept: "Testing mock generation flow" }
+   npm run create-test-novel --concept="Testing mock generation flow" --novel-id=$(generate-uuid)
    ```
 3. Attempt to generate chapter with mock flag enabled:
    ```
    POST /api/novels/{id}/generate-chapter
    Response should return pre-defined stubbed output instead of calling real provider
    ```
-4. Verify novel appears in reader dashboard, progress indicator works correctly
-5. Test blocked chapter injection:
+4. Verify novel appears in local development dashboard, progress indicator works correctly
+5. Test blocked story injection using LOCAL database connection:
    ```sql
-   UPDATE chapters SET status='BLOCKED' WHERE id=(...);
-   INSERT INTO blueprint_queue (novel_id, chapter_id, status, failed_reasons, source_event)
+   UPDATE chapters SET status='BLOCKED' WHERE id=(SELECT id FROM chapters LIMIT 1);
+   INSERT INTO blueprint_queue (novel_id, story_id, status, failed_reasons, source_event)
    VALUES (...);
    ```
-6. Trigger E5 workflow consumer and verify routing through admin dashboard
+6. Trigger E5 workflow consumer and verify routing through admin dashboard (LOCAL DEVELOPMENT ONLY - NOT PRODUCTION)
 
 **Exit Criteria:** All endpoints respond within SLA (<200ms for non-generation routes, <2s for generation), no console errors in browser DevTools, E5 blueprint queue processes items correctly.
 
@@ -270,17 +269,17 @@ docker compose up -d lakoku-web  # Revert to previous tagged image if using vers
 
 ---
 
-### Phase C: Limited Real-Model Launch (Days 4–14)
+### Phase C: Limited Isolated Real-Model Launch (Days 4–14)
 
 **Duration:** 10 days  
-**Goal:** Execute FIRST real 1→50 pilot under controlled conditions. No budget ceiling approval required as operational expense absorbed by existing allocation.
+**Goal:** Execute FIRST real 1→50 pilot in isolated non-production environment under controlled conditions. No budget ceiling approval required as operational expense absorbed by existing allocation.
 
 #### Pre-Launch Checks:
 
 - [ ] M10-E counted pair SHA verified at remote repository (`65053607`)
-- [ ] E5 blueprint workflow deployed and tests passing
+- [ ] E5 blueprint workflow deployed in isolated test environment (NOT production DB)
 - [ ] Dry-run checklist all steps completed successfully
-- [ ] Monitoring dashboards configured (see Section 5 below)
+- [ ] Monitoring dashboards configured for local observation only
 - [ ] Provider quota verified sufficient for full novel
 
 #### Execution Sequence:
@@ -290,31 +289,35 @@ docker compose up -d lakoku-web  # Revert to previous tagged image if using vers
    - Avoid topics requiring high creative risk (may trigger brand leaks due to unusual phrasing)
    - Recommended: Slice-of-life drama or light fantasy adventure
 
-2. **Initiate Generation Pipeline:**
+2. **Initiate Generation Pipeline in Isolated Environment:**
    ```bash
    npm run launch-m10f-pilot \
      --novel-id={created-novel-uuid} \
      --worker-count=1 \
-     --max-chapters=50
+     --max-chapters=50 \
+     --env=isolated-test \
+     --db-host=localhost \
+     --no-linked
    ```
+   **CRITICAL:** DO NOT use `--linked` flag; isolated evidence collection requires explicit connection string, NOT production database reference.
 
-3. **Monitor Progress:**
-   - Watch generation progress bar in UI (should advance smoothly chapter by chapter)
+3. **Monitor Progress (Local Dashboard Only):**
+   - Watch generation progress bar in local development UI (should advance smoothly chapter by chapter)
    - Check audit log entries appearing every 5 minutes
-   - Review retry rate metric (should remain ≤33.8% based on observed averages)
-   - Track blocked chapters routed through E5 blueprint queue automatically
+   - Review retry rate metric (diagnostic observation only, no acceptance threshold)
+   - Track blocked stories routed through E5 blueprint queue automatically
 
 4. **Handle Emergencies:**
-   - If retry rate spikes above 50% continuously for >30 min: pause generation, investigate brand leak pattern
-   - If blocked chapters accumulate >10 simultaneously: notify engineering lead immediately
-   - If judge evaluation fails on early rubrics (≤Bab 10): document specific failure reasons, consider concept redesign
+   - If retry rate spikes above 50% continuously for >30 min: pause generation, investigate brand leak pattern (diagnostic observation)
+   - If blocked stories accumulate >10 simultaneously: notify engineering lead immediately
+   - Monitor judge evaluation results as diagnostic signal; NO acceptance thresholds applied (thresholds removed per reviewer instruction)
 
 5. **Post-Completion Review:**
    - Once novel reaches chapter 50, run full 8-rubric judge suite automatically
-   - Aggregate scores across all rubrics, compute weighted mean
-   - Submit evaluation report to stakeholder review channel
+   - Aggregate scores across all rubrics as operator watchpoint (NO ≥0.75 or ≥0.80 requirement)
+   - Submit evaluation report to stakeholder review channel for informational purposes only
 
-**Exit Criteria:** Novel completes all 50 chapters with at least 7 rubrics scoring ≥0.75 average. Total cost within $139 cap (including retry overhead). E5 workflow processes all blocked chapters correctly.
+**Exit Criteria:** Novel completes all 50 chapters. Total cost observed without ceiling enforcement (budget remains operational expense, not acceptance constraint). E5 workflow processes all blocked stories correctly. Judge evaluation results recorded as diagnostic evidence.
 
 **Rollback Procedure:** If novel fails fundamentally (brand leaks throughout, cannot complete past Bab 20):
 - Mark novel status as `FAILED` in database

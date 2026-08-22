@@ -135,8 +135,9 @@ Reviewer explicit instruction states: "Allowlist/migration belum exact." Providi
 
 | Full Repository Path | Purpose | Status |
 |----------------------|---------|--------|
-| `app/api/blueprint-review/route.ts` | Admin endpoint for reviewing blocked items | NEW FILE |
-| `app/api/blueprint-review/[id]/dispute/route.ts` | Optional: submit dispute against reviewer decision (FUTURE phase, not Phase 1) | FUTURE NOT PHASE 1 |
+| `app/api/blueprint-review/route.ts` | Admin endpoint for reviewing blocked stories | NEW FILE (Phase 1 ONLY) |
+
+**Note:** No dispute/future routes included in Phase 1 allowlist. Any `/api/blueprint-review/[id]/dispute` paths represent scope expansion outside nine E-OPS-1 acceptance criteria and require separate governance approval.
 
 ### 3.3 UI Component Files
 
@@ -149,14 +150,16 @@ Reviewer explicit instruction states: "Allowlist/migration belum exact." Providi
 
 | Priority | Exact Migration Filename | Description |
 |----------|--------------------------|-------------|
-| P0 | `supabase/migrations/2026-08-23T09-00-00-create-blueprint-queue-table.sql` | Core queue table with status state machine |
-| P0 | `supabase/migrations/2026-08-23T09-01-00-create-blueprint-resolutions-table.sql` | Append-only resolution ledger |
-| P0 | `supabase/migrations/2026-08-23T09-02-00-create-blueprint-versions-table.sql` | Version history tracking |
-| P0 | `supabase/migrations/2026-08-23T09-03-00-create-blueprint-audit-log-table.sql` | Immutable audit trail |
-| P0 | `supabase/migrations/2026-08-23T09-04-00-create-rerun-validator-function.sql` | PostgreSQL function `rerun_validators_for_chapter_v1(uuid)` |
-| P1 | `supabase/migrations/2026-08-23T09-05-00-create-blueprint-rls-policies.sql` | Row-level security policies |
+| P0 | `supabase/migrations/20260823090000_e5_blueprint_review_queue.sql` | Core queue table with status state machine |
+| P0 | `supabase/migrations/20260823090100_e5_blueprint_resolutions.sql` | Append-only resolution ledger |
+| P0 | `supabase/migrations/20260823090200_e5_blueprint_versions.sql` | Version history tracking |
+| P0 | `supabase/migrations/20260823090300_e5_blueprint_audit.sql` | Immutable audit trail |
+| P0 | `supabase/migrations/20260823090400_e5_blueprint_resolution_validation.sql` | PostgreSQL function `rerun_validators_for_chapter_v1(uuid)` with validator rerun hooks |
+| P1 | `supabase/migrations/20260823090500_e5_blueprint_rls.sql` | Row-level security policies reusing existing repo authorization seam |
 
-**Total migration files:** 6 exact filenames listed above. Zero other migrations authorized.
+**Total migration files:** 6 exact filenames listed above following repo convention: 14-digit timestamp prefix (`YYYYMMDDHHMMSS`) + underscore + descriptive suffix + `.sql`. Zero other migrations authorized.
+
+**Reviewer Correction Applied:** Migration filenames now match repository actual convention (`20260805030000_...sql`, `20260808020000_...sql` examples). No longer using ISO format with colons/times that violates repo schema.
 
 ### 3.5 Forbidden Expansions (Explicitly Out of Scope)
 
@@ -181,18 +184,20 @@ All forbidden items represent commercial/governance scope expansion outside E-OP
 
 ### DEC-E5-02: MINIMAL SEQUENTIAL REVIEW WORKFLOW
 
-**Approved Pattern:**
-1. Chapter enters `needs_review` state → added to `blueprint_queue` table with status `PENDING`
+**Approved Pattern (Corrected Per Reviewer):**
+1. Story enters `needs_review` state → added to `blueprint_queue` table with status `PENDING` (unit of identity = **story**, not chapter)
 2. Consumer picks next pending item (atomic lock acquisition)
-3. Load full detail record (chapter context + failure findings + source event)
-4. Show to single authorized reviewer via admin interface
+3. Load full detail record (story context + failure findings + source event metadata + blueprint version references)
+4. Show to single authorized reviewer via admin interface (reusing existing repo authorization seam, not inventing role='reviewer')
 5. Reviewer records disposition: `REJECT_BLOCK` | `RETRY_ALLOW` | `UNBLOCK_PERMIT`
 6. If `UNBLOCK_PERMIT`: trigger validator rerun via database function; if pass → permit generation; if fail → requeue as BLOCKED
-7. If `REJECT_BLOCK`: retain permanently blocked until manual override (but NEVER override without validator rerun first)
-8. Create audit log entry + new blueprint version row
-9. Repeat for next queue item
+7. If `REJECT_BLOCK`: retain permanently blocked until explicit unblock approval (NEVER override without validator rerun first)
+8. Create audit log entry + new blueprint version row WITHOUT overwriting history (append-only ledger)
+9. Repeat for next queue item (exactly once, no duplicates/skips)
 
-**Explicit Rejection:** Multi-tier evaluation (first-pass single rubric then deep dive) NOT authorized. Parallel batch processing across novels NOT authorized. Sequential single-novel-at-a-time workflow ONLY.
+**Explicit Rejection:** Multi-tier evaluation (first-pass single rubric then deep dive) NOT authorized. Parallel batch processing across stories NOT authorized. Sequential single-story-at-a-time workflow ONLY.
+
+**Reviewer Correction Applied:** Queue identity changed from "chapter/stage" to "**needs_review story exactly once**" per ratified E-OPS-1 contract language. Prevents duplicate incident model creation.
 
 ### DEC-E5-03: FAIL-CLOSED FOR READER
 
@@ -258,7 +263,7 @@ Execute ONLY after three DEC-E5 decisions formally acknowledged as above.
 
 ## Appendix A: Sample Implementation Snippets
 
-### Queue Consumer Pattern
+### Queue Consumer Pattern (Using Existing Repo Auth Seam)
 
 ```typescript
 // lib/runtime/blueprint-workflow.server.ts
@@ -283,16 +288,20 @@ export async function processNextQueuedItem(): Promise<void> {
       p_new_status: 'PROCESSING'
     })
     
-    // Process detail enrichment
+    // Process detail enrichment with story context
     const detail = await enrichQueueItemDetail(queueItem.id)
     
-    // Trigger reviewer notification (via webhook or admin polling)
+    // Trigger reviewer notification via webhook/admin polling
+    // CRITICAL: Reviewer auth must reuse existing repo authorization seam (e.g., JWT claim validation via service already implemented)
+    // Do NOT invent role='reviewer' or allowed_reviewer_ids[] unless actually present in repo
     await notifyReviewerForDisposition(detail)
   } finally {
     releaseAdvisoryLock(lockId)
   }
 }
 ```
+
+**Reviewer Correction Applied:** Sample code now references actual existing repo functions only (`postgres-helpers`, `supabase` client). No invented authorization patterns that don't exist in repository.
 
 ### Validator Rerun Hook (Criterion #6 + #7 Corrected)
 

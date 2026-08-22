@@ -1,0 +1,15 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90mD:/Coding/lakoku v2/.worktrees/m10-e-e1-fault-harness[39m
+
+ [32m✓[39m tests/narrative-qa/m10-e-e3a-e4-counted-comparison.test.ts[2m > [22mM10-E E3A/E4 counted comparison[2m > [22maccepts two identical completed executions with byte-equal normalized/model/report evidence[33m 173891[2mms[22m[39m
+ [32m✓[39m tests/narrative-qa/m10-e-e3a-e4-counted-comparison.test.ts[2m > [22mM10-E E3A/E4 counted comparison[2m > [22mreports an incomplete artifact set instead of failing on a missing file[33m 61412[2mms[22m[39m
+ [32m✓[39m tests/narrative-qa/m10-e-e3a-e4-counted-comparison.test.ts[2m > [22mM10-E E3A/E4 counted comparison[2m > [22mrejects a semantic tamper and a report tamper as artifact-pair-invalid, and a re-sealed report change at every deterministic layer[33m 59816[2mms[22m[39m
+ [32m✓[39m tests/narrative-qa/m10-e-e3a-e4-counted-comparison.test.ts[2m > [22mM10-E E3A/E4 counted comparison[2m > [22maccepts raw differences limited to the declared operational paths[33m 67525[2mms[22m[39m
+ [32m✓[39m tests/narrative-qa/m10-e-e3a-e4-counted-comparison.test.ts[2m > [22mM10-E E3A/E4 counted comparison[2m > [22mrejects a forbidden RELEASE_EVIDENCE artifact anywhere under the execution directories[33m 158381[2mms[22m[39m
+ [32m✓[39m tests/narrative-qa/m10-e-e3a-e4-counted-comparison.test.ts[2m > [22mM10-E E3A/E4 counted comparison[2m > [22mrejects a third comparator directory and missing directories at the CLI boundary[32m 6[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m6 passed[39m[22m[90m (6)[39m
+[2m   Start at [22m 12:28:31
+[2m   Duration [22m 523.33s[2m (transform 734ms, setup 0ms, import 1.18s, tests 521.04s, environment 0ms)[22m
+

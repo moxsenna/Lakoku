@@ -1,9 +1,11 @@
 # M10-F Pilot Preflight Package
 
 **Document Type:** Single Isolated Non-Production Engineering Pilot Specification  
-**Status:** Awaiting M10-E Counted Pair Closure + E5 Implementation Completion  
+**Status:** E3A/E4 CLOSED; M10-E/E5 closure still prerequisite  
 **Date:** 2026-08-23  
 **Authority Constraint:** NO real model calls permitted until M10-E milestone CLOSED and E5 workflow implemented  
+**Predecessor Evidence SHA:** `65053607ac7d1574e531bd49370b0a6c6d5565ba` (E3A/E4)  
+**Execution SHA:** Future exact M10-E/E5 closure HEAD (after E5 implementation)  
 
 ---
 
@@ -61,16 +63,16 @@ All above metrics are **DIAGNOSTIC/OPERATOR WATCHPOINT** only. NO numerical thre
 
 Execute these steps sequentially BEFORE enabling any real AI provider calls. Each step must return green checkmark or abort sequence immediately.
 
-### [ ] Step 1: M10-E Counted Pair Verification
+### [ ] Step 1: Predecessor Evidence Verification
 
 **Command:**
 ```bash
 git ls-remote origin refs/heads/m10-e-e1-fault-harness
 ```
 
-**Expected Output:** `65053607ac7d1574e531bd49370b0a6c6d5565ba` exact match (predecessor E3A/E4 closure SHA)
+**Expected Output:** `65053607ac7d1574e531bd49370b0a6c6d5565ba` (predecessor E3A/E4 closure SHA)
 
-**Validation:** Confirm local HEAD also resolves to same SHA via `git rev-parse HEAD`. If mismatch, abort immediately—do not proceed without exact counted SHA boundary.
+**Validation:** This SHA represents **predecessor evidence authority**. Execution SHA will be future exact M10-E/E5 closure SHA after E5 implementation completes—never require local HEAD == `65053607`. Abort if remote repository inaccessible or branch missing.
 
 ### [ ] Step 2: Isolated Test Environment Setup
 
@@ -257,15 +259,16 @@ docker compose -f docker-compose.test.yml up -d lakoku-web  # Revert to previous
 ### Phase C: Limited Isolated Real-Model Launch (Days 4–14)
 
 **Duration:** 10 days  
-**Goal:** Execute FIRST real 1→50 pilot in isolated non-production environment under controlled conditions. No budget ceiling approval required as operational expense absorbed by existing allocation.
+**Goal:** Execute FIRST real 1→50 pilot in isolated non-production environment under controlled conditions. No budget-related statements made here; dependency on E0 business authority determined by separate governance record if it exists.
 
 #### Pre-Launch Checks:
 
-- [ ] M10-E counted pair SHA verified at remote repository (`65053607`)
+- [ ] **Predecessor evidence SHA** verified at remote repository (`65053607` - E3A/E4 closure)
+- [ ] **Execution SHA** = future exact M10-E/E5 closure HEAD (after E5 implementation completes)
 - [ ] E5 blueprint workflow deployed in isolated test environment (NOT production DB)
 - [ ] Dry-run checklist all steps completed successfully
 - [ ] Monitoring dashboards configured for local observation only
-- [ ] Provider quota verified sufficient for full novel
+- [ ] Provider quota verified sufficient for full novel (DIAGNOSTIC: 5M input + 2M output tokens)
 
 #### Execution Sequence:
 
@@ -302,7 +305,7 @@ docker compose -f docker-compose.test.yml up -d lakoku-web  # Revert to previous
    - Aggregate scores across all rubrics as operator watchpoint (NO ≥0.75 or ≥0.80 requirement)
    - Submit evaluation report to stakeholder review channel for informational purposes only
 
-**Exit Criteria:** Novel completes all 50 chapters. Total cost observed without ceiling enforcement (budget remains operational expense, not acceptance constraint). E5 workflow processes all blocked stories correctly. Judge evaluation results recorded as diagnostic evidence.
+**Exit Criteria:** Novel completes all 50 chapters (DIAGNOSTIC OBSERVATION). E5 workflow processes all blocked stories correctly (acceptance gate). Judge evaluation results recorded as diagnostic evidence (OPERATOR GUIDANCE). Total cost observed for future budget authority decisions (not acceptance constraint per reviewer instruction).
 
 **Rollback Procedure:** If novel fails fundamentally (brand leaks throughout, cannot complete past Bab 20):
 - Mark novel status as `FAILED` in database

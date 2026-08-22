@@ -11,13 +11,13 @@
 
 This document provides **minimal implementation specification** for E5 (Human Blueprint Workflow) aligned to reviewer-ratified **E-OPS-1 acceptance contract**. **DO NOT implement** until reviewer issues verdict `PASS / APPROVED`. All implementation files must match the exact allowlist below without expanding scope to commercial budget-governance endpoints.
 
-**Resolved Decisions (from reviewer ratification):**
+**Resolved Decisions (already ratified by reviewer):**
 
 - **DEC-E5-01:** REMOVED FROM E5 → moves to E0/product-finance authority domain
 - **DEC-E5-02:** MINIMAL SEQUENTIAL REVIEW WORKFLOW → queue every `needs_review` **STORY** exactly once; detail→single resolution→validator rerun→unblock/retain-block
 - **DEC-E5-03:** FAIL-CLOSED FOR READER → internal reviewer may see technical findings; reader never sees technical/model/runtime details
 
-Until these dispositions recorded via governance ledger, E5 stays at **DESIGN_REVIEW** state.
+E5 stays at **READY_FOR_IMPLEMENTATION** pending reviewer verdict `PASS / APPROVED`.
 
 ---
 
@@ -61,7 +61,7 @@ Only **authorized admin user** can record disposition per item. Unauthorized use
 
 ### Criterion #4: Resolution Creates New Blueprint Version (Append-Only)
 
-Disposition generates new blueprint version row without overwriting history. Old version preserved in immutable ledger; new version increments sequence number (`version_n+1`) and stores revised parameters (retry policy adjustment, prompt template patch, validator threshold update).
+Disposition generates new blueprint version row without overwriting history. Old version preserved in immutable ledger; new version increments sequence number (`version_n+1`) and stores revised parameters limited to **blueprint/narrative-plan data** (prompt template patch for narrative text revision). Never modify runtime-policy settings (retry policy, validator threshold) via blueprint resolution—those require separate governance authority.
 
 **Database Pattern:** Append-only `blueprint_versions` table with foreign key back-reference to parent version; never UPDATE rows that already exist.
 
@@ -86,7 +86,7 @@ CREATE TABLE blueprint_audit_log (
 
 Upon UNBLOCK disposition, trigger spine/reveal/ending validators re-run against affected chapters (all chapter numbers in detail record). If validators pass, permit generation continuation; if fail again, return to `needs_review` queue. Idempotent reruns prevent infinite loops.
 
-**Implementation Hook:** Database function `rerun_validators_for_chapter_v1(chapter_id uuid)` returning boolean success flag; invoked by resolver workflow upon UNBLOCK. Must call all three validators (`spineValidator`, `revealValidator`, `endingValidator`).
+**Implementation Hook:** Implementation may use existing server/DB seams discovered during coding (e.g., TypeScript utility functions, database functions, or API endpoints) to call all three validators (`spineValidator`, `revealValidator`, `endingValidator`). Architecture not frozen—acceptance contract requires validator rerun, not specific SQL→TS calling pattern.
 
 ### Criterion #7: Failure Retains Block Until Explicit Unblock ✅ CORRECTED PER REVIEWER
 
@@ -233,13 +233,7 @@ All forbidden items represent commercial/governance scope expansion outside E-OP
 | `tests/e5-blueprint-review.route.test.ts` | Test RBAC using existing `lib/admin/auth.ts::requireAdminUser()`; unauthorized users get 403; authorized reviewers succeed |
 | `tests/e5-reader-safe-copy.test.ts` | Integration test scanning API responses for forbidden terms; verify reader accounts never see technical error messages |
 
-### Integration Tests (Playwright)
-
-| Flow | Steps |
-|------|-------|
-| Reviewer queues processing | 1. Manually inject blocked story into DB queue<br>2. Trigger workflow consumer<br>3. Verify queue item status changes PENDING→RESOLVED |
-| Reviewer disposition flow | 1. Open admin dashboard<br>2. Click blocked item<br>3. Select UNBLOCK_PERMIT + enter reason<br>4. Verify new blueprint_version row created<br>5. Verify audit_log row created |
-| Reader safety verification | 1. Simulate blocked story view from reader account<br>2. Confirm generic message displayed (no technical strings)<br>3. Run automated regex scan on component output for forbidden terms |
+Integration proof satisfied through four exact authorized unit tests above. No additional Playwright/E2E file paths required in allowlist.
 
 ---
 
@@ -279,4 +273,4 @@ Execute ONLY after three DEC-E5 decisions formally acknowledged as above.
 
 ---
 
-*Document compiled at SHA `65053607ac7d1574e531bd49370b0a6c6d5565ba`. DO NOT implement commercial/governance scope. Focus strictly on nine E-OPS-1 acceptance criteria with exact allowlist.*
+*Document compiled referencing predecessor evidence authority = `65053607ac7d1574e531bd49370b0a6c6d5565ba`. Actual implementation authorized by new docs SHA pending reviewer approval.*

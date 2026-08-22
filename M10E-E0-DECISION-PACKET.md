@@ -9,7 +9,7 @@
 
 ## 1. Executive Summary
 
-M10-E milestone requires formal budget authority approval before permitting RELEASE_EVIDENCE profile execution or M10-F real-model pilot activation. This packet provides data-driven analysis of three proposed ceiling options based on **exact authority comparators** extracted from counted artifact at SHA `65053607ac7d1574e531bd49370b0a6c6d5565ba`.
+This packet provides data-driven analysis of three proposed ceiling options based on **exact authority comparators** extracted from counted artifact at SHA `65053607ac7d1574e531bd49370b0a6c6d5565ba`.
 
 Key findings from canonical Monte Carlo modeling:
 
@@ -169,15 +169,13 @@ Until BUSINESS_AUTHORITY exists and `budgetGate` transitions to `APPROVED_EVALUA
 | **Novel conditioning** | Single sequential | Follows E5 minimal acceptance contract DEC-E5-02 |
 | **Retry policy** | Fail-closed internal | Default recommendation aligns with DEC-E5-03 |
 | **p95 enforcement** | Strict rejection threshold | Prevents cascading failures from slow providers |
-| **Stakeholder action required** | Formal Business Authority submission | Select "Loose $200", approve via governance RPC |
+| **Stakeholder action required** | Formal Business Authority submission | Select "Loose $200", approve through separately ratified product/finance BUSINESS_AUTHORITY mechanism |
 
 **Timeline for Approval Cycle:**
 - Day 0: Submission of this decision packet
 - Day 1–2: Product/Finance review meeting
 - Day 3: BUSINESS_AUTHORITY signature obtained via separate governance ledger (parallel to E5 implementation)
-- Day 4+: Business decision recorded; M10-F pilot authorization proceeds if all conditions met
-
-**Note:** E0 approval does NOT block E5 implementation or F pilot execution—only represents operational expense consideration. E5 blueprint workflow can proceed with nine acceptance criteria independently.
+- Day 4+: Business decision recorded; M10-F pilot authorization proceeds if all conditions met (dependency determined by separate governance record)
 
 ---
 

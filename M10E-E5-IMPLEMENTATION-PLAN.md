@@ -1,23 +1,23 @@
 # M10-E E5 Human Blueprint Workflow Implementation Plan
 
 **Document Type:** Minimal Acceptance Contract Specification  
-**Status:** Awaiting Reviewer Resolutions on Three DEC-E5 Dispositions  
+**Status:** Awaiting Reviewer Approval for Implementation  
 **Date:** 2026-08-23  
-**Approval Required:** Engineering Lead (workflow design) + Product Owner (failure triage policy)  
+**Authority Source:** Ratified E-OPS-1 Acceptance Contract (M10-E Governance Ledger)  
 
 ---
 
 ## 1. Executive Summary
 
-This document provides **minimal implementation specification** for E5 (Human Blueprint Workflow) aligned to reviewer-ratified **E-OPS-1 acceptance contract**. DO NOT implement until three decisions resolved:
+This document provides **minimal implementation specification** for E5 (Human Blueprint Workflow) aligned to reviewer-ratified **E-OPS-1 acceptance contract**. **DO NOT implement** until reviewer issues verdict `PASS / APPROVED`. All implementation files must match the exact allowlist below without expanding scope to commercial budget-governance endpoints.
 
-**Resolved Decisions (from reviewer):**
+**Resolved Decisions (from reviewer ratification):**
 
 - **DEC-E5-01:** REMOVED FROM E5 → moves to E0/product-finance authority domain
-- **DEC-E5-02:** MINIMAL SEQUENTIAL REVIEW WORKFLOW → queue every `needs_review` chapter exactly once; detail→single resolution→validator rerun→unblock/retain-block
+- **DEC-E5-02:** MINIMAL SEQUENTIAL REVIEW WORKFLOW → queue every `needs_review` **STORY** exactly once; detail→single resolution→validator rerun→unblock/retain-block
 - **DEC-E5-03:** FAIL-CLOSED FOR READER → internal reviewer may see technical findings; reader never sees technical/model/runtime details
 
-Until these dispositions recorded via governance ledger, E5 stays at **DESIGN_REVIEW** state. All implementation files must match the exact allowlist below without expanding scope to commercial budget-governance endpoints.
+Until these dispositions recorded via governance ledger, E5 stays at **DESIGN_REVIEW** state.
 
 ---
 
@@ -25,21 +25,22 @@ Until these dispositions recorded via governance ledger, E5 stays at **DESIGN_RE
 
 The E5 milestone closes when these nine criteria satisfied as per reviewer ratification. **Criterion #7 corrected per explicit instruction:**
 
-### Criterion #1: Queue Processing Guarantee
+### Criterion #1: Queue Processing Guarantee (Story Unit Identity)
 
-Every chapter/stage transition entering `needs_review` state must be processed by human blueprint workflow **exactly once**. No duplicates, no skips.
+Every `needs_review` **story** must be processed by human blueprint workflow **exactly once**. No duplicates, no skips. Chapter number, act boundary identifier, specific failure findings, source event metadata (provider call ID, retry count, brand scan hash), and blueprint version references remain **detail/context fields only within each queued story item**—never determine queue identity.
 
-**Implementation:** Single-consumer queue consumer pattern using PostgreSQL advisory locks or work queue table with `status='pending'→'processing'→'resolved'` state machine. Atomic transitions prevent re-processing.
+**Implementation Pattern:** Single-consumer queue using PostgreSQL advisory locks or work queue table with `status='pending'→'processing'→'resolved'` state machine. Atomic transitions prevent re-processing. Story-level primary key (`novel_id` + `story_sequence`) determines uniqueness.
 
 ### Criterion #2: Detail Record Enrichment
 
-Each queued item carries full context payload: failed chapter number, act boundary identifier, specific failure findings, source event metadata (provider call ID, retry count, brand scan hash), and blueprint version references.
+Each queued item carries full context payload: failed chapter numbers (may span multiple chapters if act boundary affected), act boundary identifier, specific failure findings, source event metadata (provider call ID, retry count, brand scan hash), and blueprint version references.
 
 **Payload Schema:**
 ```typescript
-interface FailedChapterDetail {
-  chapterId: string;
-  chapterNumber: number; // 1..50
+interface FailedStoryDetail {
+  novelId: string;
+  storySequence: number; // Logical story arc identifier within novel
+  chapterNumbers: number[]; // May include multiple chapters if act boundary affected
   actBoundary: 'ACT_1' | 'ACT_2' | 'ACT_3';
   findings: Array<'BRAND_LEAK'|'CANONICAL_CORRUPTION'|'LEASE_TIMEOUT'|'PARSE_FAILURE'>;
   sourceEvent: {
@@ -52,13 +53,13 @@ interface FailedChapterDetail {
 }
 ```
 
-### Criterion #3: Single Resolution Authority
+### Criterion #3: Single Resolution Authority (Using Existing Auth Seam)
 
-Only **authorized reviewer** can record disposition per item. Unauthorized users receive `NOT_ALLOWED` error. Reviewer identity bound to JWT claim `role='reviewer'` validated server-side before action permitted.
+Only **authorized admin user** can record disposition per item. Unauthorized users receive `NOT_ALLOWED` error. Reviewer identity validated server-side using **existing repo authorization seam**: `lib/admin/auth.ts::requireAdminUser()`, which checks DB-backed `admin_users` table with roles `owner/admin`.
 
-**Security Pattern:** RLS policy enforcing `auth.uid() = allowed_reviewer_ids[]` check on `blueprint_resolutions` table insert.
+**Security Pattern:** RLS policy enforcing `auth.uid() IN (SELECT user_id FROM admin_users WHERE role IN ('owner', 'admin'))` check on `blueprint_resolutions` table insert. **NEVER invent** `role='reviewer'` JWT claim or `allowed_reviewer_ids[]` column unless explicitly present in existing repository schema.
 
-### Criterion #4: Resolution Creates New Blueprint Version
+### Criterion #4: Resolution Creates New Blueprint Version (Append-Only)
 
 Disposition generates new blueprint version row without overwriting history. Old version preserved in immutable ledger; new version increments sequence number (`version_n+1`) and stores revised parameters (retry policy adjustment, prompt template patch, validator threshold update).
 
@@ -66,14 +67,14 @@ Disposition generates new blueprint version row without overwriting history. Old
 
 ### Criterion #5: Audit Trail Completeness
 
-Record reviewer ID, disposition outcome (`REJECT_BLOCK|RETRY_ALLOW|UNBLOCK_PERMIT`), detailed reason text, timestamp (UTC), source event ID reference. Immutable audit entry cannot be modified post-insertion.
+Record reviewer ID (via `requireAdminUser()`), disposition outcome (`REJECT_BLOCK|RETRY_ALLOW|UNBLOCK_PERMIT`), detailed reason text, timestamp (UTC), source event ID reference. Immutable audit entry cannot be modified post-insertion.
 
 **Audit Schema:**
 ```sql
 CREATE TABLE blueprint_audit_log (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   review_item_id UUID REFERENCES blueprint_queue(id) ON DELETE CASCADE,
-  reviewer_id UUID NOT NULL, -- auth.uid() of authorized user
+  reviewer_id UUID NOT NULL, -- auth.uid() of authorized admin user
   disposition TEXT NOT NULL CHECK (disposition IN ('REJECT_BLOCK', 'RETRY_ALLOW', 'UNBLOCK_PERMIT')),
   reason_text TEXT NOT NULL,
   source_event_id UUID NOT NULL,
@@ -83,9 +84,9 @@ CREATE TABLE blueprint_audit_log (
 
 ### Criterion #6: Validator Rerun After Resolution
 
-Upon UNBLOCK disposition, trigger spine/reveal/ending validators re-run against affected chapter + adjacent chapters. If validators pass, permit generation continuation; if fail again, return to `needs_review` queue. Idempotent reruns prevent infinite loops.
+Upon UNBLOCK disposition, trigger spine/reveal/ending validators re-run against affected chapters (all chapter numbers in detail record). If validators pass, permit generation continuation; if fail again, return to `needs_review` queue. Idempotent reruns prevent infinite loops.
 
-**Implementation Hook:** Database function `rerun_validators_for_chapter_v1(chapter_id uuid)` returning boolean success flag; invoked by resolver workflow upon UNBLOCK.
+**Implementation Hook:** Database function `rerun_validators_for_chapter_v1(chapter_id uuid)` returning boolean success flag; invoked by resolver workflow upon UNBLOCK. Must call all three validators (`spineValidator`, `revealValidator`, `endingValidator`).
 
 ### Criterion #7: Failure Retains Block Until Explicit Unblock ✅ CORRECTED PER REVIEWER
 
@@ -115,7 +116,7 @@ UNBLOCK_PERMIT creates signed proof record containing: disposition hash, bluepri
 
 Reader-facing copy strings contain NO technical/model/runtime details ("brand leak", "canonical corruption", "lease timeout", "retry", "token", "AI"). Always generic user-safe messaging ("Review required", "Please try again later"). Technical findings visible only to authorized reviewers via separate admin interface.
 
-**Copy Policy:** Pre-approved string library enforced via ESLint rule disallowing forbidden words in component files under `components/novels/` and API route response messages. Forbidden term list: `brand`, `leak`, `canon`, `corruption`, `lease`, `timeout`, `retry`, `token`, `AI`, `model`, `provider`.
+**Copy Policy:** Pre-approved string library enforced via integration tests scanning API route response bodies for forbidden words: `brand`, `leak`, `canon`, `corruption`, `lease`, `timeout`, `retry`, `token`, `AI`, `model`, `provider`. **NO custom ESLint rule required**; enforcement via test suite sufficient.
 
 ---
 
@@ -135,9 +136,9 @@ Reviewer explicit instruction states: "Allowlist/migration belum exact." Providi
 
 | Full Repository Path | Purpose | Status |
 |----------------------|---------|--------|
-| `app/api/blueprint-review/route.ts` | Admin endpoint for reviewing blocked stories | NEW FILE (Phase 1 ONLY) |
+| `app/api/blueprint-review/route.ts` | Admin endpoint for reviewing blocked stories | NEW FILE |
 
-**Note:** No dispute/future routes included in Phase 1 allowlist. Any `/api/blueprint-review/[id]/dispute` paths represent scope expansion outside nine E-OPS-1 acceptance criteria and require separate governance approval.
+**Note:** No dispute/future routes included. Any `/api/blueprint-review/[id]/dispute` paths represent scope expansion outside nine E-OPS-1 acceptance criteria and require separate governance approval.
 
 ### 3.3 UI Component Files
 
@@ -159,16 +160,26 @@ Reviewer explicit instruction states: "Allowlist/migration belum exact." Providi
 
 **Total migration files:** 6 exact filenames listed above following repo convention: 14-digit timestamp prefix (`YYYYMMDDHHMMSS`) + underscore + descriptive suffix + `.sql`. Zero other migrations authorized.
 
-**Reviewer Correction Applied:** Migration filenames now match repository actual convention (`20260805030000_...sql`, `20260808020000_...sql` examples). No longer using ISO format with colons/times that violates repo schema.
+### 3.5 Test Files (Exact Paths Required)
 
-### 3.5 Forbidden Expansions (Explicitly Out of Scope)
+| File | Coverage Requirement | Status |
+|------|---------------------|--------|
+| `tests/e5-blueprint-workflow.test.ts` | Test all nine acceptance criteria individually: queue deduplication, audit logging, resolver permissions using `requireAdminUser()`, validator rerun hooks | NEW FILE |
+| `tests/e5-validator-rerun.helper.test.ts` | Test idempotency: same rerun called twice produces same result; never modifies original chapter content | NEW FILE |
+| `tests/e5-blueprint-review.route.test.ts` | Test RBAC using existing `lib/admin/auth.ts::requireAdminUser()`; unauthorized users get 403; authorized reviewers succeed | NEW FILE |
+| `tests/e5-reader-safe-copy.test.ts` | Integration test scanning API responses for forbidden terms; verify reader accounts never see technical error messages | NEW FILE |
+
+### 3.6 Forbidden Expansions (Explicitly Out of Scope)
 
 ❌ Do NOT modify `business_authority`, `budget_usage`, `judgment_evaluations` tables  
 ❌ Do NOT add novel lifecycle CRUD endpoints (`/api/novels` POST/DELETE/PATCH)  
 ❌ Do NOT implement judge evaluation RPCs (`/api/novels/:id/evaluate-judges`)  
 ❌ Do NOT create multi-tier architecture or parallel batch runners  
 ❌ Do NOT expose technical model details in reader-facing copy strings  
-❌ Do NOT create ANY migration files beyond the six listed in Section 3.4
+❌ Do NOT create ANY migration files beyond the six listed in Section 3.4  
+❌ Do NOT include `/api/blueprint-review/[id]/dispute` routes in Phase 1 (scope expansion)  
+❌ Do NOT invent authorization patterns like `role='reviewer'` or `allowed_reviewer_ids[]`  
+❌ Do NOT create custom ESLint/config changes unless genuinely required by product team
 
 All forbidden items represent commercial/governance scope expansion outside E-OPS-1 acceptance contract.
 
@@ -188,7 +199,7 @@ All forbidden items represent commercial/governance scope expansion outside E-OP
 1. Story enters `needs_review` state → added to `blueprint_queue` table with status `PENDING` (unit of identity = **story**, not chapter)
 2. Consumer picks next pending item (atomic lock acquisition)
 3. Load full detail record (story context + failure findings + source event metadata + blueprint version references)
-4. Show to single authorized reviewer via admin interface (reusing existing repo authorization seam, not inventing role='reviewer')
+4. Show to single authorized admin reviewer via admin interface (reusing existing repo authorization seam `requireAdminUser()`, not inventing `role='reviewer'`)
 5. Reviewer records disposition: `REJECT_BLOCK` | `RETRY_ALLOW` | `UNBLOCK_PERMIT`
 6. If `UNBLOCK_PERMIT`: trigger validator rerun via database function; if pass → permit generation; if fail → requeue as BLOCKED
 7. If `REJECT_BLOCK`: retain permanently blocked until explicit unblock approval (NEVER override without validator rerun first)
@@ -202,10 +213,10 @@ All forbidden items represent commercial/governance scope expansion outside E-OP
 ### DEC-E5-03: FAIL-CLOSED FOR READER
 
 **Approved Pattern:**
-- Internal reviewer sees technical details (brand leak hash, retry count, provider error codes)
-- Reader interface shows ONLY approved safe strings: "Review in progress...", "Please try again later", "Content under quality check"
+- Internal reviewer sees technical details (brand leak hash, retry count, provider error codes) via admin interface
+- Reader interface shows ONLY approved generic safe strings: "Review in progress...", "Please try again later", "Content under quality check"
 - Never render raw error messages, technical identifiers, or model/provider details
-- ESLint rule enforce forbid-list of terms: `brand`, `leak`, `token`, `AI`, `model`, `provider`, `timeout`, `retry`, `canon`, `corruption`, `lease`
+- Enforcement via integration tests scanning API responses for forbidden terms; **NO custom ESLint rule required**
 
 **Rationale:** Immersive reading experience prioritized over transparency. Technical debugging happens in admin dashboard exclusively.
 
@@ -217,17 +228,18 @@ All forbidden items represent commercial/governance scope expansion outside E-OP
 
 | File | Coverage Requirement |
 |------|---------------------|
-| `lib/runtime/blueprint-workflow.test.ts` | Test all nine acceptance criteria individually: queue deduplication, audit logging, resolver permissions, validator rerun hooks |
-| `lib/utils/validator-rerun.helper.test.ts` | Test idempotency: same rerun called twice produces same result; never modifies original chapter content |
-| `app/api/blueprint-review/route.test.ts` | Test RBAC: unauthorized users get 403; authorized reviewers succeed |
+| `tests/e5-blueprint-workflow.test.ts` | Test all nine acceptance criteria individually: queue deduplication, audit logging, resolver permissions using `requireAdminUser()`, validator rerun hooks |
+| `tests/e5-validator-rerun.helper.test.ts` | Test idempotency: same rerun called twice produces same result; never modifies original chapter content |
+| `tests/e5-blueprint-review.route.test.ts` | Test RBAC using existing `lib/admin/auth.ts::requireAdminUser()`; unauthorized users get 403; authorized reviewers succeed |
+| `tests/e5-reader-safe-copy.test.ts` | Integration test scanning API responses for forbidden terms; verify reader accounts never see technical error messages |
 
 ### Integration Tests (Playwright)
 
 | Flow | Steps |
 |------|-------|
-| Reviewer queues processing | 1. Manually inject blocked chapter into DB queue<br>2. Trigger workflow consumer<br>3. Verify queue item status changes PENDING→RESOLVED |
+| Reviewer queues processing | 1. Manually inject blocked story into DB queue<br>2. Trigger workflow consumer<br>3. Verify queue item status changes PENDING→RESOLVED |
 | Reviewer disposition flow | 1. Open admin dashboard<br>2. Click blocked item<br>3. Select UNBLOCK_PERMIT + enter reason<br>4. Verify new blueprint_version row created<br>5. Verify audit_log row created |
-| Reader safety verification | 1. Simulate blocked chapter view from reader account<br>2. Confirm generic message displayed (no technical strings)<br>3. Run automated regex scan on component output for forbidden terms |
+| Reader safety verification | 1. Simulate blocked story view from reader account<br>2. Confirm generic message displayed (no technical strings)<br>3. Run automated regex scan on component output for forbidden terms |
 
 ---
 
@@ -237,15 +249,21 @@ Execute ONLY after three DEC-E5 decisions formally acknowledged as above.
 
 ### Phase 1: Foundation (Week 1)
 
-1. ✅ Create exact six database schema migrations (`supabase/migrations/2026-08-23T09-*`)
-2. ✅ Deploy RLS policies (`2026-08-23T09-05-00-create-blueprint-rls-policies.sql`)
+1. ✅ Create exact six database schema migrations with repo-valid 14-digit timestamps:
+   - `supabase/migrations/20260823090000_e5_blueprint_review_queue.sql`
+   - `supabase/migrations/20260823090100_e5_blueprint_resolutions.sql`
+   - `supabase/migrations/20260823090200_e5_blueprint_versions.sql`
+   - `supabase/migrations/20260823090300_e5_blueprint_audit.sql`
+   - `supabase/migrations/20260823090400_e5_blueprint_resolution_validation.sql`
+   - `supabase/migrations/20260823090500_e5_blueprint_rls.sql`
+2. ✅ Deploy RLS policies (`20260823090500_e5_blueprint_rls.sql`)
 3. ✅ Implement core workflow engine (`lib/runtime/blueprint-workflow.server.ts`)
-4. ✅ Write unit tests for workflow logic
+4. ✅ Write unit tests for workflow logic (`tests/e5-blueprint-workflow.test.ts`)
 
 ### Phase 2: API Layer (Week 2)
 
 5. ✅ Implement admin review endpoint (`app/api/blueprint-review/route.ts`)
-6. ✅ Write integration tests for RBAC enforcement
+6. ✅ Write integration tests for RBAC enforcement (`tests/e5-blueprint-review.route.test.ts`)
 
 ### Phase 3: UI Components (Week 3)
 
@@ -258,100 +276,6 @@ Execute ONLY after three DEC-E5 decisions formally acknowledged as above.
 10. ✅ Execute full acceptance criterion test suite (all nine criteria green)
 11. ✅ Submit change bundle to governance review
 12. ✅ Get approval signature linking to M10-E E3A/E4 counted SHA `65053607`
-
----
-
-## Appendix A: Sample Implementation Snippets
-
-### Queue Consumer Pattern (Using Existing Repo Auth Seam)
-
-```typescript
-// lib/runtime/blueprint-workflow.server.ts
-import { acquireAdvisoryLock, releaseAdvisoryLock } from '@/lib/db/postgres-helpers'
-
-export async function processNextQueuedItem(): Promise<void> {
-  const lockId = await acquireAdvisoryLock('blueprint_queue_lock')
-  
-  try {
-    const { data: queueItem } = await supabase
-      .from('blueprint_queue')
-      .select('*')
-      .eq('status', 'PENDING')
-      .limit(1)
-      .single()
-    
-    if (!queueItem) return // Empty queue
-    
-    // Update status atomically
-    await supabase.rpc('update_queue_item_status', {
-      p_item_id: queueItem.id,
-      p_new_status: 'PROCESSING'
-    })
-    
-    // Process detail enrichment with story context
-    const detail = await enrichQueueItemDetail(queueItem.id)
-    
-    // Trigger reviewer notification via webhook/admin polling
-    // CRITICAL: Reviewer auth must reuse existing repo authorization seam (e.g., JWT claim validation via service already implemented)
-    // Do NOT invent role='reviewer' or allowed_reviewer_ids[] unless actually present in repo
-    await notifyReviewerForDisposition(detail)
-  } finally {
-    releaseAdvisoryLock(lockId)
-  }
-}
-```
-
-**Reviewer Correction Applied:** Sample code now references actual existing repo functions only (`postgres-helpers`, `supabase` client). No invented authorization patterns that don't exist in repository.
-
-### Validator Rerun Hook (Criterion #6 + #7 Corrected)
-
-```typescript
-// lib/utils/validator-rerun.helper.ts
-export async function rerunValidatorsForChapter(chapterId: string): Promise<boolean> {
-  const chapterData = await fetchChapterById(chapterId)
-  
-  const results = await Promise.all([
-    runSpineValidator(chapterData.spine),
-    runRevealValidator(chapterData.reveals),
-    runEndingValidator(chapterData.ending)
-  ])
-  
-  const allPass = results.every(r => r.pass)
-  
-  if (allPass) {
-    await logValidatorPass({ chapterId, validatorResults: results })
-  } else {
-    await logValidatorFail({ chapterId, validatorResults: results })
-    await requeueAsBlocked(chapterId) // Return to queue with BLOCKED status - CRITERION #7
-  }
-  
-  return allPass
-}
-```
-
-### Reader-Safe Copy Enforcement (Criterion #9)
-
-```typescript
-// components/novels/ChapterStatusBanner.tsx
-const READER_SAFE_STRINGS = Object.freeze([
-  'Review in progress...',
-  'Please try again later',
-  'Content under quality check',
-  'Technical issue reported, resolving now'
-] as const)
-
-const FORBIDDEN_TERMS = ['brand', 'leak', 'retry', 'token', 'AI', 'model', 'provider', 'timeout'] as const
-
-export function ChapterStatusBanner({ status }: { status: 'BLOCKED' | 'PROCESSING' }) {
-  // Validate against approved list only
-  const message = READER_SAFE_STRINGS.find(s => s.includes(status.toLowerCase()))
-  
-  if (!message) throw new Error('INVALID_READERSAFE_STRING_USAGE')
-  
-  // ESLint custom rule would also scan this file for forbidden terms
-  return <Alert variant="info">{message}</Alert>
-}
-```
 
 ---
 

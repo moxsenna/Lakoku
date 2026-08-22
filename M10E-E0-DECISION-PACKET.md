@@ -153,12 +153,11 @@ Report does NOT provide lower/central/upper sensitivity band values in this sect
 
 Current budget gate evaluation returns `BLOCKED_E0_COST_CEILING_NOT_APPROVED` per design. This is intentional—budget ceilings require explicit product/finance stakeholder sign-off before permitting production expenditure.
 
-Approval mechanism:
-1. Product manager selects ONE ceiling option above (**Recommending: Loose $200**)
-2. Finance approves corresponding spend authorization via separate business governance ledger entry
-3. Business decision recorded independently through product/finance approval channel (NOT E5 blueprint resolution workflow)
+**Domain Boundary:** E5 blueprint workflow implements failure review queue processing (nine E-OPS-1 criteria) WITHOUT budget awareness or monetary values. Budget authority resolves separately via independent product/finance governance channel. No assertions made here about whether E0 blocks M10-F execution; that dependency must be explicitly ratified in separate governance record if it exists.
 
-**Critical Domain Boundary:** E0 budget authority resolves separately as product/finance decision. E5 implementation remains ignorant of monetary values—only implements nine E-OPS-1 acceptance criteria for failure review queue processing without any awareness of cost numbers or budget ceilings. No assertion that E0 blocks M10-E/F unless exact authority proves it. Status remains: M10-E OPEN pending counted pair closure; E0 business decision runs in parallel; production FORBIDDEN until all conditions satisfied.
+Until BUSINESS_AUTHORITY exists and `budgetGate` transitions to `APPROVED_EVALUATED`, M10-E remains OPEN for remaining closure work. E3A/E4 counted pair at SHA `65053607ac7d1574e531bd49370b0a6c6d5565ba` is CLOSED; remaining M10-E work depends on E5 implementation completion which does not require E0 approval.
+
+**$200 recommendation:** Product managers may select "Loose $200" as business proposal, but this remains UNAPPROVED until formal BUSINESS_AUTHORITY signature obtained via product/finance governance channel. Not enforced by runtime system.
 
 ---
 

@@ -1,6 +1,6 @@
 # M10-F Pilot Preflight Package
 
-**Document Type:** Single Isolated Real 1→50 Engineering Pilot Specification  
+**Document Type:** Single Isolated Non-Production Engineering Pilot Specification  
 **Status:** Awaiting M10-E Counted Pair Closure + E5 Implementation Completion  
 **Date:** 2026-08-23  
 **Authority Constraint:** NO real model calls permitted until M10-E milestone CLOSED and E5 workflow implemented  
@@ -9,10 +9,10 @@
 
 ## 1. Executive Summary
 
-M10-F represents **initial real-model production pilot** where reliability artifacts transition from dry-run simulation → actual AI provider invocations. This preflight package specifies:
+M10-F represents **initial isolated non-production engineering pilot** where reliability artifacts transition from dry-run simulation → actual AI provider invocations in disposable test environment. This preflight package specifies:
 
-1. **Execution Authority:** SINGLE first real 1→50 engineering pilot ONLY (not presuming 2×50 dual-pilot)
-2. **Setup Environment:** Isolated test environment with credential validation
+1. **Execution Authority:** SINGLE first real 1→50 engineering pilot ONLY (no second pilot requirement)
+2. **Setup Environment:** Isolated disposable test environment with credential validation; NO production/shared/linked database
 3. **Execution Runbook:** ONE complete 50-chapter novel generation cycle
 4. **Evidence Capture:** Canonical artifact recording at completion
 5. **Semantic Judging:** Post-generation evaluator suite applied automatically
@@ -20,9 +20,8 @@ M10-F represents **initial real-model production pilot** where reliability artif
 7. **Failure Triage Protocol:** Root cause analysis if pilot fails mid-execution
 
 **Critical Governance Constraint:** DO NOT execute real generation calls until:
-- ✅ M10-E E3A/E4 counted pair verified at SHA `65053607`
+- ✅ M10-E E3A/E4 counted pair verified at SHA `65053607` (predecessor evidence authority)
 - ✅ E5 blueprint workflow implementation deployed and passing acceptance tests
-- ✅ No additional budget authority required (E0 resolves separately as business decision)
 - ✅ Monitoring dashboards configured for failure observation
 
 Until all conditions met, M10-F stays in **STAGED_DRY_RUN** state.
@@ -33,42 +32,28 @@ Until all conditions met, M10-F stays in **STAGED_DRY_RUN** state.
 
 ### 2.1 Default Pilot Configuration: ONE First Real 1→50
 
-**Changed From:** Presumptive 2×50 dual-pilot requirement  
-**Changed To:** Single 50-chapter novel as primary acceptance criterion
+**Authority Constraint:** Exactly ONE real 1→50 engineering pilot. NO second pilot requirement in acceptance criteria. Any follow-up exploration must be separately ratified via governance ledger and cannot be implied as mandatory.
 
-**Rationale:**
-- Observed success rate of 50% means one completed novel provides sufficient learning signal for core pipeline validation
-- Second pilot only initiated after first completes AND passes judge evaluation
-- Flexibility reduces sunk cost pressure while maintaining rigorous quality gates
-- Aligned with minimal sequential review workflow adopted in DEC-E5-02
+**Rationale:** Observed success rate of 50% means one completed novel provides sufficient learning signal for core pipeline validation. Additional pilots only initiated if explicitly requested by product team after first completes AND passes judge evaluation with separate authority approval.
 
 **Updated Acceptance Criteria:**
 
-| Criterion | Old Requirement | New Requirement (Isolated Pilot) |
-|-----------|-----------------|----------------------------------|
+| Criterion | Old Requirement | New Requirement (Isolated Single Pilot) |
+|-----------|-----------------|------------------------------------------|
 | Novel Length | Two full 50-chapter novels | ONE full 50-chapter novel |
-| Judge Pass Rate | Both novels ≥0.75 average score | Single novel completion; judge scores recorded as DIAGNOSTIC ONLY (no acceptance threshold) |
+| Judge Pass Rate | Both novels ≥0.75 average score | Completion signal; scores recorded as DIAGNOSTIC ONLY |
 | Brand Leak Rate | <1% across both pilots | <1% on single pilot (DIAGNOSTIC, not gate) |
 | Retry Overhead | Absorbable within 2×50 total budget | Absorbable in isolated pilot execution (observed metric only) |
-| P95 Latency Ceiling | <120s per chapter | <120s per chapter (DIAGNOSTIC OBSERVATION) |
+| p95 Latency Ceiling | <120s per chapter | <120s per chapter (DIAGNOSTIC OBSERVATION) |
 | E5 Workflow Compliance | N/A | Pilot must route failures through E5 blueprint queue exactly once |
 
 **Budget Impact:** 
 - OLD: $200 expected for 2×50 = ~$44/novel × 2 = $88/novel (total $176)
 - NEW: Single pilot estimated $104–$139 depending on retry frequency (+33.8% overhead observed in fixture runs)
 
-All above metrics are **DIAGNOSTIC/OPERATOR WATCHPOINT** only. NO numerical thresholds constitute acceptance requirement unless explicitly bound to existing frozen authority. Currently none exist.
+All above metrics are **DIAGNOSTIC/OPERATOR WATCHPOINT** only. NO numerical thresholds constitute acceptance requirement unless explicitly bound to existing frozen authority. Currently none exist for M10-F acceptance gate.
 
-### 2.2 Optional Follow-Up: Secondary Exploration (Conditional Only)
-
-**Condition:** Only initiate second pilot if:
-- First novel passes all 8 rubric judges with aggregate score ≥0.80
-- Budget remains available after first pilot completion
-- Product manager explicitly requests comparative analysis between different branch complexity profiles
-
-**Purpose:** Exploring whether alternative story universes produce divergent quality distributions when starting from same foundational architecture.
-
-**Not an Acceptance Requirement:** Failure to complete second pilot does NOT count as M10-F failure if first pilot succeeds fully.
+**Note:** No statements made here about whether E0 blocks M10-F execution; that dependency must be explicitly ratified in separate governance record if it exists.
 
 ---
 
@@ -83,18 +68,18 @@ Execute these steps sequentially BEFORE enabling any real AI provider calls. Eac
 git ls-remote origin refs/heads/m10-e-e1-fault-harness
 ```
 
-**Expected Output:** `65053607ac7d1574e531bd49370b0a6c6d5565ba` exact match
+**Expected Output:** `65053607ac7d1574e531bd49370b0a6c6d5565ba` exact match (predecessor E3A/E4 closure SHA)
 
 **Validation:** Confirm local HEAD also resolves to same SHA via `git rev-parse HEAD`. If mismatch, abort immediately—do not proceed without exact counted SHA boundary.
 
-### [ ] Step 2: E5 Blueprint Workflow Deployment
+### [ ] Step 2: Isolated Test Environment Setup
 
 **Command:**
 ```bash
-cd supabase/migrations && pgen exec latest --linked
+cd supabase/migrations && pgen exec latest --db-url=postgresql://localhost/isolated_test_db
 ```
 
-**Expected Output:** Zero migration errors; all `2026-08-23-create-e5-blueprint*.sql` files applied successfully.
+**Expected Output:** Zero migration errors; all blueprint-related migrations applied successfully.
 
 **Validation:** Query database directly:
 ```sql
@@ -102,7 +87,7 @@ SELECT COUNT(*) FROM blueprint_queue;
 SELECT COUNT(*) FROM blueprint_resolutions;
 ```
 
-Both tables must exist with zero rows before pilot starts.
+Both tables must exist with zero rows before pilot starts. **CRITICAL:** Use isolated disposable database only. NEVER use `--linked` flag or production/shared database connection.
 
 ### [ ] Step 3: Allowlist Diff Verification
 
@@ -118,8 +103,9 @@ npm run m10-e-e3a-e4-allowlist-cli HEAD
 **Validation:** Every changed file must match allowed paths:
 - Backend logic files (`lib/runtime/blueprint-workflow.server.ts`)
 - API route handlers (`app/api/blueprint-review/route.ts`)
-- Database migrations (`supabase/migrations/2026-08-23-create-e5-blueprint*.sql`)
+- Database migrations (`supabase/migrations/2026082309*.sql`)
 - Admin UI components (`components/admin/BlueprintDashboard.tsx`)
+- Test files (`tests/e5-blueprint*.test.ts`)
 
 If ANY unlisted paths detected, abort immediately and submit governance request.
 
@@ -131,8 +117,8 @@ pnpm test:unit --grep "blueprint"
 ```
 
 **Expected Result:** All tests pass (exit code 0), coverage report shows:
-- `lib/runtime/blueprint-workflow.test.ts`: ≥90% coverage
-- `lib/utils/validator-rerun.helper.test.ts`: ≥95% coverage
+- `tests/e5-blueprint-workflow.test.ts`: ≥90% coverage
+- `tests/e5-validator-rerun.helper.test.ts`: ≥95% coverage
 
 **Abandon Condition:** Any failing test indicates bug in implementation that requires fix before proceeding.
 
@@ -148,9 +134,9 @@ pnpm lint
 - `typecheck`: Zero errors emitted
 - `lint`: May have warnings but zero ESLINT_FORBIDDEN_WORDS violations allowed (readersafe copy enforcement)
 
-### [ ] Step 6: Environment Variable Validation (ISOLATED ENVIRONMENT ONLY)
+### [ ] Step 6: Environment Variable Validation (ISOLATED ONLY)
 
-**Required Vars (must exist in `.env.local` or `.env.isolated-test` on development machine):**
+**Required Vars (must exist in `.env.isolated-test` on development machine):**
 
 | Variable | Purpose | Validation Regex |
 |----------|---------|------------------|
@@ -158,11 +144,10 @@ pnpm lint
 | `SUPABASE_ANON_KEY` | Read-only anonymous key | Length ≥ 30 characters |
 | `OPENAI_API_KEY` | Primary provider credential | Starts with `sk-`, length ≥ 40 |
 | `LAKOKU_DEPLOY` | Deployment mode flag | Must equal `isolated-test` or `dev` |
-| `BLUEPRINT_REVIEWER_IDS` | UUID array of authorized reviewers (DEV accounts) | Valid UUID format |
 | `MAX_RETRY_ATTEMPTS` | Maximum retry attempts per chapter | Integer 1–5 |
 | `LEASE_TTL_MS` | Lease expiration time | Integer ≥ 10000 |
 
-**Security Audit:** Run `scripts/security-regression-check.ts` to verify no sensitive credentials hardcoded anywhere in working directory. DO NOT use production database or production keys for isolated pilot execution.
+**Security Audit:** Run `scripts/security-regression-check.ts` to verify no sensitive credentials hardcoded anywhere in working directory. DO NOT invent `BLUEPRINT_REVIEWER_IDS` environment variable; reuse existing repo authorization seam (`lib/admin/auth.ts::requireAdminUser()` with DB-backed `admin_users` table roles `owner/admin`).
 
 ### [ ] Step 7: Model Provider Quota Check
 
@@ -188,26 +173,26 @@ Execute phases sequentially. Each phase has explicit duration window and exit cr
 
 #### Tasks:
 
-1. Deploy Docker container to VPS with environment variables injected
+1. Deploy Docker container to isolated test instance (NOT VPS):
    ```bash
-   cd /opt/lakoku
-   docker compose up -d lakoku-web
+   cd /opt/lakoku-isolated
+   docker compose -f docker-compose.test.yml up -d lakoku-web
    docker logs -f lakoku-web  # Watch for startup errors
    ```
 
-2. Confirm health check endpoint responds
+2. Confirm health check endpoint responds (localhost only):
    ```bash
-   curl https://lakoku.yourdomain.com/api/health
+   curl http://localhost:3000/api/health
    # Expected: {"status":"ok","version":"1.0.0"}
    ```
 
 3. Run blueprint queue verification (must be empty):
    ```bash
-   curl https://lakoku.yourdomain.com/api/blueprint-review/stats
+   curl http://localhost:3000/api/blueprint-review/stats
    # Expected: {"pending":0,"processing":0,"resolved":0}
    ```
 
-4. Create pilot novel record manually:
+4. Create pilot novel record manually in isolated DB:
    ```sql
    INSERT INTO novels (id, title, concept, owner_id, status, created_at)
    VALUES (
@@ -227,9 +212,9 @@ Execute phases sequentially. Each phase has explicit duration window and exit cr
 
 **Rollback Procedure:** If any issue emerges:
 ```bash
-docker compose down
-docker rmi lakoku-web:latest
-docker compose up -d lakoku-web  # Revert to previous tagged image if using versioned tags
+docker compose -f docker-compose.test.yml down
+docker rmi lakoku-web:test
+docker compose -f docker-compose.test.yml up -d lakoku-web  # Revert to previous tagged image if using versioned tags
 ```
 
 ---
@@ -237,12 +222,12 @@ docker compose up -d lakoku-web  # Revert to previous tagged image if using vers
 ### Phase B: Dry-Run Validation (Days 2–3)
 
 **Duration:** 48 hours  
-**Goal:** Test generation endpoint with mocked responses in isolated test environment before enabling real model calls.
+**Goal:** Test generation endpoint with mocked responses before enabling real model calls.
 
 #### Tasks:
 
-1. Set `MOCK_AI_PROVIDER=true` in environment variables (NOT `.env.production`)
-2. Create test novel via isolated CLI command:
+1. Set `MOCK_AI_PROVIDER=true` in environment variables
+2. Create test novel via isolated CLI command (NO browser UI navigation to production):
    ```
    npm run create-test-novel --concept="Testing mock generation flow" --novel-id=$(generate-uuid)
    ```
@@ -363,7 +348,7 @@ docker compose up -d lakoku-web  # Revert to previous tagged image if using vers
 
 7. Write final evaluation report documenting:
    - Total cost incurred vs. budget projection
-   - Number of blocked chapters processed through E5 workflow
+   - Number of blocked stories processed through E5 workflow
    - Judge evaluation results summary
    - Retriability lessons learned for future pilots
 
@@ -403,7 +388,7 @@ All logs must flow through centralized logging pipeline with retention period of
 
 **Log Levels & Sources:**
 - `ERROR`: Runtime exceptions, database constraint violations, lease fencing conflicts
-- `WARN`: Retry attempts, temporary provider timeouts, bluep rint queue backlog warnings
+- `WARN`: Retry attempts, temporary provider timeouts, blueprint queue backlog warnings
 - `INFO`: Chapter completion events, judgment evaluation results, user session starts
 - `DEBUG`: Detailed token accounting data (enable only during pilot phase)
 

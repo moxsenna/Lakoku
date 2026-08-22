@@ -18,6 +18,7 @@ import type {
   LongHorizonFindingV1,
   M10ArtifactManifestV1,
 } from '../lib/narrative-qa/contracts/evaluator-contract'
+import { headShaOfWorkingTree } from '../lib/narrative-qa/git-sha'
 import {
   computeFindingsHash,
   computeSha256,
@@ -174,10 +175,14 @@ export function generateM10BArtifacts(outDir?: string) {
   // runId is derived from content, not wall clock, so repeated runs are byte-identical.
   const runId = `m10-b-${findingsHash.slice(0, 12)}`
 
+  const { headSha, workingTreeDirty } = headShaOfWorkingTree()
+
   const manifest: M10ArtifactManifestV1 = {
     schemaVersion: 1,
     stage: 'B',
     baselineSha: BASELINE_SHA,
+    headSha,
+    workingTreeDirty,
     m10aClosureAnchor: M10A_CLOSURE_ANCHOR,
     runId,
     startedAt,

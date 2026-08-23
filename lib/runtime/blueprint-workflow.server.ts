@@ -78,7 +78,7 @@ export async function claimQueueItem(storyId: string): Promise<null | string> {
   // Claim this item
   const workerId = `${process.env.NODE_ENV}-worker-${Date.now()}-${Math.random().toString(36).substring(7)}`
   
-  const { error: updateError } = await db
+  const { error: updateError, data: updateData } = await db
     .from('blueprint_queue')
     .update({ 
       status: 'CLAIMED',
@@ -86,7 +86,6 @@ export async function claimQueueItem(storyId: string): Promise<null | string> {
       claimed_at: new Date().toISOString()
     })
     .eq('story_id', storyId)
-    .throwOnError(false)
 
   if (updateError) {
     console.error('Claim update failed:', updateError)
@@ -153,16 +152,18 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
     // Step 3: Insert new chapter_blueprints version row (append-only, never UPDATE)
     const maxVersionQuery = await db
       .from('chapter_blueprints')
-      .select('MAX(version)')
+      .select('version', { count: 'exact' })
       .eq('story_id', story_id)
+      .order('version', { ascending: false })
+      .limit(1)
       .single()
 
-    const maxVersionVal = maxVersionQuery.data?.MAX?.version
+    const maxVersionVal = maxVersionQuery.data?.version || 0
     const maxVersion = typeof maxVersionVal === 'number' ? maxVersionVal : 0
     const newVersion = maxVersion + 1
 
     for (const chapterNum of chapter_numbers) {
-      const { error: insertError } = await db
+      const { error: insertError, data: insertData } = await db
         .from('chapter_blueprints')
         .insert({
           story_id,
@@ -171,7 +172,6 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
           reconciled_from_version: newVersion > 1 ? newVersion - 1 : undefined,
           reconciliation_reason: `E5 disposition: ${disposition} at ${new Date().toISOString()}`,
         })
-        .throwOnError(false)
 
       if (insertError) {
         console.error(`Chapter ${chapterNum} insert failed:`, insertError)
@@ -190,7 +190,6 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
         source_event_id, // Required per E-OPS-1
         idempotency_key: idempotencyKey,
       })
-      .throwOnError(false)
 
     if (auditError) {
       console.error('Audit entry creation failed:', auditError)
@@ -218,14 +217,12 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
             claimed_at: null
           })
           .eq('story_id', story_id)
-          .throwOnError(false)
       } else {
         // Validation failure -> remain BLOCKED
         await db
           .from('blueprint_queue')
           .update({ status: 'BLOCKED' })
           .eq('story_id', story_id)
-          .throwOnError(false)
         
         return { 
           success: true,
@@ -240,14 +237,12 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
         .from('blueprint_queue')
         .update({ status: 'BLOCKED' })
         .eq('story_id', story_id)
-        .throwOnError(false)
     } else if (disposition === 'RETRY_ALLOW') {
       // Permit retry without validator rerun
       await db
         .from('blueprint_queue')
         .update({ status: 'RESOLVED' })
         .eq('story_id', story_id)
-        .throwOnError(false)
     }
 
     return { success: true, unblockProof, validationResult }

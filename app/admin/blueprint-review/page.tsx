@@ -104,7 +104,7 @@ export default async function Page() {
           <Card>
             <CardHeader>
               <CardTitle className="text-base text-destructive">Peringatan Penting</CardTitle>
-            </header>
+            </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-sm text-muted-foreground">
                 Setiap resolusi harus mengikat ke evidence event nyata (source_event_id BIGINT NOT NULL).{' '}

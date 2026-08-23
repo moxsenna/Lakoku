@@ -39,7 +39,7 @@ CREATE TABLE public.blueprint_resolutions (
 
 -- Indexes
 CREATE INDEX idx_blueprint_resolutions_story_id ON public.blueprint_resolutions(story_id);
-CREATE INDEX idx_blueprint_resolutions_created DESC ON public.blueprint_resolutions(created_at DESC);
+CREATE INDEX idx_blueprint_resolutions_created ON public.blueprint_resolutions(created_at DESC);
 
 -- Comments
 COMMENT ON TABLE public.blueprint_resolutions IS 'Human reviewer disposition records for E-OPS-1 workflow queue (E-OPS-1 Criterion #4)';

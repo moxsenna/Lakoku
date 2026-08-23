@@ -39,7 +39,7 @@ CREATE TABLE public.blueprint_audit_log (
 
 -- Indexes
 CREATE INDEX idx_blueprint_audit_story_id ON public.blueprint_audit_log(story_id);
-CREATE INDEX idx_blueprint_audit_created DESC ON public.blueprint_audit_log(created_at DESC);
+CREATE INDEX idx_blueprint_audit_created ON public.blueprint_audit_log(created_at DESC);
 CREATE INDEX idx_blueprint_audit_source_event_id ON public.blueprint_audit_log(source_event_id);
 
 -- Comments

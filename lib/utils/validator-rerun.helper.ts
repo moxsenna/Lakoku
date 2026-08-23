@@ -102,10 +102,10 @@ async function validateChapter(
   const spineFailures = checkMandatoryBeats(blueprint)
   
   // Check forbidden reveals (reveal validator)
-  const revealFailures = checkForbiddenReveals(blueprint)
+  const revealFailures = checkForbiddenReveals(blueprint as any)
   
   // Check state delta consistency
-  const stateDeltaFailures = checkStateDeltaConsistency(blueprint)
+  const stateDeltaFailures = checkStateDeltaConsistency(blueprint as any)
 
   const allFailures = [...spineFailures, ...revealFailures, ...stateDeltaFailures]
 
@@ -156,7 +156,7 @@ function checkForbiddenReveals(blueprint: any): Array<{
     message: string
   }> = []
   
-  const forbiddenReveals = blueprint.forbidden_reveals
+  const forbiddenReveals = blueprint.forbidden_reveals as string[] || []
   
   if (forbiddenReveals && Array.isArray(forbidden_reveals) && forbidden_reveals.length > 0) {
     // Validate that no forbidden model details are revealed
@@ -191,7 +191,7 @@ function checkStateDeltaConsistency(blueprint: any): Array<{
     message: string
   }> = []
   
-  const allowedStateDelta = blueprint.allowed_state_delta
+  const allowedStateDelta = blueprint.allowed_state_delta as Record<string, unknown> || {}
   
   if (allowedStateDelta && typeof allowedStateDelta === 'object') {
     // Validate state transitions are valid JSON and well-formed

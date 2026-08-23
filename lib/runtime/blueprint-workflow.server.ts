@@ -125,8 +125,8 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
         throw new Error('Caller does not match reviewer_uid')
       }
     } catch (err) {
-      // This check was done in API layer, skip here for simplicity
-      // In production, use service_role for direct DB access
+      // Re-throw auth errors - never swallow them
+      throw err
     }
 
     // Step 2: Record disposition in resolutions table (idempotent via idempotency_key)

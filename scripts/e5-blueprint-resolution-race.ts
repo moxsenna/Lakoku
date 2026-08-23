@@ -1,48 +1,57 @@
 /**
  * Race Condition Harness: Concurrent Claim + Resolution Ordering Proof
  */
-import { Client } from 'pg'
+import { createClient } from '@/lib/supabase/server'
 
 const CONCURRENCY_LEVEL = 10
 
 async function main(): Promise<void> {
-  const client = new Client({
-    host: process.env.TEST_DB_HOST || 'localhost',
-    port: parseInt(process.env.TEST_DB_PORT || '5432'),
-    database: process.env.TEST_DB_NAME || 'lakoku_test',
-    user: process.env.TEST_DB_USER || 'postgres',
-    password: process.env.TEST_DB_PASSWORD || 'postgres',
-  })
+  const db = createClient()
   
   try {
-    await client.connect()
-    
     // Test concurrent claim: only ONE worker should succeed
     const storyId = `story/race-test-${Date.now()}`
     
-    await client.query(
-      'INSERT INTO blueprint_queue (story_id) VALUES ($1)',
-      [storyId]
-    )
+    await db
+      .from('blueprint_queue')
+      .insert({ story_id: storyId, status: 'PENDING' })
+      .select()
     
     let successfulClaims = 0
-    for (let i = 0; i < CONCURRENCY_LEVEL; i++) {
-      const result = await client.query(
-        'UPDATE blueprint_queue SET status = $1 WHERE story_id = $2 AND status = $3',
-        ['CLAIMED', storyId, 'PENDING']
-      )
-      
-      if (result.rowCount === 1) successfulClaims++
+    
+    // Simulate concurrent updates - PostgreSQL will handle serialization
+    const updatePromises = Array.from({ length: CONCURRENCY_LEVEL }, async (_, i) => {
+      const result = await db
+        .from('blueprint_queue')
+        .update({ 
+          status: 'CLAIMED',
+          claimed_by: `worker-${i}`,
+          claimed_at: new Date().toISOString()
+        })
+        .eq('story_id', storyId)
+        .eq('status', 'PENDING')
+        .select('status')
+    
+      if (result.data?.length === 1) {
+        successfulClaims++
+      }
+      return result
+    })
+    
+    await Promise.all(updatePromises)
+    
+    console.log(`Concurrent claim test: ${successfulClaims}/${CONCURRENCY_LEVEL} succeeded`)
+    if (successfulClaims !== 1) {
+      throw new Error(`Race condition detected: multiple claims (${successfulClaims}) succeeded, expected exactly 1`)
     }
     
-    console.log(`Concurrent claim test: ${successfulClaims}/CONCURRENCY_LEVEL succeeded`)
-    if (successfulClaims !== 1) {
-      throw new Error('Race condition detected: multiple claims succeeded')
-    }
+    // Cleanup
+    await db.from('blueprint_queue').delete().eq('story_id', storyId)
     
     console.log('\n✓ All race condition tests PASSED')
-  } finally {
-    await client.end()
+  } catch (err) {
+    console.error('Race test failed:', err)
+    process.exit(1)
   }
 }
 

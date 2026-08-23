@@ -11,8 +11,35 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/badge'
-import { AlertBanner } from '@/components/dashboard/alert-banner'
+import { Badge } from '@/components/ui/badge'
+import { Separator } from '@/components/ui/separator'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+
+/** Helper function for act badge variant */
+export function getActBadgeVariant(actBoundary: string): 'secondary' | 'destructive' | 'outline' {
+  switch (actBoundary) {
+    case 'ACT_1': return 'secondary' as const
+    case 'ACT_2': return 'destructive' as const
+    default: return 'outline' as const
+  }
+}
+
+/** Helper function for relative time formatting */
+export function formatRelativeTime(timestamp: string): string {
+  const date = new Date(timestamp)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  
+  if (diffMins < 1) return 'Baru saja'
+  if (diffMins < 60) return `${diffMins} menit yang lalu`
+  
+  const diffHours = Math.floor(diffMins / 60)
+  if (diffHours < 24) return `${diffHours} jam yang lalu`
+  
+  const diffDays = Math.floor(diffHours / 24)
+  return `${diffDays} hari yang lalu`
+}
 
 interface PendingReviewItem {
   story_id: string
@@ -55,7 +82,7 @@ export default function ClientComponent({ initialItems, reviewerRole }: ClientCo
       
       if (!res.ok) {
         setErrors(prev => new Map(prev).set(storyId, data.error || 'Gagal mencatat keputusan'))
-        setActiveDispositions(prev => new Map(prev).delete(storyId))
+        setActiveDispositions(prev => new Map(prev).set(storyId, false))
         return
       }
       
@@ -65,54 +92,26 @@ export default function ClientComponent({ initialItems, reviewerRole }: ClientCo
     } catch (err) {
       setErrors(prev => new Map(prev).set(storyId, err instanceof Error ? err.message : 'Network error'))
     } finally {
-      setActiveDispositions(prev => new Map(prev).delete(storyId))
+      setActiveDispositions(prev => new Map(prev).set(storyId, false))
     }
-  }
-
-  const getActBadgeVariant = (actBoundary: string): 'secondary' | 'destructive' | 'outline' => {
-    switch (actBoundary) {
-      case 'ACT_1': return 'secondary'
-      case 'ACT_2': return 'destructive'
-      default: return 'outline'
-    }
-  }
-
-  const formatRelativeTime = (timestamp: string): string => {
-    const date = new Date(timestamp)
-    const now = new Date()
-    const diffMs = now.getTime() - date.getTime()
-    const diffMins = Math.floor(diffMs / 60000)
-    
-    if (diffMins < 1) return 'Baru saja'
-    if (diffMins < 60) return `${diffMins} menit yang lalu`
-    
-    const diffHours = Math.floor(diffMins / 60)
-    if (diffHours < 24) return `${diffHours} jam yang lalu`
-    
-    const diffDays = Math.floor(diffHours / 24)
-    return `${diffDays} hari yang lalu`
   }
 
   return (
     <>
-      {/* Error Alerts Section */}
+      {/* Inline Error/Success Messages */}
       {errors.size > 0 && (
-        <AlertBanner
-          alert={{
-            level: 'error',
-            message: errors.values().next().value || 'Terjadi kesalahan dalam sistem',
-          }}
-        />
+        <Alert variant="destructive" className="mb-4">
+          <AlertDescription>{Array.from(errors.values())[0] || 'Terjadi kesalahan dalam sistem'}</AlertDescription>
+        </Alert>
       )}
 
-      {/* Success Alerts Section */}
       {successes.size > 0 && (
-        <AlertBanner
-          alert={{
-            level: 'success',
-            message: `Keputusan berhasil tercatat: ${Array.from(successes.values()).join(', ')}`,
-          }}
-        />
+        <Alert className="mb-4">
+          <AlertTitle>Keputusan Tercatat</AlertTitle>
+          <AlertDescription>
+            {Array.from(successes.values()).join(', ')}
+          </AlertDescription>
+        </Alert>
       )}
 
       {/* Items Grid */}

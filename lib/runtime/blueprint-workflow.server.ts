@@ -5,7 +5,7 @@
  * Authority: M10-E E5 implementation authority SHA = `a16b5a3b950ead2385a41c4fe12369336fbbc15f`
  * Boundary: Reuse requireAdminUser() owner/admin roles; NO invented role='reviewer'; no novel lifecycle CRUD
  */
-import { createClient } from '@lakoku/db'
+import { createClient } from '@/lib/supabase/server'
 import type {
   Disposition,
   ResolutionContext,
@@ -16,14 +16,12 @@ import type {
 import { runValidatorRerun } from '@/lib/utils/validator-rerun.helper'
 import { requireAdminUser } from '@/lib/admin/auth'
 
-// Import server-side Supabase client only (no HTTP layer)
-const db = createClient()
-
 /**
  * Fetch pending review items with full details
  * Called by API route GET /api/blueprint-review/route.ts
  */
 export async function getPendingItems(): Promise<PendingReviewItem[]> {
+  const db = await createClient()
   const { data, error } = await db
     .rpc('vw_blueprint_pending_review_items') // Use view for simplified access
     .select('*')
@@ -43,6 +41,8 @@ export async function getPendingItems(): Promise<PendingReviewItem[]> {
  * Returns null if already claimed or resolved/blocked
  */
 export async function claimQueueItem(storyId: string): Promise<null | string> {
+  const db = await createClient()
+  
   // Acquire advisory lock for exactly-once guarantee
   const lockResult = await db.rpc('pg_advisory_xact_lock', { key: storyId.length + 1 })
   
@@ -114,6 +114,7 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
   unblockProof?: string
   validationResult?: ValidatorRerunResult
 }> {
+  const db = await createClient()
   const { story_id, disposition, reviewer_uid, reason_text, source_event_id, chapter_numbers } = context
   
   try {
@@ -156,7 +157,8 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
       .eq('story_id', story_id)
       .single()
 
-    const maxVersion = maxVersionQuery.data?.max ? parseInt(maxVersionQuery.data.max) : 0
+    const maxVersionVal = maxVersionQuery.data?.MAX?.version
+    const maxVersion = typeof maxVersionVal === 'number' ? maxVersionVal : 0
     const newVersion = maxVersion + 1
 
     for (const chapterNum of chapter_numbers) {
@@ -262,6 +264,7 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
  * Get queue item detail (for admin dashboard display)
  */
 export async function getQueueItemDetail(storyId: string): Promise<null | any> {
+  const db = await createClient()
   const { data: queueItem, error: queueError } = await db
     .from('blueprint_queue')
     .select(`

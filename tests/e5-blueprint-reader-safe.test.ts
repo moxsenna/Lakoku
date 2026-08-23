@@ -161,7 +161,7 @@ describe('Blueprint Reader-Safe Response', () => {
         recent_resolutions: []
       }
 
-      expect(serverSideOnlyData.source_event_id !== 0n).toBe(true)
+      expect(serverSideOnlyData.source_event_id !== BigInt(0)).toBe(true)
       // Accessible only via requireAdminUser() protected route
     })
 

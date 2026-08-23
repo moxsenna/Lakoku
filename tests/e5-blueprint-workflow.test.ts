@@ -7,32 +7,31 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { getPendingItems, claimQueueItem, recordDisposition as workflowRecordDisposition } from '@/lib/runtime/blueprint-workflow.server'
 import type { PendingReviewItem, ResolutionContext } from '@/lib/types/blueprint.contract'
-import { createClient } from '@lakoku/db'
+import { createAdminClient } from '@/lib/supabase/server'
 
 describe('Blueprint Workflow Queue', () => {
   let mockDb: any
   
   beforeEach(() => {
     vi.clearAllMocks()
-    mockDb = {
-      rpc: vi.fn(),
-      from: vi.fn(),
-      select: vi.fn().mockReturnThis(),
-      order: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      single: vi.fn(),
-      update: vi.fn().mockReturnThis(),
-      insert: vi.fn().mockReturnThis(),
-      throwOnError: vi.fn().mockReturnThis(),
-    }
     
-    // Mock createClient
-    vi.mock('@lakoku/db', async () => {
-      const actual = await vi.importActual('@lakoku/db')
+    // Mock server-side client
+    vi.mock('@/lib/supabase/server', async () => {
+      const actual = await vi.importActual('@/lib/supabase/server')
       return {
         ...actual,
-        createClient: vi.fn(() => mockDb),
+        createAdminClient: vi.fn(() => ({
+          rpc: vi.fn(),
+          from: vi.fn(),
+          select: vi.fn().mockReturnThis(),
+          order: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          single: vi.fn(),
+          update: vi.fn().mockReturnThis(),
+          insert: vi.fn().mockReturnThis(),
+          throwOnError: vi.fn().mockReturnThis(),
+        })),
       }
     })
   })
@@ -142,7 +141,7 @@ describe('Blueprint Workflow Queue', () => {
       })
       
       // Test validation would go here
-      expect(context.source_event_id).toBeGreaterThan(0n)
+      expect(context.source_event_id).toBeGreaterThan(BigInt(0))
     })
 
     it('fails closed if source_event_id is missing or zero', async () => {
@@ -151,7 +150,7 @@ describe('Blueprint Workflow Queue', () => {
         disposition: 'UNBLOCK_PERMIT',
         reviewer_uid: 'auth.uid()',
         reason_text: 'Missing event ID test',
-        source_event_id: 0n, // Should fail
+        source_event_id: BigInt(0), // Should fail
         chapter_numbers: [1]
       }
       
@@ -159,7 +158,7 @@ describe('Blueprint Workflow Queue', () => {
       expect(context.source_event_id).toBeDefined()
       
       // In production: check if source_event_id == 0n triggers fail-closed
-      const isValid = !Number.isNaN(Number(context.source_event_id)) && context.source_event_id !== 0n
+      const isValid = !Number.isNaN(Number(context.source_event_id)) && context.source_event_id !== BigInt(0)
       expect(isValid).toBe(false) // Will trigger fail-closed in production
     })
 

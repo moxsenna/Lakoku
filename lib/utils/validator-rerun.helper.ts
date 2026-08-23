@@ -5,9 +5,7 @@
  * Authority: M10-E E5 implementation authority SHA = `a16b5a3b950ead2385a41c4fe12369336fbbc15f`
  * Boundary: Use existing server/DB seams discovered during coding; no frozen SQL→TS architecture
  */
-import { createClient } from '@lakoku/db'
-
-const db = createClient()
+import { createClient } from '@/lib/supabase/server'
 
 /**
  * Validator result shape per E-OPS-1 approved pattern
@@ -31,6 +29,7 @@ export async function runValidatorRerun(
   storyId: string,
   chapterNumbers: number[]
 ): Promise<ValidatorRerunResult> {
+  const db = await createClient()
   const failures: Array<{
     chapterNumber: number
     failureType: string
@@ -40,7 +39,7 @@ export async function runValidatorRerun(
   // Run validators for each chapter individually
   for (const chapterNum of chapterNumbers) {
     try {
-      const validationResult = await validateChapter(storyId, chapterNum)
+      const validationResult = await validateChapter(db, storyId, chapterNum)
       
       if (!validationResult.passed) {
         failures.push(...validationResult.failures)
@@ -74,6 +73,7 @@ export async function runValidatorRerun(
  * Uses existing server/DB seams for spine/reveal/ending checks
  */
 async function validateChapter(
+  db: any,
   storyId: string,
   chapterNumber: number
 ): Promise<ValidatorRerunResult> {
@@ -99,7 +99,7 @@ async function validateChapter(
   }
 
   // Check mandatory beats (spine validator)
-  const spineFailures = checkMandatoryBeats(blueprint)
+  const spineFailures = checkMandatoryBeats(blueprint as any)
   
   // Check forbidden reveals (reveal validator)
   const revealFailures = checkForbiddenReveals(blueprint as any)
@@ -158,7 +158,7 @@ function checkForbiddenReveals(blueprint: any): Array<{
   
   const forbiddenReveals = blueprint.forbidden_reveals as string[] || []
   
-  if (forbiddenReveals && Array.isArray(forbidden_reveals) && forbidden_reveals.length > 0) {
+  if (forbiddenReveals && Array.isArray(forbiddenReveals) && forbiddenReveals.length > 0) {
     // Validate that no forbidden model details are revealed
     for (const forbidden of forbiddenReveals) {
       if (typeof forbidden === 'string') {

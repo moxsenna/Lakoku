@@ -70,7 +70,8 @@ export async function POST(
     }
     
     // Fetch source_event_id from queue item (required per E-OPS-1 evidence binding)
-    const db = await import('@lakoku/db').then(m => m.createClient())
+    const { createClient } = await import('@/lib/supabase/server')
+    const db = await createClient()
     const { data: queueItem, error: fetchError } = await db
       .from('blueprint_queue')
       .select('source_event_id, chapter_numbers')

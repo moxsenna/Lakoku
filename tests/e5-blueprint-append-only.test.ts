@@ -7,7 +7,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { recordDisposition as workflowRecordDisposition } from '@/lib/runtime/blueprint-workflow.server'
 import type { ChapterBlueprintInsertPayload, ResolutionContext } from '@/lib/types/blueprint.contract'
-import { createClient } from '@lakoku/db'
+import { createClient } from '@/lib/supabase/server'
 
 describe('Blueprint Append-Only History', () => {
   let mockDb: any
@@ -135,7 +135,7 @@ describe('Blueprint Append-Only History', () => {
       
       // Verify audit entry has no UPDATE method
       expect(testAuditEntry.created_at).toMatch(/^\d{4}-\d{2}-\d{2}/)
-      expect(testAuditEntry.source_event_id !== 0n).toBe(true)
+      expect(testAuditEntry.source_event_id !== BigInt(0)).toBe(true)
       
       // In production: ON DELETE RESTRICT prevents cascade deletion
       // UPDATE operations should be forbidden by RLS policies

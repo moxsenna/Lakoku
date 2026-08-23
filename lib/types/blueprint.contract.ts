@@ -98,12 +98,11 @@ export interface BlueprintAuditEntry {
 /**
  * Pending review item view shape (from vw_blueprint_pending_review_items)
  */
-export interface PendingReviewItem extends BlueprintQueueItem {
+export interface PendingReviewItem extends Omit<BlueprintQueueItem, 'status'> {
   story_title?: string | null;
   tagline?: string | null;
   role?: string | null;
   total_chapters?: number | null;
-  status?: string | null;
 }
 
 /**

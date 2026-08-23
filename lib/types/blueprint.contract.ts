@@ -177,11 +177,12 @@ export interface ChapterBlueprintInsertPayload {
 
 /**
  * Full resolution context for atomic operation
+ * reviewer_uid may be derived internally from requireAdminUser() - workflow layer handles derivation
  */
 export interface ResolutionContext {
   story_id: string;
   disposition: Disposition;
-  reviewer_uid: string;
+  reviewer_uid?: string; // Optional - will be derived from auth layer if not provided
   reason_text: string;
   source_event_id: bigint;
   chapter_numbers: number[];

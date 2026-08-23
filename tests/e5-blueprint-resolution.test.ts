@@ -11,6 +11,11 @@ import { requireAdminUser } from '@/lib/admin/auth'
 
 describe('Blueprint Resolution Authorization', () => {
   let mockRequireAdminUser: any
+  interface AdminRole {
+    id: string
+    email: string
+    role: 'owner' | 'admin' | 'reviewer' | 'editor' | 'contributor'
+  }
   
   beforeEach(() => {
     vi.clearAllMocks()

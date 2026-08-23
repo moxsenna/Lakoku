@@ -47,7 +47,8 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
-    await requireAdminUser() // Require authorized admin user
+    // Capture authorized admin user identity (will be used for reviewer_uid derivation)
+    const adminRole = await requireAdminUser() // owner/admin roles only
     
     const storyId = (await params).id
     const body = await request.json()
@@ -94,11 +95,11 @@ export async function POST(
       )
     }
     
-    // Build resolution context with bigint conversion from JSON-safe string
-    const resolutionContext: ResolutionContext = {
+    // Build resolution context WITHOUT reviewer_uid (workflow will derive it from requireAdminUser)
+    const resolutionContext: Omit<ResolutionContext, 'reviewer_uid'> & { reviewer_uid?: string } = {
       story_id: storyId,
       disposition: disposition as Disposition,
-      reviewer_uid: '', // Will be populated by requireAdminUser in caller scope
+      reviewer_uid: adminRole.id, // Derive ONLY from auth layer, never trust payload
       reason_text: reason_text,
       source_event_id: BigInt(queueItem.source_event_id), // Convert string -> bigint
       chapter_numbers: queueItem.chapter_numbers || []

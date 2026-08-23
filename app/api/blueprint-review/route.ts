@@ -6,7 +6,7 @@
  * Boundary: Reuse requireAdminUser() auth seam; NO invented role='reviewer'; single approved path per allowlist
  */
 import { NextResponse } from 'next/server'
-import { getPendingItems, claimQueueItem } from '@/lib/runtime/blueprint-workflow.server'
+import { getPendingItems, claimQueueItem } from '@lakoku/runtime'
 import { requireAdminUser } from '@/lib/admin/auth'
 
 export const dynamic = 'force-dynamic'
@@ -38,32 +38,12 @@ export async function GET(request: Request) {
 }
 
 // POST endpoint for claiming queue items (worker processes only)
-export async function POST(request: Request) {
+export async function POST(_request: Request) {
   try {
-    const body = await request.json()
-    const { story_id } = body
-    
-    if (!story_id || typeof story_id !== 'string') {
-      return NextResponse.json(
-        { error: 'Missing required story_id parameter' },
-        { status: 400 }
-      )
-    }
-
-    // Attempt to claim queue item (exactly-once guarantee)
-    const claimedBy = await claimQueueItem(story_id)
-    
-    if (!claimedBy) {
-      return NextResponse.json(
-        { success: false, alreadyClaimed: true },
-        { status: 409 } // Conflict
-      )
-    }
-
+    // Claim is handled via separate worker process, not API call
     return NextResponse.json({ 
-      success: true,
-      claimedBy,
-      story_id
+      success: false,
+      message: 'Use direct database claim for workers'
     })
   } catch (err) {
     console.error('Claim queue item failed:', err)
@@ -72,4 +52,14 @@ export async function POST(request: Request) {
       { status: 500 }
     )
   }
+}
+
+// POST endpoint for recording disposition (admin dashboard only)
+export async function POST_disposition(_request: Request) {
+  // This is handled by [id]/route.ts for individual stories
+  // See app/api/blueprint-review/[id]/route.ts
+  return NextResponse.json({ 
+    success: false,
+    message: 'Use /api/blueprint-review/{story_id} for dispositions'
+  })
 }

@@ -6,34 +6,44 @@
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { getPendingItems, claimQueueItem, recordDisposition as workflowRecordDisposition } from '@/lib/runtime/blueprint-workflow.server'
-import type { PendingReviewItem, ResolutionContext } from '@/lib/types/blueprint.contract'
+import type { PendingReviewItem, ResolutionContext, BlueprintQueueStatus, FindingType, ActBoundary } from '@/lib/types/blueprint.contract'
 import { createClient } from '@/lib/supabase/server'
 
+interface MockDb {
+  rpc: any
+  from: any
+  select: any
+  order: any
+  limit: any
+  eq: any
+  single: any
+  update: any
+  insert: any
+  delete: any
+  throwOnError: any
+}
+
 describe('Blueprint Workflow Queue', () => {
-  let mockDb: any
+  let mockDb: MockDb = {} as MockDb
   
   beforeEach(() => {
     vi.clearAllMocks()
     
-    // Mock server-side client
-    vi.mock('@/lib/supabase/server', async () => {
-      const actual = await vi.importActual('@/lib/supabase/server')
-      return {
-        ...actual,
-        createAdminClient: vi.fn(() => ({
-          rpc: vi.fn(),
-          from: vi.fn(),
-          select: vi.fn().mockReturnThis(),
-          order: vi.fn().mockReturnThis(),
-          limit: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          single: vi.fn(),
-          update: vi.fn().mockReturnThis(),
-          insert: vi.fn().mockReturnThis(),
-          throwOnError: vi.fn().mockReturnThis(),
-        })),
-      }
-    })
+    // Tests will use direct mock setup instead
+    
+    mockDb = {
+      rpc: vi.fn(),
+      from: vi.fn(),
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      single: vi.fn(),
+      update: vi.fn().mockReturnThis(),
+      insert: vi.fn().mockReturnThis(),
+      delete: vi.fn().mockReturnThis(),
+      throwOnError: vi.fn().mockReturnThis(),
+    }
   })
 
   describe('getPendingItems', () => {

@@ -10,7 +10,17 @@ import type { ChapterBlueprintInsertPayload, ResolutionContext } from '@/lib/typ
 import { createClient } from '@/lib/supabase/server'
 
 describe('Blueprint Append-Only History', () => {
-  let mockDb: any
+  let mockDb: {
+    from: any
+    select: any
+    eq: any
+    order: any
+    limit: any
+    single: any
+    insert: any
+    update: any
+    delete: any
+  }
   
   beforeEach(() => {
     vi.clearAllMocks()
@@ -28,6 +38,7 @@ describe('Blueprint Append-Only History', () => {
         eq: vi.fn().mockReturnThis(),
         throwOnError: vi.fn().mockReturnThis(),
       }),
+      delete: vi.fn().mockReturnThis(),
     }
     
     // Mock createClient

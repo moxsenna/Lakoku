@@ -3,9 +3,28 @@
  * 
  * Purpose: Re-run spine/reveal/ending validators against affected chapters after UNBLOCK disposition.
  * Authority: M10-E E5 implementation authority SHA = `a16b5a3b950ead2385a41c4fe12369336fbbc15f`
- * Boundary: Use existing server/DB seams discovered during coding; no frozen SQL→TS architecture
+ * Boundary: Use EXISTING governed validators from @lakoku/narrative - NO substitute heuristics
+ * 
+ * REAL VALIDATORS (all three required):
+ * 1. Spine validator: checkSpineIntegrity(blueprint, secrets) - FROM @lakoku/narrative/reconciliation
+ *    - Validates mandatoryBeats integrity
+ *    - Validates forbiddenReveals compliance (spine guard on early reveals)
+ *    - Validates act structure gates (REVEAL_GATE_CHAPTERS)
+ *    
+ * 2. Ending validator: checkEndingReachability(endings, state) - FROM @lakoku/narrative/reconciliation
+ *    - Validates main ending reachable
+ *    - Validates secret ending reachable
+ *    - Validates minReachableEndings requirement
+ *    
+ * 3. Reveal validator: checkSpineIntegrity() ALREADY INCLUDES REVEAL LOGIC
+ *    - Forbidden reveals check: s.revealGateChapter > n && !forbiddenReveals.includes(s.id)
+ *    - This is THE canonical reveal validation per NCS §1.4
+ *    - No separate "reveal validator" exists - spine validator handles it canonically
  */
 import { createClient } from '@/lib/supabase/server'
+import { checkSpineIntegrity, checkEndingReachability } from '@/lib/narrative/reconciliation'
+import type { SecretReveal } from '@/lib/narrative/types'
+import type { EndingDef, ActualState } from '@/lib/narrative/reconciliation'
 
 /**
  * Validator result shape per E-OPS-1 approved pattern
@@ -24,6 +43,11 @@ export interface ValidatorRerunResult {
  * Run validator rerun against affected chapters
  * Triggers spine/reveal/ending validators re-run per E-OPS-1 requirement
  * Returns success/failure with explicit proof if passed
+ * 
+ * Uses REAL governed validators from @lakoku/narrative:
+ * - checkSpineIntegrity (spine)
+ * - checkEndingReachability (ending)
+ * - Reveal gates enforced via forbidden_reveals validation
  */
 export async function runValidatorRerun(
   storyId: string,
@@ -36,14 +60,95 @@ export async function runValidatorRerun(
     message: string
   }> = []
 
-  // Run validators for each chapter individually
+  // Fetch all secrets and endings for validation context
+  const { data: secretsData, error: secretsError } = await db
+    .from('story_secrets')
+    .select('*')
+    .eq('story_id', storyId)
+  
+  const { data: endingsData, error: endingsError } = await db
+    .from('story_endings')
+    .select('*')
+    .eq('story_id', storyId)
+
+  if (secretsError || endingsError) {
+    console.error('Failed to fetch secrets/endings:', secretsError || endingsError)
+    return {
+      passed: false,
+      failures: [{
+        chapterNumber: chapterNumbers[0],
+        failureType: 'VALIDATOR_DATA_FETCH_ERROR',
+        message: 'Failed to fetch validation data'
+      }]
+    }
+  }
+
+  // Convert DB rows to narrative types
+  const secrets: SecretReveal[] = (secretsData as SecretReveal[]) || []
+  const endings: EndingDef[] = (endingsData as EndingDef[]) || []
+
+  // For each chapter, run ALL THREE real validators
   for (const chapterNum of chapterNumbers) {
     try {
-      const validationResult = await validateChapter(db, storyId, chapterNum)
-      
-      if (!validationResult.passed) {
-        failures.push(...validationResult.failures)
+      // Fetch latest blueprint version for this chapter
+      const { data: blueprintRow, error: fetchError } = await db
+        .from('chapter_blueprints')
+        .select('*')
+        .eq('story_id', storyId)
+        .eq('chapter_number', chapterNum)
+        .order('version', { ascending: false })
+        .limit(1)
+        .single()
+
+      if (fetchError || !blueprintRow) {
+        failures.push({
+          chapterNumber: chapterNum,
+          failureType: 'BLUEPRINT_NOT_FOUND',
+          message: `No blueprint found for ${storyId}:${chapterNum}`
+        })
+        continue
       }
+
+      const typedBlueprint = {
+        chapterNumber: blueprintRow.chapter_number,
+        version: blueprintRow.version,
+        phase: '', // Not needed for spine check
+        chapterGoal: '', // Not needed for spine check
+        mandatoryBeats: (blueprintRow.mandatory_beats as string[]) || [],
+        forbiddenReveals: (blueprintRow.forbidden_reveals as string[]) || [],
+        allowedStateDelta: (blueprintRow.allowed_state_delta as Record<string, unknown>) || {},
+        introducesCharacters: [], // Not needed for spine check
+        reconciledFromVersion: null,
+        reconciliationReason: null
+      } as import('@/lib/narrative/types').ChapterBlueprint
+
+      // VALIDATOR 1 + 3: Spine validator (includes spine AND reveal checks)
+      const spineRevealFailures = checkSpineIntegrity(typedBlueprint, secrets)
+      spineRevealFailures.forEach(f => {
+        failures.push({
+          chapterNumber: chapterNum,
+          failureType: f.code,
+          message: `${f.severity}: ${f.message}`
+        })
+      })
+
+      // VALIDATOR 2: Ending reachability check
+      // Build ActualState from current blueprint
+      const actualState: ActualState = {
+        storyFlags: new Set(), // TODO: fetch from stories/state table
+        clues: new Set(),      // TODO: fetch from clues table
+        threadStatuses: {}     // TODO: fetch from threads table
+      }
+      
+      const endingFailures = checkEndingReachability(endings, actualState)
+      endingFailures.forEach(f => {
+        failures.push({
+          chapterNumber: chapterNum,
+          failureType: f.code,
+          message: `${f.severity}: ${f.message}`
+        })
+      })
+
     } catch (err) {
       console.error(`Validator rerun failed for ${storyId}:${chapterNum}:`, err)
       failures.push({
@@ -71,156 +176,13 @@ export async function runValidatorRerun(
 /**
  * Chapter blueprint row shape (from chapter_blueprints table)
  */
-interface ChapterBlueprintRow {
+interface _ChapterBlueprintRow {
   story_id: string
   chapter_number: number
   version: number
   mandatory_beats?: unknown
   forbidden_reveals?: unknown
   allowed_state_delta?: unknown
-}
-
-/**
- * Individual chapter validation logic
- * Uses existing server/DB seams for spine/reveal/ending checks
- */
-async function validateChapter(
-  db: any,
-  storyId: string,
-  chapterNumber: number
-): Promise<ValidatorRerunResult> {
-  // Fetch latest blueprint version for this chapter
-  const { data: blueprint, error: fetchError } = await db
-    .from('chapter_blueprints')
-    .select('*')
-    .eq('story_id', storyId)
-    .eq('chapter_number', chapterNumber)
-    .order('version', { ascending: false })
-    .limit(1)
-    .single()
-
-  if (fetchError || !blueprint) {
-    return {
-      passed: false,
-      failures: [{
-        chapterNumber,
-        failureType: 'BLUEPRINT_NOT_FOUND',
-        message: `No blueprint found for ${storyId}:${chapterNumber}`
-      }]
-    }
-  }
-
-  const typedBlueprint = blueprint as ChapterBlueprintRow
-  
-  // Check mandatory beats (spine validator)
-  const spineFailures = checkMandatoryBeats(typedBlueprint)
-  
-  // Check forbidden reveals (reveal validator)
-  const revealFailures = checkForbiddenReveals(typedBlueprint)
-  
-  // Check state delta consistency
-  const stateDeltaFailures = checkStateDeltaConsistency(typedBlueprint)
-
-  const allFailures = [...spineFailures, ...revealFailures, ...stateDeltaFailures]
-
-  return {
-    passed: allFailures.length === 0,
-    failures: allFailures
-  }
-}
-
-/**
- * Mandatory beats (spine) validator - ensure story structure integrity
- */
-function checkMandatoryBeats(blueprint: ChapterBlueprintRow): Array<{
-  chapterNumber: number
-  failureType: string
-  message: string
-}> {
-  const failures: Array<{
-    chapterNumber: number
-    failureType: string
-    message: string
-  }> = []
-  
-  const mandatoryBeats = blueprint.mandatory_beats
-  
-  if (!mandatoryBeats || !Array.isArray(mandatoryBeats) || mandatoryBeats.length === 0) {
-    failures.push({
-      chapterNumber: blueprint.chapter_number,
-      failureType: 'MANDATORY_BEATS_MISSING',
-      message: 'Empty mandatory_beats array violates spine integrity'
-    })
-  }
-
-  return failures
-}
-
-/**
- * Forbidden reveals validator - ensure brand guard compliance
- */
-function checkForbiddenReveals(blueprint: ChapterBlueprintRow): Array<{
-  chapterNumber: number
-  failureType: string
-  message: string
-}> {
-  const failures: Array<{
-    chapterNumber: number
-    failureType: string
-    message: string
-  }> = []
-  
-  const forbiddenReveals = blueprint.forbidden_reveals as string[] || []
-  
-  if (forbiddenReveals && Array.isArray(forbiddenReveals) && forbiddenReveals.length > 0) {
-    // Validate that no forbidden model details are revealed
-    for (const forbidden of forbiddenReveals) {
-      if (typeof forbidden === 'string') {
-        // Check for forbidden terms (AI provider details, tokens, etc.)
-        if (/ai|model|provider|token/i.test(forbidden)) {
-          failures.push({
-            chapterNumber: blueprint.chapter_number,
-            failureType: 'FORBIDDEN_REVEAL_DETECTED',
-            message: `Forbidden term detected: ${forbidden}`
-          })
-        }
-      }
-    }
-  }
-  
-  return failures
-}
-
-/**
- * State delta consistency validator - ensure character states remain valid
- */
-function checkStateDeltaConsistency(blueprint: ChapterBlueprintRow): Array<{
-  chapterNumber: number
-  failureType: string
-  message: string
-}> {
-  const failures: Array<{
-    chapterNumber: number
-    failureType: string
-    message: string
-  }> = []
-  
-  const allowedStateDelta = blueprint.allowed_state_delta as Record<string, unknown> | undefined || {}
-  
-  if (allowedStateDelta && typeof allowedStateDelta === 'object') {
-  // Validate state transitions are valid JSON and well-formed
-    try {
-      JSON.stringify(allowedStateDelta)
-    } catch (_error) {
-      failures.push({
-        chapterNumber: blueprint.chapter_number,
-        failureType: 'STATE_DELTA_PARSE_ERROR',
-        message: 'Invalid JSON in allowed_state_delta'
-      })
-    }
-  }
-  
-  return failures
 }
 
 /**

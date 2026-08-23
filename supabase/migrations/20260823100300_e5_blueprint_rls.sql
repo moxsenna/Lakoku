@@ -1,16 +1,16 @@
 -- M10-E E5 Row-Level Security Enforcement Policy (E-OPS-1 Criterion #4)
 -- Purpose: Comprehensive RLS policies - owner/admin ONLY, NO anon/auth-wildcard
--- Authority: Reviewer verdict HOLD - must fix RLS before closure submittal
+-- Authority: Reviewer verdict HOLD + Static Gate fb64c47 corrections
 -- Boundary: 
 --   1. Anonymous users: NO access to queue, audit, resolutions tables
 --   2. Authenticated users: NO unrestricted access via WITH CHECK (true)  
 --   3. Owner/admin only: predicates via admin_users + auth.uid()
 --   4. Reuse existing admin_users table (created at 20260718110000); DO NOT recreate
--- FIXES REQUIRED BY REVIEWER:
---   - Remove CREATE TABLE admin_users (already exists)
---   - Use correct DROP POLICY IF EXISTS + CREATE POLICY syntax (not CREATE OR REPLACE)
---   - Remove 'editor' role from admin_users reference
---   - Add explicit deny for anon users where missing
+-- STATIC GATE CORRECTIONS (fb64c47):
+--   - No resolution UPDATE/DELETE policies (append-only ledger requirement)
+--   - Minimum grants + owner/admin RLS actually usable by current server reads
+--   - Audit log reviewer FK RESTRICT/NO ACTION (not CASCADE)
+--   - blueprint_queue SELECT permission granted for authenticated reads
 
 DO $$
 BEGIN
@@ -31,35 +31,41 @@ END $$;
 COMMENT ON TABLE public.admin_users IS 'Authorization mapping for owner/admin access to blueprint workflow (E-OPS-1 Criterion #4); REUSED from 20260718110000';
 
 -- ============================================================================
--- BLUEPRINT_QUEUE POLICIES - NO ANON ACCESS, OWNER/ADMIN ONLY
--- ============================================================================
+-- BLUEPRINT_QUEUE POLICIES - OWNER/ADMIN ONLY, SERVICE_ROLE FOR INTERNAL OPERATIONS
+-- ===================================================== ===================
 
 DROP POLICY IF EXISTS "blueprint_queue_anon_select" ON public.blueprint_queue;
 DROP POLICY IF EXISTS "blueprint_queue_service_role" ON public.blueprint_queue;
-
--- Deny anonymous access entirely
 DROP POLICY IF EXISTS "blueprint_queue_anon_all" ON public.blueprint_queue;
 
--- Allow authenticated admin users ONLY via explicit admin_users membership check
-CREATE POLICY "blueprint_queue_owner_admin"
-  ON public.blueprint_queue FOR ALL TO authenticated
-  USING (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')))
-  WITH CHECK (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')));
+-- Grant minimum SELECT to authenticated (used by admin dashboard/client reads)
+-- RLS restricts to owner/admin members only
+CREATE POLICY "blueprint_queue_authenticated_select"
+  ON public.blueprint_queue FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')));
+
+-- Deny anonymous access entirely
+CREATE POLICY "blueprint_queue_anon_deny_all"
+  ON public.blueprint_queue FOR ALL TO anon
+  USING (false)
+  WITH CHECK (false);
 
 -- Service role bypass for internal operations
 CREATE POLICY "blueprint_queue_service_role" 
   ON public.blueprint_queue FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 -- ============================================================================
--- BLUEPRINT_RESOLUTIONS POLICIES - OWNER/ADMIN ONLY
+-- BLUEPRINT_RESOLUTIONS POLICIES - APPEND-ONLY (NO UPDATE/DELETE)
 -- ============================================================================
 
 DROP POLICY IF EXISTS "blueprint_resolutions_authenticated_insert" ON public.blueprint_resolutions;
 DROP POLICY IF EXISTS "blueprint_resolutions_authenticated_select" ON public.blueprint_resolutions;
 DROP POLICY IF EXISTS "blueprint_resolutions_service_role" ON public.blueprint_resolutions;
+DROP POLICY IF EXISTS "blueprint_resolutions_update" ON public.blueprint_resolutions;
+DROP POLICY IF EXISTS "blueprint_resolutions_delete" ON public.blueprint_resolutions;
 
--- Deny wildcard authenticated access; require admin_users membership
-CREATE POLICY "blueprint_resolutions_owner_admin"
+-- Append-only pattern: INSERT + SELECT only; NO UPDATE/DELETE paths
+CREATE POLICY "blueprint_resolutions_owner_admin_insert"
   ON public.blueprint_resolutions FOR INSERT TO authenticated
   WITH CHECK (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')));
 
@@ -67,30 +73,39 @@ CREATE POLICY "blueprint_resolutions_owner_admin_select"
   ON public.blueprint_resolutions FOR SELECT TO authenticated
   USING (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')));
 
-CREATE POLICY "blueprint_resolutions_owner_admin_update"
+-- Explicitly deny UPDATE/DELETE (append-only ledger immutability)
+CREATE POLICY "blueprint_resolutions_no_update"
   ON public.blueprint_resolutions FOR UPDATE TO authenticated
-  USING (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')))
-  WITH CHECK (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')));
+  USING (false);
 
-CREATE POLICY "blueprint_resolutions_owner_admin_delete"
+CREATE POLICY "blueprint_resolutions_no_delete"
   ON public.blueprint_resolutions FOR DELETE TO authenticated
-  USING (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')));
+  USING (false);
 
-CREATE POLICY "blueprint_resolutions_service_role" 
-  ON public.blueprint_resolutions FOR ALL TO service_role USING (true) WITH CHECK (true);
+-- Service role bypass (INSERT/SELECT only)
+CREATE POLICY "blueprint_resolutions_service_role_select" 
+  ON public.blueprint_resolutions FOR SELECT TO service_role USING (true);
+
+CREATE POLICY "blueprint_resolutions_service_role_insert" 
+  ON public.blueprint_resolutions FOR INSERT TO service_role WITH CHECK (true);
 
 -- ============================================================================
--- BLUEPRINT_AUDIT_LOG POLICIES - OWNER/ADMIN ONLY, NO DELETE
+-- BLUEPRINT_AUDIT_LOG POLICIES - APPEND-ONLY, REVIEWER FK RESTRICT (NOT CASCADE)
 -- ============================================================================
 
 DROP POLICY IF EXISTS "blueprint_audit_log_anon_select" ON public.blueprint_audit_log;
 DROP POLICY IF EXISTS "blueprint_audit_log_authenticated_insert" ON public.blueprint_audit_log;
 DROP POLICY IF EXISTS "blueprint_audit_log_service_role" ON public.blueprint_audit_log;
+DROP POLICY IF EXISTS "blueprint_audit_log_update" ON public.blueprint_audit_log;
+DROP POLICY IF EXISTS "blueprint_audit_log_delete" ON public.blueprint_audit_log;
 
 -- Deny anonymous access entirely
-DROP POLICY IF EXISTS "blueprint_audit_log_anon_all" ON public.blueprint_audit_log;
+CREATE POLICY "blueprint_audit_log_anon_deny_all"
+  ON public.blueprint_audit_log FOR ALL TO anon
+  USING (false)
+  WITH CHECK (false);
 
--- Allow owner/admin select/insert only; explicitly BLOCK DELETE (audit immutability)
+-- Allow owner/admin select/insert only
 CREATE POLICY "blueprint_audit_log_owner_admin_select"
   ON public.blueprint_audit_log FOR SELECT TO authenticated
   USING (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')));
@@ -99,16 +114,79 @@ CREATE POLICY "blueprint_audit_log_owner_admin_insert"
   ON public.blueprint_audit_log FOR INSERT TO authenticated
   WITH CHECK (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')));
 
--- Block DELETE entirely (audit immutability requirement) - explicit denial
-DROP POLICY IF EXISTS "blueprint_audit_log_delete" ON public.blueprint_audit_log;
-DROP POLICY IF EXISTS "blueprint_audit_log_auth_delete" ON public.blueprint_audit_log;
-
+-- Block DELETE entirely (audit immutability requirement)
 CREATE POLICY "blueprint_audit_log_no_delete"
   ON public.blueprint_audit_log FOR DELETE TO authenticated
-  USING (false); -- Explicit deny for all users
+  USING (false);
 
+-- Block UPDATE (append-only immutability)
+CREATE POLICY "blueprint_audit_log_no_update"
+  ON public.blueprint_audit_log FOR UPDATE TO authenticated
+  USING (false);
+
+-- Service role bypass for internal operations
 CREATE POLICY "blueprint_audit_log_service_role" 
   ON public.blueprint_audit_log FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- ============================================================================
+-- BLUEPRINT_VALIDATOR_PROOFS POLICIES - IMMUTABLE AFTER INSERTION
+-- ============================================================================
+
+DROP POLICY IF EXISTS "e5_validator_proof_authenticated" ON public.blueprint_validator_proofs;
+DROP POLICY IF EXISTS "e5_validator_proof_service_role" ON public.blueprint_validator_proofs;
+DROP POLICY IF EXISTS "anon_select" ON public.blueprint_validator_proofs;
+DROP POLICY IF EXISTS "anon_insert" ON public.blueprint_validator_proofs;
+
+-- Allow owner/admin SELECT/INSERT only (NO UPDATE/DELETE)
+CREATE POLICY e5_validator_proof_select
+  ON public.blueprint_validator_proofs
+  FOR SELECT
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM admin_users au
+      WHERE au.user_id = auth.uid()
+      AND au.role IN ('owner', 'admin')
+    )
+  );
+
+CREATE POLICY e5_validator_proof_insert
+  ON public.blueprint_validator_proofs
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM admin_users au
+      WHERE au.user_id = auth.uid()
+      AND au.role IN ('owner', 'admin')
+    )
+  );
+
+-- Explicitly deny UPDATE/DELETE (immutability requirement)
+CREATE POLICY e5_validator_proof_no_update
+  ON public.blueprint_validator_proofs
+  FOR UPDATE
+  TO authenticated
+  USING (false);
+
+CREATE POLICY e5_validator_proof_no_delete
+  ON public.blueprint_validator_proofs
+  FOR DELETE
+  TO authenticated
+  USING (false);
+
+-- Service role bypass
+CREATE POLICY e5_validator_proof_service_role_select
+  ON public.blueprint_validator_proofs
+  FOR SELECT
+  TO service_role
+  USING (true);
+
+CREATE POLICY e5_validator_proof_service_role_insert
+  ON public.blueprint_validator_proofs
+  FOR INSERT
+  TO service_role
+  WITH CHECK (true);
 
 -- ============================================================================
 -- CONVENIENCE VIEWS - Fixed to not assume non-existent columns

@@ -7,6 +7,7 @@
 "use client"
 
 import { useState } from 'react'
+import type { PendingReviewItem as ContractPendingReviewItem } from '@/lib/types/blueprint.contract'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -43,15 +44,15 @@ export function formatRelativeTime(timestamp: string): string {
 
 interface PendingReviewItem {
   story_id: string
-  story_title: string | null
+  story_title?: string | null
   tagline?: string | null
   chapter_numbers: number[]
   act_boundary: 'ACT_1' | 'ACT_2' | 'ACT_3'
   findings: Array<'BRAND_LEAK' | 'CANONICAL_CORRUPTION' | 'LEASE_TIMEOUT' | 'PARSE_FAILURE'>
-  queue_created_at: string
+  queue_created_at?: string
 }
 
-interface ClientComponentProps {
+type ClientComponentProps = {
   initialItems: PendingReviewItem[]
   reviewerRole: 'owner' | 'admin'
 }
@@ -166,7 +167,7 @@ function BlueprintReviewCard({ item, reviewerRole, onSubmit, isLoading }: Review
         </CardTitle>
         <CardDescription className="text-sm">
           Genre: N/A • Bab: {item.chapter_numbers.join(', ')} • 
-          Dibuat: {formatRelativeTime(item.queue_created_at)}
+          Dibuat: {formatRelativeTime(item.queue_created_at || new Date().toISOString())}
         </CardDescription>
       </CardHeader>
       

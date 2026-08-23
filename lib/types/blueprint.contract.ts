@@ -103,6 +103,7 @@ export interface PendingReviewItem extends Omit<BlueprintQueueItem, 'status'> {
   tagline?: string | null;
   role?: string | null;
   total_chapters?: number | null;
+  queue_created_at?: string; // Added for client component compatibility
 }
 
 /**
@@ -161,9 +162,10 @@ export interface ValidatorRerunResult {
     chapterNumber: number;
     findings: Array<{ findingType: string; message: string }>;
   }>;
+  /** Correction per static gate fb64c47: renamed from secretEndingsReached to reflect reachability not reached state */
   endingResults?: {
     mainEndingReachable: boolean;
-    secretEndingsReached: string[];
+    secretEndingsReachable: string[];  // Renamed for semantic accuracy
   };
 }
 

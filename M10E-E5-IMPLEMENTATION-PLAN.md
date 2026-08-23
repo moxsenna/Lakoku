@@ -38,7 +38,7 @@ Each queued item carries full context payload: failed chapter numbers (may span 
 **Payload Schema:**
 ```typescript
 interface FailedStoryDetail {
-  storyId: string; // public.stories(id) FK
+  storyId: string; // public.stories(id) FK as TEXT
   chapterNumbers: number[]; // May include multiple chapters if act boundary affected
   actBoundary: 'ACT_1' | 'ACT_2' | 'ACT_3';
   findings: Array<'BRAND_LEAK'|'CANONICAL_CORRUPTION'|'LEASE_TIMEOUT'|'PARSE_FAILURE'>;
@@ -47,7 +47,7 @@ interface FailedStoryDetail {
     retryCount: number;
     brandScanHash?: string;
     leaseId?: string;
-    eventId?: string; // public.story_events(id) if bound to actual event
+    eventId?: bigint; // public.story_events(id) BIGINT if bound to actual event; NULL if no evidence binding
   };
 }
 ```
@@ -62,7 +62,7 @@ Only **authorized admin user** can record disposition per item. Unauthorized use
 
 Disposition generates new blueprint version row without overwriting history. Old version preserved in immutable ledger via **reuse of existing `public.chapter_blueprints(version)` model**; never create parallel canonical blueprint version authority table unless repo evidence proves necessary. Revised parameters limited to **blueprint/narrative-plan data** (prompt template patch for narrative text revision). Never modify runtime-policy settings (retry policy, validator threshold) via blueprint resolution—those require separate governance authority.
 
-**Database Pattern:** Append-update to `chapter_blueprints` via version increment; never UPDATE rows that already exist in audit sense. Reference existing table rather than creating duplicate version tracking.
+**Database Pattern:** INSERT a new `chapter_blueprints` version row; never UPDATE an existing version row. Reference existing table rather than creating duplicate version tracking.
 
 ### Criterion #5: Audit Trail Completeness
 
@@ -72,14 +72,16 @@ Record reviewer ID (via `requireAdminUser()`), disposition outcome (`REJECT_BLOC
 ```sql
 CREATE TABLE blueprint_audit_log (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  review_item_id UUID REFERENCES blueprint_queue(story_id) ON DELETE CASCADE,
+  story_id TEXT NOT NULL REFERENCES blueprint_queue(story_id) ON DELETE CASCADE,
   reviewer_id UUID NOT NULL, -- auth.uid() of authorized admin user
   disposition TEXT NOT NULL CHECK (disposition IN ('REJECT_BLOCK', 'RETRY_ALLOW', 'UNBLOCK_PERMIT')),
   reason_text TEXT NOT NULL,
-  source_event_id TEXT, -- public.story_events(id) if bound to actual event; otherwise NULL
+  source_event_id BIGINT NOT NULL REFERENCES public.story_events(id),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 ```
+
+**Note:** `source_event_id` is NON-NULL per E-OPS-1 requirement that every resolution binds to evidence. If no concrete event exists, use null sentinel or placeholder event ID from frozen baseline. Never silently drop evidence binding.
 
 ### Criterion #6: Validator Rerun After Resolution
 
@@ -241,6 +243,26 @@ All forbidden items represent commercial/governance scope expansion outside E-OP
 | `tests/e5-blueprint-reader-safe.test.ts` | Reader-safe response; forbidden terms scanning |
 
 Integration proof satisfied through five exact unit/integration tests above. No additional Playwright/E2E file paths required in allowlist.
+
+### Governed Database Semantics (Disposable-DB/pgTAP Proofs)
+
+Vitest files prove application/API/server behavior. Five governed disposable-DB pgTAP proofs establish database-level semantics (concurrency, RLS, constraints, immutability). Implementation requires exactly-once queue identity, concurrent resolution serialization, row-level security enforcement, append-only ledger constraints, immutable audit logs, and fail-closed validator rerun gating.
+
+**Exact Test Paths:**
+
+| File | Responsibility | Proof Target |
+|------|----------------|--------------|
+| `supabase/tests/e5_blueprint_queue_exactly_once_test.sql` | Disposable DB setup/teardown | Exactly-once queue processing via PostgreSQL advisory locks; no duplicate claim under concurrent consumers |
+| `supabase/tests/e5_blueprint_review_rls_test.sql` | Row-level security policy | Unauthorized users cannot SELECT/UPDATE blueprint_queue/resolutions tables; only owner/admin roles permitted |
+| `supabase/tests/e5_blueprint_append_only_test.sql` | Append-only constraint | chapter_blueprints INSERT new version row never UPDATE existing; history preserved across revisions |
+| `supabase/tests/e5_blueprint_audit_immutability_test.sql` | Audit log integrity | audit_log entries never UPDATE/DELETE after insertion; FK constraints enforced on source_event_id and review_item_id |
+| `supabase/tests/e5_blueprint_unblock_fail_closed_test.sql` | Validator rerun gating | UNBLOCK disposition triggers validator rerun; failure requeues blocked, success permits continuation; idempotent verification |
+
+**Race Condition Harness (Sequential-Event Ordering)**
+
+Implementation includes one race condition harness proving sequential event ordering under concurrent access patterns:
+
+- `scripts/e5-blueprint-resolution-race.ts` | Concurrent claim + resolution races | Sequential event ordering guaranteed under parallel consumer threads; no double-resolution or lost updates |
 
 ---
 

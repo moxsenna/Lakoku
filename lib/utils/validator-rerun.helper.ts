@@ -132,22 +132,93 @@ export async function runValidatorRerun(
         })
       })
 
-      // VALIDATOR 2: Ending reachability check
-      // Build ActualState from current blueprint
+      // VALIDATOR 2: Ending reachability check (uses REAL persisted state)
       const actualState: ActualState = {
-        storyFlags: new Set(), // TODO: fetch from stories/state table
-        clues: new Set(),      // TODO: fetch from clues table
-        threadStatuses: {}     // TODO: fetch from threads table
+        storyFlags: new Set(),
+        clues: new Set(),
+        threadStatuses: {}
       }
       
-      const endingFailures = checkEndingReachability(endings, actualState)
-      endingFailures.forEach(f => {
+      // Fetch real story flags/state from stories table
+      const { data: flagsData, error: flagsError } = await db
+        .from('story_states')
+        .select('flag_key, flag_value')
+        .eq('story_id', storyId)
+        .eq('chapter_number', { lte: chapterNum })
+      
+      if (!flagsError && flagsData) {
+        for (const flag of flagsData as any[]) {
+          if (flag.flag_value === true || flag.flag_value === 'true') {
+            actualState.storyFlags.add(flag.flag_key)
+          }
+        }
+      } else if (flagsError) {
+        console.error(`Failed to fetch story flags: ${flagsError.message}`)
+        // Fail closed: missing state => cannot verify ending reachability
         failures.push({
           chapterNumber: chapterNum,
-          failureType: f.code,
-          message: `${f.severity}: ${f.message}`
+          failureType: 'STATE_FETCH_ERROR',
+          message: `Cannot validate endings without state: ${flagsError.message}`
         })
-      })
+      }
+      
+      // Fetch real clues from clues table
+      const { data: cluesData, error: cluesError } = await db
+        .from('clues')
+        .select('id')
+        .eq('story_id', storyId)
+        .eq('revealed_at', { lte: new Date().toISOString() })
+      
+      if (!cluesError && cluesData) {
+        for (const clue of cluesData as any[]) {
+          actualState.clues.add(clue.id)
+        }
+      } else if (cluesError) {
+        console.error(`Failed to fetch clues: ${cluesError.message}`)
+        // Fail closed: missing clues => cannot verify ending reachability
+        failures.push({
+          chapterNumber: chapterNum,
+          failureType: 'CLUES_FETCH_ERROR',
+          message: `Cannot validate endings without clues: ${cluesError.message}`
+        })
+      }
+      
+      // Fetch real thread statuses from threads table
+      const { data: threadsData, error: threadsError } = await db
+        .from('threads')
+        .select('thread_id, status')
+        .eq('story_id', storyId)
+        .eq('chapter_number', { lte: chapterNum })
+      
+      if (!threadsError && threadsData) {
+        for (const thread of threadsData as any[]) {
+          actualState.threadStatuses[thread.thread_id] = thread.status
+        }
+      } else if (threadsError) {
+        console.error(`Failed to fetch threads: ${threadsError.message}`)
+        // Fail closed: missing threads => cannot verify ending reachability
+        failures.push({
+          chapterNumber: chapterNum,
+          failureType: 'THREADS_FETCH_ERROR',
+          message: `Cannot validate endings without threads: ${threadsError.message}`
+        })
+      }
+      
+      // Only proceed with validation if we have complete state
+      const hasMissingState = failures.some(f => 
+        f.failureType.includes('_FETCH_ERROR')
+      )
+      
+      if (!hasMissingState) {
+        const endingFailures = checkEndingReachability(endings, actualState)
+        endingFailures.forEach(f => {
+          failures.push({
+            chapterNumber: chapterNum,
+            failureType: f.code,
+            message: `${f.severity}: ${f.message}`
+          })
+        })
+      }
 
     } catch (err) {
       console.error(`Validator rerun failed for ${storyId}:${chapterNum}:`, err)

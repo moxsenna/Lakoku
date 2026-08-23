@@ -6,7 +6,7 @@
  * Boundary: Reuse requireAdminUser() owner/admin roles; NO invented role='reviewer'; single approved path per allowlist
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { getQueueItemDetail, recordDisposition as workflowRecordDisposition } from '@/lib/runtime/blueprint-workflow.server'
+import { getQueueItemDetail, recordDisposition as workflowRecordDisposition } from '@/lib/runtime'
 import { requireAdminUser } from '@/lib/admin/auth'
 import type { Disposition, ResolutionContext } from '@/lib/types/blueprint.contract'
 

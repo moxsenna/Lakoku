@@ -18,8 +18,8 @@ CREATE TABLE public.blueprint_audit_log (
   -- FK to queue item reviewed (RESTRICT: parent deletion cannot remove historical audit)
   story_id text NOT NULL REFERENCES public.blueprint_queue(story_id) ON DELETE RESTRICT,
   
-  -- Reviewer authorization
-  reviewer_uid uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  -- Reviewer authorization (RESTRICT: never lose audit evidence on user deletion)
+  reviewer_uid uuid NOT NULL REFERENCES auth.users(id) ON DELETE RESTRICT,
   
   -- Resolution disposition outcome
   disposition text NOT NULL CHECK (disposition IN ('REJECT_BLOCK', 'RETRY_ALLOW', 'UNBLOCK_PERMIT')),

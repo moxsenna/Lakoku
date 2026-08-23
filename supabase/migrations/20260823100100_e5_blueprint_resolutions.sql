@@ -24,8 +24,8 @@ CREATE TABLE public.blueprint_resolutions (
   -- Resolution disposition outcome
   disposition text NOT NULL CHECK (disposition IN ('REJECT_BLOCK', 'RETRY_ALLOW', 'UNBLOCK_PERMIT')),
   
-  -- Reviewer authorization (auth.uid())
-  reviewer_uid uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  -- Reviewer authorization (RESTRICT: never lose resolution evidence on user deletion)
+  reviewer_uid uuid NOT NULL REFERENCES auth.users(id) ON DELETE RESTRICT,
   
   -- Reason text from reviewer
   reason_text text NOT NULL,

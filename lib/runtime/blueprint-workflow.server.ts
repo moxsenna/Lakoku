@@ -146,12 +146,12 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
       p_disposition: trustedContext.disposition,
       p_reviewer_uid: trustedContext.reviewer_uid,
       p_reason_text: trustedContext.reason_text,
-      p_source_event_id: Number(trustedContext.source_event_id),
+      p_source_event_id: trustedContext.source_event_id.toString(), // BIGINT preserved as decimal string (not Number())
       p_chapter_numbers: trustedContext.chapter_numbers,
       p_validation_passed: validatorEvidencePassed,
       p_validator_spine_findings: validationResult?.spineRevealFindings ?? null,
-      p_validator_ending_findings: validationResult?.endingResults ?? null,
-      p_expected_max_version: null // Set optimistic concurrency check later if needed
+      p_validator_ending_results: validationResult?.endingResults ?? null, // Renamed from ending_findings per static gate
+      p_expected_chapter_versions: null // Pass per-chapter version pairs here if needed later
     })
     
     if (rpcError) {

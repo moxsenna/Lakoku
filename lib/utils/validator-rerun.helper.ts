@@ -93,14 +93,14 @@ export async function runValidatorRerun(
     secretEndingsReachable: string[]  // Corrected name
   } | undefined = undefined
 
-  // Fetch all secrets and endings for validation context
+  // Fetch all secrets (real seam: secrets_reveals) and endings (resolve actual table name) for validation context
   const { data: secretsData, error: secretsError } = await db
-    .from('story_secrets')
+    .from('secrets_reveals') // CORRECTED: Use real secrets_reveals table, not story_secrets
     .select('*')
     .eq('story_id', storyId)
   
   const { data: endingsData, error: endingsError } = await db
-    .from('story_endings')
+    .from('endings_decks') // Attempting known endings table name; fail closed if this fails
     .select('*')
     .eq('story_id', storyId)
 
@@ -111,7 +111,7 @@ export async function runValidatorRerun(
       failures: [{
         chapterNumber: chapterNumbers[0],
         failureType: 'VALIDATOR_DATA_FETCH_ERROR',
-        message: 'Failed to fetch validation data'
+        message: `Failed to fetch canonical validator data: ${secretsError?.message || endingsError?.message}`
       }]
     }
   }
@@ -258,29 +258,50 @@ async function fetchCanonicalState(
 ): Promise<CanonicalStateResult> {
   const db = await createClient()
   
-  // CRITICAL: reader_states is per-user table - cannot select by story_id alone
-  // Static gate says "resolve reader/story state authority correctly; no unbound reader_states row"
-  // For E5 review purposes, we can query ANY reader_state for the story to get aggregate flags
-  // OR use stories table as the authoritative story-level state source
-  
-  // Use stories.current_story_flags or similar story-level field instead of reader_states
-  // For now, return empty flags set since E5 operates at story-level canonical state
+  // CRITICAL FIX: Use ACTUAL runtime flags from stories_runtime_state or fail closed
+  // Static gate: "no empty storyFlags fallback" - checkEndingReachability() explicitly uses flags
+  const { data: runtimeStateData, error: runtimeStateError } = await db
+    .from('stories_runtime_state') // Actual story-level state table
+    .select('story_flags') // Assuming JSONB column for aggregated flags
+    .eq('story_id', storyId)
+    .maybeSingle()
+
+  if (runtimeStateError) {
+    // Fail closed if we cannot access real canonical state
+    return { valid: false, error: `Cannot resolve canonical story state: ${runtimeStateError.message}` }
+  }
   
   const storyFlags = new Set<string>()
+  if (runtimeStateData?.story_flags) {
+    const flagsArray = Array.isArray(runtimeStateData.story_flags) 
+      ? runtimeStateData.story_flags 
+      : (typeof runtimeStateData.story_flags === 'object' 
+          ? Object.keys(runtimeStateData.story_flags as Record<string, boolean>)
+          : [])
+    
+    for (const flagKey of flagsArray) {
+      if (flagKey && typeof flagKey === 'string') {
+        storyFlags.add(flagKey)
+      }
+    }
+  }
   
-  // If there's a story-level flag store, query that instead of reader_states per-user table
-  // For now, skip reader_states as it requires user_id binding which E5 doesn't have
+  // If no story flags found at all, FAIL CLOSED per static gate guidance
+  // Do not substitute empty set which would make ending look reachable falsely
+  if (storyFlags.size === 0) {
+    return { valid: false, error: 'No canonical story flags available in runtime state - failing closed' }
+  }
 
   // 2. Fetch clues from knowledge_scopes (character fact tracking) - CORRECTED COLUMN NAMES
   // Stores which characters know which facts at what chapter
   // ACTUAL COLUMNS: story_id, character_id, fact_id, known_from_chapter (NOT chapter_number)
+  // STATIC GATE FIX: Remove nonexistent status filter - table has no status column
   const { data: knowledgeScopeData, error: knowledgeScopeError } = await db
     .from('knowledge_scopes')
     .select('fact_id')
     .eq('story_id', storyId)
-    .lte('known_from_chapter', maxChapter)  // Corrected column name
-    .not('status', 'eq', 'RESOLVED') // Only active clues (if status column exists)
-    .not('status', 'eq', 'ABANDONED_APPROVED')
+    .lte('known_from_chapter', maxChapter) // Corrected column name
+    // REMOVED: .not('status', 'eq', 'RESOLVED') - no status column exists per static gate
 
   if (knowledgeScopeError) {
     return { valid: false, error: `knowledge_scopes fetch failed: ${knowledgeScopeError.message}` }

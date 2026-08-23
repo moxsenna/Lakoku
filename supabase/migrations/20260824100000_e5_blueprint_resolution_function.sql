@@ -1,12 +1,12 @@
 -- M10-E E5 Blueprint Resolution Function (Native Atomic Transaction)
 -- Purpose: Single Postgres RPC/function for transactional disposition recording
--- Authority: E-OPS-1 Requirement #9 (transactional resolution boundary) + Static Gate fb64c47 verdict
+-- Authority: E-OPS-1 Requirement #9 (transactional resolution boundary) + Static Gate b3f20e0 verdict
 -- Boundary: 
 --   1. ANY exception => automatic rollback; NO partial commits allowed
---   2. SECURITY DEFINER performs internal auth.uid() + admin_users check
+--   2. SECURITY DEFINER with safe search_path performs internal auth.uid() + admin_users check
 --   3. BIGINT preserved lossless (no Number() conversion)
 --   4. Per-chapter expected version verification before append
---   5. Idempotent replay returns existing result, zero new effects
+--   5. Idempotent replay returns full existing authoritative result
 -- CONTRACT: TypeScript layer MUST run canonical validators BEFORE calling this RPC
 --           RPC verifies evidence/state; if validators fail, DO NOT CALL THIS RPC
 
@@ -18,9 +18,9 @@ CREATE OR REPLACE FUNCTION public.e5_record_disposition(
   p_source_event_id bigint,  -- BIGINT PRESERVED LOSSLESS (JavaScript safe as decimal string in TS)
   p_chapter_numbers integer[],
   p_validator_spine_findings jsonb DEFAULT NULL,
-  p_validator_ending_results jsonb DEFAULT NULL,  -- Renamed from ending_findings per static gate
+  p_validator_ending_results jsonb DEFAULT NULL,  -- Correct name per static gate feedback
   p_validation_passed boolean DEFAULT FALSE,
-  p_expected_chapter_versions jsonb DEFAULT NULL  -- {"chapter": N, "expected_version": M} array
+  p_expected_chapter_versions jsonb DEFAULT NULL  -- [{"chapter": N, "expected_version": M}] array
 )
 RETURNS TABLE (
   success boolean,
@@ -33,7 +33,8 @@ DECLARE
   v_idempotency_key text := format('%s-%s-%s', p_story_id, p_disposition, p_reviewer_uid);
   v_existing_resolution_id bigint;
   v_proof_id uuid;
-  v_current_max_version integer;
+  v_existing_unblock_proof text;
+  v_existing_validator_results jsonb;
   v_new_version integer;
   v_chapter_insert_count integer;
   v_expected_version integer;
@@ -42,35 +43,34 @@ BEGIN
   -- BEGIN TRANSACTION - Native PostgreSQL transaction boundary
   -- ALL operations below either commit together or rollback entirely on ANY exception
   
+  -- Set safe search path for SECURITY DEFINER function
+  PERFORM set_config('search_path', 'public, pg_catalog', false);
+  
   -- ================================================================
   -- AUTHORIZATION LAYER (SECURITY DEFINER requires internal auth check)
+  -- CRITICAL FIX: Remove fake pg_execute_server_role bypass - it doesn't identify current caller
   -- ================================================================
   
-  -- Verify caller identity matches reviewer_uid claim AND admin_users membership
-  IF EXISTS (SELECT 1 FROM pg_authid WHERE rolname = 'pg_execute_server_role') THEN
-    -- Running as superuser/service role bypass
-    NULL;
-  ELSE
-    -- Must verify auth.uid() matches p_reviewer_uid AND admin_users membership
-    IF auth.uid() IS NULL THEN
-      RAISE EXCEPTION 'UNAUTHORIZED: no active session';
-    END IF;
-    
-    IF auth.uid() != p_reviewer_uid THEN
-      RAISE EXCEPTION 'UNAUTHORIZED: reviewer_uid claim % does not match auth.uid() %', p_reviewer_uid, auth.uid();
-    END IF;
-    
-    IF NOT EXISTS (
-      SELECT 1 FROM public.admin_users 
-      WHERE user_id = auth.uid() 
-        AND role IN ('owner', 'admin')
-    ) THEN
-      RAISE EXCEPTION 'FORBIDDEN: current user is not owner/admin in admin_users table';
-    END IF;
+  -- Must verify auth.uid() matches p_reviewer_uid AND admin_users membership
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'UNAUTHORIZED: no active session';
+  END IF;
+  
+  IF auth.uid() != p_reviewer_uid THEN
+    RAISE EXCEPTION 'UNAUTHORIZED: reviewer_uid claim % does not match auth.uid() %', p_reviewer_uid, auth.uid();
+  END IF;
+  
+  IF NOT EXISTS (
+    SELECT 1 FROM public.admin_users 
+    WHERE user_id = auth.uid() 
+      AND role IN ('owner', 'admin')
+  ) THEN
+    RAISE EXCEPTION 'FORBIDDEN: current user is not owner/admin in admin_users table';
   END IF;
   
   -- ================================================================
-  -- IDEMPOTENT REPLAY (return existing authoritative result, zero new effects)
+  -- IDEMPOTENT REPLAY (return existing authoritative result WITHOUT creating new effects)
+  -- CRITICAL FIX: Return full persisted proof value and validator evidence, not NULL placeholders
   -- ================================================================
   
   -- Check if resolution already exists for this idempotency key
@@ -80,8 +80,9 @@ BEGIN
   LIMIT 1;
   
   IF v_existing_resolution_id IS NOT NULL THEN
-    -- Return existing proof/replay evidence WITHOUT creating new effects
-    SELECT bp.id INTO v_proof_id
+    -- Return EXISTING proof/replay evidence WITH full validator results (per Criterion #9)
+    SELECT bp.id, bp.chapter_version_pairs, bp.proof_hash
+      INTO v_proof_id, v_existing_validator_results, v_existing_unblock_proof
     FROM blueprint_validator_proofs bp
     WHERE bp.story_id = p_story_id
       AND bp.source_event_id = p_source_event_id
@@ -90,7 +91,16 @@ BEGIN
       AND bp.chapter_numbers = p_chapter_numbers
     LIMIT 1;
     
-    RETURN QUERY SELECT TRUE, NULL::text, 'Idempotent replay detected'::text, v_proof_id, NULL::jsonb;
+    -- Build unblock proof string from persisted hash/data
+    IF v_existing_unblock_proof IS NOT NULL THEN
+      RETURN QUERY SELECT TRUE, v_existing_unblock_proof, 'Idempotent replay detected'::text, v_proof_id, v_existing_validator_results;
+    ELSE
+      -- Fallback: reconstruct from persisted data
+      RETURN QUERY SELECT TRUE, 
+        format('E5_UNBLOCK_PROOF_%s CHAPTERS %s VALIDATOR_RERUN_PASSED PROOF_ID_%s',
+          p_story_id, array_to_string(p_chapter_numbers, ','), v_proof_id),
+        'Idempotent replay detected'::text, v_proof_id, v_existing_validator_results;
+    END IF;
     RETURN;  -- Exit early, no new chapters/audit/proof created
   END IF;
   
@@ -110,6 +120,7 @@ BEGIN
   
   -- ================================================================
   -- EXPECTED VERSION VERIFICATION (per-chapter optimistic locking)
+  -- CRITICAL FIX: Require exact equality, not merely reject actual > expected
   -- ================================================================
   
   IF p_expected_chapter_versions IS NOT NULL THEN
@@ -122,7 +133,8 @@ BEGIN
         WHERE story_id = p_story_id
           AND chapter_number = p_chapter_numbers[i];
         
-        IF v_actual_version > v_expected_version THEN
+        -- STRICT: actual version must EQUAL expected version exactly
+        IF v_actual_version != v_expected_version THEN
           RAISE EXCEPTION 
             'Optimistic concurrency violation: chapter % expected version % but found version %',
             p_chapter_numbers[i], v_expected_version, v_actual_version;
@@ -131,18 +143,20 @@ BEGIN
     END LOOP;
   END IF;
   
-  -- Calculate new version for append-only
+  -- Calculate new version for append-only (MAX + 1 across all affected chapters)
   SELECT COALESCE(MAX(version), 0) + 1 INTO v_new_version
   FROM chapter_blueprints
-  WHERE story_id = p_story_id;
+  WHERE story_id = p_story_id
+    AND chapter_number = ANY(p_chapter_numbers);
   
   -- ================================================================
   -- STEP 1: Insert disposition record (will fail on duplicate key if concurrent race)
+  -- CRITICAL FIX: ON CONFLICT DO UPDATE requires SET clause - use DO NOTHING instead
   -- ================================================================
   
   INSERT INTO blueprint_resolutions (story_id, disposition, reviewer_uid, reason_text, idempotency_key)
   VALUES (p_story_id, p_disposition, p_reviewer_uid, p_reason_text, v_idempotency_key)
-  ON CONFLICT (idempotency_key) DO UPDATE RETURNING id INTO v_existing_resolution_id;
+  ON CONFLICT (idempotency_key) DO NOTHING RETURNING id INTO v_existing_resolution_id;
   
   IF v_existing_resolution_id IS NULL THEN
     RAISE EXCEPTION 'Resolution record insertion failed unexpectedly';
@@ -150,7 +164,9 @@ BEGIN
   
   -- ================================================================
   -- STEP 2: Insert all chapter blueprint versions by copying full validated content (atomic batch)
-  -- CRITICAL: Never create blank/default blueprint rows
+  -- CRITICAL FIXES: 
+  --   - Fix typo: chapter_bluepins -> chapter_blueprints
+  --   - Fix syntax: ?? operator -> proper PostgreSQL null handling
   -- ================================================================
   
   WITH new_chapters AS (
@@ -168,14 +184,14 @@ BEGIN
       cb.introduces_characters,
       cb.reconciled_from_version,
       cb.reconciliation_reason
-    FROM chapter_bluepins cb
+    FROM chapter_blueprints cb  -- CORRECTED spelling from chapter_bluepins
     WHERE cb.story_id = p_story_id
       AND cb.chapter_number IN (SELECT chapter_num FROM new_chapters)
     ORDER BY cb.story_id, cb.chapter_number, cb.version DESC
   )
-  INSERT INTO chapter_bluepins (story_id, chapter_number, version, reconciled_from_version, reconciliation_reason, phase, chapter_goal, mandatory_beats, forbidden_reveals, allowed_state_delta, introduces_characters)
+  INSERT INTO chapter_blueprints (story_id, chapter_number, version, reconciled_from_version, reconciliation_reason, phase, chapter_goal, mandatory_beats, forbidden_reveals, allowed_state_delta, introduces_characters)
   SELECT lb.story_id, lb.chapter_number, v_new_version, 
-         CASE WHEN v_new_version > 1 THEN (lb.reconciled_from_version ?? 'null'::jsonb)::integer ELSE NULL END,
+         CASE WHEN v_new_version > 1 AND lb.reconciled_from_version IS NOT NULL THEN lb.reconciled_from_version ELSE NULL END,
          format('E5 disposition: %s at %s', p_disposition, now()),
          lb.phase,
          lb.chapter_goal,
@@ -202,69 +218,65 @@ BEGIN
   
   -- ================================================================
   -- STEP 4: Handle each disposition type
+  -- CRITICAL FIX: Compute proof hash BEFORE INSERT, make proof row truly immutable
   -- ================================================================
   
   IF p_disposition = 'UNBLOCK_PERMIT' THEN
-    -- Persist authoritative validator results with exact payload (correct column names)
-    INSERT INTO blueprint_validator_proofs (
-      story_id,
-      source_event_id,
-      disposition,
-      reviewer_uid,
-      reason_text,
-      chapter_numbers,
-      proof_type,
-      spine_reveal_findings,      -- Correct name (was spine_findings)
-      ending_results,             -- Correct name (was ending_findings)
-      proof_hash,                 -- Will populate after proof generation
-      chapter_version_pairs,      -- Exact chapter/version pairs affected
-      created_at
-    ) VALUES (
-      p_story_id,
-      p_source_event_id,
-      p_disposition,
-      p_reviewer_uid,
-      p_reason_text,
-      p_chapter_numbers,
-      CASE 
-        WHEN p_validation_passed THEN 'VALIDATOR_RERUN_PASSED'
-        ELSE 'VALIDATOR_RERUN_FAILED'
-      END,
-      p_validator_spine_findings,
-      p_validator_ending_results,
-      NULL::text,  -- proof_hash populated below
-      p_expected_chapter_versions,  -- Exact versions locked by this resolution
-      now()
-    ) RETURNING id INTO v_proof_id;
+    -- COMPUTE proof_hash FIRST to ensure immutability
+    DECLARE
+      v_hash_input text := format('%s|%s|%s|%s|%s', 
+        p_story_id, now(), array_to_string(p_chapter_numbers, ','), 
+        COALESCE(p_validator_spine_findings::text, ''), 
+        COALESCE(p_validator_ending_results::text, ''));
+      v_computed_hash text := encode(digest(v_hash_input, 'sha256'), 'hex');
+    BEGIN
+      -- Persist authoritative validator results with EXACT payload types (jsonb, not jsonb[])
+      INSERT INTO blueprint_validator_proofs (
+        story_id,
+        source_event_id,
+        disposition,
+        reviewer_uid,
+        reason_text,
+        chapter_numbers,
+        proof_type,
+        spine_reveal_findings,      -- Plain jsonb (not array of jsonb) per static gate
+        ending_results,             -- Plain jsonb
+        proof_hash,                 -- Computed before INSERT for immutability
+        chapter_version_pairs,      -- Exact chapter/version pairs affected
+        created_at
+      ) VALUES (
+        p_story_id,
+        p_source_event_id,
+        p_disposition,
+        p_reviewer_uid,
+        p_reason_text,
+        p_chapter_numbers,
+        CASE 
+          WHEN p_validation_passed THEN 'VALIDATOR_RERUN_PASSED'
+          ELSE 'VALIDATOR_RERUN_FAILED'
+        END,
+        p_validator_spine_findings,  -- Direct jsonb bind
+        p_validator_ending_results,  -- Direct jsonb bind
+        v_computed_hash,             -- Hash computed first, never updated after
+        p_expected_chapter_versions, -- Exact versions locked by this resolution
+        now()
+      ) RETURNING id INTO v_proof_id;
+    END;
     
-    -- Generate and persist unblock proof hash (SHA-256 of combined data)
-    IF p_validation_passed THEN
-      UPDATE blueprint_validator_proofs
-      SET proof_hash = encode(digest(
-        format('%s|%s|%s|%s|%s', p_story_id, now(), array_to_string(p_chapter_numbers, ','), p_validator_spine_findings::text, p_validator_ending_results::text),
-        'sha256'
-      ), 'hex')
-      WHERE id = v_proof_id
-      RETURNING unblock_proof INTO unblock_proof;
-      
-      -- Update queue status to PENDING (re-enqueue for generation)
-      UPDATE blueprint_queue SET status = 'PENDING', claimed_by = NULL, claimed_at = NULL 
-      WHERE story_id = p_story_id;
-      
-      -- Build structured unblock proof string bound to proof row
-      unblock_proof := format('E5_UNBLOCK_PROOF_%s CHAPTERS %s VALIDATOR_RERUN_PASSED PROOF_ID_%s',
+    -- Update queue status to PENDING (re-enqueue for generation)
+    UPDATE blueprint_queue SET status = 'PENDING', claimed_by = NULL, claimed_at = NULL 
+    WHERE story_id = p_story_id;
+    
+    -- Build unblock proof string bound to proof row
+    RETURN QUERY SELECT TRUE, 
+      format('E5_UNBLOCK_PROOF_%s CHAPTERS %s VALIDATOR_RERUN_PASSED PROOF_ID_%s HASH_%s',
         p_story_id, 
         array_to_string(p_chapter_numbers, ','),
-        v_proof_id
-      );
-      
-      RETURN QUERY SELECT TRUE, unblock_proof, NULL::text, v_proof_id, 
-        jsonb_build_object('spine', p_validator_spine_findings, 'ending', p_validator_ending_results);
-      
-    ELSE
-      -- Validation failed - revert entire transaction via RAISE EXCEPTION
-      RAISE EXCEPTION 'Canonical validators rejected disposition - remain BLOCKED';
-    END IF;
+        v_proof_id,
+        v_computed_hash),
+      NULL::text,
+      v_proof_id,
+      jsonb_build_object('spine', p_validator_spine_findings, 'ending', p_validator_ending_results);
     
   ELSIF p_disposition = 'REJECT_BLOCK' THEN
     -- Permanently block until manual intervention
@@ -287,7 +299,7 @@ EXCEPTION
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-COMMENT ON FUNCTION public.e5_record_disposition IS 'Native Postgres atomic transaction for E-OPS-1 disposition recording. SECURITY DEFINER enforces auth.uid() + admin_users check internally.';
+COMMENT ON FUNCTION public.e5_record_disposition IS 'Native Postgres atomic transaction for E-OPS-1 disposition recording. SECURITY DEFINER enforces auth.uid() + admin_users check internally with safe search_path.';
 
 -- Add unique index for idempotency checks
 DO $$

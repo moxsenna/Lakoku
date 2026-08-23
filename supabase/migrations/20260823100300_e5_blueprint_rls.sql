@@ -54,6 +54,11 @@ CREATE POLICY "blueprint_queue_anon_deny_all"
 CREATE POLICY "blueprint_queue_service_role" 
   ON public.blueprint_queue FOR ALL TO service_role USING (true) WITH CHECK (true);
 
+-- Grant minimum SELECT privilege to authenticated (required for RLS to have any effect)
+GRANT SELECT ON public.blueprint_queue TO authenticated;
+GRANT SELECT ON public.blueprint_resolutions TO authenticated;
+GRANT SELECT ON public.blueprint_audit_log TO authenticated;
+
 -- ============================================================================
 -- BLUEPRINT_RESOLUTIONS POLICIES - APPEND-ONLY (NO UPDATE/DELETE)
 -- ============================================================================
@@ -129,54 +134,8 @@ CREATE POLICY "blueprint_audit_log_service_role"
   ON public.blueprint_audit_log FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 -- ============================================================================
--- BLUEPRINT_VALIDATOR_PROOFS POLICIES - IMMUTABLE AFTER INSERTION
+-- BLUEPRINT_AUDIT_LOG POLICIES - APPEND-ONLY, REVIEWER FK RESTRICT (NOT CASCADE)
 -- ============================================================================
-
-DROP POLICY IF EXISTS "e5_validator_proof_authenticated" ON public.blueprint_validator_proofs;
-DROP POLICY IF EXISTS "e5_validator_proof_service_role" ON public.blueprint_validator_proofs;
-DROP POLICY IF EXISTS "anon_select" ON public.blueprint_validator_proofs;
-DROP POLICY IF EXISTS "anon_insert" ON public.blueprint_validator_proofs;
-
--- Allow owner/admin SELECT/INSERT only (NO UPDATE/DELETE)
-CREATE POLICY e5_validator_proof_select
-  ON public.blueprint_validator_proofs
-  FOR SELECT
-  TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM admin_users au
-      WHERE au.user_id = auth.uid()
-      AND au.role IN ('owner', 'admin')
-    )
-  );
-
-CREATE POLICY e5_validator_proof_insert
-  ON public.blueprint_validator_proofs
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM admin_users au
-      WHERE au.user_id = auth.uid()
-      AND au.role IN ('owner', 'admin')
-    )
-  );
-
--- Explicitly deny UPDATE/DELETE (immutability requirement)
-CREATE POLICY e5_validator_proof_no_update
-  ON public.blueprint_validator_proofs
-  FOR UPDATE
-  TO authenticated
-  USING (false);
-
-CREATE POLICY e5_validator_proof_no_delete
-  ON public.blueprint_validator_proofs
-  FOR DELETE
-  TO authenticated
-  USING (false);
-
--- Service role bypass
-CREATE POLICY e5_validator_proof_service_role_select
   ON public.blueprint_validator_proofs
   FOR SELECT
   TO service_role

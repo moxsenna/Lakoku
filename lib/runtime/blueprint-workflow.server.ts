@@ -16,6 +16,9 @@ import type {
 import { runValidatorRerun } from '@/lib/utils/validator-rerun.helper'
 import { requireAdminUser } from '@/lib/admin/auth'
 
+// Use runtime barrel export per ARCH §5.1
+import type { BlueprintQueueItem } from '@/lib/runtime'
+
 /**
  * Fetch pending review items with full details
  * Called by API route GET /api/blueprint-review/route.ts

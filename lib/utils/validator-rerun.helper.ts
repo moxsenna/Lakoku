@@ -69,6 +69,18 @@ export async function runValidatorRerun(
 }
 
 /**
+ * Chapter blueprint row shape (from chapter_blueprints table)
+ */
+interface ChapterBlueprintRow {
+  story_id: string
+  chapter_number: number
+  version: number
+  mandatory_beats?: unknown
+  forbidden_reveals?: unknown
+  allowed_state_delta?: unknown
+}
+
+/**
  * Individual chapter validation logic
  * Uses existing server/DB seams for spine/reveal/ending checks
  */
@@ -98,14 +110,16 @@ async function validateChapter(
     }
   }
 
+  const typedBlueprint = blueprint as ChapterBlueprintRow
+  
   // Check mandatory beats (spine validator)
-  const spineFailures = checkMandatoryBeats(blueprint as any)
+  const spineFailures = checkMandatoryBeats(typedBlueprint)
   
   // Check forbidden reveals (reveal validator)
-  const revealFailures = checkForbiddenReveals(blueprint as any)
+  const revealFailures = checkForbiddenReveals(typedBlueprint)
   
   // Check state delta consistency
-  const stateDeltaFailures = checkStateDeltaConsistency(blueprint as any)
+  const stateDeltaFailures = checkStateDeltaConsistency(typedBlueprint)
 
   const allFailures = [...spineFailures, ...revealFailures, ...stateDeltaFailures]
 
@@ -118,7 +132,7 @@ async function validateChapter(
 /**
  * Mandatory beats (spine) validator - ensure story structure integrity
  */
-function checkMandatoryBeats(blueprint: any): Array<{
+function checkMandatoryBeats(blueprint: ChapterBlueprintRow): Array<{
   chapterNumber: number
   failureType: string
   message: string
@@ -131,7 +145,7 @@ function checkMandatoryBeats(blueprint: any): Array<{
   
   const mandatoryBeats = blueprint.mandatory_beats
   
-  if (!mandatoryBeats || mandatoryBeats.length === 0) {
+  if (!mandatoryBeats || !Array.isArray(mandatoryBeats) || mandatoryBeats.length === 0) {
     failures.push({
       chapterNumber: blueprint.chapter_number,
       failureType: 'MANDATORY_BEATS_MISSING',
@@ -145,7 +159,7 @@ function checkMandatoryBeats(blueprint: any): Array<{
 /**
  * Forbidden reveals validator - ensure brand guard compliance
  */
-function checkForbiddenReveals(blueprint: any): Array<{
+function checkForbiddenReveals(blueprint: ChapterBlueprintRow): Array<{
   chapterNumber: number
   failureType: string
   message: string
@@ -180,7 +194,7 @@ function checkForbiddenReveals(blueprint: any): Array<{
 /**
  * State delta consistency validator - ensure character states remain valid
  */
-function checkStateDeltaConsistency(blueprint: any): Array<{
+function checkStateDeltaConsistency(blueprint: ChapterBlueprintRow): Array<{
   chapterNumber: number
   failureType: string
   message: string
@@ -191,13 +205,13 @@ function checkStateDeltaConsistency(blueprint: any): Array<{
     message: string
   }> = []
   
-  const allowedStateDelta = blueprint.allowed_state_delta as Record<string, unknown> || {}
+  const allowedStateDelta = blueprint.allowed_state_delta as Record<string, unknown> | undefined || {}
   
   if (allowedStateDelta && typeof allowedStateDelta === 'object') {
     // Validate state transitions are valid JSON and well-formed
     try {
       JSON.stringify(allowedStateDelta)
-    } catch (parseError) {
+    } catch (_parseError) {
       failures.push({
         chapterNumber: blueprint.chapter_number,
         failureType: 'STATE_DELTA_PARSE_ERROR',

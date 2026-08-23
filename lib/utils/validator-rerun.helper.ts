@@ -208,10 +208,10 @@ function checkStateDeltaConsistency(blueprint: ChapterBlueprintRow): Array<{
   const allowedStateDelta = blueprint.allowed_state_delta as Record<string, unknown> | undefined || {}
   
   if (allowedStateDelta && typeof allowedStateDelta === 'object') {
-    // Validate state transitions are valid JSON and well-formed
+  // Validate state transitions are valid JSON and well-formed
     try {
       JSON.stringify(allowedStateDelta)
-    } catch (_parseError) {
+    } catch (_error) {
       failures.push({
         chapterNumber: blueprint.chapter_number,
         failureType: 'STATE_DELTA_PARSE_ERROR',

@@ -47,7 +47,7 @@ interface FailedStoryDetail {
     retryCount: number;
     brandScanHash?: string;
     leaseId?: string;
-    eventId?: bigint; // public.story_events(id) BIGINT if bound to actual event; NULL if no evidence binding
+    eventId?: bigint; // public.story_events(id) BIGINT if bound; JSON-safe validated string -> server-side BigInt conversion; NEVER NULL — missing real event => fail closed (no enqueue/resolution permitted without evidence binding)
   };
 }
 ```
@@ -72,16 +72,16 @@ Record reviewer ID (via `requireAdminUser()`), disposition outcome (`REJECT_BLOC
 ```sql
 CREATE TABLE blueprint_audit_log (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  story_id TEXT NOT NULL REFERENCES blueprint_queue(story_id) ON DELETE CASCADE,
+  story_id TEXT NOT NULL REFERENCES blueprint_queue(story_id) ON DELETE RESTRICT, -- immutable: parent deletion cannot remove historical audit
   reviewer_id UUID NOT NULL, -- auth.uid() of authorized admin user
   disposition TEXT NOT NULL CHECK (disposition IN ('REJECT_BLOCK', 'RETRY_ALLOW', 'UNBLOCK_PERMIT')),
   reason_text TEXT NOT NULL,
-  source_event_id BIGINT NOT NULL REFERENCES public.story_events(id),
+  source_event_id BIGINT NOT NULL REFERENCES public.story_events(id), -- NON-NULL per E-OPS-1: every resolution MUST bind to evidence; missing real event => fail closed (no resolution permitted)
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 ```
 
-**Note:** `source_event_id` is NON-NULL per E-OPS-1 requirement that every resolution binds to evidence. If no concrete event exists, use null sentinel or placeholder event ID from frozen baseline. Never silently drop evidence binding.
+**Critical constraint:** `source_event_id` is **NON-NULL REQUIRED**. Missing real source event = fail closed (no enqueue/resolution without evidence binding). Never use null sentinel, placeholder, fake event ID, or any fabricated binding. Database FK enforces referential integrity against `public.story_events(id)`.
 
 ### Criterion #6: Validator Rerun After Resolution
 
@@ -164,6 +164,8 @@ Reviewer explicit instruction states: "Allowlist/migration belum exact." Providi
 
 ### 3.5 Test Files (Exact Paths Required)
 
+**Application/API/Server Tests (Vitest):**
+
 | File | Coverage Requirement | Status |
 |------|---------------------|--------|
 | `tests/e5-blueprint-workflow.test.ts` | Queue processing guarantee: exactly-once, duplicate enqueue prevention | NEW FILE |
@@ -172,7 +174,61 @@ Reviewer explicit instruction states: "Allowlist/migration belum exact." Providi
 | `tests/e5-blueprint-validator-rerun.test.ts` | Validator failure stays blocked; successful validator rerun + proof unblocks; idempotent repeated resolution | NEW FILE |
 | `tests/e5-blueprint-reader-safe.test.ts` | Reader-safe response; forbidden terms scanning | NEW FILE |
 
-**Integration proof satisfied through five exact unit/integration tests above. No additional Playwright/E2E file paths required in allowlist.**
+**Governed Database Semantics (Disposable-DB/pgTAP Proofs):**
+
+| File | Responsibility | Proof Target | Status |
+|------|----------------|--------------|--------|
+| `supabase/tests/e5_blueprint_queue_exactly_once_test.sql` | Exactly-once queue identity | PostgreSQL advisory locks prevent duplicate claim under concurrent consumers | NEW FILE |
+| `supabase/tests/e5_blueprint_review_rls_test.sql` | Row-level security enforcement | Unauthorized users cannot SELECT/UPDATE blueprint_queue/resolutions tables | NEW FILE |
+| `supabase/tests/e5_blueprint_append_only_test.sql` | Append-only ledger constraint | INSERT new version row never UPDATE existing chapter_blueprints rows | NEW FILE |
+| `supabase/tests/e5_blueprint_audit_immutability_test.sql` | Audit log integrity | No UPDATE/DELETE/cascade-deletion of audit entries; ON DELETE RESTRICT enforced | NEW FILE |
+| `supabase/tests/e5_blueprint_unblock_fail_closed_test.sql` | Validator rerun gating | UNBLOCK triggers validator rerun; failure requeues BLOCKED, success permits continuation | NEW FILE |
+
+**Race Condition Harness:**
+
+| File | Responsibility | Proof Target | Status |
+|------|----------------|--------------|--------|
+| `scripts/e5-blueprint-resolution-race.ts` | Sequential event ordering | No double-resolution or lost updates under parallel consumer threads | NEW FILE |
+
+---
+
+**Exact Implementation Allowlist:**
+
+*Migrations:*
+- `supabase/migrations/20260823100000_e5_blueprint_review_queue.sql`
+- `supabase/migrations/20260823100100_e5_blueprint_resolutions.sql`
+- `supabase/migrations/20260823100200_e5_blueprint_audit.sql`
+- `supabase/migrations/20260823100300_e5_blueprint_rls.sql`
+
+*Test Files (Application/API/Server):*
+- `tests/e5-blueprint-workflow.test.ts`
+- `tests/e5-blueprint-resolution.test.ts`
+- `tests/e5-blueprint-append-only.test.ts`
+- `tests/e5-blueprint-validator-rerun.test.ts`
+- `tests/e5-blueprint-reader-safe.test.ts`
+
+*Test Files (Governed DB/pgTAP):*
+- `supabase/tests/e5_blueprint_queue_exactly_once_test.sql`
+- `supabase/tests/e5_blueprint_review_rls_test.sql`
+- `supabase/tests/e5_blueprint_append_only_test.sql`
+- `supabase/tests/e5_blueprint_audit_immutability_test.sql`
+- `supabase/tests/e5_blueprint_unblock_fail_closed_test.sql`
+
+*Race Harness:*
+- `scripts/e5-blueprint-resolution-race.ts`
+
+*Admin UI Page:*
+- `app/admin/blueprint-review/page.tsx`
+
+*Repository Seams Reused:*
+- `lib/admin/auth.ts::requireAdminUser()` (owner/admin roles from `admin_users` table)
+- `public.chapter_blueprints(version)` for append-only blueprint history
+- `public.stories(id)` FK source for `story_id`
+- `public.story_events(id) BIGINT` evidence source for `source_event_id`
+
+---
+
+**Integration proof satisfied through all exact paths above. No additional Playwright/E2E file paths required in allowlist.**
 
 ### 3.6 Forbidden Expansions (Explicitly Out of Scope)
 
@@ -211,7 +267,7 @@ All forbidden items represent commercial/governance scope expansion outside E-OP
 5. Reviewer records disposition: `REJECT_BLOCK` | `RETRY_ALLOW` | `UNBLOCK_PERMIT`
 6. If `UNBLOCK_PERMIT`: trigger validator rerun via existing server/DB seams; if pass → permit generation; if fail → requeue as BLOCKED
 7. If `REJECT_BLOCK`: retain permanently blocked until explicit unblock approval (NEVER override without validator rerun first)
-8. Create audit log entry + update `chapter_blueprints` WITHOUT overwriting history (append-only ledger)
+8. Create audit log entry + INSERT a new `chapter_blueprints` version row, never UPDATE an existing version row (append-only ledger)
 9. Repeat for next queue item (exactly once, no duplicates/skips)
 
 **Explicit Rejection:** Multi-tier evaluation (first-pass single rubric then deep dive) NOT authorized. Parallel batch processing across stories NOT authorized. Sequential single-story-at-a-time workflow ONLY.

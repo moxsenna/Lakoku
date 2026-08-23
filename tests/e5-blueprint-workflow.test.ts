@@ -7,7 +7,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { getPendingItems, claimQueueItem, recordDisposition as workflowRecordDisposition } from '@/lib/runtime/blueprint-workflow.server'
 import type { PendingReviewItem, ResolutionContext } from '@/lib/types/blueprint.contract'
-import { createAdminClient } from '@/lib/supabase/server'
+import { createClient } from '@/lib/supabase/server'
 
 describe('Blueprint Workflow Queue', () => {
   let mockDb: any

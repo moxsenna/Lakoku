@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/server'
 const CONCURRENCY_LEVEL = 10
 
 async function main(): Promise<void> {
-  const db = createClient()
+  const db = await createClient()
   
   try {
     // Test concurrent claim: only ONE worker should succeed

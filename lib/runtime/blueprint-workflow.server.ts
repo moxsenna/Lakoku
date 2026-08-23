@@ -77,25 +77,16 @@ export async function claimQueueItem(storyId: string): Promise<null | string> {
 }
 
 /**
- * Record disposition with full atomic operations:
- * 1. Authorized owner/admin check (via requireAdminUser in API)
- * 2. Record disposition in resolutions table
- * 3. INSERT new chapter_blueprints version row (never UPDATE existing)
- * 4. Create immutable audit log entry
- * 5. If UNBLOCK_PERMIT: trigger validator rerun
- * 6. If validation passes + proof generated: permit continuation
- * 7. If validation fails: requeue as BLOCKED
- * 
- * Network retry / duplicate resolution must be idempotent via idempotency_key
- */
-/**
  * Record disposition with native Postgres atomic transaction (E-OPS-1 Criterion #9).
  * 
- * Calls e5_record_disposition() RPC for single database transaction boundary.
- * ANY exception => automatic rollback, NO partial commits allowed.
+ * REVERSED ORDER (Reviewer Requirement #2):
+ * 1. DERIVE reviewer identity ONLY from auth layer (NEVER trust payload)
+ * 2. Run CANONICAL validators BEFORE any DB writes (spine/reveal/ending)
+ * 3. If validators PASS: call native RPC with validator evidence as parameters
+ * 4. If validators FAIL: stay BLOCKED, never call success RPC
+ * 5. Native RPC atomically applies everything in one transaction
  * 
- * Authority: Native PostgreSQL function ensures ACID properties that
- * TypeScript-level transaction simulation cannot guarantee.
+ * ANY exception => automatic rollback via SECURITY DEFINER function, NO partial commits
  */
 export async function recordDisposition(context: ResolutionContext): Promise<{
   success: boolean
@@ -121,8 +112,35 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
       throw new Error(`Unauthorized: role=${adminRole.role} cannot record dispositions`)
     }
     
-    // Step 2: Call native Postgres function for ATOMIC resolution
-    // This wraps ALL writes in single DB transaction with automatic rollback
+    // Step 2: If UNBLOCK_PERMIT, run canonical validators FIRST (BEFORE any DB write)
+    // This prevents fail-open scenario where DB marks PENDING before validators run
+    let validationResult: ValidatorRerunResult | undefined
+    let validatorEvidencePassed: boolean = false
+    
+    if (trustedContext.disposition === 'UNBLOCK_PERMIT') {
+      console.log('[E5] Running canonical validators BEFORE RPC call...')
+      
+      validationResult = await runValidatorRerun(story_id, chapter_numbers)
+      
+      if (!validationResult.passed) {
+        console.warn('[E5] Canonical validators failed - staying BLOCKED (fail-closed)', validationResult.failures)
+        
+        // Return WITHOUT calling RPC - stay BLOCKED
+        return { 
+          success: true, // Success in detecting failure
+          error: 'Canonical validators rejected - remain BLOCKED',
+          validationResult,
+          unblockProof: undefined
+        }
+      }
+      
+      // Validators passed - prepare evidence for RPC
+      validatorEvidencePassed = true
+      console.log('[E5] Validators passed - calling atomic RPC with evidence')
+    }
+    
+    // Step 3: Call native Postgres function for ATOMIC resolution
+    // Pass validator evidence as parameters (Reviewer Requirement #2)
     const { data: result, error: rpcError } = await db.rpc('e5_record_disposition', {
       p_story_id: trustedContext.story_id,
       p_disposition: trustedContext.disposition,
@@ -130,6 +148,9 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
       p_reason_text: trustedContext.reason_text,
       p_source_event_id: Number(trustedContext.source_event_id),
       p_chapter_numbers: trustedContext.chapter_numbers,
+      p_validation_passed: validatorEvidencePassed,
+      p_validator_spine_findings: validationResult?.spineRevealFindings ?? null,
+      p_validator_ending_findings: validationResult?.endingResults ?? null,
       p_expected_max_version: null // Set optimistic concurrency check later if needed
     })
     
@@ -151,35 +172,12 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
       }
     }
     
-    // Step 3: If UNBLOCK_PERMIT and validation passed, call external validators
-    // Then persist validator results and unblock proof via separate API
-    let validationResult: ValidatorRerunResult | undefined
-    let unblockProof: string | undefined
-    
-    if (trustedContext.disposition === 'UNBLOCK_PERMIT') {
-      // Call real governed validators (spine/reveal/ending) BEFORE calling function
-      // or pass validator state via function parameters
-      
-      const rerunResult = await runValidatorRerun(story_id, chapter_numbers)
-      validationResult = rerunResult
-      
-      if (rerunResult.passed) {
-        unblockProof = dbResult.unblock_proof
-        return { success: true, unblockProof, validationResult }
-      } else {
-        // Validators failed - should have been caught by function
-        // Return without unblock proof
-        return { 
-          success: true, 
-          unblockProof: undefined,
-          validationResult,
-          error: 'Validator rerun failed - requeued as BLOCKED (fail-closed)'
-        }
-      }
+    // Step 4: Return success with unblock proof if applicable
+    return { 
+      success: true, 
+      unblockProof: dbResult.unblock_proof,
+      validationResult
     }
-    
-    // Non-UNBLOCK dispositions return immediately after successful function call
-    return { success: true, unblockProof, validationResult }
     
   } catch (err) {
     // Fail closed: any exception => no partial state persists

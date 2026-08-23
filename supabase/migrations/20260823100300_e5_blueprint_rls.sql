@@ -5,7 +5,12 @@
 --   1. Anonymous users: NO access to queue, audit, resolutions tables
 --   2. Authenticated users: NO unrestricted access via WITH CHECK (true)  
 --   3. Owner/admin only: predicates via admin_users + auth.uid()
---   4. Fix public.auth.users references (should use local auth.users)
+--   4. Reuse existing admin_users table (created at 20260718110000); DO NOT recreate
+-- FIXES REQUIRED BY REVIEWER:
+--   - Remove CREATE TABLE admin_users (already exists)
+--   - Use correct DROP POLICY IF EXISTS + CREATE POLICY syntax (not CREATE OR REPLACE)
+--   - Remove 'editor' role from admin_users reference
+--   - Add explicit deny for anon users where missing
 
 DO $$
 BEGIN
@@ -13,21 +18,17 @@ BEGIN
 END $$;
 
 -- ============================================================================
--- ADMIN_USERS TABLE (Authorization Mapping)
+-- ADMIN_USERS TABLE - REUSE EXISTING FROM 20260718110000
 -- ============================================================================
+-- DO NOT recreate this table! It already exists from admin_generation_observability_rpcs.sql
+-- Existing structure:
+--   user_id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE
+--   role text NOT NULL DEFAULT 'admin' CHECK (role IN ('owner', 'admin'))
+--   created_at timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp()
+--   updated_at timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp()
+-- Only allow 'owner' | 'admin' roles; NO 'editor' role permitted
 
-CREATE TABLE IF NOT EXISTS admin_users (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid NOT NULL REFERENCES auth.users(id),
-  story_id text NOT NULL REFERENCES stories(id),
-  role text NOT NULL CHECK (role IN ('owner', 'admin', 'editor')),
-  granted_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE UNIQUE INDEX idx_admin_users_user_story ON admin_users(user_id, story_id);
-CREATE INDEX idx_admin_users_role ON admin_users(role);
-
-COMMENT ON TABLE admin_users IS 'Authorization mapping for owner/admin access to blueprint workflow (E-OPS-1 Criterion #4)';
+COMMENT ON TABLE public.admin_users IS 'Authorization mapping for owner/admin access to blueprint workflow (E-OPS-1 Criterion #4); REUSED from 20260718110000';
 
 -- ============================================================================
 -- BLUEPRINT_QUEUE POLICIES - NO ANON ACCESS, OWNER/ADMIN ONLY
@@ -36,9 +37,11 @@ COMMENT ON TABLE admin_users IS 'Authorization mapping for owner/admin access to
 DROP POLICY IF EXISTS "blueprint_queue_anon_select" ON public.blueprint_queue;
 DROP POLICY IF EXISTS "blueprint_queue_service_role" ON public.blueprint_queue;
 
--- Deny anonymous access entirely (was allowing SELECT with true)
--- Allow authenticated admin users ONLY
-CREATE OR REPLACE POLICY "blueprint_queue_owner_admin"
+-- Deny anonymous access entirely
+DROP POLICY IF EXISTS "blueprint_queue_anon_all" ON public.blueprint_queue;
+
+-- Allow authenticated admin users ONLY via explicit admin_users membership check
+CREATE POLICY "blueprint_queue_owner_admin"
   ON public.blueprint_queue FOR ALL TO authenticated
   USING (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')))
   WITH CHECK (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')));
@@ -64,6 +67,15 @@ CREATE POLICY "blueprint_resolutions_owner_admin_select"
   ON public.blueprint_resolutions FOR SELECT TO authenticated
   USING (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')));
 
+CREATE POLICY "blueprint_resolutions_owner_admin_update"
+  ON public.blueprint_resolutions FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')))
+  WITH CHECK (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')));
+
+CREATE POLICY "blueprint_resolutions_owner_admin_delete"
+  ON public.blueprint_resolutions FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')));
+
 CREATE POLICY "blueprint_resolutions_service_role" 
   ON public.blueprint_resolutions FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -75,7 +87,10 @@ DROP POLICY IF EXISTS "blueprint_audit_log_anon_select" ON public.blueprint_audi
 DROP POLICY IF EXISTS "blueprint_audit_log_authenticated_insert" ON public.blueprint_audit_log;
 DROP POLICY IF EXISTS "blueprint_audit_log_service_role" ON public.blueprint_audit_log;
 
--- Deny anonymous access entirely (was allowing SELECT with true)
+-- Deny anonymous access entirely
+DROP POLICY IF EXISTS "blueprint_audit_log_anon_all" ON public.blueprint_audit_log;
+
+-- Allow owner/admin select/insert only; explicitly BLOCK DELETE (audit immutability)
 CREATE POLICY "blueprint_audit_log_owner_admin_select"
   ON public.blueprint_audit_log FOR SELECT TO authenticated
   USING (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')));
@@ -84,8 +99,13 @@ CREATE POLICY "blueprint_audit_log_owner_admin_insert"
   ON public.blueprint_audit_log FOR INSERT TO authenticated
   WITH CHECK (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')));
 
--- Block DELETE entirely (audit immutability requirement)
+-- Block DELETE entirely (audit immutability requirement) - explicit denial
 DROP POLICY IF EXISTS "blueprint_audit_log_delete" ON public.blueprint_audit_log;
+DROP POLICY IF EXISTS "blueprint_audit_log_auth_delete" ON public.blueprint_audit_log;
+
+CREATE POLICY "blueprint_audit_log_no_delete"
+  ON public.blueprint_audit_log FOR DELETE TO authenticated
+  USING (false); -- Explicit deny for all users
 
 CREATE POLICY "blueprint_audit_log_service_role" 
   ON public.blueprint_audit_log FOR ALL TO service_role USING (true) WITH CHECK (true);

@@ -156,6 +156,15 @@ export interface ValidatorRerunResult {
     message: string;
   }>;
   proof?: string; // Explicit unblock proof if passed
+  /** Actual validator findings payload for authoritative persistence */
+  spineRevealFindings?: Array<{
+    chapterNumber: number;
+    findings: Array<{ findingType: string; message: string }>;
+  }>;
+  endingResults?: {
+    mainEndingReachable: boolean;
+    secretEndingsReached: string[];
+  };
 }
 
 /**

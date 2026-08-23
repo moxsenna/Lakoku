@@ -29,7 +29,7 @@ The E5 milestone closes when these nine criteria satisfied as per reviewer ratif
 
 Every `needs_review` **story** must be processed by human blueprint workflow **exactly once**. No duplicates, no skips. Chapter number, act boundary identifier, specific failure findings, source event metadata (provider call ID, retry count, brand scan hash), and blueprint version references remain **detail/context fields only within each queued story item**—never determine queue identity.
 
-**Implementation Pattern:** Single-consumer queue using PostgreSQL advisory locks or work queue table with `status='pending'→'processing'→'resolved'` state machine. Atomic transitions prevent re-processing. Story-level primary key (`novel_id` + `story_sequence`) determines uniqueness.
+**Implementation Pattern:** Single-consumer queue using PostgreSQL advisory locks or work queue table with `status='pending'→'processing'→'resolved'` state machine. Atomic transitions prevent re-processing. Story-level primary key is **`story_id TEXT` referencing `public.stories(id)`**. Do NOT invent `novel_id + story_sequence`; use existing `stories` table PK.
 
 ### Criterion #2: Detail Record Enrichment
 
@@ -38,8 +38,7 @@ Each queued item carries full context payload: failed chapter numbers (may span 
 **Payload Schema:**
 ```typescript
 interface FailedStoryDetail {
-  novelId: string;
-  storySequence: number; // Logical story arc identifier within novel
+  storyId: string; // public.stories(id) FK
   chapterNumbers: number[]; // May include multiple chapters if act boundary affected
   actBoundary: 'ACT_1' | 'ACT_2' | 'ACT_3';
   findings: Array<'BRAND_LEAK'|'CANONICAL_CORRUPTION'|'LEASE_TIMEOUT'|'PARSE_FAILURE'>;
@@ -48,8 +47,8 @@ interface FailedStoryDetail {
     retryCount: number;
     brandScanHash?: string;
     leaseId?: string;
+    eventId?: string; // public.story_events(id) if bound to actual event
   };
-  blueprintVersion: string; // M10_E_CHAPTER_STAGE_EXCHANGEABILITY_V1 hash
 }
 ```
 
@@ -59,11 +58,11 @@ Only **authorized admin user** can record disposition per item. Unauthorized use
 
 **Security Pattern:** RLS policy enforcing `auth.uid() IN (SELECT user_id FROM admin_users WHERE role IN ('owner', 'admin'))` check on `blueprint_resolutions` table insert. **NEVER invent** `role='reviewer'` JWT claim or `allowed_reviewer_ids[]` column unless explicitly present in existing repository schema.
 
-### Criterion #4: Resolution Creates New Blueprint Version (Append-Only)
+### Criterion #4: Resolution Creates New Blueprint Version (Reuse Existing History)
 
-Disposition generates new blueprint version row without overwriting history. Old version preserved in immutable ledger; new version increments sequence number (`version_n+1`) and stores revised parameters limited to **blueprint/narrative-plan data** (prompt template patch for narrative text revision). Never modify runtime-policy settings (retry policy, validator threshold) via blueprint resolution—those require separate governance authority.
+Disposition generates new blueprint version row without overwriting history. Old version preserved in immutable ledger via **reuse of existing `public.chapter_blueprints(version)` model**; never create parallel canonical blueprint version authority table unless repo evidence proves necessary. Revised parameters limited to **blueprint/narrative-plan data** (prompt template patch for narrative text revision). Never modify runtime-policy settings (retry policy, validator threshold) via blueprint resolution—those require separate governance authority.
 
-**Database Pattern:** Append-only `blueprint_versions` table with foreign key back-reference to parent version; never UPDATE rows that already exist.
+**Database Pattern:** Append-update to `chapter_blueprints` via version increment; never UPDATE rows that already exist in audit sense. Reference existing table rather than creating duplicate version tracking.
 
 ### Criterion #5: Audit Trail Completeness
 
@@ -73,11 +72,11 @@ Record reviewer ID (via `requireAdminUser()`), disposition outcome (`REJECT_BLOC
 ```sql
 CREATE TABLE blueprint_audit_log (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  review_item_id UUID REFERENCES blueprint_queue(id) ON DELETE CASCADE,
+  review_item_id UUID REFERENCES blueprint_queue(story_id) ON DELETE CASCADE,
   reviewer_id UUID NOT NULL, -- auth.uid() of authorized admin user
   disposition TEXT NOT NULL CHECK (disposition IN ('REJECT_BLOCK', 'RETRY_ALLOW', 'UNBLOCK_PERMIT')),
   reason_text TEXT NOT NULL,
-  source_event_id UUID NOT NULL,
+  source_event_id TEXT, -- public.story_events(id) if bound to actual event; otherwise NULL
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 ```
@@ -86,7 +85,7 @@ CREATE TABLE blueprint_audit_log (
 
 Upon UNBLOCK disposition, trigger spine/reveal/ending validators re-run against affected chapters (all chapter numbers in detail record). If validators pass, permit generation continuation; if fail again, return to `needs_review` queue. Idempotent reruns prevent infinite loops.
 
-**Implementation Hook:** Implementation may use existing server/DB seams discovered during coding (e.g., TypeScript utility functions, database functions, or API endpoints) to call all three validators (`spineValidator`, `revealValidator`, `endingValidator`). Architecture not frozen—acceptance contract requires validator rerun, not specific SQL→TS calling pattern.
+**Implementation Hook:** Implementation may use existing server/DB seams discovered during coding (e.g., TypeScript utility functions in `lib/narrative/*`, database functions, or API endpoints) to call all three validators (`spineValidator`, `revealValidator`, `endingValidator`). Architecture not frozen—acceptance contract requires validator rerun, not specific SQL→TS calling pattern. Orchestrator may be TypeScript function, database function, or server action; discovery during implementation permitted.
 
 ### Criterion #7: Failure Retains Block Until Explicit Unblock ✅ CORRECTED PER REVIEWER
 
@@ -105,7 +104,7 @@ UNBLOCK_PERMIT creates signed proof record containing: disposition hash, bluepri
 ```json
 {
   "disposition_hash": "sha256(disposition+timestamp+reviewer_id)",
-  "blueprint_version": "M10_E_CHAPTER_STAGE_EXCHANGEABILITY_V1#new_hash",
+  "blueprint_version": "chapter_blueprints.version#new_value",
   "audit_log_id": "uuid",
   "validator_results": [/* array of pass/fail booleans */],
   "created_at": "ISO_8601"
@@ -140,34 +139,38 @@ Reviewer explicit instruction states: "Allowlist/migration belum exact." Providi
 
 **Note:** No dispute/future routes included. Any `/api/blueprint-review/[id]/dispute` paths represent scope expansion outside nine E-OPS-1 acceptance criteria and require separate governance approval.
 
-### 3.3 UI Component Files
+### 3.3 Admin UI Files
 
 | Full Repository Path | Purpose | Status |
 |----------------------|---------|--------|
-| `components/admin/BlueprintDashboard.tsx` | Reviewer interface showing queue | NEW FILE |
-| `components/admin/BlueprintResolutionForm.tsx` | Form for recording disposition | NEW FILE |
+| `app/admin/blueprint-review/page.tsx` | Mounted admin page for reviewing queue items | NEW FILE |
+
+**Critical:** Dashboard/form components MUST mount under existing admin layout (`app/admin/layout.tsx`). No orphan dashboard pages allowed; all E5 UI mounted under `/admin` route.
 
 ### 3.4 Database Migration Files (Exact Filenames Required)
 
 | Priority | Exact Migration Filename | Description |
 |----------|--------------------------|-------------|
-| P0 | `supabase/migrations/20260823090000_e5_blueprint_review_queue.sql` | Core queue table with status state machine |
-| P0 | `supabase/migrations/20260823090100_e5_blueprint_resolutions.sql` | Append-only resolution ledger |
-| P0 | `supabase/migrations/20260823090200_e5_blueprint_versions.sql` | Version history tracking |
-| P0 | `supabase/migrations/20260823090300_e5_blueprint_audit.sql` | Immutable audit trail |
-| P0 | `supabase/migrations/20260823090400_e5_blueprint_resolution_validation.sql` | PostgreSQL function `rerun_validators_for_chapter_v1(uuid)` with validator rerun hooks |
-| P1 | `supabase/migrations/20260823090500_e5_blueprint_rls.sql` | Row-level security policies reusing existing repo authorization seam |
+| P0 | `supabase/migrations/20260823100000_e5_blueprint_review_queue.sql` | Core queue table with status state machine; FK to public.stories(id) |
+| P0 | `supabase/migrations/20260823100100_e5_blueprint_resolutions.sql` | Append-only resolution ledger |
+| P0 | `supabase/migrations/20260823100200_e5_blueprint_audit.sql` | Immutable audit trail; FK to public.story_events(id) optional |
+| P1 | `supabase/migrations/20260823100300_e5_blueprint_rls.sql` | Row-level security policies reusing existing repo authorization seam |
 
-**Total migration files:** 6 exact filenames listed above following repo convention: 14-digit timestamp prefix (`YYYYMMDDHHMMSS`) + underscore + descriptive suffix + `.sql`. Zero other migrations authorized.
+**Total migration files:** 4 exact filenames listed above following repo convention: 14-digit timestamp prefix (`YYYYMMDDHHMMSS`) + underscore + descriptive suffix + `.sql`. Zero other migrations authorized.
+
+**Note:** Reuse existing `public.chapter_blueprints` table for version history; no new `blueprint_versions` table required.
 
 ### 3.5 Test Files (Exact Paths Required)
 
 | File | Coverage Requirement | Status |
 |------|---------------------|--------|
-| `tests/e5-blueprint-workflow.test.ts` | Test all nine acceptance criteria individually: queue deduplication, audit logging, resolver permissions using `requireAdminUser()`, validator rerun hooks | NEW FILE |
-| `tests/e5-validator-rerun.helper.test.ts` | Test idempotency: same rerun called twice produces same result; never modifies original chapter content | NEW FILE |
-| `tests/e5-blueprint-review.route.test.ts` | Test RBAC using existing `lib/admin/auth.ts::requireAdminUser()`; unauthorized users get 403; authorized reviewers succeed | NEW FILE |
-| `tests/e5-reader-safe-copy.test.ts` | Integration test scanning API responses for forbidden terms; verify reader accounts never see technical error messages | NEW FILE |
+| `tests/e5-blueprint-workflow.test.ts` | Queue processing guarantee: exactly-once, duplicate enqueue prevention | NEW FILE |
+| `tests/e5-blueprint-resolution.test.ts` | Concurrent claim/resolution race conditions; unauthorized reject; owner/admin allow | NEW FILE |
+| `tests/e5-blueprint-append-only.test.ts` | Append-only history; audit immutability | NEW FILE |
+| `tests/e5-blueprint-validator-rerun.test.ts` | Validator failure stays blocked; successful validator rerun + proof unblocks; idempotent repeated resolution | NEW FILE |
+| `tests/e5-blueprint-reader-safe.test.ts` | Reader-safe response; forbidden terms scanning | NEW FILE |
+
+**Integration proof satisfied through five exact unit/integration tests above. No additional Playwright/E2E file paths required in allowlist.**
 
 ### 3.6 Forbidden Expansions (Explicitly Out of Scope)
 
@@ -176,10 +179,13 @@ Reviewer explicit instruction states: "Allowlist/migration belum exact." Providi
 ❌ Do NOT implement judge evaluation RPCs (`/api/novels/:id/evaluate-judges`)  
 ❌ Do NOT create multi-tier architecture or parallel batch runners  
 ❌ Do NOT expose technical model details in reader-facing copy strings  
-❌ Do NOT create ANY migration files beyond the six listed in Section 3.4  
+❌ Do NOT create ANY migration files beyond the four listed in Section 3.4  
 ❌ Do NOT include `/api/blueprint-review/[id]/dispute` routes in Phase 1 (scope expansion)  
 ❌ Do NOT invent authorization patterns like `role='reviewer'` or `allowed_reviewer_ids[]`  
 ❌ Do NOT create custom ESLint/config changes unless genuinely required by product team
+❌ Do NOT create `blueprint_versions` table; reuse `public.chapter_blueprints`  
+❌ Do NOT use `novel_id + story_sequence`; use `story_id` FK to `public.stories(id)`  
+❌ Do NOT freeze orchestrator architecture as PostgreSQL function; use existing seams discovered during coding
 
 All forbidden items represent commercial/governance scope expansion outside E-OPS-1 acceptance contract.
 
@@ -196,14 +202,14 @@ All forbidden items represent commercial/governance scope expansion outside E-OP
 ### DEC-E5-02: MINIMAL SEQUENTIAL REVIEW WORKFLOW
 
 **Approved Pattern (Corrected Per Reviewer):**
-1. Story enters `needs_review` state → added to `blueprint_queue` table with status `PENDING` (unit of identity = **story**, not chapter)
+1. Story enters `needs_review` state → added to `blueprint_queue` table with status `PENDING` (unit of identity = **story**, not chapter; FK to `public.stories(id)`)
 2. Consumer picks next pending item (atomic lock acquisition)
 3. Load full detail record (story context + failure findings + source event metadata + blueprint version references)
 4. Show to single authorized admin reviewer via admin interface (reusing existing repo authorization seam `requireAdminUser()`, not inventing `role='reviewer'`)
 5. Reviewer records disposition: `REJECT_BLOCK` | `RETRY_ALLOW` | `UNBLOCK_PERMIT`
-6. If `UNBLOCK_PERMIT`: trigger validator rerun via database function; if pass → permit generation; if fail → requeue as BLOCKED
+6. If `UNBLOCK_PERMIT`: trigger validator rerun via existing server/DB seams; if pass → permit generation; if fail → requeue as BLOCKED
 7. If `REJECT_BLOCK`: retain permanently blocked until explicit unblock approval (NEVER override without validator rerun first)
-8. Create audit log entry + new blueprint version row WITHOUT overwriting history (append-only ledger)
+8. Create audit log entry + update `chapter_blueprints` WITHOUT overwriting history (append-only ledger)
 9. Repeat for next queue item (exactly once, no duplicates/skips)
 
 **Explicit Rejection:** Multi-tier evaluation (first-pass single rubric then deep dive) NOT authorized. Parallel batch processing across stories NOT authorized. Sequential single-story-at-a-time workflow ONLY.
@@ -228,48 +234,13 @@ All forbidden items represent commercial/governance scope expansion outside E-OP
 
 | File | Coverage Requirement |
 |------|---------------------|
-| `tests/e5-blueprint-workflow.test.ts` | Test all nine acceptance criteria individually: queue deduplication, audit logging, resolver permissions using `requireAdminUser()`, validator rerun hooks |
-| `tests/e5-validator-rerun.helper.test.ts` | Test idempotency: same rerun called twice produces same result; never modifies original chapter content |
-| `tests/e5-blueprint-review.route.test.ts` | Test RBAC using existing `lib/admin/auth.ts::requireAdminUser()`; unauthorized users get 403; authorized reviewers succeed |
-| `tests/e5-reader-safe-copy.test.ts` | Integration test scanning API responses for forbidden terms; verify reader accounts never see technical error messages |
+| `tests/e5-blueprint-workflow.test.ts` | Queue processing guarantee: exactly-once, duplicate enqueue prevention, concurrent claim testing |
+| `tests/e5-blueprint-resolution.test.ts` | Unauthorized reject; owner/admin allow; concurrent claim/resolution races |
+| `tests/e5-blueprint-append-only.test.ts` | Append-only history; audit immutability |
+| `tests/e5-blueprint-validator-rerun.test.ts` | Validator failure stays blocked; successful validator rerun + proof unblocks; idempotent repeated resolution |
+| `tests/e5-blueprint-reader-safe.test.ts` | Reader-safe response; forbidden terms scanning |
 
-Integration proof satisfied through four exact authorized unit tests above. No additional Playwright/E2E file paths required in allowlist.
-
----
-
-## 6. Implementation Steps (Ordered Sequence)
-
-Execute ONLY after three DEC-E5 decisions formally acknowledged as above.
-
-### Phase 1: Foundation (Week 1)
-
-1. ✅ Create exact six database schema migrations with repo-valid 14-digit timestamps:
-   - `supabase/migrations/20260823090000_e5_blueprint_review_queue.sql`
-   - `supabase/migrations/20260823090100_e5_blueprint_resolutions.sql`
-   - `supabase/migrations/20260823090200_e5_blueprint_versions.sql`
-   - `supabase/migrations/20260823090300_e5_blueprint_audit.sql`
-   - `supabase/migrations/20260823090400_e5_blueprint_resolution_validation.sql`
-   - `supabase/migrations/20260823090500_e5_blueprint_rls.sql`
-2. ✅ Deploy RLS policies (`20260823090500_e5_blueprint_rls.sql`)
-3. ✅ Implement core workflow engine (`lib/runtime/blueprint-workflow.server.ts`)
-4. ✅ Write unit tests for workflow logic (`tests/e5-blueprint-workflow.test.ts`)
-
-### Phase 2: API Layer (Week 2)
-
-5. ✅ Implement admin review endpoint (`app/api/blueprint-review/route.ts`)
-6. ✅ Write integration tests for RBAC enforcement (`tests/e5-blueprint-review.route.test.ts`)
-
-### Phase 3: UI Components (Week 3)
-
-7. ✅ Design BlueprintDashboard layout (`components/admin/BlueprintDashboard.tsx`)
-8. ✅ Build resolution form component (`components/admin/BlueprintResolutionForm.tsx`)
-9. ✅ Conduct internal reviewer usability testing
-
-### Phase 4: Validation Gate (Week 4)
-
-10. ✅ Execute full acceptance criterion test suite (all nine criteria green)
-11. ✅ Submit change bundle to governance review
-12. ✅ Get approval signature linking to M10-E E3A/E4 counted SHA `65053607`
+Integration proof satisfied through five exact unit/integration tests above. No additional Playwright/E2E file paths required in allowlist.
 
 ---
 

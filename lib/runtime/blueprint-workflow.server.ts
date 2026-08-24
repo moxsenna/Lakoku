@@ -5,6 +5,7 @@
  * Authority: M10-E E5 implementation authority SHA = `a16b5a3b950ead2385a41c4fe12369336fbbc15f`
  * Boundary: Reuse requireAdminUser() owner/admin roles; NO invented role='reviewer'; no novel lifecycle CRUD
  */
+import { createAdminClient } from '@lakoku/db'
 import { createClient } from '@/lib/supabase/server'
 import type {
   ResolutionContext,
@@ -14,9 +15,13 @@ import type {
   ActBoundary,
   FindingType,
   Disposition,
+  E5DispositionRpcArgs,
+  E5DispositionRpcRow,
 } from '@/lib/types/blueprint.contract'
 import { runValidatorRerun } from '@/lib/utils/validator-rerun.helper'
 import { requireAdminUser } from '@/lib/admin/auth'
+
+const E5_CANONICAL_VALIDATOR_VERSION = 'E5_CANONICAL_VALIDATOR_V1'
 
 /**
  * Fetch pending review items with full details
@@ -88,6 +93,16 @@ export async function claimQueueItem(storyId: string): Promise<null | string> {
  * 
  * ANY exception => automatic rollback via SECURITY DEFINER function, NO partial commits
  */
+function isE5DispositionRpcRow(value: unknown): value is E5DispositionRpcRow {
+  if (value === null || typeof value !== 'object') return false
+  const row = value as Record<string, unknown>
+  return (
+    typeof row.success === 'boolean' &&
+    (typeof row.unblock_proof === 'string' || row.unblock_proof === null) &&
+    (typeof row.error_message === 'string' || row.error_message === null)
+  )
+}
+
 export async function recordDisposition(context: ResolutionContext): Promise<{
   success: boolean
   error?: string
@@ -95,90 +110,112 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
   validationResult?: ValidatorRerunResult
 }> {
   const db = await createClient()
-  const { story_id, source_event_id, chapter_numbers } = context
-  
+
   try {
-    // Step 1: DERIVE reviewer identity ONLY from auth layer (NEVER trust payload)
+    // reviewer_uid from request context is intentionally ignored.
     const adminRole = await requireAdminUser()
-    
-    // Build trusted context with derived reviewer_uid
-    const trustedContext = {
-      ...context,
-      reviewer_uid: adminRole.id
-    } as Required<ResolutionContext>
-    
-    // Verify authorization: only owner/admin can perform resolutions
     if (!['owner', 'admin'].includes(adminRole.role)) {
       throw new Error(`Unauthorized: role=${adminRole.role} cannot record dispositions`)
     }
-    
-    // Step 2: If UNBLOCK_PERMIT, run canonical validators FIRST (BEFORE any DB write)
-    // This prevents fail-open scenario where DB marks PENDING before validators run
+
+    const trustedContext: Required<ResolutionContext> = {
+      story_id: context.story_id,
+      disposition: context.disposition,
+      reviewer_uid: adminRole.id,
+      reason_text: context.reason_text,
+      source_event_id: context.source_event_id,
+      chapter_numbers: context.chapter_numbers,
+    }
+
     let validationResult: ValidatorRerunResult | undefined
-    let validatorEvidencePassed: boolean = false
-    
     if (trustedContext.disposition === 'UNBLOCK_PERMIT') {
-      console.log('[E5] Running canonical validators BEFORE RPC call...')
-      
-      validationResult = await runValidatorRerun(story_id, chapter_numbers)
-      
+      validationResult = await runValidatorRerun(
+        trustedContext.story_id,
+        trustedContext.chapter_numbers,
+      )
+
       if (!validationResult.passed) {
-        console.warn('[E5] Canonical validators failed - staying BLOCKED (fail-closed)', validationResult.failures)
-        
-        // Return WITHOUT calling RPC - stay BLOCKED
-        return { 
-          success: true, // Success in detecting failure
+        console.warn(
+          '[E5] Canonical validators failed - staying BLOCKED (fail-closed)',
+          validationResult.failures,
+        )
+        return {
+          success: false,
           error: 'Canonical validators rejected - remain BLOCKED',
           validationResult,
-          unblockProof: undefined
         }
       }
-      
-      // Validators passed - prepare evidence for RPC
-      validatorEvidencePassed = true
-      console.log('[E5] Validators passed - calling atomic RPC with evidence')
     }
-    
-    // Step 3: Call native Postgres function for ATOMIC resolution
-    // Pass validator evidence as parameters (Reviewer Requirement #2)
-    const { data: result, error: rpcError } = await db.rpc('e5_record_disposition', {
+
+    const validatedEvidence =
+      trustedContext.disposition === 'UNBLOCK_PERMIT' && validationResult?.passed === true
+        ? validationResult
+        : null
+    let validatorAttestationId: string | null = null
+    if (validatedEvidence) {
+      const adminDb = createAdminClient()
+      const { data: issuedAttestation, error: attestationError } = await adminDb.rpc(
+        'e5_issue_validator_attestation',
+        {
+          p_story_id: trustedContext.story_id,
+          p_source_event_id: trustedContext.source_event_id,
+          p_reviewer_uid: trustedContext.reviewer_uid,
+          p_chapter_numbers: validatedEvidence.validatedChapterVersions.map(({ chapter }) => chapter),
+          p_validator_version: E5_CANONICAL_VALIDATOR_VERSION,
+          p_spine_reveal_findings: validatedEvidence.spineRevealFindings ?? [],
+          p_ending_results: validatedEvidence.endingResults,
+          p_expected_chapter_versions: validatedEvidence.validatedChapterVersions,
+        },
+      )
+      if (attestationError || typeof issuedAttestation !== 'string') {
+        return {
+          success: false,
+          error: attestationError?.message ?? 'Canonical validator attestation failed',
+          validationResult,
+        }
+      }
+      validatorAttestationId = issuedAttestation
+    }
+
+    const rpcArgs: E5DispositionRpcArgs = {
       p_story_id: trustedContext.story_id,
       p_disposition: trustedContext.disposition,
       p_reviewer_uid: trustedContext.reviewer_uid,
       p_reason_text: trustedContext.reason_text,
-      p_source_event_id: trustedContext.source_event_id.toString(), // BIGINT preserved as decimal string (not Number())
-      p_chapter_numbers: trustedContext.chapter_numbers,
-      p_validation_passed: validatorEvidencePassed,
-      p_validator_spine_findings: validationResult?.spineRevealFindings ?? null,
-      p_validator_ending_results: validationResult?.endingResults ?? null, // Renamed from ending_findings per static gate
-      p_expected_chapter_versions: null // Pass per-chapter version pairs here if needed later
-    })
-    
+      p_source_event_id: trustedContext.source_event_id,
+      p_chapter_numbers: validatedEvidence
+        ? validatedEvidence.validatedChapterVersions.map(({ chapter }) => chapter)
+        : trustedContext.chapter_numbers,
+      p_validator_attestation_id: validatorAttestationId,
+    }
+    const { data: result, error: rpcError } = await db.rpc(
+      'e5_record_disposition',
+      rpcArgs,
+    )
+
     if (rpcError) {
       console.error('Postgres function execution failed:', rpcError)
       return { success: false, error: rpcError.message }
     }
-    
-    if (!result || result.length === 0) {
-      return { success: false, error: 'Unknown error during resolution' }
+
+    if (!Array.isArray(result) || result.length === 0 || !isE5DispositionRpcRow(result[0])) {
+      return { success: false, error: 'Invalid response from resolution authority' }
     }
-    
-    const [dbResult] = result
-    
+
+    const dbResult = result[0]
     if (!dbResult.success) {
-      return { 
-        success: false, 
-        error: dbResult.error_message || 'Native function returned failure'
+      return {
+        success: false,
+        error: dbResult.error_message || 'Native function returned failure',
       }
     }
-    
-    // Step 4: Return success with unblock proof if applicable
-    return { 
-      success: true, 
-      unblockProof: dbResult.unblock_proof,
-      validationResult
+
+    return {
+      success: true,
+      unblockProof: dbResult.unblock_proof ?? undefined,
+      validationResult,
     }
-    
+
   } catch (err) {
     // Fail closed: any exception => no partial state persists
     console.error('Record disposition failed (fail-closed):', err)
@@ -193,7 +230,6 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
  * Get queue item detail (for admin dashboard display)
  */
 interface QueueItemDetail {
-  id: bigint
   story_id: string
   status: BlueprintQueueStatus
   chapter_numbers: number[]
@@ -205,25 +241,19 @@ interface QueueItemDetail {
   retry_count: number
   brand_scan_hash?: string | null
   lease_id?: string | null
-  source_event_id: bigint
+  source_event_id: string
   created_at: string
   story_title: string | null
   tagline: string | null
-  recent_resolutions: Array<{ id: bigint; disposition: Disposition; reason_text: string; created_at: string }>
+  recent_resolutions: Array<{ id: string; disposition: Disposition; reason_text: string; created_at: string }>
   audit_entries: Array<{ id: string; disposition: Disposition; reason_text: string; created_at: string }>
 }
 
 export async function getQueueItemDetail(_storyId: string): Promise<null | QueueItemDetail> {
   const db = await createClient()
   const { data: queueItem, error: queueError } = await db
-    .from('blueprint_queue')
-    .select(`
-      *,
-      story_title:stories(title),
-      tagline:stories(tagline),
-      recent_resolutions:blueprint_resolutions(id, disposition, reason_text, created_at),
-      audit_entries:blueprint_audit_log(id, disposition, reason_text, created_at)
-    `)
+    .from('vw_blueprint_review_item_details')
+    .select('*')
     .eq('story_id', _storyId)
     .single()
 

@@ -1,198 +1,170 @@
--- M10-E E5 Row-Level Security Enforcement Policy (E-OPS-1 Criterion #4)
--- Purpose: Comprehensive RLS policies - owner/admin ONLY, NO anon/auth-wildcard
--- Authority: Reviewer verdict HOLD + Static Gate fb64c47 corrections
--- Boundary: 
---   1. Anonymous users: NO access to queue, audit, resolutions tables
---   2. Authenticated users: NO unrestricted access via WITH CHECK (true)  
---   3. Owner/admin only: predicates via admin_users + auth.uid()
---   4. Reuse existing admin_users table (created at 20260718110000); DO NOT recreate
--- STATIC GATE CORRECTIONS (fb64c47):
---   - No resolution UPDATE/DELETE policies (append-only ledger requirement)
---   - Minimum grants + owner/admin RLS actually usable by current server reads
---   - Audit log reviewer FK RESTRICT/NO ACTION (not CASCADE)
---   - blueprint_queue SELECT permission granted for authenticated reads
+-- M10-E E5 owner/admin read policies and dashboard views.
+-- Authenticated writes remain available only through SECURITY DEFINER RPC.
 
-DO $$
-BEGIN
-  -- This is an idempotent policy definition migration
-END $$;
+COMMENT ON TABLE public.admin_users IS
+  'Authorization mapping reused for owner/admin blueprint workflow access';
 
--- ============================================================================
--- ADMIN_USERS TABLE - REUSE EXISTING FROM 20260718110000
--- ============================================================================
--- DO NOT recreate this table! It already exists from admin_generation_observability_rpcs.sql
--- Existing structure:
---   user_id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE
---   role text NOT NULL DEFAULT 'admin' CHECK (role IN ('owner', 'admin'))
---   created_at timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp()
---   updated_at timestamptz NOT NULL DEFAULT pg_catalog.clock_timestamp()
--- Only allow 'owner' | 'admin' roles; NO 'editor' role permitted
+CREATE POLICY blueprint_queue_owner_admin_select
+  ON public.blueprint_queue
+  FOR SELECT TO authenticated
+  USING (
+    (SELECT public.e5_is_owner_admin())
+  );
 
-COMMENT ON TABLE public.admin_users IS 'Authorization mapping for owner/admin access to blueprint workflow (E-OPS-1 Criterion #4); REUSED from 20260718110000';
+CREATE POLICY blueprint_queue_owner_admin_update
+  ON public.blueprint_queue
+  FOR UPDATE TO authenticated
+  USING (
+    status = 'PENDING'
+    AND (SELECT public.e5_is_owner_admin())
+  )
+  WITH CHECK (
+    status = 'CLAIMED'
+    AND claimed_by IS NOT NULL
+    AND claimed_at IS NOT NULL
+    AND (SELECT public.e5_is_owner_admin())
+  );
 
--- ============================================================================
--- BLUEPRINT_QUEUE POLICIES - OWNER/ADMIN ONLY, SERVICE_ROLE FOR INTERNAL OPERATIONS
--- ===================================================== ===================
+CREATE POLICY blueprint_resolutions_owner_admin_select
+  ON public.blueprint_resolutions
+  FOR SELECT TO authenticated
+  USING (
+    (SELECT public.e5_is_owner_admin())
+  );
 
-DROP POLICY IF EXISTS "blueprint_queue_anon_select" ON public.blueprint_queue;
-DROP POLICY IF EXISTS "blueprint_queue_service_role" ON public.blueprint_queue;
-DROP POLICY IF EXISTS "blueprint_queue_anon_all" ON public.blueprint_queue;
+CREATE POLICY blueprint_audit_log_owner_admin_select
+  ON public.blueprint_audit_log
+  FOR SELECT TO authenticated
+  USING (
+    (SELECT public.e5_is_owner_admin())
+  );
 
--- Grant minimum SELECT to authenticated (used by admin dashboard/client reads)
--- RLS restricts to owner/admin members only
-CREATE POLICY "blueprint_queue_authenticated_select"
-  ON public.blueprint_queue FOR SELECT TO authenticated
-  USING (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')));
-
--- Deny anonymous access entirely
-CREATE POLICY "blueprint_queue_anon_deny_all"
-  ON public.blueprint_queue FOR ALL TO anon
-  USING (false)
-  WITH CHECK (false);
-
--- Service role bypass for internal operations
-CREATE POLICY "blueprint_queue_service_role" 
-  ON public.blueprint_queue FOR ALL TO service_role USING (true) WITH CHECK (true);
-
--- Grant minimum SELECT privilege to authenticated (required for RLS to have any effect)
-GRANT SELECT ON public.blueprint_queue TO authenticated;
-GRANT SELECT ON public.blueprint_resolutions TO authenticated;
-GRANT SELECT ON public.blueprint_audit_log TO authenticated;
-
--- ============================================================================
--- BLUEPRINT_RESOLUTIONS POLICIES - APPEND-ONLY (NO UPDATE/DELETE)
--- ============================================================================
-
-DROP POLICY IF EXISTS "blueprint_resolutions_authenticated_insert" ON public.blueprint_resolutions;
-DROP POLICY IF EXISTS "blueprint_resolutions_authenticated_select" ON public.blueprint_resolutions;
-DROP POLICY IF EXISTS "blueprint_resolutions_service_role" ON public.blueprint_resolutions;
-DROP POLICY IF EXISTS "blueprint_resolutions_update" ON public.blueprint_resolutions;
-DROP POLICY IF EXISTS "blueprint_resolutions_delete" ON public.blueprint_resolutions;
-
--- Append-only pattern: INSERT + SELECT only; NO UPDATE/DELETE paths
-CREATE POLICY "blueprint_resolutions_owner_admin_insert"
-  ON public.blueprint_resolutions FOR INSERT TO authenticated
-  WITH CHECK (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')));
-
-CREATE POLICY "blueprint_resolutions_owner_admin_select"
-  ON public.blueprint_resolutions FOR SELECT TO authenticated
-  USING (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')));
-
--- Explicitly deny UPDATE/DELETE (append-only ledger immutability)
-CREATE POLICY "blueprint_resolutions_no_update"
-  ON public.blueprint_resolutions FOR UPDATE TO authenticated
-  USING (false);
-
-CREATE POLICY "blueprint_resolutions_no_delete"
-  ON public.blueprint_resolutions FOR DELETE TO authenticated
-  USING (false);
-
--- Service role bypass (INSERT/SELECT only)
-CREATE POLICY "blueprint_resolutions_service_role_select" 
-  ON public.blueprint_resolutions FOR SELECT TO service_role USING (true);
-
-CREATE POLICY "blueprint_resolutions_service_role_insert" 
-  ON public.blueprint_resolutions FOR INSERT TO service_role WITH CHECK (true);
-
--- ============================================================================
--- BLUEPRINT_AUDIT_LOG POLICIES - APPEND-ONLY, REVIEWER FK RESTRICT (NOT CASCADE)
--- ============================================================================
-
-DROP POLICY IF EXISTS "blueprint_audit_log_anon_select" ON public.blueprint_audit_log;
-DROP POLICY IF EXISTS "blueprint_audit_log_authenticated_insert" ON public.blueprint_audit_log;
-DROP POLICY IF EXISTS "blueprint_audit_log_service_role" ON public.blueprint_audit_log;
-DROP POLICY IF EXISTS "blueprint_audit_log_update" ON public.blueprint_audit_log;
-DROP POLICY IF EXISTS "blueprint_audit_log_delete" ON public.blueprint_audit_log;
-
--- Deny anonymous access entirely
-CREATE POLICY "blueprint_audit_log_anon_deny_all"
-  ON public.blueprint_audit_log FOR ALL TO anon
-  USING (false)
-  WITH CHECK (false);
-
--- Allow owner/admin select/insert only
-CREATE POLICY "blueprint_audit_log_owner_admin_select"
-  ON public.blueprint_audit_log FOR SELECT TO authenticated
-  USING (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')));
-
-CREATE POLICY "blueprint_audit_log_owner_admin_insert"
-  ON public.blueprint_audit_log FOR INSERT TO authenticated
-  WITH CHECK (EXISTS (SELECT 1 FROM admin_users au WHERE au.user_id = auth.uid() AND au.role IN ('owner', 'admin')));
-
--- Block DELETE entirely (audit immutability requirement)
-CREATE POLICY "blueprint_audit_log_no_delete"
-  ON public.blueprint_audit_log FOR DELETE TO authenticated
-  USING (false);
-
--- Block UPDATE (append-only immutability)
-CREATE POLICY "blueprint_audit_log_no_update"
-  ON public.blueprint_audit_log FOR UPDATE TO authenticated
-  USING (false);
-
--- Service role bypass for internal operations
-CREATE POLICY "blueprint_audit_log_service_role" 
-  ON public.blueprint_audit_log FOR ALL TO service_role USING (true) WITH CHECK (true);
-
--- ============================================================================
--- BLUEPRINT_AUDIT_LOG POLICIES - APPEND-ONLY, REVIEWER FK RESTRICT (NOT CASCADE)
--- ============================================================================
-  ON public.blueprint_validator_proofs
-  FOR SELECT
-  TO service_role
-  USING (true);
-
-CREATE POLICY e5_validator_proof_service_role_insert
-  ON public.blueprint_validator_proofs
-  FOR INSERT
-  TO service_role
+CREATE POLICY blueprint_queue_service_role_all
+  ON public.blueprint_queue
+  FOR ALL TO service_role
+  USING (true)
   WITH CHECK (true);
 
--- ============================================================================
--- CONVENIENCE VIEWS - Fixed to not assume non-existent columns
--- ============================================================================
+CREATE POLICY blueprint_resolutions_service_role_select
+  ON public.blueprint_resolutions
+  FOR SELECT TO service_role
+  USING (true);
+CREATE POLICY blueprint_audit_log_service_role_select
+  ON public.blueprint_audit_log
+  FOR SELECT TO service_role
+  USING (true);
+GRANT SELECT ON TABLE public.blueprint_queue TO authenticated;
+GRANT UPDATE (status, claimed_by, claimed_at) ON TABLE public.blueprint_queue TO authenticated;
+GRANT SELECT ON TABLE public.blueprint_resolutions TO authenticated;
+GRANT SELECT ON TABLE public.blueprint_audit_log TO authenticated;
 
--- View: Pending review items (do NOT assume stories.metadata exists)
-DROP VIEW IF EXISTS public.vw_blueprint_pending_review_items;
+CREATE VIEW public.vw_blueprint_review_authority AS
+SELECT
+  bq.story_id,
+  bq.chapter_numbers,
+  bq.source_event_id::text AS source_event_id,
+  bq.status
+FROM public.blueprint_queue AS bq
+WHERE bq.status IN ('PENDING', 'CLAIMED', 'BLOCKED')
+  AND (SELECT public.e5_is_owner_admin());
 
-CREATE OR REPLACE VIEW public.vw_blueprint_pending_review_items AS
-SELECT 
+CREATE VIEW public.vw_blueprint_pending_review_items AS
+SELECT
   bq.story_id,
   bq.chapter_numbers,
   bq.act_boundary,
   bq.findings,
-  bq.created_at as queue_created_at,
-  sq.title as story_title,
-  sq.tagline,
-  sq.role,
-  sq.total_chapters,
-  sq.status
-FROM public.blueprint_queue bq
-JOIN public.stories sq ON bq.story_id = sq.id
+  bq.source_event_id::text AS source_event_id,
+  bq.created_at AS queue_created_at,
+  s.title AS story_title,
+  s.tagline,
+  s.role,
+  s.total_chapters,
+  s.status AS story_status
+FROM public.blueprint_queue AS bq
+JOIN public.stories AS s ON s.id = bq.story_id
 WHERE bq.status = 'PENDING'
-ORDER BY bq.created_at ASC;
+  AND (SELECT public.e5_is_owner_admin());
 
-COMMENT ON VIEW public.vw_blueprint_pending_review_items IS 'Dashboard view of pending review items (E5 workflow only)';
-
--- View: Recent resolutions by reviewer
-DROP VIEW IF EXISTS public.vw_blueprint_recent_resolutions;
-
-CREATE OR REPLACE VIEW public.vw_blueprint_recent_resolutions AS
-SELECT 
+CREATE VIEW public.vw_blueprint_recent_resolutions AS
+SELECT
+  br.id::text AS resolution_id,
   br.story_id,
+  br.source_event_id::text AS source_event_id,
   br.disposition,
   br.reason_text,
-  br.created_at as resolution_created_at,
-  au.email as reviewer_email,
+  br.chapter_numbers,
+  br.result_chapter_version_pairs,
+  br.created_at AS resolution_created_at,
+  u.email AS reviewer_email,
   br.reviewer_uid,
-  sq.title as story_title
-FROM public.blueprint_resolutions br
-LEFT JOIN auth.users au ON br.reviewer_uid = au.id
-LEFT JOIN public.stories sq ON br.story_id = sq.id
+  s.title AS story_title
+FROM public.blueprint_resolutions AS br
+LEFT JOIN auth.users AS u ON u.id = br.reviewer_uid
+LEFT JOIN public.stories AS s ON s.id = br.story_id
+WHERE (SELECT public.e5_is_owner_admin())
 ORDER BY br.created_at DESC
 LIMIT 100;
 
-COMMENT ON VIEW public.vw_blueprint_recent_resolutions IS 'Recent resolution history dashboard view (last 100 entries)';
+CREATE VIEW public.vw_blueprint_review_item_details AS
+SELECT
+  bq.story_id,
+  bq.status,
+  bq.chapter_numbers,
+  bq.act_boundary,
+  bq.findings,
+  bq.claimed_by,
+  bq.claimed_at,
+  bq.provider_call_id,
+  bq.retry_count,
+  bq.brand_scan_hash,
+  bq.lease_id,
+  bq.source_event_id::text AS source_event_id,
+  bq.created_at,
+  s.title AS story_title,
+  s.tagline,
+  COALESCE((
+    SELECT pg_catalog.jsonb_agg(
+      pg_catalog.jsonb_build_object(
+        'id', br.id::text,
+        'disposition', br.disposition,
+        'reason_text', br.reason_text,
+        'created_at', br.created_at
+      )
+      ORDER BY br.created_at DESC
+    )
+    FROM public.blueprint_resolutions AS br
+    WHERE br.story_id = bq.story_id
+  ), '[]'::jsonb) AS recent_resolutions,
+  COALESCE((
+    SELECT pg_catalog.jsonb_agg(
+      pg_catalog.jsonb_build_object(
+        'id', bal.id::text,
+        'disposition', bal.disposition,
+        'reason_text', bal.reason_text,
+        'created_at', bal.created_at
+      )
+      ORDER BY bal.created_at DESC
+    )
+    FROM public.blueprint_audit_log AS bal
+    WHERE bal.story_id = bq.story_id
+  ), '[]'::jsonb) AS audit_entries
+FROM public.blueprint_queue AS bq
+JOIN public.stories AS s ON s.id = bq.story_id
+WHERE (SELECT public.e5_is_owner_admin());
 
--- ============================================================================
--- END RLS FIXES - All tables now protected by admin_users membership check
--- ============================================================================
+COMMENT ON VIEW public.vw_blueprint_pending_review_items IS
+  'Owner/admin dashboard view of pending E5 review items';
+COMMENT ON VIEW public.vw_blueprint_recent_resolutions IS
+  'Owner/admin dashboard view of 100 recent E5 resolutions with lossless decimal IDs';
+COMMENT ON VIEW public.vw_blueprint_review_item_details IS
+  'Owner/admin E5 queue detail with every PostgreSQL BIGINT represented as decimal text';
+
+REVOKE ALL ON TABLE public.vw_blueprint_review_authority FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON TABLE public.vw_blueprint_pending_review_items FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON TABLE public.vw_blueprint_recent_resolutions FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON TABLE public.vw_blueprint_review_item_details FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON TABLE public.vw_blueprint_review_authority TO authenticated, service_role;
+GRANT SELECT ON TABLE public.vw_blueprint_pending_review_items TO authenticated, service_role;
+GRANT SELECT ON TABLE public.vw_blueprint_recent_resolutions TO authenticated, service_role;
+GRANT SELECT ON TABLE public.vw_blueprint_review_item_details TO authenticated, service_role;

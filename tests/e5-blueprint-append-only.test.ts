@@ -1,221 +1,94 @@
-/**
- * Vitest Unit Tests: Blueprint Append-Only History (E-OPS-1 Criterion #5).
- * 
- * Purpose: Verify INSERT new version row never UPDATE existing chapter_blueprints; audit immutability.
- * Authority: M10-E E5 implementation authority SHA = `a16b5a3b950ead2385a41c4fe12369336fbbc15f`
- */
-import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { recordDisposition as workflowRecordDisposition } from '@/lib/runtime/blueprint-workflow.server'
-import type { ChapterBlueprintInsertPayload, ResolutionContext } from '@/lib/types/blueprint.contract'
-import { createClient } from '@/lib/supabase/server'
+import { readFileSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
 
-describe('Blueprint Append-Only History', () => {
-  let mockDb: {
-    from: any
-    select: any
-    eq: any
-    order: any
-    limit: any
-    single: any
-    insert: any
-    update: any
-    delete: any
-  }
-  
-  beforeEach(() => {
-    vi.clearAllMocks()
-    mockDb = {
-      from: vi.fn(),
-      select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      order: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockReturnThis(),
-      single: vi.fn(),
-      insert: vi.fn().mockReturnValue({
-        throwOnError: vi.fn().mockReturnThis(),
-      }),
-      update: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnThis(),
-        throwOnError: vi.fn().mockReturnThis(),
-      }),
-      delete: vi.fn().mockReturnThis(),
-    }
-    
-    // Mock createClient
-    vi.mock('@lakoku/db', async () => {
-      const actual = await vi.importActual('@lakoku/db')
-      return {
-        ...actual,
-        createClient: vi.fn(() => mockDb),
-      }
-    })
+const ROOT = process.cwd()
+const RESOLUTION_MIGRATION = readFileSync(
+  `${ROOT}/supabase/migrations/20260824100000_e5_blueprint_resolution_function.sql`,
+  'utf8',
+)
+const RESOLUTION_LEDGER_MIGRATION = readFileSync(
+  `${ROOT}/supabase/migrations/20260823100100_e5_blueprint_resolutions.sql`,
+  'utf8',
+)
+const AUDIT_MIGRATION = readFileSync(
+  `${ROOT}/supabase/migrations/20260823100200_e5_blueprint_audit.sql`,
+  'utf8',
+)
+const VALIDATOR_ATTESTATION_MIGRATION = readFileSync(
+  `${ROOT}/supabase/migrations/20260823100250_e5_blueprint_validator_proofs.sql`,
+  'utf8',
+)
+
+describe('E5 append-only authority evidence', () => {
+  it('copies latest exact version into a new incremented chapter_blueprints row', () => {
+    expect(RESOLUTION_MIGRATION).toMatch(
+      /FROM public\.chapter_blueprints AS cb[\s\S]*ORDER BY cb\.version DESC[\s\S]*FOR UPDATE;/,
+    )
+    expect(RESOLUTION_MIGRATION).toContain(
+      'IF v_expected_version IS NULL OR v_expected_version IS DISTINCT FROM v_source_version THEN',
+    )
+    expect(RESOLUTION_MIGRATION).toContain("MESSAGE = 'STALE_BLUEPRINT_VERSION'")
+    expect(RESOLUTION_MIGRATION).toMatch(
+      /INSERT INTO public\.chapter_blueprints[\s\S]*v_source_version \+ 1,[\s\S]*v_source_version,[\s\S]*pg_catalog\.format\('E5 %s resolution at %s'/,
+    )
+    expect(RESOLUTION_MIGRATION).not.toMatch(/UPDATE\s+public\.chapter_blueprints/i)
   })
 
-  describe('Version Increment Behavior', () => {
-    it('increments version number from MAX(existing)', async () => {
-      const mockMaxQuery = { data: { max: '5' }, error: null }
-      
-      mockDb.from.mockReturnValue({
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        order: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue(mockMaxQuery),
-        insert: vi.fn().mockReturnValue({
-          throwOnError: vi.fn().mockReturnValue(null),
-        }),
-      })
-      
-      const context: ResolutionContext = {
-        story_id: 'story/123',
-        disposition: 'UNBLOCK_PERMIT',
-        reviewer_uid: 'auth.uid-123',
-        reason_text: 'Test append-only',
-        source_event_id: BigInt(100),
-        chapter_numbers: [1, 2, 3]
-      }
-      
-      // Mock validator rerun to pass
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-      await workflowRecordDisposition(context)
-      consoleSpy.mockRestore()
-      
-      // Verify version calculation logic exists
-      const maxVersion = parseInt(mockMaxQuery.data.max || '0')
-      const newVersion = maxVersion + 1
-      
-      expect(newVersion).toBe(6)
-      expect(maxVersion).toBeGreaterThan(0)
-    })
+  it('accepts only server-issued attestation ID in current disposition contract', () => {
+    const signature = RESOLUTION_MIGRATION.match(
+      /CREATE OR REPLACE FUNCTION public\.e5_record_disposition\(([\s\S]*?)\)\s*RETURNS TABLE/,
+    )?.[1]
 
-    it('never UPDATEs existing version rows', async () => {
-      // This test verifies the code uses INSERT instead of UPDATE
-      const context: ResolutionContext = {
-        story_id: 'story/123',
-        disposition: 'RETRY_ALLOW',
-        reviewer_uid: 'auth.uid-123',
-        reason_text: 'No UPDATE test',
-        source_event_id: BigInt(100),
-        chapter_numbers: [1]
-      }
-      
-      // Mock query to simulate existing versions
-      mockDb.from.mockReturnValue({
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        order: vi.fn().mockReturnThis(),
-        single: vi.fn().mockRejectedValue(new Error('Not found')), // No versions yet
-        insert: vi.fn().mockReturnValue({
-          throwOnError: vi.fn().mockReturnValue(null),
-        }),
-      })
-      
-      await workflowRecordDisposition(context)
-      
-      // Verify INSERT was called (not UPDATE on existing rows)
-      expect(mockDb.from).toHaveBeenCalledWith('chapter_blueprints')
-      
-      // In production: verify no UPDATE calls on chapter_blueprints table
-      // UPDATE would violate append-only requirement
-    })
-
-    it('tracks reconciled_from_version correctly', async () => {
-      const oldVersion = 5
-      const newVersion = 6
-      
-      // Verify reconciliation tracking pattern
-      expect(oldVersion).toBeDefined()
-      expect(newVersion === oldVersion + 1).toBe(true)
-      
-      // In production payload:
-      // reconciled_from_version: newVersion - 1 // For version > 1
-      expect(newVersion - 1).toBe(oldVersion)
-    })
+    expect(signature).toBeDefined()
+    expect(signature).toContain('p_validator_attestation_id uuid DEFAULT NULL')
+    expect(signature).not.toMatch(/p_validation_passed|p_validator_spine_findings|p_validator_ending_results|p_expected_chapter_versions/)
+    expect(RESOLUTION_MIGRATION).toContain('VALIDATOR_ATTESTATION_REQUIRED')
+    expect(RESOLUTION_MIGRATION).toContain('VALIDATOR_ATTESTATION_BINDING_MISMATCH')
   })
 
-  describe('Audit Immutability Proof', () => {
-    it('audit entries cannot be UPDATEd after insertion', async () => {
-      const testAuditEntry = {
-        id: 'uuid-test-entry',
-        story_id: 'story/123',
-        reviewer_uid: 'auth.uid-123',
-        disposition: 'REJECT_BLOCK',
-        reason_text: 'Immutable test',
-        source_event_id: BigInt(100),
-        created_at: '2024-08-23T20:00:00Z',
-      }
-      
-      // Verify audit entry has no UPDATE method
-      expect(testAuditEntry.created_at).toMatch(/^\d{4}-\d{2}-\d{2}/)
-      expect(testAuditEntry.source_event_id !== BigInt(0)).toBe(true)
-      
-      // In production: ON DELETE RESTRICT prevents cascade deletion
-      // UPDATE operations should be forbidden by RLS policies
-    })
-
-    it('audit entries cannot be DELETEd', async () => {
-      const deleteAttempt = async () => {
-        // Mock attempt to delete audit entry
-        mockDb.from.mockReturnValue({
-          delete: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnThis(),
-            throwOnError: vi.fn().mockReturnValue(null),
-          }),
-        })
-        
-        // Expected: ON DELETE RESTRICT will block this in production
-        const result = await mockDb.from('blueprint_audit_log')
-          .delete()
-          .eq('id', 'some-uuid')
-          .throwOnError(false)
-        
-        expect(result).toBeDefined()
-      }
-      
-      // Test would require disposable DB setup for real constraint testing
-      expect(deleteAttempt).toBeDefined()
-    })
-
-    it('parent deletion cannot remove historical audit via RESTRICT', async () => {
-      // Verify ON DELETE RESTRICT behavior
-      const queueItem = {
-        story_id: 'story/test-delete-restict',
-        status: 'BLOCKED',
-      }
-      
-      const auditEntry = {
-        id: 'uuid-historical-audit',
-        story_id: 'story/test-delete-restict', // FK to blueprint_queue(story_id)
-        disposition: 'REJECT_BLOCK',
-        source_event_id: BigInt(100),
-      }
-      
-      // Expected: Deleting queue item does NOT cascade-delete related audit entries
-      expect(queueItem.story_id).toBe(auditEntry.story_id)
-      
-      // In production pgTAP test: DROP TRIGGER or CASCADE should fail
-      expect('ON DELETE RESTRICT'.toUpperCase()).toContain('RESTRICT')
-    })
+  it('allows only service role to issue validator attestations', () => {
+    expect(VALIDATOR_ATTESTATION_MIGRATION).toContain(
+      'REVOKE ALL ON FUNCTION public.e5_issue_validator_attestation(text,bigint,uuid,integer[],text,jsonb,jsonb,jsonb)',
+    )
+    expect(VALIDATOR_ATTESTATION_MIGRATION).toContain(
+      'FROM PUBLIC, anon, authenticated;',
+    )
+    expect(VALIDATOR_ATTESTATION_MIGRATION).toContain(
+      'GRANT EXECUTE ON FUNCTION public.e5_issue_validator_attestation(text,bigint,uuid,integer[],text,jsonb,jsonb,jsonb)',
+    )
+    expect(VALIDATOR_ATTESTATION_MIGRATION).toContain('TO service_role;')
+    expect(VALIDATOR_ATTESTATION_MIGRATION).not.toMatch(
+      /GRANT EXECUTE ON FUNCTION public\.e5_issue_validator_attestation\(text,bigint,uuid,integer\[\],text,jsonb,jsonb,jsonb\)\s+TO authenticated;/,
+    )
   })
 
-  describe('Consistency Verification', () => {
-    it('version sequence maintains monotonic increment', async () => {
-      const sequence = [1, 2, 3, 4, 5]
-      
-      for (let i = 1; i < sequence.length; i++) {
-        expect(sequence[i]).toBeGreaterThan(sequence[i - 1])
-      }
-      
-      expect(sequence[sequence.length - 1] - sequence[0]).toBe(4)
-    })
+  it('persists source/result version pairs and returns authoritative proof only', () => {
+    expect(RESOLUTION_MIGRATION).toContain("'source_version', v_source_version")
+    expect(RESOLUTION_MIGRATION).toContain("'result_version', v_source_version + 1")
+    expect(RESOLUTION_MIGRATION).toContain('result_chapter_version_pairs')
+    expect(RESOLUTION_MIGRATION).toContain('result_unblock_proof')
+    expect(RESOLUTION_MIGRATION).toContain('result_proof_id')
+    expect(RESOLUTION_LEDGER_MIGRATION).toContain('request_fingerprint text NOT NULL UNIQUE')
+  })
 
-    it('reconciliation_reason is recorded for each version change', async () => {
-      const reconciliationReason = 'E5 disposition: UNBLOCK_PERMIT at 2024-08-23T20:00:00Z'
-      
-      expect(reconciliationReason.length).toBeGreaterThan(0)
-      expect(reconciliationReason.includes('E5')).toBe(true)
-      expect(reconciliationReason.includes('disposition:')).toBe(true)
-    })
+  it('keeps resolution and audit ledgers immutable through grants and restrictive references', () => {
+    expect(RESOLUTION_LEDGER_MIGRATION).toContain(
+      'story_id text NOT NULL REFERENCES public.blueprint_queue(story_id) ON DELETE RESTRICT',
+    )
+    expect(RESOLUTION_LEDGER_MIGRATION).toContain(
+      'REVOKE ALL ON TABLE public.blueprint_resolutions FROM PUBLIC, anon, authenticated, service_role;',
+    )
+    expect(RESOLUTION_LEDGER_MIGRATION).toContain(
+      'GRANT SELECT ON TABLE public.blueprint_resolutions TO service_role;',
+    )
+    expect(AUDIT_MIGRATION).toContain(
+      'source_event_id bigint NOT NULL REFERENCES public.story_events(id) ON DELETE RESTRICT',
+    )
+    expect(AUDIT_MIGRATION).toContain(
+      'REVOKE ALL ON TABLE public.blueprint_audit_log FROM PUBLIC, anon, authenticated, service_role;',
+    )
+    expect(AUDIT_MIGRATION).toContain(
+      'GRANT SELECT ON TABLE public.blueprint_audit_log TO service_role;',
+    )
   })
 })
-
-// TODO: Add comprehensive append-only tests against disposable local DB

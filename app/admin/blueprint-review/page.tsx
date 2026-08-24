@@ -8,12 +8,10 @@
  */
 import { redirect } from 'next/navigation'
 import { requireAdminUser } from '@/lib/admin/auth'
-import { getPendingItems } from '@/lib/runtime/blueprint-workflow.server'
+import { getPendingItems } from '@lakoku/runtime'
 import type { PendingReviewItem } from '@/lib/types/blueprint.contract'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
 import ClientComponent from './client-component'
 
 export const dynamic = 'force-dynamic'
@@ -24,8 +22,7 @@ async function getInitialPendingItems(): Promise<PendingReviewItem[]> {
   try {
     // Call workflow directly after requireAdminUser(), no cookie/HTTP loopback
     const items = await getPendingItems()
-    // Cast as PendingReviewItem[] - contract interface extends BlueprintQueueItem which has undefined optional fields
-    return items as unknown as PendingReviewItem[] as any
+    return items
   } catch (err) {
     console.error('Error fetching pending items:', err)
     return []

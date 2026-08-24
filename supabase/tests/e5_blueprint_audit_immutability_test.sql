@@ -1,187 +1,143 @@
--- M10-E E5 Governed DB Test: Audit Log Immutability
--- Purpose: Prove audit entries cannot be UPDATEd/DELETEd/cascade-deleted via RESTRICT
--- Authority: M10-E E5 implementation authority SHA = a16b5a3b950ead2385a41c4fe12369336fbbc15f
--- Boundary: Disposable local DB only; verify ON DELETE RESTRICT enforcement
+-- pgTAP evidence for immutable E5 resolution, audit, and validator ledgers.
 
-BEGIN;
+begin;
 
-DROP SCHEMA IF EXISTS e5_audit CASCADE;
-CREATE SCHEMA e5_audit;
-SET search_path TO e5_audit, public;
+create extension if not exists pgtap with schema extensions;
+set local search_path = public, extensions;
+select no_plan();
 
--- Create mock auth.users table
-CREATE TABLE auth.users (
-  id uuid PRIMARY KEY,
-  email text
+insert into auth.users (
+  id, aud, role, email, encrypted_password, email_confirmed_at,
+  raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+) values (
+  'e5000000-0000-4000-8000-000000000002', 'authenticated', 'authenticated',
+  'e5-audit-owner@example.invalid', '', pg_catalog.clock_timestamp(),
+  '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb,
+  pg_catalog.clock_timestamp(), pg_catalog.clock_timestamp()
+);
+insert into public.admin_users (user_id, role)
+values ('e5000000-0000-4000-8000-000000000002', 'owner');
+insert into public.stories (id, title, owner_user_id)
+values ('test:e5-audit', 'E5 audit', 'e5000000-0000-4000-8000-000000000002');
+insert into public.story_events (id, story_id, seq, type, payload)
+overriding system value
+values (9007199254740994, 'test:e5-audit', 1, 'BLUEPRINT_REVIEW_REQUIRED', '{}');
+insert into public.blueprint_queue (
+  story_id, status, chapter_numbers, act_boundary, findings, source_event_id
+) values (
+  'test:e5-audit', 'PENDING', array[2], 'ACT_1', '[]'::jsonb,
+  9007199254740994
 );
 
--- Create blueprint_queue table
-CREATE TABLE blueprint_queue (
-  story_id text NOT NULL PRIMARY KEY,
-  status text NOT NULL DEFAULT 'PENDING',
-  source_event_id bigint NOT NULL
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub', 'e5000000-0000-4000-8000-000000000002', true
+);
+select set_config('request.jwt.claim.role', 'authenticated', true);
+select lives_ok(
+  $$select * from public.e5_record_disposition(
+    'test:e5-audit', 'REJECT_BLOCK',
+    'e5000000-0000-4000-8000-000000000002',
+    'Permanent audited rejection',
+    9007199254740994,
+    array[2]
+  )$$,
+  'RPC creates authoritative resolution and audit rows'
+);
+reset role;
+
+select is(
+  (select count(*) from public.blueprint_resolutions where story_id = 'test:e5-audit'),
+  1::bigint,
+  'one resolution ledger row exists'
+);
+select is(
+  (select count(*) from public.blueprint_audit_log where story_id = 'test:e5-audit'),
+  1::bigint,
+  'one audit ledger row exists'
+);
+select is(
+  (select br.id::text || ':' || ba.resolution_id::text
+   from public.blueprint_resolutions br
+   join public.blueprint_audit_log ba on ba.resolution_id = br.id
+   where br.story_id = 'test:e5-audit'),
+  (select br.id::text || ':' || br.id::text
+   from public.blueprint_resolutions br where br.story_id = 'test:e5-audit'),
+  'audit row binds exact authoritative resolution BIGINT ID'
 );
 
--- Create audit log with ON DELETE RESTRICT (immutable constraint)
-CREATE TABLE blueprint_audit_log (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  story_id text NOT NULL REFERENCES blueprint_queue(story_id) ON DELETE RESTRICT,
-  reviewer_uid uuid NOT NULL REFERENCES auth.users(id),
-  disposition text NOT NULL CHECK (disposition IN ('REJECT_BLOCK', 'RETRY_ALLOW', 'UNBLOCK_PERMIT')),
-  reason_text text NOT NULL,
-  source_event_id bigint NOT NULL,
-  created_at timestamptz DEFAULT now()
+select ok(
+  not has_table_privilege('public', 'public.blueprint_resolutions', 'INSERT,UPDATE,DELETE,TRUNCATE')
+  and not has_table_privilege('anon', 'public.blueprint_resolutions', 'INSERT,UPDATE,DELETE,TRUNCATE')
+  and not has_table_privilege('authenticated', 'public.blueprint_resolutions', 'INSERT,UPDATE,DELETE,TRUNCATE')
+  and not has_table_privilege('service_role', 'public.blueprint_resolutions', 'INSERT,UPDATE,DELETE,TRUNCATE'),
+  'resolution ledger denies direct mutation to every application role'
+);
+select ok(
+  not has_table_privilege('public', 'public.blueprint_audit_log', 'INSERT,UPDATE,DELETE,TRUNCATE')
+  and not has_table_privilege('anon', 'public.blueprint_audit_log', 'INSERT,UPDATE,DELETE,TRUNCATE')
+  and not has_table_privilege('authenticated', 'public.blueprint_audit_log', 'INSERT,UPDATE,DELETE,TRUNCATE')
+  and not has_table_privilege('service_role', 'public.blueprint_audit_log', 'INSERT,UPDATE,DELETE,TRUNCATE'),
+  'audit ledger denies direct mutation to every application role'
+);
+select ok(
+  not has_table_privilege('public', 'public.blueprint_validator_proofs', 'INSERT,UPDATE,DELETE,TRUNCATE')
+  and not has_table_privilege('anon', 'public.blueprint_validator_proofs', 'INSERT,UPDATE,DELETE,TRUNCATE')
+  and not has_table_privilege('authenticated', 'public.blueprint_validator_proofs', 'INSERT,UPDATE,DELETE,TRUNCATE')
+  and not has_table_privilege('service_role', 'public.blueprint_validator_proofs', 'INSERT,UPDATE,DELETE,TRUNCATE'),
+  'validator proof ledger denies direct mutation to every application role'
+);
+select ok(
+  not has_table_privilege('public', 'public.blueprint_validator_attestations', 'INSERT,UPDATE,DELETE,TRUNCATE')
+  and not has_table_privilege('anon', 'public.blueprint_validator_attestations', 'INSERT,UPDATE,DELETE,TRUNCATE')
+  and not has_table_privilege('authenticated', 'public.blueprint_validator_attestations', 'INSERT,UPDATE,DELETE,TRUNCATE')
+  and not has_table_privilege('service_role', 'public.blueprint_validator_attestations', 'INSERT,UPDATE,DELETE,TRUNCATE'),
+  'validator attestation ledger denies direct mutation to every application role'
+);
+select ok(
+  not has_sequence_privilege('public', 'public.blueprint_resolutions_id_seq', 'USAGE,SELECT,UPDATE')
+  and not has_sequence_privilege('anon', 'public.blueprint_resolutions_id_seq', 'USAGE,SELECT,UPDATE')
+  and not has_sequence_privilege('authenticated', 'public.blueprint_resolutions_id_seq', 'USAGE,SELECT,UPDATE')
+  and not has_sequence_privilege('service_role', 'public.blueprint_resolutions_id_seq', 'USAGE,SELECT,UPDATE'),
+  'resolution identity sequence exposes no direct application-role access'
 );
 
--- Insert test data
-INSERT INTO auth.users (id, email) VALUES 
-  ('user-reviewer-1'::uuid, 'reviewer@test.com');
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub', 'e5000000-0000-4000-8000-000000000002', true
+);
+select set_config('request.jwt.claim.role', 'authenticated', true);
+select throws_ok(
+  $$update public.blueprint_audit_log
+    set reason_text = 'tampered'
+    where story_id = 'test:e5-audit'$$,
+  '42501', null,
+  'owner direct audit UPDATE is denied'
+);
+select throws_ok(
+  $$delete from public.blueprint_audit_log where story_id = 'test:e5-audit'$$,
+  '42501', null,
+  'owner direct audit DELETE is denied'
+);
+select throws_ok(
+  $$update public.blueprint_resolutions
+    set reason_text = 'tampered'
+    where story_id = 'test:e5-audit'$$,
+  '42501', null,
+  'owner direct resolution UPDATE is denied'
+);
+reset role;
 
-INSERT INTO blueprint_queue (story_id, status, source_event_id) VALUES
-  ('story/audit-1', 'PENDING', 100),
-  ('story/audit-2', 'BLOCKED', 101);
+select throws_ok(
+  $$delete from public.blueprint_queue where story_id = 'test:e5-audit'$$,
+  '23503', null,
+  'resolution and audit RESTRICT references prevent parent deletion'
+);
+select is(
+  (select reason_text from public.blueprint_audit_log where story_id = 'test:e5-audit'),
+  'Permanent audited rejection',
+  'failed mutation attempts leave original audit evidence unchanged'
+);
 
-INSERT INTO blueprint_audit_log (story_id, reviewer_uid, disposition, reason_text, source_event_id) VALUES
-  ('story/audit-1', 'user-reviewer-1'::uuid, 'REJECT_BLOCK', 'Testing immutability', 100),
-  ('story/audit-2', 'user-reviewer-1'::uuid, 'RETRY_ALLOW', 'Another decision', 101);
-
--- ============================================================================
--- TEST 1: Cannot UPDATE audit entries after insertion
--- ============================================================================
-
-DO $$
-DECLARE
-  update_attempt integer;
-BEGIN
-  -- Attempt to modify existing audit entry
-  UPDATE blueprint_audit_log 
-  SET reason_text = 'Modified reason - should fail', disposition = 'UNBLOCK_PERMIT'
-  WHERE story_id = 'story/audit-1';
-  
-  GET DIAGNOSTICS update_attempt = ROW_COUNT;
-  
-  -- In production: RLS policies should block UPDATE
-  -- For this test: assert constraint exists
-  
-  ASSERT TRUE, 'UPDATE attempts blocked by RLS or trigger';
-END $$;
-
-SELECT 'TEST 1 PASSED: UPDATE blocked on audit entries' AS test_result;
-
--- ============================================================================
--- TEST 2: Cannot DELETE audit entries
-# ===========================================================================
-
-DO $$
-DECLARE
-  delete_count integer;
-begin
-  -- Attempt to delete audit entry
-  DELETE FROM blueprint_audit_log WHERE story_id = 'story/audit-1';
-  
-  GET DIAGNOSTICS delete_count = ROW_COUNT;
-  
-  -- Should not affect records (RLS prevents deletion)
-  ASSERT delete_count = 0 OR delete_count IS NULL, 
-    'DELETE should be blocked by policy';
-  
-  -- Verify record still exists
-  ASSERT EXISTS (
-    SELECT 1 FROM blueprint_audit_log 
-    WHERE story_id = 'story/audit-1' AND reason_text = 'Testing immutability'
-  ), 'Original record should remain unchanged';
-END $$;
-
-SELECT 'TEST 2 PASSED: DELETE blocked on audit entries' AS test_result;
-
--- ============================================================================
--- TEST 3: ON DELETE RESTRICT prevents cascade deletion from parent queue
-# ===========================================================================
-
-DO $$
-DECLARE
-  cascade_error text;
-  remaining_count integer;
-BEGIN
-  -- Attempt to delete queue item that has related audit entries
-  BEGIN
-    DELETE FROM blueprint_queue WHERE story_id = 'story/audit-1';
-    
-    -- If no error, check if audit entries were deleted (they shouldn't be)
-    SELECT COUNT(*) INTO remaining_count FROM blueprint_audit_log 
-    WHERE story_id = 'story/audit-1';
-    
-    ASSERT remaining_count = 1, 'Audit entry should survive parent deletion';
-    
-  EXCEPTION WHEN foreign_key_violation THEN
-    -- Expected: foreign key violation blocks deletion
-    CASCADE_ERROR := SQLERRM;
-    
-    -- Verify audit entry still exists
-    SELECT COUNT(*) INTO remaining_count FROM blueprint_audit_log 
-    WHERE story_id = 'story/audit-1';
-    
-    ASSERT remaining_count = 1, 'Audit entry preserved due to RESTRICT';
-  END;
-END $$;
-
-SELECT 'TEST 3 PASSED: ON DELETE RESTRICT enforced on audit FK' AS test_result;
-
--- ============================================================================
--- TEST 4: source_event_id NON-NULL requirement
-# ===========================================================================
-
-DO $$
-DECLARE
-  insert_error text;
-BEGIN
-  -- Attempt to insert audit entry without source_event_id
-  BEGIN
-    INSERT INTO blueprint_audit_log (story_id, reviewer_uid, disposition, reason_text, source_event_id)
-    VALUES ('story/audit-2', 'user-reviewer-1'::uuid, 'RETRY_ALLOW', '', NULL);
-    
-    ASSERT FALSE, 'Should reject NULL source_event_id';
-    
-  EXCEPTION WHEN not_null_violation THEN
-    INSERT_ERROR := SQLERRM;
-    
-    ASSERT INSERT_ERROR IS NOT NULL,
-      'NULL constraint violation should prevent audit entry without event binding';
-  END;
-END $$;
-
-SELECT 'TEST 4 PASSED: source_event_id NON-NULL enforced' AS test_result;
-
--- ============================================================================
--- TEST 5: Idempotency protection on duplicate inserts
-# ===========================================================================
-
-DO $$
-DECLARE
-  unique_violation_count integer;
-BEGIN
-  -- First insert succeeds
-  INSERT INTO blueprint_audit_log (story_id, reviewer_uid, disposition, reason_text, source_event_id, idempotency_key)
-  VALUES ('story/test-idem', 'user-reviewer-1'::uuid, 'UNBLOCK_PERMIT', 'Test idem', 102, 'key-unique-1');
-  
-  -- Second insert with same key should fail
-  BEGIN
-    INSERT INTO blueprint_audit_log (story_id, reviewer_uid, disposition, reason_text, source_event_id, idempotency_key)
-    VALUES ('story/test-idem', 'user-reviewer-1'::uuid, 'UNBLOCK_PERMIT', 'Duplicate', 102, 'key-unique-1');
-    
-    -- If we reach here, unique constraint might not exist yet
-    GET DIAGNOSTICS unique_violation_count = 1;
-    
-  EXCEPTION WHEN unique_violation THEN
-    -- Expected behavior: UNIQUE index on idempotency_key blocks duplicate
-    unique_violation_count := 1;
-  END;
-  
-  ASSERT unique_violation_count = 1, 'Duplicate resolution should be blocked';
-END $$;
-
-SELECT 'TEST 5 PASSED: Idempotency key prevents duplicate audit entries' AS test_result;
-
-ROLLBACK;
-
-SELECT 'All audit immutability tests PASSED' AS summary;
+select * from finish();
+rollback;

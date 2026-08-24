@@ -1,357 +1,242 @@
 /**
- * Validator Rerun Helper Module (E-OPS-1 Criterion #6).
- * 
- * Purpose: Re-run spine/reveal/ending validators against affected chapters after UNBLOCK disposition.
- * Authority: M10-E E5 implementation authority SHA = `a16b5a3b950ead2385a41c4fe12369336fbbc15f`
- * Boundary: Use EXISTING governed validators from @lakoku/narrative - NO substitute heuristics
- * 
- * REAL VALIDATORS (all three required):
- * 1. Spine validator: checkSpineIntegrity(blueprint, secrets) - FROM @lakoku/narrative/reconciliation
- *    - Validates mandatoryBeats integrity
- *    - Validates forbiddenReveals compliance (spine guard on early reveals)
- *    - Validates act structure gates (REVEAL_GATE_CHAPTERS)
- *    
- * 2. Ending validator: checkEndingReachability(endings, state) - FROM @lakoku/narrative/reconciliation
- *    - Validates main ending reachable
- *    - Validates secret ending reachable
- *    - Validates minReachableEndings requirement
- *    
- * 3. Reveal validator: checkSpineIntegrity() ALREADY INCLUDES REVEAL LOGIC
- *    - Forbidden reveals check: s.revealGateChapter > n && !forbiddenReveals.includes(s.id)
- *    - This is THE canonical reveal validation per NCS §1.4
- *    - No separate "reveal validator" exists - spine validator handles it canonically
+ * Canonical validator rerun for E5 blueprint review.
+ *
+ * Authority comes from one canon snapshot plus the persisted story generation
+ * contract. Missing or malformed authority fails closed.
  */
-import { createClient } from '@/lib/supabase/server'
-import { checkSpineIntegrity, checkEndingReachability } from '@/lib/narrative/reconciliation'
-import type { SecretReveal } from '@/lib/narrative/types'
-import type { EndingDef, ActualState } from '@/lib/narrative/reconciliation'
+import { createAdminClient } from '@lakoku/db'
+import { loadCanonSnapshot } from '@/lib/narrative/loader'
+import {
+  checkEndingReachability,
+  checkSpineIntegrity,
+  isEndingReachable,
+  type ActualState,
+  type EndingDef,
+} from '@/lib/narrative/reconciliation'
+import { ENDING_RULES } from '@/lib/narrative/template'
+import {
+  deriveEndingDef,
+  parseStoryContractWithNormalization,
+} from '@/lib/story-engine/story-contract'
+import type { ValidatorRerunResult } from '@/lib/types/blueprint.contract'
 
-/**
- * Validator result shape per E-OPS-1 approved pattern
- */
-export interface ValidatorRerunResult {
-  passed: boolean
-  failures: Array<{
-    chapterNumber: number
-    failureType: string
-    message: string
-  }>
-  proof?: string // Explicit unblock proof if passed
-  /** Actual validator findings payload for authoritative persistence */
-  spineRevealFindings?: Array<{
-    chapterNumber: number
-    findings: Array<{ findingType: string; message: string }>
-  }>
-  /** Correction per static gate fb64c47: renamed from secretEndingsReached to reflect reachability not reached state */
-  endingResults?: {
-    mainEndingReachable: boolean
-    secretEndingsReachable: string[]  // Renamed for semantic accuracy
-  }
+const TOTAL_CHAPTERS = 50
+const CONTRACT_SELECT =
+  'story_id,story_contract_json,plot_debts_json,ending_candidates_json' as const
+
+interface StoryGenerationContractRow {
+  story_id: string
+  story_contract_json: Record<string, unknown>
+  plot_debts_json: unknown
+  ending_candidates_json: unknown
 }
 
-/**
- * Canonical state fetch result (discriminated union)
- */
-type CanonicalStateResult = 
-  | { valid: true; state: ActualState }
-  | { valid: false; error: string }
-
-/**
- * Run validator rerun against affected chapters
- * Triggers spine/reveal/ending validators re-run per E-OPS-1 requirement
- * Returns success/failure with explicit proof if passed
- * 
- * Uses REAL governed validators from @lakoku/narrative:
- * - checkSpineIntegrity (spine + reveal)
- * - checkEndingReachability (ending)
- * - Reveal gates enforced via forbidden_reveals validation
- * 
- * CANONICAL STATE GROUNDING (Static Gate fb64c47 corrections):
- * - storyFlags from reader_states.jejak JSONB field (per-user context needed)
- * - clues from knowledge_scopes.known_from_chapter (correct column name)
- * - threadStatuses from story_threads.id + opened_chapter (correct column names)
- * - Fail closed if canonical state cannot be fetched
- */
-export async function runValidatorRerun(
-  storyId: string,
-  chapterNumbers: number[]
-): Promise<ValidatorRerunResult> {
-  const db = await createClient()
-  const failures: Array<{
-    chapterNumber: number
-    failureType: string
-    message: string
-  }> = []
-
-  const spineRevealFindings: Array<{
-    chapterNumber: number
-    findings: Array<{ findingType: string; message: string }>
-  }> = []
-
-  let endingResults: {
-    mainEndingReachable: boolean
-    secretEndingsReachable: string[]  // Corrected name
-  } | undefined = undefined
-
-  // Fetch all secrets (real seam: secrets_reveals) and endings (resolve actual table name) for validation context
-  const { data: secretsData, error: secretsError } = await db
-    .from('secrets_reveals') // CORRECTED: Use real secrets_reveals table, not story_secrets
-    .select('*')
-    .eq('story_id', storyId)
-  
-  const { data: endingsData, error: endingsError } = await db
-    .from('endings_decks') // Attempting known endings table name; fail closed if this fails
-    .select('*')
-    .eq('story_id', storyId)
-
-  if (secretsError || endingsError) {
-    console.error('Failed to fetch secrets/endings:', secretsError || endingsError)
-    return {
-      passed: false,
-      failures: [{
-        chapterNumber: chapterNumbers[0],
-        failureType: 'VALIDATOR_DATA_FETCH_ERROR',
-        message: `Failed to fetch canonical validator data: ${secretsError?.message || endingsError?.message}`
-      }]
-    }
-  }
-
-  // Convert DB rows to narrative types
-  const secrets: SecretReveal[] = (secretsData as SecretReveal[]) || []
-  const endings: EndingDef[] = (endingsData as EndingDef[]) || []
-
-  // Fetch CANONICAL STATE from existing runtime tables (Static Gate fb64c47 corrections)
-  const stateResult = await fetchCanonicalState(storyId, chapterNumbers[chapterNumbers.length - 1])
-  
-  if (!stateResult.valid) {
-    // Fail closed: missing canonical state => cannot verify ending reachability
-    return {
-      passed: false,
-      failures: [{
-        chapterNumber: chapterNumbers[0],
-        failureType: 'CANONICAL_STATE_UNAVAILABLE',
-        message: `Cannot validate without canonical state: ${stateResult.error}`
-      }]
-    }
-  }
-
-  const actualState = stateResult.state
-
-  // For each chapter, run ALL THREE real validators
-  for (const chapterNum of chapterNumbers) {
-    try {
-      // Fetch latest blueprint version for this chapter
-      const { data: blueprintRow, error: fetchError } = await db
-        .from('chapter_blueprints')
-        .select('*')
-        .eq('story_id', storyId)
-        .eq('chapter_number', chapterNum)
-        .order('version', { ascending: false })
-        .limit(1)
-        .single()
-
-      if (fetchError || !blueprintRow) {
-        failures.push({
-          chapterNumber: chapterNum,
-          failureType: 'BLUEPRINT_NOT_FOUND',
-          message: `No blueprint found for ${storyId}:${chapterNum}`
-        })
-        continue
-      }
-
-      const typedBlueprint = {
-        chapterNumber: blueprintRow.chapter_number,
-        version: blueprintRow.version,
-        phase: '', // Not needed for spine check
-        chapterGoal: '', // Not needed for spine check
-        mandatoryBeats: (blueprintRow.mandatory_beats as string[]) || [],
-        forbiddenReveals: (blueprintRow.forbidden_reveals as string[]) || [],
-        allowedStateDelta: (blueprintRow.allowed_state_delta as Record<string, unknown>) || {},
-        introducesCharacters: [], // Not needed for spine check
-        reconciledFromVersion: null,
-        reconciliationReason: null
-      } as import('@/lib/narrative/types').ChapterBlueprint
-
-      // VALIDATOR 1 + 3: Spine validator (includes spine AND reveal checks)
-      const currentFindings = checkSpineIntegrity(typedBlueprint, secrets)
-      
-      if (currentFindings.length > 0) {
-        spineRevealFindings.push({
-          chapterNumber: chapterNum,
-          findings: currentFindings.map(f => ({
-            findingType: f.code,
-            message: `${f.severity}: ${f.message}`
-          }))
-        })
-      }
-      
-      currentFindings.forEach(f => {
-        failures.push({
-          chapterNumber: chapterNum,
-          failureType: f.code,
-          message: `${f.severity}: ${f.message}`
-        })
-      })
-
-      // VALIDATOR 2: Ending reachability check (uses CANONICAL persisted state)
-      const endingFailures = checkEndingReachability(endings, actualState)
-      
-      if (endingFailures.length === 0) {
-        // Extract positive results for proof persistence (semantically accurate: reachable, not reached)
-        endingResults = {
-          mainEndingReachable: true, // Assuming main ending defined as primary
-          secretEndingsReachable: endings
-            .filter(e => e.isSecret === true)
-            .map(e => e.id)
-        }
-      } else {
-        endingFailures.forEach(f => {
-          failures.push({
-            chapterNumber: chapterNum,
-            failureType: f.code,
-            message: `${f.severity}: ${f.message}`
-          })
-        })
-      }
-
-    } catch (err) {
-      console.error(`Validator rerun failed for ${storyId}:${chapterNum}:`, err)
-      failures.push({
-        chapterNumber: chapterNum,
-        failureType: 'VALIDATOR_EXCEPTION',
-        message: err instanceof Error ? err.message : 'Unknown validator exception'
-      })
-    }
-  }
-
-  if (failures.length === 0) {
-    return {
-      passed: true,
-      failures: [],
-      proof: `E5_VALIDATOR_RERUN_PASSED_${storyId}_${new Date().toISOString()}_CHAPTERS_${chapterNumbers.join(',')}`,
-      spineRevealFindings,
-      endingResults
-    }
-  }
-
-  // Return findings even on failure for audit trail
+function failedResult(
+  chapterNumber: number,
+  failureType: string,
+  message: string,
+  validatedChapterVersions: ValidatorRerunResult['validatedChapterVersions'] = [],
+): ValidatorRerunResult {
   return {
     passed: false,
-    failures,
-    spineRevealFindings: spineRevealFindings.length > 0 ? spineRevealFindings : undefined,
-    endingResults
+    failures: [{ chapterNumber, failureType, message }],
+    validatedChapterVersions,
   }
 }
 
-/**
- * Fetch canonical state from existing runtime tables (Static Gate fb64c47 corrections)
- * Grounds ActualState in repo-grounded tables with CORRECT COLUMN NAMES:
- * - reader_states.jejak -> storyFlags (but requires user context for per-user state)
- * - knowledge_scopes.fact_id + known_from_chapter (not chapter_number!)
- * - story_threads.id + opened_chapter (not thread_id/introduced_at_chapter!)
- * 
- * FAILS CLOSED if any required canonical source unavailable
- */
-async function fetchCanonicalState(
-  storyId: string,
-  maxChapter: number
-): Promise<CanonicalStateResult> {
-  const db = await createClient()
-  
-  // CRITICAL FIX: Use ACTUAL runtime flags from stories_runtime_state or fail closed
-  // Static gate: "no empty storyFlags fallback" - checkEndingReachability() explicitly uses flags
-  const { data: runtimeStateData, error: runtimeStateError } = await db
-    .from('stories_runtime_state') // Actual story-level state table
-    .select('story_flags') // Assuming JSONB column for aggregated flags
+function normalizeChapterNumbers(chapterNumbers: number[]):
+  | { valid: true; chapters: number[] }
+  | { valid: false; result: ValidatorRerunResult } {
+  if (chapterNumbers.length === 0) {
+    return {
+      valid: false,
+      result: failedResult(0, 'INVALID_CHAPTER_NUMBERS', 'Chapter numbers cannot be empty'),
+    }
+  }
+
+  const invalidChapter = chapterNumbers.find(
+    (chapter) => !Number.isInteger(chapter) || chapter < 1 || chapter > TOTAL_CHAPTERS,
+  )
+  if (invalidChapter !== undefined) {
+    return {
+      valid: false,
+      result: failedResult(
+        invalidChapter,
+        'INVALID_CHAPTER_NUMBERS',
+        `Chapter number must be an integer from 1 to ${TOTAL_CHAPTERS}`,
+      ),
+    }
+  }
+
+  const uniqueChapters = [...new Set(chapterNumbers)].sort((a, b) => a - b)
+  if (uniqueChapters.length !== chapterNumbers.length) {
+    return {
+      valid: false,
+      result: failedResult(
+        uniqueChapters[0] ?? 0,
+        'INVALID_CHAPTER_NUMBERS',
+        'Duplicate chapter numbers are not allowed',
+      ),
+    }
+  }
+
+  return { valid: true, chapters: uniqueChapters }
+}
+
+async function loadEndingDefinitions(storyId: string): Promise<EndingDef[]> {
+  const db = createAdminClient()
+  const { data, error } = await db
+    .from('story_generation_contracts')
+    .select(CONTRACT_SELECT)
     .eq('story_id', storyId)
     .maybeSingle()
 
-  if (runtimeStateError) {
-    // Fail closed if we cannot access real canonical state
-    return { valid: false, error: `Cannot resolve canonical story state: ${runtimeStateError.message}` }
-  }
-  
-  const storyFlags = new Set<string>()
-  if (runtimeStateData?.story_flags) {
-    const flagsArray = Array.isArray(runtimeStateData.story_flags) 
-      ? runtimeStateData.story_flags 
-      : (typeof runtimeStateData.story_flags === 'object' 
-          ? Object.keys(runtimeStateData.story_flags as Record<string, boolean>)
-          : [])
-    
-    for (const flagKey of flagsArray) {
-      if (flagKey && typeof flagKey === 'string') {
-        storyFlags.add(flagKey)
+  if (error) throw new Error(`story_generation_contracts fetch failed: ${error.message}`)
+  if (!data) throw new Error(`Story generation contract missing for ${storyId}`)
+
+  const row = data as StoryGenerationContractRow
+  const contract = parseStoryContractWithNormalization({
+    ...row.story_contract_json,
+    storyId: row.story_id,
+    plotDebts: row.plot_debts_json,
+    endingCandidates: row.ending_candidates_json,
+  })
+  const endings = contract.endingCandidates.map(deriveEndingDef)
+  if (endings.length === 0) throw new Error(`Story generation contract has no endings for ${storyId}`)
+  return endings
+}
+
+/** Run governed spine/reveal and ending validators against exact canonical authority. */
+export async function runValidatorRerun(
+  storyId: string,
+  chapterNumbers: number[],
+): Promise<ValidatorRerunResult> {
+  const normalized = normalizeChapterNumbers(chapterNumbers)
+  if (!normalized.valid) return normalized.result
+
+  const chapters = normalized.chapters
+  const maxChapter = chapters[chapters.length - 1]
+
+  try {
+    const [snapshot, endings] = await Promise.all([
+      loadCanonSnapshot(storyId, maxChapter),
+      loadEndingDefinitions(storyId),
+    ])
+
+    if (snapshot.storyId !== storyId) {
+      return failedResult(
+        chapters[0],
+        'CANONICAL_AUTHORITY_INVALID',
+        `Canon snapshot story mismatch for ${storyId}`,
+      )
+    }
+
+    const latestBlueprints = new Map<number, (typeof snapshot.blueprints)[number]>()
+    for (const blueprint of snapshot.blueprints) {
+      if (!chapters.includes(blueprint.chapterNumber)) continue
+      const current = latestBlueprints.get(blueprint.chapterNumber)
+      if (!current || blueprint.version > current.version) {
+        latestBlueprints.set(blueprint.chapterNumber, blueprint)
       }
     }
-  }
-  
-  // If no story flags found at all, FAIL CLOSED per static gate guidance
-  // Do not substitute empty set which would make ending look reachable falsely
-  if (storyFlags.size === 0) {
-    return { valid: false, error: 'No canonical story flags available in runtime state - failing closed' }
-  }
 
-  // 2. Fetch clues from knowledge_scopes (character fact tracking) - CORRECTED COLUMN NAMES
-  // Stores which characters know which facts at what chapter
-  // ACTUAL COLUMNS: story_id, character_id, fact_id, known_from_chapter (NOT chapter_number)
-  // STATIC GATE FIX: Remove nonexistent status filter - table has no status column
-  const { data: knowledgeScopeData, error: knowledgeScopeError } = await db
-    .from('knowledge_scopes')
-    .select('fact_id')
-    .eq('story_id', storyId)
-    .lte('known_from_chapter', maxChapter) // Corrected column name
-    // REMOVED: .not('status', 'eq', 'RESOLVED') - no status column exists per static gate
+    const validatedBlueprints: Array<(typeof snapshot.blueprints)[number]> = []
+    for (const chapter of chapters) {
+      const blueprint = latestBlueprints.get(chapter)
+      if (!blueprint) {
+        return failedResult(
+          chapter,
+          'BLUEPRINT_NOT_FOUND',
+          `No canonical blueprint found for ${storyId}:${chapter}`,
+        )
+      }
+      if (!Number.isInteger(blueprint.version) || blueprint.version < 1) {
+        return failedResult(
+          chapter,
+          'CANONICAL_AUTHORITY_INVALID',
+          `Canonical blueprint version is invalid for ${storyId}:${chapter}`,
+        )
+      }
+      validatedBlueprints.push(blueprint)
+    }
 
-  if (knowledgeScopeError) {
-    return { valid: false, error: `knowledge_scopes fetch failed: ${knowledgeScopeError.message}` }
-  }
+    const validatedChapterVersions = validatedBlueprints.map((blueprint) => ({
+      chapter: blueprint.chapterNumber,
+      expected_version: blueprint.version,
+    }))
+    const revealedSecretIds = snapshot.secrets
+      .filter((secret) => secret.revealed)
+      .map((secret) => secret.id)
+    const actualState: ActualState = {
+      storyFlags: new Set([...snapshot.facts.map((fact) => fact.id), ...revealedSecretIds]),
+      clues: new Set(
+        snapshot.knowledge.map((knowledge) => `${knowledge.characterId}:${knowledge.factId}`),
+      ),
+      threadStatuses: Object.fromEntries(
+        snapshot.threads.map((thread) => [thread.id, thread.status]),
+      ),
+    }
 
-  const clues = new Set<string>()
-  if (knowledgeScopeData) {
-    for (const scope of knowledgeScopeData) {
-      if (scope.fact_id) {
-        clues.add(scope.fact_id as string)
+    const failures: ValidatorRerunResult['failures'] = []
+    const spineRevealFindings: NonNullable<ValidatorRerunResult['spineRevealFindings']> = []
+
+    for (const blueprint of validatedBlueprints) {
+      const findings = checkSpineIntegrity(blueprint, snapshot.secrets)
+      if (findings.length > 0) {
+        spineRevealFindings.push({
+          chapterNumber: blueprint.chapterNumber,
+          findings: findings.map((finding) => ({
+            findingType: finding.code,
+            message: `${finding.severity}: ${finding.message}`,
+          })),
+        })
+        failures.push(
+          ...findings.map((finding) => ({
+            chapterNumber: blueprint.chapterNumber,
+            failureType: finding.code,
+            message: `${finding.severity}: ${finding.message}`,
+          })),
+        )
       }
     }
-  }
 
-  // 3. Fetch thread statuses from story_threads (lifecycle status) - CORRECTED COLUMN NAMES
-  // Tracks thread progression: OPEN, DEVELOPING, PAYOFF_DUE, RESOLVED, ABANDONED_APPROVED
-  // ACTUAL COLUMNS: id, story_id, status, opened_chapter (NOT thread_id/introduced_at_chapter)
-  const { data: threadsData, error: threadsError } = await db
-    .from('story_threads')
-    .select('id, status')  // Corrected: id instead of thread_id
-    .eq('story_id', storyId)
-    .lte('opened_chapter', maxChapter)  // Corrected: opened_chapter instead of introduced_at_chapter
+    const endingFindings = checkEndingReachability(endings, actualState)
+    failures.push(
+      ...endingFindings.map((finding) => ({
+        chapterNumber: maxChapter,
+        failureType: finding.code,
+        message: `${finding.severity}: ${finding.message}`,
+      })),
+    )
 
-  if (threadsError) {
-    return { valid: false, error: `story_threads fetch failed: ${threadsError.message}` }
-  }
-
-  const threadStatuses: Record<string, string> = {}
-  if (threadsData) {
-    for (const thread of threadsData) {
-      if (thread.id && thread.status) {  // Using corrected field names
-        threadStatuses[thread.id] = thread.status as string
-      }
+    const reachableMainCount = endings.filter(
+      (ending) => ending.isMain && isEndingReachable(ending, actualState),
+    ).length
+    const endingResults: NonNullable<ValidatorRerunResult['endingResults']> = {
+      mainEndingReachable: reachableMainCount >= ENDING_RULES.minReachableEndings,
+      secretEndingsReachable: endings
+        .filter((ending) => ending.isSecret && isEndingReachable(ending, actualState))
+        .map((ending) => ending.id)
+        .sort(),
     }
-  }
 
-  return {
-    valid: true,
-    state: {
-      storyFlags,
-      clues,
-      threadStatuses
+    return {
+      passed: failures.length === 0,
+      failures,
+      validatedChapterVersions,
+      spineRevealFindings,
+      endingResults,
     }
+  } catch (error) {
+    console.error(`Canonical validator rerun failed for ${storyId}:`, error)
+    return failedResult(
+      chapters[0],
+      'CANONICAL_AUTHORITY_UNAVAILABLE',
+      error instanceof Error ? error.message : 'Unknown canonical authority error',
+    )
   }
 }
 
-/**
- * Clear cache helpers (if caching layer exists)
- */
 export async function clearValidatorCaches(): Promise<void> {
-  // Placeholder for future caching implementation
-  // Currently, validators run fresh against live DB data
+  // Validator always loads fresh canonical authority; no cache exists.
 }

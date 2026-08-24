@@ -1,114 +1,141 @@
--- M10-E E5 Governed DB Test: Exactly-Ononce Queue Processing
--- Purpose: Prove advisory locks prevent duplicate claim under concurrent consumers
--- Authority: M10-E E5 implementation authority SHA = a16b5a3b950ead2385a41c4fe12369336fbbc15f
--- Boundary: Disposable local DB only; never existing/shared/production DB
+-- pgTAP evidence for E5 request replay exactly-once semantics.
 
-BEGIN;
+begin;
 
--- Setup: Create disposable test schema
-DROP SCHEMA IF EXISTS e5_test CASCADE;
-CREATE SCHEMA e5_test;
-SET search_path TO e5_test, public;
+create extension if not exists pgtap with schema extensions;
+set local search_path = public, extensions;
+select no_plan();
 
--- Create test tables matching production schema
-CREATE TABLE blueprint_queue (
-  story_id text NOT NULL PRIMARY KEY,
-  status text NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'CLAIMED', 'RESOLVED', 'BLOCKED')),
-  chapter_numbers integer[],
-  claimed_by text,
-  claimed_at timestamptz,
-  created_at timestamptz NOT NULL DEFAULT now()
+insert into auth.users (
+  id, aud, role, email, encrypted_password, email_confirmed_at,
+  raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+) values (
+  'e5000000-0000-4000-8000-000000000003', 'authenticated', 'authenticated',
+  'e5-replay-admin@example.invalid', '', pg_catalog.clock_timestamp(),
+  '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb,
+  pg_catalog.clock_timestamp(), pg_catalog.clock_timestamp()
+);
+insert into public.admin_users (user_id, role)
+values ('e5000000-0000-4000-8000-000000000003', 'admin');
+insert into public.stories (id, title, owner_user_id)
+values ('test:e5-replay', 'E5 replay', 'e5000000-0000-4000-8000-000000000003');
+insert into public.story_events (id, story_id, seq, type, payload)
+overriding system value
+values (9007199254740995, 'test:e5-replay', 1, 'BLUEPRINT_REVIEW_REQUIRED', '{}');
+insert into public.chapter_blueprints (
+  story_id, chapter_number, version, phase, chapter_goal, mandatory_beats,
+  forbidden_reveals, allowed_state_delta, introduces_characters
+) values (
+  'test:e5-replay', 12, 5, 'ACT_1', 'Replay goal', '["beat"]',
+  '["secret"]', '{"thread":"main"}', '["hero"]'
+);
+insert into public.blueprint_queue (
+  story_id, status, chapter_numbers, act_boundary, findings, source_event_id
+) values (
+  'test:e5-replay', 'BLOCKED', array[12], 'ACT_1', '[]', 9007199254740995
 );
 
--- Insert test data
-INSERT INTO blueprint_queue (story_id, chapter_numbers) VALUES
-  ('story/test-001', ARRAY[1,2,3]),
-  ('story/test-002', ARRAY[4,5,6]),
-  ('story/test-003', ARRAY[7,8]);
+create temporary table replay_attestation (id uuid not null);
+create temporary table first_e5_result as
+select false::boolean as success, null::text as unblock_proof,
+       null::text as error_message, null::uuid as persisted_proof_id,
+       null::jsonb as validator_results
+with no data;
+create temporary table replay_e5_result (like first_e5_result);
+grant select, insert on replay_attestation to service_role, authenticated;
+grant select, insert on first_e5_result, replay_e5_result to authenticated;
 
--- ============================================================================
--- TEST 1: Advisory lock prevents duplicate claim
--- ============================================================================
+set local role service_role;
+insert into replay_attestation
+select public.e5_issue_validator_attestation(
+  'test:e5-replay',
+  9007199254740995,
+  'e5000000-0000-4000-8000-000000000003',
+  array[12],
+  'E5_CANONICAL_VALIDATOR_V1',
+  '[{"validator":"spine","passed":true}]'::jsonb,
+  '{"ending":"passed"}'::jsonb,
+  '[{"chapter":12,"expected_version":5}]'::jsonb
+);
+reset role;
 
-DO $$
-DECLARE
-  worker1_result text;
-  worker2_result text;
-  claim_count integer;
-BEGIN
-  -- Worker 1 acquires lock and claims
-  PERFORM pg_advisory_xact_lock(hash('story/test-001')::bigint);
-  
-  UPDATE blueprint_queue 
-  SET status = 'CLAIMED', claimed_by = 'worker-1', claimed_at = now()
-  WHERE story_id = 'story/test-001';
-  
-  SELECT COUNT(*) INTO claim_count FROM blueprint_queue 
-  WHERE story_id = 'story/test-001' AND status = 'CLAIMED';
-  
-  ASSERT claim_count = 1, 'Worker 1 should have successfully claimed story/test-001';
-  
-  -- Worker 2 attempts to claim same item (lock acquisition blocks this)
-  -- In real scenario: pg_advisory_xact_lock would block until worker 1 releases
-  
-  -- Simulate timeout check (>5 minutes stale claim)
-  UPDATE blueprint_queue 
-  SET status = 'PENDING', claimed_by = NULL, claimed_at = NULL
-  WHERE story_id = 'story/test-001' 
-    AND claimed_at < now() - interval '6 minutes';
-  
-  -- Should remain CLAIMED (not stale)
-  SELECT COUNT(*) INTO claim_count FROM blueprint_queue 
-  WHERE story_id = 'story/test-001' AND status = 'CLAIMED';
-  
-  ASSERT claim_count = 1, 'Stale claim check should not affect fresh claim';
-END $$;
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub', 'e5000000-0000-4000-8000-000000000003', true
+);
+select set_config('request.jwt.claim.role', 'authenticated', true);
+insert into first_e5_result
+select * from public.e5_record_disposition(
+  'test:e5-replay', 'UNBLOCK_PERMIT',
+  'e5000000-0000-4000-8000-000000000003',
+  'Replay exactly once evidence', 9007199254740995, array[12],
+  (select id from replay_attestation)
+);
+insert into replay_e5_result
+select * from public.e5_record_disposition(
+  'test:e5-replay', 'UNBLOCK_PERMIT',
+  'e5000000-0000-4000-8000-000000000003',
+  'Replay exactly once evidence', 9007199254740995, array[12],
+  (select id from replay_attestation)
+);
+reset role;
 
-SELECT 'TEST 1 PASSED: Advisory lock prevents duplicate claim' AS test_result;
+select ok(
+  (select success from first_e5_result)
+  and (select success from replay_e5_result),
+  'initial request and exact attested replay both return success'
+);
+select is(
+  (select row(unblock_proof, persisted_proof_id, validator_results)::text
+   from replay_e5_result),
+  (select row(unblock_proof, persisted_proof_id, validator_results)::text
+   from first_e5_result),
+  'replay returns authoritative proof ID, proof value, and validator payload'
+);
+select is(
+  (select count(*) from public.blueprint_resolutions where story_id = 'test:e5-replay'),
+  1::bigint,
+  'exact replay creates one resolution row'
+);
+select is(
+  (select count(*) from public.blueprint_audit_log where story_id = 'test:e5-replay'),
+  1::bigint,
+  'exact replay creates one audit row'
+);
+select is(
+  (select count(*) from public.blueprint_validator_proofs where story_id = 'test:e5-replay'),
+  1::bigint,
+  'exact replay creates one validator proof row'
+);
+select is(
+  (select count(*) from public.blueprint_validator_attestations
+   where story_id = 'test:e5-replay'),
+  1::bigint,
+  'exact replay reuses one immutable validator attestation'
+);
+select is(
+  (select array_agg(version order by version) from public.chapter_blueprints
+   where story_id = 'test:e5-replay' and chapter_number = 12),
+  array[5, 6],
+  'exact replay appends N+1 only once'
+);
+select is(
+  (select source_event_id::text from public.blueprint_resolutions
+   where story_id = 'test:e5-replay'),
+  '9007199254740995',
+  'replay identity preserves lossless BIGINT source event'
+);
+select is(
+  (select status from public.blueprint_queue where story_id = 'test:e5-replay'),
+  'PENDING',
+  'replay does not advance queue state twice'
+);
+select is(
+  (select count(distinct request_fingerprint)
+   from public.blueprint_resolutions where story_id = 'test:e5-replay'),
+  1::bigint,
+  'one request fingerprint remains authoritative'
+);
 
--- ============================================================================
--- TEST 2: Concurrent claim race condition handling
--- ============================================================================
-
-DO $$
-DECLARE
-  story_id text := 'story/race-test';
-  initial_status text;
-  final_status text;
-BEGIN
-  -- Insert new test record
-  INSERT INTO blueprint_queue (story_id, chapter_numbers, status)
-  VALUES (story_id, ARRAY[1], 'PENDING');
-  
-  -- Simulate two workers racing to claim
-  -- Worker A: attempts first
-  
-  UPDATE blueprint_queue 
-  SET status = 'CLAIMED', claimed_by = 'worker-a', claimed_at = now()
-  WHERE story_id = story_id AND status = 'PENDING';
-  
-  GET DIAGNOSTICS initial_status = ROW_COUNT;
-  
-  ASSERT initial_status = 1, 'Worker A should update 1 row';
-  
-  -- Worker B: attempts second (should find PENDING changed)
-  UPDATE blueprint_queue 
-  SET status = 'CLAIMED', claimed_by = 'worker-b', claimed_at = now()
-  WHERE story_id = story_id AND status = 'PENDING';
-  
-  GET DIAGNOSTICS final_status = ROW_COUNT;
-  
-  ASSERT final_status = 0, 'Worker B should update 0 rows (already claimed)';
-  
-  -- Verify final state
-  SELECT status INTO final_status FROM blueprint_queue WHERE story_id = story_id;
-  ASSERT final_status = 'CLAIMED', 'Final status should be CLAIMED';
-END $$;
-
-SELECT 'TEST 2 PASSED: Concurrent claim race handled correctly' AS test_result;
-
--- Cleanup
-ROLLBACK;
-
--- Summary
-SELECT 'All exactly-once queue tests PASSED' AS summary;
+select * from finish();
+rollback;

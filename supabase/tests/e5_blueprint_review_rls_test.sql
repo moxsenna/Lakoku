@@ -1,141 +1,214 @@
--- M10-E E5 Governed DB Test: RLS Enforcement (Admin-Only Access)
--- Purpose: Prove unauthorized users cannot SELECT/UPDATE blueprint_queue/resolutions tables
--- Authority: M10-E E5 implementation authority SHA = a16b5a3b950ead2385a41c4fe12369336fbbc15f
--- Boundary: Disposable local DB only; verify ON DELETE RESTRICT on audit table
+-- pgTAP evidence for E5 auth.uid() + admin_users owner/admin authorization.
 
-BEGIN;
+begin;
 
--- Setup: Create disposable test schema with RLS policies
-DROP SCHEMA IF EXISTS e5_rls_test CASCADE;
-CREATE SCHEMA e5_rls_test;
-SET search_path TO e5_rls_test, public;
+create extension if not exists pgtap with schema extensions;
+set local search_path = public, extensions;
+select no_plan();
 
--- Mock auth.users table for testing
-CREATE TABLE auth.users (
-  id uuid PRIMARY KEY,
-  email text
+insert into auth.users (
+  id, aud, role, email, encrypted_password, email_confirmed_at,
+  raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+) values
+  (
+    'e5000000-0000-4000-8000-000000000011', 'authenticated', 'authenticated',
+    'e5-rls-owner@example.invalid', '', pg_catalog.clock_timestamp(),
+    '{"provider":"email","providers":["email"]}', '{}',
+    pg_catalog.clock_timestamp(), pg_catalog.clock_timestamp()
+  ),
+  (
+    'e5000000-0000-4000-8000-000000000012', 'authenticated', 'authenticated',
+    'e5-rls-admin@example.invalid', '', pg_catalog.clock_timestamp(),
+    '{"provider":"email","providers":["email"]}', '{}',
+    pg_catalog.clock_timestamp(), pg_catalog.clock_timestamp()
+  ),
+  (
+    'e5000000-0000-4000-8000-000000000013', 'authenticated', 'authenticated',
+    'e5-rls-user@example.invalid', '', pg_catalog.clock_timestamp(),
+    '{"provider":"email","providers":["email"]}', '{}',
+    pg_catalog.clock_timestamp(), pg_catalog.clock_timestamp()
+  );
+insert into public.admin_users (user_id, role) values
+  ('e5000000-0000-4000-8000-000000000011', 'owner'),
+  ('e5000000-0000-4000-8000-000000000012', 'admin');
+insert into public.stories (id, title, owner_user_id) values
+  ('test:e5-rls-owner', 'E5 RLS owner', 'e5000000-0000-4000-8000-000000000011'),
+  ('test:e5-rls-admin', 'E5 RLS admin', 'e5000000-0000-4000-8000-000000000012');
+insert into public.story_events (id, story_id, seq, type, payload)
+overriding system value
+values
+  (9007199254741011, 'test:e5-rls-owner', 1, 'BLUEPRINT_REVIEW_REQUIRED', '{}'),
+  (9007199254741012, 'test:e5-rls-admin', 1, 'BLUEPRINT_REVIEW_REQUIRED', '{}');
+insert into public.blueprint_queue (
+  story_id, status, chapter_numbers, act_boundary, findings, source_event_id
+)
+select story_id, 'PENDING', array[1], 'ACT_1', '[]'::jsonb, id
+from public.story_events where story_id like 'test:e5-rls-%';
+
+select ok(
+  (select relrowsecurity from pg_catalog.pg_class
+   where oid = 'public.blueprint_queue'::regclass)
+  and (select relrowsecurity from pg_catalog.pg_class
+       where oid = 'public.blueprint_resolutions'::regclass)
+  and (select relrowsecurity from pg_catalog.pg_class
+       where oid = 'public.blueprint_audit_log'::regclass)
+  and (select relrowsecurity from pg_catalog.pg_class
+       where oid = 'public.blueprint_validator_proofs'::regclass)
+  and (select relrowsecurity from pg_catalog.pg_class
+       where oid = 'public.blueprint_validator_attestations'::regclass),
+  'RLS enabled on queue and every E5 evidence ledger'
+);
+select ok(
+  has_function_privilege(
+    'authenticated',
+    'public.e5_record_disposition(text,text,uuid,text,bigint,integer[],uuid)',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'anon',
+    'public.e5_record_disposition(text,text,uuid,text,bigint,integer[],uuid)',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'service_role',
+    'public.e5_record_disposition(text,text,uuid,text,bigint,integer[],uuid)',
+    'EXECUTE'
+  ),
+  'only authenticated role receives seven-argument disposition RPC execute before owner/admin RBAC'
+);
+select ok(
+  has_function_privilege(
+    'service_role',
+    'public.e5_issue_validator_attestation(text,bigint,uuid,integer[],text,jsonb,jsonb,jsonb)',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'public',
+    'public.e5_issue_validator_attestation(text,bigint,uuid,integer[],text,jsonb,jsonb,jsonb)',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'anon',
+    'public.e5_issue_validator_attestation(text,bigint,uuid,integer[],text,jsonb,jsonb,jsonb)',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'authenticated',
+    'public.e5_issue_validator_attestation(text,bigint,uuid,integer[],text,jsonb,jsonb,jsonb)',
+    'EXECUTE'
+  ),
+  'only service_role can execute canonical validator attestation issuer'
 );
 
--- Mock admin_users table
-CREATE TABLE admin_users (
-  user_id uuid PRIMARY KEY REFERENCES auth.users(id),
-  role text NOT NULL DEFAULT 'admin' CHECK (role IN ('owner', 'admin'))
+set local role anon;
+select set_config('request.jwt.claim.sub', '', true);
+select set_config('request.jwt.claim.role', 'anon', true);
+select throws_ok(
+  $$select count(*) from public.blueprint_queue$$,
+  '42501', null,
+  'anon has no queue SELECT privilege'
 );
-
--- Create blueprint_queue with RLS
-CREATE TABLE blueprint_queue (
-  story_id text NOT NULL PRIMARY KEY,
-  status text NOT NULL DEFAULT 'PENDING',
-  claimed_by text,
-  created_at timestamptz DEFAULT now()
+select throws_ok(
+  $$select * from public.e5_record_disposition(
+    'test:e5-rls-owner', 'REJECT_BLOCK',
+    'e5000000-0000-4000-8000-000000000011', 'anon attempt',
+    1, array[1]
+  )$$,
+  '42501', null,
+  'anon has no E5 RPC execute privilege'
 );
+reset role;
 
-ALTER TABLE blueprint_queue ENABLE ROW LEVEL SECURITY;
-
--- Create resolutions table with RLS  
-CREATE TABLE blueprint_resolutions (
-  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  story_id text NOT NULL,
-  disposition text NOT NULL,
-  reviewer_uid uuid NOT NULL,
-  reason_text text NOT NULL,
-  created_at timestamptz DEFAULT now()
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub', 'e5000000-0000-4000-8000-000000000013', true
 );
+select set_config('request.jwt.claim.role', 'authenticated', true);
+select is(
+  (select count(*) from public.blueprint_queue), 0::bigint,
+  'authenticated non-admin sees no queue rows through RLS'
+);
+select is(
+  (select count(*) from public.vw_blueprint_review_authority), 0::bigint,
+  'authenticated non-admin sees no review authority rows'
+);
+select throws_ok(
+  $$select public.e5_issue_validator_attestation(
+    'test:e5-rls-owner', 9007199254741011,
+    'e5000000-0000-4000-8000-000000000013', array[1],
+    'E5_CANONICAL_VALIDATOR_V1', '[]'::jsonb, '{}'::jsonb,
+    '[{"chapter":1,"expected_version":1}]'::jsonb
+  )$$,
+  '42501', null,
+  'authenticated user cannot issue validator attestation'
+);
+select is(
+  (select success from public.e5_record_disposition(
+    'test:e5-rls-owner', 'REJECT_BLOCK',
+    'e5000000-0000-4000-8000-000000000013', 'non-admin attempt',
+    9007199254741011, array[1]
+  )),
+  false,
+  'authenticated non-admin RPC call fails owner/admin authorization'
+);
+reset role;
 
-ALTER TABLE blueprint_resolutions ENABLE ROW LEVEL SECURITY;
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub', 'e5000000-0000-4000-8000-000000000011', true
+);
+select set_config('request.jwt.claim.role', 'authenticated', true);
+select is(
+  (select count(*) from public.blueprint_queue
+   where story_id in ('test:e5-rls-owner', 'test:e5-rls-admin')),
+  2::bigint, 'owner sees all E5 RLS fixture queue rows'
+);
+select is(
+  (select count(*) from public.vw_blueprint_pending_review_items
+   where story_id in ('test:e5-rls-owner', 'test:e5-rls-admin')),
+  2::bigint, 'owner sees all E5 RLS fixture pending dashboard rows'
+);
+select is(
+  (select success from public.e5_record_disposition(
+    'test:e5-rls-owner', 'REJECT_BLOCK',
+    'e5000000-0000-4000-8000-000000000011', 'owner decision',
+    9007199254741011, array[1]
+  )),
+  true,
+  'owner can execute disposition RPC'
+);
+reset role;
 
--- Insert test data
-INSERT INTO auth.users (id, email) VALUES 
-  ('user-admin-1'::uuid, 'admin@test.com'),
-  ('user-authenticated'::uuid, 'user@test.com'),
-  ('user-anon'::uuid, 'anon@test.com');
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub', 'e5000000-0000-4000-8000-000000000012', true
+);
+select set_config('request.jwt.claim.role', 'authenticated', true);
+select is(
+  (select count(*) from public.blueprint_queue
+   where story_id in ('test:e5-rls-owner', 'test:e5-rls-admin')),
+  2::bigint, 'admin sees all E5 RLS fixture queue rows'
+);
+select is(
+  (select count(*) from public.blueprint_resolutions
+   where story_id = 'test:e5-rls-owner'),
+  1::bigint, 'admin can read fixture resolution evidence'
+);
+select is(
+  (select count(*) from public.blueprint_audit_log
+   where story_id = 'test:e5-rls-owner'),
+  1::bigint, 'admin can read fixture audit evidence'
+);
+select is(
+  (select success from public.e5_record_disposition(
+    'test:e5-rls-admin', 'RETRY_ALLOW',
+    'e5000000-0000-4000-8000-000000000012', 'admin decision',
+    9007199254741012, array[1]
+  )),
+  true,
+  'admin can execute disposition RPC'
+);
+reset role;
 
-INSERT INTO admin_users (user_id, role) VALUES 
-  ('user-admin-1'::uuid, 'owner'),
-  ('user-admin-2'::uuid, 'admin');
-
-INSERT INTO blueprint_queue (story_id, status) VALUES
-  ('story/review-1', 'PENDING'),
-  ('story/review-2', 'CLAIMED');
-
--- ============================================================================
--- TEST 1: Anon user cannot access queue data
--- ============================================================================
-
-DO $$
-DECLARE
-  anon_count integer;
-BEGIN
-  -- Simulate anon authentication context
-  SET LOCAL request.jwt.claims IS '{"aud":"anon","email":"anonymous@test.com"}';
-  
-  SELECT COUNT(*) INTO anon_count FROM blueprint_queue;
-  
-  -- In production: RLS policy should block this or return empty
-  -- For test validation: assert RLS is enabled
-  ASSERT (SELECT relrowsecurity FROM pg_class WHERE relname = 'blueprint_queue') = true,
-    'blueprint_queue must have row level security enabled';
-END $$;
-
-SELECT 'TEST 1 PASSED: RLS enabled on blueprint_queue' AS test_result;
-
--- ============================================================================
--- TEST 2: Authenticated user can INSERT resolutions (via API gateway check)
--- ============================================================================
-
-DO $$
-DECLARE
-  insert_count integer;
-  test_res_id bigint;
-BEGIN
-  -- Simulate authenticated context
-  SET LOCAL request.jwt.claims IS '{"aud":"authenticated","email":"user@test.com"}';
-  
-  -- Attempt resolution insertion
-  INSERT INTO blueprint_resolutions (story_id, disposition, reviewer_uid, reason_text)
-  VALUES ('story/review-1', 'RETRY_ALLOW', 'user-authenticated'::uuid, 'Test resolution');
-  
-  GET DIAGNOSTICS insert_count = ROW_COUNT;
-  
-  ASSERT insert_count = 1, 'Authenticated user should insert 1 resolution';
-  
-  -- Verify record was created
-  SELECT id INTO test_res_id FROM blueprint_resolutions 
-  WHERE reviewer_uid = 'user-authenticated'::uuid;
-  
-  ASSERT test_res_id IS NOT NULL, 'Resolution record should exist';
-END $$;
-
-SELECT 'TEST 2 PASSED: Authenticated user can insert resolutions' AS test_result;
-
--- ============================================================================
--- TEST 3: Unauthorized role blocked from resolutions
--- ============================================================================
-
-DO $$
-DECLARE
-  unauthorized_insert_error text;
-BEGIN
-  -- Simulate non-admin authenticated user
-  SET LOCAL request.jwt.claims IS '{"aud":"authenticated","email":"nonadmin@test.com"}';
-  
-  BEGIN
-    INSERT INTO blueprint_resolutions (story_id, disposition, reviewer_uid, reason_text)
-    VALUES ('story/review-2', 'UNBLOCK_PERMIT', 'user-unauthorized'::uuid, 'Unauthorized attempt');
-    
-    -- If we reach here, assertion fails (should be blocked by RLS/API layer)
-    RAISE EXCEPTION 'Should not allow unauthorized resolution insertion';
-  EXCEPTION WHEN OTHERS THEN
-    unauthorized_insert_error := SQLERRM;
-  END;
-  
-  -- RLS or API layer should block this
-  ASSERT TRUE, 'Unauthorized user blocked via RLS or API layer';
-END $$;
-
-SELECT 'TEST 3 PASSED: Unauthorized role properly blocked' AS test_result;
-
--- Cleanup
-ROLLBACK;
-
-SELECT 'All RLS tests PASSED' AS summary;
+select * from finish();
+rollback;

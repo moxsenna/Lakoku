@@ -74,7 +74,7 @@ export async function POST(
     const { createClient } = await import('@/lib/supabase/server')
     const db = await createClient()
     const { data: queueItem, error: fetchError } = await db
-      .from('blueprint_queue')
+      .from('vw_blueprint_review_authority')
       .select('source_event_id, chapter_numbers')
       .eq('story_id', storyId)
       .single()
@@ -101,7 +101,7 @@ export async function POST(
       disposition: disposition as Disposition,
       reviewer_uid: adminRole.id, // Derive ONLY from auth layer, never trust payload
       reason_text: reason_text,
-      source_event_id: BigInt(queueItem.source_event_id), // Convert string -> bigint
+      source_event_id: queueItem.source_event_id,
       chapter_numbers: queueItem.chapter_numbers || []
     }
     

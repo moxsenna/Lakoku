@@ -64,7 +64,7 @@ export interface BlueprintQueueItem {
   retry_count: number;
   brand_scan_hash?: string | null;
   lease_id?: string | null;
-  source_event_id: bigint; // BIGINT NOT NULL per E-OPS-1 requirement
+  source_event_id: string; // Lossless decimal string for PostgreSQL BIGINT
   created_at: string;
 }
 
@@ -90,7 +90,7 @@ export interface BlueprintAuditEntry {
   reviewer_uid: string;
   disposition: Disposition;
   reason_text: string;
-  source_event_id: bigint; // BIGINT NOT NULL REQUIRED - no null/sentinel/placeholder/fake
+  source_event_id: string; // Lossless decimal string for PostgreSQL BIGINT
   created_at: string;
   idempotency_key?: string;
 }
@@ -98,12 +98,18 @@ export interface BlueprintAuditEntry {
 /**
  * Pending review item view shape (from vw_blueprint_pending_review_items)
  */
-export interface PendingReviewItem extends Omit<BlueprintQueueItem, 'status'> {
-  story_title?: string | null;
-  tagline?: string | null;
-  role?: string | null;
-  total_chapters?: number | null;
-  queue_created_at?: string; // Added for client component compatibility
+export interface PendingReviewItem {
+  story_id: string;
+  chapter_numbers: number[];
+  act_boundary: ActBoundary;
+  findings: FindingType[];
+  source_event_id: string;
+  queue_created_at: string;
+  story_title: string | null;
+  tagline: string | null;
+  role: string | null;
+  total_chapters: number | null;
+  story_status: string;
 }
 
 /**
@@ -119,7 +125,7 @@ export interface GetItemDetailResponse {
     genre?: string | null;
     author_note?: string | null;
     recent_resolutions: Array<{
-      id: bigint;
+      id: string; // Lossless decimal string for PostgreSQL BIGINT
       disposition: Disposition;
       reason_text: string;
       created_at: string;
@@ -149,6 +155,27 @@ export interface RecordDispositionResponse {
 /**
  * Validator rerun result
  */
+export interface ValidatedChapterVersion {
+  chapter: number;
+  expected_version: number;
+}
+
+export interface E5DispositionRpcArgs {
+  p_story_id: string;
+  p_disposition: Disposition;
+  p_reviewer_uid: string;
+  p_reason_text: string;
+  p_source_event_id: string;
+  p_chapter_numbers: number[];
+  p_validator_attestation_id: string | null;
+}
+
+export interface E5DispositionRpcRow {
+  success: boolean;
+  unblock_proof: string | null;
+  error_message: string | null;
+}
+
 export interface ValidatorRerunResult {
   passed: boolean;
   failures: Array<{
@@ -156,16 +183,18 @@ export interface ValidatorRerunResult {
     failureType: string;
     message: string;
   }>;
-  proof?: string; // Explicit unblock proof if passed
-  /** Actual validator findings payload for authoritative persistence */
+  /** Exact canonical blueprint versions checked by this rerun. */
+  validatedChapterVersions: ValidatedChapterVersion[];
+  /** Actual validator findings payload for authoritative persistence. */
   spineRevealFindings?: Array<{
     chapterNumber: number;
     findings: Array<{ findingType: string; message: string }>;
   }>;
-  /** Correction per static gate fb64c47: renamed from secretEndingsReached to reflect reachability not reached state */
   endingResults?: {
+    /** True only when reachable main endings satisfy canonical minimum. */
     mainEndingReachable: boolean;
-    secretEndingsReachable: string[];  // Renamed for semantic accuracy
+    /** Exact IDs of currently reachable secret endings. */
+    secretEndingsReachable: string[];
   };
 }
 
@@ -195,6 +224,6 @@ export interface ResolutionContext {
   disposition: Disposition;
   reviewer_uid?: string; // Optional - will be derived from auth layer if not provided
   reason_text: string;
-  source_event_id: bigint;
+  source_event_id: string;
   chapter_numbers: number[];
 }

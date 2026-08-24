@@ -86,11 +86,13 @@ export async function POST(
       )
     }
     
-    // CRITICAL: source_event_id BIGINT NOT NULL REQUIRED - fail closed if missing
-    if (queueItem.source_event_id == null) {
-      console.error(`Missing source_event_id for ${storyId} - FAIL CLOSED`)
+    if (
+      typeof queueItem.source_event_id !== 'string' ||
+      !/^[1-9]\d*$/.test(queueItem.source_event_id)
+    ) {
+      console.error(`[E5] Invalid source event identifier for ${storyId}`)
       return NextResponse.json(
-        { error: 'No real event bound - fail closed (resolution denied without evidence)' },
+        { error: 'Bukti tinjauan tidak dapat diverifikasi.' },
         { status: 400 }
       )
     }
@@ -109,8 +111,9 @@ export async function POST(
     const result = await workflowRecordDisposition(resolutionContext)
     
     if (!result.success) {
+      console.error(`[E5] Resolution rejected for ${storyId}:`, result.error)
       return NextResponse.json(
-        { error: result.error || 'Gagal mencatat keputusan tinjauan.' },
+        { error: 'Gagal mencatat keputusan tinjauan.' },
         { status: 500 }
       )
     }

@@ -1,4 +1,10 @@
+import { readFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const FORWARD_ATTESTATION_MIGRATION = readFileSync(
+  `${process.cwd()}/supabase/migrations/20260824101000_e5_stateless_validator_attestation.sql`,
+  'utf8',
+)
 
 const mocks = vi.hoisted(() => ({
   createClient: vi.fn(),
@@ -99,5 +105,31 @@ describe('E5 blueprint workflow queue', () => {
     mocks.createClient.mockResolvedValue({ from: query.from })
 
     await expect(claimQueueItem('story-123')).resolves.toBeNull()
+  })
+
+  it('defines signed envelope with complete versioned evidence and SHA-256 signature', () => {
+    const payloadFields = [
+      'story_id',
+      'source_event_id',
+      'reviewer_uid',
+      'chapter_numbers',
+      'validator_version',
+      'validation_passed',
+      'spine_reveal_findings',
+      'ending_results',
+      'expected_chapter_versions',
+    ]
+
+    expect(FORWARD_ATTESTATION_MIGRATION).toContain("'payload', v_payload")
+    expect(FORWARD_ATTESTATION_MIGRATION).toContain("'signature', v_signature")
+    expect(FORWARD_ATTESTATION_MIGRATION).toMatch(
+      /extensions\.hmac\([\s\S]*pg_catalog\.convert_to\(v_payload::text, 'UTF8'\)[\s\S]*'sha256'::text/,
+    )
+    expect(FORWARD_ATTESTATION_MIGRATION).toContain(
+      "p_validator_version IS DISTINCT FROM 'E5_CANONICAL_VALIDATOR_V1'",
+    )
+    for (const field of payloadFields) {
+      expect(FORWARD_ATTESTATION_MIGRATION).toContain(`'${field}'`)
+    }
   })
 })

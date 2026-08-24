@@ -47,6 +47,21 @@ const PASSED_VALIDATION: ValidatorRerunResult = {
   },
 }
 
+const SIGNED_ATTESTATION = {
+  payload: {
+    story_id: 'story-123',
+    source_event_id: '9223372036854775807',
+    reviewer_uid: 'trusted-owner',
+    chapter_numbers: [2, 9],
+    validator_version: 'E5_CANONICAL_VALIDATOR_V1',
+    validation_passed: true,
+    spine_reveal_findings: PASSED_VALIDATION.spineRevealFindings,
+    ending_results: PASSED_VALIDATION.endingResults,
+    expected_chapter_versions: PASSED_VALIDATION.validatedChapterVersions,
+  },
+  signature: 'a'.repeat(64),
+}
+
 function authenticatedClient(result: { data: unknown; error: unknown }) {
   const rpc = vi.fn(async (_functionName: string, _args: Record<string, unknown>) => result)
   mocks.createClient.mockResolvedValue({ rpc })
@@ -85,7 +100,7 @@ describe('E5 blueprint resolution authority', () => {
         p_reason_text: 'Ulangi setelah pemeriksaan.',
         p_source_event_id: '9223372036854775807',
         p_chapter_numbers: [7],
-        p_validator_attestation_id: null,
+        p_validator_attestation: null,
       }
       expect(rpc).toHaveBeenCalledWith('e5_record_disposition', expectedArgs)
       expect(Object.keys(rpc.mock.calls[0][1])).toEqual(Object.keys(expectedArgs))
@@ -95,11 +110,10 @@ describe('E5 blueprint resolution authority', () => {
     },
   )
 
-  it('issues server attestation from canonical evidence before authenticated unblock resolution', async () => {
-    const attestationId = '11111111-2222-4333-8444-555555555555'
+  it('validates first, obtains service-signed envelope, then passes exact token to resolution RPC', async () => {
     mocks.requireAdminUser.mockResolvedValue({ id: 'trusted-owner', role: 'owner' })
     mocks.runValidatorRerun.mockResolvedValue(PASSED_VALIDATION)
-    const issueRpc = adminClient({ data: attestationId, error: null })
+    const issueRpc = adminClient({ data: SIGNED_ATTESTATION, error: null })
     const resolutionRpc = authenticatedClient({
       data: [{ success: true, unblock_proof: 'E5_UNBLOCK_PROOF_hash', error_message: null }],
       error: null,
@@ -132,11 +146,15 @@ describe('E5 blueprint resolution authority', () => {
       p_reason_text: 'Ulangi setelah pemeriksaan.',
       p_source_event_id: '9223372036854775807',
       p_chapter_numbers: [2, 9],
-      p_validator_attestation_id: attestationId,
+      p_validator_attestation: SIGNED_ATTESTATION,
     })
+    expect(mocks.runValidatorRerun.mock.invocationCallOrder[0]).toBeLessThan(
+      issueRpc.mock.invocationCallOrder[0],
+    )
     expect(issueRpc.mock.invocationCallOrder[0]).toBeLessThan(
       resolutionRpc.mock.invocationCallOrder[0],
     )
+    expect(SIGNED_ATTESTATION.payload.source_event_id).toBe('9223372036854775807')
   })
 
   it('issues neither attestation nor resolution when canonical validation fails', async () => {
@@ -178,7 +196,7 @@ describe('E5 blueprint resolution authority', () => {
       chapter_numbers: [2, 9],
     })).resolves.toEqual({
       success: false,
-      error: 'attestation unavailable',
+      error: 'Gagal memverifikasi bukti tinjauan.',
       validationResult: PASSED_VALIDATION,
     })
     expect(resolutionRpc).not.toHaveBeenCalled()
@@ -191,7 +209,7 @@ describe('E5 blueprint resolution authority', () => {
 
     await expect(recordDisposition(CONTEXT)).resolves.toEqual({
       success: false,
-      error: 'Unauthorized: role=editor cannot record dispositions',
+      error: 'Gagal mencatat keputusan tinjauan.',
     })
     expect(rpc).not.toHaveBeenCalled()
     expect(mocks.runValidatorRerun).not.toHaveBeenCalled()
@@ -206,7 +224,7 @@ describe('E5 blueprint resolution authority', () => {
 
     await expect(recordDisposition(CONTEXT)).resolves.toEqual({
       success: false,
-      error: 'Unauthenticated',
+      error: 'Gagal mencatat keputusan tinjauan.',
     })
     expect(rpc).not.toHaveBeenCalled()
     expect(mocks.createAdminClient).not.toHaveBeenCalled()
@@ -218,7 +236,7 @@ describe('E5 blueprint resolution authority', () => {
 
     await expect(recordDisposition(CONTEXT)).resolves.toEqual({
       success: false,
-      error: 'Invalid response from resolution authority',
+      error: 'Gagal mencatat keputusan tinjauan.',
     })
   })
 })

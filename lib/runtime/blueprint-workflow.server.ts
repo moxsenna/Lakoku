@@ -22,6 +22,11 @@ import { runValidatorRerun } from '@/lib/utils/validator-rerun.helper'
 import { requireAdminUser } from '@/lib/admin/auth'
 
 const E5_CANONICAL_VALIDATOR_VERSION = 'E5_CANONICAL_VALIDATOR_V1'
+const POSTGRES_BIGINT_DECIMAL = /^[1-9]\d*$/
+
+function isLosslessPostgresBigint(value: unknown): value is string {
+  return typeof value === 'string' && POSTGRES_BIGINT_DECIMAL.test(value)
+}
 
 /**
  * Fetch pending review items with full details
@@ -118,6 +123,11 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
       throw new Error(`Unauthorized: role=${adminRole.role} cannot record dispositions`)
     }
 
+    if (!isLosslessPostgresBigint(context.source_event_id)) {
+      console.error('[E5] Invalid source event identifier type')
+      return { success: false, error: 'Gagal memverifikasi bukti tinjauan.' }
+    }
+
     const trustedContext: Required<ResolutionContext> = {
       story_id: context.story_id,
       disposition: context.disposition,
@@ -151,7 +161,7 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
       trustedContext.disposition === 'UNBLOCK_PERMIT' && validationResult?.passed === true
         ? validationResult
         : null
-    let validatorAttestationId: string | null = null
+    let validatorAttestation: Record<string, unknown> | null = null
     if (validatedEvidence) {
       const adminDb = createAdminClient()
       const { data: issuedAttestation, error: attestationError } = await adminDb.rpc(
@@ -167,14 +177,20 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
           p_expected_chapter_versions: validatedEvidence.validatedChapterVersions,
         },
       )
-      if (attestationError || typeof issuedAttestation !== 'string') {
+      if (
+        attestationError ||
+        issuedAttestation === null ||
+        typeof issuedAttestation !== 'object' ||
+        Array.isArray(issuedAttestation)
+      ) {
+        console.error('[E5] Validator evidence issuance failed:', attestationError)
         return {
           success: false,
-          error: attestationError?.message ?? 'Canonical validator attestation failed',
+          error: 'Gagal memverifikasi bukti tinjauan.',
           validationResult,
         }
       }
-      validatorAttestationId = issuedAttestation
+      validatorAttestation = issuedAttestation as Record<string, unknown>
     }
 
     const rpcArgs: E5DispositionRpcArgs = {
@@ -186,7 +202,7 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
       p_chapter_numbers: validatedEvidence
         ? validatedEvidence.validatedChapterVersions.map(({ chapter }) => chapter)
         : trustedContext.chapter_numbers,
-      p_validator_attestation_id: validatorAttestationId,
+      p_validator_attestation: validatorAttestation,
     }
     const { data: result, error: rpcError } = await db.rpc(
       'e5_record_disposition',
@@ -194,19 +210,21 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
     )
 
     if (rpcError) {
-      console.error('Postgres function execution failed:', rpcError)
-      return { success: false, error: rpcError.message }
+      console.error('[E5] Disposition authority execution failed:', rpcError)
+      return { success: false, error: 'Gagal mencatat keputusan tinjauan.' }
     }
 
     if (!Array.isArray(result) || result.length === 0 || !isE5DispositionRpcRow(result[0])) {
-      return { success: false, error: 'Invalid response from resolution authority' }
+      console.error('[E5] Disposition authority returned an invalid response')
+      return { success: false, error: 'Gagal mencatat keputusan tinjauan.' }
     }
 
     const dbResult = result[0]
     if (!dbResult.success) {
+      console.error('[E5] Disposition authority rejected request:', dbResult.error_message)
       return {
         success: false,
-        error: dbResult.error_message || 'Native function returned failure',
+        error: 'Gagal mencatat keputusan tinjauan.',
       }
     }
 
@@ -217,11 +235,10 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
     }
 
   } catch (err) {
-    // Fail closed: any exception => no partial state persists
     console.error('Record disposition failed (fail-closed):', err)
-    return { 
-      success: false, 
-      error: err instanceof Error ? err.message : 'Unknown error during resolution (fail-closed)' 
+    return {
+      success: false,
+      error: 'Gagal mencatat keputusan tinjauan.',
     }
   }
 }

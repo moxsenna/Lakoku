@@ -76,7 +76,7 @@ describe('E5 canonical validator rerun', () => {
     mocks.isEndingReachable.mockReturnValue(true)
   })
 
-  it('normalizes chapter order and records exact latest canonical versions', async () => {
+  it('produces complete canonical evidence for service-side signed attestation issuance', async () => {
     const result = await runValidatorRerun('story-123', [9, 2])
 
     expect(result).toEqual({

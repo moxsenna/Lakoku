@@ -167,7 +167,7 @@ export interface E5DispositionRpcArgs {
   p_reason_text: string;
   p_source_event_id: string;
   p_chapter_numbers: number[];
-  p_validator_attestation_id: string | null;
+  p_validator_attestation: Record<string, unknown> | null;
 }
 
 export interface E5DispositionRpcRow {

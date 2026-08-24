@@ -81,11 +81,11 @@ function verifyExplicitIsolatedTarget(): RaceTarget {
        current_user,
        pg_is_in_recovery()::text,
        to_regprocedure('public.e5_issue_validator_attestation(text,bigint,uuid,integer[],text,jsonb,jsonb,jsonb)')::text,
-       to_regprocedure('public.e5_record_disposition(text,text,uuid,text,bigint,integer[],uuid)')::text
+       to_regprocedure('public.e5_record_disposition(text,text,uuid,text,bigint,integer[],jsonb)')::text
      );`,
   ).trim()
   check(
-    identity === 'postgres|postgres|false|e5_issue_validator_attestation(text,bigint,uuid,integer[],text,jsonb,jsonb,jsonb)|e5_record_disposition(text,text,uuid,text,bigint,integer[],uuid)',
+    identity === 'postgres|postgres|false|e5_issue_validator_attestation(text,bigint,uuid,integer[],text,jsonb,jsonb,jsonb)|e5_record_disposition(text,text,uuid,text,bigint,integer[],jsonb)',
     'isolated local DB identity or final E5 RPC signatures unavailable',
   )
   return target
@@ -152,7 +152,7 @@ from public.e5_record_disposition(
   :'reason_text',
   :'source_event_id'::bigint,
   array[7, 8]::integer[],
-  :'validator_attestation_id'::uuid
+  :'validator_attestation'::jsonb
 ) as result;
 select pg_advisory_unlock_shared(:barrier);
 commit;
@@ -300,7 +300,7 @@ function issueCanonicalAttestation(
   reviewerUid: string,
   sourceEventId: string,
 ): string {
-  const attestationId = execLocalPsql(
+  const attestation = execLocalPsql(
     target,
     `begin;
      set role service_role;
@@ -322,12 +322,19 @@ function issueCanonicalAttestation(
       source_event_id: sourceEventId,
       validator_version: CANONICAL_VALIDATOR_VERSION,
       spine_findings: '[]',
-      ending_results: '{"passed":true,"ending":"consistent"}',
+      ending_results: '{"mainEndingReachable":true,"secretEndingsReachable":[]}',
       expected_versions: '[{"chapter":7,"expected_version":1},{"chapter":8,"expected_version":3}]',
     },
   ).trim()
-  check(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(attestationId), 'service_role must issue canonical validator attestation')
-  return attestationId
+  const parsed = JSON.parse(attestation) as { payload?: unknown; signature?: unknown }
+  check(parsed.payload && typeof parsed.payload === 'object', 'service_role must issue JSONB payload')
+  check(typeof parsed.signature === 'string' && /^[0-9a-f]{64}$/.test(parsed.signature), 'service_role must issue signed validator envelope')
+  const legacyCount = execLocalPsql(
+    target,
+    'select count(*) from public.blueprint_validator_attestations;',
+  ).trim()
+  check(legacyCount === '0', 'stateless issuer must write no legacy attestation row')
+  return attestation
 }
 
 function cleanupFixture(
@@ -343,7 +350,6 @@ function cleanupFixture(
      delete from public.blueprint_validator_proofs where story_id = :'story_id';
      delete from public.blueprint_audit_log where story_id = :'story_id';
      delete from public.blueprint_resolutions where story_id = :'story_id';
-     delete from public.blueprint_validator_attestations where story_id = :'story_id';
      delete from public.blueprint_queue where story_id = :'story_id';
      delete from public.chapter_blueprints where story_id = :'story_id';
      delete from public.story_events where id = :'source_event_id'::bigint;
@@ -421,7 +427,7 @@ async function main(): Promise<void> {
       'claim must persist one winner and preserve BIGINT source event as decimal text',
     )
 
-    const validatorAttestationId = issueCanonicalAttestation(
+    const validatorAttestation = issueCanonicalAttestation(
       target,
       storyId,
       reviewerUid,
@@ -432,7 +438,7 @@ async function main(): Promise<void> {
       reviewer_uid: reviewerUid,
       source_event_id: sourceEventId,
       reason_text: reasonText,
-      validator_attestation_id: validatorAttestationId,
+      validator_attestation: validatorAttestation,
     }
     const resolutionBarrier = barrierKey()
     const [resolutionA, resolutionB] = await race(
@@ -471,11 +477,14 @@ async function main(): Promise<void> {
          'resolutionCount', (select count(*) from public.blueprint_resolutions where story_id = :'story_id'),
          'auditCount', (select count(*) from public.blueprint_audit_log where story_id = :'story_id'),
          'proofCount', (select count(*) from public.blueprint_validator_proofs where story_id = :'story_id'),
-         'attestationCount', (select count(*) from public.blueprint_validator_attestations where story_id = :'story_id'),
+         'attestationCount', (select count(*) from public.blueprint_validator_attestations),
          'sourceEventIds', (select jsonb_agg(source_event_id::text) from public.blueprint_resolutions where story_id = :'story_id'),
          'proofValue', (select proof_value from public.blueprint_validator_proofs where story_id = :'story_id'),
          'proofId', (select id::text from public.blueprint_validator_proofs where story_id = :'story_id'),
-         'attestationId', (select validator_attestation_id::text from public.blueprint_validator_proofs where story_id = :'story_id'),
+         'legacyAttestationId', (select validator_attestation_id::text from public.blueprint_validator_proofs where story_id = :'story_id'),
+         'attestationEnvelope', (select validator_attestation from public.blueprint_validator_proofs where story_id = :'story_id'),
+         'attestationHash', (select validator_attestation_hash from public.blueprint_validator_proofs where story_id = :'story_id'),
+         'expectedAttestationHash', encode(extensions.digest(:'validator_attestation'::jsonb::text, 'sha256'), 'hex'),
          'versions', (select jsonb_object_agg(chapter_number::text, versions) from (
            select chapter_number, jsonb_agg(version order by version) as versions
            from public.chapter_blueprints where story_id = :'story_id'
@@ -483,14 +492,22 @@ async function main(): Promise<void> {
          ) chapter_history),
          'appendPairs', (select result_chapter_version_pairs from public.blueprint_resolutions where story_id = :'story_id')
        )::text;`,
-      { story_id: storyId },
+      { story_id: storyId, validator_attestation: validatorAttestation },
     ).trim()
     const persisted = JSON.parse(snapshot) as Record<string, unknown>
     check(persisted.resolutionCount === 1, 'identical resolution race must persist one resolution')
     check(persisted.auditCount === 1, 'identical resolution race must persist one audit row')
     check(persisted.proofCount === 1, 'identical resolution race must persist one proof row')
-    check(persisted.attestationCount === 1, 'identical resolution race must retain one canonical attestation')
-    check(persisted.attestationId === validatorAttestationId, 'persisted proof must bind shared canonical attestation ID')
+    check(persisted.attestationCount === 0, 'stateless resolution race must create no legacy attestation orphan')
+    check(persisted.legacyAttestationId === null, 'forward proof must have no legacy attestation ID')
+    check(
+      JSON.stringify(persisted.attestationEnvelope) === JSON.stringify(JSON.parse(validatorAttestation)),
+      'persisted proof must retain full signed envelope',
+    )
+    check(
+      persisted.attestationHash === persisted.expectedAttestationHash,
+      'persisted proof must retain SHA-256 hash of full signed envelope',
+    )
     check(
       JSON.stringify(persisted.sourceEventIds) === JSON.stringify([sourceEventId]),
       'persisted BIGINT source event must remain exact decimal string',

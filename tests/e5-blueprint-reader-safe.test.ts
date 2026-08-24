@@ -85,7 +85,7 @@ describe('E5 reader-safe boundary', () => {
     expect(mocks.getQueueItemDetail).not.toHaveBeenCalled()
   })
 
-  it('does not accept reviewer identity or source evidence from request body', async () => {
+  it('does not trust client reviewer, source evidence, or validator attestation', async () => {
     const single = vi.fn(async () => ({
       data: { source_event_id: '9223372036854775807', chapter_numbers: [4] },
       error: null,
@@ -101,6 +101,10 @@ describe('E5 reader-safe boundary', () => {
       reason_text: 'Coba kembali.',
       reviewer_uid: 'payload-attacker',
       source_event_id: '1',
+      validator_attestation: {
+        payload: { validation_passed: true },
+        signature: 'client-forgery',
+      },
     }), PARAMS)
 
     expect(response.status).toBe(200)

@@ -10,11 +10,9 @@ import {
   waitForRaceSuccess,
   waitForRaceToken,
 } from './authoring-race-session'
+import { verifyExplicitE5RaceTarget } from './e5-blueprint-race-target'
 
 const CONTEXT = 'E5 blueprint claim and resolution race'
-const REQUIRED_CONTAINER = 'supabase_db_lakoku-e5-preflight-isolated'
-const REQUIRED_PROJECT = 'lakoku-e5-preflight-isolated'
-const LOCAL_OPT_IN = 'LAKOKU_E5_BLUEPRINT_RACE_LOCAL'
 const CANONICAL_VALIDATOR_VERSION = 'E5_CANONICAL_VALIDATOR_V1'
 
 type Side = 'A' | 'B'
@@ -40,55 +38,34 @@ function check(value: unknown, message: string): asserts value {
 }
 
 function verifyExplicitIsolatedTarget(): RaceTarget {
-  check(
-    process.env[LOCAL_OPT_IN] === '1',
-    `refusing DB access unless ${LOCAL_OPT_IN}=1`,
-  )
-  check(
-    process.env.LAKOKU_E5_BLUEPRINT_RACE_DB_CONTAINER === REQUIRED_CONTAINER,
-    `LAKOKU_E5_BLUEPRINT_RACE_DB_CONTAINER must equal ${REQUIRED_CONTAINER}`,
-  )
-
-  let inspected = ''
-  try {
-    inspected = execFileSync(
-      'docker',
-      [
-        'inspect',
-        '--format',
-        '{{ index .Config.Labels "com.supabase.cli.project" }}|{{.State.Running}}',
-        REQUIRED_CONTAINER,
-      ],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 },
-    ).trim()
-  } catch {
-    throw new Error(`${CONTEXT}: isolated local database container unavailable`)
-  }
-  check(
-    inspected === `${REQUIRED_PROJECT}|true`,
-    'database container label or running state does not match isolated target',
-  )
-
-  const target: RaceTarget = {
-    container: REQUIRED_CONTAINER,
-    context: CONTEXT,
-    applicationPrefix: 'lakoku-e5-blueprint-race',
-  }
-  const identity = execLocalPsql(
-    target,
-    `select concat_ws('|',
-       current_database(),
-       current_user,
-       pg_is_in_recovery()::text,
-       to_regprocedure('public.e5_issue_validator_attestation(text,bigint,uuid,integer[],text,jsonb,jsonb,jsonb)')::text,
-       to_regprocedure('public.e5_record_disposition(text,text,uuid,text,bigint,integer[],jsonb)')::text
-     );`,
-  ).trim()
-  check(
-    identity === 'postgres|postgres|false|e5_issue_validator_attestation(text,bigint,uuid,integer[],text,jsonb,jsonb,jsonb)|e5_record_disposition(text,text,uuid,text,bigint,integer[],jsonb)',
-    'isolated local DB identity or final E5 RPC signatures unavailable',
-  )
-  return target
+  return verifyExplicitE5RaceTarget(process.env, {
+    inspectContainer: (container) => {
+      try {
+        return execFileSync(
+          'docker',
+          [
+            'inspect',
+            '--format',
+            '{{ index .Config.Labels "com.supabase.cli.project" }}|{{.State.Running}}',
+            container,
+          ],
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 },
+        )
+      } catch {
+        throw new Error(`${CONTEXT}: isolated local database container unavailable`)
+      }
+    },
+    readDatabaseIdentity: (target) => execLocalPsql(
+      target,
+      `select concat_ws('|',
+         current_database(),
+         current_user,
+         pg_is_in_recovery()::text,
+         to_regprocedure('public.e5_issue_validator_attestation(text,bigint,uuid,integer[],text,jsonb,jsonb,jsonb)')::text,
+         to_regprocedure('public.e5_record_disposition(text,text,uuid,text,bigint,integer[],jsonb)')::text
+       );`,
+    ),
+  })
 }
 
 function barrierKey(): string {

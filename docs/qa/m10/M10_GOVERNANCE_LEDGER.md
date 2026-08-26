@@ -1051,3 +1051,64 @@ M10-F watchpoint              observed chapter mean 2.05000000 > ceiling 2.04001
 
 ---
 
+## Entry 14 — 2026-08-26 (PM governance correction: E0 superseded by R1; sequencing amendment ratified; M10-E closure corrected)
+
+### 14.1 Supersession R1 — RATIFIED
+
+Entry 13 closed M10-E while `budgetGate = FAIL` (observed chapter mean `2.05000000` exceeded ceiling
+`2.04001674`). The PM resolved the load-bearing contradiction once, as new business authority — not a
+silent number change: `LAKOKU-E0-2026-08-26-LOOSE-200-R1` supersedes R0 with ONLY
+`maxExpectedCostPerChapter = $2.10000000`; every other approved ceiling unchanged (`$200.00000000`
+novel, `$2.40000000` judge, `173.684249%` retry overhead, `$200.00000000` p95 guardrail; USD,
+effective 2026-08-26, reviewer `Lakoku Project Lead`). R0 remains audit history in Git; R1 carries
+R0's canonical hash in its `supersedes` reference. Materialization:
+`buildApprovedE0BudgetAuthorityR1()` in `fixtures/m10-e/e0-budget-authority.ts`.
+
+**Re-evaluation requirement satisfied:** `tests/narrative-qa/m10-e-e0-closure.test.ts` proves under
+the same frozen counted comparators that R1 yields status `APPROVED_EVALUATED` with
+**`budgetGate = PASS`** — all five dimensions PASS including observed chapter `2.05000000` ≤
+`2.10000000`. A companion test preserves the honest R0 breach record. Had R1 not produced PASS,
+this batch would STOP as a real blocker; it did not.
+
+### 14.2 Sequencing amendment — RATIFIED
+
+Resolves the CONTRACT_FIXTURE/release-evidence circularity verbatim:
+
+```text
+M10-E engineering closure MAY use CONTRACT_FIXTURE when:
+- engineeringGate = PASS
+- budgetGate = PASS under valid approved E0
+- E1/E2/E3A/E4/E5 all CLOSED
+- releaseReadiness remains HOLD
+
+M10-F is the first authorized RELEASE_EVIDENCE / real-provider pilot.
+M10-G remains blocked until M10-F PASS.
+```
+
+All four conditions hold after this batch: engineeringGate PASS, budgetGate PASS under R1,
+E1/E2/E3A/E4/E5 CLOSED (Entries 11–13), releaseReadiness HOLD by design.
+
+### 14.3 M10-F conditional authorization — CONDITION MET
+
+PM state: M10-F execution CONDITIONALLY AUTHORIZED on corrected E0 `budgetGate = PASS` plus this
+amendment committed clean. Both conditions are satisfied by this single forward commit. Upon clean
+push and remote verification, **M10-F proceeds without another approval review**: Steps 1–2
+(monitoring + disposable isolated environment), then the SINGLE real-provider 1→50 engineering
+pilot per `M10E-M10F-PILOT-PREFLIGHT.md`. Defects collected first, fixed by root-cause batch,
+only necessary reruns.
+
+```text
+E0                            R1 CURRENT / R0 SUPERSEDED HISTORY
+budgetGate                    PASS (under R1)
+sequencing amendment          RATIFIED
+M10-E                         PASS / CLOSED (corrected basis)
+E5 rerun                      FORBIDDEN (counted pair + hashes frozen evidence)
+counted pair artifacts        FROZEN / UNCHANGED
+M10-F pilot                   AUTHORIZED (single 1→50, isolated non-production)
+M10-G                         BLOCKED until M10-F PASS
+production writes             FORBIDDEN
+production activation         FORBIDDEN
+```
+
+---
+

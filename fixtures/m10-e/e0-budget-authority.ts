@@ -42,6 +42,62 @@ export const E0_APPROVAL_RATIFICATION_PAYLOAD = {
 
 export const E0_APPROVAL_ARTIFACT_HASH = computeSha256(stableStringify(E0_APPROVAL_RATIFICATION_PAYLOAD))
 
+/**
+ * Superseding R1 ratification (PM governance decision 2026-08-26). New fact:
+ * observed chapter mean 2.05000000 exceeded the R0 ceiling 2.04001674. R1
+ * raises ONLY maxExpectedCostPerChapter to 2.10000000; every other approved
+ * ceiling is unchanged. R0 stays in Git history as superseded audit evidence.
+ */
+export const E0_R1_DECISION_REF = 'LAKOKU-E0-2026-08-26-LOOSE-200-R1'
+
+export const E0_R1_CEILINGS = {
+  maxExpectedCostPerChapter: '2.10000000',
+  maxExpectedCostPerNovel: '200.00000000',
+  maxJudgeEvaluationCostPerNovel: '2.40000000',
+  maxRetryOverheadPercentage: '173.684249',
+  p95CostGuardrail: '200.00000000',
+} as const
+
+export const E0_R1_RATIFICATION_PAYLOAD = {
+  sourcePacket: E0_RATIFICATION_SOURCE_PACKET,
+  decisionRef: E0_R1_DECISION_REF,
+  reviewer: E0_RATIFICATION_REVIEWER,
+  effectiveDate: E0_RATIFICATION_EFFECTIVE_DATE,
+  currency: E0_RATIFICATION_CURRENCY,
+  novelCostConditioning: 'SUCCESSFUL_50_CHAPTER_RUN' as const,
+  ceilings: E0_R1_CEILINGS,
+  supersedesDecisionRef: E0_RATIFICATION_DECISION_REF,
+}
+
+export const E0_R1_APPROVAL_ARTIFACT_HASH = computeSha256(stableStringify(E0_R1_RATIFICATION_PAYLOAD))
+
+/** Current approved authority (R1): supersedes R0 after the disclosed breach. */
+export function buildApprovedE0BudgetAuthorityR1(): E0BudgetAuthority {
+  return createE0BudgetAuthority({
+    policyId: 'e0_loose_budget_v1',
+    policyVersion: '1.1.0',
+    currency: E0_RATIFICATION_CURRENCY,
+    approvalStatus: 'APPROVED',
+    reviewer: E0_RATIFICATION_REVIEWER,
+    decisionRef: E0_R1_DECISION_REF,
+    effectiveDate: E0_RATIFICATION_EFFECTIVE_DATE,
+    approvalArtifactHash: E0_R1_APPROVAL_ARTIFACT_HASH,
+    supersedes: {
+      policyId: 'e0_loose_budget_v1',
+      policyVersion: '1.0.0',
+      canonicalHash: buildApprovedE0BudgetAuthority().canonicalHash,
+    },
+    pricing: { policyVersion: 'pricing_v1', snapshotHash: contractPricingSnapshot().canonicalHash },
+    measuredTokenEvidence: {
+      schemaVersion: 'M10_E_RELIABILITY_SEMANTIC_PAYLOAD_V1',
+      observationSetVersion: E0_MEASURED_OBSERVATION_SET_VERSION,
+    },
+    retryFallbackPolicy: { policyId: 'retry_v1', policyVersion: '1.0.0', canonicalHash: 'a'.repeat(64) },
+    productUnitEconomicsBasis: { basisId: 'lakoku_unit_economics_v1', basisVersion: '1.0.0' },
+    ceilings: E0_R1_CEILINGS,
+  })
+}
+
 export function buildApprovedE0BudgetAuthority(): E0BudgetAuthority {
   return createE0BudgetAuthority({
     policyId: 'e0_loose_budget_v1',

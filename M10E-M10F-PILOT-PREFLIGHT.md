@@ -530,20 +530,20 @@ npm run m10-e-e3a-e4 -- --capture-final-report --output-dir=.zcode/artifacts/m10
 
 ---
 
-## 0. Kickoff Readiness Record (2026-08-26)
+## 0. Kickoff Readiness Record (2026-08-26, corrected by PM governance decision)
 
-Prepared at M10-E closure (ledger Entry 13, closure commit `81cfdf507d6e55fb539b8d6810cdb93734adf199`, child of `0037c950`). This package is PREPARED, not executed.
+Prepared at M10-E closure (ledger Entry 13, closure commit `81cfdf507d6e55fb539b8d6810cdb93734adf199`, child of `0037c950`); corrected by the superseding R1 ratification and sequencing amendment (ledger Entry 14). This package is PREPARED and, on the conditions below, EXECUTION-AUTHORIZED.
 
 | Prerequisite | State |
 |---|---|
-| M10-E PASS/CLOSED | ✅ ledger Entry 13 |
+| M10-E PASS/CLOSED | ✅ ledger Entry 13, corrected basis Entry 14 |
 | E5 blueprint workflow | ✅ E-OPS-1 CLOSED (Entry 13 §13.1) |
-| E0 BUSINESS_AUTHORITY | ✅ APPROVED Loose $200 (`LAKOKU-E0-2026-08-26-LOOSE-200`) |
+| E0 BUSINESS_AUTHORITY | ✅ R1 current: `LAKOKU-E0-2026-08-26-LOOSE-200-R1`, chapter ceiling `$2.10000000`, others unchanged; `budgetGate = PASS` proven in `tests/narrative-qa/m10-e-e0-closure.test.ts` (R0 preserved as superseded history) |
+| Sequencing amendment | ✅ RATIFIED (ledger Entry 14 §14.2): CONTRACT_FIXTURE engineering closure valid; M10-F is first RELEASE_EVIDENCE pilot |
 | Counted predecessor evidence | ✅ frozen at `65053607` / runner `7324d0fd…` / normalized `cfe6734d…` |
-| Monitoring dashboards for failure observation | ⬜ must be configured before Steps begin |
+| Monitoring dashboards for failure observation | ⬜ must be configured before Steps begin (Step 1) |
 | Disposable isolated environment + credential validation | ⬜ Steps 1–2 of this package |
-| Separate M10-F execution authorization | ⬜ **BLOCKING** — kickoff cannot start without it |
 
-**Mandatory watchpoint carried into the pilot:** observed chapter mean `2.05000000` exceeded approved ceiling `2.04001674` at E0 evaluation; re-check chapter-level cost during pilot evidence review before any ceiling conclusion.
+**Watchpoint resolution:** the observed chapter mean `2.05000000` breach against `2.04001674` is resolved by the superseding authority (`≤ 2.10000000`); chapter-level cost stays a standing evidence-review item during the pilot.
 
-Execution remains FORBIDDEN until the project lead separately authorizes M10-F start. On authorization, begin at Step 1 with this document as the runbook and the watchpoint above as a standing evidence-review item.
+**Authorization state:** M10-F execution was CONDITIONALLY AUTHORIZED by the project lead on (a) corrected E0 `budgetGate = PASS` and (b) this amendment committed clean — both satisfied in the Entry 14 batch. After its clean push and remote verification, **the pilot proceeds without another approval review**: Step 1 monitoring setup, Step 2 disposable isolated environment, then the SINGLE real-provider 1→50 engineering pilot. Production remains forbidden throughout.

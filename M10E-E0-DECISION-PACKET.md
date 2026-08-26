@@ -218,4 +218,41 @@ The E5 rerun remains FORBIDDEN; the counted pair and its hashes stay frozen evid
 
 ---
 
+## 10. Superseding Ratification R1 + Sequencing Amendment (2026-08-26)
+
+**PM GOVERNANCE DECISION 2026-08-26.** New fact: observed chapter mean `2.05000000` exceeded the R0 ceiling `2.04001674`, producing `budgetGate = FAIL` under §9's ratification while the evaluator defines `APPROVED_EVALUATED` as evaluation status only, with the gate verdict separate. To resolve this once — not to silently raise a number for green tests — the project lead issued a superseding business authority:
+
+```text
+1. Supersede E0 chapter ceiling:
+   maxExpectedCostPerChapter = $2.10000000
+
+   Semua angka E0 lain tetap:
+   maxExpectedCostPerSuccessfulNovel = $200.00000000
+   maxJudgeEvaluationCostPerNovel    = $2.40000000
+   maxRetryOverheadPercentage        = 173.684249%
+   p95CostGuardrail                  = $200.00000000
+
+   decisionRef:
+   LAKOKU-E0-2026-08-26-LOOSE-200-R1
+```
+
+The prior authority (`LAKOKU-E0-2026-08-26-LOOSE-200`, §9) remains audit history in Git; R1 carries its canonical hash in `supersedes`. Materialization: `buildApprovedE0BudgetAuthorityR1()` in `fixtures/m10-e/e0-budget-authority.ts`; proof: `tests/narrative-qa/m10-e-e0-closure.test.ts` requires `budgetGate = PASS` under R1 against the same frozen counted comparators.
+
+**Sequencing amendment (ratified verbatim):**
+
+```text
+M10-E engineering closure MAY use CONTRACT_FIXTURE when:
+- engineeringGate = PASS
+- budgetGate = PASS under valid approved E0
+- E1/E2/E3A/E4/E5 all CLOSED
+- releaseReadiness remains HOLD
+
+M10-F is the first authorized RELEASE_EVIDENCE / real-provider pilot.
+M10-G remains blocked until M10-F PASS.
+```
+
+This resolves the CONTRACT_FIXTURE/release-evidence sequencing circularity: fixture-based engineering closure is now explicitly ratified, and release economics move to M10-F as the first real-provider evidence run.
+
+---
+
 *Document compiled at SHA `65053607ac7d1574e531bd49370b0a6c6d5565ba` from canonical artifact outputs. All numerical assertions bind to exact authority comparators lines 209-220. NO reconstructed values included.*

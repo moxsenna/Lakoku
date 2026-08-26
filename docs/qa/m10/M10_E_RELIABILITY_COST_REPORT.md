@@ -313,5 +313,6 @@ modeledJudgeTotal = 2.40000000 (MODELED, PRESENT)
 - Otoritas dimaterialisasi di `fixtures/m10-e/e0-budget-authority.ts`, terikat ke pricing snapshot fixture (`de7a4bb8…`) dan observation set counted (`97596b71…`); evaluasi dibuktikan `tests/narrative-qa/m10-e-e0-closure.test.ts`.
 - Hasil evaluasi: status `APPROVED_EVALUATED`; empat dari lima dimensi komparator PASS (termasuk kesamaan eksak chapter-modeled 2.04001674, judge 2.40000000, retry overhead 173.684249%); dimensi observed per-chapter FAIL (2.05000000 > ceiling 2.04001674) sehingga budgetGate = `FAIL`.
 - Kriteria penutupan §7 packet dipenuhi: BUSINESS_AUTHORITY ada dan budgetGate bertransisi ke `APPROVED_EVALUATED`. Breach observed per-chapter dicatat sebagai watchpoint wajib M10-F; engineering gate tetap PASS / HOLD.
+- 2026-08-26 (R1): PM meratifikasi otoritas pengganti `LAKOKU-E0-2026-08-26-LOOSE-200-R1` — hanya `maxExpectedCostPerChapter` naik ke `2.10000000`, ceiling lain tetap. Re-evaluasi terhadap komparator counted yang sama: `budgetGate = PASS` (observed `2.05000000` ≤ `2.10000000`). Watchpoint chapter terselesaikan oleh ratifikasi ini; R0 tetap sebagai riwayat audit. Lihat packet §10 dan ledger Entry 14.
 ---
 Deterministik: konten laporan hanya berasal dari artifacts semantik tervalidasi; hash laporan = SHA-256 byte Markdown persis.

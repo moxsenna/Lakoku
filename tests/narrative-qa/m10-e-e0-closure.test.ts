@@ -10,6 +10,7 @@ import {
 } from '../../lib/narrative-qa/reliability'
 import {
   buildApprovedE0BudgetAuthority,
+  buildApprovedE0BudgetAuthorityR1,
   E0_APPROVAL_ARTIFACT_HASH,
   E0_APPROVAL_RATIFICATION_PAYLOAD,
   E0_MEASURED_OBSERVATION_SET_VERSION,
@@ -17,6 +18,10 @@ import {
   E0_RATIFICATION_DECISION_REF,
   E0_RATIFICATION_EFFECTIVE_DATE,
   E0_RATIFICATION_REVIEWER,
+  E0_R1_APPROVAL_ARTIFACT_HASH,
+  E0_R1_CEILINGS,
+  E0_R1_DECISION_REF,
+  E0_R1_RATIFICATION_PAYLOAD,
 } from '../../fixtures/m10-e/e0-budget-authority'
 import {
   buildModelInputRecordFixture,
@@ -67,6 +72,16 @@ function deriveCountedComparators(): DerivedComparators {
 
 function evaluatedWithApprovedAuthority() {
   return evaluateBudgetGate({
+    e0Authority: buildApprovedE0BudgetAuthorityR1(),
+    currency: E0_RATIFICATION_CURRENCY,
+    compatibleStratum: fixtureStratum(),
+    modeledComparators: deriveCountedComparators().modeled,
+    observedComparators: deriveCountedComparators().observed,
+  })
+}
+
+function evaluatedWithR0History() {
+  return evaluateBudgetGate({
     e0Authority: buildApprovedE0BudgetAuthority(),
     currency: E0_RATIFICATION_CURRENCY,
     compatibleStratum: fixtureStratum(),
@@ -76,7 +91,7 @@ function evaluatedWithApprovedAuthority() {
 }
 
 describe('E0 ratified budget authority artifact', () => {
-  it('binds the exact project-lead ratification and validates as APPROVED', () => {
+  it('binds the exact original project-lead ratification (R0, superseded history)', () => {
     expect(E0_APPROVAL_RATIFICATION_PAYLOAD).toEqual({
       sourcePacket: 'M10E-E0-DECISION-PACKET.md',
       decisionRef: 'LAKOKU-E0-2026-08-26-LOOSE-200',
@@ -107,6 +122,40 @@ describe('E0 ratified budget authority artifact', () => {
     expect(Object.isFrozen(authority)).toBe(true)
   })
 
+  it('binds the exact superseding R1 ratification and references R0 by canonical hash', () => {
+    expect(E0_R1_RATIFICATION_PAYLOAD).toEqual({
+      sourcePacket: 'M10E-E0-DECISION-PACKET.md',
+      decisionRef: 'LAKOKU-E0-2026-08-26-LOOSE-200-R1',
+      reviewer: 'Lakoku Project Lead',
+      effectiveDate: '2026-08-26',
+      currency: 'USD',
+      novelCostConditioning: 'SUCCESSFUL_50_CHAPTER_RUN',
+      ceilings: {
+        maxExpectedCostPerChapter: '2.10000000',
+        maxExpectedCostPerNovel: '200.00000000',
+        maxJudgeEvaluationCostPerNovel: '2.40000000',
+        maxRetryOverheadPercentage: '173.684249',
+        p95CostGuardrail: '200.00000000',
+      },
+      supersedesDecisionRef: 'LAKOKU-E0-2026-08-26-LOOSE-200',
+    })
+    expect(E0_R1_APPROVAL_ARTIFACT_HASH).toMatch(HEX64)
+    expect(E0_R1_CEILINGS.maxExpectedCostPerNovel).toBe(E0_APPROVAL_RATIFICATION_PAYLOAD.ceilings.maxExpectedCostPerNovel)
+    expect(E0_R1_CEILINGS.maxJudgeEvaluationCostPerNovel).toBe(E0_APPROVAL_RATIFICATION_PAYLOAD.ceilings.maxJudgeEvaluationCostPerNovel)
+    expect(E0_R1_CEILINGS.maxRetryOverheadPercentage).toBe(E0_APPROVAL_RATIFICATION_PAYLOAD.ceilings.maxRetryOverheadPercentage)
+    expect(E0_R1_CEILINGS.p95CostGuardrail).toBe(E0_APPROVAL_RATIFICATION_PAYLOAD.ceilings.p95CostGuardrail)
+
+    const r1 = buildApprovedE0BudgetAuthorityR1()
+    const r0 = buildApprovedE0BudgetAuthority()
+    expect(r1.approvalStatus).toBe('APPROVED')
+    expect(r1.policyVersion).toBe('1.1.0')
+    expect(r1.decisionRef).toBe(E0_R1_DECISION_REF)
+    expect(r1.supersedes).toEqual({ policyId: 'e0_loose_budget_v1', policyVersion: '1.0.0', canonicalHash: r0.canonicalHash })
+    expect(r1.supersededBy).toBeUndefined()
+    expect(r1.ceilings.maxExpectedCostPerChapter).toBe('2.10000000')
+    expect(Object.isFrozen(r1)).toBe(true)
+  })
+
   it('keeps the frozen contract fixture evidence blocked and untouched', () => {
     expect(FIXTURE_E0_AUTHORITY).toBeNull()
     const payload = buildSemanticPayloadFixture()
@@ -126,11 +175,11 @@ describe('E0 authority evaluation against the counted comparators', () => {
     expect(modeled.combinedTotalNovelCostP95).toEqual({ state: 'PRESENT', value: COUNTED_MODELED.combinedTotalNovelCostP95 })
   }, MODEL_TIMEOUT)
 
-  it('classifies the approved USD authority as APPROVED_EVALUATED bound to the fixture stratum', () => {
+  it('classifies the superseding R1 authority as APPROVED_EVALUATED bound to the fixture stratum', () => {
     const result = evaluatedWithApprovedAuthority()
     if (result.status !== 'APPROVED_EVALUATED') throw new Error(`unexpected ${result.status}: ${JSON.stringify(result, null, 2)}`)
     expect(result.status).toBe('APPROVED_EVALUATED')
-    expect(result.authority.decisionRef).toBe(E0_RATIFICATION_DECISION_REF)
+    expect(result.authority.decisionRef).toBe(E0_R1_DECISION_REF)
     expect(result.comparisons.map((comparison) => comparison.dimension)).toEqual([
       'MAX_EXPECTED_COST_PER_CHAPTER',
       'MAX_EXPECTED_COST_PER_NOVEL',
@@ -140,23 +189,35 @@ describe('E0 authority evaluation against the counted comparators', () => {
     ])
   })
 
-  it('passes every modeled comparator including exact equalities, and records the honest chapter observed breach', () => {
-    const result = evaluatedWithApprovedAuthority()
+  it('preserves the R0 history: chapter observed 2.05000000 breached the superseded ceiling', () => {
+    const result = evaluatedWithR0History()
     if (result.status !== 'APPROVED_EVALUATED') throw new Error('unreachable')
-
-    // Modeled (authoritative projections): all five within ceiling; chapter, judge, and retry are exact equalities.
     expect(result.budgetGate).toBe('FAIL')
     expect(result.error).toContain('MAX_EXPECTED_COST_PER_CHAPTER')
-
     const byDimension = new Map(result.comparisons.map((comparison) => [comparison.dimension, comparison]))
     const chapter = byDimension.get('MAX_EXPECTED_COST_PER_CHAPTER')!
     expect(chapter.ceiling).toBe('2.04001674')
-    expect(chapter.modeled.outcome).toBe('PASS')
     expect(chapter.observed.value).toEqual({ state: 'PRESENT', value: '2.05000000' })
     expect(chapter.observed.outcome).toBe('FAIL')
+  }, MODEL_TIMEOUT)
 
-    expect(byDimension.get('MAX_EXPECTED_COST_PER_NOVEL')!.modeled.outcome).toBe('PASS')
+  it('passes every comparator under R1 including the corrected chapter ceiling', () => {
+    const result = evaluatedWithApprovedAuthority()
+    if (result.status !== 'APPROVED_EVALUATED') throw new Error('unreachable')
+
+    // PM governance decision: budgetGate must be PASS under the valid approved R1 authority.
+    expect(result.budgetGate).toBe('PASS')
+    expect(result.error).toBeNull()
+
+    const byDimension = new Map(result.comparisons.map((comparison) => [comparison.dimension, comparison]))
+    const chapter = byDimension.get('MAX_EXPECTED_COST_PER_CHAPTER')!
+    expect(chapter.ceiling).toBe('2.10000000')
+    expect(chapter.modeled.outcome).toBe('PASS')
+    expect(chapter.observed.value).toEqual({ state: 'PRESENT', value: '2.05000000' })
+    expect(chapter.observed.outcome).toBe('PASS')
+
     expect(byDimension.get('MAX_EXPECTED_COST_PER_NOVEL')!.ceiling).toBe('200.00000000')
+    expect(byDimension.get('MAX_EXPECTED_COST_PER_NOVEL')!.modeled.outcome).toBe('PASS')
 
     const judge = byDimension.get('MAX_JUDGE_EVALUATION_COST_PER_NOVEL')!
     expect(judge.ceiling).toBe('2.40000000')
@@ -176,7 +237,7 @@ describe('E0 authority evaluation against the counted comparators', () => {
     expect(p95.observed.outcome).toBe('PASS')
   }, MODEL_TIMEOUT)
 
-  it('keeps the engineering gate PASS with release HOLD while surfacing the evaluated budget verdict', () => {
+  it('keeps the engineering gate PASS with release HOLD while surfacing the PASS budget verdict', () => {
     const payload = buildSemanticPayloadFixture()
     const budgetResult = evaluatedWithApprovedAuthority()
     const verdict = evaluateEngineeringGate({
@@ -196,7 +257,7 @@ describe('E0 authority evaluation against the counted comparators', () => {
     expect(verdict.releaseReadiness).toBe('HOLD')
     expect(verdict.reasonCodes).toEqual([])
     expect(verdict.e0BudgetStatus).toBe('APPROVED_EVALUATED')
-    expect(verdict.budgetGate).toBe('FAIL')
+    expect(verdict.budgetGate).toBe('PASS')
     // Closure remains a governance act recorded in the ledger, never an evaluator output.
     expect(verdict.closure).toEqual({ G2_BUDGET: 'OPEN', M10_E: 'OPEN' })
   }, MODEL_TIMEOUT)

@@ -1,11 +1,12 @@
 # M10-F Pilot Preflight Package
 
 **Document Type:** Single Isolated Non-Production Engineering Pilot Specification  
-**Status:** E3A/E4 CLOSED; M10-E/E5 closure still prerequisite  
-**Date:** 2026-08-23  
-**Authority Constraint:** NO real model calls permitted until M10-E milestone CLOSED and E5 workflow implemented  
+**Status:** M10-E CLOSED (2026-08-26, ledger Entry 13); M10-F STAGED_DRY_RUN — execution requires separate authorization  
+**Date:** 2026-08-23 (closure update 2026-08-26)  
+**Authority Constraint:** NO real model calls permitted until M10-F execution is separately authorized; M10-E CLOSED and E5 workflow complete as of 2026-08-26  
 **Predecessor Evidence SHA:** `65053607ac7d1574e531bd49370b0a6c6d5565ba` (E3A/E4)  
-**Execution SHA:** Future exact M10-E/E5 closure HEAD (after E5 implementation)  
+**Execution SHA:** Closure batch child of `0037c950e039410d54c03d16663e3d73862dada4` (M10-E closure commit, ledger Entry 13)  
+**Mandatory watchpoint:** observed chapter mean `2.05000000` exceeded approved ceiling `2.04001674` at E0 evaluation — must be re-checked during pilot evidence review    
 
 ---
 

@@ -971,3 +971,83 @@ D1 manifest / corpus          FROZEN / UNCHANGED
 
 ---
 
+## Entry 13 — 2026-08-26 (E-OPS-1 CLOSED via E5; E0 BUSINESS_AUTHORITY ratified Loose $200; M10-E PASS / CLOSED)
+
+### 13.1 E-OPS-1 — PASS / CLOSED
+
+The nine-criterion reviewer-approved baseline acceptance contract from Entry 12 is satisfied by
+the ratified E5 blueprint review workflow: queue listing every `needs_review` story exactly once,
+detail surfacing failed chapter/act findings and blueprint versions, authorization-gated
+resolution creating new blueprint versions without overwriting canonical history, full audit
+trail (reviewer identity, disposition, reason, timestamp, source event), spine/reveal/ending
+validator reruns before release, fail-closed admission on failure with explicit unblock proof,
+reader-safe language, and passing negative authorization/idempotency/audit/failure/unblock tests.
+Implementation landed across the E5 batches above the plan base `143a01a`, including migrations
+`20260823100000…20260824101000`, pgTAP suites under `supabase/tests/e5_blueprint_*.sql`, race
+proof harness (`scripts/e5-blueprint-resolution-race.ts` + authority helper), and API/admin
+surfaces. The allowlist auditor `scripts/m10-e-e3a-e4-allowlist.ts` was extended with the
+explicitly enumerated post-E3A/E4 ratified paths and audits the full base..HEAD diff to PASS.
+
+### 13.2 E0 BUSINESS_AUTHORITY — RATIFIED
+
+On 2026-08-26 the project lead supplied exact business authority, materialized verbatim in
+`fixtures/m10-e/e0-budget-authority.ts`:
+
+```text
+approvalStatus                         APPROVED
+currency                               USD
+effectiveDate                          2026-08-26
+novelCostConditioning                  SUCCESSFUL_50_CHAPTER_RUN
+maxExpectedCostPerChapter              $2.04001674
+maxExpectedCostPerSuccessfulNovel      $200.00000000
+maxJudgeEvaluationCostPerNovel         $2.40000000
+maxRetryOverheadPercentage             173.684249%
+p95CostGuardrail                       $200.00000000
+reviewer                               Lakoku Project Lead
+decisionRef                            LAKOKU-E0-2026-08-26-LOOSE-200
+```
+
+The authority binds to fixture stratum pricing snapshot `de7a4bb8aa2812345a093523f03a6b4f358e772dba1ed84b7674b2fc68eba1d8`
+and sets `measuredTokenEvidence.observationSetVersion = 97596b719c880eaccdc6abb680e753203eef8c68bc38a81922e8e828696c233b`
+(counted artifact semantic hash). Evaluation proof lives in `tests/narrative-qa/m10-e-e0-closure.test.ts`.
+
+**Honest evaluation outcome:** status `APPROVED_EVALUATED`. Four of five comparator dimensions
+PASS, including exact equalities (chapter-modeled `2.04001674`, judge `2.40000000` modeled and
+observed, retry overhead `173.684249%`). The observed per-chapter dimension FAILS: observed mean
+`2.05000000` exceeds ceiling `2.04001674`, so `budgetGate = FAIL`. This breach does NOT defect
+the engineering gate (PASS; release HOLD by design) and is recorded as a mandatory M10-F
+watchpoint. No approved value was altered to obtain this outcome.
+
+### 13.3 M10-E — PASS / CLOSED
+
+Adopted criterion (packet §7): M10-E closes when BUSINESS_AUTHORITY exists and budgetGate
+transitions to `APPROVED_EVALUATED`. Both conditions now hold. E1 deterministic two-run authority
+(`9a5ce21`) and E2 independent remote review (`914cf30`) stand; the E3A/E4 counted pair at
+`65053607ac7d1574e531bd49370b0a6c6d5565ba` remains frozen evidence with immutable hashes:
+
+```text
+candidateGitSha       0037c950e039410d54c03d16663e3d73862dada4
+countedRunnerSha256   7324d0fd46a7d9c6bc489c158f9e3add7a2965d2bbe62597f85245cf4e7257f2
+normalizedSha256      cfe6734d82b03a0ef2019ecb82543280a476aff183eb4ca10d092a90deb79fb6
+```
+
+This closure is recorded in the same single forward commit that materializes the E0 authority;
+its parent is `0037c950`. The evaluator-emitted closure field remains hardcoded OPEN by design —
+closure is this governance ledger act, not evaluator output.
+
+```text
+E-OPS-1                       PASS / CLOSED
+M10-E                         PASS / CLOSED
+M10-F                         GO — kickoff package preparation only;
+                              execution FORBIDDEN until separately authorized
+M10-G                         BLOCKED until M10-F PASS
+
+E5 rerun                      FORBIDDEN (counted pair + hashes frozen evidence)
+counted pair artifacts        FROZEN / UNCHANGED
+production writes             FORBIDDEN
+production activation         FORBIDDEN until separately authorized
+M10-F watchpoint              observed chapter mean 2.05000000 > ceiling 2.04001674
+```
+
+---
+

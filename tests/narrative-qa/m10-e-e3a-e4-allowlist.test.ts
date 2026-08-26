@@ -3,6 +3,8 @@ import {
   M10_E_E3A_E4_ALLOWLIST,
   M10_E_E3A_E4_BASE_SHA,
   M10_E_E3A_E4_REQUIRED_CHANGES,
+  M10_E_P1_P11_ALLOWLIST,
+  M10_E_POST_E3AE4_RATIFIED_ALLOWLIST,
   M10_E_PROTECTED_PATH_PREFIXES,
   auditM10EE3AE4Allowlist,
   type M10EE3AE4GitCommand,
@@ -83,10 +85,12 @@ describe('M10-E E3A/E4 allowlist auditor', () => {
     expect(result.failures.some((failure) => failure.includes('ALLOWLIST_OMITTED_REQUIRED_CHANGE: docs/qa/m10/M10_E_RELIABILITY_COST_REPORT.md'))).toBe(true)
   })
 
-  it('protects every declared protected path class from entering the allowlist', () => {
+  it('protects every declared protected path class from entering the original P1-P11 allowlist', () => {
     for (const prefix of M10_E_PROTECTED_PATH_PREFIXES) {
-      expect(M10_E_E3A_E4_ALLOWLIST.some((path) => path.startsWith(prefix))).toBe(false)
+      expect(M10_E_P1_P11_ALLOWLIST.some((path) => path.startsWith(prefix))).toBe(false)
     }
+    // Audited union stays exactly original scope plus explicitly enumerated later ratified batches.
+    expect([...M10_E_P1_P11_ALLOWLIST, ...M10_E_POST_E3AE4_RATIFIED_ALLOWLIST]).toEqual([...M10_E_E3A_E4_ALLOWLIST])
   })
 })
 

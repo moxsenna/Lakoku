@@ -307,5 +307,11 @@ modeledJudgeTotal = 2.40000000 (MODELED, PRESENT)
 - Probabilitas sel per-bab yang kuat bukan input model pusat; topologi kondisional V1 dan semua keluaran model adalah model, bukan ukuran produksi.
 - Tidak ada klaim penutupan G2-BUDGET atau M10-E; keduanya tetap OPEN.
 - Laporan ini tidak mengandung data pribadi pembaca, konten prosa, prompt/response model, URL privat, atau kredensial layanan.
+## 12. Catatan Penutupan E0 (E0 Closure Record, 2026-08-26)
+- Bagian 1–11 adalah rekaman counted run pada SHA `65053607ac7d1574e531bd49370b0a6c6d5565ba` dan tidak diubah; bagian ini hanya catatan tata kelola pasca-ratifikasi.
+- 2026-08-26: project lead meratifikasi Loose ($200) — decisionRef `LAKOKU-E0-2026-08-26-LOOSE-200`, reviewer `Lakoku Project Lead`, USD, efektif 2026-08-26, kondisioning `SUCCESSFUL_50_CHAPTER_RUN`.
+- Otoritas dimaterialisasi di `fixtures/m10-e/e0-budget-authority.ts`, terikat ke pricing snapshot fixture (`de7a4bb8…`) dan observation set counted (`97596b71…`); evaluasi dibuktikan `tests/narrative-qa/m10-e-e0-closure.test.ts`.
+- Hasil evaluasi: status `APPROVED_EVALUATED`; empat dari lima dimensi komparator PASS (termasuk kesamaan eksak chapter-modeled 2.04001674, judge 2.40000000, retry overhead 173.684249%); dimensi observed per-chapter FAIL (2.05000000 > ceiling 2.04001674) sehingga budgetGate = `FAIL`.
+- Kriteria penutupan §7 packet dipenuhi: BUSINESS_AUTHORITY ada dan budgetGate bertransisi ke `APPROVED_EVALUATED`. Breach observed per-chapter dicatat sebagai watchpoint wajib M10-F; engineering gate tetap PASS / HOLD.
 ---
 Deterministik: konten laporan hanya berasal dari artifacts semantik tervalidasi; hash laporan = SHA-256 byte Markdown persis.

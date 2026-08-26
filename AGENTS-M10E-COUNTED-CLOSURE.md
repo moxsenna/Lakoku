@@ -1,8 +1,8 @@
 # M10-E E3A/E4 Counted Pair Closure Report
 
 **Remote Binding SHA:** `65053607ac7d1574e531bd49370b0a6c6d5565ba`  
-**Status:** PENDING REVIEWER VERIFICATION AND E0/E5 DECISION RESOLUTION  
-**Date:** 2026-08-23  
+**Status:** VERIFIED — counted pair frozen evidence; M10-E PASS/CLOSED 2026-08-26 (ledger Entry 13, E0 ratified Loose $200)  
+**Date:** 2026-08-23 (closure update 2026-08-26)  
 
 ---
 

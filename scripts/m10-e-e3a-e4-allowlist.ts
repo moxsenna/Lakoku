@@ -4,8 +4,9 @@
  * Computes the Git diff from the exact plan base
  * 143a01a0b0b2f0848ade235fd6bdc3dc3588f01d to the implementation HEAD and
  * requires every changed path to match the explicit P1–P11 create/modify
- * allowlist plus this plan file's reviewer-authorized plan-only amendment
- * commit. It rejects deletions/renames and any protected path class,
+ * allowlist, this plan file's reviewer-authorized plan-only amendment
+ * commit, the subsequently ratified E5 blueprint-review batches, and the
+ * E0 closure batch. It rejects deletions/renames and any unlisted path,
  * verifies the base resolves and is an ancestor of HEAD, and requires the
  * generated tracked changes (package.json scripts and the cost report) to be
  * present in the diff.
@@ -15,7 +16,8 @@ import { execFileSync } from 'node:child_process'
 
 export const M10_E_E3A_E4_BASE_SHA = '143a01a0b0b2f0848ade235fd6bdc3dc3588f01d'
 
-export const M10_E_E3A_E4_ALLOWLIST: readonly string[] = Object.freeze([
+/** Original P1-P11 implementation allowlist — free of protected path classes. */
+export const M10_E_P1_P11_ALLOWLIST: readonly string[] = Object.freeze([
   // Plan file (reviewer-authorized plan-only amendment commit).
   'docs/superpowers/plans/2026-08-15-m10-e-e3a-e4-implementation-plan.md',
   // P1-P3 contracts, decimals, authorities, topology.
@@ -93,6 +95,56 @@ export const M10_E_E3A_E4_ALLOWLIST: readonly string[] = Object.freeze([
   // P11 modified tracked deliverables.
   'package.json',
   'docs/qa/m10/M10_E_RELIABILITY_COST_REPORT.md',
+])
+
+/**
+ * Explicitly enumerated paths from batches ratified after the E3A/E4 plan:
+ * the E5 blueprint review workflow and the E0 closure batch. Entries stay
+ * exact paths; protected-prefix classes still reject any unlisted path.
+ */
+export const M10_E_POST_E3AE4_RATIFIED_ALLOWLIST: readonly string[] = Object.freeze([
+  'AGENTS-M10E-COUNTED-CLOSURE.md',
+  'M10E-E0-DECISION-PACKET.md',
+  'M10E-E5-IMPLEMENTATION-PLAN.md',
+  'M10E-M10F-PILOT-PREFLIGHT.md',
+  'app/admin/blueprint-review/client-component.tsx',
+  'app/admin/blueprint-review/page.tsx',
+  'app/api/blueprint-review/[id]/route.ts',
+  'app/api/blueprint-review/route.ts',
+  'lib/runtime/blueprint-workflow.server.ts',
+  'lib/runtime/index.ts',
+  'lib/types/blueprint.contract.ts',
+  'lib/utils/validator-rerun.helper.ts',
+  'scripts/e5-blueprint-race-target.ts',
+  'scripts/e5-blueprint-resolution-race.ts',
+  'supabase/migrations/20260823100000_e5_blueprint_review_queue.sql',
+  'supabase/migrations/20260823100100_e5_blueprint_resolutions.sql',
+  'supabase/migrations/20260823100200_e5_blueprint_audit.sql',
+  'supabase/migrations/20260823100250_e5_blueprint_validator_proofs.sql',
+  'supabase/migrations/20260823100300_e5_blueprint_rls.sql',
+  'supabase/migrations/20260824100000_e5_blueprint_resolution_function.sql',
+  'supabase/migrations/20260824101000_e5_stateless_validator_attestation.sql',
+  'supabase/tests/e5_blueprint_append_only_test.sql',
+  'supabase/tests/e5_blueprint_audit_immutability_test.sql',
+  'supabase/tests/e5_blueprint_queue_exactly_once_test.sql',
+  'supabase/tests/e5_blueprint_review_rls_test.sql',
+  'supabase/tests/e5_blueprint_unblock_fail_closed_test.sql',
+  'tests/e5-blueprint-append-only.test.ts',
+  'tests/e5-blueprint-reader-safe.test.ts',
+  'tests/e5-blueprint-resolution.test.ts',
+  'tests/e5-blueprint-validator-rerun.test.ts',
+  'tests/e5-blueprint-workflow.test.ts',
+  'tests/integration/e5-blueprint-race-target.test.ts',
+  // E0 closure batch (project-lead ratification materialization and ledger).
+  'fixtures/m10-e/e0-budget-authority.ts',
+  'tests/narrative-qa/m10-e-e0-closure.test.ts',
+  'docs/qa/m10/M10_GOVERNANCE_LEDGER.md',
+])
+
+/** Full audited union: original plan scope plus later ratified batches. */
+export const M10_E_E3A_E4_ALLOWLIST: readonly string[] = Object.freeze([
+  ...M10_E_P1_P11_ALLOWLIST,
+  ...M10_E_POST_E3AE4_RATIFIED_ALLOWLIST,
 ])
 
 /** Generated tracked changes that must appear in the implementation diff. */

@@ -1,9 +1,9 @@
 # M10-E E0 Budget Authority Decision Packet
 
 **Document Type:** Cost Ceiling Analysis & Trade-Off Assessment  
-**Status:** Awaiting Stakeholder Approval (Aggressive/Balanced/Loose)  
-**Date:** 2026-08-23  
-**Authority:** Product/Finance Review Cycle Required  
+**Status:** RATIFIED — Loose ($200) approved 2026-08-26 (see §9 Closure Record)  
+**Date:** 2026-08-23 (ratified 2026-08-26)  
+**Authority:** Product/Finance Review Cycle — COMPLETE (`LAKOKU-E0-2026-08-26-LOOSE-200`)  
 
 ---
 
@@ -203,6 +203,18 @@ Observed Chapter Costs (DIAGNOSTIC ONLY):
 - CHAPTER_COST_P50: 2.05000000 (single observation)
 - CHAPTER_COST_P95: 2.05000000 (range [1.775..2.05])
 ```
+
+---
+
+## 9. Closure Record (Ratification 2026-08-26)
+
+On 2026-08-26 the project lead ratified **Loose ($200)** with decision ref `LAKOKU-E0-2026-08-26-LOOSE-200`, reviewer `Lakoku Project Lead`, currency `USD`, effective date `2026-08-26`, conditioning `SUCCESSFUL_50_CHAPTER_RUN`. Exact ceilings: per-chapter `$2.04001674`, per-successful-novel `$200.00000000`, judge evaluation `$2.40000000`, retry overhead `173.684249%`, p95 guardrail `$200.00000000`.
+
+Materialization: `fixtures/m10-e/e0-budget-authority.ts` builds the `APPROVED` `M10_E_BUDGET_AUTHORITY_V1` authority bound to the fixture stratum pricing snapshot (`de7a4bb8…`) and retry policy hash, with `measuredTokenEvidence.observationSetVersion = 97596b71…` (counted artifact semantic hash). Verification: `tests/narrative-qa/m10-e-e0-closure.test.ts` (6 tests) proves the authority evaluates to `APPROVED_EVALUATED` against the frozen counted comparators.
+
+**Evaluation outcome (honest disclosure):** four of five comparator dimensions PASS, including exact equalities on chapter-modeled ($2.04001674), judge ($2.40000000 modeled and observed), and retry overhead (173.684249%). The observed per-chapter dimension FAILS: single observed chapter mean `2.05000000` exceeds ceiling `2.04001674`, so `budgetGate = FAIL` while status is `APPROVED_EVALUATED`. Per §7's adopted criterion — M10-E closes when BUSINESS_AUTHORITY exists and budgetGate transitions to `APPROVED_EVALUATED` — this ratification completes the E0 closure condition. The observed chapter breach does NOT defect the engineering gate (PASS, release HOLD by design) and is recorded as a mandatory M10-F watchpoint.
+
+The E5 rerun remains FORBIDDEN; the counted pair and its hashes stay frozen evidence. This record does not authorize production activation or M10-F execution.
 
 ---
 

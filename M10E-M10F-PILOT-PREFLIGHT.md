@@ -530,4 +530,20 @@ npm run m10-e-e3a-e4 -- --capture-final-report --output-dir=.zcode/artifacts/m10
 
 ---
 
-*Document compiled at SHA `65053607ac7d1574e531bd49370b0a6c6d5565ba`. Execution authorized ONLY after M10-E closure confirmed and all prerequisites satisfied.*
+## 0. Kickoff Readiness Record (2026-08-26)
+
+Prepared at M10-E closure (ledger Entry 13, closure commit `81cfdf507d6e55fb539b8d6810cdb93734adf199`, child of `0037c950`). This package is PREPARED, not executed.
+
+| Prerequisite | State |
+|---|---|
+| M10-E PASS/CLOSED | ✅ ledger Entry 13 |
+| E5 blueprint workflow | ✅ E-OPS-1 CLOSED (Entry 13 §13.1) |
+| E0 BUSINESS_AUTHORITY | ✅ APPROVED Loose $200 (`LAKOKU-E0-2026-08-26-LOOSE-200`) |
+| Counted predecessor evidence | ✅ frozen at `65053607` / runner `7324d0fd…` / normalized `cfe6734d…` |
+| Monitoring dashboards for failure observation | ⬜ must be configured before Steps begin |
+| Disposable isolated environment + credential validation | ⬜ Steps 1–2 of this package |
+| Separate M10-F execution authorization | ⬜ **BLOCKING** — kickoff cannot start without it |
+
+**Mandatory watchpoint carried into the pilot:** observed chapter mean `2.05000000` exceeded approved ceiling `2.04001674` at E0 evaluation; re-check chapter-level cost during pilot evidence review before any ceiling conclusion.
+
+Execution remains FORBIDDEN until the project lead separately authorizes M10-F start. On authorization, begin at Step 1 with this document as the runbook and the watchpoint above as a standing evidence-review item.

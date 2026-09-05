@@ -64,12 +64,12 @@ export default function HomePage() {
       {/* 1. HERO — masuk ke dalam cerita dalam 5 detik */}
       <section className="relative flex min-h-svh flex-col overflow-hidden">
         <Image
-          src="/covers/pesan-terakhir.png"
+          src="/landing/hero-rainy-reflection.webp"
           alt=""
           fill
           priority
           sizes="100vw"
-          className="object-cover object-center"
+          className="object-cover object-[64%_50%] sm:object-[58%_50%] lg:object-center"
         />
         <div className="absolute inset-0 bg-gradient-to-b from-background/70 via-background/30 to-background" />
         <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-background via-background/60 to-transparent" />
@@ -206,73 +206,111 @@ export default function HomePage() {
       </section>
 
       {/* 4. Bukan cerita orang lain */}
-      <section className="mx-auto w-full max-w-md px-6 py-20 sm:py-24">
-        <Reveal className="flex flex-col gap-4">
-          <div className="rounded-2xl border border-border bg-card/60 p-5">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-              Novel biasa
-            </span>
-            <p className="mt-3 font-serif text-xl leading-snug text-muted-foreground/70 line-through decoration-foreground/40">
-              &ldquo;Dia memutuskan untuk pergi.&rdquo;
-            </p>
-          </div>
-          <div className="rounded-2xl border border-primary/40 bg-primary/10 p-5">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
-              Lakoku
-            </span>
-            <p className="mt-3 font-serif text-xl leading-snug text-foreground">
-              Kamu harus memutuskan.
-            </p>
-            <div className="mt-4 flex flex-col gap-2">
-              <span className="rounded-xl border border-border bg-background/60 px-4 py-3 text-sm font-medium text-foreground">
-                Tinggal dan dengarkan kebenarannya?
-              </span>
-              <span className="text-center text-[11px] text-muted-foreground">atau</span>
-              <span className="rounded-xl border border-border bg-background/60 px-4 py-3 text-sm font-medium text-foreground">
-                Pergi sebelum semuanya terlambat?
-              </span>
+      <section className="mx-auto w-full max-w-md px-6 py-20 sm:py-24 lg:max-w-6xl">
+        <div className="grid items-center gap-10 lg:grid-cols-[55fr_45fr] lg:gap-16">
+          <Reveal className="relative">
+            <div className="relative aspect-[1672/941] overflow-hidden rounded-3xl border border-border">
+              <Image
+                src="/landing/choice-rainy-drive.webp"
+                alt="Seseorang memegang ponsel di mobil saat hujan malam."
+                fill
+                sizes="(min-width: 1024px) 55vw, 100vw"
+                className="object-cover"
+              />
+              <div
+                aria-hidden="true"
+                className="absolute inset-0 bg-gradient-to-t from-background/45 via-transparent to-transparent"
+              />
             </div>
+          </Reveal>
+          <div className="flex flex-col">
+            <Reveal className="flex flex-col gap-4">
+              <div className="rounded-2xl border border-border bg-card/60 p-5">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                  Novel biasa
+                </span>
+                <p className="mt-3 font-serif text-xl leading-snug text-muted-foreground/70 line-through decoration-foreground/40">
+                  &ldquo;Dia memutuskan untuk pergi.&rdquo;
+                </p>
+              </div>
+              <div className="rounded-2xl border border-primary/40 bg-primary/10 p-5">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
+                  Lakoku
+                </span>
+                <p className="mt-3 font-serif text-xl leading-snug text-foreground">
+                  Kamu harus memutuskan.
+                </p>
+                <div className="mt-4 flex flex-col gap-2">
+                  <span className="rounded-xl border border-border bg-background/60 px-4 py-3 text-sm font-medium text-foreground">
+                    Tinggal dan dengarkan kebenarannya?
+                  </span>
+                  <span className="text-center text-[11px] text-muted-foreground">atau</span>
+                  <span className="rounded-xl border border-border bg-background/60 px-4 py-3 text-sm font-medium text-foreground">
+                    Pergi sebelum semuanya terlambat?
+                  </span>
+                </div>
+              </div>
+            </Reveal>
+            <Reveal className="mt-10 flex flex-col gap-3">
+              <h2 className="font-serif text-3xl leading-tight text-foreground text-balance">
+                Bukan cerita tentang mereka. Tentang kamu.
+              </h2>
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                Kamu membaca akibat dari keputusan yang kamu buat sendiri.
+              </p>
+            </Reveal>
           </div>
-        </Reveal>
-        <Reveal className="mt-10 flex flex-col gap-3">
-          <h2 className="font-serif text-3xl leading-tight text-foreground text-balance">
-            Bukan cerita tentang mereka. Tentang kamu.
-          </h2>
-          <p className="text-sm leading-relaxed text-muted-foreground">
-            Kamu membaca akibat dari keputusan yang kamu buat sendiri.
-          </p>
-        </Reveal>
+        </div>
       </section>
 
       {/* 5. Proof of depth — 50 bab tanpa menjelaskan engine */}
-      <section className="mx-auto w-full max-w-md px-6 py-20 sm:py-24">
-        <Reveal>
-          <h2 className="font-serif text-3xl leading-tight text-foreground text-balance">
-            Dan ceritanya tidak melupakanmu.
-          </h2>
-        </Reveal>
-        <ol className="ml-2 mt-10 flex flex-col border-l border-border">
-          {TIMELINE.map((step) => (
-            <li key={step.bab} className="relative pb-10 pl-7 last:pb-0">
-              <span
-                aria-hidden="true"
-                className="absolute -left-[6px] top-1 size-2.5 rounded-full border border-background bg-gold"
+      <section className="mx-auto w-full max-w-md px-6 py-20 sm:py-24 lg:max-w-6xl">
+        <div className="grid items-center gap-10 lg:grid-cols-[55fr_45fr] lg:gap-16">
+          <Reveal className="relative lg:order-2">
+            <div className="relative aspect-[1672/941] overflow-hidden rounded-3xl border border-border">
+              <Image
+                src="/landing/memory-rainlit-letters.webp"
+                alt="Amplop dan foto keluarga lama di sebuah rumah pada malam hujan."
+                fill
+                sizes="(min-width: 1024px) 45vw, 100vw"
+                className="object-cover"
               />
-              <Reveal delay={100} className="flex flex-col gap-1">
-                <span className="text-[11px] font-bold uppercase tracking-[0.25em] text-gold">
-                  {step.bab}
-                </span>
-                <p className="font-serif text-lg leading-snug text-foreground">{step.text}</p>
-              </Reveal>
-            </li>
-          ))}
-        </ol>
-        <Reveal className="mt-10 flex flex-col gap-2">
-          <p className="font-serif text-xl leading-snug text-foreground">
-            Keputusan lama bisa kembali. Hubungan berubah. Rahasia punya akibat.
-          </p>
-          <p className="text-sm text-muted-foreground">Cerita bergerak bersamamu sampai akhir.</p>
-        </Reveal>
+              <div
+                aria-hidden="true"
+                className="absolute inset-0 bg-gradient-to-t from-background/40 via-transparent to-transparent"
+              />
+            </div>
+          </Reveal>
+          <div className="flex flex-col lg:order-1">
+            <Reveal>
+              <h2 className="font-serif text-3xl leading-tight text-foreground text-balance">
+                Dan ceritanya tidak melupakanmu.
+              </h2>
+            </Reveal>
+            <ol className="ml-2 mt-10 flex flex-col border-l border-border">
+              {TIMELINE.map((step) => (
+                <li key={step.bab} className="relative pb-10 pl-7 last:pb-0">
+                  <span
+                    aria-hidden="true"
+                    className="absolute -left-[6px] top-1 size-2.5 rounded-full border border-background bg-gold"
+                  />
+                  <Reveal delay={100} className="flex flex-col gap-1">
+                    <span className="text-[11px] font-bold uppercase tracking-[0.25em] text-gold">
+                      {step.bab}
+                    </span>
+                    <p className="font-serif text-lg leading-snug text-foreground">{step.text}</p>
+                  </Reveal>
+                </li>
+              ))}
+            </ol>
+            <Reveal className="mt-10 flex flex-col gap-2">
+              <p className="font-serif text-xl leading-snug text-foreground">
+                Keputusan lama bisa kembali. Hubungan berubah. Rahasia punya akibat.
+              </p>
+              <p className="text-sm text-muted-foreground">Cerita bergerak bersamamu sampai akhir.</p>
+            </Reveal>
+          </div>
+        </div>
       </section>
 
       {/* 6. Social curiosity — teaser akhir, bukan testimonial generik */}

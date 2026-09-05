@@ -8,6 +8,7 @@ import type { BuildChapterBriefInput, ChapterBrief, ChoiceHistoryEntry } from '@
 import { normalizeRouteState } from '@/lib/story-engine/route-state'
 import type { ChoiceBranch, ChapterDraftParsed } from '@/lib/ai-gateway/schemas'
 import type { GenerationProvider } from '@/lib/ai-gateway/provider'
+import type { GenerationResult } from '@/lib/ai-gateway/generate'
 import type { PublishChapterV2Input, PublishResult } from '@/lib/runtime/lifecycle'
 import type { RealGenerateResult } from '@/lib/runtime/story-generation'
 import {
@@ -19,7 +20,7 @@ import {
   type CheckpointStatus,
 } from '@/lib/runtime/chapter-generation-checkpoint.pure'
 import type { CheckpointMutationResult } from '@/lib/runtime/chapter-generation-checkpoint.pure'
-import { auditPlotDebts } from '@/lib/story-engine/plot-debt'
+import { auditPlotDebts, type PlotDebtFinding } from '@/lib/story-engine/plot-debt'
 
 const mocks = vi.hoisted(() => ({
   adminFactory: vi.fn(),
@@ -27,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   publishGenerationJobChapterV2: vi.fn(),
   publishGenerationJobChapterV3: vi.fn(),
   publishGenerationJobChapterV4: vi.fn(),
+  scanForLeaks: vi.fn((): string[] => []),
 }))
 
 vi.mock('server-only', () => ({}))
@@ -42,7 +44,7 @@ vi.mock('@lakoku/narrative-core/server', () => ({
 }))
 vi.mock('@lakoku/ai-gateway', async () => {
   const actual = await import('@/lib/ai-gateway/index')
-  return actual
+  return { ...actual, scanForLeaks: mocks.scanForLeaks }
 })
 vi.mock('@lakoku/ai-gateway/server', async () => {
   const actual = await import('@/lib/ai-gateway/server')
@@ -257,6 +259,12 @@ function briefStub(storyId: string, chapterNumber: number, lockedEndingKey: stri
     lockEnding: lockedEndingKey !== null,
     endingKey: lockedEndingKey,
     previousChoiceSummary: '',
+    forbiddenRevealIds: [],
+    resolvedPlotDebtIds: [],
+    scheduledReveals: [],
+    plotDebtObligationsToProgress: [],
+    plotDebtObligationsToClose: [],
+    lockedEndingClosure: [],
   }
 }
 
@@ -271,6 +279,7 @@ function makeDeps(options: {
   draftSignals?: DraftAuditSignals
   closesPlotDebts?: Array<{ debtId: string; closureForm: 'RESOLVED' | 'SUBVERTED' | 'TRANSFORMED' | 'ABANDONED' }>
   useRealAudit?: boolean
+  auditFailureFindings?: PlotDebtFinding[]
   auditArtifact?: {
     opensNewThread: boolean
     opensMajorMystery: boolean
@@ -461,7 +470,7 @@ function makeDeps(options: {
     generateChapter: vi.fn(async (
       _providerInput: unknown,
       input: { snapshot: CanonSnapshot; chapterNumber: number },
-    ) => {
+    ): Promise<GenerationResult> => {
       push('generateChapter')
       if (options.generateStatus === 'FAILED_REVIEW_REQUIRED') {
         return {
@@ -531,6 +540,18 @@ function makeDeps(options: {
             opensMajorMystery: input.opensMajorMystery,
             opensNewConflict: input.opensNewConflict,
             closesPlotDebts,
+          },
+        }
+      }
+      if (options.auditFailureFindings) {
+        return {
+          ok: false,
+          findings: options.auditFailureFindings,
+          auditSignals: {
+            opensNewThread: input.opensNewThread,
+            opensMajorMystery: input.opensMajorMystery,
+            opensNewConflict: input.opensNewConflict,
+            closesPlotDebts: options.closesPlotDebts ?? [],
           },
         }
       }
@@ -649,18 +670,161 @@ function personalizedCheckpoint(
   }
 }
 
+describe('bounded post-publication lifecycle', () => {
+  it('returns after timeout and logs reconciliation diagnostic for never-resolving lifecycle', async () => {
+    vi.useFakeTimers()
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    try {
+      const {
+        POST_PUBLICATION_LIFECYCLE_TIMEOUT_MS,
+        runBoundedPostPublicationLifecycle,
+      } = await import('@/lib/runtime/personalized-generation')
+      const lifecycle = vi.fn(() => new Promise<void>(() => undefined))
+      const run = runBoundedPostPublicationLifecycle({
+        storyId: STORY_A,
+        chapterNumber: 12,
+        contract: contractFor(STORY_A),
+        correlationId: CORRELATION_ID,
+        jobId: PERSONALIZED_JOB_CONTEXT.jobId,
+      }, lifecycle)
+
+      await vi.advanceTimersByTimeAsync(POST_PUBLICATION_LIFECYCLE_TIMEOUT_MS)
+
+      await expect(run).resolves.toEqual({ status: 'TIMED_OUT' })
+      expect(lifecycle).toHaveBeenCalledTimes(1)
+      expect(log).toHaveBeenCalledWith('POST_PUBLISH_RECONCILIATION_NEEDED', {
+        storyId: STORY_A,
+        chapterNumber: 12,
+        correlationId: CORRELATION_ID,
+        jobId: PERSONALIZED_JOB_CONTEXT.jobId,
+        operation: 'POST_PUBLICATION_LIFECYCLE',
+        // Kosakata `result` dibatasi NOT_UPDATED|THREW oleh gate log-safety;
+        // fakta timeout dibawa errorCode, bukan dengan memperluas kosakata.
+        result: 'NOT_UPDATED',
+        timeoutMs: POST_PUBLICATION_LIFECYCLE_TIMEOUT_MS,
+        errorCode: 'POST_PUBLICATION_LIFECYCLE_TIMEOUT',
+      })
+    } finally {
+      log.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('generateNextPersonalizedChapter', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    delete process.env.LAKOKU_WRITER_LENGTH_REPAIR_V1
+    mocks.scanForLeaks.mockReturnValue([])
     mocks.adminFactory.mockReturnValue({
       from: vi.fn(() => ({
         select: vi.fn().mockReturnThis(),
         update: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
-        maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+        maybeSingle: vi.fn(async () => ({
+          data: { generation_status: 'ready' },
+          error: null,
+        })),
       })),
       rpc: vi.fn(async () => ({ data: null, error: null })),
     })
+  })
+
+  it('omits writer length repair policy while runtime flag is OFF', async () => {
+    const { deps } = makeDeps({ chapterNumber: 12, lockedEndingKey: null })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      chapterNumber: 12,
+      correlationId: CORRELATION_ID,
+    }, deps)
+
+    const generationArgs = deps.generateChapter.mock.calls[0]?.[1] as {
+      executionOptions?: Record<string, unknown>
+    }
+    expect(generationArgs.executionOptions).not.toHaveProperty('writerLengthRepairV1')
+    expect(generationArgs.executionOptions).not.toHaveProperty('observeWriterLengthRepair')
+  })
+
+  it('passes exact enabled writer policy and metadata observer while runtime flag is ON', async () => {
+    process.env.LAKOKU_WRITER_LENGTH_REPAIR_V1 = '1'
+    const { deps } = makeDeps({ chapterNumber: 12, lockedEndingKey: null })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      chapterNumber: 12,
+      correlationId: CORRELATION_ID,
+    }, deps)
+
+    const generationArgs = deps.generateChapter.mock.calls[0]?.[1] as {
+      executionOptions?: Record<string, unknown>
+    }
+    expect(generationArgs.executionOptions?.writerLengthRepairV1).toEqual({ enabled: true })
+    expect(generationArgs.executionOptions?.observeWriterLengthRepair).toBeTypeOf('function')
+  })
+
+  it('repair throw cannot checkpoint, generate choices, publish, or advance reader', async () => {
+    process.env.LAKOKU_WRITER_LENGTH_REPAIR_V1 = '1'
+    const { deps } = makeDeps({ chapterNumber: 12, lockedEndingKey: null })
+    const repairFailure = new Error('WRITER_LENGTH_REPAIR_REJECTED')
+    deps.generateChapter.mockRejectedValueOnce(repairFailure)
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await expect(generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      chapterNumber: 12,
+      correlationId: CORRELATION_ID,
+    }, deps)).rejects.toBe(repairFailure)
+
+    expect(deps.persistProseReadyCheckpoint).not.toHaveBeenCalled()
+    expect(deps.markCheckpointStatus).not.toHaveBeenCalled()
+    expect(deps.generateChoiceBranch).not.toHaveBeenCalled()
+    expect(deps.publishChapterV2).not.toHaveBeenCalled()
+    expect(deps.markReaderStateSelesai).not.toHaveBeenCalled()
+  })
+
+  it('uses only returned final repair draft downstream', async () => {
+    process.env.LAKOKU_WRITER_LENGTH_REPAIR_V1 = '1'
+    const firstPassSentinel = 'FIRST_PASS_SENTINEL_MUST_NOT_ESCAPE'
+    const { deps } = makeDeps({ chapterNumber: 12, lockedEndingKey: null })
+    const providerResult = {
+      status: 'PUBLISHED' as const,
+      chapterNumber: 12,
+      draft: {
+        ...draftFor(STORY_A, 12),
+        title: 'Draft Final Personalized',
+        paragraphs: ['Draft final personalized yang sudah diperbaiki.'],
+      },
+      attempts: 1,
+      findings: [],
+      firstPassDraft: {
+        title: firstPassSentinel,
+        paragraphs: [firstPassSentinel],
+      },
+    }
+    deps.generateChapter.mockResolvedValueOnce(providerResult)
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      chapterNumber: 12,
+      correlationId: CORRELATION_ID,
+    }, deps)
+
+    const downstream = JSON.stringify({
+      checkpoint: deps.persistProseReadyCheckpoint.mock.calls,
+      choices: deps.generateChoiceBranch.mock.calls,
+      publish: deps.publishChapterV2.mock.calls,
+    })
+    expect(downstream).toContain('Draft Final Personalized')
+    expect(downstream).toContain('Draft final personalized yang sudah diperbaiki.')
+    expect(downstream).not.toContain(firstPassSentinel)
   })
 
   it('uses stored V2 audit artifact directly on resume despite mutable contract state', async () => {
@@ -977,7 +1141,7 @@ describe('generateNextPersonalizedChapter', () => {
       jobContext: PERSONALIZED_JOB_CONTEXT,
     }, deps)).resolves.toMatchObject({
       ok: false,
-      reason: 'FAILED_REVIEW_REQUIRED',
+      reason: 'TRANSIENT',
       detail: {
         checkpointMutation: {
           ok: false,
@@ -2201,10 +2365,24 @@ describe('generateNextPersonalizedChapter', () => {
     expect(proseArgs.executionOptions.signal).toBe(controller.signal)
   })
 
-  it('releases lease and returns FAILED_REVIEW_REQUIRED when generation fails review', async () => {
-    const { deps } = makeDeps({
+  it('records exact prose review before releasing its lease', async () => {
+    const { deps, capture } = makeDeps({
       chapterNumber: 12,
       generateStatus: 'FAILED_REVIEW_REQUIRED',
+    })
+    const proseFindings = [{
+      code: 'PROSE_STYLE_VIOLATION',
+      severity: 'MAJOR' as const,
+      message: 'prose error',
+    }]
+    deps.generateChapter.mockResolvedValueOnce({
+      status: 'FAILED_REVIEW_REQUIRED',
+      chapterNumber: 12,
+      draft: null,
+      attempts: 2,
+      findings: proseFindings,
+      failedLayer: 'A',
+      reason: 'fail',
     })
     const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
 
@@ -2215,13 +2393,185 @@ describe('generateNextPersonalizedChapter', () => {
       chapterNumber: 12,
     }, deps)
 
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.reason).toBe('FAILED_REVIEW_REQUIRED')
-    expect(deps.releaseGenerationLease).toHaveBeenCalled()
+    expect(result).toMatchObject({ ok: false, reason: 'FAILED_REVIEW_REQUIRED' })
     expect(deps.publishChapterV2).not.toHaveBeenCalled()
-    expect(deps.recordGenerationAttempt).toHaveBeenCalledWith(
-      expect.objectContaining({ outcome: 'REVIEW_REQUIRED' }),
+    expect(deps.recordGenerationAttempt).toHaveBeenCalledWith({
+      storyId: STORY_A,
+      chapter: 12,
+      outcome: 'REVIEW_REQUIRED',
+      repairAttempts: 2,
+      findings: proseFindings,
+      correlationId: CORRELATION_ID,
+      idempotencyKey: `gen:personalized:review:prose:${CORRELATION_ID}:${STORY_A}:12`,
+      leaseId: `lease-${STORY_A}-12`,
+    })
+    expect(capture.calls.indexOf('telemetry')).toBeLessThan(capture.calls.indexOf('releaseLease'))
+  })
+
+  it('records exact plot-debt review findings before releasing its lease', async () => {
+    const { deps, capture } = makeDeps({
+      chapterNumber: 12,
+      auditFailureFindings: [
+        { code: 'MAIN_MYSTERY_OPEN', debtId: 'main_mystery' },
+        { code: 'THREAD_AFTER_40' },
+      ],
+    })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    const result = await generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 12,
+    }, deps)
+
+    const findings = [
+      {
+        code: 'MAIN_MYSTERY_OPEN',
+        severity: 'CRITICAL' as const,
+        message: 'Plot debt audit violation: MAIN_MYSTERY_OPEN (debt: main_mystery)',
+        detail: { debtId: 'main_mystery' },
+      },
+      {
+        code: 'THREAD_AFTER_40',
+        severity: 'CRITICAL' as const,
+        message: 'Plot debt audit violation: THREAD_AFTER_40',
+      },
+    ]
+    expect(result).toEqual({
+      ok: false,
+      reason: 'FAILED_REVIEW_REQUIRED',
+      detail: { findings, reason: 'PLOT_DEBT_AUDIT_FAILED' },
+    })
+    expect(deps.recordGenerationAttempt).toHaveBeenCalledWith({
+      storyId: STORY_A,
+      chapter: 12,
+      outcome: 'REVIEW_REQUIRED',
+      repairAttempts: 0,
+      findings,
+      correlationId: CORRELATION_ID,
+      idempotencyKey: `gen:personalized:review:plot_debt:${CORRELATION_ID}:${STORY_A}:12`,
+      leaseId: `lease-${STORY_A}-12`,
+    })
+    expect(capture.calls.indexOf('telemetry')).toBeLessThan(capture.calls.indexOf('releaseLease'))
+  })
+
+  it('records exact choice validation findings before releasing its lease', async () => {
+    const { deps, capture } = makeDeps({
+      chapterNumber: 12,
+      choiceResults: [null, null],
+    })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    const result = await generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 12,
+    }, deps)
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'CHOICE_GENERATION_FAILED',
+      detail: {
+        choiceReason: 'REPAIR_EXHAUSTED',
+        findingCodes: ['NULL_BRANCH'],
+        repairAttempts: 1,
+      },
+    })
+    expect(deps.recordGenerationAttempt).toHaveBeenCalledWith({
+      storyId: STORY_A,
+      chapter: 12,
+      outcome: 'REVIEW_REQUIRED',
+      repairAttempts: 1,
+      findings: [{
+        code: 'NULL_BRANCH',
+        severity: 'CRITICAL',
+        message: 'Choice branch returned null.',
+      }],
+      correlationId: CORRELATION_ID,
+      idempotencyKey: `gen:personalized:review:choices:00000000-0000-4000-8000-000000000001:${STORY_A}:12`,
+      leaseId: `lease-${STORY_A}-12`,
+    })
+    expect(capture.calls.indexOf('telemetry')).toBeLessThan(capture.calls.indexOf('releaseLease'))
+  })
+
+  it('enqueues deterministic critical choice leak review before releasing legacy lease', async () => {
+    const leakingBranch = branchFor(12)
+    const { deps, capture } = makeDeps({
+      chapterNumber: 12,
+      choiceResults: [leakingBranch],
+    })
+    mocks.scanForLeaks.mockReturnValueOnce(['prompt'])
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await expect(generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 12,
+    }, deps)).resolves.toMatchObject({
+      ok: false,
+      reason: 'FAILED_REVIEW_REQUIRED',
+      detail: { reason: 'CHOICE_LEAK_REJECTED' },
+    })
+    expect(deps.recordGenerationAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: 'REVIEW_REQUIRED',
+      findings: [{
+        code: 'CHOICE_LEAK_REJECTED',
+        severity: 'CRITICAL',
+        message: 'Choice branch failed consumer-safe brand validation.',
+      }],
+      idempotencyKey: `gen:personalized:review:choice_leak:00000000-0000-4000-8000-000000000001:${STORY_A}:12`,
+      leaseId: `lease-${STORY_A}-12`,
+      brandScanHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    }))
+    expect(capture.calls.indexOf('telemetry')).toBeLessThan(capture.calls.indexOf('releaseLease'))
+    expect(deps.publishChapterV2).not.toHaveBeenCalled()
+  })
+
+  it('leaves worker-owned lease unreleased after personalized choice leak enqueue', async () => {
+    const leakingBranch = branchFor(12)
+    const { deps } = makeDeps({ chapterNumber: 12, choiceResults: [leakingBranch] })
+    mocks.scanForLeaks.mockReturnValueOnce(['provider'])
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await expect(generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 12,
+      jobContext: PERSONALIZED_JOB_CONTEXT,
+    }, deps)).resolves.toMatchObject({
+      ok: false,
+      reason: 'FAILED_REVIEW_REQUIRED',
+      detail: { reason: 'CHOICE_LEAK_REJECTED' },
+    })
+    expect(deps.recordGenerationAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      findings: [expect.objectContaining({ code: 'CHOICE_LEAK_REJECTED', severity: 'CRITICAL' })],
+      leaseId: PERSONALIZED_JOB_CONTEXT.leaseId,
+    }))
+    expect(deps.releaseGenerationLease).not.toHaveBeenCalled()
+    expect(mocks.publishGenerationJobChapterV4).not.toHaveBeenCalled()
+  })
+
+  it('propagates review enqueue failure after outer cleanup releases its lease once', async () => {
+    const { deps } = makeDeps({
+      chapterNumber: 12,
+      generateStatus: 'FAILED_REVIEW_REQUIRED',
+    })
+    deps.recordGenerationAttempt.mockRejectedValueOnce(
+      new Error('enqueue_runtime_review_v1: DB_UNAVAILABLE'),
     )
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await expect(generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      correlationId: CORRELATION_ID,
+      chapterNumber: 12,
+    }, deps)).rejects.toThrow('enqueue_runtime_review_v1: DB_UNAVAILABLE')
+    expect(deps.releaseGenerationLease).toHaveBeenCalledTimes(1)
   })
 
   it('keeps internal route/effect fields out of consumer-safe path inputs', async () => {

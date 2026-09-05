@@ -5,7 +5,10 @@ import {
   type ChoiceProviderErrorCode,
 } from '@lakoku/runtime'
 
-type FailureCode = Exclude<ChoiceProviderErrorCode, 'CONTENT_REJECTED' | 'QUALITY_NOT_ACTIONABLE' | 'UNKNOWN'>
+type FailureCode = Exclude<
+  ChoiceProviderErrorCode,
+  'CONTENT_REJECTED' | 'QUALITY_NOT_ACTIONABLE' | 'INPUT_INVALID' | 'UNKNOWN'
+>
 type CheckpointStatus = 'PROSE_READY' | 'RUNNING_CHOICES' | 'CHOICES_RETRY_WAIT' | 'PUBLISHED'
 
 type Job = {

@@ -1,228 +1,143 @@
 import {
   MOBILE_DRAMA_RHYTHM,
   STYLE_PROFILE_ID,
-  mobileDramaOutputFormat,
   mobileDramaSystemPrompt,
 } from '@/lib/prose/mobile-drama-style'
 import type { BuildWriterPromptInput, WriterPromptParts } from './types'
 
-function repairBlock(
-  findings: BuildWriterPromptInput['repairFindings'],
-): string {
-  if (!findings?.length) return ''
-  const lines = findings
-    .filter((f) => f.severity === 'CRITICAL' || f.severity === 'MAJOR' || !f.severity)
-    .map((f) => `- ${f.message}`)
-  if (!lines.length) return ''
-  return [
-    'PERBAIKAN WAJIB (revisi sebelumnya bermasalah):',
-    ...lines,
-    'Jika bab kurang kata: tulis ulang JAUH lebih panjang — tiap adegan minimal ~250 kata dengan dialog panjang, deskripsi indrawi, dan monolog batin. JANGAN meringkas; tambah adegan bila perlu, bukan filler.',
-  ].join('\n')
+function writerVisible(value: string, authorityIds: readonly string[]): string {
+  let visible = value
+  for (const authorityId of authorityIds) {
+    visible = visible.split(authorityId).join('rahasia kanonik')
+  }
+  return visible
 }
 
-/**
- * Satu pintu system + user prompt writer prosa.
- * Angka ritme hanya dari MOBILE_DRAMA_RHYTHM.
- *
- * HIERARKI PROMPT KONTRAK CONTINUITY:
- * [1] INVARIAN CANON (Nama persis, forbidden reveals, ending terkunci)
- * [2] RIWAYAT PEMBACA (Akhir Bab N-1 3–5 paragraf, pilihan, konsekuensi)
- * [3] KEADAAN CERITA (Route state, active threads, facts, timeline)
- * [4] SASARAN BAB (Chapter goal CC-aware, planned beats)
- * [5] KERANGKA & GAYA (Fase, word count, output format, repair block)
- */
-export function buildWriterPrompt(input: BuildWriterPromptInput): WriterPromptParts {
+function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptParts {
+  const brief = input.brief
+  if (!brief) throw new Error('CHAPTER_BRIEF_V2_BRIEF_REQUIRED')
+
   const { words, paragraphs } = MOBILE_DRAMA_RHYTHM
-  const chapter = input.chapterNumber
-  const scenes = Math.min(Math.max(input.sceneCount ?? 3, 2), 4)
   const names = input.characterNames ?? []
   const beats = input.plannedBeats ?? []
   const cc = input.continuation
-
-  const system = mobileDramaSystemPrompt()
-
-  // --- Lapis 1: INVARIAN CANON ---
-  const layer1CanonInvariants = [
-    '=== [1] INVARIAN CANON (MANDATORI / HARUS DIPATUHI) ===',
-    names.length ? `- Tokoh yang boleh tampil (nama persis): ${names.join(', ')}.` : '',
-    '- JANGAN memperkenalkan tokoh bernama baru di luar daftar.',
-    '- JANGAN membocorkan rahasia yang belum waktunya / belum terungkap.',
-    cc?.mustNotReveal?.length
-      ? `- RAHASIA DILARANG UNTUK DIKONTAMINASI/DIUNGKAP: ${cc.mustNotReveal.join(', ')}`
-      : '',
-    // M10-A closure: jangkar kisah global langsung di layer 1 (bukan tersirat
-    // dari contract yang tak pernah sampai ke writer).
-    cc?.storyAnchors
-      ? [
-          '',
-          '=== [1a] SANGKAR KISAH (JANGKAR GLOBAL — JANGAN MELANGGAR) ===',
-          cc.storyAnchors.corePromise
-            ? `- Janji Inti Cerita: ${cc.storyAnchors.corePromise}`
-            : '',
-          cc.storyAnchors.mainConflict
-            ? `- Konflik Utama (harus tetap terasa di bab ini): ${cc.storyAnchors.mainConflict}`
-            : '',
-          cc.storyAnchors.finalQuestion
-            ? chapter >= 45
-              ? `- PERTANYAAN AKHIR (WAJIB diarahkan ke jawaban, ending mendekat): ${cc.storyAnchors.finalQuestion}`
-              : `- Pertanyaan akhir cerita yang menggantung: ${cc.storyAnchors.finalQuestion}`
-            : '',
-        ].filter(Boolean).join('\n')
-      : '',
-    // Ending lock dipancarkan EKSPLISIT begitu terkunci (Bab >= 45) — bukan
-    // hanya diklaim di komentar (M10-A closure).
-    cc?.lockedEndingKey
-      ? `- ENDING SUDAH TERKUNCI pada "${cc.lockedEndingKey}". Semua pilihan/akibat bab ini harus mengarah ke ending tersebut.`
-      : '',
-  ].filter(Boolean).join('\n')
-
-  // --- Lapis 2: RIWAYAT PEMBACA ---
-  let layer2ReaderHistory = ''
-  if (cc && cc.previousChapter) {
-    const prevEnding = cc.previousChapter.endingParagraphs.map((p) => `> ${p}`).join('\n')
-    const choiceBlock = cc.previousChoice
-      ? [
-          `- Pilihan Pembaca di Bab ${cc.previousChapter.number} [${cc.previousChoice.choiceId}]: "${cc.previousChoice.label}"`,
-          `- Konsekuensi Kanonik Pilihan: ${cc.previousChoice.consequence.join(' / ')}`,
-          cc.previousChoice.effectSummary ? `- Ringkasan Efek: ${JSON.stringify(cc.previousChoice.effectSummary)}` : '',
-          // Tanpa ini model memperlakukan konsekuensi sebagai saran dan sering
-          // MEMBATALKAN pilihan pembaca di paragraf awal (mis. "tunda laporan"),
-          // sehingga cabang A dan B menyatu kembali.
-          '- KONSEKUENSI DI ATAS SUDAH TERJADI DAN MENGIKAT. Bab ini menuliskan AKIBATNYA.',
-          '  DILARANG membatalkan, menunda, atau membalik pilihan itu. DILARANG membuat tokoh',
-          '  berubah pikiran sehingga cerita kembali ke jalur pilihan yang TIDAK diambil.',
-        ].filter(Boolean).join('\n')
-      : `- (Bab ${cc.previousChapter.number} tidak memiliki pilihan pembaca / linear)`
-
-    layer2ReaderHistory = [
-      '=== [2] RIWAYAT PEMBACA & AKHIR BAB SEBELUMNYA ===',
-      `Potongan Paragraf Terakhir Bab ${cc.previousChapter.number} ("${cc.previousChapter.title}"):`,
-      prevEnding,
-      '',
-      choiceBlock,
-    ].join('\n')
-  }
-
-  // --- Lapis 3: KEADAAN CERITA & BUDGET CONTROL (total ≤ 4800 chars) ---
-  let layer3StoryState = ''
-  let layer3Eviction: WriterPromptParts['layer3Eviction']
-  if (cc) {
-    // Field spesifik, bukan objeknya: interpolasi objek menghasilkan
-    // "[object Object]" dan menghapus seluruh fakta/kronologi dari prompt.
-    const threadLines = cc.openThreads
-      .map((t) => `- Thread Aktif: ${t.id} (${t.status})`)
-    const factLines = cc.anchorFacts
-      .map((f) => `- Fakta Mapan (Bab ${f.establishedChapter}): ${f.statement}`)
-    const timelineLines = cc.recentTimeline
-      .map((t) => `- Kronologi Pasti (Bab ${t.chapterNumber}): ${t.description}`)
-    // M10-A closure: ringkasan babak yang sudah selesai turut dibawa ke writer
-    // (dulu hanya ada di compiler, tak pernah sampai prompt = DEAD_PATH).
-    const rollupLines = cc.actRollups.length
-      ? ['Ringkasan Babak Terlewati:', ...cc.actRollups.map(
-          (r) => `- Babak ${r.actNumber} (Bab 1-${r.coversToChapter}): ${r.summary}`,
-        )]
-      : []
-
-    const sections: Array<{
-      id: 'threads' | 'facts' | 'timeline' | 'rollups'
-      header: string | null
-      lines: string[]
-    }> = [
-      { id: 'threads' as const, header: 'Thread Aktif:', lines: threadLines },
-      { id: 'facts' as const, header: 'Fakta Terbukti:', lines: factLines },
-      { id: 'timeline' as const, header: 'Kronologi Terbaru:', lines: timelineLines },
-      { id: 'rollups' as const, header: null, lines: rollupLines },
-    ].filter((s) => s.lines.length > 0)
-
-    const render = (): string => {
-      const parts: string[] = [
-        '=== [3] KEADAAN CERITA ===',
-        `Rute & Status Pembaca: ${cc.routeStateSummary}`,
-      ]
-      for (const section of sections) {
-        if (section.lines.length === 0) continue
-        if (section.header) parts.push(section.header)
-        parts.push(...section.lines)
-      }
-      return parts.join('\n')
-    }
-
-    // Trim GRANULAR per baris (tertua dibuang dulu), bukan whole-section:
-    // urutan prioritas timeline -> facts -> threads -> rollups. Baris yang
-    // dibuang dicatat untuk observability (layer3Eviction), tidak pernah
-    // memotong excerpt/pilihan pembaca.
-    const trimPriority: Array<typeof sections[number]['id']> = ['timeline', 'facts', 'threads', 'rollups']
-    const evicted: WriterPromptParts['layer3Eviction'] = { timeline: 0, facts: 0, threads: 0, rollups: 0 }
-    let content = render()
-    while (content.length > 4800) {
-      const target = trimPriority
-        .map((id) => sections.find((s) => s.id === id))
-        .find((s) => s && s.lines.length > 0)
-      if (!target) break // patologi: semua seksi habis, terima overshoot minimal
-      target.lines.pop()
-      evicted[target.id] = (evicted[target.id] ?? 0) + 1
-      content = render()
-    }
-
-    layer3StoryState = content
-    layer3Eviction = evicted
-  }
-
-  // --- Lapis 4: SASARAN BAB ---
-  const layer4ChapterGoal = [
-    '=== [4] SASARAN BAB & ALUR BEAT ===',
-    `Tulis Bab ${chapter} drama interaktif berbahasa Indonesia.`,
-    'POV: orang pertama "aku" sebagai tokoh utama (protagonis di daftar nama bila ada).',
-    input.goal
-      ? `Tujuan Bab (hubungkan langsung dengan akibat pilihan pembaca): ${input.goal}`
-      : '',
-    input.chapterMode ? `Mode adegan dominan: ${input.chapterMode}.` : '',
-    beats.length
-      ? `Beat Wajib — tunjukkan lewat adegan & aksi konkret, bukan deskripsi ringkas:\n${beats.map((b) => `- ${b}`).join('\n')}`
-      : '',
-  ].filter(Boolean).join('\n')
-
-  // --- Lapis 5: KERANGKA & GAYA ---
-  const layer5FrameworkAndStyle = [
-    '=== [5] KERANGKA, RITME & FORMAT OUTPUT ===',
-    input.phase ? `Fase cerita: ${input.phase}.` : '',
-    input.voiceGuidance ?? '',
-    `Tulis ${scenes} adegan PENUH yang mengalir di lokasi konkret; tiap adegan minimal ~${Math.round(words.softMin / scenes)} kata dengan dialog panjang, deskripsi indrawi, dan monolog batin tokoh.`,
-    `PANJANG WAJIB minimal ${words.softMin} kata (target ${words.softMin}–${words.softMax}; jangan lewat ${words.hardMax}). JANGAN meringkas atau mempercepat alur — jika terasa kurang dari ${words.softMin} kata, tambahkan adegan atau perpanjang dialog, bukan filler.`,
-    `Jumlah paragraf ${paragraphs.softMin}–${paragraphs.softMax} (wajib ${paragraphs.hardMin}–${paragraphs.hardMax}).`,
-    'Buka dengan alur langsung yang menyambung dari paragraf terakhir / akibat pilihan.',
-    'Tutup dengan 3–5 paragraf cliffhanger pendek (kecuali bab akhir cerita).',
-    repairBlock(input.repairFindings),
-    mobileDramaOutputFormat(),
-  ].filter(Boolean).join('\n')
-
-  const user = [
-    layer1CanonInvariants,
-    layer2ReaderHistory,
-    layer3StoryState,
-    layer4ChapterGoal,
-    layer5FrameworkAndStyle,
+  const authorityIds = [
+    ...brief.forbiddenRevealIds,
+    ...brief.resolvedPlotDebtIds,
+    ...brief.scheduledReveals.map((item) => item.authorityId),
+    ...brief.plotDebtsToProgress.map((item) => item.authorityId),
+    ...brief.plotDebtsToClose.map((item) => item.authorityId),
+    ...(brief.lockedEndingKey === null ? [] : [brief.lockedEndingKey]),
   ]
-    .filter(Boolean)
-    .join('\n\n')
+  const safe = (value: string) => writerVisible(value, authorityIds)
+  const lines = (values: readonly string[]) => values.map((value) => `- ${safe(value)}`)
+  const obligationLines = (label: string, values: typeof brief.scheduledReveals) => (
+    values.length > 0
+      ? [label, ...values.map((item) => `- ${safe(item.writerDirective)}`)]
+      : []
+  )
+
+  const p0 = [
+    '=== [P0] INVARIAN CANON & KEAMANAN (MANDATORI / HARUS DIPATUHI) ===',
+    names.length > 0 ? `- Tokoh yang boleh tampil (nama persis): ${names.join(', ')}.` : '',
+    '- DILARANG memunculkan tokoh bernama baru yang tidak ada dalam daftar di atas.',
+    brief.mustNotReveal.length > 0
+      ? '- RAHASIA DILARANG UNTUK DIUNGKAP/DIBOCORKAN:'
+      : '',
+    ...lines(brief.mustNotReveal),
+    '- DILARANG membocorkan istilah teknis atau metadata internal.',
+  ].filter(Boolean).join('\n')
+
+  const endingLines = brief.lockedEndingKey === null
+    ? []
+    : [
+        '- ARAH AKHIR CERITA (ENDING TERKUNCI): Cerita telah mengunci arah resolusi menuju ending terpilih.',
+        ...lines(brief.lockedEndingClosure),
+        '- Semua tindakan, ketegangan, dan akibat adegan bab ini WAJIB mengarah ke penyelesaian tersebut.',
+      ]
+  const anchorLines = cc?.storyAnchors
+    ? [
+        cc.storyAnchors.corePromise ? `- Janji Inti Cerita: ${safe(cc.storyAnchors.corePromise)}` : '',
+        cc.storyAnchors.mainConflict ? `- Konflik Utama: ${safe(cc.storyAnchors.mainConflict)}` : '',
+        cc.storyAnchors.finalQuestion ? `- Pertanyaan Akhir Cerita: ${safe(cc.storyAnchors.finalQuestion)}` : '',
+      ].filter(Boolean)
+    : []
+  const p1 = [
+    '=== [P1] KEWAJIBAN NARATIF MANDATORI BAB INI ===',
+    ...endingLines,
+    ...obligationLines('- REVEAL / TITIK BALIK WAJIB:', brief.scheduledReveals),
+    ...obligationLines('- HUTANG PLOT WAJIB DIMAJUKAN:', brief.plotDebtsToProgress),
+    ...obligationLines('- HUTANG PLOT HARUS DITUTUP:', brief.plotDebtsToClose),
+    ...anchorLines,
+  ].join('\n')
+
+  const previousEnding = cc?.previousChapter?.endingParagraphs
+    .map((paragraph) => `> ${safe(paragraph)}`)
+    .join('\n') ?? '-'
+  const previousChoice = cc?.previousChoice
+  const context = [
+    '=== KONTEKS: RIWAYAT PEMBACA & AKIBAT PILIHAN ===',
+    'Potongan Paragraf Akhir Bab Sebelumnya:',
+    previousEnding,
+    previousChoice ? `- Pilihan: "${safe(previousChoice.label)}"` : '- Pilihan: -',
+    previousChoice
+      ? `- Konsekuensi Kanonik: ${previousChoice.consequence.map(safe).join(' / ')}`
+      : '- Konsekuensi Kanonik: -',
+    previousChoice
+      ? '- KONSEKUENSI DI ATAS TELAH TERJADI DAN MENGIKAT. Buka bab ini dengan menyambung langsung akibat tersebut. DILARANG menganulir atau membatalkan pilihan pembaca.'
+      : '',
+    brief.routeStateSummary ? `- Keadaan rute: ${safe(brief.routeStateSummary)}` : '',
+  ].filter(Boolean).join('\n')
+
+  const p2 = [
+    '=== [P2] PENYELESAIAN DRAMATIS ADEGAN & RENCANA BAB ===',
+    `- Tujuan Bab: ${safe(brief.chapterGoal)}`,
+    beats.length > 0 ? '- Beat Wajib yang Harus Dijalani Tokoh:' : '',
+    ...lines(beats),
+    '- Tulis 2–4 adegan berkesinambungan di lokasi fisik nyata yang mengalir tanpa lompatan waktu drastis.',
+    '- Terapkan Show, Don\'t Tell: fokus pada aksi fisik, reaksi emosional tubuh, dan subteks dialog.',
+    '- Bangun penutupan dramatis yang tuntas pada akhir bab, mengerucut pada cliffhanger yang tajam dan bermakna.',
+  ].filter(Boolean).join('\n')
+
+  const p3 = [
+    '=== [P3] OTORITAS PANJANG KATA ===',
+    '- Target utama penulisan: 850–950 kata.',
+    '- Batas penerimaan keras: 800–1000 kata.',
+    '- Kembangkan interaksi sensorik dan dinamika dialog untuk mencapai rentang target; hindari ringkasan naratif tergesa-gesa.',
+  ].join('\n')
+
+  const p4 = [
+    '=== [P4] SUARA TOKOH & KETERBACAAN MOBILE ===',
+    '- Pertahankan sudut pandang orang pertama ("aku") secara konsisten.',
+    input.voiceGuidance ? `- Panduan Suara Karakter:\n${safe(input.voiceGuidance)}` : '',
+    '- Format pergantian ucapan tokoh dipisahkan dengan jelas agar pembaca mudah mengikuti percakapan.',
+  ].filter(Boolean).join('\n')
+
+  const p5 = [
+    '=== [P5] RITME PARAGRAF KUALITATIF ===',
+    'Gunakan paragraf yang nyaman dibaca di layar ponsel.',
+    'Hindari dinding teks panjang.',
+    'Pisahkan pergantian pembicara dan perubahan fokus dengan jelas.',
+    'Biarkan panjang paragraf mengikuti kebutuhan aksi, reaksi, dialog, dan tensi adegan.',
+  ].join('\n')
+
+  const output = [
+    '=== KONTRAK KELUARAN ===',
+    'Keluaran WAJIB diawali dengan:',
+    'JUDUL: <Judul Bab yang Menggugah>',
+    '<Prosa lengkap...>',
+  ].join('\n')
 
   return {
-    system,
-    user,
+    system: mobileDramaSystemPrompt(),
+    user: [p0, p1, context, p2, p3, p4, p5, output].join('\n\n'),
     styleProfileId: STYLE_PROFILE_ID,
-    wordTarget: {
-      hardMin: words.hardMin,
-      hardMax: words.hardMax,
-      softMin: words.softMin,
-      softMax: words.softMax,
-    },
-    paragraphTarget: {
-      hardMin: paragraphs.hardMin,
-      hardMax: paragraphs.hardMax,
-      softMin: paragraphs.softMin,
-      softMax: paragraphs.softMax,
-    },
-    ...(layer3Eviction !== undefined ? { layer3Eviction } : {}),
+    wordTarget: { ...words },
+    paragraphTarget: { ...paragraphs },
   }
+}
+
+export function buildWriterPrompt(input: BuildWriterPromptInput): WriterPromptParts {
+  if (!input.brief) throw new Error('CHAPTER_BRIEF_V2_BRIEF_REQUIRED')
+  return buildChapterBriefV2Prompt(input)
 }

@@ -15,7 +15,7 @@ export const revalidate = false
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     await requireAdminUser() // Require authorized admin user
@@ -44,7 +44,7 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     // Capture authorized admin user identity (will be used for reviewer_uid derivation)

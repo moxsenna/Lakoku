@@ -6,13 +6,13 @@
  * Boundary: Reuse requireAdminUser() auth seam; NO invented role='reviewer'; single approved path per allowlist
  */
 import { NextResponse } from 'next/server'
-import { getPendingItems, claimQueueItem } from '@lakoku/runtime'
+import { getPendingItems } from '@lakoku/runtime'
 import { requireAdminUser } from '@/lib/admin/auth'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = false // Never cache reader-facing content
 
-export async function GET(request: Request) {
+export async function GET(_request: Request) {
   try {
     // Require authorized admin user via existing auth seam
     await requireAdminUser()
@@ -52,14 +52,4 @@ export async function POST(_request: Request) {
       { status: 500 }
     )
   }
-}
-
-// POST endpoint for recording disposition (admin dashboard only)
-export async function POST_disposition(_request: Request) {
-  // This is handled by [id]/route.ts for individual stories
-  // See app/api/blueprint-review/[id]/route.ts
-  return NextResponse.json({ 
-    success: false,
-    message: 'Use /api/blueprint-review/{story_id} for dispositions'
-  })
 }

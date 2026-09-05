@@ -3,13 +3,15 @@
  *
  * This test proves paid Bab 6 reaches worker generator admission and ends only
  * in FAILED_REVIEW_REQUIRED after a real Bab 5 reconciliation failure.
+ *
+ * Jalankan: LAKOKU_LOCAL_DB_TEST=1 pnpm exec vitest run tests/db/m10-c-r3-2-worker-production-proof.test.ts
  */
 // @vitest-environment node
 
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
-import { describe, expect, test, vi } from 'vitest'
+import { beforeAll, describe, expect, test, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
@@ -19,6 +21,12 @@ interface LocalStatus {
   serviceRoleKey: string
 }
 
+/**
+ * Local Supabase discovery. Invoked ONLY from beforeAll inside the gated suite,
+ * so the default unit run performs no Docker/CLI subprocess during collection.
+ * Failures still throw — but at setup time, where they are a real suite failure
+ * instead of a collection crash.
+ */
 function getLocalStatus(): LocalStatus {
   const raw = process.platform === 'win32'
     ? execFileSync('cmd.exe', ['/d', '/s', '/c', 'pnpm exec supabase status -o json'], {
@@ -45,10 +53,7 @@ function getLocalStatus(): LocalStatus {
   return { url, anonKey, serviceRoleKey }
 }
 
-const local = getLocalStatus()
-process.env.SUPABASE_URL = local.url
-process.env.NEXT_PUBLIC_SUPABASE_URL = local.url
-process.env.SUPABASE_SERVICE_ROLE_KEY = local.serviceRoleKey
+let local: LocalStatus
 
 const STORY_ID = `m10c-r3-2-worker-${randomUUID()}`
 const WORKER_USER_ID = '99999999-9999-4999-9999-99999999c006'
@@ -65,7 +70,19 @@ function exactCount(result: { count: number | null; error: { message: string } |
   return result.count ?? 0
 }
 
-describe('M10-C R3.2 — real worker lifecycle', () => {
+// DB-backed proof: opt-in only, same gate as the other isolated local-DB suites
+// (LAKOKU_LOCAL_DB_TEST=1 pnpm exec vitest run tests/db/...). Without the gate
+// the suite is skipped rather than collected-and-failed; local Supabase
+// discovery happens in beforeAll so a missing Docker engine can never crash
+// collection of the ordinary unit run.
+describe.skipIf(process.env.LAKOKU_LOCAL_DB_TEST !== '1')('M10-C R3.2 — real worker lifecycle', () => {
+  beforeAll(() => {
+    local = getLocalStatus()
+    process.env.SUPABASE_URL = local.url
+    process.env.NEXT_PUBLIC_SUPABASE_URL = local.url
+    process.env.SUPABASE_SERVICE_ROLE_KEY = local.serviceRoleKey
+  })
+
   test('commercial AUTHORIZED then narrative FAILED_REVIEW_REQUIRED', async () => {
     const { assertIsolatedTarget } = await import('../../lib/narrative-qa/harness/seed')
     assertIsolatedTarget()

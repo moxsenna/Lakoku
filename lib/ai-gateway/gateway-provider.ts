@@ -2,7 +2,12 @@ import 'server-only'
 import { streamText, Output, type LanguageModel } from 'ai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { z } from 'zod'
-import type { CanonSnapshot, Finding, ContinuationContext } from '@lakoku/narrative-core'
+import {
+  validateLayerA,
+  type CanonSnapshot,
+  type Finding,
+  type ContinuationContext,
+} from '@lakoku/narrative-core'
 import {
   createDeterministicProvider,
   type GenerationProvider,
@@ -20,7 +25,15 @@ import {
 import { GatewayError, scanForLeaks } from './gateway'
 import { buildChoiceSystemPromptV2, AiChoiceDraftSchema } from './choice-draft-v2'
 import { clampChapterParagraphs, countParagraphWords } from '@/lib/prose/clamp-chapter-prose'
-import { buildWriterPrompt } from '@/lib/prose/prompt-engine'
+import {
+  buildProductionChapterWriterPrompt,
+  buildWriterLengthRepairPrompt,
+  parseChapterWriterProse,
+  resolveProductionChapterWriterRuntime,
+  type ParsedChapterWriterProse,
+  type WriterAuthorityMode,
+} from './chapter-writer-contract'
+import type { PreProseChapterBrief } from '@/lib/story-engine/pre-prose-brief'
 import type { AiModelRoute } from '@/lib/ops/ai-model-routes'
 import {
   ContentRejectedError,
@@ -28,6 +41,14 @@ import {
   executeObservedModelCall,
 } from './observed-model-call.server'
 import { sanitizeChoiceValidationCodes } from './model-call-errors'
+import { ChapterDraftSchema } from './schemas'
+import {
+  assertWriterCompleteness,
+  evaluateWriterCompleteness,
+  evaluateWriterLengthRepairEligibility,
+  WriterCompletenessError,
+  type WriterCompletenessFinding,
+} from './writer-completeness'
 import { parseChoiceModelJson } from './choice-response-validation'
 import {
   buildSemanticJudgePrompt,
@@ -69,25 +90,17 @@ import {
  */
 
 const DEFAULT_MODEL = 'openai/gpt-4.1-mini'
-/** Max wall time per model attempt — hang proxy must not hold lease forever. */
-const LLM_PROSE_TIMEOUT_MS = 120_000
 // Choices are small structured outputs; 90s allows slow structured models without
 // matching the longer prose budget.
 const LLM_CHOICE_TIMEOUT_MS = 90_000
-/**
- * Antigravity Gemini (`ag/*` via 9router) spends a large share of `max_tokens`
- * on reasoning/thinking. Without a high floor, chapter prose truncates mid-sentence.
- * Empirically: mt=1024 → ~40 content tokens; mt=2048 → full short replies.
- */
 const AG_REASONING_MAX_OUTPUT_FLOOR = 4096
 const DEFAULT_PROSE_MAX_OUTPUT_TOKENS = 2048
 
 function isAntigravityModelLabel(label: string, modelId?: string): boolean {
-  const blob = `${label} ${modelId ?? ''}`.toLowerCase()
-  return blob.includes('ag/') || blob.includes('antigravity')
+  const identity = `${label} ${modelId ?? ''}`.toLowerCase()
+  return identity.includes('ag/') || identity.includes('antigravity')
 }
 
-/** Resolve maxOutputTokens with a hard floor for ag/* reasoning models. */
 function resolveMaxOutputTokens(args: {
   label: string
   modelId?: string
@@ -95,10 +108,9 @@ function resolveMaxOutputTokens(args: {
   fallback?: number
 }): number {
   const base = args.routeMax ?? args.fallback ?? DEFAULT_PROSE_MAX_OUTPUT_TOKENS
-  if (isAntigravityModelLabel(args.label, args.modelId)) {
-    return Math.max(base, AG_REASONING_MAX_OUTPUT_FLOOR)
-  }
-  return base
+  return isAntigravityModelLabel(args.label, args.modelId)
+    ? Math.max(base, AG_REASONING_MAX_OUTPUT_FLOOR)
+    : base
 }
 
 /** Satu kandidat model dengan identitas terstruktur dalam rantai fallback. */
@@ -171,7 +183,10 @@ function openAICompatibleFetch(effort?: string | null): typeof globalThis.fetch 
         // Biarkan body apa adanya bila gagal parse.
       }
     }
-    return globalThis.fetch(input as Parameters<typeof globalThis.fetch>[0], init)
+    return globalThis.fetch(
+      input as Parameters<typeof globalThis.fetch>[0],
+      init,
+    )
   }
 }
 
@@ -187,6 +202,7 @@ function customCandidate(optModel?: string, effort?: string | null): UnindexedMo
     name: 'custom',
     baseURL,
     apiKey: process.env.CUSTOM_LLM_API_KEY,
+    includeUsage: true,
     fetch: openAICompatibleFetch(effort),
   })
   return {
@@ -214,6 +230,7 @@ function nineRouterCandidate(optModel?: string, effort?: string | null): Unindex
     name: '9router',
     baseURL,
     apiKey,
+    includeUsage: true,
     fetch: openAICompatibleFetch(effort),
   })
   return {
@@ -237,6 +254,7 @@ function openRouterCandidates(effort?: string | null): UnindexedModelCandidate[]
     name: 'openrouter',
     baseURL: 'https://openrouter.ai/api/v1',
     apiKey,
+    includeUsage: true,
     fetch: openAICompatibleFetch(effort),
   })
 
@@ -308,54 +326,6 @@ function resolveModelChain(optModel?: string, route?: AiModelRoute): ModelCandid
   return finalizeModelChain([...routeCandidates, ...envCandidates])
 }
 
-/** Skema prosa yang diminta dari model — hanya konten naratif untuk pembaca. */
-/**
- * Parse teks bebas dari LLM menjadi {title, paragraphs}.
- *
- * Kontrak keluaran (lihat prompt): baris pertama diawali `JUDUL:` lalu judul,
- * diikuti baris kosong, lalu prosa dengan paragraf dipisah baris kosong. Parser
- * ini toleran: bila prefiks `JUDUL:` tak ada, baris non-kosong pertama dianggap
- * judul. Dibuat begini agar kompatibel dengan endpoint OpenAI-compatible apa pun
- * (banyak yang tak mendukung structured/JSON output).
- */
-function parseProse(text: string): { title: string; paragraphs: string[] } {
-  const blocks = text
-    .replace(/\r\n/g, '\n')
-    .split(/\n\s*\n/)
-    .map((b) => b.trim())
-    .filter(Boolean)
-
-  if (blocks.length === 0) {
-    throw new Error('gateway-provider: LLM mengembalikan teks kosong.')
-  }
-
-  let title = ''
-  const first = blocks[0]
-  const titleMatch = first.match(/^\s*(?:JUDUL|Judul|TITLE|Title)\s*[:：]\s*(.+)$/)
-  if (titleMatch) {
-    title = titleMatch[1].trim()
-    blocks.shift()
-  } else {
-    // Baris pertama sebagai judul jika singkat (satu baris), selain itu sintesis.
-    const firstLine = first.split('\n')[0].trim()
-    if (!first.includes('\n') && firstLine.length <= 80) {
-      title = firstLine.replace(/^#+\s*/, '')
-      blocks.shift()
-    } else {
-      title = 'Tanpa Judul'
-    }
-  }
-
-  // Ratakan paragraf: pecah blok multi-baris menjadi paragraf per baris berisi.
-  const paragraphs = blocks
-    .flatMap((b) => b.split(/\n+/))
-    .map((p) => p.trim())
-    .filter(Boolean)
-
-  if (!title) title = 'Tanpa Judul'
-  return { title, paragraphs }
-}
-
 type ProseModel = {
   /** Model gateway, mis. "openai/gpt-4.1-mini". */
   model?: string
@@ -365,92 +335,214 @@ function countWords(paragraphs: string[]): number {
   return countParagraphWords(paragraphs)
 }
 
-function activeCharacterNames(snapshot: CanonSnapshot, chapter: number): string[] {
-  return snapshot.characters
-    .filter((c) => c.status !== 'DEAD' && c.introducedChapter <= chapter)
-    .map((c) => c.canonicalName)
-}
-
-/**
- * Panduan suara (T0/G5-VOICE): rakit voice sheet tokoh aktif menjadi instruksi
- * ringkas untuk penulis prosa, sehingga dialog tiap tokoh KHAS & konsisten sejak
- * Bab 1. Voice diturunkan deterministik dari canon (opening package), bukan model.
- * Aman-pembaca: hanya bahasa cerita (tak ada metadata internal).
- */
-function voiceGuidance(snapshot: CanonSnapshot, chapter: number): string {
-  const nameById = new Map(snapshot.characters.map((c) => [c.id, c.canonicalName]))
-  const activeIds = new Set(
-    snapshot.characters
-      .filter((c) => c.status !== 'DEAD' && c.introducedChapter <= chapter)
-      .map((c) => c.id),
-  )
-  const lines = snapshot.voiceSheets
-    .filter((v) => activeIds.has(v.characterId))
-    .sort((a, b) => a.characterId.localeCompare(b.characterId))
-    .map((v) => {
-      const name = nameById.get(v.characterId) ?? 'Tokoh'
-      const parts = [`- ${name}: bicara ${v.register}`]
-      if (v.speechHabits.length) parts.push(`kebiasaan: ${v.speechHabits.join('; ')}`)
-      if (v.forbiddenWords.length) parts.push(`hindari kata: ${v.forbiddenWords.join(', ')}`)
-      if (v.sampleLines.length) parts.push(`contoh nada: "${v.sampleLines[0]}"`)
-      return parts.join(' — ')
-    })
-  if (!lines.length) return ''
-  return ['Jaga suara tiap tokoh agar khas & konsisten:', ...lines].join('\n')
-}
-
-/**
- * Bangun prompt penulisan bab lewat prose prompt-engine (single source of rhythm).
- * Repair findings diteruskan ke buildWriterPrompt untuk instruksi perbaikan.
- */
-function buildPrompt(args: {
-  snapshot: CanonSnapshot
-  plan: Record<string, unknown>
-  continuation?: ContinuationContext | null
-  repairFindings?: Finding[]
-}): { system: string; prompt: string } {
-  const { snapshot, plan, continuation } = args
-  const chapter = Number(plan.chapterNumber)
-  const names = activeCharacterNames(snapshot, chapter)
-  const voices = voiceGuidance(snapshot, chapter)
-  const beats = Array.isArray(plan.plannedBeats) ? (plan.plannedBeats as string[]) : []
-  const goal = String(plan.chapterGoal ?? '')
-  const phase = String(plan.phase ?? '')
-  const scenes = Number(plan.targetSceneCount ?? 3)
-
-  const parts = buildWriterPrompt({
-    chapterNumber: chapter,
-    phase: phase || undefined,
-    goal: goal || undefined,
-    characterNames: names,
-    voiceGuidance: voices || undefined,
-    plannedBeats: beats,
-    sceneCount: scenes,
-    continuation,
-    repairFindings: args.repairFindings?.map((f) => ({
-      severity: f.severity,
-      message: f.message,
-    })),
-  })
-
-  return { system: parts.system, prompt: parts.user }
-}
-
 /**
  * Hasilkan prosa via LLM dengan penjagaan: bila terdeteksi kebocoran istilah
  * internal, coba sekali lagi; bila masih bocor, lempar agar pipeline menangani
  * (fallback aman ditangani pemanggil bila perlu).
  */
+type ProcessedWriterResponse = Readonly<{
+  prose: ParsedChapterWriterProse
+  findings: WriterCompletenessFinding[]
+  wordCount: number
+  finishReason: string | undefined
+}>
+
+function reserveWriterInference(options: ModelCallExecutionOptions): void {
+  const external = options.callBudget
+  const writer = options.writerInferenceBudget
+  if (external && external.used >= external.max) {
+    throw new Error('PROVIDER_CALL_BUDGET_EXHAUSTED')
+  }
+  if (writer && writer.used >= writer.max) {
+    throw new Error('WRITER_INFERENCE_BUDGET_EXHAUSTED')
+  }
+  if (external) external.used += 1
+  if (writer) writer.used += 1
+}
+
+async function generateProseWithLengthRepairV1(args: {
+  candidate: ModelCandidate
+  productionPrompt: Readonly<{ system: string; prompt: string }>
+  options: ModelCallExecutionOptions
+  route?: AiModelRoute
+}): Promise<{ title: string; paragraphs: string[]; usedModel: string }> {
+  const { candidate, options } = args
+  const runtime = resolveProductionChapterWriterRuntime({
+    label: candidate.label,
+    modelId: candidate.configuredModelId,
+    routeMax: args.route?.maxOutputTokens,
+  })
+  const telemetry = {
+    firstPassOutcome: 'REJECTED' as 'ACCEPTED' | 'LENGTH_REPAIR_ELIGIBLE' | 'REJECTED',
+    repairAttempted: false,
+    repairOutcome: 'NOT_ATTEMPTED' as 'NOT_ATTEMPTED' | 'ACCEPTED' | 'REJECTED',
+    finalWriterOutcome: 'REJECTED' as 'ACCEPTED' | 'REJECTED',
+  }
+  let emitted = false
+  const emit = (): void => {
+    if (emitted || options.writerLengthRepairTelemetryState?.emitted) return
+    emitted = true
+    if (options.writerLengthRepairTelemetryState) {
+      options.writerLengthRepairTelemetryState.emitted = true
+    }
+    try {
+      options.observeWriterLengthRepair?.({ ...telemetry })
+    } catch {
+      return
+    }
+  }
+
+  const invoke = async (
+    request: Readonly<{ system: string; prompt: string }>,
+    workflowPhase: string,
+  ): Promise<ProcessedWriterResponse> => {
+    throwIfAborted(options.signal)
+    reserveWriterInference(options)
+    options.observeWriterRuntime?.({
+      ...runtime,
+      temperature: args.route?.temperature ?? null,
+    })
+    return executeObservedModelCall({
+      context: options.telemetryContext,
+      candidate: candidateIdentity(candidate),
+      useCase: 'chapter_prose',
+      workflowPhase,
+      call: () => executeCandidate(
+        options.providerRuntime,
+        'prose',
+        candidate,
+        () => streamText({
+          model: candidate.model,
+          system: request.system,
+          prompt: request.prompt,
+          temperature: args.route?.temperature ?? undefined,
+          maxOutputTokens: runtime.maxOutputTokens,
+          abortSignal: providerAbortSignal(options.signal, runtime.timeoutMs),
+          maxRetries: runtime.maxRetries,
+        }),
+      ),
+      observeCompletion: options.observeModelCall
+        ? (completion, metadata) => options.observeModelCall?.({
+            ...completion,
+            finishReason: metadata.finishReason,
+          })
+        : undefined,
+      observeReasoningBudget: options.observeReasoningBudget,
+      persistObservation: options.diagnosticChapterWriterPromptOverride === undefined,
+      consume: (text, metadata) => {
+        throwIfAborted(options.signal)
+        let prose: ParsedChapterWriterProse
+        try {
+          prose = parseChapterWriterProse(text)
+          options.observeWriterParserOutcome?.('ACCEPTED')
+        } catch (error) {
+          options.observeWriterParserOutcome?.('REJECTED')
+          throw new InvalidModelResponseError(
+            error instanceof Error ? error.message : undefined,
+          )
+        }
+        const completenessInput = {
+          finishReason: metadata.finishReason,
+          hasExplicitTitle: prose.hasExplicitTitle,
+          title: prose.title,
+          paragraphs: prose.paragraphs,
+        }
+        const findings = evaluateWriterCompleteness(completenessInput)
+        const wordCount = countWords(prose.paragraphs)
+        options.observeWriterEvaluation?.({
+          completenessPassed: findings.length === 0,
+          completenessCodes: findings.map((finding) => finding.code),
+          wordCount,
+          paragraphCount: prose.paragraphs.length,
+          requiredSectionsPresent: !findings.some(
+            (finding) => finding.code === 'WRITER_REQUIRED_SECTION_MISSING',
+          ),
+          terminalClosurePresent: !findings.some(
+            (finding) => finding.code === 'WRITER_TERMINAL_CLOSURE_MISSING',
+          ),
+        })
+        const leaks = scanForLeaks([prose.title, ...prose.paragraphs].join('\n'))
+        if (leaks.length > 0) {
+          throw new ContentRejectedError(
+            'Chapter prose contains forbidden internal language.',
+            leaks,
+          )
+        }
+        return { prose, findings, wordCount, finishReason: metadata.finishReason }
+      },
+    })
+  }
+
+  try {
+    const first = await invoke(args.productionPrompt, options.workflowPhase)
+    if (first.findings.length === 0) {
+      telemetry.firstPassOutcome = 'ACCEPTED'
+      telemetry.finalWriterOutcome = 'ACCEPTED'
+      emit()
+      return { ...first.prose, usedModel: candidate.label }
+    }
+
+    const eligibility = evaluateWriterLengthRepairEligibility({
+      parserAccepted: true,
+      finishReason: first.finishReason,
+      ...first.prose,
+    })
+    if (!eligibility.eligible) throw new WriterCompletenessError(first.findings)
+
+    telemetry.firstPassOutcome = 'LENGTH_REPAIR_ELIGIBLE'
+    telemetry.repairAttempted = true
+    const repairPrompt = buildWriterLengthRepairPrompt({
+      production: args.productionPrompt,
+      firstPass: first.prose,
+      wordCount: first.wordCount,
+    })
+    const repaired = await invoke(repairPrompt, 'CHAPTER_PROSE_LENGTH_REPAIR_1')
+    if (repaired.findings.length > 0) {
+      telemetry.repairOutcome = 'REJECTED'
+      throw new WriterCompletenessError(repaired.findings)
+    }
+    telemetry.repairOutcome = 'ACCEPTED'
+    telemetry.finalWriterOutcome = 'ACCEPTED'
+    emit()
+    return { ...repaired.prose, usedModel: candidate.label }
+  } catch (error) {
+    if (telemetry.repairAttempted) telemetry.repairOutcome = 'REJECTED'
+    emit()
+    throw error
+  }
+}
+
 async function generateProse(args: {
   chain: ModelCandidate[]
   snapshot: CanonSnapshot
   plan: Record<string, unknown>
   continuation?: ContinuationContext | null
+  brief: PreProseChapterBrief
+  authorityMode: WriterAuthorityMode
   repairFindings?: Finding[]
   options: ModelCallExecutionOptions
   route?: AiModelRoute
 }): Promise<{ title: string; paragraphs: string[]; usedModel: string }> {
-  const { system, prompt } = buildPrompt(args)
+  const validatedProductionPrompt = buildProductionChapterWriterPrompt(args)
+  const diagnosticOverride = args.options.diagnosticChapterWriterPromptOverride
+  const productionPrompt = diagnosticOverride
+    ? {
+        system: diagnosticOverride.system,
+        prompt: diagnosticOverride.prompt,
+        metadata: validatedProductionPrompt.metadata,
+      }
+    : validatedProductionPrompt
+  if (args.options.writerLengthRepairV1?.enabled) {
+    const candidate = args.chain[0]
+    if (!candidate) throw new Error('gateway-provider: kandidat writer tidak tersedia.')
+    return generateProseWithLengthRepairV1({
+      candidate,
+      productionPrompt,
+      options: args.options,
+      route: args.route,
+    })
+  }
+  const { system, prompt } = productionPrompt
   let lastError: unknown
 
   // Rantai fallback: coba tiap kandidat model berurutan. Kegagalan (error
@@ -465,43 +557,82 @@ async function generateProse(args: {
         const workflowPhase = attempt === 0
           ? args.options.workflowPhase
           : 'CHAPTER_PROSE_LEAK_REPAIR'
-        // maxOutputTokens: wajib untuk ag/* (reasoning memakan budget).
-        const maxOutputTokens = resolveMaxOutputTokens({
+        const runtime = resolveProductionChapterWriterRuntime({
           label,
           modelId: candidate.configuredModelId,
           routeMax: args.route?.maxOutputTokens,
-          fallback: DEFAULT_PROSE_MAX_OUTPUT_TOKENS,
         })
         try {
+          reserveWriterInference(args.options)
+          args.options.observeWriterRuntime?.({
+            ...runtime,
+            temperature: args.route?.temperature ?? null,
+          })
           const parsed = await executeObservedModelCall({
             context: args.options.telemetryContext,
             candidate: candidateIdentity(candidate),
             useCase: 'chapter_prose',
             workflowPhase,
-            call: () => executeCandidate(args.options.providerRuntime, 'prose', candidate, () => streamText({
-              model,
-              system,
-              prompt:
-                attempt === 0
-                  ? prompt
-                  : `${prompt}\n\nCATATAN: revisi sebelumnya memuat istilah teknis terlarang. Tulis ulang murni sebagai narasi cerita.`,
-              temperature: args.route?.temperature ?? undefined,
-              maxOutputTokens,
-              abortSignal: providerAbortSignal(args.options.signal, LLM_PROSE_TIMEOUT_MS),
-              maxRetries: 0,
-            })),
-            consume: (text) => {
+            call: () => executeCandidate(
+              args.options.providerRuntime,
+              'prose',
+              candidate,
+              () => streamText({
+                model,
+                system,
+                prompt:
+                  attempt === 0
+                    ? prompt
+                    : `${prompt}\n\nCATATAN: revisi sebelumnya memuat istilah teknis terlarang. Tulis ulang murni sebagai narasi cerita.`,
+                temperature: args.route?.temperature ?? undefined,
+                maxOutputTokens: runtime.maxOutputTokens,
+                abortSignal: providerAbortSignal(args.options.signal, runtime.timeoutMs),
+                maxRetries: runtime.maxRetries,
+              }),
+            ),
+            observeCompletion: args.options.observeModelCall
+              ? (completion, metadata) => args.options.observeModelCall?.({
+                  ...completion,
+                  finishReason: metadata.finishReason,
+                })
+              : undefined,
+            observeReasoningBudget: args.options.observeReasoningBudget,
+            persistObservation: diagnosticOverride === undefined,
+            consume: (text, metadata) => {
               throwIfAborted(args.options.signal)
               let prose
               try {
-                prose = parseProse(text)
+                prose = parseChapterWriterProse(text)
+                args.options.observeWriterParserOutcome?.('ACCEPTED')
               } catch (error) {
+                args.options.observeWriterParserOutcome?.('REJECTED')
                 throw new InvalidModelResponseError(
                   error instanceof Error ? error.message : undefined,
                 )
               }
+              const completenessInput = {
+                finishReason: metadata.finishReason,
+                hasExplicitTitle: prose.hasExplicitTitle,
+                title: prose.title,
+                paragraphs: prose.paragraphs,
+              }
+              const completenessFindings = evaluateWriterCompleteness(completenessInput)
+              args.options.observeWriterEvaluation?.({
+                completenessPassed: completenessFindings.length === 0,
+                completenessCodes: completenessFindings.map((finding) => finding.code),
+                wordCount: countWords(prose.paragraphs),
+                paragraphCount: prose.paragraphs.length,
+                requiredSectionsPresent: !completenessFindings.some(
+                  (finding) => finding.code === 'WRITER_REQUIRED_SECTION_MISSING',
+                ),
+                terminalClosurePresent: !completenessFindings.some(
+                  (finding) => finding.code === 'WRITER_TERMINAL_CLOSURE_MISSING',
+                ),
+              })
+              const flagshipControl = diagnosticOverride?.invocation === 'WRITER_V2_FLAGSHIP_CONTROL_V1'
+              if (!flagshipControl) assertWriterCompleteness(completenessInput)
               const leaks = scanForLeaks([prose.title, ...prose.paragraphs].join('\n'))
-              if (leaks.length > 0) {
+              if (leaks.length > 0 && !flagshipControl) {
                 throw new ContentRejectedError(
                   'Chapter prose contains forbidden internal language.',
                   leaks,
@@ -514,14 +645,14 @@ async function generateProse(args: {
         } catch (error) {
           lastError = error
           if (args.options.signal?.aborted) throw args.options.signal.reason ?? error
-          if (isAbortError(error)) throw error
+          if (isAbortError(error) || error instanceof WriterCompletenessError) throw error
           if (error instanceof ContentRejectedError && attempt === 0) continue
           throw error
         }
       }
     } catch (error) {
       if (args.options.signal?.aborted) throw args.options.signal.reason ?? error
-      if (isAbortError(error)) throw error
+      if (isAbortError(error) || error instanceof WriterCompletenessError) throw error
       lastError = error
       logCandidateFailure(args.options.workflowPhase, candidate, error)
     }
@@ -1170,11 +1301,16 @@ export function createGatewayProvider(
       }
 
       // 2) Prosa nyata dari LLM (dengan rantai fallback + max token floor for ag/*).
+      if (!input.brief) {
+        throw new Error('CHAPTER_BRIEF_V2_BRIEF_REQUIRED: writer input brief is mandatory')
+      }
       const { title, paragraphs: rawParagraphs } = await generateProse({
         chain,
         snapshot: input.snapshot,
         plan: input.plan as Record<string, unknown>,
         continuation: input.continuation,
+        brief: input.brief,
+        authorityMode: 'CHAPTER_BRIEF_V2',
         repairFindings: input.repairFindings,
         options,
         route: aiRoute,
@@ -1183,8 +1319,10 @@ export function createGatewayProvider(
       // 3) Clamp to Layer A hard band. High maxOutputTokens (ag/* floor 4096)
       // often yields 1500–2500+ words; without clamp, review fails with
       // MAJOR:CHAPTER_LENGTH_OUT_OF_RANGE after 2 wasted repairs.
-      const paragraphs = clampChapterParagraphs(rawParagraphs)
-      if (countWords(rawParagraphs) > countWords(paragraphs)) {
+      const flagshipControl = options.diagnosticChapterWriterPromptOverride?.invocation
+        === 'WRITER_V2_FLAGSHIP_CONTROL_V1'
+      const paragraphs = flagshipControl ? rawParagraphs : clampChapterParagraphs(rawParagraphs)
+      if (!flagshipControl && countWords(rawParagraphs) > countWords(paragraphs)) {
         console.log('CHAPTER_PROSE_CLAMPED', {
           beforeWords: countWords(rawParagraphs),
           afterWords: countWords(paragraphs),
@@ -1194,12 +1332,45 @@ export function createGatewayProvider(
       }
 
       // 4) Gabungkan: prosa model menggantikan judul/paragraf; sisanya canon-safe.
-      return {
+      const draft = {
         ...scaffold,
         title,
         paragraphs,
         wordCount: countWords(paragraphs),
       }
+      if (options.observeWriterDeterministicEvaluation) {
+        const parsed = ChapterDraftSchema.parse(draft)
+        const layerA = validateLayerA(input.snapshot, parsed)
+        const internalAuthorityIds = [...new Set([
+          ...input.brief.forbiddenRevealIds,
+          ...input.brief.resolvedPlotDebtIds,
+          ...input.brief.scheduledReveals.map((item) => item.authorityId),
+          ...input.brief.plotDebtsToProgress.map((item) => item.authorityId),
+          ...input.brief.plotDebtsToClose.map((item) => item.authorityId),
+          ...(input.brief.lockedEndingKey ? [input.brief.lockedEndingKey] : []),
+        ])]
+        const visible = [title, ...paragraphs].join('\n')
+        const normalizeVisibleSemantics = (value: string): string => value
+          .normalize('NFKC')
+          .toLocaleLowerCase('id-ID')
+          .replace(/[^\p{L}\p{N}]+/gu, ' ')
+          .trim()
+        const normalizedVisible = normalizeVisibleSemantics(visible)
+        const scheduledRevealIds = input.brief.scheduledReveals.map((item) => item.authorityId)
+        const scheduledRevealValidationPassed = input.brief.scheduledReveals.every((obligation) => {
+          const directive = normalizeVisibleSemantics(obligation.writerDirective)
+          return directive.length > 0 && normalizedVisible.includes(directive)
+        })
+        options.observeWriterDeterministicEvaluation({
+          layerAPassed: layerA.ok,
+          layerACodes: layerA.findings.map((finding) => finding.code),
+          leakPassed: scanForLeaks(visible).length === 0,
+          writerVisibleInternalIdCount: internalAuthorityIds.filter((id) => visible.includes(id)).length,
+          scheduledRevealObligationCount: scheduledRevealIds.length,
+          scheduledRevealValidationPassed,
+        })
+      }
+      return draft
     },
 
     async generateStoryContract(
@@ -1289,6 +1460,7 @@ function toModelCandidate(route: AiModelRoute | undefined): UnindexedModelCandid
       name: 'custom',
       baseURL,
       apiKey: process.env.CUSTOM_LLM_API_KEY,
+      includeUsage: true,
       fetch: openAICompatibleFetch(route.reasoningEffort),
     })
     return {
@@ -1306,6 +1478,7 @@ function toModelCandidate(route: AiModelRoute | undefined): UnindexedModelCandid
       name: 'openrouter',
       baseURL: 'https://openrouter.ai/api/v1',
       apiKey,
+      includeUsage: true,
       fetch: openAICompatibleFetch(route.reasoningEffort),
     })
     return {
@@ -1324,6 +1497,7 @@ function toModelCandidate(route: AiModelRoute | undefined): UnindexedModelCandid
       name: '9router',
       baseURL,
       apiKey,
+      includeUsage: true,
       fetch: openAICompatibleFetch(route.reasoningEffort),
     })
     return {

@@ -11,6 +11,13 @@ import {
   StoryContractSchema,
   type StoryContract,
 } from './story-contract'
+import {
+  MAX_AUTHORITY_ID_LENGTH,
+  MAX_ENDING_CLOSURE_LENGTH,
+  NARRATIVE_AUTHORITY_CAPACITY,
+  WriterNarrativeObligationSchema,
+  type WriterNarrativeObligation,
+} from './narrative-obligation'
 
 const chapterNumberSchema = z.number().int().min(1).max(50)
 const boundedString = (maxLength: number) => z.string().trim().min(1).max(maxLength)
@@ -76,6 +83,27 @@ export const ChapterBriefSchema = z.object({
   lockEnding: z.boolean(),
   endingKey: boundedString(80).nullable(),
   previousChoiceSummary: z.string().max(4096),
+  forbiddenRevealIds: boundedArray(
+    NARRATIVE_AUTHORITY_CAPACITY.forbiddenRevealIds,
+    MAX_AUTHORITY_ID_LENGTH,
+  ).default([]),
+  resolvedPlotDebtIds: boundedArray(
+    NARRATIVE_AUTHORITY_CAPACITY.resolvedPlotDebtIds,
+    MAX_AUTHORITY_ID_LENGTH,
+  ).default([]),
+  scheduledReveals: z.array(WriterNarrativeObligationSchema)
+    .max(NARRATIVE_AUTHORITY_CAPACITY.narrativeObligations)
+    .default([]),
+  plotDebtObligationsToProgress: z.array(WriterNarrativeObligationSchema)
+    .max(NARRATIVE_AUTHORITY_CAPACITY.narrativeObligations)
+    .default([]),
+  plotDebtObligationsToClose: z.array(WriterNarrativeObligationSchema)
+    .max(NARRATIVE_AUTHORITY_CAPACITY.narrativeObligations)
+    .default([]),
+  lockedEndingClosure: boundedArray(
+    NARRATIVE_AUTHORITY_CAPACITY.lockedEndingClosure,
+    MAX_ENDING_CLOSURE_LENGTH,
+  ).default([]),
 }).strict().superRefine((brief, context) => {
   const aliases: Array<[PropertyKey, unknown, unknown]> = [
     ['goals', brief.goals, [brief.chapterGoal]],
@@ -167,6 +195,18 @@ function stableUnique(values: readonly string[]): string[] {
     result.push(normalized)
   }
   return result
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function writerSafeDirective(value: string, authorityIds: readonly string[]): string {
+  let sanitized = value.trim()
+  for (const authorityId of authorityIds) {
+    sanitized = sanitized.replace(new RegExp(escapeRegExp(authorityId), 'gi'), 'rahasia ini')
+  }
+  return sanitized.replace(/\s+/g, ' ').trim()
 }
 
 function runwayFor(chapterNumber: number): z.infer<typeof EndingRunwaySchema> {
@@ -266,6 +306,11 @@ export function buildChapterBrief(input: BuildChapterBriefInput): ChapterBrief {
   // Living v1 (M10-A1d, koreksi #5): kewajiban plot-debt dari proyeksi ledger
   // yang TOTAL sebelum prose — bukan perkiraan kontrak. Absen = legacy.
   const effective = parsed.effectivePlotDebtState ?? null
+  const resolvedPlotDebtIds = effective
+    ? stableUnique(effective.closedDebtIds)
+    : stableUnique(storyContract.plotDebts
+        .filter((debt) => debt.status === 'closed')
+        .map((debt) => debt.id))
   const plotDebtsToClose = effective
     ? stableUnique(effective.debtsDueToClose)
     : stableUnique(openDebts
@@ -290,6 +335,65 @@ export function buildChapterBrief(input: BuildChapterBriefInput): ChapterBrief {
     readerState.routeState,
     readerState.lockedEndingKey,
   )
+
+  const forbiddenRevealIds = stableUnique(
+    storyContract.revealRunway
+      .filter((entry) => entry.revealGateChapter > chapterNumber)
+      .map((entry) => entry.secretId),
+  )
+
+  const authorityIds = stableUnique([
+    ...storyContract.revealRunway.map((entry) => entry.secretId),
+    ...storyContract.plotDebts.map((debt) => debt.id),
+  ])
+  const secretsById = new Map(snapshot.secrets.map((secret) => [secret.id, secret]))
+  const scheduledReveals: WriterNarrativeObligation[] = storyContract.revealRunway
+    .filter((entry) => entry.revealGateChapter === chapterNumber)
+    .map((entry) => {
+      const secret = secretsById.get(entry.secretId)
+        ?? snapshot.secrets.find((candidate) => (
+          candidate.id.endsWith(entry.secretId) || entry.secretId.endsWith(candidate.id)
+        ))
+      const description = secret?.description
+        ? writerSafeDirective(secret.description, authorityIds)
+        : ''
+      return {
+        authorityId: entry.secretId,
+        kind: 'SCHEDULED_REVEAL' as const,
+        writerDirective: description
+          ? `Buka rahasia: ${description}`
+          : 'Buka rahasia bab ini melalui petunjuk dan sebab-akibat adegan yang terlihat.',
+      }
+    })
+
+  const plotDebtsById = new Map(storyContract.plotDebts.map((debt) => [debt.id, debt]))
+  const plotDebtObligationsToProgress: WriterNarrativeObligation[] = plotDebtsToProgress.map((id) => {
+    const debt = plotDebtsById.get(id)
+    const directive = debt?.question?.trim()
+      ? `Majukan penyelesaian misteri: ${debt.question.trim()}`
+      : 'Perlihatkan perkembangan baru atau petunjuk penting terkait misteri yang sedang berjalan.'
+    return {
+      authorityId: id,
+      kind: 'PLOT_DEBT_PROGRESS' as const,
+      writerDirective: directive,
+    }
+  })
+
+  const plotDebtObligationsToClose: WriterNarrativeObligation[] = plotDebtsToClose.map((id) => {
+    const debt = plotDebtsById.get(id)
+    const directive = debt?.question?.trim()
+      ? `Tutup dan tuntaskan jawaban pasti atas: ${debt.question.trim()}`
+      : 'Berikan jawaban tuntas dan kepastian bagi pertanyaan misteri yang harus diselesaikan di bab ini.'
+    return {
+      authorityId: id,
+      kind: 'PLOT_DEBT_CLOSE' as const,
+      writerDirective: directive,
+    }
+  })
+
+  const lockedEndingClosure = lockedEndingKey
+    ? (storyContract.endingCandidates.find((c) => c.key === lockedEndingKey)?.requiredClosure ?? [])
+    : []
 
   const brief: ChapterBrief = {
     storyId: storyContract.storyId,
@@ -331,6 +435,12 @@ export function buildChapterBrief(input: BuildChapterBriefInput): ChapterBrief {
     lockEnding: lockedEndingKey !== null,
     endingKey: lockedEndingKey,
     previousChoiceSummary: choiceHistorySummary,
+    forbiddenRevealIds,
+    resolvedPlotDebtIds,
+    scheduledReveals,
+    plotDebtObligationsToProgress,
+    plotDebtObligationsToClose,
+    lockedEndingClosure,
   }
 
   return ChapterBriefSchema.parse(brief)

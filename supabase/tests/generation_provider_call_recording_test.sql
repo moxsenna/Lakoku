@@ -74,9 +74,51 @@ select ok(
   'created_by is a UUID snapshot without auth FK'
 );
 select is(
-  (select count(*) from public.generation_model_pricing_versions),
-  0::bigint,
-  'migration seeds no guessed prices'
+  (
+    select jsonb_agg(
+      jsonb_build_object(
+        'providerId', provider_id,
+        'modelId', model_id,
+        'inputPrice', input_token_price::text,
+        'outputPrice', output_token_price::text,
+        'currency', currency,
+        'unitSize', unit_size,
+        'effectiveFrom', effective_from
+      )
+      order by model_id
+    )
+    from public.generation_model_pricing_versions
+  ),
+  jsonb_build_array(
+    jsonb_build_object(
+      'providerId', 'openrouter',
+      'modelId', 'deepseek/deepseek-v3.1-terminus',
+      'inputPrice', '0.34260000',
+      'outputPrice', '1.02840000',
+      'currency', 'USD',
+      'unitSize', 1000000,
+      'effectiveFrom', '2026-08-27 00:00:00+00'::timestamptz
+    ),
+    jsonb_build_object(
+      'providerId', 'openrouter',
+      'modelId', 'deepseek/deepseek-v3.2',
+      'inputPrice', '3.00000000',
+      'outputPrice', '4.50000000',
+      'currency', 'USD',
+      'unitSize', 1000000,
+      'effectiveFrom', '2026-08-27 00:00:00+00'::timestamptz
+    ),
+    jsonb_build_object(
+      'providerId', 'openrouter',
+      'modelId', 'openai/gpt-4.1-mini',
+      'inputPrice', '0.44000000',
+      'outputPrice', '1.76000000',
+      'currency', 'USD',
+      'unitSize', 1000000,
+      'effectiveFrom', '2026-08-27 00:00:00+00'::timestamptz
+    )
+  ),
+  'migration seeds exact conservative M10-F OpenRouter pricing snapshot'
 );
 select ok(
   (select relrowsecurity from pg_class

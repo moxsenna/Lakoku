@@ -13,22 +13,52 @@
  *   → returns FAILED_REVIEW_REQUIRED → zero provider call → zero new checkpoint
  */
 
-import { test, expect, describe, beforeEach } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { test, expect, describe, beforeEach, vi } from 'vitest'
+
+// Mock server-only for vitest environment (required because admin.ts uses the
+// 'server-only' directive). Must be declared before the import graph that pulls
+// in @/lib/supabase/admin.
+vi.mock('server-only', () => ({}))
+
 import { createAdminClient } from '@/lib/supabase/admin'
 import { buildHarnessContract } from '../../lib/narrative-qa/harness/fixture'
 import { parseStoryContractWithNormalization } from '../../lib/story-engine/story-contract'
 import { assertIsolatedTarget } from '../../lib/narrative-qa/harness/seed'
 
-// Isolation gate: MUST run against local/isolated Supabase only
-assertIsolatedTarget()
+/**
+ * Local Supabase discovery. Runs ONLY inside the gated suite so the default
+ * unit run performs no subprocess and no DB call during collection.
+ */
+function getLocalStatus() {
+  try {
+    const raw = process.platform === 'win32'
+      ? execFileSync('cmd.exe', ['/d', '/s', '/c', 'pnpm exec supabase status -o json'], { cwd: process.cwd(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+      : execFileSync('pnpm', ['exec', 'supabase', 'status', '-o', 'json'], { cwd: process.cwd(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+    const jsonStr = raw.match(/{[\s\S]*}/)?.[0] ?? raw
+    const parsed = JSON.parse(jsonStr) as Record<string, string>
+    return { url: parsed.API_URL, key: parsed.SERVICE_ROLE_KEY }
+  } catch {
+    return { url: undefined, key: undefined }
+  }
+}
 
 const STORY_ID = 'm10c-r3-2-negative-test'
 const NEXT_CHAPTER = 6 // Attempt to generate next chapter after failed boundary
 
-describe('M10-C R3.2 — Negative DB-backed FAILED_REVIEW_REQUIRED proof', () => {
+// DB-backed proof: opt-in only, same gate as the other isolated local-DB suites
+// (LAKOKU_LOCAL_DB_TEST=1 pnpm exec vitest run tests/db/...). Without the gate
+// the suite is skipped rather than collected-and-failed — the isolation gate
+// below still runs before any write whenever the suite really executes.
+describe.skipIf(process.env.LAKOKU_LOCAL_DB_TEST !== '1')('M10-C R3.2 — Negative DB-backed FAILED_REVIEW_REQUIRED proof', () => {
   let admin: ReturnType<typeof createAdminClient>
 
   beforeEach(() => {
+    const status = getLocalStatus()
+    if (status.url) process.env.SUPABASE_URL = status.url
+    if (status.key) process.env.SUPABASE_SERVICE_ROLE_KEY = status.key
+    // Isolation gate: MUST run against local/isolated Supabase only
+    assertIsolatedTarget()
     admin = createAdminClient()
   })
 

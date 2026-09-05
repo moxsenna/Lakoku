@@ -260,7 +260,7 @@ describe('C-R1 G1: deriveActBoundaryReconciliationInput', () => {
     }
   })
 
-  it('maps ending candidates as violation-detection input only — no secret, no flag blocking (C-R2)', () => {
+  it('maps ending candidates from candidate.kind — secret is derived, flag blocking stays empty (C-R3-R1)', () => {
     const derived = deriveActBoundaryReconciliationInput({
       storyId: STORY_ID,
       chapterNumber: 12,
@@ -270,12 +270,14 @@ describe('C-R1 G1: deriveActBoundaryReconciliationInput', () => {
     expect(derived).not.toBeNull()
     expect(derived!.actNumber).toBe(2)
     expect(derived!.nextAct).toEqual({ actNumber: 3, fromChapter: 13, toChapter: 50 })
-    expect(derived!.endings.map((e) => e.id).sort()).toEqual(['ending-gelap', 'ending-open'])
-    // Honesty guard: the mapping NEVER asserts a secret ending or flag
-    // blocking — EndingCandidateSchema cannot express either. The limitation
-    // is enforced downstream by deriveEndingReachabilityEvidence (asserted
-    // below), not by pretending the model covers more than it does.
-    expect(derived!.endings.every((e) => e.isSecret === false)).toBe(true)
+    expect(derived!.endings.map((e) => e.id).sort()).toEqual(['ending-gelap', 'ending-open', 'ending-rahasia'])
+    // C-R3-R1: `kind` is the unambiguous authority for isMain/isSecret, so the
+    // mapping now carries the NCS §1.4 secret path instead of flattening it.
+    // Flag blocking remains empty here because the harness endings declare no
+    // blockingConditions — closure blocking is proven separately by
+    // deriveRequiredClosureSatisfiability, not faked through blockedByFlags.
+    expect(derived!.endings.filter((e) => e.isSecret).map((e) => e.id)).toEqual(['ending-rahasia'])
+    expect(derived!.endings.filter((e) => e.isMain && !e.isSecret)).toHaveLength(2)
     expect(derived!.endings.every((e) => (e.blockedByFlags ?? []).length === 0)).toBe(true)
   })
 })
@@ -298,18 +300,21 @@ describe('C-R2 G1: deriveEndingReachabilityEvidence', () => {
     })
   }
 
-  it('proves the count + closure clauses but never NCS §1.4 on the current model', () => {
+  it('proves the count + closure clauses from the structured V2 contract', () => {
     const evidence = evidenceAt(12)
     expect(evidence.mainEndingCount).toBe(2)
     expect(evidence.minRequiredMain).toBe(ENDING_RULES.minReachableEndings)
     expect(evidence.closureAllSatisfiable).toBe(true)
-    // No violation detectable on the structured data that exists — but that
-    // is explicitly NOT "reachability proven" (see the model-gap flags).
+    // No violation detectable on the structured data that exists.
     expect(evidence.reachabilityViolationFindingCodes).toEqual([])
-    // C-R3-R1 V2: explicit secret ending tracking instead of modeled flag
-    expect(evidence.secretEndingCount).toBe(0)
-    expect(evidence.secretReachable).toBe(false)
-    expect(evidence.ncs14Proven).toBe(false)
+    // C-R3-R1 V2: explicit secret ending tracking derived from candidate.kind.
+    // The harness contract carries the NCS §1.4 secret path (`ending-rahasia`),
+    // so the evidence reports it instead of a model gap.
+    expect(evidence.secretEndingCount).toBe(1)
+    expect(evidence.minRequiredSecret).toBe(1)
+    expect(evidence.secretReachable).toBe(true)
+    expect(evidence.closureProofComplete).toBe(true)
+    expect(evidence.ncs14Proven).toBe(true)
   })
 
   it('records closure blocking honestly when a backing thread is abandoned', () => {
@@ -390,10 +395,10 @@ describe('C-R2 G1: deriveEndingReachabilityEvidence', () => {
     const evidence = deriveEndingReachabilityEvidence({
       actNumber: derived.actNumber,
       checkpointChapter: 12,
-      endings: [
-        ...derived.endings,
-        { id: 'ending-rahasia', isMain: false, isSecret: true, blockedByFlags: [] },
-      ],
+      // The harness contract already declares the NCS §1.4 secret path, so the
+      // derived endings are used verbatim — injecting a synthetic duplicate
+      // would prove the schema against a fixture the runtime never produces.
+      endings: derived.endings,
       state: derived.state,
       snapshot: derived.snapshot,
       contract: derived.contract, // C-R3-R2 Blocker #4: pass full contract for reachability analysis

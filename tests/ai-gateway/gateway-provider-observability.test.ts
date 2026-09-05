@@ -3,6 +3,7 @@ import { buildFixtureSnapshot } from '@/fixtures/narrative/fixture-50'
 import { createDeterministicProvider, type GenerationProvider } from '@/lib/ai-gateway/provider'
 import { generateChapter } from '@/lib/ai-gateway/generate'
 import type { AiModelRoute } from '@/lib/ops/ai-model-routes'
+import { buildPreProseChapterBrief } from '@/lib/story-engine/pre-prose-brief'
 import {
   InvalidModelResponseError,
   sanitizeChoiceValidationCodes,
@@ -61,18 +62,31 @@ const envKeys = [
 ] as const
 const originalEnv = new Map<string, string | undefined>()
 
-function observedResult(text: string, modelId?: string) {
+function observedResult(text: string, modelId?: string, finishReason = 'stop') {
   return {
     text: Promise.resolve(text),
     usage: Promise.resolve({ inputTokens: 40, outputTokens: 60, totalTokens: 100 }),
     finalStep: Promise.resolve({
+      finishReason,
       response: modelId === undefined ? {} : { modelId },
       providerMetadata: {},
     }),
   }
 }
 
+function completeParagraphs(paragraphs: string[]): string[] {
+  const completed = [...paragraphs]
+  while (completed.join(' ').split(/\s+/).filter(Boolean).length < 800) {
+    completed.push('Rani menahan napas sambil menimbang langkah berikutnya dengan hati-hati.')
+  }
+  return completed
+}
+
 function prose(title: string, paragraphs: string[]): string {
+  return [`JUDUL: ${title}`, '', ...completeParagraphs(paragraphs)].join('\n\n')
+}
+
+function rawProse(title: string, paragraphs: string[]): string {
   return [`JUDUL: ${title}`, '', ...paragraphs].join('\n\n')
 }
 
@@ -92,12 +106,21 @@ async function chapterInput() {
   const snapshot = buildFixtureSnapshot()
   const chapterNumber = 12
   const base = createDeterministicProvider()
+  const blueprint = snapshot.blueprints[chapterNumber - 1]
   const plan = await base.generatePlan({
     snapshot,
-    blueprint: snapshot.blueprints[chapterNumber - 1],
+    blueprint,
     chapterNumber,
   })
-  return { snapshot, chapterNumber, plan }
+  const brief = buildPreProseChapterBrief({
+    storyId: snapshot.storyId,
+    snapshot,
+    blueprint,
+    chapterNumber,
+    continuation: null,
+    chapterBrief: null,
+  })
+  return { snapshot, chapterNumber, plan, brief }
 }
 
 beforeEach(() => {
@@ -126,6 +149,33 @@ afterEach(() => {
 })
 
 describe('createGatewayProvider prose observability', () => {
+  it('requests usage from every OpenAI-compatible runtime provider', async () => {
+    process.env.CUSTOM_LLM_BASE_URL = 'https://custom.example/v1'
+    process.env.CUSTOM_LLM_API_KEY = 'custom-key'
+    process.env.NINEROUTER_BASE_URL = 'https://nine.example/v1'
+    process.env.NINEROUTER_API_KEY = 'nine-key'
+    process.env.OPENROUTER_API_KEY = 'openrouter-key'
+
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    createGatewayProvider(undefined, undefined, {
+      ...route(),
+      provider: 'custom',
+    }, {
+      ...route(),
+      useCase: 'choices',
+      provider: 'openrouter',
+    }, {
+      ...route(),
+      useCase: 'continuity_judge',
+      provider: '9router',
+    })
+
+    expect(createOpenAICompatibleMock).toHaveBeenCalled()
+    for (const [config] of createOpenAICompatibleMock.mock.calls) {
+      expect(config).toMatchObject({ includeUsage: true })
+    }
+  })
+
   it('worker ownership AbortSignal reaches the actual prose provider request', async () => {
     const paragraphs = ['Rani membuka pintu lama.']
     streamTextMock.mockReturnValue(observedResult(prose('Pintu Lama', paragraphs)))
@@ -134,7 +184,7 @@ describe('createGatewayProvider prose observability', () => {
     const input = await chapterInput()
     const controller = new AbortController()
 
-    await provider.writeChapter({ snapshot: input.snapshot, plan: input.plan }, {
+    await provider.writeChapter({ snapshot: input.snapshot, plan: input.plan, brief: input.brief }, {
       telemetryContext,
       workflowPhase: 'CHAPTER_PROSE_INITIAL',
       signal: controller.signal,
@@ -146,6 +196,57 @@ describe('createGatewayProvider prose observability', () => {
     expect(combined.aborted).toBe(true)
   })
 
+  it('fails closed on capped prose without repair or fallback calls', async () => {
+    streamTextMock.mockReturnValue(observedResult(
+      rawProse('Pintu Lama', ['Rani membuka pintu tanpa mengetahui apa yang menunggu']),
+      'actual-primary',
+      'length',
+    ))
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, route([
+      { provider: 'gateway', modelId: 'openai/chapter-fallback' },
+    ]))
+    const chapter = await chapterInput()
+
+    await expect(provider.writeChapter({ snapshot: chapter.snapshot, plan: chapter.plan, brief: chapter.brief }, {
+      telemetryContext,
+      workflowPhase: 'CHAPTER_PROSE_INITIAL',
+    })).rejects.toMatchObject({
+      name: 'WriterCompletenessError',
+      validationErrors: expect.arrayContaining([
+        'WRITER_OUTPUT_CAPPED',
+        'WRITER_LENGTH_OUT_OF_RANGE',
+        'WRITER_TERMINAL_CLOSURE_MISSING',
+      ]),
+    })
+
+    expect(streamTextMock).toHaveBeenCalledTimes(1)
+    expect(recordGenerationProviderCallMock).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        outcome: 'INVALID_RESPONSE',
+        errorCode: 'PROVIDER_INVALID_RESPONSE',
+      }),
+    )
+  })
+
+  it('fails closed when required title protocol section is missing', async () => {
+    const body = completeParagraphs(['Rani membuka pintu lama.']).join('\n\n')
+    streamTextMock.mockReturnValue(observedResult(body))
+    const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
+    const provider = createGatewayProvider(undefined, undefined, route())
+    const chapter = await chapterInput()
+
+    await expect(provider.writeChapter({ snapshot: chapter.snapshot, plan: chapter.plan, brief: chapter.brief }, {
+      telemetryContext,
+      workflowPhase: 'CHAPTER_PROSE_INITIAL',
+    })).rejects.toMatchObject({
+      name: 'WriterCompletenessError',
+      validationErrors: expect.arrayContaining(['WRITER_REQUIRED_SECTION_MISSING']),
+    })
+    expect(streamTextMock).toHaveBeenCalledTimes(1)
+  })
+
   it('does not traverse prose fallback when an abort-class request fails', async () => {
     const abort = new DOMException('ownership lost', 'AbortError')
     streamTextMock.mockImplementationOnce(() => { throw abort })
@@ -155,7 +256,7 @@ describe('createGatewayProvider prose observability', () => {
     ]))
     const input = await chapterInput()
 
-    await expect(provider.writeChapter({ snapshot: input.snapshot, plan: input.plan }, {
+    await expect(provider.writeChapter({ snapshot: input.snapshot, plan: input.plan, brief: input.brief }, {
       telemetryContext,
       workflowPhase: 'CHAPTER_PROSE_INITIAL',
     })).rejects.toBe(abort)
@@ -174,7 +275,7 @@ describe('createGatewayProvider prose observability', () => {
     const provider = createGatewayProvider(undefined, undefined, route())
     const input = await chapterInput()
     const controller = new AbortController()
-    const run = provider.writeChapter({ snapshot: input.snapshot, plan: input.plan }, {
+    const run = provider.writeChapter({ snapshot: input.snapshot, plan: input.plan, brief: input.brief }, {
       telemetryContext,
       workflowPhase: 'CHAPTER_PROSE_INITIAL',
       signal: controller.signal,
@@ -367,11 +468,11 @@ describe('createGatewayProvider prose observability', () => {
       return candidate.execute()
     })
 
-    await expect(provider.writeChapter({ snapshot: input.snapshot, plan: input.plan }, {
+    await expect(provider.writeChapter({ snapshot: input.snapshot, plan: input.plan, brief: input.brief }, {
       telemetryContext,
       workflowPhase: 'CHAPTER_PROSE_INITIAL',
       providerRuntime: { candidateTransport },
-    })).resolves.toMatchObject({ title: 'Pintu Lama', paragraphs })
+    })).resolves.toMatchObject({ title: 'Pintu Lama', paragraphs: completeParagraphs(paragraphs) })
 
     expect(calls.map(({ kind, modelId, fallbackIndex }) => ({ kind, modelId, fallbackIndex }))).toEqual([
       { kind: 'prose', modelId: 'openai/chapter-primary', fallbackIndex: 0 },
@@ -394,10 +495,11 @@ describe('createGatewayProvider prose observability', () => {
     await expect(provider.writeChapter({
       snapshot: input.snapshot,
       plan: input.plan,
+      brief: input.brief,
     }, {
       telemetryContext,
       workflowPhase: 'CHAPTER_PROSE_INITIAL',
-    })).resolves.toMatchObject({ title: 'Pintu Lama', paragraphs })
+    })).resolves.toMatchObject({ title: 'Pintu Lama', paragraphs: completeParagraphs(paragraphs) })
 
     expect(streamTextMock).toHaveBeenNthCalledWith(1, expect.objectContaining({ maxRetries: 0 }))
     expect(streamTextMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ maxRetries: 0 }))
@@ -437,7 +539,7 @@ describe('createGatewayProvider prose observability', () => {
     const provider = createGatewayProvider(undefined, undefined, route())
     const input = await chapterInput()
 
-    await expect(provider.writeChapter({ snapshot: input.snapshot, plan: input.plan }, {
+    await expect(provider.writeChapter({ snapshot: input.snapshot, plan: input.plan, brief: input.brief }, {
       telemetryContext,
       workflowPhase: 'CHAPTER_PROSE_INITIAL',
     })).rejects.toThrow()
@@ -507,7 +609,7 @@ describe('createGatewayProvider prose observability', () => {
     const provider = createGatewayProvider(undefined, undefined, route())
     const input = await chapterInput()
 
-    await expect(provider.writeChapter({ snapshot: input.snapshot, plan: input.plan }, {
+    await expect(provider.writeChapter({ snapshot: input.snapshot, plan: input.plan, brief: input.brief }, {
       telemetryContext,
       workflowPhase: 'CHAPTER_PROSE_INITIAL',
     })).rejects.toThrow()
@@ -536,7 +638,7 @@ describe('createGatewayProvider prose observability', () => {
     const provider = createGatewayProvider(undefined, undefined, route())
     const input = await chapterInput()
 
-    await provider.writeChapter({ snapshot: input.snapshot, plan: input.plan }, {
+    await provider.writeChapter({ snapshot: input.snapshot, plan: input.plan, brief: input.brief }, {
       telemetryContext,
       workflowPhase: 'CHAPTER_PROSE_INITIAL',
     })
@@ -642,10 +744,19 @@ describe('createGatewayProvider prose observability', () => {
     const snapshot = buildFixtureSnapshot()
     const chapterNumber = 12
     const base = createDeterministicProvider()
+    const blueprint = snapshot.blueprints[chapterNumber - 1]
     const rawPlan = await base.generatePlan({
       snapshot,
-      blueprint: snapshot.blueprints[chapterNumber - 1],
+      blueprint,
       chapterNumber,
+    })
+    const brief = buildPreProseChapterBrief({
+      storyId: snapshot.storyId,
+      snapshot,
+      blueprint,
+      chapterNumber,
+      continuation: null,
+      chapterBrief: null,
     })
     const persistentFinding = {
       severity: 'MAJOR' as const,
@@ -685,8 +796,9 @@ describe('createGatewayProvider prose observability', () => {
 
     await generateChapter(deps, {
       snapshot,
-      blueprint: snapshot.blueprints[chapterNumber - 1],
+      blueprint,
       chapterNumber,
+      brief,
       executionOptions: {
         telemetryContext,
         workflowPhase: 'CHAPTER_PROSE_INITIAL',

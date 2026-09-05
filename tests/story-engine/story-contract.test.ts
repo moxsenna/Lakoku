@@ -120,6 +120,8 @@ describe('StoryContractSchema fixtures', () => {
       endingCandidates: [
         { key: 'truth', name: 'Kebenaran Terbuka', kind: 'main' as const, condition: 'Nara menjaga bukti.', requiredClosure: ['Kasus terungkap.'], blockingConditions: [] },
         { key: 'mercy', name: 'Belas Kasih', kind: 'main' as const, condition: 'Nara memahami motif pelaku.', requiredClosure: ['Korban mendapat pemulihan.'], blockingConditions: [] },
+        // NCS §1.4: setiap story contract wajib punya minimal satu jalur ending rahasia.
+        { key: 'silence', name: 'Kesaksian Terkunci', kind: 'secret' as const, condition: 'Nara menyimpan bukti tanpa menyebarkannya.', requiredClosure: ['Saksi terakhir tetap hidup.'], blockingConditions: [] },
       ],
       plotDebts: [
         { id: 'main_mystery', question: 'Siapa pemalsu bukti?', introducedAt: 1, mustProgressBy: [12, 32], mustCloseBy: 48, status: 'open' },
@@ -151,6 +153,8 @@ describe('StoryContractSchema fixtures', () => {
       endingCandidates: [
         { key: 'home', name: 'Pulang', kind: 'main' as const, condition: 'Saka berdamai.', requiredClosure: ['Nama ibu dipulihkan.'], blockingConditions: [] },
         { key: 'leave', name: 'Jalan Baru', kind: 'main' as const, condition: 'Saka melepaskan warisan.', requiredClosure: ['Saka memilih masa depan.'], blockingConditions: [] },
+        // NCS §1.4: setiap story contract wajib punya minimal satu jalur ending rahasia.
+        { key: 'ledger', name: 'Halaman yang Hilang', kind: 'secret' as const, condition: 'Saka menemukan silsilah asli tanpa membukanya ke keluarga.', requiredClosure: ['Silsilah asli tersimpan utuh.'], blockingConditions: [] },
       ],
       plotDebts: [
         { id: 'main_mystery', question: 'Siapa yang menghapus nama ibu?', introducedAt: 2, mustProgressBy: [20, 40], mustCloseBy: 48, status: 'progressing' },

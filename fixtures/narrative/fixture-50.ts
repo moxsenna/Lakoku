@@ -172,11 +172,11 @@ export function buildValidDraft(
   // Karakter baru bernama: hanya Bab 33 memperkenalkan Sari (ada di blueprint).
   const newNamedCharacters = chapter === 33 ? ['char:sari'] : []
 
-  // Paragraf ~650 kata (dalam rentang 500-800), 3 scene.
+  // Paragraf ~900 kata (soft 850–950; hard 800–1000), 3 scene.
   const paragraphs = [
-    fillWords(`Scene satu bab ${chapter}.`, 220),
-    fillWords(`Scene dua bab ${chapter}.`, 220),
-    fillWords(`Scene tiga bab ${chapter}.`, 210),
+    fillWords(`Scene satu bab ${chapter}.`, 300),
+    fillWords(`Scene dua bab ${chapter}.`, 300),
+    fillWords(`Scene tiga bab ${chapter}.`, 300),
   ]
   const wordCount = paragraphs.reduce((n, p) => n + p.trim().split(/\s+/).length, 0)
 

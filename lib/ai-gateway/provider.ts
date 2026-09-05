@@ -14,7 +14,10 @@ import type { CanonSnapshot, ChapterBlueprint, Finding } from '@lakoku/narrative
 import type { ChapterBrief, ChoiceHistoryEntry } from '../story-engine/chapter-brief'
 import type { RouteState } from '../story-engine/route-state'
 import type { TasteProfile } from '../taste-profile/schema'
-import type { ProviderCallContext } from '../observability/generation-provider-call.contract'
+import type {
+  ProviderCallCompletion,
+  ProviderCallContext,
+} from '../observability/generation-provider-call.contract'
 import type { ChapterDraftParsed } from './schemas'
 import type { ContinuationContext } from '@lakoku/narrative-core'
 import type { PreProseChapterBrief } from '../story-engine/pre-prose-brief'
@@ -77,6 +80,22 @@ export type ProviderCallBudget = {
   max: number
 }
 
+export type WriterLengthRepairV1Policy = Readonly<{
+  enabled: boolean
+}>
+
+export type WriterInferenceBudget = {
+  used: number
+  max: 1 | 2
+}
+
+export type WriterLengthRepairTelemetry = Readonly<{
+  firstPassOutcome: 'ACCEPTED' | 'LENGTH_REPAIR_ELIGIBLE' | 'REJECTED'
+  repairAttempted: boolean
+  repairOutcome: 'NOT_ATTEMPTED' | 'ACCEPTED' | 'REJECTED'
+  finalWriterOutcome: 'ACCEPTED' | 'REJECTED'
+}>
+
 export type ChoiceAbortCause =
   | 'PARENT_CANCELLED'
   | 'WORKFLOW_DEADLINE'
@@ -105,12 +124,69 @@ export interface ModelCallExecutionOptions {
   signal?: AbortSignal
   /** Shared across retries so every actual model candidate counts toward cap. */
   callBudget?: ProviderCallBudget
+  /** Explicit opt-in; absent/disabled preserves legacy writer topology. */
+  writerLengthRepairV1?: WriterLengthRepairV1Policy
+  /** Shared across first pass, length repair, and later writer rewrites. */
+  writerInferenceBudget?: WriterInferenceBudget
+  /** One terminal metadata-only aggregate per enabled writer operation. */
+  observeWriterLengthRepair?: (telemetry: WriterLengthRepairTelemetry) => void
+  /** Shared by copied execution options so chapter orchestration emits once. */
+  writerLengthRepairTelemetryState?: { emitted: boolean }
   choiceDeadlineAtMs?: number
   choiceDeadlineSource?: 'LOCAL_POLICY' | 'PARENT_JOB'
   choicePerCandidateTimeoutMs?: number
   /** Maximum effective deduped candidates traversed by this gateway invocation. */
   choiceMaxCandidates?: number
   providerRuntime?: ProviderRuntime
+  /** Metadata allowlist only; never receives model text/title. */
+  observeModelCall?: (completion: ProviderCallCompletion & Readonly<{
+    finishReason: string | undefined
+  }>) => void
+  /** Metadata-only parser boundary outcome; content is deliberately excluded. */
+  observeWriterParserOutcome?: (outcome: 'ACCEPTED' | 'REJECTED') => void
+  /** Metadata-only reasoning/output-cap counts; reasoning text and prose excluded. */
+  observeReasoningBudget?: (
+    budget: import('./reasoning-budget.contract').ObservedReasoningBudget,
+  ) => void
+  /** Metadata-only writer runtime; proves exact call settings without content. */
+  observeWriterRuntime?: (runtime: Readonly<{
+    timeoutMs: number
+    streaming: true
+    maxRetries: 0
+    maxOutputTokens: number
+    temperature: number | null
+  }>) => void
+  /** Metadata-only writer evaluation; content is deliberately excluded. */
+  observeWriterEvaluation?: (evaluation: Readonly<{
+    completenessPassed: boolean
+    completenessCodes: string[]
+    wordCount: number
+    paragraphCount?: number
+    requiredSectionsPresent: boolean
+    terminalClosurePresent: boolean
+  }>) => void
+  /** Metadata-only deterministic checks over final writer draft; content excluded. */
+  observeWriterDeterministicEvaluation?: (evaluation: Readonly<{
+    layerAPassed: boolean
+    layerACodes: string[]
+    leakPassed: boolean
+    writerVisibleInternalIdCount: number
+    scheduledRevealObligationCount: number
+    scheduledRevealValidationPassed: boolean
+  }>) => void
+  /** Offline synthetic diagnostic only; transient and never emitted to telemetry. */
+  diagnosticChapterWriterPromptOverride?: Readonly<{
+    invocation:
+      | 'WRITER_LENGTH_REPAIR_CAUSAL_DIAGNOSTIC_V1'
+      | 'GLM53_FLASH_WRITER_DIAGNOSTIC_V1'
+      | 'GPT56_SOL_WRITER_CONTROL_DIAGNOSTIC_V1'
+      | 'WRITER_PROMPT_ABLATION_V1'
+      | 'WRITER_PROMPT_ABLATION_V2'
+      | 'WRITER_PROMPT_V2_GENERALIZATION_DIAGNOSTIC_V1'
+      | 'WRITER_V2_FLAGSHIP_CONTROL_V1'
+    system: string
+    prompt: string
+  }>
   consume?: (raw: unknown) => unknown | Promise<unknown>
 }
 

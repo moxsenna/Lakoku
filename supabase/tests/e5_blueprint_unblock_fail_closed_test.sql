@@ -184,6 +184,10 @@ select is(
   'rejected and stale paths leave zero resolution, audit, proof, and append side effects'
 );
 
+update public.stories
+set generation_status = 'needs_review'
+where id = 'test:e5-binding';
+
 set local role authenticated;
 select set_config('request.jwt.claim.sub', 'e5000000-0000-4000-8000-000000000004', true);
 select set_config('request.jwt.claim.role', 'authenticated', true);
@@ -194,6 +198,16 @@ select * from public.e5_record_disposition(
   (select envelope from e5_attestations where kind = 'correct'));
 reset role;
 select ok((select success from valid_result), 'valid signed envelope succeeds');
+select is(
+  (select generation_status from public.stories where id = 'test:e5-binding'),
+  'ready',
+  'successful UNBLOCK_PERMIT clears needs_review admission latch'
+);
+select is(
+  (select status from public.blueprint_queue where story_id = 'test:e5-binding'),
+  'RESOLVED',
+  'successful UNBLOCK_PERMIT closes active review incident'
+);
 select is((select validator_attestation from public.blueprint_validator_proofs
            where story_id = 'test:e5-binding'),
           (select envelope from e5_attestations where kind = 'correct'),

@@ -39,3 +39,8 @@ testsprite_tests\tmp\config.json
 # TypeScript incremental build cache
 tsconfig.tsbuildinfo
 *.tsbuildinfo
+
+# Local diagnostic artifacts
+output/
+.playwright-cli/
+supabase/.branches/

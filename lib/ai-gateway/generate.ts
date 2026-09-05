@@ -112,6 +112,10 @@ export async function generateChapter(
   },
 ): Promise<GenerationResult> {
   throwIfAborted(args.executionOptions?.signal)
+  if (args.executionOptions?.writerLengthRepairV1?.enabled) {
+    args.executionOptions.writerInferenceBudget ??= { used: 0, max: 2 }
+    args.executionOptions.writerLengthRepairTelemetryState ??= { emitted: false }
+  }
   const { snapshot, blueprint, chapterNumber, continuation, brief, threadContext, layerBContext } = args
   const fpBefore = canonFingerprint(snapshot)
 

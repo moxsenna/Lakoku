@@ -1,5 +1,6 @@
 import type { ContinuationContext } from '@lakoku/narrative-core'
 import type { ChapterMode } from '@/lib/prose/mobile-drama-style'
+import type { PreProseChapterBrief } from '@/lib/story-engine/pre-prose-brief'
 
 export type { ChapterMode }
 
@@ -43,6 +44,7 @@ export interface BuildWriterPromptInput {
   chapterMode?: ChapterMode
   repairFindings?: Array<{ severity?: string; message: string }>
   continuation?: ContinuationContext | null
+  brief: PreProseChapterBrief
 }
 
 export type EvalSeverity = 'pass' | 'warn' | 'fail'

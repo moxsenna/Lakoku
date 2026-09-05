@@ -17,9 +17,10 @@ vi.mock('@lakoku/runtime', () => ({
 vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.createClient }))
 
 import { GET, POST } from '@/app/api/blueprint-review/[id]/route'
+import * as queueRoute from '@/app/api/blueprint-review/route'
 
 const FORBIDDEN_READER_TERMS = /\b(?:ai|model|provider|token|prompt|brand|leak|canon(?:ical)?|corruption|lease|timeout|retry)\b/i
-const PARAMS = { params: { id: 'story-123' } }
+const PARAMS = { params: Promise.resolve({ id: 'story-123' }) }
 
 function postRequest(body: Record<string, unknown>): NextRequest {
   return new NextRequest('https://lakoku.biz.id/api/blueprint-review/story-123', {
@@ -30,6 +31,10 @@ function postRequest(body: Record<string, unknown>): NextRequest {
 }
 
 describe('E5 reader-safe boundary', () => {
+  it('exports only supported Next route fields from the queue route', () => {
+    expect(Object.keys(queueRoute).sort()).toEqual(['GET', 'POST', 'dynamic', 'revalidate'])
+  })
+
   beforeEach(() => {
     vi.resetAllMocks()
     mocks.requireAdminUser.mockResolvedValue({ id: 'trusted-owner', role: 'owner' })

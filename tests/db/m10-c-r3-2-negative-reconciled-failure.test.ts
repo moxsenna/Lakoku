@@ -44,24 +44,29 @@ function getLocalStatus() {
   }
 }
 
-const status = getLocalStatus()
-process.env.SUPABASE_URL = status.url
-process.env.SUPABASE_SERVICE_ROLE_KEY = status.key
-
 import { createAdminClient } from '@/lib/supabase/admin'
 import { buildHarnessContract } from '../../lib/narrative-qa/harness/fixture'
 import { parseStoryContractWithNormalization } from '../../lib/story-engine/story-contract'
 import { assertIsolatedTarget, HARNESS_USER_ID } from '../../lib/narrative-qa/harness/seed'
 import { generateNextPersonalizedChapter } from '@/lib/runtime/personalized-generation'
 
-// Isolation gate: MUST run against local/isolated Supabase only
-assertIsolatedTarget()
-
 const STORY_ID = 'm10c-r3-2-negative-test'
 const ACT_BOUNDARY_CHAPTER = 5 // Checkpoint at end of act 1 → next act is 6-12
 const NEXT_CHAPTER = 6 // Attempt to generate next chapter after failed boundary
 
-describe('M10-C R3.2 — Negative DB-backed FAILED_REVIEW_REQUIRED proof', () => {
+// DB-backed proof: opt-in only, same gate as the other isolated local-DB suites
+// (LAKOKU_LOCAL_DB_TEST=1 pnpm exec vitest run tests/db/...). Discovery and the
+// isolation gate run in beforeAll so the ordinary unit run spawns no Supabase
+// CLI subprocess and never depends on a running Docker engine.
+describe.skipIf(process.env.LAKOKU_LOCAL_DB_TEST !== '1')('M10-C R3.2 — Negative DB-backed FAILED_REVIEW_REQUIRED proof', () => {
+  beforeAll(() => {
+    const status = getLocalStatus()
+    process.env.SUPABASE_URL = status.url
+    process.env.SUPABASE_SERVICE_ROLE_KEY = status.key
+    // Isolation gate: MUST run against local/isolated Supabase only
+    assertIsolatedTarget()
+  })
+
   test('FAILED_REVIEW_REQUIRED persists + no version++ when main endings unreachable', async () => {
     const admin = createAdminClient()
 

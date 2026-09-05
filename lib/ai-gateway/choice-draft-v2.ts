@@ -3,6 +3,7 @@
  */
 import { z } from 'zod'
 import { RouteChoiceEffectSchema, type RouteChoiceEffect } from '@/lib/story-engine/route-state'
+import { ACCEPTED_ACTION_VERB_EXAMPLES } from '@/lib/story-engine/choice-quality'
 import type { ChoiceBranch } from './schemas'
 import { GatewayError } from './safety'
 
@@ -296,6 +297,14 @@ export function buildChoiceSystemPromptV2(): string {
     '- question: 8–120 karakter',
     '- actions: tepat 2 objek',
     '- label: 8–90 karakter, tindakan konkret',
+    // Daftar verba dikutip dari validator (ACCEPTED_ACTION_VERB_EXAMPLES) agar
+    // ruang keluaran model tertutup terhadap ruang yang divalidasi. Root
+    // telanjang Indonesia tak punya tanda afiks, jadi pengenal tidak bisa
+    // menutup kelas itu sendiri — lihat catatan di choice-quality.ts.
+    `- setiap label HARUS dimulai dengan salah satu verba ini: ${ACCEPTED_ACTION_VERB_EXAMPLES.join(', ')}`,
+    '- boleh juga verba Indonesia berawalan meN-, ber-, atau berakhiran -kan/-i',
+    '- Jangan mulai label dengan perasaan, keadaan batin, kata benda, atau mekanisme internal',
+    '- Gunakan bentuk perintah aktif yang bisa langsung dilakukan pembaca',
     '- hint: opsional 8–140 karakter',
     '- consequence: 1–180 karakter',
     '- intent: investigate|confront|protect|escape|trust|deceive|negotiate|sacrifice',

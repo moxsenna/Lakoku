@@ -132,6 +132,12 @@ function mockBrief(snapshot: unknown, chapterNumber = 12) {
     lockEnding: false,
     endingKey: null,
     previousChoiceSummary: 'Belum ada pilihan sebelumnya.',
+    forbiddenRevealIds: [],
+    resolvedPlotDebtIds: [],
+    scheduledReveals: [],
+    plotDebtObligationsToProgress: [],
+    plotDebtObligationsToClose: [],
+    lockedEndingClosure: [],
   }
 }
 
@@ -306,6 +312,44 @@ describe('Phase 1 — choice-generation module unit tests', () => {
       }
       expect(onChoiceRepair).toHaveBeenCalled()
       expect(generateChoiceBranch).toHaveBeenCalledTimes(2)
+    })
+
+    it('preserves schema validation codes in repair notes instead of flattening them', async () => {
+      const { buildChoiceBranch } = await import('@/lib/runtime/choice-generation')
+      const validationError = Object.assign(new Error('Model response failed validation.'), {
+        validationCodes: ['CHOICE_NOT_ACTIONABLE'],
+      })
+      const selectProvider = vi.fn().mockResolvedValue({ name: 'test' })
+      const generateChoiceBranch = vi
+        .fn()
+        .mockRejectedValueOnce(validationError)
+        .mockResolvedValueOnce(mockBranch(12))
+      const deps: ChoiceBuildDeps = { selectProvider, generateChoiceBranch }
+      const snapshot = (await import('@/fixtures/narrative/fixture-50')).buildFixtureSnapshot()
+      const draft = mockDraft(12)
+      const brief = mockBrief(snapshot, 12)
+
+      const result = await buildChoiceBranch(deps, {
+        snapshot,
+        draft,
+        chapterNumber: 12,
+        chapterBrief: brief,
+        lastParagraphs: draft.paragraphs.slice(-5) as [string,string,string,string,string],
+        routeState: normalizeRouteState({}),
+        choiceHistory: [],
+        lockedEndingKey: null,
+        providerContext: {},
+      })
+
+      expect(result.ok).toBe(true)
+      expect(generateChoiceBranch).toHaveBeenCalledTimes(2)
+      const repairInput = generateChoiceBranch.mock.calls[1]?.[1]
+      expect(repairInput?.chapterBrief.chapterGoal).toContain(
+        'Mulai setiap label dengan salah satu verba ini:',
+      )
+      expect(repairInput?.chapterBrief.chapterGoal).not.toContain(
+        'Respons sebelumnya gagal diparse atau kosong',
+      )
     })
 
     it('returns FINAL_CHAPTER for chapter 50 without calling provider', async () => {

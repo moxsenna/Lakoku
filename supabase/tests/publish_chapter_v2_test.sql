@@ -387,12 +387,18 @@ select results_eq(
       'Bawa Arga menjauh dari para penagih utang',
       'Dorong meja untuk menghalangi pintu saung',
       'Pegang tangan Arga dan tenangkan dia',
-      'Amankan kotak kayu rahasia sebelum mereka datang'
+      'Amankan kotak kayu rahasia sebelum mereka datang',
+      'Konfrontasi Raka langsung tentang keterlibatannya dalam misteri ini',
+      'Minta Raka tetap menemani meski kamu ingin menghadapi sendiri',
+      'Masukkan tangan ke dalam lubang untuk meraba apa yang tersembunyi',
+      'Simpan surat dan pikirkan langkah selanjutnya dengan hati-hati',
+      'Abaikan pesan dan diskusikan peringatan Raka lebih dulu',
+      'Tunggu sampai pagi dan diskusikan dengan Raka sebelum membuka surat'
     ]) with ordinality as root_labels(label, ordinality)
     order by ordinality
   $$,
-  $$values ('true'::text), ('true'::text), ('true'::text), ('true'::text), ('true'::text)$$,
-  'Tarik, Bawa, Dorong, Pegang, and Amankan root imperative matrix publishes'
+  $$values ('true'::text), ('true'::text), ('true'::text), ('true'::text), ('true'::text), ('true'::text), ('true'::text), ('true'::text), ('true'::text), ('true'::text), ('true'::text)$$,
+  'root imperative matrix including exact M10-F pilot labels publishes'
 );
 select is(
   pg_temp.publish_label('modifier', 'Segera amankan kotak kayu rahasia')->>'ok',

@@ -46,7 +46,7 @@ function makePlan(): ChapterPlan {
     phase: 'Fase 2',
     chapterGoal: 'Konfrontasi atau Pelarian',
     plannedBeats: ['Lanjutkan konflik di galeri'],
-    targetWordCount: 600,
+    targetWordCount: 900,
     targetSceneCount: 2,
     opensThreadId: null,
     usesReveals: [],
@@ -59,7 +59,7 @@ const filler = (base: string): string =>
   Array.from({ length: 150 }, (_, i) => `${base}-${i}`).join(' ')
 
 function makeDraft(overrides: Partial<ChapterDraftParsed> = {}): ChapterDraftParsed {
-  // Harus lolos batas keras Layer A: 500–1200 kata, 2–4 scene, ada choice/gate.
+  // Harus lolos band terapan Layer A: 800–1000 kata, 2–4 scene, ada choice/gate.
   return {
     storyId: NADIA_RAKA_STORY_ID,
     chapterNumber: 2,
@@ -70,7 +70,7 @@ function makeDraft(overrides: Partial<ChapterDraftParsed> = {}): ChapterDraftPar
       `Raka terdesak oleh tuduhan. ${filler('bukti di gudang')}`,
       `Konsekuensi laporan mulai terasa. ${filler('jalan terbuka')}`,
     ],
-    wordCount: 600,
+    wordCount: 900,
     sceneCount: 2,
     hasChoiceOrGate: true,
     events: [],

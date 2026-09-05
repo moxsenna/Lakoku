@@ -39,6 +39,7 @@ type FakeResult = {
     raw?: unknown
   }>
   finalStep: PromiseLike<{
+    finishReason?: string
     response: {
       modelId?: string
       headers?: Record<string, string>
@@ -74,7 +75,7 @@ function input<T = string>(overrides: Partial<ObservedModelCallInput<T>> = {}): 
     useCase: 'chapter_generation',
     workflowPhase: 'CHAPTER_PROSE_INITIAL',
     call: () => result() as never,
-    consume: ((text: string) => text.toUpperCase()) as ObservedModelCallInput<T>['consume'],
+    consume: ((text: string) => text.toUpperCase()) as unknown as ObservedModelCallInput<T>['consume'],
     ...overrides,
   }
 }
@@ -182,6 +183,26 @@ describe('executeObservedModelCall', () => {
     }
   })
 
+  it('passes finish reason to consume without persisting it in completion telemetry', async () => {
+    const consume = vi.fn((text: string) => text)
+    const record = vi.fn().mockResolvedValue(undefined)
+
+    await executeObservedModelCall(input({
+      call: () => result({
+        finalStep: Promise.resolve({
+          finishReason: 'length',
+          response: { modelId: 'actual-model' },
+          providerMetadata: {},
+        }),
+      }) as never,
+      consume,
+    }), deps({ record }))
+
+    expect(consume).toHaveBeenCalledWith('model text', { finishReason: 'length' })
+    expect(JSON.stringify(record.mock.calls)).not.toContain('finishReason')
+    expect(JSON.stringify(record.mock.calls)).not.toContain('length')
+  })
+
   it('awaits async call results (generateText resolves a promise, not a result object)', async () => {
     const record = vi.fn().mockResolvedValue(undefined)
     const observedDeps = deps({ record })
@@ -279,6 +300,103 @@ describe('executeObservedModelCall', () => {
       totalTokenCount: 30,
       outcome,
       errorCode,
+    }))
+  })
+
+  it('reports reasoning-budget metadata counts without retaining reasoning text or prose', async () => {
+    const record = vi.fn().mockResolvedValue(undefined)
+    const observeBudget = vi.fn()
+
+    await executeObservedModelCall(input({
+      call: () => result({
+        text: Promise.resolve('  \n  '),
+        usage: Promise.resolve({
+          inputTokens: 1668,
+          outputTokens: 2048,
+          totalTokens: 3716,
+          outputTokenDetails: { textTokens: 0, reasoningTokens: 2048 },
+        }),
+        finalStep: Promise.resolve({
+          finishReason: 'length',
+          response: { modelId: 'actual-model' },
+          reasoningText: 'hidden chain of thought secret',
+          reasoning: [{ type: 'reasoning', text: 'hidden chain of thought secret' }],
+          providerMetadata: {},
+        }),
+      }) as never,
+      consume: (text) => text,
+      observeReasoningBudget: observeBudget,
+    }), deps({ record }))
+
+    expect(observeBudget).toHaveBeenCalledOnce()
+    expect(observeBudget).toHaveBeenCalledWith({
+      reasoningTokenCount: 2048,
+      reasoningFieldPresent: true,
+      reasoningDetailsPresent: true,
+      visibleContentChars: 0,
+      completionTokenCount: 2048,
+      finishReason: 'length',
+    })
+    const observed = JSON.stringify(observeBudget.mock.calls)
+    expect(observed).not.toContain('hidden chain of thought secret')
+    expect(JSON.stringify(record.mock.calls)).not.toContain('hidden chain of thought secret')
+  })
+
+  it('reports absent reasoning metadata as null counts rather than zero', async () => {
+    const observeBudget = vi.fn()
+
+    await executeObservedModelCall(input({
+      call: () => result({
+        text: Promise.resolve('visible prose'),
+        usage: Promise.resolve({ inputTokens: 10, outputTokens: 20, totalTokens: 30 }),
+        finalStep: Promise.resolve({
+          finishReason: 'stop',
+          response: { modelId: 'actual-model' },
+          providerMetadata: {},
+        }),
+      }) as never,
+      observeReasoningBudget: observeBudget,
+    }), deps())
+
+    expect(observeBudget).toHaveBeenCalledWith({
+      reasoningTokenCount: null,
+      reasoningFieldPresent: false,
+      reasoningDetailsPresent: false,
+      visibleContentChars: 13,
+      completionTokenCount: 20,
+      finishReason: 'stop',
+    })
+  })
+
+  it('reports reasoning-budget metadata even when consume rejects', async () => {
+    const observeBudget = vi.fn()
+    const error = new InvalidModelResponseError()
+
+    await expect(executeObservedModelCall(input({
+      call: () => result({
+        text: Promise.resolve(''),
+        usage: Promise.resolve({
+          inputTokens: 1895,
+          outputTokens: 2048,
+          totalTokens: 3943,
+          outputTokenDetails: { textTokens: 0, reasoningTokens: 2048 },
+        }),
+        finalStep: Promise.resolve({
+          finishReason: 'length',
+          response: { modelId: 'actual-model' },
+          providerMetadata: {},
+        }),
+      }) as never,
+      consume: () => { throw error },
+      observeReasoningBudget: observeBudget,
+    }), deps())).rejects.toBe(error)
+
+    expect(observeBudget).toHaveBeenCalledOnce()
+    expect(observeBudget).toHaveBeenCalledWith(expect.objectContaining({
+      reasoningTokenCount: 2048,
+      visibleContentChars: 0,
+      completionTokenCount: 2048,
+      finishReason: 'length',
     }))
   })
 

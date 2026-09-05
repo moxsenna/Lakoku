@@ -96,9 +96,35 @@ export async function recordGenerationAttempt(input: {
   findings: Finding[]
   /** Optional correlation for admin workflow join (legacy rows may omit). */
   correlationId?: string | null
+  idempotencyKey?: string | null
+  providerCallId?: string | null
+  brandScanHash?: string | null
+  leaseId?: string | null
 }): Promise<void> {
+  const db = createAdminClient()
+  if (input.outcome === 'REVIEW_REQUIRED') {
+    if (!input.idempotencyKey) {
+      throw new Error('REVIEW_REQUIRED_IDEMPOTENCY_KEY_REQUIRED')
+    }
+    const { error } = await db.rpc('enqueue_runtime_review_v1', {
+      p_story_id: input.storyId,
+      p_chapter_number: input.chapter,
+      p_repair_attempts: input.repairAttempts,
+      p_findings: input.findings.slice(0, 12).map((finding) => ({
+        code: finding.code,
+        severity: finding.severity,
+      })),
+      p_idempotency_key: input.idempotencyKey,
+      p_correlation_id: input.correlationId ?? null,
+      p_provider_call_id: input.providerCallId ?? null,
+      p_brand_scan_hash: input.brandScanHash ?? null,
+      p_lease_id: input.leaseId ?? null,
+    })
+    if (error) throw new Error(`enqueue_runtime_review_v1: ${error.message}`)
+    return
+  }
+
   try {
-    const db = createAdminClient()
     const sev = countBySeverity(input.findings)
     const payload: Record<string, unknown> = {
       chapter_number: input.chapter,

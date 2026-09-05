@@ -17,6 +17,7 @@ import {
   TOTAL_CHAPTERS,
   type CanonSnapshot,
   type ChapterBlueprint,
+  type Finding,
 } from '@lakoku/narrative-core'
 import { loadCanonSnapshot } from '@lakoku/narrative-core/server'
 import { loadContinuationContextForChapter } from './continuation-context.server'
@@ -29,6 +30,7 @@ import {
   scanForLeaks,
   type ThreadContext,
   type ChapterDraftParsed,
+  type GenerationResult,
 } from '@lakoku/ai-gateway'
 import { selectProvider } from '@lakoku/ai-gateway/server'
 import {
@@ -36,11 +38,7 @@ import {
   recordGenerationRuntimeFailed,
 } from '@/lib/observability/server'
 import { bestEffort } from '@/lib/observability/best-effort'
-import {
-  GenerationStageError,
-  isFailureRecorded,
-  markFailureRecorded,
-} from '@/lib/observability/generation-stage-error'
+import { isFailureRecorded } from '@/lib/observability/generation-stage-error'
 import type { GenerationStage } from '@/lib/observability/generation-stages'
 import { boundedLogId, safeErrorInfo } from '@/lib/observability/safe-error'
 import type { ChapterBrief, ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
@@ -72,6 +70,10 @@ import {
 import { createAdminClient } from '@lakoku/db'
 import { resolveGenerationLeaseTtlSeconds } from './generation-lease-ttl'
 import { throwIfAborted } from './abort'
+import {
+  isWriterLengthRepairV1Enabled,
+  observeWriterLengthRepairTelemetry,
+} from './writer-length-repair-policy.server'
 
 /**
  * Workflow generasi bab NYATA (M2→M5 disatukan) — "jalur cerita AI end-to-end".
@@ -90,6 +92,18 @@ import { throwIfAborted } from './abort'
 /** Idempotency key stabil per (story, chapter, scope) untuk jalur nyata. */
 export function realGenerationKey(storyId: string, n: number, scope: string) {
   return `gen:real:${scope}:${storyId}:${n}`
+}
+
+async function checkStandardGenerationAdmission(storyId: string): Promise<boolean> {
+  const admin = createAdminClient()
+  const { data, error } = await admin
+    .from('stories')
+    .select('generation_status')
+    .eq('id', storyId)
+    .maybeSingle()
+  if (error) throw new Error(`GENERATION_ADMISSION_READ_FAILED: ${error.message}`)
+  if (!data) throw new Error('GENERATION_ADMISSION_STORY_NOT_FOUND')
+  return data.generation_status !== 'needs_review'
 }
 
 function legacyLeaseKey(
@@ -253,6 +267,12 @@ function syntheticChapterBrief(
     lockEnding: lockedEndingKey !== null,
     endingKey: lockedEndingKey,
     previousChoiceSummary: choiceHistorySummary,
+    forbiddenRevealIds: [],
+    resolvedPlotDebtIds: [],
+    scheduledReveals: [],
+    plotDebtObligationsToProgress: [],
+    plotDebtObligationsToClose: [],
+    lockedEndingClosure: [],
   }
 }
 
@@ -519,6 +539,29 @@ async function generateNextChapterRealInner(
     result: CheckpointMutationResult,
   ): boolean => result.ok === true
 
+  const continuationReviewFindings = (detail: string): Finding[] => {
+    switch (detail) {
+      case 'TRIGGER_CHOICE_REQUIRED_FOR_NON_FIRST_CHAPTER':
+        return [{
+          code: 'CONTINUATION_TRIGGER_REQUIRED',
+          severity: 'CRITICAL',
+          message: 'Continuation context requires prior chapter choice provenance.',
+        }]
+      case 'TRIGGER_CHOICE_NOT_FOUND':
+        return [{
+          code: 'CONTINUATION_TRIGGER_NOT_FOUND',
+          severity: 'CRITICAL',
+          message: 'Continuation choice provenance is inconsistent with reader history.',
+        }]
+      default:
+        return [{
+          code: 'CONTINUATION_CONTEXT_INCONSISTENT',
+          severity: 'CRITICAL',
+          message: 'Continuation context is inconsistent with durable story state.',
+        }]
+    }
+  }
+
   if (jobContext?.signal?.aborted) {
     return { ok: false, reason: 'CAPACITY_TIMEOUT', detail: { reason: 'ABORT_SIGNAL' } }
   }
@@ -530,6 +573,7 @@ async function generateNextChapterRealInner(
     generationKind: 'standard',
     correlationId,
   })
+  const writerLengthRepairV1Enabled = isWriterLengthRepairV1Enabled()
 
   /**
    * On worker path the job lease is owned by the worker (heartbeat/finish).
@@ -678,8 +722,13 @@ async function generateNextChapterRealInner(
     })
   }
 
-  // 1) Lease. Worker path reuses job lease (no second acquire). Legacy acquires own.
+  // 1) Durable review admission gate before any lease is acquired or reused.
   stage = 'ACQUIRE_LEASE'
+  if (!(await checkStandardGenerationAdmission(storyId))) {
+    return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { reason: 'NEEDS_REVIEW', storyId } }
+  }
+
+  // Worker path reuses job lease (no second acquire). Legacy acquires own.
   if (jobContext) {
     leaseId = jobContext.leaseId
     console.log('GENERATION_JOB_LEASE_REUSED', {
@@ -790,7 +839,6 @@ async function generateNextChapterRealInner(
     })
 
     if (!contRes.ok) {
-      await releaseLeaseOnce()
       console.error('CONTINUATION_CONTEXT_LOAD_FAILED', {
         storyId,
         chapterNumber,
@@ -798,8 +846,24 @@ async function generateNextChapterRealInner(
         detail: contRes.detail,
       })
       if (contRes.kind === 'TRANSIENT') {
+        await releaseLeaseOnce()
         return { ok: false, reason: 'TRANSIENT', detail: contRes.detail }
       }
+      await recordGenerationAttempt({
+        storyId,
+        chapter: chapterNumber,
+        outcome: 'REVIEW_REQUIRED',
+        repairAttempts: 0,
+        findings: continuationReviewFindings(contRes.detail),
+        correlationId,
+        idempotencyKey: realGenerationKey(
+          storyId,
+          chapterNumber,
+          `review:continuation:${attemptId}`,
+        ),
+        leaseId,
+      })
+      await releaseLeaseOnce()
       return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: contRes.detail }
     }
 
@@ -844,15 +908,7 @@ async function generateNextChapterRealInner(
     })
 
     // 5) Prose: resume from checkpoint OR generate + validate.
-    type ProseResult = {
-      status: string
-      draft?: ChapterDraftParsed | null
-      attempts: number
-      findings: Array<{ severity?: string; code?: string; message?: string }>
-      failedLayer?: string | null
-      reason?: string
-    }
-    let result: ProseResult
+    let result: GenerationResult
     let draft: ChapterDraftParsed
 
     const usableCheckpoint = existingCheckpoint
@@ -866,6 +922,7 @@ async function generateNextChapterRealInner(
       draft = resumed
       result = {
         status: 'PUBLISHED',
+        chapterNumber,
         draft: resumed,
         attempts: existingCheckpoint.proseAttemptCount,
         findings: [],
@@ -884,7 +941,7 @@ async function generateNextChapterRealInner(
           storyId, chapterNumber, correlationId, attemptId: checkpointAttemptId,
           status: 'RUNNING_CHOICES', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED',
         })
-        return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: runningChoices } }
+        return { ok: false, reason: 'TRANSIENT', detail: { checkpointMutation: runningChoices } }
       }
       console.log('GENERATION_CHOICES_ONLY_RESUME', {
         storyId,
@@ -910,6 +967,12 @@ async function generateNextChapterRealInner(
             telemetryContext: providerContext,
             workflowPhase: 'CHAPTER_PROSE_INITIAL',
             signal: jobContext?.signal,
+            ...(writerLengthRepairV1Enabled
+              ? {
+                  writerLengthRepairV1: { enabled: true as const },
+                  observeWriterLengthRepair: observeWriterLengthRepairTelemetry,
+                }
+              : {}),
             ...(input.options?.providerRuntime === undefined
               ? {}
               : { providerRuntime: input.options.providerRuntime }),
@@ -921,16 +984,18 @@ async function generateNextChapterRealInner(
 
       stage = 'VALIDATE_PROSE'
       if (result.status !== 'PUBLISHED' || !result.draft) {
-        await releaseLeaseOnce()
         stage = 'RECORD_TERMINAL_ATTEMPT'
         await recordGenerationAttempt({
           storyId,
           chapter: chapterNumber,
           outcome: 'REVIEW_REQUIRED',
           repairAttempts: result.attempts,
-          findings: result.findings as never,
+          findings: result.findings,
           correlationId,
+          idempotencyKey: realGenerationKey(storyId, chapterNumber, `review:prose:${attemptId}`),
+          leaseId,
         })
+        await releaseLeaseOnce()
         const findingCodes = result.findings
           .slice(0, 12)
           .map((f) => `${f.severity}:${f.code}`)
@@ -964,7 +1029,6 @@ async function generateNextChapterRealInner(
         chapterNumber,
       })
       if (boundaryFindings.some((f) => f.severity === 'CRITICAL')) {
-        await releaseLeaseOnce()
         stage = 'RECORD_TERMINAL_ATTEMPT'
         await recordGenerationAttempt({
           storyId,
@@ -977,7 +1041,10 @@ async function generateNextChapterRealInner(
             message: f.message,
           })),
           correlationId,
-        }).catch(() => undefined)
+          idempotencyKey: realGenerationKey(storyId, chapterNumber, `review:boundary:${attemptId}`),
+          leaseId,
+        })
+        await releaseLeaseOnce()
         console.log('GENERATION_BOUNDARY_VIOLATION', {
           storyId,
           chapterNumber,
@@ -1029,7 +1096,7 @@ async function generateNextChapterRealInner(
           storyId, chapterNumber, correlationId, attemptId,
           status: 'PROSE_READY', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED',
         })
-        return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: saved } }
+        return { ok: false, reason: 'TRANSIENT', detail: { checkpointMutation: saved } }
       }
       proseFingerprintUsed = proseFingerprint(draft.title, draft.paragraphs ?? [])
       checkpointAttemptId = saved.checkpointAttemptId
@@ -1048,7 +1115,7 @@ async function generateNextChapterRealInner(
           storyId, chapterNumber, correlationId, attemptId: checkpointAttemptId,
           status: 'RUNNING_CHOICES', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED',
         })
-        return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: runningChoices } }
+        return { ok: false, reason: 'TRANSIENT', detail: { checkpointMutation: runningChoices } }
       }
     }
 
@@ -1104,7 +1171,11 @@ async function generateNextChapterRealInner(
           return { ok: false, reason: publishedEnding.reason }
         }
         if (jobContext && publishedEnding.jobId !== jobContext.jobId) {
-          return { ok: false, reason: 'FAILED_REVIEW_REQUIRED' }
+          return {
+            ok: false,
+            reason: 'LEASE_HELD',
+            detail: { reason: 'PUBLISHED_JOB_OWNERSHIP_MISMATCH' },
+          }
         }
         if (!jobContext) await reconcilePublishedCheckpoint()
         stage = 'RECORD_TERMINAL_ATTEMPT'
@@ -1113,7 +1184,7 @@ async function generateNextChapterRealInner(
           chapter: chapterNumber,
           outcome: 'PUBLISHED',
           repairAttempts: result.attempts,
-          findings: result.findings as never,
+          findings: result.findings,
           correlationId,
         }).catch(() => undefined)
         stage = 'COMPLETE'
@@ -1140,9 +1211,8 @@ async function generateNextChapterRealInner(
           storyId, chapterNumber, correlationId, attemptId: checkpointAttemptId,
           status: 'CHOICES_RETRY_WAIT', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED',
         })
-        return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: retryCheckpoint } }
+        return { ok: false, reason: 'TRANSIENT', detail: { checkpointMutation: retryCheckpoint } }
       }
-      await releaseLeaseOnce()
       stage = 'RECORD_TERMINAL_ATTEMPT'
       const { mapChoiceFailureReasonToErrorCode } = await import(
         '@/lib/observability/generation-stages'
@@ -1167,9 +1237,16 @@ async function generateNextChapterRealInner(
         chapter: chapterNumber,
         outcome: 'REVIEW_REQUIRED',
         repairAttempts: result.attempts + branch.repairAttempts,
-        findings: result.findings as never,
+        findings: branch.validationFindings.map((finding) => ({
+          code: finding.code,
+          severity: finding.severity === 'ERROR' ? 'CRITICAL' : 'MAJOR',
+          message: finding.message,
+        })),
         correlationId,
-      }).catch(() => undefined)
+        idempotencyKey: realGenerationKey(storyId, chapterNumber, `review:choices:${checkpointAttemptId}`),
+        leaseId,
+      })
+      await releaseLeaseOnce()
       return {
         ok: false,
         reason: branch.reason === 'CHOICE_WORKFLOW_TIMEOUT'
@@ -1197,18 +1274,32 @@ async function generateNextChapterRealInner(
     ]
       .flatMap(scanForLeaks)
     if (leakInChoices.length) {
+      const choiceLeakFinding: Finding = {
+        code: 'CHOICE_LEAK_REJECTED',
+        severity: 'CRITICAL',
+        message: 'Choice branch failed consumer-safe brand validation.',
+      }
+      await recordGenerationAttempt({
+        storyId,
+        chapter: chapterNumber,
+        outcome: 'REVIEW_REQUIRED',
+        repairAttempts: result.attempts + branch.repairAttempts,
+        findings: [choiceLeakFinding],
+        correlationId,
+        idempotencyKey: realGenerationKey(
+          storyId,
+          chapterNumber,
+          `review:choice_leak:${checkpointAttemptId}`,
+        ),
+        brandScanHash: createHash('sha256').update([...leakInChoices].sort().join('\n')).digest('hex'),
+        leaseId,
+      })
       await releaseLeaseOnce()
-      const err = new GenerationStageError(
-        `Kebocoran istilah internal pada cabang pilihan: ${leakInChoices.join(', ')}`,
-        {
-          errorCode: 'CHOICE_LEAK_REJECTED',
-          stage,
-          alreadyRecorded: true,
-        },
-      )
-      await logRuntimeFailure('CHOICE_LEAK_REJECTED', err)
-      markFailureRecorded(err)
-      throw err
+      return {
+        ok: false,
+        reason: 'FAILED_REVIEW_REQUIRED',
+        detail: { findings: [choiceLeakFinding], reason: 'CHOICE_LEAK_REJECTED' },
+      }
     }
 
     // 8) Publish atomik (legacy publish_chapter OR fenced job publish).
@@ -1259,7 +1350,11 @@ async function generateNextChapterRealInner(
     }
 
     if (jobContext && published.jobId !== jobContext.jobId) {
-      return { ok: false, reason: 'FAILED_REVIEW_REQUIRED' }
+      return {
+        ok: false,
+        reason: 'LEASE_HELD',
+        detail: { reason: 'PUBLISHED_JOB_OWNERSHIP_MISMATCH' },
+      }
     }
     if (!jobContext) await reconcilePublishedCheckpoint()
 
@@ -1275,7 +1370,7 @@ async function generateNextChapterRealInner(
           chapter: chapterNumber,
           outcome: 'PUBLISHED',
           repairAttempts: result.attempts,
-          findings: result.findings as never,
+          findings: result.findings,
           correlationId,
         }),
     )

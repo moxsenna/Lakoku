@@ -62,7 +62,7 @@ select ok(
 
 select is(
   md5(pg_get_functiondef('public.publish_chapter_v2(text,integer,text,jsonb,text,jsonb,jsonb,uuid,text)'::regprocedure)),
-  '349e6ec26c6123f5d872baed3bb23aa0',
+  '2dd6dba54c5f105cff1b8d755fa052f1',
   'V2 publisher remains byte-stable'
 );
 

@@ -251,6 +251,19 @@ function choiceProviderInput(
 }
 
 /**
+ * Baca kode validasi diagnostik dari error gateway secara struktural.
+ *
+ * Dibaca lewat bentuk objek, bukan `instanceof`, agar batas paket runtime →
+ * ai-gateway tidak menuntut deep import kelas error ke barrel.
+ */
+function readValidationCodes(err: unknown): string[] {
+  if (!err || typeof err !== 'object') return []
+  const codes = (err as { validationCodes?: unknown }).validationCodes
+  if (!Array.isArray(codes)) return []
+  return codes.filter((code): code is string => typeof code === 'string' && code.length > 0)
+}
+
+/**
  * Generate a choice branch via the injected provider.
  *
  * Pipeline:
@@ -430,11 +443,25 @@ export async function buildChoiceBranch(
         lastCause = err
         const code = classifyChoiceProviderError(err)
         const action = choiceRetryAction(code)
-        lastFindings = [{
-          code: 'PROVIDER_ERROR',
-          message: err instanceof Error ? err.message : 'Choice provider threw an error.',
-          severity: 'ERROR',
-        }]
+        // Kegagalan validasi schema membawa kode diagnostik yang tepat
+        // (validationCodes). Meratakannya jadi PROVIDER_ERROR membuat catatan
+        // repair berbunyi "gagal diparse atau kosong", sehingga model tidak
+        // pernah diberi tahu kelas kata mana yang ditolak dan rantai repair
+        // mengulang label yang sama sampai habis (run custom-t7 Bab 6).
+        // Pertahankan kodenya supaya buildChoiceRepairNotes bisa memberi
+        // instruksi yang dapat ditindaklanjuti.
+        const schemaValidationCodes = readValidationCodes(err)
+        lastFindings = schemaValidationCodes.length > 0
+          ? schemaValidationCodes.map((c) => ({
+              code: c,
+              message: err instanceof Error ? err.message : 'Choice schema validation failed.',
+              severity: 'ERROR' as const,
+            }))
+          : [{
+              code: 'PROVIDER_ERROR',
+              message: err instanceof Error ? err.message : 'Choice provider threw an error.',
+              severity: 'ERROR',
+            }]
         lastReason = 'PROVIDER_FAILED'
         if (action === 'transient_retry' && choiceBudget.usedCalls < choiceBudget.maxCalls) {
           // Backoff then retry same input (provider chain handled inside call).

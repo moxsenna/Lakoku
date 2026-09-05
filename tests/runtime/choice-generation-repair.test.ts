@@ -21,6 +21,14 @@ describe('choice error taxonomy', () => {
     expect(choiceRetryAction('SCHEMA_INVALID')).toBe('structural_repair')
   })
 
+  it('treats structured choice input rejection as terminal', () => {
+    const error = Object.assign(new Error('Pilihan cabang tidak dapat dihasilkan.'), {
+      code: 'CHOICE_INPUT_INVALID',
+    })
+    expect(classifyChoiceProviderError(error)).toBe('INPUT_INVALID')
+    expect(choiceRetryAction('INPUT_INVALID')).toBe('terminal')
+  })
+
   it('routes quality findings to quality repair', () => {
     expect(classifyChoiceProviderError(new Error('CHOICE_UNRELATED'))).toBe('QUALITY_UNGROUNDED')
     expect(classifyChoiceProviderError(new Error('NOT_DISTINCT'))).toBe('QUALITY_NOT_DISTINCT')

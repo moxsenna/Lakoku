@@ -38,9 +38,17 @@ export async function updateSession(request: NextRequest) {
 
   // IMPORTANT: If you remove getUser() and you use server-side rendering
   // with the Supabase client, your users may be randomly logged out.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  let user = null
+  try {
+    const { data, error } = await supabase.auth.getUser()
+    if (error) throw error
+    user = data.user
+  } catch {
+    // Refresh token mati (dicabut / diputar di klien lain / sesi dihapus):
+    // perlakukan sebagai tamu, jangan 500. auth-js sudah menghapus session
+    // mati via _callRefreshToken — cookie bersih ikut ter-set di response
+    // lewat setAll di atas, jadi request berikutnya tidak membawanya lagi.
+  }
 
   // Rute yang memerlukan sesi (pengalaman baca personal & koleksi).
   // Jelajah (/beranda, /cerita) dan /profil (punya CTA masuk) tetap publik.

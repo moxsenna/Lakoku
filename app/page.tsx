@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import Image from 'next/image'
-import { ArrowDown, ArrowRight, Lock } from 'lucide-react'
+import { ArrowDown, ArrowRight, ChevronDown, Lock } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { HeroChoice } from '@/components/landing/hero-choice'
 import { Reveal } from '@/components/landing/reveal'
@@ -401,35 +401,10 @@ export default function HomePage() {
         </Reveal>
       </section>
 
-      {/* Footer + disclosure aplikasi (dipertahankan untuk verifikasi OAuth Google) */}
+      {/* Footer: disclosure OAuth tetap di DOM (crawler branding Google memeriksa homepage),
+          tapi default tertutup agar landing tetap bersih. */}
       <footer className="border-t border-border">
         <div className="mx-auto flex w-full max-w-md flex-col gap-4 px-6 py-10 text-xs leading-relaxed text-muted-foreground">
-          <h2 className="text-sm font-semibold text-foreground">Tentang aplikasi ini</h2>
-          <p>
-            <strong className="text-foreground">Purpose of this application:</strong> Lakoku
-            provides interactive novels on the web. You create or pick a story, read chapters, and
-            choose branches that change relationships, mysteries, and endings. Some story text is
-            generated with AI models based on your inputs and choices.
-          </p>
-          <p>
-            <strong className="text-foreground">Tujuan aplikasi:</strong> Lakoku menampilkan novel
-            interaktif di web&mdash;membuat atau memilih cerita, membaca bab, dan memilih cabang
-            yang mengubah hubungan, misteri, dan akhir. Sebagian konten disusun dengan bantuan model
-            AI sesuai input dan pilihanmu.
-          </p>
-          <p>
-            <strong className="text-foreground">Google Sign-In:</strong> optional login via Google
-            shares your Google name, email, and profile photo so Lakoku can create or link your
-            account and save progress. See the{' '}
-            <Link href="/privacy" className="font-semibold text-primary">
-              Privacy Policy
-            </Link>{' '}
-            /{' '}
-            <Link href="/privacy" className="font-semibold text-primary">
-              Kebijakan Privasi
-            </Link>
-            .
-          </p>
           <p>
             <Link href="/privacy" className="font-semibold text-primary">
               Kebijakan Privasi
@@ -448,6 +423,42 @@ export default function HomePage() {
             </Link>
           </p>
           <p className="text-[11px]">© {new Date().getFullYear()} Lakoku</p>
+          <details className="group">
+            <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-foreground/80 [&::-webkit-details-marker]:hidden">
+              Tentang aplikasi ini
+              <ChevronDown
+                aria-hidden="true"
+                className="size-3 transition-transform group-open:rotate-180"
+              />
+            </summary>
+            <div className="mt-3 flex flex-col gap-3">
+              <p>
+                <strong className="text-foreground">Purpose of this application:</strong> Lakoku
+                provides interactive novels on the web. You create or pick a story, read chapters,
+                and choose branches that change relationships, mysteries, and endings. Some story
+                text is generated with AI models based on your inputs and choices.
+              </p>
+              <p>
+                <strong className="text-foreground">Tujuan aplikasi:</strong> Lakoku menampilkan
+                novel interaktif di web&mdash;membuat atau memilih cerita, membaca bab, dan memilih
+                cabang yang mengubah hubungan, misteri, dan akhir. Sebagian konten disusun dengan
+                bantuan model AI sesuai input dan pilihanmu.
+              </p>
+              <p>
+                <strong className="text-foreground">Google Sign-In:</strong> optional login via
+                Google shares your Google name, email, and profile photo so Lakoku can create or
+                link your account and save progress. See the{' '}
+                <Link href="/privacy" className="font-semibold text-primary">
+                  Privacy Policy
+                </Link>{' '}
+                /{' '}
+                <Link href="/privacy" className="font-semibold text-primary">
+                  Kebijakan Privasi
+                </Link>
+                .
+              </p>
+            </div>
+          </details>
         </div>
       </footer>
     </main>

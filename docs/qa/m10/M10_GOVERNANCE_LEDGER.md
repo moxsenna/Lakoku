@@ -2046,3 +2046,40 @@ Standing Freezes:
   Production writes / deployment        FORBIDDEN
   Subsequent milestone / work           BLOCKED until separately authorized
 ```
+
+---
+
+## Entry 25 — 2026-09-06 (M10-G entry gate evaluated; offline baseline frozen; M10G_ENTRY_GATE = PASS)
+
+Full baseline and entry gate authority: `docs/qa/m10/M10G_ENTRY_GATE_AND_PROOF_BASELINE_V1.md`.
+
+### 25.1 Entry Gate Verification & Pre-requisite Audit
+
+- **Baseline Commit Anchor:** `5d4112de9ca621bf7444a9b4edbcc23f32e62099` (HEAD).
+- **M10-F Status:** COMPLETE / CLOSED (`docs/qa/m10/M10F_CLOSEOUT_V1.md`, Entry 24).
+- **Historical Milestone Closures:** M10-A (`0997e7d`), M10-B (`7d0dd03`), M10-C (`08532c8`), M10-D (`a402d70`), M10-E (`0037c95` / `d24a52c`).
+- **Blocker Audit:** Open P0 = 0, Open P1 = 0. All historical blockers closed or reclassified with ratified evidence.
+- **Accepted Governance Debts:** `REVEAL_EXECUTION_PROOF_DEBT` and `M10F_V2_TYPE_HARDENING_DEBT` recorded as non-blocking. Golden novel human read will provide human evidence for reveal execution semantics.
+
+### 25.2 Frozen Authority & Proof Configuration
+
+- **Semantic Thresholds:** Minimum 80/100 across 8 rubrics (`D-R1`..`D-R8`), median aggregation over 3 samples, score spread ≤ 20 (`fixtures/m10-f/semantic-authority.ts:24-49`).
+- **Structural Constraints:** Hard 800–1000 words / soft 850–950 words, required sections and terminal closure present (`docs/AMENDMENTS_v0.6.md:14-23`, `lib/prose/mobile-drama-style.ts:13-44`). Paragraph count is OBSERVATIONAL, not a hard writer acceptance gate — PM structural authority correction 2026-09-06 (pre-inference, entry-baseline reconciliation; historical AMENDMENTS 35–50 band is guidance, publisher max-100 merge behavior is publisher plumbing) — see `docs/qa/m10/M10G_ENTRY_GATE_AND_PROOF_BASELINE_V1.md` §4.2.
+- **Deterministic Gates:** 0 canonical corruption, 0 duplicate publication, 0 unhandled BLOCKER/CRITICAL findings reaching publication, 0 cross-branch leakage (`docs/superpowers/plans/M10_B_TO_G_EXECUTION_PLAN.md:1274-1284`).
+- **Cost Ceilings (E0 R1):** Chapter ceiling `$2.10000000`, novel ceiling `$200.00000000`, judge novel ceiling `$2.40000000`, retry ceiling `173.684249%` (`fixtures/m10-e/e0-budget-authority.ts:51-73`).
+- **Proof Matrix:** 3 complete novels (G-1 high-trust, G-2 low-trust, G-3 mixed) × 50 chapters; ≥2 legal forks (early/mid + late to Bab 50); 1 designated golden novel with full 50-chapter human read against 11 plan dimensions (`docs/superpowers/plans/M10_B_TO_G_EXECUTION_PLAN.md:1208-1268`). Matrix reduction forbidden.
+- **Telemetry Schema:** Metadata-only run manifest; zero prose or private reader data retention (`docs/superpowers/plans/M10_B_TO_G_EXECUTION_PLAN.md:1368, 1371`).
+- **Inference Projection Envelope:** Planned volume 165 chapters, 162 choices, 108 judge calls (435 calls total); nominal baseline cost `$353.70000000`, max guardrail ceiling `$600.00000000`. Stated as analytical projection, not authorization.
+
+### 25.3 Gate Verdict & Standing Status
+
+```text
+M10G_ENTRY_GATE                          PASS
+M10-G Operational State                  BASELINE FROZEN / EXECUTION PENDING SEPARATE AUTHORIZATION
+
+Standing Freezes:
+  Model inference                        FORBIDDEN
+  Database mutations / deployments       FORBIDDEN
+  Live reader activations                FORBIDDEN
+  Evaluator / threshold modifications    FORBIDDEN
+```

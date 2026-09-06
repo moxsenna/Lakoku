@@ -18,6 +18,8 @@ import {
   InvalidModelResponseError,
   sanitizeChoiceValidationCodes,
 } from './model-call-errors'
+import { runObserver } from './observer-isolation'
+import { captureFlagshipCompletion, type FlagshipCompletionCapture } from './flagship-identity-evidence'
 import type { ObservedReasoningBudget } from './reasoning-budget.contract'
 
 export { ContentRejectedError, InvalidModelResponseError } from './model-call-errors'
@@ -45,6 +47,8 @@ export interface ObservedModelCallInput<T> {
   observeReasoningBudget?: (budget: ObservedReasoningBudget) => void
   /** Offline synthetic diagnostics can prove DB isolation by disabling recorder calls. */
   persistObservation?: boolean
+  /** Internal completion result, not an observer. */
+  flagshipCompletion?: FlagshipCompletionCapture
 }
 
 export interface ObservedModelCallDeps {
@@ -337,14 +341,18 @@ export async function executeObservedModelCall<T>(
       usage: usage as ObservedUsage | undefined,
       finalStep: finalStep as ObservedFinalStep | undefined,
     }
+    if (input.flagshipCompletion) captureFlagshipCompletion(
+      input.flagshipCompletion, input.candidate.configuredModelId,
+      input.candidate.providerId, observation.finalStep,
+    )
     observedFinishReason = typeof observation.finalStep?.finishReason === 'string'
       ? observation.finalStep.finishReason
       : undefined
     // Dilaporkan sebelum consume agar cap-exhaustion tetap terbaca ketika parser
     // menolak teks kosong dan completeness tidak pernah berjalan.
-    input.observeReasoningBudget?.(
+    runObserver(() => input.observeReasoningBudget?.(
       reasoningBudget(text, observation, observedFinishReason),
-    )
+    ))
     const value = await input.consume(text, { finishReason: observedFinishReason })
     const completion: ProviderCallCompletion = {
       ...completionBase(
@@ -358,7 +366,7 @@ export async function executeObservedModelCall<T>(
       validationStage: null,
       validationCodes: null,
     }
-    input.observeCompletion?.(completion, { finishReason: observedFinishReason })
+    runObserver(() => input.observeCompletion?.(completion, { finishReason: observedFinishReason }))
     if (input.persistObservation !== false) await recordBestEffort(start, completion, deps)
     return value
   } catch (error) {
@@ -373,7 +381,7 @@ export async function executeObservedModelCall<T>(
       ...classification,
       ...validationDiagnostics(classification, error),
     }
-    input.observeCompletion?.(completion, { finishReason: observedFinishReason })
+    runObserver(() => input.observeCompletion?.(completion, { finishReason: observedFinishReason }))
     if (input.persistObservation !== false) await recordBestEffort(start, completion, deps)
     throw error
   }

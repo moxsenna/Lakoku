@@ -11,6 +11,7 @@ import type {
   ModelCallExecutionOptions,
 } from '@lakoku/ai-gateway'
 import type { AiModelRoute } from '@/lib/ops/ai-model-routes'
+import type { FlagshipWriterResult } from '@/lib/ai-gateway/flagship-identity-evidence'
 import type { ProviderCallOutcome } from '@/lib/observability/generation-provider-call.contract'
 import { stableStringify } from '@/lib/narrative-qa/scoring/canonical-serializer'
 
@@ -119,7 +120,12 @@ export async function prepareWriterV2FlagshipControl() {
       legacyFallbackUsed: binding.legacyFallbackUsed,
       writerVisibleInternalIdCount: binding.writerVisibleInternalIdCount,
       scheduledRevealProjected: fixture.projection.scheduledRevealWriterVisible
-        && fixture.projection.scheduledRevealObligationConcrete,
+        && fixture.projection.scheduledRevealObligationConcrete
+        && selected.brief.scheduledReveals.length > 0
+        && selected.brief.scheduledReveals.every((reveal) =>
+          projection.metadata.obligations.some((item) => item.kind === 'SCHEDULED_REVEAL'
+            && item.authorityId === reveal.authorityId
+            && item.writerDirective === reveal.writerDirective)),
       numericParagraphControllersAbsent: NUMERIC_PARAGRAPH_CONTROLLERS.every(
         (pattern) => !pattern.test(envelope),
       ),
@@ -165,7 +171,8 @@ export async function preflightWriterV2FlagshipControl(input: WriterV2FlagshipPr
     || !evidence.hardBandPresent) {
     throw new Error('WRITER_V2_FLAGSHIP_CONTROL_LENGTH_AUTHORITY_MISMATCH')
   }
-  if (prepared.projectionHash !== input.expectedProjectionHash) {
+  if (input.expectedProjectionHash !== WRITER_V2_FLAGSHIP_CONTROL_CONFIG.expectedProjectionHash
+    || prepared.projectionHash !== WRITER_V2_FLAGSHIP_CONTROL_CONFIG.expectedProjectionHash) {
     throw new Error('WRITER_V2_FLAGSHIP_CONTROL_PROJECTION_HASH_MISMATCH')
   }
   if (stableStringify(input.route ?? createWriterV2FlagshipControlRoute())
@@ -181,9 +188,11 @@ export async function preflightWriterV2FlagshipControl(input: WriterV2FlagshipPr
   if ((input.providerCalls ?? 0) !== 0 || (input.artifactWritten ?? false) !== false) {
     throw new Error('WRITER_V2_FLAGSHIP_CONTROL_PREFLIGHT_SIDE_EFFECT_MISMATCH')
   }
+  // Scope amendment: deterministic projection is gated; prose semantics remain unverified.
   return {
     ok: true as const,
     credentialAvailable: true as const,
+    semanticOutcome: 'UNVERIFIABLE' as const,
     providerCalls: 0 as const,
     artifactWritten: false as const,
     projectionHash: prepared.projectionHash,
@@ -192,12 +201,20 @@ export async function preflightWriterV2FlagshipControl(input: WriterV2FlagshipPr
 }
 
 export type WriterV2ControlClassification =
-  | 'CONTROL_PASS'
+  | 'CONTROL_MECHANICAL_PASS'
   | 'CONTROL_LENGTH_MISS'
-  | 'CONTROL_AUTHORITY_MISS'
+  | 'CONTROL_AUTHORITY_PROJECTION_MISS'
   | 'CONTROL_PIPELINE_FAIL'
+  | 'CONTROL_IDENTITY_UNPROVEN'
+  | 'CONTROL_IDENTITY_MISMATCH'
 
 export type WriterV2ControlObservation = Readonly<{
+  transportOutcome: 'COMPLETED' | 'FAILED'
+  identityOutcome: FlagshipWriterResult['identityOutcome']
+  writerOutcome: 'ACCEPTED' | 'REJECTED'
+  providerRequested: string
+  providerObserved: string | null
+  canonicalResolution: FlagshipWriterResult['identity']['canonicalResolution']
   providerTransportOutcome: ProviderCallOutcome | 'NOT_COMPLETED'
   requestedModel: 'openai/gpt-5.6-sol'
   configuredModel: 'openai/gpt-5.6-sol'
@@ -213,7 +230,8 @@ export type WriterV2ControlObservation = Readonly<{
   completenessCodes: readonly string[]
   scheduledReveal: Readonly<{
     obligationCount: number
-    validationOutcome: 'PASSED' | 'FAILED' | 'NOT_REACHED'
+    projectionOutcome: 'PASSED' | 'FAILED' | 'NOT_REACHED'
+    semanticOutcome: 'UNVERIFIABLE'
   }>
   layerADeterministicResult: Readonly<{
     outcome: 'PASSED' | 'FAILED' | 'NOT_REACHED'
@@ -233,9 +251,11 @@ export type WriterV2ControlObservation = Readonly<{
 export function classifyWriterV2FlagshipControl(
   observation: WriterV2ControlObservation,
 ): WriterV2ControlClassification {
+  if (observation.transportOutcome !== 'COMPLETED') return 'CONTROL_PIPELINE_FAIL'
+  if (observation.identityOutcome === 'MISMATCH') return 'CONTROL_IDENTITY_MISMATCH'
+  if (observation.identityOutcome !== 'PROVEN') return 'CONTROL_IDENTITY_UNPROVEN'
   const canonical = observation.responseModel === WRITER_V2_FLAGSHIP_CONTROL_CONFIG.expectedResponseModel
-  const shapeHealthy = (observation.providerTransportOutcome === 'SUCCEEDED'
-      || observation.providerTransportOutcome === 'INVALID_RESPONSE')
+  const shapeHealthy = observation.transportOutcome === 'COMPLETED'
     && canonical
     && observation.finishReason === 'stop'
     && observation.parserOutcome === 'ACCEPTED'
@@ -247,18 +267,25 @@ export function classifyWriterV2FlagshipControl(
 
   const lengthPass = observation.wordCount !== null
     && observation.wordCount >= 800 && observation.wordCount <= 1000
-  const authorityPass = observation.scheduledReveal.validationOutcome === 'PASSED'
-    && observation.layerADeterministicResult.outcome === 'PASSED'
+  const layerAPass = observation.layerADeterministicResult.outcome === 'PASSED'
+    && observation.layerADeterministicResult.codes.length === 0
+  const layerALengthOnly = !lengthPass
+    && observation.layerADeterministicResult.outcome === 'FAILED'
+    && observation.layerADeterministicResult.codes.length === 1
+    && observation.layerADeterministicResult.codes[0] === 'CHAPTER_LENGTH_OUT_OF_RANGE'
+  const deterministicPass = (layerAPass || layerALengthOnly)
     && observation.leakInternalIdResult.outcome === 'PASSED'
     && observation.leakInternalIdResult.writerVisibleInternalIdCount === 0
-  if (lengthPass && authorityPass && observation.writerCompletenessOutcome === 'PASSED'
-    && observation.completenessCodes.length === 0) return 'CONTROL_PASS'
+  if (!deterministicPass) return 'CONTROL_PIPELINE_FAIL'
+  const authorityPass = observation.scheduledReveal.projectionOutcome === 'PASSED'
+    && observation.scheduledReveal.obligationCount > 0
+  if (!authorityPass) return 'CONTROL_AUTHORITY_PROJECTION_MISS'
+  if (lengthPass && observation.writerOutcome === 'ACCEPTED' && authorityPass && observation.writerCompletenessOutcome === 'PASSED'
+    && observation.completenessCodes.length === 0) return 'CONTROL_MECHANICAL_PASS'
   const lengthOnly = observation.writerCompletenessOutcome === 'FAILED'
     && observation.completenessCodes.length === 1
     && observation.completenessCodes[0] === 'WRITER_LENGTH_OUT_OF_RANGE'
   if (!lengthPass && authorityPass && lengthOnly) return 'CONTROL_LENGTH_MISS'
-  if (lengthPass && !authorityPass && observation.writerCompletenessOutcome === 'PASSED'
-    && observation.completenessCodes.length === 0) return 'CONTROL_AUTHORITY_MISS'
   return 'CONTROL_PIPELINE_FAIL'
 }
 
@@ -294,7 +321,7 @@ export type WriterV2FlagshipControlReport = Readonly<{
 
 const FORBIDDEN_REPORT_KEYS = new Set([
   'system', 'prompt', 'title', 'prose', 'paragraph', 'paragraphs', 'rawresponse',
-  'reasoning', 'reasoningtext', 'canon', 'snapshot', 'plan', 'continuation', 'brief',
+  'reasoning', 'reasoningtext', 'credential', 'credentials', 'apikey', 'authorization', 'directive', 'writerdirective', 'canon', 'snapshot', 'plan', 'continuation', 'brief',
 ])
 
 export function assertWriterV2FlagshipControlSerialization(value: unknown): void {
@@ -312,10 +339,6 @@ export function assertWriterV2FlagshipControlSerialization(value: unknown): void
   visit(value)
 }
 
-function isControlAuthorityError(error: unknown): boolean {
-  return error instanceof Error && error.message.startsWith('WRITER_V2_FLAGSHIP_CONTROL_')
-}
-
 export async function executeWriterV2FlagshipControl(
   input: WriterV2FlagshipPreflightInput & Readonly<{ provider: GenerationProvider }>,
 ): Promise<WriterV2FlagshipControlReport> {
@@ -323,9 +346,6 @@ export async function executeWriterV2FlagshipControl(
   const prepared = await prepareWriterV2FlagshipControl()
   const callBudget = { used: 0, max: 1 }
   const writerInferenceBudget = { used: 0, max: 1 as const }
-  let runtimeCount = 0
-  let modelCallCount = 0
-  let deterministicCount = 0
   const mutable = {
     providerTransportOutcome: 'NOT_COMPLETED' as ProviderCallOutcome | 'NOT_COMPLETED',
     responseModel: null as string | null,
@@ -338,7 +358,7 @@ export async function executeWriterV2FlagshipControl(
     writerCompletenessOutcome: 'NOT_REACHED' as 'PASSED' | 'FAILED' | 'NOT_REACHED',
     completenessCodes: [] as string[],
     scheduledRevealObligationCount: 0,
-    scheduledRevealValidationOutcome: 'NOT_REACHED' as 'PASSED' | 'FAILED' | 'NOT_REACHED',
+    scheduledRevealProjectionOutcome: 'NOT_REACHED' as 'PASSED' | 'FAILED' | 'NOT_REACHED',
     layerAOutcome: 'NOT_REACHED' as 'PASSED' | 'FAILED' | 'NOT_REACHED',
     layerACodes: [] as string[],
     leakOutcome: 'NOT_REACHED' as 'PASSED' | 'FAILED' | 'NOT_REACHED',
@@ -348,7 +368,7 @@ export async function executeWriterV2FlagshipControl(
     visibleContentChars: null as number | null,
     latencyMs: 0,
   }
-  let executionError: unknown
+  let result: FlagshipWriterResult | undefined
 
   const options: ModelCallExecutionOptions = {
     telemetryContext: {
@@ -368,82 +388,70 @@ export async function executeWriterV2FlagshipControl(
       system: prepared.projection.system,
       prompt: prepared.projection.prompt,
     },
-    observeWriterRuntime: (runtime) => {
-      runtimeCount += 1
-      if (runtimeCount > 1 || stableStringify(runtime) !== stableStringify(EXPECTED_RUNTIME)) {
-        throw new Error('WRITER_V2_FLAGSHIP_CONTROL_RUNTIME_MISMATCH')
-      }
-    },
-    observeModelCall: (completion) => {
-      modelCallCount += 1
-      if (modelCallCount > 1 || completion.actualProviderId !== 'openrouter'
-        || completion.actualModelId !== WRITER_V2_FLAGSHIP_CONTROL_CONFIG.expectedResponseModel
-        || completion.actualModelResolved !== true) {
-        throw new Error('WRITER_V2_FLAGSHIP_CONTROL_MODEL_IDENTITY_MISMATCH')
-      }
-      mutable.providerTransportOutcome = completion.outcome
-      mutable.responseModel = completion.actualModelId
-      mutable.finishReason = completion.finishReason ?? null
-      mutable.completionTokens = completion.outputTokenCount
-      mutable.latencyMs = completion.elapsedMs
-    },
     observeReasoningBudget: (budget) => {
       mutable.reasoningTokens = budget.reasoningTokenCount
       mutable.completionTokens = budget.completionTokenCount
       mutable.visibleContentChars = budget.visibleContentChars
-      mutable.finishReason = budget.finishReason ?? null
     },
-    observeWriterParserOutcome: (outcome) => { mutable.parserOutcome = outcome },
-    observeWriterEvaluation: (evaluation) => {
-      mutable.writerCompletenessOutcome = evaluation.completenessPassed ? 'PASSED' : 'FAILED'
-      mutable.completenessCodes = [...evaluation.completenessCodes]
-      mutable.wordCount = evaluation.wordCount
-      mutable.paragraphCount = evaluation.paragraphCount ?? null
-      mutable.requiredSections = evaluation.requiredSectionsPresent
-      mutable.terminalClosure = evaluation.terminalClosurePresent
-    },
-    observeWriterDeterministicEvaluation: (evaluation) => {
-      deterministicCount += 1
-      if (deterministicCount > 1) {
-        throw new Error('WRITER_V2_FLAGSHIP_CONTROL_DETERMINISTIC_OBSERVER_MISMATCH')
-      }
-      mutable.layerAOutcome = evaluation.layerAPassed ? 'PASSED' : 'FAILED'
-      mutable.layerACodes = [...evaluation.layerACodes]
-      mutable.leakOutcome = evaluation.leakPassed
-        && evaluation.writerVisibleInternalIdCount === 0 ? 'PASSED' : 'FAILED'
-      mutable.writerVisibleInternalIdCount = evaluation.writerVisibleInternalIdCount
-      mutable.scheduledRevealObligationCount = evaluation.scheduledRevealObligationCount
-      mutable.scheduledRevealValidationOutcome = evaluation.scheduledRevealValidationPassed
-        ? 'PASSED' : 'FAILED'
-    },
+
   }
 
   try {
-    await input.provider.writeChapter({
+    if (!input.provider.writeFlagshipControl) throw new Error('WRITER_V2_FLAGSHIP_CONTROL_AUTHORITATIVE_RESULT_REQUIRED')
+    result = await input.provider.writeFlagshipControl({
       snapshot: prepared.snapshot,
       plan: prepared.plan,
       continuation: prepared.continuation,
       brief: prepared.brief,
     }, options)
   } catch (error) {
-    executionError = error
+    if (error instanceof Error && error.message.startsWith('WRITER_V2_FLAGSHIP_CONTROL_')) throw error
+    // Missing authoritative result fails closed; observer evidence cannot replace it.
   }
-  if (isControlAuthorityError(executionError)) throw executionError
 
   const writerInferenceCount = Math.max(
     callBudget.used,
     writerInferenceBudget.used,
-    runtimeCount,
-    modelCallCount,
   )
   if (writerInferenceCount > 1 || callBudget.used > 1 || writerInferenceBudget.used > 1) {
     throw new Error('WRITER_V2_FLAGSHIP_CONTROL_INFERENCE_ACCOUNTING_MISMATCH')
+  }
+  if (result) {
+    mutable.responseModel = result.identity.responseModel
+    mutable.finishReason = result.finishReason
+    mutable.parserOutcome = result.parserOutcome
+    mutable.providerTransportOutcome = result.transportOutcome === 'COMPLETED'
+      ? (result.writerOutcome === 'ACCEPTED' ? 'SUCCEEDED' : 'INVALID_RESPONSE') : 'NOT_COMPLETED'
+    const evaluation = result.evaluation
+    if (evaluation) {
+      mutable.writerCompletenessOutcome = evaluation.completenessPassed ? 'PASSED' : 'FAILED'
+      mutable.completenessCodes = [...evaluation.completenessCodes]
+      mutable.wordCount = evaluation.wordCount
+      mutable.paragraphCount = evaluation.paragraphCount ?? null
+      mutable.requiredSections = evaluation.requiredSectionsPresent
+      mutable.terminalClosure = evaluation.terminalClosurePresent
+    }
+    const checks = result.deterministic
+    if (checks) {
+      mutable.layerAOutcome = checks.layerAPassed ? 'PASSED' : 'FAILED'
+      mutable.layerACodes = [...checks.layerACodes]
+      mutable.leakOutcome = checks.leakPassed && checks.writerVisibleInternalIdCount === 0 ? 'PASSED' : 'FAILED'
+      mutable.writerVisibleInternalIdCount = checks.writerVisibleInternalIdCount
+      mutable.scheduledRevealObligationCount = checks.scheduledRevealObligationCount
+      mutable.scheduledRevealProjectionOutcome = checks.scheduledRevealProjectionPassed ? 'PASSED' : 'FAILED'
+    }
   }
   const wordsPerParagraph = mutable.wordCount !== null && mutable.paragraphCount !== null
     && mutable.paragraphCount > 0
     ? Math.round((mutable.wordCount / mutable.paragraphCount) * 10) / 10
     : null
   const observation: WriterV2ControlObservation = {
+    transportOutcome: result?.transportOutcome ?? 'FAILED',
+    identityOutcome: result?.identityOutcome ?? 'UNAVAILABLE',
+    writerOutcome: result?.writerOutcome ?? 'REJECTED',
+    providerRequested: result?.identity.providerRequested ?? 'openrouter',
+    providerObserved: result?.identity.providerObserved ?? null,
+    canonicalResolution: result?.identity.canonicalResolution ?? null,
     providerTransportOutcome: mutable.providerTransportOutcome,
     requestedModel: 'openai/gpt-5.6-sol',
     configuredModel: 'openai/gpt-5.6-sol',
@@ -459,7 +467,8 @@ export async function executeWriterV2FlagshipControl(
     completenessCodes: mutable.completenessCodes,
     scheduledReveal: {
       obligationCount: mutable.scheduledRevealObligationCount,
-      validationOutcome: mutable.scheduledRevealValidationOutcome,
+      projectionOutcome: mutable.scheduledRevealProjectionOutcome,
+      semanticOutcome: 'UNVERIFIABLE',
     },
     layerADeterministicResult: {
       outcome: mutable.layerAOutcome,

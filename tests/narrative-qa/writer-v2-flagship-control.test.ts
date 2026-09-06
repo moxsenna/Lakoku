@@ -8,6 +8,7 @@ import type {
   GenerationProvider,
   ModelCallExecutionOptions,
 } from '@lakoku/ai-gateway'
+import { evaluateFlagshipIdentity } from '@/lib/ai-gateway/flagship-identity-evidence'
 import type { ProviderCallOutcome } from '@/lib/observability/generation-provider-call.contract'
 import {
   WRITER_V2_FLAGSHIP_CONTROL_CONFIG,
@@ -46,12 +47,13 @@ type FakeSpec = Readonly<{
 }>
 
 function fakeProvider(spec: FakeSpec = {}): GenerationProvider & {
-  writeChapter: ReturnType<typeof vi.fn>
+  writeFlagshipControl: ReturnType<typeof vi.fn>
 } {
   return {
     name: 'writer-v2-flagship-fake',
     generatePlan: vi.fn(),
-    writeChapter: vi.fn(async (_input, options?: ModelCallExecutionOptions) => {
+    writeChapter: vi.fn(),
+    writeFlagshipControl: vi.fn(async (_input, options?: ModelCallExecutionOptions) => {
       if (!options?.callBudget || !options.writerInferenceBudget) throw new Error('budgets missing')
       options.callBudget.used += 1
       options.writerInferenceBudget.used += 1
@@ -89,7 +91,8 @@ function fakeProvider(spec: FakeSpec = {}): GenerationProvider & {
         leakPassed: spec.leak ?? true,
         writerVisibleInternalIdCount: spec.internalIdCount ?? 0,
         scheduledRevealObligationCount: 1,
-        scheduledRevealValidationPassed: spec.scheduledReveal ?? true,
+        scheduledRevealValidationPassed: false,
+        scheduledRevealProjectionPassed: spec.scheduledReveal ?? true,
       })
       const transport = spec.transport ?? (completenessPassed ? 'SUCCEEDED' : 'INVALID_RESPONSE')
       options.observeModelCall?.({
@@ -109,14 +112,28 @@ function fakeProvider(spec: FakeSpec = {}): GenerationProvider & {
         validationCodes: null,
         finishReason: spec.finishReason ?? 'stop',
       })
-      if (spec.throwAfterObservation || transport !== 'SUCCEEDED') throw new Error('synthetic terminal')
-      return { discarded: true }
+      const responseModel = spec.responseModel ?? 'openai/gpt-5.6-sol-20260709'
+      const identity = { requestedModel: 'openai/gpt-5.6-sol', configuredModel: 'openai/gpt-5.6-sol',
+        responseModel, providerRequested: 'openrouter', providerObserved: 'openrouter',
+        canonicalResolution: responseModel === 'openai/gpt-5.6-sol-20260709' ? 'EXACT_FROZEN_MATCH' as const : null }
+      return {
+        identity, identityOutcome: evaluateFlagshipIdentity(identity), transportOutcome: 'COMPLETED' as const,
+        writerOutcome: completenessPassed ? 'ACCEPTED' as const : 'REJECTED' as const,
+        finishReason: spec.finishReason ?? 'stop', parserOutcome: spec.parserOutcome ?? 'ACCEPTED',
+        evaluation: { completenessPassed, completenessCodes: spec.completenessCodes ?? (completenessPassed ? [] : ['WRITER_LENGTH_OUT_OF_RANGE']),
+          wordCount, paragraphCount, requiredSectionsPresent: spec.sections ?? true, terminalClosurePresent: spec.closure ?? true },
+        deterministic: { layerAPassed: spec.layerA ?? true, layerACodes: spec.layerA === false ? ['REVEAL_BEFORE_GATE'] : [],
+          leakPassed: spec.leak ?? true, writerVisibleInternalIdCount: spec.internalIdCount ?? 0,
+          scheduledRevealObligationCount: 1, scheduledRevealValidationPassed: false, scheduledRevealProjectionPassed: spec.scheduledReveal ?? true },
+      }
     }),
   }
 }
 
 function observation(overrides: Partial<WriterV2ControlObservation> = {}): WriterV2ControlObservation {
   return {
+    transportOutcome: 'COMPLETED', identityOutcome: 'PROVEN', writerOutcome: 'ACCEPTED',
+    providerRequested: 'openrouter', providerObserved: 'openrouter', canonicalResolution: 'EXACT_FROZEN_MATCH',
     providerTransportOutcome: 'SUCCEEDED',
     requestedModel: 'openai/gpt-5.6-sol',
     configuredModel: 'openai/gpt-5.6-sol',
@@ -130,7 +147,7 @@ function observation(overrides: Partial<WriterV2ControlObservation> = {}): Write
     wordsPerParagraph: 45,
     writerCompletenessOutcome: 'PASSED',
     completenessCodes: [],
-    scheduledReveal: { obligationCount: 1, validationOutcome: 'PASSED' },
+    scheduledReveal: { obligationCount: 1, projectionOutcome: 'PASSED', semanticOutcome: 'UNVERIFIABLE' },
     layerADeterministicResult: { outcome: 'PASSED', codes: [] },
     leakInternalIdResult: { outcome: 'PASSED', writerVisibleInternalIdCount: 0 },
     reasoningTokens: 0,
@@ -176,10 +193,8 @@ describe('WRITER_V2_FLAGSHIP_CONTROL_V1', () => {
   })
 
   it('preflights all frozen gates with zero calls and no artifact', async () => {
-    const result = await preflightWriterV2FlagshipControl(authorityInput)
-    expect(result).toMatchObject({
-      ok: true, credentialAvailable: true, providerCalls: 0,
-      artifactWritten: false, projectionHash: EXPECTED_PROJECTION_HASH,
+    await expect(preflightWriterV2FlagshipControl(authorityInput)).resolves.toMatchObject({
+      ok: true, providerCalls: 0, artifactWritten: false, semanticOutcome: 'UNVERIFIABLE',
     })
     await expect(preflightWriterV2FlagshipControl({
       ...authorityInput, expectedProjectionHash: '0'.repeat(64),
@@ -199,68 +214,47 @@ describe('WRITER_V2_FLAGSHIP_CONTROL_V1', () => {
   })
 
   it('classifies exact PM taxonomy fail closed', () => {
-    expect(classifyWriterV2FlagshipControl(observation())).toBe('CONTROL_PASS')
+    expect(classifyWriterV2FlagshipControl(observation())).toBe('CONTROL_MECHANICAL_PASS')
     expect(classifyWriterV2FlagshipControl(observation({
       providerTransportOutcome: 'INVALID_RESPONSE', wordCount: 760,
       writerCompletenessOutcome: 'FAILED', completenessCodes: ['WRITER_LENGTH_OUT_OF_RANGE'],
+      layerADeterministicResult: { outcome: 'FAILED', codes: ['CHAPTER_LENGTH_OUT_OF_RANGE'] },
     }))).toBe('CONTROL_LENGTH_MISS')
     expect(classifyWriterV2FlagshipControl(observation({
-      scheduledReveal: { obligationCount: 1, validationOutcome: 'FAILED' },
-    }))).toBe('CONTROL_AUTHORITY_MISS')
+      scheduledReveal: { obligationCount: 1, projectionOutcome: 'FAILED', semanticOutcome: 'UNVERIFIABLE' },
+    }))).toBe('CONTROL_AUTHORITY_PROJECTION_MISS')
     expect(classifyWriterV2FlagshipControl(observation({
-      responseModel: 'openai/gpt-5.6-sol',
-    }))).toBe('CONTROL_PIPELINE_FAIL')
+      responseModel: 'openai/gpt-5.6-sol', identityOutcome: 'UNPROVEN',
+    }))).toBe('CONTROL_IDENTITY_UNPROVEN')
     expect(classifyWriterV2FlagshipControl(observation({
       parserOutcome: 'REJECTED',
     }))).toBe('CONTROL_PIPELINE_FAIL')
   })
 
-  it('executes one provider.writeChapter with no repair and returns metadata only', async () => {
+  it('executes once without claiming semantic proof', async () => {
     const provider = fakeProvider()
-    const report = await executeWriterV2FlagshipControl({ ...authorityInput, provider })
-    expect(provider.writeChapter).toHaveBeenCalledTimes(1)
-    const options = provider.writeChapter.mock.calls[0]?.[1] as ModelCallExecutionOptions
-    expect(options.callBudget).toEqual({ used: 1, max: 1 })
-    expect(options.writerInferenceBudget).toEqual({ used: 1, max: 1 })
-    expect(options).not.toHaveProperty('writerLengthRepairV1')
-    expect(options.diagnosticChapterWriterPromptOverride?.invocation)
-      .toBe('WRITER_V2_FLAGSHIP_CONTROL_V1')
-    expect(report.classification).toBe('CONTROL_PASS')
-    expect(report.providerCalls).toBe(1)
-    expect(report.observation).toMatchObject({
-      providerTransportOutcome: 'SUCCEEDED',
-      requestedModel: 'openai/gpt-5.6-sol', configuredModel: 'openai/gpt-5.6-sol',
-      responseModel: 'openai/gpt-5.6-sol-20260709', finishReason: 'stop',
-      parserOutcome: 'ACCEPTED', requiredSections: true, terminalClosure: true,
-      wordCount: 900, paragraphCount: 20, wordsPerParagraph: 45,
-      writerCompletenessOutcome: 'PASSED', completenessCodes: [],
-      reasoningTokens: 0, completionTokens: 1300, visibleContentChars: 7500,
-      latencyMs: 24000, writerInferenceCount: 1,
+    await expect(executeWriterV2FlagshipControl({ ...authorityInput, provider })).resolves.toMatchObject({
+      classification: 'CONTROL_MECHANICAL_PASS', providerCalls: 1, artifactWritten: false,
+      observation: { scheduledReveal: { semanticOutcome: 'UNVERIFIABLE' } },
     })
-    expect(() => assertWriterV2FlagshipControlSerialization(report)).not.toThrow()
+    expect(provider.writeFlagshipControl).toHaveBeenCalledTimes(1)
+    expect(provider.writeChapter).not.toHaveBeenCalled()
+    expect(provider.generatePlan).not.toHaveBeenCalled()
   })
 
-  it('returns terminal classification after inferred length or authority failure', async () => {
-    const length = await executeWriterV2FlagshipControl({
-      ...authorityInput,
-      provider: fakeProvider({ wordCount: 760, completenessPassed: false }),
-    })
-    expect(length.classification).toBe('CONTROL_LENGTH_MISS')
-    expect(length.observation.writerInferenceCount).toBe(1)
-
-    const authority = await executeWriterV2FlagshipControl({
-      ...authorityInput,
-      provider: fakeProvider({ scheduledReveal: false, throwAfterObservation: true }),
-    })
-    expect(authority.classification).toBe('CONTROL_AUTHORITY_MISS')
-    expect(authority.observation.writerInferenceCount).toBe(1)
+  it.each([
+    { leakInternalIdResult: { outcome: 'FAILED' as const, writerVisibleInternalIdCount: 1 } },
+    { terminalClosure: false }, { writerInferenceCount: 2 },
+    { layerADeterministicResult: { outcome: 'FAILED' as const, codes: ['ILLEGAL_STATE'] } },
+  ])('keeps pipeline gates hard %j', (override) => {
+    expect(classifyWriterV2FlagshipControl(observation(override))).toBe('CONTROL_PIPELINE_FAIL')
   })
 
-  it('rejects response alias and prevents unsafe report or runner output', async () => {
+  it('blocks even response aliases and prevents unsafe report or runner output', async () => {
     await expect(executeWriterV2FlagshipControl({
       ...authorityInput,
       provider: fakeProvider({ responseModel: 'openai/gpt-5.6-sol' }),
-    })).rejects.toThrow('WRITER_V2_FLAGSHIP_CONTROL_MODEL_IDENTITY_MISMATCH')
+    })).resolves.toMatchObject({ classification: 'CONTROL_IDENTITY_UNPROVEN', observation: { transportOutcome: 'COMPLETED', identityOutcome: 'UNPROVEN' } })
     for (const key of ['system', 'prompt', 'title', 'prose', 'rawResponse', 'canon', 'brief']) {
       expect(() => assertWriterV2FlagshipControlSerialization({ [key]: 'forbidden' }))
         .toThrow('WRITER_V2_FLAGSHIP_CONTROL_FORBIDDEN_REPORT_KEY')
@@ -268,6 +262,9 @@ describe('WRITER_V2_FLAGSHIP_CONTROL_V1', () => {
     const runner = readFileSync(path.resolve(process.cwd(), 'scripts/writer-v2-flagship-control.ts'), 'utf8')
     expect(runner).not.toMatch(/mkdirSync|writeFileSync/)
     expect(runner).toContain('--preflight-only')
+    expect(runner).toContain('--execute-authorized')
+    expect(runner).toContain('WRITER_V2_FLAGSHIP_CONTROL_UNEXPECTED_ERROR')
+    expect(runner).not.toContain("code: error instanceof Error ? error.message")
     expect(runner).toContain('LAKOKU_WRITER_V2_FLAGSHIP_CONTROL_CHILD')
     expect(runner).not.toMatch(/console\.(?:log|error)\([^\n]*(?:prompt|prose|title|system)/i)
   })

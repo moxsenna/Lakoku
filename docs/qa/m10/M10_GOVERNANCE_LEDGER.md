@@ -1955,3 +1955,94 @@ commit / push                            NOT PERFORMED
 ```
 
 ---
+
+## Entry 24 — 2026-09-06 (PM ratification: M10F_MODEL_IDENTITY_AUTHORITY_AMENDMENT_V1; flagship controls evaluated; M10-F COMPLETE / CLOSED)
+
+Full dedicated closeout record: `docs/qa/m10/M10F_CLOSEOUT_V1.md`.
+
+### 24.1 PM Ratification: M10F_MODEL_IDENTITY_AUTHORITY_AMENDMENT_V1
+
+Project Lead / PM ratified model identity authority amendment for M10-F:
+1. Authoritative OpenRouter transport adapter binding (`lib/ai-gateway/flagship-replacement.ts`, `lib/narrative-qa/harness/writer-v2-flagship-replacement.server.ts`) combined with `requestedModel = responseModel = openai/gpt-5.6-sol`, `fallbackCount = 0`, and `alternateModels = 0` establishes **`ROUTE_ALIAS_IDENTITY: PROVEN`**.
+2. Dated snapshot identity `openai/gpt-5.6-sol-20260709` is catalog/historical expectation, NOT completion-level authority, and is explicitly unproven and **NOT REQUIRED** for M10-F closure.
+3. Evaluator implementation (`evaluateFlagshipIdentity`, `evaluateReplacementIdentity`) remains unchanged in this closeout. Original execution artifacts and classifiers remain immutable.
+
+### 24.2 Flagship Control Executions Summary
+
+Both invocations consumed their single-call allocations (1/1 SPENT). Zero database writes, zero publication, zero live reader exposure.
+
+```text
+Control #1 (WRITER_V2_FLAGSHIP_CONTROL_V1):
+  Word count:                   889 words (band 800–1000)
+  Paragraph count:              82 paragraphs
+  Original classifier:          CONTROL_PIPELINE_FAIL
+  Corrected interpretation:     CONTROL_IDENTITY_UNPROVEN
+  Route / Provider:             OpenRouter (requested/configured route; observed provider UNPROVEN)
+  Response model:               null (observer loss; no reconstruction)
+  Observed provider:            Unknown (no reconstruction)
+  Latency:                      0 ms recorded (unavailable due to observer exception, NOT actual duration)
+  Tokens (completion):          1690 tokens
+  Finish reason:                stop
+  Parser / sections / closure:  ACCEPTED / PASS / PASS
+  Layer A / projection / leak:  PASS / PASS / 0 leaks
+  Reasoning:                    none
+  Authorization:                1/1 SPENT
+
+Replacement #2 (WRITER_V2_FLAGSHIP_CONTROL_REPLACEMENT_V1):
+  Word count:                   875 words (band 800–1000)
+  Paragraph count:              85 paragraphs
+  Original classifier:          CONTROL_IDENTITY_UNPROVEN
+  Amendment interpretation:     ROUTE_ALIAS_IDENTITY PROVEN / mechanicalPASS
+  Response model:               openai/gpt-5.6-sol (alias)
+  Transport:                    OpenRouter (Authoritative Adapter Binding, COMPLETED)
+  Latency:                      38850 ms
+  Tokens (completion):          1650 tokens
+  Reasoning tokens:             0
+  Fallback / alternate models:  0 / none
+  Finish reason:                stop
+  Parser / sections / closure:  ACCEPTED / PASS / PASS
+  Layer A / projection / leak:  PASS / PASS / 0 leaks
+  Prose semantics:              UNVERIFIABLE (by design)
+  Provenance:                   session-reported (no artifact file invented)
+  Authorization:                1/1 SPENT
+```
+
+### 24.3 Prompt Architecture V2, Fixture Authority, & Historical Preservation Freeze
+
+- **Prompt Architecture Mode:** `CHAPTER_BRIEF_V2` (`docs/WRITER_PROMPT_ARCHITECTURE_V2_SPEC.md`).
+- **Projection Hash:** `149ccdf1ecf1c3093748e5087ae5be66a55bcdd3032c3e0a11671732856e0a0d`.
+- **Fixture V2 Manifests (`fixtures/writer-qualification/v2.ts`):**
+  - `fixtureHashes.MYSTERY`: `ad9fbe534b4c44229b520febe5c0de32bbfb7dc9785ed46a951deff25bd35314`
+  - `provisionalCorpusManifestHash`: `712d46e7b9a06394b98593ee537fab43c376cea4aebcc951d48b654d51ca6a2a`
+  - `projectionValidationHash`: `ad0a3fdfd22af46983542cad3ca2add63c0df2765ce7a45b8782d47c57f0bf91`
+  - `privacyValidationHash`: `feced0a494c7fd27fd1b855e4827b0270d6b9677d7347cb921fbc8982c8108af`
+  - `readyAuthorityManifestHash`: `be4216adc5d1b1306aef13186eddcc294fa53d4abd8bba681889c7762bde4b99`
+- **Historical Diagnostics Authority Preservation (`HISTORICAL_V1`):** The six historical diagnostic harnesses (`gpt56-sol-writer-control-diagnostic`, `glm53-flash-writer-diagnostic`, `writer-prompt-v2-generalization-diagnostic`, `writer-prompt-ablation-v2-diagnostic`, `writer-prompt-ablation-diagnostic`, `writer-length-repair-causal-diagnostic`) remain permanently frozen under isolated `HISTORICAL_V1` authority (`lib/narrative-qa/harness/historical-writer-prompt.ts`) without active prompt imports or reinterpretation. Earlier historical records (Entries 15–23) are preserved unchanged.
+- **Observer Isolation & Capture:** Middleware adapter wrapper `flagshipCompletionModel` in `lib/ai-gateway/flagship-identity-evidence.ts` captures raw response model before SDK normalization; `lib/ai-gateway/observed-model-call.server.ts` handles authoritative completion; `lib/ai-gateway/observer-isolation.ts` ensures isolated telemetry exceptions cannot alter pipeline outcomes.
+
+### 24.4 Accepted Technical Debts
+
+1. **`REVEAL_EXECUTION_PROOF_DEBT`**: Scheduled reveal prose execution remains unprovable via deterministic automated testing. Semantic authority RATIFIED; binding design RATIFIABLE; automated execution proof `NOT_PROVEN` / `UNVERIFIABLE`.
+2. **`M10F_V2_TYPE_HARDENING_DEBT`**: Parameter `brief?: PreProseChapterBrief | null` in `generateChapter` (`lib/ai-gateway/generate.ts:107`) is optional in TypeScript typing, while runtime downstream `buildProductionChapterWriterPrompt` (`lib/ai-gateway/chapter-writer-contract.ts:265`) fails closed if missing.
+
+Both debts are accepted and do not reopen M10-F.
+
+### 24.5 Final M10-F Verdict & Standing Freezes
+
+```text
+M10-F Milestone Status                  COMPLETE / CLOSED
+Mechanical Verification                 PASS
+Route Alias Identity                    PASS (under Amendment V1)
+Exact Snapshot Verification             UNPROVEN / NOT REQUIRED
+Scheduled Reveal Semantic Proof         UNVERIFIABLE (Accepted Debt)
+
+Standing Freezes:
+  Model hunt                            CLOSED
+  Flagship controls                     CLOSED (no further runs authorized)
+  Replacement control                   CLOSED (1/1 consumed)
+  Length repair diagnostic              CLOSED / OFF
+  Identity / qualification diagnostics  CLOSED
+  Further inference                     FORBIDDEN
+  Production writes / deployment        FORBIDDEN
+  Subsequent milestone / work           BLOCKED until separately authorized
+```

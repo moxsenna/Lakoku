@@ -10,6 +10,28 @@
 
 ---
 
+## M10F_WRITER_V2_CONTROL_SCOPE_AMENDMENT_V1
+
+Scoped implementation authorization: flagship control only. No live-run authorization consumed by implementation. No change to prompt, Fixture V2, projection hash, word thresholds, production qualification, or M10-E.
+
+- Remove only unavailable deterministic scheduled-reveal prose-validator preflight blocker.
+- Preserve MYSTERY chapter 12, CHAPTER_BRIEF_V2, projection SHA-256 `149ccdf1ecf1c3093748e5087ae5be66a55bcdd3032c3e0a11671732856e0a0d`, structured reveal-ID projection, exact brief binding, `legacyFallbackUsed: false`, zero writer-visible internal IDs, and Layer A state legality.
+- Classification: `CONTROL_MECHANICAL_PASS`, `CONTROL_LENGTH_MISS`, `CONTROL_AUTHORITY_PROJECTION_MISS`, `CONTROL_PIPELINE_FAIL`. Mechanical pass proves transport stop, parser, required sections, closure, hard 800–1000 words, Layer A, projection, leak count zero, and one inference only. Missing projection is authority-projection miss; transport/parser/closure/leak/budget failures are pipeline failures.
+- Scheduled-reveal prose semantics: `UNVERIFIABLE`, never PASS or MISSING. Structured scaffold assertions and prompt projection do not prove prose execution.
+- Frozen route: `openai/gpt-5.6-sol`, reasoning `none`, cap 4096, streaming, timeout 120000 ms, temperature null. Global inference budget 1; retries, fallback, repair, rewrite all 0. No automatic reruns after live call.
+- Preflight metadata: `providerCalls: 0`, `artifactWritten: false`. Final output records call count; runner emits metadata-only JSON to stdout, creates no artifact, performs no DB/publication writes. Raw prose/title/canon/directive/reasoning/credentials must not be persisted. Live execution remains separately owned by main agent.
+
+### REVEAL_EXECUTION_PROOF_DEBT
+
+| Metadata | Status |
+|---|---|
+| Semantic authority | RATIFIED |
+| Binding design | RATIFIABLE |
+| Observability | BLOCKED |
+| Automated execution proof | NOT_PROVEN |
+
+Automation does not prove reveal execution. This debt is metadata only, not semantic acceptance or permission for an evaluator/provider call.
+
 ## 1. Executive Summary & Problem Statement
 
 Evaluasi kualifikasi model writer (`WRITER_QUALIFICATION_FIXTURE_V2`) membuktikan bahwa corpus evaluasi berhasil dibangun dengan kepatuhan skema produksi dan proteksi anti-tamper yang fail-closed. Namun, autorisasi kualifikasi model writer produksi saat ini tertahan pada status tata kelola:

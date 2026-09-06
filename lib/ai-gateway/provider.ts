@@ -173,6 +173,8 @@ export interface ModelCallExecutionOptions {
     writerVisibleInternalIdCount: number
     scheduledRevealObligationCount: number
     scheduledRevealValidationPassed: boolean
+    /** Structured authority projection only; never proof of prose execution. */
+    scheduledRevealProjectionPassed?: boolean
   }>) => void
   /** Offline synthetic diagnostic only; transient and never emitted to telemetry. */
   diagnosticChapterWriterPromptOverride?: Readonly<{
@@ -241,6 +243,11 @@ export interface GenerationProvider {
   readonly name: string
   generatePlan(input: PlanInput): Promise<unknown>
   writeChapter(input: WriteInput, options?: ModelCallExecutionOptions): Promise<unknown>
+  /** Authoritative metadata result for frozen single-inference offline control. */
+  writeFlagshipControl?(
+    input: WriteInput,
+    options: ModelCallExecutionOptions,
+  ): Promise<import('./flagship-identity-evidence').FlagshipWriterResult>
   generateChoices?(
     input: ChoiceProviderInput,
     options?: ModelCallExecutionOptions,

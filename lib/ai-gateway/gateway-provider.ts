@@ -41,6 +41,9 @@ import {
   executeObservedModelCall,
 } from './observed-model-call.server'
 import { sanitizeChoiceValidationCodes } from './model-call-errors'
+import { runObserver } from './observer-isolation'
+import { createFlagshipCompletionCapture, evaluateFlagshipIdentity, flagshipCompletionCaptures, flagshipCompletionModel } from './flagship-identity-evidence'
+import { bindReplacementProvider, registerReplacementOpenRouterAdapter } from './flagship-replacement'
 import { ChapterDraftSchema } from './schemas'
 import {
   assertWriterCompleteness,
@@ -398,10 +401,10 @@ async function generateProseWithLengthRepairV1(args: {
   ): Promise<ProcessedWriterResponse> => {
     throwIfAborted(options.signal)
     reserveWriterInference(options)
-    options.observeWriterRuntime?.({
+    runObserver(() => options.observeWriterRuntime?.({
       ...runtime,
       temperature: args.route?.temperature ?? null,
-    })
+    }))
     return executeObservedModelCall({
       context: options.telemetryContext,
       candidate: candidateIdentity(candidate),
@@ -422,10 +425,10 @@ async function generateProseWithLengthRepairV1(args: {
         }),
       ),
       observeCompletion: options.observeModelCall
-        ? (completion, metadata) => options.observeModelCall?.({
+        ? (completion, metadata) => runObserver(() => options.observeModelCall?.({
             ...completion,
             finishReason: metadata.finishReason,
-          })
+          }))
         : undefined,
       observeReasoningBudget: options.observeReasoningBudget,
       persistObservation: options.diagnosticChapterWriterPromptOverride === undefined,
@@ -434,9 +437,9 @@ async function generateProseWithLengthRepairV1(args: {
         let prose: ParsedChapterWriterProse
         try {
           prose = parseChapterWriterProse(text)
-          options.observeWriterParserOutcome?.('ACCEPTED')
+          runObserver(() => options.observeWriterParserOutcome?.('ACCEPTED'))
         } catch (error) {
-          options.observeWriterParserOutcome?.('REJECTED')
+          runObserver(() => options.observeWriterParserOutcome?.('REJECTED'))
           throw new InvalidModelResponseError(
             error instanceof Error ? error.message : undefined,
           )
@@ -449,7 +452,7 @@ async function generateProseWithLengthRepairV1(args: {
         }
         const findings = evaluateWriterCompleteness(completenessInput)
         const wordCount = countWords(prose.paragraphs)
-        options.observeWriterEvaluation?.({
+        runObserver(() => options.observeWriterEvaluation?.({
           completenessPassed: findings.length === 0,
           completenessCodes: findings.map((finding) => finding.code),
           wordCount,
@@ -460,7 +463,7 @@ async function generateProseWithLengthRepairV1(args: {
           terminalClosurePresent: !findings.some(
             (finding) => finding.code === 'WRITER_TERMINAL_CLOSURE_MISSING',
           ),
-        })
+        }))
         const leaks = scanForLeaks([prose.title, ...prose.paragraphs].join('\n'))
         if (leaks.length > 0) {
           throw new ContentRejectedError(
@@ -525,6 +528,7 @@ async function generateProse(args: {
 }): Promise<{ title: string; paragraphs: string[]; usedModel: string }> {
   const validatedProductionPrompt = buildProductionChapterWriterPrompt(args)
   const diagnosticOverride = args.options.diagnosticChapterWriterPromptOverride
+  const authority = flagshipCompletionCaptures.get(args.options)
   const productionPrompt = diagnosticOverride
     ? {
         system: diagnosticOverride.system,
@@ -548,7 +552,7 @@ async function generateProse(args: {
   // Rantai fallback: coba tiap kandidat model berurutan. Kegagalan (error
   // jaringan/HTTP maupun kebocoran istilah internal setelah repair) memicu
   // pindah ke kandidat berikutnya.
-  for (const candidate of args.chain) {
+  for (const candidate of authority ? args.chain.slice(0, 1) : args.chain) {
     throwIfAborted(args.options.signal)
     const { model, label } = candidate
     try {
@@ -562,12 +566,18 @@ async function generateProse(args: {
           modelId: candidate.configuredModelId,
           routeMax: args.route?.maxOutputTokens,
         })
+        if (diagnosticOverride?.invocation === 'WRITER_V2_FLAGSHIP_CONTROL_V1'
+          && (runtime.timeoutMs !== 120_000 || runtime.streaming !== true
+            || runtime.maxRetries !== 0 || runtime.maxOutputTokens !== 4096
+            || args.route?.temperature !== null)) {
+          throw new Error('WRITER_V2_FLAGSHIP_CONTROL_RUNTIME_MISMATCH')
+        }
         try {
           reserveWriterInference(args.options)
-          args.options.observeWriterRuntime?.({
+          runObserver(() => args.options.observeWriterRuntime?.({
             ...runtime,
             temperature: args.route?.temperature ?? null,
-          })
+          }))
           const parsed = await executeObservedModelCall({
             context: args.options.telemetryContext,
             candidate: candidateIdentity(candidate),
@@ -578,7 +588,11 @@ async function generateProse(args: {
               'prose',
               candidate,
               () => streamText({
-                model,
+                // SDK default logs raw request/response errors. Consumption below
+                // still rejects and records metadata-only transport failure.
+                onError: diagnosticOverride?.invocation === 'WRITER_V2_FLAGSHIP_CONTROL_V1'
+                  ? () => undefined : undefined,
+                model: authority ? flagshipCompletionModel(model, authority) : model,
                 system,
                 prompt:
                   attempt === 0
@@ -591,21 +605,24 @@ async function generateProse(args: {
               }),
             ),
             observeCompletion: args.options.observeModelCall
-              ? (completion, metadata) => args.options.observeModelCall?.({
+              ? (completion, metadata) => runObserver(() => args.options.observeModelCall?.({
                   ...completion,
                   finishReason: metadata.finishReason,
-                })
+                }))
               : undefined,
             observeReasoningBudget: args.options.observeReasoningBudget,
             persistObservation: diagnosticOverride === undefined,
+            flagshipCompletion: authority,
             consume: (text, metadata) => {
               throwIfAborted(args.options.signal)
               let prose
               try {
                 prose = parseChapterWriterProse(text)
-                args.options.observeWriterParserOutcome?.('ACCEPTED')
+                if (authority) authority.parserOutcome = 'ACCEPTED'
+                runObserver(() => args.options.observeWriterParserOutcome?.('ACCEPTED'))
               } catch (error) {
-                args.options.observeWriterParserOutcome?.('REJECTED')
+                if (authority) authority.parserOutcome = 'REJECTED'
+                runObserver(() => args.options.observeWriterParserOutcome?.('REJECTED'))
                 throw new InvalidModelResponseError(
                   error instanceof Error ? error.message : undefined,
                 )
@@ -617,7 +634,7 @@ async function generateProse(args: {
                 paragraphs: prose.paragraphs,
               }
               const completenessFindings = evaluateWriterCompleteness(completenessInput)
-              args.options.observeWriterEvaluation?.({
+              const evaluation = {
                 completenessPassed: completenessFindings.length === 0,
                 completenessCodes: completenessFindings.map((finding) => finding.code),
                 wordCount: countWords(prose.paragraphs),
@@ -628,7 +645,9 @@ async function generateProse(args: {
                 terminalClosurePresent: !completenessFindings.some(
                   (finding) => finding.code === 'WRITER_TERMINAL_CLOSURE_MISSING',
                 ),
-              })
+              }
+              if (authority) authority.evaluation = Object.freeze(evaluation)
+              runObserver(() => args.options.observeWriterEvaluation?.({ ...evaluation, completenessCodes: [...evaluation.completenessCodes] }))
               const flagshipControl = diagnosticOverride?.invocation === 'WRITER_V2_FLAGSHIP_CONTROL_V1'
               if (!flagshipControl) assertWriterCompleteness(completenessInput)
               const leaks = scanForLeaks([prose.title, ...prose.paragraphs].join('\n'))
@@ -1282,12 +1301,46 @@ export function createGatewayProvider(
   const resolvedJudgeRoute = judgeRoute ?? aiRoute
   const judgeChain = resolveModelChain(opts.model, resolvedJudgeRoute)
 
-  return {
+  const provider: GenerationProvider = {
     name: chain.map((c) => c.label).join(' → '),
 
     // Plan tetap canon-derived (aman); model tidak menyentuh logika reveal/state.
     generatePlan(input: PlanInput): Promise<unknown> {
       return base.generatePlan(input)
+    },
+
+    async writeFlagshipControl(input, options) {
+      if ((options.callBudget?.used ?? 0) !== 0 || (options.writerInferenceBudget?.used ?? 0) !== 0) {
+        throw new Error('WRITER_V2_FLAGSHIP_CONTROL_INFERENCE_BUDGET_SPENT')
+      }
+      const authority = createFlagshipCompletionCapture()
+      const isolatedOptions: ModelCallExecutionOptions = {
+        ...options, writerLengthRepairV1: { enabled: false },
+        callBudget: { used: 0, max: 1 }, writerInferenceBudget: { used: 0, max: 1 },
+      }
+      if (options.diagnosticChapterWriterPromptOverride?.invocation !== 'WRITER_V2_FLAGSHIP_CONTROL_V1'
+        || chain[0]?.configuredModelId !== 'openai/gpt-5.6-sol'
+        || chain[0].providerId !== 'openrouter' || aiRoute?.fallbackModels.length !== 0) {
+        throw new Error('WRITER_V2_FLAGSHIP_CONTROL_ROUTE_MISMATCH')
+      }
+      flagshipCompletionCaptures.set(isolatedOptions, authority)
+      let returned = false
+      try {
+        await this.writeChapter(input, isolatedOptions)
+        returned = true
+      } catch {
+        // Terminal rejection. Completed transport evidence remains intact.
+      } finally {
+        flagshipCompletionCaptures.delete(isolatedOptions)
+        if (options.callBudget) options.callBudget.used = isolatedOptions.callBudget!.used
+        if (options.writerInferenceBudget) options.writerInferenceBudget.used = isolatedOptions.writerInferenceBudget!.used
+      }
+      const checks = authority.deterministic
+      const accepted = returned && authority.evaluation?.completenessPassed === true
+        && checks?.layerAPassed === true && checks.leakPassed
+        && checks.writerVisibleInternalIdCount === 0 && checks.scheduledRevealProjectionPassed === true
+      return Object.freeze({ ...authority, identityOutcome: evaluateFlagshipIdentity(authority.identity),
+        writerOutcome: accepted ? 'ACCEPTED' : 'REJECTED' })
     },
 
     async writeChapter(
@@ -1338,7 +1391,8 @@ export function createGatewayProvider(
         paragraphs,
         wordCount: countWords(paragraphs),
       }
-      if (options.observeWriterDeterministicEvaluation) {
+      const authority = flagshipCompletionCaptures.get(options)
+      if (authority || options.observeWriterDeterministicEvaluation) {
         const parsed = ChapterDraftSchema.parse(draft)
         const layerA = validateLayerA(input.snapshot, parsed)
         const internalAuthorityIds = [...new Set([
@@ -1350,25 +1404,22 @@ export function createGatewayProvider(
           ...(input.brief.lockedEndingKey ? [input.brief.lockedEndingKey] : []),
         ])]
         const visible = [title, ...paragraphs].join('\n')
-        const normalizeVisibleSemantics = (value: string): string => value
-          .normalize('NFKC')
-          .toLocaleLowerCase('id-ID')
-          .replace(/[^\p{L}\p{N}]+/gu, ' ')
-          .trim()
-        const normalizedVisible = normalizeVisibleSemantics(visible)
         const scheduledRevealIds = input.brief.scheduledReveals.map((item) => item.authorityId)
-        const scheduledRevealValidationPassed = input.brief.scheduledReveals.every((obligation) => {
-          const directive = normalizeVisibleSemantics(obligation.writerDirective)
-          return directive.length > 0 && normalizedVisible.includes(directive)
-        })
-        options.observeWriterDeterministicEvaluation({
+        // Scaffold metadata and literal directive matches cannot prove prose semantics.
+        // Fail closed for obligations until a sound production validator exists.
+        const scheduledRevealValidationPassed = scheduledRevealIds.length === 0
+        const evaluation = {
           layerAPassed: layerA.ok,
           layerACodes: layerA.findings.map((finding) => finding.code),
           leakPassed: scanForLeaks(visible).length === 0,
           writerVisibleInternalIdCount: internalAuthorityIds.filter((id) => visible.includes(id)).length,
           scheduledRevealObligationCount: scheduledRevealIds.length,
           scheduledRevealValidationPassed,
-        })
+          scheduledRevealProjectionPassed: scheduledRevealIds.every((id) =>
+            parsed.reveals.some((reveal) => reveal.secretId === id)),
+        }
+        if (authority) authority.deterministic = Object.freeze(evaluation)
+        runObserver(() => options.observeWriterDeterministicEvaluation?.({ ...evaluation, layerACodes: [...evaluation.layerACodes] }))
       }
       return draft
     },
@@ -1442,6 +1493,12 @@ export function createGatewayProvider(
       })
     },
   }
+  if (aiRoute?.provider === 'openrouter' && aiRoute.modelId === 'openai/gpt-5.6-sol'
+    && aiRoute.reasoningEffort === 'none' && aiRoute.maxOutputTokens === 4096
+    && aiRoute.temperature === null && aiRoute.fallbackModels.length === 0) {
+    bindReplacementProvider(provider, chain[0]?.model, chain[0]?.configuredModelId)
+  }
+  return provider
 }
 
 /** Konversi DB route ke kandidat mentah untuk dimasukkan ke chain. */
@@ -1482,7 +1539,7 @@ function toModelCandidate(route: AiModelRoute | undefined): UnindexedModelCandid
       fetch: openAICompatibleFetch(route.reasoningEffort),
     })
     return {
-      model: openrouter(route.modelId),
+      model: registerReplacementOpenRouterAdapter(openrouter(route.modelId)),
       providerId: 'openrouter',
       ...identity,
       label: `db:openrouter:${route.modelId}`,

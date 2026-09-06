@@ -99,6 +99,26 @@ function deps(overrides: Partial<ObservedModelCallDeps> = {}): ObservedModelCall
 beforeEach(() => vi.clearAllMocks())
 
 describe('executeObservedModelCall', () => {
+  it('retains authoritative completion when observer and recorder throw', async () => {
+    const { createFlagshipCompletionCapture, evaluateFlagshipIdentity } = await import('@/lib/ai-gateway/flagship-identity-evidence')
+    const capture = createFlagshipCompletionCapture()
+    const record = vi.fn(() => { throw new Error('synthetic telemetry failure') })
+    const observeCompletion = vi.fn(() => { throw new Error('synthetic observer failure') })
+    const invoke = input({
+      candidate: { ...candidate, configuredModelId: 'openai/gpt-5.6-sol' },
+      flagshipCompletion: capture,
+      observeCompletion,
+      call: () => result({ finalStep: Promise.resolve({
+        response: { modelId: 'openai/gpt-5.6-sol-20260709' }, finishReason: 'stop',
+        providerMetadata: { providerObserved: 'openrouter' },
+      }) }) as never,
+    })
+    await expect(executeObservedModelCall(invoke, deps({ record }))).resolves.toBe('MODEL TEXT')
+    expect(record).toHaveBeenCalledOnce()
+    expect(observeCompletion).toHaveBeenCalledOnce()
+    expect(capture.transportOutcome).toBe('COMPLETED')
+    expect(evaluateFlagshipIdentity(capture.identity)).toBe('PROVEN')
+  })
   it('awaits text, usage, and finalStep then records allowlisted success fields', async () => {
     const accessed: string[] = []
     const fake = {

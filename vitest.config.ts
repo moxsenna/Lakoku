@@ -86,6 +86,11 @@ export default defineConfig({
           include: ['lib/**/*.test.ts', 'tests/**/*.test.ts'],
           exclude: [...CONTENTION_SENSITIVE_TESTS, ...HEAVY_PARALLEL_TESTS],
           sequence: { groupOrder: 1 },
+          // Test murah dengan module graph besar (await import barrel runtime/
+          // ai-gateway) bisa melewati default 5000ms secara non-deterministik
+          // saat worker unit penuh — defect harness (CI-4), bukan lambatnya test.
+          testTimeout: 20000,
+          hookTimeout: 20000,
         },
       },
       {

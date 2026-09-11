@@ -2,7 +2,7 @@
   "authorityVersion": "M10_E_E1_E2_CLOSURE_AUTHORITY_V1",
   "approvedSpecSha": "af28b45dcd62544f12415476aa62bd3a09fd8f7e",
   "e2ClosureSha": "914cf30f42d4e7f293df79e0d66c014331a696ba",
-  "manifestBaseSha": "143a01a0b0b2f0848ade235fd6bdc3dc3588f01d",
+  "manifestBaseSha": "920fbc492ceb28ff5ec3761b0291da5b5fb9d22e",
   "e2Rows": [
     { "id": "MALFORMED_CHOICES_OUTPUT", "disposition": "EXECUTED" },
     { "id": "MALFORMED_STATE_PROPOSAL_DELTA", "disposition": "EXECUTED" },
@@ -44,7 +44,7 @@
     { "path": "lib/narrative-qa/fault/e2/local-db.ts", "blobSha": "b4d933276831ff78df1ae9bf83d8bfdeb2f21132" },
     { "path": "lib/narrative-qa/fault/e2/non-db.ts", "blobSha": "3372f99cf697ae4fc5b0a5b4e44080ea1139d165" },
     { "path": "lib/narrative-qa/fault/e2/normalization.ts", "blobSha": "daa3cc2996602188bbe9743734fd5361dbe93862" },
-    { "path": "lib/narrative-qa/fault/e2/rows-1-9.ts", "blobSha": "55296b93af03a84b7be5be7d1574fd3b64ab13e3" },
+    { "path": "lib/narrative-qa/fault/e2/rows-1-9.ts", "blobSha": "064432a0bd530edf6b3986cb54e1a3c670587b10" },
     { "path": "lib/narrative-qa/fault/e2/taxonomy.ts", "blobSha": "35dbf3c9d0dbfb8825c791e86eab557934897295" },
     { "path": "scripts/m10-e-reliability.ts", "blobSha": "3f72eb0ebe340bae6af626fdc2aef9bc585c89f8" },
     { "path": "scripts/m10-e-reliability-cli.ts", "blobSha": "cc030b8aa5a08cf9dd89e7d24b112af57a2b37d4" },
@@ -73,5 +73,15 @@
     "tests/db/m10-e2-task3-local-proof.test.ts"
   ],
   "faultFrequencyProhibition": "E1/E2 fault schedule frequencies must never enter E3A/E4 observation or model inputs; observation source authority excludes E1_FAULT_INJECTION_FREQUENCY and E2_FAULT_INJECTION_FREQUENCY.",
-  "replacementSemantics": "Any byte difference between current protected blobs and this manifest is FAIL and STOP. Only a separately reviewer-approved replacement authority may change one manifest entry; the replacement must bind old blob, new blob, decision reference, approving reviewer, and replacement SHA before implementation consumes it."
+  "replacementSemantics": "Any byte difference between current protected blobs and this manifest is FAIL and STOP. Only a separately reviewer-approved replacement authority may change one manifest entry; the replacement must bind old blob, new blob, decision reference, approving reviewer, and replacement SHA before implementation consumes it.",
+  "replacements": [
+    {
+     "path": "lib/narrative-qa/fault/e2/rows-1-9.ts",
+     "oldBlobSha": "55296b93af03a84b7be5be7d1574fd3b64ab13e3",
+     "newBlobSha": "064432a0bd530edf6b3986cb54e1a3c670587b10",
+     "decisionReference": "LAKOKU-M10E-REFREEZE-2026-09-12-CI1",
+     "approvingReviewer": "Lakoku Project Lead",
+     "replacementSha": "064432a0bd530edf6b3986cb54e1a3c670587b10"
+    }
+  ]
 }

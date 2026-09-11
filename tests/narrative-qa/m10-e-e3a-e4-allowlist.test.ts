@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   M10_E_E3A_E4_ALLOWLIST,
   M10_E_E3A_E4_BASE_SHA,
+  M10_E_E3A_E4_EVIDENCE_HEAD_SHA,
   M10_E_E3A_E4_REQUIRED_CHANGES,
   M10_E_P1_P11_ALLOWLIST,
   M10_E_POST_E3AE4_RATIFIED_ALLOWLIST,
@@ -95,8 +96,8 @@ describe('M10-E E3A/E4 allowlist auditor', () => {
 })
 
 describe('M10-E E3A/E4 allowlist real-git audit of base..HEAD', () => {
-  it('audits the actual implementation diff with the exact plan base and HEAD', () => {
-    const result = auditM10EE3AE4Allowlist(M10_E_E3A_E4_BASE_SHA, 'HEAD')
+  it('audits the actual implementation diff with the exact plan base and evidence HEAD', () => {
+    const result = auditM10EE3AE4Allowlist(M10_E_E3A_E4_BASE_SHA, M10_E_E3A_E4_EVIDENCE_HEAD_SHA)
     expect(result.failures).toEqual([])
     for (const required of M10_E_E3A_E4_REQUIRED_CHANGES) {
       expect(result.changedPaths).toContain(required)

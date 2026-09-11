@@ -16,6 +16,15 @@ import { execFileSync } from 'node:child_process'
 
 export const M10_E_E3A_E4_BASE_SHA = '143a01a0b0b2f0848ade235fd6bdc3dc3588f01d'
 
+/**
+ * Evidence window HEAD: the ratified E0-closure commit at which the E3A/E4
+ * allowlist audit last ran green. The audit's object is the reviewed
+ * implementation diff inside this window, not every commit made to the
+ * repository afterwards; pinning it keeps the audit deterministic while the
+ * repository legitimately advances beyond the evidence.
+ */
+export const M10_E_E3A_E4_EVIDENCE_HEAD_SHA = '81cfdf507d6e55fb539b8d6810cdb93734adf199'
+
 /** Original P1-P11 implementation allowlist — free of protected path classes. */
 export const M10_E_P1_P11_ALLOWLIST: readonly string[] = Object.freeze([
   // Plan file (reviewer-authorized plan-only amendment commit).

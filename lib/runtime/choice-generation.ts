@@ -8,7 +8,7 @@ import type {
   ChoiceBranch,
   ChoiceInput,
 } from '@lakoku/ai-gateway'
-import type { GenerationProvider } from '@lakoku/ai-gateway'
+import { isGlobalInferenceBudgetError, type GenerationProvider } from '@lakoku/ai-gateway'
 import type { ChapterBrief, ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
 import type { RouteState } from '@/lib/story-engine/route-state'
 import {
@@ -100,6 +100,8 @@ export interface ChoiceBuildDeps {
       choicePerCandidateTimeoutMs?: number
       choiceMaxCandidates?: number
       providerRuntime?: import('@/lib/ai-gateway/provider').ProviderRuntime
+      m10gMode?: boolean
+      globalInferenceBudget?: import('@/lib/ai-gateway/global-inference-budget.contract').GlobalInferenceBudget
     },
   ) => Promise<ChoiceBranch | null>
   /** Optional repair function — placeholder/no-op in Phase 1. */
@@ -117,6 +119,8 @@ export interface ChoiceBuildDeps {
       choicePerCandidateTimeoutMs?: number
       choiceMaxCandidates?: number
       providerRuntime?: import('@/lib/ai-gateway/provider').ProviderRuntime
+      m10gMode?: boolean
+      globalInferenceBudget?: import('@/lib/ai-gateway/global-inference-budget.contract').GlobalInferenceBudget
     },
   ) => Promise<ChoiceBranch | null>
   telemetry?: {
@@ -162,6 +166,8 @@ export interface BuildChoiceBranchInput {
   /** Shared workflow budget; built from canonical worker deadline when omitted. */
   choiceExecutionBudget?: ChoiceExecutionBudget
   providerRuntime?: import('@/lib/ai-gateway/provider').ProviderRuntime
+  m10gMode?: boolean
+  globalInferenceBudget?: import('@/lib/ai-gateway/global-inference-budget.contract').GlobalInferenceBudget
   /** Override total chapters (defaults to narrative-core TOTAL_CHAPTERS). */
   totalChapters?: number
   activeCharacters?: Array<{ id: string; name: string }>
@@ -248,6 +254,19 @@ function choiceProviderInput(
     choiceHistory: input.choiceHistory,
     lockedEndingKey: input.lockedEndingKey,
   }
+}
+
+/**
+ * Baca kode validasi diagnostik dari error gateway secara struktural.
+ *
+ * Dibaca lewat bentuk objek, bukan `instanceof`, agar batas paket runtime →
+ * ai-gateway tidak menuntut deep import kelas error ke barrel.
+ */
+function readValidationCodes(err: unknown): string[] {
+  if (!err || typeof err !== 'object') return []
+  const codes = (err as { validationCodes?: unknown }).validationCodes
+  if (!Array.isArray(codes)) return []
+  return codes.filter((code): code is string => typeof code === 'string' && code.length > 0)
 }
 
 /**
@@ -362,6 +381,10 @@ export async function buildChoiceBranch(
         ...(input.providerRuntime === undefined
           ? {}
           : { providerRuntime: input.providerRuntime }),
+        ...(input.m10gMode === undefined ? {} : { m10gMode: input.m10gMode }),
+        ...(input.globalInferenceBudget === undefined
+          ? {}
+          : { globalInferenceBudget: input.globalInferenceBudget }),
       })
 
     // Build a findings-aware repair input (creative/structural guidance only;
@@ -420,6 +443,7 @@ export async function buildChoiceBranch(
         syncUsedCalls()
       } catch (err) {
         syncUsedCalls()
+        if (isGlobalInferenceBudgetError(err)) throw err
         const workflowReason = workflowFailureReason(err)
         if (workflowReason) {
           lastReason = workflowReason
@@ -430,11 +454,25 @@ export async function buildChoiceBranch(
         lastCause = err
         const code = classifyChoiceProviderError(err)
         const action = choiceRetryAction(code)
-        lastFindings = [{
-          code: 'PROVIDER_ERROR',
-          message: err instanceof Error ? err.message : 'Choice provider threw an error.',
-          severity: 'ERROR',
-        }]
+        // Kegagalan validasi schema membawa kode diagnostik yang tepat
+        // (validationCodes). Meratakannya jadi PROVIDER_ERROR membuat catatan
+        // repair berbunyi "gagal diparse atau kosong", sehingga model tidak
+        // pernah diberi tahu kelas kata mana yang ditolak dan rantai repair
+        // mengulang label yang sama sampai habis (run custom-t7 Bab 6).
+        // Pertahankan kodenya supaya buildChoiceRepairNotes bisa memberi
+        // instruksi yang dapat ditindaklanjuti.
+        const schemaValidationCodes = readValidationCodes(err)
+        lastFindings = schemaValidationCodes.length > 0
+          ? schemaValidationCodes.map((c) => ({
+              code: c,
+              message: err instanceof Error ? err.message : 'Choice schema validation failed.',
+              severity: 'ERROR' as const,
+            }))
+          : [{
+              code: 'PROVIDER_ERROR',
+              message: err instanceof Error ? err.message : 'Choice provider threw an error.',
+              severity: 'ERROR',
+            }]
         lastReason = 'PROVIDER_FAILED'
         if (action === 'transient_retry' && choiceBudget.usedCalls < choiceBudget.maxCalls) {
           // Backoff then retry same input (provider chain handled inside call).
@@ -509,6 +547,13 @@ export async function buildChoiceBranch(
                   choiceDeadlineSource: choiceBudget.deadlineSource,
                   choicePerCandidateTimeoutMs: choiceBudget.perCandidateTimeoutMs,
                   choiceMaxCandidates: choiceBudget.maxCandidates,
+                  ...(input.providerRuntime === undefined
+                    ? {}
+                    : { providerRuntime: input.providerRuntime }),
+                  ...(input.m10gMode === undefined ? {} : { m10gMode: input.m10gMode }),
+                  ...(input.globalInferenceBudget === undefined
+                    ? {}
+                    : { globalInferenceBudget: input.globalInferenceBudget }),
                 },
               )
               syncUsedCalls()
@@ -530,6 +575,7 @@ export async function buildChoiceBranch(
               }
             } catch (err) {
               syncUsedCalls()
+              if (isGlobalInferenceBudgetError(err)) throw err
               const workflowReason = workflowFailureReason(err)
               if (workflowReason) {
                 lastReason = workflowReason
@@ -596,6 +642,7 @@ export async function buildChoiceBranch(
       cause: lastCause,
     }
   } catch (err) {
+    if (isGlobalInferenceBudgetError(err)) throw err
     const reason: ChoiceBuildFailureReason = input.signal?.aborted
       ? 'CHOICE_PARENT_CANCELLED'
       : err && typeof err === 'object' && 'code' in err

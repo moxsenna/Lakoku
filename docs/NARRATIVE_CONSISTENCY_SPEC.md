@@ -108,7 +108,7 @@ Total packet maksimal ditetapkan per model policy version. Alokasi baseline:
 | Karakter tidak mengetahui info di luar knowledge scope-nya | `knowledge_scopes` vs dialog attribution | CRITICAL |
 | State delta ⊆ allowed_state_delta | packet vs proposal | CRITICAL |
 | Timeline monoton (tidak ada event mundur tanpa flashback marker) | `timeline_events` | MAJOR |
-| Panjang bab 500–800 kata, 2–4 scene, ada choice/gate | struktur draft | MAJOR |
+| Panjang bab hard 800–1000 kata (soft 850–950), 2–4 scene, ada choice/gate | struktur draft | MAJOR |
 | Nama/alias karakter cocok dengan registry (lihat G5) | `character_aliases` | MAJOR |
 | Karakter baru bernama setelah Bab 30 ada di blueprint | blueprint | CRITICAL |
 

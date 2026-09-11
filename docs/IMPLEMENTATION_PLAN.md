@@ -1,9 +1,9 @@
 # Lakoku — Implementation Plan (Build Runbook) v1.0
 
 **Status:** Executable build runbook untuk agen/engineer
-**Last updated:** 10 Juli 2026 (AMENDMENTS v0.5 ownership + Share Ending Card MVP dikunci; UX Polish Batch A/B/C selesai, Poetry Lottie, CF Workers hardening)
+**Last updated:** 30 Agustus 2026 (AMENDMENTS v0.6 word-band authority disinkronkan)
 **Owner:** Project lead
-**Governs / mengikuti:** `PRD_Lakoku_Interactive_v0.3.md`, `ARCHITECTURE_v1.1.md`, `NARRATIVE_CONSISTENCY_SPEC.md` (NCS v1.0), `NARRATIVE_TRACEABILITY_MATRIX.md` (NTM v1.0), `AMENDMENTS_v0.5.md`
+**Governs / mengikuti:** `PRD_Lakoku_Interactive_v0.3.md`, `ARCHITECTURE_v1.1.md`, `NARRATIVE_CONSISTENCY_SPEC.md` (NCS v1.0), `NARRATIVE_TRACEABILITY_MATRIX.md` (NTM v1.0), `AMENDMENTS_v0.6.md`
 
 ---
 
@@ -117,7 +117,7 @@ Dokumen ini adalah **runbook**: urutan kerja dari repo kosong sampai beta 50 bab
   - Ref: ARCH §12.3, §23 rule #16, NCS §2.3.
   - DoD: fixture fakta Bab 3 muncul benar di Bab 47.
 - **T3.3 Layer A deterministic validator** — **NTM G3-LAYERA**
-  - Deliverable: cek tanpa LLM: karakter hidup/terdaftar, no reveal pre-gate, knowledge scope, state delta ⊆ allowed, timeline monotonic, struktur bab, resolusi alias, larangan karakter baru > Bab 30.
+  - Deliverable: cek tanpa LLM: karakter hidup/terdaftar, no reveal pre-gate, knowledge scope, state delta ⊆ allowed, timeline monotonic, struktur bab termasuk hard 800–1000 kata (soft 850–950), resolusi alias, larangan karakter baru > Bab 30.
   - Ref: ARCH §11.2 step 6 (Layer A), NCS §3.1.
   - DoD: seeded-contradiction fixture & prohibited-early-reveal fixture → CRITICAL memblokir publish.
 - **T3.4 Alias registry** — **NTM G5-ALIAS**

@@ -1,8 +1,9 @@
+import type { ContinuationContext } from '@lakoku/narrative-core'
 import { describe, expect, it } from 'vitest'
 import { buildWriterPrompt } from '../../lib/prose/prompt-engine/build-writer-prompt'
-import type { ContinuationContext } from '@lakoku/narrative-core'
+import type { PreProseChapterBrief } from '../../lib/story-engine/pre-prose-brief'
 
-describe('buildWriterPrompt - Prompt Hierarchy & Continuation Context', () => {
+describe('buildWriterPrompt - CHAPTER_BRIEF_V2 hierarchy', () => {
   const mockContinuation: ContinuationContext = {
     storyId: 'story-1',
     targetChapterNumber: 2,
@@ -33,74 +34,63 @@ describe('buildWriterPrompt - Prompt Hierarchy & Continuation Context', () => {
     lockedEndingKey: null,
   }
 
-  it('menyusun 5 lapis hierarki sesuai urutan kontrak', () => {
+  const brief: PreProseChapterBrief = {
+    storyId: 'story-1',
+    chapterNumber: 2,
+    phase: 'rising',
+    lockedEndingKey: null,
+    lockedEndingClosure: [],
+    chapterGoal: 'Hadapi dampak konfrontasi',
+    mustInclude: ['Nadia menghadapi Raka'],
+    mustNotInclude: [],
+    mustNotReveal: ['Secret X'],
+    forbiddenRevealIds: [],
+    resolvedPlotDebtIds: [],
+    scheduledReveals: [],
+    plotDebtsToProgress: [],
+    plotDebtsToClose: [],
+    routeStateSummary: 'Rute tegang',
+    previousChoiceSummary: 'Konfrontasi Raka',
+    previousChoiceApplied: true,
+  }
+
+  it('menyusun P0-P5 sesuai urutan authority aktif', () => {
     const prompt = buildWriterPrompt({
       chapterNumber: 2,
       characterNames: ['Nadia', 'Raka'],
-      goal: 'Hadapi dampak konfrontasi',
+      plannedBeats: ['Nadia menghadapi Raka'],
       continuation: mockContinuation,
+      brief,
     })
 
-    const user = prompt.user
-
-    const posL1 = user.indexOf('=== [1] INVARIAN CANON')
-    const posL2 = user.indexOf('=== [2] RIWAYAT PEMBACA')
-    const posL3 = user.indexOf('=== [3] KEADAAN CERITA')
-    const posL4 = user.indexOf('=== [4] SASARAN BAB')
-    const posL5 = user.indexOf('=== [5] KERANGKA, RITME & FORMAT OUTPUT')
-
-    expect(posL1).toBeGreaterThan(-1)
-    expect(posL2).toBeGreaterThan(posL1)
-    expect(posL3).toBeGreaterThan(posL2)
-    expect(posL4).toBeGreaterThan(posL3)
-    expect(posL5).toBeGreaterThan(posL4)
-
-    expect(user).toContain('RAHASIA DILARANG UNTUK DIKONTAMINASI/DIUNGKAP: Secret X')
-    expect(user).toContain('Paragraf 2 Nadia menatap Raka.')
-    expect(user).toContain('Pilihan Pembaca di Bab 1 [choice-1]: "Konfrontasi Raka"')
-  })
-
-  it('tidak memangkas excerpt atau choice saat memangkas budget cerita', () => {
-    const hugeTimeline = Array.from({ length: 100 }, (_, i) => ({
-      chapterNumber: 1,
-      ordinal: i + 1,
-      description: `Timeline event sangat panjang ke-${i} `.repeat(10),
-    }))
-    const hugeContinuation: ContinuationContext = {
-      ...mockContinuation,
-      recentTimeline: hugeTimeline,
-    }
-
-    const prompt = buildWriterPrompt({
-      chapterNumber: 2,
-      characterNames: ['Nadia', 'Raka'],
-      continuation: hugeContinuation,
-    })
-
+    const positions = ['[P0]', '[P1]', '[P2]', '[P3]', '[P4]', '[P5]']
+      .map((label) => prompt.user.indexOf(label))
+    expect(positions.every((position) => position >= 0)).toBe(true)
+    expect(positions).toEqual([...positions].sort((left, right) => left - right))
+    expect(prompt.user).toContain('RAHASIA DILARANG UNTUK DIUNGKAP/DIBOCORKAN')
     expect(prompt.user).toContain('Paragraf 2 Nadia menatap Raka.')
-    expect(prompt.user).toContain('Pilihan Pembaca di Bab 1 [choice-1]: "Konfrontasi Raka"')
+    expect(prompt.user).toContain('Pilihan: "Konfrontasi Raka"')
+    expect(prompt.user).toContain('KONSEKUENSI DI ATAS TELAH TERJADI DAN MENGIKAT')
   })
 
-  it('menuliskan isi fakta & kronologi, bukan objek yang ter-stringify', () => {
+  it('memakai brief sebagai authority tujuan dan keadaan rute', () => {
     const prompt = buildWriterPrompt({
       chapterNumber: 2,
-      characterNames: ['Nadia', 'Raka'],
+      goal: 'Tujuan caller yang tidak berwenang',
       continuation: mockContinuation,
+      brief,
     })
 
+    expect(prompt.user).toContain(`Tujuan Bab: ${brief.chapterGoal}`)
+    expect(prompt.user).not.toContain('Tujuan caller yang tidak berwenang')
+    expect(prompt.user).toContain(`Keadaan rute: ${brief.routeStateSummary}`)
     expect(prompt.user).not.toContain('[object Object]')
-    expect(prompt.user).toContain('Fakta 1: Lukisan hilang')
-    expect(prompt.user).toContain('Nadia masuk galeri')
   })
 
-  it('menyatakan konsekuensi pilihan sebagai mengikat, bukan saran', () => {
-    const prompt = buildWriterPrompt({
+  it('gagal tertutup bila brief runtime hilang', () => {
+    expect(() => buildWriterPrompt({
       chapterNumber: 2,
-      characterNames: ['Nadia', 'Raka'],
-      continuation: mockContinuation,
-    })
-
-    expect(prompt.user).toContain('KONSEKUENSI DI ATAS SUDAH TERJADI DAN MENGIKAT')
-    expect(prompt.user).toContain('DILARANG membatalkan, menunda, atau membalik pilihan itu')
+      brief: undefined as never,
+    })).toThrow('CHAPTER_BRIEF_V2_BRIEF_REQUIRED')
   })
 })

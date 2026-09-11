@@ -1,6 +1,7 @@
 /**
  * Choice provider error taxonomy + retry policy.
  */
+import { ACCEPTED_ACTION_VERB_EXAMPLES } from '@/lib/story-engine/choice-quality'
 
 export type ChoiceProviderErrorCode =
   | 'TIMEOUT'
@@ -13,6 +14,7 @@ export type ChoiceProviderErrorCode =
   | 'QUALITY_UNGROUNDED'
   | 'QUALITY_NOT_DISTINCT'
   | 'QUALITY_NOT_ACTIONABLE'
+  | 'INPUT_INVALID'
   | 'UNKNOWN'
 
 export type ChoiceRetryAction =
@@ -44,6 +46,11 @@ export function classifyChoiceProviderError(err: unknown): ChoiceProviderErrorCo
   const message = err instanceof Error ? err.message : String(err)
   const lower = message.toLowerCase()
   const name = err instanceof Error ? err.name : ''
+  const structuredCode = err && typeof err === 'object' && 'code' in err
+    ? (err as { code?: unknown }).code
+    : undefined
+
+  if (structuredCode === 'CHOICE_INPUT_INVALID') return 'INPUT_INVALID'
 
   if (
     name === 'TimeoutError' ||
@@ -125,6 +132,8 @@ export function choiceRetryAction(code: ChoiceProviderErrorCode): ChoiceRetryAct
     case 'QUALITY_NOT_DISTINCT':
     case 'QUALITY_NOT_ACTIONABLE':
       return 'quality_repair'
+    case 'INPUT_INVALID':
+      return 'terminal'
     case 'UNKNOWN':
     default:
       return 'next_provider'
@@ -156,7 +165,11 @@ export function buildChoiceRepairNotes(
         return 'Dua pilihan menghasilkan arah yang terlalu serupa; bedakan risiko dan tujuan.'
       case 'NOT_ACTIONABLE':
       case 'CHOICE_NOT_ACTIONABLE':
-        return 'Label harus diawali tindakan konkret yang bisa dilakukan pembaca.'
+        // Catatan lama hanya menyebut "tindakan konkret" tanpa memberi verba
+        // yang diterima, sehingga model mengulang kelas kata yang sama dan
+        // rantai repair habis tanpa pernah bisa konvergen (run final-a1 Bab 10,
+        // final-a2 Bab 13, custom-t4 Bab 1). Kutip verbanya.
+        return `Mulai setiap label dengan salah satu verba ini: ${ACCEPTED_ACTION_VERB_EXAMPLES.join(', ')}.`
       case 'SCHEMA_INVALID':
       case 'INVALID_RESPONSE':
         return 'Struktur JSON tidak valid; ikuti contoh objek question + actions.'

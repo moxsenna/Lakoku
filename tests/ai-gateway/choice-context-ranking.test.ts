@@ -83,4 +83,44 @@ describe('P1-4 choice context ranking + hard-constraint preservation', () => {
     const projected = __projectChoiceInputForTests(input)
     expect(projected.chapterBrief.mustNotReveal).toEqual(input.chapterBrief.mustNotReveal)
   })
+
+  it('keeps the newest deterministic choice-history suffix within the chapter-47 provider budget', () => {
+    const input = baseChoiceInput(47)
+    const history = Array.from({ length: 46 }, (_, index) => {
+      const chapterNumber = index + 1
+      return {
+        chapterNumber,
+        choiceId: `choice-${chapterNumber}`,
+        label: `Selidiki petunjuk Bab ${chapterNumber} ${'dengan hati-hati '.repeat(6)}`.trim(),
+        consequence: [
+          `Petunjuk Bab ${chapterNumber} mengubah arah penyelidikan ${'secara nyata '.repeat(5)}`.trim(),
+          `Hubungan dengan Ratna berkembang ${'setelah keputusan itu '.repeat(4)}`.trim(),
+        ],
+        effectSummary: { truth: 1, risk: 1, flagsSet: [`chapter_${chapterNumber}_chosen`] },
+        createdAt: '2026-01-01T00:00:00.000Z',
+      }
+    }).reverse()
+    input.choiceHistory = history
+    const original = structuredClone(history)
+
+    const first = __projectChoiceInputForTests(input)
+    const second = __projectChoiceInputForTests(input)
+    const chapters = first.choiceHistory.map((entry) => entry.chapterNumber)
+
+    expect(JSON.stringify(first).length).toBeLessThanOrEqual(16_000)
+    expect(first.choiceHistory.length).toBeLessThan(history.length)
+    expect(chapters.at(-1)).toBe(46)
+    expect(chapters).toEqual(
+      Array.from(
+        { length: chapters.length },
+        (_, index) => 46 - chapters.length + index + 1,
+      ),
+    )
+    expect(second.choiceHistory).toEqual(first.choiceHistory)
+    expect(first.canon.pendingReveals).toHaveLength(
+      input.snapshot.secrets.filter((secret) => !secret.revealed).length,
+    )
+    expect(first.chapterBrief.mustNotReveal).toEqual(input.chapterBrief.mustNotReveal)
+    expect(input.choiceHistory).toEqual(original)
+  })
 })

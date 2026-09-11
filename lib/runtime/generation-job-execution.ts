@@ -9,6 +9,13 @@ import type { ProviderRuntime } from '@lakoku/ai-gateway'
 
 export type GenerationWorkerOptions = Readonly<{
   providerRuntime?: ProviderRuntime
+  /** Explicit proof mode; requires one caller-owned run-level inference budget. */
+  m10gMode?: boolean
+  globalInferenceBudget?: import('@lakoku/ai-gateway').GlobalInferenceBudget
+  /** Explicit override; false must win over process environment for frozen proof runs. */
+  writerLengthRepairV1Enabled?: boolean
+  /** Immutable lease authority for M10-G; required to avoid generation_policy reads. */
+  m10gFrozenLeaseTtlSeconds?: number
 }>
 
 /**
@@ -129,6 +136,12 @@ const TERMINAL_REASONS = new Set([
   'FINAL_CHAPTER',
   'UNSAFE',
   'CHOICE_PARENT_CANCELLED',
+  'M10G_GLOBAL_INFERENCE_BUDGET_REQUIRED',
+  'M10G_GLOBAL_INFERENCE_BUDGET_EXHAUSTED',
+  // E0 measured-cost ceilings: retrying into an exceeded ceiling would keep
+  // burning budget, so the attempt is terminal exactly like budget exhaustion.
+  'E0_CHAPTER_COST_CEILING_EXCEEDED',
+  'E0_PROCESS_COST_CEILING_EXCEEDED',
 ])
 
 export function isRetryableGenerationReason(reason: string): boolean {

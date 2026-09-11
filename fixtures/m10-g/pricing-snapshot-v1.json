@@ -1,0 +1,896 @@
+{
+  "schemaVersion": "M10G_G1_PRICING_SNAPSHOT_V1",
+  "metadataRequest": {
+    "method": "GET",
+    "endpoint": "https://openrouter.ai/api/v1/models",
+    "provider": "OpenRouter",
+    "authenticated": false
+  },
+  "retrievedAt": "2026-09-07T23:20:20.000Z",
+  "rawResponseSha256": "42deb0f12a5acd0cc199c52b919de919a3aa3416de6c63ce09d4287298d0e46c",
+  "rawResponseByteLength": "704253",
+  "rawRetainedSubset": {
+    "data": [
+      {
+        "id": "openai/gpt-5.6-sol",
+        "canonical_slug": "openai/gpt-5.6-sol-20260709",
+        "hugging_face_id": null,
+        "name": "OpenAI: GPT-5.6 Sol",
+        "created": 1783590850,
+        "description": "GPT-5.6 Sol is the flagship model in OpenAI's GPT-5.6 series. It is suited for complex reasoning, coding, and agentic workflows, and is particularly strong at command-line and multi-step coding tasks...",
+        "context_length": 1050000,
+        "architecture": {
+          "modality": "text+image+file->text",
+          "input_modalities": [
+            "file",
+            "image",
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tokenizer": "GPT",
+          "instruct_type": null
+        },
+        "pricing": {
+          "prompt": "0.000002",
+          "completion": "0.00001",
+          "web_search": "0.01",
+          "input_cache_read": "0.0000002",
+          "input_cache_write": "0.0000025",
+          "overrides": [
+            {
+              "min_prompt_tokens": 272000,
+              "prompt": "0.000004",
+              "completion": "0.000015",
+              "input_cache_read": "0.0000004",
+              "input_cache_write": "0.000005"
+            }
+          ]
+        },
+        "top_provider": {
+          "context_length": 1050000,
+          "max_completion_tokens": 128000,
+          "is_moderated": true
+        },
+        "per_request_limits": null,
+        "supported_parameters": [
+          "include_reasoning",
+          "max_completion_tokens",
+          "max_tokens",
+          "reasoning",
+          "reasoning_effort",
+          "response_format",
+          "seed",
+          "structured_outputs",
+          "tool_choice",
+          "tools"
+        ],
+        "default_parameters": {
+          "temperature": null,
+          "top_p": null,
+          "top_k": null,
+          "frequency_penalty": null,
+          "presence_penalty": null,
+          "repetition_penalty": null
+        },
+        "supported_voices": null,
+        "knowledge_cutoff": "2026-02-16",
+        "expiration_date": null,
+        "links": {
+          "details": "/api/v1/models/openai/gpt-5.6-sol-20260709/endpoints"
+        },
+        "benchmarks": {
+          "design_arena": [],
+          "artificial_analysis": {
+            "intelligence_index": 51.3,
+            "coding_index": 77.4,
+            "agentic_index": 50.7
+          }
+        },
+        "reasoning": {
+          "mandatory": false,
+          "default_enabled": true,
+          "supported_efforts": [
+            "max",
+            "xhigh",
+            "high",
+            "medium",
+            "low",
+            "none"
+          ],
+          "default_effort": "medium"
+        }
+      },
+      {
+        "id": "openai/gpt-4.1-mini",
+        "canonical_slug": "openai/gpt-4.1-mini-2025-04-14",
+        "hugging_face_id": "",
+        "name": "OpenAI: GPT-4.1 Mini",
+        "created": 1744651381,
+        "description": "GPT-4.1 Mini is a mid-sized model delivering performance competitive with GPT-4o at substantially lower latency and cost. It retains a 1 million token context window and scores 45.1% on hard...",
+        "context_length": 1047576,
+        "architecture": {
+          "modality": "text+image+file->text",
+          "input_modalities": [
+            "image",
+            "text",
+            "file"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tokenizer": "GPT",
+          "instruct_type": null
+        },
+        "pricing": {
+          "prompt": "0.0000004",
+          "completion": "0.0000016",
+          "web_search": "0.01",
+          "input_cache_read": "0.0000001"
+        },
+        "top_provider": {
+          "context_length": 1047576,
+          "max_completion_tokens": 32768,
+          "is_moderated": true
+        },
+        "per_request_limits": null,
+        "supported_parameters": [
+          "max_completion_tokens",
+          "max_tokens",
+          "response_format",
+          "seed",
+          "structured_outputs",
+          "temperature",
+          "tool_choice",
+          "tools",
+          "top_p"
+        ],
+        "default_parameters": {},
+        "supported_voices": null,
+        "knowledge_cutoff": "2024-06-30",
+        "expiration_date": null,
+        "links": {
+          "details": "/api/v1/models/openai/gpt-4.1-mini-2025-04-14/endpoints"
+        },
+        "benchmarks": {
+          "design_arena": [
+            {
+              "arena": "models",
+              "category": "3d",
+              "elo": 868,
+              "win_rate": 30.5,
+              "rank": 112
+            },
+            {
+              "arena": "models",
+              "category": "codecategories",
+              "elo": 1011,
+              "win_rate": 47.5,
+              "rank": 110
+            },
+            {
+              "arena": "models",
+              "category": "dataviz",
+              "elo": 1050,
+              "win_rate": 49.2,
+              "rank": 98
+            },
+            {
+              "arena": "models",
+              "category": "gamedev",
+              "elo": 1097,
+              "win_rate": 58.5,
+              "rank": 88
+            },
+            {
+              "arena": "models",
+              "category": "uicomponent",
+              "elo": 982,
+              "win_rate": 45.4,
+              "rank": 104
+            },
+            {
+              "arena": "models",
+              "category": "website",
+              "elo": 1012,
+              "win_rate": 47.8,
+              "rank": 112
+            }
+          ],
+          "artificial_analysis": {
+            "intelligence_index": null,
+            "coding_index": 20.2,
+            "agentic_index": null
+          }
+        }
+      },
+      {
+        "id": "deepseek/deepseek-v3.2",
+        "canonical_slug": "deepseek/deepseek-v3.2-20251201",
+        "hugging_face_id": "deepseek-ai/DeepSeek-V3.2",
+        "name": "DeepSeek: DeepSeek V3.2",
+        "created": 1764594642,
+        "description": "DeepSeek-V3.2 is a large language model designed to harmonize high computational efficiency with strong reasoning and agentic tool-use performance. It introduces DeepSeek Sparse Attention (DSA), a fine-grained sparse attention mechanism...",
+        "context_length": 163840,
+        "architecture": {
+          "modality": "text->text",
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tokenizer": "DeepSeek",
+          "instruct_type": null
+        },
+        "pricing": {
+          "prompt": "0.000000269",
+          "completion": "0.0000004",
+          "input_cache_read": "0.0000001345"
+        },
+        "top_provider": {
+          "context_length": 163840,
+          "max_completion_tokens": 65536,
+          "is_moderated": false
+        },
+        "per_request_limits": null,
+        "supported_parameters": [
+          "frequency_penalty",
+          "include_reasoning",
+          "logit_bias",
+          "logprobs",
+          "max_tokens",
+          "min_p",
+          "presence_penalty",
+          "reasoning",
+          "repetition_penalty",
+          "response_format",
+          "seed",
+          "stop",
+          "structured_outputs",
+          "temperature",
+          "tool_choice",
+          "tools",
+          "top_k",
+          "top_logprobs",
+          "top_p"
+        ],
+        "default_parameters": {
+          "temperature": 1,
+          "top_p": 0.95,
+          "top_k": null,
+          "frequency_penalty": null,
+          "presence_penalty": null,
+          "repetition_penalty": null
+        },
+        "supported_voices": null,
+        "knowledge_cutoff": null,
+        "expiration_date": null,
+        "links": {
+          "details": "/api/v1/models/deepseek/deepseek-v3.2-20251201/endpoints"
+        },
+        "benchmarks": {
+          "design_arena": [
+            {
+              "arena": "models",
+              "category": "3d",
+              "elo": 1164,
+              "win_rate": 49.5,
+              "rank": 59
+            },
+            {
+              "arena": "models",
+              "category": "asciiart",
+              "elo": 1106,
+              "win_rate": 40.5,
+              "rank": 55
+            },
+            {
+              "arena": "models",
+              "category": "codecategories",
+              "elo": 1182,
+              "win_rate": 49.3,
+              "rank": 64
+            },
+            {
+              "arena": "models",
+              "category": "dataviz",
+              "elo": 1177,
+              "win_rate": 48.2,
+              "rank": 63
+            },
+            {
+              "arena": "models",
+              "category": "gamedev",
+              "elo": 1158,
+              "win_rate": 46.5,
+              "rank": 66
+            },
+            {
+              "arena": "models",
+              "category": "svg",
+              "elo": 1057,
+              "win_rate": 40.8,
+              "rank": 68
+            },
+            {
+              "arena": "models",
+              "category": "uicomponent",
+              "elo": 1170,
+              "win_rate": 46.8,
+              "rank": 64
+            },
+            {
+              "arena": "models",
+              "category": "website",
+              "elo": 1189,
+              "win_rate": 50.2,
+              "rank": 62
+            }
+          ],
+          "artificial_analysis": {
+            "intelligence_index": null,
+            "coding_index": 44.2,
+            "agentic_index": null
+          }
+        },
+        "reasoning": {
+          "mandatory": false,
+          "default_enabled": false
+        }
+      },
+      {
+        "id": "deepseek/deepseek-v3.1-terminus",
+        "canonical_slug": "deepseek/deepseek-v3.1-terminus",
+        "hugging_face_id": "deepseek-ai/DeepSeek-V3.1-Terminus",
+        "name": "DeepSeek: DeepSeek V3.1 Terminus",
+        "created": 1758548275,
+        "description": "DeepSeek-V3.1 Terminus is an update to [DeepSeek V3.1](/deepseek/deepseek-chat-v3.1) that maintains the model's original capabilities while addressing issues reported by users, including language consistency and agent capabilities, further optimizing the model's...",
+        "context_length": 163840,
+        "architecture": {
+          "modality": "text->text",
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tokenizer": "DeepSeek",
+          "instruct_type": "deepseek-v3.1"
+        },
+        "pricing": {
+          "prompt": "0.00000027",
+          "completion": "0.000001",
+          "input_cache_read": "0.000000135"
+        },
+        "top_provider": {
+          "context_length": 131072,
+          "max_completion_tokens": 32768,
+          "is_moderated": false
+        },
+        "per_request_limits": null,
+        "supported_parameters": [
+          "frequency_penalty",
+          "include_reasoning",
+          "logit_bias",
+          "max_tokens",
+          "min_p",
+          "presence_penalty",
+          "reasoning",
+          "repetition_penalty",
+          "response_format",
+          "seed",
+          "stop",
+          "structured_outputs",
+          "temperature",
+          "tool_choice",
+          "tools",
+          "top_k",
+          "top_p"
+        ],
+        "default_parameters": {
+          "temperature": null,
+          "top_p": null,
+          "frequency_penalty": null
+        },
+        "supported_voices": null,
+        "knowledge_cutoff": "2025-03-31",
+        "expiration_date": null,
+        "links": {
+          "details": "/api/v1/models/deepseek/deepseek-v3.1-terminus/endpoints"
+        },
+        "benchmarks": {
+          "design_arena": [
+            {
+              "arena": "models",
+              "category": "3d",
+              "elo": 1172,
+              "win_rate": 56,
+              "rank": 55
+            },
+            {
+              "arena": "models",
+              "category": "codecategories",
+              "elo": 1193,
+              "win_rate": 56,
+              "rank": 55
+            },
+            {
+              "arena": "models",
+              "category": "dataviz",
+              "elo": 1186,
+              "win_rate": 53.4,
+              "rank": 56
+            },
+            {
+              "arena": "models",
+              "category": "gamedev",
+              "elo": 1157,
+              "win_rate": 52.5,
+              "rank": 67
+            },
+            {
+              "arena": "models",
+              "category": "svg",
+              "elo": 1090,
+              "win_rate": 50.1,
+              "rank": 61
+            },
+            {
+              "arena": "models",
+              "category": "uicomponent",
+              "elo": 1203,
+              "win_rate": 59.5,
+              "rank": 48
+            },
+            {
+              "arena": "models",
+              "category": "website",
+              "elo": 1201,
+              "win_rate": 56.4,
+              "rank": 56
+            }
+          ],
+          "artificial_analysis": {
+            "intelligence_index": null,
+            "coding_index": 43.5,
+            "agentic_index": null
+          }
+        },
+        "reasoning": {
+          "mandatory": false
+        }
+      }
+    ]
+  },
+  "rawRetainedSubsetCanonicalSha256": "3ce1186eff2e154cd9c6e68e34eb12ecc73c5e18c41dfac63eb16e6480a69e92",
+  "normalized": {
+    "targetAliases": [
+      "openai/gpt-5.6-sol",
+      "openai/gpt-4.1-mini",
+      "deepseek/deepseek-v3.2",
+      "deepseek/deepseek-v3.1-terminus"
+    ],
+    "models": [
+      {
+        "configuredAlias": "openai/gpt-5.6-sol",
+        "metadataRowAlias": "openai/gpt-5.6-sol",
+        "canonicalModelId": {
+          "state": "VALUE",
+          "value": "openai/gpt-5.6-sol-20260709"
+        },
+        "currency": "USD",
+        "tokenUnit": "1000000",
+        "input": {
+          "sourcePerTokenUsd": {
+            "state": "VALUE",
+            "value": "0.000002"
+          },
+          "per1MTokensUsd": {
+            "state": "VALUE",
+            "value": "2"
+          }
+        },
+        "output": {
+          "sourcePerTokenUsd": {
+            "state": "VALUE",
+            "value": "0.00001"
+          },
+          "per1MTokensUsd": {
+            "state": "VALUE",
+            "value": "10"
+          }
+        },
+        "reasoning": {
+          "sourcePerTokenUsd": {
+            "state": "OMITTED"
+          },
+          "per1MTokensUsd": {
+            "state": "OMITTED"
+          }
+        },
+        "cacheRead": {
+          "sourcePerTokenUsd": {
+            "state": "VALUE",
+            "value": "0.0000002"
+          },
+          "per1MTokensUsd": {
+            "state": "VALUE",
+            "value": "0.2"
+          }
+        },
+        "cacheWrite": {
+          "sourcePerTokenUsd": {
+            "state": "VALUE",
+            "value": "0.0000025"
+          },
+          "per1MTokensUsd": {
+            "state": "VALUE",
+            "value": "2.5"
+          }
+        },
+        "perRequest": {
+          "web_search": {
+            "state": "VALUE",
+            "value": "0.01"
+          }
+        },
+        "sourcePriceComponents": {
+          "completion": {
+            "state": "VALUE",
+            "value": "0.00001"
+          },
+          "input_cache_read": {
+            "state": "VALUE",
+            "value": "0.0000002"
+          },
+          "input_cache_write": {
+            "state": "VALUE",
+            "value": "0.0000025"
+          },
+          "prompt": {
+            "state": "VALUE",
+            "value": "0.000002"
+          },
+          "web_search": {
+            "state": "VALUE",
+            "value": "0.01"
+          }
+        },
+        "tier": {
+          "state": "OMITTED"
+        },
+        "overrides": {
+          "state": "VALUE",
+          "value": [
+            {
+              "min_prompt_tokens": 272000,
+              "prompt": "0.000004",
+              "completion": "0.000015",
+              "input_cache_read": "0.0000004",
+              "input_cache_write": "0.000005"
+            }
+          ]
+        },
+        "contextLength": 1050000,
+        "maximumOutputTokens": 128000,
+        "routingSemantics": {
+          "topProvider": {
+            "state": "VALUE",
+            "value": {
+              "context_length": 1050000,
+              "max_completion_tokens": 128000,
+              "is_moderated": true
+            }
+          },
+          "perRequestLimits": {
+            "state": "NULL"
+          },
+          "endpointDetailsLink": {
+            "state": "VALUE",
+            "value": "/api/v1/models/openai/gpt-5.6-sol-20260709/endpoints"
+          }
+        }
+      },
+      {
+        "configuredAlias": "openai/gpt-4.1-mini",
+        "metadataRowAlias": "openai/gpt-4.1-mini",
+        "canonicalModelId": {
+          "state": "VALUE",
+          "value": "openai/gpt-4.1-mini-2025-04-14"
+        },
+        "currency": "USD",
+        "tokenUnit": "1000000",
+        "input": {
+          "sourcePerTokenUsd": {
+            "state": "VALUE",
+            "value": "0.0000004"
+          },
+          "per1MTokensUsd": {
+            "state": "VALUE",
+            "value": "0.4"
+          }
+        },
+        "output": {
+          "sourcePerTokenUsd": {
+            "state": "VALUE",
+            "value": "0.0000016"
+          },
+          "per1MTokensUsd": {
+            "state": "VALUE",
+            "value": "1.6"
+          }
+        },
+        "reasoning": {
+          "sourcePerTokenUsd": {
+            "state": "OMITTED"
+          },
+          "per1MTokensUsd": {
+            "state": "OMITTED"
+          }
+        },
+        "cacheRead": {
+          "sourcePerTokenUsd": {
+            "state": "VALUE",
+            "value": "0.0000001"
+          },
+          "per1MTokensUsd": {
+            "state": "VALUE",
+            "value": "0.1"
+          }
+        },
+        "cacheWrite": {
+          "sourcePerTokenUsd": {
+            "state": "OMITTED"
+          },
+          "per1MTokensUsd": {
+            "state": "OMITTED"
+          }
+        },
+        "perRequest": {
+          "web_search": {
+            "state": "VALUE",
+            "value": "0.01"
+          }
+        },
+        "sourcePriceComponents": {
+          "completion": {
+            "state": "VALUE",
+            "value": "0.0000016"
+          },
+          "input_cache_read": {
+            "state": "VALUE",
+            "value": "0.0000001"
+          },
+          "prompt": {
+            "state": "VALUE",
+            "value": "0.0000004"
+          },
+          "web_search": {
+            "state": "VALUE",
+            "value": "0.01"
+          }
+        },
+        "tier": {
+          "state": "OMITTED"
+        },
+        "overrides": {
+          "state": "OMITTED"
+        },
+        "contextLength": 1047576,
+        "maximumOutputTokens": 32768,
+        "routingSemantics": {
+          "topProvider": {
+            "state": "VALUE",
+            "value": {
+              "context_length": 1047576,
+              "max_completion_tokens": 32768,
+              "is_moderated": true
+            }
+          },
+          "perRequestLimits": {
+            "state": "NULL"
+          },
+          "endpointDetailsLink": {
+            "state": "VALUE",
+            "value": "/api/v1/models/openai/gpt-4.1-mini-2025-04-14/endpoints"
+          }
+        }
+      },
+      {
+        "configuredAlias": "deepseek/deepseek-v3.2",
+        "metadataRowAlias": "deepseek/deepseek-v3.2",
+        "canonicalModelId": {
+          "state": "VALUE",
+          "value": "deepseek/deepseek-v3.2-20251201"
+        },
+        "currency": "USD",
+        "tokenUnit": "1000000",
+        "input": {
+          "sourcePerTokenUsd": {
+            "state": "VALUE",
+            "value": "0.000000269"
+          },
+          "per1MTokensUsd": {
+            "state": "VALUE",
+            "value": "0.269"
+          }
+        },
+        "output": {
+          "sourcePerTokenUsd": {
+            "state": "VALUE",
+            "value": "0.0000004"
+          },
+          "per1MTokensUsd": {
+            "state": "VALUE",
+            "value": "0.4"
+          }
+        },
+        "reasoning": {
+          "sourcePerTokenUsd": {
+            "state": "OMITTED"
+          },
+          "per1MTokensUsd": {
+            "state": "OMITTED"
+          }
+        },
+        "cacheRead": {
+          "sourcePerTokenUsd": {
+            "state": "VALUE",
+            "value": "0.0000001345"
+          },
+          "per1MTokensUsd": {
+            "state": "VALUE",
+            "value": "0.1345"
+          }
+        },
+        "cacheWrite": {
+          "sourcePerTokenUsd": {
+            "state": "OMITTED"
+          },
+          "per1MTokensUsd": {
+            "state": "OMITTED"
+          }
+        },
+        "perRequest": {},
+        "sourcePriceComponents": {
+          "completion": {
+            "state": "VALUE",
+            "value": "0.0000004"
+          },
+          "input_cache_read": {
+            "state": "VALUE",
+            "value": "0.0000001345"
+          },
+          "prompt": {
+            "state": "VALUE",
+            "value": "0.000000269"
+          }
+        },
+        "tier": {
+          "state": "OMITTED"
+        },
+        "overrides": {
+          "state": "OMITTED"
+        },
+        "contextLength": 163840,
+        "maximumOutputTokens": 65536,
+        "routingSemantics": {
+          "topProvider": {
+            "state": "VALUE",
+            "value": {
+              "context_length": 163840,
+              "max_completion_tokens": 65536,
+              "is_moderated": false
+            }
+          },
+          "perRequestLimits": {
+            "state": "NULL"
+          },
+          "endpointDetailsLink": {
+            "state": "VALUE",
+            "value": "/api/v1/models/deepseek/deepseek-v3.2-20251201/endpoints"
+          }
+        }
+      },
+      {
+        "configuredAlias": "deepseek/deepseek-v3.1-terminus",
+        "metadataRowAlias": "deepseek/deepseek-v3.1-terminus",
+        "canonicalModelId": {
+          "state": "VALUE",
+          "value": "deepseek/deepseek-v3.1-terminus"
+        },
+        "currency": "USD",
+        "tokenUnit": "1000000",
+        "input": {
+          "sourcePerTokenUsd": {
+            "state": "VALUE",
+            "value": "0.00000027"
+          },
+          "per1MTokensUsd": {
+            "state": "VALUE",
+            "value": "0.27"
+          }
+        },
+        "output": {
+          "sourcePerTokenUsd": {
+            "state": "VALUE",
+            "value": "0.000001"
+          },
+          "per1MTokensUsd": {
+            "state": "VALUE",
+            "value": "1"
+          }
+        },
+        "reasoning": {
+          "sourcePerTokenUsd": {
+            "state": "OMITTED"
+          },
+          "per1MTokensUsd": {
+            "state": "OMITTED"
+          }
+        },
+        "cacheRead": {
+          "sourcePerTokenUsd": {
+            "state": "VALUE",
+            "value": "0.000000135"
+          },
+          "per1MTokensUsd": {
+            "state": "VALUE",
+            "value": "0.135"
+          }
+        },
+        "cacheWrite": {
+          "sourcePerTokenUsd": {
+            "state": "OMITTED"
+          },
+          "per1MTokensUsd": {
+            "state": "OMITTED"
+          }
+        },
+        "perRequest": {},
+        "sourcePriceComponents": {
+          "completion": {
+            "state": "VALUE",
+            "value": "0.000001"
+          },
+          "input_cache_read": {
+            "state": "VALUE",
+            "value": "0.000000135"
+          },
+          "prompt": {
+            "state": "VALUE",
+            "value": "0.00000027"
+          }
+        },
+        "tier": {
+          "state": "OMITTED"
+        },
+        "overrides": {
+          "state": "OMITTED"
+        },
+        "contextLength": 163840,
+        "maximumOutputTokens": 32768,
+        "routingSemantics": {
+          "topProvider": {
+            "state": "VALUE",
+            "value": {
+              "context_length": 131072,
+              "max_completion_tokens": 32768,
+              "is_moderated": false
+            }
+          },
+          "perRequestLimits": {
+            "state": "NULL"
+          },
+          "endpointDetailsLink": {
+            "state": "VALUE",
+            "value": "/api/v1/models/deepseek/deepseek-v3.1-terminus/endpoints"
+          }
+        }
+      }
+    ],
+    "canonicalHash": "587126f281730c3bd129f4ccd620a852610962320ab482775d757d6898bb8513"
+  }
+}

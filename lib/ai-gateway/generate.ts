@@ -32,6 +32,7 @@ import {
 } from './semantic-continuation-judge'
 import type { ChapterDraftParsed } from './schemas'
 import type { DraftDefect, ModelCallExecutionOptions } from './provider'
+import { isGlobalInferenceBudgetError } from './global-inference-budget.contract'
 import { throwIfAborted } from '@/lib/runtime/abort'
 
 export const MAX_REPAIR_ATTEMPTS = 2 // per lapis
@@ -112,6 +113,10 @@ export async function generateChapter(
   },
 ): Promise<GenerationResult> {
   throwIfAborted(args.executionOptions?.signal)
+  if (args.executionOptions?.writerLengthRepairV1?.enabled) {
+    args.executionOptions.writerInferenceBudget ??= { used: 0, max: 2 }
+    args.executionOptions.writerLengthRepairTelemetryState ??= { emitted: false }
+  }
   const { snapshot, blueprint, chapterNumber, continuation, brief, threadContext, layerBContext } = args
   const fpBefore = canonFingerprint(snapshot)
 
@@ -230,6 +235,7 @@ export async function generateChapter(
           : undefined,
       )
     } catch (err) {
+      if (isGlobalInferenceBudgetError(err)) throw err
       // Missing evaluator atau technical failure -> throw SEMANTIC_JUDGE_UNAVAILABLE (retryable, NO publish)
       throw new Error(SEMANTIC_JUDGE_UNAVAILABLE, { cause: err })
     }
@@ -286,6 +292,7 @@ export async function generateChapter(
             : undefined,
         )
       } catch (err) {
+        if (isGlobalInferenceBudgetError(err)) throw err
         throw new Error(SEMANTIC_JUDGE_UNAVAILABLE, { cause: err })
       }
 

@@ -307,11 +307,14 @@ async function main() {
         if (index === restartIndex) continue
         const fixture = fixtures[index]!
         const transport = scenarios.transport(fixture.storyId, fixture.jobId, observed)
-        const instrumentedTransport: ProviderCandidateTransport = (candidate) => metrics.run(
-          candidate.providerId,
-          () => transport(candidate),
-          { phase: candidate.kind, fallback: candidate.fallbackIndex },
-        )
+        const instrumentedTransport: ProviderCandidateTransport = (candidate) => {
+          if (candidate.kind === 'semantic') throw new Error('PROGRAMMED_SEMANTIC_UNSUPPORTED')
+          return metrics.run(
+            candidate.providerId,
+            () => transport(candidate),
+            { phase: candidate.kind, fallback: candidate.fallbackIndex },
+          )
+        }
         const result = await withDeadline(
           claimAndRunGenerationJobById({ jobId: fixture.jobId, workerId: `soak-main:${process.pid}:${index}` }, { providerRuntime: { candidateTransport: instrumentedTransport, choiceConcurrencyObserver } }),
           TERMINAL_TIMEOUT_MS,

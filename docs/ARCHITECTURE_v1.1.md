@@ -3,7 +3,8 @@
 **Version:** 1.1  
 **Status:** Build-ready technical baseline  
 **Last updated:** 22 July 2026 — backend stack sections amended to reflect the real VPS deployment (Next.js standalone + Supabase); original Cloudflare Workers/Queues/Workflows/R2 design retained only as historical context  
-**Amendments applied:** AMENDMENTS v0.3 (§B), AMENDMENTS v0.4 (§B), AMENDMENTS v0.5 (§B) — see `docs/AMENDMENTS_v0.3.md`, `docs/AMENDMENTS_v0.4.md`, `docs/AMENDMENTS_v0.5.md`  
+**Amendments applied:** AMENDMENTS v0.3 (§B), AMENDMENTS v0.4 (§B), AMENDMENTS v0.5 (§B), AMENDMENTS v0.6 (LD-PROSE-RHYTHM) — see `docs/AMENDMENTS_v0.3.md`, `docs/AMENDMENTS_v0.4.md`, `docs/AMENDMENTS_v0.5.md`, `docs/AMENDMENTS_v0.6.md`
+
 **Primary release:** Private Beta — web reader mobile-first first, Android (Kotlin) second  
 **Client sequencing:** Web reader (Next.js) is the first production client; Android native follows once web retention/monetization is proven — see AMENDMENTS v0.4 §0 (LD-CLIENT-SEQ)  
 **Primary app stack:** Web reader — Next.js (App Router); Android — Kotlin + Jetpack Compose (second client)  

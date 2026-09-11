@@ -22,6 +22,7 @@ node_modules
 .zcode/
 .commandcode/
 .omo/
+.superpowers/
 
 # TestSprite intermediate artifacts (logs, raw results, config)
 testsprite_tests/tmp/
@@ -38,3 +39,12 @@ testsprite_tests\tmp\config.json
 # TypeScript incremental build cache
 tsconfig.tsbuildinfo
 *.tsbuildinfo
+
+# Local diagnostic artifacts
+output/
+.playwright-cli/
+supabase/.branches/
+
+# unlazy local state (machine-specific, never commit)
+.unlazy/
+.unlazy-hook-state.json

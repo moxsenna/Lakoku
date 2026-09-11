@@ -1,0 +1,128 @@
+{
+  "authorityVersion": "M10_E_JUDGE_PLAN_V1",
+  "decisionRef": "docs/superpowers/specs/2026-08-13-m10-e-e3a-e4-reliability-economics-design.md",
+  "currency": "IDR",
+  "evaluations": [
+    {
+      "judgeTaskId": "D-R1",
+      "evaluationIndex": 0,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R1",
+      "evaluationIndex": 1,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R1",
+      "evaluationIndex": 2,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R2",
+      "evaluationIndex": 0,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R2",
+      "evaluationIndex": 1,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R2",
+      "evaluationIndex": 2,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R3",
+      "evaluationIndex": 0,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R3",
+      "evaluationIndex": 1,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R3",
+      "evaluationIndex": 2,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R4",
+      "evaluationIndex": 0,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R4",
+      "evaluationIndex": 1,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R4",
+      "evaluationIndex": 2,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R5",
+      "evaluationIndex": 0,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R5",
+      "evaluationIndex": 1,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R5",
+      "evaluationIndex": 2,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R6",
+      "evaluationIndex": 0,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R6",
+      "evaluationIndex": 1,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R6",
+      "evaluationIndex": 2,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R7",
+      "evaluationIndex": 0,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R7",
+      "evaluationIndex": 1,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R7",
+      "evaluationIndex": 2,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R8",
+      "evaluationIndex": 0,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R8",
+      "evaluationIndex": 1,
+      "providerModelPolicyId": "provider_v1"
+    },
+    {
+      "judgeTaskId": "D-R8",
+      "evaluationIndex": 2,
+      "providerModelPolicyId": "provider_v1"
+    }
+  ],
+  "canonicalHash": "c5f81c15d4eeb550702b1d2c1fca969373890e39fb4c545d6520db757cd3439c"
+}

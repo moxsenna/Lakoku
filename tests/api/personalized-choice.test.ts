@@ -172,6 +172,19 @@ function createCookieDb(input?: {
       }
       return builder
     }),
+    rpc: vi.fn(async (...args: unknown[]) => {
+      input?.order?.push('cookie:rpc')
+      calls.push({ method: 'rpc', args })
+      return {
+        data: {
+          ok: true,
+          status: 'QUEUED',
+          job_id: '00000000-0000-4000-8000-0000000000e1',
+          correlation_id: '00000000-0000-4000-8000-0000000000e2',
+        },
+        error: null,
+      }
+    }),
   }
   return { client, calls }
 }
@@ -391,7 +404,7 @@ describe('applyPersonalizedChoice', () => {
       idempotencyKey,
     })
 
-    expect(result).toEqual({ outcome: publicOutcome, nextChapterNumber: 2, replayed: false })
+    expect(result).toEqual({ outcome: publicOutcome, nextChapterNumber: 2, replayed: false, jobId: '00000000-0000-4000-8000-0000000000e1' })
     expect(fixture.calls.filter((call) => call.method === 'select').map((call) => call.args[0])).toEqual([
       'id,owner_user_id,visibility,story_mode',
       'user_id,story_id,status,current_chapter,jejak,ending_name,route_state,choice_history,locked_ending_key,updated_at',
@@ -622,6 +635,7 @@ describe('personalized choice route dispatch', () => {
       chapterNumber: 2,
       triggerChoiceId: 'private-choice',
       correlationId: expect.any(String),
+      jobId: '00000000-0000-4000-8000-0000000000e1',
     })
   })
 })

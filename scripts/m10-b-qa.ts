@@ -56,7 +56,12 @@ export const EVALUATOR_VERSIONS: Record<string, string> = {
   threadLifecycle: '1.1.0',
   contextMemory: '1.1.0',
   choiceHistory: '1.1.0',
-  endingRunway: '1.1.0',
+  // C-R1 #4 → C-R2 (reviewer Entry 6): B.3.7 rebaseline. Durability inputs are
+  // now RAW persisted rows; the evaluator itself computes the lock/commit/
+  // publication conjunction. The fabricated Bab-49 emotional-resolution beat
+  // check was withdrawn (emotional resolution moves to the M10-D semantic
+  // judge). Contract change → minor bump to 1.3.0.
+  endingRunway: '1.3.0',
   repetition: '1.1.0',
   factConflict: '0.0.0-blocked',
 }
@@ -174,7 +179,6 @@ export function generateM10BArtifacts(outDir?: string) {
   const finishedAt = new Date().toISOString()
   // runId is derived from content, not wall clock, so repeated runs are byte-identical.
   const runId = `m10-b-${findingsHash.slice(0, 12)}`
-
   const { headSha, workingTreeDirty } = headShaOfWorkingTree()
 
   const manifest: M10ArtifactManifestV1 = {

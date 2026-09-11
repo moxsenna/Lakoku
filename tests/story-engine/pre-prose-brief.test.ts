@@ -101,6 +101,12 @@ function makeChapterBrief(overrides?: Partial<ChapterBrief>): ChapterBrief {
     lockEnding: false,
     endingKey: null,
     previousChoiceSummary: '',
+    forbiddenRevealIds: [],
+    resolvedPlotDebtIds: [],
+    scheduledReveals: [],
+    plotDebtObligationsToProgress: [],
+    plotDebtObligationsToClose: [],
+    lockedEndingClosure: [],
   }
   return { ...base, ...overrides }
 }

@@ -59,10 +59,16 @@ function toState(r: ReaderStateRow): ReaderState {
 
 const getSessionContext = cache(async function getSessionContext() {
   const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  return { supabase, user }
+  try {
+    const { data, error } = await supabase.auth.getUser()
+    if (error) throw error
+    return { supabase, user: data.user }
+  } catch {
+    // Refresh token mati (dicabut / diputar di klien lain / sesi dihapus):
+    // perlakukan sebagai tamu, jangan crash RSC. Cookie mati dibersihkan
+    // oleh middleware (penulisan cookie dari RSC tidak diizinkan Next).
+    return { supabase, user: null }
+  }
 })
 
 /**
@@ -173,10 +179,7 @@ export async function applyChoiceToUserState(
   decision: string,
   outcome: ChoiceOutcome,
 ): Promise<void> {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { supabase, user } = await getSessionContext()
   if (!user) return
 
   const existing = await getReaderState(storyId)

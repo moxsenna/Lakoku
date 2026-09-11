@@ -10,6 +10,8 @@ import {
   rankChoiceRelevantThreads,
 } from '@/lib/ai-gateway/choice-draft-v2'
 
+import { ACCEPTED_ACTION_VERB_EXAMPLES } from '@/lib/story-engine/choice-quality'
+
 describe('choice protocol V2 prompt contract', () => {
   it('example JSON is valid JSON.parse and matches schema', () => {
     const parsed = JSON.parse(JSON.stringify(AI_CHOICE_DRAFT_V2_EXAMPLE))
@@ -19,6 +21,15 @@ describe('choice protocol V2 prompt contract', () => {
   it('system prompt embeds parseable example without pseudo-schema tokens', () => {
     const prompt = buildChoiceSystemPromptV2()
     expect(prompt).toContain('Balas hanya satu objek JSON valid')
+    // Kontrak diperketat 2026-08-29: prompt WAJIB mengutip daftar verba yang
+    // sama dengan yang diterima validator, bukan sekadar menyebut "verba
+    // tindakan". Tiga regresi produksi terjadi karena prompt dan validator
+    // memakai ruang kata berbeda.
+    expect(prompt).toContain('setiap label HARUS dimulai dengan salah satu verba ini')
+    for (const verb of ACCEPTED_ACTION_VERB_EXAMPLES) {
+      expect(prompt).toContain(verb)
+    }
+    expect(prompt).toContain('Jangan mulai label dengan perasaan')
     expect(prompt).not.toMatch(/<integer\|null>/)
     expect(prompt).not.toMatch(/"nextChapterNumber":\s*</)
     // Extract the example object from prompt

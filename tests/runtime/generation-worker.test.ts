@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SEMANTIC_JUDGE_UNAVAILABLE } from '@/lib/ai-gateway/semantic-continuation-judge'
+import { GlobalInferenceBudgetError } from '@/lib/ai-gateway/global-inference-budget.contract'
+import { E0CostGuardError } from '@/lib/ai-gateway/e0-cost-guard'
 
 const mocks = vi.hoisted(() => ({
   claimGenerationJob: vi.fn(),
   claimGenerationJobById: vi.fn(),
   acquireGenerationJobLease: vi.fn(),
   heartbeatGenerationJob: vi.fn(),
-  finishGenerationJobAttempt: vi.fn(),
+  finishAttemptAndFinalizeIfTerminal: vi.fn(),
   runChapterGenerationAttempt: vi.fn(),
   resolveGenerationLeaseTtlSeconds: vi.fn(),
 }))
@@ -17,7 +19,7 @@ vi.mock('@/lib/runtime/generation-jobs', () => ({
   claimGenerationJobById: mocks.claimGenerationJobById,
   acquireGenerationJobLease: mocks.acquireGenerationJobLease,
   heartbeatGenerationJob: mocks.heartbeatGenerationJob,
-  finishGenerationJobAttempt: mocks.finishGenerationJobAttempt,
+  finishAttemptAndFinalizeIfTerminal: mocks.finishAttemptAndFinalizeIfTerminal,
 }))
 vi.mock('@/lib/runtime/generation-mode', () => ({
   runChapterGenerationAttempt: mocks.runChapterGenerationAttempt,
@@ -49,7 +51,7 @@ beforeEach(() => {
   mocks.resolveGenerationLeaseTtlSeconds.mockResolvedValue(180)
   mocks.acquireGenerationJobLease.mockResolvedValue({ ok: true, leaseId: 'lease-1' })
   mocks.heartbeatGenerationJob.mockResolvedValue({ ok: true })
-  mocks.finishGenerationJobAttempt.mockResolvedValue({ ok: true, status: 'RETRY_WAIT' })
+  mocks.finishAttemptAndFinalizeIfTerminal.mockResolvedValue({ ok: true, status: 'RETRY_WAIT' })
 })
 
 describe('executeClaimedJob heartbeat/abort/ownership', () => {
@@ -60,7 +62,7 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
     expect(res.ok).toBe(false)
     if (!res.ok) expect(res.outcome).toBe('OWNERSHIP_LOST')
     expect(mocks.runChapterGenerationAttempt).not.toHaveBeenCalled()
-    expect(mocks.finishGenerationJobAttempt).not.toHaveBeenCalled()
+    expect(mocks.finishAttemptAndFinalizeIfTerminal).not.toHaveBeenCalled()
   })
 
   it('lease acquire failure → no generator, no finish', async () => {
@@ -69,7 +71,7 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
     const res = await runAlreadyClaimedGenerationJob(JOB)
     expect(res.ok).toBe(false)
     expect(mocks.runChapterGenerationAttempt).not.toHaveBeenCalled()
-    expect(mocks.finishGenerationJobAttempt).not.toHaveBeenCalled()
+    expect(mocks.finishAttemptAndFinalizeIfTerminal).not.toHaveBeenCalled()
   })
 
   it('generator success (fenced publish) → SUCCEEDED, no finish(SUCCEEDED)', async () => {
@@ -83,7 +85,7 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
     expect(res.ok).toBe(true)
     if (res.ok) expect(res.outcome).toBe('SUCCEEDED')
     // Success never calls finish; SUCCEEDED comes only from fenced publish RPC.
-    expect(mocks.finishGenerationJobAttempt).not.toHaveBeenCalled()
+    expect(mocks.finishAttemptAndFinalizeIfTerminal).not.toHaveBeenCalled()
   })
 
   it('post-publish checkpoint reconciliation success does not finish generation job', async () => {
@@ -98,7 +100,7 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
       ok: true,
       outcome: 'SUCCEEDED',
     })
-    expect(mocks.finishGenerationJobAttempt).not.toHaveBeenCalled()
+    expect(mocks.finishAttemptAndFinalizeIfTerminal).not.toHaveBeenCalled()
   })
 
   it('preserves claimed explicit trigger choice in execution context and dispatcher input', async () => {
@@ -214,8 +216,8 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
     const res = await runAlreadyClaimedGenerationJob(JOB)
     expect(res.ok).toBe(false)
     if (!res.ok) expect(res.outcome).toBe('RETRY_WAIT')
-    expect(mocks.finishGenerationJobAttempt).toHaveBeenCalledTimes(1)
-    const finishArg = mocks.finishGenerationJobAttempt.mock.calls[0][0]
+    expect(mocks.finishAttemptAndFinalizeIfTerminal).toHaveBeenCalledTimes(1)
+    const finishArg = mocks.finishAttemptAndFinalizeIfTerminal.mock.calls[0][0]
     expect(finishArg.outcome).toBe('RETRY_WAIT')
     expect(finishArg.availableAt).toBeTruthy()
   })
@@ -231,12 +233,59 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
       outcome: 'RETRY_WAIT',
       reason: SEMANTIC_JUDGE_UNAVAILABLE,
     })
-    expect(mocks.finishGenerationJobAttempt).toHaveBeenCalledTimes(1)
-    expect(mocks.finishGenerationJobAttempt).toHaveBeenCalledWith(
+    expect(mocks.finishAttemptAndFinalizeIfTerminal).toHaveBeenCalledTimes(1)
+    expect(mocks.finishAttemptAndFinalizeIfTerminal).toHaveBeenCalledWith(
       expect.objectContaining({
         outcome: 'RETRY_WAIT',
         errorCode: SEMANTIC_JUDGE_UNAVAILABLE,
         errorClass: 'RETRYABLE',
+      }),
+    )
+  })
+
+  it.each([
+    'M10G_GLOBAL_INFERENCE_BUDGET_REQUIRED',
+    'M10G_GLOBAL_INFERENCE_BUDGET_EXHAUSTED',
+  ] as const)('%s is terminal and never redispatched', async (code) => {
+    mocks.runChapterGenerationAttempt.mockRejectedValueOnce(new GlobalInferenceBudgetError(code))
+    const { runAlreadyClaimedGenerationJob } = await import('@/lib/runtime/generation-worker')
+
+    await expect(runAlreadyClaimedGenerationJob(JOB)).resolves.toMatchObject({
+      ok: false,
+      outcome: 'FAILED',
+      reason: code,
+    })
+    expect(mocks.runChapterGenerationAttempt).toHaveBeenCalledTimes(1)
+    expect(mocks.finishAttemptAndFinalizeIfTerminal).toHaveBeenCalledTimes(1)
+    expect(mocks.finishAttemptAndFinalizeIfTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'FAILED',
+        availableAt: null,
+        errorCode: code,
+        errorClass: 'TERMINAL',
+        retryDecision: 'FAILED',
+      }),
+    )
+  })
+
+  it('E0 measured-cost ceiling breach is terminal and never redispatched', async () => {
+    mocks.runChapterGenerationAttempt.mockRejectedValueOnce(
+      new E0CostGuardError('E0_CHAPTER_COST_CEILING_EXCEEDED', 'chapter test measured cost exceeds E0 chapter ceiling'),
+    )
+    const { runAlreadyClaimedGenerationJob } = await import('@/lib/runtime/generation-worker')
+
+    await expect(runAlreadyClaimedGenerationJob(JOB)).resolves.toMatchObject({
+      ok: false,
+      outcome: 'FAILED',
+      reason: 'E0_CHAPTER_COST_CEILING_EXCEEDED',
+    })
+    expect(mocks.finishAttemptAndFinalizeIfTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'FAILED',
+        availableAt: null,
+        errorCode: 'E0_CHAPTER_COST_CEILING_EXCEEDED',
+        errorClass: 'TERMINAL',
+        retryDecision: 'FAILED',
       }),
     )
   })
@@ -247,7 +296,7 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
     const res = await runAlreadyClaimedGenerationJob(JOB)
     expect(res.ok).toBe(false)
     if (!res.ok) expect(res.outcome).toBe('RETRY_WAIT')
-    expect(mocks.finishGenerationJobAttempt).toHaveBeenCalledWith(
+    expect(mocks.finishAttemptAndFinalizeIfTerminal).toHaveBeenCalledWith(
       expect.objectContaining({
         outcome: 'RETRY_WAIT',
         errorCode: 'GENERATOR_EXCEPTION',
@@ -269,7 +318,7 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
       outcome: 'RETRY_WAIT',
       reason: 'TRANSIENT',
     })
-    expect(mocks.finishGenerationJobAttempt).toHaveBeenCalledWith({
+    expect(mocks.finishAttemptAndFinalizeIfTerminal).toHaveBeenCalledWith({
       jobId: JOB.id,
       workerId: JOB.workerId,
       claimToken: JOB.claimToken,
@@ -302,7 +351,7 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
       outcome: 'FAILED',
       reason: 'PROVENANCE_CONFLICT',
     })
-    expect(mocks.finishGenerationJobAttempt).toHaveBeenCalledWith(
+    expect(mocks.finishAttemptAndFinalizeIfTerminal).toHaveBeenCalledWith(
       expect.objectContaining({
         outcome: 'FAILED',
         errorCode: 'PROVENANCE_CONFLICT',
@@ -321,7 +370,7 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
     const res = await runAlreadyClaimedGenerationJob(JOB)
     expect(res.ok).toBe(false)
     if (!res.ok) expect(res.outcome).toBe('FAILED')
-    expect(mocks.finishGenerationJobAttempt).toHaveBeenCalledWith({
+    expect(mocks.finishAttemptAndFinalizeIfTerminal).toHaveBeenCalledWith({
       jobId: JOB.id,
       workerId: JOB.workerId,
       claimToken: JOB.claimToken,
@@ -357,7 +406,7 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
         jobId: JOB.id,
         reason: 'LEASE_HELD',
       })
-      expect(mocks.finishGenerationJobAttempt).not.toHaveBeenCalled()
+      expect(mocks.finishAttemptAndFinalizeIfTerminal).not.toHaveBeenCalled()
     },
   )
 
@@ -376,7 +425,7 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
     })
 
     expect(res).toEqual({ ok: true, outcome: 'ALREADY_DONE', jobId: JOB.id })
-    expect(mocks.finishGenerationJobAttempt).not.toHaveBeenCalled()
+    expect(mocks.finishAttemptAndFinalizeIfTerminal).not.toHaveBeenCalled()
   })
 
 })
@@ -417,7 +466,7 @@ describe('executeClaimedJob ownership loss via heartbeat interval (fake timers)'
         ok: true,
         outcome: 'SUCCEEDED',
       })
-      expect(mocks.finishGenerationJobAttempt).not.toHaveBeenCalled()
+      expect(mocks.finishAttemptAndFinalizeIfTerminal).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
@@ -456,7 +505,7 @@ describe('executeClaimedJob ownership loss via heartbeat interval (fake timers)'
       expect(res.ok).toBe(false)
       if (!res.ok) expect(res.outcome).toBe('OWNERSHIP_LOST')
       // Ownership lost: no finish call mutating another worker's job.
-      expect(mocks.finishGenerationJobAttempt).not.toHaveBeenCalled()
+      expect(mocks.finishAttemptAndFinalizeIfTerminal).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }

@@ -15,6 +15,7 @@ import * as gateway from '../../lib/ai-gateway/gateway'
 import type { CanonSnapshot } from '../../lib/narrative/types'
 import type { ChapterPlan, ChapterDraftParsed } from '../../lib/ai-gateway/schemas'
 import { SEMANTIC_JUDGE_UNAVAILABLE } from '../../lib/ai-gateway/semantic-continuation-judge'
+import { GlobalInferenceBudgetError } from '../../lib/ai-gateway/global-inference-budget.contract'
 import {
   NADIA_RAKA_BLUEPRINT,
   NADIA_RAKA_BRIEF_A,
@@ -46,7 +47,7 @@ function makePlan(): ChapterPlan {
     phase: 'Fase 2',
     chapterGoal: 'Konfrontasi atau Pelarian',
     plannedBeats: ['Lanjutkan konflik di galeri'],
-    targetWordCount: 600,
+    targetWordCount: 900,
     targetSceneCount: 2,
     opensThreadId: null,
     usesReveals: [],
@@ -59,7 +60,7 @@ const filler = (base: string): string =>
   Array.from({ length: 150 }, (_, i) => `${base}-${i}`).join(' ')
 
 function makeDraft(overrides: Partial<ChapterDraftParsed> = {}): ChapterDraftParsed {
-  // Harus lolos batas keras Layer A: 500–1200 kata, 2–4 scene, ada choice/gate.
+  // Harus lolos band terapan Layer A: 800–1000 kata, 2–4 scene, ada choice/gate.
   return {
     storyId: NADIA_RAKA_STORY_ID,
     chapterNumber: 2,
@@ -70,7 +71,7 @@ function makeDraft(overrides: Partial<ChapterDraftParsed> = {}): ChapterDraftPar
       `Raka terdesak oleh tuduhan. ${filler('bukti di gudang')}`,
       `Konsekuensi laporan mulai terasa. ${filler('jalan terbuka')}`,
     ],
-    wordCount: 600,
+    wordCount: 900,
     sceneCount: 2,
     hasChoiceOrGate: true,
     events: [],
@@ -182,6 +183,46 @@ describe('generateChapter — Layer B repair seam & Layer C publish gate', () =>
         brief: NADIA_RAKA_BRIEF_A,
       }),
     ).rejects.toThrow(SEMANTIC_JUDGE_UNAVAILABLE)
+  })
+
+  it.each([
+    'M10G_GLOBAL_INFERENCE_BUDGET_REQUIRED',
+    'M10G_GLOBAL_INFERENCE_BUDGET_EXHAUSTED',
+  ] as const)('initial semantic judge preserves %s unchanged', async (code) => {
+    generatePlanMock.mockResolvedValueOnce(makePlan())
+    writeChapterMock.mockResolvedValueOnce(makeDraft())
+    const error = new GlobalInferenceBudgetError(code)
+    evaluateSemanticContinuityMock.mockRejectedValueOnce(error)
+
+    await expect(generateChapter(deps, {
+      snapshot,
+      blueprint: NADIA_RAKA_BLUEPRINT,
+      chapterNumber: 2,
+      continuation: NADIA_RAKA_CONTINUATION_A,
+      brief: NADIA_RAKA_BRIEF_A,
+    })).rejects.toBe(error)
+  })
+
+  it.each([
+    'M10G_GLOBAL_INFERENCE_BUDGET_REQUIRED',
+    'M10G_GLOBAL_INFERENCE_BUDGET_EXHAUSTED',
+  ] as const)('post-repair semantic judge preserves %s unchanged', async (code) => {
+    generatePlanMock.mockResolvedValueOnce(makePlan())
+    writeChapterMock
+      .mockResolvedValueOnce(makeDraft())
+      .mockResolvedValueOnce(makeDraft({ title: 'Bab 2 (semantic repair)' }))
+    const error = new GlobalInferenceBudgetError(code)
+    evaluateSemanticContinuityMock
+      .mockResolvedValueOnce({ verdict: 'FAIL', codes: ['CHOICE_CONSEQUENCE_REVERSED'] })
+      .mockRejectedValueOnce(error)
+
+    await expect(generateChapter(deps, {
+      snapshot,
+      blueprint: NADIA_RAKA_BLUEPRINT,
+      chapterNumber: 2,
+      continuation: NADIA_RAKA_CONTINUATION_A,
+      brief: NADIA_RAKA_BRIEF_A,
+    })).rejects.toBe(error)
   })
 
   it('semantic FAIL → maksimal 1 rewrite → judge #2 PASS → PUBLISHED', async () => {

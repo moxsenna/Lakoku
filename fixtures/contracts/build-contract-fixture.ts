@@ -108,7 +108,7 @@ export function buildContractFixture(input: BuildContractFixtureInput): StoryCon
     title: input.title,
     genre: input.genre,
     tone: input.tone,
-    styleProfile: 'lakoku_mobile_drama_v1',
+    styleProfile: 'lakoku_mobile_drama_v2',
     mainCharacter: { ...input.mainCharacter },
     mainConflict: input.mainConflict,
     finalQuestion: input.finalQuestion,

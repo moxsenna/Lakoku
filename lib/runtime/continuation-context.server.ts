@@ -1,7 +1,7 @@
 import 'server-only'
 import { createAdminClient } from '@lakoku/db'
 import { compileContext } from '@lakoku/narrative-core'
-import { loadCanonSnapshot } from '@lakoku/narrative-core/server'
+import { loadCanonSnapshot, persistRetrievalLog } from '@lakoku/narrative-core/server'
 import { buildContinuationContext, type ContinuationContext } from '@lakoku/narrative-core'
 import { choiceNarrativeContextFromReader } from './choice-context'
 import type { ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
@@ -191,6 +191,13 @@ export async function loadContinuationContextForChapter(input: {
   } catch {
     return { ok: false, kind: 'TRANSIENT', detail: 'COMPILE_CONTEXT_FAILED' }
   }
+
+  // C-R1 #2 (reviewer 2026-08-08): capture context-budget summary per chapter.
+  // Audit trail retrieval (included/excluded + budget report) ke retrieval_logs —
+  // tabel existing, best-effort by design (persistRetrievalLog menelan error):
+  // observability TIDAK boleh menggagalkan generasi. Bab 1 tidak pernah sampai
+  // sini (early return n<=1) — tidak ada retrieval di awal kisah by construction.
+  void persistRetrievalLog(input.storyId, n, packet)
 
   // 2) Reader state (truth untuk pilihan & route).
   const reader = await loadReaderRow(targetUserId!, input.storyId)

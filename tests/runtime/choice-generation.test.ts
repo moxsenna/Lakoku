@@ -7,6 +7,10 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import type { ChoiceBranch, ChapterDraftParsed } from '@/lib/ai-gateway/schemas'
+import {
+  createGlobalInferenceBudget,
+  GlobalInferenceBudgetError,
+} from '@/lib/ai-gateway/global-inference-budget.contract'
 import type { ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
 import { normalizeRouteState } from '@/lib/story-engine/route-state'
 import type { ChoiceBuildDeps, BuildChoiceBranchInput } from '@/lib/runtime/choice-generation'
@@ -132,6 +136,12 @@ function mockBrief(snapshot: unknown, chapterNumber = 12) {
     lockEnding: false,
     endingKey: null,
     previousChoiceSummary: 'Belum ada pilihan sebelumnya.',
+    forbiddenRevealIds: [],
+    resolvedPlotDebtIds: [],
+    scheduledReveals: [],
+    plotDebtObligationsToProgress: [],
+    plotDebtObligationsToClose: [],
+    lockedEndingClosure: [],
   }
 }
 
@@ -306,6 +316,145 @@ describe('Phase 1 — choice-generation module unit tests', () => {
       }
       expect(onChoiceRepair).toHaveBeenCalled()
       expect(generateChoiceBranch).toHaveBeenCalledTimes(2)
+    })
+
+    it('passes same run-level budget reference to initial and injected repair calls', async () => {
+      const { buildChoiceBranch } = await import('@/lib/runtime/choice-generation')
+      const invalid = mockBranch(12)
+      invalid.choicePrompt = 'Apa yang kau lakukan?'
+      invalid.choices = [
+        { id: 'hadapi', label: 'Hadapi langsung apa yang baru terbuka' },
+        { id: 'selidiki', label: 'Selidiki dulu jejak yang tersisa' },
+      ]
+      const budget = createGlobalInferenceBudget({ runId: 'm10g-choice-repair', hardLimit: 8 })
+      const providerRuntime = { candidateTransport: vi.fn() }
+      const generateChoiceBranch = vi.fn().mockResolvedValue(invalid)
+      const repairChoiceBranch = vi.fn().mockResolvedValue(mockBranch(12))
+      const deps: ChoiceBuildDeps = {
+        selectProvider: vi.fn().mockResolvedValue({ name: 'test' }),
+        generateChoiceBranch,
+        repairChoiceBranch,
+      }
+      const snapshot = (await import('@/fixtures/narrative/fixture-50')).buildFixtureSnapshot()
+      const draft = mockDraft(12)
+
+      const result = await buildChoiceBranch(deps, {
+        snapshot,
+        draft,
+        chapterNumber: 12,
+        chapterBrief: mockBrief(snapshot, 12),
+        routeState: normalizeRouteState({}),
+        choiceHistory: [],
+        lockedEndingKey: null,
+        providerContext: {},
+        m10gMode: true,
+        globalInferenceBudget: budget,
+        providerRuntime,
+      })
+
+      expect(result.ok).toBe(true)
+      const initialOptions = generateChoiceBranch.mock.calls[0]?.[2]
+      const repairOptions = repairChoiceBranch.mock.calls[0]?.[3]
+      expect(initialOptions).toMatchObject({ m10gMode: true, providerRuntime })
+      expect(initialOptions?.globalInferenceBudget).toBe(budget)
+      expect(repairOptions).toMatchObject({ m10gMode: true, providerRuntime })
+      expect(repairOptions?.globalInferenceBudget).toBe(budget)
+      expect(budget.consumed).toBe(0)
+    })
+
+    it.each([
+      'M10G_GLOBAL_INFERENCE_BUDGET_REQUIRED',
+      'M10G_GLOBAL_INFERENCE_BUDGET_EXHAUSTED',
+    ] as const)('rethrows %s unchanged from initial provider call', async (code) => {
+      const { buildChoiceBranch } = await import('@/lib/runtime/choice-generation')
+      const error = new GlobalInferenceBudgetError(code)
+      const deps: ChoiceBuildDeps = {
+        selectProvider: vi.fn().mockResolvedValue({ name: 'test' }),
+        generateChoiceBranch: vi.fn().mockRejectedValue(error),
+      }
+      const snapshot = (await import('@/fixtures/narrative/fixture-50')).buildFixtureSnapshot()
+      const draft = mockDraft(12)
+
+      await expect(buildChoiceBranch(deps, {
+        snapshot,
+        draft,
+        chapterNumber: 12,
+        chapterBrief: mockBrief(snapshot, 12),
+        routeState: normalizeRouteState({}),
+        choiceHistory: [],
+        lockedEndingKey: null,
+        providerContext: {},
+      })).rejects.toBe(error)
+    })
+
+    it.each([
+      'M10G_GLOBAL_INFERENCE_BUDGET_REQUIRED',
+      'M10G_GLOBAL_INFERENCE_BUDGET_EXHAUSTED',
+    ] as const)('rethrows %s unchanged from injected repair call', async (code) => {
+      const { buildChoiceBranch } = await import('@/lib/runtime/choice-generation')
+      const invalid = mockBranch(12)
+      invalid.choicePrompt = 'Apa yang kau lakukan?'
+      invalid.choices = [
+        { id: 'hadapi', label: 'Hadapi langsung apa yang baru terbuka' },
+        { id: 'selidiki', label: 'Selidiki dulu jejak yang tersisa' },
+      ]
+      const error = new GlobalInferenceBudgetError(code)
+      const deps: ChoiceBuildDeps = {
+        selectProvider: vi.fn().mockResolvedValue({ name: 'test' }),
+        generateChoiceBranch: vi.fn().mockResolvedValue(invalid),
+        repairChoiceBranch: vi.fn().mockRejectedValue(error),
+      }
+      const snapshot = (await import('@/fixtures/narrative/fixture-50')).buildFixtureSnapshot()
+      const draft = mockDraft(12)
+
+      await expect(buildChoiceBranch(deps, {
+        snapshot,
+        draft,
+        chapterNumber: 12,
+        chapterBrief: mockBrief(snapshot, 12),
+        routeState: normalizeRouteState({}),
+        choiceHistory: [],
+        lockedEndingKey: null,
+        providerContext: {},
+      })).rejects.toBe(error)
+    })
+
+    it('preserves schema validation codes in repair notes instead of flattening them', async () => {
+      const { buildChoiceBranch } = await import('@/lib/runtime/choice-generation')
+      const validationError = Object.assign(new Error('Model response failed validation.'), {
+        validationCodes: ['CHOICE_NOT_ACTIONABLE'],
+      })
+      const selectProvider = vi.fn().mockResolvedValue({ name: 'test' })
+      const generateChoiceBranch = vi
+        .fn()
+        .mockRejectedValueOnce(validationError)
+        .mockResolvedValueOnce(mockBranch(12))
+      const deps: ChoiceBuildDeps = { selectProvider, generateChoiceBranch }
+      const snapshot = (await import('@/fixtures/narrative/fixture-50')).buildFixtureSnapshot()
+      const draft = mockDraft(12)
+      const brief = mockBrief(snapshot, 12)
+
+      const result = await buildChoiceBranch(deps, {
+        snapshot,
+        draft,
+        chapterNumber: 12,
+        chapterBrief: brief,
+        lastParagraphs: draft.paragraphs.slice(-5) as [string,string,string,string,string],
+        routeState: normalizeRouteState({}),
+        choiceHistory: [],
+        lockedEndingKey: null,
+        providerContext: {},
+      })
+
+      expect(result.ok).toBe(true)
+      expect(generateChoiceBranch).toHaveBeenCalledTimes(2)
+      const repairInput = generateChoiceBranch.mock.calls[1]?.[1]
+      expect(repairInput?.chapterBrief.chapterGoal).toContain(
+        'Mulai setiap label dengan salah satu verba ini:',
+      )
+      expect(repairInput?.chapterBrief.chapterGoal).not.toContain(
+        'Respons sebelumnya gagal diparse atau kosong',
+      )
     })
 
     it('returns FINAL_CHAPTER for chapter 50 without calling provider', async () => {

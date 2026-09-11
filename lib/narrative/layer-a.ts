@@ -15,11 +15,7 @@
  *  7. Nama/alias cocok registry (G5)                             MAJOR
  *  8. Karakter baru bernama setelah Bab 30 ada di blueprint      CRITICAL
  *
- * Panjang bab:
- *  - hard band 500–1200 kata → MAJOR di luar band (bisa gagal review)
- *  - soft band 800–1000 kata (generation_policy / mobile-drama target)
- *  - soft miss = MINOR agar provider call sukses tidak sia-sia
- *    hanya karena model sedikit di bawah 800 kata.
+ * Panjang bab mengikuti band mobile-drama terapan di AMENDMENTS v0.6.
  */
 
 import type {
@@ -37,12 +33,11 @@ export interface LayerAResult {
   blocking: boolean // ada CRITICAL?
 }
 
-/** Hard band — di luar ini MAJOR (masuk repair / bisa gagal review). */
-const WORD_MIN = 500
-const WORD_MAX = 1200
-/** Soft band — selaras generation_policy target 800–1000. Soft miss = MINOR. */
-const WORD_SOFT_MIN = 800
-const WORD_SOFT_MAX = 1000
+/** Applied AMENDMENTS v0.6 band — di luar hard band menjadi MAJOR. */
+const WORD_MIN = 800
+const WORD_MAX = 1000
+const WORD_SOFT_MIN = 850
+const WORD_SOFT_MAX = 950
 const SCENE_MIN = 2
 const SCENE_MAX = 4
 const NEW_CHARACTER_GATE = 30

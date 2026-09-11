@@ -18,8 +18,17 @@ import {
   InvalidModelResponseError,
   sanitizeChoiceValidationCodes,
 } from './model-call-errors'
+import { runObserver } from './observer-isolation'
+import { captureFlagshipCompletion, type FlagshipCompletionCapture } from './flagship-identity-evidence'
+import type { ObservedReasoningBudget } from './reasoning-budget.contract'
 
 export { ContentRejectedError, InvalidModelResponseError } from './model-call-errors'
+
+export type ObservedModelCallMetadata = Readonly<{
+  finishReason: string | undefined
+}>
+
+export type { ObservedReasoningBudget } from './reasoning-budget.contract'
 
 export interface ObservedModelCallInput<T> {
   context: ProviderCallContext
@@ -27,8 +36,19 @@ export interface ObservedModelCallInput<T> {
   useCase: string
   workflowPhase: string
   call: () => ReturnType<typeof streamText>
-  consume: (text: string) => T | Promise<T>
+  consume: (text: string, metadata: ObservedModelCallMetadata) => T | Promise<T>
   classifyFailure?: (error: unknown) => FailureClassification | null
+  /** Additive metadata-only seam; never receives model text. */
+  observeCompletion?: (
+    completion: ProviderCallCompletion,
+    metadata: ObservedModelCallMetadata,
+  ) => void
+  /** Additive metadata-only seam; counts only, never reasoning text or prose. */
+  observeReasoningBudget?: (budget: ObservedReasoningBudget) => void
+  /** Offline synthetic diagnostics can prove DB isolation by disabling recorder calls. */
+  persistObservation?: boolean
+  /** Internal completion result, not an observer. */
+  flagshipCompletion?: FlagshipCompletionCapture
 }
 
 export interface ObservedModelCallDeps {
@@ -46,6 +66,9 @@ type ObservedUsage = {
   inputTokens?: unknown
   outputTokens?: unknown
   totalTokens?: unknown
+  outputTokenDetails?: {
+    reasoningTokens?: unknown
+  }
 }
 
 type ObservedFinalStep = {
@@ -53,6 +76,9 @@ type ObservedFinalStep = {
     modelId?: unknown
   }
   providerMetadata?: unknown
+  finishReason?: unknown
+  reasoning?: unknown
+  reasoningText?: unknown
 }
 
 type ResolvedObservation = {
@@ -102,6 +128,30 @@ function normalizedUsage(usage: ObservedUsage | undefined): Pick<
   }
 
   return { inputTokenCount, outputTokenCount, totalTokenCount }
+}
+
+/**
+ * Metadata-only. Membaca panjang teks dan hitungan token saja; isi reasoning
+ * maupun prosa tidak pernah disalin ke hasil.
+ */
+function reasoningBudget(
+  text: string,
+  observation: Partial<ResolvedObservation>,
+  finishReason: string | undefined,
+): ObservedReasoningBudget {
+  const finalStep = observation.finalStep
+  const reasoningParts = finalStep?.reasoning
+  const reasoningText = finalStep?.reasoningText
+
+  return {
+    reasoningTokenCount: scalarTokenCount(observation.usage?.outputTokenDetails?.reasoningTokens),
+    reasoningFieldPresent: (typeof reasoningText === 'string' && reasoningText.length > 0)
+      || (Array.isArray(reasoningParts) && reasoningParts.length > 0),
+    reasoningDetailsPresent: Array.isArray(reasoningParts) && reasoningParts.length > 0,
+    visibleContentChars: text.trim().length,
+    completionTokenCount: scalarTokenCount(observation.usage?.outputTokens),
+    finishReason,
+  }
 }
 
 function decimalCost(value: unknown): string | null {
@@ -267,6 +317,7 @@ export async function executeObservedModelCall<T>(
     startedAt: startedAt.toISOString(),
   }
   let observation: Partial<ResolvedObservation> = {}
+  let observedFinishReason: string | undefined
 
   try {
     // Await the call itself first: streamText returns a result object whose
@@ -290,7 +341,19 @@ export async function executeObservedModelCall<T>(
       usage: usage as ObservedUsage | undefined,
       finalStep: finalStep as ObservedFinalStep | undefined,
     }
-    const value = await input.consume(text)
+    if (input.flagshipCompletion) captureFlagshipCompletion(
+      input.flagshipCompletion, input.candidate.configuredModelId,
+      input.candidate.providerId, observation.finalStep,
+    )
+    observedFinishReason = typeof observation.finalStep?.finishReason === 'string'
+      ? observation.finalStep.finishReason
+      : undefined
+    // Dilaporkan sebelum consume agar cap-exhaustion tetap terbaca ketika parser
+    // menolak teks kosong dan completeness tidak pernah berjalan.
+    runObserver(() => input.observeReasoningBudget?.(
+      reasoningBudget(text, observation, observedFinishReason),
+    ))
+    const value = await input.consume(text, { finishReason: observedFinishReason })
     const completion: ProviderCallCompletion = {
       ...completionBase(
         input as ObservedModelCallInput<unknown>,
@@ -303,7 +366,8 @@ export async function executeObservedModelCall<T>(
       validationStage: null,
       validationCodes: null,
     }
-    await recordBestEffort(start, completion, deps)
+    runObserver(() => input.observeCompletion?.(completion, { finishReason: observedFinishReason }))
+    if (input.persistObservation !== false) await recordBestEffort(start, completion, deps)
     return value
   } catch (error) {
     const classification = input.classifyFailure?.(error) ?? classifyFailure(error)
@@ -317,7 +381,8 @@ export async function executeObservedModelCall<T>(
       ...classification,
       ...validationDiagnostics(classification, error),
     }
-    await recordBestEffort(start, completion, deps)
+    runObserver(() => input.observeCompletion?.(completion, { finishReason: observedFinishReason }))
+    if (input.persistObservation !== false) await recordBestEffort(start, completion, deps)
     throw error
   }
 }

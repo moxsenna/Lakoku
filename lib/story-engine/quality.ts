@@ -1,4 +1,4 @@
-import { INDO_ROOT_IMPERATIVES } from './choice-quality'
+import { isActionableLabelStart } from './choice-quality'
 
 export interface QualityFinding {
   code: string
@@ -40,20 +40,16 @@ const CONCRETE_ACTION_PATTERN = /\b(?:berjalan|berlari|membuka|menutup|mengambil
 const GENERIC_CHOICE_PATTERN = /^(?:lanjut(?:kan)?|terus(?:kan)?|pilihan\s*[a-z0-9]+|apa yang harus dilakukan\??|pilih ini|continue|next|choice\s*[a-z0-9]+|what should .+ do\??)$/iu
 const INTERNAL_CHOICE_PATTERN = /\b(?:prompt|tokens?|models?|llm|providers?|routes?|system|internal)\b/iu
 /**
- * Action prefix validation: modifier aspek/cara opsional + verba konkret.
- * Verba imperatif Indonesia diambil dari INDO_ROOT_IMPERATIVES (satu sumber
- * kebenaran dengan validator domain choice-quality.ts) + prefix meN-/ber-/di-/ter-
- * + daftar verba Inggris. Sebelumnya daftar verb schema tertinggal dari domain —
- * label imperatif wajar ("Tarik Arga bersembunyi...") ditolak NOT_ACTIONABLE dan
- * SEMUA cabang pilihan gagal schema (akar CHOICE_REPAIR_EXHAUSTED produksi).
+ * Action prefix validation kini memakai isActionableLabelStart() dari
+ * choice-quality.ts — satu sumber kebenaran untuk validator domain DAN schema
+ * (root imperatives + prefix meN-/ber-/di-/ter-/peN- + akhiran -kan/-lah/-i
+ * + blocklist nomina/abstrak + verba Inggris). Sebelumnya daftar verb schema
+ * tertinggal dari domain — label imperatif wajar ("Tarik Arga bersembunyi...")
+ * ditolak NOT_ACTIONABLE dan SEMUA cabang pilihan gagal schema (akar
+ * CHOICE_REPAIR_EXHAUSTED produksi 2026-08-01).
+ * Run final-a1 Bab 10 & Bab 13 (2026-08-29): kelas sama pada peN-/per- dan
+ * bentuk berakhiran — pengenalan morfologis menyatukan kedua validator.
  */
-const ACTION_PREFIX_PATTERN = new RegExp(
-  '^(?:(?:tetap|terus|segera|langsung|perlahan|diam-diam|cepat|coba|kembali|maju|mundur|pura-pura|tiba-tiba)\\s+)?'
-  + '(?:me[a-z]{2,}|ber[a-z]+|di[a-z]+|ter[a-z]+|'
-  + [...INDO_ROOT_IMPERATIVES].join('|')
-  + '|open|close|take|leave|follow|stop|ask|help|save|fight|chase|inspect|read|hide|reveal|enter|run|call|find|choose|refuse|accept|send|destroy|guard|approach|avoid)\\b',
-  'iu',
-)
 const STOP_WORDS = new Set([
   'yang', 'dan', 'atau', 'di', 'ke', 'dari', 'itu', 'ini', 'dengan', 'untuk',
   'pada', 'dalam', 'sambil', 'lalu', 'sebuah', 'the', 'a', 'an', 'and', 'or',
@@ -232,7 +228,7 @@ export function validateChoiceLabelStructural(label: string): QualityFinding[] {
     ))
     return findings
   }
-  if (!ACTION_PREFIX_PATTERN.test(trimmed)) {
+  if (!isActionableLabelStart(trimmed)) {
     findings.push(finding(
       'CHOICE_NOT_ACTIONABLE',
       'Choice label must begin with a concrete action.',
@@ -265,7 +261,7 @@ export function validateChoiceQuality(input: ValidateChoiceQualityInput): Qualit
       return
     }
 
-    if (!ACTION_PREFIX_PATTERN.test(label)) {
+    if (!isActionableLabelStart(label)) {
       findings.push(finding(
         'CHOICE_NOT_ACTIONABLE',
         `Choice label must begin with a concrete action.${suffix}`,

@@ -195,12 +195,12 @@ function isPromptGenericWithoutConcreteNouns(
  * cabang pilihan di schema (akar CHOICE_REPAIR_EXHAUSTED produksi).
  */
 export const INDO_ROOT_IMPERATIVES = new Set([
-  'hadapi', 'selidiki', 'buka', 'tutup', 'ambil', 'amankan', 'tinggalkan', 'ikuti',
+  'hadapi', 'konfrontasi', 'minta', 'selidiki', 'buka', 'tutup', 'ambil', 'abaikan', 'amankan', 'tinggalkan', 'ikuti',
   'hadang', 'tanya', 'tolong', 'selamatkan', 'lawan', 'kejar', 'periksa',
-  'baca', 'sembunyikan', 'ungkapkan', 'masuk', 'keluar', 'lari', 'panggil',
+  'baca', 'simpan', 'sembunyikan', 'ungkapkan', 'masuk', 'masukkan', 'keluar', 'lari', 'panggil',
   'cari', 'pilih', 'tolak', 'terima', 'kirim', 'hancurkan', 'jaga', 'dekati',
   'hindari', 'putuskan', 'diam', 'dengar', 'lihat', 'coba', 'pegang', 'tarik',
-  'dorong', 'lempar', 'tangkap', 'lepas', 'gunakan', 'pakai', 'naik', 'turun',
+  'dorong', 'lempar', 'tangkap', 'lepas', 'gunakan', 'pakai', 'naik', 'turun', 'tunggu',
   'berhenti', 'mulai', 'lanjutkan', 'hentikan', 'kunci', 'kumpulkan', 'sebarkan',
   'bagikan', 'ceritakan', 'jelaskan', 'tanyakan', 'katakan', 'ucapkan',
   'beritahu', 'balas', 'tembak', 'serang', 'lompat', 'teriak', 'bisik',
@@ -209,8 +209,74 @@ export const INDO_ROOT_IMPERATIVES = new Set([
   'pukul', 'tampar', 'seret', 'jatuhkan', 'bangun', 'tidur', 'makan',
   'minum', 'bawa', 'datang', 'pergi', 'pulang', 'kembali', 'singgah',
   'hadir', 'muncul', 'tampil', 'lenyap', 'hilang',
+  // Imperatif umum yang dipakai model alami (Bab 10 run final-a1: tiga
+  // panggilan provider beruntun menulis label valid yang ditolak leksikon).
+  // "lindungi" bahkan dicontohkan di choice-draft-v2.ts — contoh prompt
+  // wajib lolos validator miliknya sendiri.
+  'lindungi', 'amati', 'cermati', 'waspadai', 'bantu', 'temui', 'datangi',
+  'penuhi', 'jebak', 'giring', 'sabotase', 'batalkan', 'nyalakan', 'nyatakan',
+  'kenali', 'kaitkan', 'siapkan', 'tampilkan', 'pasang', 'tekan', 'peluk',
+  'petik', 'pancing', 'kerahkan', 'ketuk',
+  // Root imajkatif telanjang umum yang tidak berimbuhan awalan.
+  'ubah', 'cek', 'duduk', 'susun', 'tukar', 'tunjuk', 'raih', 'ulang',
+  'ikat', 'cuci', 'racik', 'genggam',
   'bersembunyi', 'membuntuti', 'berjalan', 'berlari', 'bertanya',
   'berlindung', 'berjuang', 'berteriak', 'berbisik', 'berdoa',
+  // Root telanjang tambahan yang terbukti dipakai model (run custom-t4 Bab 1).
+  'sorot', 'sisir', 'endus', 'intip', 'rekam', 'catat', 'hitung', 'timbang',
+  // Run custom-t7 Bab 6: "Rebut ponsel Raka dan periksa siapa yang
+  // menghubunginya" ditolak. Label itu sah sepenuhnya — verba transitif
+  // konkret, ter-grounding, distinct — jadi penolakannya cacat validator,
+  // bukan cacat model.
+  'rebut', 'rampas', 'renggut', 'sergap', 'cegat', 'tepis', 'tangkis',
+  'sambar', 'gapai', 'sentuh', 'tepuk', 'remas', 'sobek', 'robek', 'banting',
+  'buang', 'kubur', 'angkat', 'geser', 'putar', 'balik', 'tatap', 'pandang',
+  'simak', 'pinjam', 'tagih', 'tawar', 'timbun', 'goyang', 'colek',
+  // Run custom-t8 Bab 3: "Desak sosok itu untuk menuntaskan kalimatnya
+  // sekarang" ditolak padahal daftar verba sudah dikutip di prompt draft DAN
+  // di catatan repair — model provider lokal tetap menulis root telanjang di
+  // luar daftar. Empat kejadian beruntun (final-a1 Bab 10, final-a2 Bab 13,
+  // custom-t4 Bab 1, custom-t7 Bab 6, custom-t8 Bab 3) membuktikan
+  // penambahan kata-per-kata reaktif tak akan selesai, jadi seluruh persediaan
+  // verba imperatif transitif frekuensi-tinggi fiksi ditambahkan sekaligus.
+  // Semua entri adalah aksi konkret sejati — guardrail tidak dilonggarkan;
+  // penolakan perasaan abstrak, mekanisme internal, dan nomina deklaratif
+  // tetap berlaku (lihat regresi negatif di
+  // tests/story-engine/choice-actionability-regression.test.ts).
+  'desak', 'paksa', 'hantam', 'tendang', 'gedor', 'gebuk', 'hajar', 'sikat',
+  'cengkeram', 'copot', 'bongkar', 'geledah', 'ransak', 'lacak', 'buru',
+  'curi', 'colong', 'rampok', 'sadap', 'salin', 'sebut', 'ajak', 'undang',
+  'pujuk', 'bujuk', 'ancam', 'ugut', 'tegur', 'sambut', 'antar', 'jemput',
+  'dukung', 'titip', 'kasih', 'jawab', 'kabur', 'sembunyi', 'susup', 'halau',
+  'jerat', 'suntik', 'balut', 'lap', 'bilas', 'gosok', 'kupas', 'elus',
+  'cubit', 'gigit', 'hisap', 'tiup', 'goncang', 'hentak', 'injak', 'pijak',
+  'jongkok', 'rebah', 'hembus', 'panjat', 'tahan', 'tanggung', 'pikul',
+  'lewat', 'tengok', 'lirik', 'pikir', 'kira', 'ukur', 'gores', 'ukir',
+  'tempel', 'kait', 'tuntun', 'bimbing', 'ajar', 'latih', 'uji', 'tawan',
+  'kurung',
+])
+
+/**
+ * Verba yang DIJAMIN lolos `isActionableLabelStart`, dikutip apa adanya ke
+ * prompt draft dan ke catatan repair.
+ *
+ * Root telanjang Indonesia ("sorot", "intip") tidak punya tanda afiks, jadi
+ * secara morfologis tak bisa dibedakan dari nomina ("sorot" juga berarti berkas
+ * cahaya). Validator karenanya WAJIB memakai leksikon untuk kelas itu — dan
+ * leksikon apa pun akan selalu tertinggal dari kelas terbuka yang dipakai model.
+ * Terbukti tiga kali di produksi (run final-a1 Bab 10, final-a2 Bab 13,
+ * custom-t4 Bab 1: model berbeda, kelas cacat sama).
+ *
+ * Karena itu penutup kelas ada di sisi generator, bukan di sisi pengenal: model
+ * diberi daftar konkret ini sehingga ruang keluarannya tertutup terhadap ruang
+ * yang divalidasi. Guardrail tidak dilonggarkan — perasaan abstrak, mekanisme
+ * internal, grounding, dan distinctness tetap berlaku penuh.
+ */
+export const ACCEPTED_ACTION_VERB_EXAMPLES: readonly string[] = Object.freeze([
+  'Buka', 'Tutup', 'Ambil', 'Cari', 'Periksa', 'Hadapi', 'Ikuti', 'Kejar',
+  'Sembunyikan', 'Lindungi', 'Pertahankan', 'Perhatikan', 'Amati', 'Bantu',
+  'Bawa', 'Tinggalkan', 'Panggil', 'Tanyakan', 'Ceritakan', 'Serahkan',
+  'Dekati', 'Hindari', 'Tarik', 'Dorong', 'Kunci', 'Nyalakan', 'Matikan',
 ])
 
 /** Verbs that indicate abstract feeling rather than concrete action. */
@@ -219,6 +285,25 @@ const ABSTRACT_FEELING_VERBS = new Set([
   'merenungkan', 'memikirkan', 'menghayalkan', 'mengkhawatirkan', 'menyesali',
   'menerka', 'menduga', 'mengira', 'menyangka', 'mengkhayalkan',
   'merindukan', 'mengharapkan',
+  // Bentuk imajkatif meN- yang dijatuhkan (drop meN-) — tanpa ini, aturan
+  // akhiran -kan menerima label perasaan internal sebagai "aksi".
+  'pikirkan', 'renungkan', 'bayangkan', 'harapkan', 'dambakan', 'inginkan',
+  'khayalkan', 'khawatirkan', 'impikan', 'rindukan',
+])
+
+/** Nomina umum berakhiran -kan/-i yang bukan verba (blocklist akhiran). */
+const SUFFIX_NOUN_BLOCKLIST = new Set([
+  'pekan', 'pakan', // -kan
+  'kopi', 'kaki', 'nasi', 'sapi', 'padi', 'sepi', 'mini', 'taxi', // -i
+  'ialah', 'adalah', // -lah (kopula)
+])
+
+/** Verba imperatif Inggris yang diterima validator sebelumnya. */
+const ENGLISH_ACTION_VERBS = new Set([
+  'open', 'close', 'take', 'leave', 'follow', 'stop', 'ask', 'help', 'save',
+  'fight', 'chase', 'inspect', 'read', 'hide', 'reveal', 'enter', 'run',
+  'call', 'find', 'choose', 'refuse', 'accept', 'send', 'destroy', 'guard',
+  'approach', 'avoid',
 ])
 
 /** Patterns that indicate internal mechanism labels (not reader-facing). */
@@ -239,13 +324,27 @@ const LEADING_ACTION_MODIFIERS = new Set([
   'kembali', 'maju', 'mundur', 'pura-pura', 'tiba-tiba', 'diam-diam',
 ])
 
-function startsWithVerb(label: string): boolean {
+/**
+ * Satu sumber kebenaran pengenalan bentuk verba imperatif Indonesia di awal
+ * label — dipakai validator domain (validateChoiceBranchQuality) DAN validator
+ * schema (validateChoiceLabelStructural di quality.ts). Kelas terbuka morfologi
+ * tidak bisa dienumerasi root-per-root (run final-a1 Bab 10 & Bab 13:
+ * CHOICE_NOT_ACTIONABLE beruntun dari verba valid di luar daftar), sehingga
+ * pengenalan juga memakai akhiran verba -kan/-lah/-i dengan blocklist nomina.
+ */
+export function isActionableLabelStart(label: string): boolean {
   const tokens = tokenize(label)
   // Lewati satu modifier aspek/cara di depan ("Tetap berdiri...", "Segera lari...").
   const firstWord = (LEADING_ACTION_MODIFIERS.has(tokens[0] ?? '')
     ? tokens[1]
     : tokens[0]) ?? ''
   if (!firstWord) return false
+
+  // Perasaan abstrak dan mekanisme internal bukan aksi konkret pembaca —
+  // cek ini mendahului pengenalan bentuk verba.
+  if (ABSTRACT_FEELING_VERBS.has(firstWord.toLowerCase())) return false
+  if (isInternalMechanismLabel(label)) return false
+  if (SUFFIX_NOUN_BLOCKLIST.has(firstWord.toLowerCase())) return false
 
   // Known root imperatives (exact match)
   if (INDO_ROOT_IMPERATIVES.has(firstWord)) return true
@@ -263,6 +362,21 @@ function startsWithVerb(label: string): boolean {
   // ter- prefixed: tertangkap, terjebak
   if (/^ter[a-z]/i.test(firstWord)) return true
 
+  // peN-/per- prefixed verbs: perhatikan, pertahankan, peluk, pancing,
+  // perlihatkan. Kelas ambiguitas nominal sama dengan meN-/ber- di atas
+  // (petani/perang juga lolos prefix — lapisan grounding, distinctness,
+  // dan genericness menyaring sisanya).
+  if (/^pe[a-z]{2,}/i.test(firstWord)) return true
+
+  // Akhiran verba produktif: -kan/-lah (kembalikan, sampaikan, bawalah) dan
+  // -i (ganti, datangi, penuhi) dengan blocklist nomina di atas. False-accept
+  // langka tersaring di grounding/distinctness; false-reject mematikan run.
+  if (/[a-z]{3,}kan$/i.test(firstWord) || /[a-z]{3,}lah$/i.test(firstWord)) return true
+  if (/[a-z]{3,}i$/i.test(firstWord)) return true
+
+  // Verba imperatif Inggris (jarang, untuk fallback model).
+  if (ENGLISH_ACTION_VERBS.has(firstWord.toLowerCase())) return true
+
   return false
 }
 
@@ -279,9 +393,7 @@ function isInternalMechanismLabel(label: string): boolean {
 }
 
 function isActionable(label: string): boolean {
-  if (isAbstractFeelingLabel(label)) return false
-  if (isInternalMechanismLabel(label)) return false
-  return startsWithVerb(label)
+  return isActionableLabelStart(label)
 }
 
 // ---- Effects comparison ----

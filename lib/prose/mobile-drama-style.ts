@@ -79,7 +79,7 @@ export const SOFT_PARAGRAPH_MIN = MOBILE_DRAMA_RHYTHM.paragraphs.softMin
 export const SOFT_PARAGRAPH_MAX = MOBILE_DRAMA_RHYTHM.paragraphs.softMax
 
 export function mobileDramaSystemPrompt(): string {
-  const { words, paragraphs } = MOBILE_DRAMA_RHYTHM
+  const { words } = MOBILE_DRAMA_RHYTHM
   return [
     'Kamu penulis serial drama mobile / web novel Indonesia.',
     'Tulis HANYA prosa cerita untuk pembaca akhir.',
@@ -88,22 +88,15 @@ export function mobileDramaSystemPrompt(): string {
     '',
     'GAYA WAJIB (Lakoku Mobile Drama):',
     '- POV: orang pertama "aku" (tokoh utama).',
-    `- Target ${words.softMin}–${words.softMax} kata (wajib dalam ${words.hardMin}–${words.hardMax}).`,
-    `- Target ${paragraphs.softMin}–${paragraphs.softMax} paragraf (wajib dalam ${paragraphs.hardMin}–${paragraphs.hardMax}).`,
-    '- Mayoritas paragraf = 1 kalimat pendek (15–25 kata). Sesekali 2 kalimat (30–40 kata) untuk emosi penting.',
-    '- DILARANG paragraf 4–6 kalimat. DILARANG dinding teks.',
-    '- Dialog: 1 baris ucapan = 1 paragraf. Selalu pisah per pembicara.',
-    '- Twist/reveal: berdiri sendiri dalam 1 paragraf.',
-    '- Ending bab: 3–5 paragraf pendek yang makin tajam (cliffhanger), kecuali bab terakhir cerita.',
+    `- Target utama: ${words.softMin}–${words.softMax} kata (wajib berada dalam rentang ketat ${words.hardMin}–${words.hardMax} kata).`,
     '- SHOW, jangan TELL: aksi, dialog, tubuh, detail sensorik. Hindari "aku merasa sedih/marah" polos.',
-    '- Satu beat per paragraf. Bahasa Indonesia modern, natural, emosional—bukan puitis berat.',
+    '- Bahasa Indonesia modern, natural, emosional—bukan puitis berat.',
     '',
-    'STRUKTUR BAB (~900 kata):',
-    '- Pembuka hook: 3–5 paragraf',
-    '- Konflik awal: 8–10 paragraf',
-    '- Dialog/konfrontasi utama: 15–20 paragraf',
-    '- Reveal kecil / ubah emosi: 6–8 paragraf',
-    '- Penutup cliffhanger: 4–6 paragraf',
+    'RITME PARAGRAF:',
+    'Gunakan paragraf yang nyaman dibaca di layar ponsel.',
+    'Hindari dinding teks panjang.',
+    'Pisahkan pergantian pembicara dan perubahan fokus dengan jelas.',
+    'Biarkan panjang paragraf mengikuti kebutuhan aksi, reaksi, dialog, dan tensi adegan.',
     '',
     'DILARANG:',
     '- Eksposisi plot ke pembaca',
@@ -114,13 +107,11 @@ export function mobileDramaSystemPrompt(): string {
 }
 
 export function mobileDramaOutputFormat(): string {
-  const { paragraphs } = MOBILE_DRAMA_RHYTHM
   return [
     'FORMAT KELUARAN (WAJIB):',
     'Baris pertama tepat: JUDUL: <judul bab tanpa nomor bab>',
     'Satu baris kosong, lalu prosa.',
-    `Pisahkan SETIAP paragraf dengan satu baris kosong (target ${paragraphs.softMin}–${paragraphs.softMax} paragraf).`,
-    'Mayoritas 1 kalimat per paragraf. Dialog satu baris per paragraf.',
+    'Pisahkan paragraf dengan satu baris kosong.',
     'Jangan markdown, bullet, atau label lain.',
   ].join('\n')
 }

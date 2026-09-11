@@ -28,7 +28,7 @@ describe('post-publish reconciliation log safety', () => {
   it('uses fixed bounded outcomes without raw error fields in both generation paths', () => {
     const emissions = collectEmissions()
 
-    expect(emissions).toHaveLength(6)
+    expect(emissions).toHaveLength(8)
     for (const emission of emissions) {
       expect(emission).toMatch(/result: '(?:NOT_UPDATED|THREW)'/)
       expect(emission).toMatch(/errorCode: '[A-Z_]+'/)
@@ -39,7 +39,7 @@ describe('post-publish reconciliation log safety', () => {
   it('omits raw error, err, cause, and stack fields in every reconciliation payload', () => {
     const emissions = collectEmissions()
 
-    expect(emissions).toHaveLength(6)
+    expect(emissions).toHaveLength(8)
     for (const emission of emissions) {
       expect(emission).not.toMatch(rawErrorFieldPattern)
     }
@@ -48,7 +48,7 @@ describe('post-publish reconciliation log safety', () => {
   it('routes every emitted identifier through the bounded id helper', () => {
     const emissions = collectEmissions()
 
-    expect(emissions).toHaveLength(6)
+    expect(emissions).toHaveLength(8)
     for (const emission of emissions) {
       for (const field of boundedIdFields) {
         if (!emission.includes(`${field}:`)) continue

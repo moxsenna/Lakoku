@@ -21,8 +21,16 @@ describe('generation job publication errors', () => {
       code: 'LEASE_HELD',
     })
     expect(classifyGenerationPublicationError(new GenerationJobError('CHECKPOINT_CONFLICT'))).toEqual({
-      kind: 'failed_review_required',
+      kind: 'transient',
       code: 'CHECKPOINT_CONFLICT',
+    })
+    expect(classifyGenerationPublicationError(new GenerationJobError('PROVENANCE_CONFLICT'))).toEqual({
+      kind: 'ownership_lost',
+      code: 'PROVENANCE_CONFLICT',
+    })
+    expect(classifyGenerationPublicationError(new GenerationJobError('PLOT_DEBT_CONFLICT'))).toEqual({
+      kind: 'failed_review_required',
+      code: 'PLOT_DEBT_CONFLICT',
     })
   })
 

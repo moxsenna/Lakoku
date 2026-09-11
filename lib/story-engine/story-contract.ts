@@ -5,6 +5,22 @@ const boundedString = (max: number) => z.string().trim().min(1).max(max)
 const boundedStringArray = (maxItems: number, maxLength: number, minItems = 0) =>
   z.array(boundedString(maxLength)).min(minItems).max(maxItems)
 
+// Helper for duplicate detection in refinement contexts
+function addDuplicateIssues(
+  values: string[],
+  path: PropertyKey[],
+  message: string,
+  context: z.RefinementCtx,
+): void {
+  const seen = new Set<string>()
+  values.forEach((value, index) => {
+    if (seen.has(value)) {
+      context.addIssue({ code: 'custom', path: [...path, index], message })
+    }
+    seen.add(value)
+  })
+}
+
 export const MainCharacterSchema = z.object({
   name: boundedString(100),
   role: boundedString(120),
@@ -29,12 +45,69 @@ export const ChapterTargetSchema = z.object({
   expectedThreadMovement: boundedStringArray(8, 500, 1),
 }).strict()
 
-export const EndingCandidateSchema = z.object({
+/** C-R3-R2 Blocker #2: V1 ending candidate - uses `isSecret` legacy field */
+export const EndingCandidateV1Schema = z.object({
   key: boundedString(80),
   name: boundedString(160),
   condition: boundedString(500),
   requiredClosure: boundedStringArray(8, 400, 1),
+  isSecret: z.boolean().optional(), // optional in legacy DB
+  blockingConditions: z.array(z.string().min(1).max(100)).min(0).max(20).default([]),
 }).strict()
+
+/** C-R3-R2 Blocker #1 + #4: V2 ending candidate - uses canonical `kind` field AND requires structured debt IDs */
+export const EndingCandidateV2Schema = z.object({
+  key: boundedString(80),
+  name: boundedString(160),
+  kind: z.enum(['main', 'secret']),
+  condition: boundedString(500),
+  requiredClosure: boundedStringArray(8, 400, 1),
+  // C-R3-R2 Blocker #4: REQUIRED for V2 - structured authority over prose-text semantics
+  requiredPlotDebtIds: z.array(boundedString(100)).min(1).max(20),
+  blockingConditions: z.array(z.string().min(1).max(100)).min(0).max(20).default([]),
+}).strict()
+
+/** Normalized ending candidate - runtime schema that accepts both V1 (optional PlotDebtIds) and V2 (required) during transition */
+export const EndingCandidateSchema = z.object({
+  key: boundedString(80),
+  name: boundedString(160),
+  kind: z.enum(['main', 'secret']),
+  condition: boundedString(500),
+  requiredClosure: boundedStringArray(8, 400, 1),
+  requiredPlotDebtIds: z.array(boundedString(100)).min(0).max(20).optional(), // Allow empty for V1 → V2 transition
+  blockingConditions: z.array(z.string().min(1).max(100)).min(0).max(20).default([]),
+}).strict()
+
+/** Derive isMain/isSecret strictly from kind field to avoid dual-authority ambiguity. */
+export function deriveEndingDef(candidate: EndingCandidate): { id: string; isMain: boolean; isSecret: boolean; blockedByFlags: string[] } {
+  return {
+    id: candidate.key,
+    isMain: candidate.kind === 'main',
+    isSecret: candidate.kind === 'secret',
+    blockedByFlags: candidate.blockingConditions ?? [],
+  }
+}
+
+/** Normalize V1 ending candidate to V2 representation for runtime use
+  
+   C-R3-R2 Blocker #2 + #3: Must use explicit field selection, NOT spread {...v1} which includes legacy isSecret field.
+   Architecture: V1 contracts remain V1 until runtime normalization - do not promote styleProfile or spreading legacy fields.
+*/
+export function normalizeEndingCandidateFromV1(v1: z.infer<typeof EndingCandidateV1Schema>): Omit<z.infer<typeof EndingCandidateSchema>, 'kind'> & { kind: 'main' | 'secret' } {
+  const isSecret = v1.isSecret === true
+  
+  // C-R3-R2 Blocker #2 + #3: Explicit field selection - DO NOT spread {...v1} which includes legacy isSecret field
+  // Also marks structured closure proof as empty (UNPROVEN) since V1 contracts lack requiredPlotDebtIds
+  return {
+    key: v1.key,
+    name: v1.name,
+    condition: v1.condition,
+    requiredClosure: v1.requiredClosure,
+    blockingConditions: v1.blockingConditions ?? [],
+    requiredPlotDebtIds: [], // V1 contracts don't have this field — empty until normalized to V2
+    kind: isSecret ? 'secret' : 'main',
+  }
+}
 
 export const PlotDebtSchema = z.object({
   id: boundedString(100),
@@ -59,7 +132,8 @@ export const ClosureRunwaySchema = z.object({
   finalEndingChapter: z.literal(50),
 }).strict()
 
-export const StoryContractSchema = z.object({
+// C-R3-R2 Blocker #2: Separate root schemas without NCS §1.4 enforcement for V1 compatibility
+export const StoredStoryContractV1Schema = z.object({
   storyId: boundedString(128),
   totalChapters: z.literal(50),
   title: boundedString(160),
@@ -72,7 +146,8 @@ export const StoryContractSchema = z.object({
   corePromise: boundedString(800),
   actPlan: z.array(ActPlanEntrySchema).min(1).max(12),
   chapterTargets: z.array(ChapterTargetSchema).length(50),
-  endingCandidates: z.array(EndingCandidateSchema).min(2).max(8),
+  // V1 endings don't enforce ≥2 main + ≥1 secret per NCS §1.4
+  endingCandidates: z.array(EndingCandidateV1Schema).min(2).max(8),
   plotDebts: z.array(PlotDebtSchema).min(1).max(20),
   revealRunway: z.array(RevealRunwayEntrySchema).min(1).max(20),
   closureRunway: ClosureRunwaySchema,
@@ -134,6 +209,24 @@ export const StoryContractSchema = z.object({
     'Plot debt IDs must be unique.',
     context,
   )
+
+  // C-R3-R1 Blocker #6: Validate referential integrity for requiredPlotDebtIds (if present)
+  const allPlotDebtIds = new Set(contract.plotDebts.map((debt) => debt.id))
+  contract.endingCandidates.forEach((ending, endingIndex) => {
+    const endingObj = ending as Record<string, unknown>
+    const requiredIds: string[] = Array.isArray(endingObj.requiredPlotDebtIds) ? endingObj.requiredPlotDebtIds : []
+    requiredIds.forEach((debtId: string, i: number) => {
+      if (!allPlotDebtIds.has(debtId)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['endingCandidates', endingIndex, 'requiredPlotDebtIds', i],
+          message: `Required plot debt ID "${debtId}" does not exist in contract.plotDebts.`,
+        })
+      }
+    })
+  })
+
+  // Must have exactly one main_mystery plot debt
   if (contract.plotDebts.filter((debt) => debt.id === 'main_mystery').length !== 1) {
     context.addIssue({
       code: 'custom',
@@ -141,6 +234,7 @@ export const StoryContractSchema = z.object({
       message: 'Story contract must contain exactly one main_mystery plot debt.',
     })
   }
+  
   addDuplicateIssues(
     contract.revealRunway.map((reveal) => reveal.secretId),
     ['revealRunway'],
@@ -175,30 +269,469 @@ export const StoryContractSchema = z.object({
   })
 })
 
-function addDuplicateIssues(
-  values: string[],
-  path: PropertyKey[],
-  message: string,
-  context: z.RefinementCtx,
-): void {
-  const seen = new Set<string>()
-  values.forEach((value, index) => {
-    if (seen.has(value)) {
-      context.addIssue({ code: 'custom', path: [...path, index], message })
+export const StoredStoryContractV2Schema = z.object({
+  storyId: boundedString(128),
+  totalChapters: z.literal(50),
+  title: boundedString(160),
+  genre: boundedString(80),
+  tone: boundedString(160),
+  styleProfile: z.literal('lakoku_mobile_drama_v2'),
+  mainCharacter: MainCharacterSchema,
+  mainConflict: boundedString(800),
+  finalQuestion: boundedString(500),
+  corePromise: boundedString(800),
+  actPlan: z.array(ActPlanEntrySchema).min(1).max(12),
+  chapterTargets: z.array(ChapterTargetSchema).length(50),
+  // C-R3-R2 Blocker #1 + #4: V2 enforces ≥2 main + ≥1 secret AND requiredPlotDebtIds
+  endingCandidates: z.array(EndingCandidateV2Schema).min(2).max(8),
+  plotDebts: z.array(PlotDebtSchema).min(1).max(20),
+  revealRunway: z.array(RevealRunwayEntrySchema).min(1).max(20),
+  closureRunway: ClosureRunwaySchema,
+}).strict().superRefine((contract, context) => {
+  // Per NCS §1.4: ≥2 main endings PLUS secret-ending path required
+  const mainCount = contract.endingCandidates.filter((e) => e.kind === 'main').length
+  const secretCount = contract.endingCandidates.filter((e) => e.kind === 'secret').length
+  if (mainCount < 2) {
+    context.addIssue({
+      code: 'custom',
+      path: ['endingCandidates'],
+      message: `NCS §1.4 requires at least 2 main endings; found ${mainCount}.`,
+    })
+  }
+  if (secretCount < 1) {
+    context.addIssue({
+      code: 'custom',
+      path: ['endingCandidates'],
+      message: `NCS §1.4 requires at least 1 secret ending path; found ${secretCount}.`,
+    })
+  }
+  contract.chapterTargets.forEach((target, index) => {
+    const expected = index + 1
+    if (target.chapterNumber !== expected) {
+      context.addIssue({
+        code: 'custom',
+        path: ['chapterTargets', index, 'chapterNumber'],
+        message: `chapterTargets must be ordered sequentially; expected chapter ${expected}.`,
+      })
     }
-    seen.add(value)
   })
+
+  contract.actPlan.forEach((act, index) => {
+    const expectedActNumber = index + 1
+    if (act.actNumber !== expectedActNumber) {
+      context.addIssue({
+        code: 'custom',
+        path: ['actPlan', index, 'actNumber'],
+        message: `actPlan must use ordered act numbers; expected act ${expectedActNumber}.`,
+      })
+    }
+    if (act.fromChapter > act.toChapter) {
+      context.addIssue({
+        code: 'custom',
+        path: ['actPlan', index],
+        message: 'Act range cannot end before it starts.',
+      })
+    }
+    const expectedStart = index === 0 ? 1 : contract.actPlan[index - 1].toChapter + 1
+    if (act.fromChapter !== expectedStart) {
+      context.addIssue({
+        code: 'custom',
+        path: ['actPlan', index, 'fromChapter'],
+        message: `actPlan must cover chapters contiguously; expected chapter ${expectedStart}.`,
+      })
+    }
+  })
+
+  if (contract.actPlan.at(-1)?.toChapter !== 50) {
+    context.addIssue({
+      code: 'custom',
+      path: ['actPlan', contract.actPlan.length - 1, 'toChapter'],
+      message: 'actPlan must cover through chapter 50.',
+    })
+  }
+
+  addDuplicateIssues(
+    contract.endingCandidates.map((ending) => ending.key),
+    ['endingCandidates'],
+    'Ending candidate keys must be unique.',
+    context,
+  )
+  addDuplicateIssues(
+    contract.plotDebts.map((debt) => debt.id),
+    ['plotDebts'],
+    'Plot debt IDs must be unique.',
+    context,
+  )
+
+  // C-R3-R1 Blocker #6: Validate referential integrity for requiredPlotDebtIds
+  const allPlotDebtIds = new Set(contract.plotDebts.map((debt) => debt.id))
+  contract.endingCandidates.forEach((ending, endingIndex) => {
+    ending.requiredPlotDebtIds?.forEach((debtId, i) => {
+      if (!allPlotDebtIds.has(debtId)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['endingCandidates', endingIndex, 'requiredPlotDebtIds', i],
+          message: `Required plot debt ID "${debtId}" does not exist in contract.plotDebts.`,
+        })
+      }
+    })
+  })
+
+  // Must have exactly one main_mystery plot debt
+  if (contract.plotDebts.filter((debt) => debt.id === 'main_mystery').length !== 1) {
+    context.addIssue({
+      code: 'custom',
+      path: ['plotDebts'],
+      message: 'Story contract must contain exactly one main_mystery plot debt.',
+    })
+  }
+  
+  addDuplicateIssues(
+    contract.revealRunway.map((reveal) => reveal.secretId),
+    ['revealRunway'],
+    'Reveal secret IDs must be unique.',
+    context,
+  )
+
+  contract.plotDebts.forEach((debt, debtIndex) => {
+    debt.mustProgressBy.forEach((chapter, chapterIndex) => {
+      if (chapter < debt.introducedAt || chapter > debt.mustCloseBy) {
+        context.addIssue({
+          code: 'custom',
+          path: ['plotDebts', debtIndex, 'mustProgressBy', chapterIndex],
+          message: 'Debt progression must fall between introduction and closure chapters.',
+        })
+      }
+      if (chapterIndex > 0 && chapter <= debt.mustProgressBy[chapterIndex - 1]) {
+        context.addIssue({
+          code: 'custom',
+          path: ['plotDebts', debtIndex, 'mustProgressBy', chapterIndex],
+          message: 'Debt progression chapters must be sorted and unique.',
+        })
+      }
+    })
+    if (debt.mustCloseBy < debt.introducedAt) {
+      context.addIssue({
+        code: 'custom',
+        path: ['plotDebts', debtIndex, 'mustCloseBy'],
+        message: 'Debt closure cannot precede introduction.',
+      })
+    }
+  })
+})
+
+/** C-R3-R2 Blocker #2: Runtime schema for normalized contracts - does NOT enforce NCS §1.4 authoring invariants
+  
+   This is used AFTER normalization to validate runtime-compatible shape WITHOUT requiring V2 authoring rules.
+   Allows legitimate V1 contracts (without secret endings) to be represented at runtime after normalization.
+   
+   CRITICAL DIFFERENCE from StoryContractSchema:
+   - StoryContractSchema = AUTHORING contract enforcement (NCS §1.4 required)
+   - NormalizedStoryContractSchema = RUNTIME representation only (no NCS §1.4 enforcement)
+   - Use this when you want V1/V2 compatibility at runtime, not strict authoring validation
+*/
+export const NormalizedStoryContractSchema = z.object({
+  storyId: boundedString(128),
+  totalChapters: z.literal(50),
+  title: boundedString(160),
+  genre: boundedString(80),
+  tone: boundedString(160),
+  styleProfile: z.enum(['lakoku_mobile_drama_v1', 'lakoku_mobile_drama_v2']),
+  mainCharacter: MainCharacterSchema,
+  mainConflict: boundedString(800),
+  finalQuestion: boundedString(500),
+  corePromise: boundedString(800),
+  actPlan: z.array(ActPlanEntrySchema).min(1).max(12),
+  chapterTargets: z.array(ChapterTargetSchema).length(50),
+  endingCandidates: z.array(EndingCandidateSchema).min(2).max(8),
+  plotDebts: z.array(PlotDebtSchema).min(1).max(20),
+  revealRunway: z.array(RevealRunwayEntrySchema).min(1).max(20),
+  closureRunway: ClosureRunwaySchema,
+}).strict().superRefine((contract, context) => {
+  // NO NCS §1.4 enforcement here - that's for StoryContractSchema only
+  // Only validate structural integrity, not authoring requirements
+  
+  // Still validate chapter targets ordering (structural, not authoring-specific)
+  contract.chapterTargets.forEach((target, index) => {
+    const expected = index + 1
+    if (target.chapterNumber !== expected) {
+      context.addIssue({
+        code: 'custom',
+        path: ['chapterTargets', index, 'chapterNumber'],
+        message: `chapterTargets must be ordered sequentially; expected chapter ${expected}.`,
+      })
+    }
+  })
+
+  // Validate act plan structure
+  contract.actPlan.forEach((act, index) => {
+    const expectedActNumber = index + 1
+    if (act.actNumber !== expectedActNumber) {
+      context.addIssue({
+        code: 'custom',
+        path: ['actPlan', index, 'actNumber'],
+        message: `actPlan must use ordered act numbers; expected act ${expectedActNumber}.`,
+      })
+    }
+    if (act.fromChapter > act.toChapter) {
+      context.addIssue({
+        code: 'custom',
+        path: ['actPlan', index],
+        message: 'Act range cannot end before it starts.',
+      })
+    }
+    const expectedStart = index === 0 ? 1 : contract.actPlan[index - 1].toChapter + 1
+    if (act.fromChapter !== expectedStart) {
+      context.addIssue({
+        code: 'custom',
+        path: ['actPlan', index, 'fromChapter'],
+        message: `actPlan must cover chapters contiguously; expected chapter ${expectedStart}.`,
+      })
+    }
+  })
+
+  if (contract.actPlan.at(-1)?.toChapter !== 50) {
+    context.addIssue({
+      code: 'custom',
+      path: ['actPlan', contract.actPlan.length - 1, 'toChapter'],
+      message: 'actPlan must cover through chapter 50.',
+    })
+  }
+
+  addDuplicateIssues(
+    contract.endingCandidates.map((ending) => ending.key),
+    ['endingCandidates'],
+    'Ending candidate keys must be unique.',
+    context,
+  )
+  addDuplicateIssues(
+    contract.plotDebts.map((debt) => debt.id),
+    ['plotDebts'],
+    'Plot debt IDs must be unique.',
+    context,
+  )
+
+  // No requiredPlotDebtIds validation here - allow empty arrays for V1->V2 transition
+})
+
+export const StoryContractSchema = z.object({
+  storyId: boundedString(128),
+  totalChapters: z.literal(50),
+  title: boundedString(160),
+  genre: boundedString(80),
+  tone: boundedString(160),
+  styleProfile: z.enum(['lakoku_mobile_drama_v1', 'lakoku_mobile_drama_v2']),
+  mainCharacter: MainCharacterSchema,
+  mainConflict: boundedString(800),
+  finalQuestion: boundedString(500),
+  corePromise: boundedString(800),
+  actPlan: z.array(ActPlanEntrySchema).min(1).max(12),
+  chapterTargets: z.array(ChapterTargetSchema).length(50),
+  endingCandidates: z.array(EndingCandidateSchema).min(2).max(8),
+  plotDebts: z.array(PlotDebtSchema).min(1).max(20),
+  revealRunway: z.array(RevealRunwayEntrySchema).min(1).max(20),
+  closureRunway: ClosureRunwaySchema,
+}).strict().superRefine((contract, context) => {
+  // Per NCS §1.4: ≥2 main endings PLUS secret-ending path required
+  const mainCount = contract.endingCandidates.filter((e) => e.kind === 'main').length
+  const secretCount = contract.endingCandidates.filter((e) => e.kind === 'secret').length
+  if (mainCount < 2) {
+    context.addIssue({
+      code: 'custom',
+      path: ['endingCandidates'],
+      message: `NCS §1.4 requires at least 2 main endings; found ${mainCount}.`,
+    })
+  }
+  if (secretCount < 1) {
+    context.addIssue({
+      code: 'custom',
+      path: ['endingCandidates'],
+      message: `NCS §1.4 requires at least 1 secret ending path; found ${secretCount}.`,
+    })
+  }
+  contract.chapterTargets.forEach((target, index) => {
+    const expected = index + 1
+    if (target.chapterNumber !== expected) {
+      context.addIssue({
+        code: 'custom',
+        path: ['chapterTargets', index, 'chapterNumber'],
+        message: `chapterTargets must be ordered sequentially; expected chapter ${expected}.`,
+      })
+    }
+  })
+
+  contract.actPlan.forEach((act, index) => {
+    const expectedActNumber = index + 1
+    if (act.actNumber !== expectedActNumber) {
+      context.addIssue({
+        code: 'custom',
+        path: ['actPlan', index, 'actNumber'],
+        message: `actPlan must use ordered act numbers; expected act ${expectedActNumber}.`,
+      })
+    }
+    if (act.fromChapter > act.toChapter) {
+      context.addIssue({
+        code: 'custom',
+        path: ['actPlan', index],
+        message: 'Act range cannot end before it starts.',
+      })
+    }
+    const expectedStart = index === 0 ? 1 : contract.actPlan[index - 1].toChapter + 1
+    if (act.fromChapter !== expectedStart) {
+      context.addIssue({
+        code: 'custom',
+        path: ['actPlan', index, 'fromChapter'],
+        message: `actPlan must cover chapters contiguously; expected chapter ${expectedStart}.`,
+      })
+    }
+  })
+
+  if (contract.actPlan.at(-1)?.toChapter !== 50) {
+    context.addIssue({
+      code: 'custom',
+      path: ['actPlan', contract.actPlan.length - 1, 'toChapter'],
+      message: 'actPlan must cover through chapter 50.',
+    })
+  }
+
+  addDuplicateIssues(
+    contract.endingCandidates.map((ending) => ending.key),
+    ['endingCandidates'],
+    'Ending candidate keys must be unique.',
+    context,
+  )
+  addDuplicateIssues(
+    contract.plotDebts.map((debt) => debt.id),
+    ['plotDebts'],
+    'Plot debt IDs must be unique.',
+    context,
+  )
+
+  // C-R3-R1 Blocker #6: Validate referential integrity for requiredPlotDebtIds
+  const allPlotDebtIds = new Set(contract.plotDebts.map((debt) => debt.id))
+  contract.endingCandidates.forEach((ending, endingIndex) => {
+    ending.requiredPlotDebtIds?.forEach((debtId, i) => {
+      if (!allPlotDebtIds.has(debtId)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['endingCandidates', endingIndex, 'requiredPlotDebtIds', i],
+          message: `Required plot debt ID "${debtId}" does not exist in contract.parseStoryContractWithNormalization.`,
+        })
+      }
+    })
+  })
+
+  // Must have exactly one main_mystery plot debt
+  if (contract.plotDebts.filter((debt) => debt.id === 'main_mystery').length !== 1) {
+    context.addIssue({
+      code: 'custom',
+      path: ['plotDebts'],
+      message: 'Story contract must contain exactly one main_mystery plot debt.',
+    })
+  }
+  
+  addDuplicateIssues(
+    contract.revealRunway.map((reveal) => reveal.secretId),
+    ['revealRunway'],
+    'Reveal secret IDs must be unique.',
+    context,
+  )
+
+  contract.plotDebts.forEach((debt, debtIndex) => {
+    debt.mustProgressBy.forEach((chapter, chapterIndex) => {
+      if (chapter < debt.introducedAt || chapter > debt.mustCloseBy) {
+        context.addIssue({
+          code: 'custom',
+          path: ['plotDebts', debtIndex, 'mustProgressBy', chapterIndex],
+          message: 'Debt progression must fall between introduction and closure chapters.',
+        })
+      }
+      if (chapterIndex > 0 && chapter <= debt.mustProgressBy[chapterIndex - 1]) {
+        context.addIssue({
+          code: 'custom',
+          path: ['plotDebts', debtIndex, 'mustProgressBy', chapterIndex],
+          message: 'Debt progression chapters must be sorted and unique.',
+        })
+      }
+    })
+    if (debt.mustCloseBy < debt.introducedAt) {
+      context.addIssue({
+        code: 'custom',
+        path: ['plotDebts', debtIndex, 'mustCloseBy'],
+        message: 'Debt closure cannot precede introduction.',
+      })
+    }
+  })
+})
+
+export function parseStoryContract(input: unknown): z.infer<typeof StoryContractSchema> {
+  return StoryContractSchema.parse(input)
 }
 
-export type MainCharacter = z.infer<typeof MainCharacterSchema>
+/** Parse stored story contract from V1 format (legacy database) */
+export function parseStoredStoryContractFromV1(input: unknown): z.infer<typeof StoredStoryContractV1Schema> {
+  return StoredStoryContractV1Schema.parse(input)
+}
+
+/** Parse stored story contract from V2 format (new standard) */
+export function parseStoredStoryContractFromV2(input: unknown): z.infer<typeof StoredStoryContractV2Schema> {
+  return StoredStoryContractV2Schema.parse(input)
+}
+
+/** Runtime adapter: normalize V1 contracts to V2 semantics during parsing
+
+ARCHITECTURAL LOCK (C-R3-R2 Blocker #2):
+MUST parse V1 contracts strictly BEFORE normalization, NOT cast and promote.
+Correct flow:
+  unknown → StoredStoryContractV1Schema.parse() → explicitly normalize endings → NormalizedStoryContractSchema
+V1 contracts must NOT be promoted to v2 authoring format - they remain V1 until runtime normalization.
+
+Current WRONG pattern (VIOLATES ARCH):
+  unknown → cast to Record → parse endingCandidates as v1 → normalize → StoryContractSchema (v2)
+  
+Fixed pattern (COMPLIANT WITH ARCH):
+  unknown → StoredStoryContractV1Schema.parse() → normalizeEndingCandidateFromV1() → NormalizedStoryContractSchema (runtime-compatible output)
+*/
+export function parseStoryContractWithNormalization(input: unknown): z.infer<typeof StoryContractSchema> {
+  if (input === null || typeof input !== 'object') {
+    throw new Error(`Invalid contract input: expected object, got ${typeof input}`)
+  }
+  
+  const obj = input as Record<string, unknown>
+  const styleProfile = obj.styleProfile as string | undefined
+  const isV1 = styleProfile === 'lakoku_mobile_drama_v1'
+  
+  if (isV1) {
+    // C-R3-R2 Blocker #2: STRICT V1 PARSING FIRST - must validate against StoredStoryContractV1Schema before any normalization
+    const parsedV1 = StoredStoryContractV1Schema.parse(obj)
+    
+    // Then explicitly normalize ending candidates without promoting styleProfile or spreading legacy fields
+    const normalizedEndings = parsedV1.endingCandidates.map((candidate) => 
+      normalizeEndingCandidateFromV1(candidate)
+    )
+    
+    // Build v2-compatible output using runtime schema (NO NCS §1.4 enforcement!)
+    const normalizedOutput = {
+      ...parsedV1,
+      endingCandidates: normalizedEndings,
+    }
+    
+    // Use NormalizedStoryContractSchema instead of StoryContractSchema - doesn't enforce NCS §1.4
+    return NormalizedStoryContractSchema.parse(normalizedOutput) as z.infer<typeof StoryContractSchema>
+  }
+  
+  return StoryContractSchema.parse(obj)
+}
+
 export type ActPlanEntry = z.infer<typeof ActPlanEntrySchema>
 export type ChapterTarget = z.infer<typeof ChapterTargetSchema>
 export type EndingCandidate = z.infer<typeof EndingCandidateSchema>
+export type EndingCandidateV1 = z.infer<typeof EndingCandidateV1Schema>
+export type EndingCandidateV2 = z.infer<typeof EndingCandidateV2Schema>
+export type MainCharacter = z.infer<typeof MainCharacterSchema>
 export type PlotDebt = z.infer<typeof PlotDebtSchema>
 export type RevealRunwayEntry = z.infer<typeof RevealRunwayEntrySchema>
 export type ClosureRunway = z.infer<typeof ClosureRunwaySchema>
 export type StoryContract = z.infer<typeof StoryContractSchema>
-
-export function parseStoryContract(input: unknown): StoryContract {
-  return StoryContractSchema.parse(input)
-}
+export type StoredStoryContractV1 = z.infer<typeof StoredStoryContractV1Schema>
+export type StoredStoryContractV2 = z.infer<typeof StoredStoryContractV2Schema>

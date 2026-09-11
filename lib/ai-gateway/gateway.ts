@@ -39,7 +39,11 @@ import {
   type StoryContractCallOptions,
   type ModelCallExecutionOptions,
 } from './provider'
-import { ChapterBriefSchema, ChoiceHistoryEntrySchema } from '../story-engine/chapter-brief'
+import {
+  ChapterBriefSchema,
+  ChoiceHistoryEntrySchema,
+  type ChoiceHistoryEntry,
+} from '../story-engine/chapter-brief'
 import { RouteStateSchema } from '../story-engine/route-state'
 import { GatewayError, scanForLeaks } from './safety'
 import {
@@ -240,6 +244,34 @@ function serializedLength(value: unknown): number {
   }
 }
 
+function fitRecentChoiceHistory(
+  projected: ChoiceProviderInput,
+  history: ChoiceHistoryEntry[],
+): ChoiceHistoryEntry[] {
+  if (history.length === 0) return []
+
+  const chronological = history
+    .map((entry, originalIndex) => ({ entry, originalIndex }))
+    .sort((left, right) => (
+      left.entry.chapterNumber - right.entry.chapterNumber
+      || left.originalIndex - right.originalIndex
+    ))
+    .map(({ entry }) => entry)
+
+  for (let start = 0; start < chronological.length; start += 1) {
+    const suffix = chronological.slice(start)
+    const candidate = { ...projected, choiceHistory: suffix }
+    const envelopeLength = `Konteks pilihan (currentChapter=${projected.currentChapter}):\n`.length
+    if (serializedLength(candidate) + envelopeLength <= MAX_CHOICE_PROVIDER_INPUT_CHARS) {
+      return suffix
+    }
+  }
+
+  throw choiceInputError([
+    '(root): Latest choice and hard constraints exceed choice provider input limit.',
+  ])
+}
+
 /** Test-only: exposes the ranked/bounded choice projection (P1-4). */
 export function __projectChoiceInputForTests(input: ChoiceInput): ChoiceProviderInput {
   return projectChoiceInput(input)
@@ -289,7 +321,7 @@ function projectChoiceInput(input: ChoiceInput): ChoiceProviderInput {
       endingRunway: chapterBrief.endingRunway,
     },
     routeState: parsed.data.routeState,
-    choiceHistory: parsed.data.choiceHistory,
+    choiceHistory: [],
     lockedEndingKey: parsed.data.lockedEndingKey,
     canon: {
       // P1-4: rank creative context by relevance and cap tightly (top 6 each).
@@ -322,17 +354,32 @@ function projectChoiceInput(input: ChoiceInput): ChoiceProviderInput {
   })
   if (!projected.success) throw choiceInputError(issueStrings(projected.error))
 
-  const serialized = JSON.stringify(projected.data)
-  if (serialized.length > MAX_CHOICE_PROVIDER_INPUT_CHARS) {
+  const normalizedProjected: ChoiceProviderInput = {
+    ...projected.data,
+    draft: {
+      ...projected.data.draft,
+      lastParagraphs: projected.data.draft.lastParagraphs as LastParagraphs,
+    },
+  }
+  const boundedHistory = fitRecentChoiceHistory(normalizedProjected, parsed.data.choiceHistory)
+  const bounded = ChoiceProviderInputSchema.safeParse({
+    ...normalizedProjected,
+    choiceHistory: boundedHistory,
+  })
+  if (!bounded.success) throw choiceInputError(issueStrings(bounded.error))
+
+  const envelopeLength = `Konteks pilihan (currentChapter=${bounded.data.currentChapter}):\n`.length
+  const serialized = JSON.stringify(bounded.data)
+  if (serialized.length + envelopeLength > MAX_CHOICE_PROVIDER_INPUT_CHARS) {
     throw choiceInputError([
       `(root): Serialized choice provider input exceeds ${MAX_CHOICE_PROVIDER_INPUT_CHARS} characters.`,
     ])
   }
   return {
-    ...projected.data,
+    ...bounded.data,
     draft: {
-      ...projected.data.draft,
-      lastParagraphs: projected.data.draft.lastParagraphs as LastParagraphs,
+      ...bounded.data.draft,
+      lastParagraphs: bounded.data.draft.lastParagraphs as LastParagraphs,
     },
   }
 }

@@ -128,6 +128,15 @@ function createCookieDb(input?: {
       )
       return builder
     }),
+    rpc: vi.fn(async () => ({
+      data: {
+        ok: true,
+        status: 'QUEUED',
+        job_id: '00000000-0000-4000-8000-0000000000e1',
+        correlation_id: '00000000-0000-4000-8000-0000000000e2',
+      },
+      error: null,
+    })),
   }
 }
 
@@ -436,7 +445,21 @@ describe('continuePersonalizedGeneration', () => {
 
 describe('choice route generation continuation', () => {
   it('returns outcome and nextChapterReady for personalized non-ending next chapter', async () => {
-    mocks.generateNextPersonalizedChapter.mockResolvedValue(publishedResult(2))
+    // R3 job-authoritative flow: the choice route enqueues a generation job and
+    // the continuation polls chapter readiness instead of calling the generator
+    // directly, so chapter 2 must exist in the admin fixture for the readiness
+    // poll to succeed on its first iteration.
+    mocks.adminFactory.mockReturnValue(createAdminDb({
+      tables: {
+        stories: [{ data: metadataRow, error: null }],
+        reader_states: [{ data: readerStateRow, error: null }],
+        choice_outcomes: [{ data: outcomeRow, error: null }],
+        chapters: [
+          { data: { story_id: storyId, number: 1, choices: [{ id: choiceId, label: 'Buka surat itu' }] }, error: null },
+          { data: { story_id: storyId, number: 2 }, error: null },
+        ],
+      },
+    }))
     const { POST } = await import('@/app/api/stories/[id]/choices/route')
 
     const response = await POST(choiceRequest(), {
@@ -446,13 +469,7 @@ describe('choice route generation continuation', () => {
 
     expect(response.status).toBe(200)
     expect(body).toEqual({ outcome: publicOutcome, nextChapterReady: true })
-    expect(mocks.generateNextPersonalizedChapter).toHaveBeenCalledWith({
-      storyId,
-      userId,
-      correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
-      chapterNumber: 2,
-      triggerChoiceId: choiceId,
-    })
+    expect(mocks.generateNextPersonalizedChapter).not.toHaveBeenCalled()
     expect(mocks.after).toHaveBeenCalledOnce()
     expect(JSON.stringify(body)).not.toMatch(
       /effect_json|choice_kind|route_state|choice_history|locked_ending_key|owner_user_id|story_mode|expected_state|ledger|replayed|lease/,

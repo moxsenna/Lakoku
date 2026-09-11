@@ -27,8 +27,12 @@ import {
 } from '@/lib/runtime/generation-job-execution'
 import { resolveGenerationLeaseTtlSeconds } from '@/lib/runtime/generation-lease-ttl'
 import { runChapterGenerationAttempt } from '@/lib/runtime/generation-mode'
+import { bindE0ProductionCostGuard } from '@/lib/commercial/e0-budget-authority.server'
 import { safeErrorInfo } from '@/lib/observability/safe-error'
 import {
+  getE0CostGuard,
+  isE0CostGuardError,
+  isGlobalInferenceBudgetError,
   isSemanticJudgeUnavailableError,
   SEMANTIC_JUDGE_UNAVAILABLE,
 } from '@lakoku/ai-gateway'
@@ -36,6 +40,11 @@ import { retryWindowFitsJobDeadline } from '@/lib/runtime/choice-execution-budge
 
 // Re-export ClaimedGenerationJob type for callers (recovery route).
 export type { ClaimedGenerationJob }
+
+// Bind the ratified E0 R1 measured-cost ceilings once per process. The guard
+// records only provider-reported billed usage; transports without usage
+// accounting are counted as unmeasured and never price-guessed.
+bindE0ProductionCostGuard()
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000
 
@@ -274,6 +283,11 @@ export async function executeClaimedJob(
     }
 
     let dispatchResult: Awaited<ReturnType<typeof runChapterGenerationAttempt>>
+    // One E0 chapter-cost scope per attempt; only the process guard keeps
+    // accounting when a stale scope blocks opening a new one.
+    const e0Guard = getE0CostGuard()
+    const e0ScopeId = `${job.id}#${job.attemptCount}`
+    const e0ScopeOpen = e0Guard?.tryBeginChapterScope(e0ScopeId) ?? false
     try {
       dispatchResult = await runChapterGenerationAttempt({
         storyId: job.storyId,
@@ -299,10 +313,16 @@ export async function executeClaimedJob(
       // its own reason so telemetry/retry classification is exact, not generic.
       dispatchResult = {
         ok: false,
-        reason: isSemanticJudgeUnavailableError(err)
-          ? SEMANTIC_JUDGE_UNAVAILABLE
-          : 'GENERATOR_EXCEPTION',
+        reason: isGlobalInferenceBudgetError(err)
+          ? err.code
+          : isE0CostGuardError(err)
+            ? err.code
+            : isSemanticJudgeUnavailableError(err)
+              ? SEMANTIC_JUDGE_UNAVAILABLE
+              : 'GENERATOR_EXCEPTION',
       }
+    } finally {
+      if (e0ScopeOpen) e0Guard?.endChapterScope(e0ScopeId)
     }
 
     // 6) Normalize before checking ownership. normalized.ok is the generator

@@ -5,7 +5,7 @@
  * sungguhan (bukan template deterministik), tetapi TETAP:
  *   - lolos pipeline plan→write→Layer A→Layer B→repair (status PUBLISHED),
  *   - konsisten canon (metadata terstruktur canon-derived),
- *   - dalam rentang 500–800 kata & 2–4 scene,
+ *   - dalam hard band 800–1000 kata & 2–4 scene,
  *   - bersih dari kebocoran istilah internal (consumer-safe),
  *   - berbeda dari output deterministik (bukti model betul-betul menulis).
  *
@@ -73,7 +73,7 @@ async function main() {
       continue
     }
     const d = r.draft
-    check('wordCount 500–800', d.wordCount >= 500 && d.wordCount <= 800, d.wordCount)
+    check('wordCount 800–1000', d.wordCount >= 800 && d.wordCount <= 1000, d.wordCount)
     check('sceneCount 2–4', d.sceneCount >= 2 && d.sceneCount <= 4, d.sceneCount)
     check('≥3 paragraf', d.paragraphs.length >= 3, d.paragraphs.length)
     check('judul non-kosong', d.title.trim().length > 0, d.title)

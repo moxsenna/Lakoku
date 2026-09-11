@@ -12,6 +12,7 @@ vi.mock('@/lib/runtime/generation-jobs', () => ({
   acquireGenerationJobLease: vi.fn(async () => ({ ok: true, leaseId: 'lease-mock-1' })),
   heartbeatGenerationJob: vi.fn(async () => ({ ok: true })),
   finishGenerationJobAttempt: vi.fn(async () => ({ ok: true })),
+  finishAttemptAndFinalizeIfTerminal: vi.fn(async () => ({ ok: true, status: 'FAILED' })),
 }))
 
 vi.mock('@/lib/runtime/generation-mode', () => ({

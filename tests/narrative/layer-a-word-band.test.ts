@@ -62,14 +62,14 @@ function draft(wordCount: number): ChapterDraft {
 
 describe('Layer A word bands', () => {
   it('treats soft-band miss as MINOR only', () => {
-    const result = validateLayerA(minimalSnapshot(), draft(650))
+    const result = validateLayerA(minimalSnapshot(), draft(825))
     const codes = result.findings.map((f) => `${f.severity}:${f.code}`)
     expect(codes).toContain('MINOR:CHAPTER_LENGTH_SOFT_MISS')
     expect(codes.some((c) => c.startsWith('MAJOR:CHAPTER_LENGTH'))).toBe(false)
   })
 
   it('treats hard-band miss as MAJOR', () => {
-    const result = validateLayerA(minimalSnapshot(), draft(200))
+    const result = validateLayerA(minimalSnapshot(), draft(799))
     const codes = result.findings.map((f) => `${f.severity}:${f.code}`)
     expect(codes).toContain('MAJOR:CHAPTER_LENGTH_OUT_OF_RANGE')
   })

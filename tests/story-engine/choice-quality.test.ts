@@ -835,3 +835,59 @@ describe('mapFindingToReason', () => {
     expect(mapFindingToReason([{ code: 'CHOICE_EFFECTS_IDENTICAL', message: '', severity: 'ERROR' }])).toBe('NOT_DISTINCT')
   })
 })
+
+describe('domain actionability Bab 10 regression (peN-/per- + expanded roots)', () => {
+  it('accepts grounded peN-/per- and expanded-root labels at domain level', () => {
+    const input = makeInput()
+    input.branch.choices = [
+      { id: 'lindungi-arsip', label: 'Lindungi arsip basah itu sebelum lampu koridor padam' },
+      { id: 'pertahankan-pintu', label: 'Pertahankan posisi di depan pintu arsip yang berderit' },
+    ]
+    input.branch.outcomes = [
+      {
+        choiceId: 'lindungi-arsip',
+        consequence: ['Berkas arsip tetap selamat.'],
+        nextChapterNumber: 13,
+        isEnding: false,
+        effect: distinctEffect(1),
+      },
+      {
+        choiceId: 'pertahankan-pintu',
+        consequence: ['Pintu arsip bertahan.'],
+        nextChapterNumber: 13,
+        isEnding: false,
+        effect: distinctEffect(2),
+      },
+    ]
+
+    const result = validateChoiceBranchQuality(input)
+    expect(hasCode(result.findings, 'CHOICE_NOT_ACTIONABLE')).toBe(false)
+  })
+
+  it('still rejects abstract feelings at domain level', () => {
+    const input = makeInput()
+    input.branch.choices = [
+      { id: 'berharap', label: 'Berharap pintu arsip terbuka dengan sendirinya' },
+      { id: 'periksa-lampu', label: 'Periksa lampu koridor yang berkedip' },
+    ]
+    input.branch.outcomes = [
+      {
+        choiceId: 'berharap',
+        consequence: ['Harapan tinggal harapan.'],
+        nextChapterNumber: 13,
+        isEnding: false,
+        effect: distinctEffect(1),
+      },
+      {
+        choiceId: 'periksa-lampu',
+        consequence: ['Lampu padam.'],
+        nextChapterNumber: 13,
+        isEnding: false,
+        effect: distinctEffect(2),
+      },
+    ]
+
+    const result = validateChoiceBranchQuality(input)
+    expect(hasCode(result.findings, 'CHOICE_NOT_ACTIONABLE')).toBe(true)
+  })
+})

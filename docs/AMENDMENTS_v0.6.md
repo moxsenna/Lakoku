@@ -1,7 +1,7 @@
 # Lakoku — Amandemen Dokumen v0.6
 
-Status: APPLIED — §A ke `docs/PRD_Lakoku_Interactive_v0.3.md`; implementasi di `lib/prose/*` + demo seed (Juli 2026).
-Sumber: PRD v0.3, AMENDMENTS v0.3–v0.5 (tetap berlaku). NCS/NTM tidak diubah oleh amandemen ini kecuali band panjang bab di PRD.
+Status: APPLIED — §A ke `docs/PRD_Lakoku_Interactive_v0.3.md`; band panjang bab disinkronkan ke NCS/NTM/runbook; implementasi di `lib/prose/*`, Layer A, dan demo seed (Juli–Agustus 2026).
+Sumber: PRD v0.3, AMENDMENTS v0.3–v0.5 (tetap berlaku). Untuk panjang bab, v0.6 secara eksplisit menggantikan band NCS lama 500–800 dengan hard 800–1000 dan soft 850–950.
 
 Amandemen ini mengunci **kontrak ritme prosa mobile drama** (demo + quality target AI) dan **prompt-engine** sebagai sumber tunggal prompt writer.
 

@@ -13,8 +13,12 @@
 export * from './schemas'
 export * from './choice-draft-v2'
 export * from './provider'
+export * from './global-inference-budget.contract'
+export * from './e0-cost-guard'
 export * from './gateway'
 export * from './generate'
+export * from './chapter-writer-contract'
+export * from './writer-completeness'
 // Pure (no server-only): kontrak semantic judge & error code dipakai runtime
 // (worker) via barrel ini, bukan deep import.
 export * from './semantic-continuation-judge'

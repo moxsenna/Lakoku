@@ -10,11 +10,13 @@ import {
   STYLE_PROFILE_ID,
   countWords,
 } from '../lib/prose/mobile-drama-style'
+import { buildFixtureSnapshot } from '../fixtures/narrative/fixture-50'
 import {
   buildWriterPrompt,
   evaluateProseDraft,
   estimateSentenceCount,
 } from '../lib/prose/prompt-engine'
+import { buildPreProseChapterBrief } from '../lib/story-engine/pre-prose-brief'
 
 const FIX = join(process.cwd(), 'lib/prose/fixtures')
 const R = MOBILE_DRAMA_RHYTHM
@@ -90,6 +92,16 @@ assert.equal(estimateSentenceCount('No. 12 sudah dibuka tadi malam.'), 1)
 assert.ok(estimateSentenceCount('Aku diam. Ia pergi.') >= 2)
 
 // --- buildWriterPrompt ---
+const snapshot = buildFixtureSnapshot()
+const blueprint = snapshot.blueprints[0]
+const brief = buildPreProseChapterBrief({
+  storyId: snapshot.storyId,
+  chapterNumber: 1,
+  snapshot,
+  blueprint,
+  continuation: null,
+  chapterBrief: null,
+})
 const prompt = buildWriterPrompt({
   chapterNumber: 1,
   phase: 'hook',
@@ -97,6 +109,7 @@ const prompt = buildWriterPrompt({
   characterNames: ['Rani', 'Ibu Ratna', 'Dimas'],
   plannedBeats: ['Larangan sentuh barang Ayah', 'Teh dingin'],
   chapterMode: 'confrontation',
+  brief,
 })
 
 assert.equal(prompt.styleProfileId, STYLE_PROFILE_ID)
@@ -104,10 +117,10 @@ assert.equal(prompt.wordTarget.softMin, R.words.softMin)
 assert.equal(prompt.wordTarget.hardMax, R.words.hardMax)
 assert.ok(prompt.system.includes(String(R.words.softMin)))
 assert.ok(prompt.system.includes(String(R.words.softMax)))
-assert.ok(prompt.system.includes(String(R.paragraphs.softMin)))
-assert.ok(prompt.system.includes(String(R.paragraphs.softMax)))
-assert.ok(prompt.system.includes('1 baris ucapan = 1 paragraf'))
-assert.ok(prompt.user.includes('Bab 1'))
+assert.ok(prompt.system.includes('RITME PARAGRAF:'))
+assert.ok(prompt.system.includes('Biarkan panjang paragraf mengikuti kebutuhan'))
+assert.ok(prompt.user.includes('=== [P0]'))
+assert.ok(prompt.user.includes('=== [P5]'))
 assert.ok(prompt.user.includes('Rani'))
 
 // --- valid synthetic ---

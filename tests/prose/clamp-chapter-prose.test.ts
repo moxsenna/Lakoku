@@ -44,4 +44,19 @@ describe('clampChapterParagraphs', () => {
     const result = clampChapterParagraphs(paragraphs)
     expect(countParagraphWords(result)).toBe(50)
   })
+
+  it('merges sentence-fragment paragraphs to publisher hard limit without losing words', () => {
+    // Real-provider M10-F evidence: 155 short paragraphs / 915 words passed
+    // word clamp but publish_chapter_v2 rejected array length > 100.
+    const paragraphs = Array.from({ length: 155 }, (_, index) =>
+      `${index} ${words(4, `kata${index}`)}`,
+    )
+    const before = countParagraphWords(paragraphs)
+
+    const result = clampChapterParagraphs(paragraphs)
+
+    expect(result.length).toBeLessThanOrEqual(100)
+    expect(countParagraphWords(result)).toBe(before)
+    expect(result.join(' ')).toBe(paragraphs.join(' '))
+  })
 })

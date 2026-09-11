@@ -83,7 +83,8 @@ Semua ini berlaku identik untuk client mana pun:
 | `docs/PRD_Lakoku_Interactive_v0.3.md` | Spesifikasi produk, brand contract |
 | `docs/NARRATIVE_CONSISTENCY_SPEC.md` | Kontrak konsistensi naratif 50 bab (NCS) |
 | `docs/NARRATIVE_TRACEABILITY_MATRIX.md` | Gap → skema → validator → gate (NTM) |
-| `docs/AMENDMENTS_v0.4.md` | Amandemen terbaru (client sequencing) — baca lebih dulu |
+| `docs/AMENDMENTS_v0.6.md` | Amandemen terbaru: hard 800–1000 / soft 850–950 kata dan prompt writer tunggal — baca lebih dulu |
+| `docs/AMENDMENTS_v0.4.md` | Client sequencing web-first |
 | `docs/AMENDMENTS_v0.3.md` | Amandemen presisi sebelumnya |
 
 ## 6. Definisi selesai (untuk perubahan client)

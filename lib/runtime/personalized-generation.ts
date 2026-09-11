@@ -27,10 +27,12 @@ import {
   type ChapterDraftParsed,
   type ChoiceBranch,
   type GenerationProvider,
+  type GenerationRuntimePolicy,
   type ChoiceInput,
   type GenerationResult,
 } from '@lakoku/ai-gateway'
-import { selectProvider } from '@lakoku/ai-gateway/server'
+import type { Finding } from '@lakoku/narrative-core'
+import { createProviderFromExactRoutes, selectProvider } from '@lakoku/ai-gateway/server'
 import { createAdminClient } from '@lakoku/db'
 import { recordGenerationAttempt } from '@/lib/observability/server'
 import { boundedLogId, safeErrorInfo } from '@/lib/observability/safe-error'
@@ -40,7 +42,8 @@ import {
   ChoiceHistoryEntrySchema,
 } from '@/lib/story-engine/chapter-brief'
 import {
-  parseStoryContract,
+  /** C-R3-R1 Blocker #3: export normalized parser for V1/V2 compatibility */
+  parseStoryContractWithNormalization as parseStoryContractNormalized,
   type StoryContract,
 } from '@/lib/story-engine/story-contract'
 import {
@@ -105,10 +108,20 @@ import {
 import { resolveGenerationLeaseTtlSeconds } from './generation-lease-ttl'
 import { throwIfAborted } from './abort'
 import { deriveStructuredStateProposalDefault } from './state-proposal-derivation'
+import { runPostPublicationLifecycle } from './post-publication-lifecycle.server'
 import { proseFingerprint } from './chapter-generation-checkpoint.pure'
+import {
+  isWriterLengthRepairV1Enabled,
+  observeWriterLengthRepairTelemetry,
+} from './writer-length-repair-policy.server'
 import { loadEffectivePlotDebtState } from './plot-debt-effective-state.loader'
 import type { GenerationJobExecutionContext } from './generation-job-execution'
 import type { Schema3PublicationResult } from './checkpoint-schema-v3'
+import type { ExactProductionRoutes } from '@lakoku/ai-gateway/server'
+import {
+  assertM10GG1ExecutionCapability,
+  type M10GG1ExecutionCapability,
+} from './m10-g-g1-execution-capability.server'
 
 /**
  * Personalized chapter runtime (Task 17).
@@ -126,6 +139,7 @@ import type { Schema3PublicationResult } from './checkpoint-schema-v3'
 
 const TOTAL_PERSONALIZED_CHAPTERS = 50
 const ENDING_LOCK_CHAPTER = 45
+export const POST_PUBLICATION_LIFECYCLE_TIMEOUT_MS = 5_000
 
 const CONTRACT_SELECT =
   'story_id,story_contract_json,plot_debts_json,ending_candidates_json,ending_lock_json,mode,total_chapters' as const
@@ -290,7 +304,12 @@ export interface PersonalizedGenerationDeps {
     chapter: number
     outcome: 'PUBLISHED' | 'REVIEW_REQUIRED'
     repairAttempts: number
-    findings: GenerationResult['findings']
+    findings: Finding[]
+    correlationId?: string | null
+    idempotencyKey?: string | null
+    providerCallId?: string | null
+    brandScanHash?: string | null
+    leaseId?: string | null
   }) => Promise<void>
   // ---- M10-A1d living canon v1 (optional; defaultDeps menyediakan) ----
   /** `stories.living_canon_version` (0/1). 0 = legacy capability. */
@@ -308,6 +327,8 @@ export interface PersonalizedGenerationDeps {
   persistCheckpointSchema3?: (input: PersistSchema3CheckpointInput) => Promise<CheckpointMutationResult>
   /** Schema-3 publisher (v5 worker / v3 sync). */
   publishChapterSchema3?: (input: PublishSchema3ChapterInput) => Promise<Schema3PublicationResult>
+  /** Post-commit lifecycle seam; bounded by runtime before publication success returns. */
+  runPostPublicationLifecycle?: typeof runPostPublicationLifecycle
 }
 
 export interface PersistSchema3CheckpointInput {
@@ -414,7 +435,7 @@ async function defaultLoadStoryGenerationContract(storyId: string): Promise<Stor
     ending_lock_json: unknown
   }
 
-  return parseStoryContract({
+  return parseStoryContractNormalized({
     ...row.story_contract_json,
     storyId: row.story_id,
     plotDebts: row.plot_debts_json,
@@ -462,6 +483,41 @@ export async function defaultPersistEndingLock(input: PersistEndingLockInput): P
 
 /** Test seam for default atomic ending-lock path. */
 export const defaultPersistEndingLockForTest = defaultPersistEndingLock
+
+/**
+ * Check generation admission gate before acquiring lease.
+ * Returns error if generation_status === 'needs_review' (FAILED_REVIEW_REQUIRED durable).
+ * FAIL-CLOSED: treats missing story or read error as failure to prevent proceeding on ambiguous state.
+ */
+async function checkAdmissionBeforeGeneration(storyId: string): Promise<{ ok: true } | { ok: false; reason: 'FAILED_REVIEW_REQUIRED' }> {
+  try {
+    const admin = createAdminClient()
+    const { data, error } = await admin
+      .from('stories')
+      .select('generation_status')
+      .eq('id', storyId)
+      .maybeSingle()
+    
+    if (error) throw error // FAIL-CLOSED: treat read error as failure
+    
+    // C-R3-R2 Blocker #3: Treat null data (story missing) as failed admission for fail-closed semantics
+    if (!data) {
+      console.error('ADMISSION_CHECK_FAILED', { storyId, reason: 'STORY_MISSING' })
+      throw new Error(`Story ${storyId} not found in database`)
+    }
+    
+    const storyRow = data as { generation_status?: string }
+    
+    if (storyRow.generation_status === 'needs_review') {
+      return { ok: false, reason: 'FAILED_REVIEW_REQUIRED' as const }
+    }
+    
+    return { ok: true }
+  } catch (err) {
+    console.error('ADMISSION_CHECK_FAILED', { storyId, error: String(err) })
+    throw err // Re-throw to fail-closed (caller will return FAILED_REVIEW_REQUIRED)
+  }
+}
 
 // ---- Test-only exports (Phase 0 baseline) ----
 // Exported for characterization / desired-behavior TDD tests only.
@@ -693,6 +749,64 @@ async function defaultPublishChapterSchema3(
   })
 }
 
+type PostPublicationLifecycleRunner = typeof runPostPublicationLifecycle
+
+type PostPublicationLifecycleOutcome =
+  | { status: 'COMPLETED' }
+  | { status: 'THREW' }
+  | { status: 'TIMED_OUT' }
+
+/** Publication already committed. Bound lifecycle latency and consume late rejection safely. */
+export async function runBoundedPostPublicationLifecycle(
+  input: Parameters<PostPublicationLifecycleRunner>[0] & {
+    correlationId: string
+    jobId?: string | null
+  },
+  lifecycle: PostPublicationLifecycleRunner = runPostPublicationLifecycle,
+  timeoutMs = POST_PUBLICATION_LIFECYCLE_TIMEOUT_MS,
+): Promise<PostPublicationLifecycleOutcome> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const lifecycleOutcome: Promise<PostPublicationLifecycleOutcome> = Promise.resolve()
+    .then(() => lifecycle(input))
+    .then((): PostPublicationLifecycleOutcome => ({ status: 'COMPLETED' }))
+    .catch((): PostPublicationLifecycleOutcome => ({ status: 'THREW' }))
+  const timeoutOutcome = new Promise<PostPublicationLifecycleOutcome>((resolve) => {
+    timeout = setTimeout(() => resolve({ status: 'TIMED_OUT' }), timeoutMs)
+  })
+  const outcome = await Promise.race([lifecycleOutcome, timeoutOutcome])
+  if (timeout) clearTimeout(timeout)
+
+  // Dua emisi literal, bukan satu emisi ber-variabel: gate log-safety
+  // (tests/runtime/generation-reconciliation-log-safety.test.ts) memindai
+  // sumber secara statis dan hanya menerima `result` serta `errorCode` sebagai
+  // literal berbatas. Percabangan di sini menjaga jaminan itu tetap dapat
+  // dibuktikan tanpa mengeksekusi kode.
+  if (outcome.status === 'TIMED_OUT') {
+    console.log('POST_PUBLISH_RECONCILIATION_NEEDED', {
+      storyId: boundedLogId(input.storyId),
+      chapterNumber: input.chapterNumber,
+      correlationId: boundedLogId(input.correlationId),
+      jobId: boundedLogId(input.jobId),
+      operation: 'POST_PUBLICATION_LIFECYCLE',
+      result: 'NOT_UPDATED',
+      timeoutMs,
+      errorCode: 'POST_PUBLICATION_LIFECYCLE_TIMEOUT',
+    })
+  } else if (outcome.status === 'THREW') {
+    console.log('POST_PUBLISH_RECONCILIATION_NEEDED', {
+      storyId: boundedLogId(input.storyId),
+      chapterNumber: input.chapterNumber,
+      correlationId: boundedLogId(input.correlationId),
+      jobId: boundedLogId(input.jobId),
+      operation: 'POST_PUBLICATION_LIFECYCLE',
+      result: 'THREW',
+      timeoutMs,
+      errorCode: 'POST_PUBLICATION_LIFECYCLE_FAILED',
+    })
+  }
+  return outcome
+}
+
 function defaultDeps(): PersonalizedGenerationDeps {
   return {
     acquireGenerationLease,
@@ -734,6 +848,7 @@ function defaultDeps(): PersonalizedGenerationDeps {
     loadCanonStateRevision: defaultLoadCanonStateRevision,
     persistCheckpointSchema3: defaultPersistCheckpointSchema3,
     publishChapterSchema3: defaultPublishChapterSchema3,
+    runPostPublicationLifecycle,
   }
 }
 
@@ -741,10 +856,40 @@ function defaultDeps(): PersonalizedGenerationDeps {
  * Generate + publish one personalized chapter. Injectable deps for unit tests.
  * Never calls generateNextChapterReal.
  */
+export async function executeM10GG1PersonalizedChapter(input: {
+  capability: M10GG1ExecutionCapability
+  chapter: Omit<PersonalizedGenerateInput, 'options'>
+  globalInferenceBudget: import('@lakoku/ai-gateway').GlobalInferenceBudget
+  frozenRoutes: ExactProductionRoutes
+  frozenGenerationPolicy: GenerationRuntimePolicy
+  frozenLeaseTtlSeconds: number
+}): Promise<RealGenerateResult> {
+  assertM10GG1ExecutionCapability(input.capability)
+  const frozenProvider = createProviderFromExactRoutes({
+    ...input.frozenRoutes,
+    generationPolicy: input.frozenGenerationPolicy,
+  })
+  return generateNextPersonalizedChapter({
+    ...input.chapter,
+    options: {
+      m10gMode: true,
+      globalInferenceBudget: input.globalInferenceBudget,
+      writerLengthRepairV1Enabled: false,
+      m10gFrozenLeaseTtlSeconds: input.frozenLeaseTtlSeconds,
+    },
+  }, {
+    ...defaultDeps(),
+    selectProvider: async () => frozenProvider,
+  })
+}
+
 export async function generateNextPersonalizedChapter(
   input: PersonalizedGenerateInput,
   deps?: PersonalizedGenerationDeps,
 ): Promise<RealGenerateResult> {
+  if (input.options?.m10gMode && input.options.m10gFrozenLeaseTtlSeconds === undefined) {
+    throw new Error('M10G_G1_GENERATION_POLICY_AUTHORITY_UNBOUND')
+  }
   return withGenerationSlot(
     {
       userId: input.userId,
@@ -775,6 +920,7 @@ export async function generateNextPersonalizedChapter(
       return { ok: false, reason, detail: meta }
     },
     input.jobContext?.signal,
+    { refreshMutablePolicy: input.options?.m10gMode !== true },
   )
 }
 
@@ -794,12 +940,40 @@ async function generateNextPersonalizedChapterInner(
   const jobId = jobContext?.jobId ?? input.jobId
   const attemptNumber = jobContext?.attemptNumber ?? input.attemptNumber
   const attemptId = input.attemptId?.trim() || jobContext?.jobId || correlationId
+  const writerLengthRepairV1Enabled = input.options?.writerLengthRepairV1Enabled
+    ?? isWriterLengthRepairV1Enabled()
+  const m10gFrozenLeaseTtlSeconds = input.options?.m10gFrozenLeaseTtlSeconds
+  if (input.options?.m10gMode && m10gFrozenLeaseTtlSeconds === undefined) {
+    throw new Error('M10G_G1_GENERATION_POLICY_AUTHORITY_UNBOUND')
+  }
   let checkpointAttemptId = attemptId
   let fromCheckpoint = false
 
   const checkpointMutationSucceeded = (
     result: CheckpointMutationResult,
   ): boolean => result.ok === true
+  const continuationReviewFindings = (detail: string): Finding[] => {
+    switch (detail) {
+      case 'TRIGGER_CHOICE_REQUIRED_FOR_NON_FIRST_CHAPTER':
+        return [{
+          code: 'CONTINUATION_TRIGGER_REQUIRED',
+          severity: 'CRITICAL',
+          message: 'Continuation context requires prior chapter choice provenance.',
+        }]
+      case 'TRIGGER_CHOICE_NOT_FOUND':
+        return [{
+          code: 'CONTINUATION_TRIGGER_NOT_FOUND',
+          severity: 'CRITICAL',
+          message: 'Continuation choice provenance is inconsistent with reader history.',
+        }]
+      default:
+        return [{
+          code: 'CONTINUATION_CONTEXT_INCONSISTENT',
+          severity: 'CRITICAL',
+          message: 'Continuation context is inconsistent with durable story state.',
+        }]
+    }
+  }
   const providerContext = jobId === undefined && attemptNumber === undefined
     ? createSynchronousProviderContext({
         userId,
@@ -830,6 +1004,13 @@ async function generateNextPersonalizedChapterInner(
     return { ok: false, reason: 'CAPACITY_TIMEOUT', detail: { reason: 'ABORT_SIGNAL' } }
   }
 
+  // C-R3-R1 (reviewer Entry 10): Check admission gate BEFORE acquiring lease for sync path.
+  // Worker path reuses existing job context; check there too as safety.
+  const admissionCheck = await checkAdmissionBeforeGeneration(storyId)
+  if (!admissionCheck.ok) {
+    return { ok: false, reason: admissionCheck.reason, detail: { reason: 'NEEDS_REVIEW', storyId } }
+  }
+
   // Worker path reuses job lease (no second acquire). Legacy acquires own.
   let leaseId: string
   let ownLease = false
@@ -844,7 +1025,8 @@ async function generateNextPersonalizedChapterInner(
       path: 'personalized',
     })
   } else {
-    const ttlSeconds = await resolveGenerationLeaseTtlSeconds()
+    const ttlSeconds = m10gFrozenLeaseTtlSeconds
+      ?? await resolveGenerationLeaseTtlSeconds()
     const lease = await d.acquireGenerationLease({
       storyId,
       chapterNumber,
@@ -871,6 +1053,26 @@ async function generateNextPersonalizedChapterInner(
     if (!blueprint || snapshot.characters.length === 0) {
       await releaseOwnLease()
       return { ok: false, reason: 'CANON_MISSING' }
+    }
+
+    // Safety check for worker path (should not trigger on normal flow, but guards against state changes mid-execution)
+    try {
+      const admin = createAdminClient()
+      const { data, error } = await admin
+        .from('stories')
+        .select('generation_status')
+        .eq('id', storyId) // FIX: was 'story_id', must be 'id' per database schema
+        .maybeSingle()
+      if (error) throw error // FAIL-CLOSED: if read fails, do NOT proceed with generation
+      
+      const storyRow = data as { generation_status?: string } | null
+      if (storyRow?.generation_status === 'needs_review') {
+        await releaseOwnLease()
+        return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { reason: 'NEEDS_REVIEW', storyId } }
+      }
+    } catch (err) {
+      console.error('GATE_STATUS_CHECK_FAILED', { storyId, error: String(err) })
+      throw err // FAIL-CLOSED: never allow generation to proceed if status check fails
     }
 
     const contract = await d.loadStoryGenerationContract(storyId)
@@ -941,7 +1143,6 @@ async function generateNextPersonalizedChapterInner(
     })
 
     if (!contRes.ok) {
-      await releaseOwnLease()
       console.error('PERSONALIZED_CONTINUATION_CONTEXT_LOAD_FAILED', {
         storyId,
         chapterNumber,
@@ -949,8 +1150,24 @@ async function generateNextPersonalizedChapterInner(
         detail: contRes.detail,
       })
       if (contRes.kind === 'TRANSIENT') {
+        await releaseOwnLease()
         return { ok: false, reason: 'TRANSIENT', detail: contRes.detail }
       }
+      await d.recordGenerationAttempt({
+        storyId,
+        chapter: chapterNumber,
+        outcome: 'REVIEW_REQUIRED',
+        repairAttempts: 0,
+        findings: continuationReviewFindings(contRes.detail),
+        correlationId,
+        idempotencyKey: personalizedGenerationKey(
+          storyId,
+          chapterNumber,
+          `review:continuation:${attemptId}`,
+        ),
+        leaseId,
+      })
+      await releaseOwnLease()
       return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: contRes.detail }
     }
 
@@ -1106,23 +1323,38 @@ async function generateNextPersonalizedChapterInner(
             telemetryContext: providerContext,
             workflowPhase: 'CHAPTER_PROSE_INITIAL',
             signal: jobContext?.signal,
+            ...(writerLengthRepairV1Enabled
+              ? {
+                  writerLengthRepairV1: { enabled: true as const },
+                  observeWriterLengthRepair: observeWriterLengthRepairTelemetry,
+                }
+              : {}),
             ...(input.options?.providerRuntime === undefined
               ? {}
               : { providerRuntime: input.options.providerRuntime }),
+            ...(input.options?.m10gMode === undefined
+              ? {}
+              : { m10gMode: input.options.m10gMode }),
+            ...(input.options?.globalInferenceBudget === undefined
+              ? {}
+              : { globalInferenceBudget: input.options.globalInferenceBudget }),
           },
         },
       )
       throwIfAborted(jobContext?.signal)
 
       if (result.status !== 'PUBLISHED' || !result.draft) {
-        await releaseOwnLease()
         await d.recordGenerationAttempt({
           storyId,
           chapter: chapterNumber,
           outcome: 'REVIEW_REQUIRED',
           repairAttempts: result.attempts,
           findings: result.findings,
+          correlationId,
+          idempotencyKey: personalizedGenerationKey(storyId, chapterNumber, `review:prose:${attemptId}`),
+          leaseId: leaseId ?? undefined,
         })
+        await releaseOwnLease()
         return {
           ok: false,
           reason: 'FAILED_REVIEW_REQUIRED',
@@ -1201,18 +1433,27 @@ async function generateNextPersonalizedChapterInner(
       auditSignals = audited.auditSignals
     }
     if (audit && !audit.ok) {
-      await releaseOwnLease()
+      const auditFindings: Finding[] = audit.findings.map((f) => ({
+        code: f.code,
+        severity: 'CRITICAL' as const,
+        message: `Plot debt audit violation: ${f.code}${f.debtId ? ` (debt: ${f.debtId})` : ''}`,
+        ...(f.debtId ? { detail: { debtId: f.debtId } } : {}),
+      }))
       await d.recordGenerationAttempt({
         storyId,
         chapter: chapterNumber,
         outcome: 'REVIEW_REQUIRED',
         repairAttempts: result.attempts,
-        findings: result.findings,
+        findings: auditFindings,
+        correlationId,
+        idempotencyKey: personalizedGenerationKey(storyId, chapterNumber, `review:plot_debt:${attemptId}`),
+        leaseId: leaseId ?? undefined,
       })
+      await releaseOwnLease()
       return {
         ok: false,
         reason: 'FAILED_REVIEW_REQUIRED',
-        detail: { findings: audit.findings, reason: 'PLOT_DEBT_AUDIT_FAILED' },
+        detail: { findings: auditFindings, reason: 'PLOT_DEBT_AUDIT_FAILED' },
       }
     }
 
@@ -1264,7 +1505,7 @@ async function generateNextPersonalizedChapterInner(
           storyId, chapterNumber, correlationId, attemptId,
           status: 'PROSE_READY', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED', path: 'personalized',
         })
-        return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: saved } }
+        return { ok: false, reason: 'TRANSIENT', detail: { checkpointMutation: saved } }
       }
       if (saved.ok === true) checkpointAttemptId = saved.checkpointAttemptId
     }
@@ -1286,7 +1527,7 @@ async function generateNextPersonalizedChapterInner(
           storyId, chapterNumber, correlationId, attemptId: checkpointAttemptId,
           status: 'RUNNING_CHOICES', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED', path: 'personalized',
         })
-        return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: runningChoices } }
+        return { ok: false, reason: 'TRANSIENT', detail: { checkpointMutation: runningChoices } }
       }
     }
 
@@ -1331,6 +1572,8 @@ async function generateNextPersonalizedChapterInner(
         providerContext,
         signal: jobContext?.signal,
         providerRuntime: input.options?.providerRuntime,
+        m10gMode: input.options?.m10gMode,
+        globalInferenceBudget: input.options?.globalInferenceBudget,
         choiceExecutionBudget: jobContext && resolvedChoiceDeadline ? {
           usedCalls: 0,
           maxCalls: 5,
@@ -1362,17 +1605,24 @@ async function generateNextPersonalizedChapterInner(
               storyId, chapterNumber, correlationId, attemptId: checkpointAttemptId,
               status: 'CHOICES_RETRY_WAIT', errorCode: 'CHECKPOINT_STATUS_UPDATE_FAILED', path: 'personalized',
             })
-            return { ok: false, reason: 'FAILED_REVIEW_REQUIRED', detail: { checkpointMutation: retryCheckpoint } }
+            return { ok: false, reason: 'TRANSIENT', detail: { checkpointMutation: retryCheckpoint } }
           }
         }
-        await releaseOwnLease()
         await d.recordGenerationAttempt({
           storyId,
           chapter: chapterNumber,
           outcome: 'REVIEW_REQUIRED',
           repairAttempts: result.attempts + choiceResult.repairAttempts,
-          findings: result.findings,
-        }).catch(() => undefined)
+          findings: choiceResult.validationFindings.map((finding) => ({
+            code: finding.code,
+            severity: finding.severity === 'ERROR' ? 'CRITICAL' : 'MAJOR',
+            message: finding.message,
+          })),
+          correlationId,
+          idempotencyKey: personalizedGenerationKey(storyId, chapterNumber, `review:choices:${checkpointAttemptId}`),
+          leaseId: leaseId ?? undefined,
+        })
+        await releaseOwnLease()
         return {
           ok: false,
           reason: choiceResult.reason === 'CHOICE_WORKFLOW_TIMEOUT'
@@ -1397,10 +1647,32 @@ async function generateNextPersonalizedChapterInner(
         ...branch.outcomes.flatMap((o) => o.consequence),
       ].flatMap(scanForLeaks)
       if (leakInChoices.length) {
+        const choiceLeakFinding: Finding = {
+          code: 'CHOICE_LEAK_REJECTED',
+          severity: 'CRITICAL',
+          message: 'Choice branch failed consumer-safe brand validation.',
+        }
+        await d.recordGenerationAttempt({
+          storyId,
+          chapter: chapterNumber,
+          outcome: 'REVIEW_REQUIRED',
+          repairAttempts: result.attempts + choiceResult.repairAttempts,
+          findings: [choiceLeakFinding],
+          correlationId,
+          idempotencyKey: personalizedGenerationKey(
+            storyId,
+            chapterNumber,
+            `review:choice_leak:${checkpointAttemptId}`,
+          ),
+          brandScanHash: createHash('sha256').update([...leakInChoices].sort().join('\n')).digest('hex'),
+          leaseId,
+        })
         await releaseOwnLease()
-        throw new Error(
-          `Kebocoran istilah internal pada cabang pilihan: ${leakInChoices.join(', ')}`,
-        )
+        return {
+          ok: false,
+          reason: 'FAILED_REVIEW_REQUIRED',
+          detail: { findings: [choiceLeakFinding], reason: 'CHOICE_LEAK_REJECTED' },
+        }
       }
 
       choicePrompt = branch.choicePrompt
@@ -1459,7 +1731,7 @@ async function generateNextPersonalizedChapterInner(
     }
 
     type LocalPublish =
-      | { ok: true; chapter_number: number; seq: number }
+      | { ok: true; chapter_number: number; seq: number; jobId?: string | null }
       | { ok: false; reason: 'CHAPTER_EXISTS' | 'LEASE_HELD' | 'FAILED_REVIEW_REQUIRED' | 'TRANSIENT' | 'CAPACITY_TIMEOUT' }
 
     let published: LocalPublish
@@ -1490,8 +1762,28 @@ async function generateNextPersonalizedChapterInner(
           endingLock: endingLock ? { key: endingLock.key, name: endingLock.name } : null,
           jobContext,
         })
-        published = { ok: true, chapter_number: v3.chapterNumber, seq: v3.seq }
+        published = {
+          ok: true,
+          chapter_number: v3.chapterNumber,
+          seq: v3.seq,
+          jobId: v3.jobId,
+        }
         if (!jobContext) await releaseOwnLease()
+        // C-R1 (reviewer 2026-08-08): post-publication lifecycle side-effects —
+        // G4 stale marking (NCS §4.2) + act-boundary reconciliation/ending
+        // reachability proof (NCS §1.2/§1.4). Runs AFTER canonical commit in
+        // both sync(V3)/worker(V5) modes. Bound latency: lifecycle failure/hang
+        // becomes reconciliation diagnostic, never publication failure.
+        await runBoundedPostPublicationLifecycle(
+          {
+            storyId,
+            chapterNumber,
+            contract,
+            correlationId,
+            jobId: jobContext?.jobId ?? null,
+          },
+          d.runPostPublicationLifecycle ?? runPostPublicationLifecycle,
+        )
       } catch (err) {
         throwIfAborted(jobContext?.signal)
         const classification = classifyGenerationPublicationError(err)
@@ -1543,6 +1835,7 @@ async function generateNextPersonalizedChapterInner(
           ok: true,
           chapter_number: fenced.chapterNumber,
           seq: fenced.seq,
+          jobId: fenced.jobId,
         }
       } catch (err) {
         throwIfAborted(jobContext.signal)
@@ -1586,6 +1879,14 @@ async function generateNextPersonalizedChapterInner(
         }
       } else {
         published = { ok: false, reason: legacy.reason }
+      }
+    }
+
+    if (published.ok && jobContext && published.jobId !== jobContext.jobId) {
+      return {
+        ok: false,
+        reason: 'LEASE_HELD',
+        detail: { reason: 'PUBLISHED_JOB_OWNERSHIP_MISMATCH' },
       }
     }
 

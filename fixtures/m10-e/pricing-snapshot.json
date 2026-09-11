@@ -1,0 +1,15 @@
+{
+  "provenance": "ASSUMPTION",
+  "authorityVersion": "M10_E_PRICING_SNAPSHOT_V1",
+  "pricingPolicyVersion": "pricing_v1",
+  "providerId": "provider_v1",
+  "exactModelId": "fixture_model_v1",
+  "currency": "IDR",
+  "inputPricePerUnit": "0.00000100",
+  "outputPricePerUnit": "0.00000200",
+  "unitSize": 1000,
+  "effectiveFrom": "2026-08-15T00:00:00.000Z",
+  "effectiveTo": null,
+  "decisionRef": "docs/superpowers/specs/2026-08-13-m10-e-e3a-e4-reliability-economics-design.md",
+  "canonicalHash": "de7a4bb8aa2812345a093523f03a6b4f358e772dba1ed84b7674b2fc68eba1d8"
+}

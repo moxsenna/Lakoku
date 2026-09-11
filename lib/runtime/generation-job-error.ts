@@ -117,20 +117,39 @@ export function adaptGenerationJobError(error: unknown): AdaptedGenerationJobErr
 
 export type GenerationPublicationErrorClassification =
   | { kind: 'chapter_exists'; code: 'CHAPTER_EXISTS' }
-  | { kind: 'ownership_lost'; code: 'GENERATION_JOB_OWNERSHIP_LOST' | 'LEASE_HELD' }
-  | { kind: 'transient'; code: 'INTERNAL_ERROR' }
-  | { kind: 'failed_review_required'; code: Exclude<GenerationJobErrorCode, 'INTERNAL_ERROR'> }
+  | {
+      kind: 'ownership_lost'
+      code: 'GENERATION_JOB_OWNERSHIP_LOST' | 'LEASE_HELD' | 'PROVENANCE_CONFLICT'
+    }
+  | {
+      kind: 'transient'
+      code: Exclude<
+        GenerationJobErrorCode,
+        | 'CHAPTER_EXISTS'
+        | 'GENERATION_JOB_OWNERSHIP_LOST'
+        | 'LEASE_HELD'
+        | 'PROVENANCE_CONFLICT'
+        | 'CONTRACT_CONFLICT'
+        | 'PLOT_DEBT_CONFLICT'
+      >
+    }
+  | { kind: 'failed_review_required'; code: 'CONTRACT_CONFLICT' | 'PLOT_DEBT_CONFLICT' }
 
 export function classifyGenerationPublicationError(
   error: unknown,
 ): GenerationPublicationErrorClassification {
   const adapted = adaptGenerationJobError(error)
-  if (!adapted || adapted.code === 'INTERNAL_ERROR') {
-    return { kind: 'transient', code: 'INTERNAL_ERROR' }
-  }
+  if (!adapted) return { kind: 'transient', code: 'INTERNAL_ERROR' }
   if (adapted.code === 'CHAPTER_EXISTS') return { kind: 'chapter_exists', code: adapted.code }
-  if (adapted.code === 'GENERATION_JOB_OWNERSHIP_LOST' || adapted.code === 'LEASE_HELD') {
+  if (
+    adapted.code === 'GENERATION_JOB_OWNERSHIP_LOST'
+    || adapted.code === 'LEASE_HELD'
+    || adapted.code === 'PROVENANCE_CONFLICT'
+  ) {
     return { kind: 'ownership_lost', code: adapted.code }
   }
-  return { kind: 'failed_review_required', code: adapted.code }
+  if (adapted.code === 'CONTRACT_CONFLICT' || adapted.code === 'PLOT_DEBT_CONFLICT') {
+    return { kind: 'failed_review_required', code: adapted.code }
+  }
+  return { kind: 'transient', code: adapted.code }
 }

@@ -28,6 +28,16 @@ export async function POST(req: Request) {
       idempotencyKey,
     })
 
+    if (result.pending) {
+      return NextResponse.json(
+        {
+          storyId: result.storyId,
+          pending: true,
+        },
+        { status: 202 },
+      )
+    }
+
     return NextResponse.json(
       {
         storyId: result.storyId,

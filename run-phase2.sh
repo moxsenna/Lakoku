@@ -79,6 +79,13 @@ pnpm exec vitest run --config vitest.config.ts \
     --maxWorkers=1 --testTimeout=1800000
 if [ $? -ne 0 ]; then echo "FAILED: Phase2C-E1-E2-narrative"; OVERALL_STATUS=1; fi
 
+# PHASE-2C(ii): Protected E1/E2 closure regression (manifest-bound, main lineage)
+echo "## PHASE-2C(ii): PROTECTED E1/E2 CLOSURE REGRESSION ##"
+pnpm exec vitest run --config vitest.config.ts \
+    tests/narrative-qa/m10-e-e1-e2-closure-regression.test.ts \
+    --maxWorkers=1 --testTimeout=1800000
+if [ $? -ne 0 ]; then echo "FAILED: Phase2C-E1-E2-closure"; OVERALL_STATUS=1; fi
+
 # Verify no tests were skipped (machine-readable: numPendingTests > 0 or numFailedTests > 0)
 VITEST_JSON="${TEMP:-${TMP:-.}}/m10-e-phase2c-${RANDOM}.json"
 if ! pnpm exec vitest run --config vitest.config.ts \
@@ -204,7 +211,6 @@ else
     echo "FAILED: Git diff --check found whitespace issues"
     OVERALL_STATUS=1
 fi
-
 echo ""
 echo "=========================================="
 echo "PHASE-2 FINAL SUMMARY"

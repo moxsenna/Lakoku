@@ -372,6 +372,59 @@ describe('generation job worker RPC adapters', () => {
     })
   })
 
+  it('V6 uses exact RPC name and V4 payload normalization', async () => {
+    const rpc = rpcResult({ ok: true, chapter_number: 2, seq: 8, jobId: JOB_ID })
+    const { publishGenerationJobChapterV6 } = await import('@/lib/runtime/generation-jobs')
+    const effect = { routeDelta: {}, flagUpdates: {}, inventoryAdd: [], inventoryRemove: [], relationshipDelta: {} }
+
+    await expect(publishGenerationJobChapterV6({
+      jobId: JOB_ID,
+      workerId: 'worker-a',
+      claimToken: CLAIM_TOKEN,
+      leaseId: LEASE_ID,
+      storyId: 'story-a',
+      chapterNumber: 2,
+      title: 'Bab Dua',
+      paragraphs: ['Paragraf pertama.'],
+      choicePrompt: 'Apa yang Maya lakukan sekarang?',
+      choices: [{ id: 'buka-arsip', label: 'Buka arsip banjir bersama jurnalis' }],
+      outcomes: [{
+        choiceId: 'buka-arsip',
+        consequence: ['Maya membuka arsip.'],
+        nextChapterNumber: 3,
+        isEnding: false,
+        effect,
+        choiceKind: 'normal',
+      }],
+      endingLock: null,
+      closures: [],
+    })).resolves.toEqual({ ok: true, chapterNumber: 2, seq: 8, jobId: JOB_ID })
+
+    expect(rpc).toHaveBeenCalledWith('publish_generation_job_chapter_v6', {
+      p_job_id: JOB_ID,
+      p_worker_id: 'worker-a',
+      p_claim_token: CLAIM_TOKEN,
+      p_lease_id: LEASE_ID,
+      p_story_id: 'story-a',
+      p_chapter_number: 2,
+      p_title: 'Bab Dua',
+      p_paragraphs: ['Paragraf pertama.'],
+      p_choice_prompt: 'Apa yang Maya lakukan sekarang?',
+      p_choices: [{ id: 'buka-arsip', label: 'Buka arsip banjir bersama jurnalis' }],
+      p_outcomes: [{
+        choiceId: 'buka-arsip',
+        consequence: ['Maya membuka arsip.'],
+        nextChapterNumber: 3,
+        isEnding: false,
+        effect_json: effect,
+        choice_kind: 'normal',
+      }],
+      p_ending_key: null,
+      p_ending_name: null,
+      p_closures: [],
+    })
+  })
+
   it('V4 serializes internal outcomes to publish_chapter_v2 SQL shape', async () => {
     const rpc = rpcResult({ ok: true, chapter_number: 2, seq: 8, jobId: JOB_ID })
     const { publishGenerationJobChapterV4 } = await import('@/lib/runtime/generation-jobs')

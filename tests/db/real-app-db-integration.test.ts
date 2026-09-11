@@ -4,6 +4,20 @@ import { describe, expect, it, beforeAll, afterAll, beforeEach, vi } from 'vites
 
 vi.mock('server-only', () => ({}))
 
+const { continuationCalls } = vi.hoisted(() => ({
+  continuationCalls: [] as Array<{ jobId?: string; storyId: string; chapterNumber: number }>,
+}))
+
+vi.mock('@/lib/api/generation-continuation.server', () => ({
+  CONTINUATION_WAIT_MS: 25_000,
+  continuationJobKey: (storyId: string, chapterNumber: number) => `${storyId}:${chapterNumber}`,
+  continuePersonalizedGeneration: async (input: { jobId?: string; storyId: string; chapterNumber: number }) => {
+    continuationCalls.push(input)
+    return { nextChapterReady: false }
+  },
+  continueStandardGeneration: async () => ({ nextChapterReady: false }),
+}))
+
 const userId = '88888888-8888-4888-8888-888888888888'
 
 function getLocalStatus() {
@@ -31,7 +45,7 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = status.key
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { applyPersonalizedChoice } from '@/lib/api/personalized-choice.server'
-import { createPersonalizedStory, PersonalizedStoryError } from '@/lib/api/personalized-stories.server'
+import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
 import { clonePremiumStoryForUser, PremiumCloneError } from '@/lib/api/premium-clone.server'
 import * as aiGatewayModule from '@lakoku/ai-gateway/server'
 import * as contractGenModule from '@/lib/story-engine/contract-generation.server'
@@ -71,11 +85,14 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
 
     // 1. Cleanup test fixtures
     await admin.from('commercial_generation_intents').delete().eq('user_id', userId)
+    await admin.from('generation_leases').delete().eq('story_id', storyId)
     await admin.from('reader_states').delete().eq('user_id', userId)
     await admin.from('choice_outcomes').delete().eq('story_id', storyId)
     await admin.from('chapters').delete().eq('story_id', storyId)
     await admin.from('stories').delete().eq('owner_user_id', userId)
     await admin.from('story_creation_requests').delete().eq('owner_user_id', userId)
+    await admin.from('generation_jobs').delete().eq('user_id', userId)
+    await admin.from('credit_reservations').delete().eq('user_id', userId)
     await admin.from('account_commercial_states').delete().eq('user_id', userId)
 
     // Ensure template story exists for premium clone test
@@ -136,11 +153,14 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
     generateNextPersonalizedChapterSpy?.mockRestore()
     // Cleanup after test
     await admin.from('commercial_generation_intents').delete().eq('user_id', userId)
+    await admin.from('generation_leases').delete().eq('story_id', storyId)
     await admin.from('reader_states').delete().eq('user_id', userId)
     await admin.from('choice_outcomes').delete().eq('story_id', storyId)
     await admin.from('chapters').delete().eq('story_id', storyId)
     await admin.from('stories').delete().eq('owner_user_id', userId)
     await admin.from('story_creation_requests').delete().eq('owner_user_id', userId)
+    await admin.from('generation_jobs').delete().eq('user_id', userId)
+    await admin.from('credit_reservations').delete().eq('user_id', userId)
     await admin.from('account_commercial_states').delete().eq('user_id', userId)
   })
 
@@ -148,6 +168,7 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
     selectProviderSpy?.mockClear()
     createResilientStoryContractSpy?.mockClear()
     generateNextPersonalizedChapterSpy?.mockClear()
+    continuationCalls.length = 0
   })
 
   it('applyPersonalizedChoice application TS wrapper executes 9-arg apply_personalized_choice_v2 against real local Postgres DB', async () => {
@@ -269,7 +290,7 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
     expect(replayResult.replayed).toBe(true)
   })
 
-  it('createPersonalizedStory Story #2 application orchestration: shell created with NULL origin -> reserve_story_start_v1 updates origin to PENDING_PAID_START -> stops with COMMERCIAL_RUNTIME_NOT_READY (0 provider calls)', async () => {
+  it('createPersonalizedStory Story #2 application orchestration: shell created with NULL origin -> reserve_story_start_v1 updates origin to PENDING_PAID_START -> queues exact Bab 1 job (job-authoritative, no legacy generation)', async () => {
     // 1. Mark user as having claimed a DIFFERENT starter story
     const { error: upsertErr } = await admin.from('account_commercial_states').upsert({
       user_id: userId,
@@ -279,7 +300,7 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
     })
     expect(upsertErr).toBeNull()
 
-    // 2. Grant credits
+    // 2. Grant credits (sufficient for STORY_START quote)
     const { data: gData, error: gErr } = await admin.rpc('grant_credits_v1', {
       p_user_id: userId,
       p_ref: `ref-test-grant-story2-${Date.now()}`,
@@ -291,36 +312,27 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
 
     const idempotencyKey = `p2-app-key-${Date.now()}`
 
-    // 3. Invoke application creation function
-    let errToVerify: unknown
-    try {
-      await createPersonalizedStory({
-        userId,
-        idempotencyKey,
-      })
-    } catch (err) {
-      errToVerify = err
-    }
+    // 3. Invoke application creation function: commercial flow proceeds via exact queued job
+    const result = await createPersonalizedStory({
+      userId,
+      idempotencyKey,
+    })
 
-    expect(selectProviderSpy).toHaveBeenCalledTimes(0)
-    expect(createResilientStoryContractSpy).toHaveBeenCalledTimes(0)
-    expect(generateNextPersonalizedChapterSpy).toHaveBeenCalledTimes(0)
+    // Pending until the claimed job publishes Bab 1
+    expect(result.storyId).toBeDefined()
+    expect(result.pending).toBe(true)
+    const createdStoryId = result.storyId
 
-    expect(errToVerify).toBeInstanceOf(PersonalizedStoryError)
-    const pErr = errToVerify as PersonalizedStoryError
-    expect(pErr.code).toBe('COMMERCIAL_RUNTIME_NOT_READY')
-    const createdStoryId = pErr.storyId
-    expect(createdStoryId).toBeDefined()
-
-    // 4. Verify DB creation request remains RESERVED
+    // 4. Verify DB creation request remains RESERVED and is bound to the canonical job
     const { data: reqRow } = await admin
       .from('story_creation_requests')
-      .select('status')
+      .select('status, generation_job_id')
       .eq('owner_user_id', userId)
       .eq('idempotency_key', idempotencyKey)
       .single()
 
     expect(reqRow?.status).toBe('RESERVED')
+    expect(reqRow?.generation_job_id).toBeTruthy()
 
     // 5. Verify DB story row was transitioned to PENDING_PAID_START by reserve_story_start_v1
     const { data: transitionedStory } = await admin
@@ -331,22 +343,66 @@ describe.skipIf(!process.env.LAKOKU_LOCAL_DB_TEST)('Real Application -> Local DB
 
     expect(transitionedStory?.commercial_origin).toBe('PENDING_PAID_START')
 
-    // 6. Replay with same idempotency key returns same story ID and stops cleanly (0 provider calls)
-    let replayErr: unknown
-    try {
-      await createPersonalizedStory({
-        userId,
-        idempotencyKey,
-      })
-    } catch (err) {
-      replayErr = err
-    }
-    expect(replayErr).toBeInstanceOf(PersonalizedStoryError)
-    expect((replayErr as PersonalizedStoryError).storyId).toBe(createdStoryId)
+    // 6. Exactly one canonical Bab 1 generation job, bound to the request
+    const { data: jobRows } = await admin
+      .from('generation_jobs')
+      .select('id, chapter_number, status')
+      .eq('user_id', userId)
+      .eq('story_id', createdStoryId)
+      .eq('chapter_number', 1)
 
-    expect(selectProviderSpy).toHaveBeenCalledTimes(0)
-    expect(createResilientStoryContractSpy).toHaveBeenCalledTimes(0)
+    expect(jobRows).toHaveLength(1)
+    expect(jobRows?.[0].id).toBe(reqRow?.generation_job_id)
+
+    // 7. Continuation was kicked with the EXACT queued jobId (job-authoritative wiring)
+    expect(continuationCalls).toHaveLength(1)
+    expect(continuationCalls[0]?.jobId).toBe(reqRow?.generation_job_id)
+    expect(continuationCalls[0]?.storyId).toBe(createdStoryId)
+
+    // 8. Exactly one ACTIVE STORY_START reservation for the quoted amount
+    const { data: reservationRows } = await admin
+      .from('credit_reservations')
+      .select('status, amount, reservation_kind')
+      .eq('user_id', userId)
+      .eq('story_id', createdStoryId)
+      .eq('reservation_kind', 'STORY_START')
+
+    expect(reservationRows).toHaveLength(1)
+    expect(reservationRows?.[0].status).toBe('ACTIVE')
+    expect(reservationRows?.[0].amount).toBe(24)
+
+    // 9. Commercial path must NOT fall into legacy generation
     expect(generateNextPersonalizedChapterSpy).toHaveBeenCalledTimes(0)
+
+    // 10. Contract created through the real pipeline; provider selected only for contract
+    expect(createResilientStoryContractSpy).toHaveBeenCalledTimes(1)
+    expect(selectProviderSpy).toHaveBeenCalledTimes(1)
+
+    // 11. Replay with same idempotency key returns same story ID and re-kicks the SAME job
+    const replayResult = await createPersonalizedStory({
+      userId,
+      idempotencyKey,
+    })
+    expect(replayResult.storyId).toBe(createdStoryId)
+
+    const { data: replayJobs } = await admin
+      .from('generation_jobs')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('story_id', createdStoryId)
+      .eq('chapter_number', 1)
+    expect(replayJobs).toHaveLength(1)
+
+    const { data: replayReservations } = await admin
+      .from('credit_reservations')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('story_id', createdStoryId)
+      .eq('reservation_kind', 'STORY_START')
+    expect(replayReservations).toHaveLength(1)
+
+    expect(continuationCalls).toHaveLength(2)
+    expect(continuationCalls[1]?.jobId).toBe(reqRow?.generation_job_id)
   })
 
   it('clonePremiumStoryForUser Story #2 application orchestration: shell target created -> reserve_story_start_v1 updates origin to PENDING_PAID_START -> stops with COMMERCIAL_RUNTIME_NOT_READY (0 provider calls)', async () => {

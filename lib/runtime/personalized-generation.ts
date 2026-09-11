@@ -1806,7 +1806,7 @@ async function generateNextPersonalizedChapterInner(
         }
       }
     } else if (jobContext) {
-      const { publishGenerationJobChapterV4 } = await import('@/lib/runtime/generation-jobs')
+      const { publishGenerationJobChapterV6 } = await import('@/lib/runtime/generation-jobs')
       const endingLock = chapterNumber === ENDING_LOCK_CHAPTER
         ? lockWrittenThisTurn ?? ending ?? d.resolveEnding({
             routeState,
@@ -1816,7 +1816,7 @@ async function generateNextPersonalizedChapterInner(
           })
         : null
       try {
-        const fenced = await publishGenerationJobChapterV4({
+        const fenced = await publishGenerationJobChapterV6({
           jobId: jobContext.jobId,
           workerId: jobContext.workerId,
           claimToken: jobContext.claimToken,

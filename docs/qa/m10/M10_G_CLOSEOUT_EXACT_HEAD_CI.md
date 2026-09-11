@@ -315,3 +315,30 @@ selesai. Ruang lingkup akar sama dengan `BLOCKED_PRICING_AUTHORITY_MISSING`.
 
 Supabase lokal tidak tersedia (Docker daemon mati); 4 test integration
 tetap gagal karena lingkungan, bukan kode.
+
+### CI-2c — ditemukan dan diperbaiki (guard AST maxRetries)
+
+Menjalankan rantai smoke penuh pertama kali mengungkap kegagalan yang sebelumnya
+tersembunyi di balik kegagalan lebih dini: `smoke:admin-generation-observability`
+(guard AST "hidden SDK retries disabled") menolak `maxRetries: runtime.maxRetries`
+pada dua situs streamText writer M10-F V2 (`gateway-provider.ts:445,627`).
+Nilai runtime-nya adalah konstanta beku `PRODUCTION_CHAPTER_WRITER_MAX_RETRIES = 0`
+(dengan guard `!== 0` di jalur flagship), sehingga mengganti dengan literal `0`
+identik secara semantik dan memenuhi invariant. 28/28 skrip smoke kini lulus.
+
+### CI-4 — akar sebenarnya: proyek vitest berjalan paralel
+
+`groupOrder` hanya mengurutkan antar-file DI DALAM satu proyek; vitest 4 tetap
+menjalankan tiga proyek secara konkuren. Bukti: `m10-e-reliability-fixture`
+membengkak ke 828s dan `counted-comparison` gagal pada assertion yang hijau saat
+terisolasi. `test:unit` kini merangkai tiga proyek sebagai sekuens nyata
+(`--project heavy && --project unit && --project contention-sensitive`), plus
+timeout proyek unit 20s. Rantai penuh berurutan selesai ±15 menit.
+
+### Status gate akhir (unlazy ledger `.unlazy/launch/GATES.md`)
+
+13/15 gate TERPENUHI dengan bukti terukur; 2 gate di-ABANDON sebagai handoff
+(G12 deploy VPS — akses SSH hanya milik user; G13 soft launch — proses nyata
+butuh pengguna dan keputusan go PM). Fail-closed tetap bekerja: satu-satunya
+kegagalan unit yang tersisa adalah `m10-e2-telemetry-reference` (CI-1b, tercatat
+terbuka, diperbolehkan eksplisit di allowlist gate dengan referensi tiket).

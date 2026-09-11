@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SEMANTIC_JUDGE_UNAVAILABLE } from '@/lib/ai-gateway/semantic-continuation-judge'
 import { GlobalInferenceBudgetError } from '@/lib/ai-gateway/global-inference-budget.contract'
+import { E0CostGuardError } from '@/lib/ai-gateway/e0-cost-guard'
 
 const mocks = vi.hoisted(() => ({
   claimGenerationJob: vi.fn(),
@@ -261,6 +262,28 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
         outcome: 'FAILED',
         availableAt: null,
         errorCode: code,
+        errorClass: 'TERMINAL',
+        retryDecision: 'FAILED',
+      }),
+    )
+  })
+
+  it('E0 measured-cost ceiling breach is terminal and never redispatched', async () => {
+    mocks.runChapterGenerationAttempt.mockRejectedValueOnce(
+      new E0CostGuardError('E0_CHAPTER_COST_CEILING_EXCEEDED', 'chapter test measured cost exceeds E0 chapter ceiling'),
+    )
+    const { runAlreadyClaimedGenerationJob } = await import('@/lib/runtime/generation-worker')
+
+    await expect(runAlreadyClaimedGenerationJob(JOB)).resolves.toMatchObject({
+      ok: false,
+      outcome: 'FAILED',
+      reason: 'E0_CHAPTER_COST_CEILING_EXCEEDED',
+    })
+    expect(mocks.finishAttemptAndFinalizeIfTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'FAILED',
+        availableAt: null,
+        errorCode: 'E0_CHAPTER_COST_CEILING_EXCEEDED',
         errorClass: 'TERMINAL',
         retryDecision: 'FAILED',
       }),

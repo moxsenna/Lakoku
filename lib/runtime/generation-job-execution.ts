@@ -138,6 +138,10 @@ const TERMINAL_REASONS = new Set([
   'CHOICE_PARENT_CANCELLED',
   'M10G_GLOBAL_INFERENCE_BUDGET_REQUIRED',
   'M10G_GLOBAL_INFERENCE_BUDGET_EXHAUSTED',
+  // E0 measured-cost ceilings: retrying into an exceeded ceiling would keep
+  // burning budget, so the attempt is terminal exactly like budget exhaustion.
+  'E0_CHAPTER_COST_CEILING_EXCEEDED',
+  'E0_PROCESS_COST_CEILING_EXCEEDED',
 ])
 
 export function isRetryableGenerationReason(reason: string): boolean {

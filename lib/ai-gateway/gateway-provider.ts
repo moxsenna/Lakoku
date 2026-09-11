@@ -442,7 +442,7 @@ async function generateProseWithLengthRepairV1(args: {
           temperature: args.route?.temperature ?? undefined,
           maxOutputTokens: runtime.maxOutputTokens,
           abortSignal: providerAbortSignal(options.signal, runtime.timeoutMs),
-          maxRetries: runtime.maxRetries,
+          maxRetries: 0, // PRODUCTION_CHAPTER_WRITER_MAX_RETRIES; AST guard requires the literal.
         }),
       ),
       observeCompletion: options.observeModelCall
@@ -624,7 +624,7 @@ async function generateProse(args: {
                 temperature: args.route?.temperature ?? undefined,
                 maxOutputTokens: runtime.maxOutputTokens,
                 abortSignal: providerAbortSignal(args.options.signal, runtime.timeoutMs),
-                maxRetries: runtime.maxRetries,
+                maxRetries: 0, // PRODUCTION_CHAPTER_WRITER_MAX_RETRIES; AST guard requires the literal.
               }),
             ),
             observeCompletion: args.options.observeModelCall

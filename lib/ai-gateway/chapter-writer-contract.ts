@@ -29,7 +29,10 @@ export function resolveProductionChapterWriterRuntime(args: Readonly<{
 }>): ProductionChapterWriterRuntime {
   const maxOutputTokens = args.routeMax ?? DEFAULT_PRODUCTION_CHAPTER_WRITER_MAX_OUTPUT_TOKENS
   const identity = `${args.label} ${args.modelId ?? ''}`.toLowerCase()
-  const usesAntigravity = identity.includes('ag/') || identity.includes('antigravity')
+  const usesAntigravity =
+    identity.includes('ag/') ||
+    identity.includes('antigravity') ||
+    identity.includes('gweb/')
 
   return {
     timeoutMs: PRODUCTION_CHAPTER_WRITER_TIMEOUT_MS,

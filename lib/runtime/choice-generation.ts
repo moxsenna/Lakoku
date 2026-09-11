@@ -8,7 +8,7 @@ import type {
   ChoiceBranch,
   ChoiceInput,
 } from '@lakoku/ai-gateway'
-import type { GenerationProvider } from '@lakoku/ai-gateway'
+import { isGlobalInferenceBudgetError, type GenerationProvider } from '@lakoku/ai-gateway'
 import type { ChapterBrief, ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
 import type { RouteState } from '@/lib/story-engine/route-state'
 import {
@@ -100,6 +100,8 @@ export interface ChoiceBuildDeps {
       choicePerCandidateTimeoutMs?: number
       choiceMaxCandidates?: number
       providerRuntime?: import('@/lib/ai-gateway/provider').ProviderRuntime
+      m10gMode?: boolean
+      globalInferenceBudget?: import('@/lib/ai-gateway/global-inference-budget.contract').GlobalInferenceBudget
     },
   ) => Promise<ChoiceBranch | null>
   /** Optional repair function — placeholder/no-op in Phase 1. */
@@ -117,6 +119,8 @@ export interface ChoiceBuildDeps {
       choicePerCandidateTimeoutMs?: number
       choiceMaxCandidates?: number
       providerRuntime?: import('@/lib/ai-gateway/provider').ProviderRuntime
+      m10gMode?: boolean
+      globalInferenceBudget?: import('@/lib/ai-gateway/global-inference-budget.contract').GlobalInferenceBudget
     },
   ) => Promise<ChoiceBranch | null>
   telemetry?: {
@@ -162,6 +166,8 @@ export interface BuildChoiceBranchInput {
   /** Shared workflow budget; built from canonical worker deadline when omitted. */
   choiceExecutionBudget?: ChoiceExecutionBudget
   providerRuntime?: import('@/lib/ai-gateway/provider').ProviderRuntime
+  m10gMode?: boolean
+  globalInferenceBudget?: import('@/lib/ai-gateway/global-inference-budget.contract').GlobalInferenceBudget
   /** Override total chapters (defaults to narrative-core TOTAL_CHAPTERS). */
   totalChapters?: number
   activeCharacters?: Array<{ id: string; name: string }>
@@ -375,6 +381,10 @@ export async function buildChoiceBranch(
         ...(input.providerRuntime === undefined
           ? {}
           : { providerRuntime: input.providerRuntime }),
+        ...(input.m10gMode === undefined ? {} : { m10gMode: input.m10gMode }),
+        ...(input.globalInferenceBudget === undefined
+          ? {}
+          : { globalInferenceBudget: input.globalInferenceBudget }),
       })
 
     // Build a findings-aware repair input (creative/structural guidance only;
@@ -433,6 +443,7 @@ export async function buildChoiceBranch(
         syncUsedCalls()
       } catch (err) {
         syncUsedCalls()
+        if (isGlobalInferenceBudgetError(err)) throw err
         const workflowReason = workflowFailureReason(err)
         if (workflowReason) {
           lastReason = workflowReason
@@ -536,6 +547,13 @@ export async function buildChoiceBranch(
                   choiceDeadlineSource: choiceBudget.deadlineSource,
                   choicePerCandidateTimeoutMs: choiceBudget.perCandidateTimeoutMs,
                   choiceMaxCandidates: choiceBudget.maxCandidates,
+                  ...(input.providerRuntime === undefined
+                    ? {}
+                    : { providerRuntime: input.providerRuntime }),
+                  ...(input.m10gMode === undefined ? {} : { m10gMode: input.m10gMode }),
+                  ...(input.globalInferenceBudget === undefined
+                    ? {}
+                    : { globalInferenceBudget: input.globalInferenceBudget }),
                 },
               )
               syncUsedCalls()
@@ -557,6 +575,7 @@ export async function buildChoiceBranch(
               }
             } catch (err) {
               syncUsedCalls()
+              if (isGlobalInferenceBudgetError(err)) throw err
               const workflowReason = workflowFailureReason(err)
               if (workflowReason) {
                 lastReason = workflowReason
@@ -623,6 +642,7 @@ export async function buildChoiceBranch(
       cause: lastCause,
     }
   } catch (err) {
+    if (isGlobalInferenceBudgetError(err)) throw err
     const reason: ChoiceBuildFailureReason = input.signal?.aborted
       ? 'CHOICE_PARENT_CANCELLED'
       : err && typeof err === 'object' && 'code' in err

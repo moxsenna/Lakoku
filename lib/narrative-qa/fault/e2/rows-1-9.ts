@@ -86,6 +86,7 @@ export async function proveMalformedChoicesOutput(input: ObservedChoiceProbe): P
   const trace: CandidateDescriptor[] = []
   const externalCalls = createExternalCallAuthority()
   const transport: ProviderCandidateTransport = (candidate) => {
+    if (candidate.kind === 'semantic') throw new Error('SEMANTIC_CANDIDATE_UNEXPECTED')
     trace.push({
       kind: candidate.kind,
       providerId: candidate.providerId,
@@ -117,6 +118,7 @@ export async function proveProviderFallbackSucceeds(input: ObservedChoiceProbe):
   const trace: CandidateDescriptor[] = []
   const externalCalls = createExternalCallAuthority()
   const transport: ProviderCandidateTransport = (candidate) => {
+    if (candidate.kind === 'semantic') throw new Error('SEMANTIC_CANDIDATE_UNEXPECTED')
     trace.push({
       kind: candidate.kind,
       providerId: candidate.providerId,

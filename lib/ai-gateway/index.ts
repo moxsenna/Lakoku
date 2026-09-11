@@ -13,6 +13,7 @@
 export * from './schemas'
 export * from './choice-draft-v2'
 export * from './provider'
+export * from './global-inference-budget.contract'
 export * from './gateway'
 export * from './generate'
 export * from './chapter-writer-contract'

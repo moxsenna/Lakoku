@@ -7,8 +7,9 @@ import type { StoryContract } from '@/lib/story-engine/story-contract'
 import type { BuildChapterBriefInput, ChapterBrief, ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
 import { normalizeRouteState } from '@/lib/story-engine/route-state'
 import type { ChoiceBranch, ChapterDraftParsed } from '@/lib/ai-gateway/schemas'
-import type { GenerationProvider } from '@/lib/ai-gateway/provider'
+import type { GenerationProvider, ModelCallExecutionOptions } from '@/lib/ai-gateway/provider'
 import type { GenerationResult } from '@/lib/ai-gateway/generate'
+import { createGlobalInferenceBudget } from '@/lib/ai-gateway/global-inference-budget.contract'
 import type { PublishChapterV2Input, PublishResult } from '@/lib/runtime/lifecycle'
 import type { RealGenerateResult } from '@/lib/runtime/story-generation'
 import {
@@ -509,7 +510,11 @@ function makeDeps(options: {
     assertConsumerSafe: vi.fn(() => {
       push('assertConsumerSafe')
     }),
-    generateChoiceBranch: vi.fn(async () => {
+    generateChoiceBranch: vi.fn(async (
+      _provider: unknown,
+      _input: unknown,
+      _options?: ModelCallExecutionOptions,
+    ) => {
       push('choices')
       capture.choiceCalls += 1
       if (options.choiceResults) {
@@ -765,6 +770,60 @@ describe('generateNextPersonalizedChapter', () => {
     }
     expect(generationArgs.executionOptions?.writerLengthRepairV1).toEqual({ enabled: true })
     expect(generationArgs.executionOptions?.observeWriterLengthRepair).toBeTypeOf('function')
+  })
+
+  it('fails M10-G before admission, lease, or provider work without frozen lease authority', async () => {
+    const budget = createGlobalInferenceBudget({ runId: 'm10g-missing-ttl', hardLimit: 2 })
+    const { deps } = makeDeps({ chapterNumber: 12, lockedEndingKey: null })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await expect(generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      chapterNumber: 12,
+      correlationId: CORRELATION_ID,
+      options: {
+        m10gMode: true,
+        globalInferenceBudget: budget,
+      },
+    }, deps)).rejects.toThrow('M10G_G1_GENERATION_POLICY_AUTHORITY_UNBOUND')
+
+    expect(deps.acquireGenerationLease).not.toHaveBeenCalled()
+    expect(deps.selectProvider).not.toHaveBeenCalled()
+    expect(deps.generateChapter).not.toHaveBeenCalled()
+  })
+
+  it('passes same run-level budget reference to prose and choice stages', async () => {
+    const budget = createGlobalInferenceBudget({ runId: 'm10g-propagation', hardLimit: 2 })
+    const providerRuntime = { candidateTransport: vi.fn() }
+    const { deps } = makeDeps({ chapterNumber: 12, lockedEndingKey: null })
+    const { generateNextPersonalizedChapter } = await import('@/lib/runtime/personalized-generation')
+
+    await generateNextPersonalizedChapter({
+      storyId: STORY_A,
+      userId: USER_A,
+      chapterNumber: 12,
+      correlationId: CORRELATION_ID,
+      options: {
+        m10gMode: true,
+        globalInferenceBudget: budget,
+        providerRuntime,
+        m10gFrozenLeaseTtlSeconds: 300,
+      },
+    }, deps)
+
+    const generationArgs = deps.generateChapter.mock.calls[0]?.[1] as {
+      executionOptions?: Record<string, unknown>
+    }
+    expect(deps.generateChoiceBranch).toHaveBeenCalledTimes(1)
+    const choiceOptions = deps.generateChoiceBranch.mock.calls[0]?.[2]
+    if (!choiceOptions) throw new Error('Expected choice execution options.')
+
+    expect(generationArgs.executionOptions).toMatchObject({ m10gMode: true, providerRuntime })
+    expect(generationArgs.executionOptions?.globalInferenceBudget).toBe(budget)
+    expect(choiceOptions).toMatchObject({ m10gMode: true, providerRuntime })
+    expect(choiceOptions.globalInferenceBudget).toBe(budget)
+    expect(budget.consumed).toBe(0)
   })
 
   it('repair throw cannot checkpoint, generate choices, publish, or advance reader', async () => {

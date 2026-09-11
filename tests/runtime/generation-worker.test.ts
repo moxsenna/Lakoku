@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SEMANTIC_JUDGE_UNAVAILABLE } from '@/lib/ai-gateway/semantic-continuation-judge'
+import { GlobalInferenceBudgetError } from '@/lib/ai-gateway/global-inference-budget.contract'
 
 const mocks = vi.hoisted(() => ({
   claimGenerationJob: vi.fn(),
@@ -237,6 +238,31 @@ describe('executeClaimedJob heartbeat/abort/ownership', () => {
         outcome: 'RETRY_WAIT',
         errorCode: SEMANTIC_JUDGE_UNAVAILABLE,
         errorClass: 'RETRYABLE',
+      }),
+    )
+  })
+
+  it.each([
+    'M10G_GLOBAL_INFERENCE_BUDGET_REQUIRED',
+    'M10G_GLOBAL_INFERENCE_BUDGET_EXHAUSTED',
+  ] as const)('%s is terminal and never redispatched', async (code) => {
+    mocks.runChapterGenerationAttempt.mockRejectedValueOnce(new GlobalInferenceBudgetError(code))
+    const { runAlreadyClaimedGenerationJob } = await import('@/lib/runtime/generation-worker')
+
+    await expect(runAlreadyClaimedGenerationJob(JOB)).resolves.toMatchObject({
+      ok: false,
+      outcome: 'FAILED',
+      reason: code,
+    })
+    expect(mocks.runChapterGenerationAttempt).toHaveBeenCalledTimes(1)
+    expect(mocks.finishGenerationJobAttempt).toHaveBeenCalledTimes(1)
+    expect(mocks.finishGenerationJobAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'FAILED',
+        availableAt: null,
+        errorCode: code,
+        errorClass: 'TERMINAL',
+        retryDecision: 'FAILED',
       }),
     )
   })

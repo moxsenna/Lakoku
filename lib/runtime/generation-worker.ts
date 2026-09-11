@@ -29,6 +29,7 @@ import { resolveGenerationLeaseTtlSeconds } from '@/lib/runtime/generation-lease
 import { runChapterGenerationAttempt } from '@/lib/runtime/generation-mode'
 import { safeErrorInfo } from '@/lib/observability/safe-error'
 import {
+  isGlobalInferenceBudgetError,
   isSemanticJudgeUnavailableError,
   SEMANTIC_JUDGE_UNAVAILABLE,
 } from '@lakoku/ai-gateway'
@@ -299,9 +300,11 @@ export async function executeClaimedJob(
       // its own reason so telemetry/retry classification is exact, not generic.
       dispatchResult = {
         ok: false,
-        reason: isSemanticJudgeUnavailableError(err)
-          ? SEMANTIC_JUDGE_UNAVAILABLE
-          : 'GENERATOR_EXCEPTION',
+        reason: isGlobalInferenceBudgetError(err)
+          ? err.code
+          : isSemanticJudgeUnavailableError(err)
+            ? SEMANTIC_JUDGE_UNAVAILABLE
+            : 'GENERATOR_EXCEPTION',
       }
     }
 

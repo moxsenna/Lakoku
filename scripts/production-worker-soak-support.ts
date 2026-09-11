@@ -44,6 +44,7 @@ export function createProgrammableCandidateTransport(
 ): ProviderCandidateTransport {
   const offsets = { prose: 0, choice: 0 }
   return (candidate) => {
+    if (candidate.kind === 'semantic') throw new Error('PROGRAMMED_SEMANTIC_UNSUPPORTED')
     const sequence = script[candidate.kind === 'choice' ? 'choices' : 'prose']
     const offset = offsets[candidate.kind]
     offsets[candidate.kind] += 1
@@ -311,6 +312,7 @@ export function createScenarioRegistry(runId: string, metadataLimit: number, art
       const state = states.get(key(storyId, jobId))
       if (!state) throw new Error('scenario not found')
       return (candidate) => {
+        if (candidate.kind === 'semantic') throw new Error('PROGRAMMED_SEMANTIC_UNSUPPORTED')
         const phase = candidate.kind
         const sequence = state.script[phase === 'choice' ? 'choices' : 'prose']
         const offset = state.cursor[phase]++

@@ -19,10 +19,10 @@ import {
   type ModelCallExecutionOptions,
   type GenerationRuntimePolicy,
   type ProviderCandidateKind,
-  type ProviderRuntime,
   DEFAULT_RUNTIME_POLICY,
 } from './provider'
 import { GatewayError, scanForLeaks } from './gateway'
+import { GlobalInferenceBudgetError } from './global-inference-budget.contract'
 import { buildChoiceSystemPromptV2, AiChoiceDraftSchema } from './choice-draft-v2'
 import { clampChapterParagraphs, countParagraphWords } from '@/lib/prose/clamp-chapter-prose'
 import {
@@ -101,7 +101,7 @@ const DEFAULT_PROSE_MAX_OUTPUT_TOKENS = 2048
 
 function isAntigravityModelLabel(label: string, modelId?: string): boolean {
   const identity = `${label} ${modelId ?? ''}`.toLowerCase()
-  return identity.includes('ag/') || identity.includes('antigravity')
+  return identity.includes('ag/') || identity.includes('antigravity') || identity.includes('gweb/')
 }
 
 function resolveMaxOutputTokens(args: {
@@ -130,12 +130,23 @@ type ModelCandidate = {
 type UnindexedModelCandidate = Omit<ModelCandidate, 'fallbackIndex'>
 
 function executeCandidate<T>(
-  runtime: ProviderRuntime | undefined,
+  options: ModelCallExecutionOptions,
   kind: ProviderCandidateKind,
   candidate: ModelCandidate,
   execute: () => T,
 ): T {
-  const transport = runtime?.candidateTransport
+  const budget = options.globalInferenceBudget
+  if (options.m10gMode && !budget) {
+    throw new GlobalInferenceBudgetError('M10G_GLOBAL_INFERENCE_BUDGET_REQUIRED')
+  }
+  budget?.reserve(kind, {
+    workflowPhase: options.workflowPhase,
+    providerId: candidate.providerId,
+    modelId: candidate.configuredModelId,
+    fallbackIndex: candidate.fallbackIndex,
+  })
+
+  const transport = options.providerRuntime?.candidateTransport
   if (!transport) return execute()
   return transport({
     kind,
@@ -322,16 +333,26 @@ function finalizeModelChain(candidates: UnindexedModelCandidate[]): ModelCandida
 }
 
 /** DB route lebih dulu, lalu env/code fallback; indeks mengikuti chain final. */
-function resolveModelChain(optModel?: string, route?: AiModelRoute): ModelCandidate[] {
+function resolveModelChain(
+  optModel?: string,
+  route?: AiModelRoute,
+  exactRouteOnly: boolean = false,
+): ModelCandidate[] {
+  const routeCandidates = route ? routeModelCandidates(route) : []
+  if (exactRouteOnly) {
+    if (!route) throw new Error('EXACT_MODEL_ROUTE_REQUIRED')
+    return finalizeModelChain(routeCandidates)
+  }
   const effort = route?.reasoningEffort ?? null
   const envCandidates = resolveEnvModelCandidates(optModel, effort)
-  const routeCandidates = route ? routeModelCandidates(route) : []
   return finalizeModelChain([...routeCandidates, ...envCandidates])
 }
 
 type ProseModel = {
   /** Model gateway, mis. "openai/gpt-4.1-mini". */
   model?: string
+  /** Frozen proof topology: use only explicit route candidates, never env/code additions. */
+  exactRouteOnly?: boolean
 }
 
 function countWords(paragraphs: string[]): number {
@@ -411,7 +432,7 @@ async function generateProseWithLengthRepairV1(args: {
       useCase: 'chapter_prose',
       workflowPhase,
       call: () => executeCandidate(
-        options.providerRuntime,
+        options,
         'prose',
         candidate,
         () => streamText({
@@ -584,7 +605,9 @@ async function generateProse(args: {
             useCase: 'chapter_prose',
             workflowPhase,
             call: () => executeCandidate(
-              args.options.providerRuntime,
+              workflowPhase === args.options.workflowPhase
+                ? args.options
+                : { ...args.options, workflowPhase },
               'prose',
               candidate,
               () => streamText({
@@ -664,14 +687,16 @@ async function generateProse(args: {
         } catch (error) {
           lastError = error
           if (args.options.signal?.aborted) throw args.options.signal.reason ?? error
-          if (isAbortError(error) || error instanceof WriterCompletenessError) throw error
+          if (isAbortError(error) || error instanceof WriterCompletenessError
+            || error instanceof GlobalInferenceBudgetError) throw error
           if (error instanceof ContentRejectedError && attempt === 0) continue
           throw error
         }
       }
     } catch (error) {
       if (args.options.signal?.aborted) throw args.options.signal.reason ?? error
-      if (isAbortError(error) || error instanceof WriterCompletenessError) throw error
+      if (isAbortError(error) || error instanceof WriterCompletenessError
+        || error instanceof GlobalInferenceBudgetError) throw error
       lastError = error
       logCandidateFailure(args.options.workflowPhase, candidate, error)
     }
@@ -1118,7 +1143,7 @@ async function generateChoiceJson(args: {
         // (IN 0 OUT 0), while streamText works 100% for every model. Same
         // `.text` consumption path (executeObservedModelCall awaits result.text).
         call: () =>
-          executeCandidate(args.options.providerRuntime, 'choice', candidate, () => streamText({
+          executeCandidate(args.options, 'choice', candidate, () => streamText({
             model,
             system,
             prompt,
@@ -1147,6 +1172,7 @@ async function generateChoiceJson(args: {
       })
     } catch (error) {
       if (args.options.signal?.aborted) throw args.options.signal.reason ?? error
+      if (error instanceof GlobalInferenceBudgetError) throw error
       if (isAbortError(error) || error instanceof Error && error.name === 'TimeoutError') {
         lastError = error
         logCandidateFailure(args.options.workflowPhase, candidate, error)
@@ -1196,16 +1222,15 @@ async function generateSemanticJudgeJson(args: {
         candidate: candidateIdentity(candidate),
         useCase: args.route?.useCase ?? 'continuity_judge',
         workflowPhase: args.options.workflowPhase,
-        call: () =>
-          streamText({
-            model,
-            system,
-            prompt: user,
-            temperature: 0.0,
-            maxOutputTokens: 512,
-            abortSignal: requestSignal,
-            maxRetries: 0,
-          }),
+        call: () => executeCandidate(args.options, 'semantic', candidate, () => streamText({
+          model,
+          system,
+          prompt: user,
+          temperature: 0.0,
+          maxOutputTokens: 512,
+          abortSignal: requestSignal,
+          maxRetries: 0,
+        })),
         consume: async (text) => {
           throwIfAborted(args.options.signal)
           let jsonText = text.trim()
@@ -1223,6 +1248,7 @@ async function generateSemanticJudgeJson(args: {
       })) as SemanticJudgeResult
     } catch (error) {
       if (args.options.signal?.aborted) throw args.options.signal.reason ?? error
+      if (error instanceof GlobalInferenceBudgetError) throw error
       lastError = error
       continue
     }
@@ -1254,7 +1280,7 @@ export function createGatewayProvider(
   const base = createDeterministicProvider(genPolicy)
 
   // Build chain: DB route first if available, then env, then code fallback.
-  const chain = resolveModelChain(opts.model, aiRoute)
+  const chain = resolveModelChain(opts.model, aiRoute, opts.exactRouteOnly)
 
   // P1-8: choices route must be EXPLICIT. Precedence:
   //   1. DB choices route            → use it
@@ -1296,10 +1322,14 @@ export function createGatewayProvider(
         hasAiRoute: Boolean(aiRoute),
       })
   }
-  const choiceChain = resolveModelChain(choiceModelOverride ?? opts.model, resolvedChoicesRoute)
+  const choiceChain = resolveModelChain(
+    choiceModelOverride ?? opts.model,
+    resolvedChoicesRoute,
+    opts.exactRouteOnly,
+  )
 
   const resolvedJudgeRoute = judgeRoute ?? aiRoute
-  const judgeChain = resolveModelChain(opts.model, resolvedJudgeRoute)
+  const judgeChain = resolveModelChain(opts.model, resolvedJudgeRoute, opts.exactRouteOnly)
 
   const provider: GenerationProvider = {
     name: chain.map((c) => c.label).join(' → '),

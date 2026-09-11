@@ -7,7 +7,7 @@ import {
   type ProviderCallContext,
 } from '@/lib/observability/generation-provider-call.contract'
 import { getGenerationPolicy } from '@/lib/ops/generation-policy'
-import { getAiModelRoute } from '@/lib/ops/ai-model-routes'
+import { getAiModelRoute, type AiModelRoute } from '@/lib/ops/ai-model-routes'
 
 /**
  * Seam pemilihan provider generasi (satu-satunya tempat runtime memutuskan
@@ -82,4 +82,35 @@ export function selectProviderSync(): GenerationProvider {
     return createGatewayProvider()
   }
   return createDeterministicProvider()
+}
+
+export type ExactProductionRoutes = Readonly<{
+  writerRoute: AiModelRoute
+  choicesRoute: AiModelRoute
+  judgeRoute: AiModelRoute
+}>
+
+/** Production gateway constructor with exact caller-owned immutable routes. */
+export function createProviderFromExactRoutes(
+  input: ExactProductionRoutes & {
+    generationPolicy: Parameters<typeof createGatewayProvider>[1]
+  },
+): GenerationProvider {
+  return createGatewayProvider(
+    { exactRouteOnly: true },
+    input.generationPolicy,
+    input.writerRoute,
+    input.choicesRoute,
+    input.judgeRoute,
+  )
+}
+
+/** Production selection path: mutable generation policy allowed, mutable model routes forbidden. */
+export async function selectProviderFromExactRoutes(
+  context: ProviderCallContext,
+  routes: ExactProductionRoutes,
+): Promise<GenerationProvider> {
+  ProviderCallContextSchema.parse(context)
+  const generationPolicy = await getGenerationPolicy()
+  return createProviderFromExactRoutes({ ...routes, generationPolicy })
 }

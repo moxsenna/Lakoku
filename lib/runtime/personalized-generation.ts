@@ -27,11 +27,12 @@ import {
   type ChapterDraftParsed,
   type ChoiceBranch,
   type GenerationProvider,
+  type GenerationRuntimePolicy,
   type ChoiceInput,
   type GenerationResult,
 } from '@lakoku/ai-gateway'
 import type { Finding } from '@lakoku/narrative-core'
-import { selectProvider } from '@lakoku/ai-gateway/server'
+import { createProviderFromExactRoutes, selectProvider } from '@lakoku/ai-gateway/server'
 import { createAdminClient } from '@lakoku/db'
 import { recordGenerationAttempt } from '@/lib/observability/server'
 import { boundedLogId, safeErrorInfo } from '@/lib/observability/safe-error'
@@ -116,6 +117,11 @@ import {
 import { loadEffectivePlotDebtState } from './plot-debt-effective-state.loader'
 import type { GenerationJobExecutionContext } from './generation-job-execution'
 import type { Schema3PublicationResult } from './checkpoint-schema-v3'
+import type { ExactProductionRoutes } from '@lakoku/ai-gateway/server'
+import {
+  assertM10GG1ExecutionCapability,
+  type M10GG1ExecutionCapability,
+} from './m10-g-g1-execution-capability.server'
 
 /**
  * Personalized chapter runtime (Task 17).
@@ -850,10 +856,40 @@ function defaultDeps(): PersonalizedGenerationDeps {
  * Generate + publish one personalized chapter. Injectable deps for unit tests.
  * Never calls generateNextChapterReal.
  */
+export async function executeM10GG1PersonalizedChapter(input: {
+  capability: M10GG1ExecutionCapability
+  chapter: Omit<PersonalizedGenerateInput, 'options'>
+  globalInferenceBudget: import('@lakoku/ai-gateway').GlobalInferenceBudget
+  frozenRoutes: ExactProductionRoutes
+  frozenGenerationPolicy: GenerationRuntimePolicy
+  frozenLeaseTtlSeconds: number
+}): Promise<RealGenerateResult> {
+  assertM10GG1ExecutionCapability(input.capability)
+  const frozenProvider = createProviderFromExactRoutes({
+    ...input.frozenRoutes,
+    generationPolicy: input.frozenGenerationPolicy,
+  })
+  return generateNextPersonalizedChapter({
+    ...input.chapter,
+    options: {
+      m10gMode: true,
+      globalInferenceBudget: input.globalInferenceBudget,
+      writerLengthRepairV1Enabled: false,
+      m10gFrozenLeaseTtlSeconds: input.frozenLeaseTtlSeconds,
+    },
+  }, {
+    ...defaultDeps(),
+    selectProvider: async () => frozenProvider,
+  })
+}
+
 export async function generateNextPersonalizedChapter(
   input: PersonalizedGenerateInput,
   deps?: PersonalizedGenerationDeps,
 ): Promise<RealGenerateResult> {
+  if (input.options?.m10gMode && input.options.m10gFrozenLeaseTtlSeconds === undefined) {
+    throw new Error('M10G_G1_GENERATION_POLICY_AUTHORITY_UNBOUND')
+  }
   return withGenerationSlot(
     {
       userId: input.userId,
@@ -884,6 +920,7 @@ export async function generateNextPersonalizedChapter(
       return { ok: false, reason, detail: meta }
     },
     input.jobContext?.signal,
+    { refreshMutablePolicy: input.options?.m10gMode !== true },
   )
 }
 
@@ -903,7 +940,12 @@ async function generateNextPersonalizedChapterInner(
   const jobId = jobContext?.jobId ?? input.jobId
   const attemptNumber = jobContext?.attemptNumber ?? input.attemptNumber
   const attemptId = input.attemptId?.trim() || jobContext?.jobId || correlationId
-  const writerLengthRepairV1Enabled = isWriterLengthRepairV1Enabled()
+  const writerLengthRepairV1Enabled = input.options?.writerLengthRepairV1Enabled
+    ?? isWriterLengthRepairV1Enabled()
+  const m10gFrozenLeaseTtlSeconds = input.options?.m10gFrozenLeaseTtlSeconds
+  if (input.options?.m10gMode && m10gFrozenLeaseTtlSeconds === undefined) {
+    throw new Error('M10G_G1_GENERATION_POLICY_AUTHORITY_UNBOUND')
+  }
   let checkpointAttemptId = attemptId
   let fromCheckpoint = false
 
@@ -983,7 +1025,8 @@ async function generateNextPersonalizedChapterInner(
       path: 'personalized',
     })
   } else {
-    const ttlSeconds = await resolveGenerationLeaseTtlSeconds()
+    const ttlSeconds = m10gFrozenLeaseTtlSeconds
+      ?? await resolveGenerationLeaseTtlSeconds()
     const lease = await d.acquireGenerationLease({
       storyId,
       chapterNumber,
@@ -1289,6 +1332,12 @@ async function generateNextPersonalizedChapterInner(
             ...(input.options?.providerRuntime === undefined
               ? {}
               : { providerRuntime: input.options.providerRuntime }),
+            ...(input.options?.m10gMode === undefined
+              ? {}
+              : { m10gMode: input.options.m10gMode }),
+            ...(input.options?.globalInferenceBudget === undefined
+              ? {}
+              : { globalInferenceBudget: input.options.globalInferenceBudget }),
           },
         },
       )
@@ -1523,6 +1572,8 @@ async function generateNextPersonalizedChapterInner(
         providerContext,
         signal: jobContext?.signal,
         providerRuntime: input.options?.providerRuntime,
+        m10gMode: input.options?.m10gMode,
+        globalInferenceBudget: input.options?.globalInferenceBudget,
         choiceExecutionBudget: jobContext && resolvedChoiceDeadline ? {
           usedCalls: 0,
           maxCalls: 5,

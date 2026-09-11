@@ -503,11 +503,14 @@ export async function withGenerationSlot<T>(
     },
   ) => T | Promise<T>,
   signal?: AbortSignal,
+  options?: Readonly<{ refreshMutablePolicy?: boolean }>,
 ): Promise<T> {
-  try {
-    await refreshGenerationConcurrencyFromPolicy()
-  } catch {
-    // best-effort: keep last known caps
+  if (options?.refreshMutablePolicy !== false) {
+    try {
+      await refreshGenerationConcurrencyFromPolicy()
+    } catch {
+      // best-effort: keep last known caps
+    }
   }
   const slot = await acquireGenerationSlot(job, signal)
   if (!slot.ok) {

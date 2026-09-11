@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChapterGenerationCheckpoint } from '@/lib/runtime/chapter-generation-checkpoint.pure'
+import { createGlobalInferenceBudget } from '@/lib/ai-gateway/global-inference-budget.contract'
 
 const CORRELATION_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 
@@ -874,6 +875,39 @@ describe('standard worker V4 publication', () => {
     }
     expect(generationArgs.executionOptions?.writerLengthRepairV1).toEqual({ enabled: true })
     expect(generationArgs.executionOptions?.observeWriterLengthRepair).toBeTypeOf('function')
+  })
+
+  it('passes same M10-G budget reference through standard prose and choices', async () => {
+    const { buildFixtureSnapshot } = await import('@/fixtures/narrative/fixture-50')
+    const snapshot = buildFixtureSnapshot()
+    const budget = createGlobalInferenceBudget({ runId: 'm10g-standard-propagation', hardLimit: 2 })
+    const providerRuntime = { candidateTransport: vi.fn() }
+    mocks.loadCanonSnapshot.mockResolvedValue(snapshot)
+    mocks.generateChapter.mockResolvedValue({
+      status: 'PUBLISHED',
+      chapterNumber: 12,
+      draft: draft(12),
+      attempts: 1,
+      findings: [],
+    })
+
+    await (await import('@/lib/runtime/story-generation')).generateNextChapterReal({
+      storyId: snapshot.storyId,
+      userId: '55555555-5555-4555-8555-555555555555',
+      chapterNumber: 12,
+      correlationId: JOB_CONTEXT.correlationId,
+      attemptId: JOB_CONTEXT.jobId,
+      jobContext: JOB_CONTEXT,
+      options: { m10gMode: true, globalInferenceBudget: budget, providerRuntime },
+    })
+
+    const proseOptions = mocks.generateChapter.mock.calls[0]?.[1]?.executionOptions
+    const choiceInput = mocks.buildChoiceBranch.mock.calls[0]?.[1]
+    expect(proseOptions).toMatchObject({ m10gMode: true, providerRuntime })
+    expect(proseOptions?.globalInferenceBudget).toBe(budget)
+    expect(choiceInput).toMatchObject({ m10gMode: true, providerRuntime })
+    expect(choiceInput?.globalInferenceBudget).toBe(budget)
+    expect(budget.consumed).toBe(0)
   })
 
   it('writer length repair failure cannot persist checkpoint, choices, publish, or reader advance', async () => {

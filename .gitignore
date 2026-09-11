@@ -44,3 +44,7 @@ tsconfig.tsbuildinfo
 output/
 .playwright-cli/
 supabase/.branches/
+
+# unlazy local state (machine-specific, never commit)
+.unlazy/
+.unlazy-hook-state.json

@@ -11,6 +11,7 @@ import {
 } from '../contracts/m10-f-semantic-contract'
 import { SEMANTIC_FINDING_CODES } from '../contracts/semantic-judge-contract'
 import { computeSha256, stableStringify } from '../scoring/canonical-serializer'
+import { deriveSemanticSampleAggregation } from './semantic-sample-aggregation'
 
 export interface M10FRawJudgeResponse {
   score: number
@@ -202,20 +203,12 @@ export function deriveM10FSemanticAggregate(input: {
   attempts: M10FSemanticAttempt[]
 }): M10FSemanticAggregate {
   const matching = input.attempts.filter((attempt) => attempt.caseId === input.assembled.caseAuthority.caseId)
-  const valid = matching.filter((attempt) => attempt.status === 'VALID' && attempt.score !== null)
-  const scores = valid.map((attempt) => attempt.score as number).sort((left, right) => left - right)
-  const failureCodes = matching.flatMap((attempt) => attempt.failureCodes)
-  if (matching.length !== 3) failureCodes.push('REQUIRED_ATTEMPTS_MISSING')
-  if (new Set(matching.map((attempt) => attempt.sampleIndex)).size !== matching.length) {
-    failureCodes.push('DUPLICATE_SAMPLE_INDEX')
-  }
-  if (valid.length < 3) failureCodes.push('VALID_SAMPLE_COUNT_BELOW_3')
-  const medianScore = scores.length === 3 ? scores[1]! : null
-  const scoreSpread = scores.length === 3 ? scores[2]! - scores[0]! : null
-  if (scoreSpread !== null && scoreSpread > input.authority.maximumConclusiveSpread) {
-    failureCodes.push('SCORE_SPREAD_EXCEEDS_20')
-  }
-  const conclusive = failureCodes.length === 0 && medianScore !== null
+  const derived = deriveSemanticSampleAggregation({
+    attempts: matching,
+    requiredSampleCount: input.authority.sampleCountPerCase,
+    threshold: input.authority.uniformThreshold,
+    maximumConclusiveSpread: input.authority.maximumConclusiveSpread,
+  })
   return M10FSemanticAggregateSchema.parse({
     schemaVersion: 1,
     caseId: input.assembled.caseAuthority.caseId,
@@ -223,15 +216,6 @@ export function deriveM10FSemanticAggregate(input: {
     authorityHash: input.authority.authorityHash,
     judgeInputHash: input.assembled.judgeInputHash,
     promptHash: input.assembled.promptHash,
-    attemptRefs: matching.map((attempt) => attempt.attemptId),
-    validSampleRefs: valid.map((attempt) => attempt.attemptId),
-    validSampleCount: valid.length,
-    scores,
-    medianScore,
-    scoreSpread,
-    outcome: conclusive
-      ? medianScore >= input.authority.uniformThreshold ? 'PASS' : 'FAIL'
-      : 'INCONCLUSIVE',
-    failureCodes: [...new Set(failureCodes)].sort(),
+    ...derived,
   })
 }

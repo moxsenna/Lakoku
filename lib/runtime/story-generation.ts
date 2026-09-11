@@ -352,6 +352,8 @@ async function buildChoices(
   signal?: AbortSignal,
   providerRuntime?: import('@/lib/ai-gateway/provider').ProviderRuntime,
   choiceExecutionBudget?: import('@/lib/runtime/choice-execution-budget').ChoiceExecutionBudget,
+  m10gMode?: boolean,
+  globalInferenceBudget?: import('@/lib/ai-gateway/global-inference-budget.contract').GlobalInferenceBudget,
 ): Promise<{
   ok: true
   choicePrompt: string
@@ -417,6 +419,8 @@ async function buildChoices(
     signal,
     providerRuntime,
     choiceExecutionBudget,
+    m10gMode,
+    globalInferenceBudget,
     activeCharacters,
     activeThreads,
     creativeDirectionHints: choiceDirection
@@ -976,6 +980,12 @@ async function generateNextChapterRealInner(
             ...(input.options?.providerRuntime === undefined
               ? {}
               : { providerRuntime: input.options.providerRuntime }),
+            ...(input.options?.m10gMode === undefined
+              ? {}
+              : { m10gMode: input.options.m10gMode }),
+            ...(input.options?.globalInferenceBudget === undefined
+              ? {}
+              : { globalInferenceBudget: input.options.globalInferenceBudget }),
           },
         },
       )
@@ -1152,6 +1162,8 @@ async function generateNextChapterRealInner(
         deadlineAtMs: resolvedChoiceDeadline.deadlineAtMs,
         deadlineSource: resolvedChoiceDeadline.source,
       } : undefined,
+      input.options?.m10gMode,
+      input.options?.globalInferenceBudget,
     )
     throwIfAborted(jobContext?.signal)
     if (!branch.ok) {

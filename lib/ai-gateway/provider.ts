@@ -101,7 +101,7 @@ export type ChoiceAbortCause =
   | 'WORKFLOW_DEADLINE'
   | 'CANDIDATE_TIMEOUT'
 
-export type ProviderCandidateKind = 'prose' | 'choice'
+export type ProviderCandidateKind = import('./global-inference-budget.contract').GlobalInferenceKind
 
 export type ProviderCandidateTransport = (input: Readonly<{
   kind: ProviderCandidateKind
@@ -124,6 +124,10 @@ export interface ModelCallExecutionOptions {
   signal?: AbortSignal
   /** Shared across retries so every actual model candidate counts toward cap. */
   callBudget?: ProviderCallBudget
+  /** Explicit M10-G proof mode. Missing global budget fails before transport. */
+  m10gMode?: boolean
+  /** Same mutable run-level context across prose, semantic judge, choices, and retries. */
+  globalInferenceBudget?: import('./global-inference-budget.contract').GlobalInferenceBudget
   /** Explicit opt-in; absent/disabled preserves legacy writer topology. */
   writerLengthRepairV1?: WriterLengthRepairV1Policy
   /** Shared across first pass, length repair, and later writer rewrites. */

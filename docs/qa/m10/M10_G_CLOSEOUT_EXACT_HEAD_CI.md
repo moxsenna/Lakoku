@@ -268,3 +268,50 @@ production inference = STOP
 DB write/publication = STOP
 merge to main        = STOP
 ```
+
+## 9. Lampiran fasa launch — 2026-09-12
+
+### CI-1 resolusi (re-freeze, bukan revert)
+
+Delta blob `lib/narrative-qa/fault/e2/rows-1-9.ts` terbukti tepat dua baris
+hardening fail-closed (`SEMANTIC_CANDIDATE_UNEXPECTED`). `manifestBaseSha`
+direbase 143a01a → 920fbc4 dengan verifikasi bahwa tepat satu path berubah di
+antara kedua base; catatan replacement lengkap ditambahkan sesuai
+replacementSemantics otoritas (old blob, new blob, decision reference
+`LAKOKU-M10E-REFREEZE-2026-09-12-CI1`, reviewer, replacement SHA).
+Empat file test M10-E kembali hijau (28/28).
+
+### CI-1B-OPEN-REQUIRES-PM-RERATIFICATION
+
+`tests/narrative-qa/m10-e2-telemetry-reference.test.ts` menuntut blob produksi
+(`lib/runtime/personalized-generation.ts`, `lib/ai-gateway/gateway-provider.ts`,
+dll.) byte-identik sejak anchor M10-E; M10-F (writer v2) dan M10-G (budget
+threading) mengubahnya secara sah dengan gate mereka sendiri. Mekanisme yang
+benar adalah validator transisi semantik per-file (pola
+`validateApprovedScenarioTransition`), bukan re-freeze mekanis dan bukan
+konversi paksa ke SEMANTIC_COMPARE tanpa bukti ekuivalensi. Test dibiarkan
+gagal (fail-closed bekerja sesuai desain). Owner: PM. Tidak ditutup oleh
+dokumen ini.
+
+### CI-2b, CI-4 — diperbaiki
+
+- CI-2b: tiga file test API tidak mengikuti evolusi sah jalur R3 —
+  `server-only`/barrel `@lakoku/runtime/server` tidak di-mock (recover 17),
+  cookie client tanpa `rpc('enqueue_generation_job_v1')` (choice), dan flow
+  continuation berbasis `jobId` yang mem-poll kesiapan bab (continuation).
+  53/53 test hijau; tanpa perubahan kode produksi.
+- CI-4: proyek vitest `unit` diberi `testTimeout`/`hookTimeout` 20000ms —
+  kegagalan non-deterministik 5000ms adalah starvation worker, bukan
+  kelambatan test. Batch 9 file: 287/287 hijau.
+
+### CI-5 OPEN — seam pengukuran biaya E0
+
+Semua transport produksi memakai `streamText` (SSE); AI SDK tidak mengekspos
+`usage.cost` dari chunk akhir. Guard E0 aktif dan teruji, tetapi inert sampai
+seam pengambilan `usage.cost` (parser chunk akhir SSE atau dukungan upstream)
+selesai. Ruang lingkup akar sama dengan `BLOCKED_PRICING_AUTHORITY_MISSING`.
+
+### CI-3 — tetap lingkungan
+
+Supabase lokal tidak tersedia (Docker daemon mati); 4 test integration
+tetap gagal karena lingkungan, bukan kode.

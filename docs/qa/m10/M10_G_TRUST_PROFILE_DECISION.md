@@ -39,3 +39,11 @@
 
 Baris `trust-profile requirement` pada acceptance gate = **GAP** (bukan PASS,
 bukan waived). M10-G tetap IN CLOSEOUT.
+
+## Addendum — SINGLE-PROFILE-LAUNCH-2026-09-12 (keputusan PM arah launch)
+
+Launch berjalan dengan **satu trust profile**: writer
+`gweb/gemini-3.1-pro` + choice/continuity `gweb/gemini-3.8-flash` via 9Router
+VPS (qualified end-to-end, bukti M10-G proof runs). Profil high/low/mixed
+TIDAK diaktifkan saat launch; promosi G.2.1 tetap GAP pasca-launch dan tidak
+menjadi blocker launch karena hanya satu provider yang melayani.

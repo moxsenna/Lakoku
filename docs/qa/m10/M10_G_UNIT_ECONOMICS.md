@@ -42,3 +42,32 @@ tarif adalah tepat jenis promosi topology-menjadi-economics yang dilarang PM.
 - E reliability/economics gate: **BLOCKED** (bukan PASS, bukan FAIL run).
 - `hardInferenceLimit`: tetap `null`.
 - M10-E ceiling: tidak disentuh.
+
+## Addendum — E0-INTERIM-CAP-2026-09-12 (keputusan PM arah launch)
+
+Direktif PM 2026-09-12 ("kerjakan seluruh fase") mengadopsi otoritas E0 R1 yang
+sudah diratifikasi sebagai **trip-wire biaya produksi interim**:
+
+- Binding: `lib/commercial/e0-budget-authority.server.ts` memuat ceiling
+  `maxExpectedCostPerChapter = 2.10000000 USD` dan `p95CostGuardrail =
+  200.00000000 USD` **verbatim dari** `fixtures/m10-e/e0-budget-authority.ts`
+  (decision ref `LAKOKU-E0-2026-08-26-LOOSE-200-R1`); tidak ada angka yang
+  didefinisikan ulang.
+- Inti enforcement: `lib/ai-gateway/e0-cost-guard.ts` — akumulasi biaya
+  terukur (BigInt, 8 desimal, pembulatan ke atas), scope per-attempt bab,
+  error terminal `E0_CHAPTER_COST_CEILING_EXCEEDED` /
+  `E0_PROCESS_COST_CEILING_EXCEEDED`; worker memetakannya terminal (tidak
+  pernah di-retry) dan klasifikasi terminal ada di
+  `TERMINAL_REASONS` (`generation-job-execution.ts`).
+- Biaya hanya diterima dari **laporan provider** (`usage.cost`); tidak ada
+  derivasi token→harga di mana pun. Transport tanpa laporan biaya dihitung
+  `E0_COST_UNMEASURED` dan tidak pernah dihargai pakai tebakan.
+- **GAP terbuka (CI-5):** semua transport produksi mengalir lewat
+  `streamText` (SSE), dan AI SDK tidak mengekspos `usage.cost` dari chunk
+  akhir — sehingga seam pengukuran biaya nyata belum terikat. Guard aktif
+  namun tercatat inert sampai seam SSE selesai dirancang (ruang lingkup
+  sama dengan blocker G-1 `BLOCKED_PRICING_AUTHORITY_MISSING`).
+- `hardInferenceLimit` G-1 **tetap `null`** — addendum ini tidak mengubah
+  otoritas topologi/ekonomi G-1 dan tidak menerbitkan limit baru.
+- Guardrail moneter bisnis saat launch tetap sistem kredit/kuota komersial
+  (`authorize_commercial_generation_intent_v1`), yang sudah teruji.

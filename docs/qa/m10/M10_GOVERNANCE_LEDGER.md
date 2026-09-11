@@ -2083,3 +2083,35 @@ Standing Freezes:
   Live reader activations                FORBIDDEN
   Evaluator / threshold modifications    FORBIDDEN
 ```
+
+## 2026-09-12 — M10-G-STOP-LIFTED-2026-09-12 (PM directive: "kerjakan seluruh fase")
+
+Keputusan PM (sesi closeout launch, disiplin unlazy ledger `.unlazy/launch/`):
+
+1. **STOP merge dicabut.** Cabang closeout `closeout/m10-g-integration-evidence`
+   (9dae014; 0 defect merge terbukti per-test-name) dan
+   `feat/landing-cinematic-v1` diintegrasikan ke `main`.
+2. **CI-1 ditutup via re-freeze.** Delta blob `rows-1-9.ts` terbukti tepat 2
+   baris hardening fail-closed (`SEMANTIC_CANDIDATE_UNEXPECTED`);
+   `e1-e2-closure-authority.json` direbase: `manifestBaseSha` 143a01a → 920fbc4
+   (terverifikasi: tepat 1 path berubah di antara kedua base), blob rows-1-9
+   diperbarui, dan catatan replacement lengkap (old blob, new blob, decision
+   reference `LAKOKU-M10E-REFREEZE-2026-09-12-CI1`, approving reviewer
+   Lakoku Project Lead, replacement SHA) sesuai replacementSemantics.
+3. **CI-1b OPEN (REQUIRES PM RERATIFICATION).** Test telemetry-reference
+   M10-E2 menuntut blob produksi (personalized-generation.ts,
+   gateway-provider.ts, dll.) tak berubah sejak anchor M10-E; M10-F/M10-G
+   mengubahnya secara sah. Perbaikan butuh validator transisi semantik
+   per-file ala `validateApprovedScenarioTransition` — bukan re-freeze
+   mekanis. Gate fail-closed dibiarkan gagal; tidak di-hack hijau.
+4. **CI-2b/CI-4 diperbaiki** (drift harness di belakang perubahan R3 sah;
+   timeout proyek `unit` dinaikkan untuk starvation), **CI-5 dibuka**
+   (seam pengukuran `usage.cost` SSE untuk guard E0 — lihat addendum
+   UNIT_ECONOMICS). CI-3 tetap lingkungan.
+5. **Cap biaya interim E0 R1 terikat** (int enforcement + terminal mapping;
+   pengukuran nyata menunggu CI-5); `hardInferenceLimit` G-1 tetap `null`.
+6. Single trust profile launch tercatat di `M10_G_TRUST_PROFILE_DECISION.md`.
+
+Standing freezes yang TETAP berlaku: model inference di luar jalur aplikasi
+FORBIDDEN; DB mutations produksi tanpa otorisasi FORBIDDEN; evaluator/threshold
+modifications tanpa ratifikasi FORBIDDEN.

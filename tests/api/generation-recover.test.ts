@@ -5,8 +5,11 @@ const mocks = vi.hoisted(() => ({
   recoverStaleGenerationJobs: vi.fn(),
   claimAndRunAvailableJobs: vi.fn(),
   isGenerationWorkerEnabled: vi.fn(),
+  listTerminalCommercialFinalizationCandidates: vi.fn(),
+  finalizeTerminalCommercialGeneration: vi.fn(),
 }))
 
+vi.mock('server-only', () => ({}))
 vi.mock('next/server', () => ({
   after: mocks.after,
   NextResponse: {
@@ -21,6 +24,13 @@ vi.mock('@lakoku/runtime', () => ({
   recoverStaleGenerationJobs: mocks.recoverStaleGenerationJobs,
   claimAndRunAvailableJobs: mocks.claimAndRunAvailableJobs,
   isGenerationWorkerEnabled: mocks.isGenerationWorkerEnabled,
+}))
+vi.mock('@lakoku/runtime/server', () => ({
+  recoverStaleGenerationJobs: mocks.recoverStaleGenerationJobs,
+  claimAndRunAvailableJobs: mocks.claimAndRunAvailableJobs,
+  isGenerationWorkerEnabled: mocks.isGenerationWorkerEnabled,
+  listTerminalCommercialFinalizationCandidates: mocks.listTerminalCommercialFinalizationCandidates,
+  finalizeTerminalCommercialGeneration: mocks.finalizeTerminalCommercialGeneration,
 }))
 
 const SECRET = 'recovery-secret-value'

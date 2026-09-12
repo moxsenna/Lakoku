@@ -65,7 +65,7 @@ const BUILD_STEPS = [
   { key: 'cast', label: 'Menyusun tokoh-tokohmu' },
   { key: 'mystery', label: 'Menata rahasia yang menunggu' },
   { key: 'world', label: 'Membangun dunia & jejaknya' },
-  { key: 'lock', label: 'Mengunci alur 50 bab' },
+  { key: 'lock', label: 'Menyiapkan cabang alur & pilihanmu' },
   { key: 'chapter', label: 'Menulis Bab 1' },
 ] as const
 type BuildKey = (typeof BUILD_STEPS)[number]['key']

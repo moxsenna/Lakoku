@@ -38,6 +38,9 @@ testsprite_tests\tmp\config.json
 
 # TypeScript incremental build cache
 tsconfig.tsbuildinfo
+
+# Local benchmark and proof run dumps
+fixtures/benchmarks/
 *.tsbuildinfo
 
 # Local diagnostic artifacts

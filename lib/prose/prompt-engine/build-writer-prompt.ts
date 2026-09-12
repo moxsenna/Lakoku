@@ -111,6 +111,8 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
     '- Pertahankan sudut pandang orang pertama ("aku") secara konsisten.',
     input.voiceGuidance ? `- Panduan Suara Karakter:\n${safe(input.voiceGuidance)}` : '',
     '- Format pergantian ucapan tokoh dipisahkan dengan jelas agar pembaca mudah mengikuti percakapan.',
+    '- Keterbacaan Mobile: Utamakan kalimat lugas, padat, dan bertenaga. Pecah kalimat majemuk bertingkat yang panjang atau berbelit-belit menjadi kalimat-kalimat yang lebih ringkas.',
+    '- Hindari satu kalimat yang memuat terlalu banyak koma atau anak kalimat bertumpuk.',
   ].filter(Boolean).join('\n')
 
   const p5 = [
@@ -119,6 +121,7 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
     'Hindari dinding teks panjang.',
     'Pisahkan pergantian pembicara dan perubahan fokus dengan jelas.',
     'Biarkan panjang paragraf mengikuti kebutuhan aksi, reaksi, dialog, dan tensi adegan.',
+    'Jaga ketukan visual yang lincah: variasikan aksi pendek, reaksi batin, dan dialog tanpa menumpuk blok kalimat panjang.',
   ].join('\n')
 
   const output = [

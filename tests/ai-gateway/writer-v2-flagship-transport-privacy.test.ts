@@ -15,7 +15,7 @@ import {
   executeWriterV2FlagshipControl,
 } from '@/lib/narrative-qa/harness/writer-v2-flagship-control.server'
 
-const HASH = '149ccdf1ecf1c3093748e5087ae5be66a55bcdd3032c3e0a11671732856e0a0d'
+const HASH = 'b72919dd223317f708397ac055a7eca082cfff7400476618fba8c08d8d78c10e'
 const sentinels = {
   prompt: 'SENTINEL_PRIVATE_PROMPT_781',
   prose: 'SENTINEL_PRIVATE_PROSE_782',

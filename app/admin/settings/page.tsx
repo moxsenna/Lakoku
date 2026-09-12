@@ -191,7 +191,13 @@ export default function AdminSettingsPage() {
       </AdminSectionCard>
 
       {/* AI Model Routes */}
-      <AdminSectionCard title="AI Model Routes">
+      <AdminSectionCard
+        title="AI Model Routes"
+        subtitle="Konfigurasi rute provider & model generasi"
+      >
+        <div className="border-b border-border bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
+          🔒 <strong>M10-G code authority:</strong> Runtime produksi menggunakan rute dan parameter yang dibekukan di level kode (zero mutable route selection). Perubahan di tabel ini adalah referensi database dan tidak mengubah kandidat beku M10-G tanpa rilis kode baru.
+        </div>
         {data.aiModelRoutes.length === 0 ? <AdminEmptyState /> : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -202,7 +208,14 @@ export default function AdminSettingsPage() {
               <tbody>
                 {data.aiModelRoutes.map((r) => (
                   <tr key={r.useCase} className="border-b border-border hover:bg-muted/20">
-                    <td className="px-3 py-1.5 font-medium">{r.useCase}</td>
+                    <td className="px-3 py-1.5 font-medium">
+                      <div className="flex items-center gap-1.5">
+                        <span>{r.useCase}</span>
+                        <span className="rounded bg-muted px-1.5 py-0.2 text-[9px] font-mono text-muted-foreground border border-border" title="Locked to code authority">
+                          code authority
+                        </span>
+                      </div>
+                    </td>
                     <td className="px-3 py-1.5">{r.provider}</td>
                     <td className="px-3 py-1.5 font-mono text-[10px]">{r.modelId}</td>
                     <td className="px-3 py-1.5 text-muted-foreground text-[10px] font-mono">{fallbackPreview(r.fallbackModels ?? [])}</td>

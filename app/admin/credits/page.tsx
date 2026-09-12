@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic'
 export default async function AdminCreditsPage() {
   const db = createAdminClient()
 
-  // Aggregate stats
+  // Aggregate stats (bounded to recent 5000 entries to prevent unbounded table scan)
   let totalCirculating = 0
   let totalPurchased = 0
   let totalAdminGranted = 0
@@ -19,7 +19,11 @@ export default async function AdminCreditsPage() {
   let grantsToday = 0
 
   try {
-    const { data: ledger } = await db.from('credit_ledger').select('delta,reason')
+    const { data: ledger } = await db
+      .from('credit_ledger')
+      .select('delta, reason, created_at')
+      .order('created_at', { ascending: false })
+      .limit(5000)
     if (ledger) {
       for (const r of ledger as { delta: number; reason: string }[]) {
         totalCirculating += r.delta

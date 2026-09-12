@@ -9,8 +9,19 @@ export function GenerationCostBreakdown({
 }: {
   rows: AdminGenerationCostBreakdownRow[]
 }) {
+  const totalUnpriced = rows.reduce((s, r) => s + Number(r.unavailable_cost_count ?? 0), 0)
+  const totalCalls = rows.reduce((s, r) => s + Number(r.call_count ?? 0), 0)
+
   return (
     <AdminSectionCard title="Cost breakdown" subtitle="Bounded top 100 groups; user emails are masked in database output.">
+      <div className="border-b border-border bg-amber-500/10 px-4 py-2.5 text-xs text-amber-800 dark:text-amber-300">
+        <p className="font-medium">
+          ⚠ Status Biaya Provider: Defek CI-6 Terbuka (UNMEASURED)
+        </p>
+        <p className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-400">
+          Dari data panggilan yang terekam, {totalUnpriced} dari {totalCalls} panggilan berstatus <em>Unavailable</em> karena provider (OpenRouter/9Router) belum menyertakan metrik <code>usage.cost</code> pada SSE stream. Biaya bernilai $0 atau Unavailable <strong>bukan berarti gratis</strong>. Verifikasi tagihan riil wajib dicek via dashboard penyedia model.
+        </p>
+      </div>
       {rows.length === 0 ? <AdminEmptyState message="No cost breakdown data for selected range." /> : (
         <div className="overflow-x-auto">
           <table className="w-full text-xs">

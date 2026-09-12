@@ -2,6 +2,75 @@ import 'server-only'
 import { createAdminClient } from '@lakoku/db'
 import { loadAdminGenerationOverview } from '@/lib/admin/generation'
 import type { AdminGenerationFilters } from '@/lib/admin/generation-filters'
+import {
+  buildDailyCostReport,
+  type ProviderCallCostRow,
+  type DailyCostReportStatus,
+} from '@/lib/commercial/daily-cost-report'
+
+export interface AdminDailyCostSummary {
+  readonly status: DailyCostReportStatus
+  readonly totalMeasuredCostUsd: string
+  readonly maxChapterCostUsd: string
+  readonly callCount: number
+  readonly pricedCallCount: number
+  readonly unmeasuredCallCount: number
+  readonly chapterCeilingUsd: string
+  readonly novelCeilingUsd: string
+  readonly watchpointsCount: number
+  readonly breachesCount: number
+}
+
+const COST_COLUMNS = [
+  'started_at',
+  'story_id',
+  'chapter_number',
+  'job_id',
+  'provider_id',
+  'model_id',
+  'outcome',
+  'cost_amount',
+  'cost_currency',
+  'cost_source',
+].join(',')
+
+export async function loadAdminDailyCostSummary(
+  days = 1,
+  now = new Date(),
+): Promise<AdminDailyCostSummary> {
+  const db = createAdminClient()
+  const from = new Date(now.getTime() - days * 24 * 60 * 60 * 1000)
+
+  let rows: ProviderCallCostRow[] = []
+  try {
+    const { data } = await db
+      .from('generation_provider_calls')
+      .select(COST_COLUMNS)
+      .gte('started_at', from.toISOString())
+      .lt('started_at', now.toISOString())
+      .order('started_at', { ascending: true })
+      .limit(1000)
+    if (data) {
+      rows = data as unknown as ProviderCallCostRow[]
+    }
+  } catch {
+    // Database table may be empty or unconfigured in tests
+  }
+
+  const report = buildDailyCostReport(rows)
+  return {
+    status: report.status,
+    totalMeasuredCostUsd: report.totalMeasuredCostUsd,
+    maxChapterCostUsd: report.maxChapterCostUsd,
+    callCount: report.callCount,
+    pricedCallCount: report.pricedCallCount,
+    unmeasuredCallCount: report.unmeasuredCallCount,
+    chapterCeilingUsd: report.ceilings.maxCostPerChapterUsd,
+    novelCeilingUsd: report.ceilings.maxCostPerNovelUsd,
+    watchpointsCount: report.watchpoints.length,
+    breachesCount: report.breaches.length,
+  }
+}
 
 export interface AdminDashboardMetrics {
   totalUsers: number
@@ -56,6 +125,8 @@ export async function loadAdminDashboardMetrics(
     const { data: circ } = await db
       .from('credit_ledger')
       .select('delta')
+      .order('created_at', { ascending: false })
+      .limit(5000)
     if (circ) {
       metrics.totalCreditsCirculating = (circ as { delta: number }[]).reduce(
         (s, r) => s + r.delta, 0,

@@ -18,6 +18,9 @@ export function GenerationJobDrawer({ rows, filters }: { rows: AdminGenerationJo
   const job = sorted.find((row) => row.row_kind === 'JOB') ?? sorted[0]
   const timeline = sorted.filter((row) => row.row_kind !== 'JOB')
 
+  const isStuck = (job.job_status === 'RUNNING' || job.job_status === 'QUEUED') &&
+    Boolean(job.deadline_at && new Date(job.deadline_at).getTime() < new Date(filters.to).getTime())
+
   return (
     <aside aria-labelledby="job-detail-heading" className="rounded-xl border border-border bg-card shadow-sm">
       <div className="flex items-start justify-between border-b border-border px-4 py-3">
@@ -25,7 +28,17 @@ export function GenerationJobDrawer({ rows, filters }: { rows: AdminGenerationJo
         <Link href={generationClearJobHref(filters)} className="text-xs text-muted-foreground underline underline-offset-4">Close</Link>
       </div>
       <div className="grid gap-3 border-b border-border p-4 text-xs md:grid-cols-2 lg:grid-cols-4">
-        <div><span className="text-muted-foreground">State</span><div className="mt-1"><StatusBadge status={job.job_status} /></div></div>
+        <div>
+          <span className="text-muted-foreground">State</span>
+          <div className="mt-1 flex items-center gap-1.5">
+            <StatusBadge status={job.job_status} />
+            {isStuck && (
+              <span className="rounded bg-rose-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-rose-600 dark:text-rose-400">
+                STUCK (LEASE EXPIRED)
+              </span>
+            )}
+          </div>
+        </div>
         <div><span className="text-muted-foreground">User</span><div><Link href={`/admin/users/${job.user_id}`} className="underline underline-offset-4">{job.masked_user_email ?? job.user_id}</Link></div></div>
         <div><span className="text-muted-foreground">Story</span><div>{job.story_title ?? job.story_id}</div><div className="text-[10px]">Chapter {job.chapter_number}</div></div>
         <div><span className="text-muted-foreground">Attempts</span><div>{job.job_attempt_count} / {job.max_attempts}</div></div>

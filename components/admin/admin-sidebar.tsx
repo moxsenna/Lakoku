@@ -9,6 +9,7 @@ import {
   Coins,
   CreditCard,
   Cpu,
+  ClipboardCheck,
   BarChart3,
   Settings,
 } from 'lucide-react'
@@ -19,6 +20,7 @@ const navItems = [
   { href: '/admin/credits', label: 'Credits', icon: Coins },
   { href: '/admin/payments', label: 'Payments', icon: CreditCard },
   { href: '/admin/generation', label: 'Generation', icon: Cpu },
+  { href: '/admin/blueprint-review', label: 'Blueprint Review', icon: ClipboardCheck },
   { href: '/admin/consistency', label: 'Consistency', icon: BarChart3 },
   { href: '/admin/settings', label: 'Settings', icon: Settings },
 ]

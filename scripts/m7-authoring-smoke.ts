@@ -107,7 +107,7 @@ async function main() {
   check('ladder → NEEDS_AUTHOR (kebocoran)', ladder2.status === 'NEEDS_AUTHOR', ladder2.status)
 
   // ---- 4) Live LLM check (opsional) ----
-  if (process.env.OPENROUTER_API_KEY || process.env.AI_GATEWAY_API_KEY) {
+  if (process.env.OPENROUTER_API_KEY || process.env.AI_GATEWAY_API_KEY || process.env.NINEROUTER_API_KEY) {
     console.log('\n== Live: proposePremises (opsional) ==')
     try {
       const { proposePremises } = await import('../lib/authoring/server')
@@ -119,7 +119,7 @@ async function main() {
       console.log('  SKIP  live check gagal:', (e as Error).message)
     }
   } else {
-    console.log('\n  (lewati live LLM check — tak ada OPENROUTER/GATEWAY key)')
+    console.log('\n  (lewati live LLM check — tak ada OPENROUTER/GATEWAY/NINEROUTER key)')
   }
 
   // ---- 5) Roundtrip persist/load (opsional, butuh Supabase) ----

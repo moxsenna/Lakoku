@@ -62,12 +62,33 @@ sudah diratifikasi sebagai **trip-wire biaya produksi interim**:
 - Biaya hanya diterima dari **laporan provider** (`usage.cost`); tidak ada
   derivasi token→harga di mana pun. Transport tanpa laporan biaya dihitung
   `E0_COST_UNMEASURED` dan tidak pernah dihargai pakai tebakan.
-- **GAP terbuka (CI-5):** semua transport produksi mengalir lewat
-  `streamText` (SSE), dan AI SDK tidak mengekspos `usage.cost` dari chunk
-  akhir — sehingga seam pengukuran biaya nyata belum terikat. Guard aktif
-  namun tercatat inert sampai seam SSE selesai dirancang (ruang lingkup
-  sama dengan blocker G-1 `BLOCKED_PRICING_AUTHORITY_MISSING`).
+- **CI-5 DITUTUP (2026-09-12):** Seam pengukuran biaya provider ke guard E0
+  telah tersambung di `lib/ai-gateway/observed-model-call.server.ts` via
+  `providerMetadata[providerId].cost` dan `.currency` (memerlukan keduanya
+  sekaligus). Klaim historis bahwa "AI SDK tidak mengekspos `usage.cost`"
+  dicabut sebagai kekeliruan analisis awal. Teruji via
+  `tests/ai-gateway/e0-cost-measurement-seam.test.ts`.
+- **GAP BARU TERBUKA (CI-6, 2026-09-12):** Audit data produksi nyata
+  (`generation_provider_calls`) menemukan 722/722 transport produksi terekam
+  (2026-07-23 s.d. 2026-09-02) berstatus `cost_source='unavailable'` dan 0
+  `provider_actual` di seluruh 22 kombinasi provider|model. Guard E0 tetap
+  inert di produksi karena provider tidak mengembalikan `usage.cost`. Akar
+  masalah: `openAICompatibleFetch` di `lib/ai-gateway/gateway-provider.ts` tidak
+  menyertakan `usage: { include: true }` pada outbound request body (prasyarat
+  OpenRouter untuk mengembalikan kalkulasi biaya).
+- **Pemantauan Biaya Harian Soft Launch:**
+  Implementasi monitor operasional di `scripts/daily-cost-monitor.ts` (`pnpm cost:daily`)
+  dan `lib/commercial/daily-cost-report.ts`.
+  Status monitor:
+  - `BREACH`: Melewati ceiling bab ($2.10) atau novel ($200.00). Exit code 1.
+  - `WATCH`: Melewati ambang watchpoint bab (≥97% dari $2.10 = $2.037) atau novel. Exit code 0.
+  - `UNMEASURED`: Ada transport tanpa data biaya terukur (`cost_source != provider_actual`).
+    Diprioritaskan di atas `WATCH` dan `OK` agar operator menyadari biaya riil
+    belum tercatat oleh provider. Exit code 0.
+  - `OK`: Seluruh transport terukur dan berada di bawah ambang watchpoint. Exit code 0.
 - `hardInferenceLimit` G-1 **tetap `null`** — addendum ini tidak mengubah
   otoritas topologi/ekonomi G-1 dan tidak menerbitkan limit baru.
 - Guardrail moneter bisnis saat launch tetap sistem kredit/kuota komersial
-  (`authorize_commercial_generation_intent_v1`), yang sudah teruji.
+  (`authorize_commercial_generation_intent_v1`), yang sudah teruji. Selama
+  CI-6 terbuka, rekonsiliasi manual via dashboard OpenRouter/9Router wajib
+  dilakukan setiap hari.

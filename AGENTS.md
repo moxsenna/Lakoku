@@ -128,6 +128,10 @@ pnpm smoke                  # All smoke tests (30+ individual smokes)
 pnpm smoke:contracts        # API contracts
 pnpm smoke:web-release      # Web release gate
 pnpm smoke:personalized-story  # Personalized story flow
+pnpm smoke:production-reader   # Production reader-path E2E gate
+
+# Operations & Monitoring
+pnpm cost:daily             # Daily cost monitor against DB (E0 ceilings)
 
 # Database
 pnpm exec supabase db push --linked  # Push migrations to production

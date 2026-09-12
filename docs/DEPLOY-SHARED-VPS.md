@@ -149,6 +149,23 @@ target (mis. `grep -c 'maxRetries: 0, //' lib/ai-gateway/gateway-provider.ts`
 
 Bersihkan paket masuk: `rm /home/ubuntu/mox-apps/lakoku-incoming-<sha>.tgz`.
 
+### 5.1 Verifikasi operasional pembaca & biaya (dari lokal operator)
+
+Setelah deployment aktif, jalankan verifikasi E2E jalur pembaca dan monitor biaya:
+
+```bash
+# Uji jalur pembaca produksi: landing, app, katalog public, detail bab, proteksi auth, brand guard (9 cek)
+pnpm smoke:production-reader
+
+# Monitor pengeluaran biaya provider terukur terhadap ceiling E0 R1
+pnpm cost:daily -- --days 7
+```
+
+Catatan status monitor biaya:
+- `OK` atau `WATCH`: Aman dalam batas plafon E0.
+- `UNMEASURED`: Ada transport tanpa laporan biaya dari provider (CI-6). Volume terpantau tetapi uang riil wajib dicek manual ke dashboard OpenRouter/9Router.
+- `BREACH`: Pelanggaran batas biaya ($2.10/bab atau $200/novel) — eskalasi segera ke PM.
+
 ## 6. Pitfall yang sudah pernah terjadi (jangan diulang)
 
 | Gejala | Sebab | Solusi |

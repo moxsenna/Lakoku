@@ -2115,3 +2115,23 @@ Keputusan PM (sesi closeout launch, disiplin unlazy ledger `.unlazy/launch/`):
 Standing freezes yang TETAP berlaku: model inference di luar jalur aplikasi
 FORBIDDEN; DB mutations produksi tanpa otorisasi FORBIDDEN; evaluator/threshold
 modifications tanpa ratifikasi FORBIDDEN.
+
+## 2026-09-12 — M10-G G13 SOFT LAUNCH DECOMPOSITION, CI-5 CLOSURE, CI-6 OPENING (`f633fe8`)
+
+PM Directive: "go g13" (membuka kembali gate G13 yang sebelumnya berstatus blanket ABANDON).
+
+### 1. Dekomposisi Gate G13 (unlazy ledger `.unlazy/launch/GATES.md`)
+- **G13a (PASS):** E2E reader-path smoke terhadap produksi nyata (`scripts/production-reader-smoke.ts`, `pnpm smoke:production-reader`). 9/9 cek hijau: origin/app HTTP 200, cerita eksplorasi `demo:selasa-akhir` 50/50 bab kontigu 802–869 kata, halaman detail ter-render, `/baca/*` dan `/mulai` redirect 307 ke login, brand guard bersih (boundary-matched).
+- **G13b (PASS):** Agregator biaya harian (`lib/commercial/daily-cost-report.ts`) 11/11 unit tests hijau (`tests/commercial/daily-cost-report.test.ts`), desimal eksak BigInt 8 digit, ceiling terikat verbatim dari `E0_R1_CEILINGS`.
+- **G13c (PASS):** Monitor biaya harian operasional (`scripts/daily-cost-monitor.ts`, `pnpm cost:daily -- --days 7`) berjalan terhadap DB produksi nyata membaca `generation_provider_calls`.
+- **G13d (PASS):** CI-6 terdokumentasi terbuka di doc closeout.
+- **G13e (ABANDON / HANDOFF MANUSIA):** Dogfood beta reader nyata, verifikasi 50 bab utuh sebagai pembaca manusia, dan keputusan go/no-go harian PM.
+
+### 2. Status Defect CI
+- **CI-5 DITUTUP:** Seam pengukuran biaya E0 tersambung di `lib/ai-gateway/observed-model-call.server.ts` via `providerMetadata[providerId].cost/currency`. Catatan historis ("AI SDK tidak mengekspos usage.cost") dicabut; unit test `tests/ai-gateway/e0-cost-measurement-seam.test.ts` memverifikasi ingest biaya provider ke guard E0.
+- **CI-6 DIBUKA:** Dari 722 transport produksi terekam (2026-07-23..2026-09-02), 722 tercatat `cost_source='unavailable'` dan 0 `provider_actual` di seluruh 22 kombinasi provider|model. Guard E0 tetap inert di produksi. Dugaan akar: `openAICompatibleFetch` tidak menyuntikkan `usage: { include: true }` yang disyaratkan OpenRouter. Status monitor: `UNMEASURED` agar nol-harga tidak disalahartikan sebagai nol belanja.
+
+### 3. Batas Operasional
+- `hardInferenceLimit` G-1 tetap `null`.
+- Selama CI-6 terbuka, verifikasi biaya harian wajib direkonsiliasi manual ke dashboard provider.
+

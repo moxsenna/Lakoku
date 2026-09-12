@@ -39,6 +39,14 @@ if (existsSync(migrationPath)) {
   check('migration: seed chapter_prose route', content.includes("'chapter_prose'"))
 }
 
+const authoringMigrationPath = join(root, 'supabase/migrations/20260912220000_add_story_authoring_ai_model_route.sql')
+if (existsSync(authoringMigrationPath)) {
+  const content = readFileSync(authoringMigrationPath, 'utf-8')
+  check('migration: seed story_authoring route', content.includes("'story_authoring'"))
+  check('migration: story_authoring 9router provider', content.includes("'9router'"))
+  check('migration: story_authoring sonnet model', content.includes("'ag/claude-sonnet-4-6'"))
+}
+
 // --- Backward compat: gateway-provider still has env fallback ---
 const gpPath = join(root, 'lib/ai-gateway/gateway-provider.ts')
 if (existsSync(gpPath)) {

@@ -76,6 +76,13 @@ function fallbackPreview(fallbacks: FallbackRow[]): string {
   return `${label} +${fallbacks.length - 1}`
 }
 
+const USE_CASE_LABELS: Record<string, string> = {
+  chapter_prose: 'Generasi Prosa Bab',
+  choices: 'Pilihan Alur Interaktif',
+  story_authoring: 'Authoring & Premis (/mulai)',
+  continuity_judge: 'Audit Kontinuitas Naratif',
+}
+
 export default function AdminSettingsPage() {
   const [data, setData] = useState<SettingsData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -195,8 +202,11 @@ export default function AdminSettingsPage() {
         title="AI Model Routes"
         subtitle="Konfigurasi rute provider & model generasi"
       >
-        <div className="border-b border-border bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
-          🔒 <strong>M10-G code authority:</strong> Runtime produksi menggunakan rute dan parameter yang dibekukan di level kode (zero mutable route selection). Perubahan di tabel ini adalah referensi database dan tidak mengubah kandidat beku M10-G tanpa rilis kode baru.
+        <div className="border-b border-border bg-emerald-500/10 px-4 py-2.5 text-xs text-emerald-300 flex items-center gap-2">
+          <span className="inline-block size-2 rounded-full bg-emerald-400 shrink-0" />
+          <span>
+            <strong>Rute Aktif Produksi:</strong> Perubahan konfigurasi di tabel ini langsung berlaku di runtime untuk pembuatan premis (<code>story_authoring</code>), penulisan bab (<code>chapter_prose</code>), dan pilihan cerita (<code>choices</code>).
+          </span>
         </div>
         {data.aiModelRoutes.length === 0 ? <AdminEmptyState /> : (
           <div className="overflow-x-auto">
@@ -209,11 +219,13 @@ export default function AdminSettingsPage() {
                 {data.aiModelRoutes.map((r) => (
                   <tr key={r.useCase} className="border-b border-border hover:bg-muted/20">
                     <td className="px-3 py-1.5 font-medium">
-                      <div className="flex items-center gap-1.5">
-                        <span>{r.useCase}</span>
-                        <span className="rounded bg-muted px-1.5 py-0.2 text-[9px] font-mono text-muted-foreground border border-border" title="Locked to code authority">
-                          code authority
-                        </span>
+                      <div className="flex flex-col">
+                        <span className="font-mono text-[11px] text-foreground">{r.useCase}</span>
+                        {USE_CASE_LABELS[r.useCase] && (
+                          <span className="text-[10px] text-muted-foreground font-normal">
+                            {USE_CASE_LABELS[r.useCase]}
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-3 py-1.5">{r.provider}</td>

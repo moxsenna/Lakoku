@@ -64,6 +64,29 @@ describe('resolveAuthoringModels', () => {
     expect(candidates[0].label).toBe('gateway:openai/gpt-4.1-mini')
   })
 
+  it('resolves explicit DB route when provided, taking precedence over env defaults', async () => {
+    process.env.NINEROUTER_BASE_URL = 'https://9router.example.com/v1'
+    process.env.NINEROUTER_API_KEY = 'nr-test-key'
+
+    const { resolveAuthoringModels } = await import('@/lib/authoring/model')
+    const dbRoute = {
+      useCase: 'story_authoring',
+      provider: '9router' as const,
+      modelId: 'ag/custom-author-model',
+      fallbackModels: [
+        { provider: '9router' as const, modelId: 'ag/custom-fallback-model' },
+      ],
+      temperature: null,
+      maxOutputTokens: 4096,
+      routeVersion: 'test-v1',
+    }
+
+    const candidates = resolveAuthoringModels(dbRoute)
+    expect(candidates.length).toBe(2)
+    expect(candidates[0].label).toBe('9router:ag/custom-author-model')
+    expect(candidates[1].label).toBe('9router:ag/custom-fallback-model')
+  })
+
   it('authorObjectFromCandidates falls back to next candidate when first fails', async () => {
     const { authorObjectFromCandidates } = await import('@/lib/authoring/model')
     const { z } = await import('zod')

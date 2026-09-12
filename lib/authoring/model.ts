@@ -12,6 +12,7 @@ import 'server-only'
 import { generateObject, type LanguageModel } from 'ai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import type { z } from 'zod'
+import type { AiModelRoute } from '@/lib/ops/ai-model-routes'
 
 const AUTHORING_PRIMARY_JSON = 'openai/gpt-4.1-mini'
 const AUTHORING_FALLBACK_JSON = 'deepseek/deepseek-v3.2'
@@ -139,17 +140,92 @@ function createAuthoringFetch(): typeof globalThis.fetch {
   }
 }
 
+function candidateForTarget(
+  provider: string,
+  modelId: string,
+  authoringFetch: typeof globalThis.fetch,
+): AuthoringModel | null {
+  const cleanId = modelId.trim()
+  if (!cleanId) return null
+
+  if (provider === '9router') {
+    const baseURL = process.env.NINEROUTER_BASE_URL?.trim()
+    const apiKey = process.env.NINEROUTER_API_KEY?.trim()
+    if (baseURL && apiKey) {
+      const nine = createOpenAICompatible({
+        name: '9router-authoring',
+        baseURL,
+        apiKey,
+        supportsStructuredOutputs: true,
+        fetch: authoringFetch,
+      })
+      return { model: nine(cleanId), label: `9router:${cleanId}` }
+    }
+  }
+
+  if (provider === 'custom') {
+    const baseURL = process.env.CUSTOM_LLM_BASE_URL?.trim()
+    const apiKey = process.env.CUSTOM_LLM_API_KEY?.trim()
+    if (baseURL && apiKey) {
+      const custom = createOpenAICompatible({
+        name: 'custom-authoring',
+        baseURL,
+        apiKey,
+        supportsStructuredOutputs: true,
+        fetch: authoringFetch,
+      })
+      return { model: custom(cleanId), label: `custom:${cleanId}` }
+    }
+  }
+
+  if (provider === 'openrouter') {
+    const apiKey = process.env.OPENROUTER_API_KEY?.trim()
+    if (apiKey) {
+      const openrouter = createOpenAICompatible({
+        name: 'openrouter-authoring',
+        baseURL: 'https://openrouter.ai/api/v1',
+        apiKey,
+        supportsStructuredOutputs: true,
+        fetch: authoringFetch,
+      })
+      return { model: openrouter(cleanId), label: `openrouter:${cleanId}` }
+    }
+  }
+
+  if (provider === 'gateway') {
+    return { model: cleanId as unknown as LanguageModel, label: `gateway:${cleanId}` }
+  }
+
+  return null
+}
+
 /**
  * Pilih kandidat authoring JSON-capable.
  * Prioritas:
+ * 0. Rute aktif dari DB (jika route disediakan)
  * 1. 9Router (bila NINEROUTER_BASE_URL & NINEROUTER_API_KEY tersedia)
  * 2. Custom endpoint (bila CUSTOM_LLM_BASE_URL & CUSTOM_LLM_API_KEY tersedia)
  * 3. OpenRouter (bila OPENROUTER_API_KEY tersedia)
  * 4. Gateway fallback (bila tidak ada provider OpenAI-compatible)
  */
-export function resolveAuthoringModels(): AuthoringModel[] {
-  const candidates: AuthoringModel[] = []
+export function resolveAuthoringModels(route?: AiModelRoute | null): AuthoringModel[] {
   const authoringFetch = createAuthoringFetch()
+
+  // 0. Bila route DB disediakan, gunakan primary & fallbacks dari route
+  if (route) {
+    const dbCandidates: AuthoringModel[] = []
+    const primary = candidateForTarget(route.provider, route.modelId, authoringFetch)
+    if (primary) dbCandidates.push(primary)
+    for (const fb of route.fallbackModels ?? []) {
+      const candidate = candidateForTarget(fb.provider, fb.modelId, authoringFetch)
+      if (candidate) dbCandidates.push(candidate)
+    }
+    if (dbCandidates.length > 0) {
+      return dbCandidates
+    }
+  }
+
+  const candidates: AuthoringModel[] = []
   const customModels = splitModelList(process.env.AUTHORING_MODELS)
 
   // 1. 9Router (jika dikonfigurasi) — model Claude teruji sangat patuh schema
@@ -210,8 +286,8 @@ export function resolveAuthoringModels(): AuthoringModel[] {
 }
 
 /** Kompatibilitas untuk pemanggil lama yang hanya butuh kandidat pertama. */
-export function resolveAuthoringModel(): AuthoringModel {
-  return resolveAuthoringModels()[0]
+export function resolveAuthoringModel(route?: AiModelRoute | null): AuthoringModel {
+  return resolveAuthoringModels(route)[0]
 }
 
 function describeError(error: unknown): string {
@@ -269,5 +345,12 @@ export async function authorObjectFromCandidates<T>(
 export async function authorObject<T>(
   args: AuthorObjectArgs<T>,
 ): Promise<{ object: T; usedModel: string }> {
-  return authorObjectFromCandidates(args, resolveAuthoringModels())
+  let dbRoute: AiModelRoute | null = null
+  try {
+    const { getAiModelRoute } = await import('@/lib/ops/ai-model-routes')
+    dbRoute = await getAiModelRoute('story_authoring')
+  } catch {
+    // DB tidak tersedia (misal di runner offline/harness), fallback ke env
+  }
+  return authorObjectFromCandidates(args, resolveAuthoringModels(dbRoute))
 }

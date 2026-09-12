@@ -19,6 +19,10 @@ import {
   sanitizeChoiceValidationCodes,
 } from './model-call-errors'
 import { runObserver } from './observer-isolation'
+import {
+  recordProviderReportedCost,
+  recordProviderUnmeasuredCost,
+} from './e0-cost-guard'
 import { captureFlagshipCompletion, type FlagshipCompletionCapture } from './flagship-identity-evidence'
 import type { ObservedReasoningBudget } from './reasoning-budget.contract'
 
@@ -203,6 +207,35 @@ function providerCost(
   }
 }
 
+/**
+ * Feeds the E0 interim cost guard with the transport's provider-reported billed
+ * amount. Only `provider_actual` values are accepted — a transport that reports
+ * no billed usage is counted as unmeasured, never priced by derivation.
+ *
+ * A ceiling trip throws, so the caller decides whether the trip is terminal
+ * (success path) or must not mask an in-flight failure (error path).
+ */
+function accountE0MeasuredCost(
+  completion: ProviderCallCompletion,
+  input: ObservedModelCallInput<unknown>,
+  accounted: { done: boolean },
+): void {
+  // One transport is billed once. A ceiling trip on the success path rethrows
+  // into the catch block, which must not re-charge the same spend.
+  if (accounted.done) return
+  accounted.done = true
+  const provenance = {
+    providerId: input.candidate.providerId,
+    modelId: completion.actualModelId,
+    workflowPhase: input.workflowPhase,
+  }
+  if (completion.providerActualCostAmount === null || completion.providerActualCostCurrency !== 'USD') {
+    recordProviderUnmeasuredCost(provenance)
+    return
+  }
+  recordProviderReportedCost(completion.providerActualCostAmount, provenance)
+}
+
 function actualModel(
   finalStep: ObservedFinalStep | undefined,
   configuredModelId: string,
@@ -318,6 +351,7 @@ export async function executeObservedModelCall<T>(
   }
   let observation: Partial<ResolvedObservation> = {}
   let observedFinishReason: string | undefined
+  const e0Accounted = { done: false }
 
   try {
     // Await the call itself first: streamText returns a result object whose
@@ -368,6 +402,7 @@ export async function executeObservedModelCall<T>(
     }
     runObserver(() => input.observeCompletion?.(completion, { finishReason: observedFinishReason }))
     if (input.persistObservation !== false) await recordBestEffort(start, completion, deps)
+    accountE0MeasuredCost(completion, input as ObservedModelCallInput<unknown>, e0Accounted)
     return value
   } catch (error) {
     const classification = input.classifyFailure?.(error) ?? classifyFailure(error)
@@ -383,6 +418,13 @@ export async function executeObservedModelCall<T>(
     }
     runObserver(() => input.observeCompletion?.(completion, { finishReason: observedFinishReason }))
     if (input.persistObservation !== false) await recordBestEffort(start, completion, deps)
+    // A failed transport is still billed. Account it, but never let a ceiling
+    // trip replace the original failure the caller must classify.
+    try {
+      accountE0MeasuredCost(completion, input as ObservedModelCallInput<unknown>, e0Accounted)
+    } catch {
+      // Budget state is already updated; the next transport trips terminally.
+    }
     throw error
   }
 }

@@ -10,6 +10,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit --incremental false",
     "check:migration-versions": "node scripts/run-smoke.cjs scripts/check-migration-version-uniqueness.ts",
+    "cost:daily": "node scripts/run-smoke.cjs scripts/daily-cost-monitor.ts",
+    "smoke:production-reader": "node scripts/run-smoke.cjs scripts/production-reader-smoke.ts",
     "test": "pnpm run typecheck && pnpm run check:migration-versions && pnpm run test:unit && pnpm run smoke",
     "test:unit": "vitest run --project heavy && vitest run --project unit && vitest run --project contention-sensitive",
     "test:unit:watch": "vitest",

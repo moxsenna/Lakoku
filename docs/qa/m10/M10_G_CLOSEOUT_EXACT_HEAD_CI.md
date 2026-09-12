@@ -304,12 +304,46 @@ dokumen ini.
   kegagalan non-deterministik 5000ms adalah starvation worker, bukan
   kelambatan test. Batch 9 file: 287/287 hijau.
 
-### CI-5 OPEN — seam pengukuran biaya E0
+### CI-5 DITUTUP — seam pengukuran biaya E0 tersambung
 
-Semua transport produksi memakai `streamText` (SSE); AI SDK tidak mengekspos
-`usage.cost` dari chunk akhir. Guard E0 aktif dan teruji, tetapi inert sampai
-seam pengambilan `usage.cost` (parser chunk akhir SSE atau dukungan upstream)
-selesai. Ruang lingkup akar sama dengan `BLOCKED_PRICING_AUTHORITY_MISSING`.
+Catatan lama ("AI SDK tidak mengekspos `usage.cost`") **salah** dan dicabut.
+`observed-model-call.server.ts` sudah memanen `finalStep.providerMetadata[providerId].cost`
+lewat `providerCost()` sejak awal; yang tidak ada adalah pemanggil ke guard E0.
+
+Perbaikan: `executeObservedModelCall` kini memanggil `recordProviderReportedCost`
+(untuk `provider_actual` USD) atau `recordProviderUnmeasuredCost`, pada jalur
+sukses maupun gagal — transport gagal tetap ditagih. Token idempotensi per
+invokasi mencegah tagihan ganda saat trip ceiling jatuh ke blok catch, dan trip
+pada jalur gagal tidak pernah menggantikan error asli yang harus diklasifikasi
+pemanggil. Seluruh transport gateway wajib melewati choke point ini (dipaksa
+guard AST `smoke:admin-generation-observability`), jadi tidak ada jalur pintas.
+
+Bukti: `tests/ai-gateway/e0-cost-measurement-seam.test.ts` (5 test baru, RED lalu
+GREEN) + regresi `observed-model-call` dan `e0-cost-guard` — 39/39 hijau.
+
+### CI-6 OPEN — nol transport produksi pernah melaporkan biaya
+
+Ditemukan saat membangun monitor biaya harian G13. Dari **722 transport
+tercatat** pada `generation_provider_calls` (2026-07-23..2026-09-02),
+**722 bermuatan `cost_source='unavailable'`; 0 `provider_actual`** — lintas
+seluruh provider (`9router`, `openrouter`, `custom`).
+
+Akibatnya guard E0 tetap inert di produksi meskipun CI-5 sudah ditutup: guard
+hanya menghitung apa yang dilaporkan provider, dan tidak pernah menurunkan harga
+dari token (otoritas pricing masih `BLOCKED_PRICING_AUTHORITY_MISSING`).
+
+Akar dugaan (belum dibuktikan dengan transport nyata): seluruh kandidat dibangun
+dengan `createOpenAICompatible` (`gateway-provider.ts`), yang memetakan field
+usage OpenAI standar. OpenRouter hanya mengembalikan `usage.cost` bila request
+menyertakan `usage: { include: true }`; body request saat ini tidak
+menyertakannya (lihat `openAICompatibleFetch`, yang hanya menambah
+`reasoning_effort` dan `stream`). 9router/custom belum diketahui mendukung
+akuntansi biaya sama sekali.
+
+Konsekuensi soft launch: pemantauan biaya harian **hanya bisa menghitung volume
+transport**, bukan rupiah/dolar nyata. Tagihan riil harus dibaca dari dashboard
+provider sampai CI-6 ditutup. Monitor melaporkan status `UNMEASURED` (bukan
+`OK`) tepat supaya kondisi ini tidak terbaca sebagai "biaya nol".
 
 ### CI-3 — tetap lingkungan
 

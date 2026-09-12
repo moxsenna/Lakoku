@@ -1,6 +1,13 @@
 # Lakoku VPS Deploy (production)
 
-> **Baca ini dulu.** Production Lakoku **bukan** Cloudflare Worker / Vercel.
+> **⚠️ TARGET AKTIF SEKARANG: shared VPS `ubuntu@43.157.235.28`** (systemd user
+> service `mox-lakoku` + Cloudflare Tunnel). Runbook deployment saat ini:
+> **[docs/DEPLOY-SHARED-VPS.md](./DEPLOY-SHARED-VPS.md)** (terverifikasi pada
+> release `57b276d`, 2026-09-12).
+>
+> Dokumen di bawah ini adalah **legacy** (Docker Compose + Caddy di
+> `root@43.228.213.148`) — dipertahankan sebagai referensi, bukan target deploy.
+
 > App berjalan di VPS Atlantic multi-app. Database production = **Supabase linked**, bukan Postgres di VPS.
 
 Kit multi-app umum (server, port policy, Caddy, SSH):

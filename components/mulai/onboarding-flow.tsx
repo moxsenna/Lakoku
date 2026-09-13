@@ -47,6 +47,16 @@ import type { PremiseDraft, StoryBibleDraft } from '@/lib/authoring/schema'
 import type { TasteProfile } from '@/lib/taste-profile/schema'
 import type { StoryCreativeDirection } from '@/lib/onboarding/creative-direction'
 import { trackEvent } from '@/lib/analytics/client'
+
+function isActionMismatchError(err: unknown): boolean {
+  if (err instanceof Error) {
+    return (
+      err.message.includes('Failed to find Server Action') ||
+      err.message.includes('older or newer deployment')
+    )
+  }
+  return false
+}
 import { isTasteProfileV2Enabled } from '@/lib/feature-flags'
 
 const PoetryLottie = dynamic(
@@ -153,9 +163,13 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
 
     // Server: best-effort, fallback ke localStorage kalau gagal.
     startTransition(async () => {
-      const result = await actGetTasteProfile()
-      if (result.ok && result.profile) {
-        setTasteProfile(result.profile)
+      try {
+        const result = await actGetTasteProfile()
+        if (result.ok && result.profile) {
+          setTasteProfile(result.profile)
+        }
+      } catch {
+        // best-effort fallback ke guest localStorage
       }
     })
 
@@ -198,40 +212,48 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
   }, [supabaseConfig])
 
   const lockAndStart = useCallback(async (draft: StoryBibleDraft) => {
-    setBuildStage('lock')
-    const lockRes = await lockStoryBible(draft)
-    if (!lockRes.ok) {
-      return failBuild(
-        'needsAuthor' in lockRes
-          ? 'Cerita ini butuh sedikit penyesuaian. Coba pilih cerita lain atau ulangi.'
-          : lockRes.error,
-      )
-    }
-
-    clearOnboardingDraftStash(window.localStorage)
-
-    // T-SHARE-3: tautkan story baru ke share start row.
     try {
-      const raw = sessionStorage.getItem('lakoku:share-start:v1')
-      if (raw) {
-        const parsed = JSON.parse(raw) as { startId?: string }
-        if (parsed.startId) {
-          const { actAttachShareStart } = await import('@/app/share/actions')
-          await actAttachShareStart(parsed.startId, lockRes.storyId)
-        }
-        sessionStorage.removeItem('lakoku:share-start:v1')
+      setBuildStage('lock')
+      const lockRes = await lockStoryBible(draft)
+      if (!lockRes.ok) {
+        return failBuild(
+          'needsAuthor' in lockRes
+            ? 'Cerita ini butuh sedikit penyesuaian. Coba pilih cerita lain atau ulangi.'
+            : lockRes.error,
+        )
       }
-    } catch {
-      // best-effort
-    }
 
-    setBuildStage('chapter')
-    const gen = await startChapter(lockRes.storyId, 1)
-    if (!gen.ok) {
-      router.push(`/cerita/${lockRes.storyId}`)
-      return
+      clearOnboardingDraftStash(window.localStorage)
+
+      // T-SHARE-3: tautkan story baru ke share start row.
+      try {
+        const raw = sessionStorage.getItem('lakoku:share-start:v1')
+        if (raw) {
+          const parsed = JSON.parse(raw) as { startId?: string }
+          if (parsed.startId) {
+            const { actAttachShareStart } = await import('@/app/share/actions')
+            await actAttachShareStart(parsed.startId, lockRes.storyId)
+          }
+          sessionStorage.removeItem('lakoku:share-start:v1')
+        }
+      } catch {
+        // best-effort
+      }
+
+      setBuildStage('chapter')
+      const gen = await startChapter(lockRes.storyId, 1)
+      if (!gen.ok) {
+        router.push(`/cerita/${lockRes.storyId}`)
+        return
+      }
+      router.push(`/baca/${lockRes.storyId}?bab=1`)
+    } catch (err) {
+      if (isActionMismatchError(err)) {
+        window.location.reload()
+        return
+      }
+      failBuild('Gagal menyimpan atau memulai bab pertama cerita. Coba lagi.')
     }
-    router.push(`/baca/${lockRes.storyId}?bab=1`)
   }, [failBuild, router])
 
   // ── Resume flow ─────────────────────────────────────────────────
@@ -269,11 +291,19 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
       setErr(null)
       setPhase('building')
       startTransition(async () => {
-        if (!(await hasSession())) {
-          router.push(RESUME_LOGIN_URL)
-          return
+        try {
+          if (!(await hasSession())) {
+            router.push(RESUME_LOGIN_URL)
+            return
+          }
+          await lockAndStart(draft)
+        } catch (err) {
+          if (isActionMismatchError(err)) {
+            window.location.reload()
+            return
+          }
+          failBuild('Terjadi kendala saat melanjutkan cerita. Coba lagi.')
         }
-        await lockAndStart(draft)
       })
     })
   }, [failBuild, hasSession, lockAndStart, resume, router])
@@ -304,25 +334,34 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     setErr(null)
     setPhase('proposals')
     startTransition(async () => {
-      const res = await actProposeStorySetupPremises({
-        mode: 'quick',
-        answers: currentAnswers,
-        guestTasteProfile: tasteProfile,
-      })
-      if (!res.ok) {
-        setErr(res.error ?? 'Gagal menyiapkan cerita. Coba lagi.')
+      try {
+        const res = await actProposeStorySetupPremises({
+          mode: 'quick',
+          answers: currentAnswers,
+          guestTasteProfile: tasteProfile,
+        })
+        if (!res.ok) {
+          setErr(res.error ?? 'Gagal menyiapkan cerita. Coba lagi.')
+          setPhase('error')
+          return
+        }
+        setProposals(res.proposals)
+        if (res.direction) setCreativeDirection(res.direction)
+        if (res.publicSummary) setPublicSummary(res.publicSummary)
+        trackEvent('story_premises_generated', {
+          story_setup_mode: 'quick',
+          stage: 'proposal',
+          has_usable_taste: hasUsableTasteProfile(tasteProfile),
+          direction_fingerprint: res.fingerprint,
+        })
+      } catch (err) {
+        if (isActionMismatchError(err)) {
+          window.location.reload()
+          return
+        }
+        setErr('Gagal menyiapkan cerita. Coba lagi.')
         setPhase('error')
-        return
       }
-      setProposals(res.proposals)
-      if (res.direction) setCreativeDirection(res.direction)
-      if (res.publicSummary) setPublicSummary(res.publicSummary)
-      trackEvent('story_premises_generated', {
-        story_setup_mode: 'quick',
-        stage: 'proposal',
-        has_usable_taste: hasUsableTasteProfile(tasteProfile),
-        direction_fingerprint: res.fingerprint,
-      })
     })
   }
 
@@ -334,19 +373,28 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     setErr(null)
     setPhase('proposals')
     startTransition(async () => {
-      const res = await actProposeStorySetupPremises({
-        mode: 'custom',
-        customIdea: trimmed,
-        guestTasteProfile: tasteProfile,
-      })
-      if (!res.ok) {
-        setErr(res.error ?? 'Gagal menyiapkan cerita. Coba lagi.')
+      try {
+        const res = await actProposeStorySetupPremises({
+          mode: 'custom',
+          customIdea: trimmed,
+          guestTasteProfile: tasteProfile,
+        })
+        if (!res.ok) {
+          setErr(res.error ?? 'Gagal menyiapkan cerita. Coba lagi.')
+          setPhase('error')
+          return
+        }
+        setProposals(res.proposals)
+        if (res.direction) setCreativeDirection(res.direction)
+        if (res.publicSummary) setPublicSummary(res.publicSummary)
+      } catch (err) {
+        if (isActionMismatchError(err)) {
+          window.location.reload()
+          return
+        }
+        setErr('Gagal menyiapkan cerita. Coba lagi.')
         setPhase('error')
-        return
       }
-      setProposals(res.proposals)
-      if (res.direction) setCreativeDirection(res.direction)
-      if (res.publicSummary) setPublicSummary(res.publicSummary)
     })
   }
 
@@ -357,55 +405,63 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     setErr(null)
     setPhase('building')
     startTransition(async () => {
-      setBuildStage('cast')
-      const castRes = await actProposeCast(premise, undefined, undefined, creativeDirection)
-      if (!castRes.ok) return failBuild(castRes.error)
+      try {
+        setBuildStage('cast')
+        const castRes = await actProposeCast(premise, undefined, undefined, creativeDirection)
+        if (!castRes.ok) return failBuild(castRes.error)
 
-      setBuildStage('mystery')
-      const mysteryRes = await actProposeMystery(
-        premise,
-        castRes.cast,
-        undefined,
-        undefined,
-        creativeDirection,
-      )
-      if (!mysteryRes.ok) return failBuild(mysteryRes.error)
+        setBuildStage('mystery')
+        const mysteryRes = await actProposeMystery(
+          premise,
+          castRes.cast,
+          undefined,
+          undefined,
+          creativeDirection,
+        )
+        if (!mysteryRes.ok) return failBuild(mysteryRes.error)
 
-      setBuildStage('world')
-      const worldRes = await actProposeWorld(
-        premise,
-        castRes.cast,
-        mysteryRes.mystery,
-        undefined,
-        undefined,
-        creativeDirection,
-      )
-      if (!worldRes.ok) return failBuild(worldRes.error)
+        setBuildStage('world')
+        const worldRes = await actProposeWorld(
+          premise,
+          castRes.cast,
+          mysteryRes.mystery,
+          undefined,
+          undefined,
+          creativeDirection,
+        )
+        if (!worldRes.ok) return failBuild(worldRes.error)
 
-      const draft = {
-        premise,
-        cast: castRes.cast,
-        mystery: mysteryRes.mystery,
-        world: worldRes.world,
-        creativeDirection: creativeDirection ?? undefined,
+        const draft = {
+          premise,
+          cast: castRes.cast,
+          mystery: mysteryRes.mystery,
+          world: worldRes.world,
+          creativeDirection: creativeDirection ?? undefined,
+        }
+
+        setBuildStage('lock')
+        if (!(await hasSession())) {
+          saveOnboardingDraftStash(window.localStorage, {
+            ...draft,
+            answers: Object.fromEntries(
+              Object.entries(answers).map(([k, v]) => [
+                k,
+                v.mode === 'custom' ? v.text : v.mode === 'selected' ? v.value : 'auto',
+              ]),
+            ),
+          })
+          router.push(RESUME_LOGIN_URL)
+          return
+        }
+
+        await lockAndStart(draft)
+      } catch (err) {
+        if (isActionMismatchError(err)) {
+          window.location.reload()
+          return
+        }
+        failBuild('Terjadi kendala saat menyusun karakter dan dunia cerita. Coba lagi.')
       }
-
-      setBuildStage('lock')
-      if (!(await hasSession())) {
-        saveOnboardingDraftStash(window.localStorage, {
-          ...draft,
-          answers: Object.fromEntries(
-            Object.entries(answers).map(([k, v]) => [
-              k,
-              v.mode === 'custom' ? v.text : v.mode === 'selected' ? v.value : 'auto',
-            ]),
-          ),
-        })
-        router.push(RESUME_LOGIN_URL)
-        return
-      }
-
-      await lockAndStart(draft)
     })
   }
 

@@ -28,6 +28,16 @@ import type {
 } from '@/lib/authoring/schema'
 import type { Finding } from '@lakoku/narrative-core'
 
+function isActionMismatchError(err: unknown): boolean {
+  if (err instanceof Error) {
+    return (
+      err.message.includes('Failed to find Server Action') ||
+      err.message.includes('older or newer deployment')
+    )
+  }
+  return false
+}
+
 type Stage = 'idea' | 'premise' | 'cast' | 'mystery' | 'world' | 'review'
 const ORDER: Stage[] = ['idea', 'premise', 'cast', 'mystery', 'world', 'review']
 const LABEL: Record<Stage, string> = {
@@ -154,58 +164,98 @@ export function BrainstormWizard() {
   // --- Stage transitions ---
   function generatePremises() {
     startTransition(async () => {
-      const res = await actProposePremises(idea)
-      guard(res, (r) => {
-        setProposals(r.proposals)
-        setStage('premise')
-      })
+      try {
+        const res = await actProposePremises(idea)
+        guard(res, (r) => {
+          setProposals(r.proposals)
+          setStage('premise')
+        })
+      } catch (err) {
+        if (isActionMismatchError(err)) {
+          window.location.reload()
+          return
+        }
+        setErr('Gagal memproses ide cerita. Coba lagi.')
+      }
     })
   }
 
   function refinePremiseNow() {
     if (!premise) return
     startTransition(async () => {
-      const res = await actRefinePremise(premise, feedback)
-      guard(res, (r) => {
-        setPremise(r.premise)
-        setFeedback('')
-      })
+      try {
+        const res = await actRefinePremise(premise, feedback)
+        guard(res, (r) => {
+          setPremise(r.premise)
+          setFeedback('')
+        })
+      } catch (err) {
+        if (isActionMismatchError(err)) {
+          window.location.reload()
+          return
+        }
+        setErr('Gagal menyesuaikan premis. Coba lagi.')
+      }
     })
   }
 
   function goCast(fb?: string) {
     if (!premise) return
     startTransition(async () => {
-      const res = await actProposeCast(premise, fb, cast ?? undefined)
-      guard(res, (r) => {
-        setCast(r.cast)
-        setFeedback('')
-        setStage('cast')
-      })
+      try {
+        const res = await actProposeCast(premise, fb, cast ?? undefined)
+        guard(res, (r) => {
+          setCast(r.cast)
+          setFeedback('')
+          setStage('cast')
+        })
+      } catch (err) {
+        if (isActionMismatchError(err)) {
+          window.location.reload()
+          return
+        }
+        setErr('Gagal menyusun tokoh. Coba lagi.')
+      }
     })
   }
 
   function goMystery(fb?: string) {
     if (!premise || !cast) return
     startTransition(async () => {
-      const res = await actProposeMystery(premise, cast, fb, mystery ?? undefined)
-      guard(res, (r) => {
-        setMystery(r.mystery)
-        setFeedback('')
-        setStage('mystery')
-      })
+      try {
+        const res = await actProposeMystery(premise, cast, fb, mystery ?? undefined)
+        guard(res, (r) => {
+          setMystery(r.mystery)
+          setFeedback('')
+          setStage('mystery')
+        })
+      } catch (err) {
+        if (isActionMismatchError(err)) {
+          window.location.reload()
+          return
+        }
+        setErr('Gagal menyusun misteri cerita. Coba lagi.')
+      }
     })
   }
 
   function goWorld(fb?: string) {
     if (!premise || !cast || !mystery) return
     startTransition(async () => {
-      const res = await actProposeWorld(premise, cast, mystery, fb, world ?? undefined)
-      guard(res, (r) => {
-        setWorld(r.world)
-        setFeedback('')
-        setStage('world')
-      })
+      try {
+        const res = await actProposeWorld(premise, cast, mystery, fb, world ?? undefined)
+        guard(res, (r) => {
+          setWorld(r.world)
+          setFeedback('')
+          setStage('world')
+        })
+      } catch (err) {
+        if (isActionMismatchError(err)) {
+          window.location.reload()
+          return
+        }
+        setErr('Gagal menyusun dunia cerita. Coba lagi.')
+      }
     })
   }
 
@@ -213,29 +263,37 @@ export function BrainstormWizard() {
     if (!premise || !cast || !mystery || !world) return
     setFindings(null)
     startTransition(async () => {
-      const res = await lockStoryBible({ premise, cast, mystery, world })
-      if (res.ok) {
-        setErr(null)
-        // Cerita terkunci. Siapkan Bab 1 (generasi nyata) sebelum masuk reader.
-        setPreparing(true)
-        const gen = await startChapter(res.storyId, 1)
-        if (!gen.ok) {
-          // Bab gagal disiapkan: jangan buntu — arahkan ke detail cerita.
-          setPreparing(false)
-          setErr(gen.error ?? 'Bab pertama gagal disiapkan.')
-          router.push(`/cerita/${res.storyId}`)
+      try {
+        const res = await lockStoryBible({ premise, cast, mystery, world })
+        if (res.ok) {
+          setErr(null)
+          // Cerita terkunci. Siapkan Bab 1 (generasi nyata) sebelum masuk reader.
+          setPreparing(true)
+          const gen = await startChapter(res.storyId, 1)
+          if (!gen.ok) {
+            // Bab gagal disiapkan: jangan buntu — arahkan ke detail cerita.
+            setPreparing(false)
+            setErr(gen.error ?? 'Bab pertama gagal disiapkan.')
+            router.push(`/cerita/${res.storyId}`)
+            return
+          }
+          router.push(`/baca/${res.storyId}?bab=1`)
           return
         }
-        router.push(`/baca/${res.storyId}?bab=1`)
-        return
+        if ('needsAuthor' in res) {
+          setFindings(res.findings)
+          setTransforms(res.transforms)
+          setErr('Ada beberapa bagian cerita yang perlu dirapikan.')
+          return
+        }
+        setErr(res.error ?? 'Gagal mengunci cerita.')
+      } catch (err) {
+        if (isActionMismatchError(err)) {
+          window.location.reload()
+          return
+        }
+        setErr('Gagal mengunci atau menyiapkan bab pertama cerita. Coba lagi.')
       }
-      if ('needsAuthor' in res) {
-        setFindings(res.findings)
-        setTransforms(res.transforms)
-        setErr(null)
-        return
-      }
-      setErr(res.error ?? 'Gagal mengunci cerita.')
     })
   }
 

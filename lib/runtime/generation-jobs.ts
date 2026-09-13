@@ -298,9 +298,12 @@ type RpcError = { message?: unknown; code?: unknown }
 
 function mapRpcError(error: RpcError): GenerationJobError {
   const extracted = extractGenerationJobRpcError(error.message)
+  const detail = typeof error.message === 'string'
+    ? error.message
+    : (error.message != null ? JSON.stringify(error.message) : undefined)
   return extracted
-    ? new GenerationJobError(extracted.code, extracted.rpcToken)
-    : new GenerationJobError('INTERNAL_ERROR')
+    ? new GenerationJobError(extracted.code, extracted.rpcToken, detail)
+    : new GenerationJobError('INTERNAL_ERROR', 'INTERNAL_ERROR', detail)
 }
 
 async function callRpc(name: string, payload: Record<string, unknown>): Promise<unknown> {

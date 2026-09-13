@@ -9,9 +9,10 @@ export default function GlobalError({
   error: Error & { digest?: string }
   reset: () => void
 }) {
-  const isServerActionMismatch =
-    error.message?.includes('Failed to find Server Action') ||
-    error.message?.includes('older or newer deployment')
+  const isServerActionMismatch = Boolean(
+    error?.message?.includes('Failed to find Server Action') ||
+    error?.message?.includes('older or newer deployment'),
+  )
 
   useEffect(() => {
     if (isServerActionMismatch) {

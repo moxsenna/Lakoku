@@ -1794,6 +1794,7 @@ async function generateNextPersonalizedChapterInner(
           jobId: jobContext?.jobId ?? null,
           errorCode: classification.code,
           errorName: info.errorName.slice(0, 100),
+          errorMessage: info.errorMessage.slice(0, 300),
         })
         if (classification.kind === 'chapter_exists') {
           published = { ok: false, reason: 'CHAPTER_EXISTS' }
@@ -1847,6 +1848,7 @@ async function generateNextPersonalizedChapterInner(
           jobId: jobContext.jobId,
           errorCode: classification.code,
           errorName: info.errorName.slice(0, 100),
+          errorMessage: info.errorMessage.slice(0, 300),
         })
         if (classification.kind === 'chapter_exists') {
           published = { ok: false, reason: 'CHAPTER_EXISTS' }

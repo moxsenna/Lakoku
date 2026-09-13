@@ -425,9 +425,12 @@ function normalizeV3Publication(
 
 function mapRpcError(error: { message?: unknown; code?: unknown }): GenerationJobError {
   const extracted = extractGenerationJobRpcError(error.message)
+  const detail = typeof error.message === 'string'
+    ? error.message
+    : (error.message != null ? JSON.stringify(error.message) : undefined)
   return extracted
-    ? new GenerationJobError(extracted.code, extracted.rpcToken)
-    : new GenerationJobError('INTERNAL_ERROR')
+    ? new GenerationJobError(extracted.code, extracted.rpcToken, detail)
+    : new GenerationJobError('INTERNAL_ERROR', 'INTERNAL_ERROR', detail)
 }
 
 /** RPC publisher helper — throw pada error RPC (classification di caller). */

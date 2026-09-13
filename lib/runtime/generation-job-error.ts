@@ -69,8 +69,9 @@ export class GenerationJobError extends Error {
   constructor(
     public readonly code: GenerationJobErrorCode,
     public readonly rpcToken: string = code,
+    public readonly detail?: string,
   ) {
-    super(code)
+    super(detail ? `${code}: ${detail}` : code)
     this.name = 'GenerationJobError'
   }
 }

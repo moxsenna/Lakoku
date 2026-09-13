@@ -78,7 +78,7 @@ describe('M10-G G-1 runner preflight V2', () => {
     expect(evaluateRouteIntegrity()).toMatchObject({
       ok: true,
       requestedModel: 'openai/gpt-5.6-sol',
-      projectionHash: 'b72919dd223317f708397ac055a7eca082cfff7400476618fba8c08d8d78c10e',
+      projectionHash: '2e0fd9bad777b798c95fe739bd41b5eb191c432009706514bcede7aad510fca4',
     })
     expect(evaluateJudgeSchedule()).toMatchObject({
       ok: true,

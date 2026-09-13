@@ -111,17 +111,20 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
     '- Pertahankan sudut pandang orang pertama ("aku") secara konsisten.',
     input.voiceGuidance ? `- Panduan Suara Karakter:\n${safe(input.voiceGuidance)}` : '',
     '- Format pergantian ucapan tokoh dipisahkan dengan jelas agar pembaca mudah mengikuti percakapan.',
-    '- Keterbacaan Mobile: Utamakan kalimat lugas, padat, dan bertenaga. Pecah kalimat majemuk bertingkat yang panjang atau berbelit-belit menjadi kalimat-kalimat yang lebih ringkas.',
-    '- Hindari satu kalimat yang memuat terlalu banyak koma atau anak kalimat bertumpuk.',
+    '- Keterbacaan Mobile: Utamakan kalimat tunggal yang lugas, padat, dan bertenaga (SP / SPO).',
+    '- Pecah kalimat majemuk bertingkat yang panjang atau berbelit-belit menjadi kalimat-kalimat tunggal yang ringkas.',
+    '- DILARANG menyambung banyak klausa atau anak kalimat dengan koma beruntun (seperti: ", merasakan...", ", membuat...", ", sehingga...", ", lalu...").',
+    '- Contoh SALAH: "Aku mengusap meja kayu yang kasar, merasakan alur seratnya sambil menatap pintu."',
+    '- Contoh BENAR: "Aku mengusap meja kayu yang kasar. Alur seratnya sudah kuhafal di luar kepala."',
   ].filter(Boolean).join('\n')
 
   const p5 = [
     '=== [P5] RITME PARAGRAF KUALITATIF ===',
-    'Gunakan paragraf yang nyaman dibaca di layar ponsel.',
-    'Hindari dinding teks panjang.',
-    'Pisahkan pergantian pembicara dan perubahan fokus dengan jelas.',
-    'Biarkan panjang paragraf mengikuti kebutuhan aksi, reaksi, dialog, dan tensi adegan.',
-    'Jaga ketukan visual yang lincah: variasikan aksi pendek, reaksi batin, dan dialog tanpa menumpuk blok kalimat panjang.',
+    '- Paragraf Ringkas: Setiap paragraf wajib bernapas lega. Cukup satu atau dua kalimat pendek saja.',
+    '- DILARANG menumpuk banyak kalimat dalam satu blok paragraf. Hindari paragraf berjejal atau dinding teks.',
+    '- Dialog Mandiri: Setiap baris ucapan dialog tokoh WAJIB berdiri sendiri dalam paragraf terpisah. Jangan satukan dialog dengan kalimat narasi panjang.',
+    '- Pemisahan Aksi & Reaksi: Pecah runtutan aksi fisik, reaksi emosi, dan detail sensorik menjadi paragraf-paragraf mandiri yang terpisah satu baris kosong.',
+    '- Target panjang 800–1000 kata dicapai dengan memperbanyak pergantian paragraf pendek yang lincah, BUKAN dengan mempertebal isi satu paragraf.',
   ].join('\n')
 
   const output = [

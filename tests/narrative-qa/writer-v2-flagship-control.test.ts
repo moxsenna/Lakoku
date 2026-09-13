@@ -21,7 +21,7 @@ import {
   type WriterV2ControlObservation,
 } from '@/lib/narrative-qa/harness/writer-v2-flagship-control.server'
 
-const EXPECTED_PROJECTION_HASH = 'b72919dd223317f708397ac055a7eca082cfff7400476618fba8c08d8d78c10e'
+const EXPECTED_PROJECTION_HASH = '2e0fd9bad777b798c95fe739bd41b5eb191c432009706514bcede7aad510fca4'
 const authorityInput = {
   childFlag: '1',
   credentialAvailable: true,
@@ -165,7 +165,7 @@ describe('WRITER_V2_FLAGSHIP_CONTROL_V1', () => {
       fixtureKey: 'MYSTERY', genre: 'MYSTERY', chapterNumber: 12,
       authorityMode: 'CHAPTER_BRIEF_V2',
       provisionalCorpusManifestHash: '712d46e7b9a06394b98593ee537fab43c376cea4aebcc951d48b654d51ca6a2a',
-      readyAuthorityManifestHash: '352e7c35c34d2547bea9a717825d635db50449a8e9bd7c5f515f293825a44213',
+      readyAuthorityManifestHash: 'a82216c319af567b71bf3793bb9e0ccbfc4caad5c3b7ad4cc7ca1bd22b439c5f',
       expectedProjectionHash: EXPECTED_PROJECTION_HASH,
       provider: 'openrouter', requestedModel: 'openai/gpt-5.6-sol',
       configuredModel: 'openai/gpt-5.6-sol',

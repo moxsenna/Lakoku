@@ -85,6 +85,16 @@ describe('StoryBibleDraftSchema', () => {
     expect(parsed.premise.tropes).toEqual(['Rahasia Keluarga', 'Kebangkitan Diri'])
   })
 
+  it('accepts and gracefully truncates role up to 200 chars to 80 chars', () => {
+    const draft = cloneDraft(validDraft())
+    draft.premise.role = 'Putra sulung yang dikhianati, difitnah, dan dibuang dari kerajaan bisnis keluarga.'
+
+    const parsed = StoryBibleDraftSchema.parse(draft)
+
+    expect(parsed.premise.role.length).toBeLessThanOrEqual(80)
+    expect(parsed.premise.role).toBe('Putra sulung yang dikhianati, difitnah, dan dibuang dari kerajaan bisnis keluarg')
+  })
+
   it.each([
     ['malformed nested input', (draft: StoryBibleDraftFixture) => { draft.cast.characters[0].voice = 'secret' }],
     ['aggregate unknown key', (draft: StoryBibleDraftFixture) => { draft.internalConfig = 'secret' }],

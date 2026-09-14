@@ -51,6 +51,7 @@ export async function proposePremises(idea: string): Promise<{ proposals: Premis
       'Tiap premis harus punya luka tokoh yang jelas dan taruhan yang meningkat.',
       'Keluaran wajib objek JSON dengan field proposals berisi tepat 3 item.',
       'Setiap item wajib punya title, tagline, role, synopsis, dan tropes.',
+      'role: sebutan peran ringkas pembaca sebagai tokoh utama (maksimal 10 kata / 60 karakter, mis. "Rani, pewaris yang dikhianati").',
       'Synopsis 3-5 kalimat pendek; tropes 2-5 string pendek.',
     ].join('\n'),
   })
@@ -66,6 +67,7 @@ export async function refinePremise(current: PremiseDraft, feedback: string): Pr
       `Premis saat ini:\n${JSON.stringify(current, null, 2)}`,
       `Masukan pengguna untuk revisi: "${feedback}".`,
       'Kembalikan SATU premis hasil revisi yang tetap koheren.',
+      'role: tetap sebutan peran ringkas pembaca sebagai tokoh utama (maksimal 60 karakter).',
     ].join('\n'),
   })
   return { premise: object, usedModel }

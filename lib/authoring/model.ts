@@ -109,19 +109,24 @@ function createAuthoringFetch(): typeof globalThis.fetch {
         if (Array.isArray(data.choices) && data.choices[0] && typeof data.choices[0] === 'object') {
           const choice = data.choices[0] as { message?: { content?: unknown } }
           if (choice.message && typeof choice.message.content === 'string') {
-            const content = choice.message.content
-            const match = content.match(/^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$/i)
-            if (match) {
-              choice.message.content = match[1].trim()
-              const newHeaders = new Headers(res.headers)
-              newHeaders.delete('content-length')
-              newHeaders.delete('content-encoding')
-              return new Response(JSON.stringify(data), {
-                status: res.status,
-                statusText: res.statusText,
-                headers: newHeaders,
-              })
+            const raw = choice.message.content.trim()
+            const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
+            const candidate = fenceMatch ? fenceMatch[1].trim() : raw
+            const firstBrace = candidate.indexOf('{')
+            const lastBrace = candidate.lastIndexOf('}')
+            if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+              choice.message.content = candidate.slice(firstBrace, lastBrace + 1).trim()
+            } else {
+              choice.message.content = candidate
             }
+            const newHeaders = new Headers(res.headers)
+            newHeaders.delete('content-length')
+            newHeaders.delete('content-encoding')
+            return new Response(JSON.stringify(data), {
+              status: res.status,
+              statusText: res.statusText,
+              headers: newHeaders,
+            })
           }
         }
         const newHeaders = new Headers(res.headers)
@@ -291,7 +296,17 @@ export function resolveAuthoringModel(route?: AiModelRoute | null): AuthoringMod
 }
 
 function describeError(error: unknown): string {
-  if (error instanceof Error) return error.message
+  if (error && typeof error === 'object') {
+    const err = error as { message?: string; text?: string; cause?: unknown }
+    let msg = err.message ?? String(error)
+    if (err.cause) {
+      const causeMsg = err.cause instanceof Error
+        ? err.cause.message
+        : (typeof err.cause === 'object' ? JSON.stringify(err.cause) : String(err.cause))
+      msg += ` [cause: ${causeMsg}]`
+    }
+    return msg
+  }
   return String(error)
 }
 

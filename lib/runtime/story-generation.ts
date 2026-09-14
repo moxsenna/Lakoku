@@ -666,7 +666,6 @@ async function generateNextChapterRealInner(
           jobId: jobContext.jobId,
           errorCode: classification.code,
           errorName: info.errorName.slice(0, 100),
-          errorMessage: info.errorMessage.slice(0, 300),
         })
         if (classification.kind === 'chapter_exists') {
           return { ok: false, reason: 'CHAPTER_EXISTS' }

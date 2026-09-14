@@ -24,25 +24,30 @@ const OpeningVoiceSchema = z.object({
   voices: z
     .array(
       z.object({
-        characterId: z.string().min(1).describe('Id tokoh PERSIS seperti diberikan pada konteks.'),
+        characterId: z.string().trim().min(1).describe('Id tokoh PERSIS seperti diberikan pada konteks.'),
         register: z
           .string()
-          .min(6)
-          .max(140)
+          .trim()
+          .min(3)
+          .max(300)
+          .transform((s) => s.slice(0, 140).trim())
           .describe('Register/nada bicara khas, mis. "tenang tapi menusuk, hemat kata".'),
         speechHabits: z
-          .array(z.string().min(2).max(120))
-          .min(2)
-          .max(6)
+          .array(z.string().trim().min(2).max(250).transform((s) => s.slice(0, 120).trim()))
+          .min(1)
+          .max(10)
+          .transform((arr) => arr.slice(0, 6))
           .describe('Kebiasaan bicara konkret yang membedakan tokoh ini.'),
         forbiddenWords: z
-          .array(z.string().min(1).max(40))
-          .max(10)
+          .array(z.string().trim().min(1).max(100).transform((s) => s.slice(0, 40).trim()))
+          .max(15)
+          .transform((arr) => arr.slice(0, 10))
           .describe('Kata/ungkapan yang TAK PERNAH diucapkan tokoh ini.'),
         sampleLines: z
-          .array(z.string().min(4).max(200))
-          .min(2)
-          .max(4)
+          .array(z.string().trim().min(2).max(400).transform((s) => s.slice(0, 200).trim()))
+          .min(1)
+          .max(8)
+          .transform((arr) => arr.slice(0, 4))
           .describe('Contoh dialog otentik yang menunjukkan suara tokoh.'),
       }),
     )

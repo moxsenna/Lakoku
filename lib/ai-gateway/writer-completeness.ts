@@ -43,8 +43,11 @@ export type WriterLengthRepairEligibility = Readonly<{
 
 export class WriterCompletenessError extends InvalidModelResponseError {
   constructor(readonly findings: readonly WriterCompletenessFinding[]) {
+    const summary = findings
+      .map((f) => (f.detail ? `${f.code}(${JSON.stringify(f.detail)})` : f.code))
+      .join(', ')
     super(
-      'Writer output failed completeness validation.',
+      `Writer output failed completeness validation${summary ? `: [${summary}]` : ''}.`,
       findings.map((finding) => finding.code),
     )
     this.name = 'WriterCompletenessError'

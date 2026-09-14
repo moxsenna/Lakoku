@@ -100,6 +100,12 @@ export async function proposeCast(
       feedback ? `Masukan pengguna: "${feedback}".` : '',
       'Rancang 3–8 karakter inti. Karakter PERTAMA wajib protagonis yang sesuai peran pembaca.',
       'Beri tiap karakter voice sheet (register, kebiasaan bicara, kata terlarang, contoh dialog).',
+      'PENTING batasan panjang teks:',
+      '- role: peran ringkas (maks 60 karakter / 2–5 kata), misal "Pewaris warung", "Pengusaha licin".',
+      '- motivation: motivasi inti (maks 240 karakter).',
+      '- voice.register: register bicara ringkas (maks 140 karakter), misal "hangat namun waspada".',
+      '- voice.speechHabits: 2–5 kebiasaan bicara, masing-masing maks 120 karakter.',
+      '- voice.sampleLines: 1–3 contoh dialog, masing-masing maks 200 karakter.',
       'Sebar introducedChapter secara wajar (protagonis di bab 1).',
       'Hard boundaries tidak boleh masuk ke backstory sebagai kejadian utama.',
     ].filter(Boolean).join('\n'),
@@ -126,6 +132,9 @@ export async function proposeMystery(
       feedback ? `Masukan pengguna: "${feedback}".` : '',
       `PENTING: setiap rahasia HARUS dijadwalkan pada salah satu reveal gate berikut: ${REVEAL_GATES.join(', ')}.`,
       'Buat 2–4 rahasia yang saling menumpuk menuju pembayaran misteri utama. Jangan pakai bab gate di luar daftar.',
+      'PENTING batasan panjang teks:',
+      '- mainMystery.title: judul misteri ringkas (maks 120 karakter).',
+      '- secrets.description: deskripsi rahasia (maks 300 karakter).',
     ].filter(Boolean).join('\n'),
   })
   return { mystery: object, usedModel }
@@ -152,6 +161,9 @@ export async function proposeWorld(
       feedback ? `Masukan pengguna: "${feedback}".` : '',
       'Rancang 1–6 thread naratif tambahan dan 3–12 fakta pijakan.',
       'Fakta loadBearing=true untuk fakta yang menopang misteri utama. subjectName harus salah satu nama karakter atau null.',
+      'PENTING batasan panjang teks:',
+      '- thread.title: judul thread ringkas (maks 120 karakter).',
+      '- fact.statement: fakta ringkas (maks 240 karakter).',
       'Jangan mengubah struktur 50 bab atau posisi reveal gate.',
     ].filter(Boolean).join('\n'),
   })

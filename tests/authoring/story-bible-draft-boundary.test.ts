@@ -31,6 +31,10 @@ type StoryBibleDraftFixture = {
       payoffWindow: number
       [key: string]: unknown
     }>
+    facts?: Array<{
+      subjectName?: unknown
+      [key: string]: unknown
+    }>
     [key: string]: unknown
   }
   internalConfig?: unknown
@@ -93,6 +97,26 @@ describe('StoryBibleDraftSchema', () => {
 
     expect(parsed.premise.role.length).toBeLessThanOrEqual(80)
     expect(parsed.premise.role).toBe('Putra sulung yang dikhianati, difitnah, dan dibuang dari kerajaan bisnis keluarg')
+  })
+
+  it('accepts register up to 140 chars and truncates character role to 60 chars', () => {
+    const draft = cloneDraft(validDraft())
+    const longRegister = 'Tenang tapi penuh beban, seperti orang yang sudah lama menelan kata-katanya sendiri.'
+    expect(longRegister.length).toBe(84)
+    draft.cast.characters[0].voice = {
+      register: longRegister,
+      speechHabits: ['bicara pelan'],
+      forbiddenWords: ['marah'],
+      sampleLines: ['Tidak apa-apa.'],
+    }
+    draft.cast.characters[1].role = 'Pengusaha properti licin yang mengincar warung peninggalan orang tua sejak lama'
+    draft.world.facts![2].subjectName = ''
+
+    const parsed = StoryBibleDraftSchema.parse(draft)
+
+    expect(parsed.cast.characters[0].voice.register).toBe(longRegister)
+    expect(parsed.cast.characters[1].role.length).toBeLessThanOrEqual(60)
+    expect(parsed.world.facts[2].subjectName).toBeNull()
   })
 
   it.each([

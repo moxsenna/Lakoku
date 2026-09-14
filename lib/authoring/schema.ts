@@ -21,8 +21,20 @@ export const REVEAL_GATES = REVEAL_GATE_CHAPTERS as readonly number[]
 const TropeSchema = z.string().trim().min(2).max(40)
 
 export const PremiseSchema = z.object({
-  title: z.string().min(3).max(80).describe('Judul cerita, ringkas & menggugah.'),
-  tagline: z.string().min(10).max(160).describe('Satu kalimat pemikat (logline).'),
+  title: z
+    .string()
+    .trim()
+    .min(3)
+    .max(150)
+    .transform((s) => s.slice(0, 80).trim())
+    .describe('Judul cerita, ringkas & menggugah.'),
+  tagline: z
+    .string()
+    .trim()
+    .min(10)
+    .max(300)
+    .transform((s) => s.slice(0, 160).trim())
+    .describe('Satu kalimat pemikat (logline).'),
   role: z
     .string()
     .trim()
@@ -43,20 +55,90 @@ export type PremiseProposals = z.infer<typeof PremiseProposalsSchema>
 // ---------- Tahap 2: Cast (karakter) ----------
 
 export const AuthoredCharacterSchema = z.object({
-  canonicalName: z.string().min(2).max(60).describe('Nama kanonik karakter.'),
-  role: z.string().min(2).max(60).describe('Peran naratif, mis. protagonis, antagonis, mentor.'),
-  motivation: z.string().min(10).max(240).describe('Motivasi inti yang menggerakkan karakter.'),
+  canonicalName: z
+    .string()
+    .trim()
+    .min(2)
+    .max(100)
+    .transform((s) => s.slice(0, 60).trim())
+    .describe('Nama kanonik karakter.'),
+  role: z
+    .string()
+    .trim()
+    .min(2)
+    .max(150)
+    .transform((s) => s.slice(0, 60).trim())
+    .describe('Peran naratif ringkas (maks 60 kar), mis. "antagonis", "mentor bijak".'),
+  motivation: z
+    .string()
+    .trim()
+    .min(10)
+    .max(500)
+    .transform((s) => s.slice(0, 240).trim())
+    .describe('Motivasi inti yang menggerakkan karakter.'),
   introducedChapter: z.number().int().min(1).max(50).describe('Bab perkenalan (1–50).'),
-  aliases: z.array(z.object({
-    alias: z.string().min(1).max(60),
-    aliasType: z.enum(['NAME', 'NICKNAME', 'RELATION', 'TITLE']),
-  }).strict()).max(4).describe('Nama panggilan/relasi/gelar (opsional).'),
-  voice: z.object({
-    register: z.string().min(3).max(80).describe('Register bicara, mis. "hangat namun waspada".'),
-    speechHabits: z.array(z.string().min(2).max(80)).max(5),
-    forbiddenWords: z.array(z.string().min(1).max(40)).max(8).describe('Kata yang tak pernah diucapkan karakter ini.'),
-    sampleLines: z.array(z.string().min(3).max(160)).min(1).max(3),
-  }).strict(),
+  aliases: z
+    .array(
+      z
+        .object({
+          alias: z
+            .string()
+            .trim()
+            .min(1)
+            .max(100)
+            .transform((s) => s.slice(0, 60).trim()),
+          aliasType: z.enum(['NAME', 'NICKNAME', 'RELATION', 'TITLE']),
+        })
+        .strict(),
+    )
+    .max(4)
+    .describe('Nama panggilan/relasi/gelar (opsional).'),
+  voice: z
+    .object({
+      register: z
+        .string()
+        .trim()
+        .min(3)
+        .max(250)
+        .transform((s) => s.slice(0, 140).trim())
+        .describe('Register bicara (maks 140 kar), mis. "hangat namun waspada".'),
+      speechHabits: z
+        .array(
+          z
+            .string()
+            .trim()
+            .min(2)
+            .max(200)
+            .transform((s) => s.slice(0, 120).trim()),
+        )
+        .max(10)
+        .transform((arr) => arr.slice(0, 6)),
+      forbiddenWords: z
+        .array(
+          z
+            .string()
+            .trim()
+            .min(1)
+            .max(80)
+            .transform((s) => s.slice(0, 40).trim()),
+        )
+        .max(15)
+        .transform((arr) => arr.slice(0, 8))
+        .describe('Kata yang tak pernah diucapkan karakter ini.'),
+      sampleLines: z
+        .array(
+          z
+            .string()
+            .trim()
+            .min(3)
+            .max(300)
+            .transform((s) => s.slice(0, 200).trim()),
+        )
+        .min(1)
+        .max(8)
+        .transform((arr) => arr.slice(0, 4)),
+    })
+    .strict(),
 }).strict()
 export type AuthoredCharacter = z.infer<typeof AuthoredCharacterSchema>
 
@@ -68,32 +150,77 @@ export type CastDraft = z.infer<typeof CastSchema>
 // ---------- Tahap 3: Mystery (rahasia + thread utama) ----------
 
 export const AuthoredSecretSchema = z.object({
-  description: z.string().min(15).max(300).describe('Deskripsi rahasia yang akan dibuka.'),
-  revealGateChapter: z.number().int().min(1).max(50).describe(`Bab gate reveal; HARUS salah satu dari ${REVEAL_GATES.join(', ')}.`),
+  description: z
+    .string()
+    .trim()
+    .min(15)
+    .max(500)
+    .transform((s) => s.slice(0, 300).trim())
+    .describe('Deskripsi rahasia yang akan dibuka.'),
+  revealGateChapter: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .transform((ch) => {
+      if ((REVEAL_GATES as readonly number[]).includes(ch)) return ch
+      return (REVEAL_GATES as readonly number[]).reduce((best, g) =>
+        Math.abs(g - ch) < Math.abs(best - ch) ? g : best,
+      )
+    })
+    .describe(`Bab gate reveal; HARUS salah satu dari ${REVEAL_GATES.join(', ')}.`),
 }).strict()
 export type AuthoredSecret = z.infer<typeof AuthoredSecretSchema>
 
 export const MysterySchema = z.object({
-  mainMystery: z.object({
-    title: z.string().min(5).max(120).describe('Judul misteri utama cerita.'),
-    payoffWindow: z.number().int().min(1).max(50).nullable().describe('Bab target pembayaran (opsional).'),
-  }).strict(),
-  secrets: z.array(AuthoredSecretSchema).min(2).max(4).describe('2–4 rahasia terjadwal, dipetakan ke reveal gate.'),
+  mainMystery: z
+    .object({
+      title: z
+        .string()
+        .trim()
+        .min(5)
+        .max(200)
+        .transform((s) => s.slice(0, 120).trim())
+        .describe('Judul misteri utama cerita.'),
+      payoffWindow: z.number().int().min(1).max(50).nullable().describe('Bab target pembayaran (opsional).'),
+    })
+    .strict(),
+  secrets: z
+    .array(AuthoredSecretSchema)
+    .min(2)
+    .max(8)
+    .transform((arr) => arr.slice(0, 4))
+    .describe('2–4 rahasia terjadwal, dipetakan ke reveal gate.'),
 }).strict()
 export type MysteryDraft = z.infer<typeof MysterySchema>
 
 // ---------- Tahap 4: Threads & facts ----------
 
 export const AuthoredThreadSchema = z.object({
-  title: z.string().min(5).max(120),
+  title: z
+    .string()
+    .trim()
+    .min(5)
+    .max(200)
+    .transform((s) => s.slice(0, 120).trim()),
   openedChapter: z.number().int().min(1).max(50),
   payoffWindow: z.number().int().min(1).max(50).nullable(),
 }).strict()
 export type AuthoredThread = z.infer<typeof AuthoredThreadSchema>
 
 export const AuthoredFactSchema = z.object({
-  statement: z.string().min(8).max(240).describe('Fakta canon yang jadi pijakan cerita.'),
-  subjectName: z.string().min(2).max(60).nullable().describe('Nama karakter subjek fakta (atau null).'),
+  statement: z
+    .string()
+    .trim()
+    .min(8)
+    .max(400)
+    .transform((s) => s.slice(0, 240).trim())
+    .describe('Fakta canon yang jadi pijakan cerita.'),
+  subjectName: z
+    .union([z.string().trim().min(2).max(100), z.literal('')])
+    .transform((s) => (s && s.length >= 2 ? s.slice(0, 60).trim() : null))
+    .nullable()
+    .describe('Nama karakter subjek fakta (atau null).'),
   establishedChapter: z.number().int().min(1).max(50),
   salience: z.number().min(0).max(1).describe('Bobot penting 0–1.'),
   loadBearing: z.boolean().describe('true = fakta penyangga (tak boleh dibuang retrieval).'),
@@ -101,8 +228,18 @@ export const AuthoredFactSchema = z.object({
 export type AuthoredFact = z.infer<typeof AuthoredFactSchema>
 
 export const WorldSchema = z.object({
-  threads: z.array(AuthoredThreadSchema).min(1).max(6).describe('Thread naratif tambahan (di luar misteri utama).'),
-  facts: z.array(AuthoredFactSchema).min(3).max(12).describe('3–12 fakta pijakan cerita.'),
+  threads: z
+    .array(AuthoredThreadSchema)
+    .min(1)
+    .max(10)
+    .transform((arr) => arr.slice(0, 6))
+    .describe('Thread naratif tambahan (di luar misteri utama).'),
+  facts: z
+    .array(AuthoredFactSchema)
+    .min(3)
+    .max(20)
+    .transform((arr) => arr.slice(0, 12))
+    .describe('3–12 fakta pijakan cerita.'),
 }).strict()
 export type WorldDraft = z.infer<typeof WorldSchema>
 

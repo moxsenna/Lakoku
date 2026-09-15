@@ -157,11 +157,14 @@ export async function getChapter(
   const chapter = await queryChapter(storyId, target)
   if (chapter) return chapter
 
-  // Bab yang diminta belum ada isinya. Bila bab itu SEDANG ditulis (ada lease
-  // generasi aktif), biarkan null agar reader menampilkan layar PREPARING yang
-  // tepat. Bila tidak sedang ditulis, pembaca kemungkinan terlanjur maju
-  // melewati konten yang tersedia — jatuhkan ke bab terakhir yang bisa dibaca
-  // (<= target) alih-alih menahan mereka di layar kosong permanen.
+  // Bab yang diminta belum ada isinya. Bila target adalah bab terkini (currentChapter)
+  // atau lebih besar, jangan jatuh ke bab lama agar reader menampilkan layar
+  // PREPARING atau UNAVAILABLE dengan tombol retry.
+  if (target >= (story.currentChapter || 1)) return null
+
+  // Bila bab itu SEDANG ditulis (ada lease generasi aktif), biarkan null agar reader
+  // menampilkan layar PREPARING yang tepat. Bila tidak sedang ditulis dan pembaca
+  // membuka riwayat bab lama yang belum siap, jatuhkan ke bab terakhir yang bisa dibaca.
   const preparing = await isChapterPreparing(storyId, target)
   if (preparing) return null
   return queryLatestAvailableChapter(storyId, target)

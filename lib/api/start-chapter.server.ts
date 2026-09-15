@@ -81,6 +81,31 @@ async function hasActiveLease(storyId: string, chapterNumber: number): Promise<b
   return data != null
 }
 
+async function resolveTriggerChoiceForChapter(
+  userId: string,
+  storyId: string,
+  chapterNumber: number,
+): Promise<string | null> {
+  if (chapterNumber <= 1) return null
+  const admin = createAdminClient()
+  const { data: reader } = await admin
+    .from('reader_states')
+    .select('choice_history')
+    .eq('user_id', userId)
+    .eq('story_id', storyId)
+    .maybeSingle()
+  if (!reader || !Array.isArray(reader.choice_history)) return null
+  const previousChapterNumber = chapterNumber - 1
+  const matchingEntry = (reader.choice_history as Array<Record<string, unknown>>).find((entry) => {
+    if (typeof entry !== 'object' || entry === null) return false
+    return Number(entry.chapterNumber) === previousChapterNumber
+  })
+  if (matchingEntry && typeof matchingEntry.choiceId === 'string') {
+    return matchingEntry.choiceId
+  }
+  return null
+}
+
 /**
  * Owner-only. Idempotent: CHAPTER_EXISTS / LEASE_HELD treated as success in background.
  * chapterNumber defaults to 1 (onboarding kickoff).
@@ -136,6 +161,12 @@ export async function startOwnedChapterGeneration(
 
     const workerEnabled = isGenerationWorkerEnabled()
 
+    const triggerChoiceId = await resolveTriggerChoiceForChapter(
+      user.id,
+      storyId,
+      chapterNumber,
+    )
+
     if (!workerEnabled) {
       // ---- LEGACY PATH (flag OFF): no generation_job, attemptId null ----
       const correlationId = crypto.randomUUID()
@@ -148,6 +179,7 @@ export async function startOwnedChapterGeneration(
             chapterNumber,
             correlationId,
             attemptId: null,
+            ...(triggerChoiceId ? { triggerChoiceId } : {}),
           })
           if (!dispatched.ok) {
             console.log('START_CHAPTER_BACKGROUND_FAILED', {
@@ -217,7 +249,7 @@ export async function startOwnedChapterGeneration(
         storyId,
         chapterNumber,
         generationKind,
-        triggerChoiceId: null,
+        triggerChoiceId,
       })
     } catch (err) {
       if (err instanceof GenerationJobError) {

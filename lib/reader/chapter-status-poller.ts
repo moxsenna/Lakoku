@@ -23,7 +23,7 @@ export type ChapterQueueHint = {
 
 export const CHAPTER_STATUS_POLL_MS = 5_000
 export const MAX_TRANSIENT_ATTEMPTS = 5
-export const TRANSIENT_DEADLINE_MS = 60_000
+export const TRANSIENT_DEADLINE_MS = 180_000
 
 export type PollDecision =
   | { action: 'refresh' }

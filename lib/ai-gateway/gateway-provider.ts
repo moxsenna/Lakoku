@@ -1210,7 +1210,7 @@ async function generateSemanticJudgeJson(args: {
   for (const candidate of effectiveChain) {
     throwIfAborted(args.options.signal)
     const { model } = candidate
-    const timeoutMs = 30_000
+    const timeoutMs = 60_000
     const candidateTimeoutSignal = AbortSignal.timeout(timeoutMs)
     const requestSignal = args.options.signal
       ? AbortSignal.any([args.options.signal, candidateTimeoutSignal])

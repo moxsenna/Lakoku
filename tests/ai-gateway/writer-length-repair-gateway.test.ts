@@ -131,7 +131,7 @@ describe('writerLengthRepairV1 gateway state machine', () => {
   })
 
   it.each([
-    ['severe short', [{ value: text(699) }]],
+    ['severe short', [{ value: text(599) }]],
     ['parser failure', [{ value: '' }]],
     ['missing title', [{ value: text(799, { title: false }) }]],
     ['missing closure', [{ value: text(799, { closure: false }) }]],

@@ -73,7 +73,10 @@ import {
   type RealGenerateResult,
 } from './story-generation'
 import type { CheckpointMutationResult } from './chapter-generation-checkpoint.pure'
-import { classifyGenerationPublicationError } from './generation-job-error'
+import {
+  GenerationJobError,
+  classifyGenerationPublicationError,
+} from './generation-job-error'
 import {
   draftFromCheckpoint,
   loadUsableProseCheckpoint,
@@ -1788,13 +1791,17 @@ async function generateNextPersonalizedChapterInner(
         throwIfAborted(jobContext?.signal)
         const classification = classifyGenerationPublicationError(err)
         const info = safeErrorInfo(err)
+        const rpcDetail = err instanceof GenerationJobError && typeof err.detail === 'string'
+          && /^[A-Z0-9_]{3,80}$/.test(err.detail.trim())
+          ? err.detail.trim()
+          : undefined
         console.error('PERSONALIZED_SCHEMA3_PUBLISH_FAILED', {
           storyId,
           chapterNumber,
           jobId: jobContext?.jobId ?? null,
           errorCode: classification.code,
           errorName: info.errorName.slice(0, 100),
-          errorMessage: info.errorMessage.slice(0, 300),
+          rpcDetail,
         })
         if (classification.kind === 'chapter_exists') {
           published = { ok: false, reason: 'CHAPTER_EXISTS' }
@@ -1842,13 +1849,17 @@ async function generateNextPersonalizedChapterInner(
         throwIfAborted(jobContext.signal)
         const classification = classifyGenerationPublicationError(err)
         const info = safeErrorInfo(err)
+        const rpcDetail = err instanceof GenerationJobError && typeof err.detail === 'string'
+          && /^[A-Z0-9_]{3,80}$/.test(err.detail.trim())
+          ? err.detail.trim()
+          : undefined
         console.error('PERSONALIZED_FENCED_PUBLISH_FAILED', {
           storyId,
           chapterNumber,
           jobId: jobContext.jobId,
           errorCode: classification.code,
           errorName: info.errorName.slice(0, 100),
-          errorMessage: info.errorMessage.slice(0, 300),
+          rpcDetail,
         })
         if (classification.kind === 'chapter_exists') {
           published = { ok: false, reason: 'CHAPTER_EXISTS' }

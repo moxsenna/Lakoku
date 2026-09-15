@@ -10,7 +10,10 @@ import {
 } from './lifecycle'
 import { NO_CREATIVE_DIRECTION_FINGERPRINT } from './chapter-generation-checkpoint.pure'
 import type { CheckpointMutationResult } from './chapter-generation-checkpoint.pure'
-import { classifyGenerationPublicationError } from './generation-job-error'
+import {
+  GenerationJobError,
+  classifyGenerationPublicationError,
+} from './generation-job-error'
 import { withGenerationSlot } from './generation-concurrency'
 import {
   buildBlueprints,
@@ -660,12 +663,17 @@ async function generateNextChapterRealInner(
         throwIfAborted(jobContext.signal)
         const classification = classifyGenerationPublicationError(err)
         const info = safeErrorInfo(err)
+        const rpcDetail = err instanceof GenerationJobError && typeof err.detail === 'string'
+          && /^[A-Z0-9_]{3,80}$/.test(err.detail.trim())
+          ? err.detail.trim()
+          : undefined
         console.error('GENERATION_FENCED_PUBLISH_FAILED', {
           storyId,
           chapterNumber,
           jobId: jobContext.jobId,
           errorCode: classification.code,
           errorName: info.errorName.slice(0, 100),
+          rpcDetail,
         })
         if (classification.kind === 'chapter_exists') {
           return { ok: false, reason: 'CHAPTER_EXISTS' }

@@ -223,6 +223,7 @@ export function ChapterUnavailable({
   }
 
   async function checkNow() {
+    budgetRef.current = createPollBudget()
     await pollOnce()
   }
 
@@ -296,15 +297,15 @@ export function ChapterUnavailable({
         ) : uiState === 'STATUS_UNKNOWN' ? (
           <button
             type="button"
-            onClick={() => void checkNow()}
-            disabled={checking}
+            onClick={() => void retry()}
+            disabled={checking || retrying}
             className="flex min-h-13 w-full items-center justify-center gap-2 rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
           >
             <RefreshCw
-              className={checking ? 'lk-pulse-soft size-4' : 'size-4'}
+              className={retrying || checking ? 'animate-spin size-4' : 'size-4'}
               aria-hidden="true"
             />
-            {checking ? 'Memeriksa…' : copy.primaryCta}
+            {retrying || checking ? 'Memeriksa…' : copy.primaryCta}
           </button>
         ) : (
           <button

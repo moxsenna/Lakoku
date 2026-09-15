@@ -103,7 +103,9 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
     '=== [P3] OTORITAS PANJANG KATA ===',
     '- Target utama penulisan: 850–950 kata.',
     '- Batas penerimaan keras: 800–1000 kata.',
-    '- Kembangkan interaksi sensorik dan dinamika dialog untuk mencapai rentang target; hindari ringkasan naratif tergesa-gesa.',
+    '- Titik tengah ideal: 880 kata. DILARANG melebihi 1000 kata (batas atas mutlak).',
+    '- Kembangkan interaksi sensorik dan dinamika dialog secukupnya untuk mencapai minimal 800 kata.',
+    '- Begitu narasi mencapai sekitar 880–900 kata, segera tuntaskan adegan dan tutup bab dengan penutup tajam agar tidak meluber melewati batas 1000 kata.',
   ].join('\n')
 
   const p4 = [

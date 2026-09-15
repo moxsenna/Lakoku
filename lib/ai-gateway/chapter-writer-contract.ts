@@ -164,8 +164,8 @@ export function buildWriterLengthRepairPrompt(args: Readonly<{
   wordCount: number
 }>): Readonly<{ system: string; prompt: string }> {
   const direction = args.wordCount < 800
-    ? 'Prosa terlalu pendek: perluas adegan yang sudah ada secara alami; jangan menambah fakta baru.'
-    : 'Prosa terlalu panjang: padatkan pilihan kata dan pengulangan; jangan menghapus peristiwa apa pun.'
+    ? 'Prosa terlalu pendek: perluas adegan yang sudah ada secara alami; jangan menambah fakta baru. WAJIB capai minimal 850 kata (batas penerimaan sistem: 800–1000 kata).'
+    : 'Prosa terlalu panjang: padatkan pilihan kata dan pengulangan; jangan menghapus peristiwa apa pun. WAJIB di bawah 950 kata (batas penerimaan sistem: 800–1000 kata).'
   const firstPass = [
     `JUDUL: ${args.firstPass.title}`,
     '',
@@ -180,6 +180,7 @@ export function buildWriterLengthRepairPrompt(args: Readonly<{
       'REVISI PANJANG — ganti seluruh keluaran sebelumnya.',
       direction,
       'Targetkan 850–950 kata.',
+      'Batas minimal mutlak 800 kata, batas maksimal mutlak 1000 kata. Naskah di luar 800–1000 kata DITOLAK otomatis.',
       'Pertahankan judul, semua peristiwa, akhir, sudut pandang/POV, canon, dan makna.',
       'Balas hanya dengan JUDUL: diikuti prosa lengkap, tanpa komentar, penjelasan, atau markdown.',
       '',

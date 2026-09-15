@@ -93,4 +93,31 @@ describe('buildWriterPrompt - CHAPTER_BRIEF_V2 hierarchy', () => {
       brief: undefined as never,
     })).toThrow('CHAPTER_BRIEF_V2_BRIEF_REQUIRED')
   })
+
+  // Bab 4 & Bab 5 produksi pernah terbit dengan judul identik karena judul bab
+  // sebelumnya tersedia di continuation tetapi tak pernah dikirim ke penulis.
+  it('melarang penulis mengulang judul bab sebelumnya', () => {
+    const prompt = buildWriterPrompt({
+      chapterNumber: 2,
+      characterNames: ['Nadia', 'Raka'],
+      plannedBeats: ['Nadia menghadapi Raka'],
+      continuation: mockContinuation,
+      brief,
+    })
+
+    expect(prompt.user).toContain('Judul bab sebelumnya adalah "Galeri Seni"')
+    expect(prompt.user).toContain('Judul bab ini WAJIB berbeda')
+  })
+
+  it('menghilangkan larangan judul saat tidak ada bab sebelumnya', () => {
+    const prompt = buildWriterPrompt({
+      chapterNumber: 1,
+      characterNames: ['Nadia'],
+      plannedBeats: ['Pembuka'],
+      continuation: { ...mockContinuation, targetChapterNumber: 1, previousChapter: null },
+      brief: { ...brief, chapterNumber: 1 },
+    })
+
+    expect(prompt.user).not.toContain('Judul bab sebelumnya adalah')
+  })
 })

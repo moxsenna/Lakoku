@@ -70,6 +70,10 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
+    // Suite unit/harness sengaja deterministik (nol panggilan model). Opt-in
+    // eksplisit ini yang dituntut assertDeterministicProviderAllowed(); jalur
+    // generasi produksi tetap fail-closed tanpa NARRATIVE_PROVIDER=gateway.
+    env: { LAKOKU_ALLOW_DETERMINISTIC_PROVIDER: '1' },
     projects: [
       {
         extends: true,

@@ -120,7 +120,23 @@ export async function recordGenerationAttempt(input: {
       p_brand_scan_hash: input.brandScanHash ?? null,
       p_lease_id: input.leaseId ?? null,
     })
-    if (error) throw new Error(`enqueue_runtime_review_v1: ${error.message}`)
+    if (error) {
+      // Satu cerita hanya boleh punya satu review aktif. Kalau sudah ada
+      // (PENDING/CLAIMED/BLOCKED), enqueue kedua menolak dengan
+      // BLUEPRINT_QUEUE_ACTIVE_CONFLICT. Itu bukan kegagalan telemetri: tujuan
+      // "cerita ini menunggu tinjauan" sudah tercapai. Melemparnya ke atas
+      // membuat setiap generasi review-required berikutnya crash sebagai
+      // UNKNOWN_RUNTIME_EXCEPTION dan cerita mandek permanen.
+      if (error.message.includes('BLUEPRINT_QUEUE_ACTIVE_CONFLICT')) {
+        console.log('RUNTIME_REVIEW_ALREADY_ACTIVE', {
+          storyId: input.storyId,
+          chapterNumber: input.chapter,
+          correlationId: input.correlationId ?? null,
+        })
+        return
+      }
+      throw new Error(`enqueue_runtime_review_v1: ${error.message}`)
+    }
     return
   }
 

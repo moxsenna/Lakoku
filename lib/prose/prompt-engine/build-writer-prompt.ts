@@ -129,12 +129,19 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
     '- Target panjang 800–1000 kata dicapai dengan memperbanyak pergantian paragraf pendek yang lincah, BUKAN dengan mempertebal isi satu paragraf.',
   ].join('\n')
 
+  // Judul bab sebelumnya sudah tersedia di continuation tetapi tak pernah
+  // sampai ke penulis, sehingga bab berurutan bisa terbit dengan judul
+  // identik (mis. Bab 4 & Bab 5 sama-sama "Jejak di Balik Pintu").
+  const previousTitle = cc?.previousChapter?.title
   const output = [
     '=== KONTRAK KELUARAN ===',
     'Keluaran WAJIB diawali dengan:',
     'JUDUL: <Judul Bab yang Menggugah>',
+    previousTitle
+      ? `- Judul bab sebelumnya adalah "${safe(previousTitle)}". DILARANG memakai judul itu lagi atau variasi yang nyaris sama. Judul bab ini WAJIB berbeda.`
+      : '',
     '<Prosa lengkap...>',
-  ].join('\n')
+  ].filter(Boolean).join('\n')
 
   return {
     system: mobileDramaSystemPrompt(),

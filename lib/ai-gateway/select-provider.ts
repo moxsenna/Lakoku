@@ -70,7 +70,23 @@ export async function selectProvider(
       resolvedJudge,
     )
   }
+  assertDeterministicProviderAllowed()
   return createDeterministicProvider(genPolicy)
+}
+
+/**
+ * Prosa deterministik adalah fixture: templated, berulang, dan membocorkan
+ * instruksi prompt ke pembaca. Ia tidak pernah boleh terbit ke cerita nyata.
+ * Jalur runtime produksi karena itu fail-closed — harness/smoke wajib opt-in
+ * eksplisit lewat LAKOKU_ALLOW_DETERMINISTIC_PROVIDER=1.
+ */
+export function assertDeterministicProviderAllowed(): void {
+  if (process.env.LAKOKU_ALLOW_DETERMINISTIC_PROVIDER === '1') return
+  throw new Error(
+    'DETERMINISTIC_PROVIDER_FORBIDDEN: NARRATIVE_PROVIDER != "gateway" pada jalur generasi produksi. ' +
+      'Provider deterministik hanya fixture dan akan menerbitkan prosa template berisi bocoran prompt. ' +
+      'Set NARRATIVE_PROVIDER=gateway, atau LAKOKU_ALLOW_DETERMINISTIC_PROVIDER=1 untuk harness.',
+  )
 }
 
 /**
@@ -81,6 +97,7 @@ export function selectProviderSync(): GenerationProvider {
   if (process.env.NARRATIVE_PROVIDER === 'gateway') {
     return createGatewayProvider()
   }
+  assertDeterministicProviderAllowed()
   return createDeterministicProvider()
 }
 

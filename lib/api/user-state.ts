@@ -12,7 +12,10 @@ import { cache } from 'react'
 import { headers } from 'next/headers'
 import { createClient as createSupabaseJsClient, type User } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { requireSupabaseAnonKey, requireSupabaseUrl } from '@/lib/supabase/env'
+import { ChoiceHistoryEntrySchema, type ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
+import { mergeChoiceEffect, RouteChoiceEffectSchema } from '@/lib/story-engine/route-state'
 import type { JejakItem, ChoiceOutcome } from './types'
 
 export const READER_STATE_PUBLIC_COLUMNS = 'user_id,story_id,status,current_chapter,jejak,ending_name,updated_at' as const
@@ -166,11 +169,31 @@ export async function ensureReaderStateStarted(
   if (error) throw new Error(`ensureReaderStateStarted: ${error.message}`)
 }
 
+function buildEffectSummary(effect: unknown) {
+  const parsed = RouteChoiceEffectSchema.safeParse(effect ?? {})
+  if (!parsed.success) return { flagsSet: [] }
+  const deltas: Record<string, number> = {}
+  for (const [k, v] of Object.entries(parsed.data.routeDeltas ?? {})) {
+    if (typeof v === 'number' && Number.isInteger(v)) {
+      deltas[k] = Math.min(20, Math.max(-20, v))
+    }
+  }
+  return {
+    ...deltas,
+    flagsSet: Object.entries(parsed.data.flagsSet ?? {})
+      .filter(([, value]) => value)
+      .map(([key]) => key)
+      .sort(),
+  }
+}
+
 /**
  * Catat hasil pilihan ke state user saat ini (jika login).
  * - current_chapter maju monotonic (tidak pernah mundur).
  * - jejak di-append hanya jika bab itu belum tercatat (anti duplikat repeat-tap).
  * - isEnding => status SELESAI + endingName dari konsekuensi.
+ * - choice_history & route_state diperbarui via admin client (service_role)
+ *   agar loadContinuationContextForChapter menemukan triggerChoiceId pada bab N>1.
  * No-op untuk tamu.
  */
 export async function applyChoiceToUserState(
@@ -179,15 +202,22 @@ export async function applyChoiceToUserState(
   decision: string,
   outcome: ChoiceOutcome,
 ): Promise<void> {
-  const { supabase, user } = await getSessionContext()
+  const { user } = await getSessionContext()
   if (!user) return
 
-  const existing = await getReaderState(storyId)
+  const admin = createAdminClient()
+  const { data: stateData, error: stateError } = await admin
+    .from('reader_states')
+    .select('status, current_chapter, jejak, ending_name, route_state, choice_history')
+    .eq('user_id', user.id)
+    .eq('story_id', storyId)
+    .maybeSingle()
+  if (stateError) throw new Error(`applyChoiceToUserState: ${stateError.message}`)
 
   // --- Rekonsiliasi jejak: gabung per-bab, keputusan terbaru menang, urut naik.
-  // Aman untuk tulisan lintas-perangkat yang tiba tak berurutan.
+  const existingJejak = Array.isArray(stateData?.jejak) ? (stateData.jejak as JejakItem[]) : []
   const byChapter = new Map<number, JejakItem>()
-  for (const j of existing?.jejak ?? []) byChapter.set(j.chapter, j)
+  for (const j of existingJejak) byChapter.set(j.chapter, j)
   byChapter.set(chapterNumber, {
     chapter: chapterNumber,
     decision,
@@ -197,27 +227,71 @@ export async function applyChoiceToUserState(
     (a, b) => a.chapter - b.chapter,
   )
 
+  // --- Rekonsiliasi choice_history & route_state
+  const { data: outcomeData } = await admin
+    .from('choice_outcomes')
+    .select('effect_json')
+    .eq('story_id', storyId)
+    .eq('chapter_number', chapterNumber)
+    .eq('choice_id', outcome.choiceId)
+    .maybeSingle()
+
+  const effectJson = outcomeData?.effect_json ?? {}
+  const nextRouteState = mergeChoiceEffect(stateData?.route_state, effectJson)
+
+  const summary = buildEffectSummary(effectJson)
+  const rawConsequence = Array.isArray(outcome.consequence) && outcome.consequence.length > 0
+    ? outcome.consequence
+    : ['']
+  const consequence = rawConsequence
+    .slice(0, 2)
+    .map((c) => (typeof c === 'string' ? c.trim().slice(0, 160) : ''))
+    .filter((c) => c.length > 0)
+  const safeConsequence = consequence.length > 0 ? consequence : ['Pilihan tercatat.']
+  const safeLabel = (typeof decision === 'string' ? decision.trim().slice(0, 240) : '') || outcome.choiceId.slice(0, 100)
+
+  const historyEntry = ChoiceHistoryEntrySchema.parse({
+    chapterNumber,
+    choiceId: outcome.choiceId.slice(0, 100),
+    label: safeLabel,
+    consequence: safeConsequence,
+    effectSummary: summary,
+    createdAt: new Date().toISOString(),
+  })
+
+  const existingHistory = Array.isArray(stateData?.choice_history)
+    ? (stateData.choice_history as ChoiceHistoryEntry[])
+    : []
+  const historyByChapter = new Map<number, ChoiceHistoryEntry>()
+  for (const h of existingHistory) {
+    if (h && typeof h.chapterNumber === 'number') {
+      historyByChapter.set(h.chapterNumber, h)
+    }
+  }
+  historyByChapter.set(chapterNumber, historyEntry)
+  const choiceHistory = [...historyByChapter.values()].sort((a, b) => a.chapterNumber - b.chapterNumber)
+
   // --- Progres MONOTONIC: current_chapter tak pernah mundur.
   const advanceTo = outcome.isEnding
     ? chapterNumber
     : (outcome.nextChapterNumber ?? chapterNumber + 1)
-  const nextChapter = Math.max(existing?.currentChapter ?? 1, advanceTo)
+  const nextChapter = Math.max(stateData?.current_chapter ?? 1, advanceTo)
 
   // --- Status MONOTONIC: tak boleh turun dari SELESAI ke BERJALAN.
   const incomingStatus: ReaderState['status'] = outcome.isEnding
     ? 'SELESAI'
     : 'BERJALAN'
-  const status = maxStatus(existing?.status ?? 'BARU', incomingStatus)
+  const status = maxStatus((stateData?.status as ReaderState['status']) ?? 'BARU', incomingStatus)
 
   // --- Ending name: pertahankan bila cerita sudah/menjadi SELESAI.
   const endingName =
     status === 'SELESAI'
       ? (outcome.isEnding
-          ? (outcome.consequence[0] ?? existing?.endingName ?? null)
-          : (existing?.endingName ?? null))
+          ? (outcome.consequence[0] ?? stateData?.ending_name ?? null)
+          : (stateData?.ending_name ?? null))
       : null
 
-  const { error } = await supabase.from('reader_states').upsert(
+  const { error } = await admin.from('reader_states').upsert(
     {
       user_id: user.id,
       story_id: storyId,
@@ -225,6 +299,8 @@ export async function applyChoiceToUserState(
       current_chapter: nextChapter,
       jejak,
       ending_name: endingName,
+      route_state: nextRouteState,
+      choice_history: choiceHistory,
       updated_at: new Date().toISOString(),
     },
     { onConflict: 'user_id,story_id' },

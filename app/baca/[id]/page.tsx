@@ -57,6 +57,28 @@ export default async function BacaPage({
 
   const fallbackFromChapter = resolveReaderFallbackNotice(requested, story.currentChapter, chapter.number)
 
+  // Rekonsiliasi akhir cerita bila mencapai bab penutup.
+  if (chapter.number >= (story.totalChapters || 50) && user && story.status !== 'SELESAI') {
+    try {
+      const { createAdminClient } = await import('@/lib/supabase/admin')
+      const admin = createAdminClient()
+      await admin
+        .from('reader_states')
+        .update({
+          status: 'SELESAI',
+          ending_name: chapter.title,
+          current_chapter: chapter.number,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('user_id', user.id)
+        .eq('story_id', story.id)
+      story.status = 'SELESAI'
+      story.endingName = chapter.title
+    } catch (err) {
+      console.warn('MARK_READER_STATE_SELESAI_AT_PAGE_FAILED', err)
+    }
+  }
+
   // Deteksi baca-ulang: bab sudah ada jejak + belum mencapai currentChapter.
   // Pakai chapter.number (bukan targetNumber) karena getChapter bisa fallback.
   const previousChoice = story.jejak.find((j) => j.chapter === chapter.number) ?? null

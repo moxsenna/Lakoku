@@ -652,6 +652,12 @@ export function ReaderView({
         {chapter.number >= story.totalChapters && (
           <nav aria-label="Cerita selesai" className="mt-6 flex flex-col gap-3 border-t border-border pt-6">
             <Link
+              href={`/akhir/${story.id}`}
+              className="flex min-h-13 items-center justify-center rounded-2xl bg-gold px-6 text-sm font-semibold text-ink transition-opacity hover:opacity-90"
+            >
+              Lihat Akhir Cerita
+            </Link>
+            <Link
               href="/koleksiku"
               className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
             >

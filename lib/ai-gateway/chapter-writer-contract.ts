@@ -163,8 +163,14 @@ export function buildWriterLengthRepairPrompt(args: Readonly<{
   firstPass: Pick<ParsedChapterWriterProse, 'title' | 'paragraphs'>
   wordCount: number
 }>): Readonly<{ system: string; prompt: string }> {
+  const neededWords = Math.max(120, 880 - args.wordCount)
   const direction = args.wordCount < 800
-    ? 'Prosa terlalu pendek: perluas adegan yang sudah ada secara alami; jangan menambah fakta baru. WAJIB capai minimal 850 kata (batas penerimaan sistem: 800–1000 kata).'
+    ? `Prosa draf pertama (${args.wordCount} kata) terlalu pendek: perluas adegan yang sudah ada secara alami; jangan menambah fakta baru. WAJIB capai minimal 850 kata (batas penerimaan sistem: 800–1000 kata).\n` +
+      `- Tambahkan minimal ${neededWords} kata baru pada draf ini agar total naskah mencapai 850–950 kata.\n` +
+      '- Tambahkan dialog antar tokoh (saling menyahut, reaksi mimik, jeda bicara).\n' +
+      '- Perdalam monolog batin dan konflik emosional tokoh saat menghadapi situasi.\n' +
+      '- Perkaya deskripsi indrawi/sensorik suasana sekitar (suara, pencahayaan, hawa, detil fisik).\n' +
+      '- Urai interaksi dan momen yang sedang berjalan secara utuh; jangan terburu-buru menutup adegan.'
     : 'Prosa terlalu panjang: padatkan pilihan kata dan pengulangan; jangan menghapus peristiwa apa pun. WAJIB di bawah 950 kata (batas penerimaan sistem: 800–1000 kata).'
   const firstPass = [
     `JUDUL: ${args.firstPass.title}`,

@@ -106,6 +106,7 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
     '- Batas minimal mutlak: 800 kata. Naskah di bawah 800 kata DITOLAK oleh validator sistem.',
     '- Batas maksimal mutlak: 1000 kata. Titik tengah ideal: 880–920 kata.',
     '- Kembangkan interaksi sensorik, dinamika dialog, dan ketegangan adegan secara mendalam untuk memastikan panjang naskah stabil di 850–950 kata.',
+    '- Perbanyak pertukaran dialog bolak-balik antar tokoh, diselingi observasi fisik dan pergolakan batin narator agar narasi mengalir utuh mencapai 850–950 kata.',
     '- Jangan menutup bab sebelum mencapai minimal 800 kata.',
   ].join('\n')
 

@@ -167,15 +167,16 @@ export function buildWriterLengthRepairPrompt(args: Readonly<{
   const direction = args.wordCount < 800
     ? `PERINGATAN KERAS: Draf pertama (${args.wordCount} kata) KURANG PANJANG dan GAGAL lolos (batas minimal mutlak sistem adalah 800 kata).\n` +
       `WAJIB tulis ulang dan perluas adegan yang sudah ada secara alami; jangan menambah fakta baru. Targetkan naskah mencapai 850–950 kata (titik tengah ideal: 910–930 kata).\n` +
+      `- Draf pertama terlalu singkat (${args.wordCount} kata). DILARANG menyalin draf lama secara singkat atau hanya mengubah sedikit kata; draf yang panjangnya masih mirip (${args.wordCount} kata) otomatis DITOLAK LAGI.\n` +
       `- Tambahkan minimal ${neededWords} kata ISI BARU ke dalam draf ini. Tambahan WAJIB berupa kalimat bermakna, BUKAN hasil memecah kalimat lama menjadi baris pendek.\n` +
       `- DILARANG KERAS memotong kalimat yang sudah ada menjadi beberapa paragraf demi memperbanyak baris. Menambah jumlah paragraf TIDAK menambah jumlah kata dan tetap GAGAL.\n` +
       `- Setiap paragraf WAJIB berisi kalimat utuh sekitar 10–20 kata.\n` +
-      `- CARA MENAMBAH KATA SECARA AMAN: Sisipkan 1 adegan dialog baru atau perpanjang percakapan konfrontasi yang sudah ada dengan 8–10 sahut-menyahut kalimat baru antar tokoh, ditambah pergolakan batin narator.\n` +
-      `- Sisipkan dialog bolak-balik antar tokoh yang lebih intens (saling menyahut, jeda hening, reaksi tubuh, mimik muka).\n` +
-      `- Perdalam monolog batin narator saat menghadapi ketegangan dan keraguan batin.\n` +
-      `- Perkaya deskripsi sensorik suasana sekitar (suara, pencahayaan, hawa, detil fisik ruangan/lingkungan).\n` +
+      `- CARA MENAMBAH KATA SECARA AMAN DI SETIAP DARI 4 ADEGAN:\n` +
+      `  1. Sisipkan percakapan dialog baru atau perpanjang percakapan konfrontasi yang sudah ada dengan 10–14 sahut-menyahut kalimat baru antar tokoh.\n` +
+      `  2. Tambahkan pergolakan batin narator yang mendalam, keraguan, dan pertimbangan emosional.\n` +
+      `  3. Perkaya deskripsi sensorik suasana sekitar (suara, pencahayaan, hawa, detil fisik ruangan/lingkungan).\n` +
       `- Urai interaksi dan momen yang sedang berjalan secara utuh; jangan terburu-buru menutup adegan.\n` +
-      `- Susun naskah hasil revisi menjadi TEPAT 4 adegan, masing-masing sekitar 230 kata (4 × 230 = ±920 kata). Jangan berpindah adegan sebelum adegan berjalan mencapai anggaran katanya.`
+      `- Susun naskah hasil revisi menjadi TEPAT 4 adegan penuh, masing-masing sekitar 230 kata (4 × 230 = ±920 kata). Jangan berpindah adegan sebelum adegan berjalan mencapai anggaran katanya.`
     : `PERINGATAN KERAS: Draf pertama (${args.wordCount} kata) TERLALU PANJANG dan GAGAL lolos (batas maksimal mutlak sistem adalah 1000 kata).\n` +
       `WAJIB tulis ulang seluruh naskah menjadi 870–930 kata. DILARANG menyalin ulang draf pertama apa adanya; keluaran yang panjangnya sama dengan draf pertama tetap GAGAL.\n` +
       `- Buang minimal ${Math.max(80, args.wordCount - 900)} kata: padatkan pilihan kata dan pengulangan, lalu ringkas deskripsi yang berlebihan.\n` +

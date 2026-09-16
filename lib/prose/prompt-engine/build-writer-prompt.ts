@@ -102,17 +102,17 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
 
   const p3 = [
     '=== [P3] OTORITAS PANJANG KATA & STRUKTUR PARAGRAF ===',
-    '- Target utama penulisan: 880–950 kata (titik tengah ideal: 910 kata).',
+    '- Target utama penulisan: 890–950 kata (titik tengah ideal: 920 kata).',
     '- Batas penerimaan keras: 800–1000 kata.',
     '- Batas minimal mutlak: 800 kata. Naskah di bawah 800 kata DITOLAK oleh validator sistem.',
     '- Batas maksimal mutlak: 1000 kata.',
-    '- Agar aman dan tidak jatuh di bawah batas 800 kata, tuliskan naskah dengan panjang 880–940 kata.',
-    '- Target struktur naskah: 115–135 paragraf pendek bergaya mobile (1–2 kalimat per paragraf).',
-    '- Karena setiap paragraf pendek bergaya mobile rata-rata memiliki 6–8 kata, kamu WAJIB menghasilkan 115–135 paragraf pendek agar panjang naskah otomatis stabil di rentang 880–940 kata.',
+    '- Agar aman dan tidak jatuh di bawah batas 800 kata, tuliskan naskah dengan panjang 890–950 kata.',
+    '- Target struktur naskah: 130–150 paragraf pendek bergaya mobile (1–2 kalimat per paragraf).',
+    '- Karena setiap paragraf pendek bergaya mobile rata-rata hanya memiliki 6–7 kata, kamu WAJIB menghasilkan 130–150 paragraf pendek agar panjang naskah otomatis stabil di rentang 890–950 kata.',
     '- Kembangkan interaksi sensorik, dinamika dialog, dan ketegangan adegan secara mendalam.',
     '- Perbanyak pertukaran dialog bolak-balik beruntun antar tokoh, diselingi observasi fisik dan pergolakan batin narator agar narasi mengalir utuh.',
-    '- Urai setiap adegan secara bertahap dan detail; perlambat tempo agar cerita tidak selesai terlalu cepat sebelum mencapai minimal 850 kata dan minimal 115 paragraf.',
-    '- DILARANG keras menutup bab atau menulis penutup sebelum panjang naskah melewati minimal 850 kata.',
+    '- Urai setiap adegan secara bertahap dan detail; perlambat tempo agar cerita tidak selesai terlalu cepat sebelum mencapai minimal 880 kata dan minimal 130 paragraf.',
+    '- DILARANG keras menutup bab atau menulis penutup sebelum panjang naskah melewati minimal 880 kata.',
   ].join('\n')
 
   const p4 = [
@@ -133,7 +133,7 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
     '- DILARANG menumpuk banyak kalimat dalam satu blok paragraf. Hindari paragraf berjejal atau dinding teks.',
     '- Dialog Mandiri: Setiap baris ucapan dialog tokoh WAJIB berdiri sendiri dalam paragraf terpisah. Jangan satukan dialog dengan kalimat narasi panjang.',
     '- Pemisahan Aksi & Reaksi: Pecah runtutan aksi fisik, reaksi emosi, dan detail sensorik menjadi paragraf-paragraf mandiri yang terpisah satu baris kosong.',
-    '- Target panjang 800–1000 kata dicapai dengan memperbanyak pergantian 115–135 paragraf pendek yang lincah, BUKAN dengan mempertebal isi satu paragraf.',
+    '- Target panjang 800–1000 kata dicapai dengan memperbanyak pergantian 130–150 paragraf pendek yang lincah, BUKAN dengan mempertebal isi satu paragraf.',
   ].join('\n')
 
   // Judul bab sebelumnya sudah tersedia di continuation tetapi tak pernah
@@ -147,7 +147,7 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
     previousTitle
       ? `- Judul bab sebelumnya adalah "${safe(previousTitle)}". DILARANG memakai judul itu lagi atau variasi yang nyaris sama. Judul bab ini WAJIB berbeda.`
       : '',
-    '- Panjang naskah WAJIB berada dalam rentang 800–1000 kata (target: 115–135 paragraf pendek).',
+    '- Panjang naskah WAJIB berada dalam rentang 800–1000 kata (target: 130–150 paragraf pendek).',
     '<Prosa lengkap...>',
   ].filter(Boolean).join('\n')
 

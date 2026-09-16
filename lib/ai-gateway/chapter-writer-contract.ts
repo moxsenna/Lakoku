@@ -175,7 +175,12 @@ export function buildWriterLengthRepairPrompt(args: Readonly<{
       `- Perkaya deskripsi sensorik suasana sekitar (suara, pencahayaan, hawa, detil fisik ruangan/lingkungan).\n` +
       `- Urai interaksi dan momen yang sedang berjalan secara utuh; jangan terburu-buru menutup adegan.\n` +
       `- Kembangkan setiap adegan sampai sekitar 250–300 kata sebelum berpindah ke adegan berikutnya.`
-    : 'Prosa terlalu panjang: padatkan pilihan kata dan pengulangan; jangan menghapus peristiwa apa pun. WAJIB di bawah 950 kata (batas penerimaan sistem: 800–1000 kata).'
+    : `PERINGATAN KERAS: Draf pertama (${args.wordCount} kata) TERLALU PANJANG dan GAGAL lolos (batas maksimal mutlak sistem adalah 1000 kata).\n` +
+      `WAJIB tulis ulang seluruh naskah menjadi 870–930 kata. DILARANG menyalin ulang draf pertama apa adanya; keluaran yang panjangnya sama dengan draf pertama tetap GAGAL.\n` +
+      `- Buang minimal ${Math.max(80, args.wordCount - 900)} kata: padatkan pilihan kata dan pengulangan, lalu ringkas deskripsi yang berlebihan.\n` +
+      `- Pertahankan SEMUA peristiwa, dialog penting, urutan adegan, dan akhir bab; jangan menghapus peristiwa apa pun.\n` +
+      `- Ringkas kalimat bertele-tele menjadi kalimat pendek yang lugas.\n` +
+      `- Hitung ulang panjang naskah sebelum menjawab; pastikan hasil akhir berada di 870–930 kata.`
   const firstPass = [
     `JUDUL: ${args.firstPass.title}`,
     '',
@@ -198,7 +203,9 @@ export function buildWriterLengthRepairPrompt(args: Readonly<{
       firstPass,
       '',
       '=== INSTRUKSI WAJIB PENULISAN ULANG ===',
-      `Draf pertama di atas (${args.wordCount} kata) tidak lolos karena di bawah 800 kata. Tulis ulang seluruh cerita di atas dari awal hingga akhir dengan mengembangkan setiap dialog dan adegan yang ada secara signifikan. Targetkan total panjang mencapai 850–950 kata, dengan setiap paragraf berupa kalimat utuh sekitar 10–20 kata. Yang dihitung validator adalah JUMLAH KATA, bukan jumlah paragraf. Batas minimal mutlak adalah 800 kata. Balas HANYA dengan JUDUL: diikuti prosa lengkap.`,
+      args.wordCount < 800
+        ? `Draf pertama di atas (${args.wordCount} kata) tidak lolos karena di bawah 800 kata. Tulis ulang seluruh cerita di atas dari awal hingga akhir dengan mengembangkan setiap dialog dan adegan yang ada secara signifikan. Targetkan total panjang mencapai 850–950 kata, dengan setiap paragraf berupa kalimat utuh sekitar 10–20 kata. Yang dihitung validator adalah JUMLAH KATA, bukan jumlah paragraf. Batas minimal mutlak adalah 800 kata. Balas HANYA dengan JUDUL: diikuti prosa lengkap.`
+        : `Draf pertama di atas (${args.wordCount} kata) tidak lolos karena di atas 1000 kata. Tulis ulang seluruh cerita di atas dari awal hingga akhir dalam bentuk yang lebih padat, tanpa membuang satu pun peristiwa. Targetkan total panjang 870–930 kata. Keluaran yang panjangnya tetap sama seperti draf pertama akan GAGAL lagi. Batas maksimal mutlak adalah 1000 kata. Balas HANYA dengan JUDUL: diikuti prosa lengkap.`,
     ].join('\n'),
   }
 }

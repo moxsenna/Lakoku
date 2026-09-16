@@ -168,15 +168,15 @@ export function buildWriterLengthRepairPrompt(args: Readonly<{
     ? `PERINGATAN KERAS: Draf pertama (${args.wordCount} kata) KURANG PANJANG dan GAGAL lolos (batas minimal mutlak sistem adalah 800 kata).\n` +
       `WAJIB tulis ulang dan perluas adegan yang sudah ada secara alami; jangan menambah fakta baru. Targetkan naskah mencapai 850–950 kata (titik tengah ideal: 910–930 kata).\n` +
       `- Draf pertama terlalu singkat (${args.wordCount} kata). DILARANG menyalin draf lama secara singkat atau hanya mengubah sedikit kata; draf yang panjangnya masih mirip (${args.wordCount} kata) otomatis DITOLAK LAGI.\n` +
-      `- Tambahkan minimal ${neededWords} kata ISI BARU ke dalam draf ini. Tambahan WAJIB berupa kalimat bermakna, BUKAN hasil memecah kalimat lama menjadi baris pendek.\n` +
-      `- DILARANG KERAS memotong kalimat yang sudah ada menjadi beberapa paragraf demi memperbanyak baris. Menambah jumlah paragraf TIDAK menambah jumlah kata dan tetap GAGAL.\n` +
-      `- Setiap paragraf WAJIB berisi kalimat utuh sekitar 10–20 kata.\n` +
+      `- Tambahkan minimal ${neededWords} kata ISI BARU ke dalam draf ini dengan memperluas dialog dan interaksi tokoh menjadi sekitar 35–45 paragraf.\n` +
+      `- Tambahkan minimal 12–16 baris dialog percakapan sahut-menyahut baru antar tokoh. Setiap dialog tokoh WAJIB berdiri sendiri sebagai 1 paragraf terpisah (1–2 kalimat).\n` +
+      `- Setiap paragraf narasi WAJIB berisi kalimat utuh sekitar 10–20 kata.\n` +
       `- CARA MENAMBAH KATA SECARA AMAN DI SETIAP DARI 4 ADEGAN:\n` +
-      `  1. Sisipkan percakapan dialog baru atau perpanjang percakapan konfrontasi yang sudah ada dengan 10–14 sahut-menyahut kalimat baru antar tokoh.\n` +
+      `  1. Sisipkan percakapan dialog baru yang intens dan mendalam di setiap adegan (tambahkan 12–16 sahut-menyahut kalimat baru antar tokoh).\n` +
       `  2. Tambahkan pergolakan batin narator yang mendalam, keraguan, dan pertimbangan emosional.\n` +
       `  3. Perkaya deskripsi sensorik suasana sekitar (suara, pencahayaan, hawa, detil fisik ruangan/lingkungan).\n` +
       `- Urai interaksi dan momen yang sedang berjalan secara utuh; jangan terburu-buru menutup adegan.\n` +
-      `- Susun naskah hasil revisi menjadi TEPAT 4 adegan penuh, masing-masing sekitar 230 kata (4 × 230 = ±920 kata). Jangan berpindah adegan sebelum adegan berjalan mencapai anggaran katanya.`
+      `- Susun naskah hasil revisi menjadi TEPAT 4 adegan penuh, masing-masing sekitar 230 kata (total ±920 kata, sekitar 35–45 paragraf). Jangan berpindah adegan sebelum adegan berjalan mencapai anggaran katanya.`
     : `PERINGATAN KERAS: Draf pertama (${args.wordCount} kata) TERLALU PANJANG dan GAGAL lolos (batas maksimal mutlak sistem adalah 1000 kata).\n` +
       `WAJIB tulis ulang seluruh naskah menjadi 870–930 kata. DILARANG menyalin ulang draf pertama apa adanya; keluaran yang panjangnya sama dengan draf pertama tetap GAGAL.\n` +
       `- Buang minimal ${Math.max(80, args.wordCount - 900)} kata: padatkan pilihan kata dan pengulangan, lalu ringkas deskripsi yang berlebihan.\n` +
@@ -206,7 +206,7 @@ export function buildWriterLengthRepairPrompt(args: Readonly<{
       '',
       '=== INSTRUKSI WAJIB PENULISAN ULANG ===',
       args.wordCount < 800
-        ? `Draf pertama di atas (${args.wordCount} kata) tidak lolos karena di bawah 800 kata. Tulis ulang seluruh cerita di atas dari awal hingga akhir dengan mengembangkan setiap dialog dan adegan yang ada secara signifikan. Targetkan total panjang mencapai 850–950 kata, dengan setiap paragraf berupa kalimat utuh sekitar 10–20 kata. Yang dihitung validator adalah JUMLAH KATA, bukan jumlah paragraf. Batas minimal mutlak adalah 800 kata. Balas HANYA dengan JUDUL: diikuti prosa lengkap.`
+        ? `Draf pertama di atas (${args.wordCount} kata) tidak lolos karena di bawah 800 kata. Tulis ulang seluruh cerita di atas dari awal hingga akhir dengan mengembangkan setiap dialog dan adegan yang ada secara signifikan. Kembangkan cerita menjadi sekitar 35–45 paragraf dengan menambahkan minimal 12–16 baris percakapan dialog baru antar tokoh dan monolog batin narator. Targetkan total panjang mencapai 850–950 kata, dengan setiap paragraf berupa kalimat utuh sekitar 10–20 kata. Yang dihitung validator adalah JUMLAH KATA, bukan jumlah paragraf. Batas minimal mutlak adalah 800 kata. Balas HANYA dengan JUDUL: diikuti prosa lengkap.`
         : `Draf pertama di atas (${args.wordCount} kata) tidak lolos karena di atas 1000 kata. Tulis ulang seluruh cerita di atas dari awal hingga akhir dalam bentuk yang lebih padat, tanpa membuang satu pun peristiwa. Targetkan total panjang 870–930 kata. Keluaran yang panjangnya tetap sama seperti draf pertama akan GAGAL lagi. Batas maksimal mutlak adalah 1000 kata. Balas HANYA dengan JUDUL: diikuti prosa lengkap.`,
     ].join('\n'),
   }

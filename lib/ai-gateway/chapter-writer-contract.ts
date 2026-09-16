@@ -174,7 +174,7 @@ export function buildWriterLengthRepairPrompt(args: Readonly<{
       `- Perdalam monolog batin narator saat menghadapi ketegangan dan keraguan batin.\n` +
       `- Perkaya deskripsi sensorik suasana sekitar (suara, pencahayaan, hawa, detil fisik ruangan/lingkungan).\n` +
       `- Urai interaksi dan momen yang sedang berjalan secara utuh; jangan terburu-buru menutup adegan.\n` +
-      `- Kembangkan setiap adegan sampai sekitar 250–300 kata sebelum berpindah ke adegan berikutnya.`
+      `- Susun naskah hasil revisi menjadi TEPAT 4 adegan, masing-masing sekitar 230 kata (4 × 230 = ±920 kata). Jangan berpindah adegan sebelum adegan berjalan mencapai anggaran katanya.`
     : `PERINGATAN KERAS: Draf pertama (${args.wordCount} kata) TERLALU PANJANG dan GAGAL lolos (batas maksimal mutlak sistem adalah 1000 kata).\n` +
       `WAJIB tulis ulang seluruh naskah menjadi 870–930 kata. DILARANG menyalin ulang draf pertama apa adanya; keluaran yang panjangnya sama dengan draf pertama tetap GAGAL.\n` +
       `- Buang minimal ${Math.max(80, args.wordCount - 900)} kata: padatkan pilihan kata dan pengulangan, lalu ringkas deskripsi yang berlebihan.\n` +

@@ -31,10 +31,10 @@ describe('writer length repair eligibility', () => {
       eligibleMax: WRITER_LENGTH_REPAIR_ELIGIBLE_MAX_WORDS,
       targetMin: WRITER_LENGTH_REPAIR_TARGET_MIN_WORDS,
       targetMax: WRITER_LENGTH_REPAIR_TARGET_MAX_WORDS,
-    }).toEqual({ eligibleMin: 450, eligibleMax: 1100, targetMin: 850, targetMax: 950 })
+    }).toEqual({ eligibleMin: 450, eligibleMax: 1250, targetMin: 850, targetMax: 950 })
   })
 
-  it.each([450, 799, 1001, 1100])('accepts inclusive eligible edge %i', (wordCount) => {
+  it.each([450, 799, 1001, 1250])('accepts inclusive eligible edge %i', (wordCount) => {
     expect(eligibility(wordCount)).toEqual({
       eligible: true,
       reason: wordCount < 800 ? 'UNDER_LENGTH' : 'OVER_LENGTH',
@@ -47,7 +47,7 @@ describe('writer length repair eligibility', () => {
     [449, 'OUTSIDE_ELIGIBLE_BAND'],
     [800, 'NOT_LENGTH_ONLY_FAILURE'],
     [1000, 'NOT_LENGTH_ONLY_FAILURE'],
-    [1101, 'OUTSIDE_ELIGIBLE_BAND'],
+    [1251, 'OUTSIDE_ELIGIBLE_BAND'],
   ] as const)('rejects word edge %i', (wordCount, reason) => {
     expect(eligibility(wordCount)).toMatchObject({ eligible: false, reason, wordCount })
   })

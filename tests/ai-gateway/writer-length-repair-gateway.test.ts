@@ -84,14 +84,18 @@ beforeEach(() => {
 
 afterEach(() => vi.restoreAllMocks())
 
-async function write(responses: Array<{ value?: string; finish?: string; error?: Error }>, enabled = true) {
+async function write(
+  responses: Array<{ value?: string; finish?: string; error?: Error }>,
+  enabled = true,
+  budgetMax: 1 | 2 | 3 = 2,
+) {
   const queued = [...responses]
   const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
   const provider = createGatewayProvider({}, undefined, route(true))
   const chapter = await input()
   const records: WriterLengthRepairTelemetry[] = []
   const identities: unknown[] = []
-  const writerInferenceBudget = { used: 0, max: 2 as const }
+  const writerInferenceBudget = { used: 0, max: budgetMax }
   const promise = provider.writeChapter({ snapshot: chapter.snapshot, plan: chapter.plan, brief: chapter.brief }, {
     telemetryContext,
     workflowPhase: 'CHAPTER_PROSE_INITIAL',
@@ -158,6 +162,30 @@ describe('writerLengthRepairV1 gateway state machine', () => {
     await expect(run.promise).rejects.toThrow()
     expect(run.identities).toHaveLength(2)
     expect(run.identities[0]).toEqual(run.identities[1])
+    expect(run.records).toEqual([{
+      firstPassOutcome: 'LENGTH_REPAIR_ELIGIBLE', repairAttempted: true,
+      repairOutcome: 'REJECTED', finalWriterOutcome: 'REJECTED',
+    }])
+  })
+
+  it('runs a second length repair when the budget allows it', async () => {
+    const run = await write([{ value: text(700) }, { value: text(770) }, { value: text(900) }], true, 3)
+
+    await expect(run.promise).resolves.toMatchObject({ wordCount: 900 })
+    expect(run.identities).toHaveLength(3)
+    expect(run.writerInferenceBudget.used).toBe(3)
+    expect(run.records).toEqual([{
+      firstPassOutcome: 'LENGTH_REPAIR_ELIGIBLE', repairAttempted: true,
+      repairOutcome: 'ACCEPTED', finalWriterOutcome: 'ACCEPTED',
+    }])
+  })
+
+  it('stops after the second length repair still fails', async () => {
+    const run = await write([{ value: text(700) }, { value: text(760) }, { value: text(780) }], true, 3)
+
+    await expect(run.promise).rejects.toThrow()
+    expect(run.identities).toHaveLength(3)
+    expect(run.writerInferenceBudget.used).toBe(3)
     expect(run.records).toEqual([{
       firstPassOutcome: 'LENGTH_REPAIR_ELIGIBLE', repairAttempted: true,
       repairOutcome: 'REJECTED', finalWriterOutcome: 'REJECTED',
@@ -237,7 +265,7 @@ describe('writerLengthRepairV1 gateway state machine', () => {
     expect(streamTextMock).toHaveBeenCalledTimes(1)
   })
 
-  it('creates one shared max-two writer budget for enabled generateChapter calls', async () => {
+  it('creates one shared max-three writer budget for enabled generateChapter calls', async () => {
     streamTextMock.mockReturnValueOnce(observed(text(900)))
     const { createGatewayProvider } = await import('@/lib/ai-gateway/gateway-provider')
     const provider = createGatewayProvider({}, undefined, route())
@@ -266,7 +294,7 @@ describe('writerLengthRepairV1 gateway state machine', () => {
       executionOptions,
     })).resolves.toMatchObject({ status: 'PUBLISHED' })
 
-    expect(executionOptions).toHaveProperty('writerInferenceBudget', { used: 1, max: 2 })
+    expect(executionOptions).toHaveProperty('writerInferenceBudget', { used: 1, max: 3 })
   })
 
   it('keeps legacy fallback behavior when policy disabled', async () => {

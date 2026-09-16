@@ -521,20 +521,44 @@ async function generateProseWithLengthRepairV1(args: {
 
     telemetry.firstPassOutcome = 'LENGTH_REPAIR_ELIGIBLE'
     telemetry.repairAttempted = true
-    const repairPrompt = buildWriterLengthRepairPrompt({
-      production: args.productionPrompt,
-      firstPass: first.prose,
-      wordCount: first.wordCount,
-    })
-    const repaired = await invoke(repairPrompt, 'CHAPTER_PROSE_LENGTH_REPAIR_1')
-    if (repaired.findings.length > 0) {
-      telemetry.repairOutcome = 'REJECTED'
-      throw new WriterCompletenessError(repaired.findings)
+
+    // A single repair pass regularly still lands short of the 800-word gate, so
+    // keep repairing while the only defect is length and the shared writer
+    // budget still has a call left.
+    let latest = first
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const repairPrompt = buildWriterLengthRepairPrompt({
+        production: args.productionPrompt,
+        firstPass: latest.prose,
+        wordCount: latest.wordCount,
+      })
+      const repaired = await invoke(
+        repairPrompt,
+        attempt === 1 ? 'CHAPTER_PROSE_LENGTH_REPAIR_1' : 'CHAPTER_PROSE_LENGTH_REPAIR_2',
+      )
+      if (repaired.findings.length === 0) {
+        telemetry.repairOutcome = 'ACCEPTED'
+        telemetry.finalWriterOutcome = 'ACCEPTED'
+        emit()
+        return { ...repaired.prose, usedModel: candidate.label }
+      }
+
+      const nextEligibility = evaluateWriterLengthRepairEligibility({
+        parserAccepted: true,
+        finishReason: repaired.finishReason,
+        ...repaired.prose,
+      })
+      const budget = options.writerInferenceBudget
+      const budgetLeft = budget ? budget.used < budget.max : false
+      if (!nextEligibility.eligible || !budgetLeft) {
+        telemetry.repairOutcome = 'REJECTED'
+        throw new WriterCompletenessError(repaired.findings)
+      }
+      latest = repaired
     }
-    telemetry.repairOutcome = 'ACCEPTED'
-    telemetry.finalWriterOutcome = 'ACCEPTED'
-    emit()
-    return { ...repaired.prose, usedModel: candidate.label }
+
+    telemetry.repairOutcome = 'REJECTED'
+    throw new WriterCompletenessError(latest.findings)
   } catch (error) {
     if (telemetry.repairAttempted) telemetry.repairOutcome = 'REJECTED'
     emit()

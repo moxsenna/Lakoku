@@ -86,7 +86,8 @@ export type WriterLengthRepairV1Policy = Readonly<{
 
 export type WriterInferenceBudget = {
   used: number
-  max: 1 | 2
+  // 1 = diagnostics (single call), 2 = one repair, 3 = production (two repairs).
+  max: 1 | 2 | 3
 }
 
 export type WriterLengthRepairTelemetry = Readonly<{

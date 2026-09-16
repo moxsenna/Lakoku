@@ -473,6 +473,12 @@ async function generateProseWithLengthRepairV1(args: {
         }
         const findings = evaluateWriterCompleteness(completenessInput)
         const wordCount = countWords(prose.paragraphs)
+        console.log('[WRITER_OUTPUT_OBSERVED]', {
+          phase: workflowPhase,
+          wordCount,
+          paragraphs: prose.paragraphs.length,
+          findings: findings.map((f) => f.code),
+        })
         runObserver(() => options.observeWriterEvaluation?.({
           completenessPassed: findings.length === 0,
           completenessCodes: findings.map((finding) => finding.code),

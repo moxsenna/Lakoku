@@ -24,7 +24,7 @@ export type WriterCompletenessInput = Readonly<{
   paragraphs: readonly string[]
 }>
 
-export const WRITER_LENGTH_REPAIR_ELIGIBLE_MIN_WORDS = 600
+export const WRITER_LENGTH_REPAIR_ELIGIBLE_MIN_WORDS = 450
 export const WRITER_LENGTH_REPAIR_ELIGIBLE_MAX_WORDS = 1100
 export const WRITER_LENGTH_REPAIR_TARGET_MIN_WORDS = 850
 export const WRITER_LENGTH_REPAIR_TARGET_MAX_WORDS = 950

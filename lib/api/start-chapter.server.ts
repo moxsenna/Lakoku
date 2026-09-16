@@ -243,6 +243,13 @@ export async function startOwnedChapterGeneration(
     }
     const generationKind = mapModeToGenerationKind(modeResolved.mode)
 
+    try {
+      const { recoverStaleGenerationJobs } = await import('@lakoku/runtime/server')
+      await recoverStaleGenerationJobs({ batchSize: 10 })
+    } catch {
+      // Non-blocking best effort cleanup of expired jobs before fresh enqueue
+    }
+
     let enqueued: Awaited<ReturnType<typeof enqueueGenerationJob>>
     try {
       enqueued = await enqueueGenerationJob({

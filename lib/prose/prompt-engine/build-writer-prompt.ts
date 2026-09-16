@@ -112,6 +112,7 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
     '- Tulis TEPAT 4 adegan penuh. Anggaran panjang setiap adegan: sekitar 230 kata (4 × 230 = ±920 kata).',
     '- Adegan 1 ±230 kata, Adegan 2 ±230 kata, Adegan 3 ±230 kata, Adegan 4 ±230 kata. DILARANG berpindah adegan sebelum adegan berjalan mencapai sekitar 230 kata.',
     '- DILARANG menutup bab sebelum keempat adegan selesai ditulis penuh.',
+    '- Khusus bab klimaks atau bab-bab akhir: DILARANG menyelesaikan konflik secara terburu-buru. Urai percakapan konfrontasi, pertarungan argumen, dan ketegangan situasi secara bertahap dan mendalam.',
     '- Setiap adegan WAJIB memuat: pembukaan situasi, detail sensorik lingkungan, minimal 8–10 pertukaran dialog bolak-balik, reaksi fisik tokoh, dan pergolakan batin narator.',
     '- Kembangkan interaksi sensorik, dinamika dialog, dan ketegangan adegan secara mendalam.',
     '- Urai setiap adegan secara bertahap dan detail; perlambat tempo agar cerita tidak selesai terlalu cepat sebelum mencapai minimal 880 kata.',

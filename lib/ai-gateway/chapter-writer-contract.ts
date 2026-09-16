@@ -170,6 +170,7 @@ export function buildWriterLengthRepairPrompt(args: Readonly<{
       `- Tambahkan minimal ${neededWords} kata ISI BARU ke dalam draf ini. Tambahan WAJIB berupa kalimat bermakna, BUKAN hasil memecah kalimat lama menjadi baris pendek.\n` +
       `- DILARANG KERAS memotong kalimat yang sudah ada menjadi beberapa paragraf demi memperbanyak baris. Menambah jumlah paragraf TIDAK menambah jumlah kata dan tetap GAGAL.\n` +
       `- Setiap paragraf WAJIB berisi kalimat utuh sekitar 10–20 kata.\n` +
+      `- CARA MENAMBAH KATA SECARA AMAN: Sisipkan 1 adegan dialog baru atau perpanjang percakapan konfrontasi yang sudah ada dengan 8–10 sahut-menyahut kalimat baru antar tokoh, ditambah pergolakan batin narator.\n` +
       `- Sisipkan dialog bolak-balik antar tokoh yang lebih intens (saling menyahut, jeda hening, reaksi tubuh, mimik muka).\n` +
       `- Perdalam monolog batin narator saat menghadapi ketegangan dan keraguan batin.\n` +
       `- Perkaya deskripsi sensorik suasana sekitar (suara, pencahayaan, hawa, detil fisik ruangan/lingkungan).\n` +

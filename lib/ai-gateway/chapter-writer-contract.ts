@@ -163,17 +163,17 @@ export function buildWriterLengthRepairPrompt(args: Readonly<{
   firstPass: Pick<ParsedChapterWriterProse, 'title' | 'paragraphs'>
   wordCount: number
 }>): Readonly<{ system: string; prompt: string }> {
-  const neededWords = Math.max(200, 920 - args.wordCount)
-  const neededParagraphs = Math.max(15, Math.ceil(neededWords / 14))
+  const neededWords = Math.max(160, 920 - args.wordCount)
+  const neededParagraphs = Math.max(15, Math.ceil(neededWords / 13))
   const direction = args.wordCount < 800
-    ? `PERINGATAN KERAS: Draf pertama (${args.wordCount} kata) SANGAT KURANG PANJANG. Batas minimal mutlak penerimaan sistem adalah 800 kata (naskah di bawah 800 kata DITOLAK otomatis).\n` +
-      `WAJIB tulis ulang dan perluas adegan yang sudah ada secara alami; jangan menambah fakta baru. Targetkan naskah mencapai 850–950 kata.\n` +
+    ? `PERINGATAN KERAS: Draf pertama (${args.wordCount} kata) KURANG PANJANG dan GAGAL lolos (batas minimal mutlak sistem adalah 800 kata).\n` +
+      `WAJIB tulis ulang dan perluas adegan yang sudah ada secara alami; jangan menambah fakta baru. Targetkan naskah mencapai 850–950 kata (titik tengah ideal: 900–920 kata).\n` +
       `- Tambahkan minimal ${neededWords} kata baru (sekitar ${neededParagraphs} paragraf pendek baru) ke dalam draf ini.\n` +
       `- Sisipkan dialog bolak-balik antar tokoh yang lebih intens (saling menyahut, jeda hening, reaksi tubuh, mimik muka).\n` +
       `- Perdalam monolog batin narator saat menghadapi ketegangan dan keraguan batin.\n` +
       `- Perkaya deskripsi sensorik suasana sekitar (suara, pencahayaan, hawa, detil fisik ruangan/lingkungan).\n` +
       `- Urai interaksi dan momen yang sedang berjalan secara utuh; jangan terburu-buru menutup adegan.\n` +
-      `- Targetkan total struktur naskah memiliki 60–75 paragraf pendek agar panjang kata stabil di 850–950 kata.`
+      `- Targetkan total struktur naskah memiliki 65–80 paragraf pendek agar panjang kata stabil di 850–950 kata.`
     : 'Prosa terlalu panjang: padatkan pilihan kata dan pengulangan; jangan menghapus peristiwa apa pun. WAJIB di bawah 950 kata (batas penerimaan sistem: 800–1000 kata).'
   const firstPass = [
     `JUDUL: ${args.firstPass.title}`,
@@ -197,7 +197,7 @@ export function buildWriterLengthRepairPrompt(args: Readonly<{
       firstPass,
       '',
       '=== INSTRUKSI WAJIB PENULISAN ULANG ===',
-      `Tulis ulang seluruh cerita di atas dari awal hingga akhir. Lebarkan setiap dialog dan adegan yang ada agar total panjang mencapai 850–950 kata (target 60–75 paragraf pendek). Batas minimal mutlak 800 kata. Balas HANYA dengan JUDUL: diikuti prosa lengkap.`,
+      `Draf pertama di atas (${args.wordCount} kata) tidak lolos karena di bawah 800 kata. Tulis ulang seluruh cerita di atas dari awal hingga akhir dengan mengembangkan setiap dialog dan adegan yang ada secara signifikan. Targetkan total panjang mencapai 850–950 kata (target 65–80 paragraf pendek). Batas minimal mutlak adalah 800 kata. Balas HANYA dengan JUDUL: diikuti prosa lengkap.`,
     ].join('\n'),
   }
 }

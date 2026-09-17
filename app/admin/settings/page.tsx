@@ -8,6 +8,7 @@ import { EditCreditProductDialog, type CreditProductRow } from '@/components/adm
 import { EditFeatureCreditCostDialog } from '@/components/admin/settings/edit-feature-credit-cost-dialog'
 import { EditGenerationPolicyDialog } from '@/components/admin/settings/edit-generation-policy-dialog'
 import { EditAiModelRouteDialog } from '@/components/admin/settings/edit-ai-model-route-dialog'
+import { EditRewardPolicyDialog } from '@/components/admin/settings/edit-reward-policy-dialog'
 import { idr, isoDatetime } from '@/lib/admin/format'
 import { Pencil } from 'lucide-react'
 
@@ -42,6 +43,18 @@ interface SettingsData {
   featureCreditCosts: {
     featureKey: string; creditsRequired: number; isActive: boolean; pricingVersion: string; updatedAt: string | null
   }[]
+  rewardPolicy: {
+    commissionPercent: number
+    windowDays: number
+    attributionCookieDays: number
+    redeemRateIdrPerCredit: number
+    redeemMinIdr: number
+    commissionEnabled: boolean
+    redeemEnabled: boolean
+    payoutEnabled: boolean
+    payoutMinIdr: number
+    updatedAt: string | null
+  } | null
   recentAuditLogs: {
     id: string; adminEmail: string | null; settingArea: string; settingKey: string
     oldValue: unknown; newValue: unknown; reason: string; createdAt: string
@@ -90,6 +103,7 @@ export default function AdminSettingsPage() {
   const [editFeature, setEditFeature] = useState<{ featureKey: string; creditsRequired: number; isActive: boolean; pricingVersion: string } | null>(null)
   const [editGenPolicy, setEditGenPolicy] = useState(false)
   const [editRoute, setEditRoute] = useState<RouteRow | null>(null)
+  const [editRewardPolicy, setEditRewardPolicy] = useState(false)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -242,6 +256,80 @@ export default function AdminSettingsPage() {
         )}
       </AdminSectionCard>
 
+      {/* Dompet Imbalan & Referral Policy */}
+      <AdminSectionCard
+        title="Dompet Imbalan & Referral"
+        subtitle="Kebijakan komisi top-up, atribusi first-touch, dan penukaran ke kredit"
+      >
+        {data.rewardPolicy ? (
+          <div>
+            {data.rewardPolicy.commissionEnabled && (
+              <div className="border-b border-border bg-amber-500/10 px-4 py-2 text-xs text-amber-500 flex items-center gap-2">
+                <span className="inline-block size-2 rounded-full bg-amber-400 shrink-0" />
+                <span>
+                  <strong>Perhatian:</strong> Komisi referral aktif sementara biaya inferensi 9Router belum terukur di produksi (UNMEASURED). Pantau margin berkala.
+                </span>
+              </div>
+            )}
+            <div className="flex items-end justify-between p-4">
+              <div className="flex flex-wrap gap-6">
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Status Komisi</span>
+                  <div className="mt-0.5">
+                    <StatusBadge status={data.rewardPolicy.commissionEnabled ? 'active' : 'inactive'} />
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Komisi Top-Up</span>
+                  <div className="text-sm font-semibold">{data.rewardPolicy.commissionPercent}%</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Jendela Komisi</span>
+                  <div className="text-sm font-semibold">{data.rewardPolicy.windowDays} hari</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Umur Cookie /r/</span>
+                  <div className="text-sm font-semibold">{data.rewardPolicy.attributionCookieDays} hari</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Kurs Penukaran</span>
+                  <div className="text-sm font-semibold">{idr(data.rewardPolicy.redeemRateIdrPerCredit)} / kredit</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Min. Tukar</span>
+                  <div className="text-sm font-semibold">{idr(data.rewardPolicy.redeemMinIdr)}</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Tukar ke Kredit</span>
+                  <div className="mt-0.5">
+                    <StatusBadge status={data.rewardPolicy.redeemEnabled ? 'active' : 'inactive'} />
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Pencairan Tunai</span>
+                  <div className="mt-0.5">
+                    <span className="inline-flex items-center rounded px-2 py-0.5 text-[10px] font-medium bg-muted text-muted-foreground">
+                      Segera Hadir
+                    </span>
+                  </div>
+                </div>
+              </div>
+              {owner && (
+                <button
+                  onClick={() => setEditRewardPolicy(true)}
+                  className="text-lavender hover:underline text-[10px] flex items-center gap-1 shrink-0 ml-4"
+                >
+                  <Pencil className="size-3" />
+                  Edit Kebijakan
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <AdminEmptyState message="Kebijakan dompet imbalan belum diinisialisasi." />
+        )}
+      </AdminSectionCard>
+
       {/* Recent Audit Logs */}
       <AdminSectionCard title="Recent Settings Changes" subtitle={`${data.recentAuditLogs.length} entries`}>
         {data.recentAuditLogs.length === 0 ? <AdminEmptyState /> : (
@@ -276,6 +364,13 @@ export default function AdminSettingsPage() {
           route={editRoute}
           proseRoute={data.aiModelRoutes.find((r) => r.useCase === 'chapter_prose') ?? null}
           onClose={() => setEditRoute(null)}
+          onSaved={loadData}
+        />
+      )}
+      {editRewardPolicy && data.rewardPolicy && (
+        <EditRewardPolicyDialog
+          policy={data.rewardPolicy}
+          onClose={() => setEditRewardPolicy(false)}
           onSaved={loadData}
         />
       )}

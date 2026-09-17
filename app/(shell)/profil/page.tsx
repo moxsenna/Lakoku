@@ -6,6 +6,7 @@ import {
   Coins,
   Footprints,
   Trophy,
+  Wallet,
 } from 'lucide-react'
 import { listMyLibraryStories } from '@/lib/api/server'
 import { getReaderStates, getSessionUser } from '@/lib/api/user-state'
@@ -109,6 +110,24 @@ export default async function ProfilPage() {
               <span className="text-xs text-muted-foreground">{freeChapterText}</span>
               <span className="text-xs text-muted-foreground">
                 Saldo {creditBalance} · beli paket untuk buka bab
+              </span>
+            </span>
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          </Link>
+        )}
+
+        {user && (
+          <Link
+            href="/profil/imbalan"
+            className="flex items-center gap-4 rounded-2xl bg-card p-4 transition-colors hover:bg-secondary/50"
+          >
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary">
+              <Wallet className="size-5" aria-hidden="true" />
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="text-sm font-medium text-foreground">Dompet Imbalan</span>
+              <span className="text-xs text-muted-foreground">
+                Ajak teman membaca · Dapatkan komisi 10%
               </span>
             </span>
             <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />

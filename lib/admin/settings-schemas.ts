@@ -87,3 +87,18 @@ export const updateGenerationPolicySchema = z
     path: ['targetWordsMax'],
   })
 export type UpdateGenerationPolicyInput = z.infer<typeof updateGenerationPolicySchema>
+
+export const updateRewardPolicySchema = z.object({
+  commissionPercent: z.number().int().min(0).max(50),
+  windowDays: z.number().int().min(1).max(365),
+  attributionCookieDays: z.number().int().min(1).max(365),
+  redeemRateIdrPerCredit: z.number().int().min(50).max(10000),
+  redeemMinIdr: z.number().int().min(0).max(1000000),
+  commissionEnabled: z.boolean(),
+  redeemEnabled: z.boolean(),
+  payoutEnabled: z.boolean(),
+  payoutMinIdr: z.number().int().min(0).max(10000000),
+  reason: z.string().min(5).max(500),
+})
+export type UpdateRewardPolicyInput = z.infer<typeof updateRewardPolicySchema>
+

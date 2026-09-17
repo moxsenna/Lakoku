@@ -10,7 +10,21 @@ import type {
   UpdateFeatureCreditCostInput,
   UpdateGenerationPolicyInput,
   UpdateAiModelRouteInput,
+  UpdateRewardPolicyInput,
 } from './settings-schemas'
+
+export interface AdminRewardPolicy {
+  commissionPercent: number
+  windowDays: number
+  attributionCookieDays: number
+  redeemRateIdrPerCredit: number
+  redeemMinIdr: number
+  commissionEnabled: boolean
+  redeemEnabled: boolean
+  payoutEnabled: boolean
+  payoutMinIdr: number
+  updatedAt: string | null
+}
 
 export interface AdminCreditProduct {
   productKey: string
@@ -178,24 +192,62 @@ export async function listRecentSettingsAuditLogs(limit = 20): Promise<AdminSett
   }))
 }
 
+export async function getAdminRewardPolicy(): Promise<AdminRewardPolicy | null> {
+  const db = createAdminClient()
+  const { data } = await db
+    .from('reward_policy')
+    .select('*')
+    .eq('id', true)
+    .maybeSingle()
+  if (!data) return null
+  const d = data as Record<string, unknown>
+  return {
+    commissionPercent: Number(d.commission_percent ?? 10),
+    windowDays: Number(d.window_days ?? 30),
+    attributionCookieDays: Number(d.attribution_cookie_days ?? 30),
+    redeemRateIdrPerCredit: Number(d.redeem_rate_idr_per_credit ?? 250),
+    redeemMinIdr: Number(d.redeem_min_idr ?? 1000),
+    commissionEnabled: Boolean(d.commission_enabled),
+    redeemEnabled: Boolean(d.redeem_enabled),
+    payoutEnabled: Boolean(d.payout_enabled),
+    payoutMinIdr: Number(d.payout_min_idr ?? 50000),
+    updatedAt: (d.updated_at as string) ?? null,
+  }
+}
+
 export interface AdminSettingsData {
   creditProducts: AdminCreditProduct[]
   generationPolicy: AdminGenerationPolicy | null
   aiModelRoutes: AdminAiModelRoute[]
   featureCreditCosts: AdminFeatureCreditCost[]
+  rewardPolicy: AdminRewardPolicy | null
   recentAuditLogs: AdminSettingsAuditLog[]
 }
 
 export async function loadAdminSettings(): Promise<AdminSettingsData> {
-  const [creditProducts, generationPolicy, aiModelRoutes, featureCreditCosts, recentAuditLogs] =
-    await Promise.all([
-      listAdminCreditProducts(),
-      getAdminGenerationPolicy(),
-      listAdminAiModelRoutes(),
-      listAdminFeatureCreditCosts(),
-      listRecentSettingsAuditLogs(),
-    ])
-  return { creditProducts, generationPolicy, aiModelRoutes, featureCreditCosts, recentAuditLogs }
+  const [
+    creditProducts,
+    generationPolicy,
+    aiModelRoutes,
+    featureCreditCosts,
+    rewardPolicy,
+    recentAuditLogs,
+  ] = await Promise.all([
+    listAdminCreditProducts(),
+    getAdminGenerationPolicy(),
+    listAdminAiModelRoutes(),
+    listAdminFeatureCreditCosts(),
+    getAdminRewardPolicy(),
+    listRecentSettingsAuditLogs(),
+  ])
+  return {
+    creditProducts,
+    generationPolicy,
+    aiModelRoutes,
+    featureCreditCosts,
+    rewardPolicy,
+    recentAuditLogs,
+  }
 }
 
 // --- Write helpers (owner-only) ---
@@ -506,3 +558,74 @@ export async function updateAiModelRoute(
     notes: input.notes,
   }
 }
+
+export async function updateRewardPolicy(
+  input: UpdateRewardPolicyInput,
+): Promise<AdminRewardPolicy> {
+  const admin = await requireOwner()
+  const db = createAdminClient()
+
+  const { data: oldRow } = await db
+    .from('reward_policy')
+    .select('*')
+    .eq('id', true)
+    .single()
+
+  const oldVal = oldRow
+    ? {
+        commission_percent: oldRow.commission_percent,
+        window_days: oldRow.window_days,
+        attribution_cookie_days: oldRow.attribution_cookie_days,
+        redeem_rate_idr_per_credit: oldRow.redeem_rate_idr_per_credit,
+        redeem_min_idr: oldRow.redeem_min_idr,
+        commission_enabled: oldRow.commission_enabled,
+        redeem_enabled: oldRow.redeem_enabled,
+        payout_enabled: oldRow.payout_enabled,
+        payout_min_idr: oldRow.payout_min_idr,
+      }
+    : null
+
+  const newVal = {
+    commission_percent: input.commissionPercent,
+    window_days: input.windowDays,
+    attribution_cookie_days: input.attributionCookieDays,
+    redeem_rate_idr_per_credit: input.redeemRateIdrPerCredit,
+    redeem_min_idr: input.redeemMinIdr,
+    commission_enabled: input.commissionEnabled,
+    redeem_enabled: input.redeemEnabled,
+    payout_enabled: input.payoutEnabled,
+    payout_min_idr: input.payoutMinIdr,
+    updated_at: new Date().toISOString(),
+  }
+
+  const { error } = await db
+    .from('reward_policy')
+    .update(newVal)
+    .eq('id', true)
+
+  if (error) throw new Error(`updateRewardPolicy: ${error.message}`)
+
+  await auditSettings({
+    adminUserId: admin.id,
+    adminEmail: admin.email,
+    settingArea: 'reward_policy',
+    settingKey: 'default',
+    oldValue: oldVal,
+    newValue: newVal,
+    reason: input.reason,
+  })
+
+  return {
+    commissionPercent: input.commissionPercent,
+    windowDays: input.windowDays,
+    attributionCookieDays: input.attributionCookieDays,
+    redeemRateIdrPerCredit: input.redeemRateIdrPerCredit,
+    redeemMinIdr: input.redeemMinIdr,
+    commissionEnabled: input.commissionEnabled,
+    redeemEnabled: input.redeemEnabled,
+    payoutEnabled: input.payoutEnabled,
+    payoutMinIdr: input.payoutMinIdr,
+    updatedAt: newVal.updated_at,
+  }
+}
+

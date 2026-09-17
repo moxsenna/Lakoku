@@ -437,41 +437,118 @@ export function ReaderView({
         isCream ? 'reader-cream bg-background' : 'bg-background',
       )}
     >
-      <header
+      <div
         className={cn(
-          'sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-border px-4 py-3 backdrop-blur',
+          'sticky top-0 z-30 w-full transition-colors backdrop-blur',
           isCream ? 'bg-background/95' : 'bg-background/95',
         )}
       >
-        <Link
-          href={`/cerita/${story.id}`}
-          aria-label="Kembali ke detail cerita"
-          className="flex size-10 items-center justify-center rounded-full text-foreground hover:bg-muted"
-        >
-          <ArrowLeft className="size-5" aria-hidden="true" />
-        </Link>
-        <div className="flex min-w-0 flex-1 flex-col items-center">
-          <span className="truncate text-xs font-medium text-foreground">{story.title}</span>
-          <span className="text-[11px] text-muted-foreground">
-            Bab {chapter.number} dari {story.totalChapters}
-          </span>
-        </div>
-        <button
-          type="button"
-          onClick={() => setSettingsOpen((v) => !v)}
-          aria-label="Pengaturan baca"
-          aria-expanded={settingsOpen}
-          className="flex size-10 items-center justify-center rounded-full text-foreground hover:bg-muted"
-        >
-          <Settings2 className="size-5" aria-hidden="true" />
-        </button>
-      </header>
+        <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <Link
+            href={`/cerita/${story.id}`}
+            aria-label="Kembali ke detail cerita"
+            className="flex size-10 items-center justify-center rounded-full text-foreground hover:bg-muted"
+          >
+            <ArrowLeft className="size-5" aria-hidden="true" />
+          </Link>
+          <div className="flex min-w-0 flex-1 flex-col items-center">
+            <span className="truncate text-xs font-medium text-foreground">{story.title}</span>
+            <span className="text-[11px] text-muted-foreground">
+              Bab {chapter.number} dari {story.totalChapters}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSettingsOpen((v) => !v)}
+            aria-label="Pengaturan baca"
+            aria-expanded={settingsOpen}
+            className="flex size-10 items-center justify-center rounded-full text-foreground hover:bg-muted"
+          >
+            <Settings2 className="size-5" aria-hidden="true" />
+          </button>
+        </header>
 
-      <div className="h-0.5 w-full bg-muted" aria-hidden="true">
-        <div
-          className="h-full bg-primary"
-          style={{ width: `${Math.round((chapter.number / story.totalChapters) * 100)}%` }}
-        />
+        <div className="h-0.5 w-full bg-muted" aria-hidden="true">
+          <div
+            className="h-full bg-primary"
+            style={{ width: `${Math.round((chapter.number / story.totalChapters) * 100)}%` }}
+          />
+        </div>
+
+        {settingsOpen && (
+          <div className="lk-fade-up border-b border-border px-5 py-4 shadow-lg">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-medium text-muted-foreground">Ukuran teks</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={decreaseFontSize}
+                    aria-label="Perkecil teks"
+                    className="flex size-9 items-center justify-center rounded-full bg-muted text-foreground"
+                  >
+                    <Minus className="size-4" aria-hidden="true" />
+                  </button>
+                  <span className="w-6 text-center text-sm text-foreground">{fontSize}</span>
+                  <button
+                    type="button"
+                    onClick={increaseFontSize}
+                    aria-label="Perbesar teks"
+                    className="flex size-9 items-center justify-center rounded-full bg-muted text-foreground"
+                  >
+                    <Plus className="size-4" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+              <div className="flex items-center gap-2" role="group" aria-label="Tema baca">
+                <button
+                  type="button"
+                  onClick={() => setTheme('ink')}
+                  aria-pressed={theme === 'ink'}
+                  className={cn(
+                    'size-9 rounded-full border-2 bg-ink',
+                    theme === 'ink' ? 'border-primary' : 'border-border',
+                  )}
+                >
+                  <span className="sr-only">Tema gelap</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTheme('cream')}
+                  aria-pressed={theme === 'cream'}
+                  className={cn(
+                    'size-9 rounded-full border-2 bg-cream',
+                    theme === 'cream' ? 'border-primary' : 'border-border',
+                  )}
+                >
+                  <span className="sr-only">Tema terang</span>
+                </button>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setSettingsOpen(false)
+                setChapterListOpen(true)
+              }}
+              className="mt-3 flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              <List className="size-3.5" aria-hidden="true" />
+              Daftar Bab
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSettingsOpen(false)
+                setReportOpen(true)
+              }}
+              className="mt-3 flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              <Flag className="size-3.5" aria-hidden="true" />
+              Laporkan Masalah Cerita
+            </button>
+          </div>
+        )}
       </div>
 
       {fallbackFromChapter && fallbackFromChapter !== chapter.number && (
@@ -479,81 +556,6 @@ export function ReaderView({
           requestedChapter={fallbackFromChapter}
           currentChapter={chapter.number}
         />
-      )}
-
-      {settingsOpen && (
-        <div className="lk-fade-up border-b border-border px-5 py-4">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <span className="text-xs font-medium text-muted-foreground">Ukuran teks</span>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={decreaseFontSize}
-                  aria-label="Perkecil teks"
-                  className="flex size-9 items-center justify-center rounded-full bg-muted text-foreground"
-                >
-                  <Minus className="size-4" aria-hidden="true" />
-                </button>
-                <span className="w-6 text-center text-sm text-foreground">{fontSize}</span>
-                <button
-                  type="button"
-                  onClick={increaseFontSize}
-                  aria-label="Perbesar teks"
-                  className="flex size-9 items-center justify-center rounded-full bg-muted text-foreground"
-                >
-                  <Plus className="size-4" aria-hidden="true" />
-                </button>
-              </div>
-            </div>
-            <div className="flex items-center gap-2" role="group" aria-label="Tema baca">
-              <button
-                type="button"
-                onClick={() => setTheme('ink')}
-                aria-pressed={theme === 'ink'}
-                className={cn(
-                  'size-9 rounded-full border-2 bg-ink',
-                  theme === 'ink' ? 'border-primary' : 'border-border',
-                )}
-              >
-                <span className="sr-only">Tema gelap</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setTheme('cream')}
-                aria-pressed={theme === 'cream'}
-                className={cn(
-                  'size-9 rounded-full border-2 bg-cream',
-                  theme === 'cream' ? 'border-primary' : 'border-border',
-                )}
-              >
-                <span className="sr-only">Tema terang</span>
-              </button>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setSettingsOpen(false)
-              setChapterListOpen(true)
-            }}
-            className="mt-3 flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"
-          >
-            <List className="size-3.5" aria-hidden="true" />
-            Daftar Bab
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setSettingsOpen(false)
-              setReportOpen(true)
-            }}
-            className="mt-3 flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"
-          >
-            <Flag className="size-3.5" aria-hidden="true" />
-            Laporkan Masalah Cerita
-          </button>
-        </div>
       )}
 
       <article className="flex flex-col gap-6 px-6 pb-16 pt-8">

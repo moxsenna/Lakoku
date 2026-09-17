@@ -13,6 +13,11 @@ import type { JejakItem } from '@/lib/api/types'
 export type ShareVisibility = 'unlisted' | 'public'
 export type ShareType = 'ending_card' | 'story_seed' | 'challenge'
 
+export interface ShareTeaserCharacter {
+  name: string
+  role: string
+}
+
 export interface ShareTeaser {
   title: string
   tagline?: string
@@ -22,6 +27,8 @@ export interface ShareTeaser {
   bigChoices: string[]
   cta: string
   seedVersion: number
+  synopsis?: string
+  cast?: ShareTeaserCharacter[]
 }
 
 export interface SharedStoryLink {
@@ -67,24 +74,36 @@ function shortSlug(len = 10): string {
   return out
 }
 
-/** 3–5 big decision labels, non-spoiler (no consequence text). */
+/**
+ * Pilihan awal non-spoiler (hanya bab 1–15, urut kronologis).
+ * Menampilkan bagaimana cerita mulai bercabang tanpa membocorkan klimaks bab 40–50.
+ */
 export function pickBigChoices(jejak: JejakItem[]): string[] {
   if (!jejak.length) return []
-  const ranked = [...jejak].sort((a, b) => {
-    const weight = (c: number) =>
-      [12, 20, 32, 40, 45, 48, 50].includes(c) ? 2 : c >= 30 ? 1 : 0
-    return weight(b.chapter) - weight(a.chapter) || b.chapter - a.chapter
+  const early = jejak.filter((j) => j.chapter <= 15)
+  const candidatePool = early.length > 0 ? early : jejak.slice(0, 3)
+
+  const priorityChapters = [1, 3, 5, 8, 12]
+  const sorted = [...candidatePool].sort((a, b) => {
+    const aPriority = priorityChapters.includes(a.chapter) ? 1 : 0
+    const bPriority = priorityChapters.includes(b.chapter) ? 1 : 0
+    if (aPriority !== bPriority) return bPriority - aPriority
+    return a.chapter - b.chapter
   })
+
   const seen = new Set<string>()
-  const out: string[] = []
-  for (const j of ranked) {
+  const selected: JejakItem[] = []
+  for (const j of sorted) {
     const label = j.decision.trim()
     if (!label || seen.has(label)) continue
     seen.add(label)
-    out.push(label)
-    if (out.length >= 5) break
+    selected.push(j)
+    if (selected.length >= 3) break
   }
-  return out.slice(0, Math.max(3, Math.min(5, out.length)))
+
+  return selected
+    .sort((a, b) => a.chapter - b.chapter)
+    .map((j) => j.decision.trim())
 }
 
 function toPublicLink(
@@ -107,6 +126,12 @@ function toPublicLink(
       bigChoices: Array.isArray(teaser.bigChoices) ? teaser.bigChoices : [],
       cta: teaser.cta ?? 'Coba jalurmu sendiri',
       seedVersion: typeof teaser.seedVersion === 'number' ? teaser.seedVersion : 1,
+      synopsis: typeof teaser.synopsis === 'string' ? teaser.synopsis : undefined,
+      cast: Array.isArray(teaser.cast)
+        ? teaser.cast
+            .filter((c): c is ShareTeaserCharacter => typeof c?.name === 'string' && typeof c?.role === 'string')
+            .map((c) => ({ name: c.name, role: c.role }))
+        : undefined,
     },
     createdAt: row.created_at,
     ...(includeInternal && 'source_story_id' in row && 'owner_user_id' in row
@@ -147,6 +172,45 @@ export async function createEndingCardShare(input: {
     input.endingName ??
     (typeof state.ending_name === 'string' ? state.ending_name : undefined)
 
+  // Ambil sinopsis cerita untuk pengantar pembaca baru
+  let synopsis: string | undefined
+  try {
+    const { data: storyRow } = await supabase
+      .from('stories')
+      .select('synopsis')
+      .eq('id', input.storyId)
+      .maybeSingle()
+    if (typeof storyRow?.synopsis === 'string' && storyRow.synopsis.trim()) {
+      synopsis = storyRow.synopsis.trim()
+    }
+  } catch {
+    // Non-fatal jika sinopsis tidak terbaca
+  }
+
+  // Ambil maksimal 3 tokoh awal (bab 1–3) tanpa motivasi rahasia
+  let cast: ShareTeaserCharacter[] | undefined
+  try {
+    const admin = createAdminClient()
+    const { data: charRows } = await admin
+      .from('characters')
+      .select('canonical_name, role, introduced_chapter')
+      .eq('story_id', input.storyId)
+      .lte('introduced_chapter', 3)
+      .order('introduced_chapter', { ascending: true })
+      .limit(3)
+
+    if (charRows && charRows.length > 0) {
+      cast = charRows
+        .filter((c) => typeof c.canonical_name === 'string' && c.canonical_name.trim())
+        .map((c) => ({
+          name: c.canonical_name.trim(),
+          role: typeof c.role === 'string' && c.role.trim() ? c.role.trim() : 'Tokoh Cerita',
+        }))
+    }
+  } catch {
+    // Non-fatal jika tabel characters tidak terbaca
+  }
+
   const teaser: ShareTeaser = {
     title: input.title,
     tagline: input.tagline,
@@ -156,6 +220,8 @@ export async function createEndingCardShare(input: {
     bigChoices,
     cta: 'Coba jalurmu sendiri',
     seedVersion: 1,
+    synopsis,
+    cast,
   }
 
   // Prefer user-scoped client so RLS owner check applies; admin fallback if needed.

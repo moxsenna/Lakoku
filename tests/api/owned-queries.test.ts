@@ -295,6 +295,66 @@ describe('share and taste-profile projections', () => {
     })
     expect(result).not.toHaveProperty('ownerUserId')
     expect(result).not.toHaveProperty('sourceStoryId')
+    expect(result?.teaser.synopsis).toBeUndefined()
+    expect(result?.teaser.cast).toBeUndefined()
+  })
+
+  it('normalizes synopsis and cast in getShareBySlug when present', async () => {
+    const shareRow = {
+      id: 'share-b',
+      share_slug: 'ending-b',
+      share_type: 'ending_card',
+      visibility: 'public',
+      title: 'Ending B',
+      teaser_json: {
+        title: 'Ending B',
+        tropes: ['misteri'],
+        bigChoices: ['Buka warung tua'],
+        cta: 'Coba jalurmu sendiri',
+        seedVersion: 1,
+        synopsis: 'Sebuah rahasia lama terbongkar.',
+        cast: [
+          { name: 'Nara', role: 'Pemilik warung' },
+          { name: 'Pak Darsono', role: 'Ayah' },
+        ],
+      },
+      expires_at: null,
+      revoked_at: null,
+      created_at: '2026-07-14T00:00:00.000Z',
+    }
+    const db = createQueryClient([{ data: shareRow, error: null }])
+    mocks.cookieFactory.mockResolvedValue(db.client)
+    const share = await import('@/lib/api/share')
+
+    const result = await share.getShareBySlug('ending-b')
+
+    expect(result?.teaser.synopsis).toBe('Sebuah rahasia lama terbongkar.')
+    expect(result?.teaser.cast).toEqual([
+      { name: 'Nara', role: 'Pemilik warung' },
+      { name: 'Pak Darsono', role: 'Ayah' },
+    ])
+  })
+
+  it('pickBigChoices only selects early non-spoiler choices in chronological order', async () => {
+    const { pickBigChoices } = await import('@/lib/api/share')
+    const jejak = [
+      { chapter: 1, decision: 'Buka kembali warung tua', consequence: 'Warung buka' },
+      { chapter: 5, decision: 'Tolak tawaran Hendra', consequence: 'Konflik dimulai' },
+      { chapter: 12, decision: 'Selidiki gudang tua', consequence: 'Bukti ditemukan' },
+      { chapter: 45, decision: 'Bawa bukti ke pengadilan', consequence: 'Klimaks' },
+      { chapter: 50, decision: 'Tutup kasus selamanya', consequence: 'Ending' },
+    ]
+
+    const choices = pickBigChoices(jejak)
+
+    expect(choices).toEqual([
+      'Buka kembali warung tua',
+      'Tolak tawaran Hendra',
+      'Selidiki gudang tua',
+    ])
+    // Pastikan pilihan bab 45 dan 50 tidak bocor
+    expect(choices).not.toContain('Bawa bukti ke pengadilan')
+    expect(choices).not.toContain('Tutup kasus selamanya')
   })
 
   it('uses exact public-safe projection for listPublicShareTeasers', async () => {

@@ -30,9 +30,14 @@ Desain ini menutup keduanya dengan memisahkan kode referral dari share cerita.
 |---|---|---|
 | Mesin | Referral (M1), rel siap untuk bagi hasil kreator (M2) | Atribusi sudah ada; M2 butuh fitur "seed bisa dipakai ulang" yang belum ada |
 | Bentuk imbalan | Dompet rupiah terpisah dari kredit | Kredit yang dibeli tidak boleh pernah bisa dicairkan |
-| Besaran komisi | 10% dari `price_idr` | Ditetapkan project lead |
-| Cakupan | Semua top-up dalam 30 hari sejak atribusi | Berulang sehingga terasa sebagai penghasilan, tapi beban margin punya ujung |
+| Besaran komisi | 10% dari `price_idr` (default) | Ditetapkan project lead |
+| Cakupan | Semua top-up dalam 30 hari sejak atribusi (default) | Berulang sehingga terasa sebagai penghasilan, tapi beban margin punya ujung |
 | Pencairan rupiah | Ditunda; rilis pertama hanya tukar ke kredit | Menghindari KYC, pajak, dan rail disbursement sampai ada saldo yang layak diurus |
+| Konfigurasi | Semua angka lewat panel admin, tidak ada yang di-hardcode | Ekonomi belum terbukti; ceilingnya harus bisa digeser tanpa deploy |
+
+Setiap angka yang disebut "default" di dokumen ini adalah nilai awal baris
+`reward_policy`, bukan konstanta program. Operator mengubahnya dari
+`/admin/settings` (§8).
 
 ### 2.1 Invarian arus dana
 
@@ -117,21 +122,49 @@ komisi.
 
 ### 3.4 `reward_policy`
 
-Satu baris konfigurasi, mengikuti pola `reading_policy` supaya bisa diubah dari
-Supabase Dashboard tanpa deploy.
+Satu baris konfigurasi, mengikuti pola `generation_policy`. **Tidak ada satu pun
+angka di bawah ini yang boleh di-hardcode di kode aplikasi** — semuanya diubah
+lewat panel admin Lakoku (§8).
 
 | Kolom | Tipe | Default | Catatan |
 |---|---|---|---|
 | `id` | `boolean` PK | `true` | constraint `id = true` menjamin baris tunggal |
 | `commission_percent` | `integer` | `10` | |
 | `window_days` | `integer` | `30` | hanya berlaku untuk atribusi baru |
-| `redeem_rate_idr_per_credit` | `integer` | `250` | setara paket terbaik; lihat §8.1 |
+| `attribution_cookie_days` | `integer` | `30` | umur cookie `lakoku_ref`; lihat §3.5 |
+| `redeem_rate_idr_per_credit` | `integer` | `250` | setara paket terbaik; lihat §9.1 |
+| `redeem_min_idr` | `integer` | `1000` | ambang minimum sekali tukar |
 | `commission_enabled` | `boolean` | **`false`** | lihat §7 |
 | `redeem_enabled` | `boolean` | `true` | |
 | `payout_enabled` | `boolean` | `false` | belum diimplementasikan; kolom disiapkan |
+| `payout_min_idr` | `integer` | `50000` | ambang pencairan; belum dipakai |
+| `updated_at` | `timestamptz` | `now()` | |
 
 Konstanta default cadangan hidup di `lib/rewards/policy.ts` sebagai logika murni
-tanpa I/O, sejalan dengan `lib/credits/policy.ts`.
+tanpa I/O, sejalan dengan `lib/credits/policy.ts#DEFAULT_READING_POLICY`. Nilai
+itu hanya dipakai bila baris DB gagal dibaca, bukan sebagai sumber kebenaran.
+
+### 3.5 Umur cookie dan jendela komisi adalah dua hal berbeda
+
+`attribution_cookie_days` mengatur berapa lama kode referral masih menempel pada
+pengunjung yang **belum mendaftar**. `window_days` mengatur berapa lama komisi
+mengalir **setelah** atribusi tertulis. Keduanya sengaja dipisah karena
+menjawab pertanyaan yang berbeda: seberapa lama orang boleh menunda mendaftar,
+versus seberapa lama pengajak berhak atas belanjanya. Operator mungkin ingin
+cookie berumur 60 hari tapi jendela komisi tetap 30 hari, atau sebaliknya.
+
+Konsekuensinya, route handler `/r/[code]` harus membaca `reward_policy` untuk
+menentukan `maxAge` cookie. Ini satu query ringan pada baris tunggal, dan
+handler tetap me-redirect dengan umur cadangan dari `lib/rewards/policy.ts` bila
+pembacaan gagal — atribusi tidak boleh pernah gagal gara-gara pembacaan
+konfigurasi.
+
+### 3.6 Yang sengaja tidak dibuat editable
+
+Panjang dan alfabet kode referral tidak masuk `reward_policy`. Mengubahnya tidak
+akan mengubah kode yang sudah terbit dan sudah beredar di tautan, jadi sakelar
+itu hanya akan menciptakan ilusi kendali sambil membuka kemungkinan tabrakan
+kode. Nilainya tetap konstanta di `lib/rewards/policy.ts`.
 
 ## 4. Penangkapan atribusi
 
@@ -153,8 +186,9 @@ Alurnya:
 
 1. Handler menerima `code`, menulis cookie `lakoku_ref`, lalu me-redirect ke `/`
    atau ke `next` bila disertakan.
-2. Cookie `httpOnly`, `sameSite=lax`, `secure`, umur 30 hari. Tidak ditimpa bila
-   sudah ada.
+2. Cookie `httpOnly`, `sameSite=lax`, `secure`, dengan umur dibaca dari
+   `reward_policy.attribution_cookie_days` (§3.5) — bukan angka tetap di kode.
+   Tidak ditimpa bila sudah ada.
 3. Kode yang tidak valid tetap me-redirect tanpa menulis cookie. Handler ini
    tidak boleh pernah menampilkan error kepada pengunjung.
 4. Saat pendaftaran selesai (`app/auth/callback`), server membaca cookie,
@@ -266,13 +300,58 @@ Karena itu spec ini **tidak menetapkan bahwa komisi 10% menguntungkan**. Ia
 menetapkan sakelar, dan menjadikan pengukuran biaya sebagai prasyarat
 menyalakannya.
 
-## 8. Antarmuka user
+## 8. Panel admin
+
+Seluruh isi `reward_policy` diubah dari `/admin/settings`, bukan dari Supabase
+Dashboard dan bukan dari konstanta di kode. Polanya persis mengikuti
+`generation_policy` yang sudah ada, sehingga tidak ada mekanisme baru yang perlu
+dipelajari operator.
+
+Komponen yang dibangun:
+
+| Lapisan | Berkas | Mengikuti |
+|---|---|---|
+| Skema validasi | `lib/admin/settings-schemas.ts` → `updateRewardPolicySchema` | `updateGenerationPolicySchema` |
+| Mutasi + audit | `lib/admin/settings.ts` → `updateRewardPolicy` | `updateGenerationPolicy` |
+| Route | `app/api/admin/settings/reward-policy/route.ts` (PATCH) | `settings/generation-policy/route.ts` |
+| Dialog | `components/admin/settings/edit-reward-policy-dialog.tsx` | `edit-generation-policy-dialog.tsx` |
+| Pembacaan | `lib/admin/settings.ts` → `SettingsData.rewardPolicy` | `SettingsData.generationPolicy` |
+
+Ketentuan yang mengikat:
+
+- **Owner-only.** `updateRewardPolicy` memanggil `requireOwner()`. Route
+  mengembalikan 403 pada `Forbidden`, seperti route generation-policy.
+- **Wajib beralasan.** Skema menuntut `reason` minimal 5 karakter, dan setiap
+  perubahan menulis `admin_settings_audit_logs` dengan `setting_area =
+  'reward_policy'`. Ini pengaturan yang menggerakkan uang; harus ada jejak siapa
+  mengubah apa dan mengapa.
+- **Batas validasi**, dipilih agar salah ketik tidak langsung menguras kas:
+  `commission_percent` 0–50, `window_days` 1–365, `attribution_cookie_days`
+  1–365, `redeem_rate_idr_per_credit` 50–10.000, `redeem_min_idr` 0–1.000.000,
+  `payout_min_idr` 0–10.000.000.
+- **Sakelar ditampilkan apa adanya.** Dialog memperlihatkan
+  `commission_enabled`, `redeem_enabled`, dan `payout_enabled` sebagai toggle.
+  Saat `commission_enabled` dinyalakan, dialog menampilkan peringatan bahwa
+  biaya inferensi per bab belum terukur (§7) selama kondisi itu masih berlaku.
+- **`payout_enabled` dikunci mati** pada rilis ini dan diberi label bahwa
+  pencairan belum diimplementasikan. Menyalakannya tidak boleh menimbulkan efek
+  apa pun, supaya tidak ada janji yang tidak bisa ditepati sistem.
+
+### 8.1 Perubahan tidak berlaku surut
+
+Mengubah `window_days` tidak menggeser `window_ends_at` atribusi yang sudah
+tertulis (§3.2). Mengubah `commission_percent` tidak mengubah komisi yang sudah
+tercatat di `reward_ledger`. Dialog menyatakan ini secara eksplisit, karena
+dugaan sebaliknya adalah kesalahpahaman yang paling mungkin terjadi dan paling
+mahal akibatnya.
+
+## 9. Antarmuka user
 
 Halaman `/profil/imbalan`:
 
 - Saldo rupiah
 - Kode referral dengan tombol salin dan tautan siap bagikan
-- Jumlah orang yang diajak, dan berapa di antaranya yang masih dalam jendela 30 hari
+- Jumlah orang yang diajak, dan berapa di antaranya yang masih dalam jendela komisi
 - Riwayat `reward_ledger`
 - Tombol tukar ke kredit
 - Tombol cairkan dalam keadaan terkunci, dengan penjelasan jujur bahwa
@@ -283,7 +362,7 @@ dengan `ref = reward-redeem:<uuid>`. Kedua penulisan berbagi UUID yang sama
 supaya bisa direkonsiliasi. Sisa rupiah yang tidak cukup untuk satu kredit tetap
 tinggal di dompet, tidak hangus.
 
-### 8.1 Kurs penukaran
+### 9.1 Kurs penukaran
 
 Kurs default Rp250 per kredit, setara paket terbaik di katalog (Paket Ultra,
 Rp500.000 untuk 2.000 kredit). Paket termurah berada di Rp500 per kredit.
@@ -297,13 +376,13 @@ dalam sistem alih-alih mendorong pencairan.
 Konsekuensi biayanya harus disadari: Rp250 per kredit berarti setiap rupiah
 imbalan menghasilkan dua kali lipat bab dibanding kurs Rp500, sehingga beban
 inferensinya juga dua kali lipat. Ini alasan tambahan mengapa §7 menuntut biaya
-nyata per bab terukur sebelum komisi dinyalakan. Angkanya bisa diubah dari
-Supabase Dashboard tanpa deploy.
+nyata per bab terukur sebelum komisi dinyalakan. Angkanya diubah lewat panel
+admin (§8).
 
 Bahasa halaman mengikuti brand guard: tanpa istilah teknis, tanpa menyebut AI,
 model, atau token.
 
-## 9. Batas paket
+## 10. Batas paket
 
 Modul baru `lib/rewards/`:
 
@@ -315,28 +394,40 @@ Modul baru `lib/rewards/`:
 Komponen mengakses data lewat seam `lib/api/` sesuai AGENT_RULES.md, tidak
 pernah menyentuh Supabase langsung.
 
-## 10. Pengujian
+Semua fungsi di `policy.ts` menerima objek kebijakan sebagai parameter, meniru
+`chapterCost(n, policy)` di `lib/credits/policy.ts`. Tidak ada satu pun yang
+membaca konfigurasi sendiri dari dalam. Ini yang membuat aturan bisa diuji tanpa
+database sekaligus menjamin nilai admin selalu mengalir dari satu tempat.
+
+## 11. Pengujian
 
 **Unit, tanpa jaringan:**
 
 - Perhitungan komisi, termasuk pembulatan ke bawah dan `price_idr` nol
 - Batas jendela: tepat sebelum, tepat pada, dan sesudah `window_ends_at`
 - Penolakan self-referral
-- Konversi rupiah ke kredit, termasuk sisa yang tidak bulat
+- Konversi rupiah ke kredit, termasuk sisa yang tidak bulat dan saldo di bawah
+  `redeem_min_idr`
 - Komisi tidak lahir saat `commission_enabled = false`
+- Validasi `updateRewardPolicySchema` menolak nilai di luar batas §8
 
 **Integrasi:**
 
 - Webhook terulang dengan `order_id` sama menghasilkan tepat satu baris komisi
 - Kegagalan penulisan komisi tidak membatalkan pemberian kredit
 - Order tanpa snapshot `credit_orders` tidak menghasilkan komisi
+- `/r/[code]` memakai `attribution_cookie_days` dari DB, dan tetap me-redirect
+  dengan umur cadangan bila pembacaan kebijakan gagal
+- Mengubah `window_days` tidak menggeser `window_ends_at` yang sudah tertulis
 
 **Database (`supabase/tests/`):**
 
 - RLS: user tidak bisa membaca `reward_ledger` milik user lain
 - Constraint self-referral dan keunikan `referred_user_id` benar-benar menolak
+- `reward_policy` tidak bisa menampung lebih dari satu baris
+- Non-owner ditolak saat mengubah `reward_policy`
 
-## 11. Di luar lingkup
+## 12. Di luar lingkup
 
 - Bagi hasil kreator (M2) — butuh seed yang bisa dipakai ulang, yang belum ada
 - Pencairan rupiah, KYC, dan pemotongan pajak
@@ -344,7 +435,7 @@ pernah menyentuh Supabase langsung.
 - Pembalikan refund otomatis — manual dulu, lihat §6.1
 - Ekspor naskah dan monetisasi di platform luar (M4)
 
-## 12. Utang yang diterima
+## 13. Utang yang diterima
 
 1. **Pembalikan refund manual.** Dibatasi risikonya oleh saldo yang tidak bisa
    dicairkan.

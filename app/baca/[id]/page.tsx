@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import { getStory, getChapter, getChapterAvailability } from '@/lib/api/server'
-import { getSessionUser } from '@/lib/api/user-state'
+import { getSessionUser, getPreviousChoiceId } from '@/lib/api/user-state'
 import { getReadingPolicy, getCreditBalance } from '@/lib/credits/server'
 import { ReaderView } from '@/components/reader-view'
 import { ChapterUnavailable } from '@/components/chapter-unavailable'
@@ -89,6 +89,10 @@ export default async function BacaPage({
   // Ringkasan pilihan dari bab sebelumnya — untuk card "Pilihanmu sebelumnya".
   const previousChapterJejak = story.jejak.find((j) => j.chapter === chapter.number - 1) ?? null
 
+  // Penanda pilihan lama pakai choiceId: label di `jejak` bisa usang bila bab
+  // pernah ditulis ulang, sedangkan choiceId stabil per bab.
+  const previousChoiceId = isReRead ? await getPreviousChoiceId(story.id, chapter.number) : null
+
   return (
     <ReaderView
       key={chapter.number}
@@ -97,6 +101,7 @@ export default async function BacaPage({
       fallbackFromChapter={fallbackFromChapter}
       isReRead={isReRead}
       previousChoice={previousChoice}
+      previousChoiceId={previousChoiceId}
       previousChapterJejak={previousChapterJejak}
     />
   )

@@ -178,6 +178,7 @@ export function ReaderView({
   fallbackFromChapter,
   isReRead = false,
   previousChoice = null,
+  previousChoiceId = null,
   previousChapterJejak = null,
   initialLocalPreviousChoice = null,
 }: {
@@ -186,6 +187,8 @@ export function ReaderView({
   fallbackFromChapter?: number
   isReRead?: boolean
   previousChoice?: JejakItem | null
+  /** choiceId pilihan lama; lebih stabil dari label bila bab ditulis ulang. */
+  previousChoiceId?: string | null
   previousChapterJejak?: JejakItem | null
   initialLocalPreviousChoice?: JejakItem | null
 }) {
@@ -600,8 +603,13 @@ export function ReaderView({
             <div className="flex flex-col gap-3">
               {chapter.choices.map((c) => {
                 const selected = selectedChoiceId === c.id
-                // Mode baca-ulang: cocokkan pilihan lama lewat label (fallback hingga JejakItem punya choiceId).
-                const wasChosen = isReRead && previousChoice?.decision === c.label
+                // Mode baca-ulang: cocokkan lewat choiceId (stabil walau bab
+                // ditulis ulang); label hanya fallback untuk state lama.
+                const wasChosen =
+                  isReRead &&
+                  (previousChoiceId
+                    ? previousChoiceId === c.id
+                    : previousChoice?.decision === c.label)
                 return (
                   <button
                     key={c.id}

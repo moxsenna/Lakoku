@@ -139,6 +139,33 @@ export const getReaderState = cache(async function getReaderState(
 })
 
 /**
+ * `choiceId` yang pernah dipilih pembaca pada satu bab, atau null.
+ *
+ * Dipakai mode baca-ulang: label pada `jejak` bisa usang bila bab pernah
+ * ditulis ulang, sedangkan `choiceId` (`chapter-N-choice-M`) stabil.
+ */
+export const getPreviousChoiceId = cache(async function getPreviousChoiceId(
+  storyId: string,
+  chapterNumber: number,
+): Promise<string | null> {
+  const { supabase, user } = await getSessionContext()
+  if (!user) return null
+
+  const { data, error } = await supabase
+    .from('reader_states')
+    .select('choice_history')
+    .eq('story_id', storyId)
+    .maybeSingle()
+  if (error || !data) return null
+
+  const history = Array.isArray(data.choice_history)
+    ? (data.choice_history as { chapterNumber?: number; choiceId?: string }[])
+    : []
+  const entry = history.find((h) => h.chapterNumber === chapterNumber)
+  return typeof entry?.choiceId === 'string' ? entry.choiceId : null
+})
+
+/**
  * Seed / advance progress personal (login only).
  * Monotonic: tidak menurunkan status/chapter yang sudah lebih maju.
  * Default mulai: BERJALAN bab 1. Pakai status 'BARU' + chapter 1 saat lock bible.

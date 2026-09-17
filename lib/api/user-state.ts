@@ -143,17 +143,22 @@ export const getReaderState = cache(async function getReaderState(
  *
  * Dipakai mode baca-ulang: label pada `jejak` bisa usang bila bab pernah
  * ditulis ulang, sedangkan `choiceId` (`chapter-N-choice-M`) stabil.
+ *
+ * `choice_history` kolom internal (tidak di-grant ke `authenticated`), jadi
+ * dibaca via admin client dan dikunci ke user pemilik sesi + story ini saja.
  */
 export const getPreviousChoiceId = cache(async function getPreviousChoiceId(
   storyId: string,
   chapterNumber: number,
 ): Promise<string | null> {
-  const { supabase, user } = await getSessionContext()
+  const { user } = await getSessionContext()
   if (!user) return null
 
-  const { data, error } = await supabase
+  const { createAdminClient } = await import('@/lib/supabase/admin')
+  const { data, error } = await createAdminClient()
     .from('reader_states')
     .select('choice_history')
+    .eq('user_id', user.id)
     .eq('story_id', storyId)
     .maybeSingle()
   if (error || !data) return null

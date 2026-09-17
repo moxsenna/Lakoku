@@ -217,6 +217,8 @@ export function ReaderView({
   // Catat bahwa bab ini telah dibuka (progres lokal, monotonic).
   useEffect(() => {
     recordChapterReached(story.id, chapter.number)
+    // Mode baca-ulang tidak boleh memulihkan pilihan tertunda: bab ini sudah final.
+    if (isReRead) return
     const pending = getPendingChoice()
     if (pending?.storyId === story.id && pending.chapterNumber === chapter.number) {
       const timer = window.setTimeout(() => {
@@ -225,7 +227,7 @@ export function ReaderView({
       }, 0)
       return () => window.clearTimeout(timer)
     }
-  }, [story.id, chapter.number])
+  }, [story.id, chapter.number, isReRead])
 
   useEffect(() => {
     if (pollingChapterNumber === null) return
@@ -637,16 +639,56 @@ export function ReaderView({
               })}
             </div>
 
-            {/* Navigasi kembali ke bab terbaru dalam mode baca-ulang */}
-            {isReRead && (
+          </section>
+        )}
+
+        {/* Navigasi mode baca-ulang: pilihan terkunci, arah baca tetap bebas. */}
+        {isReRead && chapter.number < story.totalChapters && (
+          <nav
+            aria-label="Navigasi baca ulang"
+            className="mt-6 flex flex-col gap-3 border-t border-border pt-6"
+          >
+            <Link
+              href={`/baca/${story.id}?bab=${chapter.number + 1}`}
+              className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+            >
+              Lanjut ke Bab {chapter.number + 1}
+            </Link>
+            <div className="flex gap-3">
+              {chapter.number > 1 && (
+                <Link
+                  href={`/baca/${story.id}?bab=${chapter.number - 1}`}
+                  className="flex min-h-13 flex-1 items-center justify-center rounded-2xl border border-border px-4 text-sm font-semibold text-foreground transition-colors hover:bg-card"
+                >
+                  Bab Sebelumnya
+                </Link>
+              )}
+              <button
+                type="button"
+                onClick={() => setChapterListOpen(true)}
+                className="flex min-h-13 flex-1 items-center justify-center gap-2 rounded-2xl border border-border px-4 text-sm font-semibold text-foreground transition-colors hover:bg-card"
+              >
+                <List className="size-4" aria-hidden="true" />
+                Daftar Bab
+              </button>
+            </div>
+            {story.status !== 'SELESAI' && (
               <Link
                 href={`/baca/${story.id}?bab=${story.currentChapter}`}
-                className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+                className="flex min-h-13 items-center justify-center rounded-2xl border border-border px-6 text-sm font-semibold text-foreground transition-colors hover:bg-card"
               >
                 Kembali ke Bab Terbaru
               </Link>
             )}
-          </section>
+            {story.status === 'SELESAI' && (
+              <Link
+                href={`/akhir/${story.id}`}
+                className="flex min-h-13 items-center justify-center rounded-2xl border border-border px-6 text-sm font-semibold text-foreground transition-colors hover:bg-card"
+              >
+                Lihat Akhir Cerita
+              </Link>
+            )}
+          </nav>
         )}
 
         {chapter.number >= story.totalChapters && (
@@ -656,6 +698,30 @@ export function ReaderView({
               className="flex min-h-13 items-center justify-center rounded-2xl bg-gold px-6 text-sm font-semibold text-ink transition-opacity hover:opacity-90"
             >
               Lihat Akhir Cerita
+            </Link>
+            <div className="flex gap-3">
+              {chapter.number > 1 && (
+                <Link
+                  href={`/baca/${story.id}?bab=${chapter.number - 1}`}
+                  className="flex min-h-13 flex-1 items-center justify-center rounded-2xl border border-border px-4 text-sm font-semibold text-foreground transition-colors hover:bg-card"
+                >
+                  Bab Sebelumnya
+                </Link>
+              )}
+              <button
+                type="button"
+                onClick={() => setChapterListOpen(true)}
+                className="flex min-h-13 flex-1 items-center justify-center gap-2 rounded-2xl border border-border px-4 text-sm font-semibold text-foreground transition-colors hover:bg-card"
+              >
+                <List className="size-4" aria-hidden="true" />
+                Daftar Bab
+              </button>
+            </div>
+            <Link
+              href={`/baca/${story.id}?bab=1`}
+              className="flex min-h-13 items-center justify-center rounded-2xl border border-border px-6 text-sm font-semibold text-foreground transition-colors hover:bg-card"
+            >
+              Baca Ulang dari Bab 1
             </Link>
             <Link
               href="/koleksiku"

@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import { notFound } from 'next/navigation'
-import { ArrowLeft, CheckCircle2, Footprints, Lock, RotateCcw, Sparkles } from 'lucide-react'
+import { ArrowLeft, BookOpen, CheckCircle2, Footprints, Lock, RotateCcw, Sparkles } from 'lucide-react'
 import { getStory } from '@/lib/api/server'
 import { pickBigChoices } from '@/lib/api/share'
 import { ShareButton } from '@/components/share-button'
@@ -146,6 +146,16 @@ export default async function AkhirCeritaPage({
         </section>
 
         <div className="mt-auto flex flex-col gap-3">
+          <Link
+            href={`/baca/${story.id}?bab=1`}
+            className="flex min-h-13 items-center justify-center gap-2 rounded-2xl bg-gold px-6 text-sm font-semibold text-ink transition-opacity hover:opacity-90"
+          >
+            <BookOpen className="size-4" aria-hidden="true" />
+            Baca Ulang dari Bab 1
+          </Link>
+          <p className="text-center text-xs text-muted-foreground">
+            Baca ulang tidak mengubah apa pun — semua pilihanmu tetap terkunci.
+          </p>
           <button
             type="button"
             disabled

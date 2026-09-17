@@ -79,10 +79,12 @@ export default async function BacaPage({
     }
   }
 
-  // Deteksi baca-ulang: bab sudah ada jejak + belum mencapai currentChapter.
+  // Deteksi baca-ulang: cerita sudah tamat (semua bab final), atau bab sudah
+  // punya jejak dan belum mencapai currentChapter.
   // Pakai chapter.number (bukan targetNumber) karena getChapter bisa fallback.
   const previousChoice = story.jejak.find((j) => j.chapter === chapter.number) ?? null
-  const isReRead = !!previousChoice && chapter.number < story.currentChapter
+  const isReRead =
+    story.status === 'SELESAI' || (!!previousChoice && chapter.number < story.currentChapter)
 
   // Ringkasan pilihan dari bab sebelumnya — untuk card "Pilihanmu sebelumnya".
   const previousChapterJejak = story.jejak.find((j) => j.chapter === chapter.number - 1) ?? null

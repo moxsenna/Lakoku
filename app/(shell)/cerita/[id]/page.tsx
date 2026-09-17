@@ -80,12 +80,20 @@ export default async function CeritaDetailPage({
           )}
 
           {story.status === 'SELESAI' ? (
-            <Link
-              href={`/akhir/${story.id}`}
-              className="flex min-h-13 items-center justify-center rounded-2xl bg-gold px-6 text-sm font-semibold text-ink transition-opacity hover:opacity-90"
-            >
-              Lihat Akhir Cerita: {story.endingName}
-            </Link>
+            <div className="flex flex-col gap-3">
+              <Link
+                href={`/akhir/${story.id}`}
+                className="flex min-h-13 items-center justify-center rounded-2xl bg-gold px-6 text-sm font-semibold text-ink transition-opacity hover:opacity-90"
+              >
+                Lihat Akhir Cerita: {story.endingName}
+              </Link>
+              <Link
+                href={`/baca/${story.id}?bab=1`}
+                className="flex min-h-13 items-center justify-center rounded-2xl border border-border px-6 text-sm font-semibold text-foreground transition-colors hover:bg-card"
+              >
+                Baca Ulang dari Bab 1
+              </Link>
+            </div>
           ) : (
             <Link
               href={`/baca/${story.id}`}

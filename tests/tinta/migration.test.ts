@@ -207,6 +207,10 @@ describe('20260919000000_lakoin_tinta_economy migration', () => {
         // 8. Pending duration calculation & return ok
         expect(sql).toContain('now() + make_interval(hours => v_policy.pending_hours)')
         expect(sql).toContain("return 'ok'")
+
+        // 9. Unique violation exception handler on concurrent insert race
+        expect(sql).toContain('exception when unique_violation then')
+        expect(sql).toContain("return 'duplicate';")
       })
     })
   })

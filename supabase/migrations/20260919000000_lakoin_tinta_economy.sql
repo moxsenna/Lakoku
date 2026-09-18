@@ -211,11 +211,15 @@ begin
     return 'capped';
   end if;
 
-  insert into public.tinta_ledger
-    (user_id, delta, reason, ref, pending_until)
-  values
-    (v_owner, v_policy.tinta_per_read, 'author_read_reward', v_ref,
-     now() + make_interval(hours => v_policy.pending_hours));
+  begin
+    insert into public.tinta_ledger
+      (user_id, delta, reason, ref, pending_until)
+    values
+      (v_owner, v_policy.tinta_per_read, 'author_read_reward', v_ref,
+       now() + make_interval(hours => v_policy.pending_hours));
+  exception when unique_violation then
+    return 'duplicate';
+  end;
 
   return 'ok';
 end;

@@ -4,6 +4,7 @@ import { DM_Serif_Display, Plus_Jakarta_Sans } from 'next/font/google'
 import { Toaster } from '@/components/ui/sonner'
 import { ThemeProvider } from '@/components/theme-provider'
 import { FontSizeProvider } from '@/components/font-size-provider'
+import { AdsenseScript } from '@/components/ads/adsense-script'
 import './globals.css'
 
 const jakarta = Plus_Jakarta_Sans({
@@ -60,6 +61,7 @@ export default function RootLayout({
           <FontSizeProvider>{children}</FontSizeProvider>
           <Toaster position="top-center" />
         </ThemeProvider>
+        <AdsenseScript />
         {enableVercelAnalytics && <Analytics />}
       </body>
     </html>

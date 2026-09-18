@@ -1,8 +1,12 @@
 import Link from 'next/link'
 import { ArrowLeft, Coins, Gift, Sparkles } from 'lucide-react'
 import { BuyCreditButton } from '@/components/kredit/buy-credit-button'
+import { AndroidBuySection } from '@/components/kredit/android-buy-section'
+import { AdsenseBanner } from '@/components/ads/adsense-banner'
+import { resolveAdSlot, type ResolvedAdSlot } from '@/lib/ads/server'
 import { getSessionUser } from '@/lib/api/user-state'
 import { listCreditProducts, calculateTopupCredits } from '@/lib/paycore/products'
+import { getRequestChannel } from '@/lib/android/channel'
 import { getCreditBalance, getReadingPolicy } from '@/lib/credits/server'
 import { createAdminClient } from '@lakoku/db'
 
@@ -10,6 +14,10 @@ const idr = (n: number) => `Rp${new Intl.NumberFormat('id-ID').format(n)}`
 
 export default async function KreditPage() {
   const user = await getSessionUser()
+  // Kanal android (WebView, UA marker) → katalog Play Billing + sembunyikan
+  // PayCore & AdSense (kebijakan Google). Web tidak berubah.
+  const channel = await getRequestChannel()
+  const isAndroid = channel === 'android'
 
   // Cek apakah user baru (belum pernah topup) — untuk bonus first topup.
   let isFirstTopup = false
@@ -23,10 +31,12 @@ export default async function KreditPage() {
     }
   }
 
-  const [balance, products, policy] = await Promise.all([
+  const androidNoAds: ResolvedAdSlot = { shouldRender: false, clientId: '', slotId: '' }
+  const [balance, products, policy, adSlot] = await Promise.all([
     user ? getCreditBalance(user.id) : Promise.resolve(0),
-    listCreditProducts(),
+    listCreditProducts(isAndroid ? 'android' : 'web'),
     getReadingPolicy(),
+    isAndroid ? Promise.resolve(androidNoAds) : resolveAdSlot({ slotKey: 'credit', userId: user?.id }),
   ])
 
   // Best value = paket dgn harga per kredit termurah (dari base credits).
@@ -75,7 +85,20 @@ export default async function KreditPage() {
 
         <section className="flex flex-col gap-3">
           <h2 className="text-sm font-semibold tracking-wide text-lavender">PILIH PAKET</h2>
-          {products.length === 0 ? (
+          {isAndroid ? (
+            <AndroidBuySection
+              products={products.map((p) => ({
+                productKey: p.productKey,
+                playSku: p.playSku,
+                name: p.name,
+                referencePriceIdr: p.priceIdr,
+                baseCredits: p.credits,
+                displayBonusCredits: calculateTopupCredits(p, isFirstTopup).bonusCredits,
+                displayTotalCredits: calculateTopupCredits(p, isFirstTopup).totalCredits,
+                marketingBadge: p.marketingBadge,
+              }))}
+            />
+          ) : products.length === 0 ? (
             <p className="rounded-2xl bg-card p-5 text-sm text-muted-foreground">
               Paket kredit belum tersedia. Coba lagi nanti.
             </p>
@@ -137,9 +160,15 @@ export default async function KreditPage() {
           )}
         </section>
 
-        <p className="text-center text-[11px] text-muted-foreground">
-          Pembayaran diproses aman oleh PayCore. Kredit masuk otomatis setelah pembayaran berhasil.
-        </p>
+        {adSlot.shouldRender && (
+          <AdsenseBanner clientId={adSlot.clientId} slotId={adSlot.slotId} />
+        )}
+
+        {!isAndroid && (
+          <p className="text-center text-[11px] text-muted-foreground">
+            Pembayaran diproses aman oleh PayCore. Kredit masuk otomatis setelah pembayaran berhasil.
+          </p>
+        )}
     </main>
   )
 }

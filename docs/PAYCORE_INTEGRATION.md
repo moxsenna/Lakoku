@@ -14,22 +14,12 @@ untuk membuka bab). Referensi kontrak: `D:/Coding/paycore/docs/external/`.
 - **Model kredit** (`supabase/migrations/20260708000000_paycore_credit_model.sql`):
   `credit_ledger` append-only + `grant_credits_v1` / `spend_credits_v1` / `credit_balance_v1`.
 
-## 1. Terapkan migrasi DB (WAJIB dulu)
+## 1. Migrasi DB (sudah applied di produksi)
 
-Skema kredit belum ada di Supabase. Terapkan salah satu cara:
-
-```bash
-# A. Supabase CLI (butuh SUPABASE_ACCESS_TOKEN dari dashboard → Account → Access Tokens)
-export SUPABASE_ACCESS_TOKEN=sbp_xxx
-npx supabase link --project-ref <ref>   # <ref> = subdomain SUPABASE_URL
-npx supabase db push
-```
-
-Atau **B. Dashboard**: buka Supabase → SQL Editor → paste isi
-`supabase/migrations/20260708000000_paycore_credit_model.sql` → Run.
-
-Verifikasi: tabel `credit_products` (6 baris seed) & `credit_ledger` ada; fungsi
-`grant_credits_v1` terdaftar.
+Skema kredit **sudah live** di Supabase produksi (`db push --linked`):
+`20260708000000_paycore_credit_model.sql` + bonus (`20260711010000`) + kanal
+Android (`20260917120000_play_billing_channel_model.sql`). Jangan push ulang
+tanpa dry-run (`--dry-run`) — push mendorong SEMUA migrasi pending.
 
 ## 2. Katalog produk (edit harga kapan pun)
 
@@ -45,10 +35,10 @@ Supabase Dashboard → Table `credit_products`, tanpa deploy ulang):
 | credits_max | Paket Maksi | 200.000 | 700 |
 | credits_ultra | Paket Ultra | 500.000 | 2.000 |
 
-## 3. Data yang harus diminta ke maintainer PayCore
+## 3. Kredensial PayCore (terdaftar, live di VPS)
 
-lakoku **belum terdaftar** di PayCore. Minta maintainer mendaftarkan app baru dan
-memberi nilai berikut (staging & production terpisah — README PayCore §11):
+lakoku **sudah terdaftar** di PayCore (staging & production terpisah). Nilai live
+ada di `.env` VPS shared (`/home/ubuntu/mox-apps/lakoku/.env`), dikelola owner:
 
 - `app_id` (usul slug: **`lakoku`**)
 - `key_id` (mis. `pk_prod_lakoku_01`)
@@ -60,20 +50,20 @@ memberi nilai berikut (staging & production terpisah — README PayCore §11):
 > README PayCore melarang agen eksternal mengubah secret/DB PayCore — laporkan data
 > di atas ke maintainer, jangan sentuh repo PayCore.
 
-## 4. Secrets di VPS (`.env` container `lakoku-web`)
+## 4. Secrets di VPS (`.env` service `mox-lakoku`)
 
-Production Lakoku berjalan sebagai Next.js standalone di VPS (Docker), bukan Cloudflare Worker.
-Secret di-set lewat file `.env` yang dibaca `docker-compose.yml` (`env_file: .env`), lalu
-`docker compose up -d --build`. Jangan commit `.env`.
+Production Lakoku berjalan sebagai Next.js standalone di shared VPS (systemd user
+`mox-lakoku`), bukan Docker. Secret di-set di `/home/ubuntu/mox-apps/lakoku/.env`
+(di-source `run-lakoku.sh`); restart `mox-lakoku` untuk memuat ulang. Jangan commit `.env`.
 
 ```dotenv
-# .env di /opt/lakoku (VPS)
+# .env di /home/ubuntu/mox-apps/lakoku (VPS shared)
 PAYCORE_WEBHOOK_SECRET=...   # inbound (WAJIB, jika tidak → webhook 503)
 PAYCORE_BASE_URL=https://pay.appvibe.biz.id   # prod / pay-staging untuk staging
 PAYCORE_APP_ID=lakoku
 PAYCORE_KEY_ID=pk_prod_lakoku_01
 PAYCORE_APP_SECRET=...        # outbound sign
-PAYCORE_RETURN_URL=https://<domain>/payment/return
+PAYCORE_RETURN_URL=https://lakoku.biz.id/payment/return
 ```
 
 Webhook & create-order **fail-closed 503** bila secret kurang → aman (tak ada grant/order palsu).
@@ -92,3 +82,19 @@ Staging dulu sampai lolos; production hanya beda nilai env (kode identik).
 
 - `pnpm run smoke:paycore-webhook` — verifikasi tanda tangan, anti-replay, idempotensi (21).
 - `pnpm run smoke:paycore-client` — canonical signing outbound (6).
+
+## 6. Kanal Android — Google Play Billing (terpisah dari PayCore web)
+
+PayCore **hanya untuk web**. Pembelian di aplikasi Android wajib lewat Play Billing
+(kebijakan Google) dan TIDAK boleh menampilkan checkout PayCore di dalam app:
+
+- Katalog: baris `channel='android'` di `credit_products` (mirror web, `active=false`
+  sampai SKU Play terdaftar). Harga/kredit per kanal diatur admin via Dashboard.
+- Verifikasi server-side: `POST /api/play-billing/verify`
+  (`lib/paycore/play-billing.server.ts` → Google `androidpublisher`) lalu grant
+  idempoten via RPC `play_billing_grant_v1` (`credit_ledger.ref = 'playbilling:{token}'`).
+- Ledger & saldo sama dengan web → sinkron otomatis. Bonus first-topup/normal
+  dihitung server-side seperti PayCore.
+- Env VPS: `GOOGLE_PLAY_BILLING_ENABLED`, `GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL`,
+  `GOOGLE_PLAY_PRIVATE_KEY`, `GOOGLE_PLAY_PACKAGE_NAME` (kill switch: tanpa ini → 503).
+- Rilis: `docs/android/PLAY_STORE_RELEASE.md`; ledger `GATES.android*.md`.

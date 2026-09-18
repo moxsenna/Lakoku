@@ -84,6 +84,17 @@ export default function PrivacyPage() {
         layanan, menyelesaikan sengketa, dan memenuhi kewajiban hukum. Kamu dapat meminta penghapusan
         akun melalui kontak di bawah; sebagian log keamanan dapat dipertahankan sementara.
       </p>
+      <h3>Cara meminta penghapusan akun Lakoku</h3>
+      <p>
+        Kirim email ke support@lakoku.biz.id dengan subjek &quot;Hapus akun Lakoku&quot; dari
+        alamat email yang terdaftar di akunmu, dan cantumkan nama tampilan akun bila ada. Kami
+        memproses permintaan dalam maksimal 30 hari dan memberi tahu lewat email yang sama.
+      </p>
+      <p>
+        Yang dihapus: akun login, profil selera, progres dan jejak pilihan cerita, serta saldo
+        kredit. Yang dapat dipertahankan sementara: log keamanan dan bukti transaksi (maksimal
+        90 hari) untuk pencegahan penipuan dan kewajiban hukum.
+      </p>
 
       <h2>8. Keamanan</h2>
       <p>

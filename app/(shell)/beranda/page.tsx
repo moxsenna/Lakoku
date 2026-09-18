@@ -5,17 +5,22 @@ import { ResumeChapter } from '@/components/resume-chapter'
 import { TasteProfileFirstRunGate } from '@/components/onboarding/taste-profile-first-run-gate'
 import { listExploreStories, listMyLibraryStories } from '@/lib/api/server'
 import { listPublicShareTeasers } from '@/lib/api/share'
+import { getSessionUser } from '@/lib/api/user-state'
+import { AdsenseBanner } from '@/components/ads/adsense-banner'
+import { resolveAdSlot } from '@/lib/ads/server'
 import { Play } from 'lucide-react'
 
 // Request-time data (Supabase). Avoid CF Workers Builds prerender without build env.
 export const dynamic = 'force-dynamic'
 
 export default async function BerandaPage() {
-  const [library, explore, publicShares] = await Promise.all([
+  const [library, explore, publicShares, user] = await Promise.all([
     listMyLibraryStories(),
     listExploreStories(),
     listPublicShareTeasers(12).catch(() => []),
+    getSessionUser(),
   ])
+  const adSlot = await resolveAdSlot({ slotKey: 'beranda', userId: user?.id })
   const berjalan = library.find((s) => s.status === 'BERJALAN')
   // Jelajahi: demo resmi + share publik (AMENDMENTS v0.5).
   const jelajahi = explore.filter((s) => s.id !== berjalan?.id)
@@ -67,6 +72,10 @@ export default async function BerandaPage() {
               </div>
             </Link>
           </section>
+        )}
+
+        {adSlot.shouldRender && (
+          <AdsenseBanner clientId={adSlot.clientId} slotId={adSlot.slotId} />
         )}
 
         <section aria-labelledby="jelajahi-heading" className="flex flex-col gap-4">

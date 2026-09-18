@@ -11,7 +11,27 @@ import type {
   UpdateGenerationPolicyInput,
   UpdateAiModelRouteInput,
   UpdateRewardPolicyInput,
+  UpdateMissionPolicyInput,
 } from './settings-schemas'
+
+export interface AdminMissionPolicy {
+  missionsEnabled: boolean
+  adRewardEnabled: boolean
+  adsenseEnabled: boolean
+  checkinCredits: number
+  choiceCredits: number
+  adBatchCredits: number
+  choiceRequired: number
+  adsPerCredit: number
+  adDailyCap: number
+  ssvFreshnessSeconds: number
+  adsenseClientId: string
+  adsenseSlotShareLanding: string
+  adsenseSlotEnding: string
+  adsenseSlotBeranda: string
+  adsenseSlotCredit: string
+  updatedAt: string | null
+}
 
 export interface AdminRewardPolicy {
   commissionPercent: number
@@ -221,7 +241,37 @@ export interface AdminSettingsData {
   aiModelRoutes: AdminAiModelRoute[]
   featureCreditCosts: AdminFeatureCreditCost[]
   rewardPolicy: AdminRewardPolicy | null
+  missionPolicy: AdminMissionPolicy | null
   recentAuditLogs: AdminSettingsAuditLog[]
+}
+
+export async function getAdminMissionPolicy(): Promise<AdminMissionPolicy | null> {
+  const db = createAdminClient()
+  const { data } = await db
+    .from('mission_policy')
+    .select('*')
+    .eq('id', true)
+    .maybeSingle()
+  if (!data) return null
+  const d = data as Record<string, unknown>
+  return {
+    missionsEnabled: Boolean(d.missions_enabled),
+    adRewardEnabled: Boolean(d.ad_reward_enabled),
+    adsenseEnabled: Boolean(d.adsense_enabled),
+    checkinCredits: Number(d.checkin_credits ?? 1),
+    choiceCredits: Number(d.choice_credits ?? 1),
+    adBatchCredits: Number(d.ad_batch_credits ?? 1),
+    choiceRequired: Number(d.choice_required ?? 3),
+    adsPerCredit: Number(d.ads_per_credit ?? 5),
+    adDailyCap: Number(d.ad_daily_cap ?? 10),
+    ssvFreshnessSeconds: Number(d.ssv_freshness_seconds ?? 600),
+    adsenseClientId: String(d.adsense_client_id ?? ''),
+    adsenseSlotShareLanding: String(d.adsense_slot_share_landing ?? ''),
+    adsenseSlotEnding: String(d.adsense_slot_ending ?? ''),
+    adsenseSlotBeranda: String(d.adsense_slot_beranda ?? ''),
+    adsenseSlotCredit: String(d.adsense_slot_credit ?? ''),
+    updatedAt: (d.updated_at as string) ?? null,
+  }
 }
 
 export async function loadAdminSettings(): Promise<AdminSettingsData> {
@@ -231,6 +281,7 @@ export async function loadAdminSettings(): Promise<AdminSettingsData> {
     aiModelRoutes,
     featureCreditCosts,
     rewardPolicy,
+    missionPolicy,
     recentAuditLogs,
   ] = await Promise.all([
     listAdminCreditProducts(),
@@ -238,6 +289,7 @@ export async function loadAdminSettings(): Promise<AdminSettingsData> {
     listAdminAiModelRoutes(),
     listAdminFeatureCreditCosts(),
     getAdminRewardPolicy(),
+    getAdminMissionPolicy(),
     listRecentSettingsAuditLogs(),
   ])
   return {
@@ -246,6 +298,7 @@ export async function loadAdminSettings(): Promise<AdminSettingsData> {
     aiModelRoutes,
     featureCreditCosts,
     rewardPolicy,
+    missionPolicy,
     recentAuditLogs,
   }
 }
@@ -625,6 +678,94 @@ export async function updateRewardPolicy(
     redeemEnabled: input.redeemEnabled,
     payoutEnabled: input.payoutEnabled,
     payoutMinIdr: input.payoutMinIdr,
+    updatedAt: newVal.updated_at,
+  }
+}
+
+export async function updateMissionPolicy(
+  input: UpdateMissionPolicyInput,
+): Promise<AdminMissionPolicy> {
+  const admin = await requireOwner()
+  const db = createAdminClient()
+
+  const { data: oldRow } = await db
+    .from('mission_policy')
+    .select('*')
+    .eq('id', true)
+    .single()
+
+  const oldVal = oldRow
+    ? {
+        missions_enabled: oldRow.missions_enabled,
+        ad_reward_enabled: oldRow.ad_reward_enabled,
+        adsense_enabled: oldRow.adsense_enabled,
+        checkin_credits: oldRow.checkin_credits,
+        choice_credits: oldRow.choice_credits,
+        ad_batch_credits: oldRow.ad_batch_credits,
+        choice_required: oldRow.choice_required,
+        ads_per_credit: oldRow.ads_per_credit,
+        ad_daily_cap: oldRow.ad_daily_cap,
+        ssv_freshness_seconds: oldRow.ssv_freshness_seconds,
+        adsense_client_id: oldRow.adsense_client_id,
+        adsense_slot_share_landing: oldRow.adsense_slot_share_landing,
+        adsense_slot_ending: oldRow.adsense_slot_ending,
+        adsense_slot_beranda: oldRow.adsense_slot_beranda,
+        adsense_slot_credit: oldRow.adsense_slot_credit,
+      }
+    : null
+
+  const newVal = {
+    missions_enabled: input.missionsEnabled,
+    ad_reward_enabled: input.adRewardEnabled,
+    adsense_enabled: input.adsenseEnabled,
+    checkin_credits: input.checkinCredits,
+    choice_credits: input.choiceCredits,
+    ad_batch_credits: input.adBatchCredits,
+    choice_required: input.choiceRequired,
+    ads_per_credit: input.adsPerCredit,
+    ad_daily_cap: input.adDailyCap,
+    ssv_freshness_seconds: input.ssvFreshnessSeconds,
+    adsense_client_id: input.adsenseClientId,
+    adsense_slot_share_landing: input.adsenseSlotShareLanding,
+    adsense_slot_ending: input.adsenseSlotEnding,
+    adsense_slot_beranda: input.adsenseSlotBeranda,
+    adsense_slot_credit: input.adsenseSlotCredit,
+    updated_at: new Date().toISOString(),
+  }
+
+  const { error } = await db
+    .from('mission_policy')
+    .update(newVal)
+    .eq('id', true)
+
+  if (error) throw new Error(`updateMissionPolicy: ${error.message}`)
+
+  await auditSettings({
+    adminUserId: admin.id,
+    adminEmail: admin.email,
+    settingArea: 'mission_policy',
+    settingKey: 'default',
+    oldValue: oldVal,
+    newValue: newVal,
+    reason: input.reason,
+  })
+
+  return {
+    missionsEnabled: input.missionsEnabled,
+    adRewardEnabled: input.adRewardEnabled,
+    adsenseEnabled: input.adsenseEnabled,
+    checkinCredits: input.checkinCredits,
+    choiceCredits: input.choiceCredits,
+    adBatchCredits: input.adBatchCredits,
+    choiceRequired: input.choiceRequired,
+    adsPerCredit: input.adsPerCredit,
+    adDailyCap: input.adDailyCap,
+    ssvFreshnessSeconds: input.ssvFreshnessSeconds,
+    adsenseClientId: input.adsenseClientId,
+    adsenseSlotShareLanding: input.adsenseSlotShareLanding,
+    adsenseSlotEnding: input.adsenseSlotEnding,
+    adsenseSlotBeranda: input.adsenseSlotBeranda,
+    adsenseSlotCredit: input.adsenseSlotCredit,
     updatedAt: newVal.updated_at,
   }
 }

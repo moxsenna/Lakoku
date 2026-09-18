@@ -296,3 +296,28 @@ Recovery order (reviewer-mandated):
 - Plan file updated: §0.3 post-integration status; header M10-B CLOSED.
   M10_B_REPORT.md §10 closure addendum. Next: recovery step 2 — restart M10-C
   from main 7d0dd03 (current runtime incl. V6/preflight seams).
+
+## Dompet Imbalan & Komisi Referral (2026-09-17)
+Plan: docs/superpowers/plans/2026-09-17-dompet-imbalan-referral.md
+Branch: feat/dompet-imbalan-referral
+Base: aa22218
+
+### Tasks
+- Task 1 (Migration): pending
+- Task 2 (Pure Domain Policy): pending
+- Task 3 (Server Seam): pending
+- Task 4 (Attribution & /r/[code]): pending
+- Task 5 (PayCore Webhook Commission): pending
+- Task 6 (Admin Settings Schema & Route): pending
+- Task 7 (Admin Settings UI): pending
+- Task 8 (Reader UI /profil/imbalan): pending
+- Task 9 (Smoke Test Verification): pending
+
+## Lakoin-Tinta Economy P1-P12 (2026-09-19)
+Plan: docs/superpowers/plans/2026-09-19-lakoin-tinta-economy.md (2ebde3e)
+Branch: feat/lakoin-tinta-economy | Gates: GATES.lakoin-tinta.md | Amandemen PM: etalase rail TERPISAH (bukan merge); default reward disetujui; tanpa clawback.
+- Task P1: complete (commits 2ebde3e..115b13b, review APPROVED, gate G1 met). Minor dicatat: (a) unique_violation race di grant_author_tinta_v1 -> fold ke P4; (b) commit video user 5a1d25a ada di branch ini (milik PM, biarkan).
+- Task P2: complete (commit d87b555, review APPROVED, 22 test + typecheck hijau). Catatan: commit video PM 5a1d25a terinterleave di antara task — BASE tiap task dicatat ulang sebelum dispatch.
+- Task P3: complete (commit cfc1efe, review APPROVED, 21 test + typecheck + eslint hijau). Minor utk final review: rollback grant error tidak di-log (mengikuti pola redeemRewardCredits).
+- Task P4 (implementer): 5450a76 + follow-up 460dc1f (perbaikan test personalized-choice yang rusak oleh hook baru). Menunggu review.
+- Task P4: complete (commits 5450a76 + 460dc1f, review APPROVED, 96 test hijau termasuk regression personalized-choice). Minor utk final review: mock RPC default bikin log skip bising di stdout test.

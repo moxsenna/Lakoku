@@ -17,6 +17,8 @@ export interface CreditProduct {
   marketingBadge: string | null
   bonusActive: boolean
   active: boolean
+  channel: 'web' | 'android'
+  playSku: string | null
 }
 
 interface CreditProductRow {
@@ -29,6 +31,8 @@ interface CreditProductRow {
   marketing_badge: string | null
   bonus_active: boolean
   active: boolean
+  channel: 'web' | 'android'
+  play_sku: string | null
 }
 
 function mapRow(r: CreditProductRow): CreditProduct {
@@ -42,31 +46,54 @@ function mapRow(r: CreditProductRow): CreditProduct {
     marketingBadge: r.marketing_badge,
     bonusActive: r.bonus_active,
     active: r.active,
+    channel: r.channel,
+    playSku: r.play_sku,
   }
 }
 
 const SELECT_COLUMNS =
-  'product_key,name,price_idr,credits,normal_bonus_credits,first_topup_bonus_credits,marketing_badge,bonus_active,active'
+  'product_key,name,price_idr,credits,normal_bonus_credits,first_topup_bonus_credits,marketing_badge,bonus_active,active,channel,play_sku'
 
-/** Ambil satu produk aktif berdasarkan product_key. `null` bila tak ada/nonaktif. */
-export async function getCreditProduct(productKey: string): Promise<CreditProduct | null> {
+/** Ambil satu produk aktif berdasarkan product_key + channel (default web). */
+export async function getCreditProduct(
+  productKey: string,
+  channel: 'web' | 'android' = 'web',
+): Promise<CreditProduct | null> {
   const supabase = createAdminClient()
   const { data, error } = await supabase
     .from('credit_products')
     .select(SELECT_COLUMNS)
     .eq('product_key', productKey)
+    .eq('channel', channel)
     .eq('active', true)
     .maybeSingle()
   if (error) throw new Error(`getCreditProduct: ${error.message}`)
   return data ? mapRow(data as CreditProductRow) : null
 }
 
-/** Daftar produk aktif, terurut untuk ditampilkan. */
-export async function listCreditProducts(): Promise<CreditProduct[]> {
+/** Ambil produk android berdasarkan SKU Play Billing (idempotent per SKU). */
+export async function getCreditProductByPlaySku(playSku: string): Promise<CreditProduct | null> {
   const supabase = createAdminClient()
   const { data, error } = await supabase
     .from('credit_products')
     .select(SELECT_COLUMNS)
+    .eq('play_sku', playSku)
+    .eq('channel', 'android')
+    .eq('active', true)
+    .maybeSingle()
+  if (error) throw new Error(`getCreditProductByPlaySku: ${error.message}`)
+  return data ? mapRow(data as CreditProductRow) : null
+}
+
+/** Daftar produk aktif per kanal, terurut untuk ditampilkan. */
+export async function listCreditProducts(
+  channel: 'web' | 'android' = 'web',
+): Promise<CreditProduct[]> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('credit_products')
+    .select(SELECT_COLUMNS)
+    .eq('channel', channel)
     .eq('active', true)
     .order('sort_order', { ascending: true })
   if (error) throw new Error(`listCreditProducts: ${error.message}`)

@@ -1,6 +1,6 @@
 # Client Sequencing — Web Reader First, Android Second
 
-**Versi:** 1.0
+**Versi:** 1.1 (2026-09-18: §7 — Android live via Capacitor, menggantikan rencana Kotlin §6)
 **Status:** Normatif (mengikat untuk agen & kontributor)
 **Keputusan sumber:** AMENDMENTS v0.4 — LD-CLIENT-SEQ, LD-CONTRACT-SEAM
 **Dokumen terkait:** `PRD_Lakoku_Interactive_v0.3.md`, `ARCHITECTURE_v1.1.md`, `IMPLEMENTATION_PLAN.md` (M6-WEB), `NARRATIVE_CONSISTENCY_SPEC.md`, `NARRATIVE_TRACEABILITY_MATRIX.md`
@@ -62,8 +62,32 @@ M6-WEB punya dua jalur dengan gate berbeda. Ini titik yang paling sering disalah
 
 ## 6. Kapan Android dimulai
 
+> **DIPERBARUI v1.1 (2026-09-18):** bagian ini digantikan §7. Android sudah live —
+> bukan via Kotlin native melainkan Capacitor (satu codebase web). Syarat metrik di bawah
+> tetap berlaku untuk promosi track (internal → closed → produksi), bukan untuk memulai client.
+
 Android native dimulai (M6) setelah:
 - metrik retensi bab-per-bab & konversi per-cerita di web terbukti cukup, **dan**
 - Reader API nyata + M5 NTM sign-off penuh (gate konsistensi 50 bab) hijau.
 
 Saat itu, Android cukup membangun **UI baru** di atas kontrak yang sama — tanpa memindahkan logika naratif apa pun.
+
+---
+
+## 7. Android live via Capacitor (keputusan 2026-09-18)
+
+Keputusan Kotlin/Jetpack Compose (§1, §6) **diganti**: Android dibangun sebagai wrapper
+Capacitor di atas web produksi (`capacitor.config.ts` → `https://lakoku.biz.id`,
+`appId biz.lakoku.app`). Alasan: UI sudah mobile-first, satu database/auth/ledger
+(Supabase) membuat sinkronisasi otomatis, dan satu codebase menghindari duplikasi.
+
+Konsekuensi yang mengikat agen (detail operasional: `AGENT_RULES.md` §2.2–§3):
+
+1. **Perubahan web-only tampil otomatis di Android** setelah deploy VPS. Tidak perlu rilis Play.
+2. **Perubahan native wajib sepaket**: `android/`, plugin, permission, ikon, deep link,
+   aturan Play → naikkan `versionCode` → `bundleRelease` → verifikasi → AAB ke owner.
+3. **Monetisasi terpisah per kanal**: web = PayCore, Android = Play Billing
+   (`app/api/play-billing/verify`, katalog `channel='android'`). Jangan pernah
+   mengekspos checkout PayCore di dalam app.
+4. Invariant §3 (nol logika naratif di client, nol panggilan AI, seam data, brand guard)
+   **tetap berlaku penuh** — WebView tidak mengubahnya.

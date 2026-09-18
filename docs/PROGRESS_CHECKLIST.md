@@ -194,6 +194,15 @@
 
 ## M6 — Android Reader Beta (client kedua)
 
+> **DIGANTIKAN 2026-09-18 (Capacitor, bukan Compose):** T6.1–T6.3 di bawah adalah rencana
+> Kotlin yang tidak dieksekusi. Realisasi: wrapper Capacitor atas web produksi
+> (`biz.lakoku.app`, AAB signed, track internal Play), auth/deep-link, katalog kredit
+> per-kanal + Play Billing server-side. Lihat `docs/CLIENT_SEQUENCING.md` S7 dan
+> `GATES.android*.md`. Baris T6.x dipertahankan sebagai arsip (jangan centang).
+>
+> - [x] **M6-Capacitor live** — AAB signed (bundletool valid), internal track, sinkron web-Android.
+> - [~] **M6-PlayBilling** — server + katalog live; menunggu produk IAP & service account (G9).
+
 - [ ] **T6.1 Design system + app shell** — `apps/android` (Compose, offline-first, ARCH §6); navigation graph + DI + tema Brand Guidelines v1.1.
 - [ ] **T6.2 Auth + library cache + reader + progress** — reader render dari local data; progress monotonic.
 - [ ] **T6.3 Choice submission + recovery + generation status** — repeat tap tak double-advance; status reader-safe tanpa metadata model.

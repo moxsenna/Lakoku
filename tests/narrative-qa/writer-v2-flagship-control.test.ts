@@ -21,7 +21,7 @@ import {
   type WriterV2ControlObservation,
 } from '@/lib/narrative-qa/harness/writer-v2-flagship-control.server'
 
-const EXPECTED_PROJECTION_HASH = '2e0fd9bad777b798c95fe739bd41b5eb191c432009706514bcede7aad510fca4'
+const EXPECTED_PROJECTION_HASH = '68759d6557fe341fa7fc90d8a62bea294fcb3f8987db0567fd05505d0804e8f1'
 const authorityInput = {
   childFlag: '1',
   credentialAvailable: true,

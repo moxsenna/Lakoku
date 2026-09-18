@@ -23,7 +23,7 @@ export const WRITER_V2_FLAGSHIP_CONTROL_CONFIG = Object.freeze({
   authorityMode: 'CHAPTER_BRIEF_V2' as const,
   provisionalCorpusManifestHash: '712d46e7b9a06394b98593ee537fab43c376cea4aebcc951d48b654d51ca6a2a',
   readyAuthorityManifestHash: 'a82216c319af567b71bf3793bb9e0ccbfc4caad5c3b7ad4cc7ca1bd22b439c5f',
-  expectedProjectionHash: '2e0fd9bad777b798c95fe739bd41b5eb191c432009706514bcede7aad510fca4',
+  expectedProjectionHash: '68759d6557fe341fa7fc90d8a62bea294fcb3f8987db0567fd05505d0804e8f1',
   provider: 'openrouter' as const,
   requestedModel: 'openai/gpt-5.6-sol' as const,
   configuredModel: 'openai/gpt-5.6-sol' as const,

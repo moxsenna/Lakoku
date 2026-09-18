@@ -526,6 +526,7 @@ async function checkAdmissionBeforeGeneration(storyId: string): Promise<{ ok: tr
 // Exported for characterization / desired-behavior TDD tests only.
 // Must NOT be imported by production code. Re-exported from shared lifecycle.
 export { mapBranchToV2Outcomes as __testMapBranchToV2Outcomes } from './lifecycle'
+export { defaultMarkReaderStateSelesai as __testDefaultMarkReaderStateSelesai }
 
 type DraftAuditSignals = ChapterDraftParsed & {
   opensNewThread?: boolean
@@ -627,6 +628,27 @@ async function defaultMarkReaderStateSelesai(input: MarkReaderSelesaiInput): Pro
     .eq('user_id', input.userId)
     .eq('story_id', input.storyId)
   if (error) throw new Error(`markReaderStateSelesai: ${error.message}`)
+
+  // Sinkron baris stories (meta turunan). reader_states tetap satu-satunya
+  // sumber kebenaran progres; guard owner_user_id mencegah cerita demo bersama
+  // ikut terflip bila input.userId bukan pemilik instance. Kegagalan sinkron
+  // tidak boleh menggagalkan penyelesaian yang sudah terkomit — catat keras.
+  const { error: storiesError } = await supabase
+    .from('stories')
+    .update({
+      status: 'SELESAI',
+      current_chapter: TOTAL_PERSONALIZED_CHAPTERS,
+      ending_name: input.endingName,
+    })
+    .eq('id', input.storyId)
+    .eq('owner_user_id', input.userId)
+  if (storiesError) {
+    console.log('STORIES_COMPLETION_SYNC_FAILED', {
+      storyId: input.storyId,
+      userId: input.userId,
+      message: storiesError.message,
+    })
+  }
 }
 
 function isMissingColumn(error: { code?: string } | null | undefined): boolean {

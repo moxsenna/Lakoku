@@ -6,7 +6,7 @@ import { createWriterV2FlagshipControlRoute } from '@/lib/narrative-qa/harness/w
 import { evaluateReplacementIdentity, getReplacementAdapterEvidence } from '@/lib/ai-gateway/flagship-replacement'
 import { preflightReplacement, executeReplacement } from '@/lib/narrative-qa/harness/writer-v2-flagship-replacement.server'
 
-const authority = { childFlag: '1', credentialAvailable: true, expectedProjectionHash: '2e0fd9bad777b798c95fe739bd41b5eb191c432009706514bcede7aad510fca4' }
+const authority = { childFlag: '1', credentialAvailable: true, expectedProjectionHash: '68759d6557fe341fa7fc90d8a62bea294fcb3f8987db0567fd05505d0804e8f1' }
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 function setup() {
   vi.stubGlobal('process', Object.assign(Object.create(process), { env: { OPENROUTER_API_KEY: 'offline-placeholder', NODE_ENV: 'test' } }))

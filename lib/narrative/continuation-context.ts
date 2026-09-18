@@ -95,12 +95,19 @@ export interface ContinuationContext {
   actRollups: ContinuationActRollup[]
   /** Ending terkunci pembaca (null sampai endingLockChapter). */
   lockedEndingKey: string | null
+  /**
+   * Registry judul bab 1..N-1 (urut bab, bounded 24 terakhir) untuk keunikan
+   * judul. Opsional agar konstruktor lama tetap sah; builder produksi selalu
+   * mengisinya.
+   */
+  previousTitles?: string[]
 }
 
 const CAP_FACTS = 6
 const CAP_THREADS = 6
 const CAP_TIMELINE = 5
 const CAP_ROLLUPS = 2
+const CAP_PREVIOUS_TITLES = 24
 
 function projectFact(f: Fact): ContinuationFact {
   return {
@@ -144,6 +151,11 @@ export interface BuildContinuationContextInput {
   lockedEndingKey: string | null
   /** Jangkar kisah global dari story contract (dari loader/caller). Null = tanpa contract. */
   storyAnchors?: StoryAnchors | null
+  /**
+   * Judul bab 1..N-1 (urut bab) untuk registry keunikan judul. Opsional;
+   * bounded ke 24 terakhir oleh builder.
+   */
+  previousTitles?: string[]
 }
 
 /**
@@ -208,5 +220,15 @@ export function buildContinuationContext(
     storyAnchors: input.storyAnchors ?? null,
     actRollups,
     lockedEndingKey: input.lockedEndingKey,
+    // Key hanya hadir bila caller menyediakan registry judul — konstruktor
+    // lama (fixture/test) tetap identik byte-per-byte tanpa field kosong.
+    ...(input.previousTitles === undefined
+      ? {}
+      : {
+          previousTitles: input.previousTitles
+            .map((title) => title.trim())
+            .filter(Boolean)
+            .slice(-CAP_PREVIOUS_TITLES),
+        }),
   }
 }

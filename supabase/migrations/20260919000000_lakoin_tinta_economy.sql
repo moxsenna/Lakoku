@@ -227,3 +227,214 @@ $$;
 
 revoke all on function public.grant_author_tinta_v1(uuid, text, integer) from public, anon, authenticated;
 grant execute on function public.grant_author_tinta_v1(uuid, text, integer) to service_role;
+
+-- ===== 7) Misi: branch grant Tinta vs Kredit =====
+-- claim_mission_v1 di-create-or-replace: saat tinta_policy.missions_pay_tinta = true,
+-- imbalan misi di-grant sebagai Tinta (langsung tersedia, pending_hours = 0) dengan
+-- ref yang sama 'mission:{key}:{user}:{day}' (tabel berbeda, idempotensi tetap dari
+-- PK user_mission_daily). Logika verifikasi bukti TIDAK berubah.
+-- get_daily_missions_v1: tambahkan field 'currency' ('tinta' | 'lakoin') dan
+-- nilai imbalan per misi dibaca dari tinta_policy saat flag menyala.
+
+create or replace function public.get_daily_missions_v1(p_user_id uuid)
+returns jsonb
+language plpgsql stable security definer set search_path = public
+as $$
+declare
+  v_policy   public.mission_policy%rowtype;
+  v_tinta    public.tinta_policy%rowtype;
+  v_today    date := (timezone('Asia/Jakarta', now()))::date;
+  v_choices  integer;
+  v_ads      integer;
+  v_claimed  jsonb;
+  v_currency text;
+  v_checkin  integer;
+  v_choice   integer;
+  v_ad       integer;
+begin
+  select * into v_policy from public.mission_policy where id = true;
+  if not found then
+    return jsonb_build_object('enabled', false, 'currency', 'lakoin', 'missions', '[]'::jsonb);
+  end if;
+
+  select * into v_tinta from public.tinta_policy where id = true;
+
+  if coalesce(v_tinta.missions_pay_tinta, false) then
+    v_currency := 'tinta';
+    v_checkin  := coalesce(v_tinta.tinta_checkin, 0);
+    v_choice   := coalesce(v_tinta.tinta_choice, 0);
+    v_ad       := coalesce(v_tinta.tinta_ad_batch, 0);
+  else
+    v_currency := 'lakoin';
+    v_checkin  := coalesce(v_policy.checkin_credits, 0);
+    v_choice   := coalesce(v_policy.choice_credits, 0);
+    v_ad       := coalesce(v_policy.ad_batch_credits, 0);
+  end if;
+
+  -- Bukti make_choice: baris nyata di tabel penerapan pilihan hari ini.
+  select count(*)::int into v_choices
+  from public.personalized_choice_applications
+  where user_id = p_user_id
+    and (timezone('Asia/Jakarta', created_at))::date = v_today;
+
+  -- Bukti watch_ad: hanya callback SSV bertanda tangan sah yang dihitung.
+  select count(*)::int into v_ads
+  from public.admob_ssv_events
+  where user_id = p_user_id
+    and day_jkt = v_today
+    and status = 'valid';
+
+  select coalesce(jsonb_object_agg(mission_key, credits_granted), '{}'::jsonb)
+    into v_claimed
+  from public.user_mission_daily
+  where user_id = p_user_id and day_jkt = v_today;
+
+  return jsonb_build_object(
+    'enabled', v_policy.missions_enabled,
+    'adRewardEnabled', v_policy.ad_reward_enabled,
+    'day', v_today,
+    'adsWatched', v_ads,
+    'adDailyCap', v_policy.ad_daily_cap,
+    'adsPerCredit', v_policy.ads_per_credit,
+    'currency', v_currency,
+    'claimed', v_claimed,
+    'missions', jsonb_build_array(
+      jsonb_build_object(
+        'key', 'daily_checkin',
+        'progress', 1,
+        'required', 1,
+        'credits', v_checkin,
+        'claimed', v_claimed ? 'daily_checkin',
+        'currency', v_currency
+      ),
+      jsonb_build_object(
+        'key', 'make_choice',
+        'progress', v_choices,
+        'required', v_policy.choice_required,
+        'credits', v_choice,
+        'claimed', v_claimed ? 'make_choice',
+        'currency', v_currency
+      ),
+      jsonb_build_object(
+        'key', 'watch_ad',
+        'progress', v_ads,
+        'required', v_policy.ads_per_credit,
+        'credits', v_ad,
+        'claimed', v_claimed ? 'watch_ad',
+        'currency', v_currency
+      )
+    )
+  );
+end;
+$$;
+
+revoke all on function public.get_daily_missions_v1(uuid) from public, anon, authenticated;
+grant execute on function public.get_daily_missions_v1(uuid) to service_role;
+
+-- claim_mission_v1: klaim imbalan misi. Server memverifikasi ulang bukti.
+-- Return: 'ok' | 'duplicate' | 'incomplete' | 'disabled' | 'unknown_mission'
+create or replace function public.claim_mission_v1(
+  p_user_id uuid,
+  p_mission_key text
+) returns text
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_policy   public.mission_policy%rowtype;
+  v_tinta    public.tinta_policy%rowtype;
+  v_today    date := (timezone('Asia/Jakarta', now()))::date;
+  v_progress integer := 0;
+  v_required integer := 1;
+  v_credits  integer := 0;
+  v_amount   integer := 0;
+  v_reason   text;
+  v_ref      text;
+begin
+  select * into v_policy from public.mission_policy where id = true;
+  if not found or not v_policy.missions_enabled then
+    return 'disabled';
+  end if;
+
+  perform pg_advisory_xact_lock(hashtext(p_user_id::text));
+
+  if exists (
+    select 1 from public.user_mission_daily
+    where user_id = p_user_id and mission_key = p_mission_key and day_jkt = v_today
+  ) then
+    return 'duplicate';
+  end if;
+
+  if p_mission_key = 'daily_checkin' then
+    v_progress := 1;
+    v_required := 1;
+    v_credits  := v_policy.checkin_credits;
+
+  elsif p_mission_key = 'make_choice' then
+    select count(*)::int into v_progress
+    from public.personalized_choice_applications
+    where user_id = p_user_id
+      and (timezone('Asia/Jakarta', created_at))::date = v_today;
+    v_required := v_policy.choice_required;
+    v_credits  := v_policy.choice_credits;
+
+  elsif p_mission_key = 'watch_ad' then
+    if not v_policy.ad_reward_enabled then
+      return 'disabled';
+    end if;
+    select count(*)::int into v_progress
+    from public.admob_ssv_events
+    where user_id = p_user_id and day_jkt = v_today and status = 'valid';
+    v_required := v_policy.ads_per_credit;
+    v_credits  := v_policy.ad_batch_credits;
+
+  else
+    return 'unknown_mission';
+  end if;
+
+  if v_progress < v_required then
+    return 'incomplete';
+  end if;
+
+  select * into v_tinta from public.tinta_policy where id = true;
+
+  if coalesce(v_tinta.missions_pay_tinta, false) then
+    v_amount := case p_mission_key
+      when 'daily_checkin' then coalesce(v_tinta.tinta_checkin, 0)
+      when 'make_choice'   then coalesce(v_tinta.tinta_choice, 0)
+      when 'watch_ad'      then coalesce(v_tinta.tinta_ad_batch, 0)
+      else 0
+    end;
+  else
+    v_amount := v_credits;
+  end if;
+
+  insert into public.user_mission_daily (
+    user_id, mission_key, day_jkt, progress, credits_granted
+  ) values (
+    p_user_id, p_mission_key, v_today, v_progress, v_amount
+  );
+
+  v_ref := 'mission:' || p_mission_key || ':' || p_user_id::text || ':' || v_today::text;
+
+  if coalesce(v_tinta.missions_pay_tinta, false) then
+    if v_amount > 0 then
+      v_reason := case p_mission_key
+        when 'daily_checkin' then 'mission_checkin'
+        when 'make_choice'   then 'mission_choice'
+        when 'watch_ad'      then 'mission_ad_batch'
+        else 'mission_' || p_mission_key
+      end;
+      perform public.grant_tinta_v1(p_user_id, v_ref, v_amount, v_reason, 0);
+    end if;
+  elsif v_credits > 0 then
+    perform public.grant_credits_v1(
+      p_user_id, v_ref, v_credits, 'Misi harian: ' || p_mission_key
+    );
+  end if;
+
+  return 'ok';
+end;
+$$;
+
+revoke all on function public.claim_mission_v1(uuid, text) from public, anon, authenticated;
+grant execute on function public.claim_mission_v1(uuid, text) to service_role;

@@ -262,9 +262,9 @@ describe('20260919000000_lakoin_tinta_economy migration', () => {
       )
     })
 
-    it('does not touch mission functions in Task P1 (reserved for Task P5)', () => {
-      expect(sql).not.toContain('get_daily_missions_v1')
-      expect(sql).not.toContain('claim_mission_v1')
+    it('implements mission functions in Task P5 (AC1.6)', () => {
+      expect(sql).toContain('get_daily_missions_v1')
+      expect(sql).toContain('claim_mission_v1')
     })
   })
 })

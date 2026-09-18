@@ -47,6 +47,7 @@ import type { PremiseDraft, StoryBibleDraft } from '@/lib/authoring/schema'
 import type { TasteProfile } from '@/lib/taste-profile/schema'
 import type { StoryCreativeDirection } from '@/lib/onboarding/creative-direction'
 import { trackEvent } from '@/lib/analytics/client'
+import type { AnalyticsClientPayload } from '@/lib/analytics/events'
 
 function isActionMismatchError(err: unknown): boolean {
   if (err instanceof Error) {
@@ -81,6 +82,33 @@ const BUILD_STEPS = [
 type BuildKey = (typeof BUILD_STEPS)[number]['key']
 
 const RESUME_LOGIN_URL = '/auth/login?next=%2Fmulai%3Fresume%3D1'
+
+/** Bucket panjang ide custom — jangan pernah kirim teks mentahnya. */
+function customIdeaLengthBucket(length: number): 'short' | 'medium' | 'long' {
+  if (length < 120) return 'short'
+  if (length < 500) return 'medium'
+  return 'long'
+}
+
+type AnalyticsQuestionKey = NonNullable<AnalyticsClientPayload['question_key']>
+
+/** Key pertanyaan yang boleh dikirim ke analytics; custom key di-drop. */
+const QUESTION_KEYS: ReadonlySet<string> = new Set<AnalyticsQuestionKey>([
+  'genre',
+  'coreConflict',
+  'protagonistRole',
+  'relationshipFocus',
+  'agencyStyle',
+  'endingDirection',
+])
+
+/** Fase yang dihitung "masih di dalam funnel" untuk event abandoned. */
+const IN_FUNNEL_PHASES: ReadonlySet<Phase> = new Set<Phase>([
+  'quiz',
+  'customIdea',
+  'proposals',
+  'building',
+])
 
 // ─── Progress bar helper ──────────────────────────────────────────
 
@@ -145,9 +173,37 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
 
   const [proposals, setProposals] = useState<PremiseDraft[]>([])
   const [selected, setSelected] = useState<PremiseDraft | null>(null)
+  const [selectedPremiseIndex, setSelectedPremiseIndex] = useState<number | null>(null)
 
   const [buildStage, setBuildStage] = useState<BuildKey>('cast')
   const [err, setErr] = useState<string | null>(null)
+
+  // Refs analytics — funnel timing + snapshot fase terakhir untuk event abandoned.
+  const entryViewedRef = useRef(false)
+  const funnelStartedAtRef = useRef<number | null>(null)
+  const funnelSnapshotRef = useRef<{
+    phase: Phase
+    entryMode: 'quick' | 'custom' | null
+    step: number
+    buildStage: BuildKey
+  }>({ phase: 'entry', entryMode: null, step: 0, buildStage: 'cast' })
+  const abandonSentRef = useRef(false)
+
+  // Snapshot fase terakhir, dipakai handler pagehide yang tidak melihat state terbaru.
+  useEffect(() => {
+    funnelSnapshotRef.current = { phase, entryMode, step, buildStage }
+  }, [phase, entryMode, step, buildStage])
+
+  // Tahap build dibaca sinkron oleh failBuild, sebelum effect snapshot sempat jalan.
+  const enterBuildStage = useCallback((stage: BuildKey) => {
+    funnelSnapshotRef.current.buildStage = stage
+    setBuildStage(stage)
+  }, [])
+
+  const elapsedMs = useCallback(() => {
+    const startedAt = funnelStartedAtRef.current
+    return startedAt === null ? undefined : Math.max(0, Math.round(performance.now() - startedAt))
+  }, [])
 
   const questions = activeQuestions
   const totalQuestions = questions.length
@@ -176,10 +232,54 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     return () => window.clearTimeout(timer)
   }, [])
 
-  const failBuild = useCallback((message?: string) => {
-    setErr(message ?? 'Terjadi kendala saat menyiapkan cerita.')
-    setPhase('error')
+  // Funnel step 0 — entry viewed. Sekali per mount, termasuk saat resume.
+  useEffect(() => {
+    if (entryViewedRef.current) return
+    entryViewedRef.current = true
+    funnelStartedAtRef.current = performance.now()
+    trackEvent('story_setup_entry_viewed', { stage: 'entry' })
   }, [])
+
+  // Drop-off — user menutup tab / pindah halaman saat masih di dalam funnel.
+  useEffect(() => {
+    function reportAbandon() {
+      if (abandonSentRef.current) return
+      const snap = funnelSnapshotRef.current
+      if (!IN_FUNNEL_PHASES.has(snap.phase)) return
+      abandonSentRef.current = true
+      trackEvent('story_setup_abandoned', {
+        stage:
+          snap.phase === 'quiz'
+            ? 'quiz'
+            : snap.phase === 'customIdea'
+              ? 'custom'
+              : snap.phase === 'proposals'
+                ? 'proposal'
+                : 'build',
+        story_setup_mode: snap.entryMode ?? undefined,
+        step_number: snap.phase === 'quiz' ? snap.step + 1 : undefined,
+        build_stage: snap.phase === 'building' ? snap.buildStage : undefined,
+        duration_ms: elapsedMs(),
+      })
+    }
+    window.addEventListener('pagehide', reportAbandon)
+    return () => window.removeEventListener('pagehide', reportAbandon)
+  }, [elapsedMs])
+
+  const failBuild = useCallback(
+    (message?: string, errorCode?: AnalyticsClientPayload['error_code']) => {
+      setErr(message ?? 'Terjadi kendala saat menyiapkan cerita.')
+      setPhase('error')
+      trackEvent('story_setup_failed', {
+        stage: 'build',
+        story_setup_mode: funnelSnapshotRef.current.entryMode ?? undefined,
+        build_stage: funnelSnapshotRef.current.buildStage,
+        error_code: errorCode ?? 'unknown',
+        duration_ms: elapsedMs(),
+      })
+    },
+    [elapsedMs],
+  )
 
   // ── Quick flow start ────────────────────────────────────────────
 
@@ -213,13 +313,15 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
 
   const lockAndStart = useCallback(async (draft: StoryBibleDraft) => {
     try {
-      setBuildStage('lock')
+      enterBuildStage('lock')
       const lockRes = await lockStoryBible(draft)
       if (!lockRes.ok) {
+        const needsAuthor = 'needsAuthor' in lockRes
         return failBuild(
-          'needsAuthor' in lockRes
+          needsAuthor
             ? 'Cerita ini butuh sedikit penyesuaian. Coba pilih cerita lain atau ulangi.'
             : lockRes.error,
+          needsAuthor ? 'needs_author' : 'lock_failed',
         )
       }
 
@@ -240,9 +342,27 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
         // best-effort
       }
 
-      setBuildStage('chapter')
+      enterBuildStage('chapter')
       const gen = await startChapter(lockRes.storyId, 1)
+
+      // Story sudah terkunci ke akun — hitung sebagai konversi walau bab 1 gagal.
+      abandonSentRef.current = true
+      const startedPayload = {
+        stage: 'start',
+        story_setup_mode: funnelSnapshotRef.current.entryMode ?? undefined,
+        story_id: lockRes.storyId,
+        duration_ms: elapsedMs(),
+      } as const
+      trackEvent('story_setup_story_started', startedPayload)
+      trackEvent('story_creation_completed', startedPayload)
+
       if (!gen.ok) {
+        trackEvent('story_setup_failed', {
+          stage: 'build',
+          build_stage: 'chapter',
+          story_id: lockRes.storyId,
+          error_code: 'chapter_failed',
+        })
         router.push(`/cerita/${lockRes.storyId}`)
         return
       }
@@ -252,9 +372,9 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
         window.location.reload()
         return
       }
-      failBuild('Gagal menyimpan atau memulai bab pertama cerita. Coba lagi.')
+      failBuild('Gagal menyimpan atau memulai bab pertama cerita. Coba lagi.', 'lock_failed')
     }
-  }, [failBuild, router])
+  }, [elapsedMs, enterBuildStage, failBuild, router])
 
   // ── Resume flow ─────────────────────────────────────────────────
 
@@ -265,9 +385,13 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     queueMicrotask(() => {
       const draft = readOnboardingDraftStash(window.localStorage)
       if (!draft) {
-        failBuild('Rancangan ceritamu sudah kedaluwarsa. Mulai lagi agar ceritanya tetap rapi.')
+        failBuild(
+          'Rancangan ceritamu sudah kedaluwarsa. Mulai lagi agar ceritanya tetap rapi.',
+          'resume_expired',
+        )
         return
       }
+      trackEvent('story_setup_resume_succeeded', { stage: 'login_resume' })
 
       setSelected(draft.premise)
       // Resume stash stores string answers; convert lightly for display state only.
@@ -293,6 +417,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
       startTransition(async () => {
         try {
           if (!(await hasSession())) {
+            trackEvent('story_setup_login_required', { stage: 'login_resume' })
             router.push(RESUME_LOGIN_URL)
             return
           }
@@ -302,7 +427,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
             window.location.reload()
             return
           }
-          failBuild('Terjadi kendala saat melanjutkan cerita. Coba lagi.')
+          failBuild('Terjadi kendala saat melanjutkan cerita. Coba lagi.', 'unknown')
         }
       })
     })
@@ -316,9 +441,27 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     setCustomAnswerFor(null)
     setCustomAnswerText('')
 
+    // Drop-off per pertanyaan — kirim key + mode saja, tidak pernah teks jawaban.
+    trackEvent('story_setup_question_answered', {
+      stage: 'quiz',
+      story_setup_mode: 'quick',
+      question_key: QUESTION_KEYS.has(key) ? (key as AnalyticsQuestionKey) : undefined,
+      answer_mode: answer.mode,
+      step_number: step + 1,
+      question_count: totalQuestions,
+      duration_ms: elapsedMs(),
+    })
+
     if (step < totalQuestions - 1) {
       setTimeout(() => setStep((s) => s + 1), 220)
     } else {
+      trackEvent('story_setup_quiz_completed', {
+        stage: 'quiz',
+        story_setup_mode: 'quick',
+        question_count: totalQuestions,
+        has_usable_taste: hasUsableTasteProfile(tasteProfile),
+        duration_ms: elapsedMs(),
+      })
       setTimeout(() => generateProposals(next), 220)
     }
   }
@@ -343,17 +486,26 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
         if (!res.ok) {
           setErr(res.error ?? 'Gagal menyiapkan cerita. Coba lagi.')
           setPhase('error')
+          trackEvent('story_setup_failed', {
+            stage: 'proposal',
+            story_setup_mode: 'quick',
+            error_code: 'propose_failed',
+            duration_ms: elapsedMs(),
+          })
           return
         }
         setProposals(res.proposals)
         if (res.direction) setCreativeDirection(res.direction)
         if (res.publicSummary) setPublicSummary(res.publicSummary)
-        trackEvent('story_premises_generated', {
+        const proposalPayload = {
           story_setup_mode: 'quick',
           stage: 'proposal',
           has_usable_taste: hasUsableTasteProfile(tasteProfile),
           direction_fingerprint: res.fingerprint,
-        })
+          duration_ms: elapsedMs(),
+        } as const
+        trackEvent('story_premises_generated', proposalPayload)
+        trackEvent('story_setup_proposals_generated', proposalPayload)
       } catch (err) {
         if (isActionMismatchError(err)) {
           window.location.reload()
@@ -361,6 +513,12 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
         }
         setErr('Gagal menyiapkan cerita. Coba lagi.')
         setPhase('error')
+        trackEvent('story_setup_failed', {
+          stage: 'proposal',
+          story_setup_mode: 'quick',
+          error_code: 'unknown',
+          duration_ms: elapsedMs(),
+        })
       }
     })
   }
@@ -372,6 +530,14 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     if (!trimmed) return
     setErr(null)
     setPhase('proposals')
+    // Hanya bucket panjang — teks ide tidak pernah dikirim ke analytics.
+    trackEvent('story_setup_custom_submitted', {
+      stage: 'custom',
+      story_setup_mode: 'custom',
+      custom_idea_length_bucket: customIdeaLengthBucket(trimmed.length),
+      has_usable_taste: hasUsableTasteProfile(tasteProfile),
+      duration_ms: elapsedMs(),
+    })
     startTransition(async () => {
       try {
         const res = await actProposeStorySetupPremises({
@@ -382,11 +548,26 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
         if (!res.ok) {
           setErr(res.error ?? 'Gagal menyiapkan cerita. Coba lagi.')
           setPhase('error')
+          trackEvent('story_setup_failed', {
+            stage: 'proposal',
+            story_setup_mode: 'custom',
+            error_code: 'propose_failed',
+            duration_ms: elapsedMs(),
+          })
           return
         }
         setProposals(res.proposals)
         if (res.direction) setCreativeDirection(res.direction)
         if (res.publicSummary) setPublicSummary(res.publicSummary)
+        const proposalPayload = {
+          story_setup_mode: 'custom',
+          stage: 'proposal',
+          has_usable_taste: hasUsableTasteProfile(tasteProfile),
+          direction_fingerprint: res.fingerprint,
+          duration_ms: elapsedMs(),
+        } as const
+        trackEvent('story_premises_generated', proposalPayload)
+        trackEvent('story_setup_proposals_generated', proposalPayload)
       } catch (err) {
         if (isActionMismatchError(err)) {
           window.location.reload()
@@ -394,23 +575,53 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
         }
         setErr('Gagal menyiapkan cerita. Coba lagi.')
         setPhase('error')
+        trackEvent('story_setup_failed', {
+          stage: 'proposal',
+          story_setup_mode: 'custom',
+          error_code: 'unknown',
+          duration_ms: elapsedMs(),
+        })
       }
     })
   }
 
   // ── Pipeline otomatis ──────────────────────────────────────────
 
+  function clearSelectedPremise() {
+    setSelected(null)
+    setSelectedPremiseIndex(null)
+  }
+
+  function selectPremise(premise: PremiseDraft, index: number) {
+    setSelected(premise)
+    setSelectedPremiseIndex(index)
+    const payload = {
+      stage: 'proposal',
+      story_setup_mode: entryMode ?? undefined,
+      selected_premise_index: index,
+      duration_ms: elapsedMs(),
+    } as const
+    trackEvent('story_premise_selected', payload)
+    trackEvent('story_setup_premise_selected', payload)
+  }
+
   function beginStory(premise: PremiseDraft) {
     setSelected(premise)
     setErr(null)
     setPhase('building')
+    trackEvent('story_setup_build_started', {
+      stage: 'build',
+      story_setup_mode: entryMode ?? undefined,
+      selected_premise_index: selectedPremiseIndex ?? undefined,
+      duration_ms: elapsedMs(),
+    })
     startTransition(async () => {
       try {
-        setBuildStage('cast')
+        enterBuildStage('cast')
         const castRes = await actProposeCast(premise, undefined, undefined, creativeDirection)
-        if (!castRes.ok) return failBuild(castRes.error)
+        if (!castRes.ok) return failBuild(castRes.error, 'cast_failed')
 
-        setBuildStage('mystery')
+        enterBuildStage('mystery')
         const mysteryRes = await actProposeMystery(
           premise,
           castRes.cast,
@@ -418,9 +629,9 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
           undefined,
           creativeDirection,
         )
-        if (!mysteryRes.ok) return failBuild(mysteryRes.error)
+        if (!mysteryRes.ok) return failBuild(mysteryRes.error, 'mystery_failed')
 
-        setBuildStage('world')
+        enterBuildStage('world')
         const worldRes = await actProposeWorld(
           premise,
           castRes.cast,
@@ -429,7 +640,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
           undefined,
           creativeDirection,
         )
-        if (!worldRes.ok) return failBuild(worldRes.error)
+        if (!worldRes.ok) return failBuild(worldRes.error, 'world_failed')
 
         const draft = {
           premise,
@@ -439,8 +650,15 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
           creativeDirection: creativeDirection ?? undefined,
         }
 
-        setBuildStage('lock')
+        enterBuildStage('lock')
         if (!(await hasSession())) {
+          // Bukan drop-off: user dialihkan ke login lalu resume.
+          abandonSentRef.current = true
+          trackEvent('story_setup_login_required', {
+            stage: 'build',
+            story_setup_mode: entryMode ?? undefined,
+            duration_ms: elapsedMs(),
+          })
           saveOnboardingDraftStash(window.localStorage, {
             ...draft,
             answers: Object.fromEntries(
@@ -460,7 +678,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
           window.location.reload()
           return
         }
-        failBuild('Terjadi kendala saat menyusun karakter dan dunia cerita. Coba lagi.')
+        failBuild('Terjadi kendala saat menyusun karakter dan dunia cerita. Coba lagi.', 'unknown')
       }
     })
   }
@@ -474,7 +692,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     setCustomAnswerFor(null)
     setCustomAnswerText('')
     setProposals([])
-    setSelected(null)
+    clearSelectedPremise()
     setCreativeDirection(null)
     setPublicSummary(null)
     setErr(null)
@@ -501,7 +719,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     }
     if (phase === 'proposals') {
       if (selected) {
-        setSelected(null)
+        clearSelectedPremise()
         return
       }
       if (entryMode === 'custom') {
@@ -642,7 +860,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
               type="button"
               onClick={() => {
                 setErr(null)
-                setSelected(null)
+                clearSelectedPremise()
                 setPhase('proposals')
               }}
               className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
@@ -945,7 +1163,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
                 <button
                   key={i}
                   type="button"
-                  onClick={() => setSelected(p)}
+                  onClick={() => selectPremise(p, i)}
                   className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-5 text-left transition-colors hover:border-primary/60"
                 >
                   <div className="flex flex-wrap gap-2">
@@ -1010,7 +1228,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
             </button>
             <button
               type="button"
-              onClick={() => setSelected(null)}
+              onClick={clearSelectedPremise}
               className="flex min-h-13 items-center justify-center rounded-2xl border border-border px-6 text-sm font-semibold text-foreground transition-colors hover:bg-card"
             >
               Lihat Cerita Lain

@@ -524,7 +524,15 @@ describe('personalized choice route dispatch', () => {
 
     expect(response.status).toBe(200)
     expect(mocks.applyChoiceToUserState).toHaveBeenCalledOnce()
-    expect(fixture.client.rpc).not.toHaveBeenCalled()
+    expect(fixture.client.rpc).not.toHaveBeenCalledWith(
+      'apply_personalized_choice_v2',
+      expect.anything(),
+    )
+    expect(fixture.client.rpc).toHaveBeenCalledWith('grant_author_tinta_v1', {
+      p_reader_id: userId,
+      p_story_id: 'demo:standard',
+      p_chapter_number: 1,
+    })
   })
 
   it('falls through to old path for authenticated unlisted standard story', async () => {
@@ -544,7 +552,15 @@ describe('personalized choice route dispatch', () => {
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ outcome: publicOutcome, nextChapterReady: true })
     expect(mocks.applyChoiceToUserState).toHaveBeenCalledOnce()
-    expect(fixture.client.rpc).not.toHaveBeenCalled()
+    expect(fixture.client.rpc).not.toHaveBeenCalledWith(
+      'apply_personalized_choice_v2',
+      expect.anything(),
+    )
+    expect(fixture.client.rpc).toHaveBeenCalledWith('grant_author_tinta_v1', {
+      p_reader_id: userId,
+      p_story_id: 'demo:unlisted',
+      p_chapter_number: 1,
+    })
   })
 
   it.each([
@@ -572,8 +588,16 @@ describe('personalized choice route dispatch', () => {
     const response = await POST(request(), { params: Promise.resolve({ id: storyId }) })
 
     expect(response.status).toBe(200)
-    expect(fixture.client.rpc).toHaveBeenCalledTimes(usesRpc ? 1 : 0)
+    const applyRpcCalls = fixture.client.rpc.mock.calls.filter(
+      (call: unknown[]) => call[0] === 'apply_personalized_choice_v2',
+    )
+    expect(applyRpcCalls).toHaveLength(usesRpc ? 1 : 0)
     expect(mocks.applyChoiceToUserState).toHaveBeenCalledTimes(usesRpc ? 0 : 1)
+    expect(fixture.client.rpc).toHaveBeenCalledWith('grant_author_tinta_v1', {
+      p_reader_id: userId,
+      p_story_id: storyId,
+      p_chapter_number: 1,
+    })
   })
 
   it('requires idempotency key only after owned personalized mode is established', async () => {
@@ -637,5 +661,9 @@ describe('personalized choice route dispatch', () => {
       correlationId: expect.any(String),
       jobId: '00000000-0000-4000-8000-0000000000e1',
     })
+    expect(fixture.client.rpc).not.toHaveBeenCalledWith(
+      'grant_author_tinta_v1',
+      expect.anything(),
+    )
   })
 })

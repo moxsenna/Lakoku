@@ -24,6 +24,7 @@ Sumber tiap file tercatat di tabel bawah (ID Mixkit = `https://mixkit.co/free-so
 | 2 · Kamu Bukan Pembaca (15,3s) | Musik sama "Silent Descent" (variabel A/B terjaga, `data-media-start="60"`); `whoosh-light-pop` tiap kalimat hook & kedatangan kartu; `whoosh-fast` tiap tukar premis; `ui-select` statement (motif pilihan); `whoosh-sparkle` endcard |
 | 3 · Kredit Gratis Tiap Hari (20s) | `tick-counter` angka kredit naik; `ui-check-pop` misi tercentang; `coin-win` kredit masuk; `achievement` misi selesai; `chime-positive` undangan referral; `ui-select` tombol |
 | 4 · Jadi Tokoh Utama (35s, 16:9) | `amb-rain-light-loop` bed; `heartbeat-medium` beat dramatis; `whoosh-cinematic` transisi babak; `impact-whoosh-deep` masuk Bab 45 lock; `whoosh-sparkle` + `chime-positive` logo & CTA |
+| 4 · Jadi Tokoh Utama (35s, 16:9) | Musik sama "Silent Descent" (`data-media-start="55"`); `amb-rain-night-loop` babak Malam; `ui-select` tombol pilihan; `whoosh-fast` masuk Konsekuensi; `whoosh-light-pop` tiap kilatan bab; `chime-positive` babak Dunia; `boom-short` beat Janji; `whoosh-sparkle` endcard |
 | 5 · Bab yang Menunggu (12s) | `clock-tick` bed; `page-turn` bab bergulir; `heartbeat-slow` tension; `notif-bell` notifikasi masuk; `whoosh-fast` snap ke CTA |
 
 ## Referensi file
@@ -41,6 +42,8 @@ Sumber tiap file tercatat di tabel bawah (ID Mixkit = `https://mixkit.co/free-so
 | `whoosh-cinematic.mp3` | 1,3s | 1492 | Cinematic whoosh fast transition |
 | `whoosh-light-pop.mp3` | 0,2s | 3005 | Explainer video pops whoosh light pop |
 | `whoosh-sparkle.mp3` | 3,5s | 2350 | Magic sparkle whoosh |
+| `boom-short.mp3` | 1,3s | 1694 | Short explosion (boom sinematik pendek) |
+| `impact-cinematic-sting.mp3` | 6,0s | 2902 | Movie impact intro presentation |
 | `impact-whoosh-deep.mp3` | 4,1s | 1143 | Cinematic whoosh deep impact |
 | `impact-big.mp3` | 7,9s | 788 | Big cinematic impact |
 | `riser-reverse-impact.mp3` | 10,1s | 784 | Reverse cinematic impact trailer |

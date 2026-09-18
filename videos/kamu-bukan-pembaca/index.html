@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      @font-face {
+        font-family: "DM Serif Display";
+        src: url("assets/fonts/dmserif-400.woff2") format("woff2");
+        font-weight: 400;
+        font-style: normal;
+        font-display: block;
+      }
+      @font-face {
+        font-family: "Plus Jakarta Sans";
+        src: url("assets/fonts/jakarta-var.woff2") format("woff2");
+        font-weight: 200 800;
+        font-style: normal;
+        font-display: block;
+      }
+
+      /* Palet dikutip dari app/globals.css (tema gelap) */
+      :root {
+        --ink: #191319;
+        --plum: #3d1f3d;
+        --rose: #c94967;
+        --gold: #d5a45c;
+        --cream: #fff7ee;
+        --mauve: #e8dce8;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: var(--ink);
+      }
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+        color: var(--cream);
+        background: var(--ink);
+      }
+
+      .clip {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        display: grid;
+        place-items: center;
+      }
+      .serif {
+        font-family: "DM Serif Display", Georgia, serif;
+        font-weight: 400;
+      }
+
+      .glow {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 1500px;
+        height: 1500px;
+        margin-left: -750px;
+        margin-top: -750px;
+        background: radial-gradient(
+          ellipse 50% 50% at 50% 50%,
+          rgba(61, 31, 61, 0.9) 0%,
+          rgba(61, 31, 61, 0) 66%
+        );
+      }
+
+      /* ===== BABAK 1 — hook tipografis ===== */
+      #hook-text {
+        position: relative;
+        width: 920px;
+        text-align: center;
+        font-size: 96px;
+        line-height: 1.14;
+        color: var(--cream);
+        will-change: transform, opacity;
+      }
+      #hook-text .rose {
+        color: var(--rose);
+      }
+
+      /* ===== BABAK 2 — kartu premis ===== */
+      #cards-wrap {
+        position: absolute;
+        left: 90px;
+        top: 610px;
+        width: 900px;
+        height: 700px;
+      }
+      .premise-card {
+        position: absolute;
+        inset: 0;
+        transform-origin: 50% 50%;
+        will-change: transform, opacity;
+      }
+      #cards-label {
+        position: absolute;
+        left: 90px;
+        top: 540px;
+        width: 900px;
+        text-align: center;
+        font-size: 26px;
+        font-weight: 800;
+        letter-spacing: 0.28em;
+        text-transform: uppercase;
+        color: var(--gold);
+      }
+      .premise-no {
+        font-size: 30px;
+        font-weight: 800;
+        letter-spacing: 0.28em;
+        color: var(--gold);
+        text-align: center;
+      }
+      .premise-title {
+        margin-top: 36px;
+        font-size: 68px;
+        line-height: 1.18;
+        text-align: center;
+        color: var(--cream);
+      }
+
+      /* ===== BABAK 3 — statement + tombol buram ===== */
+      .ghost-choice {
+        position: absolute;
+        left: 80px;
+        width: 920px;
+        height: 118px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 44px;
+        border: 3px solid rgba(232, 220, 232, 0.28);
+        border-radius: 34px;
+        background: rgba(25, 19, 25, 0.8);
+        font-size: 38px;
+        font-weight: 700;
+        color: var(--cream);
+        filter: blur(9px);
+        opacity: 0;
+        will-change: transform, opacity;
+      }
+      #ghost-a {
+        top: 800px;
+      }
+      #ghost-b {
+        top: 934px;
+      }
+      #stmt-text {
+        position: absolute;
+        left: 80px;
+        top: 872px;
+        width: 920px;
+        text-align: center;
+        font-size: 76px;
+        line-height: 1.18;
+        color: var(--cream);
+        text-shadow: 0 4px 34px rgba(25, 19, 25, 0.9);
+        z-index: 2;
+        will-change: transform, opacity;
+      }
+
+      /* ===== BABAK 4 — endcard (identik Konsep 1) ===== */
+      #end-glow {
+        position: absolute;
+        left: 50%;
+        top: 820px;
+        width: 1300px;
+        height: 1300px;
+        margin-left: -650px;
+        margin-top: -650px;
+        background: radial-gradient(
+          ellipse 50% 50% at 50% 50%,
+          rgba(201, 73, 103, 0.34) 0%,
+          rgba(201, 73, 103, 0) 66%
+        );
+      }
+      #end-inner {
+        position: absolute;
+        left: 90px;
+        width: 900px;
+        top: 560px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      #end-logo {
+        width: 200px;
+        height: 200px;
+        border-radius: 26%;
+        border: 3px solid rgba(232, 220, 232, 0.2);
+        object-fit: cover;
+        transform-origin: 50% 50%;
+        will-change: transform, opacity;
+      }
+      #end-word {
+        margin-top: 34px;
+        font-size: 76px;
+        line-height: 1;
+        color: var(--cream);
+        will-change: transform, opacity;
+      }
+      #end-cta {
+        margin-top: 64px;
+        width: 720px;
+        height: 124px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        border-radius: 36px;
+        background: var(--rose);
+        font-size: 42px;
+        font-weight: 800;
+        color: var(--cream);
+        transform-origin: 50% 50%;
+        will-change: transform, opacity;
+      }
+      #end-sub {
+        margin-top: 30px;
+        font-size: 30px;
+        color: var(--mauve);
+        opacity: 0.86;
+        will-change: transform, opacity;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="15.3"
+      data-width="1080"
+      data-height="1920"
+    >
+      <!-- ============ BABAK 1 (0 - 4,0s) — hook tipografis ============ -->
+      <div id="scene-hook" class="clip" data-start="0" data-duration="4" data-track-index="0">
+        <div class="glow" data-layout-allow-overflow></div>
+        <p id="hook-text" class="serif">
+          <span id="hook-1">Kamu bukan pembaca.</span>
+          <span id="hook-2" style="position: absolute; left: 0; top: 0"
+            >Kamu <span class="rose">tokoh utamanya.</span></span
+          >
+        </p>
+      </div>
+
+      <!-- ============ BABAK 2 (4,0 - 9,7s) — tiga premis ============ -->
+      <div id="scene-cards" class="clip" data-start="4" data-duration="5.7" data-track-index="0">
+        <div class="glow" data-layout-allow-overflow></div>
+        <div id="cards-label">Ceritamu menunggu</div>
+        <div id="cards-wrap">
+          <div class="premise-card" id="card-a" style="z-index: 1">
+            <div class="premise-no">01</div>
+            <p class="premise-title serif">Pernikahan yang Seharusnya Sempurna</p>
+          </div>
+          <div class="premise-card" id="card-b" style="z-index: 2">
+            <div class="premise-no">02</div>
+            <p class="premise-title serif">Orang yang Pulang Setelah Tujuh Tahun</p>
+          </div>
+          <div class="premise-card" id="card-c" style="z-index: 3">
+            <div class="premise-no">03</div>
+            <p class="premise-title serif">Rumah yang Menyimpan Nama Keluargamu</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ BABAK 3 (9,7 - 12,2s) — statement ============ -->
+      <div
+        id="scene-statement"
+        class="clip"
+        data-start="9.7"
+        data-duration="2.5"
+        data-track-index="0"
+      >
+        <div class="glow" data-layout-allow-overflow></div>
+        <div class="ghost-choice" id="ghost-a">
+          <span data-layout-allow-overlap>Buka pesannya</span>
+          <span>&#8594;</span>
+        </div>
+        <div class="ghost-choice" id="ghost-b">
+          <span data-layout-allow-overlap>Abaikan untuk malam ini</span>
+          <span>&#8594;</span>
+        </div>
+        <p id="stmt-text" class="serif" data-layout-allow-overlap>Setiap pilihanmu mengubah arah cerita.</p>
+      </div>
+
+      <!-- ============ BABAK 4 (12,2 - 15,3s) — endcard ============ -->
+      <div id="scene-end" class="clip" data-start="12.2" data-duration="3.1" data-track-index="0">
+        <div id="end-glow" data-layout-allow-overflow></div>
+        <div id="end-inner">
+          <img id="end-logo" src="assets/logo-lakoku.png" alt="" />
+          <div id="end-word" class="serif">Lakoku</div>
+          <div id="end-cta">Mulai Ceritaku</div>
+          <p id="end-sub">Kalau ini ceritamu, apa yang akan kamu lakukan?</p>
+        </div>
+      </div>
+
+      <!-- ============ AUDIO (pola pilot, level rendah) ============ -->
+      <audio id="bgm" src="assets/audio/music-silent-descent.mp3" data-start="0" data-duration="15.3" data-media-start="60" data-track-index="10"></audio>
+      <audio id="sfx-hook1" src="assets/audio/whoosh-light-pop.mp3" data-start="0.35" data-duration="0.18" data-volume="0.325" data-track-index="11"></audio>
+      <audio id="sfx-hook2" src="assets/audio/whoosh-light-pop.mp3" data-start="2.15" data-duration="0.18" data-volume="0.325" data-track-index="12"></audio>
+      <audio id="sfx-cards" src="assets/audio/whoosh-light-pop.mp3" data-start="4.05" data-duration="0.18" data-volume="0.325" data-track-index="13"></audio>
+      <audio id="sfx-swap1" src="assets/audio/whoosh-fast.mp3" data-start="5.9" data-volume="0.25" data-track-index="14"></audio>
+      <audio id="sfx-swap2" src="assets/audio/whoosh-fast.mp3" data-start="7.8" data-volume="0.25" data-track-index="15"></audio>
+      <audio id="sfx-statement" src="assets/audio/ui-select.mp3" data-start="9.8" data-volume="0.275" data-track-index="16"></audio>
+      <audio id="sfx-end" src="assets/audio/whoosh-sparkle.mp3" data-start="12.25" data-duration="3.05" data-volume="0.4" data-track-index="17"></audio>
+    </div>
+
+    <script>
+      const tl = gsap.timeline({ paused: true });
+
+      /* ==========================================================
+         BABAK 1 — dua kalimat hook bergantian
+         ========================================================== */
+      // Keadaan awal immediate (di luar timeline) supaya frame 0 benar.
+      gsap.set("#hook-2", { autoAlpha: 0 });
+      tl.fromTo(
+        "#hook-1",
+        { autoAlpha: 0, scale: 0.92, y: 36 },
+        { autoAlpha: 1, scale: 1, y: 0, duration: 0.6, ease: "power3.out" },
+        0.3,
+      );
+      // Kalimat pertama menyerahkan panggung; kalimat kedua ganti dengan aksen rose.
+      tl.to("#hook-1", { autoAlpha: 0, scale: 0.94, duration: 0.28, ease: "power2.in" }, 1.82);
+      tl.fromTo(
+        "#hook-2",
+        { autoAlpha: 0, scale: 0.92, y: 36 },
+        { autoAlpha: 1, scale: 1, y: 0, duration: 0.6, ease: "power3.out" },
+        2.15,
+      );
+      tl.to("#hook-2", { autoAlpha: 0, duration: 0.22, ease: "power2.in" }, 3.72);
+
+      // Glow ink bernapas.
+      tl.fromTo(
+        "#scene-hook .glow",
+        { opacity: 0.5 },
+        { opacity: 0.95, duration: 2, ease: "sine.inOut", repeat: 1, yoyo: true },
+        0,
+      );
+
+      /* ==========================================================
+         BABAK 2 — tiga kartu premis, scale-swap
+         ========================================================== */
+      const CARDS_AT = 4.0;
+      const CARDS_END = 9.7;
+
+      tl.set("#card-a", { autoAlpha: 1, scale: 1 }, CARDS_AT);
+      tl.set(["#card-b", "#card-c"], { autoAlpha: 0, scale: 0.72 }, CARDS_AT);
+
+      tl.to("#card-a", { scale: 1.03, duration: 1.9, ease: "none" }, CARDS_AT);
+
+      const SWAP_EXIT = 0.26;
+      const SWAP_OVERLAP = 0.1;
+      const SWAP_ENTER = 0.4;
+
+      function premiseSwap(outgoing, incoming, trigger) {
+        const enterAt = trigger + SWAP_EXIT - SWAP_OVERLAP;
+        tl.to(
+          outgoing,
+          { scale: 0.72, autoAlpha: 0, duration: SWAP_EXIT, ease: "power2.in" },
+          trigger,
+        );
+        tl.to(
+          incoming,
+          { scale: 1, autoAlpha: 1, duration: SWAP_ENTER, ease: "back.out(1.6)" },
+          enterAt,
+        );
+        const next =
+          trigger === 7.8 ? CARDS_END : trigger + 1.9;
+        tl.to(incoming, { scale: 1.03, duration: next - (enterAt + SWAP_ENTER), ease: "none" }, enterAt + SWAP_ENTER);
+      }
+
+      premiseSwap("#card-a", "#card-b", 5.9);
+      premiseSwap("#card-b", "#card-c", 7.8);
+
+      /* ==========================================================
+         BABAK 3 — statement di atas dua tombol buram
+         ========================================================== */
+      tl.set("#stmt-text", { autoAlpha: 0, scale: 0.94 }, 9.7);
+      tl.fromTo(
+        "#ghost-a",
+        { autoAlpha: 0, y: 30 },
+        { autoAlpha: 0.55, y: 0, duration: 0.5, ease: "power2.out" },
+        9.78,
+      );
+      tl.fromTo(
+        "#ghost-b",
+        { autoAlpha: 0, y: 30 },
+        { autoAlpha: 0.55, y: 0, duration: 0.5, ease: "power2.out" },
+        9.9,
+      );
+      tl.fromTo(
+        "#stmt-text",
+        { autoAlpha: 0, scale: 0.94 },
+        { autoAlpha: 1, scale: 1, duration: 0.5, ease: "power3.out" },
+        9.9,
+      );
+      tl.fromTo(
+        "#scene-statement .glow",
+        { opacity: 0.55 },
+        { opacity: 0.95, duration: 2.5, ease: "sine.inOut" },
+        9.7,
+      );
+
+      /* ==========================================================
+         BABAK 4 — endcard (identik Konsep 1)
+         ========================================================== */
+      tl.fromTo(
+        "#end-logo",
+        { autoAlpha: 0, scale: 0 },
+        { autoAlpha: 1, scale: 1, duration: 0.55, ease: "power3.out" },
+        12.25,
+      );
+      tl.fromTo(
+        "#end-word",
+        { autoAlpha: 0, y: 28 },
+        { autoAlpha: 1, y: 0, duration: 0.5, ease: "power3.out" },
+        12.48,
+      );
+      tl.fromTo(
+        "#end-cta",
+        { autoAlpha: 0, scale: 0.9 },
+        { autoAlpha: 1, scale: 1, duration: 0.55, ease: "power3.out" },
+        12.8,
+      );
+      tl.fromTo(
+        "#end-sub",
+        { autoAlpha: 0, y: 20 },
+        { autoAlpha: 0.86, y: 0, duration: 0.45, ease: "power2.out" },
+        13.15,
+      );
+      tl.fromTo(
+        "#end-glow",
+        { opacity: 0.4, scale: 0.92 },
+        { opacity: 1, scale: 1.05, duration: 3.1, ease: "sine.inOut" },
+        12.2,
+      );
+
+      /* ==========================================================
+         AUDIO — fade volume (nilai absolut, tanpa data-volume)
+         ========================================================== */
+      tl.fromTo("#bgm", { volume: 0 }, { volume: 0.275, duration: 0.8, ease: "power1.out" }, 0);
+      tl.fromTo(
+        "#bgm",
+        { volume: 0.275 },
+        { volume: 0, duration: 1.4, ease: "power1.in", immediateRender: false },
+        13.9,
+      );
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

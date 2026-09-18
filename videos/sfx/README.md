@@ -21,7 +21,7 @@ Sumber tiap file tercatat di tabel bawah (ID Mixkit = `https://mixkit.co/free-so
 | Video | SFX |
 |-------|-----|
 | 1 · Pesan Malam (pilot, 21,5s) | `amb-rain-night-loop` sebagai bed; `notif-message-pop` saat pesan masuk (~0,3s); `ui-select` tombol muncul; `ui-click-modern` atau `type-soft` saat tombol ditekan (5,6s); `ui-check-pop` pil konfirmasi (6,5s); `impact-whoosh-deep` potongan keras ke sampul (9,4s); `whoosh-light-pop` tiap tukar sampul (11,4s, 13,4s); `whoosh-sparkle` endcard (19s) |
-| 2 · Kamu Bukan Pembaca (15s) | `type-key` / `type-soft` untuk type-on per kata; `whoosh-fast` transisi antar klaim; `impact-big` punch klaim utama; `riser-reverse-impact` build-up akhir; `chime-positive` CTA |
+| 2 · Kamu Bukan Pembaca (15,3s) | Musik sama "Silent Descent" (variabel A/B terjaga, `data-media-start="60"`); `whoosh-light-pop` tiap kalimat hook & kedatangan kartu; `whoosh-fast` tiap tukar premis; `ui-select` statement (motif pilihan); `whoosh-sparkle` endcard |
 | 3 · Kredit Gratis Tiap Hari (20s) | `tick-counter` angka kredit naik; `ui-check-pop` misi tercentang; `coin-win` kredit masuk; `achievement` misi selesai; `chime-positive` undangan referral; `ui-select` tombol |
 | 4 · Jadi Tokoh Utama (35s, 16:9) | `amb-rain-light-loop` bed; `heartbeat-medium` beat dramatis; `whoosh-cinematic` transisi babak; `impact-whoosh-deep` masuk Bab 45 lock; `whoosh-sparkle` + `chime-positive` logo & CTA |
 | 5 · Bab yang Menunggu (12s) | `clock-tick` bed; `page-turn` bab bergulir; `heartbeat-slow` tension; `notif-bell` notifikasi masuk; `whoosh-fast` snap ke CTA |

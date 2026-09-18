@@ -97,7 +97,7 @@ export function evaluateRouteIntegrity(): {
   const ok = WRITER_V2_FLAGSHIP_CONTROL_CONFIG.requestedModel === 'openai/gpt-5.6-sol'
     && WRITER_V2_FLAGSHIP_CONTROL_CONFIG.configuredModel === 'openai/gpt-5.6-sol'
     && WRITER_V2_FLAGSHIP_CONTROL_CONFIG.expectedProjectionHash
-      === '68759d6557fe341fa7fc90d8a62bea294fcb3f8987db0567fd05505d0804e8f1'
+      === '22025fccd0eccc2cbad458d3e828bb6dd2389f19ab83222638ece2786e138a22'
     && route.modelId === 'openai/gpt-5.6-sol'
     && route.fallbackModels.length === 0
     && route.reasoningEffort === 'none'

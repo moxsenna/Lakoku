@@ -131,7 +131,7 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
     `- Tujuan Bab: ${safe(brief.chapterGoal)}`,
     beats.length > 0 ? '- Beat Wajib yang Harus Dijalani Tokoh:' : '',
     ...lines(beats),
-    '- Urai setiap beat secara mendalam menjadi rangkaian interaksi bertahap; jangan meringkas satu beat hanya dalam 2–3 paragraf singkat.',
+    '- Urai setiap beat secara mendalam menjadi rangkaian interaksi bertahap; jangan meringkas satu beat hanya dalam segelintir paragraf singkat.',
     '- Khusus Bab 45 ke atas atau bab resolusi/klimaks: Urai proses pemulihan, percakapan konfrontasi/penyelesaian mendalam antar tokoh, dan konsekuensi pilihan secara bertahap menjadi 4 adegan berbobot. DILARANG merangkum atau mempercepat adegan menuju akhir sebelum mencapai target panjang kata.',
     '- Tulis 4 adegan berkesinambungan di lokasi fisik nyata yang mengalir tanpa lompatan waktu drastis.',
     '- Hidupkan adegan dengan percakapan langsung: Sertakan banyak interaksi dialog bolak-balik antar tokoh (minimal 12–16 pertukaran ucapan) agar suasana hidup dan naskah tidak menjadi monolog sepi.',
@@ -173,7 +173,7 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
 
   const p5 = [
     '=== [P5] RITME PARAGRAF KUALITATIF ===',
-    '- Paragraf Ringkas: Setiap paragraf wajib bernapas lega. Cukup satu atau dua kalimat pendek saja (1–2 kalimat per paragraf).',
+    '- Paragraf Ringkas: Setiap paragraf wajib bernapas lega. Cukup satu atau dua kalimat pendek saja per paragraf.',
     '- DILARANG menumpuk banyak kalimat dalam satu blok paragraf. Hindari paragraf berjejal atau dinding teks.',
     '- Dialog Mandiri: Setiap baris ucapan dialog tokoh WAJIB berdiri sendiri dalam paragraf terpisah. Jangan satukan dialog dengan kalimat narasi panjang.',
     '- Pemisahan Aksi & Reaksi: Pecah runtutan aksi fisik, reaksi emosi, dan detail sensorik menjadi paragraf-paragraf mandiri yang terpisah satu baris kosong.',

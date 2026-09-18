@@ -577,20 +577,20 @@
           <img id="end-logo" src="assets/logo-lakoku.png" alt="" />
           <div id="end-word" class="serif">Lakoku</div>
           <div id="end-cta">Mulai Ceritaku</div>
-          <p id="end-sub">3 bab pertama gratis &middot; tanpa kartu</p>
+          <p id="end-sub">Kalau ini ceritamu, apa yang akan kamu lakukan?</p>
         </div>
       </div>
       <!-- ============ AUDIO (SFX + musik, lisensi Mixkit) ============ -->
       <audio id="bgm" src="assets/audio/music-silent-descent.mp3" data-start="0" data-duration="21.5" data-media-start="60" data-track-index="10"></audio>
       <audio id="rain" src="assets/audio/amb-rain-night-loop.mp3" data-start="0" data-duration="9.4" data-track-index="11"></audio>
-      <audio id="sfx-notif" src="assets/audio/notif-message-pop.mp3" data-start="0.3" data-volume="0.9" data-track-index="12"></audio>
-      <audio id="sfx-select" src="assets/audio/ui-select.mp3" data-start="4.2" data-volume="0.55" data-track-index="13"></audio>
-      <audio id="sfx-press" src="assets/audio/ui-click-modern.mp3" data-start="5.6" data-volume="0.8" data-track-index="14"></audio>
-      <audio id="sfx-check" src="assets/audio/ui-check-pop.mp3" data-start="6.53" data-volume="0.7" data-track-index="15"></audio>
-      <audio id="sfx-cut" src="assets/audio/impact-whoosh-deep.mp3" data-start="9.4" data-volume="0.9" data-track-index="16"></audio>
-      <audio id="sfx-swap1" src="assets/audio/whoosh-light-pop.mp3" data-start="11.4" data-duration="0.18" data-volume="0.65" data-track-index="17"></audio>
-      <audio id="sfx-swap2" src="assets/audio/whoosh-light-pop.mp3" data-start="13.4" data-duration="0.18" data-volume="0.65" data-track-index="18"></audio>
-      <audio id="sfx-sparkle" src="assets/audio/whoosh-sparkle.mp3" data-start="19.05" data-duration="2.45" data-volume="0.8" data-track-index="19"></audio>
+      <audio id="sfx-notif" src="assets/audio/notif-message-pop.mp3" data-start="0.3" data-volume="0.45" data-track-index="12"></audio>
+      <audio id="sfx-select" src="assets/audio/ui-select.mp3" data-start="4.2" data-volume="0.275" data-track-index="13"></audio>
+      <audio id="sfx-press" src="assets/audio/ui-click-modern.mp3" data-start="5.6" data-volume="0.4" data-track-index="14"></audio>
+      <audio id="sfx-check" src="assets/audio/ui-check-pop.mp3" data-start="6.53" data-volume="0.35" data-track-index="15"></audio>
+      <audio id="sfx-cut" src="assets/audio/impact-whoosh-deep.mp3" data-start="9.4" data-volume="0.45" data-track-index="16"></audio>
+      <audio id="sfx-swap1" src="assets/audio/whoosh-light-pop.mp3" data-start="11.4" data-duration="0.18" data-volume="0.325" data-track-index="17"></audio>
+      <audio id="sfx-swap2" src="assets/audio/whoosh-light-pop.mp3" data-start="13.4" data-duration="0.18" data-volume="0.325" data-track-index="18"></audio>
+      <audio id="sfx-sparkle" src="assets/audio/whoosh-sparkle.mp3" data-start="19.05" data-duration="2.45" data-volume="0.4" data-track-index="19"></audio>
     </div>
 
     <script>
@@ -843,17 +843,17 @@
       /* ==========================================================
          AUDIO — fade volume (nilai absolut = baseline klip)
          ========================================================== */
-      tl.fromTo("#bgm", { volume: 0 }, { volume: 0.55, duration: 0.8, ease: "power1.out" }, 0);
+      tl.fromTo("#bgm", { volume: 0 }, { volume: 0.275, duration: 0.8, ease: "power1.out" }, 0);
       tl.fromTo(
         "#bgm",
-        { volume: 0.55 },
+        { volume: 0.275 },
         { volume: 0, duration: 1.4, ease: "power1.in", immediateRender: false },
         20.1,
       );
-      tl.fromTo("#rain", { volume: 0 }, { volume: 0.42, duration: 0.8, ease: "power1.out" }, 0);
+      tl.fromTo("#rain", { volume: 0 }, { volume: 0.21, duration: 0.8, ease: "power1.out" }, 0);
       tl.fromTo(
         "#rain",
-        { volume: 0.42 },
+        { volume: 0.21 },
         { volume: 0, duration: 0.15, ease: "power1.in", immediateRender: false },
         9.25,
       );

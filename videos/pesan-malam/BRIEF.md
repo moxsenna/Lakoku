@@ -49,7 +49,12 @@ License, komersial tanpa atribusi).
 - **Beat SFX**: notif pop 0,3s · ui-select 4,2s (tombol muncul) · ui-click 5,6s (tekan) ·
   ui-check-pop 6,53s (konfirmasi) · impact-whoosh-deep 9,4s (hard cut) · whoosh-light-pop
   11,4s & 13,4s (tukar sampul) · whoosh-sparkle 19,05s (endcard).
-- Mix mean ±−20 dB RMS, puncak −1,5 dB. Platform medsos menormalisasi loudness sendiri.
+- **Endcard**: subline memakai slogan brand "Kalau ini ceritamu, apa yang akan kamu
+  lakukan?" (judul situs / H1 landing) — menggantikan "3 bab pertama gratis · tanpa kartu"
+  atas permintaan user.
+- Level semua audio dikali 0,5 (−6 dB) atas umpan balik user "terlalu besar": musik 0,275,
+  hujan 0,21, SFX 0,325–0,45. Mix final mean ±−25 dB RMS, puncak −6 dB. Platform medsos
+  menormalisasi loudness sendiri.
 
 ## Notes
 

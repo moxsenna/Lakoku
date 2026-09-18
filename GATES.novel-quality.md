@@ -37,17 +37,17 @@ Scope: backfill ledger canon novel proof o9bple berbasis bukti prosa, cegah judu
   EXPECT: GATE-REGRESSION-PASS
   EVIDENCE: exit=0; shell=C:\WINDOWS\system32\cmd.exe; cwd=D:\Coding\lakoku v2; path=59d114d73a9b/65 entries; EXPECT=matched; output-sha256=d2da4e82570770b3b37d2b649b9971fc6c0c3ffbba9ac61bd7efc1edd5d5dddc; output-bytes=1816
 
-- [ ] G8: Rebaseline fixture M10-F selesai: fixture-v2 + flagship-control + g1-runner lulus penuh dan kegagalan suite turun 68 -> 30 tanpa kegagalan baru
+- [x] G8: Rebaseline fixture M10-F selesai: fixture-v2 + flagship-control + g1-runner lulus penuh dan kegagalan suite turun 68 -> 30 tanpa kegagalan baru
   CHECK: pnpm exec vitest run tests/narrative-qa/writer-qualification-fixture-v2.test.ts tests/narrative-qa/writer-v2-flagship-control.test.ts tests/narrative-qa/m10-g-g1-runner.test.ts && echo GATE-REBASE-PASS
   EXPECT: GATE-REBASE-PASS
-  EVIDENCE: pending
+  EVIDENCE: exit=0; shell=C:\WINDOWS\system32\cmd.exe; cwd=D:\Coding\lakoku v2; path=59d114d73a9b/65 entries; EXPECT=matched; output-sha256=8f49ba85e2f7380ebe3c803f692d61460c3fc7620fae50038d12ccaf43b2328b; output-bytes=980
 
-- [ ] G9: Prosa terbit o9bple diperbaiki tanpa inferensi: 0 judul duplikat, 5 echo verbatim dihapus, 5 echo tersisa terdokumentasi karena anggaran kata, semua bab tetap 800-1000 kata
+- [x] G9: Prosa terbit o9bple diperbaiki tanpa inferensi: 0 judul duplikat, 5 echo verbatim dihapus, 5 echo tersisa terdokumentasi karena anggaran kata, semua bab tetap 800-1000 kata
   CHECK: node --env-file=.env.local scripts/repair-prose-o9bple.mjs --verify
   EXPECT: REPAIR-PROSE-VERIFY-PASS
-  EVIDENCE: pending
+  EVIDENCE: exit=0; shell=C:\WINDOWS\system32\cmd.exe; cwd=D:\Coding\lakoku v2; path=59d114d73a9b/65 entries; EXPECT=matched; output-sha256=983e575d3cf8579777bfda890f7f971a67e64971fcac7feeb8e67eb424c5c69a; output-bytes=524
 
-- [ ] G10: Deploy produksi sehat: production-reader smoke lulus terhadap app.lakoku.biz.id
+- [x] G10: Deploy produksi sehat: production-reader smoke lulus terhadap app.lakoku.biz.id
   CHECK: pnpm smoke:production-reader
   EXPECT: PRODUCTION-READER-SMOKE-PASS
-  EVIDENCE: pending
+  EVIDENCE: exit=0; shell=C:\WINDOWS\system32\cmd.exe; cwd=D:\Coding\lakoku v2; path=59d114d73a9b/65 entries; EXPECT=matched; output-sha256=d1a46ee8f54a6ca0f830eac81e8fe7d964a4b7b4a91a2b9adc83819d30636791; output-bytes=754

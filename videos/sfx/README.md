@@ -54,6 +54,12 @@ Sumber tiap file tercatat di tabel bawah (ID Mixkit = `https://mixkit.co/free-so
 | `heartbeat-medium.mp3` | 29,7s | 495 | Heartbeat medium speed |
 | `heartbeat-slow.mp3` | 45,3s | 494 | Slow heartbeat |
 | `page-turn.mp3` | 2,6s | 1101 | Single book paging |
+| `music-silent-descent.mp3` | 2:40 | 614 | Silent Descent (piano/strings, melancholic) |
+
+Musik memakai **Mixkit Stock Music Free License** (syarat sama: komersial tanpa atribusi,
+dilarang didistribusikan ulang mandiri). Terpakai di pilot "Pesan Malam" via
+`data-media-start="60"` — intro 21,5s pertama trek ini nyaris senyap (mean −29,6 dB vs
+−14,8 dB di menit kedua), jadi selalu cek profil loudness trek sebelum memakai bagian awal.
 
 ## Catatan produksi
 
@@ -62,9 +68,8 @@ Sumber tiap file tercatat di tabel bawah (ID Mixkit = `https://mixkit.co/free-so
   tidak "pop" di awal-akhir.
 - **Gain mixing**: SFX foley (tap, pop) dudukan sekitar −12 dB di bawah ambience;
   impact/riser boleh mendominasi −6 dB. Selalu cek loudness final ± −14 LUFS untuk medsos.
-- **Kebenaran copy**: SFX tidak mengubah aturan BRIEF — tanpa musik berlisensi eksternal
-  tanpa persetujuan, dan tetap ada kemungkinan video dirilis bisu bila musik/SFX dianggap
-  mengganggu keterbacaan.
+- **Kebenaran copy**: SFX tidak mengubah aturan BRIEF. Audio pada video final hanya
+  dipasang setelah disetujui user — pilot "Pesan Malam" sudah disetujui (2026-09-19).
 - Menambah file baru: unduh dari halaman download Mixkit (URL asli bisa `.mp3` **atau**
   `.wav` — resolve dulu), konversi wav → `ffmpeg -i in.wav -codec:a libmp3lame -b:a 320k out.mp3`,
   lalu tambahkan baris di tabel ini dengan ID sumbernya.

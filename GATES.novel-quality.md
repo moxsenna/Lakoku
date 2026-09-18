@@ -36,3 +36,18 @@ Scope: backfill ledger canon novel proof o9bple berbasis bukti prosa, cegah judu
   CHECK: pnpm exec vitest run tests/prose/strip-echo-opening.test.ts tests/prose/writer-prompt-title-registry.test.ts tests/runtime/mark-reader-selesai-sync.test.ts tests/narrative/continuation-context.test.ts tests/prose/writer-prompt-hierarchy.test.ts tests/ai-gateway/plan-continuation.test.ts tests/runtime/continuation-propagation-integration.test.ts tests/narrative/continuity-checks.test.ts && echo GATE-REGRESSION-PASS
   EXPECT: GATE-REGRESSION-PASS
   EVIDENCE: exit=0; shell=C:\WINDOWS\system32\cmd.exe; cwd=D:\Coding\lakoku v2; path=59d114d73a9b/65 entries; EXPECT=matched; output-sha256=d2da4e82570770b3b37d2b649b9971fc6c0c3ffbba9ac61bd7efc1edd5d5dddc; output-bytes=1816
+
+- [ ] G8: Rebaseline fixture M10-F selesai: fixture-v2 + flagship-control + g1-runner lulus penuh dan kegagalan suite turun 68 -> 30 tanpa kegagalan baru
+  CHECK: pnpm exec vitest run tests/narrative-qa/writer-qualification-fixture-v2.test.ts tests/narrative-qa/writer-v2-flagship-control.test.ts tests/narrative-qa/m10-g-g1-runner.test.ts && echo GATE-REBASE-PASS
+  EXPECT: GATE-REBASE-PASS
+  EVIDENCE: pending
+
+- [ ] G9: Prosa terbit o9bple diperbaiki tanpa inferensi: 0 judul duplikat, 5 echo verbatim dihapus, 5 echo tersisa terdokumentasi karena anggaran kata, semua bab tetap 800-1000 kata
+  CHECK: node --env-file=.env.local scripts/repair-prose-o9bple.mjs --verify
+  EXPECT: REPAIR-PROSE-VERIFY-PASS
+  EVIDENCE: pending
+
+- [ ] G10: Deploy produksi sehat: production-reader smoke lulus terhadap app.lakoku.biz.id
+  CHECK: pnpm smoke:production-reader
+  EXPECT: PRODUCTION-READER-SMOKE-PASS
+  EVIDENCE: pending

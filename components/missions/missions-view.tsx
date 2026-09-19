@@ -24,6 +24,7 @@ import {
   type MissionView,
 } from '@/lib/missions/policy'
 import { trackEvent } from '@/lib/analytics/client'
+import { withPending } from '@/lib/loading/pending'
 import { tintaAmountBucket } from '@/lib/tinta/policy'
 
 interface Props {
@@ -54,11 +55,11 @@ export function MissionsView({ initialSnapshot, policy, creditBalance }: Props) 
     setMessage(null)
 
     try {
-      const res = await fetch('/api/missions/claim', {
+      const res = await withPending(fetch('/api/missions/claim', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ missionKey: mission.key }),
-      })
+      }))
 
       const json = await res.json()
       if (!res.ok) {

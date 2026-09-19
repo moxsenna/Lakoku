@@ -6,6 +6,7 @@ import { createClient, type SupabasePublicConfig } from '@/lib/supabase/client'
 import { readGuestTasteProfile, clearGuestTasteProfile } from '@/lib/taste-profile/storage'
 import { actMergeGuestTasteProfile } from '@/app/onboarding/selera/actions'
 import { sanitizeNextPath } from '@/lib/auth/safe-next'
+import { beginPending, endPending } from '@/lib/loading/pending'
 import { GoogleSignInButton } from '@/components/auth/google-sign-in-button'
 import { ArrowLeft, Loader2 } from 'lucide-react'
 
@@ -47,6 +48,7 @@ export function LoginForm({
     submitGuardRef.current = true
     setEmailLoading(true)
     setError(null)
+    beginPending()
 
     try {
       if (!supabaseConfig?.url || !supabaseConfig?.anonKey) {
@@ -91,6 +93,7 @@ export function LoginForm({
       // Jika hard nav jalan, unmount mengabaikan ini. Jika gagal, tombol bisa dipakai lagi.
       submitGuardRef.current = false
       setEmailLoading(false)
+      endPending()
     }
   }
 

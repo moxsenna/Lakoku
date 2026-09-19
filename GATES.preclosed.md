@@ -26,10 +26,10 @@ konfirmasi eksplisit saat eksekusi (downtime). Purchase device-asli = owner.
   EXPECT: play products live verification passed
   EVIDENCE: pending
 
-- [ ] W3: orkestrasi purchase native teruji deterministik (vitest, plugin+fetch di-mock)
-  CHECK: npx vitest run tests/play-billing --project unit
-  EXPECT: exit 0
-  EVIDENCE: pending
+- [x] W3: orkestrasi purchase native teruji deterministik (vitest, plugin+fetch di-mock)
+  CHECK: cmd /c "npx vitest run tests/play-billing --project unit && echo UNITTEST PASSED"
+  EXPECT: UNITTEST PASSED
+  EVIDENCE: exit=0; shell=C:\WINDOWS\system32\cmd.exe; cwd=D:\Coding\lakoku v2; path=49037f729fe2/57 entries; EXPECT=matched; output-sha256=84f37765e12ff064c1f1f6513bbd62823913dc077981e61f7a6757da0c28be7e; output-bytes=219
 
 - [x] W4: typecheck proyek tetap hijau
   CHECK: cmd /c "pnpm typecheck && echo TYPECHECK PASSED"

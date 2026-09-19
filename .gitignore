@@ -65,3 +65,7 @@ android/app/src/main/assets/capacitor.config.json
 android/*.jks
 android/keystore.properties
 store-assets/
+
+# Reticle runtime state & agent scratch (machine-local)
+.reticle/
+.sdd-scratch/

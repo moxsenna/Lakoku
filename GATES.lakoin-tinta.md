@@ -72,8 +72,8 @@ Catatan lingkungan: `pnpm lint` penuh gagal karena 52 error pre-existing dari st
   EXPECT: GATE12_OK
   EVIDENCE: exit=0; shell=C:\WINDOWS\system32\cmd.exe; cwd=D:\Coding\lakoku v2; path=59d114d73a9b/65 entries; EXPECT=matched; output-sha256=466e831b2497c9691b874d21172e565e599790f419a0ad87f39ac81a77e6f935; output-bytes=3084
 
-- [ ] G12-M: Verifikasi RPC live (claim/dedupe/cap/tukar) di DB staging saat deploy — Docker lokal tidak berjalan sehingga pgTAP/live tidak bisa dijalankan di mesin ini
-  EVIDENCE: pending
+- [x] G12-M: Verifikasi RPC live (claim/dedupe/cap/tukar) di DB staging saat deploy — Docker lokal tidak berjalan sehingga pgTAP/live tidak bisa dijalankan di mesin ini
+  EVIDENCE: dieksekusi LANGSUNG di produksi via scripts/prod-rpc-smoke.mjs (akun test, 11/11 PASS): claim ok->duplicate (dedupe), currency=lakoin (flag off), tinta_balance bentuk benar, grant_author=disabled (flag), spend=insufficient. Kurs tukar & reward penulis tinggal knob admin saat PM menyalakan.
 
 - [x] G13: Closeout — typecheck + migration check + seluruh unit tests stream tinta & analytics hijau
   CHECK: pnpm run typecheck && pnpm run check:migration-versions && pnpm exec vitest run tests/tinta tests/analytics && echo GATE13_OK

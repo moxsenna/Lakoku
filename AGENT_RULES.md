@@ -27,17 +27,41 @@ produk. Nama produk konsumen: **Lakoku**.
 - Aplikasi **Android native (Kotlin)** menyusul sebagai **client kedua** di atas
   kontrak API yang sama, setelah metrik retensi/monetisasi web terbukti.
 
-### 2.1 Production deploy (wajib dibaca sebelum tanya user)
+### 2.2 Klien Android — LIVE (bukan rencana)
 
-- **Production app = VPS**, bukan Cloudflare Worker / Vercel default.
-- Runbook lengkap: **`docs/VPS_DEPLOY.md`** (entry singkat: `deploy/README.deploy.md`).
+- Aplikasi Android **sudah ada dan rilis** (bukan Kotlin native — diputuskan Capacitor/WebView,
+  `biz.lakoku.app`, track internal Play Console). Lihat `docs/CLIENT_SEQUENCING.md` §7.
+- Android memuat **web produksi yang sama** (`https://lakoku.biz.id`) dalam WebView: satu
+  database, satu auth Supabase, satu `credit_ledger`. Sinkronisasi web↔Android otomatis.
+- **Perubahan web-only (app/, components/, lib/, Supabase) OTOMATIS tampil di Android**
+  setelah deploy VPS — tanpa rilis Play Store baru.
+- **Perubahan yang menyentuh lapisan native WAJIB dikerjakan juga**, yaitu bila menyentuh:
+  `android/`, `capacitor.config.ts`, plugin Capacitor baru, permission Android, ikon/splash,
+  deep link, atau aturan Play (target API, billing). Prosedurnya: ubah → naikkan `versionCode`
+  → `gradlew bundleRelease` → verifikasi (`bundletool validate` + blok signature) →
+  serahkan AAB ke owner untuk upload (agen tidak punya akses Play Console).
+- **Dilarang** mengekspos alur pembayaran non-Play-Billing di dalam app Android (kebijakan
+  monetisasi Google): checkout PayCore hanya untuk web; kanal Android wajib Play Billing
+  (`app/api/play-billing/verify`, katalog `channel='android'`).
+- Secret native (`android/*.jks`, `android/keystore.properties`) tidak pernah di-commit,
+  tidak pernah dicetak ke chat/log.
+
+### 2.3 Production deploy (wajib dibaca sebelum tanya user)
+
+- **Production app = shared VPS** (`ubuntu@43.157.235.28`), bukan Cloudflare Worker /
+  Vercel default, bukan lagi Docker `/opt/lakoku` (legacy, lihat `docs/VPS_DEPLOY.md`).
+- Runbook lengkap: **`docs/DEPLOY-SHARED-VPS.md`** — native systemd **user** service
+  `mox-lakoku` + Cloudflare Tunnel. Path app: `/home/ubuntu/mox-apps/lakoku`,
+  service file menjalankan `. ./.env` lalu Next standalone (`LAKOKU_DEPLOY=vps`).
 - Kit multi-app VPS: **`D:\Coding\deploy-kit\AGENT-HANDOFF.md`** (+ `README.md`, `MULTI-APP.md`).
-- Path app: `/opt/lakoku`, container `lakoku-web`, port `127.0.0.1:5200`, domain
-  `https://lakoku.biz.id`, network Docker `wacrm_edge` (Caddy shared di `/opt/wacrm`).
-- Build mode VPS: `LAKOKU_DEPLOY=vps` → Next standalone (`Dockerfile` + `docker-compose.yml`).
+- Akses agen: helper Paramiko `D:\Coding\deploy-kit\scripts\shared-vps-exec.py`
+  (password di User env, jangan dicetak); SSH key lama hanya milik VPS legacy.
+- Batasan: mutasi hanya `/home/ubuntu/mox-apps/**` + unit user Mox; restart hanya
+  `mox-lakoku`; dilarang reboot/sentuh Docker/Caddy/firewall.
 - **DB production = Supabase linked** dari laptop (`pnpm exec supabase db push --linked`);
-  rebuild container **tidak** menerapkan migration.
-- Jangan tanya “deploy ke mana?” kecuali akses SSH/VPS gagal atau user minta override.
+  restart service **tidak** menerapkan migration.
+- Domain: `https://lakoku.biz.id`. Jangan tanya “deploy ke mana?” kecuali akses
+  SSH/VPS gagal atau user minta override.
 
 ## 3. Aturan wajib untuk client (web sekarang, Android nanti)
 
@@ -59,6 +83,9 @@ Semua ini berlaku identik untuk client mana pun:
 6. **Mobile-first.** Desain untuk layar sentuh vertikal; sesi baca pendek.
 7. **Jangan ubah** struktur 50 bab, story spine, atau terminologi publik tanpa
    persetujuan produk. (ARCH §23 #9)
+8. **Paritas Android.** Setiap fitur yang butuh perubahan native (§2.2) wajib menyertakan
+   perubahan `android/` + AAB terverifikasi dalam task yang sama. Dilarang selesai
+   "versi web saja" untuk fitur yang menyentuh lapisan native.
 
 ## 4. Gate yang harus dipahami
 
@@ -83,7 +110,8 @@ Semua ini berlaku identik untuk client mana pun:
 | `docs/PRD_Lakoku_Interactive_v0.3.md` | Spesifikasi produk, brand contract |
 | `docs/NARRATIVE_CONSISTENCY_SPEC.md` | Kontrak konsistensi naratif 50 bab (NCS) |
 | `docs/NARRATIVE_TRACEABILITY_MATRIX.md` | Gap → skema → validator → gate (NTM) |
-| `docs/AMENDMENTS_v0.6.md` | Amandemen terbaru: hard 800–1000 / soft 850–950 kata dan prompt writer tunggal — baca lebih dulu |
+| `docs/AMENDMENTS_v0.7.md` | Amandemen terbaru: permukaan admin/RBAC DB, config operasional, onboarding premis, katalog demo `bilik-ketujuh-kbm-v2` — baca lebih dulu |
+| `docs/AMENDMENTS_v0.6.md` | Hard 800–1000 / soft 850–950 kata dan prompt writer tunggal |
 | `docs/AMENDMENTS_v0.4.md` | Client sequencing web-first |
 | `docs/AMENDMENTS_v0.3.md` | Amandemen presisi sebelumnya |
 

@@ -4,7 +4,10 @@ import { notFound } from 'next/navigation'
 import { ArrowLeft, BookOpen, CheckCircle2, Footprints, Lock, RotateCcw, Sparkles } from 'lucide-react'
 import { getStory } from '@/lib/api/server'
 import { pickBigChoices } from '@/lib/api/share'
+import { getSessionUser } from '@/lib/api/user-state'
 import { ShareButton } from '@/components/share-button'
+import { AdsenseBanner } from '@/components/ads/adsense-banner'
+import { resolveAdSlot } from '@/lib/ads/server'
 
 const endingNames = [
   'Kebebasan',
@@ -22,6 +25,9 @@ export default async function AkhirCeritaPage({
   const { id } = await params
   const story = await getStory(id)
   if (!story || story.status !== 'SELESAI') notFound()
+
+  const user = await getSessionUser()
+  const adSlot = await resolveAdSlot({ slotKey: 'ending', userId: user?.id })
 
   const bigChoices = pickBigChoices(story.jejak)
   const tropes = story.tropes ?? []
@@ -156,6 +162,11 @@ export default async function AkhirCeritaPage({
           <p className="text-center text-xs text-muted-foreground">
             Baca ulang tidak mengubah apa pun — semua pilihanmu tetap terkunci.
           </p>
+
+          {adSlot.shouldRender && (
+            <AdsenseBanner clientId={adSlot.clientId} slotId={adSlot.slotId} />
+          )}
+
           <button
             type="button"
             disabled

@@ -116,6 +116,34 @@ async function loadPreviousChapterRow(
   }
 }
 
+/** Registry judul bab 1..N-1 untuk keunikan judul. Best-effort: gagal transient mengembalikan [] (tercatat). */
+async function loadPreviousTitles(
+  storyId: string,
+  beforeChapter: number,
+): Promise<string[]> {
+  try {
+    const db = createAdminClient()
+    const { data, error } = await db
+      .from('chapters')
+      .select('number, title')
+      .eq('story_id', storyId)
+      .lt('number', beforeChapter)
+      .order('number', { ascending: false })
+      .limit(24)
+    if (error) throw new Error(error.message)
+    return (data ?? [])
+      .map((row: { title: string }) => row.title)
+      .reverse()
+  } catch (error) {
+    console.log('CONTINUATION_PREVIOUS_TITLES_LOAD_FAILED', {
+      storyId,
+      beforeChapter,
+      message: error instanceof Error ? error.message : String(error),
+    })
+    return []
+  }
+}
+
 /** Consistency check saja — TIDAK mengganti choice_history. */
 async function checkOutcomeDrift(
   storyId: string,
@@ -276,6 +304,7 @@ export async function loadContinuationContextForChapter(input: {
   // 6) Build konteks (pure projection).
   const routeStateSummary = summarizeRouteStateForPrompt(narrative.routeState as RouteState)
   const storyAnchors = input.storyAnchors ?? (await loadStoryAnchorsBestEffort(input.storyId))
+  const previousTitles = await loadPreviousTitles(input.storyId, n)
   const continuation = buildContinuationContext({
     storyId: input.storyId,
     targetChapterNumber: n,
@@ -290,6 +319,7 @@ export async function loadContinuationContextForChapter(input: {
     routeStateSummary,
     lockedEndingKey: narrative.lockedEndingKey,
     storyAnchors,
+    previousTitles,
   })
 
   return { ok: true, continuation }

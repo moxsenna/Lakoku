@@ -87,3 +87,57 @@ export const updateGenerationPolicySchema = z
     path: ['targetWordsMax'],
   })
 export type UpdateGenerationPolicyInput = z.infer<typeof updateGenerationPolicySchema>
+
+export const updateRewardPolicySchema = z.object({
+  commissionPercent: z.number().int().min(0).max(50),
+  windowDays: z.number().int().min(1).max(365),
+  attributionCookieDays: z.number().int().min(1).max(365),
+  redeemRateIdrPerCredit: z.number().int().min(50).max(10000),
+  redeemMinIdr: z.number().int().min(0).max(1000000),
+  commissionEnabled: z.boolean(),
+  redeemEnabled: z.boolean(),
+  payoutEnabled: z.boolean(),
+  payoutMinIdr: z.number().int().min(0).max(10000000),
+  reason: z.string().min(5).max(500),
+})
+export type UpdateRewardPolicyInput = z.infer<typeof updateRewardPolicySchema>
+
+export const updateMissionPolicySchema = z.object({
+  missionsEnabled: z.boolean(),
+  adRewardEnabled: z.boolean(),
+  adsenseEnabled: z.boolean(),
+  checkinCredits: z.number().int().min(0).max(100),
+  choiceCredits: z.number().int().min(0).max(100),
+  adBatchCredits: z.number().int().min(0).max(100),
+  choiceRequired: z.number().int().min(1).max(50),
+  adsPerCredit: z.number().int().min(1).max(50),
+  adDailyCap: z.number().int().min(0).max(100),
+  ssvFreshnessSeconds: z.number().int().min(60).max(3600),
+  adsenseClientId: z.string().max(100),
+  adsenseSlotShareLanding: z.string().max(100),
+  adsenseSlotEnding: z.string().max(100),
+  adsenseSlotBeranda: z.string().max(100),
+  adsenseSlotCredit: z.string().max(100),
+  reason: z.string().min(5).max(500),
+})
+export type UpdateMissionPolicyInput = z.infer<typeof updateMissionPolicySchema>
+
+export const updateTintaPolicySchema = z
+  .object({
+    tintaPerRead: z.number().int().min(0).max(1000),
+    authorDailyCap: z.number().int().min(0).max(100000),
+    tintaCheckin: z.number().int().min(0).max(1000),
+    tintaChoice: z.number().int().min(0).max(1000),
+    tintaAdBatch: z.number().int().min(0).max(1000),
+    tintaPerLakoin: z.number().int().min(10).max(100000),
+    exchangeMinLakoin: z.number().int().min(1).max(10000),
+    pendingHours: z.number().int().min(0).max(168),
+    authorRewardsEnabled: z.boolean(),
+    exchangeEnabled: z.boolean(),
+    missionsPayTinta: z.boolean(),
+    reason: z.string().min(5).max(500),
+  })
+  .strict()
+export type UpdateTintaPolicyInput = z.infer<typeof updateTintaPolicySchema>
+
+

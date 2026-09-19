@@ -81,13 +81,13 @@ const LANGUAGE_OPTIONS: { id: LanguageStyle; label: string; desc: string }[] = [
   { id: 'cinematic_visual', label: LANGUAGE_STYLE_LABEL.cinematic_visual, desc: 'Adegan terasa hidup seperti rangkaian gambar dalam film' },
 ]
 
-const STEP_PHASES: TasteOnboardingPhase[] = [
+const STEP_PHASES = [
   'genre',
   'conflicts',
   'boundaries',
   'tone',
   'ending_style',
-]
+] as const satisfies readonly TasteOnboardingPhase[]
 
 function optionClass(active: boolean) {
   return cn(
@@ -189,6 +189,21 @@ export function TasteProfileFlow() {
       setPhase('genre')
       return
     }
+
+    // Drop-off per langkah — hanya stage + nomor + jumlah pilihan, tanpa isi jawaban.
+    const stepPhase = STEP_PHASES.find((p) => p === phase)
+    if (stepPhase) {
+      trackEvent('taste_onboarding_step_completed', {
+        stage: stepPhase,
+        step_number: STEP_PHASES.indexOf(stepPhase) + 1,
+        profile_version: 2,
+        genre_count: selectedGenreIds(answers).length,
+        conflict_count: answers.likedConflictIds.length,
+        soft_avoidance_count: answers.softAvoidanceIds.length,
+        boundary_count: answers.contentBoundaryIds.filter((id) => id !== BOUNDARY_NONE).length,
+      })
+    }
+
     if (phase === 'genre') {
       // Prune conflicts that no longer match genres
       const invalid = invalidConflictsAfterGenreChange(

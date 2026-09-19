@@ -25,6 +25,7 @@ import { GatewayError, scanForLeaks } from './gateway'
 import { GlobalInferenceBudgetError } from './global-inference-budget.contract'
 import { buildChoiceSystemPromptV2, AiChoiceDraftSchema } from './choice-draft-v2'
 import { clampChapterParagraphs, countParagraphWords } from '@/lib/prose/clamp-chapter-prose'
+import { stripEchoOpening } from '@/lib/prose/strip-echo-opening'
 import {
   buildProductionChapterWriterPrompt,
   buildWriterLengthRepairPrompt,
@@ -387,6 +388,7 @@ function reserveWriterInference(options: ModelCallExecutionOptions): void {
 async function generateProseWithLengthRepairV1(args: {
   candidate: ModelCandidate
   productionPrompt: Readonly<{ system: string; prompt: string }>
+  continuation?: ContinuationContext | null
   options: ModelCallExecutionOptions
   route?: AiModelRoute
 }): Promise<{ title: string; paragraphs: string[]; usedModel: string }> {
@@ -464,6 +466,13 @@ async function generateProseWithLengthRepairV1(args: {
           throw new InvalidModelResponseError(
             error instanceof Error ? error.message : undefined,
           )
+        }
+        // Anti-echo (T-NOVEL-QC1): strip sebelum completeness (parity jalur utama).
+        const previousEndingParagraphs = args.continuation?.previousChapter?.endingParagraphs ?? []
+        const echoStripped = stripEchoOpening(prose.paragraphs, previousEndingParagraphs)
+        if (echoStripped.strippedCount > 0) {
+          console.log('[WRITER_ECHO_STRIPPED]', { strippedCount: echoStripped.strippedCount })
+          prose = { ...prose, paragraphs: echoStripped.paragraphs }
         }
         const completenessInput = {
           finishReason: metadata.finishReason,
@@ -593,6 +602,7 @@ async function generateProse(args: {
     return generateProseWithLengthRepairV1({
       candidate,
       productionPrompt,
+      continuation: args.continuation,
       options: args.options,
       route: args.route,
     })
@@ -679,6 +689,15 @@ async function generateProse(args: {
                 throw new InvalidModelResponseError(
                   error instanceof Error ? error.message : undefined,
                 )
+              }
+              // Anti-echo (T-NOVEL-QC1): buang paragraf pembuka yang menyalin
+              // verbatim penutup bab sebelumnya SEBELUM completeness, supaya
+              // hitungan kata berlaku untuk teks yang benar-benar diterbitkan.
+              const previousEndingParagraphs = args.continuation?.previousChapter?.endingParagraphs ?? []
+              const echoStripped = stripEchoOpening(prose.paragraphs, previousEndingParagraphs)
+              if (echoStripped.strippedCount > 0) {
+                console.log('[WRITER_ECHO_STRIPPED]', { strippedCount: echoStripped.strippedCount })
+                prose = { ...prose, paragraphs: echoStripped.paragraphs }
               }
               const completenessInput = {
                 finishReason: metadata.finishReason,

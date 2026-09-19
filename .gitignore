@@ -51,3 +51,21 @@ supabase/.branches/
 # unlazy local state (machine-specific, never commit)
 .unlazy/
 .unlazy-hook-state.json
+
+# Capacitor Android build output
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/app/src/main/assets/public/
+android/capacitor-cordova-android-plugins/
+android/app/src/main/assets/capacitor.config.json
+
+# Android release signing (local secrets, never commit)
+android/*.jks
+android/keystore.properties
+store-assets/
+
+# Reticle runtime state & agent scratch (machine-local)
+.reticle/
+.sdd-scratch/

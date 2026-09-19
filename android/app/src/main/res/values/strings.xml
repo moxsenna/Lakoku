@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Lakoku</string>
+    <string name="title_activity_main">Lakoku</string>
+    <string name="package_name">biz.lakoku.app</string>
+    <string name="custom_url_scheme">biz.lakoku.app</string>
+</resources>

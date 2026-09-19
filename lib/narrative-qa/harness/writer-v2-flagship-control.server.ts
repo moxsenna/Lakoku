@@ -22,8 +22,8 @@ export const WRITER_V2_FLAGSHIP_CONTROL_CONFIG = Object.freeze({
   chapterNumber: 12,
   authorityMode: 'CHAPTER_BRIEF_V2' as const,
   provisionalCorpusManifestHash: '712d46e7b9a06394b98593ee537fab43c376cea4aebcc951d48b654d51ca6a2a',
-  readyAuthorityManifestHash: 'a82216c319af567b71bf3793bb9e0ccbfc4caad5c3b7ad4cc7ca1bd22b439c5f',
-  expectedProjectionHash: '2e0fd9bad777b798c95fe739bd41b5eb191c432009706514bcede7aad510fca4',
+  readyAuthorityManifestHash: '008739493e9603bc4b14fc6ba0d7bbeb02edbe38e03c3db71f03f789809064df',
+  expectedProjectionHash: '22025fccd0eccc2cbad458d3e828bb6dd2389f19ab83222638ece2786e138a22',
   provider: 'openrouter' as const,
   requestedModel: 'openai/gpt-5.6-sol' as const,
   configuredModel: 'openai/gpt-5.6-sol' as const,
@@ -129,7 +129,7 @@ export async function prepareWriterV2FlagshipControl() {
       numericParagraphControllersAbsent: NUMERIC_PARAGRAPH_CONTROLLERS.every(
         (pattern) => !pattern.test(envelope),
       ),
-      targetBandPresent: envelope.includes('850–950'),
+      targetBandPresent: envelope.includes('890–950'),
       hardBandPresent: envelope.includes('800–1000'),
     }),
   }

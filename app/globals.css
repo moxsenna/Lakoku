@@ -157,10 +157,39 @@
   animation: lk-pulse-soft 2.2s ease-in-out infinite;
 }
 
+/* Global pending bar — "app sedang bekerja, bukan ngefreeze".
+   Segmen merah-rose dengan kepala emas meluncur di tepi atas layar. */
+@keyframes lk-pending-glide {
+  0% {
+    transform: translateX(-110%);
+  }
+  60% {
+    transform: translateX(340%);
+  }
+  100% {
+    transform: translateX(340%);
+  }
+}
+
+.lk-pending-bar {
+  height: 3px;
+  width: 36%;
+  min-width: 90px;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, transparent 0%, var(--rose) 35%, var(--gold) 100%);
+  box-shadow: 0 0 10px rgba(168, 121, 51, 0.45);
+  opacity: 0.9;
+  animation: lk-pending-glide 1.15s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .lk-fade-up,
   .lk-pulse-soft {
     animation: none;
+  }
+  .lk-pending-bar {
+    width: 100%;
+    animation: lk-pulse-soft 1.6s ease-in-out infinite;
   }
 }
 

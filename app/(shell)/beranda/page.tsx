@@ -3,22 +3,29 @@ import Image from 'next/image'
 import { StoryCard } from '@/components/story-card'
 import { ResumeChapter } from '@/components/resume-chapter'
 import { TasteProfileFirstRunGate } from '@/components/onboarding/taste-profile-first-run-gate'
-import { listExploreStories, listMyLibraryStories } from '@/lib/api/server'
+import { listExploreStories, listMyLibraryStories, listPublicUserStories } from '@/lib/api/server'
 import { listPublicShareTeasers } from '@/lib/api/share'
+import { getSessionUser } from '@/lib/api/user-state'
+import { AdsenseBanner } from '@/components/ads/adsense-banner'
+import { resolveAdSlot } from '@/lib/ads/server'
 import { Play } from 'lucide-react'
 
 // Request-time data (Supabase). Avoid CF Workers Builds prerender without build env.
 export const dynamic = 'force-dynamic'
 
 export default async function BerandaPage() {
-  const [library, explore, publicShares] = await Promise.all([
+  const [library, explore, publicShares, publicUserStories, user] = await Promise.all([
     listMyLibraryStories(),
     listExploreStories(),
     listPublicShareTeasers(12).catch(() => []),
+    listPublicUserStories(12).catch(() => []),
+    getSessionUser(),
   ])
+  const adSlot = await resolveAdSlot({ slotKey: 'beranda', userId: user?.id })
   const berjalan = library.find((s) => s.status === 'BERJALAN')
   // Jelajahi: demo resmi + share publik (AMENDMENTS v0.5).
   const jelajahi = explore.filter((s) => s.id !== berjalan?.id)
+  const pembacaLain = publicUserStories.filter((s) => s.id !== berjalan?.id)
 
   return (
     <main className="flex flex-col gap-8 px-5 pt-8">
@@ -67,6 +74,10 @@ export default async function BerandaPage() {
               </div>
             </Link>
           </section>
+        )}
+
+        {adSlot.shouldRender && (
+          <AdsenseBanner clientId={adSlot.clientId} slotId={adSlot.slotId} />
         )}
 
         <section aria-labelledby="jelajahi-heading" className="flex flex-col gap-4">
@@ -120,6 +131,28 @@ export default async function BerandaPage() {
             </div>
           )}
         </section>
+
+        {pembacaLain.length > 0 && (
+          <section aria-labelledby="pembaca-lain-heading" className="flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h2 id="pembaca-lain-heading" className="font-serif text-xl text-foreground">
+                Dari Pembaca Lain
+              </h2>
+            </div>
+            <div className="flex flex-col gap-3">
+              {pembacaLain.map((story) => (
+                <div key={story.id} className="relative">
+                  <div className="pointer-events-none absolute right-3 top-3 z-10">
+                    <span className="rounded-full bg-gold/15 px-2.5 py-0.5 text-[10px] font-semibold tracking-wide text-gold">
+                      DARI PENULIS
+                    </span>
+                  </div>
+                  <StoryCard story={story} />
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section className="mb-4 flex flex-col items-start gap-3 rounded-3xl bg-secondary p-6">
           <h2 className="font-serif text-2xl leading-snug text-secondary-foreground text-balance">

@@ -4,12 +4,16 @@ import {
   BookOpenText,
   ChevronRight,
   Coins,
+  Feather,
   Footprints,
   Trophy,
+  Wallet,
+  Sparkles,
 } from 'lucide-react'
 import { listMyLibraryStories } from '@/lib/api/server'
 import { getReaderStates, getSessionUser } from '@/lib/api/user-state'
 import { getCreditBalance, getReadingPolicy } from '@/lib/credits/server'
+import { getTintaBalance } from '@/lib/tinta/server'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,9 +36,10 @@ export default async function ProfilPage() {
     listMyLibraryStories(),
     getReaderStates(),
   ])
-  const [creditBalance, policy] = await Promise.all([
+  const [creditBalance, policy, tintaBalance] = await Promise.all([
     user ? getCreditBalance(user.id) : Promise.resolve(0),
     getReadingPolicy(),
+    user ? getTintaBalance(user.id) : Promise.resolve({ total: 0, available: 0, pending: 0 }),
   ])
   const totalBerjalan = stories.filter((s) => s.status === 'BERJALAN').length
   const totalSelesai = stories.filter((s) => s.status === 'SELESAI').length
@@ -105,10 +110,67 @@ export default async function ProfilPage() {
               <Coins className="size-5" aria-hidden="true" />
             </span>
             <span className="flex min-w-0 flex-1 flex-col">
-              <span className="text-sm font-medium text-foreground">Kredit</span>
+              <span className="text-sm font-medium text-foreground">Lakoin</span>
               <span className="text-xs text-muted-foreground">{freeChapterText}</span>
               <span className="text-xs text-muted-foreground">
                 Saldo {creditBalance} · beli paket untuk buka bab
+              </span>
+            </span>
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          </Link>
+        )}
+
+        {user && (
+          <Link
+            href="/profil/tinta"
+            className="flex items-center gap-4 rounded-2xl bg-card p-4 transition-colors hover:bg-secondary/50"
+          >
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary">
+              <Feather className="size-5" aria-hidden="true" />
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="text-sm font-medium text-foreground">Tinta</span>
+              <span className="text-xs text-muted-foreground">
+                Saldo {tintaBalance.available} tersedia{tintaBalance.pending > 0 ? ` · ${tintaBalance.pending} sedang diproses` : ''}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Kumpulkan dari misi & karya · tukar ke Lakoin
+              </span>
+            </span>
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          </Link>
+        )}
+
+        {user && (
+          <Link
+            href="/misi"
+            className="flex items-center gap-4 rounded-2xl bg-card p-4 transition-colors hover:bg-secondary/50"
+          >
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary">
+              <Sparkles className="size-5" aria-hidden="true" />
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="text-sm font-medium text-foreground">Misi Harian</span>
+              <span className="text-xs text-muted-foreground">
+                Kumpulkan Lakoin gratis setiap hari
+              </span>
+            </span>
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          </Link>
+        )}
+
+        {user && (
+          <Link
+            href="/profil/imbalan"
+            className="flex items-center gap-4 rounded-2xl bg-card p-4 transition-colors hover:bg-secondary/50"
+          >
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary">
+              <Wallet className="size-5" aria-hidden="true" />
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="text-sm font-medium text-foreground">Dompet Imbalan</span>
+              <span className="text-xs text-muted-foreground">
+                Ajak teman membaca · Dapatkan komisi 10%
               </span>
             </span>
             <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />

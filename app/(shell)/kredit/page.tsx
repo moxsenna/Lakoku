@@ -1,8 +1,12 @@
 import Link from 'next/link'
 import { ArrowLeft, Coins, Gift, Sparkles } from 'lucide-react'
 import { BuyCreditButton } from '@/components/kredit/buy-credit-button'
+import { AndroidBuySection } from '@/components/kredit/android-buy-section'
+import { AdsenseBanner } from '@/components/ads/adsense-banner'
+import { resolveAdSlot, type ResolvedAdSlot } from '@/lib/ads/server'
 import { getSessionUser } from '@/lib/api/user-state'
 import { listCreditProducts, calculateTopupCredits } from '@/lib/paycore/products'
+import { getRequestChannel } from '@/lib/android/channel'
 import { getCreditBalance, getReadingPolicy } from '@/lib/credits/server'
 import { createAdminClient } from '@lakoku/db'
 
@@ -10,6 +14,10 @@ const idr = (n: number) => `Rp${new Intl.NumberFormat('id-ID').format(n)}`
 
 export default async function KreditPage() {
   const user = await getSessionUser()
+  // Kanal android (WebView, UA marker) → katalog Play Billing + sembunyikan
+  // PayCore & AdSense (kebijakan Google). Web tidak berubah.
+  const channel = await getRequestChannel()
+  const isAndroid = channel === 'android'
 
   // Cek apakah user baru (belum pernah topup) — untuk bonus first topup.
   let isFirstTopup = false
@@ -23,10 +31,12 @@ export default async function KreditPage() {
     }
   }
 
-  const [balance, products, policy] = await Promise.all([
+  const androidNoAds: ResolvedAdSlot = { shouldRender: false, clientId: '', slotId: '' }
+  const [balance, products, policy, adSlot] = await Promise.all([
     user ? getCreditBalance(user.id) : Promise.resolve(0),
-    listCreditProducts(),
+    listCreditProducts(isAndroid ? 'android' : 'web'),
     getReadingPolicy(),
+    isAndroid ? Promise.resolve(androidNoAds) : resolveAdSlot({ slotKey: 'credit', userId: user?.id }),
   ])
 
   // Best value = paket dgn harga per kredit termurah (dari base credits).
@@ -44,7 +54,7 @@ export default async function KreditPage() {
           >
             <ArrowLeft className="size-5" aria-hidden="true" />
           </Link>
-          <h1 className="font-serif text-2xl text-foreground">Kredit</h1>
+          <h1 className="font-serif text-2xl text-foreground">Lakoin</h1>
         </header>
 
         <section className="flex items-center gap-4 rounded-2xl bg-card p-5">
@@ -53,7 +63,7 @@ export default async function KreditPage() {
           </span>
           <div className="flex flex-col">
             <span className="text-xs text-muted-foreground">
-              {user ? 'Saldo kreditmu' : 'Harga kredit'}
+              {user ? 'Saldo Lakoinmu' : 'Harga Lakoin'}
             </span>
             <span className="font-serif text-3xl text-foreground">{user ? balance : 'Publik'}</span>
           </div>
@@ -63,21 +73,34 @@ export default async function KreditPage() {
           <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 px-4 py-3">
             <Sparkles className="size-4 shrink-0 text-emerald-500" aria-hidden="true" />
             <p className="text-xs text-emerald-700 dark:text-emerald-400 text-pretty">
-              Topup pertamamu dapat bonus kredit ekstra! Lihat di detail paket di bawah.
+              Topup pertamamu dapat bonus Lakoin ekstra! Lihat di detail paket di bawah.
             </p>
           </div>
         )}
 
         <p className="text-sm leading-relaxed text-muted-foreground text-pretty">
-          {policy.freeChapters} bab pertama tiap cerita gratis. Bab berikutnya {policy.creditsPerChapter} kredit
-          per bab. Kredit tak kedaluwarsa.
+          {policy.freeChapters} bab pertama tiap cerita gratis. Bab berikutnya {policy.creditsPerChapter} Lakoin
+          per bab. Lakoin tak kedaluwarsa.
         </p>
 
         <section className="flex flex-col gap-3">
           <h2 className="text-sm font-semibold tracking-wide text-lavender">PILIH PAKET</h2>
-          {products.length === 0 ? (
+          {isAndroid ? (
+            <AndroidBuySection
+              products={products.map((p) => ({
+                productKey: p.productKey,
+                playSku: p.playSku,
+                name: p.name,
+                referencePriceIdr: p.priceIdr,
+                baseCredits: p.credits,
+                displayBonusCredits: calculateTopupCredits(p, isFirstTopup).bonusCredits,
+                displayTotalCredits: calculateTopupCredits(p, isFirstTopup).totalCredits,
+                marketingBadge: p.marketingBadge,
+              }))}
+            />
+          ) : products.length === 0 ? (
             <p className="rounded-2xl bg-card p-5 text-sm text-muted-foreground">
-              Paket kredit belum tersedia. Coba lagi nanti.
+              Paket Lakoin belum tersedia. Coba lagi nanti.
             </p>
           ) : (
             <ul className="flex flex-col gap-3">
@@ -108,7 +131,7 @@ export default async function KreditPage() {
                       )}
                     </div>
                     <span className="text-xs text-muted-foreground">
-                      {p.credits} kredit
+                      {p.credits} Lakoin
                       {hasBonus && (
                         <span className="text-emerald-600 dark:text-emerald-400">
                           {' + bonus '}{calc.bonusCredits}
@@ -119,12 +142,12 @@ export default async function KreditPage() {
                     {showFirstTopupBonus && (
                       <span className="flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
                         <Gift className="size-3" aria-hidden="true" />
-                        Bonus topup pertama: +{p.firstTopupBonusCredits} kredit
+                        Bonus topup pertama: +{p.firstTopupBonusCredits} Lakoin
                       </span>
                     )}
                     {!isFirstTopup && hasBonus && p.normalBonusCredits > 0 && (
                       <span className="text-[11px] text-muted-foreground">
-                        Termasuk bonus +{p.normalBonusCredits} kredit
+                        Termasuk bonus +{p.normalBonusCredits} Lakoin
                       </span>
                     )}
                     <span className="mt-1 text-sm font-medium text-foreground">{idr(p.priceIdr)}</span>
@@ -137,9 +160,15 @@ export default async function KreditPage() {
           )}
         </section>
 
-        <p className="text-center text-[11px] text-muted-foreground">
-          Pembayaran diproses aman oleh PayCore. Kredit masuk otomatis setelah pembayaran berhasil.
-        </p>
+        {adSlot.shouldRender && (
+          <AdsenseBanner clientId={adSlot.clientId} slotId={adSlot.slotId} />
+        )}
+
+        {!isAndroid && (
+          <p className="text-center text-[11px] text-muted-foreground">
+            Pembayaran diproses aman oleh PayCore. Lakoin masuk otomatis setelah pembayaran berhasil.
+          </p>
+        )}
     </main>
   )
 }

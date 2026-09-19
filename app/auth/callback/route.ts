@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireSupabaseAnonKey, requireSupabaseUrl } from '@/lib/supabase/env'
 import { sanitizeNextPath } from '@/lib/auth/safe-next'
 import { getPublicOrigin } from '@/lib/auth/public-origin'
+import { REFERRAL_COOKIE_NAME } from '@/lib/rewards/policy'
+import { recordReferralAttribution } from '@/lib/rewards/attribution.server'
 
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl
@@ -38,9 +40,26 @@ export async function GET(request: NextRequest) {
     },
   })
 
-  const { error } = await supabase.auth.exchangeCodeForSession(code)
+  const { data: sessionData, error } = await supabase.auth.exchangeCodeForSession(code)
   if (error) {
     return redirectAuthError(origin, 'oauth_error')
+  }
+
+  // Hook atribusi referral (non-blocking, fail-safe)
+  const referralCookie = request.cookies.get(REFERRAL_COOKIE_NAME)?.value
+  if (referralCookie && sessionData?.user?.id) {
+    try {
+      await recordReferralAttribution(sessionData.user.id, referralCookie, 'referral_code')
+      // Bersihkan cookie agar tidak diproses berulang
+      successResponse.cookies.set({
+        name: REFERRAL_COOKIE_NAME,
+        value: '',
+        maxAge: 0,
+        path: '/',
+      })
+    } catch (attributionErr) {
+      console.log('[auth/callback] attribution hook non-fatal error:', attributionErr)
+    }
   }
 
   return successResponse

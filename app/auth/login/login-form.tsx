@@ -1,13 +1,14 @@
 'use client'
 
-import { useState, useSyncExternalStore } from 'react'
+import { useRef, useState, useSyncExternalStore } from 'react'
 import Link from 'next/link'
 import { createClient, type SupabasePublicConfig } from '@/lib/supabase/client'
 import { readGuestTasteProfile, clearGuestTasteProfile } from '@/lib/taste-profile/storage'
 import { actMergeGuestTasteProfile } from '@/app/onboarding/selera/actions'
 import { sanitizeNextPath } from '@/lib/auth/safe-next'
+import { beginPending, endPending } from '@/lib/loading/pending'
 import { GoogleSignInButton } from '@/components/auth/google-sign-in-button'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Loader2 } from 'lucide-react'
 
 const subscribeToMounted = () => () => {}
 const getMountedSnapshot = () => true
@@ -31,6 +32,9 @@ export function LoginForm({
   const [emailLoading, setEmailLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const busy = emailLoading || googleLoading
+  // Guard sinkron: state `busy` belum ter-commit saat klik kedua datang dalam
+  // puluhan ms, sehingga disabled={busy} saja bisa kena race double-submit.
+  const submitGuardRef = useRef(false)
   const mounted = useSyncExternalStore(
     subscribeToMounted,
     getMountedSnapshot,
@@ -40,9 +44,11 @@ export function LoginForm({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (busy) return
+    if (busy || submitGuardRef.current) return
+    submitGuardRef.current = true
     setEmailLoading(true)
     setError(null)
+    beginPending()
 
     try {
       if (!supabaseConfig?.url || !supabaseConfig?.anonKey) {
@@ -57,7 +63,11 @@ export function LoginForm({
       })
       const { error } = await Promise.race([signIn, timeout])
       if (error) {
-        setError('Email atau kata sandi salah. Coba lagi.')
+        if (error.code === 'email_not_confirmed') {
+          setError('Emailmu belum dikonfirmasi. Buka tautan konfirmasi di inbox, lalu masuk lagi.')
+        } else {
+          setError('Email atau kata sandi salah. Coba lagi.')
+        }
         return
       }
 
@@ -85,7 +95,9 @@ export function LoginForm({
       }
     } finally {
       // Jika hard nav jalan, unmount mengabaikan ini. Jika gagal, tombol bisa dipakai lagi.
+      submitGuardRef.current = false
       setEmailLoading(false)
+      endPending()
     }
   }
 
@@ -180,8 +192,10 @@ export function LoginForm({
           <button
             type="submit"
             disabled={busy}
-            className="mt-2 flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+            aria-busy={emailLoading || undefined}
+            className="mt-2 flex min-h-13 items-center justify-center gap-2 rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
           >
+            {emailLoading && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
             {emailLoading ? 'Membuka pintu...' : resumeOnboarding ? 'Simpan Ceritaku' : 'Masuk'}
           </button>
         </form>

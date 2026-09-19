@@ -5,6 +5,8 @@ import { BookOpen, Footprints, Sparkles, Trophy, Users } from 'lucide-react'
 import { getShareBySlug } from '@/lib/api/share'
 import { getSessionUser } from '@/lib/api/user-state'
 import { StartFromShareButton } from '@/components/start-from-share-button'
+import { AdsenseBanner } from '@/components/ads/adsense-banner'
+import { resolveAdSlot } from '@/lib/ads/server'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,6 +20,7 @@ export default async function ShareLandingPage({
   if (!share) notFound()
 
   const user = await getSessionUser()
+  const adSlot = await resolveAdSlot({ slotKey: 'shareLanding', userId: user?.id })
   const t = share.teaser
   const ending = t.endingName ?? 'Akhir Cerita'
 
@@ -151,6 +154,10 @@ export default async function ShareLandingPage({
             yang sama atau akhir yang berbeda.
           </p>
         </div>
+
+        {adSlot.shouldRender && (
+          <AdsenseBanner clientId={adSlot.clientId} slotId={adSlot.slotId} />
+        )}
 
         {/* CTA */}
         <div className="mt-auto flex flex-col gap-3">

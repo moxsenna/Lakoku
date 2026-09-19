@@ -42,7 +42,7 @@ export function ChapterLocked({
       }
       if (res.status === 402) {
         setInsufficient(true)
-        setError('Kreditmu belum cukup.')
+        setError('Lakoinmu belum cukup.')
       } else {
         setError('Gagal membuka bab. Coba lagi.')
       }
@@ -75,13 +75,13 @@ export function ChapterLocked({
             Bab {chapterNumber} terkunci
           </h1>
           <p className="text-sm leading-relaxed text-muted-foreground text-pretty">
-            Buka bab ini dengan {cost} kredit untuk melanjutkan kisahmu.
+            Buka bab ini dengan {cost} Lakoin untuk melanjutkan kisahmu.
           </p>
         </div>
 
         <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
           <Coins className="size-4 text-gold" aria-hidden="true" />
-          Saldo kreditmu: <strong className="text-foreground">{balance}</strong>
+          Saldo Lakoinmu: <strong className="text-foreground">{balance}</strong>
         </span>
 
         {error && (
@@ -95,7 +95,7 @@ export function ChapterLocked({
             href="/kredit"
             className="flex min-h-13 w-full items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
           >
-            Beli kredit
+            Beli Lakoin
           </Link>
         ) : (
           <button
@@ -104,7 +104,7 @@ export function ChapterLocked({
             disabled={loading}
             className="flex min-h-13 w-full items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
           >
-            {loading ? 'Membuka…' : `Buka bab (${cost} kredit)`}
+            {loading ? 'Membuka…' : `Buka bab (${cost} Lakoin)`}
           </button>
         )}
 

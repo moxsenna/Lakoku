@@ -8,6 +8,9 @@ import { EditCreditProductDialog, type CreditProductRow } from '@/components/adm
 import { EditFeatureCreditCostDialog } from '@/components/admin/settings/edit-feature-credit-cost-dialog'
 import { EditGenerationPolicyDialog } from '@/components/admin/settings/edit-generation-policy-dialog'
 import { EditAiModelRouteDialog } from '@/components/admin/settings/edit-ai-model-route-dialog'
+import { EditRewardPolicyDialog } from '@/components/admin/settings/edit-reward-policy-dialog'
+import { EditMissionPolicyDialog } from '@/components/admin/settings/edit-mission-policy-dialog'
+import { EditTintaPolicyDialog } from '@/components/admin/settings/edit-tinta-policy-dialog'
 import { idr, isoDatetime } from '@/lib/admin/format'
 import { Pencil } from 'lucide-react'
 
@@ -42,6 +45,50 @@ interface SettingsData {
   featureCreditCosts: {
     featureKey: string; creditsRequired: number; isActive: boolean; pricingVersion: string; updatedAt: string | null
   }[]
+  rewardPolicy: {
+    commissionPercent: number
+    windowDays: number
+    attributionCookieDays: number
+    redeemRateIdrPerCredit: number
+    redeemMinIdr: number
+    commissionEnabled: boolean
+    redeemEnabled: boolean
+    payoutEnabled: boolean
+    payoutMinIdr: number
+    updatedAt: string | null
+  } | null
+  missionPolicy: {
+    missionsEnabled: boolean
+    adRewardEnabled: boolean
+    adsenseEnabled: boolean
+    checkinCredits: number
+    choiceCredits: number
+    adBatchCredits: number
+    choiceRequired: number
+    adsPerCredit: number
+    adDailyCap: number
+    ssvFreshnessSeconds: number
+    adsenseClientId: string
+    adsenseSlotShareLanding: string
+    adsenseSlotEnding: string
+    adsenseSlotBeranda: string
+    adsenseSlotCredit: string
+    updatedAt: string | null
+  } | null
+  tintaPolicy?: {
+    tintaPerRead: number
+    authorDailyCap: number
+    tintaCheckin: number
+    tintaChoice: number
+    tintaAdBatch: number
+    tintaPerLakoin: number
+    exchangeMinLakoin: number
+    pendingHours: number
+    authorRewardsEnabled: boolean
+    exchangeEnabled: boolean
+    missionsPayTinta: boolean
+    updatedAt: string | null
+  } | null
   recentAuditLogs: {
     id: string; adminEmail: string | null; settingArea: string; settingKey: string
     oldValue: unknown; newValue: unknown; reason: string; createdAt: string
@@ -90,6 +137,9 @@ export default function AdminSettingsPage() {
   const [editFeature, setEditFeature] = useState<{ featureKey: string; creditsRequired: number; isActive: boolean; pricingVersion: string } | null>(null)
   const [editGenPolicy, setEditGenPolicy] = useState(false)
   const [editRoute, setEditRoute] = useState<RouteRow | null>(null)
+  const [editRewardPolicy, setEditRewardPolicy] = useState(false)
+  const [editMissionPolicy, setEditMissionPolicy] = useState(false)
+  const [editTintaPolicy, setEditTintaPolicy] = useState(false)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -242,6 +292,245 @@ export default function AdminSettingsPage() {
         )}
       </AdminSectionCard>
 
+      {/* Dompet Imbalan & Referral Policy */}
+      <AdminSectionCard
+        title="Dompet Imbalan & Referral"
+        subtitle="Kebijakan komisi top-up, atribusi first-touch, dan penukaran ke kredit"
+      >
+        {data.rewardPolicy ? (
+          <div>
+            {data.rewardPolicy.commissionEnabled && (
+              <div className="border-b border-border bg-amber-500/10 px-4 py-2 text-xs text-amber-500 flex items-center gap-2">
+                <span className="inline-block size-2 rounded-full bg-amber-400 shrink-0" />
+                <span>
+                  <strong>Perhatian:</strong> Komisi referral aktif sementara biaya inferensi 9Router belum terukur di produksi (UNMEASURED). Pantau margin berkala.
+                </span>
+              </div>
+            )}
+            <div className="flex items-end justify-between p-4">
+              <div className="flex flex-wrap gap-6">
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Status Komisi</span>
+                  <div className="mt-0.5">
+                    <StatusBadge status={data.rewardPolicy.commissionEnabled ? 'active' : 'inactive'} />
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Komisi Top-Up</span>
+                  <div className="text-sm font-semibold">{data.rewardPolicy.commissionPercent}%</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Jendela Komisi</span>
+                  <div className="text-sm font-semibold">{data.rewardPolicy.windowDays} hari</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Umur Cookie /r/</span>
+                  <div className="text-sm font-semibold">{data.rewardPolicy.attributionCookieDays} hari</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Kurs Penukaran</span>
+                  <div className="text-sm font-semibold">{idr(data.rewardPolicy.redeemRateIdrPerCredit)} / kredit</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Min. Tukar</span>
+                  <div className="text-sm font-semibold">{idr(data.rewardPolicy.redeemMinIdr)}</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Tukar ke Kredit</span>
+                  <div className="mt-0.5">
+                    <StatusBadge status={data.rewardPolicy.redeemEnabled ? 'active' : 'inactive'} />
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Pencairan Tunai</span>
+                  <div className="mt-0.5">
+                    <span className="inline-flex items-center rounded px-2 py-0.5 text-[10px] font-medium bg-muted text-muted-foreground">
+                      Segera Hadir
+                    </span>
+                  </div>
+                </div>
+              </div>
+              {owner && (
+                <button
+                  onClick={() => setEditRewardPolicy(true)}
+                  className="text-lavender hover:underline text-[10px] flex items-center gap-1 shrink-0 ml-4"
+                >
+                  <Pencil className="size-3" />
+                  Edit Kebijakan
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <AdminEmptyState message="Kebijakan dompet imbalan belum diinisialisasi." />
+        )}
+      </AdminSectionCard>
+
+      {/* Misi Bergamifikasi & Iklan Policy */}
+      <AdminSectionCard
+        title="Misi Bergamifikasi & Iklan"
+        subtitle="Kebijakan misi harian, kuota iklan rewarded (AdMob), dan slot AdSense web"
+      >
+        {data.missionPolicy ? (
+          <div>
+            {data.missionPolicy.adRewardEnabled && (
+              <div className="border-b border-border bg-amber-500/10 px-4 py-2 text-xs text-amber-500 flex items-center gap-2">
+                <span className="inline-block size-2 rounded-full bg-amber-400 shrink-0" />
+                <span>
+                  <strong>Perhatian:</strong> Imbalan iklan rewarded aktif. Setiap kredit didanai inferensi berbayar; pantau kuota harian dan aktivitas klaim.
+                </span>
+              </div>
+            )}
+            <div className="flex items-end justify-between p-4">
+              <div className="flex flex-wrap gap-6">
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Status Misi</span>
+                  <div className="mt-0.5">
+                    <StatusBadge status={data.missionPolicy.missionsEnabled ? 'active' : 'inactive'} />
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Imbalan Iklan</span>
+                  <div className="mt-0.5">
+                    <StatusBadge status={data.missionPolicy.adRewardEnabled ? 'active' : 'inactive'} />
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">AdSense Web</span>
+                  <div className="mt-0.5">
+                    <StatusBadge status={data.missionPolicy.adsenseEnabled ? 'active' : 'inactive'} />
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Kredit Hadir</span>
+                  <div className="text-sm font-semibold">{data.missionPolicy.checkinCredits}</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Kredit Pilihan</span>
+                  <div className="text-sm font-semibold">{data.missionPolicy.choiceCredits} (min. {data.missionPolicy.choiceRequired})</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Kredit Iklan</span>
+                  <div className="text-sm font-semibold">
+                    {data.missionPolicy.adBatchCredits} / {data.missionPolicy.adsPerCredit} tonton (max {data.missionPolicy.adDailyCap}/hari)
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">AdSense Client</span>
+                  <div className="text-xs font-mono text-foreground">
+                    {data.missionPolicy.adsenseClientId ? `${data.missionPolicy.adsenseClientId.slice(0, 14)}...` : '-'}
+                  </div>
+                </div>
+              </div>
+              {owner && (
+                <button
+                  onClick={() => setEditMissionPolicy(true)}
+                  className="text-lavender hover:underline text-[10px] flex items-center gap-1 shrink-0 ml-4"
+                >
+                  <Pencil className="size-3" />
+                  Edit Kebijakan
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <AdminEmptyState message="Kebijakan misi dan iklan belum diinisialisasi." />
+        )}
+      </AdminSectionCard>
+
+      {/* Ekonomi Tinta & Lakoin */}
+      <AdminSectionCard
+        title="Ekonomi Tinta & Lakoin"
+        subtitle="Kebijakan reward penulis, kurs penukaran Tinta ke Lakoin, dan mata uang misi"
+      >
+        {data.tintaPolicy ? (
+          <div>
+            {(data.tintaPolicy.authorRewardsEnabled || data.tintaPolicy.exchangeEnabled) && (
+              <div className="border-b border-border bg-amber-500/10 px-4 py-2 text-xs text-amber-500 flex items-center gap-2">
+                <span className="inline-block size-2 rounded-full bg-amber-400 shrink-0" />
+                <span>
+                  <strong>Perhatian:</strong> Fitur ekonomi aktif ({[
+                    data.tintaPolicy.authorRewardsEnabled ? 'Reward Penulis' : null,
+                    data.tintaPolicy.exchangeEnabled ? 'Penukaran Tinta' : null,
+                  ].filter(Boolean).join(' & ')}). Pantau beban ekonomi dan laju penerbitan secara berkala.
+                </span>
+              </div>
+            )}
+            <div className="flex items-end justify-between p-4">
+              <div className="flex flex-wrap gap-6">
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Reward Penulis</span>
+                  <div className="mt-0.5">
+                    <StatusBadge status={data.tintaPolicy.authorRewardsEnabled ? 'active' : 'inactive'} />
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Tukar Tinta→Lakoin</span>
+                  <div className="mt-0.5">
+                    <StatusBadge status={data.tintaPolicy.exchangeEnabled ? 'active' : 'inactive'} />
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Mata Uang Misi</span>
+                  <div className="mt-0.5">
+                    <span className={`inline-flex items-center rounded px-2 py-0.5 text-[10px] font-medium ${
+                      data.tintaPolicy.missionsPayTinta
+                        ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                        : 'bg-muted text-muted-foreground'
+                    }`}>
+                      {data.tintaPolicy.missionsPayTinta ? 'Tinta' : 'Lakoin'}
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Tinta per Baca</span>
+                  <div className="text-sm font-semibold">{data.tintaPolicy.tintaPerRead} Tinta</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Batas Harian Penulis</span>
+                  <div className="text-sm font-semibold">{data.tintaPolicy.authorDailyCap} Tinta/hari</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Kurs Penukaran</span>
+                  <div className="text-sm font-semibold">{data.tintaPolicy.tintaPerLakoin} Tinta = 1 Lakoin</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Min. Penukaran</span>
+                  <div className="text-sm font-semibold">{data.tintaPolicy.exchangeMinLakoin} Lakoin</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Jendela Pending</span>
+                  <div className="text-sm font-semibold">{data.tintaPolicy.pendingHours} jam</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Paket Misi (H/P/I)</span>
+                  <div className="text-sm font-semibold">
+                    {data.tintaPolicy.tintaCheckin} / {data.tintaPolicy.tintaChoice} / {data.tintaPolicy.tintaAdBatch}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground">Pembaruan Terakhir</span>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {data.tintaPolicy.updatedAt ? isoDatetime(data.tintaPolicy.updatedAt) : '-'}
+                  </div>
+                </div>
+              </div>
+              {owner && (
+                <button
+                  onClick={() => setEditTintaPolicy(true)}
+                  className="text-lavender hover:underline text-[10px] flex items-center gap-1 shrink-0 ml-4"
+                >
+                  <Pencil className="size-3" />
+                  Edit Kebijakan
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <AdminEmptyState message="Kebijakan ekonomi Tinta & Lakoin belum diinisialisasi." />
+        )}
+      </AdminSectionCard>
+
       {/* Recent Audit Logs */}
       <AdminSectionCard title="Recent Settings Changes" subtitle={`${data.recentAuditLogs.length} entries`}>
         {data.recentAuditLogs.length === 0 ? <AdminEmptyState /> : (
@@ -276,6 +565,27 @@ export default function AdminSettingsPage() {
           route={editRoute}
           proseRoute={data.aiModelRoutes.find((r) => r.useCase === 'chapter_prose') ?? null}
           onClose={() => setEditRoute(null)}
+          onSaved={loadData}
+        />
+      )}
+      {editRewardPolicy && data.rewardPolicy && (
+        <EditRewardPolicyDialog
+          policy={data.rewardPolicy}
+          onClose={() => setEditRewardPolicy(false)}
+          onSaved={loadData}
+        />
+      )}
+      {editMissionPolicy && data.missionPolicy && (
+        <EditMissionPolicyDialog
+          policy={data.missionPolicy}
+          onClose={() => setEditMissionPolicy(false)}
+          onSaved={loadData}
+        />
+      )}
+      {editTintaPolicy && data.tintaPolicy && (
+        <EditTintaPolicyDialog
+          policy={data.tintaPolicy}
+          onClose={() => setEditTintaPolicy(false)}
           onSaved={loadData}
         />
       )}

@@ -13,6 +13,39 @@ function writerVisible(value: string, authorityIds: readonly string[]): string {
   return visible
 }
 
+/** Stopword umum judul; tidak berguna sebagai ban kata kunci. */
+const TITLE_KEYWORD_STOPWORDS = new Set([
+  'yang', 'dari', 'dengan', 'untuk', 'pada', 'dalam', 'antara', 'setelah',
+  'sebelum', 'para', 'siapa', 'ketika', 'karena',
+])
+
+/**
+ * Kata kunci yang muncul di >= minTitles judul berbeda — kandidat ban agar
+ * kosakata judul tidak kolaps (mis. "balik" muncul di 16 dari 50 judul).
+ * Deterministik: hitung per judul (bukan per kemunculan), urut alfabetis.
+ */
+export function dominantTitleKeywords(
+  titles: readonly string[],
+  minTitles = 3,
+): string[] {
+  const titlesByWord = new Map<string, Set<number>>()
+  titles.forEach((title, index) => {
+    const words = title
+      .toLowerCase()
+      .split(/[^a-z]+/)
+      .filter((word) => word.length >= 4 && !TITLE_KEYWORD_STOPWORDS.has(word))
+    for (const word of new Set(words)) {
+      const set = titlesByWord.get(word) ?? new Set<number>()
+      set.add(index)
+      titlesByWord.set(word, set)
+    }
+  })
+  return [...titlesByWord.entries()]
+    .filter(([, indices]) => indices.size >= minTitles)
+    .map(([word]) => word)
+    .sort()
+}
+
 function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptParts {
   const brief = input.brief
   if (!brief) throw new Error('CHAPTER_BRIEF_V2_BRIEF_REQUIRED')
@@ -75,10 +108,14 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
     .map((paragraph) => `> ${safe(paragraph)}`)
     .join('\n') ?? '-'
   const previousChoice = cc?.previousChoice
+  const echoGuard = cc?.previousChapter
+    ? '- Paragraf-paragraf di atas adalah PENUTUP BAB SEBELUMNYA yang sudah dibaca pembaca. DILARANG mengulangnya (verbatim maupun nyaris verbatim) sebagai paragraf pembuka bab ini. Buka bab ini dengan adegan BARU yang langsung melanjutkan akibat pilihan pembaca.'
+    : ''
   const context = [
     '=== KONTEKS: RIWAYAT PEMBACA & AKIBAT PILIHAN ===',
     'Potongan Paragraf Akhir Bab Sebelumnya:',
     previousEnding,
+    echoGuard,
     previousChoice ? `- Pilihan: "${safe(previousChoice.label)}"` : '- Pilihan: -',
     previousChoice
       ? `- Konsekuensi Kanonik: ${previousChoice.consequence.map(safe).join(' / ')}`
@@ -94,7 +131,7 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
     `- Tujuan Bab: ${safe(brief.chapterGoal)}`,
     beats.length > 0 ? '- Beat Wajib yang Harus Dijalani Tokoh:' : '',
     ...lines(beats),
-    '- Urai setiap beat secara mendalam menjadi rangkaian interaksi bertahap; jangan meringkas satu beat hanya dalam 2–3 paragraf singkat.',
+    '- Urai setiap beat secara mendalam menjadi rangkaian interaksi bertahap; jangan meringkas satu beat hanya dalam segelintir paragraf singkat.',
     '- Khusus Bab 45 ke atas atau bab resolusi/klimaks: Urai proses pemulihan, percakapan konfrontasi/penyelesaian mendalam antar tokoh, dan konsekuensi pilihan secara bertahap menjadi 4 adegan berbobot. DILARANG merangkum atau mempercepat adegan menuju akhir sebelum mencapai target panjang kata.',
     '- Tulis 4 adegan berkesinambungan di lokasi fisik nyata yang mengalir tanpa lompatan waktu drastis.',
     '- Hidupkan adegan dengan percakapan langsung: Sertakan banyak interaksi dialog bolak-balik antar tokoh (minimal 12–16 pertukaran ucapan) agar suasana hidup dan naskah tidak menjadi monolog sepi.',
@@ -136,7 +173,7 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
 
   const p5 = [
     '=== [P5] RITME PARAGRAF KUALITATIF ===',
-    '- Paragraf Ringkas: Setiap paragraf wajib bernapas lega. Cukup satu atau dua kalimat pendek saja (1–2 kalimat per paragraf).',
+    '- Paragraf Ringkas: Setiap paragraf wajib bernapas lega. Cukup satu atau dua kalimat pendek saja per paragraf.',
     '- DILARANG menumpuk banyak kalimat dalam satu blok paragraf. Hindari paragraf berjejal atau dinding teks.',
     '- Dialog Mandiri: Setiap baris ucapan dialog tokoh WAJIB berdiri sendiri dalam paragraf terpisah. Jangan satukan dialog dengan kalimat narasi panjang.',
     '- Pemisahan Aksi & Reaksi: Pecah runtutan aksi fisik, reaksi emosi, dan detail sensorik menjadi paragraf-paragraf mandiri yang terpisah satu baris kosong.',
@@ -148,6 +185,13 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
   // sampai ke penulis, sehingga bab berurutan bisa terbit dengan judul
   // identik (mis. Bab 4 & Bab 5 sama-sama "Jejak di Balik Pintu").
   const previousTitle = cc?.previousChapter?.title
+  // Registry judul: novel produksi pernah terbit dengan judul duplikat lintas
+  // bab yang tidak berurutan ("Bayang-Bayang di Balik Daun Pintu" 3x) dan
+  // kosakata judul yang kolaps (balik/bawah/jejak dominan). Ban eksplisit.
+  const usedTitles = [...new Set((cc?.previousTitles ?? [])
+    .map((title) => title.trim())
+    .filter(Boolean))]
+  const dominantKeywords = dominantTitleKeywords(usedTitles)
   const output = [
     '=== KONTRAK KELUARAN ===',
     'Keluaran WAJIB diawali dengan:',
@@ -155,6 +199,13 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
     previousTitle
       ? `- Judul bab sebelumnya adalah "${safe(previousTitle)}". DILARANG memakai judul itu lagi atau variasi yang nyaris sama. Judul bab ini WAJIB berbeda.`
       : '',
+    usedTitles.length > 0
+      ? `- REGISTRY JUDUL SUDAH DIPAKAI bab lain (DILARANG memakai judul yang sama atau nyaris sama): ${usedTitles.map((title) => `"${safe(title)}"`).join(', ')}.`
+      : '',
+    dominantKeywords.length > 0
+      ? `- Kata-kata berikut sudah terlalu sering muncul di judul-judul sebelumnya (DILARANG menjadi kata utama judul baru): ${dominantKeywords.join(', ')}.`
+      : '',
+    '- Judul bab ini WAJIB unik (belum pernah dipakai di bab mana pun) dan memakai kosakata segar yang spesifik dengan isi bab ini.',
     '- Panjang naskah WAJIB berada dalam rentang 800–1000 kata (target ideal: 890–950 kata), dengan setiap paragraf berupa kalimat utuh sekitar 10–20 kata.',
     '<Prosa lengkap...>',
   ].filter(Boolean).join('\n')

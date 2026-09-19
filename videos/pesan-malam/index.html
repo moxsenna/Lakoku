@@ -1,0 +1,866 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      /* ---- Fonts: self-embedded, HyperFrames tidak membundel dua keluarga ini ---- */
+      @font-face {
+        font-family: "DM Serif Display";
+        src: url("assets/fonts/dmserif-400.woff2") format("woff2");
+        font-weight: 400;
+        font-style: normal;
+        font-display: block;
+      }
+      @font-face {
+        font-family: "Plus Jakarta Sans";
+        src: url("assets/fonts/jakarta-var.woff2") format("woff2");
+        font-weight: 200 800;
+        font-style: normal;
+        font-display: block;
+      }
+
+      /* ---- Palet dikutip dari app/globals.css (tema gelap) ---- */
+      :root {
+        --ink: #191319;
+        --plum: #3d1f3d;
+        --rose: #c94967;
+        --gold: #d5a45c;
+        --cream: #fff7ee;
+        --mauve: #e8dce8;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: var(--ink);
+      }
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+        color: var(--cream);
+        background: var(--ink);
+      }
+
+      .clip {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+      }
+
+      .serif {
+        font-family: "DM Serif Display", Georgia, serif;
+        font-weight: 400;
+      }
+
+      /* =========================================================
+         BABAK 1-3 — piring foto malam + UI pilihan
+         ========================================================= */
+      #scene-plate {
+        background: var(--ink);
+      }
+      #camera {
+        position: absolute;
+        inset: 0;
+        transform-origin: 50% 50%;
+        will-change: transform;
+      }
+      .plate-img {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: 50% 50%;
+      }
+      /* Vignette radial — bukan gradien linear layar penuh (banding H.264). */
+      .plate-vignette {
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(
+          ellipse 78% 62% at 42% 38%,
+          rgba(25, 19, 25, 0) 0%,
+          rgba(25, 19, 25, 0.28) 55%,
+          rgba(25, 19, 25, 0.82) 100%
+        );
+      }
+      /* Scrim lokal di bawah UI supaya teks tetap terbaca di ponsel. */
+      .plate-scrim {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 860px;
+        height: 1060px;
+        background: linear-gradient(
+          to bottom,
+          rgba(25, 19, 25, 0) 0%,
+          rgba(25, 19, 25, 0.72) 42%,
+          rgba(25, 19, 25, 0.94) 100%
+        );
+      }
+      #plate-glow {
+        position: absolute;
+        left: -120px;
+        right: -120px;
+        top: 760px;
+        height: 780px;
+        background: radial-gradient(
+          ellipse 50% 50% at 50% 50%,
+          rgba(61, 31, 61, 0.55) 0%,
+          rgba(61, 31, 61, 0) 70%
+        );
+        opacity: 0.35;
+      }
+
+      /* Kartu notifikasi — salinan persis komponen hero produksi */
+      #notif-card {
+        position: absolute;
+        left: 80px;
+        width: 920px;
+        top: 980px;
+        padding: 40px 44px 44px;
+        border: 3px solid rgba(232, 220, 232, 0.24);
+        border-radius: 40px;
+        background: rgba(25, 19, 25, 0.78);
+        will-change: transform, opacity;
+      }
+      .notif-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 26px;
+        font-weight: 800;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--mauve);
+        opacity: 0.78;
+      }
+      .notif-body {
+        margin-top: 26px;
+        font-size: 32px;
+        line-height: 1.5;
+        color: var(--mauve);
+        opacity: 0.86;
+      }
+      .notif-quote {
+        margin-top: 26px;
+        font-size: 56px;
+        line-height: 1.22;
+        color: var(--cream);
+      }
+      .notif-rule {
+        position: absolute;
+        left: 44px;
+        top: 0;
+        width: 132px;
+        height: 4px;
+        background: var(--rose);
+        transform-origin: 0% 50%;
+      }
+
+      /* Tombol pilihan */
+      .choice {
+        position: absolute;
+        left: 80px;
+        width: 920px;
+        height: 118px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 44px;
+        border: 3px solid rgba(232, 220, 232, 0.28);
+        border-radius: 34px;
+        background: rgba(25, 19, 25, 0.8);
+        font-size: 38px;
+        font-weight: 700;
+        color: var(--cream);
+        transform-origin: 50% 50%;
+        z-index: 2;
+        will-change: transform, opacity;
+      }
+      #btn-open {
+        top: 980px;
+      }
+      #btn-ignore {
+        top: 1114px;
+      }
+      .choice .arrow {
+        font-size: 34px;
+        color: var(--mauve);
+        opacity: 0.7;
+      }
+      #burst {
+        position: absolute;
+        left: 80px;
+        top: 980px;
+        width: 920px;
+        height: 118px;
+        border-radius: 34px;
+        background: radial-gradient(
+          ellipse 50% 50% at 50% 50%,
+          rgba(201, 73, 103, 0.9) 0%,
+          rgba(201, 73, 103, 0) 70%
+        );
+        filter: blur(56px);
+        opacity: 0;
+        transform-origin: 50% 50%;
+        z-index: 1;
+        will-change: transform, opacity;
+      }
+      #plate-caption {
+        position: absolute;
+        left: 80px;
+        width: 920px;
+        top: 1276px;
+        text-align: center;
+        font-size: 28px;
+        line-height: 1.5;
+        color: var(--mauve);
+        opacity: 0.72;
+        will-change: transform, opacity;
+      }
+
+      /* Konfirmasi pilihan */
+      #confirm {
+        position: absolute;
+        left: 80px;
+        width: 920px;
+        top: 972px;
+      }
+      #confirm-pill {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        height: 118px;
+        padding: 0 44px;
+        border: 3px solid var(--rose);
+        border-radius: 34px;
+        background: rgba(201, 73, 103, 0.16);
+        font-size: 38px;
+        font-weight: 700;
+        color: var(--cream);
+        will-change: transform, opacity;
+      }
+      .tick {
+        width: 34px;
+        height: 34px;
+        flex: none;
+      }
+      #confirm-head {
+        margin-top: 44px;
+        font-size: 68px;
+        line-height: 1.16;
+        color: var(--cream);
+        will-change: transform, opacity;
+      }
+      #confirm-sub {
+        margin-top: 16px;
+        font-size: 34px;
+        line-height: 1.45;
+        color: var(--mauve);
+        opacity: 0.88;
+        will-change: transform, opacity;
+      }
+
+      /* =========================================================
+         BABAK 4 — tiga sampul
+         ========================================================= */
+      #scene-covers {
+        background: var(--ink);
+      }
+      #covers-glow {
+        position: absolute;
+        left: 50%;
+        top: 780px;
+        width: 1500px;
+        height: 1500px;
+        margin-left: -750px;
+        margin-top: -750px;
+        background: radial-gradient(
+          ellipse 50% 50% at 50% 50%,
+          rgba(61, 31, 61, 0.85) 0%,
+          rgba(61, 31, 61, 0) 68%
+        );
+      }
+      .swap-wrap {
+        position: absolute;
+        left: 90px;
+        top: 300px;
+        width: 900px;
+        height: 1180px;
+      }
+      .cover-card {
+        position: absolute;
+        inset: 0;
+        transform-origin: 50% 50%;
+        will-change: transform, opacity;
+      }
+      .cover-frame {
+        position: relative;
+        width: 900px;
+        height: 900px;
+        border: 3px solid rgba(232, 220, 232, 0.22);
+        border-radius: 44px;
+        overflow: hidden;
+      }
+      .cover-frame img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      .cover-frame::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(
+          ellipse 76% 70% at 50% 42%,
+          rgba(25, 19, 25, 0) 0%,
+          rgba(25, 19, 25, 0.55) 100%
+        );
+      }
+      .cover-label {
+        margin-top: 44px;
+        font-size: 26px;
+        font-weight: 800;
+        letter-spacing: 0.28em;
+        text-transform: uppercase;
+        color: var(--gold);
+      }
+      .cover-caption {
+        margin-top: 18px;
+        font-size: 52px;
+        line-height: 1.2;
+        color: var(--cream);
+      }
+      .cover-text {
+        will-change: transform, opacity;
+      }
+
+      /* =========================================================
+         BABAK 5 — kartu pernyataan
+         ========================================================= */
+      #scene-statement {
+        background: var(--ink);
+        display: grid;
+        place-items: center;
+      }
+      #statement-glow {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 1400px;
+        height: 1400px;
+        margin-left: -700px;
+        margin-top: -700px;
+        background: radial-gradient(
+          ellipse 50% 50% at 50% 50%,
+          rgba(61, 31, 61, 0.92) 0%,
+          rgba(61, 31, 61, 0) 66%
+        );
+      }
+      #statement-inner {
+        position: relative;
+        width: 900px;
+        text-align: left;
+        will-change: transform, opacity;
+      }
+      #statement-rule {
+        width: 180px;
+        height: 4px;
+        background: var(--rose);
+        transform-origin: 0% 50%;
+      }
+      #statement-text {
+        margin-top: 46px;
+        font-size: 82px;
+        line-height: 1.16;
+        color: var(--cream);
+      }
+
+      /* =========================================================
+         BABAK 6 — endcard
+         ========================================================= */
+      #scene-end {
+        background: var(--ink);
+      }
+      #end-glow {
+        position: absolute;
+        left: 50%;
+        top: 820px;
+        width: 1300px;
+        height: 1300px;
+        margin-left: -650px;
+        margin-top: -650px;
+        background: radial-gradient(
+          ellipse 50% 50% at 50% 50%,
+          rgba(201, 73, 103, 0.34) 0%,
+          rgba(201, 73, 103, 0) 66%
+        );
+      }
+      #end-inner {
+        position: absolute;
+        left: 90px;
+        width: 900px;
+        top: 560px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      #end-logo {
+        width: 200px;
+        height: 200px;
+        border-radius: 26%;
+        border: 3px solid rgba(232, 220, 232, 0.2);
+        object-fit: cover;
+        transform-origin: 50% 50%;
+        will-change: transform, opacity;
+      }
+      #end-word {
+        margin-top: 34px;
+        font-size: 76px;
+        line-height: 1;
+        color: var(--cream);
+        will-change: transform, opacity;
+      }
+      #end-cta {
+        margin-top: 64px;
+        width: 720px;
+        height: 124px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        border-radius: 36px;
+        background: var(--rose);
+        font-size: 42px;
+        font-weight: 800;
+        color: var(--cream);
+        transform-origin: 50% 50%;
+        will-change: transform, opacity;
+      }
+      #end-sub {
+        margin-top: 30px;
+        font-size: 30px;
+        color: var(--mauve);
+        opacity: 0.86;
+        will-change: transform, opacity;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="21.5"
+      data-width="1080"
+      data-height="1920"
+    >
+      <!-- ============ BABAK 1-3 (0,0 - 8,6s) ============ -->
+      <div id="scene-plate" class="clip" data-start="0" data-duration="9.4" data-track-index="0">
+        <div id="camera" data-layout-allow-overflow>
+          <img class="plate-img" src="assets/plate-malam.jpg" alt="" />
+          <div class="plate-vignette"></div>
+          <div class="plate-scrim" data-layout-allow-overflow></div>
+          <div id="plate-glow"></div>
+
+          <div id="notif-card" data-layout-allow-occlusion>
+            <div class="notif-rule" id="notif-rule"></div>
+            <div class="notif-meta">
+              <span>23.47</span>
+              <span>1 pesan baru</span>
+            </div>
+            <p class="notif-body">
+              Sebuah pesan masuk dari nomor yang sudah kamu hapus tiga tahun lalu.
+            </p>
+            <p class="notif-quote serif">
+              &ldquo;Aku tahu apa yang sebenarnya terjadi malam itu.&rdquo;
+            </p>
+          </div>
+
+          <div id="burst" data-layout-allow-overflow></div>
+          <div class="choice" id="btn-open">
+            <span>Buka pesannya</span>
+            <span class="arrow">&#8594;</span>
+          </div>
+          <div class="choice" id="btn-ignore">
+            <span>Abaikan untuk malam ini</span>
+            <span class="arrow">&#8594;</span>
+          </div>
+          <p id="plate-caption">Pilihanmu bisa kembali jauh setelah kamu melupakannya.</p>
+
+          <div id="confirm">
+            <div id="confirm-pill">
+              <svg class="tick" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M20 6 9 17l-5-5"
+                  stroke="#c94967"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <span>Buka pesannya</span>
+            </div>
+            <p id="confirm-head" class="serif">Pilihanmu dicatat.</p>
+            <p id="confirm-sub">Tapi itu baru keputusan pertama.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ BABAK 4 (8,6 - 14,0s) ============ -->
+      <div id="scene-covers" class="clip" data-start="9.4" data-duration="7" data-track-index="0">
+        <div id="covers-glow" data-layout-allow-overflow></div>
+        <div class="swap-wrap">
+          <div class="cover-card" id="cover-a" style="z-index: 1">
+            <div class="cover-frame">
+              <img src="assets/cover-pesan-terakhir.jpg" alt="" />
+            </div>
+            <div class="cover-text" id="cover-a-text">
+              <div class="cover-label">Bab 3</div>
+              <p class="cover-caption serif">Kamu menyembunyikan sebuah surat.</p>
+            </div>
+          </div>
+          <div class="cover-card" id="cover-b" style="z-index: 2">
+            <div class="cover-frame">
+              <img src="assets/cover-di-balik-kaca.jpg" alt="" />
+            </div>
+            <div class="cover-text" id="cover-b-text">
+              <div class="cover-label">Bab 18</div>
+              <p class="cover-caption serif">Seseorang mulai mencurigaimu.</p>
+            </div>
+          </div>
+          <div class="cover-card" id="cover-c" style="z-index: 3">
+            <div class="cover-frame">
+              <img src="assets/cover-koper-di-depan-pintu.jpg" alt="" />
+            </div>
+            <div class="cover-text" id="cover-c-text">
+              <div class="cover-label">Bab 37</div>
+              <p class="cover-caption serif">Surat itu ditemukan.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ BABAK 5 (14,0 - 16,0s) ============ -->
+      <div
+        id="scene-statement"
+        class="clip"
+        data-start="16.4"
+        data-duration="2.6"
+        data-track-index="0"
+      >
+        <div id="statement-glow" data-layout-allow-overflow></div>
+        <div id="statement-inner">
+          <div id="statement-rule"></div>
+          <p id="statement-text" class="serif">
+            Pilihan kecil bisa kembali jauh setelah kamu melupakannya.
+          </p>
+        </div>
+      </div>
+
+      <!-- ============ BABAK 6 (16,0 - 18,0s) ============ -->
+      <div id="scene-end" class="clip" data-start="19" data-duration="2.5" data-track-index="0">
+        <div id="end-glow" data-layout-allow-overflow></div>
+        <div id="end-inner">
+          <img id="end-logo" src="assets/logo-lakoku.png" alt="" />
+          <div id="end-word" class="serif">Lakoku</div>
+          <div id="end-cta">Mulai Ceritaku</div>
+          <p id="end-sub">Kalau ini ceritamu, apa yang akan kamu lakukan?</p>
+        </div>
+      </div>
+      <!-- ============ AUDIO (SFX + musik, lisensi Mixkit) ============ -->
+      <audio id="bgm" src="assets/audio/music-silent-descent.mp3" data-start="0" data-duration="21.5" data-media-start="60" data-track-index="10"></audio>
+      <audio id="rain" src="assets/audio/amb-rain-night-loop.mp3" data-start="0" data-duration="9.4" data-track-index="11"></audio>
+      <audio id="sfx-notif" src="assets/audio/notif-message-pop.mp3" data-start="0.3" data-volume="0.45" data-track-index="12"></audio>
+      <audio id="sfx-select" src="assets/audio/ui-select.mp3" data-start="4.2" data-volume="0.275" data-track-index="13"></audio>
+      <audio id="sfx-press" src="assets/audio/ui-click-modern.mp3" data-start="5.6" data-volume="0.4" data-track-index="14"></audio>
+      <audio id="sfx-check" src="assets/audio/ui-check-pop.mp3" data-start="6.53" data-volume="0.35" data-track-index="15"></audio>
+      <audio id="sfx-cut" src="assets/audio/impact-whoosh-deep.mp3" data-start="9.4" data-volume="0.45" data-track-index="16"></audio>
+      <audio id="sfx-swap1" src="assets/audio/whoosh-light-pop.mp3" data-start="11.4" data-duration="0.18" data-volume="0.325" data-track-index="17"></audio>
+      <audio id="sfx-swap2" src="assets/audio/whoosh-light-pop.mp3" data-start="13.4" data-duration="0.18" data-volume="0.325" data-track-index="18"></audio>
+      <audio id="sfx-sparkle" src="assets/audio/whoosh-sparkle.mp3" data-start="19.05" data-duration="2.45" data-volume="0.4" data-track-index="19"></audio>
+    </div>
+
+    <script>
+      const tl = gsap.timeline({ paused: true });
+
+      /* ==========================================================
+         BABAK 1-3 — dorongan kamera menerus + UI pilihan
+         ========================================================== */
+      const PLATE_DUR = 9.4;
+      const camera = document.getElementById("camera");
+
+      // Kamera: satu dorongan menerus (steady push) + micro-drift sinus.
+      const phase = { scale: 1.0 };
+      tl.to(phase, { scale: 1.045, duration: 1.8, ease: "power2.out" }, 0.3);
+      tl.to(phase, { scale: 1.12, duration: 5.2, ease: "power2.inOut" }, 4.2);
+
+      const drift = { p: 0 };
+      tl.to(
+        drift,
+        {
+          p: Math.PI * 2 * 1.3,
+          duration: PLATE_DUR,
+          ease: "none",
+          // SATU-SATUNYA penulis camera.style.transform.
+          onUpdate: () => {
+            const dx = Math.sin(drift.p) * 7;
+            const dy = Math.sin(drift.p * 1.3) * 4;
+            camera.style.transform =
+              "scale(" + phase.scale + ") translate(" + dx + "px, " + dy + "px)";
+          },
+        },
+        0,
+      );
+
+      // Glow plum bernapas di balik kartu (dekoratif harus hidup).
+      tl.fromTo(
+        "#plate-glow",
+        { opacity: 0.22 },
+        { opacity: 0.5, duration: 2.35, ease: "sine.inOut", repeat: 3, yoyo: true },
+        0,
+      );
+
+      // Kartu notifikasi naik.
+      tl.fromTo(
+        "#notif-card",
+        { autoAlpha: 0, y: 52 },
+        { autoAlpha: 1, y: 0, duration: 0.85, ease: "power3.out" },
+        0.25,
+      );
+      tl.fromTo(
+        "#notif-rule",
+        { scaleX: 0 },
+        { scaleX: 1, duration: 0.6, ease: "power2.out" },
+        0.75,
+      );
+
+      // Tombol belum ada di babak 1.
+      tl.set(["#btn-open", "#btn-ignore", "#burst", "#plate-caption"], { autoAlpha: 0 }, 0);
+      tl.set("#confirm", { autoAlpha: 0 }, 0);
+
+      // Babak 2 — kartu naik memberi ruang, dua pilihan muncul SETELAH kartu mendarat
+      // (4.2s) supaya kutipan tidak menyapu tombol saat transisi.
+      const ACT2 = 3.2;
+      tl.to("#notif-card", { y: -400, duration: 1.0, ease: "power2.inOut" }, ACT2);
+      tl.fromTo(
+        "#btn-open",
+        { autoAlpha: 0, y: 46 },
+        { autoAlpha: 1, y: 0, duration: 0.6, ease: "power3.out" },
+        4.2,
+      );
+      tl.fromTo(
+        "#btn-ignore",
+        { autoAlpha: 0, y: 46 },
+        { autoAlpha: 1, y: 0, duration: 0.6, ease: "power3.out" },
+        4.35,
+      );
+      tl.fromTo(
+        "#plate-caption",
+        { autoAlpha: 0, y: 26 },
+        { autoAlpha: 0.72, y: 0, duration: 0.55, ease: "power2.out" },
+        4.65,
+      );
+
+      // Babak 3 — tekan-lepas pada pilihan pertama.
+      const PRESS_START = 5.6;
+      const PRESS_DUR = 0.14;
+      const RELEASE_START = PRESS_START + PRESS_DUR;
+
+      tl.to(
+        "#btn-open",
+        { scale: 0.92, duration: PRESS_DUR, ease: "power1.in" },
+        PRESS_START,
+      );
+      tl.to(
+        "#btn-open",
+        {
+          scale: 1,
+          borderColor: "rgba(201, 73, 103, 1)",
+          backgroundColor: "rgba(201, 73, 103, 0.18)",
+          duration: 0.52,
+          ease: "back.out(1.8)",
+        },
+        RELEASE_START,
+      );
+      tl.fromTo(
+        "#burst",
+        { scale: 1, autoAlpha: 0 },
+        { scale: 4.2, autoAlpha: 0.85, duration: 0.5, ease: "power2.out" },
+        RELEASE_START,
+      );
+      // Adjacency: fade mulai persis saat grow selesai (0.5s), bukan tumpang tindih.
+      tl.to("#burst", { autoAlpha: 0, duration: 0.42, ease: "power2.in" }, RELEASE_START + 0.5);
+
+      // Pilihan kedua mundur, lalu kedua tombol menyerahkan layar ke konfirmasi.
+      tl.to("#btn-ignore", { autoAlpha: 0, y: 24, duration: 0.4, ease: "power2.in" }, PRESS_START);
+      tl.to("#plate-caption", { autoAlpha: 0, duration: 0.35, ease: "power2.in" }, PRESS_START);
+      // Tombol harus benar-benar lepas dari layar sebelum pil konfirmasi
+      // menempati koordinat yang sama — kalau tidak, dua blok teks tumpang tindih.
+      tl.to("#btn-open", { autoAlpha: 0, duration: 0.26, ease: "power2.in" }, 6.2);
+
+      tl.set("#confirm", { autoAlpha: 1 }, 6.53);
+      tl.fromTo(
+        "#confirm-pill",
+        { autoAlpha: 0, scale: 0.94 },
+        { autoAlpha: 1, scale: 1, duration: 0.42, ease: "power3.out" },
+        6.53,
+      );
+      tl.fromTo(
+        "#confirm-head",
+        { autoAlpha: 0, y: 34 },
+        { autoAlpha: 1, y: 0, duration: 0.5, ease: "power3.out" },
+        6.75,
+      );
+      tl.fromTo(
+        "#confirm-sub",
+        { autoAlpha: 0, y: 26 },
+        { autoAlpha: 0.88, y: 0, duration: 0.45, ease: "power3.out" },
+        6.99,
+      );
+
+      /* ==========================================================
+         BABAK 4 — tiga sampul, potong keras lalu dua kali tukar
+         ========================================================== */
+      const COVERS_AT = 9.4;
+      const COVERS_END = 16.4;
+
+      // Keadaan awal babak: hanya sampul A yang tampak (potong keras, opasitas penuh).
+      tl.set("#cover-a", { autoAlpha: 1, scale: 1 }, COVERS_AT);
+      tl.set(["#cover-b", "#cover-c"], { autoAlpha: 0, scale: 0.72 }, COVERS_AT);
+      tl.set(["#cover-b-text", "#cover-c-text"], { autoAlpha: 0, y: 26 }, COVERS_AT);
+      tl.set("#cover-a-text", { autoAlpha: 1, y: 0 }, COVERS_AT);
+
+      // Ken burns pelan pada tiap sampul supaya tidak membeku.
+      tl.fromTo(
+        "#cover-a",
+        { scale: 1 },
+        { scale: 1.05, duration: 2.0, ease: "none" },
+        COVERS_AT,
+      );
+
+      const EXIT_DUR = 0.26;
+      const OVERLAP = 0.1;
+      const ENTER_DUR = 0.4;
+
+      function coverSwap(outgoing, incoming, incomingText, trigger, nextTrigger) {
+        const enterAt = trigger + EXIT_DUR - OVERLAP;
+        tl.to(
+          outgoing,
+          { scale: 0.72, autoAlpha: 0, duration: EXIT_DUR, ease: "power2.in" },
+          trigger,
+        );
+        tl.to(
+          incoming,
+          { scale: 1, autoAlpha: 1, duration: ENTER_DUR, ease: "back.out(1.6)" },
+          enterAt,
+        );
+        // Teks menunggangi pop masuk (bukan setelah settle) supaya dwell baca cukup panjang;
+        // ken burns menyambung persis di ujung pop — satu penulis scale per waktu.
+        tl.to(
+          incomingText,
+          { autoAlpha: 1, y: 0, duration: 0.4, ease: "power3.out" },
+          enterAt,
+        );
+        tl.to(
+          incoming,
+          { scale: 1.05, duration: nextTrigger - (enterAt + ENTER_DUR), ease: "none" },
+          enterAt + ENTER_DUR,
+        );
+      }
+
+      coverSwap("#cover-a", "#cover-b", "#cover-b-text", 11.4, 13.4);
+      coverSwap("#cover-b", "#cover-c", "#cover-c-text", 13.4, COVERS_END);
+
+      /* ==========================================================
+         BABAK 5 — kartu pernyataan
+         ========================================================== */
+      tl.fromTo(
+        "#statement-inner",
+        { autoAlpha: 0, scale: 0.95 },
+        { autoAlpha: 1, scale: 1, duration: 0.6, ease: "power3.out" },
+        16.45,
+      );
+      tl.fromTo(
+        "#statement-rule",
+        { scaleX: 0 },
+        { scaleX: 1, duration: 0.6, ease: "power2.out" },
+        16.6,
+      );
+      tl.fromTo(
+        "#statement-glow",
+        { opacity: 0.55, scale: 0.94 },
+        { opacity: 0.95, scale: 1.04, duration: 2.6, ease: "sine.inOut" },
+        16.4,
+      );
+
+      /* ==========================================================
+         BABAK 6 — endcard
+         ========================================================== */
+      tl.fromTo(
+        "#end-logo",
+        { autoAlpha: 0, scale: 0 },
+        { autoAlpha: 1, scale: 1, duration: 0.55, ease: "power3.out" },
+        19.05,
+      );
+      tl.fromTo(
+        "#end-word",
+        { autoAlpha: 0, y: 28 },
+        { autoAlpha: 1, y: 0, duration: 0.5, ease: "power3.out" },
+        19.28,
+      );
+      tl.fromTo(
+        "#end-cta",
+        { autoAlpha: 0, scale: 0.9 },
+        { autoAlpha: 1, scale: 1, duration: 0.55, ease: "power3.out" },
+        19.6,
+      );
+      tl.fromTo(
+        "#end-sub",
+        { autoAlpha: 0, y: 20 },
+        { autoAlpha: 0.86, y: 0, duration: 0.45, ease: "power2.out" },
+        19.85,
+      );
+      tl.fromTo(
+        "#end-glow",
+        { opacity: 0.4, scale: 0.92 },
+        { opacity: 1, scale: 1.05, duration: 2.5, ease: "sine.inOut" },
+        19.0,
+      );
+
+      /* ==========================================================
+         AUDIO — fade volume (nilai absolut = baseline klip)
+         ========================================================== */
+      tl.fromTo("#bgm", { volume: 0 }, { volume: 0.275, duration: 0.8, ease: "power1.out" }, 0);
+      tl.fromTo(
+        "#bgm",
+        { volume: 0.275 },
+        { volume: 0, duration: 1.4, ease: "power1.in", immediateRender: false },
+        20.1,
+      );
+      tl.fromTo("#rain", { volume: 0 }, { volume: 0.21, duration: 0.8, ease: "power1.out" }, 0);
+      tl.fromTo(
+        "#rain",
+        { volume: 0.21 },
+        { volume: 0, duration: 0.15, ease: "power1.in", immediateRender: false },
+        9.25,
+      );
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

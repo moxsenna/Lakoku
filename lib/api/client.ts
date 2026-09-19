@@ -23,16 +23,27 @@ import type { StoryBibleDraft } from '@/lib/authoring/schema'
 import type { Finding } from '@lakoku/narrative-core'
 import {
   ChapterStatusResponseSchema,
+  SetStoryVisibilityResponseSchema,
   StartChapterSuccessResponseSchema,
   SubmitChoiceResponseSchema,
   type ChapterStatusResponse,
   type GenerationAttemptIdentity,
+  type SetStoryVisibilityResponse,
   type StartChapterSuccessResponse,
   type SubmitChoiceResponse,
 } from '../../packages/contracts/src/reader'
 import { buildChoiceIdempotencyKey } from './choice-idempotency'
+import { withPending } from '@/lib/loading/pending'
 
 const API_BASE = '/api'
+
+/**
+ * fetch untuk seluruh seam — membungkus dengan sinyal pending global sehingga
+ * bar "sedang bekerja" menyala untuk SEMUA aksi data tanpa per-component wiring.
+ */
+async function seamFetch(input: string, init?: RequestInit): Promise<Response> {
+  return withPending(fetch(input, init))
+}
 
 export class ReaderStatusHttpError extends Error {
   readonly status: number
@@ -62,7 +73,7 @@ export type StartChapterClientResult =
 
 /** Daftar seluruh cerita (ringkasan) untuk katalog/beranda/koleksiku. */
 export async function listStories(): Promise<StorySummary[]> {
-  const res = await fetch(`${API_BASE}/stories`)
+  const res = await seamFetch(`${API_BASE}/stories`)
   if (!res.ok) throw new Error('Gagal memuat daftar cerita.')
   const data = (await res.json()) as { stories: StorySummary[] }
   return data.stories
@@ -70,7 +81,7 @@ export async function listStories(): Promise<StorySummary[]> {
 
 /** Detail lengkap satu cerita berdasarkan id. */
 export async function getStory(id: string): Promise<StoryDetail | null> {
-  const res = await fetch(`${API_BASE}/stories/${encodeURIComponent(id)}`)
+  const res = await seamFetch(`${API_BASE}/stories/${encodeURIComponent(id)}`)
   if (res.status === 404) return null
   if (!res.ok) throw new Error('Gagal memuat cerita.')
   const data = (await res.json()) as { story: StoryDetail }
@@ -82,7 +93,7 @@ export async function getChapter(
   storyId: string,
   chapterNumber: number,
 ): Promise<Chapter | null> {
-  const res = await fetch(
+  const res = await seamFetch(
     `${API_BASE}/stories/${encodeURIComponent(storyId)}/chapters/${chapterNumber}`,
   )
   if (res.status === 404) return null
@@ -110,7 +121,7 @@ export async function submitChoiceWithReadiness(
   choiceId: string,
 ): Promise<SubmitChoiceResponse> {
   try {
-    const res = await fetch(
+    const res = await seamFetch(
       `${API_BASE}/stories/${encodeURIComponent(storyId)}/choices`,
       {
         method: 'POST',
@@ -150,7 +161,7 @@ export async function getChapterGenerationStatus(
     }
     const query = params.size > 0 ? `?${params.toString()}` : ''
     const url = `${API_BASE}/stories/${encodeURIComponent(storyId)}/chapters/${chapterNumber}/status${query}`
-    const res = await fetch(url, {
+    const res = await seamFetch(url, {
       signal: options.signal,
       credentials: 'same-origin',
       cache: 'no-store',
@@ -174,7 +185,7 @@ export async function submitReport(
   note?: string,
 ): Promise<ReportResult> {
   try {
-    const res = await fetch(
+    const res = await seamFetch(
       `${API_BASE}/stories/${encodeURIComponent(storyId)}/report`,
       {
         method: 'POST',
@@ -198,7 +209,7 @@ export async function listChapters(storyId: string): Promise<{
   chapters: { number: number; title: string }[]
   maxReachedChapter: number
 }> {
-  const res = await fetch(
+  const res = await seamFetch(
     `${API_BASE}/stories/${encodeURIComponent(storyId)}/chapters`,
   )
   if (!res.ok) throw new Error('Gagal memuat daftar bab.')
@@ -213,7 +224,7 @@ export async function lockStoryBible(
   draft: StoryBibleDraft,
 ): Promise<LockStoryBibleClientResult> {
   try {
-    const res = await fetch(`${API_BASE}/stories/authoring/lock`, {
+    const res = await seamFetch(`${API_BASE}/stories/authoring/lock`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(draft),
@@ -238,7 +249,7 @@ export async function startChapter(
   chapterNumber = 1,
 ): Promise<StartChapterClientResult> {
   try {
-    const res = await fetch(
+    const res = await seamFetch(
       `${API_BASE}/stories/${encodeURIComponent(storyId)}/start-chapter`,
       {
         method: 'POST',
@@ -264,3 +275,48 @@ export async function startChapter(
     return { ok: false, error: 'Gagal memulai bab.' }
   }
 }
+
+/**
+ * Atur visibilitas cerita milik pengguna ('private' | 'public').
+ */
+export async function setStoryVisibility(
+  storyId: string,
+  visibility: 'private' | 'public',
+): Promise<SetStoryVisibilityResponse> {
+  try {
+    const res = await seamFetch(
+      `${API_BASE}/stories/${encodeURIComponent(storyId)}/visibility`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ storyId, visibility }),
+        credentials: 'same-origin',
+      },
+    )
+    const raw = await res.json().catch(() => null)
+    const parsed = SetStoryVisibilityResponseSchema.safeParse(raw)
+    if (parsed.success) return parsed.data
+    if (raw && typeof raw === 'object' && 'ok' in raw && (raw as { ok?: unknown }).ok === false) {
+      return {
+        ok: false,
+        error:
+          typeof (raw as { error?: unknown }).error === 'string'
+            ? (raw as { error: string }).error
+            : 'Gagal memperbarui visibilitas cerita.',
+      }
+    }
+    if (res.status === 401) {
+      return { ok: false, error: 'Silakan masuk terlebih dahulu.' }
+    }
+    if (res.status === 403) {
+      return { ok: false, error: 'Kamu bukan pemilik cerita ini.' }
+    }
+    if (res.status === 404) {
+      return { ok: false, error: 'Cerita tidak ditemukan.' }
+    }
+    return { ok: false, error: 'Gagal memperbarui visibilitas cerita.' }
+  } catch {
+    return { ok: false, error: 'Gagal memperbarui visibilitas cerita.' }
+  }
+}
+

@@ -1,3 +1,4 @@
+import { withReticle } from '@reticlehq/next';
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // VPS Docker runs the standalone server (`node server.js`).
@@ -10,4 +11,5 @@ const nextConfig = {
   },
 }
 
-export default nextConfig
+export default withReticle(nextConfig
+)

@@ -12,6 +12,7 @@ import {
 } from '@/lib/api/generation-continuation.server'
 import { isStoryOwnedBy } from '@/lib/api/story-ownership.server'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
+import { maybeGrantAuthorTinta } from '@/lib/tinta/author-reward.server'
 
 /**
  * POST /api/stories/[id]/choices
@@ -59,6 +60,14 @@ export async function POST(
             },
             { status: 402 },
           )
+        }
+
+        if (!result.replayed) {
+          await maybeGrantAuthorTinta({
+            readerUserId: user.id,
+            storyId: id,
+            chapterNumber,
+          })
         }
 
         const nextChapterNumber = result.nextChapterNumber ?? result.outcome.nextChapterNumber
@@ -133,6 +142,14 @@ export async function POST(
     const decision =
       chapter?.choices?.find((c) => c.id === choiceId)?.label ?? choiceId
     await applyChoiceToUserState(id, chapterNumber, decision, outcome)
+
+    if (user) {
+      await maybeGrantAuthorTinta({
+        readerUserId: user.id,
+        storyId: id,
+        chapterNumber,
+      })
+    }
 
     // Standard path: kick off next chapter hanya untuk pemilik story.
     // Topologi: chapters PK (story_id, number) — 1 bab per story tanpa dimensi reader.

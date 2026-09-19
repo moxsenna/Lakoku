@@ -10,7 +10,57 @@ import type {
   UpdateFeatureCreditCostInput,
   UpdateGenerationPolicyInput,
   UpdateAiModelRouteInput,
+  UpdateRewardPolicyInput,
+  UpdateMissionPolicyInput,
+  UpdateTintaPolicyInput,
 } from './settings-schemas'
+
+export interface AdminMissionPolicy {
+  missionsEnabled: boolean
+  adRewardEnabled: boolean
+  adsenseEnabled: boolean
+  checkinCredits: number
+  choiceCredits: number
+  adBatchCredits: number
+  choiceRequired: number
+  adsPerCredit: number
+  adDailyCap: number
+  ssvFreshnessSeconds: number
+  adsenseClientId: string
+  adsenseSlotShareLanding: string
+  adsenseSlotEnding: string
+  adsenseSlotBeranda: string
+  adsenseSlotCredit: string
+  updatedAt: string | null
+}
+
+export interface AdminRewardPolicy {
+  commissionPercent: number
+  windowDays: number
+  attributionCookieDays: number
+  redeemRateIdrPerCredit: number
+  redeemMinIdr: number
+  commissionEnabled: boolean
+  redeemEnabled: boolean
+  payoutEnabled: boolean
+  payoutMinIdr: number
+  updatedAt: string | null
+}
+
+export interface AdminTintaPolicy {
+  tintaPerRead: number
+  authorDailyCap: number
+  tintaCheckin: number
+  tintaChoice: number
+  tintaAdBatch: number
+  tintaPerLakoin: number
+  exchangeMinLakoin: number
+  pendingHours: number
+  authorRewardsEnabled: boolean
+  exchangeEnabled: boolean
+  missionsPayTinta: boolean
+  updatedAt: string | null
+}
 
 export interface AdminCreditProduct {
   productKey: string
@@ -178,25 +228,127 @@ export async function listRecentSettingsAuditLogs(limit = 20): Promise<AdminSett
   }))
 }
 
+export async function getAdminRewardPolicy(): Promise<AdminRewardPolicy | null> {
+  const db = createAdminClient()
+  const { data } = await db
+    .from('reward_policy')
+    .select('*')
+    .eq('id', true)
+    .maybeSingle()
+  if (!data) return null
+  const d = data as Record<string, unknown>
+  return {
+    commissionPercent: Number(d.commission_percent ?? 10),
+    windowDays: Number(d.window_days ?? 30),
+    attributionCookieDays: Number(d.attribution_cookie_days ?? 30),
+    redeemRateIdrPerCredit: Number(d.redeem_rate_idr_per_credit ?? 250),
+    redeemMinIdr: Number(d.redeem_min_idr ?? 1000),
+    commissionEnabled: Boolean(d.commission_enabled),
+    redeemEnabled: Boolean(d.redeem_enabled),
+    payoutEnabled: Boolean(d.payout_enabled),
+    payoutMinIdr: Number(d.payout_min_idr ?? 50000),
+    updatedAt: (d.updated_at as string) ?? null,
+  }
+}
+
 export interface AdminSettingsData {
   creditProducts: AdminCreditProduct[]
   generationPolicy: AdminGenerationPolicy | null
   aiModelRoutes: AdminAiModelRoute[]
   featureCreditCosts: AdminFeatureCreditCost[]
+  rewardPolicy: AdminRewardPolicy | null
+  missionPolicy: AdminMissionPolicy | null
+  tintaPolicy?: AdminTintaPolicy | null
   recentAuditLogs: AdminSettingsAuditLog[]
 }
 
-export async function loadAdminSettings(): Promise<AdminSettingsData> {
-  const [creditProducts, generationPolicy, aiModelRoutes, featureCreditCosts, recentAuditLogs] =
-    await Promise.all([
-      listAdminCreditProducts(),
-      getAdminGenerationPolicy(),
-      listAdminAiModelRoutes(),
-      listAdminFeatureCreditCosts(),
-      listRecentSettingsAuditLogs(),
-    ])
-  return { creditProducts, generationPolicy, aiModelRoutes, featureCreditCosts, recentAuditLogs }
+export async function getAdminMissionPolicy(): Promise<AdminMissionPolicy | null> {
+  const db = createAdminClient()
+  const { data } = await db
+    .from('mission_policy')
+    .select('*')
+    .eq('id', true)
+    .maybeSingle()
+  if (!data) return null
+  const d = data as Record<string, unknown>
+  return {
+    missionsEnabled: Boolean(d.missions_enabled),
+    adRewardEnabled: Boolean(d.ad_reward_enabled),
+    adsenseEnabled: Boolean(d.adsense_enabled),
+    checkinCredits: Number(d.checkin_credits ?? 1),
+    choiceCredits: Number(d.choice_credits ?? 1),
+    adBatchCredits: Number(d.ad_batch_credits ?? 1),
+    choiceRequired: Number(d.choice_required ?? 3),
+    adsPerCredit: Number(d.ads_per_credit ?? 5),
+    adDailyCap: Number(d.ad_daily_cap ?? 10),
+    ssvFreshnessSeconds: Number(d.ssv_freshness_seconds ?? 600),
+    adsenseClientId: String(d.adsense_client_id ?? ''),
+    adsenseSlotShareLanding: String(d.adsense_slot_share_landing ?? ''),
+    adsenseSlotEnding: String(d.adsense_slot_ending ?? ''),
+    adsenseSlotBeranda: String(d.adsense_slot_beranda ?? ''),
+    adsenseSlotCredit: String(d.adsense_slot_credit ?? ''),
+    updatedAt: (d.updated_at as string) ?? null,
+  }
 }
+
+export async function getAdminTintaPolicy(): Promise<AdminTintaPolicy | null> {
+  const db = createAdminClient()
+  const { data } = await db
+    .from('tinta_policy')
+    .select('*')
+    .eq('id', true)
+    .maybeSingle()
+  if (!data) return null
+  const d = data as Record<string, unknown>
+  return {
+    tintaPerRead: Number(d.tinta_per_read ?? 10),
+    authorDailyCap: Number(d.author_daily_cap ?? 300),
+    tintaCheckin: Number(d.tinta_checkin ?? 5),
+    tintaChoice: Number(d.tinta_choice ?? 10),
+    tintaAdBatch: Number(d.tinta_ad_batch ?? 10),
+    tintaPerLakoin: Number(d.tinta_per_lakoin ?? 100),
+    exchangeMinLakoin: Number(d.exchange_min_lakoin ?? 1),
+    pendingHours: Number(d.pending_hours ?? 24),
+    authorRewardsEnabled: Boolean(d.author_rewards_enabled),
+    exchangeEnabled: Boolean(d.exchange_enabled),
+    missionsPayTinta: Boolean(d.missions_pay_tinta),
+    updatedAt: (d.updated_at as string) ?? null,
+  }
+}
+
+export async function loadAdminSettings(): Promise<AdminSettingsData> {
+  const [
+    creditProducts,
+    generationPolicy,
+    aiModelRoutes,
+    featureCreditCosts,
+    rewardPolicy,
+    missionPolicy,
+    tintaPolicy,
+    recentAuditLogs,
+  ] = await Promise.all([
+    listAdminCreditProducts(),
+    getAdminGenerationPolicy(),
+    listAdminAiModelRoutes(),
+    listAdminFeatureCreditCosts(),
+    getAdminRewardPolicy(),
+    getAdminMissionPolicy(),
+    getAdminTintaPolicy(),
+    listRecentSettingsAuditLogs(),
+  ])
+  return {
+    creditProducts,
+    generationPolicy,
+    aiModelRoutes,
+    featureCreditCosts,
+    rewardPolicy,
+    missionPolicy,
+    tintaPolicy,
+    recentAuditLogs,
+  }
+}
+
+export const loadSettingsData = loadAdminSettings
 
 // --- Write helpers (owner-only) ---
 
@@ -506,3 +658,239 @@ export async function updateAiModelRoute(
     notes: input.notes,
   }
 }
+
+export async function updateRewardPolicy(
+  input: UpdateRewardPolicyInput,
+): Promise<AdminRewardPolicy> {
+  const admin = await requireOwner()
+  const db = createAdminClient()
+
+  const { data: oldRow } = await db
+    .from('reward_policy')
+    .select('*')
+    .eq('id', true)
+    .single()
+
+  const oldVal = oldRow
+    ? {
+        commission_percent: oldRow.commission_percent,
+        window_days: oldRow.window_days,
+        attribution_cookie_days: oldRow.attribution_cookie_days,
+        redeem_rate_idr_per_credit: oldRow.redeem_rate_idr_per_credit,
+        redeem_min_idr: oldRow.redeem_min_idr,
+        commission_enabled: oldRow.commission_enabled,
+        redeem_enabled: oldRow.redeem_enabled,
+        payout_enabled: oldRow.payout_enabled,
+        payout_min_idr: oldRow.payout_min_idr,
+      }
+    : null
+
+  const newVal = {
+    commission_percent: input.commissionPercent,
+    window_days: input.windowDays,
+    attribution_cookie_days: input.attributionCookieDays,
+    redeem_rate_idr_per_credit: input.redeemRateIdrPerCredit,
+    redeem_min_idr: input.redeemMinIdr,
+    commission_enabled: input.commissionEnabled,
+    redeem_enabled: input.redeemEnabled,
+    payout_enabled: input.payoutEnabled,
+    payout_min_idr: input.payoutMinIdr,
+    updated_at: new Date().toISOString(),
+  }
+
+  const { error } = await db
+    .from('reward_policy')
+    .update(newVal)
+    .eq('id', true)
+
+  if (error) throw new Error(`updateRewardPolicy: ${error.message}`)
+
+  await auditSettings({
+    adminUserId: admin.id,
+    adminEmail: admin.email,
+    settingArea: 'reward_policy',
+    settingKey: 'default',
+    oldValue: oldVal,
+    newValue: newVal,
+    reason: input.reason,
+  })
+
+  return {
+    commissionPercent: input.commissionPercent,
+    windowDays: input.windowDays,
+    attributionCookieDays: input.attributionCookieDays,
+    redeemRateIdrPerCredit: input.redeemRateIdrPerCredit,
+    redeemMinIdr: input.redeemMinIdr,
+    commissionEnabled: input.commissionEnabled,
+    redeemEnabled: input.redeemEnabled,
+    payoutEnabled: input.payoutEnabled,
+    payoutMinIdr: input.payoutMinIdr,
+    updatedAt: newVal.updated_at,
+  }
+}
+
+export async function updateMissionPolicy(
+  input: UpdateMissionPolicyInput,
+): Promise<AdminMissionPolicy> {
+  const admin = await requireOwner()
+  const db = createAdminClient()
+
+  const { data: oldRow } = await db
+    .from('mission_policy')
+    .select('*')
+    .eq('id', true)
+    .single()
+
+  const oldVal = oldRow
+    ? {
+        missions_enabled: oldRow.missions_enabled,
+        ad_reward_enabled: oldRow.ad_reward_enabled,
+        adsense_enabled: oldRow.adsense_enabled,
+        checkin_credits: oldRow.checkin_credits,
+        choice_credits: oldRow.choice_credits,
+        ad_batch_credits: oldRow.ad_batch_credits,
+        choice_required: oldRow.choice_required,
+        ads_per_credit: oldRow.ads_per_credit,
+        ad_daily_cap: oldRow.ad_daily_cap,
+        ssv_freshness_seconds: oldRow.ssv_freshness_seconds,
+        adsense_client_id: oldRow.adsense_client_id,
+        adsense_slot_share_landing: oldRow.adsense_slot_share_landing,
+        adsense_slot_ending: oldRow.adsense_slot_ending,
+        adsense_slot_beranda: oldRow.adsense_slot_beranda,
+        adsense_slot_credit: oldRow.adsense_slot_credit,
+      }
+    : null
+
+  const newVal = {
+    missions_enabled: input.missionsEnabled,
+    ad_reward_enabled: input.adRewardEnabled,
+    adsense_enabled: input.adsenseEnabled,
+    checkin_credits: input.checkinCredits,
+    choice_credits: input.choiceCredits,
+    ad_batch_credits: input.adBatchCredits,
+    choice_required: input.choiceRequired,
+    ads_per_credit: input.adsPerCredit,
+    ad_daily_cap: input.adDailyCap,
+    ssv_freshness_seconds: input.ssvFreshnessSeconds,
+    adsense_client_id: input.adsenseClientId,
+    adsense_slot_share_landing: input.adsenseSlotShareLanding,
+    adsense_slot_ending: input.adsenseSlotEnding,
+    adsense_slot_beranda: input.adsenseSlotBeranda,
+    adsense_slot_credit: input.adsenseSlotCredit,
+    updated_at: new Date().toISOString(),
+  }
+
+  const { error } = await db
+    .from('mission_policy')
+    .update(newVal)
+    .eq('id', true)
+
+  if (error) throw new Error(`updateMissionPolicy: ${error.message}`)
+
+  await auditSettings({
+    adminUserId: admin.id,
+    adminEmail: admin.email,
+    settingArea: 'mission_policy',
+    settingKey: 'default',
+    oldValue: oldVal,
+    newValue: newVal,
+    reason: input.reason,
+  })
+
+  return {
+    missionsEnabled: input.missionsEnabled,
+    adRewardEnabled: input.adRewardEnabled,
+    adsenseEnabled: input.adsenseEnabled,
+    checkinCredits: input.checkinCredits,
+    choiceCredits: input.choiceCredits,
+    adBatchCredits: input.adBatchCredits,
+    choiceRequired: input.choiceRequired,
+    adsPerCredit: input.adsPerCredit,
+    adDailyCap: input.adDailyCap,
+    ssvFreshnessSeconds: input.ssvFreshnessSeconds,
+    adsenseClientId: input.adsenseClientId,
+    adsenseSlotShareLanding: input.adsenseSlotShareLanding,
+    adsenseSlotEnding: input.adsenseSlotEnding,
+    adsenseSlotBeranda: input.adsenseSlotBeranda,
+    adsenseSlotCredit: input.adsenseSlotCredit,
+    updatedAt: newVal.updated_at,
+  }
+}
+
+export async function updateTintaPolicy(
+  input: UpdateTintaPolicyInput,
+): Promise<AdminTintaPolicy> {
+  const admin = await requireOwner()
+  const db = createAdminClient()
+
+  const { data: oldRow } = await db
+    .from('tinta_policy')
+    .select('*')
+    .eq('id', true)
+    .single()
+
+  const oldVal = oldRow
+    ? {
+        tinta_per_read: oldRow.tinta_per_read,
+        author_daily_cap: oldRow.author_daily_cap,
+        tinta_checkin: oldRow.tinta_checkin,
+        tinta_choice: oldRow.tinta_choice,
+        tinta_ad_batch: oldRow.tinta_ad_batch,
+        tinta_per_lakoin: oldRow.tinta_per_lakoin,
+        exchange_min_lakoin: oldRow.exchange_min_lakoin,
+        pending_hours: oldRow.pending_hours,
+        author_rewards_enabled: oldRow.author_rewards_enabled,
+        exchange_enabled: oldRow.exchange_enabled,
+        missions_pay_tinta: oldRow.missions_pay_tinta,
+      }
+    : null
+
+  const newVal = {
+    tinta_per_read: input.tintaPerRead,
+    author_daily_cap: input.authorDailyCap,
+    tinta_checkin: input.tintaCheckin,
+    tinta_choice: input.tintaChoice,
+    tinta_ad_batch: input.tintaAdBatch,
+    tinta_per_lakoin: input.tintaPerLakoin,
+    exchange_min_lakoin: input.exchangeMinLakoin,
+    pending_hours: input.pendingHours,
+    author_rewards_enabled: input.authorRewardsEnabled,
+    exchange_enabled: input.exchangeEnabled,
+    missions_pay_tinta: input.missionsPayTinta,
+    updated_at: new Date().toISOString(),
+  }
+
+  const { error } = await db
+    .from('tinta_policy')
+    .update(newVal)
+    .eq('id', true)
+
+  if (error) throw new Error(`updateTintaPolicy: ${error.message}`)
+
+  await auditSettings({
+    adminUserId: admin.id,
+    adminEmail: admin.email,
+    settingArea: 'tinta_policy',
+    settingKey: 'default',
+    oldValue: oldVal,
+    newValue: newVal,
+    reason: input.reason,
+  })
+
+  return {
+    tintaPerRead: input.tintaPerRead,
+    authorDailyCap: input.authorDailyCap,
+    tintaCheckin: input.tintaCheckin,
+    tintaChoice: input.tintaChoice,
+    tintaAdBatch: input.tintaAdBatch,
+    tintaPerLakoin: input.tintaPerLakoin,
+    exchangeMinLakoin: input.exchangeMinLakoin,
+    pendingHours: input.pendingHours,
+    authorRewardsEnabled: input.authorRewardsEnabled,
+    exchangeEnabled: input.exchangeEnabled,
+    missionsPayTinta: input.missionsPayTinta,
+    updatedAt: newVal.updated_at,
+  }
+}
+
+

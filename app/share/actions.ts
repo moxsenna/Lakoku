@@ -36,9 +36,9 @@ export async function actStartFromShare(
   shareSlug: string,
 ): Promise<ShareActionResult<{ startId: string; next: string }>> {
   try {
-    const { startId } = await recordShareStart(shareSlug)
-    // MVP: playthrough baru via onboarding; foundation-copy penuh = T-SHARE-4.
-    const next = `/mulai?share=${encodeURIComponent(shareSlug)}&start=${encodeURIComponent(startId)}`
+    const { cloneStoryFromShare } = await import('@/lib/api/share')
+    const { storyId, startId } = await cloneStoryFromShare(shareSlug)
+    const next = `/baca/${encodeURIComponent(storyId)}?bab=1`
     return { ok: true, startId, next }
   } catch (e) {
     return {

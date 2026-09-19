@@ -24,6 +24,7 @@ import {
   queryStoriesByIdsForUser,
   queryStoryForUser,
   queryExploreStories,
+  queryPublicUserStories,
   queryChapter,
   queryLatestAvailableChapter,
   queryChapterMetadatas,
@@ -110,6 +111,32 @@ export async function listExploreStories(): Promise<StorySummary[]> {
         endingName: undefined,
       }
     })
+}
+
+/**
+ * Katalog cerita publik buatan pembaca/penulis lain (rail "Dari Pembaca Lain").
+ * Progress personal di-overlay bila user punya reader_state untuk cerita tsb.
+ * Menjaga keunikan id di dalam rail.
+ */
+export async function listPublicUserStories(limit = 12): Promise<StorySummary[]> {
+  const [stories, states] = await Promise.all([queryPublicUserStories(limit), getReaderStates()])
+  const seen = new Set<string>()
+  const uniqueStories = stories.filter((s) => {
+    if (seen.has(s.id)) return false
+    seen.add(s.id)
+    return true
+  })
+  return uniqueStories.map((s) => {
+    const state = states.get(s.id)
+    if (state) return overlay(s, state)
+    return {
+      ...s,
+      status: 'BARU' as const,
+      currentChapter: 1,
+      jejak: [],
+      endingName: undefined,
+    }
+  })
 }
 
 /** Detail lengkap satu cerita, dengan state per-user bila login. */
@@ -218,3 +245,40 @@ export async function listChapterMetadatas(storyId: string): Promise<{
   const chapters = await queryChapterMetadatas(storyId, maxReached)
   return { chapters, maxReachedChapter: maxReached }
 }
+
+/**
+ * Ambil peta visibilitas cerita milik pengguna (storyId -> visibility).
+ * Hanya mengembalikan baris di mana user adalah pemilik cerita (owner_user_id = userId).
+ */
+export async function getOwnedStoryVisibilityForUser(
+  userId: string,
+  storyIds?: string[],
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  if (!userId) return map
+
+  try {
+    const { createAdminClient } = await import('@/lib/supabase/admin')
+    const db = createAdminClient()
+    let query = db
+      .from('stories')
+      .select('id, visibility')
+      .eq('owner_user_id', userId)
+
+    if (storyIds && storyIds.length > 0) {
+      query = query.in('id', storyIds)
+    }
+
+    const { data, error } = await query
+    if (error || !data) return map
+
+    for (const row of data as { id: string; visibility: string | null }[]) {
+      map.set(row.id, row.visibility || 'private')
+    }
+  } catch {
+    // Fail-open
+  }
+
+  return map
+}
+

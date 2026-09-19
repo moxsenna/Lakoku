@@ -218,5 +218,13 @@ export async function processPayCoreWebhook(
     console.log('[v0] paycore webhook: markOrderPaid gagal (non-fatal):', (err as Error)?.message)
   }
 
+  // Berikan komisi referral secara non-fatal bila pembeli terikat referral
+  try {
+    const { applyReferralCommission } = await import('@/lib/rewards/commission.server')
+    await applyReferralCommission(event.orderId, event.userId)
+  } catch (err) {
+    console.log('[v0] paycore webhook: applyReferralCommission non-fatal failure:', (err as Error)?.message)
+  }
+
   return { status: 'applied', eventId: event.eventId, orderId: event.orderId, credits: grantCredits }
 }

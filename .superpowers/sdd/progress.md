@@ -296,3 +296,38 @@ Recovery order (reviewer-mandated):
 - Plan file updated: §0.3 post-integration status; header M10-B CLOSED.
   M10_B_REPORT.md §10 closure addendum. Next: recovery step 2 — restart M10-C
   from main 7d0dd03 (current runtime incl. V6/preflight seams).
+
+## Dompet Imbalan & Komisi Referral (2026-09-17)
+Plan: docs/superpowers/plans/2026-09-17-dompet-imbalan-referral.md
+Branch: feat/dompet-imbalan-referral
+Base: aa22218
+
+### Tasks
+- Task 1 (Migration): pending
+- Task 2 (Pure Domain Policy): pending
+- Task 3 (Server Seam): pending
+- Task 4 (Attribution & /r/[code]): pending
+- Task 5 (PayCore Webhook Commission): pending
+- Task 6 (Admin Settings Schema & Route): pending
+- Task 7 (Admin Settings UI): pending
+- Task 8 (Reader UI /profil/imbalan): pending
+- Task 9 (Smoke Test Verification): pending
+
+## Lakoin-Tinta Economy P1-P12 (2026-09-19)
+Plan: docs/superpowers/plans/2026-09-19-lakoin-tinta-economy.md (2ebde3e)
+Branch: feat/lakoin-tinta-economy | Gates: GATES.lakoin-tinta.md | Amandemen PM: etalase rail TERPISAH (bukan merge); default reward disetujui; tanpa clawback.
+- Task P1: complete (commits 2ebde3e..115b13b, review APPROVED, gate G1 met). Minor dicatat: (a) unique_violation race di grant_author_tinta_v1 -> fold ke P4; (b) commit video user 5a1d25a ada di branch ini (milik PM, biarkan).
+- Task P2: complete (commit d87b555, review APPROVED, 22 test + typecheck hijau). Catatan: commit video PM 5a1d25a terinterleave di antara task — BASE tiap task dicatat ulang sebelum dispatch.
+- Task P3: complete (commit cfc1efe, review APPROVED, 21 test + typecheck + eslint hijau). Minor utk final review: rollback grant error tidak di-log (mengikuti pola redeemRewardCredits).
+- Task P4 (implementer): 5450a76 + follow-up 460dc1f (perbaikan test personalized-choice yang rusak oleh hook baru). Menunggu review.
+- Task P4: complete (commits 5450a76 + 460dc1f, review APPROVED, 96 test hijau termasuk regression personalized-choice). Minor utk final review: mock RPC default bikin log skip bising di stdout test.
+- Task P5: complete (commits 97ba034 + 462c30d, review APPROVED, 140 test hijau). Temuan reviewer: fondasi misi/ads/android ternyata untracked -> di-snapshot-commit ac7f7de per commit-push discipline (bukan klaim selesai; lihat GATES.preclosed/android-ops).
+- Task P6: complete (commit 8bee6c2, review APPROVED, typecheck+lint+92 test hijau). G6-M (navigasi browser) = verifikasi staging.
+- Task P7: complete (commit 5fb2d2f, review APPROVED, grep audit 0 literal pembaca; web-release 9/9). Implementer benar memperluas cakupan ke payment/return + privacy via grep.
+- Task P8: complete (commits f78d638 + fix 8e364d8, re-review APPROVED — 4 temuan: data seam, barrel import, owner filter defense-in-depth, touch target, semua FIXED).
+- Task P9: complete (commit 523d1c0, review APPROVED, 10 test + typecheck + eslint hijau). Rail terpisah "Dari Pembaca Lain" sesuai amandemen PM; listExploreStories utuh.
+- Task P10: complete (commit e07225a, review APPROVED, 112 test admin + typecheck + eslint hijau). ⚠️ audit log live di staging = verifikasi deploy.
+- Task P11: complete (commit f588866, review APPROVED, smoke analytics 35/35 + 157 test + typecheck + eslint hijau). Keputusan dinilai jujur: status RPC 'ineligible' -> log server tanpa event (enum tertutup tidak dipetakan paksa). Important utk masa depan: pecah kode return ineligible di migrasi berikutnya bila BI butuh breakdown.
+- Task P12: complete (commit 5829afc, review APPROVED, smoke:tinta 44/44 + 157 test + typecheck; bagian RPC live AC12.1-12.4 ditunda eksplisit ke G12-M staging).
+- FINAL REVIEW: SIAP MERGE (agent 34cab5fe). 0 Critical, 0 Important. 8 Minor semua DEFER beralasan (verifikasi: race unique_violation sudah FIX di P4). Catatan evolusi: pecah status 'ineligible' RPC di migrasi berikutnya bila BI butuh granular skip-reason.
+- GATES FINAL: 13/16 met runnable+G7-M; 2 manual menunggu staging deploy (G6-M navigasi dompet, G12-M RPC live) — handoff eksplisit.

@@ -26,8 +26,8 @@ export default async function PaymentReturnPage({
         <div className="flex flex-col gap-2">
           <h1 className="font-serif text-2xl text-foreground text-balance">Terima kasih!</h1>
           <p className="text-sm leading-relaxed text-muted-foreground text-pretty">
-            Pembayaranmu sedang diproses. Kreditmu akan masuk otomatis begitu pembayaran
-            dikonfirmasi — biasanya beberapa saat. Kamu bisa cek saldo di halaman Kredit.
+            Pembayaranmu sedang diproses. Lakoinmu akan masuk otomatis begitu pembayaran
+            dikonfirmasi — biasanya beberapa saat. Kamu bisa cek saldo di halaman Lakoin.
           </p>
           {order_id && (
             <p className="text-[11px] text-muted-foreground">No. pesanan: {order_id}</p>
@@ -40,7 +40,7 @@ export default async function PaymentReturnPage({
             href="/kredit"
             className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
           >
-            Lihat saldo kredit
+            Lihat saldo Lakoin
           </Link>
           <Link
             href="/beranda"

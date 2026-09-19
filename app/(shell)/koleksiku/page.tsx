@@ -2,6 +2,8 @@ import Link from 'next/link'
 import { StoryCard } from '@/components/story-card'
 import { listMyLibraryStories } from '@/lib/api/server'
 import { getSessionUser } from '@/lib/api/user-state'
+import { createAdminClient } from '@lakoku/db'
+import { StoryVisibilityToggle } from '@/components/story/story-visibility-toggle'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,6 +13,25 @@ export default async function KoleksikuPage() {
   const stories = user ? await listMyLibraryStories() : []
   const berjalan = stories.filter((s) => s.status !== 'SELESAI')
   const selesai = stories.filter((s) => s.status === 'SELESAI')
+
+  const ownedStoriesMap = new Map<string, string>()
+  if (user && stories.length > 0) {
+    try {
+      const db = createAdminClient()
+      const { data } = await db
+        .from('stories')
+        .select('id, visibility')
+        .eq('owner_user_id', user.id)
+        .in('id', stories.map((s) => s.id))
+      if (data) {
+        for (const row of data) {
+          ownedStoriesMap.set(row.id, row.visibility || 'private')
+        }
+      }
+    } catch {
+      // Fail-open: if ownership query fails, toggle won't show
+    }
+  }
 
   return (
     <main className="flex flex-col gap-8 px-5 pt-8">
@@ -27,9 +48,24 @@ export default async function KoleksikuPage() {
           </h2>
           {berjalan.length > 0 ? (
             <div className="flex flex-col gap-3">
-              {berjalan.map((story) => (
-                <StoryCard key={story.id} story={story} />
-              ))}
+              {berjalan.map((story) => {
+                const isOwned = ownedStoriesMap.has(story.id)
+                return (
+                  <div key={story.id} className="flex flex-col gap-1">
+                    <StoryCard story={story} />
+                    {isOwned && (
+                      <div className="flex items-center justify-between px-2 py-0.5">
+                        <span className="text-[11px] text-muted-foreground">Visibilitas cerita</span>
+                        <StoryVisibilityToggle
+                          storyId={story.id}
+                          initialVisibility={ownedStoriesMap.get(story.id) ?? 'private'}
+                          owned={true}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           ) : (
             <div className="flex flex-col items-start gap-3 rounded-2xl bg-card p-6">
@@ -50,9 +86,24 @@ export default async function KoleksikuPage() {
           </h2>
           {selesai.length > 0 ? (
             <div className="flex flex-col gap-3">
-              {selesai.map((story) => (
-                <StoryCard key={story.id} story={story} />
-              ))}
+              {selesai.map((story) => {
+                const isOwned = ownedStoriesMap.has(story.id)
+                return (
+                  <div key={story.id} className="flex flex-col gap-1">
+                    <StoryCard story={story} />
+                    {isOwned && (
+                      <div className="flex items-center justify-between px-2 py-0.5">
+                        <span className="text-[11px] text-muted-foreground">Visibilitas cerita</span>
+                        <StoryVisibilityToggle
+                          storyId={story.id}
+                          initialVisibility={ownedStoriesMap.get(story.id) ?? 'private'}
+                          owned={true}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           ) : (
             <div className="flex flex-col items-start gap-3 rounded-2xl bg-card p-6">

@@ -23,10 +23,12 @@ import type { StoryBibleDraft } from '@/lib/authoring/schema'
 import type { Finding } from '@lakoku/narrative-core'
 import {
   ChapterStatusResponseSchema,
+  SetStoryVisibilityResponseSchema,
   StartChapterSuccessResponseSchema,
   SubmitChoiceResponseSchema,
   type ChapterStatusResponse,
   type GenerationAttemptIdentity,
+  type SetStoryVisibilityResponse,
   type StartChapterSuccessResponse,
   type SubmitChoiceResponse,
 } from '../../packages/contracts/src/reader'
@@ -264,3 +266,48 @@ export async function startChapter(
     return { ok: false, error: 'Gagal memulai bab.' }
   }
 }
+
+/**
+ * Atur visibilitas cerita milik pengguna ('private' | 'public').
+ */
+export async function setStoryVisibility(
+  storyId: string,
+  visibility: 'private' | 'public',
+): Promise<SetStoryVisibilityResponse> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/stories/${encodeURIComponent(storyId)}/visibility`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ storyId, visibility }),
+        credentials: 'same-origin',
+      },
+    )
+    const raw = await res.json().catch(() => null)
+    const parsed = SetStoryVisibilityResponseSchema.safeParse(raw)
+    if (parsed.success) return parsed.data
+    if (raw && typeof raw === 'object' && 'ok' in raw && (raw as { ok?: unknown }).ok === false) {
+      return {
+        ok: false,
+        error:
+          typeof (raw as { error?: unknown }).error === 'string'
+            ? (raw as { error: string }).error
+            : 'Gagal memperbarui visibilitas cerita.',
+      }
+    }
+    if (res.status === 401) {
+      return { ok: false, error: 'Silakan masuk terlebih dahulu.' }
+    }
+    if (res.status === 403) {
+      return { ok: false, error: 'Kamu bukan pemilik cerita ini.' }
+    }
+    if (res.status === 404) {
+      return { ok: false, error: 'Cerita tidak ditemukan.' }
+    }
+    return { ok: false, error: 'Gagal memperbarui visibilitas cerita.' }
+  } catch {
+    return { ok: false, error: 'Gagal memperbarui visibilitas cerita.' }
+  }
+}
+

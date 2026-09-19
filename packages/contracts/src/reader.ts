@@ -232,6 +232,26 @@ export const SubmitReportResponseSchema = z.object({
 })
 export type SubmitReportResponse = z.infer<typeof SubmitReportResponseSchema>
 
+export const StoryVisibilitySchema = z.enum(['private', 'unlisted', 'public'])
+export type StoryVisibility = z.infer<typeof StoryVisibilitySchema>
+
+export const SetStoryVisibilityRequestSchema = z
+  .object({
+    storyId: z.string().min(1).max(100),
+    visibility: z.enum(['private', 'public']),
+  })
+  .strict()
+export type SetStoryVisibilityRequest = z.infer<typeof SetStoryVisibilityRequestSchema>
+
+export const SetStoryVisibilityResponseSchema = z
+  .object({
+    ok: z.boolean(),
+    visibility: StoryVisibilitySchema.optional(),
+    error: z.string().optional(),
+  })
+  .strict()
+export type SetStoryVisibilityResponse = z.infer<typeof SetStoryVisibilityResponseSchema>
+
 const contractSchemas = {
   TropeTag: TropeTagSchema,
   StoryStatus: StoryStatusSchema,
@@ -261,6 +281,9 @@ const contractSchemas = {
   SubmitChoiceResponse: SubmitChoiceResponseSchema,
   SubmitReportRequest: SubmitReportRequestSchema,
   SubmitReportResponse: SubmitReportResponseSchema,
+  StoryVisibility: StoryVisibilitySchema,
+  SetStoryVisibilityRequest: SetStoryVisibilityRequestSchema,
+  SetStoryVisibilityResponse: SetStoryVisibilityResponseSchema,
 } as const
 
 type ContractSchemaName = keyof typeof contractSchemas
@@ -390,6 +413,29 @@ export const openApiDocument = {
         },
         responses: {
           200: response('Laporan diterima.', schemaRef('SubmitReportResponse')),
+          400: errorResponses[400],
+          404: errorResponses[404],
+          500: errorResponses[500],
+        },
+      },
+    },
+    '/api/stories/{id}/visibility': {
+      patch: {
+        summary: 'Ubah visibilitas cerita milik pengguna.',
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'string', minLength: 1 },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: jsonContent(schemaRef('SetStoryVisibilityRequest')),
+        },
+        responses: {
+          200: response('Visibilitas cerita diperbarui.', schemaRef('SetStoryVisibilityResponse')),
           400: errorResponses[400],
           404: errorResponses[404],
           500: errorResponses[500],

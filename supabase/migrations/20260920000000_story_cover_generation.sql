@@ -44,7 +44,7 @@ values (
   'story_cover',
   'custom',
   'ag/gemini-3.1-flash-image',
-  '{}',
+  '[]'::jsonb,
   true,
   '2026-09-cover-v1',
   'Sampul cerita: endpoint gambar terpisah, bukan jalur prosa.'

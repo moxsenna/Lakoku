@@ -4,6 +4,7 @@ import { isStoryOwnedBy } from '@/lib/api/story-ownership.server'
 import { createAdminClient } from '@lakoku/db'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
 import { SetStoryVisibilityRequestSchema } from '@lakoku/contracts'
+import { trackServerEvent } from '@/lib/analytics/server'
 
 export async function PATCH(
   req: Request,
@@ -71,6 +72,15 @@ export async function PATCH(
       { status: 500 },
     )
   }
+
+  trackServerEvent(
+    'story_visibility_changed',
+    {
+      to_visibility: parsed.data.visibility,
+      story_id: storyId,
+    },
+    { userId: user.id },
+  )
 
   return NextResponse.json({
     ok: true,

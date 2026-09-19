@@ -1,6 +1,8 @@
 import 'server-only'
 import { createAdminClient } from '@lakoku/db'
-import type { AuthorRewardStatus } from './policy'
+import { type AuthorRewardStatus, tintaAmountBucket } from './policy'
+import { getTintaPolicy } from './server'
+import { trackServerEvent } from '@/lib/analytics/server'
 
 export interface MaybeGrantAuthorTintaParams {
   readerUserId: string
@@ -42,7 +44,41 @@ export async function maybeGrantAuthorTinta(
         chapterNumber,
         readerUserId,
       })
+
+      try {
+        const policy = await getTintaPolicy()
+        trackServerEvent(
+          'tinta_earned',
+          {
+            tinta_source: 'author_read_reward',
+            tinta_amount_bucket: tintaAmountBucket(policy.tintaPerRead),
+            story_id: storyId,
+          },
+          { userId: readerUserId },
+        )
+      } catch {
+        // Non-critical — jangan memblokir jika gagal analitik
+      }
+    } else if (status === 'capped' || status === 'disabled' || status === 'duplicate') {
+      console.log('[tinta] author reward skipped', {
+        status,
+        storyId,
+        chapterNumber,
+        readerUserId,
+      })
+
+      trackServerEvent(
+        'author_reward_skipped',
+        {
+          tinta_skip_reason: status,
+          story_id: storyId,
+        },
+        { userId: readerUserId },
+      )
     } else {
+      // Status 'ineligible' (atau lainnya): log server saja tanpa event
+      // Alasan: penyebab spesifik (bukan public vs self-read vs bab di luar batas)
+      // tidak dapat dipetakan secara jujur dari status tunggal RPC.
       console.log('[tinta] author reward skipped', {
         status,
         storyId,

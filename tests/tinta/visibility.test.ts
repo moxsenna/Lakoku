@@ -96,10 +96,10 @@ describe('Task P8: Story Visibility (AC8.1 - AC8.6)', () => {
   })
 
   describe('AC8.2 Route PATCH /api/stories/[id]/visibility', () => {
-    it('does not import lib/analytics in Task P8', () => {
+    it('imports lib/analytics/server in Task P11', () => {
       const filePath = join(process.cwd(), 'app/api/stories/[id]/visibility/route.ts')
       const source = readFileSync(filePath, 'utf-8')
-      expect(source).not.toMatch(/from\s+['"][^'"]*analytics[^'"]*['"]/)
+      expect(source).toMatch(/from\s+['"][^'"]*analytics\/server[^'"]*['"]/)
     })
 
     it('returns 401 when guest (no user session)', async () => {

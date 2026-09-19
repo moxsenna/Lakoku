@@ -2,7 +2,9 @@
 
 import { revalidatePath } from 'next/cache'
 import { getSessionUser } from '@/lib/api/user-state'
-import { exchangeTintaForLakoin } from '@/lib/tinta/server'
+import { exchangeTintaForLakoin, getTintaPolicy } from '@/lib/tinta/server'
+import { lakoinOutBucket } from '@/lib/tinta/policy'
+import { trackServerEvent } from '@/lib/analytics/server'
 
 export type ExchangeActionResult =
   | { ok: true; lakoinOut: number; tintaSpent: number }
@@ -27,6 +29,21 @@ export async function actExchangeTinta(amount: number): Promise<ExchangeActionRe
 
   try {
     const result = await exchangeTintaForLakoin(user.id, Math.floor(amount))
+
+    try {
+      const policy = await getTintaPolicy()
+      trackServerEvent(
+        'tinta_exchanged',
+        {
+          lakoin_out_bucket: lakoinOutBucket(result.lakoinOut),
+          exchange_rate: policy.tintaPerLakoin,
+        },
+        { userId: user.id },
+      )
+    } catch {
+      // Non-critical
+    }
+
     revalidatePath('/profil/tinta')
     revalidatePath('/profil')
     revalidatePath('/kredit')

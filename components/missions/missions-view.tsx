@@ -23,6 +23,8 @@ import {
   type MissionPolicy,
   type MissionView,
 } from '@/lib/missions/policy'
+import { trackEvent } from '@/lib/analytics/client'
+import { tintaAmountBucket } from '@/lib/tinta/policy'
 
 interface Props {
   initialSnapshot: DailyMissionsSnapshot
@@ -77,6 +79,19 @@ export function MissionsView({ initialSnapshot, policy, creditBalance }: Props) 
         text: `Berhasil klaim! +${mission.credits} ${currencyLabel} ditambahkan ke akunmu.`,
         kind: 'ok',
       })
+
+      if (missionCurrency === 'tinta') {
+        const sourceMap: Record<MissionKey, 'mission_checkin' | 'mission_choice' | 'mission_ad_batch'> = {
+          daily_checkin: 'mission_checkin',
+          make_choice: 'mission_choice',
+          watch_ad: 'mission_ad_batch',
+        }
+        trackEvent('tinta_earned', {
+          tinta_source: sourceMap[mission.key],
+          tinta_amount_bucket: tintaAmountBucket(mission.credits),
+        })
+      }
+
       router.refresh()
     } catch {
       setMessage({ text: 'Terjadi kesalahan saat mengklaim.', kind: 'err' })

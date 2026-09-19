@@ -13,12 +13,22 @@ const mocks = vi.hoisted(() => ({
   continuePersonalizedGeneration: vi.fn(),
   continueStandardGeneration: vi.fn(),
   isStoryOwnedBy: vi.fn(),
+  trackServerEvent: vi.fn(),
+  getTintaPolicy: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
 
 vi.mock('@lakoku/db', () => ({
   createAdminClient: mocks.createAdminClient,
+}))
+
+vi.mock('@/lib/analytics/server', () => ({
+  trackServerEvent: mocks.trackServerEvent,
+}))
+
+vi.mock('../../lib/tinta/server', () => ({
+  getTintaPolicy: mocks.getTintaPolicy,
 }))
 
 vi.mock('@/lib/api/queries', () => ({
@@ -68,6 +78,19 @@ describe('lib/tinta/author-reward.server (AC4.1, AC4.5)', () => {
     mocks.createAdminClient.mockReturnValue({
       rpc: mocks.rpc,
     })
+    mocks.getTintaPolicy.mockResolvedValue({
+      tintaPerRead: 10,
+      authorDailyCap: 300,
+      tintaCheckin: 5,
+      tintaChoice: 10,
+      tintaAdBatch: 10,
+      tintaPerLakoin: 100,
+      exchangeMinLakoin: 1,
+      pendingHours: 24,
+      authorRewardsEnabled: true,
+      exchangeEnabled: true,
+      missionsPayTinta: false,
+    })
   })
 
   describe('Architecture & Boundaries', () => {
@@ -78,13 +101,13 @@ describe('lib/tinta/author-reward.server (AC4.1, AC4.5)', () => {
       expect(firstLine).toBe("import 'server-only'")
     })
 
-    it('does not import lib/analytics in Task P4', () => {
+    it('imports lib/analytics/server in Task P11', () => {
       const filePath = join(process.cwd(), 'lib/tinta/author-reward.server.ts')
       const source = readFileSync(filePath, 'utf-8')
-      expect(source).not.toMatch(/from\s+['"][^'"]*analytics[^'"]*['"]/)
+      expect(source).toMatch(/from\s+['"][^'"]*analytics\/server[^'"]*['"]/)
     })
 
-    it('only imports from @lakoku/db and ./policy', () => {
+    it('only imports allowed modules (@lakoku/db, ./policy, ./server, @/lib/analytics/server)', () => {
       const filePath = join(process.cwd(), 'lib/tinta/author-reward.server.ts')
       const source = readFileSync(filePath, 'utf-8')
       const importMatches = [...source.matchAll(/import\s+(?:[^'"]*from\s+)?['"]([^'"]+)['"]/g)]
@@ -95,6 +118,8 @@ describe('lib/tinta/author-reward.server (AC4.1, AC4.5)', () => {
           mod === 'server-only' ||
           mod === '@lakoku/db' ||
           mod === './policy' ||
+          mod === './server' ||
+          mod === '@/lib/analytics/server' ||
           mod.startsWith('node:')
         expect(isAllowed).toBe(true)
       }

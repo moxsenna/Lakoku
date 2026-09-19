@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useSyncExternalStore } from 'react'
+import { useRef, useState, useSyncExternalStore } from 'react'
 import Link from 'next/link'
 import { createClient, type SupabasePublicConfig } from '@/lib/supabase/client'
 import { readGuestTasteProfile, clearGuestTasteProfile } from '@/lib/taste-profile/storage'
@@ -31,6 +31,9 @@ export function LoginForm({
   const [emailLoading, setEmailLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const busy = emailLoading || googleLoading
+  // Guard sinkron: state `busy` belum ter-commit saat klik kedua datang dalam
+  // puluhan ms, sehingga disabled={busy} saja bisa kena race double-submit.
+  const submitGuardRef = useRef(false)
   const mounted = useSyncExternalStore(
     subscribeToMounted,
     getMountedSnapshot,
@@ -40,7 +43,8 @@ export function LoginForm({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (busy) return
+    if (busy || submitGuardRef.current) return
+    submitGuardRef.current = true
     setEmailLoading(true)
     setError(null)
 
@@ -85,6 +89,7 @@ export function LoginForm({
       }
     } finally {
       // Jika hard nav jalan, unmount mengabaikan ini. Jika gagal, tombol bisa dipakai lagi.
+      submitGuardRef.current = false
       setEmailLoading(false)
     }
   }

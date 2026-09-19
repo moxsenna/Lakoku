@@ -12,6 +12,7 @@ import type {
   UpdateAiModelRouteInput,
   UpdateRewardPolicyInput,
   UpdateMissionPolicyInput,
+  UpdateTintaPolicyInput,
 } from './settings-schemas'
 
 export interface AdminMissionPolicy {
@@ -43,6 +44,21 @@ export interface AdminRewardPolicy {
   redeemEnabled: boolean
   payoutEnabled: boolean
   payoutMinIdr: number
+  updatedAt: string | null
+}
+
+export interface AdminTintaPolicy {
+  tintaPerRead: number
+  authorDailyCap: number
+  tintaCheckin: number
+  tintaChoice: number
+  tintaAdBatch: number
+  tintaPerLakoin: number
+  exchangeMinLakoin: number
+  pendingHours: number
+  authorRewardsEnabled: boolean
+  exchangeEnabled: boolean
+  missionsPayTinta: boolean
   updatedAt: string | null
 }
 
@@ -242,6 +258,7 @@ export interface AdminSettingsData {
   featureCreditCosts: AdminFeatureCreditCost[]
   rewardPolicy: AdminRewardPolicy | null
   missionPolicy: AdminMissionPolicy | null
+  tintaPolicy?: AdminTintaPolicy | null
   recentAuditLogs: AdminSettingsAuditLog[]
 }
 
@@ -274,6 +291,31 @@ export async function getAdminMissionPolicy(): Promise<AdminMissionPolicy | null
   }
 }
 
+export async function getAdminTintaPolicy(): Promise<AdminTintaPolicy | null> {
+  const db = createAdminClient()
+  const { data } = await db
+    .from('tinta_policy')
+    .select('*')
+    .eq('id', true)
+    .maybeSingle()
+  if (!data) return null
+  const d = data as Record<string, unknown>
+  return {
+    tintaPerRead: Number(d.tinta_per_read ?? 10),
+    authorDailyCap: Number(d.author_daily_cap ?? 300),
+    tintaCheckin: Number(d.tinta_checkin ?? 5),
+    tintaChoice: Number(d.tinta_choice ?? 10),
+    tintaAdBatch: Number(d.tinta_ad_batch ?? 10),
+    tintaPerLakoin: Number(d.tinta_per_lakoin ?? 100),
+    exchangeMinLakoin: Number(d.exchange_min_lakoin ?? 1),
+    pendingHours: Number(d.pending_hours ?? 24),
+    authorRewardsEnabled: Boolean(d.author_rewards_enabled),
+    exchangeEnabled: Boolean(d.exchange_enabled),
+    missionsPayTinta: Boolean(d.missions_pay_tinta),
+    updatedAt: (d.updated_at as string) ?? null,
+  }
+}
+
 export async function loadAdminSettings(): Promise<AdminSettingsData> {
   const [
     creditProducts,
@@ -282,6 +324,7 @@ export async function loadAdminSettings(): Promise<AdminSettingsData> {
     featureCreditCosts,
     rewardPolicy,
     missionPolicy,
+    tintaPolicy,
     recentAuditLogs,
   ] = await Promise.all([
     listAdminCreditProducts(),
@@ -290,6 +333,7 @@ export async function loadAdminSettings(): Promise<AdminSettingsData> {
     listAdminFeatureCreditCosts(),
     getAdminRewardPolicy(),
     getAdminMissionPolicy(),
+    getAdminTintaPolicy(),
     listRecentSettingsAuditLogs(),
   ])
   return {
@@ -299,9 +343,12 @@ export async function loadAdminSettings(): Promise<AdminSettingsData> {
     featureCreditCosts,
     rewardPolicy,
     missionPolicy,
+    tintaPolicy,
     recentAuditLogs,
   }
 }
+
+export const loadSettingsData = loadAdminSettings
 
 // --- Write helpers (owner-only) ---
 
@@ -769,4 +816,81 @@ export async function updateMissionPolicy(
     updatedAt: newVal.updated_at,
   }
 }
+
+export async function updateTintaPolicy(
+  input: UpdateTintaPolicyInput,
+): Promise<AdminTintaPolicy> {
+  const admin = await requireOwner()
+  const db = createAdminClient()
+
+  const { data: oldRow } = await db
+    .from('tinta_policy')
+    .select('*')
+    .eq('id', true)
+    .single()
+
+  const oldVal = oldRow
+    ? {
+        tinta_per_read: oldRow.tinta_per_read,
+        author_daily_cap: oldRow.author_daily_cap,
+        tinta_checkin: oldRow.tinta_checkin,
+        tinta_choice: oldRow.tinta_choice,
+        tinta_ad_batch: oldRow.tinta_ad_batch,
+        tinta_per_lakoin: oldRow.tinta_per_lakoin,
+        exchange_min_lakoin: oldRow.exchange_min_lakoin,
+        pending_hours: oldRow.pending_hours,
+        author_rewards_enabled: oldRow.author_rewards_enabled,
+        exchange_enabled: oldRow.exchange_enabled,
+        missions_pay_tinta: oldRow.missions_pay_tinta,
+      }
+    : null
+
+  const newVal = {
+    tinta_per_read: input.tintaPerRead,
+    author_daily_cap: input.authorDailyCap,
+    tinta_checkin: input.tintaCheckin,
+    tinta_choice: input.tintaChoice,
+    tinta_ad_batch: input.tintaAdBatch,
+    tinta_per_lakoin: input.tintaPerLakoin,
+    exchange_min_lakoin: input.exchangeMinLakoin,
+    pending_hours: input.pendingHours,
+    author_rewards_enabled: input.authorRewardsEnabled,
+    exchange_enabled: input.exchangeEnabled,
+    missions_pay_tinta: input.missionsPayTinta,
+    updated_at: new Date().toISOString(),
+  }
+
+  const { error } = await db
+    .from('tinta_policy')
+    .update(newVal)
+    .eq('id', true)
+
+  if (error) throw new Error(`updateTintaPolicy: ${error.message}`)
+
+  await auditSettings({
+    adminUserId: admin.id,
+    adminEmail: admin.email,
+    settingArea: 'tinta_policy',
+    settingKey: 'default',
+    oldValue: oldVal,
+    newValue: newVal,
+    reason: input.reason,
+  })
+
+  return {
+    tintaPerRead: input.tintaPerRead,
+    authorDailyCap: input.authorDailyCap,
+    tintaCheckin: input.tintaCheckin,
+    tintaChoice: input.tintaChoice,
+    tintaAdBatch: input.tintaAdBatch,
+    tintaPerLakoin: input.tintaPerLakoin,
+    exchangeMinLakoin: input.exchangeMinLakoin,
+    pendingHours: input.pendingHours,
+    authorRewardsEnabled: input.authorRewardsEnabled,
+    exchangeEnabled: input.exchangeEnabled,
+    missionsPayTinta: input.missionsPayTinta,
+    updatedAt: newVal.updated_at,
+  }
+}
+
 

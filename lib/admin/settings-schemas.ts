@@ -122,3 +122,22 @@ export const updateMissionPolicySchema = z.object({
 })
 export type UpdateMissionPolicyInput = z.infer<typeof updateMissionPolicySchema>
 
+export const updateTintaPolicySchema = z
+  .object({
+    tintaPerRead: z.number().int().min(0).max(1000),
+    authorDailyCap: z.number().int().min(0).max(100000),
+    tintaCheckin: z.number().int().min(0).max(1000),
+    tintaChoice: z.number().int().min(0).max(1000),
+    tintaAdBatch: z.number().int().min(0).max(1000),
+    tintaPerLakoin: z.number().int().min(10).max(100000),
+    exchangeMinLakoin: z.number().int().min(1).max(10000),
+    pendingHours: z.number().int().min(0).max(168),
+    authorRewardsEnabled: z.boolean(),
+    exchangeEnabled: z.boolean(),
+    missionsPayTinta: z.boolean(),
+    reason: z.string().min(5).max(500),
+  })
+  .strict()
+export type UpdateTintaPolicyInput = z.infer<typeof updateTintaPolicySchema>
+
+

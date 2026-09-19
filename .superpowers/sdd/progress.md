@@ -321,3 +321,13 @@ Branch: feat/lakoin-tinta-economy | Gates: GATES.lakoin-tinta.md | Amandemen PM:
 - Task P3: complete (commit cfc1efe, review APPROVED, 21 test + typecheck + eslint hijau). Minor utk final review: rollback grant error tidak di-log (mengikuti pola redeemRewardCredits).
 - Task P4 (implementer): 5450a76 + follow-up 460dc1f (perbaikan test personalized-choice yang rusak oleh hook baru). Menunggu review.
 - Task P4: complete (commits 5450a76 + 460dc1f, review APPROVED, 96 test hijau termasuk regression personalized-choice). Minor utk final review: mock RPC default bikin log skip bising di stdout test.
+- Task P5: complete (commits 97ba034 + 462c30d, review APPROVED, 140 test hijau). Temuan reviewer: fondasi misi/ads/android ternyata untracked -> di-snapshot-commit ac7f7de per commit-push discipline (bukan klaim selesai; lihat GATES.preclosed/android-ops).
+- Task P6: complete (commit 8bee6c2, review APPROVED, typecheck+lint+92 test hijau). G6-M (navigasi browser) = verifikasi staging.
+- Task P7: complete (commit 5fb2d2f, review APPROVED, grep audit 0 literal pembaca; web-release 9/9). Implementer benar memperluas cakupan ke payment/return + privacy via grep.
+- Task P8: complete (commits f78d638 + fix 8e364d8, re-review APPROVED — 4 temuan: data seam, barrel import, owner filter defense-in-depth, touch target, semua FIXED).
+- Task P9: complete (commit 523d1c0, review APPROVED, 10 test + typecheck + eslint hijau). Rail terpisah "Dari Pembaca Lain" sesuai amandemen PM; listExploreStories utuh.
+- Task P10: complete (commit e07225a, review APPROVED, 112 test admin + typecheck + eslint hijau). ⚠️ audit log live di staging = verifikasi deploy.
+- Task P11: complete (commit f588866, review APPROVED, smoke analytics 35/35 + 157 test + typecheck + eslint hijau). Keputusan dinilai jujur: status RPC 'ineligible' -> log server tanpa event (enum tertutup tidak dipetakan paksa). Important utk masa depan: pecah kode return ineligible di migrasi berikutnya bila BI butuh breakdown.
+- Task P12: complete (commit 5829afc, review APPROVED, smoke:tinta 44/44 + 157 test + typecheck; bagian RPC live AC12.1-12.4 ditunda eksplisit ke G12-M staging).
+- FINAL REVIEW: SIAP MERGE (agent 34cab5fe). 0 Critical, 0 Important. 8 Minor semua DEFER beralasan (verifikasi: race unique_violation sudah FIX di P4). Catatan evolusi: pecah status 'ineligible' RPC di migrasi berikutnya bila BI butuh granular skip-reason.
+- GATES FINAL: 13/16 met runnable+G7-M; 2 manual menunggu staging deploy (G6-M navigasi dompet, G12-M RPC live) — handoff eksplisit.

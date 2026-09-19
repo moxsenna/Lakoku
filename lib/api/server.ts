@@ -24,6 +24,7 @@ import {
   queryStoriesByIdsForUser,
   queryStoryForUser,
   queryExploreStories,
+  queryPublicUserStories,
   queryChapter,
   queryLatestAvailableChapter,
   queryChapterMetadatas,
@@ -110,6 +111,32 @@ export async function listExploreStories(): Promise<StorySummary[]> {
         endingName: undefined,
       }
     })
+}
+
+/**
+ * Katalog cerita publik buatan pembaca/penulis lain (rail "Dari Pembaca Lain").
+ * Progress personal di-overlay bila user punya reader_state untuk cerita tsb.
+ * Menjaga keunikan id di dalam rail.
+ */
+export async function listPublicUserStories(limit = 12): Promise<StorySummary[]> {
+  const [stories, states] = await Promise.all([queryPublicUserStories(limit), getReaderStates()])
+  const seen = new Set<string>()
+  const uniqueStories = stories.filter((s) => {
+    if (seen.has(s.id)) return false
+    seen.add(s.id)
+    return true
+  })
+  return uniqueStories.map((s) => {
+    const state = states.get(s.id)
+    if (state) return overlay(s, state)
+    return {
+      ...s,
+      status: 'BARU' as const,
+      currentChapter: 1,
+      jejak: [],
+      endingName: undefined,
+    }
+  })
 }
 
 /** Detail lengkap satu cerita, dengan state per-user bila login. */

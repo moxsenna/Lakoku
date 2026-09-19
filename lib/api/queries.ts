@@ -11,7 +11,7 @@ import { cache } from 'react'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { requireSupabaseAnonKey, requireSupabaseUrl } from '@/lib/supabase/env'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { createClient as createCookieClient } from '@/lib/supabase/server'
+import { createClient as _createCookieClient } from '@/lib/supabase/server'
 import type {
   StorySummary,
   StoryDetail,
@@ -171,6 +171,26 @@ export async function queryExploreStories(): Promise<StorySummary[]> {
     .order('id', { ascending: true })
   if (error) throw new Error(`queryExploreStories: ${error.message}`)
   return (data as StoryRow[]).map(toDetail)
+}
+
+/**
+ * Cerita publik buatan pembaca/penulis lain (bukan demo/premium bawaan).
+ * Menggunakan admin client, visibility public, owner tidak null, bukan demo/premium.
+ * Memanfaatkan index stories_visibility_idx.
+ */
+export async function queryPublicUserStories(limit = 12): Promise<StorySummary[]> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('stories')
+    .select(STORY_READER_COLUMNS)
+    .eq('visibility', 'public')
+    .not('owner_user_id', 'is', null)
+    .not('id', 'like', 'demo:%')
+    .not('id', 'like', 'premium:%')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) throw new Error(`queryPublicUserStories: ${error.message}`)
+  return ((data ?? []) as StoryRow[]).map(toDetail)
 }
 
 function mapChapterRow(r: ChapterRow): Chapter {

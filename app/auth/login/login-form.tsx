@@ -7,7 +7,7 @@ import { readGuestTasteProfile, clearGuestTasteProfile } from '@/lib/taste-profi
 import { actMergeGuestTasteProfile } from '@/app/onboarding/selera/actions'
 import { sanitizeNextPath } from '@/lib/auth/safe-next'
 import { GoogleSignInButton } from '@/components/auth/google-sign-in-button'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Loader2 } from 'lucide-react'
 
 const subscribeToMounted = () => () => {}
 const getMountedSnapshot = () => true
@@ -185,8 +185,10 @@ export function LoginForm({
           <button
             type="submit"
             disabled={busy}
-            className="mt-2 flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+            aria-busy={emailLoading || undefined}
+            className="mt-2 flex min-h-13 items-center justify-center gap-2 rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
           >
+            {emailLoading && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
             {emailLoading ? 'Membuka pintu...' : resumeOnboarding ? 'Simpan Ceritaku' : 'Masuk'}
           </button>
         </form>

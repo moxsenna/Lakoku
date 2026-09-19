@@ -5,6 +5,7 @@ import { DM_Serif_Display, Plus_Jakarta_Sans } from 'next/font/google'
 import { Toaster } from '@/components/ui/sonner'
 import { ThemeProvider } from '@/components/theme-provider'
 import { FontSizeProvider } from '@/components/font-size-provider'
+import { GlobalPendingIndicator } from '@/components/loading/global-pending'
 import { AdsenseScript } from '@/components/ads/adsense-script'
 import './globals.css'
 
@@ -60,6 +61,7 @@ export default function RootLayout({
       <body className="font-sans antialiased">{process.env.NODE_ENV === 'development' ? <ReticleDev /> : null}
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
           <FontSizeProvider>{children}</FontSizeProvider>
+          <GlobalPendingIndicator />
           <Toaster position="top-center" />
         </ThemeProvider>
         <AdsenseScript />

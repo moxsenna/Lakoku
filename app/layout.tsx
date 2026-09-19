@@ -1,3 +1,4 @@
+import { ReticleDev } from './reticle-dev';
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { DM_Serif_Display, Plus_Jakarta_Sans } from 'next/font/google'
@@ -56,7 +57,7 @@ export default function RootLayout({
           suppressHydrationWarning
         />
       </head>
-      <body className="font-sans antialiased">
+      <body className="font-sans antialiased">{process.env.NODE_ENV === 'development' ? <ReticleDev /> : null}
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
           <FontSizeProvider>{children}</FontSizeProvider>
           <Toaster position="top-center" />

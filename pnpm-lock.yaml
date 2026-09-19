@@ -99,6 +99,12 @@ importers:
       '@eslint/eslintrc':
         specifier: ^3.3.5
         version: 3.3.5
+      '@reticlehq/next':
+        specifier: ^3.1.0
+        version: 3.1.0(next@16.2.6(@babel/core@7.29.7)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))
+      '@reticlehq/react':
+        specifier: ^3.1.0
+        version: 3.1.0(react@19.2.4)
       '@tailwindcss/postcss':
         specifier: ^4.2.0
         version: 4.2.0
@@ -987,6 +993,32 @@ packages:
 
   '@oxc-project/types@0.139.0':
     resolution: {integrity: sha512-r9gHphtCs+1M7J0pw6Sn/hh/Wpa/iQrOOkrNAlVLF/gHq+/CJmHIWKKUUhdWjcD6CIa8idarspCsASiXCXvFUw==}
+
+  '@reticlehq/babel-plugin@3.1.0':
+    resolution: {integrity: sha512-8VKkpicKtZr4Mm/unaolIpY1w/SOjicyDq6hc7DTZU7q5AnipsevupyF0FG6CIeJMsQiqYei3DSgfZZRzLhiwA==}
+    engines: {node: '>=20.0.0'}
+    peerDependencies:
+      '@babel/core': ^7
+
+  '@reticlehq/browser@3.1.0':
+    resolution: {integrity: sha512-cA/Mf8eyf0Vp3L9WCyTYYj5EOITb2uYpm/bkGMM0MCBOIT6gFkx+bchl8yAyO4jmiAoETcf1O28UFrV05W7bxg==}
+    engines: {node: '>=20.0.0'}
+
+  '@reticlehq/core@3.1.0':
+    resolution: {integrity: sha512-3f823kl5YVPnh6vRsEFzAsIru1QWelG1m/efrn4U5aIN5t1uFTRPiH4IOQbYDAlpSxGADJ5nzk1b7021Xh11Fg==}
+    engines: {node: '>=20.0.0'}
+
+  '@reticlehq/next@3.1.0':
+    resolution: {integrity: sha512-6ybzLvZzShuV5Wh+kkS+G6yvRQ7+KWHIKNnIsmHakbguIno2lrDQHjIlkzkl4wjYL1nHf6GYwnHCIR/3F44yXg==}
+    engines: {node: '>=20.0.0'}
+    peerDependencies:
+      next: '>=13'
+
+  '@reticlehq/react@3.1.0':
+    resolution: {integrity: sha512-h0w1bu4YWBpkWnLsMj9iO/USGf9LoYeLzgwtXtoqJAsUokRArRyr9dW2/VNZ075IDDcual6hfDyvkDCw194k3w==}
+    engines: {node: '>=20.0.0'}
+    peerDependencies:
+      react: '>=18'
 
   '@rolldown/binding-android-arm64@1.1.5':
     resolution: {integrity: sha512-lZg8fqIv2v7FF237bwMgzGZEJvGL79/s5knJ/i6FmsGF4XXlzccZ4jb+TrFIxtSSxFtIpdsgrPZeMk1I9AFcyQ==}
@@ -3209,6 +3241,10 @@ packages:
     resolution: {integrity: sha512-VXJjc87FScF88uafS3JllDgvAm+c/Slfz06lorj2uAY34rlUu0Nt+v8wreiImcrgAjjIHp1rXpTDlLOGw29WwQ==}
     engines: {node: '>=18'}
 
+  open-verification@1.0.0:
+    resolution: {integrity: sha512-f6m79eT2xfDdEYlIEBxKyo+GPI47a95IgVmy4S9xQ2yVtdCl7Oz5bp30NBR5ITo16VV00Cpyui0k+jSPHbgVHw==}
+    engines: {node: '>=20.0.0'}
+
   open@11.0.0:
     resolution: {integrity: sha512-smsWv2LzFjP03xmvFoJ331ss6h+jixfA4UUV/Bsiyuu4YJPfN+FIQGOIiv4w9/+MoHkfkJ22UIaQWRVFRfH6Vw==}
     engines: {node: '>=20'}
@@ -4936,6 +4972,34 @@ snapshots:
   '@open-draft/until@2.1.0': {}
 
   '@oxc-project/types@0.139.0': {}
+
+  '@reticlehq/babel-plugin@3.1.0(@babel/core@7.29.7)':
+    dependencies:
+      '@babel/core': 7.29.7
+      '@reticlehq/core': 3.1.0
+
+  '@reticlehq/browser@3.1.0':
+    dependencies:
+      '@reticlehq/core': 3.1.0
+
+  '@reticlehq/core@3.1.0':
+    dependencies:
+      open-verification: 1.0.0
+      zod: 3.25.76
+
+  '@reticlehq/next@3.1.0(next@16.2.6(@babel/core@7.29.7)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))':
+    dependencies:
+      '@babel/core': 7.29.7
+      '@reticlehq/babel-plugin': 3.1.0(@babel/core@7.29.7)
+      next: 16.2.6(@babel/core@7.29.7)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+    transitivePeerDependencies:
+      - supports-color
+
+  '@reticlehq/react@3.1.0(react@19.2.4)':
+    dependencies:
+      '@reticlehq/browser': 3.1.0
+      '@reticlehq/core': 3.1.0
+      react: 19.2.4
 
   '@rolldown/binding-android-arm64@1.1.5':
     optional: true
@@ -7141,6 +7205,10 @@ snapshots:
   onetime@7.0.0:
     dependencies:
       mimic-function: 5.0.1
+
+  open-verification@1.0.0:
+    dependencies:
+      zod: 3.25.76
 
   open@11.0.0:
     dependencies:

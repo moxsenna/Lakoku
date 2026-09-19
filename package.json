@@ -121,6 +121,8 @@
   "devDependencies": {
     "@capacitor/cli": "^7.6.9",
     "@eslint/eslintrc": "^3.3.5",
+    "@reticlehq/next": "^3.1.0",
+    "@reticlehq/react": "^3.1.0",
     "@tailwindcss/postcss": "^4.2.0",
     "@types/node": "^24",
     "@types/react": "^19",

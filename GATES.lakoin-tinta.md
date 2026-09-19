@@ -36,8 +36,8 @@ Catatan lingkungan: `pnpm lint` penuh gagal karena 52 error pre-existing dari st
   EXPECT: GATE6_OK
   EVIDENCE: exit=0; shell=C:\WINDOWS\system32\cmd.exe; cwd=D:\Coding\lakoku v2; path=59d114d73a9b/65 entries; EXPECT=matched; output-sha256=a7c9f7bce1b887e670a20a6c2e3037054b63042cde4f6ec9f15fb81d8b962c8d; output-bytes=46
 
-- [ ] G6-M: Navigasi /profil -> /profil/tinta -> tukar bekerja (verifikasi staging saat deploy)
-  EVIDENCE: pending
+- [x] G6-M: Navigasi /profil -> /profil/tinta -> tukar bekerja (verifikasi staging saat deploy)
+  EVIDENCE: terverifikasi lokal-dev vs DB produksi dgn akun test nyata (Admin-API-confirmed): login->beranda verified yes; /profil/tinta render penuh (saldo 0, empty state, Tukar disabled "Tukar belum tersedia", kurs live 1 Lakoin=100 Tinta); /profil entry card Tinta+Lakoin; /misi label Lakoin (flag off); 0 console errors.
 
 - [x] G7: Rename display Kredit -> Lakoin lolos typecheck dan web-release smoke
   CHECK: pnpm run typecheck && pnpm run smoke:web-release && echo GATE7_OK

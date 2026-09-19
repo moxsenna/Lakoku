@@ -25,7 +25,7 @@ Sumber tiap file tercatat di tabel bawah (ID Mixkit = `https://mixkit.co/free-so
 | 3 · Kredit Gratis Tiap Hari (20s) | `tick-counter` angka kredit naik; `ui-check-pop` misi tercentang; `coin-win` kredit masuk; `achievement` misi selesai; `chime-positive` undangan referral; `ui-select` tombol |
 | 4 · Jadi Tokoh Utama (35s, 16:9) | `amb-rain-light-loop` bed; `heartbeat-medium` beat dramatis; `whoosh-cinematic` transisi babak; `impact-whoosh-deep` masuk Bab 45 lock; `whoosh-sparkle` + `chime-positive` logo & CTA |
 | 4 · Jadi Tokoh Utama (35s, 16:9) | Musik sama "Silent Descent" (`data-media-start="55"`); `amb-rain-night-loop` babak Malam; `ui-select` tombol pilihan; `whoosh-fast` masuk Konsekuensi; `whoosh-light-pop` tiap kilatan bab; `chime-positive` babak Dunia; `boom-short` beat Janji; `whoosh-sparkle` endcard |
-| 5 · Bab yang Menunggu (12s) | `clock-tick` bed; `page-turn` bab bergulir; `heartbeat-slow` tension; `notif-bell` notifikasi masuk; `whoosh-fast` snap ke CTA |
+| 5 · Bab yang Menunggu (13s) | `clock-tick` bed 0–7s (vol 0,16); `notif-bell` pembuka; `whoosh-light-pop` ganti kalimat; `whoosh-fast` tombol keputusan muncul; `whoosh-sparkle` endcard |
 
 ## Referensi file
 

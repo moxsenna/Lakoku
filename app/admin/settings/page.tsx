@@ -128,6 +128,14 @@ const USE_CASE_LABELS: Record<string, string> = {
   choices: 'Pilihan Alur Interaktif',
   story_authoring: 'Authoring & Premis (/mulai)',
   continuity_judge: 'Audit Kontinuitas Naratif',
+  story_cover: 'Sampul Cerita',
+}
+
+const FEATURE_KEY_LABELS: Record<string, string> = {
+  chapter_unlock: 'Buka Bab',
+  story_start: 'Mulai Cerita',
+  welcome_credit: 'Kredit Selamat Datang',
+  story_cover: 'Sampul Cerita',
 }
 
 export default function AdminSettingsPage() {
@@ -216,7 +224,7 @@ export default function AdminSettingsPage() {
               <tbody>
                 {data.featureCreditCosts.map((f) => (
                   <tr key={f.featureKey} className="border-b border-border hover:bg-muted/20">
-                    <td className="px-3 py-1.5 font-medium">{f.featureKey}</td>
+                    <td className="px-3 py-1.5 font-medium">{FEATURE_KEY_LABELS[f.featureKey] ?? f.featureKey}</td>
                     <td className="px-3 py-1.5 text-right">{f.creditsRequired}</td>
                     <td className="px-3 py-1.5 text-muted-foreground">{f.pricingVersion}</td>
                     <td className="px-3 py-1.5"><StatusBadge status={f.isActive ? 'active' : 'inactive'} /></td>

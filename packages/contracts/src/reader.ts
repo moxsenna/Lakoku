@@ -252,6 +252,18 @@ export const SetStoryVisibilityResponseSchema = z
   .strict()
 export type SetStoryVisibilityResponse = z.infer<typeof SetStoryVisibilityResponseSchema>
 
+/** Balasan seragam untuk kedua jalur sampul: generate berbayar dan unggah gratis. */
+export const StoryCoverResponseSchema = z
+  .object({
+    ok: z.boolean(),
+    cover: z.string().min(1).optional(),
+    balance: z.number().int().optional(),
+    requiredCredits: z.number().int().optional(),
+    error: z.string().optional(),
+  })
+  .strict()
+export type StoryCoverResponse = z.infer<typeof StoryCoverResponseSchema>
+
 const contractSchemas = {
   TropeTag: TropeTagSchema,
   StoryStatus: StoryStatusSchema,
@@ -284,6 +296,7 @@ const contractSchemas = {
   StoryVisibility: StoryVisibilitySchema,
   SetStoryVisibilityRequest: SetStoryVisibilityRequestSchema,
   SetStoryVisibilityResponse: SetStoryVisibilityResponseSchema,
+  StoryCoverResponse: StoryCoverResponseSchema,
 } as const
 
 type ContractSchemaName = keyof typeof contractSchemas

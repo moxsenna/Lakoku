@@ -25,11 +25,13 @@ import {
   ChapterStatusResponseSchema,
   SetStoryVisibilityResponseSchema,
   StartChapterSuccessResponseSchema,
+  StoryCoverResponseSchema,
   SubmitChoiceResponseSchema,
   type ChapterStatusResponse,
   type GenerationAttemptIdentity,
   type SetStoryVisibilityResponse,
   type StartChapterSuccessResponse,
+  type StoryCoverResponse,
   type SubmitChoiceResponse,
 } from '../../packages/contracts/src/reader'
 import { buildChoiceIdempotencyKey } from './choice-idempotency'
@@ -317,6 +319,59 @@ export async function setStoryVisibility(
     return { ok: false, error: 'Gagal memperbarui visibilitas cerita.' }
   } catch {
     return { ok: false, error: 'Gagal memperbarui visibilitas cerita.' }
+  }
+}
+
+/** Pesan default per status HTTP untuk kedua jalur sampul. */
+function coverErrorForStatus(status: number): string {
+  if (status === 401) return 'Silakan masuk terlebih dahulu.'
+  if (status === 403) return 'Kamu bukan pemilik cerita ini.'
+  if (status === 404) return 'Cerita tidak ditemukan.'
+  return 'Sampul gagal diperbarui. Coba lagi.'
+}
+
+/** Baca balasan sampul; skema dulu, fallback pesan per status. */
+function parseCoverResponse(raw: unknown, status: number): StoryCoverResponse {
+  const parsed = StoryCoverResponseSchema.safeParse(raw)
+  if (parsed.success) return parsed.data
+  if (raw && typeof raw === 'object' && 'ok' in raw && (raw as { ok?: unknown }).ok === false) {
+    const message = (raw as { error?: unknown }).error
+    if (typeof message === 'string') return { ok: false, error: message }
+  }
+  return { ok: false, error: coverErrorForStatus(status) }
+}
+
+/**
+ * Buat sampul dengan Lakoin. Tiap percobaan berbayar; kegagalan tidak
+ * memotong saldo (reservasi dilepas di server).
+ */
+export async function generateStoryCover(storyId: string): Promise<StoryCoverResponse> {
+  try {
+    const res = await seamFetch(`${API_BASE}/stories/${encodeURIComponent(storyId)}/cover/generate`, {
+      method: 'POST',
+      credentials: 'same-origin',
+    })
+    const raw = await res.json().catch(() => null)
+    return parseCoverResponse(raw, res.status)
+  } catch {
+    return { ok: false, error: 'Sampul gagal dibuat. Coba lagi.' }
+  }
+}
+
+/** Unggah sampul sendiri — gratis. */
+export async function uploadStoryCover(storyId: string, file: File): Promise<StoryCoverResponse> {
+  try {
+    const body = new FormData()
+    body.append('file', file)
+    const res = await seamFetch(`${API_BASE}/stories/${encodeURIComponent(storyId)}/cover/upload`, {
+      method: 'POST',
+      body,
+      credentials: 'same-origin',
+    })
+    const raw = await res.json().catch(() => null)
+    return parseCoverResponse(raw, res.status)
+  } catch {
+    return { ok: false, error: 'Sampul gagal diunggah. Coba lagi.' }
   }
 }
 

@@ -14,6 +14,10 @@ vi.mock('@lakoku/db', () => ({
   createAdminClient: mocks.createAdminClient,
 }))
 
+vi.mock('@/lib/supabase/admin', () => ({
+  createAdminClient: mocks.createAdminClient,
+}))
+
 vi.mock('@/lib/api/user-state', () => ({
   getSessionUser: mocks.getSessionUser,
 }))
@@ -26,9 +30,10 @@ import {
   StoryVisibilitySchema,
   SetStoryVisibilityRequestSchema,
   SetStoryVisibilityResponseSchema,
-} from '../../packages/contracts/src/reader'
+} from '@lakoku/contracts'
 import { PATCH } from '@/app/api/stories/[id]/visibility/route'
 import { setStoryVisibility } from '@/lib/api/client'
+import { getOwnedStoryVisibilityForUser } from '@/lib/api/server'
 
 describe('Task P8: Story Visibility (AC8.1 - AC8.6)', () => {
   beforeEach(() => {
@@ -192,8 +197,9 @@ describe('Task P8: Story Visibility (AC8.1 - AC8.6)', () => {
       mocks.getSessionUser.mockResolvedValue({ id: 'user-1' })
       mocks.isStoryOwnedBy.mockResolvedValue(true)
 
-      const mockEq = vi.fn().mockResolvedValue({ error: null })
-      const mockUpdate = vi.fn().mockReturnValue({ eq: mockEq })
+      const mockEqOwner = vi.fn().mockResolvedValue({ error: null })
+      const mockEqId = vi.fn().mockReturnValue({ eq: mockEqOwner })
+      const mockUpdate = vi.fn().mockReturnValue({ eq: mockEqId })
       const mockFrom = vi.fn().mockReturnValue({ update: mockUpdate })
       mocks.createAdminClient.mockReturnValue({ from: mockFrom })
 
@@ -209,15 +215,17 @@ describe('Task P8: Story Visibility (AC8.1 - AC8.6)', () => {
       expect(data).toEqual({ ok: true, visibility: 'public' })
       expect(mockFrom).toHaveBeenCalledWith('stories')
       expect(mockUpdate).toHaveBeenCalledWith({ visibility: 'public' })
-      expect(mockEq).toHaveBeenCalledWith('id', 'story-123')
+      expect(mockEqId).toHaveBeenCalledWith('id', 'story-123')
+      expect(mockEqOwner).toHaveBeenCalledWith('owner_user_id', 'user-1')
     })
 
     it('returns 500 when DB update fails', async () => {
       mocks.getSessionUser.mockResolvedValue({ id: 'user-1' })
       mocks.isStoryOwnedBy.mockResolvedValue(true)
 
-      const mockEq = vi.fn().mockResolvedValue({ error: { message: 'Database error' } })
-      const mockUpdate = vi.fn().mockReturnValue({ eq: mockEq })
+      const mockEqOwner = vi.fn().mockResolvedValue({ error: { message: 'Database error' } })
+      const mockEqId = vi.fn().mockReturnValue({ eq: mockEqOwner })
+      const mockUpdate = vi.fn().mockReturnValue({ eq: mockEqId })
       const mockFrom = vi.fn().mockReturnValue({ update: mockUpdate })
       mocks.createAdminClient.mockReturnValue({ from: mockFrom })
 
@@ -279,4 +287,34 @@ describe('Task P8: Story Visibility (AC8.1 - AC8.6)', () => {
       vi.unstubAllGlobals()
     })
   })
+
+  describe('AC8.4 Server Seam getOwnedStoryVisibilityForUser in lib/api/server', () => {
+    it('returns empty map when userId is empty', async () => {
+      const map = await getOwnedStoryVisibilityForUser('')
+      expect(map.size).toBe(0)
+    })
+
+    it('queries DB and returns map of storyId to visibility for user owned stories', async () => {
+      const mockIn = vi.fn().mockResolvedValue({
+        data: [
+          { id: 'story-1', visibility: 'public' },
+          { id: 'story-2', visibility: 'private' },
+        ],
+        error: null,
+      })
+      const mockEq = vi.fn().mockReturnValue({ in: mockIn })
+      const mockSelect = vi.fn().mockReturnValue({ eq: mockEq })
+      const mockFrom = vi.fn().mockReturnValue({ select: mockSelect })
+      mocks.createAdminClient.mockReturnValue({ from: mockFrom })
+
+      const map = await getOwnedStoryVisibilityForUser('user-1', ['story-1', 'story-2'])
+      expect(map.get('story-1')).toBe('public')
+      expect(map.get('story-2')).toBe('private')
+      expect(mockFrom).toHaveBeenCalledWith('stories')
+      expect(mockSelect).toHaveBeenCalledWith('id, visibility')
+      expect(mockEq).toHaveBeenCalledWith('owner_user_id', 'user-1')
+      expect(mockIn).toHaveBeenCalledWith('id', ['story-1', 'story-2'])
+    })
+  })
 })
+

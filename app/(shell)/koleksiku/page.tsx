@@ -1,8 +1,7 @@
 import Link from 'next/link'
 import { StoryCard } from '@/components/story-card'
-import { listMyLibraryStories } from '@/lib/api/server'
+import { listMyLibraryStories, getOwnedStoryVisibilityForUser } from '@/lib/api/server'
 import { getSessionUser } from '@/lib/api/user-state'
-import { createAdminClient } from '@lakoku/db'
 import { StoryVisibilityToggle } from '@/components/story/story-visibility-toggle'
 
 export const dynamic = 'force-dynamic'
@@ -14,24 +13,13 @@ export default async function KoleksikuPage() {
   const berjalan = stories.filter((s) => s.status !== 'SELESAI')
   const selesai = stories.filter((s) => s.status === 'SELESAI')
 
-  const ownedStoriesMap = new Map<string, string>()
-  if (user && stories.length > 0) {
-    try {
-      const db = createAdminClient()
-      const { data } = await db
-        .from('stories')
-        .select('id, visibility')
-        .eq('owner_user_id', user.id)
-        .in('id', stories.map((s) => s.id))
-      if (data) {
-        for (const row of data) {
-          ownedStoriesMap.set(row.id, row.visibility || 'private')
-        }
-      }
-    } catch {
-      // Fail-open: if ownership query fails, toggle won't show
-    }
-  }
+  const ownedStoriesMap =
+    user && stories.length > 0
+      ? await getOwnedStoryVisibilityForUser(
+          user.id,
+          stories.map((s) => s.id),
+        )
+      : new Map<string, string>()
 
   return (
     <main className="flex flex-col gap-8 px-5 pt-8">

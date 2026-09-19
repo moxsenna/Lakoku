@@ -66,6 +66,10 @@ export default defineConfig({
         find: /^@lakoku\/db$/,
         replacement: fileURLToPath(new URL('./lib/supabase/index.ts', import.meta.url)),
       },
+      {
+        find: /^@lakoku\/contracts$/,
+        replacement: fileURLToPath(new URL('./packages/contracts/src/index.ts', import.meta.url)),
+      },
     ],
   },
   test: {

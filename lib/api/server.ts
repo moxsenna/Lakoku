@@ -218,3 +218,40 @@ export async function listChapterMetadatas(storyId: string): Promise<{
   const chapters = await queryChapterMetadatas(storyId, maxReached)
   return { chapters, maxReachedChapter: maxReached }
 }
+
+/**
+ * Ambil peta visibilitas cerita milik pengguna (storyId -> visibility).
+ * Hanya mengembalikan baris di mana user adalah pemilik cerita (owner_user_id = userId).
+ */
+export async function getOwnedStoryVisibilityForUser(
+  userId: string,
+  storyIds?: string[],
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  if (!userId) return map
+
+  try {
+    const { createAdminClient } = await import('@/lib/supabase/admin')
+    const db = createAdminClient()
+    let query = db
+      .from('stories')
+      .select('id, visibility')
+      .eq('owner_user_id', userId)
+
+    if (storyIds && storyIds.length > 0) {
+      query = query.in('id', storyIds)
+    }
+
+    const { data, error } = await query
+    if (error || !data) return map
+
+    for (const row of data as { id: string; visibility: string | null }[]) {
+      map.set(row.id, row.visibility || 'private')
+    }
+  } catch {
+    // Fail-open
+  }
+
+  return map
+}
+

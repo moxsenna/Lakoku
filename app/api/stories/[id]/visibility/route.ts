@@ -3,7 +3,7 @@ import { getSessionUser } from '@/lib/api/user-state'
 import { isStoryOwnedBy } from '@/lib/api/story-ownership.server'
 import { createAdminClient } from '@lakoku/db'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
-import { SetStoryVisibilityRequestSchema } from '@/packages/contracts/src/reader'
+import { SetStoryVisibilityRequestSchema } from '@lakoku/contracts'
 
 export async function PATCH(
   req: Request,
@@ -63,6 +63,7 @@ export async function PATCH(
     .from('stories')
     .update({ visibility: parsed.data.visibility })
     .eq('id', storyId)
+    .eq('owner_user_id', user.id)
 
   if (updateError) {
     return NextResponse.json(

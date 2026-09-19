@@ -63,7 +63,11 @@ export function LoginForm({
       })
       const { error } = await Promise.race([signIn, timeout])
       if (error) {
-        setError('Email atau kata sandi salah. Coba lagi.')
+        if (error.code === 'email_not_confirmed') {
+          setError('Emailmu belum dikonfirmasi. Buka tautan konfirmasi di inbox, lalu masuk lagi.')
+        } else {
+          setError('Email atau kata sandi salah. Coba lagi.')
+        }
         return
       }
 

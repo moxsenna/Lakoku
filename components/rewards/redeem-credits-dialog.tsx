@@ -40,7 +40,7 @@ export function RedeemCreditsDialog({
       return
     }
     if (estimatedCredits <= 0) {
-      setError('Jumlah penukaran tidak menghasilkan kredit baca')
+      setError('Jumlah penukaran tidak menghasilkan Lakoin')
       return
     }
 
@@ -64,7 +64,7 @@ export function RedeemCreditsDialog({
         <div className="flex items-center justify-between pb-4 border-b border-border">
           <div className="flex items-center gap-2">
             <Coins className="size-5 text-amber-500" />
-            <h2 className="text-base font-semibold text-foreground">Tukar Saldo ke Kredit Baca</h2>
+            <h2 className="text-base font-semibold text-foreground">Tukar Saldo ke Lakoin</h2>
           </div>
           <button onClick={onClose} className="rounded-lg p-1 hover:bg-secondary text-muted-foreground">
             <X className="size-5" />
@@ -116,14 +116,14 @@ export function RedeemCreditsDialog({
           <div className="rounded-xl bg-secondary/50 p-3.5 space-y-2 border border-border/50 text-xs">
             <div className="flex justify-between items-center text-muted-foreground">
               <span>Kurs Penukaran</span>
-              <span>Rp{rateIdrPerCredit.toLocaleString('id-ID')} = 1 Kredit</span>
+              <span>Rp{rateIdrPerCredit.toLocaleString('id-ID')} = 1 Lakoin</span>
             </div>
             <div className="flex justify-between items-center font-medium text-foreground pt-1 border-t border-border/40">
               <span className="flex items-center gap-1.5 text-primary">
                 <Sparkles className="size-4" />
-                Kredit Diperoleh
+                Lakoin Diperoleh
               </span>
-              <span className="text-base font-bold text-primary">+{estimatedCredits} Kredit</span>
+              <span className="text-base font-bold text-primary">+{estimatedCredits} Lakoin</span>
             </div>
             {remainderIdr > 0 && (
               <p className="text-[11px] text-muted-foreground italic">

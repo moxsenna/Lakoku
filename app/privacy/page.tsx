@@ -15,7 +15,7 @@ export default function PrivacyPage() {
         Kebijakan ini menjelaskan bagaimana <strong className="text-foreground">Lakoku</strong>{' '}
         (&quot;kami&quot;) menangani informasi saat kamu memakai situs{' '}
         <a href="https://lakoku.biz.id">https://lakoku.biz.id</a> dan layanan
-        terkait (novel interaktif, akun, kredit, dan fitur AI).
+        terkait (novel interaktif, akun, Lakoin, dan fitur AI).
       </p>
 
       <h2>1. Data yang kami kumpulkan</h2>
@@ -31,7 +31,7 @@ export default function PrivacyPage() {
         </li>
         <li>
           <strong className="text-foreground">Transaksi (jika dipakai):</strong> status top-up
-          kredit / pembayaran melalui penyedia pembayaran (kami tidak menyimpan nomor kartu penuh
+          Lakoin / pembayaran melalui penyedia pembayaran (kami tidak menyimpan nomor kartu penuh
           di server app).
         </li>
         <li>
@@ -44,7 +44,7 @@ export default function PrivacyPage() {
       <ul>
         <li>Menyediakan login, menyimpan progres cerita, dan menampilkan konten personal.</li>
         <li>Menjalankan pembuatan prosa/pilihan cerita lewat model AI sesuai fitur yang kamu gunakan.</li>
-        <li>Memproses kredit/entitlement dan mencegah penyalahgunaan.</li>
+        <li>Memproses Lakoin/entitlement dan mencegah penyalahgunaan.</li>
         <li>Memperbaiki bug, memantau kesehatan sistem, dan memenuhi kewajiban hukum yang berlaku.</li>
       </ul>
 
@@ -92,7 +92,7 @@ export default function PrivacyPage() {
       </p>
       <p>
         Yang dihapus: akun login, profil selera, progres dan jejak pilihan cerita, serta saldo
-        kredit. Yang dapat dipertahankan sementara: log keamanan dan bukti transaksi (maksimal
+        Lakoin. Yang dapat dipertahankan sementara: log keamanan dan bukti transaksi (maksimal
         90 hari) untuk pencegahan penipuan dan kewajiban hukum.
       </p>
 

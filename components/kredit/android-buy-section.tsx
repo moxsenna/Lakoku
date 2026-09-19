@@ -87,8 +87,8 @@ export function AndroidBuySection({ products }: { products: AndroidProduct[] }) 
               tx.finish()
               setMessage(
                 outcome.alreadyGranted
-                  ? `Kredit sudah masuk sebelumnya (+${outcome.totalCredits}).`
-                  : `Pembayaran berhasil! +${outcome.totalCredits} kredit masuk.`,
+                  ? `Lakoin sudah masuk sebelumnya (+${outcome.totalCredits}).`
+                  : `Pembayaran berhasil! +${outcome.totalCredits} Lakoin masuk.`,
               )
               router.refresh()
             } else {
@@ -140,7 +140,7 @@ export function AndroidBuySection({ products }: { products: AndroidProduct[] }) 
   if (products.length === 0) {
     return (
       <p className="rounded-2xl bg-card p-5 text-sm text-muted-foreground">
-        Paket kredit belum tersedia. Coba lagi nanti.
+        Paket Lakoin belum tersedia. Coba lagi nanti.
       </p>
     )
   }
@@ -163,7 +163,7 @@ export function AndroidBuySection({ products }: { products: AndroidProduct[] }) 
                 )}
               </div>
               <span className="text-xs text-muted-foreground">
-                {p.baseCredits} kredit
+                {p.baseCredits} Lakoin
                 {p.displayBonusCredits > 0 && (
                   <span className="text-emerald-600 dark:text-emerald-400">
                     {' + bonus '}{p.displayBonusCredits}
@@ -191,7 +191,7 @@ export function AndroidBuySection({ products }: { products: AndroidProduct[] }) 
         </p>
       )}
       <p className="text-center text-[11px] text-muted-foreground">
-        Pembayaran diproses aman oleh Google Play. Kredit masuk otomatis setelah pembayaran berhasil.
+        Pembayaran diproses aman oleh Google Play. Lakoin masuk otomatis setelah pembayaran berhasil.
       </p>
     </div>
   )

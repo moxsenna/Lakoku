@@ -24,6 +24,6 @@ export async function actRedeemCredits(amountIdr: number): Promise<RedeemActionR
       newBalance: result.remainingIdr,
     }
   } catch (e) {
-    return { ok: false, error: (e as Error)?.message ?? 'Gagal menukarkan kredit' }
+    return { ok: false, error: (e as Error)?.message ?? 'Gagal menukarkan Lakoin' }
   }
 }

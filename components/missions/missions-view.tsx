@@ -99,7 +99,7 @@ export function MissionsView({ initialSnapshot, policy, creditBalance }: Props) 
         <div>
           <h1 className="font-serif text-2xl text-foreground">Misi Harian</h1>
           <p className="text-xs text-muted-foreground">
-            Selesaikan langkah sederhana setiap hari untuk mengumpulkan kredit baca.
+            Selesaikan langkah sederhana setiap hari untuk mengumpulkan Lakoin.
           </p>
         </div>
       </div>
@@ -111,9 +111,9 @@ export function MissionsView({ initialSnapshot, policy, creditBalance }: Props) 
             <Coins className="size-6" />
           </span>
           <div>
-            <div className="text-xs text-muted-foreground">Saldo Kreditmu</div>
+            <div className="text-xs text-muted-foreground">Saldo Lakoinmu</div>
             <div className="font-serif text-2xl font-bold text-foreground">
-              {creditBalance} <span className="text-xs font-normal text-muted-foreground">kredit</span>
+              {creditBalance} <span className="text-xs font-normal text-muted-foreground">Lakoin</span>
             </div>
           </div>
         </div>
@@ -242,7 +242,7 @@ export function MissionsView({ initialSnapshot, policy, creditBalance }: Props) 
             <div className="font-medium text-foreground">Tayangan Iklan Singkat</div>
             <p className="mt-0.5">
               Iklan rewarded hanya tersedia di aplikasi Android resmi Lakoku. Setiap{' '}
-              {policy.adsPerCredit} tayangan dapat ditukar menjadi {policy.adBatchCredits} kredit,
+              {policy.adsPerCredit} tayangan dapat ditukar menjadi {policy.adBatchCredits} Lakoin,
               maksimal {policy.adDailyCap} tayangan per hari.
             </p>
           </div>

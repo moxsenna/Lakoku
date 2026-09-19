@@ -20,7 +20,7 @@ export function RewardWalletView({ stats, policy }: Props) {
   const canRedeem = policy.redeemEnabled && stats.currentBalanceIdr >= policy.redeemMinIdr
 
   function handleRedeemSuccess(credits: number) {
-    setSuccessToast(`Berhasil menukar kredit baca +${credits}!`)
+    setSuccessToast(`Berhasil menukar Lakoin +${credits}!`)
     setTimeout(() => setSuccessToast(null), 4000)
   }
 
@@ -73,7 +73,7 @@ export function RewardWalletView({ stats, policy }: Props) {
             className="flex flex-1 min-w-[140px] items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-semibold text-primary-foreground shadow-sm transition hover:opacity-90 disabled:opacity-40 disabled:pointer-events-none"
           >
             <Coins className="size-4" />
-            Tukar ke Kredit
+            Tukar ke Lakoin
           </button>
 
           <button
@@ -90,7 +90,7 @@ export function RewardWalletView({ stats, policy }: Props) {
 
         {!canRedeem && stats.currentBalanceIdr < policy.redeemMinIdr && (
           <p className="mt-2.5 text-[11px] text-muted-foreground text-center">
-            Minimal penukaran ke kredit adalah Rp{policy.redeemMinIdr.toLocaleString('id-ID')} (kurs Rp{policy.redeemRateIdrPerCredit}/kredit).
+            Minimal penukaran ke Lakoin adalah Rp{policy.redeemMinIdr.toLocaleString('id-ID')} (kurs Rp{policy.redeemRateIdrPerCredit}/Lakoin).
           </p>
         )}
       </div>
@@ -137,7 +137,7 @@ export function RewardWalletView({ stats, policy }: Props) {
           <li>
             Dapatkan komisi <strong>{policy.commissionPercent}%</strong> dari setiap pembelian paket koin teman selama <strong>{policy.windowDays} hari pertama</strong>!
           </li>
-          <li>Saldo rupiah dapat ditukar kapan saja menjadi kredit untuk membaca kelanjutan bab.</li>
+          <li>Saldo rupiah dapat ditukar kapan saja menjadi Lakoin untuk membaca kelanjutan bab.</li>
         </ul>
       </div>
 

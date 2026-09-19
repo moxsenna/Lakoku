@@ -110,7 +110,7 @@ export default async function ProfilPage() {
               <Coins className="size-5" aria-hidden="true" />
             </span>
             <span className="flex min-w-0 flex-1 flex-col">
-              <span className="text-sm font-medium text-foreground">Kredit</span>
+              <span className="text-sm font-medium text-foreground">Lakoin</span>
               <span className="text-xs text-muted-foreground">{freeChapterText}</span>
               <span className="text-xs text-muted-foreground">
                 Saldo {creditBalance} · beli paket untuk buka bab
@@ -152,7 +152,7 @@ export default async function ProfilPage() {
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="text-sm font-medium text-foreground">Misi Harian</span>
               <span className="text-xs text-muted-foreground">
-                Kumpulkan kredit baca gratis setiap hari
+                Kumpulkan Lakoin gratis setiap hari
               </span>
             </span>
             <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />

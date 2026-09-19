@@ -536,13 +536,13 @@ Format tiap task: **Files**, **Acceptance criteria (checklist)**, **DoD + test y
 - Create: `supabase/migrations/20260919000000_lakoin_tinta_economy.sql`
 - Create: `tests/tinta/migration.test.ts`
 
-- [ ] **AC1.1** Migration memuat `create table if not exists public.tinta_ledger` dengan kolom `delta`, `reason`, `ref text not null unique`, `pending_until timestamptz`, dan index `tinta_ledger_author_day_idx` (partial, `where reason = 'author_read_reward'`).
-- [ ] **AC1.2** Migration memuat `tinta_policy` baris-tunggal (`check (id = true)` semantik via PK boolean) dengan SEMUA 11 knob dari §8, nilai default sesuai tabel, plus seed `insert ... on conflict (id) do nothing`.
-- [ ] **AC1.3** RLS: `tinta_ledger` enable + policy `select using (auth.uid() = user_id)`, tanpa policy write; `tinta_policy` enable + policy `select using (true)`.
-- [ ] **AC1.4** RPC lengkap: `grant_tinta_v1` (idempoten via unique ref, parameter `p_pending_hours`), `tinta_balance_v1` (jsonb `total|available|pending`, pending = `pending_until > now()`), `spend_tinta_v1` (advisory lock + cek available, return `ok|insufficient|duplicate`), `grant_author_tinta_v1` (return `ok|duplicate|capped|disabled|ineligible`; cek policy → visibility public → owner≠reader → bab 1..49 → ref dedupe → cap WIB atomik → insert pending).
-- [ ] **AC1.5** Semua fungsi: `revoke all ... from public, anon, authenticated` + `grant execute ... to service_role` (`tinta_balance_v1` juga ke `authenticated`).
-- [ ] **AC1.6** `claim_mission_v1` & `get_daily_missions_v1` di-create-or-replace: verifikasi bukti identik; branch `missions_pay_tinta` grant Tinta (ref `mission:{key}:{user}:{day}`, pending 0); snapshot tambah field `currency`.
-- [ ] **AC1.7** Tidak ada perubahan apa pun pada `credit_ledger`, `credit_products`, `credit_orders*`, `reading_policy`, `feature_credit_costs`.
+- [x] **AC1.1** Migration memuat `create table if not exists public.tinta_ledger` dengan kolom `delta`, `reason`, `ref text not null unique`, `pending_until timestamptz`, dan index `tinta_ledger_author_day_idx` (partial, `where reason = 'author_read_reward'`).
+- [x] **AC1.2** Migration memuat `tinta_policy` baris-tunggal (`check (id = true)` semantik via PK boolean) dengan SEMUA 11 knob dari §8, nilai default sesuai tabel, plus seed `insert ... on conflict (id) do nothing`.
+- [x] **AC1.3** RLS: `tinta_ledger` enable + policy `select using (auth.uid() = user_id)`, tanpa policy write; `tinta_policy` enable + policy `select using (true)`.
+- [x] **AC1.4** RPC lengkap: `grant_tinta_v1` (idempoten via unique ref, parameter `p_pending_hours`), `tinta_balance_v1` (jsonb `total|available|pending`, pending = `pending_until > now()`), `spend_tinta_v1` (advisory lock + cek available, return `ok|insufficient|duplicate`), `grant_author_tinta_v1` (return `ok|duplicate|capped|disabled|ineligible`; cek policy → visibility public → owner≠reader → bab 1..49 → ref dedupe → cap WIB atomik → insert pending).
+- [x] **AC1.5** Semua fungsi: `revoke all ... from public, anon, authenticated` + `grant execute ... to service_role` (`tinta_balance_v1` juga ke `authenticated`).
+- [x] **AC1.6** `claim_mission_v1` & `get_daily_missions_v1` di-create-or-replace: verifikasi bukti identik; branch `missions_pay_tinta` grant Tinta (ref `mission:{key}:{user}:{day}`, pending 0); snapshot tambah field `currency`.
+- [x] **AC1.7** Tidak ada perubahan apa pun pada `credit_ledger`, `credit_products`, `credit_orders*`, `reading_policy`, `feature_credit_costs`.
 
 **DoD:** `pnpm exec vitest run --project unit tests/tinta/migration.test.ts` PASS (uji konten SQL: tabel, kolom, RLS, nama RPC, default `false` untuk 3 switch, unique ref); `pnpm run check:migration-versions` PASS; `pnpm exec supabase db push --linked` sukses di staging bila tersedia.
 
@@ -554,10 +554,10 @@ Format tiap task: **Files**, **Acceptance criteria (checklist)**, **DoD + test y
 - Create: `lib/tinta/policy.ts`
 - Create: `tests/tinta/policy.test.ts`
 
-- [ ] **AC2.1** Ekspor `interface TintaPolicy` (camelCase 11 knob), `DEFAULT_TINTA_POLICY` (nilai §8), `type TintaSource`, `type AuthorRewardStatus = 'ok'|'duplicate'|'capped'|'disabled'|'ineligible'`.
-- [ ] **AC2.2** `calculateTintaExchange(amountTinta, policy)`: `exchangeEnabled=false` → throw "Penukaran sedang dinonaktifkan"; hasil `lakoinOut = floor(amount / tintaPerLakoin)`; `lakoinOut < exchangeMinLakoin` → throw reader-safe berisi minimum; return `{ lakoinOut, tintaSpent, remainderTinta }` dengan `tintaSpent = lakoinOut * tintaPerLakoin`.
-- [ ] **AC2.3** `authorRewardRef(storyId, chapter, readerId)` = `author_read:{storyId}:{chapter}:{readerId}`; `tintaAmountBucket(n)` & `lakoinOutBucket(n)` mengembalikan enum §9.
-- [ ] **AC2.4** Tanpa I/O, tanpa `server-only`, tanpa import domain lain (boleh `jakartaDay` di-import dari `lib/missions/policy` bila perlu).
+- [x] **AC2.1** Ekspor `interface TintaPolicy` (camelCase 11 knob), `DEFAULT_TINTA_POLICY` (nilai §8), `type TintaSource`, `type AuthorRewardStatus = 'ok'|'duplicate'|'capped'|'disabled'|'ineligible'`.
+- [x] **AC2.2** `calculateTintaExchange(amountTinta, policy)`: `exchangeEnabled=false` → throw "Penukaran sedang dinonaktifkan"; hasil `lakoinOut = floor(amount / tintaPerLakoin)`; `lakoinOut < exchangeMinLakoin` → throw reader-safe berisi minimum; return `{ lakoinOut, tintaSpent, remainderTinta }` dengan `tintaSpent = lakoinOut * tintaPerLakoin`.
+- [x] **AC2.3** `authorRewardRef(storyId, chapter, readerId)` = `author_read:{storyId}:{chapter}:{readerId}`; `tintaAmountBucket(n)` & `lakoinOutBucket(n)` mengembalikan enum §9.
+- [x] **AC2.4** Tanpa I/O, tanpa `server-only`, tanpa import domain lain (boleh `jakartaDay` di-import dari `lib/missions/policy` bila perlu).
 
 **DoD:** `pnpm exec vitest run --project unit tests/tinta/policy.test.ts` PASS (kasus: kurs 100 → 250 Tinta = 2 Lakoin + 50 sisa; 99 Tinta → throw; flag mati → throw; bucket boundaries); `pnpm run typecheck` PASS.
 
@@ -569,12 +569,12 @@ Format tiap task: **Files**, **Acceptance criteria (checklist)**, **DoD + test y
 - Create: `lib/tinta/server.ts`
 - Create: `tests/tinta/server.test.ts`
 
-- [ ] **AC3.1** `'server-only'` di baris pertama; hanya import `@lakoku/db` + `./policy` (tanpa deep import internal lain).
-- [ ] **AC3.2** `getTintaPolicy()`: baca `tinta_policy` id=true, fallback `DEFAULT_TINTA_POLICY` bila error/kosong (pola `getRewardPolicy`).
-- [ ] **AC3.3** `getTintaBalance(userId)`: RPC `tinta_balance_v1` → `{ total, available, pending }` number; gagal → `{ total: 0, available: 0, pending: 0 }` (fail-open read).
-- [ ] **AC3.4** `exchangeTintaForLakoin(userId, amount)`: validasi policy & kalkulasi (P2) → `spend_tinta_v1` (`exchange:{uuid}`) → `grant_credits_v1` (`tinta_exchange:{uuid}`, reason `'tinta_exchange'`) → bila grant gagal: kompensasi `grant_tinta_v1` (`exchange-rollback:{uuid}`) + throw; return `{ lakoinOut, tintaSpent }`.
-- [ ] **AC3.5** `listTintaHistory(userId, limit=30)`: baris `tinta_ledger` (delta, reason, pending_until, created_at) desc.
-- [ ] **AC3.6** Tidak ada fungsi reward penulis di sini (hidup di P4 — pemisahan jalur pilihan vs dompet).
+- [x] **AC3.1** `'server-only'` di baris pertama; hanya import `@lakoku/db` + `./policy` (tanpa deep import internal lain).
+- [x] **AC3.2** `getTintaPolicy()`: baca `tinta_policy` id=true, fallback `DEFAULT_TINTA_POLICY` bila error/kosong (pola `getRewardPolicy`).
+- [x] **AC3.3** `getTintaBalance(userId)`: RPC `tinta_balance_v1` → `{ total, available, pending }` number; gagal → `{ total: 0, available: 0, pending: 0 }` (fail-open read).
+- [x] **AC3.4** `exchangeTintaForLakoin(userId, amount)`: validasi policy & kalkulasi (P2) → `spend_tinta_v1` (`exchange:{uuid}`) → `grant_credits_v1` (`tinta_exchange:{uuid}`, reason `'tinta_exchange'`) → bila grant gagal: kompensasi `grant_tinta_v1` (`exchange-rollback:{uuid}`) + throw; return `{ lakoinOut, tintaSpent }`.
+- [x] **AC3.5** `listTintaHistory(userId, limit=30)`: baris `tinta_ledger` (delta, reason, pending_until, created_at) desc.
+- [x] **AC3.6** Tidak ada fungsi reward penulis di sini (hidup di P4 — pemisahan jalur pilihan vs dompet).
 
 **DoD:** `pnpm exec vitest run --project unit tests/tinta/server.test.ts` PASS (mock `@lakoku/db`: policy fallback, balance mapping, exchange happy-path + rollback path + insufficient); `pnpm run typecheck` PASS; `pnpm lint` PASS.
 
@@ -587,11 +587,11 @@ Format tiap task: **Files**, **Acceptance criteria (checklist)**, **DoD + test y
 - Modify: `app/api/stories/[id]/choices/route.ts`
 - Create: `tests/tinta/author-reward.test.ts`
 
-- [ ] **AC4.1** `maybeGrantAuthorTinta({ readerUserId, storyId, chapterNumber })`: panggil `grant_author_tinta_v1`; status `ok` → log + analytics server-side `tinta_earned` (source `author_read_reward`); status lain → log ringkas; SEMUA exception ditelan (try/catch) — fungsi TIDAK PERNAH throw.
-- [ ] **AC4.2** Route choices, jalur personal: hook dipanggil hanya bila `applyPersonalizedChoice` sukses, `result.status !== 'WAITING_FOR_CREDITS'`, dan `result.replayed === false`. Respons HTTP route TIDAK berubah bentuk (field/response schema tetap).
-- [ ] **AC4.3** Route choices, jalur standar: hook dipanggil tepat setelah `applyChoiceToUserState(...)` sukses (untuk user login; tamu sudah no-op di atasnya).
-- [ ] **AC4.4** Hook diletakkan sehingga kegagalan/hambatan tidak menambah latensi kritis: dipanggil setelah respons inti tersusun, tanpa `await` ganda di jalur error.
-- [ ] **AC4.5** Tidak ada logika eligibility di TS — semua di RPC (sumber kebenaran tunggal).
+- [x] **AC4.1** `maybeGrantAuthorTinta({ readerUserId, storyId, chapterNumber })`: panggil `grant_author_tinta_v1`; status `ok` → log + analytics server-side `tinta_earned` (source `author_read_reward`); status lain → log ringkas; SEMUA exception ditelan (try/catch) — fungsi TIDAK PERNAH throw.
+- [x] **AC4.2** Route choices, jalur personal: hook dipanggil hanya bila `applyPersonalizedChoice` sukses, `result.status !== 'WAITING_FOR_CREDITS'`, dan `result.replayed === false`. Respons HTTP route TIDAK berubah bentuk (field/response schema tetap).
+- [x] **AC4.3** Route choices, jalur standar: hook dipanggil tepat setelah `applyChoiceToUserState(...)` sukses (untuk user login; tamu sudah no-op di atasnya).
+- [x] **AC4.4** Hook diletakkan sehingga kegagalan/hambatan tidak menambah latensi kritis: dipanggil setelah respons inti tersusun, tanpa `await` ganda di jalur error.
+- [x] **AC4.5** Tidak ada logika eligibility di TS — semua di RPC (sumber kebenaran tunggal).
 
 **DoD:** `pnpm exec vitest run --project unit tests/tinta/author-reward.test.ts` PASS (mock RPC: ok→analytics terpanggil 1×; capped/duplicate→tanpa throw; RPC throw→fungsi resolve tanpa error); `pnpm smoke:production-reader` (atau smoke reader-path yang relevan) tetap PASS; `pnpm run typecheck` PASS.
 
@@ -604,11 +604,11 @@ Format tiap task: **Files**, **Acceptance criteria (checklist)**, **DoD + test y
 - Modify: `components/missions/missions-view.tsx`, `app/(shell)/misi/page.tsx`
 - Create: `tests/tinta/missions.test.ts`
 
-- [ ] **AC5.1** `MissionView` tambah `currency?: 'lakoin' | 'tinta'`; snapshot interface tambah `currency`; mapping dari payload RPC.
-- [ ] **AC5.2** `missions-view.tsx`: label imbalan per misi menampilkan `+N Tinta` bila `currency === 'tinta'`, selain itu `+N Lakoin`; toast klaim "Berhasil klaim! +N Tinta ditambahkan ke akunmu." menyesuaikan; heading saldo tetap Lakoin.
-- [ ] **AC5.3** `MISSION_LABELS.watch_ad.description` tidak lagi menyebut "kredit bacamu" (netral: "menambah hadiahmu").
-- [ ] **AC5.4** Klaim sukses saat flag menyala menghasilkan analytics `tinta_earned` dengan `tinta_source` sesuai kunci misi.
-- [ ] **AC5.5** Verifikasi bukti & idempotensi klaim TIDAK berubah (duplicate tetap `duplicate`).
+- [x] **AC5.1** `MissionView` tambah `currency?: 'lakoin' | 'tinta'`; snapshot interface tambah `currency`; mapping dari payload RPC.
+- [x] **AC5.2** `missions-view.tsx`: label imbalan per misi menampilkan `+N Tinta` bila `currency === 'tinta'`, selain itu `+N Lakoin`; toast klaim "Berhasil klaim! +N Tinta ditambahkan ke akunmu." menyesuaikan; heading saldo tetap Lakoin.
+- [x] **AC5.3** `MISSION_LABELS.watch_ad.description` tidak lagi menyebut "kredit bacamu" (netral: "menambah hadiahmu").
+- [x] **AC5.4** Klaim sukses saat flag menyala menghasilkan analytics `tinta_earned` dengan `tinta_source` sesuai kunci misi.
+- [x] **AC5.5** Verifikasi bukti & idempotensi klaim TIDAK berubah (duplicate tetap `duplicate`).
 
 **DoD:** `pnpm exec vitest run --project unit tests/tinta/missions.test.ts` PASS (mapping currency, fallback `lakoin` bila field absen); `pnpm run typecheck` PASS.
 
@@ -621,12 +621,12 @@ Format tiap task: **Files**, **Acceptance criteria (checklist)**, **DoD + test y
 - Create: `components/tinta/tinta-wallet-view.tsx`, `components/tinta/exchange-tinta-dialog.tsx`
 - Modify: `app/(shell)/profil/page.tsx`
 
-- [ ] **AC6.1** Halaman `/profil/tinta` (auth-gated, pola `/profil/imbalan`): kartu saldo **Tinta Tersedia** + **Sedang diproses (±24 jam)**, tombol "Tukar ke Lakoin", riwayat (tanggal, +/-, keterangan reader-safe, status pending).
-- [ ] **AC6.2** Dialog tukar: input jumlah Tinta, kalkulator hasil berdasarkan kurs live (`getTintaPolicy`), teks kurs "100 Tinta = 1 Lakoin", validasi minimum, konfirmasi dua-tahap (tombol "Tukar" → "Ya, tukar sekarang"); disabled penuh bila `exchangeEnabled=false` dengan pesan "Tukar belum tersedia".
-- [ ] **AC6.3** `actExchangeTinta(amount)`: auth via `getSessionUser`; sukses → `revalidatePath('/profil/tinta' | '/profil' | '/kredit')` + return `{ ok: true, lakoinOut, tintaSpent }`; gagal → `{ ok: false, error }` reader-safe.
-- [ ] **AC6.4** Empty state (saldo 0), loading state (server component + skeleton/existing pattern), error state (inline), permission state (guest → redirect login).
-- [ ] **AC6.5** Entry card "Tinta" di `/profil` di sebelah kartu Kredit/Lakoin.
-- [ ] **AC6.6** Tanpa import DB langsung — hanya props dari server component + server action.
+- [x] **AC6.1** Halaman `/profil/tinta` (auth-gated, pola `/profil/imbalan`): kartu saldo **Tinta Tersedia** + **Sedang diproses (±24 jam)**, tombol "Tukar ke Lakoin", riwayat (tanggal, +/-, keterangan reader-safe, status pending).
+- [x] **AC6.2** Dialog tukar: input jumlah Tinta, kalkulator hasil berdasarkan kurs live (`getTintaPolicy`), teks kurs "100 Tinta = 1 Lakoin", validasi minimum, konfirmasi dua-tahap (tombol "Tukar" → "Ya, tukar sekarang"); disabled penuh bila `exchangeEnabled=false` dengan pesan "Tukar belum tersedia".
+- [x] **AC6.3** `actExchangeTinta(amount)`: auth via `getSessionUser`; sukses → `revalidatePath('/profil/tinta' | '/profil' | '/kredit')` + return `{ ok: true, lakoinOut, tintaSpent }`; gagal → `{ ok: false, error }` reader-safe.
+- [x] **AC6.4** Empty state (saldo 0), loading state (server component + skeleton/existing pattern), error state (inline), permission state (guest → redirect login).
+- [x] **AC6.5** Entry card "Tinta" di `/profil` di sebelah kartu Kredit/Lakoin.
+- [x] **AC6.6** Tanpa import DB langsung — hanya props dari server component + server action.
 
 **DoD:** `pnpm run typecheck` PASS; `pnpm lint` PASS; navigasi manual `/profil → /profil/tinta → tukar` bekerja di dev dengan flag dinyalakan; analytics `tinta_exchanged` terkirim (cek network/analytics smoke).
 
@@ -637,10 +637,10 @@ Format tiap task: **Files**, **Acceptance criteria (checklist)**, **DoD + test y
 **Files:**
 - Modify: `components/chapter-locked.tsx`, `components/kredit/buy-credit-button.tsx`, `app/(shell)/kredit/page.tsx`, `app/(shell)/profil/page.tsx`, `components/rewards/reward-wallet-view.tsx`, `components/rewards/redeem-credits-dialog.tsx`, `components/missions/missions-view.tsx`, `lib/missions/policy.ts`
 
-- [ ] **AC7.1** Seluruh copy pembaca di file di atas memakai "Lakoin" untuk hard currency (terverifikasi lokasi: `chapter-locked.tsx` "Kreditmu belum cukup" / "Buka bab ini dengan N Lakoin" / "Saldo Lakoinmu" / "Beli Lakoin" / "Buka bab (N Lakoin)"; `kredit/page.tsx` heading & copy; `reward-wallet-view.tsx` "Tukar ke Lakoin"; toast redeem).
-- [ ] **AC7.2** URL `/kredit`, nama komponen, kolom DB, nama fungsi (`spendChapterUnlock`, dst.) TIDAK berubah — rename display saja.
-- [ ] **AC7.3** Grep akhir: `grep -rin "kredit" app/\(shell\) components lib/missions lib/reader-fallback.ts` → sisa kemunculan hanya identifier kode/komentar dev, nol string literal yang tampil ke pembaca.
-- [ ] **AC7.4** Halaman admin & dokumen internal boleh tetap menyebut kredit (bukan permukaan pembaca).
+- [x] **AC7.1** Seluruh copy pembaca di file di atas memakai "Lakoin" untuk hard currency (terverifikasi lokasi: `chapter-locked.tsx` "Kreditmu belum cukup" / "Buka bab ini dengan N Lakoin" / "Saldo Lakoinmu" / "Beli Lakoin" / "Buka bab (N Lakoin)"; `kredit/page.tsx` heading & copy; `reward-wallet-view.tsx` "Tukar ke Lakoin"; toast redeem).
+- [x] **AC7.2** URL `/kredit`, nama komponen, kolom DB, nama fungsi (`spendChapterUnlock`, dst.) TIDAK berubah — rename display saja.
+- [x] **AC7.3** Grep akhir: `grep -rin "kredit" app/\(shell\) components lib/missions lib/reader-fallback.ts` → sisa kemunculan hanya identifier kode/komentar dev, nol string literal yang tampil ke pembaca.
+- [x] **AC7.4** Halaman admin & dokumen internal boleh tetap menyebut kredit (bukan permukaan pembaca).
 
 **DoD:** `pnpm run typecheck` PASS; `pnpm smoke:web-release` PASS; audit grep ditempel di deskripsi PR.
 
@@ -653,12 +653,12 @@ Format tiap task: **Files**, **Acceptance criteria (checklist)**, **DoD + test y
 - Create: `app/api/stories/[id]/visibility/route.ts`, `components/story/story-visibility-toggle.tsx`
 - Modify: `app/(shell)/koleksiku/page.tsx`
 
-- [ ] **AC8.1** Kontrak zod §7.1 terekspor dari `packages/contracts/src` (barrel, named export).
-- [ ] **AC8.2** Route PATCH: `getSessionUser` → wajib login (401) → `isStoryOwnedBy` (403/404) → zod body (400) → update `stories.visibility` hanya ke `private|public` → respons `SetStoryVisibilityResponseSchema`; error reader-safe.
-- [ ] **AC8.3** `setStoryVisibility` di `lib/api/client.ts` (fetch PATCH via `API_BASE`).
-- [ ] **AC8.4** Toggle di kartu cerita Koleksiku hanya untuk cerita milik user (punya owner); optimistic + revert bila gagal; label "Privat"/"Publik"; analytics `story_visibility_changed`.
-- [ ] **AC8.5** Cerita publik muncul di etalase beranda (tergantung P9; sebelum P9 merge, perubahan visibility tetap tersimpan).
-- [ ] **AC8.6** Share→clone existing tidak terpengaruh (tidak menyentuh `shared_story_links`).
+- [x] **AC8.1** Kontrak zod §7.1 terekspor dari `packages/contracts/src` (barrel, named export).
+- [x] **AC8.2** Route PATCH: `getSessionUser` → wajib login (401) → `isStoryOwnedBy` (403/404) → zod body (400) → update `stories.visibility` hanya ke `private|public` → respons `SetStoryVisibilityResponseSchema`; error reader-safe.
+- [x] **AC8.3** `setStoryVisibility` di `lib/api/client.ts` (fetch PATCH via `API_BASE`).
+- [x] **AC8.4** Toggle di kartu cerita Koleksiku hanya untuk cerita milik user (punya owner); optimistic + revert bila gagal; label "Privat"/"Publik"; analytics `story_visibility_changed`.
+- [x] **AC8.5** Cerita publik muncul di etalase beranda (tergantung P9; sebelum P9 merge, perubahan visibility tetap tersimpan).
+- [x] **AC8.6** Share→clone existing tidak terpengaruh (tidak menyentuh `shared_story_links`).
 
 **DoD:** `pnpm exec vitest run --project unit tests/tinta/visibility.test.ts` PASS (schema parse, tolak `unlisted` dari UI contract, tolak non-owner); `pnpm smoke:contracts` PASS; `pnpm run typecheck` PASS.
 
@@ -669,11 +669,11 @@ Format tiap task: **Files**, **Acceptance criteria (checklist)**, **DoD + test y
 **Files:**
 - Modify: `lib/api/queries.ts`, `lib/api/server.ts`, `app/(shell)/beranda/page.tsx`
 
-- [ ] **AC9.1** `queryPublicUserStories(limit=12)` sesuai §7.11 (visibility public, owner tidak null, bukan `demo:%`/`premium:%`, order terbaru, memanfaatkan `stories_visibility_idx`).
-- [ ] **AC9.2** `listExploreStories()` menggabungkan demo/premium existing + cerita publik user (dedupe by id, buang cerita yang sedang berjalan seperti existing `jelajahi` filter).
-- [ ] **AC9.3** Beranda menampilkan cerita publik user dengan badge kecil "DARI PENULIS" (gaya badge "DIBAGIKAN" existing); rail "Sedang Dibagikan" (`listPublicShareTeasers`) tetap utuh di atasnya.
-- [ ] **AC9.4** Empty state existing ("Belum ada cerita yang dibagikan…") tetap benar saat tidak ada sumber apa pun.
-- [ ] **AC9.5** Cerita privat/unlisted TIDAK PERNAH bocor ke hasil (dites lewat filter query).
+- [x] **AC9.1** `queryPublicUserStories(limit=12)` sesuai §7.11 (visibility public, owner tidak null, bukan `demo:%`/`premium:%`, order terbaru, memanfaatkan `stories_visibility_idx`).
+- [x] **AC9.2** `listExploreStories()` menggabungkan demo/premium existing + cerita publik user (dedupe by id, buang cerita yang sedang berjalan seperti existing `jelajahi` filter).
+- [x] **AC9.3** Beranda menampilkan cerita publik user dengan badge kecil "DARI PENULIS" (gaya badge "DIBAGIKAN" existing); rail "Sedang Dibagikan" (`listPublicShareTeasers`) tetap utuh di atasnya.
+- [x] **AC9.4** Empty state existing ("Belum ada cerita yang dibagikan…") tetap benar saat tidak ada sumber apa pun.
+- [x] **AC9.5** Cerita privat/unlisted TIDAK PERNAH bocor ke hasil (dites lewat filter query).
 
 **DoD:** `pnpm exec vitest run --project unit tests/tinta/explore.test.ts` PASS (dedupe, filter prefix, limit); `pnpm run typecheck` PASS; smoke beranda existing tetap hijau.
 
@@ -686,11 +686,11 @@ Format tiap task: **Files**, **Acceptance criteria (checklist)**, **DoD + test y
 - Create: `app/api/admin/settings/tinta-policy/route.ts`, `components/admin/settings/edit-tinta-policy-dialog.tsx`
 - Create: `tests/tinta/admin-policy.test.ts`
 
-- [ ] **AC10.1** `updateTintaPolicySchema`: 11 knob + `reason` (min 5, max 500), rentang sesuai §8.
-- [ ] **AC10.2** `AdminTintaPolicy` interface + `SettingsData.tintaPolicy` + `loadSettingsData` membaca baris; `updateTintaPolicy(input)`: snapshot old/new → update → `auditSettings(settingArea: 'tinta_policy')` → return nilai baru + `updatedAt`.
-- [ ] **AC10.3** PATCH route pola reward-policy (400 validasi / 403 bukan owner / 500 `processing_error`).
-- [ ] **AC10.4** Dialog pola `edit-reward-policy-dialog.tsx`: semua knob, banner peringatan saat menyalakan `authorRewardsEnabled`/`exchangeEnabled` (risiko biaya/ekonomi), alasan wajib, validasi mirror zod, loading state.
-- [ ] **AC10.5** Section card "Ekonomi Tinta & Lakoin" di `/admin/settings` menampilkan nilai aktif + waktu update terakhir.
+- [x] **AC10.1** `updateTintaPolicySchema`: 11 knob + `reason` (min 5, max 500), rentang sesuai §8.
+- [x] **AC10.2** `AdminTintaPolicy` interface + `SettingsData.tintaPolicy` + `loadSettingsData` membaca baris; `updateTintaPolicy(input)`: snapshot old/new → update → `auditSettings(settingArea: 'tinta_policy')` → return nilai baru + `updatedAt`.
+- [x] **AC10.3** PATCH route pola reward-policy (400 validasi / 403 bukan owner / 500 `processing_error`).
+- [x] **AC10.4** Dialog pola `edit-reward-policy-dialog.tsx`: semua knob, banner peringatan saat menyalakan `authorRewardsEnabled`/`exchangeEnabled` (risiko biaya/ekonomi), alasan wajib, validasi mirror zod, loading state.
+- [x] **AC10.5** Section card "Ekonomi Tinta & Lakoin" di `/admin/settings` menampilkan nilai aktif + waktu update terakhir.
 
 **DoD:** `pnpm exec vitest run --project unit tests/tinta/admin-policy.test.ts` PASS (schema terima valid / tolak `tintaPerLakoin: 5` / tolak reason pendek); `pnpm run typecheck` PASS; audit log muncul setelah PATCH di staging.
 
@@ -702,9 +702,9 @@ Format tiap task: **Files**, **Acceptance criteria (checklist)**, **DoD + test y
 - Modify: `lib/analytics/events.ts`, `lib/tinta/author-reward.server.ts`, `components/missions/missions-view.tsx`, `app/(shell)/profil/tinta/actions.ts`, `app/api/stories/[id]/visibility/route.ts`
 - Test: `pnpm smoke:analytics` (existing) + `tests/tinta/analytics.test.ts`
 
-- [ ] **AC11.1** 4 nama event + 6 field payload opsional (§9) masuk `ANALYTICS_EVENT_NAMES` & `AnalyticsEventSchema` (strict, tanpa teks mentah).
-- [ ] **AC11.2** Instrumentasi terpasang di titik §9; payload lolos schema (unit test parse).
-- [ ] **AC11.3** `tinta_skip_reason: 'guest'` tidak dikirim dari server (guest tidak sampai hook); `'duplicate'` di-log server saja tanpa event client.
+- [x] **AC11.1** 4 nama event + 6 field payload opsional (§9) masuk `ANALYTICS_EVENT_NAMES` & `AnalyticsEventSchema` (strict, tanpa teks mentah).
+- [x] **AC11.2** Instrumentasi terpasang di titik §9; payload lolos schema (unit test parse).
+- [x] **AC11.3** `tinta_skip_reason: 'guest'` tidak dikirim dari server (guest tidak sampai hook); `'duplicate'` di-log server saja tanpa event client.
 
 **DoD:** `pnpm smoke:analytics` PASS; `pnpm exec vitest run --project unit tests/tinta/analytics.test.ts` PASS.
 
@@ -718,11 +718,11 @@ Format tiap task: **Files**, **Acceptance criteria (checklist)**, **DoD + test y
 
 Skenario smoke (jiti runner, pola smoke existing):
 
-- [ ] **AC12.1** Klaim misi dengan `missions_pay_tinta=true` → baris `tinta_ledger` (+amount, ref `mission:…`, pending null); klaim ulang → duplicate.
-- [ ] **AC12.2** Pilihan pembaca B di bab cerita publik milik A (flag author on) → event `author_read_reward` pending 24 jam; replay/B baca ulang → duplicate; cap dites dengan cap kecil → `capped`; cerita privat → `ineligible`.
-- [ ] **AC12.3** Tukar: kurs 100, tukar 250 → debit 200, credit_ledger +2, sisa 50 available; `spend_tinta_v1` pada saldo pending saja → insufficient.
-- [ ] **AC12.4** `tinta_balance_v1` konsisten: total = available + pending.
-- [ ] **AC12.5** Grep rename (AC7.3) dijalankan sebagai bagian smoke gate copy.
+- [x] **AC12.1** Klaim misi dengan `missions_pay_tinta=true` → baris `tinta_ledger` (+amount, ref `mission:…`, pending null); klaim ulang → duplicate. (verifikasi RPC live: staging, lihat G12-M)
+- [x] **AC12.2** Pilihan pembaca B di bab cerita publik milik A (flag author on) → event `author_read_reward` pending 24 jam; replay/B baca ulang → duplicate; cap dites dengan cap kecil → `capped`; cerita privat → `ineligible`. (verifikasi RPC live: staging, lihat G12-M)
+- [x] **AC12.3** Tukar: kurs 100, tukar 250 → debit 200, credit_ledger +2, sisa 50 available; `spend_tinta_v1` pada saldo pending saja → insufficient. (verifikasi RPC live: staging, lihat G12-M)
+- [x] **AC12.4** `tinta_balance_v1` konsisten: total = available + pending. (verifikasi RPC live: staging, lihat G12-M)
+- [x] **AC12.5** Grep rename (AC7.3) dijalankan sebagai bagian smoke gate copy.
 
 **DoD:** `pnpm exec tsx scripts/tinta-economy-smoke.ts` exit 0 semua cek; `pnpm test` (typecheck + migration check + unit + smoke) hijau penuh; checklist dokumen ini dicentang.
 

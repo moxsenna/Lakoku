@@ -331,3 +331,14 @@ Branch: feat/lakoin-tinta-economy | Gates: GATES.lakoin-tinta.md | Amandemen PM:
 - Task P12: complete (commit 5829afc, review APPROVED, smoke:tinta 44/44 + 157 test + typecheck; bagian RPC live AC12.1-12.4 ditunda eksplisit ke G12-M staging).
 - FINAL REVIEW: SIAP MERGE (agent 34cab5fe). 0 Critical, 0 Important. 8 Minor semua DEFER beralasan (verifikasi: race unique_violation sudah FIX di P4). Catatan evolusi: pecah status 'ineligible' RPC di migrasi berikutnya bila BI butuh granular skip-reason.
 - GATES FINAL: 13/16 met runnable+G7-M; 2 manual menunggu staging deploy (G6-M navigasi dompet, G12-M RPC live) — handoff eksplisit.
+
+## Feature: Indonesian Cultural Honorifics & Mobile Paragraph Rhythm
+- Task 1: complete (commit 0bc1f95 + fix b87eed3, review APPROVED, 4 tests passed). `lib/prose/cultural-conventions.ts`.
+- Task 2: complete (commit 9edccab + fix f53b739, review APPROVED with fixes, 10 tests passed). `lib/prose/mobile-paragraph-splitter.ts`.
+- Task 3: complete (commit 2f2184e, review APPROVED, 5 parser tests + 269 ai-gateway tests passed). `lib/ai-gateway/chapter-writer-contract.ts`.
+- Task 4: complete (commit cbd1599 + fix 288e636, review APPROVED, 8 files/53 tests in prose passed + typecheck clean). `lib/prose/prompt-engine/`.
+- Task 5: complete (typecheck PASS, unit tests 58/58 prose & parser pass, 3696 total tests pass, 0 regressions against baseline 70 failures). All gates verified.
+
+
+
+

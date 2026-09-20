@@ -12,7 +12,9 @@ import {
   captureStoryCover,
   releaseStoryCover,
   setStoryCover,
+  getStoryCoverPolicy,
 } from '@/lib/cover/server'
+import { GenerateStoryCoverRequestSchema } from '@lakoku/contracts'
 
 /**
  * Buat sampul cerita (berbayar Lakoin).
@@ -22,11 +24,21 @@ import {
  * kegagalan penyedia tidak pernah memakan Lakoin pengguna.
  */
 export async function POST(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const route = await params
   const storyId = normalizeStoryRouteId(route.id)
+
+  const rawBody = await req.json().catch(() => ({}))
+  const parsedRequest = GenerateStoryCoverRequestSchema.safeParse(rawBody)
+  if (!parsedRequest.success) {
+    return NextResponse.json(
+      { ok: false, error: 'Konfigurasi sampul tidak valid.' },
+      { status: 400 },
+    )
+  }
+  const options = parsedRequest.data
 
   const user = await getSessionUser()
   if (!user) {
@@ -83,12 +95,32 @@ export async function POST(
     return NextResponse.json({ ok: false, error: 'Kamu bukan pemilik cerita ini.' }, { status: 403 })
   }
 
+  if (reservation.replayed) {
+    return NextResponse.json(
+      { ok: false, error: 'Pembuatan sampul sebelumnya sedang berlangsung. Tunggu sebentar.' },
+      { status: 409 },
+    )
+  }
+
+  if (reservation.replayed) {
+    return NextResponse.json(
+      { ok: false, error: 'Pembuatan sampul sebelumnya sedang berlangsung. Tunggu sebentar.' },
+      { status: 409 },
+    )
+  }
+
+  const policy = await getStoryCoverPolicy()
+
   try {
     const generated = await generateCoverImage({
       title: String(story.title ?? ''),
       tagline: String(story.tagline ?? ''),
       role: String(story.role ?? ''),
       tropes: Array.isArray(story.tropes) ? story.tropes.map(String) : [],
+      preset: options.preset,
+      customNotes: options.customNotes,
+      includeTitle: options.includeTitle,
+      basePromptOverride: policy.basePromptOverride,
     })
 
     if (!generated.ok) {
@@ -122,7 +154,14 @@ export async function POST(
     }
 
     // Gambar sudah terpasang: baru sekarang Lakoin benar-benar ditagih.
-    await captureStoryCover(reservation.ref)
+    const captureStatus = await captureStoryCover(reservation.ref)
+    if (captureStatus !== 'ok' && captureStatus !== 'duplicate') {
+      console.error('cover capture gagal', { storyId, ref: reservation.ref, captureStatus })
+      return NextResponse.json(
+        { ok: false, error: 'Waktu pembayaran berakhir. Lakoinmu tidak terpotong, silakan coba lagi.' },
+        { status: 409 },
+      )
+    }
     const balance = await getCreditBalance(user.id)
 
     return NextResponse.json({ ok: true, cover: stored.url, balance })

@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import { ImageIcon, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { generateStoryCover, uploadStoryCover } from '@/lib/api/client'
+import { StoryCoverDialog } from '@/components/story-cover-dialog'
+import type { CoverPresetKey } from '@lakoku/contracts'
 
 /**
  * Aksi sampul untuk pemilik cerita: buat dengan Lakoin, atau unggah sendiri
@@ -14,23 +16,31 @@ export function StoryCoverActions({
   storyId,
   cost,
   generateEnabled,
+  userBalance = 0,
 }: {
   storyId: string
   cost: number
   generateEnabled: boolean
+  userBalance?: number
 }) {
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  async function handleGenerate() {
+  async function handleGenerate(payload: {
+    preset: CoverPresetKey
+    customNotes?: string
+    includeTitle: boolean
+  }) {
     setError(null)
     setGenerating(true)
     try {
-      const result = await generateStoryCover(storyId)
+      const result = await generateStoryCover(storyId, payload)
       if (result.ok) {
+        setDialogOpen(false)
         router.refresh()
       } else {
         setError(result.error ?? 'Sampul gagal dibuat. Coba lagi.')
@@ -65,8 +75,7 @@ export function StoryCoverActions({
           <Button
             variant="secondary"
             size="sm"
-            loading={generating}
-            onClick={handleGenerate}
+            onClick={() => setDialogOpen(true)}
             className="flex-1"
           >
             <Sparkles className="size-3.5" aria-hidden="true" />
@@ -94,11 +103,16 @@ export function StoryCoverActions({
         tabIndex={-1}
       />
       {error && <p className="text-xs leading-relaxed text-destructive">{error}</p>}
-      {generating && (
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          Sedang membuat sampul... ini bisa memakan waktu hingga setengah menit. Jangan tutup halaman.
-        </p>
-      )}
+      <StoryCoverDialog
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        storyId={storyId}
+        cost={cost}
+        userBalance={userBalance}
+        onGenerate={handleGenerate}
+        generating={generating}
+        error={error}
+      />
     </div>
   )
 }

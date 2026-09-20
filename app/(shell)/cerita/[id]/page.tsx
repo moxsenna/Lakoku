@@ -8,6 +8,7 @@ import { getStory } from '@/lib/api/server'
 import { getSessionUser } from '@/lib/api/user-state'
 import { isStoryOwnedBy } from '@/lib/api/story-ownership.server'
 import { getStoryCoverPolicy } from '@/lib/cover/server'
+import { getCreditBalance } from '@/lib/credits/server'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,7 +23,9 @@ export default async function CeritaDetailPage({
 
   const user = await getSessionUser()
   const isOwner = user ? await isStoryOwnedBy(story.id, user.id) : false
-  const coverPolicy = isOwner ? await getStoryCoverPolicy() : { cost: 0, enabled: false }
+  const [coverPolicy, userBalance] = isOwner && user
+    ? await Promise.all([getStoryCoverPolicy(), getCreditBalance(user.id)])
+    : [{ cost: 0, enabled: false }, 0]
 
   return (
     <main className="flex flex-col">
@@ -48,7 +51,12 @@ export default async function CeritaDetailPage({
           {isOwner && (
             <div className="flex flex-col gap-2 rounded-2xl bg-card p-4">
               <span className="text-[11px] font-semibold tracking-wide text-lavender">SAMPUL CERITAMU</span>
-              <StoryCoverActions storyId={story.id} cost={coverPolicy.cost} generateEnabled={coverPolicy.enabled} />
+              <StoryCoverActions
+                storyId={story.id}
+                cost={coverPolicy.cost}
+                generateEnabled={coverPolicy.enabled}
+                userBalance={userBalance}
+              />
             </div>
           )}
           <div className="flex flex-col gap-3">

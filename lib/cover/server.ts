@@ -14,7 +14,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
  */
 
 export type ReserveCoverResult =
-  | { ok: true; ref: string; cost: number; attempt: number }
+  | { ok: true; ref: string; cost: number; attempt: number; replayed?: boolean }
   | { ok: false; reason: 'NOT_STORY_OWNER' | 'FEATURE_DISABLED' | 'INSUFFICIENT_CREDITS'; available?: number; required?: number }
 
 type ReserveRpcPayload = {
@@ -25,6 +25,7 @@ type ReserveRpcPayload = {
   attempt?: number
   available?: number
   required?: number
+  replayed?: boolean
 }
 
 /** Tahan Lakoin sebelum memanggil penyedia. */
@@ -38,7 +39,13 @@ export async function reserveStoryCover(userId: string, storyId: string): Promis
 
   const payload = data as ReserveRpcPayload
   if (payload.ok && payload.ref && typeof payload.cost === 'number' && typeof payload.attempt === 'number') {
-    return { ok: true, ref: payload.ref, cost: payload.cost, attempt: payload.attempt }
+    return {
+      ok: true,
+      ref: payload.ref,
+      cost: payload.cost,
+      attempt: payload.attempt,
+      replayed: Boolean(payload.replayed),
+    }
   }
 
   const reason = payload.reason
@@ -95,7 +102,11 @@ export async function setStoryCover(storyId: string, userId: string, coverUrl: s
   return (count ?? 0) > 0
 }
 
-export type StoryCoverPolicy = { cost: number; enabled: boolean }
+export type StoryCoverPolicy = {
+  cost: number
+  enabled: boolean
+  basePromptOverride?: string
+}
 
 /**
  * Harga sampul dari feature_credit_costs, untuk ditampilkan apa adanya di UI.
@@ -106,12 +117,17 @@ export async function getStoryCoverPolicy(): Promise<StoryCoverPolicy> {
     const db = createAdminClient()
     const { data } = await db
       .from('feature_credit_costs')
-      .select('credits_required,is_active')
+      .select('credits_required,is_active,metadata')
       .eq('feature_key', 'story_cover')
       .maybeSingle()
 
     if (!data || !data.is_active) return { cost: 0, enabled: false }
-    return { cost: Number(data.credits_required), enabled: true }
+    const meta = data.metadata as { basePromptOverride?: string } | null
+    return {
+      cost: Number(data.credits_required),
+      enabled: true,
+      basePromptOverride: typeof meta?.basePromptOverride === 'string' ? meta.basePromptOverride : undefined,
+    }
   } catch (error) {
     console.error('getStoryCoverPolicy gagal', { error })
     return { cost: 0, enabled: false }

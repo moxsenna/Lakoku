@@ -43,7 +43,12 @@ interface SettingsData {
   } | null
   aiModelRoutes: RouteRow[]
   featureCreditCosts: {
-    featureKey: string; creditsRequired: number; isActive: boolean; pricingVersion: string; updatedAt: string | null
+    featureKey: string
+    creditsRequired: number
+    isActive: boolean
+    pricingVersion: string
+    metadata?: Record<string, unknown>
+    updatedAt: string | null
   }[]
   rewardPolicy: {
     commissionPercent: number
@@ -142,7 +147,13 @@ export default function AdminSettingsPage() {
   const [data, setData] = useState<SettingsData | null>(null)
   const [loading, setLoading] = useState(true)
   const [editProduct, setEditProduct] = useState<CreditProductRow | null>(null)
-  const [editFeature, setEditFeature] = useState<{ featureKey: string; creditsRequired: number; isActive: boolean; pricingVersion: string } | null>(null)
+  const [editFeature, setEditFeature] = useState<{
+    featureKey: string
+    creditsRequired: number
+    isActive: boolean
+    pricingVersion: string
+    metadata?: Record<string, unknown>
+  } | null>(null)
   const [editGenPolicy, setEditGenPolicy] = useState(false)
   const [editRoute, setEditRoute] = useState<RouteRow | null>(null)
   const [editRewardPolicy, setEditRewardPolicy] = useState(false)

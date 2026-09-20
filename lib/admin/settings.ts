@@ -462,7 +462,7 @@ export async function updateFeatureCreditCost(
 
   const { data: oldRow } = await db
     .from('feature_credit_costs')
-    .select('credits_required,is_active,pricing_version')
+    .select('credits_required,is_active,pricing_version,metadata')
     .eq('feature_key', input.featureKey)
     .single()
   if (!oldRow) throw new Error('Feature cost not found')
@@ -471,16 +471,22 @@ export async function updateFeatureCreditCost(
     credits_required: oldRow.credits_required,
     is_active: oldRow.is_active,
     pricing_version: oldRow.pricing_version,
+    metadata: oldRow.metadata,
+  }
+
+  const updatePayload: Record<string, unknown> = {
+    credits_required: input.creditsRequired,
+    is_active: input.isActive,
+    pricing_version: input.pricingVersion,
+    updated_at: new Date().toISOString(),
+  }
+  if (input.metadata !== undefined) {
+    updatePayload.metadata = input.metadata
   }
 
   const { error } = await db
     .from('feature_credit_costs')
-    .update({
-      credits_required: input.creditsRequired,
-      is_active: input.isActive,
-      pricing_version: input.pricingVersion,
-      updated_at: new Date().toISOString(),
-    })
+    .update(updatePayload)
     .eq('feature_key', input.featureKey)
 
   if (error) throw new Error(`updateFeatureCreditCost: ${error.message}`)
@@ -495,6 +501,7 @@ export async function updateFeatureCreditCost(
       credits_required: input.creditsRequired,
       is_active: input.isActive,
       pricing_version: input.pricingVersion,
+      metadata: input.metadata ?? oldRow.metadata ?? {},
     },
     reason: input.reason,
   })
@@ -504,7 +511,7 @@ export async function updateFeatureCreditCost(
     creditsRequired: input.creditsRequired,
     isActive: input.isActive,
     pricingVersion: input.pricingVersion,
-    metadata: {},
+    metadata: (input.metadata as Record<string, unknown>) ?? (oldRow.metadata as Record<string, unknown>) ?? {},
     updatedAt: new Date().toISOString(),
   }
 }

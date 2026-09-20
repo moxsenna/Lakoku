@@ -14,11 +14,30 @@ import 'server-only'
  *     kalimat prompt dan tetap dinormalkan ulang di lib/cover/image.ts.
  */
 
+import { type CoverPresetKey } from '@lakoku/contracts'
+
+const SERVER_PRESET_PROMPT_MODIFIERS: Record<CoverPresetKey, string> = {
+  sinematik:
+    'Gaya: sinematik, pencahayaan lembut dan dramatis, kedalaman ruang (shallow depth of field), warna hangat, komposisi tokoh sentral.',
+  webtoon:
+    'Gaya: ilustrasi webtoon manhwa modern dan anime berkualitas tinggi, garis bersih tegas, pewarnaan digital cerah dinamis, karakter ekspresif memikat.',
+  cat_air:
+    'Gaya: lukisan cat air klasik (watercolor painting), sapuan kuas basah bertekstur, palet warna pastel puitis mengalir, suasana artistik elegan.',
+  gelap:
+    'Gaya: gelap dan menegangkan (moody dark thriller), kontras chiaroscuro tinggi, bayangan pekat atmosferik, palet dingin menegangkan.',
+  fantasi:
+    'Gaya: fantasi megah epik (epic high fantasy), efek cahaya magis berpendar, latar dan busana megah memukau, aura mistis.',
+}
+
 export type CoverGenerationInput = {
   title: string
   tagline: string
   role: string
   tropes: string[]
+  preset?: CoverPresetKey
+  customNotes?: string
+  includeTitle?: boolean
+  basePromptOverride?: string
 }
 
 export type CoverGenerationResult =
@@ -59,15 +78,36 @@ export function buildCoverPrompt(input: CoverGenerationInput): string {
   const role = input.role.slice(0, 120).trim()
   const tropes = input.tropes.slice(0, 5).map((t) => t.slice(0, 40).trim()).filter(Boolean)
 
+  const selectedKey = input.preset && SERVER_PRESET_PROMPT_MODIFIERS[input.preset]
+    ? input.preset
+    : 'sinematik'
+  const styleLine = SERVER_PRESET_PROMPT_MODIFIERS[selectedKey]
+
+  const customNotes = input.customNotes
+    ? input.customNotes
+        .replace(/[\r\n"“”]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .slice(0, 80)
+        .trim()
+    : ''
+
+  const baseHeader = input.basePromptOverride?.trim() ||
+    'Sampul novel romansa Indonesia, orientasi potret vertikal rasio 2:3 (lebih tinggi daripada lebar).'
+
+  const textInstruction = input.includeTitle
+    ? `Tampilkan teks judul cerita "${title}" secara jelas, artistik, dan terbaca rapi di dalam gambar.`
+    : 'JANGAN menuliskan teks, huruf, judul, atau tanda air apa pun di dalam gambar.'
+
   const lines = [
-    'Sampul novel romansa Indonesia, orientasi potret vertikal rasio 2:3 (lebih tinggi daripada lebar).',
+    baseHeader,
     `Judul cerita: "${title}".`,
     tagline ? `Suasana: ${tagline}.` : '',
     role ? `Tokoh utama: ${role}.` : '',
     tropes.length ? `Nuansa: ${tropes.join(', ')}.` : '',
-    'Gaya: sinematik, pencahayaan lembut, warna hangat, komposisi tokoh sentral.',
+    styleLine,
+    customNotes ? `Catatan visual tambahan: "${customNotes}".` : '',
     'Latar dan busana khas Indonesia kontemporer.',
-    'JANGAN menuliskan teks, huruf, judul, atau tanda air apa pun di dalam gambar.',
+    textInstruction,
   ]
   return lines.filter(Boolean).join('\n')
 }

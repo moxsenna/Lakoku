@@ -5,6 +5,7 @@ import { loadPlayBillingConfig, fetchPurchaseState, isGrantablePurchase } from '
 import { getCreditProductByPlaySku, calculateTopupCredits } from '@/lib/paycore/products'
 import { playBillingGrantV1 } from '@/lib/paycore/play-billing-grant.server'
 import { createAdminClient } from '@lakoku/db'
+import { notifyTopupResult } from '@lakoku/notifications/server'
 
 /**
  * POST /api/play-billing/verify — verifikasi pembelian Google Play (Android)
@@ -77,8 +78,22 @@ export async function POST(request: NextRequest) {
     orderNumber: state.purchase.orderId ?? parsed.data.orderId ?? null,
   })
   if (!grant.ok) {
+    // Kabari kegagalan juga (best-effort, idempoten per ref): uang mungkin
+    // sudah keluar di Play tapi kredit belum masuk.
+    void notifyTopupResult({
+      userId: auth.user.id,
+      ok: false,
+      ref: purchaseToken,
+    }).catch(() => undefined)
     return NextResponse.json({ ok: false, error: 'grant_failed' }, { status: 500 })
   }
+
+  // Kabar baik topup (best-effort, idempoten per ref; replay aman).
+  void notifyTopupResult({
+    userId: auth.user.id,
+    ok: true,
+    ref: grant.orderId ?? purchaseToken,
+  }).catch(() => undefined)
 
   return NextResponse.json({
     ok: true,

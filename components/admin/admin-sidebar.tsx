@@ -11,6 +11,7 @@ import {
   Cpu,
   ClipboardCheck,
   BarChart3,
+  Bell,
   Settings,
 } from 'lucide-react'
 
@@ -19,6 +20,7 @@ const navItems = [
   { href: '/admin/users', label: 'Users', icon: Users },
   { href: '/admin/credits', label: 'Credits', icon: Coins },
   { href: '/admin/payments', label: 'Payments', icon: CreditCard },
+  { href: '/admin/push', label: 'Siaran', icon: Bell },
   { href: '/admin/generation', label: 'Generation', icon: Cpu },
   { href: '/admin/blueprint-review', label: 'Blueprint Review', icon: ClipboardCheck },
   { href: '/admin/consistency', label: 'Consistency', icon: BarChart3 },

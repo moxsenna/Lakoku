@@ -6,6 +6,8 @@ import { Toaster } from '@/components/ui/sonner'
 import { ThemeProvider } from '@/components/theme-provider'
 import { FontSizeProvider } from '@/components/font-size-provider'
 import { GlobalPendingIndicator } from '@/components/loading/global-pending'
+import { PushPrompt } from '@/components/push/push-prompt'
+import { AndroidPushBridge } from '@/components/push/android-bridge'
 import { AdsenseScript } from '@/components/ads/adsense-script'
 import './globals.css'
 
@@ -25,6 +27,7 @@ export const metadata: Metadata = {
   description:
     'Lakoku is an interactive fiction web app (novel interaktif). Read branching stories, make choices that change the plot, and save progress with email or Google sign-in.',
   applicationName: 'Lakoku',
+  manifest: '/manifest.webmanifest',
   icons: {
     icon: [
       { url: '/favicon.ico', sizes: 'any' },
@@ -63,6 +66,8 @@ export default function RootLayout({
           <FontSizeProvider>{children}</FontSizeProvider>
           <GlobalPendingIndicator />
           <Toaster position="top-center" />
+          <PushPrompt />
+          <AndroidPushBridge />
         </ThemeProvider>
         <AdsenseScript />
         {enableVercelAnalytics && <Analytics />}

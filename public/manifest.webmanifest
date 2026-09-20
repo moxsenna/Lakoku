@@ -1,0 +1,16 @@
+{
+  "name": "Lakoku — Novel Interaktif",
+  "short_name": "Lakoku",
+  "description": "Novel interaktif berbahasa Indonesia — kamulah tokoh utamanya.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#191319",
+  "theme_color": "#191319",
+  "lang": "id",
+  "icons": [
+    { "src": "/icon.png", "sizes": "any", "type": "image/png" },
+    { "src": "/logo.png", "sizes": "any", "type": "image/png" }
+  ]
+}

@@ -6,7 +6,7 @@ import { AdsenseBanner } from '@/components/ads/adsense-banner'
 import { resolveAdSlot, type ResolvedAdSlot } from '@/lib/ads/server'
 import { getSessionUser } from '@/lib/api/user-state'
 import { listCreditProducts, calculateTopupCredits } from '@/lib/paycore/products'
-import { getRequestChannel } from '@/lib/android/channel'
+import { getRequestChannel } from '@/lib/android/channel.server'
 import { getCreditBalance, getReadingPolicy } from '@/lib/credits/server'
 import { createAdminClient } from '@lakoku/db'
 

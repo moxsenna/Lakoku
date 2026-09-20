@@ -2,11 +2,15 @@
 
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { clearStoredWebPush } from '@/components/push/web-registration'
+import { clearAndroidPush } from '@/lib/android/push-bridge'
 
 export function LogoutButton() {
   const router = useRouter()
 
   async function handleLogout() {
+    await clearStoredWebPush()
+    await clearAndroidPush()
     const supabase = createClient()
     await supabase.auth.signOut()
     router.push('/beranda')

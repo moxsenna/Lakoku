@@ -56,6 +56,12 @@
       "@lakoku/api": [
         "./lib/api/index.ts"
       ],
+      "@lakoku/notifications": [
+        "./lib/notifications/index.ts"
+      ],
+      "@lakoku/notifications/server": [
+        "./lib/notifications/server.ts"
+      ],
       "@lakoku/contracts": [
         "./packages/contracts/src/index.ts"
       ]

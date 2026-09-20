@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
-import { isMissionKey } from '@/lib/missions/policy'
+import { isMissionKey, MISSION_LABELS } from '@/lib/missions/policy'
 import { claimMission } from '@/lib/missions/server'
+import { notifyMissionComplete } from '@lakoku/notifications/server'
 
 const claimSchema = z.object({
   missionKey: z.string().min(1).max(64),
@@ -48,6 +49,13 @@ export async function POST(request: Request): Promise<Response> {
       { status: statusMap[result.reason] ?? 400 },
     )
   }
+
+  // Pengingat transaksional (push): best-effort, idempoten per (user, misi, hari).
+  // Tidak boleh menggagalkan klaim bila layanan push mati.
+  void notifyMissionComplete({
+    userId: auth.user.id,
+    missionName: MISSION_LABELS[missionKey].title,
+  }).catch(() => undefined)
 
   return NextResponse.json({ ok: true, status: 'ok' })
 }

@@ -1,6 +1,7 @@
 import type { ContinuationContext } from '@lakoku/narrative-core'
 import type { ChapterMode } from '@/lib/prose/mobile-drama-style'
 import type { PreProseChapterBrief } from '@/lib/story-engine/pre-prose-brief'
+import type { CharacterDescriptor, SupportedLanguage } from '../cultural-conventions'
 
 export type { ChapterMode }
 
@@ -38,6 +39,8 @@ export interface BuildWriterPromptInput {
   phase?: string
   goal?: string
   characterNames?: string[]
+  characterDescriptors?: CharacterDescriptor[]
+  language?: SupportedLanguage
   voiceGuidance?: string
   plannedBeats?: string[]
   sceneCount?: number

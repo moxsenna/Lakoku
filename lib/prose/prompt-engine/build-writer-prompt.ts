@@ -4,6 +4,11 @@ import {
   mobileDramaSystemPrompt,
 } from '@/lib/prose/mobile-drama-style'
 import { buildGenreProseDirective } from '@/lib/prose/genre-flavor'
+import {
+  buildCulturalHonorificDirectives,
+  type CharacterDescriptor,
+  type SupportedLanguage,
+} from '@/lib/prose/cultural-conventions'
 import type { BuildWriterPromptInput, WriterPromptParts } from './types'
 
 function writerVisible(value: string, authorityIds: readonly string[]): string {
@@ -52,7 +57,8 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
   if (!brief) throw new Error('CHAPTER_BRIEF_V2_BRIEF_REQUIRED')
 
   const { words, paragraphs } = MOBILE_DRAMA_RHYTHM
-  const names = input.characterNames ?? []
+  const language = input.language ?? 'id'
+  const descriptors: CharacterDescriptor[] = input.characterDescriptors ?? (input.characterNames ?? []).map((name) => ({ name }))
   const beats = input.plannedBeats ?? []
   const cc = input.continuation
   const authorityIds = [
@@ -71,10 +77,18 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
       : []
   )
 
+  const characterDisplayList = descriptors.map((d) => {
+    const parts = [safe(d.name)]
+    if (d.role) parts.push(`Peran: ${safe(d.role)}`)
+    if (d.honorifics && d.honorifics.length > 0) parts.push(`sapaan sah: ${d.honorifics.map(safe).join(' / ')}`)
+    return parts.length > 1 ? `${parts[0]} (${parts.slice(1).join(', ')})` : parts[0]
+  })
+
   const p0 = [
     '=== [P0] INVARIAN CANON & KEAMANAN (MANDATORI / HARUS DIPATUHI) ===',
-    names.length > 0 ? `- Tokoh yang boleh tampil (nama persis): ${names.join(', ')}.` : '',
+    characterDisplayList.length > 0 ? `- Tokoh yang boleh tampil: ${characterDisplayList.join('; ')}.` : '',
     '- DILARANG memunculkan tokoh bernama baru yang tidak ada dalam daftar di atas.',
+    language === 'id' ? '- Panggilan honorifik/kekerabatan di atas adalah sebutan sah untuk tokoh bersangkutan, BUKAN tokoh baru.' : '',
     brief.mustNotReveal.length > 0
       ? '- RAHASIA DILARANG UNTUK DIUNGKAP/DIBOCORKAN:'
       : '',
@@ -160,11 +174,13 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
     '- DILARANG keras menutup bab atau menulis penutup sebelum panjang naskah melewati minimal 880 kata.',
   ].join('\n')
 
+  const culturalDirective = buildCulturalHonorificDirectives(descriptors, language)
   const genreDirective = input.genre ? buildGenreProseDirective(input.genre) : null
   const p4 = [
     '=== [P4] SUARA TOKOH & KETERBACAAN MOBILE ===',
     '- Pertahankan sudut pandang orang pertama ("aku") secara konsisten.',
     input.voiceGuidance ? `- Panduan Suara Karakter:\n${safe(input.voiceGuidance)}` : '',
+    culturalDirective ? safe(culturalDirective) : '',
     genreDirective ? safe(genreDirective) : '',
     '- Format pergantian ucapan tokoh dipisahkan dengan jelas agar pembaca mudah mengikuti percakapan.',
     '- Keterbacaan Mobile: Utamakan kalimat tunggal yang lugas, padat, dan bertenaga (SP / SPO).',

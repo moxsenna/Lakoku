@@ -1,5 +1,7 @@
 import type { CanonSnapshot, ContinuationContext, Finding } from '@lakoku/narrative-core'
 import { buildWriterPrompt } from '@/lib/prose/prompt-engine'
+import { splitParagraphsForMobile } from '@/lib/prose/mobile-paragraph-splitter'
+import { buildCharacterDescriptors } from '@/lib/prose/cultural-conventions'
 import type {
   PreProseChapterBrief,
   WriterNarrativeObligation,
@@ -78,10 +80,12 @@ export function parseChapterWriterProse(text: string): ParsedChapterWriterProse 
     }
   }
 
-  const paragraphs = blocks
+  const rawParagraphs = blocks
     .flatMap((block) => block.split(/\n+/))
     .map((paragraph) => paragraph.trim())
     .filter(Boolean)
+
+  const paragraphs = splitParagraphsForMobile(rawParagraphs)
 
   if (!title) title = 'Tanpa Judul'
   return { title, paragraphs, hasExplicitTitle }
@@ -300,6 +304,8 @@ export function buildProductionChapterWriterPrompt(
 
   const chapter = brief?.chapterNumber ?? Number(plan.chapterNumber)
   const names = activeCharacterNames(snapshot, chapter)
+  const activeChars = snapshot.characters.filter((c) => c.status !== 'DEAD' && c.introducedChapter <= chapter)
+  const descriptors = buildCharacterDescriptors(activeChars, snapshot.aliases, 'id')
   const voices = voiceGuidance(snapshot, chapter)
   const beats = Array.isArray(plan.plannedBeats) ? (plan.plannedBeats as string[]) : []
   const obligations = brief
@@ -317,6 +323,8 @@ export function buildProductionChapterWriterPrompt(
     phase: phase || undefined,
     goal: goal || undefined,
     characterNames: names,
+    characterDescriptors: descriptors,
+    language: 'id',
     voiceGuidance: voices || undefined,
     plannedBeats: beats,
     sceneCount: Number(plan.targetSceneCount ?? 3),

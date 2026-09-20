@@ -8,15 +8,21 @@
  */
 
 function splitSentences(paragraph: string): string[] {
+  // Regex branches (evaluated left-to-right):
+  // 1. Dialogue-first with possible split inquit or trailing tag (e.g. "Halo," katanya, "aku pulang." or "Pergi!" Bentaknya keras.)
+  // 2. Narrative-first dialogue sentence (e.g. Budi berbisik, "Jangan bergerak.")
+  // 3. Narrative sentence with optional leading ellipses (e.g. ...dia terdiam. or Kalimat biasa.)
+  // 4. Trailing text without sentence-ending punctuation
   const regex =
-    /\s*(?:(["'“‘][^"'”’]*["'”’](?:\s+[a-z\p{Ll}][^.!?\n]*[.!?]+)?)|([^.!?\n]+[.!?]+(?:["'”’])?)|([^.!?\n]+$))/gu
+    /\s*(?:(["'“‘][^"'”’]+["'”’](?:\s*[^"'”’.!?\n]+[,;]\s*["'“‘][^"'”’]+["'”’])?(?:\s*[^"'”’.!?\n]+[.!?]+)?)|([^.!?\n]+(?::|,)\s*["'“‘][^"'”’]+["'”’](?:\s*[^"'”’.!?\n]+[.!?]+)?)|((?:\.{2,}\s*)?[^.!?\n]+[.!?]+(?:["'”’])?)|([^.!?\n]+$))/gu
   const matches = paragraph.match(regex)
   if (!matches) return [paragraph]
   return matches.map((s) => s.trim()).filter(Boolean)
 }
 
 function isDialogueSentence(sentence: string): boolean {
-  return /^[“"']/.test(sentence.trim())
+  const trimmed = sentence.trim()
+  return /["“”]/.test(trimmed) || /^['‘]/.test(trimmed)
 }
 
 export function splitParagraphsForMobile(paragraphs: readonly string[]): string[] {

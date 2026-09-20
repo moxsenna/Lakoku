@@ -56,4 +56,37 @@ describe('mobile-paragraph-splitter', () => {
     expect(output).toEqual(['"Siapa di sana?" bisikku.', '"Ini aku," jawabnya tenang.'])
     expect(countParagraphWords(output)).toBe(countParagraphWords(input))
   })
+
+  it('handles mid-sentence dialogue tag without orphaning quotes', () => {
+    const input = ['"Halo," katanya, "aku pulang."']
+    const output = splitParagraphsForMobile(input)
+    expect(output).toEqual(['"Halo," katanya, "aku pulang."'])
+    expect(countParagraphWords(output)).toBe(countParagraphWords(input))
+  })
+
+  it('handles leading ellipses without dropping tokens', () => {
+    const input = ['...dia terdiam beberapa saat. Udara dingin berhembus perlahan.']
+    const output = splitParagraphsForMobile(input)
+    expect(output.length).toBe(1)
+    expect(output[0]).toBe('...dia terdiam beberapa saat. Udara dingin berhembus perlahan.')
+    expect(countParagraphWords(output)).toBe(countParagraphWords(input))
+  })
+
+  it('handles capitalized dialogue tags naturally', () => {
+    const input = ['"Pergi!" Bentaknya keras. Langkahnya menjauh dengan cepat.']
+    const output = splitParagraphsForMobile(input)
+    expect(output.length).toBe(2)
+    expect(output[0]).toBe('"Pergi!" Bentaknya keras.')
+    expect(output[1]).toBe('Langkahnya menjauh dengan cepat.')
+    expect(countParagraphWords(output)).toBe(countParagraphWords(input))
+  })
+
+  it('isolates dialogue when preceded by narrative text', () => {
+    const input = ['Dia menoleh perlahan. Budi berbisik, "Jangan bergerak."']
+    const output = splitParagraphsForMobile(input)
+    expect(output.length).toBe(2)
+    expect(output[0]).toBe('Dia menoleh perlahan.')
+    expect(output[1]).toBe('Budi berbisik, "Jangan bergerak."')
+    expect(countParagraphWords(output)).toBe(countParagraphWords(input))
+  })
 })

@@ -8,6 +8,7 @@ interface Row {
   creditsRequired: number
   isActive: boolean
   pricingVersion: string
+  metadata?: Record<string, unknown>
 }
 
 interface Props { feature: Row; onClose: () => void; onSaved: () => void }
@@ -16,9 +17,14 @@ export function EditFeatureCreditCostDialog({ feature, onClose, onSaved }: Props
   const [creditsRequired, setCreditsRequired] = useState(String(feature.creditsRequired))
   const [version, setVersion] = useState(feature.pricingVersion)
   const [active, setActive] = useState(feature.isActive)
+  const [basePromptOverride, setBasePromptOverride] = useState(
+    typeof feature.metadata?.basePromptOverride === 'string' ? feature.metadata.basePromptOverride : ''
+  )
   const [reason, setReason] = useState('')
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
+
+  const isStoryCover = feature.featureKey === 'story_cover'
 
   async function handleSave() {
     const cr = Number(creditsRequired)
@@ -27,10 +33,23 @@ export function EditFeatureCreditCostDialog({ feature, onClose, onSaved }: Props
     setErr('')
     setLoading(true)
     try {
+      const payload: Record<string, unknown> = {
+        featureKey: feature.featureKey,
+        creditsRequired: cr,
+        isActive: active,
+        pricingVersion: version,
+        reason,
+      }
+      if (isStoryCover) {
+        payload.metadata = {
+          ...(feature.metadata ?? {}),
+          basePromptOverride: basePromptOverride.trim() ? basePromptOverride.trim() : undefined,
+        }
+      }
       const res = await fetch('/api/admin/settings/feature-costs', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ featureKey: feature.featureKey, creditsRequired: cr, isActive: active, pricingVersion: version, reason }),
+        body: JSON.stringify(payload),
       })
       const data = await res.json()
       if (!res.ok) { setErr(data.error ?? 'Gagal'); return }
@@ -49,10 +68,25 @@ export function EditFeatureCreditCostDialog({ feature, onClose, onSaved }: Props
           <label className="flex flex-col gap-0.5"><span className="text-[11px] text-muted-foreground">Credits Required</span>
             <input value={creditsRequired} onChange={(e) => setCreditsRequired(e.target.value)} type="number" className="rounded border border-border bg-background px-2 py-1.5 text-xs" />
           </label>
-          {creditsRequired === '0' && <p className="text-[11px] text-amber-600">⚠ Unlock bab gratis.</p>}
+          {creditsRequired === '0' && <p className="text-[11px] text-amber-600">⚠ Fitur gratis jika 0 credits.</p>}
           <label className="flex flex-col gap-0.5"><span className="text-[11px] text-muted-foreground">Version</span>
             <input value={version} onChange={(e) => setVersion(e.target.value)} className="rounded border border-border bg-background px-2 py-1.5 text-xs" />
           </label>
+          {isStoryCover && (
+            <label className="flex flex-col gap-0.5">
+              <span className="text-[11px] text-muted-foreground">Base Prompt Override (Opsional)</span>
+              <textarea
+                value={basePromptOverride}
+                onChange={(e) => setBasePromptOverride(e.target.value)}
+                placeholder="Kosongkan untuk memakai prompt bawaan sistem..."
+                rows={3}
+                className="rounded border border-border bg-background px-2 py-1.5 text-xs resize-y"
+              />
+              <span className="text-[10px] text-muted-foreground">
+                Mengganti kalimat pembuka deskripsi orientasi/gaya sampul novel.
+              </span>
+            </label>
+          )}
           <label className="flex items-center gap-2"><input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="size-3.5" /><span className="text-xs">Active</span></label>
           <label className="flex flex-col gap-0.5"><span className="text-[11px] text-muted-foreground">Alasan *</span>
             <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Min 5 karakter" className="rounded border border-border bg-background px-2 py-1.5 text-xs" />

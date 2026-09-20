@@ -18,6 +18,7 @@ export const updateFeatureCreditCostSchema = z.object({
   creditsRequired: z.number().int().min(0).max(10_000),
   isActive: z.boolean(),
   pricingVersion: z.string().min(3).max(80),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   reason: z.string().min(5).max(500),
 })
 export type UpdateFeatureCreditCostInput = z.infer<typeof updateFeatureCreditCostSchema>

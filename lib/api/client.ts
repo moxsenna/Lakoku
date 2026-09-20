@@ -33,7 +33,8 @@ import {
   type StartChapterSuccessResponse,
   type StoryCoverResponse,
   type SubmitChoiceResponse,
-} from '../../packages/contracts/src/reader'
+  type GenerateStoryCoverRequest,
+} from '@lakoku/contracts'
 import { buildChoiceIdempotencyKey } from './choice-idempotency'
 import { withPending } from '@/lib/loading/pending'
 
@@ -345,10 +346,17 @@ function parseCoverResponse(raw: unknown, status: number): StoryCoverResponse {
  * Buat sampul dengan Lakoin. Tiap percobaan berbayar; kegagalan tidak
  * memotong saldo (reservasi dilepas di server).
  */
-export async function generateStoryCover(storyId: string): Promise<StoryCoverResponse> {
+export async function generateStoryCover(
+  storyId: string,
+  options?: GenerateStoryCoverRequest,
+): Promise<StoryCoverResponse> {
   try {
     const res = await seamFetch(`${API_BASE}/stories/${encodeURIComponent(storyId)}/cover/generate`, {
       method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(options ?? {}),
       credentials: 'same-origin',
     })
     const raw = await res.json().catch(() => null)

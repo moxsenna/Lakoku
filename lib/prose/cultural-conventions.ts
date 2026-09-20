@@ -7,7 +7,7 @@ export interface CharacterDescriptor {
   honorifics?: string[]
 }
 
-const PARENT_FATHER_REGEX = /\b(ayah|bapak|papa|papi|romow|abi)\b/i
+const PARENT_FATHER_REGEX = /\b(ayah|bapak|papa|papi|romo|abi)\b/i
 const PARENT_MOTHER_REGEX = /\b(ibu|mama|mami|bunda|umi)\b/i
 const SIBLING_OLDER_MALE_REGEX = /\b(kakak laki|abang|mas)\b/i
 const SIBLING_OLDER_FEMALE_REGEX = /\b(kakak perempuan|mbak|teteh|uni)\b/i

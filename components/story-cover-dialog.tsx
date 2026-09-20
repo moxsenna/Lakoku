@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { Sparkles, X, Coins, Check, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -35,6 +36,7 @@ export function StoryCoverDialog({
   generating,
   error,
 }: StoryCoverDialogProps) {
+  const [mounted, setMounted] = useState(false)
   const [selectedPreset, setSelectedPreset] = useState<CoverPresetKey>('sinematik')
   const [customNotes, setCustomNotes] = useState('')
   const [includeTitle, setIncludeTitle] = useState(false)
@@ -42,17 +44,27 @@ export function StoryCoverDialog({
   const isInsufficient = userBalance < cost
 
   useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  useEffect(() => {
     if (!open) return
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape' && !generating) {
         onClose()
       }
     }
     window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    return () => {
+      document.body.style.overflow = prevOverflow
+      window.removeEventListener('keydown', handleKeyDown)
+    }
   }, [open, generating, onClose])
 
-  if (!open) return null
+  if (!open || !mounted) return null
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -64,9 +76,9 @@ export function StoryCoverDialog({
     })
   }
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-foreground/40 backdrop-blur-sm sm:items-center"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="story-cover-dialog-title"
@@ -245,6 +257,7 @@ export function StoryCoverDialog({
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

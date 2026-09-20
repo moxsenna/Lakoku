@@ -65,6 +65,8 @@ android/app/src/main/assets/capacitor.config.json
 # Android release signing (local secrets, never commit)
 android/*.jks
 android/keystore.properties
+# Firebase config (project-specific, jangan commit bila repo publik)
+android/app/google-services.json
 store-assets/
 
 # Reticle runtime state & agent scratch (machine-local)

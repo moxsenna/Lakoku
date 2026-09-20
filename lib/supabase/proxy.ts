@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { requireSupabaseAnonKey, requireSupabaseUrl } from '@/lib/supabase/env'
+import { getSessionRedirectPath } from '@/lib/auth/session-redirect'
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
@@ -64,7 +65,38 @@ export async function updateSession(request: NextRequest) {
     url.pathname = '/auth/login'
     url.search = ''
     url.searchParams.set('next', pathname + request.nextUrl.search)
-    return NextResponse.redirect(url)
+    const redirectResponse = NextResponse.redirect(url)
+    supabaseResponse.cookies.getAll().forEach((cookie) => {
+      redirectResponse.cookies.set(cookie)
+    })
+    return redirectResponse
+  }
+
+  // Pengalihan cerdas untuk user yang sudah login:
+  // - Akses '/' (root) -> otomatis ke '/beranda' (kecuali ?preview=1).
+  // - Akses '/auth/login' atau '/auth/sign-up' -> otomatis ke next (default '/beranda').
+  const redirectTarget = getSessionRedirectPath({
+    pathname,
+    isAuthenticated: Boolean(user),
+    preview: request.nextUrl.searchParams.get('preview') === '1',
+    next: request.nextUrl.searchParams.get('next'),
+  })
+
+  if (redirectTarget) {
+    const url = request.nextUrl.clone()
+    if (redirectTarget.includes('?')) {
+      const [pathOnly, searchOnly] = redirectTarget.split('?')
+      url.pathname = pathOnly
+      url.search = searchOnly
+    } else {
+      url.pathname = redirectTarget
+      url.search = ''
+    }
+    const redirectResponse = NextResponse.redirect(url)
+    supabaseResponse.cookies.getAll().forEach((cookie) => {
+      redirectResponse.cookies.set(cookie)
+    })
+    return redirectResponse
   }
 
   // IMPORTANT: You *must* return the supabaseResponse object as it is.

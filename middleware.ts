@@ -7,6 +7,9 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
+    '/',
+    '/auth/login',
+    '/auth/sign-up',
     '/baca/:path*',
     '/akhir/:path*',
     '/koleksiku/:path*',
@@ -16,6 +19,7 @@ export const config = {
     // Halaman publik-personalized: middleware memastikan sesi di-refresh dan
     // cookie mati dibersihkan sebelum RSC membacanya (tanpa redirect tamu).
     '/beranda/:path*',
+    '/cerita/:path*',
     '/profil/:path*',
     '/kredit/:path*',
     '/payment/:path*',

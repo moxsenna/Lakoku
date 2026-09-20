@@ -1,10 +1,14 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import Image from 'next/image'
+import { redirect } from 'next/navigation'
 import { ArrowDown, ArrowRight, ChevronDown, Lock } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { HeroChoice } from '@/components/landing/hero-choice'
 import { Reveal } from '@/components/landing/reveal'
+import { getSessionUser } from '@/lib/api/user-state'
+
+export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = {
   title: 'Lakoku — Kalau Ini Ceritamu, Apa yang Akan Kamu Lakukan?',
@@ -56,7 +60,19 @@ const ENDINGS = [
   'Akhir Rahasia',
 ]
 
-export default function HomePage() {
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ preview?: string }>
+}) {
+  const params = searchParams ? await searchParams : undefined
+  if (params?.preview !== '1') {
+    const user = await getSessionUser()
+    if (user) {
+      redirect('/beranda')
+    }
+  }
+
   return (
     <main className="relative w-full overflow-x-clip">
       <div aria-hidden="true" className="lk-grain" />

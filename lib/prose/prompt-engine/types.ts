@@ -45,6 +45,7 @@ export interface BuildWriterPromptInput {
   repairFindings?: Array<{ severity?: string; message: string }>
   continuation?: ContinuationContext | null
   brief: PreProseChapterBrief
+  genre?: string | null
 }
 
 export type EvalSeverity = 'pass' | 'warn' | 'fail'

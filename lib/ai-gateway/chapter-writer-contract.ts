@@ -146,6 +146,7 @@ export interface BuildProductionChapterWriterPromptArgs {
   readonly brief?: PreProseChapterBrief | null
   readonly authorityMode: WriterAuthorityMode
   readonly repairFindings?: Finding[]
+  readonly genre?: string | null
 }
 
 export type ChapterWriterPromptProjection = Readonly<{
@@ -321,6 +322,7 @@ export function buildProductionChapterWriterPrompt(
     sceneCount: Number(plan.targetSceneCount ?? 3),
     continuation,
     brief,
+    genre: args.genre ?? (typeof plan.genre === 'string' ? plan.genre : null),
     repairFindings: args.repairFindings?.map((finding) => ({
       severity: finding.severity,
       message: finding.message,

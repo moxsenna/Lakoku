@@ -110,6 +110,7 @@ export async function generateChapter(
     threadContext?: ThreadContext
     layerBContext?: LayerBContext
     executionOptions?: ModelCallExecutionOptions
+    genre?: string | null
   },
 ): Promise<GenerationResult> {
   throwIfAborted(args.executionOptions?.signal)
@@ -118,7 +119,7 @@ export async function generateChapter(
     args.executionOptions.writerInferenceBudget ??= { used: 0, max: 3 }
     args.executionOptions.writerLengthRepairTelemetryState ??= { emitted: false }
   }
-  const { snapshot, blueprint, chapterNumber, continuation, brief, threadContext, layerBContext } = args
+  const { snapshot, blueprint, chapterNumber, continuation, brief, threadContext, layerBContext, genre } = args
   const fpBefore = canonFingerprint(snapshot)
 
   const plan = await generatePlan(deps, {
@@ -135,6 +136,7 @@ export async function generateChapter(
     plan,
     continuation,
     brief,
+    genre,
     injectDefects: args.injectDefects,
   }, args.executionOptions)
   throwIfAborted(args.executionOptions?.signal)
@@ -167,7 +169,7 @@ export async function generateChapter(
     attempts++
     draft = await writeChapter(
       deps,
-      { snapshot, plan, continuation, brief, repairFindings: aFindings },
+      { snapshot, plan, continuation, brief, genre, repairFindings: aFindings },
       args.executionOptions
         ? {
             ...args.executionOptions,
@@ -189,7 +191,7 @@ export async function generateChapter(
     attempts++
     draft = await writeChapter(
       deps,
-      { snapshot, plan, continuation, brief, repairFindings: bFindings },
+      { snapshot, plan, continuation, brief, genre, repairFindings: bFindings },
       args.executionOptions
         ? {
             ...args.executionOptions,

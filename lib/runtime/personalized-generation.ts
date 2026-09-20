@@ -276,6 +276,7 @@ export interface PersonalizedGenerationDeps {
       brief?: import('@/lib/story-engine/pre-prose-brief').PreProseChapterBrief | null
       threadContext?: ThreadContext
       executionOptions?: Parameters<GenerationProvider['writeChapter']>[1]
+      genre?: string | null
     },
   ) => Promise<GenerationResult>
   toReaderSafe: (draft: ChapterDraftParsed) => {
@@ -1344,6 +1345,7 @@ async function generateNextPersonalizedChapterInner(
           continuation,
           brief: preProseBrief,
           threadContext,
+          genre: contract.genre ?? null,
           executionOptions: {
             telemetryContext: providerContext,
             workflowPhase: 'CHAPTER_PROSE_INITIAL',

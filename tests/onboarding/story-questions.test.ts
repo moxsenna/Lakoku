@@ -23,23 +23,16 @@ function completeProfile(over: Partial<TasteProfileV2> = {}): TasteProfileV2 {
 }
 
 describe('buildStorySpecificQuestions', () => {
-  it('complete profile → 4 core questions only', () => {
+  it('complete profile → genre first, then 4 core questions', () => {
     const qs = buildStorySpecificQuestions({ tasteProfile: completeProfile() })
     expect(qs.map((q) => q.key)).toEqual([
+      'genre',
       'coreConflict',
       'protagonistRole',
       'relationshipFocus',
       'agencyStyle',
     ])
-    expect(countAdaptiveQuestions(completeProfile())).toBe(4)
-  })
-
-  it('missing genre → adds genre question first', () => {
-    const qs = buildStorySpecificQuestions({
-      tasteProfile: completeProfile({ primaryGenreId: null, secondaryGenreId: null }),
-    })
-    expect(qs[0].key).toBe('genre')
-    expect(qs.some((q) => q.key === 'coreConflict')).toBe(true)
+    expect(countAdaptiveQuestions(completeProfile())).toBe(5)
   })
 
   it('missing endingBias → adds endingDirection', () => {
@@ -47,13 +40,30 @@ describe('buildStorySpecificQuestions', () => {
       tasteProfile: completeProfile({ endingBias: null }),
     })
     expect(qs.map((q) => q.key)).toContain('endingDirection')
-    expect(qs).toHaveLength(5)
+    expect(qs).toHaveLength(6)
   })
 
-  it('null profile still returns core questions', () => {
+  it('genre question always first, profile genre ordered on top', () => {
+    const qs = buildStorySpecificQuestions({ tasteProfile: completeProfile() })
+    expect(qs[0].key).toBe('genre')
+    expect(qs[0].options[0].id).toBe('mystery')
+    expect(qs[0].options).toHaveLength(6)
+  })
+
+  it('null profile still returns genre + core questions', () => {
     const qs = buildStorySpecificQuestions({ tasteProfile: null })
+    expect(qs[0].key).toBe('genre')
     expect(qs.some((q) => q.key === 'coreConflict')).toBe(true)
-    expect(qs.some((q) => q.key === 'genre')).toBe(true)
+  })
+
+  it('session override genre adapts conflict options to the chosen genre', () => {
+    const qs = buildStorySpecificQuestions({
+      tasteProfile: completeProfile({ likedConflictIds: [] }),
+      sessionOverrides: { primaryGenreId: 'romance' },
+    })
+    expect(qs[0].options[0].id).toBe('romance')
+    const conflict = qs.find((q) => q.key === 'coreConflict')!
+    expect(conflict.options.some((o) => o.id.startsWith('romance_'))).toBe(true)
   })
 
   it('coreConflict options prefer liked ids', () => {

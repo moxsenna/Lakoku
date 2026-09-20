@@ -181,6 +181,8 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
   // Refs analytics — funnel timing + snapshot fase terakhir untuk event abandoned.
   const entryViewedRef = useRef(false)
   const funnelStartedAtRef = useRef<number | null>(null)
+  // Genre cerita ini — dipakai untuk pre-fill selera pada rantai onboarding.
+  const genreAnswerRef = useRef<string | null>(null)
   const funnelSnapshotRef = useRef<{
     phase: Phase
     entryMode: 'quick' | 'custom' | null
@@ -285,6 +287,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
 
   function startQuickFlow() {
     setEntryMode('quick')
+    genreAnswerRef.current = null
     const qs = isTasteProfileV2Enabled()
       ? buildStorySpecificQuestions({ tasteProfile })
       : buildStorySpecificQuestions({ tasteProfile: null })
@@ -310,6 +313,22 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     const { data: { user } } = await supabase.auth.getUser()
     return Boolean(user)
   }, [supabaseConfig])
+
+  // Rantai onboarding: user tanpa selera lengkap diarahkan ke halaman selera
+  // (genre pre-fill dari jawaban kuis) sebelum masuk cerita — sekali saja,
+  // bisa dilewati. User berselera langsung masuk ke tujuan akhir.
+  const routeAfterStoryStart = useCallback(
+    (fallback: string) => {
+      if (!hasUsableTasteProfile(tasteProfile)) {
+        const params = new URLSearchParams({ next: fallback })
+        if (genreAnswerRef.current) params.set('genre', genreAnswerRef.current)
+        router.push(`/onboarding/selera?${params.toString()}`)
+        return
+      }
+      router.push(fallback)
+    },
+    [router, tasteProfile],
+  )
 
   const lockAndStart = useCallback(async (draft: StoryBibleDraft) => {
     try {
@@ -363,10 +382,10 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
           story_id: lockRes.storyId,
           error_code: 'chapter_failed',
         })
-        router.push(`/cerita/${lockRes.storyId}`)
+        routeAfterStoryStart(`/cerita/${lockRes.storyId}`)
         return
       }
-      router.push(`/baca/${lockRes.storyId}?bab=1`)
+      routeAfterStoryStart(`/baca/${lockRes.storyId}?bab=1`)
     } catch (err) {
       if (isActionMismatchError(err)) {
         window.location.reload()
@@ -374,7 +393,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
       }
       failBuild('Gagal menyimpan atau memulai bab pertama cerita. Coba lagi.', 'lock_failed')
     }
-  }, [elapsedMs, enterBuildStage, failBuild, router])
+  }, [elapsedMs, enterBuildStage, failBuild, routeAfterStoryStart])
 
   // ── Resume flow ─────────────────────────────────────────────────
 
@@ -407,6 +426,8 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
                 : { mode: 'custom', text: v }
         }
         setAnswers(restored)
+        const restoredGenre = restored.genre
+        if (restoredGenre?.mode === 'selected') genreAnswerRef.current = restoredGenre.value
       }
       if (draft.creativeDirection) {
         // Opaque stash — cast only if shape looks like direction
@@ -436,7 +457,26 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
   // ── Kuis ────────────────────────────────────────────────────────
 
   function pickAnswer(key: string, answer: AutoOrValue) {
-    const next = { ...answers, [key]: answer }
+    let next = { ...answers, [key]: answer }
+
+    // Genre dipilih → pertanyaan berikutnya menyesuaikan genre cerita ini
+    // (bukan genre profil global). Jawaban yang bergantung genre dibuang agar
+    // tidak membawa opsi genre lama.
+    if (key === 'genre' && answer.mode === 'selected') {
+      genreAnswerRef.current = answer.value
+      setActiveQuestions(
+        buildStorySpecificQuestions({
+          tasteProfile,
+          sessionOverrides: { primaryGenreId: answer.value as TasteProfile['primaryGenreId'] },
+        }),
+      )
+      next = Object.fromEntries(
+        Object.entries(next).filter(
+          ([k]) => k !== 'coreConflict' && k !== 'protagonistRole',
+        ),
+      )
+    }
+
     setAnswers(next)
     setCustomAnswerFor(null)
     setCustomAnswerText('')
@@ -447,6 +487,10 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
       story_setup_mode: 'quick',
       question_key: QUESTION_KEYS.has(key) ? (key as AnalyticsQuestionKey) : undefined,
       answer_mode: answer.mode,
+      genre_id:
+        key === 'genre' && answer.mode === 'selected'
+          ? (answer.value as AnalyticsClientPayload['genre_id'])
+          : undefined,
       step_number: step + 1,
       question_count: totalQuestions,
       duration_ms: elapsedMs(),
@@ -688,6 +732,7 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
     setEntryMode(null)
     setStep(0)
     setAnswers({})
+    genreAnswerRef.current = null
     setCustomIdea('')
     setCustomAnswerFor(null)
     setCustomAnswerText('')
@@ -934,7 +979,8 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
                 {profileSummaryForMulai(tasteProfile)}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Kami akan memakai selera ini untuk menyusun premis, tokoh, konflik, dan gaya cerita.
+                Genre akan kamu konfirmasi di langkah pertama; batasan &amp; gaya tetap mengikuti
+                seleramu.
               </p>
               <Link
                 href="/onboarding/selera?next=/mulai"
@@ -945,18 +991,19 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
             </div>
           ) : (
             <div className="rounded-2xl border border-border bg-card p-4">
-              <p className="text-sm font-medium text-foreground">Belum ada selera tersimpan.</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Atur selera dulu agar premis dan gaya cerita lebih cocok, atau lanjut tanpa mengatur.
+              <p className="text-sm font-medium text-foreground">
+                Genre cerita akan kamu pilih di langkah pertama.
               </p>
-              <div className="mt-3 flex flex-col gap-2">
-                <Link
-                  href="/onboarding/selera?next=/mulai"
-                  className="flex min-h-11 items-center justify-center rounded-xl bg-primary px-4 text-xs font-semibold text-primary-foreground"
-                >
-                  Atur selera dulu
-                </Link>
-              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Batasan &amp; gaya baca berlaku lintas cerita — bisa diatur sekarang, nanti, atau
+                kapan saja dari Profil.
+              </p>
+              <Link
+                href="/onboarding/selera?next=/mulai"
+                className="mt-2 inline-block text-xs font-semibold text-lavender underline-offset-4 hover:underline"
+              >
+                Atur batasan &amp; gaya baca dulu (opsional)
+              </Link>
             </div>
           )}
 
@@ -966,13 +1013,9 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
               onClick={startQuickFlow}
               className="flex flex-col gap-1 rounded-2xl border border-border bg-card p-5 text-left transition-colors hover:border-primary/60"
             >
-              <span className="text-sm font-semibold text-foreground">
-                {hasUsableTasteProfile(tasteProfile)
-                  ? 'Mulai cepat dari seleraku'
-                  : 'Lanjut tanpa mengatur'}
-              </span>
+              <span className="text-sm font-semibold text-foreground">Mulai cepat</span>
               <span className="text-xs text-muted-foreground">
-                Jawab beberapa detail khusus, lalu Lakoku menyiapkan 3 premis.
+                Pilih genre &amp; beberapa detail cerita, lalu Lakoku menyiapkan 3 premis.
               </span>
             </button>
 

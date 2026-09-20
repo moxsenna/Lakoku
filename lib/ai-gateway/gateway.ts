@@ -114,6 +114,7 @@ export async function writeChapter(
     brief?: PreProseChapterBrief | null
     repairFindings?: Finding[]
     injectDefects?: DraftDefect[]
+    genre?: string | null
   },
   options?: ModelCallExecutionOptions,
 ): Promise<ChapterDraftParsed> {
@@ -125,6 +126,7 @@ export async function writeChapter(
     brief: args.brief,
     repairFindings: args.repairFindings,
     injectDefects: args.injectDefects,
+    genre: args.genre,
   }, options)
   throwIfAborted(options?.signal)
   const parsed = parseDraft(raw)

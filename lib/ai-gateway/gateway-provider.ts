@@ -583,6 +583,7 @@ async function generateProse(args: {
   brief: PreProseChapterBrief
   authorityMode: WriterAuthorityMode
   repairFindings?: Finding[]
+  genre?: string | null
   options: ModelCallExecutionOptions
   route?: AiModelRoute
 }): Promise<{ title: string; paragraphs: string[]; usedModel: string }> {
@@ -1444,6 +1445,7 @@ export function createGatewayProvider(
         brief: input.brief,
         authorityMode: 'CHAPTER_BRIEF_V2',
         repairFindings: input.repairFindings,
+        genre: input.genre,
         options,
         route: aiRoute,
       })

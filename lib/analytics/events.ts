@@ -104,6 +104,18 @@ export const AnalyticsEventSchema = z
         'endingDirection',
       ])
       .optional(),
+    // Genre katalog V2 — id stabil, bukan teks bebas.
+    genre_id: z
+      .enum([
+        'family_drama',
+        'romance',
+        'mystery',
+        'fantasy_kingdom',
+        'slice_of_life',
+        'survival_thriller',
+      ])
+      .optional(),
+    prefill_genre: z.boolean().optional(),
     answer_mode: z.enum(['selected', 'auto', 'custom']).optional(),
     build_stage: z.enum(['cast', 'mystery', 'world', 'lock', 'chapter']).optional(),
     custom_idea_length_bucket: z.enum(['short', 'medium', 'long']).optional(),

@@ -3,6 +3,7 @@ import {
   STYLE_PROFILE_ID,
   mobileDramaSystemPrompt,
 } from '@/lib/prose/mobile-drama-style'
+import { buildGenreProseDirective } from '@/lib/prose/genre-flavor'
 import type { BuildWriterPromptInput, WriterPromptParts } from './types'
 
 function writerVisible(value: string, authorityIds: readonly string[]): string {
@@ -159,10 +160,12 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
     '- DILARANG keras menutup bab atau menulis penutup sebelum panjang naskah melewati minimal 880 kata.',
   ].join('\n')
 
+  const genreDirective = input.genre ? buildGenreProseDirective(input.genre) : null
   const p4 = [
     '=== [P4] SUARA TOKOH & KETERBACAAN MOBILE ===',
     '- Pertahankan sudut pandang orang pertama ("aku") secara konsisten.',
     input.voiceGuidance ? `- Panduan Suara Karakter:\n${safe(input.voiceGuidance)}` : '',
+    genreDirective ? safe(genreDirective) : '',
     '- Format pergantian ucapan tokoh dipisahkan dengan jelas agar pembaca mudah mengikuti percakapan.',
     '- Keterbacaan Mobile: Utamakan kalimat tunggal yang lugas, padat, dan bertenaga (SP / SPO).',
     '- Pecah kalimat majemuk bertingkat yang panjang atau berbelit-belit menjadi kalimat-kalimat tunggal yang ringkas.',

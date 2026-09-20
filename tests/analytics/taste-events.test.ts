@@ -38,4 +38,35 @@ describe('taste analytics events', () => {
     })
     expect(parsed.success).toBe(false)
   })
+
+  it('accepts genre_id and prefill_genre on safe payloads', () => {
+    const answered = AnalyticsEventSchema.safeParse({
+      event_name: 'story_setup_question_answered',
+      anonymous_id: null,
+      created_at: '2026-09-20T00:00:00.000Z',
+      question_key: 'genre',
+      genre_id: 'romance',
+      answer_mode: 'selected',
+    })
+    expect(answered.success).toBe(true)
+
+    const viewed = AnalyticsEventSchema.safeParse({
+      event_name: 'taste_onboarding_viewed',
+      anonymous_id: null,
+      created_at: '2026-09-20T00:00:00.000Z',
+      stage: 'intro',
+      profile_version: 2,
+      prefill_genre: true,
+    })
+    expect(viewed.success).toBe(true)
+
+    const invalidGenre = AnalyticsEventSchema.safeParse({
+      event_name: 'story_setup_question_answered',
+      anonymous_id: null,
+      created_at: '2026-09-20T00:00:00.000Z',
+      question_key: 'genre',
+      genre_id: 'not_a_genre',
+    })
+    expect(invalidGenre.success).toBe(false)
+  })
 })

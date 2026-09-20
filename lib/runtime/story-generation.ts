@@ -975,6 +975,7 @@ async function generateNextChapterRealInner(
           continuation,
           brief: preProseBrief,
           threadContext,
+          genre: creativeDirection?.genre.primary ?? null,
           executionOptions: {
             telemetryContext: providerContext,
             workflowPhase: 'CHAPTER_PROSE_INITIAL',

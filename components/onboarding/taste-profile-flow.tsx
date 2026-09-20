@@ -46,6 +46,7 @@ import {
   type TasteOnboardingAnswers,
   type TasteOnboardingPhase,
 } from '@/lib/taste-profile/onboarding-state'
+import { GenreIdSchema } from '@/lib/taste-profile/schema'
 import type {
   DramaIntensity,
   EndingBias,
@@ -106,8 +107,23 @@ export function TasteProfileFlow() {
 
   const nextUrl = searchParams.get('next') || '/beranda'
 
+  // Pre-fill genre dari langkah mulai cerita (/mulai → rantai onboarding).
+  const prefillGenreRaw = searchParams.get('genre')
+  const prefillGenre =
+    prefillGenreRaw && GenreIdSchema.safeParse(prefillGenreRaw).success
+      ? (prefillGenreRaw as GenreId)
+      : null
+
+  /** Isi genre utama dari param hanya kalau user belum memilih sendiri. */
+  function withGenrePrefill(ans: TasteOnboardingAnswers): TasteOnboardingAnswers {
+    if (!prefillGenre || ans.primaryGenreId) return ans
+    return { ...ans, primaryGenreId: prefillGenre }
+  }
+
   const [phase, setPhase] = useState<TasteOnboardingPhase>('intro')
-  const [answers, setAnswers] = useState<TasteOnboardingAnswers>(emptyAnswers)
+  const [answers, setAnswers] = useState<TasteOnboardingAnswers>(() =>
+    withGenrePrefill(emptyAnswers()),
+  )
   const [err, setErr] = useState<string | null>(null)
   const [hint, setHint] = useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
@@ -118,7 +134,11 @@ export function TasteProfileFlow() {
 
   // Load draft once on mount (defer setState to avoid set-state-in-effect lint).
   useEffect(() => {
-    trackEvent('taste_onboarding_viewed', { stage: 'intro', profile_version: 2 })
+    trackEvent('taste_onboarding_viewed', {
+      stage: 'intro',
+      profile_version: 2,
+      prefill_genre: Boolean(prefillGenre),
+    })
     const timer = window.setTimeout(() => {
       const draft = readTasteDraft()
       if (!draft) return
@@ -128,7 +148,7 @@ export function TasteProfileFlow() {
       }
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [])
+  }, [prefillGenre])
 
   // Persist draft on answer change (not on intro)
   useEffect(() => {
@@ -147,7 +167,7 @@ export function TasteProfileFlow() {
 
   function resumeDraft() {
     const draft = readTasteDraft()
-    setAnswers(answersFromDraft(draft))
+    setAnswers(withGenrePrefill(answersFromDraft(draft)))
     setCustomConflictText(draft?.customLikedConflict ?? '')
     setDraftOffer(false)
     setPhase('genre')
@@ -155,7 +175,7 @@ export function TasteProfileFlow() {
 
   function restartDraft() {
     clearTasteDraft()
-    setAnswers(emptyAnswers())
+    setAnswers(withGenrePrefill(emptyAnswers()))
     setCustomConflictText('')
     setDraftOffer(false)
     setPhase('intro')
@@ -366,10 +386,11 @@ export function TasteProfileFlow() {
     return (
       <Shell onBack={() => router.back()} progress={0} total={progressSteps} showProgress={false}>
         <Eyebrow>SELERA CERITAMU</Eyebrow>
-        <Title>Biar ceritanya terasa lebih kamu</Title>
+        <Title>Satu aturan baca untuk semua ceritamu</Title>
         <p className="text-sm text-muted-foreground">
-          Pilih beberapa hal yang kamu nikmati. Lakoku akan memakainya saat menyusun premis, tokoh,
-          konflik, gaya penulisan, dan arah akhir. Semuanya bisa diubah nanti.
+          Pilih genre, batasan, dan gaya baca sekali — Lakoku memakainya sebagai default setiap
+          kali kamu mulai cerita. Genre tetap bisa diganti per cerita di langkah mulai. Semuanya
+          bisa diubah nanti.
         </p>
         <div className="mt-auto flex flex-col gap-3 pt-8">
           <PrimaryButton
@@ -432,8 +453,14 @@ export function TasteProfileFlow() {
           <Eyebrow>LANGKAH 1 DARI 5</Eyebrow>
           <Title>Jenis cerita apa yang paling kamu suka?</Title>
           <p className="text-sm text-muted-foreground">
-            Pilih maksimal 2. Pilihan pertama menjadi genre utama.
+            Pilih maksimal 2. Pilihan pertama menjadi genre utama dan default ceritamu berikutnya —
+            tetap bisa diganti setiap mulai cerita.
           </p>
+          {prefillGenre && answers.primaryGenreId === prefillGenre && (
+            <p className="rounded-xl bg-primary/10 px-3 py-2 text-xs font-medium text-primary">
+              Genre dari langkah mulai cerita sudah terpilih sebagai utama. Ubah kalau perlu.
+            </p>
+          )}
           <Counter
             current={selectedGenreIds(answers).length}
             max={2}

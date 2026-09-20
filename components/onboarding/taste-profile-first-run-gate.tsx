@@ -1,8 +1,10 @@
 'use client'
 
 /**
- * First-run gate: redirect ke /onboarding/selera jika user belum pernah
- * complete/skip Taste Profile. Hanya redirect logic, tidak render apapun.
+ * First-run gate: redirect ke /mulai jika user belum pernah complete/skip
+ * Taste Profile. Genre cerita kini dipilih di langkah pertama /mulai; selera
+ * (batasan & gaya) menyusul setelah cerita dimulai — bukan yank ke selera
+ * sebelum user memilih apa pun.
  *
  * Guest: cek localStorage dual-read v2→v1 (storage.ts)
  * Login: panggil actGetTasteProfile()
@@ -10,7 +12,7 @@
  * Bonus: jika login user punya guest profile di localStorage tapi belum di DB,
  * merge otomatis (fallback untuk OAuth users yang tidak lewat login-form.tsx).
  *
- * Guard: jangan redirect dari /onboarding/selera, /baca, /auth/login.
+ * Guard: jangan redirect dari /onboarding/selera, /mulai, /baca, /auth/login.
  * Paling aman dipasang hanya di BerandaPage.
  */
 import { useEffect, useRef, useTransition } from 'react'
@@ -18,7 +20,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { readGuestTasteProfile, clearGuestTasteProfile } from '@/lib/taste-profile/storage'
 import { actGetTasteProfile, actMergeGuestTasteProfile } from '@/app/onboarding/selera/actions'
 
-const GUARDED_PATHS = ['/onboarding/selera', '/baca', '/auth/login']
+const GUARDED_PATHS = ['/onboarding/selera', '/mulai', '/baca', '/auth/login']
 
 export function TasteProfileFirstRunGate({ next = '/beranda' }: { next?: string }) {
   const router = useRouter()
@@ -62,8 +64,8 @@ export function TasteProfileFirstRunGate({ next = '/beranda' }: { next?: string 
         return
       }
 
-      // Belum pernah complete/skip → redirect ke onboarding selera.
-      router.push(`/onboarding/selera?next=${encodeURIComponent(next)}`)
+      // Belum pernah complete/skip → mulai dari /mulai (genre = langkah pertama).
+      router.push(`/mulai?next=${encodeURIComponent(next)}`)
     })
   }, [next, pathname, router, startTransition])
 

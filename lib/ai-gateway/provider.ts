@@ -45,6 +45,7 @@ export interface WriteInput {
   repairFindings?: Finding[]
   /** Simulasikan cacat awal (untuk uji repair). Dihapus saat repair. */
   injectDefects?: DraftDefect[]
+  genre?: string | null
 }
 
 /** Konteks server-only yang terbatas untuk menghasilkan cabang pilihan dinamis.

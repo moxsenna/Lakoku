@@ -42,6 +42,7 @@ export type StorySpecificQuestion = {
 }
 
 export type SessionTasteOverrides = {
+  primaryGenreId?: TasteProfileV2['primaryGenreId']
   dramaIntensity?: TasteProfileV2['dramaIntensity']
   pacing?: TasteProfileV2['pacing']
   languageStyle?: TasteProfileV2['languageStyle']
@@ -57,6 +58,7 @@ export function applySessionOverrides(
   if (!overrides) return profile
   return {
     ...profile,
+    primaryGenreId: overrides.primaryGenreId ?? profile.primaryGenreId,
     dramaIntensity: overrides.dramaIntensity ?? profile.dramaIntensity,
     pacing: overrides.pacing ?? profile.pacing,
     languageStyle: overrides.languageStyle ?? profile.languageStyle,
@@ -66,7 +68,8 @@ export function applySessionOverrides(
 }
 
 /**
- * Build adaptive questions. Complete profile → 4 core questions.
+ * Build adaptive questions. Genre selalu jadi pertanyaan pertama (pilihan
+ * per cerita, pre-fill dari selera), lalu pertanyaan inti menyesuaikan.
  */
 export function buildStorySpecificQuestions(args: {
   tasteProfile: TasteProfileV2 | null
@@ -79,19 +82,23 @@ export function buildStorySpecificQuestions(args: {
   const secondary = profile?.secondaryGenreId ?? null
   const hasGenre = Boolean(primary)
 
-  // 1. genre — only if missing
-  if (!hasGenre) {
-    questions.push({
-      key: 'genre',
-      prompt: 'Jenis cerita apa yang ingin kamu jalani kali ini?',
-      helper: 'Pilih satu sebagai arah utama cerita ini.',
-      options: GENRE_CATALOG.map((g) => ({ id: g.id, label: g.label })),
-      allowAuto: false,
-      allowCustom: false,
-      autoLabel: 'Pilihkan yang paling cocok',
-      customLabel: 'Tulis sendiri',
-    })
-  }
+  // 1. genre — selalu ditanya (per cerita). Genre selera ditaruh paling atas
+  //    agar cukup satu tap untuk mengonfirmasi.
+  questions.push({
+    key: 'genre',
+    prompt: 'Jenis cerita apa yang ingin kamu jalani kali ini?',
+    helper: hasGenre
+      ? 'Genre dari seleramu ada di paling atas — pilih lagi kalau mau nuansa lain.'
+      : 'Pilih satu sebagai arah utama cerita ini.',
+    options: [
+      ...GENRE_CATALOG.filter((g) => g.id === primary).map((g) => ({ id: g.id, label: g.label })),
+      ...GENRE_CATALOG.filter((g) => g.id !== primary).map((g) => ({ id: g.id, label: g.label })),
+    ],
+    allowAuto: false,
+    allowCustom: false,
+    autoLabel: 'Pilihkan yang paling cocok',
+    customLabel: 'Tulis sendiri',
+  })
 
   // 2. coreConflict — always
   questions.push({

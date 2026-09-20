@@ -1,5 +1,6 @@
 import type { CanonSnapshot, ContinuationContext, Finding } from '@lakoku/narrative-core'
 import { buildWriterPrompt } from '@/lib/prose/prompt-engine'
+import { splitParagraphsForMobile } from '@/lib/prose/mobile-paragraph-splitter'
 import type {
   PreProseChapterBrief,
   WriterNarrativeObligation,
@@ -78,10 +79,12 @@ export function parseChapterWriterProse(text: string): ParsedChapterWriterProse 
     }
   }
 
-  const paragraphs = blocks
+  const rawParagraphs = blocks
     .flatMap((block) => block.split(/\n+/))
     .map((paragraph) => paragraph.trim())
     .filter(Boolean)
+
+  const paragraphs = splitParagraphsForMobile(rawParagraphs)
 
   if (!title) title = 'Tanpa Judul'
   return { title, paragraphs, hasExplicitTitle }

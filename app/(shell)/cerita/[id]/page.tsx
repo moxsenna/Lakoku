@@ -7,7 +7,7 @@ import { StoryCoverActions } from '@/components/story-cover-actions'
 import { getStory } from '@/lib/api/server'
 import { getSessionUser } from '@/lib/api/user-state'
 import { isStoryOwnedBy } from '@/lib/api/story-ownership.server'
-import { getStoryCoverPolicy } from '@/lib/cover/server'
+import { getStoryCoverPolicy, getStoryCoverCandidates } from '@/lib/cover/server'
 import { getCreditBalance } from '@/lib/credits/server'
 
 export const dynamic = 'force-dynamic'
@@ -23,9 +23,13 @@ export default async function CeritaDetailPage({
 
   const user = await getSessionUser()
   const isOwner = user ? await isStoryOwnedBy(story.id, user.id) : false
-  const [coverPolicy, userBalance] = isOwner && user
-    ? await Promise.all([getStoryCoverPolicy(), getCreditBalance(user.id)])
-    : [{ cost: 0, enabled: false }, 0]
+  const [coverPolicy, userBalance, coverCandidates] = isOwner && user
+    ? await Promise.all([
+        getStoryCoverPolicy(),
+        getCreditBalance(user.id),
+        getStoryCoverCandidates(story.id, user.id),
+      ])
+    : [{ cost: 0, enabled: false }, 0, []]
 
   return (
     <main className="flex flex-col">
@@ -56,6 +60,8 @@ export default async function CeritaDetailPage({
                 cost={coverPolicy.cost}
                 generateEnabled={coverPolicy.enabled}
                 userBalance={userBalance}
+                candidates={coverCandidates}
+                currentCover={story.cover}
               />
             </div>
           )}

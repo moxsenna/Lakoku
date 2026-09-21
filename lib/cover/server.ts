@@ -102,6 +102,67 @@ export async function setStoryCover(storyId: string, userId: string, coverUrl: s
   return (count ?? 0) > 0
 }
 
+export type StoryCoverCandidate = {
+  id: string
+  url: string
+  preset: string
+  createdAt: string
+  expiresAt: string
+}
+
+/** Catat kandidat sampul baru, pangkas expired, dan tahan maksimal 3 sampul per cerita. */
+export async function recordStoryCoverCandidate(
+  storyId: string,
+  userId: string,
+  payload: { url: string; preset?: string },
+): Promise<void> {
+  try {
+    const db = createAdminClient()
+    const { error } = await db.rpc('record_story_cover_candidate_v1', {
+      p_story_id: storyId,
+      p_user_id: userId,
+      p_url: payload.url,
+      p_preset: payload.preset || 'sinematik',
+    })
+    if (error) {
+      console.error('recordStoryCoverCandidate rpc error', { storyId, error: error.message })
+    }
+  } catch (error) {
+    console.error('recordStoryCoverCandidate gagal', { storyId, error })
+  }
+}
+
+/** Ambil hingga 3 kandidat sampul yang belum kedaluwarsa. */
+export async function getStoryCoverCandidates(
+  storyId: string,
+  userId: string,
+): Promise<StoryCoverCandidate[]> {
+  try {
+    const db = createAdminClient()
+    const { data, error } = await db
+      .from('story_cover_candidates')
+      .select('id,url,preset,created_at,expires_at')
+      .eq('story_id', storyId)
+      .eq('user_id', userId)
+      .gt('expires_at', new Date().toISOString())
+      .order('created_at', { ascending: false })
+      .limit(3)
+
+    if (error || !data) return []
+
+    return data.map((r) => ({
+      id: String(r.id),
+      url: String(r.url),
+      preset: String(r.preset),
+      createdAt: String(r.created_at),
+      expiresAt: String(r.expires_at),
+    }))
+  } catch (error) {
+    console.error('getStoryCoverCandidates gagal', { storyId, error })
+    return []
+  }
+}
+
 export type StoryCoverPolicy = {
   cost: number
   enabled: boolean

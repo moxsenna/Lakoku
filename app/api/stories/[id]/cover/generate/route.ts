@@ -12,6 +12,7 @@ import {
   captureStoryCover,
   releaseStoryCover,
   setStoryCover,
+  recordStoryCoverCandidate,
   getStoryCoverPolicy,
 } from '@/lib/cover/server'
 import { GenerateStoryCoverRequestSchema } from '@lakoku/contracts'
@@ -162,6 +163,13 @@ export async function POST(
         { status: 409 },
       )
     }
+
+    // Catat ke riwayat 3 sampul terakhir (retensi 3 hari)
+    await recordStoryCoverCandidate(storyId, user.id, {
+      url: stored.url,
+      preset: options.preset,
+    })
+
     const balance = await getCreditBalance(user.id)
 
     return NextResponse.json({ ok: true, cover: stored.url, balance })

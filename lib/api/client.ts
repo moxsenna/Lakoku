@@ -383,3 +383,21 @@ export async function uploadStoryCover(storyId: string, file: File): Promise<Sto
   }
 }
 
+/** Pasang kembali salah satu sampul dari riwayat kandidat (gratis). */
+export async function applyStoryCover(storyId: string, url: string): Promise<StoryCoverResponse> {
+  try {
+    const res = await seamFetch(`${API_BASE}/stories/${encodeURIComponent(storyId)}/cover/apply`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ url }),
+      credentials: 'same-origin',
+    })
+    const raw = await res.json().catch(() => null)
+    return parseCoverResponse(raw, res.status)
+  } catch {
+    return { ok: false, error: 'Sampul gagal dipasang. Coba lagi.' }
+  }
+}
+

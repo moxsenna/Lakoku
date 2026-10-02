@@ -12,6 +12,7 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { requireSupabaseAnonKey, requireSupabaseUrl } from '@/lib/supabase/env'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient as _createCookieClient } from '@/lib/supabase/server'
+import { resolveStoryCover } from '@/lib/cover/url'
 import type {
   StorySummary,
   StoryDetail,
@@ -26,16 +27,12 @@ export const CHAPTER_READER_COLUMNS = 'story_id,number,title,paragraphs,choice_p
 export const OUTCOME_READER_COLUMNS = 'story_id,chapter_number,choice_id,consequence,next_chapter_number,is_ending' as const
 export const EXPLORE_STORY_FILTER = 'id.like.demo:%,id.like.premium:%' as const
 
-/** Sampul default untuk cerita tanpa cover (ringan, WebP untuk mobile). */
-export const DEFAULT_STORY_COVER = '/covers/default-cover.webp'
-
 /**
- * Legacy stories may store '/placeholder.svg' (with or without query params)
- * or null cover. Resolve ke sampul default sebelum sampai ke UI.
+ * Sampul default + resolver URL publik kini tinggal di modul rakitan URL
+ * (lib/cover/url.ts) supaya jalur tulis (putCover/apply) memakai definisi
+ * yang sama persis. Re-export di sini demi konsumen existing.
  */
-export function resolveStoryCover(cover: string | null | undefined): string {
-  return cover && !cover.startsWith('/placeholder.svg') ? cover : DEFAULT_STORY_COVER
-}
+export { DEFAULT_STORY_COVER, resolveStoryCover } from '@/lib/cover/url'
 
 type StoryRow = {
   id: string

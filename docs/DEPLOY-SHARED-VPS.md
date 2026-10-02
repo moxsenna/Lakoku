@@ -118,6 +118,18 @@ python .../shared-vps-exec.py "cd /home/ubuntu/mox-apps/lakoku && \
   test -f .next/standalone/server.js && echo ASSEMBLY-OK"
 ```
 
+### 4.1 Environment variables (`/home/ubuntu/mox-apps/lakoku/.env`)
+
+Pastikan variabel berikut sudah terkonfigurasi pada `/home/ubuntu/mox-apps/lakoku/.env` di VPS. Khusus `NEXT_PUBLIC_COVER_BASE`, nilai wajib diset sebelum proses `build` karena di-inline oleh Next.js pada tahap kompilasi:
+
+| Variabel | Keterangan |
+|---|---|
+| `R2_ACCOUNT_ID` | Cloudflare account ID (dash.cloudflare.com) |
+| `R2_ACCESS_KEY_ID` | Token API R2, izin Object Read & Write untuk bucket sampul |
+| `R2_SECRET_ACCESS_KEY` | Secret pasangan token di atas |
+| `R2_BUCKET` | `lakoku-story-covers` |
+| `NEXT_PUBLIC_COVER_BASE` | `https://covers.lakoku.biz.id` — WAJIB diset sebelum build (di-inline Next saat build) |
+
 ## 5. Restart + health check + guardrail
 
 ```bash

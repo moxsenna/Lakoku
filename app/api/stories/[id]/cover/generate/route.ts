@@ -7,6 +7,7 @@ import { getCreditBalance } from '@/lib/credits/server'
 import { generateCoverImage, isCoverProviderConfigured } from '@/lib/cover/provider'
 import { normalizeCoverImage } from '@/lib/cover/image'
 import { putCover } from '@/lib/cover/storage'
+import { resolveStoryCover } from '@/lib/cover/url'
 import {
   reserveStoryCover,
   captureStoryCover,
@@ -145,7 +146,7 @@ export async function POST(
       )
     }
 
-    const applied = await setStoryCover(storyId, user.id, stored.url)
+    const applied = await setStoryCover(storyId, user.id, stored.key)
     if (!applied) {
       await releaseStoryCover(reservation.ref)
       return NextResponse.json(
@@ -166,13 +167,13 @@ export async function POST(
 
     // Catat ke riwayat 3 sampul terakhir (retensi 3 hari)
     await recordStoryCoverCandidate(storyId, user.id, {
-      url: stored.url,
+      url: stored.key,
       preset: options.preset,
     })
 
     const balance = await getCreditBalance(user.id)
 
-    return NextResponse.json({ ok: true, cover: stored.url, balance })
+    return NextResponse.json({ ok: true, cover: resolveStoryCover(stored.key), balance })
   } catch (error) {
     await releaseStoryCover(reservation.ref)
     console.error('cover generate error', { storyId, error })

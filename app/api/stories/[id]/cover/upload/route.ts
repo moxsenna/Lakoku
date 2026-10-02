@@ -4,6 +4,7 @@ import { isStoryOwnedBy } from '@/lib/api/story-ownership.server'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
 import { normalizeCoverImage, sniffImageFormat } from '@/lib/cover/image'
 import { putCover } from '@/lib/cover/storage'
+import { resolveStoryCover } from '@/lib/cover/url'
 import { setStoryCover, recordStoryCoverCandidate } from '@/lib/cover/server'
 
 /** Batas ukuran unggahan sebelum disentuh apa pun (8MB, cukup untuk foto ponsel). */
@@ -82,15 +83,15 @@ export async function POST(
     return NextResponse.json({ ok: false, error: 'Sampul gagal disimpan. Coba lagi.' }, { status: 502 })
   }
 
-  const applied = await setStoryCover(storyId, user.id, stored.url)
+  const applied = await setStoryCover(storyId, user.id, stored.key)
   if (!applied) {
     return NextResponse.json({ ok: false, error: 'Sampul gagal dipasang. Coba lagi.' }, { status: 500 })
   }
 
   await recordStoryCoverCandidate(storyId, user.id, {
-    url: stored.url,
+    url: stored.key,
     preset: 'unggah',
   })
 
-  return NextResponse.json({ ok: true, cover: stored.url })
+  return NextResponse.json({ ok: true, cover: resolveStoryCover(stored.key) })
 }

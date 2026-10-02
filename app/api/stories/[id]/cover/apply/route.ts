@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/api/user-state'
 import { isStoryOwnedBy } from '@/lib/api/story-ownership.server'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
+import { coverKeyFromPublicUrl, resolveStoryCover } from '@/lib/cover/url'
 import { setStoryCover } from '@/lib/cover/server'
 
 /**
@@ -35,5 +36,7 @@ export async function POST(
     return NextResponse.json({ ok: false, error: 'Sampul gagal dipasang.' }, { status: 500 })
   }
 
-  return NextResponse.json({ ok: true, cover: url })
+  // setStoryCover menormalisasi URL base-publik ke key; respons memakai
+  // resolver supaya UI selalu menerima URL yang bisa dirender.
+  return NextResponse.json({ ok: true, cover: resolveStoryCover(coverKeyFromPublicUrl(url) ?? url) })
 }

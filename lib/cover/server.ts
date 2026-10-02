@@ -1,5 +1,6 @@
 import 'server-only'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { coverKeyFromPublicUrl, resolveStoryCover } from '@/lib/cover/url'
 
 /**
  * Seam uang untuk sampul cerita.
@@ -89,12 +90,18 @@ export async function releaseStoryCover(ref: string): Promise<void> {
   }
 }
 
-/** Pasang URL sampul baru; penjaga pemilik diulang di klausa update. */
-export async function setStoryCover(storyId: string, userId: string, coverUrl: string): Promise<boolean> {
+/**
+ * Pasang sampul baru; penjaga pemilik diulang di klausa update.
+ * Input bisa object key (dari putCover) atau URL publik (dari kandidat);
+ * URL milik base publik kita dinormalisasi kembali menjadi key supaya
+ * stories.cover selalu konsisten menyimpan key.
+ */
+export async function setStoryCover(storyId: string, userId: string, coverPath: string): Promise<boolean> {
   const db = createAdminClient()
+  const cover = coverKeyFromPublicUrl(coverPath) ?? coverPath
   const { error, count } = await db
     .from('stories')
-    .update({ cover: coverUrl }, { count: 'exact' })
+    .update({ cover }, { count: 'exact' })
     .eq('id', storyId)
     .eq('owner_user_id', userId)
 
@@ -152,7 +159,7 @@ export async function getStoryCoverCandidates(
 
     return data.map((r) => ({
       id: String(r.id),
-      url: String(r.url),
+      url: resolveStoryCover(String(r.url)),
       preset: String(r.preset),
       createdAt: String(r.created_at),
       expiresAt: String(r.expires_at),

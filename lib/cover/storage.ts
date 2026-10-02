@@ -54,7 +54,7 @@ export async function putCover(storyId: string, webp: Buffer): Promise<PutCoverR
         Key: key,
         Body: webp,
         ContentType: 'image/webp',
-        CacheControl: '31536000',
+        CacheControl: 'public, max-age=31536000, immutable',
       }),
     )
     return { ok: true, key }

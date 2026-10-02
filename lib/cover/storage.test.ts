@@ -39,7 +39,7 @@ describe('putCover', () => {
     expect(cmd.input.Bucket).toBe('lakoku-story-covers')
     expect(cmd.input.Key).toBe(result.key)
     expect(cmd.input.ContentType).toBe('image/webp')
-    expect(cmd.input.CacheControl).toBe('31536000')
+    expect(cmd.input.CacheControl).toBe('public, max-age=31536000, immutable')
     expect(cmd.input.Body).toBe(webp)
   })
 

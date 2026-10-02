@@ -30,11 +30,12 @@ export function coverKeyFromPublicUrl(url: string): string | null {
 }
 
 /**
- * 3 cabang: kosong/placeholder → default; URL absolut (sisa legacy) → apa
- * adanya; selain itu dianggap key relatif dan dirakit dengan base.
+ * 4 cabang: kosong/placeholder → default; URL absolut (sisa legacy) atau
+ * path lokal aset publik (diawali /) → apa adanya; selain itu dianggap key
+ * relatif dan dirakit dengan base.
  */
 export function resolveStoryCover(cover: string | null | undefined): string {
   if (!cover || cover.startsWith('/placeholder.svg')) return DEFAULT_STORY_COVER
-  if (/^https?:\/\//i.test(cover)) return cover
+  if (/^https?:\/\//i.test(cover) || cover.startsWith('/')) return cover
   return coverPublicUrl(cover)
 }

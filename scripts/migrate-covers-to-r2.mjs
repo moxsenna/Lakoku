@@ -10,26 +10,28 @@
  *   node scripts/migrate-covers-to-r2.mjs --dry-run   # laporan saja
  *   node scripts/migrate-covers-to-r2.mjs             # eksekusi riil
  */
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { createClient } from '@supabase/supabase-js'
 import { HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 
 const dryRun = process.argv.includes('--dry-run')
 const SUPABASE_BUCKET = 'story-covers'
 
-// --- env (pola scripts/cover-rpc-smoke.mjs) ---
-const envText = readFileSync('.env.local', 'utf8')
-const env = {}
-for (const line of envText.split('\n')) {
-  const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/)
-  if (m) env[m[1]] = m[2].replace(/^["']|["']$/g, '')
+// --- env: .env.local (dev) -> .env (VPS) -> process.env (sudah diekspor) ---
+const env = { ...process.env }
+for (const file of ['.env.local', '.env']) {
+  if (!existsSync(file)) continue
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/)
+    if (m) env[m[1]] ??= m[2].replace(/^["']|["']$/g, '')
+  }
 }
-const supabaseUrl = env.SUPABASE_URL ?? env.NEXT_PUBLIC_SUPABASE_URL
+const supabaseUrl = (env.SUPABASE_URL ?? env.NEXT_PUBLIC_SUPABASE_URL ?? '').replace(/\/+$/, '')
 const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY
 const r2AccountId = env.R2_ACCOUNT_ID
 const r2Bucket = env.R2_BUCKET
-if (!supabaseUrl || !serviceKey || !r2AccountId || !r2Bucket) {
-  console.error('env tidak lengkap: butuh SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, R2_ACCOUNT_ID, R2_BUCKET')
+if (!supabaseUrl || !serviceKey || !r2AccountId || !r2Bucket || !env.R2_ACCESS_KEY_ID || !env.R2_SECRET_ACCESS_KEY) {
+  console.error('env tidak lengkap: butuh SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET')
   process.exit(1)
 }
 
@@ -66,14 +68,14 @@ async function objectExists(key) {
 
 async function listAllObjects() {
   const out = []
-  // Layout: <storyId>/<stamp>.webp — list('') mengembalikan pseudo-folder.
+  // Layout: <storyId>/<stamp>.webp — list('') mengembalikan pseudo-folder; file langsung di root jarang tapi didukung bila .webp.
   const { data: roots, error } = await admin.storage.from(SUPABASE_BUCKET).list('', { limit: 1000 })
   if (error) throw error
   for (const root of roots) {
     if (!root.id) {
       const { data: files, error: ferr } = await admin.storage.from(SUPABASE_BUCKET).list(root.name, { limit: 1000 })
       if (ferr) throw ferr
-      for (const f of files) if (f.id) out.push(`${root.name}/${f.name}`)
+      for (const f of files) if (f.id && f.name.endsWith('.webp')) out.push(`${root.name}/${f.name}`)
     } else if (root.name.endsWith('.webp')) {
       out.push(root.name)
     }
@@ -92,7 +94,7 @@ async function copyObject(key) {
     Key: key,
     Body: body,
     ContentType: 'image/webp',
-    CacheControl: '31536000',
+    CacheControl: 'public, max-age=31536000, immutable',
   }))
   return 'copy'
 }

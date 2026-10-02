@@ -35,6 +35,12 @@ describe('resolveStoryCover', () => {
     vi.stubEnv('NEXT_PUBLIC_COVER_BASE', '')
     expect(resolveStoryCover('story-1/abc123.webp')).toBe('story-1/abc123.webp')
   })
+
+  it('path lokal aset publik (awal /) dikembalikan apa adanya, bukan domain R2', () => {
+    vi.stubEnv('NEXT_PUBLIC_COVER_BASE', 'https://covers.example.com')
+    expect(resolveStoryCover('/covers/selasa-terakhir.webp')).toBe('/covers/selasa-terakhir.webp')
+    expect(resolveStoryCover('/covers/default-cover.webp')).toBe('/covers/default-cover.webp')
+  })
 })
 
 describe('coverPublicUrl', () => {

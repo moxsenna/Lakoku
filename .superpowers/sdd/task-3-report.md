@@ -1,119 +1,62 @@
-# Task 3 Report: Integrasi ke Ingestion Pipeline (`parseChapterWriterProse`)
+# Task 3 Report: `putCover` menulis ke Cloudflare R2
 
-## What Was Implemented
-- Integrated `splitParagraphsForMobile` from `@/lib/prose/mobile-paragraph-splitter` into `parseChapterWriterProse` in `lib/ai-gateway/chapter-writer-contract.ts`.
-- Formatted raw blocks into mobile-friendly paragraphs (maximum 2 sentences per paragraph block, standalone dialogue lines, zero word loss).
-- Created comprehensive test suite in `tests/ai-gateway/chapter-writer-prose-parser.test.ts` verifying:
-  - Bulky narrative paragraph splitting (> 2 sentences split into <= 2 sentence chunks).
-  - Embedded dialogue isolation into standalone paragraphs.
-  - Zero word loss preservation (`countParagraphWords` equality).
-  - Explicit and implicit title retention.
-  - Empty text error throwing.
+## Implementation
+- Added `@aws-sdk/client-s3` dependency to workspace root.
+- Replaced Supabase Storage implementation in `lib/cover/storage.ts` with Cloudflare R2 S3-compatible client (`PutObjectCommand`, `S3Client`).
+- Changed `putCover` success contract from `{ ok: true, url: string }` to `{ ok: true, key: string }`.
+- Removed unused `COVER_BUCKET` export.
+- Created `lib/cover/storage.test.ts` covering 3 scenarios: upload and key return, SDK error without throwing, and unconfigured environment.
 
-## Test Commands Run & Outputs
+## TDD Evidence
 
-### 1. RED Verification
+### RED
 Command:
 ```bash
-node node_modules/vitest/vitest.mjs run tests/ai-gateway/chapter-writer-prose-parser.test.ts
+pnpm exec vitest run lib/cover/storage.test.ts
 ```
 Output:
 ```
- FAIL  unit tests/ai-gateway/chapter-writer-prose-parser.test.ts (5 tests | 2 failed) 12ms
-   × splits bulky narrative paragraphs into chunks of at most 2 sentences 5ms
-   × isolates embedded dialogue lines into standalone paragraphs 4ms
-   ✓ preserves exact word count with zero word loss 0ms
-   ✓ preserves implicit title format and preserves short paragraphs intact 0ms
-   ✓ throws when text is empty 1ms
+ FAIL  unit  lib/cover/storage.test.ts > putCover > mengunggah ke R2 dan mengembalikan key
+Error: createAdminClient: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY belum diset.
+ FAIL  unit  lib/cover/storage.test.ts > putCover > kegagalan SDK → ok:false dengan detail, tanpa throw
+Error: createAdminClient: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY belum diset.
+ FAIL  unit  lib/cover/storage.test.ts > putCover > env belum diset → ok:false, tidak ada panggilan keluar
+Error: createAdminClient: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY belum diset.
 
-⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯
-
- FAIL  unit tests/ai-gateway/chapter-writer-prose-parser.test.ts > parseChapterWriterProse with mobile paragraph splitter > splits bulky narrative paragraphs into chunks of at most 2 sentences
-AssertionError: expected 2 to be greater than 2
-
- FAIL  unit tests/ai-gateway/chapter-writer-prose-parser.test.ts > parseChapterWriterProse with mobile paragraph splitter > isolates embedded dialogue lines into standalone paragraphs
-AssertionError: expected [ Array(1) ] to deeply equal [ …(3) ]
-- Expected
-+ Received
-  [
--   "Rian mendekati meja kasir dengan ragu-ragu.",
--   "\"Apakah kamu melihat amplop hitam itu?\" tanyanya berbisik.",
--   "Kasir tersebut menggeleng cepat tanpa menatap matanya.",
-+   "Rian mendekati meja kasir dengan ragu-ragu. \"Apakah kamu melihat amplop hitam itu?\" tanyanya berbisik. Kasir tersebut menggeleng cepat tanpa menatap matanya.",
-  ]
-
- Test Files  1 failed (1)
-      Tests  2 failed | 3 passed (5)
+Test Files  1 failed (1)
+     Tests  3 failed (3)
 ```
+Why expected:
+The old implementation in `lib/cover/storage.ts` called `createAdminClient()` from Supabase and returned `url`, which fails immediately when Supabase env vars are absent and does not adhere to the R2 contract.
 
-### 2. GREEN Verification
+### GREEN
 Command:
 ```bash
-node node_modules/vitest/vitest.mjs run tests/ai-gateway/chapter-writer-prose-parser.test.ts
+pnpm exec vitest run lib/cover/storage.test.ts
 ```
 Output:
 ```
- ✓ unit tests/ai-gateway/chapter-writer-prose-parser.test.ts (5 tests) 6ms
+ ✓  unit  lib/cover/storage.test.ts (3 tests) 4ms
 
  Test Files  1 passed (1)
-      Tests  5 passed (5)
-   Start at  01:49:13
-   Duration  552ms
-```
-
-### 3. Regression Suite Verification
-Command:
-```bash
-node node_modules/vitest/vitest.mjs run tests/ai-gateway/
-```
-Output:
-```
- Test Files  25 passed (25)
-      Tests  269 passed (269)
-   Start at  01:49:25
-   Duration  9.25s
-```
-
-Command:
-```bash
-node node_modules/vitest/vitest.mjs run tests/prose/
-```
-Output:
-```
- Test Files  7 passed (7)
-      Tests  51 passed (51)
-   Start at  01:49:41
-   Duration  1.07s
-```
-
-Command:
-```bash
-pnpm typecheck
-```
-Output:
-```
-$ tsc --noEmit --incremental false
-(clean exit 0)
-```
-
-Command:
-```bash
-npx eslint lib/ai-gateway/chapter-writer-contract.ts tests/ai-gateway/chapter-writer-prose-parser.test.ts
-```
-Output:
-```
-(clean exit 0)
+      Tests  3 passed (3)
+   Duration  280ms
 ```
 
 ## Files Changed
-- `lib/ai-gateway/chapter-writer-contract.ts` (modified: imported `splitParagraphsForMobile` and piped raw paragraphs through it)
-- `tests/ai-gateway/chapter-writer-prose-parser.test.ts` (added: unit test suite verifying mobile paragraph splitting in prose parser)
+- `D:\Coding\lakoku v2\.worktrees\feat-r2-cover-storage\package.json`
+- `D:\Coding\lakoku v2\.worktrees\feat-r2-cover-storage\pnpm-lock.yaml`
+- `D:\Coding\lakoku v2\.worktrees\feat-r2-cover-storage\lib\cover\storage.ts`
+- `D:\Coding\lakoku v2\.worktrees\feat-r2-cover-storage\lib\cover\storage.test.ts`
+
+## Commit
+- `af8d2f1` `feat(cover): write covers to Cloudflare R2 via S3 API, return object key`
 
 ## Self-Review Findings
-- Code matches project architecture and import seams.
-- ZERO WORD LOSS guaranteed by underlying `splitParagraphsForMobile` implementation and verified by `countParagraphWords`.
-- Existing tests across all 25 ai-gateway suites pass cleanly without regressions.
-- No `as any`, `@ts-ignore`, or ESLint violations.
+- Completeness: All 3 tests from the brief present and passing. Env validation paths handled correctly.
+- Quality: `cachedClient` singleton pattern used for `S3Client`. Errors caught and returned as `{ ok: false, detail }` without throwing.
+- Discipline: Route files (`app/api/stories/[id]/cover/generate/route.ts` and `app/api/stories/[id]/cover/upload/route.ts`) left untouched per instructions for Task 4.
+- Testing: Mocks verify `PutObjectCommand` input payload (`Bucket`, `Key`, `ContentType`, `CacheControl`, `Body`).
 
 ## Concerns
-None. Integration is backward-compatible with title parsing and completeness evaluation.
+- As expected and documented in the brief, route files calling `stored.url` are temporarily broken until Task 4 updates their callers.

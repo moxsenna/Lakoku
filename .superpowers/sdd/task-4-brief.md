@@ -1,35 +1,106 @@
-# Task 4: Integrasi Prompt Engine (`build-writer-prompt.ts` & `types.ts`)
+### Task 4: Jalur tulis & baca konsumen mengikuti kontrak key
 
-## Context
-Feature: Indonesian Cultural Honorifics & Mobile Paragraph Rhythm
-Plan: `docs/superpowers/plans/2026-09-21-indonesian-cultural-honorifics-and-mobile-paragraphs.md`
+**Files:**
+- Modify: `lib/cover/server.ts:93-103` (`setStoryCover`) dan `:136-164` (`getStoryCoverCandidates`)
+- Modify: `app/api/stories/[id]/cover/generate/route.ts:148,168-171,175`
+- Modify: `app/api/stories/[id]/cover/upload/route.ts:85-95`
+- Modify: `app/api/stories/[id]/cover/apply/route.ts:31-46`
 
-## Files to Modify
-- `lib/prose/prompt-engine/types.ts`
-- `lib/prose/prompt-engine/build-writer-prompt.ts`
-- `lib/ai-gateway/chapter-writer-contract.ts`
-- `tests/prose/prompt-engine/writer-prompt-architecture-v2.test.ts`
+**Interfaces:**
+- Consumes: `putCover` → `{ ok: true; key }` (Task 3); `resolveStoryCover`, `coverKeyFromPublicUrl` dari `lib/cover/url.ts` (Task 1).
+- Produces: `setStoryCover(storyId, userId, coverPath)` menerima key ATAU URL publik (dinormalisasi ke key); `getStoryCoverCandidates()` mengembalikan `url` yang SUDAH di-resolve (UI tetap memperlakukan sebagai URL final).
 
-## Requirements
-1. In `lib/prose/prompt-engine/types.ts`:
-   - Add `characterDescriptors?: CharacterDescriptor[]` and `language?: SupportedLanguage` to `BuildWriterPromptInput`.
-2. In `lib/prose/prompt-engine/build-writer-prompt.ts`:
-   - Import `buildCulturalHonorificDirectives`, `CharacterDescriptor`, `SupportedLanguage` from `@/lib/prose/cultural-conventions`.
-   - In P0:
-     - Render legal honorifics and roles alongside character names: e.g. `Ragil (Peran: Ayah kandung, sapaan sah: Bapak / Pak / Ayah)`.
-     - Explicit invariant: `language === 'id' ? '- Panggilan honorifik/kekerabatan di atas adalah sebutan sah untuk tokoh bersangkutan, BUKAN tokoh baru.' : ''`
-   - In P3:
-     - Strengthen mobile paragraph constraints (1-2 short sentences per narrative paragraph, max 25-30 words, standalone dialogue).
-   - In P4:
-     - Include `culturalDirective = buildCulturalHonorificDirectives(descriptors, language)` if non-empty and language is 'id'.
-3. In `lib/ai-gateway/chapter-writer-contract.ts`:
-   - In `buildProductionChapterWriterPrompt`:
-     - Build character descriptors from active characters in snapshot using `buildCharacterDescriptors(activeChars, snapshot.aliases, 'id')`.
-     - Pass `characterDescriptors` and `language: 'id'` into `buildWriterPrompt(...)`.
-4. In `tests/prose/prompt-engine/writer-prompt-architecture-v2.test.ts`:
-   - Add tests verifying P0 and P4 directives when `language === 'id'`, and verifying cultural directives are omitted when `language === 'en'`.
-   - Verify existing prompt architecture tests continue to pass.
+- [ ] **Step 1: Ubah `lib/cover/server.ts`**
 
-## Verification
-- Test runner: `node node_modules/vitest/vitest.mjs run tests/prose/prompt-engine/`
-- Typecheck: `pnpm typecheck`
+Di `setStoryCover` (ganti fungsi, baris 92–103):
+
+```ts
+import { coverKeyFromPublicUrl, resolveStoryCover } from '@/lib/cover/url'
+```
+
+```ts
+/**
+ * Pasang sampul baru; penjaga pemilik diulang di klausa update.
+ * Input bisa object key (dari putCover) atau URL publik (dari kandidat);
+ * URL milik base publik kita dinormalisasi kembali menjadi key supaya
+ * stories.cover selalu konsisten menyimpan key.
+ */
+export async function setStoryCover(storyId: string, userId: string, coverPath: string): Promise<boolean> {
+  const db = createAdminClient()
+  const cover = coverKeyFromPublicUrl(coverPath) ?? coverPath
+  const { error, count } = await db
+    .from('stories')
+    .update({ cover }, { count: 'exact' })
+    .eq('id', storyId)
+    .eq('owner_user_id', userId)
+
+  if (error) throw new Error(`setStoryCover: ${error.message}`)
+  return (count ?? 0) > 0
+}
+```
+
+Di `getStoryCoverCandidates` (baris 153–159), ubah mapping agar `url` yang sampai ke UI sudah absolut:
+
+```ts
+    return data.map((r) => ({
+      id: String(r.id),
+      url: resolveStoryCover(String(r.url)),
+      preset: String(r.preset),
+      createdAt: String(r.created_at),
+      expiresAt: String(r.expires_at),
+    }))
+```
+
+(Di DB, kandidat kini menyimpan key; resolver merakit URL saat baca.)
+
+- [ ] **Step 2: Ubah route `cover/generate`**
+
+- Baris 148: `const applied = await setStoryCover(storyId, user.id, stored.key)`
+- Baris 168–171: `await recordStoryCoverCandidate(storyId, user.id, { url: stored.key, preset: options.preset })`
+- Baris 175: `return NextResponse.json({ ok: true, cover: resolveStoryCover(stored.key), balance })`
+- Tambah import: `import { resolveStoryCover } from '@/lib/cover/url'`
+
+- [ ] **Step 3: Ubah route `cover/upload`**
+
+- Baris 85: `const applied = await setStoryCover(storyId, user.id, stored.key)`
+- Baris 90–93: `await recordStoryCoverCandidate(storyId, user.id, { url: stored.key, preset: 'unggah' })`
+- Baris 95: `return NextResponse.json({ ok: true, cover: resolveStoryCover(stored.key) })`
+- Tambah import: `import { resolveStoryCover } from '@/lib/cover/url'`
+
+- [ ] **Step 4: Ubah route `cover/apply`**
+
+Ganti blok validasi–pasang (baris 31–46):
+
+```ts
+  const body = await req.json().catch(() => ({}))
+  const url = typeof body.url === 'string' ? body.url.trim() : ''
+  if (!url) {
+    return NextResponse.json({ ok: false, error: 'URL sampul tidak valid.' }, { status: 400 })
+  }
+
+  const applied = await setStoryCover(storyId, user.id, url)
+  if (!applied) {
+    return NextResponse.json({ ok: false, error: 'Sampul gagal dipasang.' }, { status: 500 })
+  }
+
+  // setStoryCover menormalisasi URL base-publik ke key; respons memakai
+  // resolver supaya UI selalu menerima URL yang bisa dirender.
+  return NextResponse.json({ ok: true, cover: resolveStoryCover(coverKeyFromPublicUrl(url) ?? url) })
+```
+
+Tambah import: `import { coverKeyFromPublicUrl, resolveStoryCover } from '@/lib/cover/url'`
+
+- [ ] **Step 5: Gate statis**
+
+Run: `pnpm typecheck && pnpm lint`
+Expected: bersih. (`grep -rn "stored.url" app/api/stories/` harus kosong.)
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add lib/cover/server.ts app/api/stories/\[id\]/cover/generate/route.ts app/api/stories/\[id\]/cover/upload/route.ts app/api/stories/\[id\]/cover/apply/route.ts
+git commit -m "feat(cover): store object keys across cover write paths, resolve URLs at read"
+```
+
+---
+

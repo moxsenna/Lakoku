@@ -342,3 +342,20 @@ Branch: feat/lakoin-tinta-economy | Gates: GATES.lakoin-tinta.md | Amandemen PM:
 
 
 
+
+## R2 Cover Storage Migration (2026-10-02)
+Plan: docs/superpowers/plans/2026-10-02-r2-cover-storage-migration.md
+Branch: feat/r2-cover-storage (worktree .worktrees/feat-r2-cover-storage)
+Base: f180628
+- Task 1: complete (commits f180628..7104860, review clean, 7/7 test). Minor: none.
+- Task 2: complete (commits 7104860..d7df104, review clean, 7/7 + typecheck). Minor: none.
+- Task 3: complete (commits d7df104..af8d2f1, review clean, 3/3 test). Minor utk final review: module-singleton S3Client bertahan lintas test bila kredensial di-stub berbeda (harmless di produksi).
+- Task 4: complete (commits af8d2f1..89db2ee, review clean, typecheck + grep clean). Minor: none.
+- Task 4: complete (commits af8d2f1..89db2ee, review clean, typecheck+lint+25/25 cover test). Catatan controller: nomor baris di laporan reviewer tidak akurat tapi konten terverifikasi vs diff (23+/11-, 4 file).
+- Task 5: complete (commits 89db2ee..0d06981, review clean, node --check + exit-path ok). Minor utk final review: (a) guard env tidak mengecek R2_ACCESS_KEY_ID/SECRET (gagal di SDK, bukan exit awal; kode plan-mandated); (b) query DB/storage statis limit 1000 tanpa pagination loop — ok utk ukuran katalog saat ini.
+- Task 6: complete (commits 0d06981..cfe02f6, review clean; typecheck 0 err, lint 114 pre-existing 0 di file branch, unit 3718 pass/76 fail semuanya suite DB pre-existing, cover 25/25). .env.local checkout utama diisi 5 var (untracked).
+- Task 7 (runbook cutover produksi): TIDAK DIEKSEKUSI AGENT — menunggu prasyarat PM: bucket R2 dibuat, token API R2, domain covers.lakoku.biz.id bound, env produksi diisi sebelum build. Runbook ada di plan §Task 7.
+- FINAL REVIEW: temuan 1 Critical (resolveStoryCover me-rewrite path lokal /covers/* ke domain R2 -> demo cover 404) + 2 Important (CacheControl '31536000' invalid RFC; script crash tanpa .env.local di VPS) + 2 Minor minor.
+- FIX ROUND: ce0bed2 — semua 5 temuan FIXED (re-review verdict: READY TO MERGE YES; 26/26 test, typecheck+lint clean). Deviasi tercatat dari teks plan: CacheControl valid RFC + guard env script diperluas (perbaikan teknis, bukan perubahan keputusan desain PM).
+- Minor DEFER: pagination 1000 di script migrasi (katalog kecil); module-singleton S3Client lintas test (harmless produksi).
+- Sisa kerja = Task 7 (cutover produksi) menunggu prasyarat PM.

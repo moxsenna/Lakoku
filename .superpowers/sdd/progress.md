@@ -359,3 +359,5 @@ Base: f180628
 - FIX ROUND: ce0bed2 — semua 5 temuan FIXED (re-review verdict: READY TO MERGE YES; 26/26 test, typecheck+lint clean). Deviasi tercatat dari teks plan: CacheControl valid RFC + guard env script diperluas (perbaikan teknis, bukan perubahan keputusan desain PM).
 - Minor DEFER: pagination 1000 di script migrasi (katalog kecil); module-singleton S3Client lintas test (harmless produksi).
 - Sisa kerja = Task 7 (cutover produksi) menunggu prasyarat PM.
+- Task 7 (cutover produksi): COMPLETE 2026-10-03 — push main ef4c092..9553ed7; VPS: env 5 var + backup lakoku.bak-20261003-082202, build 9553ed7 EXIT=0, assembly OK, cover base ter-inline, restart active, origin/public/app 200, 17/17 asset, .hermes guardrail identik; migrasi riil (1 objek, 1 row), SQL check 0 residue; E2E upload akun test (smoke-cover-r2-murnznrr) 3/3 check PASS + cleanup; smoke:production-reader 9/9 PASS. Backup tersedia utk rollback.
+- MIGRASI R2 SELESAI PENUH — sub-proyek 1 ditutup; sisa roadmap: sub-proyek 2 (Neon) & 3 (Better Auth) belum mulai.

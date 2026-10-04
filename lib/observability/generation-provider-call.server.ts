@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb, rpcOne, single } from '@lakoku/db'
 import {
   ModelCandidateIdentitySchema,
   ProviderCallCompletionSchema,
@@ -66,10 +66,7 @@ export async function recordGenerationProviderCall(
   const parsedCompletion = ProviderCallCompletionSchema.parse(completion)
 
   try {
-    const rpc: ProviderCallRpc = deps.rpc ?? ((name, args) => (
-      createAdminClient().rpc(name, args) as unknown as Promise<RpcResult>
-    ))
-    const { error } = await rpc('record_generation_provider_call_v2', {
+    const rpcArgs = {
       p_provider_call_id: parsedStart.providerCallId,
       p_user_id: parsedStart.context.userId,
       p_story_id: parsedStart.context.storyId,
@@ -97,7 +94,18 @@ export async function recordGenerationProviderCall(
       p_provider_cost_currency: parsedCompletion.providerActualCostCurrency,
       p_validation_stage: parsedCompletion.validationStage,
       p_validation_codes: parsedCompletion.validationCodes,
-    })
+    }
+
+    // RLS_AUDIT: record_generation_provider_call_v2 mencatat telemetri pemanggilan model AI
+    let error: unknown = null
+    if (deps.rpc) {
+      const rpcResult = await deps.rpc('record_generation_provider_call_v2', rpcArgs)
+      error = rpcResult.error
+    } else {
+      const db = getDb()
+      const res = await single(rpcOne(db, 'record_generation_provider_call_v2', rpcArgs).execute())
+      error = res.error
+    }
 
     if (error) {
       emitWriteFailure(deps.logCode)

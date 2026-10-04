@@ -2,7 +2,7 @@
  * Persist compiled story bible through one transaction-safe service-role RPC.
  */
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, rpcOne, single } from '@lakoku/db'
 import type { CanonSnapshot } from '@lakoku/narrative-core'
 import type { CompileResult } from './compile'
 
@@ -16,23 +16,27 @@ export async function persistStoryBible(
 ): Promise<{ storyId: string }> {
   if (!ownerUserId) throw new Error('persistStoryBible: trusted owner user required')
 
-  const db = createAdminClient()
+  // RLS_AUDIT: replace_authoring_story_bible_v1 mengunci owner_user_id
+  const db = getDb()
   const { storyId, snapshot, meta } = result
-  const { data, error } = await db.rpc('replace_authoring_story_bible_v1', {
-    p_story_id: storyId,
-    p_owner_user_id: ownerUserId,
-    p_title: meta.title,
-    p_cover: '/covers/default-cover.webp',
-    p_tagline: meta.tagline,
-    p_role: meta.role,
-    p_tropes: meta.tropes,
-    p_total_chapters: 50,
-    p_synopsis: meta.synopsis,
-    p_canon: buildCanonPayload(snapshot),
-  })
+  const { data: rawData, error } = await single(
+    rpcOne(db, 'replace_authoring_story_bible_v1', {
+      p_story_id: storyId,
+      p_owner_user_id: ownerUserId,
+      p_title: meta.title,
+      p_cover: '/covers/default-cover.webp',
+      p_tagline: meta.tagline,
+      p_role: meta.role,
+      p_tropes: meta.tropes,
+      p_total_chapters: 50,
+      p_synopsis: meta.synopsis,
+      p_canon: buildCanonPayload(snapshot),
+    }).execute(),
+  )
 
   if (error) throw new Error(`replace authoring story bible: ${error.message}`)
 
+  const data = (rawData as Record<string, unknown> | null)?.fn ?? rawData
   const replaced = data as ReplaceResult | null
   if (replaced?.ok === false && replaced.status === 'OWNER_MISMATCH') {
     throw new Error('persistStoryBible: story owner mismatch')

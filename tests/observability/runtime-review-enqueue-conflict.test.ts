@@ -4,9 +4,21 @@ vi.mock('server-only', () => ({}))
 
 const rpc = vi.fn()
 
-vi.mock('@lakoku/db', () => ({
-  createAdminClient: () => ({ rpc }),
-}))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: () => ({ rpc }),
+    getDb: () => ({ rpc }),
+    rpcOne: (_client: unknown, name: string, args: unknown) => ({
+      execute: async () => {
+        const res = await rpc(name, args)
+        if (res?.error) throw new Error(res.error.message || String(res.error))
+        return [res?.data]
+      },
+    }),
+  }
+})
 vi.mock('@/lib/supabase/admin', () => ({
   createAdminClient: () => ({ rpc }),
 }))

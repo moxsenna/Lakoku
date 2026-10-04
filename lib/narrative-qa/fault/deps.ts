@@ -29,7 +29,7 @@ import {
   assertConsumerSafe,
 } from '@lakoku/ai-gateway'
 import { selectProvider } from '@lakoku/ai-gateway/server'
-import { createAdminClient } from '../../supabase/admin'
+import { getDb, single, result } from '@lakoku/db'
 import { recordGenerationAttempt } from '../../observability/server'
 import {
   buildChapterBrief,
@@ -60,14 +60,6 @@ import {
 import type { Schema3PublicationResult } from '../../runtime/checkpoint-schema-v3'
 import { HARNESS_TOTAL_CHAPTERS } from '../harness/fixture'
 
-// Mirror of CONTRACT_SELECT (personalized-generation.ts:130).
-const CONTRACT_SELECT =
-  'story_id,story_contract_json,plot_debts_json,ending_candidates_json,ending_lock_json,mode,total_chapters' as const
-
-// Mirror of READER_STATE_INTERNAL_SELECT (personalized-generation.ts:132).
-const READER_STATE_INTERNAL_SELECT =
-  'user_id,story_id,status,current_chapter,jejak,ending_name,route_state,choice_history,locked_ending_key,updated_at' as const
-
 // Exact semantic mirror of ReaderStateInternalSchema
 // (personalized-generation.ts:138-149). Exported so E1 can detect mirror drift
 // without exporting production-private parser behavior.
@@ -95,12 +87,23 @@ void _assertReaderStateMirrorAssignable
 
 // Mirror of defaultLoadStoryGenerationContract (personalized-generation.ts:399).
 async function mirrorLoadStoryGenerationContract(storyId: string): Promise<StoryContract> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('story_generation_contracts')
-    .select(CONTRACT_SELECT)
-    .eq('story_id', storyId)
-    .maybeSingle()
+  // RLS_AUDIT: story_generation_contracts service role load contract
+  const db = getDb()
+  const { data, error } = await single(
+    db
+      .selectFrom('story_generation_contracts')
+      .select([
+        'story_id',
+        'story_contract_json',
+        'plot_debts_json',
+        'ending_candidates_json',
+        'ending_lock_json',
+        'mode',
+        'total_chapters',
+      ])
+      .where('story_id', '=', storyId)
+      .execute(),
+  )
   if (error) throw new Error(`loadStoryGenerationContract: ${error.message}`)
   if (!data) throw new Error(`loadStoryGenerationContract: contract missing for ${storyId}`)
   const row = data as {
@@ -122,35 +125,61 @@ async function mirrorLoadReaderStateInternal(
   userId: string,
   storyId: string,
 ): Promise<ReaderStateInternal> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('reader_states')
-    .select(READER_STATE_INTERNAL_SELECT)
-    .eq('user_id', userId)
-    .eq('story_id', storyId)
-    .maybeSingle()
+  // RLS_AUDIT: reader_states per user_id and story_id
+  const db = getDb()
+  const { data, error } = await single(
+    db
+      .selectFrom('reader_states')
+      .select([
+        'user_id',
+        'story_id',
+        'status',
+        'current_chapter',
+        'jejak',
+        'ending_name',
+        'route_state',
+        'choice_history',
+        'locked_ending_key',
+        'updated_at',
+      ])
+      .where('user_id', '=', userId)
+      .where('story_id', '=', storyId)
+      .execute(),
+  )
   if (error) throw new Error(`loadReaderStateInternal: ${error.message}`)
   if (!data) throw new Error(`loadReaderStateInternal: missing for ${userId}/${storyId}`)
+  const typedData = data as Record<string, unknown>
+  const updatedAtStr =
+    typedData.updated_at instanceof Date
+      ? typedData.updated_at.toISOString()
+      : typeof typedData.updated_at === 'string'
+        ? typedData.updated_at
+        : String(typedData.updated_at ?? '')
   return ReaderStateInternalMirrorSchema.parse({
-    ...data,
-    route_state: normalizeRouteState((data as { route_state: unknown }).route_state),
+    ...typedData,
+    updated_at: updatedAtStr,
+    route_state: normalizeRouteState(typedData.route_state),
   })
 }
 
 // Mirror of defaultMarkReaderStateSelesai (personalized-generation.ts:557).
 async function mirrorMarkReaderStateSelesai(input: MarkReaderSelesaiInput): Promise<void> {
-  const supabase = createAdminClient()
-  const { error } = await supabase
-    .from('reader_states')
-    .update({
-      status: 'SELESAI',
-      ending_name: input.endingName,
-      locked_ending_key: input.endingKey,
-      current_chapter: HARNESS_TOTAL_CHAPTERS,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('user_id', input.userId)
-    .eq('story_id', input.storyId)
+  // RLS_AUDIT: reader_states diupdate per user_id dan story_id
+  const db = getDb()
+  const { error } = await result(
+    db
+      .updateTable('reader_states')
+      .set({
+        status: 'SELESAI',
+        ending_name: input.endingName,
+        locked_ending_key: input.endingKey,
+        current_chapter: HARNESS_TOTAL_CHAPTERS,
+        updated_at: new Date().toISOString(),
+      })
+      .where('user_id', '=', input.userId)
+      .where('story_id', '=', input.storyId)
+      .executeTakeFirst(),
+  )
   if (error) throw new Error(`markReaderStateSelesai: ${error.message}`)
 }
 
@@ -160,12 +189,15 @@ function isMissingColumn(error: { code?: string } | null | undefined): boolean {
 
 // Mirror of defaultLoadLivingCanonVersion (personalized-generation.ts:582).
 async function mirrorLoadLivingCanonVersion(storyId: string): Promise<number> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('stories')
-    .select('living_canon_version')
-    .eq('id', storyId)
-    .maybeSingle()
+  // RLS_AUDIT: stories living_canon_version read
+  const db = getDb()
+  const { data, error } = await single(
+    db
+      .selectFrom('stories')
+      .select('living_canon_version')
+      .where('id', '=', storyId)
+      .execute(),
+  )
   if (error) {
     if (isMissingColumn(error)) return 0
     throw new Error(`loadLivingCanonVersion: ${error.message}`)
@@ -175,12 +207,15 @@ async function mirrorLoadLivingCanonVersion(storyId: string): Promise<number> {
 
 // Mirror of defaultLoadCanonStateRevision (personalized-generation.ts:597).
 async function mirrorLoadCanonStateRevision(storyId: string): Promise<number> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('stories')
-    .select('canon_state_revision')
-    .eq('id', storyId)
-    .maybeSingle()
+  // RLS_AUDIT: stories canon_state_revision read
+  const db = getDb()
+  const { data, error } = await single(
+    db
+      .selectFrom('stories')
+      .select('canon_state_revision')
+      .where('id', '=', storyId)
+      .execute(),
+  )
   if (error) {
     if (isMissingColumn(error)) return 0
     throw error

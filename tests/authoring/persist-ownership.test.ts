@@ -4,7 +4,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ adminFactory: vi.fn(), authorObject: vi.fn() }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: () => mocks.adminFactory(),
+    rpcOne: (client: any, name: string, args: any) => ({
+      execute: async () => {
+        const res = await client.rpc(name, args)
+        if (res?.error) throw new Error(res.error.message || String(res.error))
+        return [res?.data]
+      },
+    }),
+  }
+})
 vi.mock('@lakoku/ai-gateway', () => ({ scanForLeaks: () => [] }))
 vi.mock('@lakoku/narrative-core', () => ({}))
 vi.mock('@/lib/authoring/model', () => ({ authorObject: mocks.authorObject }))

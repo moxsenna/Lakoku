@@ -1,9 +1,34 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ adminFactory: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  adminFactory: vi.fn(),
+  rpcOne: vi.fn(),
+}))
 
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: vi.fn(() => mocks.adminFactory()),
+    rpcOne: vi.fn((client: unknown, name: string, args: Record<string, unknown>) => {
+      mocks.rpcOne(client, name, args)
+      return {
+        execute: async () => {
+          const clientObj = client as { rpc?: (name: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }> } | undefined
+          if (clientObj?.rpc) {
+            const res = await clientObj.rpc(name, args)
+            if (res.error) throw res.error
+            return [res.data]
+          }
+          return []
+        },
+      }
+    }),
+  }
+})
 
 import { recordGenerationProviderCall } from '@/lib/observability/generation-provider-call.server'
 

@@ -2,17 +2,66 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
+const mockCreateAdminClient = vi.fn()
+
+function adaptMockDbToKysely(mockDb: any) {
+  if (!mockDb) return {}
+  return {
+    selectFrom: vi.fn((table: string) => {
+      let currentQuery = mockDb.from ? mockDb.from(table) : null
+      const builder: any = {
+        select: vi.fn((_cols: any) => {
+          if (currentQuery?.select) {
+            currentQuery = currentQuery.select()
+          }
+          return builder
+        }),
+        where: vi.fn((col: string, op: string, val: any) => {
+          if (op === '=' && currentQuery?.eq) {
+            currentQuery = currentQuery.eq(col, val)
+          } else if (op === 'in' && currentQuery?.in) {
+            currentQuery = currentQuery.in(col, val)
+          } else if (op === '>' && currentQuery?.gt) {
+            currentQuery = currentQuery.gt(col, val instanceof Date ? val.toISOString() : val)
+          }
+          return builder
+        }),
+        execute: vi.fn(async () => {
+          if (!currentQuery) return []
+          if (currentQuery.maybeSingle) {
+            const res = await currentQuery.maybeSingle()
+            if (res?.error) throw res.error
+            return res?.data ? [res.data] : []
+          }
+          const res = await (typeof currentQuery === 'function' ? currentQuery() : currentQuery)
+          if (res?.error) throw res.error
+          if (Array.isArray(res?.data)) return res.data
+          return res?.data ? [res.data] : []
+        }),
+      }
+      return builder
+    }),
+  }
+}
+
 vi.mock('@/lib/supabase/admin', () => {
   return {
-    createAdminClient: vi.fn(),
+    createAdminClient: () => mockCreateAdminClient(),
+  }
+})
+
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: () => mockCreateAdminClient(),
+    getDb: vi.fn(() => adaptMockDbToKysely(mockCreateAdminClient())),
   }
 })
 
 import { isCommercialStoryMode, resolveCommercialAuthorization } from '@/lib/commercial/resolver.server'
 import { resolveChapterAccess } from '@/lib/credits/access-resolver.server'
-import { createAdminClient } from '@/lib/supabase/admin'
-
-const mockCreateAdminClient = vi.mocked(createAdminClient)
+import type { createAdminClient } from '@/lib/supabase/admin'
 
 const mockFeatureCreditCosts = [
   { feature_key: 'story_start', credits_required: 24, is_active: true },

@@ -12,7 +12,8 @@
  * try/catch agar TAK PERNAH menggagalkan jalur generasi/publish.
  */
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, rpcOne, single, result, type Database } from '@lakoku/db'
+import type { Kysely } from 'kysely'
 import type { Finding } from '@lakoku/narrative-core'
 import {
   aggregateConsistencyMetrics,
@@ -28,9 +29,16 @@ import {
 export const GENERATION_ATTEMPT_EVENT = 'GENERATION_ATTEMPT' as const
 export { GENERATION_RUNTIME_FAILED_EVENT } from './generation-stages'
 
-type Db = ReturnType<typeof createAdminClient>
+type Db = Kysely<Database>
 
 function chapterOf(payload: unknown): number | null {
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload)
+    } catch {
+      return null
+    }
+  }
   if (payload && typeof payload === 'object') {
     const p = payload as Record<string, unknown>
     const raw = p.chapter_number ?? p.chapter
@@ -67,20 +75,29 @@ async function appendStoryEvent(
   type: string,
   payload: Record<string, unknown>,
 ): Promise<void> {
-  const { data, error: eRead } = await db
-    .from('story_events')
-    .select('seq')
-    .eq('story_id', storyId)
-    .order('seq', { ascending: false })
-    .limit(1)
+  // RLS_AUDIT: story_events_service_only
+  const { data, error: eRead } = await single(
+    db
+      .selectFrom('story_events')
+      .select('seq')
+      .where('story_id', '=', storyId)
+      .orderBy('seq', 'desc')
+      .limit(1)
+      .execute(),
+  )
   if (eRead) throw new Error(eRead.message)
-  const nextSeq = ((data?.[0]?.seq as number | undefined) ?? 0) + 1
-  const { error } = await db.from('story_events').insert({
-    story_id: storyId,
-    seq: nextSeq,
-    type,
-    payload,
-  })
+  const nextSeq = ((data?.seq as number | undefined) ?? 0) + 1
+  const { error } = await result(
+    db
+      .insertInto('story_events')
+      .values({
+        story_id: storyId,
+        seq: nextSeq,
+        type,
+        payload: JSON.stringify(payload),
+      })
+      .execute(),
+  )
   if (error) throw new Error(error.message)
 }
 
@@ -101,25 +118,28 @@ export async function recordGenerationAttempt(input: {
   brandScanHash?: string | null
   leaseId?: string | null
 }): Promise<void> {
-  const db = createAdminClient()
+  const db = getDb()
   if (input.outcome === 'REVIEW_REQUIRED') {
     if (!input.idempotencyKey) {
       throw new Error('REVIEW_REQUIRED_IDEMPOTENCY_KEY_REQUIRED')
     }
-    const { error } = await db.rpc('enqueue_runtime_review_v1', {
-      p_story_id: input.storyId,
-      p_chapter_number: input.chapter,
-      p_repair_attempts: input.repairAttempts,
-      p_findings: input.findings.slice(0, 12).map((finding) => ({
-        code: finding.code,
-        severity: finding.severity,
-      })),
-      p_idempotency_key: input.idempotencyKey,
-      p_correlation_id: input.correlationId ?? null,
-      p_provider_call_id: input.providerCallId ?? null,
-      p_brand_scan_hash: input.brandScanHash ?? null,
-      p_lease_id: input.leaseId ?? null,
-    })
+    // RLS_AUDIT: enqueue_runtime_review_v1 antrian tinjauan editorial
+    const { error } = await single(
+      rpcOne(db, 'enqueue_runtime_review_v1', {
+        p_story_id: input.storyId,
+        p_chapter_number: input.chapter,
+        p_repair_attempts: input.repairAttempts,
+        p_findings: input.findings.slice(0, 12).map((finding) => ({
+          code: finding.code,
+          severity: finding.severity,
+        })),
+        p_idempotency_key: input.idempotencyKey,
+        p_correlation_id: input.correlationId ?? null,
+        p_provider_call_id: input.providerCallId ?? null,
+        p_brand_scan_hash: input.brandScanHash ?? null,
+        p_lease_id: input.leaseId ?? null,
+      }).execute(),
+    )
     if (error) {
       // Satu cerita hanya boleh punya satu review aktif. Kalau sudah ada
       // (PENDING/CLAIMED/BLOCKED), enqueue kedua menolak dengan
@@ -172,7 +192,7 @@ export async function recordGenerationRuntimeFailed(input: {
   errorName: string
 }): Promise<void> {
   try {
-    const db = createAdminClient()
+    const db = getDb()
     const { GENERATION_RUNTIME_FAILED_EVENT } = await import('./generation-stages')
     await appendStoryEvent(db, input.storyId, GENERATION_RUNTIME_FAILED_EVENT, {
       chapter_number: input.chapter,
@@ -190,7 +210,7 @@ interface StoryEventRow {
   story_id: string
   type: string
   payload: Record<string, unknown> | null
-  created_at: string
+  created_at: Date | string
 }
 
 interface ThreadRow {
@@ -208,21 +228,23 @@ interface ThreadRow {
  * story tersebut; jika tidak, seluruh story (tampilan ops global).
  */
 export async function loadConsistencyInputs(storyId?: string): Promise<ConsistencyInputs> {
-  const db = createAdminClient()
+  const db = getDb()
 
+  // RLS_AUDIT: story_events_service_only
   let eventsQuery = db
-    .from('story_events')
-    .select('story_id, type, payload, created_at')
-    .in('type', [GENERATION_ATTEMPT_EVENT, 'REPORT_FILED', 'CHAPTER_PUBLISHED'])
-  if (storyId) eventsQuery = eventsQuery.eq('story_id', storyId)
+    .selectFrom('story_events')
+    .select(['story_id', 'type', 'payload', 'created_at'])
+    .where('type', 'in', [GENERATION_ATTEMPT_EVENT, 'REPORT_FILED', 'CHAPTER_PUBLISHED'])
+  if (storyId) eventsQuery = eventsQuery.where('story_id', '=', storyId)
 
+  // RLS_AUDIT: story_threads dibaca untuk konsistensi naratif
   let threadsQuery = db
-    .from('story_threads')
-    .select('story_id, id, title, status, stale, stale_since_chapter, is_main_mystery')
-  if (storyId) threadsQuery = threadsQuery.eq('story_id', storyId)
+    .selectFrom('story_threads')
+    .select(['story_id', 'id', 'title', 'status', 'stale', 'stale_since_chapter', 'is_main_mystery'])
+  if (storyId) threadsQuery = threadsQuery.where('story_id', '=', storyId)
 
   const [{ data: eventRows, error: eEvents }, { data: threadRows, error: eThreads }] =
-    await Promise.all([eventsQuery, threadsQuery])
+    await Promise.all([result(eventsQuery.execute()), result(threadsQuery.execute())])
   if (eEvents) throw new Error(`loadConsistencyInputs events: ${eEvents.message}`)
   if (eThreads) throw new Error(`loadConsistencyInputs threads: ${eThreads.message}`)
 
@@ -234,7 +256,8 @@ export async function loadConsistencyInputs(storyId?: string): Promise<Consisten
     const chapter = chapterOf(row.payload)
     if (row.type === GENERATION_ATTEMPT_EVENT) {
       if (chapter == null) continue
-      const p = row.payload ?? {}
+      const rawPayload = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload
+      const p = rawPayload ?? {}
       attempts.push({
         storyId: row.story_id,
         chapter,
@@ -243,11 +266,15 @@ export async function loadConsistencyInputs(storyId?: string): Promise<Consisten
         criticalRemaining: Number(p.critical_remaining ?? 0),
         majorRemaining: Number(p.major_remaining ?? 0),
         minorRemaining: Number(p.minor_remaining ?? 0),
-        at: row.created_at,
+        at: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
       })
     } else if (row.type === 'REPORT_FILED') {
       if (chapter == null) continue
-      reports.push({ storyId: row.story_id, chapter, at: row.created_at })
+      reports.push({
+        storyId: row.story_id,
+        chapter,
+        at: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+      })
     } else if (row.type === 'CHAPTER_PUBLISHED') {
       if (chapter == null) continue
       published.push({ storyId: row.story_id, chapter })

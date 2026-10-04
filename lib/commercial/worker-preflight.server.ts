@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
+import { getDb, rpcOne, single } from '@lakoku/db'
 
 export type PreflightResultStatus = 'AUTHORIZED' | 'WAITING_FOR_CREDITS' | 'DENIED'
 
@@ -23,9 +23,7 @@ export interface WorkerPreflightInput {
 export async function evaluateCommercialWorkerPreflight(
   input: WorkerPreflightInput,
 ): Promise<PreflightResult> {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY!
-  const db = createClient(url, key)
+  const db = getDb()
 
   // 1. Validate exact claimed job state before financial preflight (Requirement 4)
   if (
@@ -38,11 +36,24 @@ export async function evaluateCommercialWorkerPreflight(
   }
 
   // Authoritative second-read of generation_jobs row (Requirement 4)
-  const { data: jobRow, error: jobErr } = await db
-    .from('generation_jobs')
-    .select('id, user_id, story_id, chapter_number, status, worker_id, claim_token, generation_kind, trigger_choice_id')
-    .eq('id', input.jobId)
-    .maybeSingle()
+  // RLS_AUDIT: generation_jobs authoritatif second-read worker preflight
+  const { data: jobRow, error: jobErr } = await single(
+    db
+      .selectFrom('generation_jobs')
+      .select([
+        'id',
+        'user_id',
+        'story_id',
+        'chapter_number',
+        'status',
+        'worker_id',
+        'claim_token',
+        'generation_kind',
+        'trigger_choice_id',
+      ])
+      .where('id', '=', input.jobId)
+      .execute(),
+  )
 
   if (
     jobErr ||
@@ -60,10 +71,18 @@ export async function evaluateCommercialWorkerPreflight(
   }
 
   // 2. Load fail-closed active pricing config
-  const { data: pricingRows, error: pricingErr } = await db
-    .from('feature_credit_costs')
-    .select('feature_key, credits_required, is_active')
-    .in('feature_key', ['story_start', 'chapter_unlock'])
+  // RLS_AUDIT: feature_credit_costs tabel konfigurasi pricing sistem
+  let pricingRows: Array<{ feature_key: string; credits_required: number; is_active: boolean }> | null = null
+  let pricingErr = false
+  try {
+    pricingRows = await db
+      .selectFrom('feature_credit_costs')
+      .select(['feature_key', 'credits_required', 'is_active'])
+      .where('feature_key', 'in', ['story_start', 'chapter_unlock'])
+      .execute()
+  } catch {
+    pricingErr = true
+  }
 
   if (pricingErr || !pricingRows) {
     return { status: 'DENIED', reason: 'INTERNAL_CONFIG_ERROR' }
@@ -77,11 +96,14 @@ export async function evaluateCommercialWorkerPreflight(
   }
 
   // 3. Load story with owner and mode validation
-  const { data: story, error: storyErr } = await db
-    .from('stories')
-    .select('id, owner_user_id, story_mode, commercial_origin, visibility')
-    .eq('id', input.storyId)
-    .maybeSingle()
+  // RLS_AUDIT: stories divalidasi owner_user_id === input.userId
+  const { data: story, error: storyErr } = await single(
+    db
+      .selectFrom('stories')
+      .select(['id', 'owner_user_id', 'story_mode', 'commercial_origin', 'visibility'])
+      .where('id', '=', input.storyId)
+      .execute(),
+  )
 
   if (storyErr || !story) {
     return { status: 'DENIED', reason: 'STORY_NOT_FOUND' }
@@ -102,11 +124,14 @@ export async function evaluateCommercialWorkerPreflight(
   // ---------------------------------------------------------------------------
   // STARTER_FREE Bab 1-3
   if (origin === 'STARTER_FREE' && input.chapterNumber <= 3) {
-    const { data: accountState } = await db
-      .from('account_commercial_states')
-      .select('starter_story_id, starter_claimed_at')
-      .eq('user_id', input.userId)
-      .maybeSingle()
+    // RLS_AUDIT: account_commercial_states per user_id
+    const { data: accountState } = await single(
+      db
+        .selectFrom('account_commercial_states')
+        .select(['starter_story_id', 'starter_claimed_at'])
+        .where('user_id', '=', input.userId)
+        .execute(),
+    )
 
     if (!accountState || accountState.starter_story_id !== input.storyId || !accountState.starter_claimed_at) {
       return { status: 'DENIED', reason: 'STARTER_IDENTITY_MISMATCH' }
@@ -142,13 +167,16 @@ export async function evaluateCommercialWorkerPreflight(
   if (input.chapterNumber === 1 && origin === 'PENDING_PAID_START') {
     const expectedKind = story.story_mode === 'premium_instance' ? 'premium_clone' : 'personalized'
 
-    const { data: req, error: reqErr } = await db
-      .from('story_creation_requests')
-      .select('status, generation_job_id')
-      .eq('owner_user_id', input.userId)
-      .eq('story_id', input.storyId)
-      .eq('request_kind', expectedKind)
-      .maybeSingle()
+    // RLS_AUDIT: story_creation_requests difilter owner_user_id dan story_id
+    const { data: req, error: reqErr } = await single(
+      db
+        .selectFrom('story_creation_requests')
+        .select(['status', 'generation_job_id'])
+        .where('owner_user_id', '=', input.userId)
+        .where('story_id', '=', input.storyId)
+        .where('request_kind', '=', expectedKind)
+        .execute(),
+    )
 
     if (reqErr || !req || req.generation_job_id !== input.jobId) {
       return { status: 'DENIED', reason: 'CREATION_REQUEST_NOT_BOUND' }
@@ -157,17 +185,21 @@ export async function evaluateCommercialWorkerPreflight(
     const resRef = `story-start:${input.userId}:${input.storyId}`
 
     // Pass 1: Check active reservation
-    let { data: resRow } = await db
-      .from('credit_reservations')
-      .select('id, status, amount, expires_at')
-      .eq('ref', resRef)
-      .eq('user_id', input.userId)
-      .eq('story_id', input.storyId)
-      .eq('chapter_number', 1)
-      .eq('reservation_kind', 'STORY_START')
-      .eq('status', 'ACTIVE')
-      .gt('expires_at', new Date().toISOString())
-      .maybeSingle()
+    // RLS_AUDIT: credit_reservations difilter user_id, story_id, dan ref
+    const { data: initialResRow } = await single(
+      db
+        .selectFrom('credit_reservations')
+        .select(['id', 'status', 'amount', 'expires_at'])
+        .where('ref', '=', resRef)
+        .where('user_id', '=', input.userId)
+        .where('story_id', '=', input.storyId)
+        .where('chapter_number', '=', 1)
+        .where('reservation_kind', '=', 'STORY_START')
+        .where('status', '=', 'ACTIVE')
+        .where('expires_at', '>', new Date())
+        .execute(),
+    )
+    let resRow = initialResRow
 
     if (resRow && resRow.amount !== storyStartPrice) {
       return { status: 'DENIED', reason: 'STORY_START_AMOUNT_MISMATCH' }
@@ -177,24 +209,33 @@ export async function evaluateCommercialWorkerPreflight(
 
     // Pass 2 Reactivation: Attempt reserve_story_start_v1 using Phase 1 signature (current catalog price)
     if (!resRow) {
-      const { data: reserveRpcRes, error: reserveRpcErr } = await db.rpc('reserve_story_start_v1', {
-        p_user_id: input.userId,
-        p_story_id: input.storyId,
-      })
+      const { data: rawRpcRes, error: reserveRpcErr } = await single(
+        rpcOne(db, 'reserve_story_start_v1', {
+          p_user_id: input.userId,
+          p_story_id: input.storyId,
+        }).execute(),
+      )
+      const reserveRpcRes = ((rawRpcRes as Record<string, unknown> | null)?.fn ?? rawRpcRes) as {
+        ok?: boolean
+        status?: string
+        reason?: string
+      } | null
 
       if (!reserveRpcErr && reserveRpcRes?.ok === true && reserveRpcRes?.status === 'RESERVED') {
         // Authoritative SECOND READ
-        const { data: secondRes } = await db
-          .from('credit_reservations')
-          .select('id, status, amount, expires_at')
-          .eq('ref', resRef)
-          .eq('user_id', input.userId)
-          .eq('story_id', input.storyId)
-          .eq('chapter_number', 1)
-          .eq('reservation_kind', 'STORY_START')
-          .eq('status', 'ACTIVE')
-          .gt('expires_at', new Date().toISOString())
-          .maybeSingle()
+        const { data: secondRes } = await single(
+          db
+            .selectFrom('credit_reservations')
+            .select(['id', 'status', 'amount', 'expires_at'])
+            .where('ref', '=', resRef)
+            .where('user_id', '=', input.userId)
+            .where('story_id', '=', input.storyId)
+            .where('chapter_number', '=', 1)
+            .where('reservation_kind', '=', 'STORY_START')
+            .where('status', '=', 'ACTIVE')
+            .where('expires_at', '>', new Date())
+            .execute(),
+        )
 
         if (secondRes && secondRes.amount === storyStartPrice) {
           resRow = secondRes
@@ -215,21 +256,28 @@ export async function evaluateCommercialWorkerPreflight(
       }
 
       // Transition creation request to WAITING_FOR_CREDITS using DB-authoritative RPC
-      const { data: transRes, error: transErr } = await db.rpc('transition_story_creation_request_waiting_v1', {
-        p_owner_user_id: input.userId,
-        p_story_id: input.storyId,
-        p_request_kind: expectedKind,
-        p_generation_job_id: input.jobId,
-      })
+      const { data: rawTransRes, error: transErr } = await single(
+        rpcOne(db, 'transition_story_creation_request_waiting_v1', {
+          p_owner_user_id: input.userId,
+          p_story_id: input.storyId,
+          p_request_kind: expectedKind,
+          p_generation_job_id: input.jobId,
+        }).execute(),
+      )
+      const transRes = ((rawTransRes as Record<string, unknown> | null)?.fn ?? rawTransRes) as {
+        ok?: boolean
+      } | null
 
       // Authoritative re-read proof
-      const { data: reReadReq } = await db
-        .from('story_creation_requests')
-        .select('status, generation_job_id')
-        .eq('owner_user_id', input.userId)
-        .eq('story_id', input.storyId)
-        .eq('request_kind', expectedKind)
-        .maybeSingle()
+      const { data: reReadReq } = await single(
+        db
+          .selectFrom('story_creation_requests')
+          .select(['status', 'generation_job_id'])
+          .where('owner_user_id', '=', input.userId)
+          .where('story_id', '=', input.storyId)
+          .where('request_kind', '=', expectedKind)
+          .execute(),
+      )
 
       if (!transErr && transRes && transRes.ok && reReadReq?.status === 'WAITING_FOR_CREDITS' && reReadReq?.generation_job_id === input.jobId) {
         return { status: 'WAITING_FOR_CREDITS', origin, reason: 'INSUFFICIENT_CREDITS' }
@@ -255,25 +303,30 @@ export async function evaluateCommercialWorkerPreflight(
 
     // Revalidate Starter identity for STARTER_FREE Bab4+
     if (origin === 'STARTER_FREE') {
-      const { data: accountState } = await db
-        .from('account_commercial_states')
-        .select('starter_story_id, starter_claimed_at')
-        .eq('user_id', input.userId)
-        .maybeSingle()
+      const { data: accountState } = await single(
+        db
+          .selectFrom('account_commercial_states')
+          .select(['starter_story_id', 'starter_claimed_at'])
+          .where('user_id', '=', input.userId)
+          .execute(),
+      )
 
       if (!accountState || accountState.starter_story_id !== input.storyId || !accountState.starter_claimed_at) {
         return { status: 'DENIED', reason: 'STARTER_IDENTITY_MISMATCH' }
       }
     }
 
-    const { data: intent, error: intentErr } = await db
-      .from('commercial_generation_intents')
-      .select('id, status, generation_job_id, trigger_choice_id, quoted_credits')
-      .eq('user_id', input.userId)
-      .eq('story_id', input.storyId)
-      .eq('chapter_number', input.chapterNumber)
-      .eq('generation_job_id', input.jobId)
-      .maybeSingle()
+    // RLS_AUDIT: commercial_generation_intents per user_id, story_id, chapter_number, job_id
+    const { data: intent, error: intentErr } = await single(
+      db
+        .selectFrom('commercial_generation_intents')
+        .select(['id', 'status', 'generation_job_id', 'trigger_choice_id', 'quoted_credits'])
+        .where('user_id', '=', input.userId)
+        .where('story_id', '=', input.storyId)
+        .where('chapter_number', '=', input.chapterNumber)
+        .where('generation_job_id', '=', input.jobId)
+        .execute(),
+    )
 
     if (
       intentErr ||
@@ -292,42 +345,54 @@ export async function evaluateCommercialWorkerPreflight(
     const resRef = `chapter-reservation:${input.userId}:${input.storyId}:${input.chapterNumber}`
 
     // Pass 1: Check active reservation
-    let { data: resRow } = await db
-      .from('credit_reservations')
-      .select('id, status, amount, expires_at')
-      .eq('ref', resRef)
-      .eq('user_id', input.userId)
-      .eq('story_id', input.storyId)
-      .eq('chapter_number', input.chapterNumber)
-      .eq('reservation_kind', 'CHAPTER_UNLOCK')
-      .eq('status', 'ACTIVE')
-      .gt('expires_at', new Date().toISOString())
-      .maybeSingle()
+    // RLS_AUDIT: credit_reservations difilter user_id, story_id, chapter_number, ref
+    let { data: resRow } = await single(
+      db
+        .selectFrom('credit_reservations')
+        .select(['id', 'status', 'amount', 'expires_at'])
+        .where('ref', '=', resRef)
+        .where('user_id', '=', input.userId)
+        .where('story_id', '=', input.storyId)
+        .where('chapter_number', '=', input.chapterNumber)
+        .where('reservation_kind', '=', 'CHAPTER_UNLOCK')
+        .where('status', '=', 'ACTIVE')
+        .where('expires_at', '>', new Date())
+        .execute(),
+    )
 
     let reserveInsufficient = false
 
     // Pass 2 Reactivation: Attempt quote-preserving DB RPC reactivate_commercial_chapter_reservation_v1
     if (!resRow || resRow.amount !== intent.quoted_credits) {
-      const { data: reserveRpcRes, error: reserveRpcErr } = await db.rpc('reactivate_commercial_chapter_reservation_v1', {
-        p_user_id: input.userId,
-        p_story_id: input.storyId,
-        p_chapter_number: input.chapterNumber,
-        p_generation_job_id: input.jobId,
-      })
+      const { data: rawRpcRes, error: reserveRpcErr } = await single(
+        rpcOne(db, 'reactivate_commercial_chapter_reservation_v1', {
+          p_user_id: input.userId,
+          p_story_id: input.storyId,
+          p_chapter_number: input.chapterNumber,
+          p_generation_job_id: input.jobId,
+        }).execute(),
+      )
+      const reserveRpcRes = ((rawRpcRes as Record<string, unknown> | null)?.fn ?? rawRpcRes) as {
+        ok?: boolean
+        status?: string
+        reason?: string
+      } | null
 
       if (!reserveRpcErr && reserveRpcRes?.ok === true && (reserveRpcRes?.status === 'ACTIVE' || reserveRpcRes?.status === 'RESERVED')) {
         // Authoritative SECOND READ
-        const { data: secondRes } = await db
-          .from('credit_reservations')
-          .select('id, status, amount, expires_at')
-          .eq('ref', resRef)
-          .eq('user_id', input.userId)
-          .eq('story_id', input.storyId)
-          .eq('chapter_number', input.chapterNumber)
-          .eq('reservation_kind', 'CHAPTER_UNLOCK')
-          .eq('status', 'ACTIVE')
-          .gt('expires_at', new Date().toISOString())
-          .maybeSingle()
+        const { data: secondRes } = await single(
+          db
+            .selectFrom('credit_reservations')
+            .select(['id', 'status', 'amount', 'expires_at'])
+            .where('ref', '=', resRef)
+            .where('user_id', '=', input.userId)
+            .where('story_id', '=', input.storyId)
+            .where('chapter_number', '=', input.chapterNumber)
+            .where('reservation_kind', '=', 'CHAPTER_UNLOCK')
+            .where('status', '=', 'ACTIVE')
+            .where('expires_at', '>', new Date())
+            .execute(),
+        )
 
         if (secondRes && secondRes.amount === intent.quoted_credits) {
           resRow = secondRes
@@ -346,22 +411,29 @@ export async function evaluateCommercialWorkerPreflight(
       }
 
       // Transition intent to WAITING_FOR_CREDITS using correct 5 RPC params
-      const { data: transRes, error: transErr } = await db.rpc('transition_commercial_generation_intent_v1', {
-        p_user_id: input.userId,
-        p_story_id: input.storyId,
-        p_chapter_number: input.chapterNumber,
-        p_target_status: 'WAITING_FOR_CREDITS',
-        p_generation_job_id: input.jobId,
-      })
+      const { data: rawTransRes, error: transErr } = await single(
+        rpcOne(db, 'transition_commercial_generation_intent_v1', {
+          p_user_id: input.userId,
+          p_story_id: input.storyId,
+          p_chapter_number: input.chapterNumber,
+          p_target_status: 'WAITING_FOR_CREDITS',
+          p_generation_job_id: input.jobId,
+        }).execute(),
+      )
+      const transRes = ((rawTransRes as Record<string, unknown> | null)?.fn ?? rawTransRes) as {
+        ok?: boolean
+      } | null
 
       // Authoritative re-read proof
-      const { data: reReadIntent } = await db
-        .from('commercial_generation_intents')
-        .select('status, generation_job_id')
-        .eq('user_id', input.userId)
-        .eq('story_id', input.storyId)
-        .eq('chapter_number', input.chapterNumber)
-        .maybeSingle()
+      const { data: reReadIntent } = await single(
+        db
+          .selectFrom('commercial_generation_intents')
+          .select(['status', 'generation_job_id'])
+          .where('user_id', '=', input.userId)
+          .where('story_id', '=', input.storyId)
+          .where('chapter_number', '=', input.chapterNumber)
+          .execute(),
+      )
 
       if (!transErr && transRes && transRes.ok && reReadIntent?.status === 'WAITING_FOR_CREDITS' && reReadIntent?.generation_job_id === input.jobId) {
         return { status: 'WAITING_FOR_CREDITS', origin, reason: 'INSUFFICIENT_CREDITS' }

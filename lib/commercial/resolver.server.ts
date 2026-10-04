@@ -1,5 +1,5 @@
 import 'server-only'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb, single } from '@lakoku/db'
 
 export type CommercialAuthorizationStatus =
   | 'AUTHORIZED'
@@ -24,15 +24,22 @@ export async function resolveCommercialAuthorization(input: {
   storyId: string
   chapterNumber: number
 }): Promise<CommercialAuthorizationDecision> {
-  const db = createAdminClient()
+  const db = getDb()
 
   // 1. Fetch active pricing from DB with zero hardcoded fallbacks
-  const { data: pricingRows, error: pricingErr } = await db
-    .from('feature_credit_costs')
-    .select('feature_key, credits_required, is_active')
-    .in('feature_key', ['story_start', 'chapter_unlock'])
+  // RLS_AUDIT: feature_credit_costs konfigurasi harga aktif
+  let pricingRows: Array<{ feature_key: string; credits_required: number; is_active: boolean }> | null = null
+  try {
+    pricingRows = await db
+      .selectFrom('feature_credit_costs')
+      .select(['feature_key', 'credits_required', 'is_active'])
+      .where('feature_key', 'in', ['story_start', 'chapter_unlock'])
+      .execute()
+  } catch {
+    return { status: 'DENIED', origin: null, requiredCredits: 0, reason: 'INTERNAL_CONFIG_ERROR' }
+  }
 
-  if (pricingErr || !pricingRows) {
+  if (!pricingRows || pricingRows.length === 0) {
     return { status: 'DENIED', origin: null, requiredCredits: 0, reason: 'INTERNAL_CONFIG_ERROR' }
   }
 
@@ -44,11 +51,14 @@ export async function resolveCommercialAuthorization(input: {
   }
 
   // 2. Load story
-  const { data: story, error: storyErr } = await db
-    .from('stories')
-    .select('id, owner_user_id, story_mode, commercial_origin, visibility')
-    .eq('id', input.storyId)
-    .maybeSingle()
+  // RLS_AUDIT: stories dibaca berdasarkan storyId
+  const { data: story, error: storyErr } = await single(
+    db
+      .selectFrom('stories')
+      .select(['id', 'owner_user_id', 'story_mode', 'commercial_origin', 'visibility'])
+      .where('id', '=', input.storyId)
+      .execute(),
+  )
 
   if (storyErr) {
     return { status: 'DENIED', origin: null, requiredCredits: 0, reason: 'INTERNAL_CONFIG_ERROR' }
@@ -72,11 +82,14 @@ export async function resolveCommercialAuthorization(input: {
 
   // Helper for STARTER_FREE identity validation against account_commercial_states
   async function verifyStarterIdentity(): Promise<CommercialAuthorizationDecision | null> {
-    const { data: accountState, error: accountErr } = await db
-      .from('account_commercial_states')
-      .select('starter_story_id, starter_claimed_at')
-      .eq('user_id', input.userId)
-      .maybeSingle()
+    // RLS_AUDIT: account_commercial_states validasi identitas starter per user_id
+    const { data: accountState, error: accountErr } = await single(
+      db
+        .selectFrom('account_commercial_states')
+        .select(['starter_story_id', 'starter_claimed_at'])
+        .where('user_id', '=', input.userId)
+        .execute(),
+    )
 
     if (accountErr) {
       return { status: 'DENIED', origin, requiredCredits: 0, reason: 'INTERNAL_CONFIG_ERROR' }
@@ -105,16 +118,19 @@ export async function resolveCommercialAuthorization(input: {
       if (input.chapterNumber === 1) {
         // Check exact active STORY_START reservation matching canonical ref: story-start:${userId}:${storyId}
         const canonicalRef = `story-start:${input.userId}:${input.storyId}`
-        const { data: res, error: resErr } = await db
-          .from('credit_reservations')
-          .select('ref, amount, status, expires_at, user_id, story_id, chapter_number, reservation_kind')
-          .eq('user_id', input.userId)
-          .eq('story_id', input.storyId)
-          .eq('chapter_number', 1)
-          .eq('reservation_kind', 'STORY_START')
-          .eq('status', 'ACTIVE')
-          .gt('expires_at', new Date().toISOString())
-          .maybeSingle()
+        // RLS_AUDIT: credit_reservations verifikasi reservasi story start per user_id dan story_id
+        const { data: res, error: resErr } = await single(
+          db
+            .selectFrom('credit_reservations')
+            .select(['ref', 'amount', 'status', 'expires_at', 'user_id', 'story_id', 'chapter_number', 'reservation_kind'])
+            .where('user_id', '=', input.userId)
+            .where('story_id', '=', input.storyId)
+            .where('chapter_number', '=', 1)
+            .where('reservation_kind', '=', 'STORY_START')
+            .where('status', '=', 'ACTIVE')
+            .where('expires_at', '>', new Date())
+            .execute(),
+        )
 
         if (resErr) {
           return { status: 'DENIED', origin, requiredCredits: storyStartPrice, reason: 'INTERNAL_CONFIG_ERROR' }
@@ -154,16 +170,19 @@ export async function resolveCommercialAuthorization(input: {
     if (origin === 'STARTER_FREE' || origin === 'PAID_START' || origin === 'LEGACY_GRANDFATHERED') {
       // Check exact active CHAPTER_UNLOCK reservation matching canonical ref: chapter-reservation:${userId}:${storyId}:${chapterNumber}
       const canonicalRef = `chapter-reservation:${input.userId}:${input.storyId}:${input.chapterNumber}`
-      const { data: res, error: resErr } = await db
-        .from('credit_reservations')
-        .select('ref, amount, status, expires_at, user_id, story_id, chapter_number, reservation_kind')
-        .eq('user_id', input.userId)
-        .eq('story_id', input.storyId)
-        .eq('chapter_number', input.chapterNumber)
-        .eq('reservation_kind', 'CHAPTER_UNLOCK')
-        .eq('status', 'ACTIVE')
-        .gt('expires_at', new Date().toISOString())
-        .maybeSingle()
+      // RLS_AUDIT: credit_reservations verifikasi reservasi chapter unlock per user_id, story_id, chapter_number
+      const { data: res, error: resErr } = await single(
+        db
+          .selectFrom('credit_reservations')
+          .select(['ref', 'amount', 'status', 'expires_at', 'user_id', 'story_id', 'chapter_number', 'reservation_kind'])
+          .where('user_id', '=', input.userId)
+          .where('story_id', '=', input.storyId)
+          .where('chapter_number', '=', input.chapterNumber)
+          .where('reservation_kind', '=', 'CHAPTER_UNLOCK')
+          .where('status', '=', 'ACTIVE')
+          .where('expires_at', '>', new Date())
+          .execute(),
+      )
 
       if (resErr) {
         return { status: 'DENIED', origin, requiredCredits: chapterUnlockPrice, reason: 'INTERNAL_CONFIG_ERROR' }

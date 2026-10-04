@@ -3,7 +3,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ createAdminClient: vi.fn() }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.createAdminClient }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.createAdminClient,
+    getDb: () => mocks.createAdminClient(),
+    rpcOne: (client: any, name: string, args: any) => ({
+      execute: async () => {
+        const res = await client.rpc(name, args)
+        if (res?.error) throw new Error(res.error.message || String(res.error))
+        return [res?.data]
+      },
+    }),
+  }
+})
 
 import {
   recordGenerationAttempt,
@@ -15,25 +29,38 @@ function makeAdminClient(options: {
   insertError?: { message: string } | null
   rpcError?: { message: string } | null
 } = {}) {
-  const limit = vi.fn().mockResolvedValue({
-    data: [{ seq: 7 }],
-    error: options.readError ?? null,
-  })
-  const query = {
-    select: vi.fn(),
-    eq: vi.fn(),
-    order: vi.fn(),
-    limit,
-  }
-  query.select.mockReturnValue(query)
-  query.eq.mockReturnValue(query)
-  query.order.mockReturnValue(query)
-
-  const insert = vi.fn().mockResolvedValue({ error: options.insertError ?? null })
-  const from = vi.fn().mockImplementation(() => ({ ...query, insert }))
+  const from = vi.fn()
   const rpc = vi.fn().mockResolvedValue({ data: null, error: options.rpcError ?? null })
 
-  return { client: { from, rpc }, from, insert, rpc }
+  const selectFrom = vi.fn((table: string) => {
+    from(table)
+    const builder: any = {
+      select: vi.fn(() => builder),
+      where: vi.fn(() => builder),
+      orderBy: vi.fn(() => builder),
+      limit: vi.fn(() => builder),
+      execute: vi.fn(async () => {
+        if (options.readError) throw new Error(options.readError.message)
+        return [{ seq: 7 }]
+      }),
+    }
+    return builder
+  })
+
+  const insertInto = vi.fn((table: string) => {
+    from(table)
+    const builder: any = {
+      values: vi.fn(() => builder),
+      execute: vi.fn(async () => {
+        if (options.insertError) throw new Error(options.insertError.message)
+        return []
+      }),
+    }
+    return builder
+  })
+
+  const client = { from, rpc, selectFrom, insertInto }
+  return { client, from, insert: insertInto, rpc }
 }
 
 const baseAttempt = {

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   claimAndRunGenerationJobById: vi.fn(),
   after: vi.fn(),
   adminFactory: vi.fn(),
+  getDb: vi.fn(),
   proposeMystery: vi.fn(),
   proposeWorld: vi.fn(),
 }))
@@ -62,6 +63,14 @@ vi.mock('next/server', () => ({
 vi.mock('@/lib/supabase/admin', () => ({
   createAdminClient: mocks.adminFactory,
 }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: mocks.getDb,
+  }
+})
 
 import type { StoryBibleDraft } from '@/lib/authoring/schema'
 
@@ -108,37 +117,61 @@ function ownerQuery(
 ) {
   const chapterExists = opts?.chapterExists ?? false
   const activeLease = opts?.activeLease ?? false
-  return {
-    client: {
-      from: vi.fn((table: string) => {
-        const builder: Record<string, unknown> = {}
-        const chain = () => builder
-        builder.select = vi.fn(chain)
-        builder.eq = vi.fn(chain)
-        builder.gt = vi.fn(chain)
-        builder.limit = vi.fn(chain)
-        builder.maybeSingle = vi.fn(async () => {
-          if (table === 'stories') {
-            return { data: owner ? { id: 'story-a' } : null, error: null }
+  const client = {
+    from: vi.fn((table: string) => {
+      const builder: Record<string, unknown> = {}
+      const chain = () => builder
+      builder.select = vi.fn(chain)
+      builder.eq = vi.fn(chain)
+      builder.gt = vi.fn(chain)
+      builder.limit = vi.fn(chain)
+      builder.maybeSingle = vi.fn(async () => {
+        if (table === 'stories') {
+          return { data: owner ? { id: 'story-a' } : null, error: null }
+        }
+        if (table === 'chapters') {
+          return {
+            data: chapterExists ? { number: 1 } : null,
+            error: null,
           }
-          if (table === 'chapters') {
-            return {
-              data: chapterExists ? { number: 1 } : null,
-              error: null,
-            }
+        }
+        if (table === 'generation_leases') {
+          return {
+            data: activeLease ? { id: 'lease-1' } : null,
+            error: null,
           }
-          if (table === 'generation_leases') {
-            return {
-              data: activeLease ? { id: 'lease-1' } : null,
-              error: null,
-            }
-          }
-          return { data: null, error: null }
-        })
-        return builder
-      }),
-    },
+        }
+        return { data: null, error: null }
+      })
+      return builder
+    }),
   }
+
+  const kysely = {
+    selectFrom: vi.fn((table: string) => {
+      const builder: Record<string, unknown> = {}
+      const chain = () => builder
+      builder.select = vi.fn(chain)
+      builder.where = vi.fn(chain)
+      builder.limit = vi.fn(chain)
+      builder.execute = vi.fn(async () => {
+        if (table === 'stories') {
+          return owner ? [{ id: 'story-a' }] : []
+        }
+        if (table === 'chapters') {
+          return chapterExists ? [{ number: 1 }] : []
+        }
+        if (table === 'generation_leases') {
+          return activeLease ? [{ id: 'lease-1' }] : []
+        }
+        return []
+      })
+      return builder
+    }),
+  }
+  mocks.getDb.mockReturnValue(kysely)
+
+  return { client, kysely }
 }
 
 beforeEach(() => {

@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb, result, single } from '@lakoku/db'
 import { queryStoryForUser } from '@/lib/api/queries'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
 import { GENERATION_ATTEMPT_EVENT } from '@/lib/observability/telemetry'
@@ -90,28 +90,35 @@ function isReviewRequiredOutcome(outcome: unknown): boolean {
 }
 
 async function chapterExists(storyId: string, chapterNumber: number): Promise<boolean> {
-  const admin = createAdminClient()
-  const { data, error } = await admin
-    .from('chapters')
-    .select('number')
-    .eq('story_id', storyId)
-    .eq('number', chapterNumber)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: chapters_public_read
+  const { data, error } = await single(
+    db
+      .selectFrom('chapters')
+      .select('number')
+      .where('story_id', '=', storyId)
+      .where('number', '=', chapterNumber)
+      .limit(1)
+      .execute(),
+  )
   if (error) throw new ChapterStatusError('INTERNAL_ERROR')
   return data != null
 }
 
 async function hasActiveLease(storyId: string, chapterNumber: number): Promise<boolean> {
-  const admin = createAdminClient()
-  const { data, error } = await admin
-    .from('generation_leases')
-    .select('id')
-    .eq('story_id', storyId)
-    .eq('chapter_number', chapterNumber)
-    .eq('status', 'ACTIVE')
-    .gt('expires_at', new Date().toISOString())
-    .limit(1)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: generation_leases_service_only
+  const { data, error } = await single(
+    db
+      .selectFrom('generation_leases')
+      .select('id')
+      .where('story_id', '=', storyId)
+      .where('chapter_number', '=', chapterNumber)
+      .where('status', '=', 'ACTIVE')
+      .where('expires_at', '>', new Date())
+      .limit(1)
+      .execute(),
+  )
   if (error) throw new ChapterStatusError('INTERNAL_ERROR')
   return data != null
 }
@@ -133,38 +140,46 @@ async function activeJobState(
   chapterNumber: number,
   identity?: GenerationAttemptIdentity | null,
 ): Promise<ActiveJobState> {
-  const admin = createAdminClient()
-  const { data, error } = await admin
-    .from('generation_jobs')
-    .select('status, available_at, id, correlation_id')
-    .eq('story_id', storyId)
-    .eq('chapter_number', chapterNumber)
-    .in('generation_kind', ['personalized', 'standard'])
-    .in('status', ['QUEUED', 'RUNNING', 'RETRY_WAIT'])
-    .order('updated_at', { ascending: false })
-    .limit(5)
-  if (error) {
-    // Missing relation / not deployed → treat as no durable job (legacy path).
+  try {
+    const db = getDb()
+    // RLS_AUDIT: generation_jobs_service_only
+    const { data, error } = await result(
+      db
+        .selectFrom('generation_jobs')
+        .select(['status', 'available_at', 'id', 'correlation_id'])
+        .where('story_id', '=', storyId)
+        .where('chapter_number', '=', chapterNumber)
+        .where('generation_kind', 'in', ['personalized', 'standard'])
+        .where('status', 'in', ['QUEUED', 'RUNNING', 'RETRY_WAIT'])
+        .orderBy('updated_at', 'desc')
+        .limit(5)
+        .execute(),
+    )
+    if (error) {
+      // Missing relation / not deployed → treat as no durable job (legacy path).
+      return { kind: 'none' }
+    }
+    const rows = (data ?? []) as Array<{
+      status?: unknown
+      id?: unknown
+      correlation_id?: unknown
+    }>
+    const row = identity
+      ? rows.find((candidate) => candidate.correlation_id === identity.correlationId
+        && (identity.attemptId === null || candidate.id === identity.attemptId))
+      : rows[0]
+    if (!row) return { kind: 'none' }
+    const status = String(row.status ?? '')
+    if (status === 'RUNNING') return { kind: 'running' }
+    if (status === 'QUEUED') return { kind: 'queued' }
+    if (status === 'RETRY_WAIT') {
+      // Future available_at still counts as an active (scheduled) job.
+      return { kind: 'retry_scheduled' }
+    }
+    return { kind: 'none' }
+  } catch {
     return { kind: 'none' }
   }
-  const rows = (Array.isArray(data) ? data : data ? [data] : []) as Array<{
-    status?: unknown
-    id?: unknown
-    correlation_id?: unknown
-  }>
-  const row = identity
-    ? rows.find((candidate) => candidate.correlation_id === identity.correlationId
-      && (identity.attemptId === null || candidate.id === identity.attemptId))
-    : rows[0]
-  if (!row) return { kind: 'none' }
-  const status = String(row.status ?? '')
-  if (status === 'RUNNING') return { kind: 'running' }
-  if (status === 'QUEUED') return { kind: 'queued' }
-  if (status === 'RETRY_WAIT') {
-    // Future available_at still counts as an active (scheduled) job.
-    return { kind: 'retry_scheduled' }
-  }
-  return { kind: 'none' }
 }
 
 async function latestExactFailedAttempt(
@@ -172,16 +187,18 @@ async function latestExactFailedAttempt(
   chapterNumber: number,
   opts?: { identity?: GenerationAttemptIdentity | null },
 ): Promise<boolean> {
-  const admin = createAdminClient()
-  // Indexed path: story_events(story_id, seq). Filter exact chapter + outcome in app.
-  // Include both attempt review failures and runtime failures.
-  const { data, error } = await admin
-    .from('story_events')
-    .select('seq, type, payload, created_at')
-    .eq('story_id', storyId)
-    .in('type', [GENERATION_ATTEMPT_EVENT, GENERATION_RUNTIME_FAILED_EVENT])
-    .order('seq', { ascending: false })
-    .limit(50)
+  const db = getDb()
+  // RLS_AUDIT: story_events_service_only
+  const { data, error } = await result(
+    db
+      .selectFrom('story_events')
+      .select(['seq', 'type', 'payload', 'created_at'])
+      .where('story_id', '=', storyId)
+      .where('type', 'in', [GENERATION_ATTEMPT_EVENT, GENERATION_RUNTIME_FAILED_EVENT])
+      .orderBy('seq', 'desc')
+      .limit(50)
+      .execute(),
+  )
   if (error) throw new ChapterStatusError('INTERNAL_ERROR')
 
   const identity = opts?.identity ?? null
@@ -247,17 +264,21 @@ export async function getChapterStatusForUser(input: {
   // never replaces requested identity or proves liveness by itself.
   let hasMatchingCheckpoint = false
   try {
-    const admin = createAdminClient()
-    const { data: checkpoints } = await admin
-      .from('chapter_generation_checkpoints')
-      .select('attempt_id, correlation_id, status')
-      .eq('story_id', storyId)
-      .eq('chapter_number', chapterNumber)
-      .in('status', ['PROSE_READY', 'QUEUED_CHOICES', 'RUNNING_CHOICES', 'CHOICES_RETRY_WAIT'])
-      .gt('expires_at', new Date().toISOString())
-      .order('updated_at', { ascending: false })
-      .limit(5)
-    const rows = (Array.isArray(checkpoints) ? checkpoints : checkpoints ? [checkpoints] : []) as Array<{
+    const db = getDb()
+    // RLS_AUDIT: chapter_generation_checkpoints_service_only
+    const { data: checkpoints } = await result(
+      db
+        .selectFrom('chapter_generation_checkpoints')
+        .select(['attempt_id', 'correlation_id', 'status'])
+        .where('story_id', '=', storyId)
+        .where('chapter_number', '=', chapterNumber)
+        .where('status', 'in', ['PROSE_READY', 'QUEUED_CHOICES', 'RUNNING_CHOICES', 'CHOICES_RETRY_WAIT'])
+        .where('expires_at', '>', new Date())
+        .orderBy('updated_at', 'desc')
+        .limit(5)
+        .execute(),
+    )
+    const rows = (checkpoints ?? []) as Array<{
       attempt_id?: unknown
       correlation_id?: unknown
     }>

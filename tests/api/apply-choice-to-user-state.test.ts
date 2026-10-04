@@ -4,11 +4,19 @@ import type { ChoiceOutcome } from '@/packages/contracts/src/reader'
 const mocks = vi.hoisted(() => ({
   cookieFactory: vi.fn(),
   adminFactory: vi.fn(),
+  getDb: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.cookieFactory }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    getDb: mocks.getDb,
+  }
+})
 vi.mock('@/lib/supabase/env', () => ({
   requireSupabaseAnonKey: () => 'anon-key',
   requireSupabaseUrl: () => 'https://example.supabase.co',
@@ -36,6 +44,49 @@ describe('applyChoiceToUserState', () => {
         })),
       },
     })
+
+    const mockDb = {
+      selectFrom: vi.fn((table: string) => {
+        const b: Record<string, unknown> = {}
+        b.select = vi.fn(() => b)
+        b.where = vi.fn(() => b)
+        b.limit = vi.fn(() => b)
+        b.execute = vi.fn(async () => {
+          if (table === 'reader_states') {
+            return [{
+              status: 'BERJALAN',
+              current_chapter: 1,
+              jejak: [],
+              ending_name: null,
+              route_state: { truth: 0, risk: 0, secrecy: 0, empathy: 0 },
+              choice_history: [],
+            }]
+          }
+          if (table === 'choice_outcomes') {
+            return [{
+              effect_json: {
+                routeDeltas: { risk: 5, truth: 2, empathy: -1 },
+                trustDeltas: { 'char:pak-darsono': -2 },
+                flagsSet: { met_penagih: true },
+              },
+            }]
+          }
+          return []
+        })
+        return b
+      }),
+      insertInto: vi.fn((table: string) => {
+        const b: Record<string, unknown> = {}
+        b.values = vi.fn((vals: Record<string, unknown>) => {
+          upsertPayload = vals
+          return b
+        })
+        b.onConflict = vi.fn(() => b)
+        b.execute = vi.fn(async () => [])
+        return b
+      }),
+    }
+    mocks.getDb.mockReturnValue(mockDb)
 
     mocks.adminFactory.mockReturnValue({
       from: vi.fn((table: string) => {

@@ -10,7 +10,7 @@
  */
 import 'server-only'
 import { after } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb, single } from '@lakoku/db'
 import { ensureReaderStateStarted } from '@/lib/api/user-state'
 import {
   AUTHORING_AUTH_REQUIRED_ERROR,
@@ -50,33 +50,39 @@ function fail(err: unknown): StartChapterFailure {
     : message === STORY_NOT_FOUND_ERROR
       ? STORY_NOT_FOUND_ERROR
       : publicAuthoringErrorMessage(err)
-  console.log('START_CHAPTER_FAILED', { publicMessage })
   return { ok: false, error: publicMessage }
 }
 
 async function chapterExists(storyId: string, chapterNumber: number): Promise<boolean> {
-  const admin = createAdminClient()
-  const { data, error } = await admin
-    .from('chapters')
-    .select('number')
-    .eq('story_id', storyId)
-    .eq('number', chapterNumber)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: chapters_public_read
+  const { data, error } = await single(
+    db
+      .selectFrom('chapters')
+      .select('number')
+      .where('story_id', '=', storyId)
+      .where('number', '=', chapterNumber)
+      .limit(1)
+      .execute(),
+  )
   if (error) throw new Error('INTERNAL_STATUS_CHECK_FAILED')
   return data != null
 }
 
 async function hasActiveLease(storyId: string, chapterNumber: number): Promise<boolean> {
-  const admin = createAdminClient()
-  const { data, error } = await admin
-    .from('generation_leases')
-    .select('id')
-    .eq('story_id', storyId)
-    .eq('chapter_number', chapterNumber)
-    .eq('status', 'ACTIVE')
-    .gt('expires_at', new Date().toISOString())
-    .limit(1)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: generation_leases_service_only
+  const { data, error } = await single(
+    db
+      .selectFrom('generation_leases')
+      .select('id')
+      .where('story_id', '=', storyId)
+      .where('chapter_number', '=', chapterNumber)
+      .where('status', '=', 'ACTIVE')
+      .where('expires_at', '>', new Date())
+      .limit(1)
+      .execute(),
+  )
   if (error) throw new Error('INTERNAL_STATUS_CHECK_FAILED')
   return data != null
 }
@@ -87,13 +93,17 @@ async function resolveTriggerChoiceForChapter(
   chapterNumber: number,
 ): Promise<string | null> {
   if (chapterNumber <= 1) return null
-  const admin = createAdminClient()
-  const { data: reader } = await admin
-    .from('reader_states')
-    .select('choice_history')
-    .eq('user_id', userId)
-    .eq('story_id', storyId)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: reader_states_owner_all
+  const { data: reader } = await single(
+    db
+      .selectFrom('reader_states')
+      .select('choice_history')
+      .where('user_id', '=', userId)
+      .where('story_id', '=', storyId)
+      .limit(1)
+      .execute(),
+  )
   if (!reader || !Array.isArray(reader.choice_history)) return null
   const previousChapterNumber = chapterNumber - 1
   const matchingEntry = (reader.choice_history as Array<Record<string, unknown>>).find((entry) => {
@@ -126,13 +136,17 @@ export async function startOwnedChapterGeneration(
       return { ok: false, error: 'chapterNumber wajib bilangan bulat >= 1.' }
     }
 
-    const admin = createAdminClient()
-    const { data: ownedStory, error: ownerError } = await admin
-      .from('stories')
-      .select('id')
-      .eq('id', storyId)
-      .eq('owner_user_id', user.id)
-      .maybeSingle()
+    const db = getDb()
+    // RLS_AUDIT: stories_owner_read
+    const { data: ownedStory, error: ownerError } = await single(
+      db
+        .selectFrom('stories')
+        .select('id')
+        .where('id', '=', storyId)
+        .where('owner_user_id', '=', user.id)
+        .limit(1)
+        .execute(),
+    )
     if (ownerError || !ownedStory) {
       return { ok: false, error: STORY_NOT_FOUND_ERROR }
     }

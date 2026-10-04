@@ -1,13 +1,11 @@
 /**
  * Pembacaan status lease generasi (server-only, operasional).
  *
- * `generation_leases` memakai RLS TANPA policy baca publik, jadi client anon
- * tidak bisa membacanya. Status ketersediaan bab (untuk layar reader-safe)
- * karenanya dibaca lewat admin client di sisi server, dan HANYA dipetakan ke
- * enum kasar `ChapterAvailability` — tak ada detail teknis yang keluar.
+ * Status ketersediaan bab dibaca menggunakan Kysely di sisi server,
+ * dan HANYA dipetakan ke boolean (isChapterPreparing) — tak ada detail teknis yang keluar.
  */
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single } from '@lakoku/db'
 
 /**
  * true bila ada lease generasi AKTIF (belum kedaluwarsa) untuk (story, bab):
@@ -19,16 +17,19 @@ export async function isChapterPreparing(
   chapterNumber: number,
 ): Promise<boolean> {
   try {
-    const supabase = createAdminClient()
-    const { data, error } = await supabase
-      .from('generation_leases')
-      .select('id, expires_at')
-      .eq('story_id', storyId)
-      .eq('chapter_number', chapterNumber)
-      .eq('status', 'ACTIVE')
-      .gt('expires_at', new Date().toISOString())
-      .limit(1)
-      .maybeSingle()
+    const db = getDb()
+    // RLS_AUDIT: generation_leases_service_only
+    const { data, error } = await single(
+      db
+        .selectFrom('generation_leases')
+        .select(['id', 'expires_at'])
+        .where('story_id', '=', storyId)
+        .where('chapter_number', '=', chapterNumber)
+        .where('status', '=', 'ACTIVE')
+        .where('expires_at', '>', new Date())
+        .limit(1)
+        .execute(),
+    )
     if (error) return false
     return data != null
   } catch {

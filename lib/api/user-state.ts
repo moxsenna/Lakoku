@@ -1,8 +1,8 @@
 /**
- * Reader-state per-user (Supabase Auth + RLS).
+ * Reader-state per-user (Supabase Auth + Kysely Data Access).
  *
- * Semua akses memakai client ber-cookies (sesi pengguna), sehingga RLS
- * `reader_states` (pemilik-saja) yang menegakkan keamanan — bukan kode ini.
+ * Auth/sesi tetap GoTrue (Supabase Auth). Akses data memakai Kysely dengan
+ * guard aplikasi eksplisit (RLS_AUDIT: reader_states_owner_all).
  *
  * Aturan progres: MONOTONIC. current_chapter tidak pernah mundur.
  * Tamu (tanpa sesi) tidak tersentuh file ini — mereka pakai state demo global.
@@ -12,13 +12,24 @@ import { cache } from 'react'
 import { headers } from 'next/headers'
 import { createClient as createSupabaseJsClient, type User } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
 import { requireSupabaseAnonKey, requireSupabaseUrl } from '@/lib/supabase/env'
+import { getDb, result, single } from '@lakoku/db'
+import type { Json } from '@/lib/supabase/db-types'
 import { ChoiceHistoryEntrySchema, type ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
 import { mergeChoiceEffect, RouteChoiceEffectSchema } from '@/lib/story-engine/route-state'
 import type { JejakItem, ChoiceOutcome } from './types'
 
 export const READER_STATE_PUBLIC_COLUMNS = 'user_id,story_id,status,current_chapter,jejak,ending_name,updated_at' as const
+
+export const READER_STATE_COLS = [
+  'user_id',
+  'story_id',
+  'status',
+  'current_chapter',
+  'jejak',
+  'ending_name',
+  'updated_at',
+] as const
 
 export interface ReaderState {
   storyId: string
@@ -110,15 +121,23 @@ export const getSessionUser = cache(async function getSessionUser(): Promise<Use
   return getUserFromBearerAuthorization()
 })
 
-/** Seluruh reader-state milik user saat ini (RLS membatasi ke pemiliknya). */
+/** Seluruh reader-state milik user saat ini. */
 export const getReaderStates = cache(async function getReaderStates(): Promise<Map<string, ReaderState>> {
-  const { supabase, user } = await getSessionContext()
+  const { user } = await getSessionContext()
   if (!user) return new Map()
 
-  const { data, error } = await supabase.from('reader_states').select(READER_STATE_PUBLIC_COLUMNS)
+  const db = getDb()
+  // RLS_AUDIT: reader_states_owner_all
+  const { data, error } = await result(
+    db
+      .selectFrom('reader_states')
+      .select(READER_STATE_COLS)
+      .where('user_id', '=', user.id)
+      .execute(),
+  )
   if (error) throw new Error(`getReaderStates: ${error.message}`)
   return new Map(
-    (data as ReaderStateRow[]).map((r) => [r.story_id, toState(r)]),
+    ((data ?? []) as unknown as ReaderStateRow[]).map((r) => [r.story_id, toState(r)]),
   )
 })
 
@@ -126,16 +145,22 @@ export const getReaderStates = cache(async function getReaderStates(): Promise<M
 export const getReaderState = cache(async function getReaderState(
   storyId: string,
 ): Promise<ReaderState | null> {
-  const { supabase, user } = await getSessionContext()
+  const { user } = await getSessionContext()
   if (!user) return null
 
-  const { data, error } = await supabase
-    .from('reader_states')
-    .select(READER_STATE_PUBLIC_COLUMNS)
-    .eq('story_id', storyId)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: reader_states_owner_all
+  const { data, error } = await single(
+    db
+      .selectFrom('reader_states')
+      .select(READER_STATE_COLS)
+      .where('user_id', '=', user.id)
+      .where('story_id', '=', storyId)
+      .limit(1)
+      .execute(),
+  )
   if (error) throw new Error(`getReaderState: ${error.message}`)
-  return data ? toState(data as ReaderStateRow) : null
+  return data ? toState(data as unknown as ReaderStateRow) : null
 })
 
 /**
@@ -144,8 +169,7 @@ export const getReaderState = cache(async function getReaderState(
  * Dipakai mode baca-ulang: label pada `jejak` bisa usang bila bab pernah
  * ditulis ulang, sedangkan `choiceId` (`chapter-N-choice-M`) stabil.
  *
- * `choice_history` kolom internal (tidak di-grant ke `authenticated`), jadi
- * dibaca via admin client dan dikunci ke user pemilik sesi + story ini saja.
+ * `choice_history` kolom internal, dikunci ke user pemilik sesi + story ini saja.
  */
 export const getPreviousChoiceId = cache(async function getPreviousChoiceId(
   storyId: string,
@@ -154,13 +178,17 @@ export const getPreviousChoiceId = cache(async function getPreviousChoiceId(
   const { user } = await getSessionContext()
   if (!user) return null
 
-  const { createAdminClient } = await import('@/lib/supabase/admin')
-  const { data, error } = await createAdminClient()
-    .from('reader_states')
-    .select('choice_history')
-    .eq('user_id', user.id)
-    .eq('story_id', storyId)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: reader_states_owner_all
+  const { data, error } = await single(
+    db
+      .selectFrom('reader_states')
+      .select('choice_history')
+      .where('user_id', '=', user.id)
+      .where('story_id', '=', storyId)
+      .limit(1)
+      .execute(),
+  )
   if (error || !data) return null
 
   const history = Array.isArray(data.choice_history)
@@ -180,23 +208,37 @@ export async function ensureReaderStateStarted(
   chapterNumber = 1,
   statusHint: ReaderState['status'] = 'BERJALAN',
 ): Promise<void> {
-  const { supabase, user } = await getSessionContext()
+  const { user } = await getSessionContext()
   if (!user) return
 
   const existing = await getReaderState(storyId)
   const status = maxStatus(existing?.status ?? 'BARU', statusHint)
   const currentChapter = Math.max(existing?.currentChapter ?? 0, chapterNumber)
-  const { error } = await supabase.from('reader_states').upsert(
-    {
-      user_id: user.id,
-      story_id: storyId,
-      status,
-      current_chapter: currentChapter,
-      jejak: existing?.jejak ?? [],
-      ending_name: existing?.endingName ?? null,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'user_id,story_id' },
+
+  const db = getDb()
+  // RLS_AUDIT: reader_states_owner_all
+  const { error } = await result(
+    db
+      .insertInto('reader_states')
+      .values({
+        user_id: user.id,
+        story_id: storyId,
+        status,
+        current_chapter: currentChapter,
+        jejak: (existing?.jejak ?? []) as unknown as Json,
+        ending_name: existing?.endingName ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .onConflict((oc) =>
+        oc.columns(['user_id', 'story_id']).doUpdateSet({
+          status,
+          current_chapter: currentChapter,
+          jejak: (existing?.jejak ?? []) as unknown as Json,
+          ending_name: existing?.endingName ?? null,
+          updated_at: new Date().toISOString(),
+        }),
+      )
+      .execute(),
   )
   if (error) throw new Error(`ensureReaderStateStarted: ${error.message}`)
 }
@@ -224,8 +266,6 @@ function buildEffectSummary(effect: unknown) {
  * - current_chapter maju monotonic (tidak pernah mundur).
  * - jejak di-append hanya jika bab itu belum tercatat (anti duplikat repeat-tap).
  * - isEnding => status SELESAI + endingName dari konsekuensi.
- * - choice_history & route_state diperbarui via admin client (service_role)
- *   agar loadContinuationContextForChapter menemukan triggerChoiceId pada bab N>1.
  * No-op untuk tamu.
  */
 export async function applyChoiceToUserState(
@@ -237,13 +277,17 @@ export async function applyChoiceToUserState(
   const { user } = await getSessionContext()
   if (!user) return
 
-  const admin = createAdminClient()
-  const { data: stateData, error: stateError } = await admin
-    .from('reader_states')
-    .select('status, current_chapter, jejak, ending_name, route_state, choice_history')
-    .eq('user_id', user.id)
-    .eq('story_id', storyId)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: reader_states_owner_all
+  const { data: stateData, error: stateError } = await single(
+    db
+      .selectFrom('reader_states')
+      .select(['status', 'current_chapter', 'jejak', 'ending_name', 'route_state', 'choice_history'])
+      .where('user_id', '=', user.id)
+      .where('story_id', '=', storyId)
+      .limit(1)
+      .execute(),
+  )
   if (stateError) throw new Error(`applyChoiceToUserState: ${stateError.message}`)
 
   // --- Rekonsiliasi jejak: gabung per-bab, keputusan terbaru menang, urut naik.
@@ -260,13 +304,17 @@ export async function applyChoiceToUserState(
   )
 
   // --- Rekonsiliasi choice_history & route_state
-  const { data: outcomeData } = await admin
-    .from('choice_outcomes')
-    .select('effect_json')
-    .eq('story_id', storyId)
-    .eq('chapter_number', chapterNumber)
-    .eq('choice_id', outcome.choiceId)
-    .maybeSingle()
+  // RLS_AUDIT: choice_outcomes_public_read
+  const { data: outcomeData } = await single(
+    db
+      .selectFrom('choice_outcomes')
+      .select('effect_json')
+      .where('story_id', '=', storyId)
+      .where('chapter_number', '=', chapterNumber)
+      .where('choice_id', '=', outcome.choiceId)
+      .limit(1)
+      .execute(),
+  )
 
   const effectJson = outcomeData?.effect_json ?? {}
   const nextRouteState = mergeChoiceEffect(stateData?.route_state, effectJson)
@@ -323,19 +371,33 @@ export async function applyChoiceToUserState(
           : (stateData?.ending_name ?? null))
       : null
 
-  const { error } = await admin.from('reader_states').upsert(
-    {
-      user_id: user.id,
-      story_id: storyId,
-      status,
-      current_chapter: nextChapter,
-      jejak,
-      ending_name: endingName,
-      route_state: nextRouteState,
-      choice_history: choiceHistory,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'user_id,story_id' },
+  // RLS_AUDIT: reader_states_owner_all
+  const { error } = await result(
+    db
+      .insertInto('reader_states')
+      .values({
+        user_id: user.id,
+        story_id: storyId,
+        status,
+        current_chapter: nextChapter,
+        jejak: jejak as unknown as Json,
+        ending_name: endingName,
+        route_state: nextRouteState as unknown as Json,
+        choice_history: choiceHistory as unknown as Json,
+        updated_at: new Date().toISOString(),
+      })
+      .onConflict((oc) =>
+        oc.columns(['user_id', 'story_id']).doUpdateSet({
+          status,
+          current_chapter: nextChapter,
+          jejak: jejak as unknown as Json,
+          ending_name: endingName,
+          route_state: nextRouteState as unknown as Json,
+          choice_history: choiceHistory as unknown as Json,
+          updated_at: new Date().toISOString(),
+        }),
+      )
+      .execute(),
   )
   if (error) throw new Error(`applyChoiceToUserState: ${error.message}`)
 }

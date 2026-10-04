@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   cookieFactory: vi.fn(),
   adminFactory: vi.fn(),
+  getDb: vi.fn(),
   queryStoryForUser: vi.fn(),
   getGenerationProgress: vi.fn(),
   getChapterStatusForUser: vi.fn(),
@@ -11,7 +12,14 @@ const mocks = vi.hoisted(() => ({
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.cookieFactory }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.adminFactory }))
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: mocks.getDb,
+  }
+})
 vi.mock('@/lib/runtime/generation-concurrency', () => ({
   getGenerationProgress: mocks.getGenerationProgress,
 }))
@@ -123,7 +131,66 @@ function createAdminDb(input: {
       return builder
     }),
   }
-  return { client, calls }
+
+  const kysely = {
+    selectFrom: vi.fn((table: string) => {
+      const filters: Array<[string, unknown]> = []
+      const builder: Record<string, unknown> = {}
+      builder.select = vi.fn((...args: unknown[]) => {
+        const colArg = args[0]
+        const formatted = Array.isArray(colArg) ? colArg.join(', ') : colArg
+        calls.push({ table, method: 'select', args: [formatted], filters: [...filters] })
+        return builder
+      })
+      builder.where = vi.fn((...args: unknown[]) => {
+        filters.push(['where', args])
+        calls.push({ table, method: 'where', args, filters: [...filters] })
+        return builder
+      })
+      builder.orderBy = vi.fn((...args: unknown[]) => {
+        calls.push({ table, method: 'order', args, filters: [...filters] })
+        return builder
+      })
+      builder.limit = vi.fn((...args: unknown[]) => {
+        calls.push({ table, method: 'limit', args, filters: [...filters] })
+        return builder
+      })
+      builder.execute = vi.fn(async () => {
+        calls.push({ table, method: 'execute', args: [], filters: [...filters] })
+        if (table === 'chapters') {
+          if (input.chapter?.error) throw new Error(input.chapter.error.message)
+          return input.chapter?.data ? [input.chapter.data] : []
+        }
+        if (table === 'generation_leases') {
+          if (input.leases?.error) throw new Error(input.leases.error.message)
+          return input.leases?.data ? [input.leases.data] : []
+        }
+        if (table === 'generation_jobs') {
+          if (input.jobs?.error) throw new Error(input.jobs.error.message)
+          const data = input.jobs?.data
+          if (data == null) return []
+          return Array.isArray(data) ? data : [data]
+        }
+        if (table === 'chapter_generation_checkpoints') {
+          if (input.checkpoint?.error) throw new Error(input.checkpoint.error.message)
+          const data = input.checkpoint?.data
+          if (data == null) return []
+          return Array.isArray(data) ? data : [data]
+        }
+        if (table === 'story_events') {
+          if (input.events?.error) throw new Error(input.events.error.message)
+          const data = input.events?.data
+          if (data == null) return []
+          return Array.isArray(data) ? data : [data]
+        }
+        return []
+      })
+      return builder
+    }),
+  }
+  mocks.getDb.mockReturnValue(kysely)
+
+  return { client, kysely, calls }
 }
 
 function request(storyId = STORY_A, chapterNumber = 2) {

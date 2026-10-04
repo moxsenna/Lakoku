@@ -9,7 +9,8 @@
  * Migration-on-read: saat membaca dari DB, V1 profile di-migrate ke V2
  * sebelum dikembalikan. Penyimpanan selalu V2 JSON.
  */
-import { createClient } from '@/lib/supabase/server'
+import { getDb, single, result } from '@lakoku/db'
+import type { Json } from '@/lib/supabase/db-types'
 import {
   normalizeTasteProfile,
   type TasteProfileV2,
@@ -36,13 +37,17 @@ function parseRow(row: TasteProfileRow | null): TasteProfileV2 | null {
 export async function getTasteProfileForUser(
   userId: string,
 ): Promise<TasteProfileV2 | null> {
-  const supabase = await createClient()
+  const db = getDb()
 
-  const { data, error } = await supabase
-    .from('reader_taste_profiles')
-    .select('taste_json')
-    .eq('user_id', userId)
-    .maybeSingle()
+  // RLS_AUDIT: reader_taste_profiles_select_self
+  const { data, error } = await single(
+    db
+      .selectFrom('reader_taste_profiles')
+      .select('taste_json')
+      .where('user_id', '=', userId)
+      .limit(1)
+      .execute(),
+  )
 
   if (error) {
     console.error('[taste-profile] getTasteProfileForUser error:', error.message)
@@ -61,19 +66,26 @@ export async function saveTasteProfileForUser(
   userId: string,
   profile: TasteProfileV2,
 ): Promise<void> {
-  const supabase = await createClient()
+  const db = getDb()
   const toStore = normalizeTasteProfile(profile)
 
-  const { error } = await supabase
-    .from('reader_taste_profiles')
-    .upsert(
-      {
+  // RLS_AUDIT: reader_taste_profiles_insert_self, reader_taste_profiles_update_self
+  const { error } = await result(
+    db
+      .insertInto('reader_taste_profiles')
+      .values({
         user_id: userId,
-        taste_json: toStore as unknown as Record<string, unknown>,
+        taste_json: toStore as unknown as Json,
         updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'user_id' },
-    )
+      })
+      .onConflict((oc) =>
+        oc.column('user_id').doUpdateSet({
+          taste_json: toStore as unknown as Json,
+          updated_at: new Date().toISOString(),
+        }),
+      )
+      .execute(),
+  )
 
   if (error) {
     console.error('[taste-profile] saveTasteProfileForUser error:', error.message)

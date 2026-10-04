@@ -138,6 +138,34 @@ function createQueryClient(
       calls.push({ method: 'selectFrom', args: [table] })
       return createKyselyBuilder(table)
     }),
+    insertInto: vi.fn((table: string) => {
+      calls.push({ method: 'insertInto', args: [table] })
+      let payload: unknown = null
+      const ib: Record<string, unknown> = {}
+      ib.values = vi.fn((vals: unknown) => {
+        payload = vals
+        calls.push({ method: 'values', args: [vals] })
+        return ib
+      })
+      ib.onConflict = vi.fn((ocCallback: unknown) => {
+        calls.push({ method: 'upsert', args: [payload] })
+        const ocHelper = {
+          columns: vi.fn(() => ocHelper),
+          column: vi.fn(() => ocHelper),
+          doUpdateSet: vi.fn(() => ocHelper),
+        }
+        if (typeof ocCallback === 'function') {
+          ocCallback(ocHelper)
+        }
+        return ib
+      })
+      ib.execute = vi.fn(async () => {
+        calls.push({ method: 'execute', args: [] })
+        const res = nextResult()
+        return res.data ? (Array.isArray(res.data) ? res.data : [res.data]) : []
+      })
+      return ib
+    }),
   }
   mocks.getDb.mockReturnValue(kysely)
 

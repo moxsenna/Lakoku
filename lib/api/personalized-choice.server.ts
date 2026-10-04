@@ -195,7 +195,7 @@ function mapRpcError(message: string): PersonalizedChoiceError {
   return new PersonalizedChoiceError(code ?? 'INTERNAL_ERROR')
 }
 
-async function authorizeParentWithCookieRls(userId: string, storyId: string): Promise<void> {
+async function authorizeParentStory(userId: string, storyId: string): Promise<void> {
   const cookieClient = await createCookieClient()
   const { data: { user }, error: userError } = await cookieClient.auth.getUser()
   if (userError || user?.id !== userId) {
@@ -483,6 +483,6 @@ export async function applyPersonalizedChoiceAuthorized(
 export async function applyPersonalizedChoice(
   input: ApplyPersonalizedChoiceInput,
 ): Promise<ApplyPersonalizedChoiceResult> {
-  await authorizeParentWithCookieRls(input.userId, input.storyId)
+  await authorizeParentStory(input.userId, input.storyId)
   return applyPersonalizedChoiceAuthorized(input)
 }

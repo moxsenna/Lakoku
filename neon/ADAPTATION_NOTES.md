@@ -37,7 +37,7 @@ Transformer `scripts/adapt-supabase-migrations.mjs` mentransformasi migrasi Supa
 ### A. `20260707000000_core_runtime_baseline.sql`
 - **Asal:** Berisi blok PL/pgSQL raksasa `do $baseline_guard$ ... execute $baseline_ddl$ ... $baseline_guard$;` yang menguji integritas skema pre-history Supabase lama.
 - **Masalah di Neon:** Pada Neon kosong (`neondb`), guard memeriksa hak akses fungsi pada role `anon`/`authenticated`/`service_role` via `has_function_privilege()`. Karena role tersebut tidak ada di Neon, eksekusi menghasilkan error fatal `role "anon" does not exist`. Selain itu, string DDL di dalam `$baseline_ddl$` mengandung puluhan statement `GRANT/REVOKE` dan `OWNER TO "postgres"`.
-- **Keputusan:** Transformer mengekstrak isi DDL murni dari dalam `$baseline_ddl$`, menyalurkannya melalui filter `stripStatements`, membuang kebijakan RLS/grants/owner, serta menambahkan preamble inisialisasi skema kompatibilitas (`extensions`, ekstensi `btree_gist` dan `pgcrypto`, skema `auth`, stub `auth.uid()`, dan tabel kompatibilitas `auth.users`).
+- **Keputusan:** Transformer mengekstrak isi DDL murni dari dalam `$baseline_ddl$`, menyalurkannya melalui filter `stripStatements`, membuang kebijakan RLS/grants/owner, serta menambahkan preamble inisialisasi skema kompatibilitas (`extensions`, ekstensi `btree_gist` dan `pgcrypto`, skema `auth`, stub `auth.uid()` yang membaca GUC `request.jwt.claim.sub`, dan tabel kompatibilitas `auth.users`).
 
 ### B. `20260718060000_harden_legacy_lifecycle_function_acl.sql`
 - **Isi Sumber:** Hanya memuat statement `REVOKE ALL ON FUNCTION ... FROM public, anon, authenticated;` dan `GRANT EXECUTE ... TO service_role;`.
@@ -72,7 +72,7 @@ Audit mendalam terhadap seluruh 11 kemunculan `auth.users` di dalam body fungsi 
 ### Kebijakan Compat Shim (`neon/bootstrap/001-auth-compat.sql`)
 1. Ditempatkan di direktori bootstrap: `neon/bootstrap/001-auth-compat.sql`.
 2. Dijalankan otomatis oleh `scripts/neon-migrate.mjs` sebelum seluruh file `neon/migrations/*.sql`.
-3. Memastikan skema `auth`, fungsi stub `auth.uid()`, dan tabel `auth.users` dengan 11 kolom (`id`, `instance_id`, `email`, `encrypted_password`, `email_confirmed_at`, `raw_app_meta_data`, `raw_user_meta_data`, `role`, `aud`, `created_at`, `updated_at`) tersedia secara idempoten (`IF NOT EXISTS` / `OR REPLACE`).
+3. Memastikan skema `auth`, fungsi stub `auth.uid()`, dan tabel `auth.users` dengan 11 kolom (`id`, `instance_id`, `email`, `encrypted_password`, `email_confirmed_at`, `raw_app_meta_data`, `raw_user_meta_data`, `role`, `aud`, `created_at`, `updated_at`) tersedia secara idempoten (`IF NOT EXISTS` / `OR REPLACE`). Berbeda dari asumsi awal bahwa stub `auth.uid()` mengembalikan `null` statis, stub dikonfigurasi membaca GUC `request.jwt.claim.sub` (`select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid`), sehingga mengembalikan UUID pengguna saat disetel oleh kode aplikasi (`generation-job-enqueue.server.ts` dan `personalized-choice.server.ts`) dan mengembalikan `null` saat tidak disetel (fresh session).
 4. Semua fungsi LIVE tidak memerlukan perubahan logika body karena seluruh join bersifat non-intrusif (`LEFT JOIN` atau pengecekan ID) dan kompatibel penuh dengan identitas UUID pengguna. Tidak ditemukan `public.profiles` di repositori Lakoku. Tidak ditemukan fungsi LIVE yang melakukan `INSERT INTO auth.users`.
 
 ### Handoff ke Task 4 (clone data)

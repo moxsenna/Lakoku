@@ -3,7 +3,9 @@ CREATE EXTENSION IF NOT EXISTS "btree_gist" WITH SCHEMA "extensions";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";
 
 CREATE SCHEMA IF NOT EXISTS "auth";
-CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT null::uuid $$;
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$
+  SELECT nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
+$$;
 CREATE TABLE IF NOT EXISTS auth.users (
   id uuid PRIMARY KEY,
   instance_id uuid,

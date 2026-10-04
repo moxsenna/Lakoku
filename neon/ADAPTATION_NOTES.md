@@ -75,6 +75,15 @@ Audit mendalam terhadap seluruh 11 kemunculan `auth.users` di dalam body fungsi 
 3. Memastikan skema `auth`, fungsi stub `auth.uid()`, dan tabel `auth.users` dengan 11 kolom (`id`, `instance_id`, `email`, `encrypted_password`, `email_confirmed_at`, `raw_app_meta_data`, `raw_user_meta_data`, `role`, `aud`, `created_at`, `updated_at`) tersedia secara idempoten (`IF NOT EXISTS` / `OR REPLACE`).
 4. Semua fungsi LIVE tidak memerlukan perubahan logika body karena seluruh join bersifat non-intrusif (`LEFT JOIN` atau pengecekan ID) dan kompatibel penuh dengan identitas UUID pengguna. Tidak ditemukan `public.profiles` di repositori Lakoku. Tidak ditemukan fungsi LIVE yang melakukan `INSERT INTO auth.users`.
 
+### Handoff ke Task 4 (clone data)
+
+- `scripts/neon-clone-data.mjs` WAJIB mengisi `auth.users` (compat) — dump harus menyertakan `--table=auth.users` dari schema auth Supabase, selain `public` + `private`.
+- Alasan eksplisit: dua fungsi LIVE melakukan hard existence check terhadap `auth.users`:
+  - `clone_premium_story_instance` (`neon/migrations/20260728010000_plot_debt_closure_ledger.sql:524`) — raise `INVALID_OWNER` bila user tidak ada.
+  - `grant_welcome_credit_v1` (`neon/migrations/20260804010000_account_commercial_entitlements.sql:215`) — raise `user % not found` bila tidak ada.
+- Tanpa populasi ini, clone cerita premium dan welcome credit gagal di produksi.
+- Catatan juga: kolom compat `auth.users` yang wajib terisi minimal: `id`, `email`, `encrypted_password`, `raw_user_meta_data`, `email_confirmed_at`, `created_at` (sekaligus persiapan import user Better Auth di Fase B).
+
 ---
 
 ## 4. Hasil Verifikasi Gate

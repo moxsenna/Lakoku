@@ -1,6 +1,6 @@
 import 'server-only'
 import { createHash, createSign } from 'node:crypto'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb } from '@lakoku/db'
 import {
   buildPushData,
   type PushAudience,
@@ -158,30 +158,31 @@ async function sendToTokensRaw(
   return outcome
 }
 
-interface DeviceRow {
-  fcm_token: string
-}
-
 async function tokensForAudience(audience: PushAudience): Promise<string[]> {
-  const admin = createAdminClient()
+  const db = getDb()
   if (audience.startsWith('user:')) {
     const userId = audience.slice('user:'.length)
-    const { data } = await admin
-      .from('push_devices')
+    // RLS_AUDIT: push_devices difilter per user_id
+    const rows = await db
+      .selectFrom('push_devices')
       .select('fcm_token')
-      .eq('user_id', userId)
-    return ((data ?? []) as DeviceRow[]).map((r) => r.fcm_token)
+      .where('user_id', '=', userId)
+      .execute()
+    return rows.map((r) => r.fcm_token)
   }
-  let query = admin.from('push_devices').select('fcm_token')
-  if (audience === 'web' || audience === 'android') query = query.eq('platform', audience)
-  const { data } = await query
-  return ((data ?? []) as DeviceRow[]).map((r) => r.fcm_token)
+  let query = db.selectFrom('push_devices').select('fcm_token')
+  if (audience === 'web' || audience === 'android') {
+    query = query.where('platform', '=', audience)
+  }
+  const rows = await query.execute()
+  return rows.map((r) => r.fcm_token)
 }
 
 async function pruneTokens(tokens: string[]): Promise<void> {
   if (tokens.length === 0) return
-  const admin = createAdminClient()
-  await admin.from('push_devices').delete().in('fcm_token', tokens)
+  const db = getDb()
+  // RLS_AUDIT: push_devices dihapus berdasarkan token yang tidak valid
+  await db.deleteFrom('push_devices').where('fcm_token', 'in', tokens).execute()
 }
 
 async function writeLog(entry: {
@@ -195,8 +196,9 @@ async function writeLog(entry: {
   successCount: number
   failureCount: number
 }): Promise<void> {
-  const admin = createAdminClient()
-  await admin.from('push_log').insert({
+  const db = getDb()
+  // RLS_AUDIT: push_log mencatat riwayat pengiriman notifikasi push
+  await db.insertInto('push_log').values({
     audience: entry.audience,
     title: entry.title,
     body: entry.body,
@@ -206,7 +208,7 @@ async function writeLog(entry: {
     status: entry.status,
     success_count: entry.successCount,
     failure_count: entry.failureCount,
-  })
+  }).execute()
 }
 
 export interface DispatchResult extends SendOutcome {
@@ -237,12 +239,14 @@ export async function dispatchPush(input: {
   }
 
   if (input.dedupeKey) {
-    const admin = createAdminClient()
-    const { data: existing } = await admin
-      .from('push_log')
+    const db = getDb()
+    // RLS_AUDIT: push_log pemeriksaan dedupe_key unik
+    const existing = await db
+      .selectFrom('push_log')
       .select('id')
-      .eq('dedupe_key', input.dedupeKey)
+      .where('dedupe_key', '=', input.dedupeKey)
       .limit(1)
+      .execute()
     if (existing && existing.length > 0) {
       return { successCount: 0, failureCount: 0, invalidTokens: [], status: 'sent' }
     }

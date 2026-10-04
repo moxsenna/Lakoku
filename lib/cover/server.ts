@@ -1,5 +1,5 @@
 import 'server-only'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb, rpcOne, single } from '@lakoku/db'
 import { coverKeyFromPublicUrl, resolveStoryCover } from '@/lib/cover/url'
 
 /**
@@ -31,14 +31,18 @@ type ReserveRpcPayload = {
 
 /** Tahan Lakoin sebelum memanggil penyedia. */
 export async function reserveStoryCover(userId: string, storyId: string): Promise<ReserveCoverResult> {
-  const db = createAdminClient()
-  const { data, error } = await db.rpc('reserve_story_cover_v1', {
-    p_user_id: userId,
-    p_story_id: storyId,
-  })
+  // RLS_AUDIT: reserve_story_cover_v1 memvalidasi kepemilikan cerita dan menahan saldo pengguna
+  const db = getDb()
+  const { data, error } = await single(
+    rpcOne(db, 'reserve_story_cover_v1', {
+      p_user_id: userId,
+      p_story_id: storyId,
+    }).execute()
+  )
   if (error) throw new Error(`reserveStoryCover: ${error.message}`)
 
-  const payload = data as ReserveRpcPayload
+  const raw = (data as Record<string, unknown> | null)?.fn ?? data
+  const payload = raw as ReserveRpcPayload
   if (payload.ok && payload.ref && typeof payload.cost === 'number' && typeof payload.attempt === 'number') {
     return {
       ok: true,
@@ -60,11 +64,15 @@ export type CaptureCoverResult = 'ok' | 'duplicate' | 'expired' | 'not_found' | 
 
 /** Tagih reservasi setelah gambar benar-benar tersimpan. */
 export async function captureStoryCover(ref: string): Promise<CaptureCoverResult> {
-  const db = createAdminClient()
-  const { data, error } = await db.rpc('capture_story_cover_reservation_v1', { p_ref: ref })
+  // RLS_AUDIT: capture_story_cover_reservation_v1 menyelesaikan tagihan reservasi
+  const db = getDb()
+  const { data, error } = await single(
+    rpcOne(db, 'capture_story_cover_reservation_v1', { p_ref: ref }).execute()
+  )
   if (error) throw new Error(`captureStoryCover: ${error.message}`)
 
-  const status = String(data)
+  const raw = (data as Record<string, unknown> | null)?.fn ?? data
+  const status = String(raw)
   if (
     status === 'ok' || status === 'duplicate' || status === 'expired' ||
     status === 'not_found' || status === 'not_active' || status === 'wrong_kind'
@@ -83,8 +91,9 @@ export async function captureStoryCover(ref: string): Promise<CaptureCoverResult
  */
 export async function releaseStoryCover(ref: string): Promise<void> {
   try {
-    const db = createAdminClient()
-    await db.rpc('release_credit_reservation_v1', { p_ref: ref })
+    // RLS_AUDIT: release_credit_reservation_v1 mengembalikan reservasi yang gagal
+    const db = getDb()
+    await rpcOne(db, 'release_credit_reservation_v1', { p_ref: ref }).execute()
   } catch (error) {
     console.error('releaseStoryCover gagal', { ref, error })
   }
@@ -97,16 +106,17 @@ export async function releaseStoryCover(ref: string): Promise<void> {
  * stories.cover selalu konsisten menyimpan key.
  */
 export async function setStoryCover(storyId: string, userId: string, coverPath: string): Promise<boolean> {
-  const db = createAdminClient()
+  const db = getDb()
   const cover = coverKeyFromPublicUrl(coverPath) ?? coverPath
-  const { error, count } = await db
-    .from('stories')
-    .update({ cover }, { count: 'exact' })
-    .eq('id', storyId)
-    .eq('owner_user_id', userId)
+  // RLS_AUDIT: stories diupdate oleh pemilik cerita (owner_user_id = userId)
+  const result = await db
+    .updateTable('stories')
+    .set({ cover })
+    .where('id', '=', storyId)
+    .where('owner_user_id', '=', userId)
+    .executeTakeFirst()
 
-  if (error) throw new Error(`setStoryCover: ${error.message}`)
-  return (count ?? 0) > 0
+  return Number(result.numUpdatedRows) > 0
 }
 
 export type StoryCoverCandidate = {
@@ -124,13 +134,16 @@ export async function recordStoryCoverCandidate(
   payload: { url: string; preset?: string },
 ): Promise<void> {
   try {
-    const db = createAdminClient()
-    const { error } = await db.rpc('record_story_cover_candidate_v1', {
-      p_story_id: storyId,
-      p_user_id: userId,
-      p_url: payload.url,
-      p_preset: payload.preset || 'sinematik',
-    })
+    // RLS_AUDIT: record_story_cover_candidate_v1 menyimpan kandidat sampul cerita
+    const db = getDb()
+    const { error } = await single(
+      rpcOne(db, 'record_story_cover_candidate_v1', {
+        p_story_id: storyId,
+        p_user_id: userId,
+        p_url: payload.url,
+        p_preset: payload.preset || 'sinematik',
+      }).execute()
+    )
     if (error) {
       console.error('recordStoryCoverCandidate rpc error', { storyId, error: error.message })
     }
@@ -145,19 +158,19 @@ export async function getStoryCoverCandidates(
   userId: string,
 ): Promise<StoryCoverCandidate[]> {
   try {
-    const db = createAdminClient()
-    const { data, error } = await db
-      .from('story_cover_candidates')
-      .select('id,url,preset,created_at,expires_at')
-      .eq('story_id', storyId)
-      .eq('user_id', userId)
-      .gt('expires_at', new Date().toISOString())
-      .order('created_at', { ascending: false })
+    // RLS_AUDIT: story_cover_candidates difilter per story_id dan user_id
+    const db = getDb()
+    const rows = await db
+      .selectFrom('story_cover_candidates')
+      .select(['id', 'url', 'preset', 'created_at', 'expires_at'])
+      .where('story_id', '=', storyId)
+      .where('user_id', '=', userId)
+      .where('expires_at', '>', new Date())
+      .orderBy('created_at', 'desc')
       .limit(3)
+      .execute()
 
-    if (error || !data) return []
-
-    return data.map((r) => ({
+    return rows.map((r) => ({
       id: String(r.id),
       url: resolveStoryCover(String(r.url)),
       preset: String(r.preset),
@@ -182,12 +195,15 @@ export type StoryCoverPolicy = {
  */
 export async function getStoryCoverPolicy(): Promise<StoryCoverPolicy> {
   try {
-    const db = createAdminClient()
-    const { data } = await db
-      .from('feature_credit_costs')
-      .select('credits_required,is_active,metadata')
-      .eq('feature_key', 'story_cover')
-      .maybeSingle()
+    // RLS_AUDIT: feature_credit_costs konfigurasi publik biaya fitur
+    const db = getDb()
+    const { data } = await single(
+      db
+        .selectFrom('feature_credit_costs')
+        .select(['credits_required', 'is_active', 'metadata'])
+        .where('feature_key', '=', 'story_cover')
+        .execute()
+    )
 
     if (!data || !data.is_active) return { cost: 0, enabled: false }
     const meta = data.metadata as { basePromptOverride?: string } | null

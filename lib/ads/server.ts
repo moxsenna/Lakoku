@@ -1,4 +1,4 @@
-import { createAdminClient } from '@lakoku/db'
+import { getDb, rpcOne, single } from '@lakoku/db'
 import { getMissionPolicy } from '@/lib/missions/server'
 import { shouldRenderAdsense } from '@/lib/missions/policy'
 
@@ -23,9 +23,13 @@ export async function resolveAdSlot(args: {
   let hasPaidTopup = false
   if (args.userId) {
     try {
-      const db = createAdminClient()
-      const { data } = await db.rpc('has_paid_topup_v1', { p_user_id: args.userId })
-      hasPaidTopup = Boolean(data)
+      // RLS_AUDIT: has_paid_topup_v1 membaca status pembayaran topup per p_user_id
+      const db = getDb()
+      const { data } = await single(
+        rpcOne(db, 'has_paid_topup_v1', { p_user_id: args.userId }).execute()
+      )
+      const raw = (data as Record<string, unknown> | null)?.fn ?? data
+      hasPaidTopup = Boolean(raw)
     } catch {
       hasPaidTopup = false
     }

@@ -1,6 +1,8 @@
 import 'server-only'
 import type { z } from 'zod'
-import { createClient } from '@/lib/supabase/server'
+import { getDb, result, rpcRows } from '@lakoku/db'
+import type { Kysely } from 'kysely'
+import type { Database } from '@/lib/supabase/db-types'
 import type { AdminGenerationFilters } from '@/lib/admin/generation-filters'
 import {
   AdminGenerationCostBreakdownSchema,
@@ -37,11 +39,7 @@ export class AdminGenerationQueryError extends Error {
   }
 }
 
-type RpcResult = Promise<{ data: unknown; error: unknown }>
-type GenerationRpcClient = {
-  rpc: (name: string, args: Record<string, unknown>) => RpcResult
-}
-
+export type GenerationDbClient = Kysely<Database>
 type RpcSchema<T> = z.ZodType<T>
 
 function commonArgs(filters: AdminGenerationFilters): Record<string, unknown> {
@@ -65,35 +63,32 @@ function commonArgs(filters: AdminGenerationFilters): Record<string, unknown> {
 }
 
 async function queryRpc<T>(
-  client: GenerationRpcClient,
+  client: GenerationDbClient,
   name: string,
   args: Record<string, unknown>,
   schema: RpcSchema<T>,
 ): Promise<T> {
-  let result: Awaited<RpcResult>
+  let rows: unknown
   try {
-    result = await client.rpc(name, args)
-  } catch {
+    const { data, error } = await result(rpcRows(client, name, args).execute())
+    if (error) throw new AdminGenerationQueryError('QUERY_FAILED')
+    rows = data
+  } catch (err) {
+    if (err instanceof AdminGenerationQueryError) throw err
     throw new AdminGenerationQueryError('QUERY_FAILED')
   }
 
-  if (result.error) throw new AdminGenerationQueryError('QUERY_FAILED')
-
-  const parsed = schema.safeParse(result.data)
+  const parsed = schema.safeParse(rows)
   if (!parsed.success) throw new AdminGenerationQueryError('INVALID_RESPONSE')
   return parsed.data
 }
 
-async function cookieClient(): Promise<GenerationRpcClient> {
-  return await createClient() as unknown as GenerationRpcClient
-}
-
 export async function loadAdminGenerationOverview(
   filters: AdminGenerationFilters,
-  client?: GenerationRpcClient,
+  client?: GenerationDbClient,
 ): Promise<AdminGenerationOverviewRow[]> {
   return queryRpc(
-    client ?? await cookieClient(),
+    client ?? getDb(),
     'admin_generation_overview_v1',
     commonArgs(filters),
     AdminGenerationOverviewSchema,
@@ -102,10 +97,10 @@ export async function loadAdminGenerationOverview(
 
 export async function loadAdminGenerationTimeseries(
   filters: AdminGenerationFilters,
-  client?: GenerationRpcClient,
+  client?: GenerationDbClient,
 ): Promise<AdminGenerationTimeseriesRow[]> {
   return queryRpc(
-    client ?? await cookieClient(),
+    client ?? getDb(),
     'admin_generation_timeseries_v1',
     commonArgs(filters),
     AdminGenerationTimeseriesSchema,
@@ -114,10 +109,10 @@ export async function loadAdminGenerationTimeseries(
 
 export async function loadAdminModelPerformance(
   filters: AdminGenerationFilters,
-  client?: GenerationRpcClient,
+  client?: GenerationDbClient,
 ): Promise<AdminModelPerformanceRow[]> {
   return queryRpc(
-    client ?? await cookieClient(),
+    client ?? getDb(),
     'admin_model_performance_v1',
     commonArgs(filters),
     AdminModelPerformanceSchema,
@@ -126,10 +121,10 @@ export async function loadAdminModelPerformance(
 
 export async function loadAdminGenerationProviderCalls(
   filters: AdminGenerationFilters,
-  client?: GenerationRpcClient,
+  client?: GenerationDbClient,
 ): Promise<AdminGenerationProviderCall[]> {
   return queryRpc(
-    client ?? await cookieClient(),
+    client ?? getDb(),
     'admin_generation_provider_calls_v2',
     {
       ...commonArgs(filters),
@@ -143,10 +138,10 @@ export async function loadAdminGenerationProviderCalls(
 
 export async function loadAdminGenerationJobDetail(
   jobId: string,
-  client?: GenerationRpcClient,
+  client?: GenerationDbClient,
 ): Promise<AdminGenerationJobDetailRow[]> {
   return queryRpc(
-    client ?? await cookieClient(),
+    client ?? getDb(),
     'admin_generation_job_detail_v1',
     { p_job_id: jobId },
     AdminGenerationJobDetailSchema,
@@ -155,10 +150,10 @@ export async function loadAdminGenerationJobDetail(
 
 export async function loadAdminGenerationDataQuality(
   filters: Pick<AdminGenerationFilters, 'from' | 'to'>,
-  client?: GenerationRpcClient,
+  client?: GenerationDbClient,
 ): Promise<AdminGenerationDataQualityRow[]> {
   return queryRpc(
-    client ?? await cookieClient(),
+    client ?? getDb(),
     'admin_generation_data_quality_v1',
     { p_from: filters.from, p_to: filters.to },
     AdminGenerationDataQualitySchema,
@@ -167,10 +162,10 @@ export async function loadAdminGenerationDataQuality(
 
 export async function loadAdminGenerationErrorDistribution(
   filters: AdminGenerationFilters,
-  client?: GenerationRpcClient,
+  client?: GenerationDbClient,
 ): Promise<AdminGenerationErrorDistributionRow[]> {
   return queryRpc(
-    client ?? await cookieClient(),
+    client ?? getDb(),
     'admin_generation_error_distribution_v1',
     commonArgs(filters),
     AdminGenerationErrorDistributionSchema,
@@ -179,10 +174,10 @@ export async function loadAdminGenerationErrorDistribution(
 
 export async function loadAdminGenerationCostBreakdown(
   filters: AdminGenerationFilters,
-  client?: GenerationRpcClient,
+  client?: GenerationDbClient,
 ): Promise<AdminGenerationCostBreakdownRow[]> {
   return queryRpc(
-    client ?? await cookieClient(),
+    client ?? getDb(),
     'admin_generation_cost_breakdown_v1',
     { ...commonArgs(filters), p_limit: 100 },
     AdminGenerationCostBreakdownSchema,
@@ -202,11 +197,12 @@ export interface AdminGenerationDashboard {
 
 export async function loadAdminGenerationDashboard(
   filters: AdminGenerationFilters,
+  client?: GenerationDbClient,
 ): Promise<AdminGenerationDashboard> {
-  const client = await cookieClient()
+  const db = client ?? getDb()
   const jobDetailPromise = filters.jobId === null
     ? Promise.resolve(null)
-    : loadAdminGenerationJobDetail(filters.jobId, client)
+    : loadAdminGenerationJobDetail(filters.jobId, db)
 
   const [
     overview,
@@ -218,14 +214,14 @@ export async function loadAdminGenerationDashboard(
     errorDistribution,
     costBreakdown,
   ] = await Promise.all([
-    loadAdminGenerationOverview(filters, client),
-    loadAdminGenerationTimeseries(filters, client),
-    loadAdminModelPerformance(filters, client),
-    loadAdminGenerationProviderCalls(filters, client),
+    loadAdminGenerationOverview(filters, db),
+    loadAdminGenerationTimeseries(filters, db),
+    loadAdminModelPerformance(filters, db),
+    loadAdminGenerationProviderCalls(filters, db),
     jobDetailPromise,
-    loadAdminGenerationDataQuality(filters, client),
-    loadAdminGenerationErrorDistribution(filters, client),
-    loadAdminGenerationCostBreakdown(filters, client),
+    loadAdminGenerationDataQuality(filters, db),
+    loadAdminGenerationErrorDistribution(filters, db),
+    loadAdminGenerationCostBreakdown(filters, db),
   ])
 
   return {

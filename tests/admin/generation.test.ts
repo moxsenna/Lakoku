@@ -3,11 +3,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   createClient: vi.fn(),
   createAdminClient: vi.fn(),
+  getDb: vi.fn(),
+  rpcRows: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.createClient }))
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.createAdminClient }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.createAdminClient,
+    getDb: mocks.getDb,
+    rpcRows: mocks.rpcRows,
+  }
+})
 
 const UUID_A = '11111111-1111-4111-8111-111111111111'
 const FROM = '2026-07-17T12:00:00.000Z'
@@ -80,12 +90,30 @@ const overviewRows = ['USD', 'IDR'].map((currency) => ({
 
 function createRpcClient(results?: Partial<Record<string, { data: unknown; error: unknown }>>) {
   const rpc = vi.fn(async (name: string, _args: Record<string, unknown>) => {
-    return results?.[name] ?? {
+    const res = results?.[name] ?? {
       data: name === 'admin_generation_overview_v1' ? overviewRows : [],
       error: null,
     }
+    if (res.error) {
+      const err = new Error(
+        typeof res.error === 'object' && res.error !== null && 'message' in res.error
+          ? String((res.error as { message: unknown }).message)
+          : 'RPC error',
+      )
+      throw err
+    }
+    return res.data
   })
   return { rpc }
+}
+
+function wireMockDb(client: ReturnType<typeof createRpcClient>) {
+  mocks.getDb.mockReturnValue(client)
+  mocks.rpcRows.mockImplementation((_client: unknown, name: string, args: Record<string, unknown>) => {
+    return {
+      execute: vi.fn(async () => client.rpc(name, args)),
+    }
+  })
 }
 
 function createDashboardAdminClient() {
@@ -110,13 +138,16 @@ function createDashboardAdminClient() {
 beforeEach(() => {
   vi.clearAllMocks()
   vi.resetModules()
-  mocks.createClient.mockResolvedValue(createRpcClient())
+  const client = createRpcClient()
+  mocks.createClient.mockResolvedValue(client)
+  wireMockDb(client)
 })
 
 describe('admin generation RPC loaders', () => {
   it('maps filters to exact eight RPC signatures using cookie-scoped client only', async () => {
     const client = createRpcClient()
     mocks.createClient.mockResolvedValue(client)
+    wireMockDb(client)
     const generation = await import('@/lib/admin/generation')
 
     await generation.loadAdminGenerationOverview(filters)
@@ -143,19 +174,21 @@ describe('admin generation RPC loaders', () => {
       ['admin_generation_error_distribution_v1', commonArgs],
       ['admin_generation_cost_breakdown_v1', { ...commonArgs, p_limit: 100 }],
     ])
-    expect(mocks.createClient).toHaveBeenCalledTimes(8)
+    expect(mocks.getDb).toHaveBeenCalledTimes(8)
     expect(mocks.createAdminClient).not.toHaveBeenCalled()
   })
 
   it('loads dashboard RPCs concurrently through one cookie-scoped client', async () => {
     const pendingResolvers: Array<() => void> = []
-    const rpc = vi.fn((name: string) => new Promise<{ data: unknown; error: null }>((resolve) => {
-      pendingResolvers.push(() => resolve({
-        data: name === 'admin_generation_overview_v1' ? overviewRows : [],
-        error: null,
-      }))
+    const rpc = vi.fn((name: string, _args?: unknown) => new Promise<unknown>((resolve) => {
+      pendingResolvers.push(() => resolve(name === 'admin_generation_overview_v1' ? overviewRows : []))
     }))
-    mocks.createClient.mockResolvedValue({ rpc })
+    const client = { rpc }
+    mocks.createClient.mockResolvedValue(client)
+    mocks.getDb.mockReturnValue(client)
+    mocks.rpcRows.mockImplementation((_client: unknown, name: string, args: Record<string, unknown>) => ({
+      execute: vi.fn(async () => client.rpc(name, args)),
+    }))
     const { loadAdminGenerationDashboard } = await import('@/lib/admin/generation')
 
     const resultPromise = loadAdminGenerationDashboard(filters)
@@ -163,7 +196,7 @@ describe('admin generation RPC loaders', () => {
     pendingResolvers.forEach((resolve) => resolve())
     const result = await resultPromise
 
-    expect(mocks.createClient).toHaveBeenCalledTimes(1)
+    expect(mocks.getDb).toHaveBeenCalledTimes(1)
     expect(result.overview.map((row) => row.cost_currency)).toEqual(['USD', 'IDR'])
     expect(result.timeseries).toEqual([])
     expect(result.errorDistribution).toEqual([])
@@ -174,6 +207,7 @@ describe('admin generation RPC loaders', () => {
   it('omits job-detail RPC when no job filter exists', async () => {
     const client = createRpcClient()
     mocks.createClient.mockResolvedValue(client)
+    wireMockDb(client)
     const { loadAdminGenerationDashboard } = await import('@/lib/admin/generation')
 
     const result = await loadAdminGenerationDashboard({ ...filters, jobId: null })
@@ -183,12 +217,14 @@ describe('admin generation RPC loaders', () => {
   })
 
   it('maps DB failures to stable QUERY_FAILED without raw DB text or zero metrics', async () => {
-    mocks.createClient.mockResolvedValue(createRpcClient({
+    const client = createRpcClient({
       admin_generation_overview_v1: {
         data: null,
         error: { message: 'secret relation detail', code: 'P0001' },
       },
-    }))
+    })
+    mocks.createClient.mockResolvedValue(client)
+    wireMockDb(client)
     const {
       AdminGenerationQueryError,
       loadAdminGenerationOverview,
@@ -202,12 +238,14 @@ describe('admin generation RPC loaders', () => {
   })
 
   it('maps strict output mismatch to stable INVALID_RESPONSE', async () => {
-    mocks.createClient.mockResolvedValue(createRpcClient({
+    const client = createRpcClient({
       admin_generation_overview_v1: {
         data: [{ ...overviewRows[0], raw_error: 'secret' }],
         error: null,
       },
-    }))
+    })
+    mocks.createClient.mockResolvedValue(client)
+    wireMockDb(client)
     const { loadAdminGenerationOverview } = await import('@/lib/admin/generation')
 
     await expect(loadAdminGenerationOverview(filters)).rejects.toMatchObject({
@@ -219,12 +257,14 @@ describe('admin generation RPC loaders', () => {
 
   it('dashboard summary keeps generation failure visible while other metrics load', async () => {
     mocks.createAdminClient.mockReturnValue(createDashboardAdminClient())
-    mocks.createClient.mockResolvedValue(createRpcClient({
+    const client = createRpcClient({
       admin_generation_overview_v1: {
         data: null,
         error: { message: 'secret DB detail' },
       },
-    }))
+    })
+    mocks.createClient.mockResolvedValue(client)
+    wireMockDb(client)
     const { loadAdminDashboardMetrics } = await import('@/lib/admin/dashboard')
 
     const error = await loadAdminDashboardMetrics(new Date(TO)).catch((value) => value)

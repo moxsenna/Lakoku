@@ -1,6 +1,8 @@
 import 'server-only'
 import { z } from 'zod'
-import { createClient } from '@/lib/supabase/server'
+import { getDb, result, rpcRows } from '@lakoku/db'
+import type { Kysely } from 'kysely'
+import type { Database } from '@/lib/supabase/db-types'
 
 const MAX_WINDOW_MS = 60 * 60 * 1000
 
@@ -30,14 +32,9 @@ const MetadataRowSchema = z.object({
   correlation_id: z.string().uuid(),
 }).strict()
 
-type MetadataRpcClient = {
-  rpc: (name: 'find_generation_incident_metadata_v1', args: {
-    p_story_id: string
-    p_chapter_number: number
-    p_from: string
-    p_to: string
-  }) => Promise<{ data: unknown; error: unknown }>
-}
+export type MetadataDbClient =
+  | Kysely<Database>
+  | { rpc: (name: string, args?: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }> }
 
 export type GenerationIncidentMetadataResult =
   | { status: 'found'; captureId: string; correlationId: string }
@@ -51,32 +48,50 @@ function isOwnerRequiredError(error: unknown): boolean {
   return candidate.message === 'OWNER_REQUIRED'
     || candidate.details === 'OWNER_REQUIRED'
     || candidate.code === 'OWNER_REQUIRED'
+    || String(candidate.message).includes('OWNER_REQUIRED')
 }
 
 export async function findGenerationIncidentMetadata(
   lookup: z.input<typeof GenerationIncidentMetadataLookupSchema>,
-  deps: { client?: MetadataRpcClient } = {},
+  deps: { client?: MetadataDbClient } = {},
 ): Promise<GenerationIncidentMetadataResult> {
   const parsed = GenerationIncidentMetadataLookupSchema.parse(lookup)
-  const client = deps.client ?? await createClient() as unknown as MetadataRpcClient
+  const db = deps.client ?? getDb()
 
-  let result: { data: unknown; error: unknown }
+  let res: { data: unknown; error: { message: string; code?: string } | null }
   try {
-    result = await client.rpc('find_generation_incident_metadata_v1', {
-      p_story_id: parsed.storyId,
-      p_chapter_number: parsed.chapterNumber,
-      p_from: parsed.from,
-      p_to: parsed.to,
-    })
+    if ('rpc' in db) {
+      const rpcRes = await db.rpc('find_generation_incident_metadata_v1', {
+        p_story_id: parsed.storyId,
+        p_chapter_number: parsed.chapterNumber,
+        p_from: parsed.from,
+        p_to: parsed.to,
+      })
+      if (rpcRes.error) {
+        const errObj = rpcRes.error as { message?: string; code?: string }
+        res = { data: null, error: { message: String(errObj.message ?? 'RPC error'), code: errObj.code } }
+      } else {
+        res = { data: rpcRes.data, error: null }
+      }
+    } else {
+      res = await result(
+        rpcRows(db, 'find_generation_incident_metadata_v1', {
+          p_story_id: parsed.storyId,
+          p_chapter_number: parsed.chapterNumber,
+          p_from: parsed.from,
+          p_to: parsed.to,
+        }).execute(),
+      )
+    }
   } catch {
     return { status: 'unavailable' }
   }
 
-  if (result.error) {
-    return { status: isOwnerRequiredError(result.error) ? 'forbidden' : 'unavailable' }
+  if (res.error) {
+    return { status: isOwnerRequiredError(res.error) ? 'forbidden' : 'unavailable' }
   }
 
-  const rows = z.array(MetadataRowSchema).safeParse(result.data)
+  const rows = z.array(MetadataRowSchema).safeParse(res.data)
   if (!rows.success || rows.data.length > 1) return { status: 'unavailable' }
   if (rows.data.length === 0) return { status: 'not_found' }
 

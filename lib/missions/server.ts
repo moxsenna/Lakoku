@@ -1,4 +1,4 @@
-import { createAdminClient } from '@lakoku/db'
+import { getDb, rpcOne, single } from '@lakoku/db'
 import {
   DEFAULT_MISSION_POLICY,
   isMissionKey,
@@ -20,12 +20,15 @@ export interface DailyMissionsSnapshot {
 
 export async function getMissionPolicy(): Promise<MissionPolicy> {
   try {
-    const db = createAdminClient()
-    const { data, error } = await db
-      .from('mission_policy')
-      .select('*')
-      .eq('id', true)
-      .maybeSingle()
+    // RLS_AUDIT: mission_policy tabel konfigurasi publik singleton
+    const db = getDb()
+    const { data, error } = await single(
+      db
+        .selectFrom('mission_policy')
+        .selectAll()
+        .where('id', '=', true)
+        .execute()
+    )
 
     if (error || !data) {
       return DEFAULT_MISSION_POLICY
@@ -75,10 +78,14 @@ interface RawSnapshotPayload {
 }
 
 export async function getDailyMissions(userId: string): Promise<DailyMissionsSnapshot> {
-  const db = createAdminClient()
-  const { data, error } = await db.rpc('get_daily_missions_v1', { p_user_id: userId })
+  // RLS_AUDIT: get_daily_missions_v1 membaca snapshot misi pengguna p_user_id
+  const db = getDb()
+  const { data, error } = await single(
+    rpcOne(db, 'get_daily_missions_v1', { p_user_id: userId }).execute()
+  )
+  const rawData = ((data as Record<string, unknown> | null)?.fn ?? data) as RawSnapshotPayload | null
 
-  if (error || !data) {
+  if (error || !rawData) {
     const fallback = await getMissionPolicy()
     return {
       enabled: fallback.missionsEnabled,
@@ -97,7 +104,7 @@ export async function getDailyMissions(userId: string): Promise<DailyMissionsSna
     }
   }
 
-  const raw = data as RawSnapshotPayload
+  const raw = rawData
   const snapshotCurrency: 'lakoin' | 'tinta' =
     raw.currency === 'tinta' ? 'tinta' : 'lakoin'
   const missions: MissionView[] = []
@@ -148,11 +155,14 @@ export async function claimMission(
     }
   }
 
-  const db = createAdminClient()
-  const { data, error } = await db.rpc('claim_mission_v1', {
-    p_user_id: userId,
-    p_mission_key: missionKey,
-  })
+  // RLS_AUDIT: claim_mission_v1 memvalidasi & mengklaim hadiah misi p_user_id
+  const db = getDb()
+  const { data, error } = await single(
+    rpcOne(db, 'claim_mission_v1', {
+      p_user_id: userId,
+      p_mission_key: missionKey,
+    }).execute()
+  )
 
   if (error) {
     return {
@@ -162,7 +172,7 @@ export async function claimMission(
     }
   }
 
-  const status = data as string
+  const status = ((data as Record<string, unknown> | null)?.fn ?? data) as string
   if (status === 'ok') {
     return { ok: true, status: 'ok' }
   }
@@ -194,19 +204,22 @@ export async function recordAdMobSsv(args: {
   adUnit: string
   rewardAmount: number
 }): Promise<RecordSsvResult> {
-  const db = createAdminClient()
-  const { data, error } = await db.rpc('record_admob_ssv_v1', {
-    p_user_id: args.userId,
-    p_transaction_id: args.transactionId,
-    p_ad_unit: args.adUnit,
-    p_reward_amount: args.rewardAmount,
-  })
+  // RLS_AUDIT: record_admob_ssv_v1 mencatat verifikasi server side ad mob per user
+  const db = getDb()
+  const { data, error } = await single(
+    rpcOne(db, 'record_admob_ssv_v1', {
+      p_user_id: args.userId,
+      p_transaction_id: args.transactionId,
+      p_ad_unit: args.adUnit,
+      p_reward_amount: args.rewardAmount,
+    }).execute()
+  )
 
   if (error) {
     return { ok: false, status: 'error' }
   }
 
-  const status = data as string
+  const status = ((data as Record<string, unknown> | null)?.fn ?? data) as string
   if (status === 'valid') {
     return { ok: true, status: 'valid' }
   }
@@ -223,12 +236,13 @@ export async function recordAdMobRejection(args: {
   status: 'invalid_signature' | 'stale' | 'unknown_user'
 }): Promise<void> {
   try {
-    const db = createAdminClient()
-    await db.rpc('record_admob_rejection_v1', {
+    // RLS_AUDIT: record_admob_rejection_v1 audit kegagalan admob verifikasi
+    const db = getDb()
+    await rpcOne(db, 'record_admob_rejection_v1', {
       p_transaction_id: args.transactionId,
       p_user_id: args.userId,
       p_status: args.status,
-    })
+    }).execute()
   } catch {
     // Audit kegagalan best-effort, jangan menutupi respons HTTP asli
   }

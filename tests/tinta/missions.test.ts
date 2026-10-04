@@ -2,13 +2,48 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
-const mocks = vi.hoisted(() => ({
-  createAdminClient: vi.fn(),
-}))
+vi.mock('server-only', () => ({}))
 
-vi.mock('@lakoku/db', () => ({
-  createAdminClient: mocks.createAdminClient,
-}))
+const mocks = vi.hoisted(() => {
+  const mockRpc = vi.fn()
+  const mockSelectFrom = vi.fn()
+  const createAdminClient = vi.fn(() => ({
+    rpc: mockRpc,
+  }))
+  return {
+    createAdminClient,
+    getDb: vi.fn(() => ({
+      selectFrom: mockSelectFrom,
+    })),
+    mockRpc,
+    mockSelectFrom,
+  }
+})
+
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.createAdminClient,
+    getDb: mocks.getDb,
+    rpcOne: (_db: unknown, name: string, args: Record<string, unknown>) => ({
+      execute: async () => {
+        const adminClient = mocks.createAdminClient()
+        const rpcFn = adminClient?.rpc ?? mocks.mockRpc
+        const res = await rpcFn(name, args)
+        if (res?.error) {
+          const err = typeof res.error === 'object' && res.error !== null
+            ? Object.assign(new Error(String((res.error as { message?: unknown }).message ?? 'RPC error')), res.error)
+            : new Error(String(res.error))
+          throw err
+        }
+        if (Array.isArray(res?.data)) return res.data
+        if (res?.data !== null && res?.data !== undefined) return [{ fn: res.data }]
+        return []
+      },
+    }),
+  }
+})
 
 import {
   MISSION_LABELS,
@@ -22,6 +57,16 @@ import { getDailyMissions, claimMission } from '@/lib/missions/server'
 describe('Task P5: Missions Pay Tinta Behind missions_pay_tinta Flag', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.mockSelectFrom.mockReturnValue({
+      selectAll: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          execute: vi.fn().mockResolvedValue([]),
+        }),
+      }),
+    })
+    mocks.createAdminClient.mockReturnValue({
+      rpc: mocks.mockRpc,
+    })
   })
 
   describe('AC5.3: Neutral copy in MISSION_LABELS.watch_ad', () => {
@@ -161,25 +206,23 @@ describe('Task P5: Missions Pay Tinta Behind missions_pay_tinta Flag', () => {
         data: null,
         error: { message: 'DB connection error' },
       })
-      const mockSelect = vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          maybeSingle: vi.fn().mockResolvedValue({
-            data: {
-              missions_enabled: true,
-              ad_reward_enabled: false,
-              ad_daily_cap: 10,
-              ads_per_credit: 5,
-            },
-            error: null,
+      mocks.mockSelectFrom.mockReturnValue({
+        selectAll: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            execute: vi.fn().mockResolvedValue([
+              {
+                missions_enabled: true,
+                ad_reward_enabled: false,
+                ad_daily_cap: 10,
+                ads_per_credit: 5,
+              },
+            ]),
           }),
         }),
       })
 
       mocks.createAdminClient.mockReturnValue({
         rpc: mockRpc,
-        from: vi.fn().mockReturnValue({
-          select: mockSelect,
-        }),
       })
 
       const snapshot = await getDailyMissions('user-uuid-4')

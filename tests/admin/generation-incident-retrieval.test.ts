@@ -2,6 +2,44 @@ import { randomBytes } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    rpcRows: (client: unknown, name: string, args: Record<string, unknown>) => ({
+      execute: async () => {
+        if (client && typeof client === 'object' && 'rpc' in client) {
+          const res = await (client as { rpc: (n: string, a: unknown) => Promise<{ data: unknown; error: unknown }> }).rpc(name, args)
+          if (res.error) {
+            const err = typeof res.error === 'object' && res.error !== null
+              ? Object.assign(new Error(String((res.error as { message?: unknown }).message ?? 'RPC error')), res.error)
+              : new Error(String(res.error))
+            throw err
+          }
+          return res.data
+        }
+        return []
+      },
+    }),
+    rpcOne: (client: unknown, name: string, args: Record<string, unknown>) => ({
+      execute: async () => {
+        if (client && typeof client === 'object' && 'rpc' in client) {
+          const res = await (client as { rpc: (n: string, a: unknown) => Promise<{ data: unknown; error: unknown }> }).rpc(name, args)
+          if (res.error) {
+            const err = typeof res.error === 'object' && res.error !== null
+              ? Object.assign(new Error(String((res.error as { message?: unknown }).message ?? 'RPC error')), res.error)
+              : new Error(String(res.error))
+            throw err
+          }
+          if (Array.isArray(res.data)) return res.data
+          if (res.data !== null && res.data !== undefined) return [{ fn: res.data }]
+          return []
+        }
+        return []
+      },
+    }),
+  }
+})
 
 import { CHOICE_INVALID_CAPTURE_ENV } from '@/lib/observability/choice-invalid-capture-config.server'
 import { encryptChoiceLexicalEvidence } from '@/lib/observability/choice-invalid-capture-crypto.server'

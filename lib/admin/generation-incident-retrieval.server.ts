@@ -1,7 +1,9 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import { createClient } from '@/lib/supabase/server'
+import { getDb, result, rpcOne, rpcRows, single } from '@lakoku/db'
+import type { Kysely } from 'kysely'
+import type { Database } from '@/lib/supabase/db-types'
 import {
   decryptChoiceLexicalEvidence,
   type EncryptedChoiceLexicalEvidence,
@@ -59,10 +61,9 @@ export type GenerationIncidentRetrievalTelemetry = (event: Readonly<{
   outcome: RetrievalOutcome
 }>) => void
 
-type IncidentRpcName =
-  | 'claim_generation_incident_v1'
-  | 'finalize_generation_incident_v1'
-  | 'release_generation_incident_claim_v1'
+export type IncidentDbClient =
+  | Kysely<Database>
+  | { rpc: (name: string, args?: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }> }
 
 type IncidentLookupRpcArgs = {
   p_capture_id: string
@@ -71,13 +72,6 @@ type IncidentLookupRpcArgs = {
 
 type IncidentClaimMutationRpcArgs = IncidentLookupRpcArgs & {
   p_claim_token: string
-}
-
-type IncidentRpcClient = {
-  rpc: (
-    name: IncidentRpcName,
-    args: IncidentLookupRpcArgs | IncidentClaimMutationRpcArgs,
-  ) => Promise<{ data: unknown; error: unknown }>
 }
 
 export type GenerationIncidentRetrievalResult =
@@ -108,22 +102,31 @@ function isOwnerRequiredError(error: unknown): boolean {
   return candidate.message === 'OWNER_REQUIRED'
     || candidate.details === 'OWNER_REQUIRED'
     || candidate.code === 'OWNER_REQUIRED'
+    || String(candidate.message).includes('OWNER_REQUIRED')
 }
 
 async function releaseClaimBestEffort(
-  client: IncidentRpcClient,
+  client: IncidentDbClient,
   args: IncidentClaimMutationRpcArgs,
 ): Promise<boolean> {
   try {
-    const result = await client.rpc('release_generation_incident_claim_v1', args)
-    return result.error === null && result.data === true
+    if ('rpc' in client) {
+      const res = await client.rpc('release_generation_incident_claim_v1', args)
+      return res.data === true
+    }
+    const { data, error } = await single(
+      rpcOne(client, 'release_generation_incident_claim_v1', args).execute(),
+    )
+    if (error) return false
+    const raw = data ? ((data as Record<string, unknown>).fn ?? data) : false
+    return raw === true
   } catch {
     return false
   }
 }
 
 async function releaseAndEmit(
-  client: IncidentRpcClient,
+  client: IncidentDbClient,
   args: IncidentClaimMutationRpcArgs,
   telemetry: GenerationIncidentRetrievalTelemetry,
 ): Promise<void> {
@@ -153,14 +156,14 @@ function asEncryptedRecord(incident: EncryptedGenerationIncident): EncryptedChoi
 export async function retrieveGenerationIncidentLabel(
   lookup: z.infer<typeof GenerationIncidentLookupSchema>,
   deps: {
-    client?: IncidentRpcClient
+    client?: IncidentDbClient
     decryptor?: GenerationIncidentDecryptor
     createClaimToken?: () => string
     telemetry?: GenerationIncidentRetrievalTelemetry
   } = {},
 ): Promise<GenerationIncidentRetrievalResult> {
   const parsedLookup = GenerationIncidentLookupSchema.parse(lookup)
-  const client = deps.client ?? await createClient() as unknown as IncidentRpcClient
+  const client = deps.client ?? getDb()
   const telemetry = deps.telemetry ?? defaultTelemetry
   const lookupArgs: IncidentLookupRpcArgs = {
     p_capture_id: parsedLookup.captureId,
@@ -173,9 +176,21 @@ export async function retrieveGenerationIncidentLabel(
     p_claim_token: claimToken,
   }
 
-  let claimResult: { data: unknown; error: unknown }
+  let claimResult: { data: unknown; error: { message: string; code?: string } | null }
   try {
-    claimResult = await client.rpc('claim_generation_incident_v1', mutationArgs)
+    if ('rpc' in client) {
+      const rpcRes = await client.rpc('claim_generation_incident_v1', mutationArgs)
+      if (rpcRes.error) {
+        const errObj = rpcRes.error as { message?: string; code?: string }
+        claimResult = { data: null, error: { message: String(errObj.message ?? 'RPC error'), code: errObj.code } }
+      } else {
+        claimResult = { data: rpcRes.data, error: null }
+      }
+    } else {
+      claimResult = await result(
+        rpcRows(client, 'claim_generation_incident_v1', mutationArgs).execute(),
+      )
+    }
   } catch {
     emitTelemetry(telemetry, 'CLAIM', 'UNAVAILABLE')
     return { status: 'unavailable' }
@@ -247,16 +262,29 @@ export async function retrieveGenerationIncidentLabel(
   }
   emitTelemetry(telemetry, 'DECRYPT', 'SUCCESS')
 
-  let finalizeResult: { data: unknown; error: unknown }
+  let finalizeResult: { data: unknown; error: { message: string; code?: string } | null }
   try {
-    finalizeResult = await client.rpc('finalize_generation_incident_v1', mutationArgs)
+    if ('rpc' in client) {
+      const rpcRes = await client.rpc('finalize_generation_incident_v1', mutationArgs)
+      if (rpcRes.error) {
+        const errObj = rpcRes.error as { message?: string; code?: string }
+        finalizeResult = { data: null, error: { message: String(errObj.message ?? 'RPC error'), code: errObj.code } }
+      } else {
+        finalizeResult = { data: rpcRes.data, error: null }
+      }
+    } else {
+      finalizeResult = await single(
+        rpcOne(client, 'finalize_generation_incident_v1', mutationArgs).execute(),
+      )
+    }
   } catch {
     emitTelemetry(telemetry, 'FINALIZE', 'UNAVAILABLE')
     await releaseAndEmit(client, mutationArgs, telemetry)
     return { status: 'unavailable' }
   }
 
-  if (finalizeResult.error || finalizeResult.data !== true) {
+  const finalizeOk = finalizeResult.data ? ((finalizeResult.data as Record<string, unknown>).fn ?? finalizeResult.data) : false
+  if (finalizeResult.error || finalizeOk !== true) {
     const outcome = finalizeResult.error && isOwnerRequiredError(finalizeResult.error)
       ? 'FORBIDDEN'
       : 'UNAVAILABLE'

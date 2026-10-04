@@ -1,5 +1,5 @@
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, rpcOne, single } from '@lakoku/db'
 
 /**
  * Helper untuk grant kredit manual oleh admin (server-only).
@@ -30,17 +30,20 @@ export async function adminGrantCredits(args: {
     args.requestId ??
     `admin_grant:${args.targetUserId}:${Date.now()}:${crypto.randomUUID()}`
 
-  const db = createAdminClient()
+  const db = getDb()
 
-  const { data, error } = await db.rpc('admin_grant_credits_v1', {
-    p_target_user_id: args.targetUserId,
-    p_admin_user_id: args.adminUserId,
-    p_credits: args.credits,
-    p_reason: args.reason,
-    p_ref: ref,
-  })
+  const { data, error } = await single(
+    rpcOne(db, 'admin_grant_credits_v1', {
+      p_admin_user_id: args.adminUserId,
+      p_credits: args.credits,
+      p_reason: args.reason,
+      p_ref: ref,
+      p_target_user_id: args.targetUserId,
+    }).execute(),
+  )
 
   if (error) throw new Error(`adminGrantCredits: ${error.message}`)
 
-  return { granted: data === true, ref }
+  const raw = data ? ((data as Record<string, unknown>).fn ?? data) : false
+  return { granted: raw === true, ref }
 }

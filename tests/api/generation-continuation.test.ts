@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
   cookieFactory: vi.fn(),
   adminFactory: vi.fn(),
+  getDb: vi.fn(),
+  rpcData: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
@@ -37,6 +39,32 @@ vi.mock('@/lib/api/user-state', () => ({
 }))
 vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.cookieFactory }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: mocks.getDb,
+    rpcOne: vi.fn((_db: unknown, name: string, _params: Record<string, unknown>) => ({
+      execute: vi.fn(async () => {
+        if (name === 'apply_personalized_choice_v2') {
+          return [{ fn: mocks.rpcData() }]
+        }
+        if (name === 'enqueue_generation_job_v1') {
+          return [{
+            fn: {
+              alreadyComplete: false,
+              jobId: '00000000-0000-4000-8000-0000000000e1',
+              correlationId: '00000000-0000-4000-8000-0000000000e2',
+              status: 'QUEUED',
+            },
+          }]
+        }
+        return []
+      }),
+    })),
+  }
+})
 vi.mock('@/lib/api/story-ownership.server', () => ({
   isStoryOwnedBy: vi.fn(async () => true),
 }))
@@ -151,6 +179,57 @@ function createAdminDb(input?: {
     indexes.set(table, index + 1)
     return tables[table]?.[index] ?? { data: null, error: null }
   }
+
+  mocks.rpcData.mockReturnValue(
+    input?.rpc?.data ?? { outcome: publicOutcome, nextChapterNumber: 2, replayed: false },
+  )
+
+  const executor = {
+    transformQuery: (node: unknown) => node,
+    compileQuery: () => ({ sql: '', parameters: [] }),
+    executeQuery: vi.fn(async () => ({ rows: [] })),
+  }
+  const trx = {
+    getExecutor: vi.fn(() => executor),
+  }
+
+  const kysely = {
+    selectFrom: vi.fn((table: string) => {
+      const filters: Array<[string, unknown]> = []
+      const builder: Record<string, unknown> = {}
+      builder.select = vi.fn(() => builder)
+      builder.where = vi.fn((...args: unknown[]) => {
+        filters.push(['where', args])
+        return builder
+      })
+      builder.limit = vi.fn(() => builder)
+      builder.execute = vi.fn(async () => {
+        if (table === 'chapters') {
+          const numFilter = filters.find(([_, args]) => Array.isArray(args) && args[0] === 'number')
+          if (numFilter && Array.isArray(numFilter[1])) {
+            const targetNum = numFilter[1][2]
+            const list = tables['chapters'] ?? []
+            const match = list.find((c) => (c.data as Record<string, unknown>)?.number === targetNum)
+            if (match?.data) return [match.data]
+          }
+          const list = tables['chapters'] ?? []
+          return list[0]?.data ? [list[0].data] : []
+        }
+        const rows = tables[table] ?? []
+        if (rows.length === 1 && rows[0]?.data) {
+          return [rows[0].data]
+        }
+        const res = next(table)
+        return res?.data ? [res.data] : []
+      })
+      return builder
+    }),
+    transaction: vi.fn(() => ({
+      execute: vi.fn(async (cb: (t: typeof trx) => Promise<unknown>) => cb(trx)),
+    })),
+  }
+  mocks.getDb.mockReturnValue(kysely)
+
   return {
     from: vi.fn((table: string) => {
       const builder: Record<string, unknown> = {}

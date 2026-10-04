@@ -6,16 +6,36 @@ import {
   JejakItemSchema,
   type ChoiceOutcome,
 } from '@/packages/contracts/src/reader'
-import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient as createCookieClient } from '@/lib/supabase/server'
+import { getDb, result, rpcOne, single } from '@lakoku/db'
+import { sql } from 'kysely'
 import { ChoiceHistoryEntrySchema } from '@/lib/story-engine/chapter-brief'
 import { mergeChoiceEffect, RouteStateSchema } from '@/lib/story-engine/route-state'
 
-const STORY_AUTHORIZATION_COLUMNS = 'id' as const
-const STORY_INTERNAL_COLUMNS = 'id,owner_user_id,visibility,story_mode' as const
-const READER_STATE_INTERNAL_COLUMNS = 'user_id,story_id,status,current_chapter,jejak,ending_name,route_state,choice_history,locked_ending_key,updated_at' as const
-const OUTCOME_INTERNAL_COLUMNS = 'story_id,chapter_number,choice_id,consequence,next_chapter_number,is_ending,effect_json,choice_kind' as const
-const CHAPTER_CHOICE_COLUMNS = 'story_id,number,choices' as const
+const STORY_INTERNAL_COLUMNS = ['id', 'owner_user_id', 'visibility', 'story_mode'] as const
+const READER_STATE_INTERNAL_COLUMNS = [
+  'user_id',
+  'story_id',
+  'status',
+  'current_chapter',
+  'jejak',
+  'ending_name',
+  'route_state',
+  'choice_history',
+  'locked_ending_key',
+  'updated_at',
+] as const
+const OUTCOME_INTERNAL_COLUMNS = [
+  'story_id',
+  'chapter_number',
+  'choice_id',
+  'consequence',
+  'next_chapter_number',
+  'is_ending',
+  'effect_json',
+  'choice_kind',
+] as const
+const CHAPTER_CHOICE_COLUMNS = ['story_id', 'number', 'choices'] as const
 
 const IdempotencyKeySchema = z.string().trim().min(1).max(240).regex(/^[\x21-\x7E]+$/)
 const PersonalizedChapterSchema = z.number().int().min(1).max(49)
@@ -182,11 +202,22 @@ async function authorizeParentWithCookieRls(userId: string, storyId: string): Pr
     throw new PersonalizedChoiceError('STORY_NOT_FOUND')
   }
 
-  const { data, error } = await cookieClient
-    .from('stories')
-    .select(STORY_AUTHORIZATION_COLUMNS)
-    .eq('id', storyId)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: stories_owner_read, stories_public_read
+  const { data, error } = await single(
+    db
+      .selectFrom('stories')
+      .select('id')
+      .where('id', '=', storyId)
+      .where((eb) =>
+        eb.or([
+          eb('visibility', '=', 'public'),
+          eb('owner_user_id', '=', userId),
+        ]),
+      )
+      .limit(1)
+      .execute(),
+  )
   if (error) throw new PersonalizedChoiceError('INTERNAL_ERROR')
   if (!data) throw new PersonalizedChoiceError('STORY_NOT_FOUND')
 }
@@ -203,12 +234,22 @@ async function authorizeParentWithCookieRls(userId: string, storyId: string): Pr
 export async function applyPersonalizedChoiceAuthorized(
   input: ApplyPersonalizedChoiceInput,
 ): Promise<ApplyPersonalizedChoiceResult> {
-  const admin = createAdminClient()
-  const { data: metadataData, error: metadataError } = await admin
-    .from('stories')
-    .select(STORY_INTERNAL_COLUMNS)
-    .eq('id', input.storyId)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: stories_owner_read, stories_public_read
+  const { data: metadataData, error: metadataError } = await single(
+    db
+      .selectFrom('stories')
+      .select(STORY_INTERNAL_COLUMNS)
+      .where('id', '=', input.storyId)
+      .where((eb) =>
+        eb.or([
+          eb('visibility', '=', 'public'),
+          eb('owner_user_id', '=', input.userId),
+        ]),
+      )
+      .limit(1)
+      .execute(),
+  )
   if (metadataError) throw new PersonalizedChoiceError('INTERNAL_ERROR')
   if (!metadataData) throw new PersonalizedChoiceError('STORY_NOT_FOUND')
 
@@ -225,33 +266,43 @@ export async function applyPersonalizedChoiceAuthorized(
     throw new PersonalizedChoiceError('INVALID_CHAPTER')
   }
 
-  const { data: stateData, error: stateError } = await admin
-    .from('reader_states')
-    .select(READER_STATE_INTERNAL_COLUMNS)
-    .eq('user_id', input.userId)
-    .eq('story_id', input.storyId)
-    .maybeSingle()
+  // RLS_AUDIT: reader_states_owner_read
+  const { data: stateData, error: stateError } = await single(
+    db
+      .selectFrom('reader_states')
+      .select(READER_STATE_INTERNAL_COLUMNS)
+      .where('user_id', '=', input.userId)
+      .where('story_id', '=', input.storyId)
+      .limit(1)
+      .execute(),
+  )
   if (stateError) throw new PersonalizedChoiceError('INTERNAL_ERROR')
   if (!stateData) throw new PersonalizedChoiceError('READER_STATE_MISSING')
   const state = parseStored(ReaderStateSchema, stateData)
 
-  const { data: outcomeData, error: outcomeError } = await admin
-    .from('choice_outcomes')
-    .select(OUTCOME_INTERNAL_COLUMNS)
-    .eq('story_id', input.storyId)
-    .eq('chapter_number', input.chapterNumber)
-    .eq('choice_id', input.choiceId)
-    .maybeSingle()
+  const { data: outcomeData, error: outcomeError } = await single(
+    db
+      .selectFrom('choice_outcomes')
+      .select(OUTCOME_INTERNAL_COLUMNS)
+      .where('story_id', '=', input.storyId)
+      .where('chapter_number', '=', input.chapterNumber)
+      .where('choice_id', '=', input.choiceId)
+      .limit(1)
+      .execute(),
+  )
   if (outcomeError) throw new PersonalizedChoiceError('INTERNAL_ERROR')
   if (!outcomeData) throw new PersonalizedChoiceError('CHOICE_NOT_FOUND')
   const outcomeRow = parseStored(OutcomeInternalSchema, outcomeData)
 
-  const { data: chapterData, error: chapterError } = await admin
-    .from('chapters')
-    .select(CHAPTER_CHOICE_COLUMNS)
-    .eq('story_id', input.storyId)
-    .eq('number', input.chapterNumber)
-    .maybeSingle()
+  const { data: chapterData, error: chapterError } = await single(
+    db
+      .selectFrom('chapters')
+      .select(CHAPTER_CHOICE_COLUMNS)
+      .where('story_id', '=', input.storyId)
+      .where('number', '=', input.chapterNumber)
+      .limit(1)
+      .execute(),
+  )
   if (chapterError) throw new PersonalizedChoiceError('INTERNAL_ERROR')
   if (!chapterData) throw new PersonalizedChoiceError('CHOICE_NOT_FOUND')
   const chapter = parseStored(ChapterChoiceSchema, chapterData)
@@ -276,17 +327,19 @@ export async function applyPersonalizedChoiceAuthorized(
   })
 
   // STEP 1: Apply choice durably to DB via apply_personalized_choice_v2 (SQL)
-  const { data: rpcData, error: rpcError } = await admin.rpc('apply_personalized_choice_v2', {
-    p_user_id: input.userId,
-    p_story_id: input.storyId,
-    p_chapter_number: input.chapterNumber,
-    p_choice_id: input.choiceId,
-    p_idempotency_key: input.idempotencyKey,
-    p_expected_state: state,
-    p_next_route_state: nextRouteState,
-    p_history_entry: historyEntry,
-    p_jejak_entry: jejakEntry,
-  })
+  const { data: rpcData, error: rpcError } = await single(
+    rpcOne(db, 'apply_personalized_choice_v2', {
+      p_user_id: input.userId,
+      p_story_id: input.storyId,
+      p_chapter_number: input.chapterNumber,
+      p_choice_id: input.choiceId,
+      p_idempotency_key: input.idempotencyKey,
+      p_expected_state: state,
+      p_next_route_state: nextRouteState,
+      p_history_entry: historyEntry,
+      p_jejak_entry: jejakEntry,
+    }).execute(),
+  )
   if (rpcError) {
     if (rpcError.message.includes('COMMERCIAL_INTENT_CONFLICT')) {
       throw new PersonalizedChoiceError('CHOICE_CONFLICT')
@@ -294,34 +347,36 @@ export async function applyPersonalizedChoiceAuthorized(
     throw mapRpcError(rpcError.message)
   }
 
-  const result = parseStored(z.object({
+  const choiceResult = parseStored(z.object({
     outcome: ChoiceOutcomeSchema,
     nextChapterNumber: z.number().int().positive().nullable(),
     replayed: z.boolean(),
-  }), rpcData)
+  }), rpcData?.fn ?? rpcData)
 
-  const targetChapter = result.nextChapterNumber ?? outcome.nextChapterNumber
+  const targetChapter = choiceResult.nextChapterNumber ?? outcome.nextChapterNumber
 
   if (outcome.isEnding || !targetChapter) {
     return {
-      outcome: result.outcome,
+      outcome: choiceResult.outcome,
       nextChapterNumber: targetChapter,
-      replayed: result.replayed,
+      replayed: choiceResult.replayed,
     }
   }
 
   // STEP 2: Commercial Intent & Job Queueing (personalized_ai only; premium_instance uses authenticated queueing)
   if (targetChapter >= 4 && metadata.story_mode === 'personalized_ai') {
     // Bab 4+: Quote-preserving commercial authorization & atomic queueing
-    const { data: authData, error: authErr } = await admin.rpc('authorize_commercial_generation_intent_v1', {
-      p_user_id: input.userId,
-      p_story_id: input.storyId,
-      p_chapter_number: targetChapter,
-    })
+    const { data: authData, error: authErr } = await single(
+      rpcOne(db, 'authorize_commercial_generation_intent_v1', {
+        p_user_id: input.userId,
+        p_story_id: input.storyId,
+        p_chapter_number: targetChapter,
+      }).execute(),
+    )
 
-    if (authErr?.message === 'SUCCEEDED_JOB_PRESENT') {
+    if (authErr?.message?.includes('SUCCEEDED_JOB_PRESENT')) {
       return {
-        outcome: result.outcome,
+        outcome: choiceResult.outcome,
         nextChapterNumber: targetChapter,
         replayed: true,
       }
@@ -331,7 +386,7 @@ export async function applyPersonalizedChoiceAuthorized(
       throw new PersonalizedChoiceError('INTERNAL_ERROR')
     }
 
-    const authParsed = AuthorizeIntentResultSchema.safeParse(authData)
+    const authParsed = AuthorizeIntentResultSchema.safeParse(authData?.fn ?? authData)
     if (!authParsed.success) {
       throw new PersonalizedChoiceError('INTERNAL_ERROR')
     }
@@ -345,9 +400,9 @@ export async function applyPersonalizedChoiceAuthorized(
         typeof authParsed.data.available === 'number'
       ) {
         return {
-          outcome: result.outcome,
+          outcome: choiceResult.outcome,
           nextChapterNumber: targetChapter,
-          replayed: result.replayed,
+          replayed: choiceResult.replayed,
           status: 'WAITING_FOR_CREDITS',
           requiredCredits: authParsed.data.required,
           availableCredits: authParsed.data.available,
@@ -355,7 +410,7 @@ export async function applyPersonalizedChoiceAuthorized(
       }
       if (authParsed.data.reason === 'RESERVATION_ALREADY_CAPTURED') {
         return {
-          outcome: result.outcome,
+          outcome: choiceResult.outcome,
           nextChapterNumber: targetChapter,
           replayed: true,
         }
@@ -364,36 +419,43 @@ export async function applyPersonalizedChoiceAuthorized(
     }
 
     // Atomic Queueing
-    const { data: queueData, error: queueErr } = await admin.rpc('queue_authorized_commercial_generation_v1', {
-      p_user_id: input.userId,
-      p_story_id: input.storyId,
-      p_chapter_number: targetChapter,
-    })
+    const { data: queueData, error: queueErr } = await single(
+      rpcOne(db, 'queue_authorized_commercial_generation_v1', {
+        p_user_id: input.userId,
+        p_story_id: input.storyId,
+        p_chapter_number: targetChapter,
+      }).execute(),
+    )
 
     if (queueErr || !queueData) {
       throw new PersonalizedChoiceError('INTERNAL_ERROR')
     }
 
-    const queueParsed = QueueJobResultSchema.safeParse(queueData)
+    const queueParsed = QueueJobResultSchema.safeParse(queueData?.fn ?? queueData)
     if (!queueParsed.success || !queueParsed.data.ok) {
       throw new PersonalizedChoiceError('INTERNAL_ERROR')
     }
 
     return {
-      outcome: result.outcome,
+      outcome: choiceResult.outcome,
       nextChapterNumber: targetChapter,
-      replayed: result.replayed,
+      replayed: choiceResult.replayed,
       jobId: queueParsed.data.job_id,
     }
   } else {
-    // Included Bab 2-3: Enqueue via authenticated request-scoped Supabase client
-    const cookieClient = await createCookieClient()
-    const { data: enqueueData, error: enqueueErr } = await cookieClient.rpc('enqueue_generation_job_v1', {
-      p_story_id: input.storyId,
-      p_chapter_number: targetChapter,
-      p_generation_kind: 'personalized',
-      p_trigger_choice_id: input.choiceId,
-    })
+    // Included Bab 2-3: Enqueue via authenticated request-scoped transaction on Neon
+    const { data: enqueueData, error: enqueueErr } = await result(
+      db.transaction().execute(async (trx) => {
+        await sql`select set_config('request.jwt.claim.sub', ${input.userId}, true)`.execute(trx)
+        const rows = await rpcOne(trx, 'enqueue_generation_job_v1', {
+          p_story_id: input.storyId,
+          p_chapter_number: targetChapter,
+          p_generation_kind: 'personalized',
+          p_trigger_choice_id: input.choiceId,
+        }).execute()
+        return rows[0]?.fn ?? rows[0]
+      }),
+    )
 
     if (enqueueErr || !enqueueData) {
       throw new PersonalizedChoiceError('INTERNAL_ERROR')
@@ -410,9 +472,9 @@ export async function applyPersonalizedChoiceAuthorized(
       : undefined
 
     return {
-      outcome: result.outcome,
+      outcome: choiceResult.outcome,
       nextChapterNumber: targetChapter,
-      replayed: result.replayed,
+      replayed: choiceResult.replayed,
       jobId,
     }
   }

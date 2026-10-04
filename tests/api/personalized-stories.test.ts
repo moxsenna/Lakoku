@@ -15,10 +15,35 @@ const mocks = vi.hoisted(() => ({
   randomUUID: vi.fn(),
 }))
 
+let activeAdminDb: {
+  client: Record<string, unknown> & {
+    rpc: (name: string, args: Record<string, unknown>) => Promise<{ error?: { message: string } | null; data?: unknown }>
+  }
+  calls: DbCall[]
+} | null = null
+
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.cookieFactory }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.adminFactory }))
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: vi.fn(() => {
+      mocks.adminFactory()
+      return activeAdminDb?.client
+    }),
+    rpcOne: vi.fn((_db: unknown, name: string, args: Record<string, unknown>) => ({
+      execute: vi.fn(async () => {
+        if (!activeAdminDb) return []
+        const res = await activeAdminDb.client.rpc(name, args)
+        if (res.error) throw new Error(res.error.message)
+        return [{ fn: res.data }]
+      }),
+    })),
+  }
+})
 vi.mock('@/lib/api/taste-profile', () => ({
   getTasteProfileForUser: mocks.getTasteProfileForUser,
 }))
@@ -102,112 +127,114 @@ function createAdminDb(input?: {
   let reserved = false
 
   const client = {
-    from: vi.fn((table: string) => {
+    selectFrom: vi.fn((table: string) => {
       calls.push({ table, method: 'from', args: [] })
       const builder: Record<string, unknown> = {}
-      const chain = (...methods: string[]) => {
-        for (const method of methods) {
-          builder[method] = vi.fn((...args: unknown[]) => {
-            calls.push({ table, method, args })
-            return builder
-          })
-        }
-      }
-      chain('select', 'eq', 'insert', 'update')
-
-      builder.maybeSingle = vi.fn(async () => {
+      builder.select = vi.fn((...args: unknown[]) => {
+        calls.push({ table, method: 'select', args })
+        return builder
+      })
+      builder.where = vi.fn((...args: unknown[]) => {
+        calls.push({ table, method: 'eq', args })
+        return builder
+      })
+      builder.limit = vi.fn(() => builder)
+      builder.execute = vi.fn(async () => {
         calls.push({ table, method: 'maybeSingle', args: [] })
         if (table === 'story_creation_requests') {
-          if (input?.existing) return input.existing
+          if (input?.existing) {
+            if (input.existing.error) throw new Error(input.existing.error.message)
+            return input.existing.data ? [input.existing.data] : []
+          }
           if (reserved) {
-            return {
-              data: {
-                story_id: reservedStoryId,
-                request_hash: requestHashFor(tasteProfile.version),
-                status: 'READY',
-              },
-              error: null,
-            }
+            return [{
+              story_id: reservedStoryId,
+              request_hash: requestHashFor(tasteProfile.version),
+              status: 'READY',
+              error_code: null,
+              generation_job_id: null,
+            }]
           }
         }
         const queue = selectQueues.get(table)
-        if (queue && queue.length > 0) return queue.shift()!
+        if (queue && queue.length > 0) {
+          const item = queue.shift()!
+          if (item.error) throw new Error(item.error.message)
+          return item.data ? [item.data] : []
+        }
         if (table === 'account_commercial_states') {
-          return { data: { starter_claimed_at: '2026-08-01T00:00:00Z', starter_story_id: reservedStoryId }, error: null }
+          return [{ starter_claimed_at: '2026-08-01T00:00:00Z', starter_story_id: reservedStoryId }]
         }
         if (table === 'stories') {
-          return { data: { commercial_origin: 'STARTER_FREE' }, error: null }
+          return [{ commercial_origin: 'STARTER_FREE', id: reservedStoryId }]
         }
-        return { data: null, error: null }
+        return []
       })
-
-      builder.insert = vi.fn((payload: unknown) => {
+      return builder
+    }),
+    insertInto: vi.fn((table: string) => {
+      const insertBuilder: Record<string, unknown> = {}
+      insertBuilder.values = vi.fn((payload: unknown) => {
         calls.push({ table, method: 'insert', args: [payload] })
-        const insertBuilder: Record<string, unknown> = {
-          select: vi.fn(() => insertBuilder),
-          single: vi.fn(async () => {
-            calls.push({ table, method: 'single', args: [] })
-            if (table === 'story_creation_requests') {
-              const result = input?.reserve ?? { data: { story_id: reservedStoryId }, error: null }
-              if (!result.error) reserved = true
-              return result
-            }
-            if (table === 'stories') {
-              return input?.storyInsert ?? { data: { id: reservedStoryId }, error: null }
-            }
-            if (table === 'reader_states') {
-              return input?.readerInsert ?? { data: { story_id: reservedStoryId }, error: null }
-            }
-            return { data: null, error: null }
-          }),
-          then: undefined,
-        }
-        // Support bare await of insert() for tables that do not chain .select()
-        Object.defineProperty(insertBuilder, 'then', {
-          value: (
-            onfulfilled?: (value: DbResult) => unknown,
-            onrejected?: (reason: unknown) => unknown,
-          ) => {
-            const run = async (): Promise<DbResult> => {
-              if (table === 'story_creation_requests') {
-                const result = input?.reserve ?? { data: { story_id: reservedStoryId }, error: null }
-                if (!result.error) reserved = true
-                return result
-              }
-              if (table === 'stories') {
-                return input?.storyInsert ?? { data: { id: reservedStoryId }, error: null }
-              }
-              if (table === 'reader_states') {
-                return input?.readerInsert ?? { data: { story_id: reservedStoryId }, error: null }
-              }
-              return { data: null, error: null }
-            }
-            return run().then(onfulfilled, onrejected)
-          },
-        })
         return insertBuilder
       })
-
-      builder.update = vi.fn((payload: unknown) => {
+      insertBuilder.returning = vi.fn(() => insertBuilder)
+      insertBuilder.executeTakeFirst = vi.fn(async () => {
+        calls.push({ table, method: 'single', args: [] })
+        if (table === 'story_creation_requests') {
+          const result = input?.reserve ?? { data: { story_id: reservedStoryId }, error: null }
+          if (!result.error) reserved = true
+          if (result.error) {
+            const err = new Error(result.error.message)
+            Object.assign(err, { code: result.error.code ?? '23505' })
+            throw err
+          }
+          return result.data
+        }
+        return { story_id: reservedStoryId }
+      })
+      insertBuilder.execute = vi.fn(async () => {
+        calls.push({ table, method: 'single', args: [] })
+        if (table === 'story_creation_requests') {
+          const result = input?.reserve ?? { data: { story_id: reservedStoryId }, error: null }
+          if (!result.error) reserved = true
+          if (result.error) {
+            const err = new Error(result.error.message)
+            Object.assign(err, { code: result.error.code ?? '23505' })
+            throw err
+          }
+          return result.data ? [result.data] : []
+        }
+        if (table === 'stories') {
+          const result = input?.storyInsert ?? { data: { id: reservedStoryId }, error: null }
+          if (result.error) throw new Error(result.error.message)
+          return result.data ? [result.data] : []
+        }
+        if (table === 'reader_states') {
+          const result = input?.readerInsert ?? { data: { story_id: reservedStoryId }, error: null }
+          if (result.error) throw new Error(result.error.message)
+          return result.data ? [result.data] : []
+        }
+        return []
+      })
+      return insertBuilder
+    }),
+    updateTable: vi.fn((table: string) => {
+      const updateBuilder: Record<string, unknown> = {}
+      updateBuilder.set = vi.fn((payload: unknown) => {
         calls.push({ table, method: 'update', args: [payload] })
-        const updateBuilder: Record<string, unknown> = {}
-        for (const method of ['eq', 'select']) {
-          updateBuilder[method] = vi.fn((...args: unknown[]) => {
-            calls.push({ table, method, args })
-            return updateBuilder
-          })
-        }
-        updateBuilder.then = (
-          onfulfilled?: (value: DbResult) => unknown,
-          onrejected?: (reason: unknown) => unknown,
-        ) => {
-          const result = updateResults.shift() ?? { data: null, error: null }
-          return Promise.resolve(result).then(onfulfilled, onrejected)
-        }
         return updateBuilder
       })
-
-      return builder
+      updateBuilder.where = vi.fn((...args: unknown[]) => {
+        calls.push({ table, method: 'eq', args })
+        return updateBuilder
+      })
+      updateBuilder.execute = vi.fn(async () => {
+        const result = updateResults.shift() ?? { data: null, error: null }
+        if (result.error) throw new Error(result.error.message)
+        return result.data ? [result.data] : []
+      })
+      return updateBuilder
     }),
     rpc: vi.fn(async (rpcName: string, args?: unknown) => {
       calls.push({ method: 'rpc', args: [rpcName, args] })
@@ -217,11 +244,23 @@ function createAdminDb(input?: {
       if (rpcName === 'reserve_story_start_v1') {
         return { data: { ok: true, status: 'RESERVED' }, error: null }
       }
+      if (rpcName === 'queue_paid_story_start_generation_v1') {
+        return {
+          data: {
+            ok: true,
+            job_id: '00000000-0000-4000-8000-0000000000e1',
+            correlation_id: '00000000-0000-4000-8000-0000000000e2',
+          },
+          error: null,
+        }
+      }
       return { data: null, error: null }
     }),
   }
 
-  return { client, calls }
+  const instance = { client, calls }
+  activeAdminDb = instance
+  return instance
 }
 
 function request(options?: {

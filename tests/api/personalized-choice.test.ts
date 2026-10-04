@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
   cookieFactory: vi.fn(),
   adminFactory: vi.fn(),
+  getDb: vi.fn(),
   continuePersonalizedGeneration: vi.fn(),
   continueStandardGeneration: vi.fn(),
 }))
@@ -22,6 +23,42 @@ vi.mock('@/lib/api/user-state', () => ({
 }))
 vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.cookieFactory }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: mocks.getDb,
+    rpcOne: vi.fn((_db: unknown, name: string, params: Record<string, unknown>) => ({
+      execute: vi.fn(async () => {
+        if (name === 'enqueue_generation_job_v1') {
+          if (activeCookieDb) {
+            activeCookieDb.input?.order?.push('cookie:rpc')
+            activeCookieDb.calls.push({ method: 'rpc', args: [name, params] })
+          }
+          return [{
+            fn: {
+              alreadyComplete: false,
+              jobId: '00000000-0000-4000-8000-0000000000e1',
+              correlationId: '00000000-0000-4000-8000-0000000000e2',
+              status: 'QUEUED',
+            },
+          }]
+        }
+        if (!activeAdminDb) return []
+        const rpcRes = await activeAdminDb.client.rpc(name, params)
+        const resObj = (rpcRes && typeof rpcRes === 'object') ? (rpcRes as Record<string, unknown>) : null
+        const resErr = resObj && typeof resObj.error === 'object' && resObj.error !== null
+          ? (resObj.error as { message?: string })
+          : null
+        if (resErr?.message) {
+          throw new Error(resErr.message)
+        }
+        return [{ fn: resObj && 'data' in resObj ? resObj.data : rpcRes }]
+      }),
+    })),
+  }
+})
 vi.mock('@/lib/api/story-ownership.server', () => ({
   isStoryOwnedBy: vi.fn(async () => true),
 }))
@@ -37,6 +74,19 @@ type TestQueryBuilder = {
   eq: (column: string, value: unknown) => TestQueryBuilder
   maybeSingle: () => Promise<DbResult>
 }
+
+let activeCookieDb: {
+  client: { auth: { getUser: () => Promise<unknown> }; from: (t: string) => unknown; rpc: (...a: unknown[]) => unknown }
+  calls: DbCall[]
+  input?: { user?: { id: string } | null; story?: DbResult; order?: string[] }
+} | null = null
+
+let activeAdminDb: {
+  client: { from: (t: string) => unknown; rpc: (...a: unknown[]) => Promise<unknown> }
+  calls: DbCall[]
+  input?: { tables?: Record<string, DbResult[]>; rpc?: DbResult; order?: string[] }
+  next: (t: string) => DbResult
+} | null = null
 
 const REPLAY_INTERNAL_KEYS = new Set([
   'effect',
@@ -148,29 +198,7 @@ function createCookieDb(input?: {
     from: vi.fn((table: string) => {
       input?.order?.push(`cookie:${table}`)
       calls.push({ table, method: 'from', args: [] })
-      const predicates = new Map<string, unknown>()
-      const builder: TestQueryBuilder = {
-        select: vi.fn((...args: unknown[]) => {
-          calls.push({ table, method: 'select', args })
-          return builder
-        }),
-        eq: vi.fn((column: string, value: unknown) => {
-          calls.push({ table, method: 'eq', args: [column, value] })
-          predicates.set(column, value)
-          return builder
-        }),
-        maybeSingle: vi.fn(async () => {
-          input?.order?.push('cookie:authorized')
-          calls.push({ table, method: 'maybeSingle', args: [] })
-          const result = input?.story ?? { data: { id: storyId }, error: null }
-          if (result.error || result.data === null || typeof result.data !== 'object') return result
-          const row = result.data as Record<string, unknown>
-          const matches = predicates.size > 0
-            && [...predicates].every(([column, value]) => row[column] === value)
-          return matches ? result : { data: null, error: null }
-        }),
-      }
-      return builder
+      return {}
     }),
     rpc: vi.fn(async (...args: unknown[]) => {
       input?.order?.push('cookie:rpc')
@@ -186,7 +214,9 @@ function createCookieDb(input?: {
       }
     }),
   }
-  return { client, calls }
+  const dbObj = { client, calls, input }
+  activeCookieDb = dbObj
+  return dbObj
 }
 
 function createAdminDb(input?: {
@@ -207,28 +237,7 @@ function createAdminDb(input?: {
     from: vi.fn((table: string) => {
       input?.order?.push(`admin:${table}`)
       calls.push({ table, method: 'from', args: [] })
-      const predicates = new Map<string, unknown>()
-      const builder: TestQueryBuilder = {
-        select: vi.fn((...args: unknown[]) => {
-          calls.push({ table, method: 'select', args })
-          return builder
-        }),
-        eq: vi.fn((column: string, value: unknown) => {
-          calls.push({ table, method: 'eq', args: [column, value] })
-          predicates.set(column, value)
-          return builder
-        }),
-        maybeSingle: vi.fn(async () => {
-          calls.push({ table, method: 'maybeSingle', args: [] })
-          const result = next(table)
-          if (result.error || result.data === null || typeof result.data !== 'object') return result
-          const row = result.data as Record<string, unknown>
-          const matches = predicates.size > 0
-            && [...predicates].every(([column, value]) => row[column] === value)
-          return matches ? result : { data: null, error: null }
-        }),
-      }
-      return builder
+      return {}
     }),
     rpc: vi.fn(async (...args: unknown[]) => {
       calls.push({ method: 'rpc', args })
@@ -239,7 +248,9 @@ function createAdminDb(input?: {
     }),
   }
 
-  return { client, calls }
+  const dbObj = { client, calls, input, next }
+  activeAdminDb = dbObj
+  return dbObj
 }
 
 function personalizedDb(overrides?: Parameters<typeof createAdminDb>[0]) {
@@ -278,9 +289,15 @@ function request(options?: {
   )
 }
 
+let adminFactoryCalled = false
+
 beforeEach(() => {
   vi.clearAllMocks()
-  mocks.cookieFactory.mockResolvedValue(createCookieDb().client)
+  adminFactoryCalled = false
+  const cookie = createCookieDb()
+  mocks.cookieFactory.mockResolvedValue(cookie.client)
+  const admin = personalizedDb()
+  mocks.adminFactory.mockReturnValue(admin.client)
   mocks.getSessionUser.mockResolvedValue({ id: userId })
   mocks.queryChoiceOutcome.mockResolvedValue(publicOutcome)
   mocks.queryChapter.mockResolvedValue({
@@ -293,6 +310,72 @@ beforeEach(() => {
   mocks.applyChoiceToUserState.mockResolvedValue(undefined)
   mocks.continuePersonalizedGeneration.mockResolvedValue({ nextChapterReady: true })
   mocks.continueStandardGeneration.mockResolvedValue({ nextChapterReady: true })
+
+  const executor = {
+    transformQuery: (node: unknown) => node,
+    compileQuery: () => ({ sql: '', parameters: [] }),
+    executeQuery: vi.fn(async () => ({ rows: [] })),
+  }
+  const trx = {
+    getExecutor: vi.fn(() => executor),
+  }
+
+  const kysely = {
+    selectFrom: vi.fn((table: string) => {
+      let isParentAuth = false
+      const builder: Record<string, unknown> = {}
+      builder.select = vi.fn((...args: unknown[]) => {
+        const colArg = args[0]
+        if (colArg === 'id') {
+          isParentAuth = true
+        } else {
+          if (!adminFactoryCalled) {
+            adminFactoryCalled = true
+            mocks.adminFactory()
+          }
+          if (activeAdminDb) {
+            const formatted = Array.isArray(colArg) ? colArg.join(',') : colArg
+            activeAdminDb.calls.push({ table, method: 'select', args: [formatted] })
+          }
+        }
+        return builder
+      })
+      builder.where = vi.fn((...args: unknown[]) => {
+        if (args.length === 3 && args[1] === '=') {
+          if (!isParentAuth && activeAdminDb) {
+            activeAdminDb.calls.push({ table, method: 'eq', args: [args[0], args[2]] })
+          }
+        }
+        return builder
+      })
+      builder.limit = vi.fn(() => builder)
+      builder.execute = vi.fn(async () => {
+        if (isParentAuth) {
+          if (activeCookieDb) {
+            activeCookieDb.input?.order?.push('cookie:stories')
+            activeCookieDb.calls.push({ table: 'stories', method: 'select', args: ['id'] })
+            activeCookieDb.calls.push({ table: 'stories', method: 'eq', args: ['id', storyId] })
+            activeCookieDb.input?.order?.push('cookie:authorized')
+            if (activeCookieDb.input?.story && activeCookieDb.input.story.data === null) {
+              return []
+            }
+          }
+          return [{ id: storyId }]
+        }
+        if (activeAdminDb) {
+          const res = activeAdminDb.next(table)
+          if (res.error) throw new Error(res.error.message)
+          return res.data ? [res.data] : []
+        }
+        return []
+      })
+      return builder
+    }),
+    transaction: vi.fn(() => ({
+      execute: vi.fn(async (cb: (t: typeof trx) => Promise<unknown>) => cb(trx)),
+    })),
+  }
+  mocks.getDb.mockReturnValue(kysely)
 })
 
 describe('applyPersonalizedChoice', () => {

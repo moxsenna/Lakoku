@@ -9,7 +9,7 @@ import {
   type RealGenerateResult,
 } from '@/lib/runtime/story-generation'
 import { claimAndRunGenerationJobById } from '@/lib/runtime/generation-worker'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb, single } from '@lakoku/db'
 
 export const CONTINUATION_WAIT_MS = 25_000
 
@@ -125,14 +125,17 @@ export async function continuePersonalizedGeneration(input: {
 }
 
 async function checkChapterReadiness(storyId: string, chapterNumber: number): Promise<boolean> {
-  const admin = createAdminClient()
+  const db = getDb()
 
-  const { data, error } = await admin
-    .from('chapters')
-    .select('number')
-    .eq('story_id', storyId)
-    .eq('number', chapterNumber)
-    .maybeSingle()
+  const { data, error } = await single(
+    db
+      .selectFrom('chapters')
+      .select('number')
+      .where('story_id', '=', storyId)
+      .where('number', '=', chapterNumber)
+      .limit(1)
+      .execute(),
+  )
 
   if (error) {
     // fail closed / not-ready, preserving existing continuation semantics

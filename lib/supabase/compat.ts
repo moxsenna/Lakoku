@@ -1,4 +1,4 @@
-import { sql, type Kysely, type SelectQueryBuilder } from 'kysely'
+import { sql, type Kysely, type SelectQueryBuilder, type Transaction } from 'kysely'
 
 /**
  * Helper kompatibilitas transisi supabase-js -> Kysely (Neon Phase A).
@@ -42,13 +42,13 @@ import { sql, type Kysely, type SelectQueryBuilder } from 'kysely'
 
 export type DbResult<T> = {
   data: T
-  error: { message: string } | null
+  error: { message: string; code?: string } | null
 }
 
 /**
  * Membungkus promise Kysely.
  * Awaited success -> { data, error: null }
- * Rejection -> { data: null, error: { message } } (tidak pernah melempar).
+ * Rejection -> { data: null, error: { message, code } } (tidak pernah melempar).
  */
 export async function result<T>(p: Promise<T>): Promise<DbResult<T>> {
   try {
@@ -56,7 +56,10 @@ export async function result<T>(p: Promise<T>): Promise<DbResult<T>> {
     return { data, error: null }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
-    return { data: null as unknown as T, error: { message } }
+    const code = (err && typeof err === 'object' && 'code' in err && typeof (err as { code: unknown }).code === 'string')
+      ? (err as { code: string }).code
+      : undefined
+    return { data: null as unknown as T, error: { message, ...(code ? { code } : {}) } }
   }
 }
 
@@ -64,7 +67,7 @@ export async function result<T>(p: Promise<T>): Promise<DbResult<T>> {
  * Semantik maybeSingle supabase-js.
  * Array kosong -> { data: null, error: null }
  * 1+ baris -> baris pertama ({ data: rows[0], error: null })
- * Rejection -> { data: null, error: { message } } (tidak pernah melempar).
+ * Rejection -> { data: null, error: { message, code } } (tidak pernah melempar).
  */
 export async function single<T>(p: Promise<T[]>): Promise<DbResult<T>> {
   try {
@@ -73,7 +76,10 @@ export async function single<T>(p: Promise<T[]>): Promise<DbResult<T>> {
     return { data, error: null }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
-    return { data: null as unknown as T, error: { message } }
+    const code = (err && typeof err === 'object' && 'code' in err && typeof (err as { code: unknown }).code === 'string')
+      ? (err as { code: string }).code
+      : undefined
+    return { data: null as unknown as T, error: { message, ...(code ? { code } : {}) } }
   }
 }
 
@@ -123,7 +129,7 @@ function assertSafeIdentifier(name: string, kind = 'RPC function name'): void {
 }
 
 function buildRpcQuery<DB, TB extends keyof DB, Row>(
-  db: Kysely<DB>,
+  db: Kysely<DB> | Transaction<DB>,
   name: string,
   params: Record<string, unknown> = {}
 ): SelectQueryBuilder<DB, TB, Row> {
@@ -152,7 +158,7 @@ function buildRpcQuery<DB, TB extends keyof DB, Row>(
  * dan diurutkan alfabetis demi determinisme query cache Kysely.
  */
 export function rpcRows<DB = unknown, TB extends keyof DB = never, Row = Record<string, unknown>>(
-  db: Kysely<DB>,
+  db: Kysely<DB> | Transaction<DB>,
   name: string,
   params: Record<string, unknown> = {}
 ): SelectQueryBuilder<DB, TB, Row> {
@@ -165,7 +171,7 @@ export function rpcRows<DB = unknown, TB extends keyof DB = never, Row = Record<
  * dan diurutkan alfabetis demi determinisme query cache Kysely.
  */
 export function rpcOne<DB = unknown, TB extends keyof DB = never, Row = Record<string, unknown>>(
-  db: Kysely<DB>,
+  db: Kysely<DB> | Transaction<DB>,
   name: string,
   params: Record<string, unknown> = {}
 ): SelectQueryBuilder<DB, TB, Row> {

@@ -8,9 +8,27 @@ const mocks = vi.hoisted(() => ({
   randomUUID: vi.fn(),
 }))
 
+let activeAdminDb: ReturnType<typeof db> | null = null
+
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.cookieFactory }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: vi.fn(() => activeAdminDb?.client),
+    rpcOne: vi.fn((_db: unknown, name: string, args: Record<string, unknown>) => ({
+      execute: vi.fn(async () => {
+        if (!activeAdminDb) return []
+        const res = await (activeAdminDb.client as { rpc: (...a: unknown[]) => Promise<{ data?: unknown; error?: { message: string } | null }> }).rpc(name, args)
+        if (res.error) throw new Error(res.error.message)
+        return [{ fn: res.data }]
+      }),
+    })),
+  }
+})
 vi.mock('@/lib/runtime/personalized-generation', () => ({
   generateNextPersonalizedChapter: mocks.generate,
 }))
@@ -128,7 +146,99 @@ function db(input: DbInput = {}) {
     return { data: null, error: null }
   }
 
-  const client = {
+  const client: Record<string, unknown> = {
+    selectFrom: vi.fn((table: string) => {
+      calls.push({ table, method: 'from', args: [] })
+      let operation = 'select'
+      let payload: unknown
+      const filters: Array<{ method: string; args: unknown[] }> = []
+      const builder: Record<string, unknown> = {}
+      builder.select = vi.fn((...args: unknown[]) => {
+        let colArg = args[0]
+        if (Array.isArray(colArg)) {
+          colArg = colArg.join(',')
+        }
+        payload = colArg
+        calls.push({ table, method: 'select', args: [colArg] })
+        return builder
+      })
+      builder.where = vi.fn((...args: unknown[]) => {
+        if (args.length === 3 && args[1] === '=') {
+          filters.push({ method: 'eq', args: [args[0], args[2]] })
+          calls.push({ table, method: 'eq', args: [args[0], args[2]] })
+        } else if (args.length === 3 && args[1] === 'in') {
+          filters.push({ method: 'in', args: [args[0], args[2]] })
+          calls.push({ table, method: 'in', args: [args[0], args[2]] })
+        }
+        return builder
+      })
+      builder.limit = vi.fn(() => builder)
+      builder.execute = vi.fn(async () => {
+        calls.push({ table, method: 'execute', args: [payload], filters: [...filters] })
+        const res = result(table, operation, payload)
+        if (res.error) throw Object.assign(new Error(res.error.message), { code: res.error.code })
+        return res.data ? [res.data] : []
+      })
+      return builder
+    }),
+    insertInto: vi.fn((table: string) => {
+      let operation = 'insert'
+      let payload: unknown
+      const builder: Record<string, unknown> = {}
+      builder.values = vi.fn((value: unknown) => {
+        operation = 'insert'
+        payload = value
+        calls.push({ table, method: 'insert', args: [value] })
+        return builder
+      })
+      builder.returning = vi.fn(() => builder)
+      builder.executeTakeFirst = vi.fn(async () => {
+        calls.push({ table, method: 'execute', args: [payload] })
+        const res = result(table, operation, payload)
+        if (res.error) throw Object.assign(new Error(res.error.message), { code: res.error.code })
+        return res.data
+      })
+      builder.execute = vi.fn(async () => {
+        calls.push({ table, method: 'execute', args: [payload] })
+        const res = result(table, operation, payload)
+        if (res.error) throw Object.assign(new Error(res.error.message), { code: res.error.code })
+        return res.data ? [res.data] : []
+      })
+      return builder
+    }),
+    updateTable: vi.fn((table: string) => {
+      let operation = 'update'
+      let payload: unknown
+      const filters: Array<{ method: string; args: unknown[] }> = []
+      const builder: Record<string, unknown> = {}
+      builder.set = vi.fn((value: unknown) => {
+        operation = 'update'
+        payload = value
+        calls.push({ table, method: 'update', args: [value] })
+        return builder
+      })
+      builder.where = vi.fn((...args: unknown[]) => {
+        if (args.length === 3 && args[1] === '=') {
+          filters.push({ method: 'eq', args: [args[0], args[2]] })
+          calls.push({ table, method: 'eq', args: [args[0], args[2]] })
+        } else if (args.length === 3 && args[1] === 'in') {
+          filters.push({ method: 'in', args: [args[0], args[2]] })
+          calls.push({ table, method: 'in', args: [args[0], args[2]] })
+        }
+        return builder
+      })
+      builder.returning = vi.fn((...args: unknown[]) => {
+        calls.push({ table, method: 'select', args })
+        return builder
+      })
+      builder.execute = vi.fn(async () => {
+        calls.push({ table, method: 'execute', args: [payload], filters: [...filters] })
+        const res = result(table, operation, payload)
+        if (res.error) throw Object.assign(new Error(res.error.message), { code: res.error.code })
+        return res.data ? [res.data] : []
+      })
+      return builder
+    }),
     from: vi.fn((table: string) => {
       calls.push({ table, method: 'from', args: [] })
       let operation = 'select'
@@ -181,7 +291,9 @@ function db(input: DbInput = {}) {
       return { data: { ok: true, story_id: storyId }, error: null }
     }),
   }
-  return { client, calls }
+  const instance = { client, calls }
+  activeAdminDb = instance
+  return instance
 }
 
 function req(input?: { key?: string | null; body?: unknown; raw?: string }) {

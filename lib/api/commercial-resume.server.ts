@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb, result, rpcOne, single } from '@lakoku/db'
 import { continuePersonalizedGeneration } from '@/lib/api/generation-continuation.server'
 import { getTasteProfileForUser } from '@/lib/api/taste-profile'
 import { normalizeTasteProfile } from '@/lib/taste-profile/schema'
@@ -70,26 +70,34 @@ const QueueJobResultSchema = z.object({
 export async function resumeCommercialOperation(
   input: ResumeCommercialOperationInput,
 ): Promise<ResumeCommercialOperationResult> {
-  const admin = createAdminClient()
+  const db = getDb()
 
   // 1) Query pending creation request for this story
-  const { data: creationReqs, error: creationErr } = await admin
-    .from('story_creation_requests')
-    .select('story_id, status, generation_job_id, idempotency_key')
-    .eq('owner_user_id', input.userId)
-    .eq('story_id', input.storyId)
-    .eq('request_kind', 'personalized')
+  // RLS_AUDIT: story_creation_requests_owner_read
+  const { data: creationReqs, error: creationErr } = await result(
+    db
+      .selectFrom('story_creation_requests')
+      .select(['story_id', 'status', 'generation_job_id', 'idempotency_key'])
+      .where('owner_user_id', '=', input.userId)
+      .where('story_id', '=', input.storyId)
+      .where('request_kind', '=', 'personalized')
+      .execute(),
+  )
 
   if (creationErr) throw new CommercialResumeError('INTERNAL_ERROR')
 
   const pendingCreation = (creationReqs ?? []).filter((r) => r.status === 'WAITING_FOR_CREDITS' || r.status === 'RESERVED')
 
   // 2) Query pending commercial intents for this story
-  const { data: choiceIntents, error: choiceErr } = await admin
-    .from('commercial_generation_intents')
-    .select('story_id, chapter_number, status, generation_job_id, quoted_credits')
-    .eq('user_id', input.userId)
-    .eq('story_id', input.storyId)
+  // RLS_AUDIT: commercial_generation_intents_owner_read
+  const { data: choiceIntents, error: choiceErr } = await result(
+    db
+      .selectFrom('commercial_generation_intents')
+      .select(['story_id', 'chapter_number', 'status', 'generation_job_id', 'quoted_credits'])
+      .where('user_id', '=', input.userId)
+      .where('story_id', '=', input.storyId)
+      .execute(),
+  )
 
   if (choiceErr) throw new CommercialResumeError('INTERNAL_ERROR')
 
@@ -109,7 +117,6 @@ export async function resumeCommercialOperation(
   if (pendingCreation.length === 1) {
     const creationReq = pendingCreation[0]
     const authRes = await authorizeStoryCreation({
-      admin,
       userId: input.userId,
       storyId: input.storyId,
     })
@@ -121,7 +128,6 @@ export async function resumeCommercialOperation(
     const tasteProfile = (await getTasteProfileForUser(input.userId)) ?? normalizeTasteProfile(null)
 
     const runRes = await runContractAndGeneration({
-      admin,
       userId: input.userId,
       idempotencyKey: creationReq.idempotency_key,
       storyId: input.storyId,
@@ -145,15 +151,17 @@ export async function resumeCommercialOperation(
   // Handle Resumable Choice Intent (Bab 4+)
   const intent = pendingIntents[0]
 
-  const { data: authData, error: authErr } = await admin.rpc('authorize_commercial_generation_intent_v1', {
-    p_user_id: input.userId,
-    p_story_id: input.storyId,
-    p_chapter_number: intent.chapter_number,
-  })
+  const { data: authData, error: authErr } = await single(
+    rpcOne(db, 'authorize_commercial_generation_intent_v1', {
+      p_user_id: input.userId,
+      p_story_id: input.storyId,
+      p_chapter_number: intent.chapter_number,
+    }).execute(),
+  )
 
   if (authErr || !authData) throw new CommercialResumeError('INTERNAL_ERROR')
 
-  const authParsed = AuthorizeIntentResultSchema.safeParse(authData)
+  const authParsed = AuthorizeIntentResultSchema.safeParse(authData?.fn ?? authData)
   if (!authParsed.success) throw new CommercialResumeError('INTERNAL_ERROR')
 
   if (authParsed.data.ok === false) {
@@ -169,18 +177,20 @@ export async function resumeCommercialOperation(
     throw new CommercialResumeError('INTERNAL_ERROR')
   }
 
-  const { data: queueData, error: queueErr } = await admin.rpc('queue_authorized_commercial_generation_v1', {
-    p_user_id: input.userId,
-    p_story_id: input.storyId,
-    p_chapter_number: intent.chapter_number,
-  })
+  const { data: queueData, error: queueErr } = await single(
+    rpcOne(db, 'queue_authorized_commercial_generation_v1', {
+      p_user_id: input.userId,
+      p_story_id: input.storyId,
+      p_chapter_number: intent.chapter_number,
+    }).execute(),
+  )
 
   if (queueErr || !queueData) {
     if (queueErr) console.error('[resumeCommercialOperation] queueErr:', queueErr)
     throw new CommercialResumeError('INTERNAL_ERROR')
   }
 
-  const queueParsed = QueueJobResultSchema.safeParse(queueData)
+  const queueParsed = QueueJobResultSchema.safeParse(queueData?.fn ?? queueData)
   if (!queueParsed.success || !queueParsed.data.ok) throw new CommercialResumeError('INTERNAL_ERROR')
 
   const jobId = queueParsed.data.job_id

@@ -3,25 +3,67 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   cookieFactory: vi.fn(),
   adminFactory: vi.fn(),
+  getDb: vi.fn(),
+  rpc: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.cookieFactory }))
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: mocks.getDb,
+    rpcOne: vi.fn((_db: unknown, name: string, params: Record<string, unknown>) => {
+      const promise = mocks.rpc(name, params)
+      return {
+        execute: vi.fn(async () => {
+          const res = await promise
+          return [{ fn: res }]
+        }),
+      }
+    }),
+  }
+})
 
 const JOB_ID = '11111111-1111-4111-8111-111111111111'
 const CORRELATION_ID = '22222222-2222-4222-8222-222222222222'
+const USER_ID = '10000000-0000-4000-8000-000000000001'
+
+function setupDb() {
+  const executor = {
+    transformQuery: (node: unknown) => node,
+    compileQuery: () => ({ sql: '', parameters: [] }),
+    executeQuery: vi.fn(async () => ({ rows: [] })),
+  }
+  const trx = {
+    getExecutor: vi.fn(() => executor),
+  }
+  const db = {
+    transaction: vi.fn(() => ({
+      execute: vi.fn(async (cb: (t: typeof trx) => Promise<unknown>) => cb(trx)),
+    })),
+  }
+  mocks.getDb.mockReturnValue(db)
+  mocks.cookieFactory.mockResolvedValue({
+    auth: {
+      getUser: vi.fn(async () => ({ data: { user: { id: USER_ID } }, error: null })),
+    },
+  })
+}
 
 function rpcResult(data: unknown) {
-  const rpc = vi.fn().mockResolvedValue({ data, error: null })
-  mocks.cookieFactory.mockResolvedValue({ rpc })
-  return rpc
+  setupDb()
+  mocks.rpc.mockResolvedValue(data)
+  return mocks.rpc
 }
 
 function rpcError(message: string, code = 'P0001') {
-  const rpc = vi.fn().mockResolvedValue({ data: null, error: { code, message } })
-  mocks.cookieFactory.mockResolvedValue({ rpc })
-  return rpc
+  setupDb()
+  const err = Object.assign(new Error(message), { code })
+  mocks.rpc.mockRejectedValue(err)
+  return mocks.rpc
 }
 
 beforeEach(() => {

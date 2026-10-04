@@ -6,6 +6,8 @@ import {
   type EnqueueGenerationJobResult,
 } from '@/packages/contracts/src/generation-job'
 import { createClient } from '@/lib/supabase/server'
+import { getDb, result, rpcOne } from '@lakoku/db'
+import { sql } from 'kysely'
 
 export type GenerationJobErrorCode =
   | 'AUTH_REQUIRED'
@@ -72,13 +74,28 @@ export async function enqueueGenerationJob(
 ): Promise<EnqueueGenerationJobResult> {
   const parsed = EnqueueGenerationJobInputSchema.parse(input)
   const client = await createClient()
-  const { data, error } = await client.rpc('enqueue_generation_job_v1', {
-    p_story_id: parsed.storyId,
-    p_chapter_number: parsed.chapterNumber,
-    p_generation_kind: parsed.generationKind,
-    p_trigger_choice_id: parsed.triggerChoiceId,
-  })
-  if (error) throw mapRpcError(error)
+  const { data: userData, error: userError } = await client.auth.getUser()
+  if (userError || !userData?.user) {
+    throw new GenerationJobError('AUTH_REQUIRED')
+  }
+
+  const db = getDb()
+  const { data, error } = await result(
+    db.transaction().execute(async (trx) => {
+      await sql`select set_config('request.jwt.claim.sub', ${userData.user.id}, true)`.execute(trx)
+      const rows = await rpcOne(trx, 'enqueue_generation_job_v1', {
+        p_story_id: parsed.storyId,
+        p_chapter_number: parsed.chapterNumber,
+        p_generation_kind: parsed.generationKind,
+        p_trigger_choice_id: parsed.triggerChoiceId,
+      }).execute()
+      return rows[0]?.fn ?? rows[0]
+    }),
+  )
+  if (error) {
+    console.error('[enqueueGenerationJob error]', error)
+    throw mapRpcError(error)
+  }
 
   const raw = RawEnqueueResultSchema.parse(data)
   return EnqueueGenerationJobResultSchema.parse({

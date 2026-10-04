@@ -271,12 +271,12 @@ async function run() {
       targetSet.has(`${r.schema_name}.${r.table_name}`)
     )
 
-    console.log(`[TRIGGERS] Temporarily disabling user triggers on ${tablesWithTriggers.length} tables...`)
-    for (const r of tablesWithTriggers) {
-      await neonClient.query(`ALTER TABLE "${r.schema_name}"."${r.table_name}" DISABLE TRIGGER USER`)
-    }
-
     try {
+      console.log(`[TRIGGERS] Temporarily disabling user triggers on ${tablesWithTriggers.length} tables...`)
+      for (const r of tablesWithTriggers) {
+        await neonClient.query(`ALTER TABLE "${r.schema_name}"."${r.table_name}" DISABLE TRIGGER USER`)
+      }
+
       // 9. TRUNCATE target tables in one statement with CASCADE
       console.log('[TRUNCATE] Truncating target tables on Neon...')
       const truncateList = allTargetTables
@@ -370,10 +370,13 @@ async function run() {
         if (identityColsByTable.has(fqn)) {
           for (const col of identityColsByTable.get(fqn)) {
             await neonClient.query(`
-              SELECT setval(
-                pg_get_serial_sequence($1, $2),
-                coalesce((SELECT max("${col}") FROM "${schema}"."${table}"), 1)
-              )
+              SELECT CASE
+                WHEN max("${col}") IS NOT NULL THEN
+                  setval(pg_get_serial_sequence($1, $2), max("${col}"), true)
+                ELSE
+                  setval(pg_get_serial_sequence($1, $2), 1, false)
+              END
+              FROM "${schema}"."${table}"
             `, [`"${schema}"."${table}"`, col])
           }
         }

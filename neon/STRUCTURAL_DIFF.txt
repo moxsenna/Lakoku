@@ -139,5 +139,39 @@ DETAILED TRIGGER LIST (17 triggers):
  13. e5_reject_audit_mutation                      [20260824101000_e5_stateless_validator_attestation.sql]
  14. e5_reject_audit_truncate                      [20260824101000_e5_stateless_validator_attestation.sql]
  15. e5_reject_proof_mutation                      [20260824101000_e5_stateless_validator_attestation.sql]
- 16. e5_reject_proof_truncate                      [20260824101000_e5_stateless_validator_attestation.sql]
- 17. e5_sync_generation_admission_from_queue_v1    [20260827130000_atomic_runtime_review_enqueue.sql]
+  16. e5_reject_proof_truncate                      [20260824101000_e5_stateless_validator_attestation.sql]
+  17. e5_sync_generation_admission_from_queue_v1    [20260827130000_atomic_runtime_review_enqueue.sql]
+
+===============================================================================
+LIVE-VS-LIVE DRIFT CHECK REPORT (Supabase Live vs Neon Target)
+Generated: 2026-10-04
+===============================================================================
+
+SCOPE:
+- Schemas: public, private (and auth compatibility)
+- Source: Supabase Live Database (PostgreSQL 17.6)
+- Target: Neon Database (PostgreSQL 17.6)
+
+DRIFT DISCOVERY & RESOLUTION:
+1. Captured Objects (via neon/migrations/20261004000000_live_drift_capture.sql):
+   - Table: public.content_reports (9 columns, PK, FK to stories(id) ON DELETE CASCADE, CHECK chapter_number >= 1)
+   - Index: public.content_reports_story_chapter_idx ON (story_id, chapter_number)
+   - Function: public.record_content_report_v1(text, integer, uuid, text, text, jsonb) RETURNS uuid (SECURITY DEFINER)
+   - Background: Artifacts originally created live during M7c but omitted from supabase/migrations/. Now codified as a proper migration file so fresh replays are 100% reproducible.
+
+2. Live Object Comparison Summary (public + private schemas):
+   - Tables: 75 Supabase domain tables vs 75 Neon domain tables (+1 neon_schema_migrations) -> 0 missing
+   - Columns: 800 Supabase columns vs 800 Neon domain columns (+2 neon_schema_migrations) -> 0 missing
+   - Views: 4 Supabase views vs 4 Neon views -> 0 missing
+   - Functions: 129 Supabase functions vs 129 Neon domain functions -> 0 missing
+   - Triggers: 17 Supabase triggers vs 17 Neon triggers -> 0 missing
+   - Indexes: 202 Supabase indexes vs 202 Neon domain indexes (+1 neon_schema_migrations) -> 0 missing
+
+3. Intentionally Excluded Objects (Supabase-internal / Infrastructure):
+   - Internal Schemas: auth (except compat auth.users / auth.uid()), storage, realtime, graphql, pgsodium, pgjwt, net, pg_cron, supabase_functions, vault.
+   - Row Level Security (RLS) policies: Stripped on Neon per data plane architecture (backend service connection bypasses RLS; auth handled at application level).
+   - Supabase System Roles: anon, authenticated, service_role grants/revokes stripped.
+   - Foreign Keys to auth.users: Stripped inline and standalone per Neon standalone auth architecture.
+
+VERDICT: CLEAN - 0 missing objects, 0 structural drift across domain schemas.
+

@@ -1,0 +1,143 @@
+===============================================================================
+STRUCTURAL DIFF GATE REPORT: supabase/migrations vs neon/migrations
+Generated: 2026-10-04T06:20:29.028Z
+===============================================================================
+
+SUMMARY OBJECT COUNTS:
+-------------------------------------------------------------------------------
+Object Type                   | Supabase Migrations | Neon Migrations | Delta
+-------------------------------------------------------------------------------
+CREATE TABLE                  | 75                  | 76              | +1
+CREATE [OR REPLACE] FUNCTION  | 166                 | 167             | +1
+CREATE TRIGGER                | 17                  | 17              | 0
+-------------------------------------------------------------------------------
+
+DELTAS EXPLANATION:
+-------------------------------------------------------------------------------
+1. CREATE TABLE delta (+1):
+   - Added: auth.users (in neon/migrations/20260707000000_core_runtime_baseline.sql)
+   - Reason: In Supabase, auth.users is managed internally by Supabase Auth and
+     not declared in supabase/migrations/*.sql. In Neon, independent PostgreSQL
+     does not have auth.users built-in. A compatibility placeholder table
+     (id, email, encrypted_password, metadata, timestamps) is defined to allow
+     historical views and legacy functions to resolve during migration replay.
+     All 75 domain tables from Supabase migrations are 100% preserved.
+
+2. CREATE FUNCTION delta (+1):
+   - Added: auth.uid() (in neon/migrations/20260707000000_core_runtime_baseline.sql)
+   - Reason: In Supabase, auth.uid() is provided by the internal auth schema.
+     In Neon, a STABLE SQL stub returning null::uuid is defined so that
+     LANGUAGE sql functions referencing auth.uid() compile cleanly.
+     All 166 domain function definitions from Supabase migrations are 100% preserved.
+
+3. CREATE TRIGGER delta (0):
+   - Exact match: 17 triggers defined across both source and target.
+
+STRIPPED OBJECTS AUDIT:
+-------------------------------------------------------------------------------
+- CREATE POLICY: Stripped completely (Row Level Security removed on Neon data plane).
+- ALTER TABLE ... ENABLE/FORCE ROW LEVEL SECURITY: Stripped completely.
+- GRANT / REVOKE: Stripped for Supabase-specific roles (anon, authenticated, service_role).
+- ALTER TABLE/FUNCTION ... OWNER TO: Stripped postgres ownership clauses.
+- pg_cron (CREATE EXTENSION pg_cron / cron.schedule): Stripped completely.
+- storage.buckets inserts: Stripped completely.
+- Foreign Key constraints to auth.users: Stripped inline and standalone ALTER TABLE constraints.
+
+DETAILED TABLE LIST (Supabase 75 -> Neon 76):
+-------------------------------------------------------------------------------
+  1. auth.users                                    [20260707000000_core_runtime_baseline.sql]
+  2. public.act_rollups                            [20260707000000_core_runtime_baseline.sql]
+  3. public.chapter_blueprints                     [20260707000000_core_runtime_baseline.sql]
+  4. public.chapters                               [20260707000000_core_runtime_baseline.sql]
+  5. public.character_aliases                      [20260707000000_core_runtime_baseline.sql]
+  6. public.character_states                       [20260707000000_core_runtime_baseline.sql]
+  7. public.character_voice_sheets                 [20260707000000_core_runtime_baseline.sql]
+  8. public.characters                             [20260707000000_core_runtime_baseline.sql]
+  9. public.choice_outcomes                        [20260707000000_core_runtime_baseline.sql]
+ 10. public.facts_ledger                           [20260707000000_core_runtime_baseline.sql]
+ 11. public.generation_leases                      [20260707000000_core_runtime_baseline.sql]
+ 12. public.idempotency_keys                       [20260707000000_core_runtime_baseline.sql]
+ 13. public.knowledge_scopes                       [20260707000000_core_runtime_baseline.sql]
+ 14. public.outbox                                 [20260707000000_core_runtime_baseline.sql]
+ 15. public.reader_states                          [20260707000000_core_runtime_baseline.sql]
+ 16. public.retrieval_logs                         [20260707000000_core_runtime_baseline.sql]
+ 17. public.secrets_reveals                        [20260707000000_core_runtime_baseline.sql]
+ 18. public.stories                                [20260707000000_core_runtime_baseline.sql]
+ 19. public.story_events                           [20260707000000_core_runtime_baseline.sql]
+ 20. public.story_threads                          [20260707000000_core_runtime_baseline.sql]
+ 21. public.timeline_events                        [20260707000000_core_runtime_baseline.sql]
+ 22. public.credit_products                        [20260708000000_paycore_credit_model.sql]
+ 23. public.credit_ledger                          [20260708000000_paycore_credit_model.sql]
+ 24. public.reading_policy                         [20260708100000_reading_policy.sql]
+ 25. public.shared_story_links                     [20260710010000_shared_story_links.sql]
+ 26. public.shared_story_starts                    [20260710010000_shared_story_links.sql]
+ 27. public.reader_taste_profiles                  [20260711000000_reader_taste_profiles.sql]
+ 28. public.analytics_events                       [20260711000001_analytics_events.sql]
+ 29. public.credit_orders                          [20260711010000_ops_credit_config.sql]
+ 30. public.admin_credit_grants                    [20260711010000_ops_credit_config.sql]
+ 31. public.generation_policy                      [20260711010000_ops_credit_config.sql]
+ 32. public.ai_model_routes                        [20260711010000_ops_credit_config.sql]
+ 33. public.feature_credit_costs                   [20260711010000_ops_credit_config.sql]
+ 34. public.admin_settings_audit_logs              [20260711030000_admin_editable_settings.sql]
+ 35. public.story_generation_contracts             [20260713000000_personalized_story_engine.sql]
+ 36. public.story_creation_requests                [20260713000000_personalized_story_engine.sql]
+ 37. public.personalized_choice_applications       [20260713030000_apply_personalized_choice.sql]
+ 38. public.personalized_choice_idempotency_keys   [20260713030000_apply_personalized_choice.sql]
+ 39. public.generation_jobs                        [20260718010000_generation_jobs_foundation.sql]
+ 40. public.generation_job_attempts                [20260718010000_generation_jobs_foundation.sql]
+ 41. public.generation_model_pricing_versions      [20260718100000_generation_provider_observability.sql]
+ 42. public.generation_provider_calls              [20260718100000_generation_provider_observability.sql]
+ 43. public.generation_provider_call_daily         [20260718100000_generation_provider_observability.sql]
+ 44. public.admin_users                            [20260718110000_admin_generation_observability_rpcs.sql]
+ 45. public.admin_generation_access_audit          [20260718110000_admin_generation_observability_rpcs.sql]
+ 46. public.story_creative_directions              [20260722090001_story_creative_directions.sql]
+ 47. public.story_creative_directions              [20260724100000_reconcile_choice_routes_and_creative_direction.sql]
+ 48. public.chapter_generation_checkpoints         [20260724110000_chapter_generation_checkpoints.sql]
+ 49. public.reader_plot_debt_closures              [20260728010000_plot_debt_closure_ledger.sql]
+ 50. private.generation_incident_captures          [20260731010000_generation_incident_capture.sql]
+ 51. private.generation_incident_access_audit      [20260731010000_generation_incident_capture.sql]
+ 52. public.password_recovery_capabilities         [20260731020000_password_recovery_capabilities.sql]
+ 53. public.account_commercial_states              [20260804010000_account_commercial_entitlements.sql]
+ 54. public.credit_reservations                    [20260804020000_credit_reservations.sql]
+ 55. public.reader_plot_debt_progress              [20260805000000_chapter_state_delta_expand.sql]
+ 56. public.chapter_state_commits                  [20260805000000_chapter_state_delta_expand.sql]
+ 57. public.commercial_generation_intents          [20260805010000_commercial_generation_intents.sql]
+ 58. public.blueprint_queue                        [20260823100000_e5_blueprint_review_queue.sql]
+ 59. public.blueprint_resolutions                  [20260823100100_e5_blueprint_resolutions.sql]
+ 60. public.blueprint_audit_log                    [20260823100200_e5_blueprint_audit.sql]
+ 61. public.blueprint_validator_attestations       [20260823100250_e5_blueprint_validator_proofs.sql]
+ 62. public.blueprint_validator_proofs             [20260823100250_e5_blueprint_validator_proofs.sql]
+ 63. private.e5_validator_attestation_key          [20260824101000_e5_stateless_validator_attestation.sql]
+ 64. public.referral_codes                         [20260917000000_dompet_imbalan_referral.sql]
+ 65. public.referral_attributions                  [20260917000000_dompet_imbalan_referral.sql]
+ 66. public.reward_ledger                          [20260917000000_dompet_imbalan_referral.sql]
+ 67. public.reward_policy                          [20260917000000_dompet_imbalan_referral.sql]
+ 68. public.credit_orders_v2                       [20260917120000_play_billing_channel_model.sql]
+ 69. public.mission_policy                         [20260918000000_gamified_missions_ads.sql]
+ 70. public.user_mission_daily                     [20260918000000_gamified_missions_ads.sql]
+ 71. public.admob_ssv_events                       [20260918000000_gamified_missions_ads.sql]
+ 72. public.tinta_ledger                           [20260919000000_lakoin_tinta_economy.sql]
+ 73. public.tinta_policy                           [20260919000000_lakoin_tinta_economy.sql]
+ 74. public.push_devices                           [20260921000000_push_devices.sql]
+ 75. public.push_log                               [20260921000000_push_devices.sql]
+ 76. public.story_cover_candidates                 [20260922000000_story_cover_candidates.sql]
+
+DETAILED TRIGGER LIST (17 triggers):
+-------------------------------------------------------------------------------
+  1. ai_model_routes_fallback_models_trg           [20260717020000_fallback_models_with_provider.sql]
+  2. generation_jobs_enforce_state_v1_trigger      [20260718010000_generation_jobs_foundation.sql]
+  3. generation_job_attempts_enforce_identity_v1_trigger [20260718010000_generation_jobs_foundation.sql]
+  4. generation_provider_calls_enforce_identity_v1_trigger [20260718100000_generation_provider_observability.sql]
+  5. plot_debt_closures_no_update                  [20260728010000_plot_debt_closure_ledger.sql]
+  6. reader_plot_debt_progress_immutable           [20260805000000_chapter_state_delta_expand.sql]
+  7. chapter_state_commits_immutable               [20260805000000_chapter_state_delta_expand.sql]
+  8. trg_personalized_creation_request_ready       [20260806010000_commercial_cutover_primitives.sql]
+  9. e5_reject_legacy_attestation_mutation         [20260824101000_e5_stateless_validator_attestation.sql]
+ 10. e5_reject_legacy_attestation_truncate         [20260824101000_e5_stateless_validator_attestation.sql]
+ 11. e5_reject_resolution_mutation                 [20260824101000_e5_stateless_validator_attestation.sql]
+ 12. e5_reject_resolution_truncate                 [20260824101000_e5_stateless_validator_attestation.sql]
+ 13. e5_reject_audit_mutation                      [20260824101000_e5_stateless_validator_attestation.sql]
+ 14. e5_reject_audit_truncate                      [20260824101000_e5_stateless_validator_attestation.sql]
+ 15. e5_reject_proof_mutation                      [20260824101000_e5_stateless_validator_attestation.sql]
+ 16. e5_reject_proof_truncate                      [20260824101000_e5_stateless_validator_attestation.sql]
+ 17. e5_sync_generation_admission_from_queue_v1    [20260827130000_atomic_runtime_review_enqueue.sql]

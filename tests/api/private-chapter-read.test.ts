@@ -25,15 +25,28 @@ vi.mock('@/lib/supabase/env', () => ({
 vi.mock('@/lib/supabase/admin', () => ({
   createAdminClient: mocks.adminFactory,
 }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: vi.fn(() => {
+      mocks.adminFactory()
+      return activeAdminDb?.client
+    }),
+  }
+})
 vi.mock('@/lib/supabase/server', () => ({
   createClient: mocks.cookieFactory,
 }))
 
 type Call = { method: string; args: unknown[] }
 
+let activeAdminDb: { client: Record<string, unknown>; calls: Call[] } | null = null
+
 function createAdminDb(chapterRow: unknown | null) {
   const calls: Call[] = []
-  const client = {
+  const client: Record<string, unknown> = {
     from: vi.fn((table: string) => {
       calls.push({ method: 'from', args: [table] })
       const builder: Record<string, unknown> = {}
@@ -49,8 +62,21 @@ function createAdminDb(chapterRow: unknown | null) {
       })
       return builder
     }),
+    selectFrom: vi.fn((table: string) => {
+      calls.push({ method: 'from', args: [table] })
+      const kb: Record<string, unknown> = {}
+      kb.select = vi.fn(() => kb)
+      kb.where = vi.fn(() => kb)
+      kb.limit = vi.fn(() => kb)
+      kb.execute = vi.fn(async () => {
+        return chapterRow ? [chapterRow] : []
+      })
+      return kb
+    }),
   }
-  return { client, calls }
+  const instance = { client, calls }
+  activeAdminDb = instance
+  return instance
 }
 
 const chapterRow = {

@@ -19,9 +19,14 @@ vi.mock('@/lib/supabase/env', () => ({
 vi.mock('@/lib/supabase/admin', () => ({
   createAdminClient: mocks.adminFactory,
 }))
-vi.mock('@lakoku/db', () => ({
-  createAdminClient: mocks.adminFactory,
-}))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: vi.fn(() => mocks.adminFactory()),
+  }
+})
 vi.mock('@/lib/supabase/server', () => ({
   createClient: mocks.cookieFactory,
 }))
@@ -59,6 +64,55 @@ function createMockDb(result: { data: unknown; error: { message: string } | null
     from: vi.fn((table: string) => {
       calls.push({ method: 'from', args: [table] })
       return builder
+    }),
+    selectFrom: vi.fn((table: string) => {
+      calls.push({ method: 'from', args: [table] })
+      const kb: Record<string, unknown> = {}
+      kb.select = vi.fn((..._args: unknown[]) => {
+        calls.push({ method: 'select', args: [STORY_READER_COLUMNS] })
+        return kb
+      })
+      kb.where = vi.fn((...args: unknown[]) => {
+        if (typeof args[0] === 'function') {
+          const ebFn = vi.fn((left: unknown, op?: unknown, right?: unknown) => {
+            if (op === '=' && right !== undefined) return `${left}.eq.${right}`
+            if (op === 'like' && right !== undefined) return `${left}.like.${right}`
+            return `${left}.${op}.${right}`
+          }) as unknown as {
+            (left: unknown, op?: unknown, right?: unknown): string
+            or: (items: unknown[]) => string
+            and: (items: unknown[]) => string
+          }
+          ebFn.or = vi.fn((items: unknown[]) => items.join(','))
+          ebFn.and = vi.fn((items: unknown[]) => items.join(','))
+          const res = args[0](ebFn)
+          calls.push({ method: 'or', args: [res] })
+        } else if (args[1] === '=') {
+          calls.push({ method: 'eq', args: [args[0], args[2]] })
+        } else if (args[1] === 'is not') {
+          calls.push({ method: 'not', args: [args[0], 'is', args[2]] })
+        } else if (args[1] === 'not like') {
+          calls.push({ method: 'not', args: [args[0], 'like', args[2]] })
+        } else if (args[1] === 'in') {
+          calls.push({ method: 'in', args: [args[0], args[2]] })
+        }
+        return kb
+      })
+      kb.orderBy = vi.fn((col: unknown, dir: unknown) => {
+        calls.push({ method: 'order', args: [col, { ascending: dir === 'asc' }] })
+        return kb
+      })
+      kb.limit = vi.fn((num: unknown) => {
+        calls.push({ method: 'limit', args: [num] })
+        return kb
+      })
+      kb.execute = vi.fn(async () => {
+        if (result.error) throw new Error(result.error.message)
+        const d = result.data
+        if (Array.isArray(d)) return d
+        return d ? [d] : []
+      })
+      return kb
     }),
   }
 

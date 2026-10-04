@@ -2,7 +2,7 @@ import 'server-only'
 import { hmacSha256Hex, sha256Hex } from './crypto'
 import { loadPayCoreOutboundConfig, type PayCoreOutboundConfig } from './config'
 import { getCreditProduct, calculateTopupCredits, type TopupCreditCalculation } from './products'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, result, rpcOne, single } from '@lakoku/db'
 
 /**
  * Client outbound PayCore (server-only): membuat order pembelian kredit dan
@@ -68,10 +68,13 @@ export type CreateOrderOutcome =
 
 /** Cek apakah user sudah pernah topup berbayar (untuk bonus first topup). */
 async function hasPaidTopup(userId: string): Promise<boolean> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase.rpc('has_paid_topup_v1', { p_user_id: userId })
+  const db = getDb()
+  const { data, error } = await single(
+    rpcOne(db, 'has_paid_topup_v1', { p_user_id: userId }).execute(),
+  )
   if (error) throw new Error(`hasPaidTopup: ${error.message}`)
-  return data === true
+  const raw = data ? ((data as Record<string, unknown>).fn ?? data) : false
+  return raw === true
 }
 
 /**
@@ -153,18 +156,24 @@ async function insertCreditOrderSnapshot(args: {
   priceIdr: number
   calc: TopupCreditCalculation
 }): Promise<void> {
-  const supabase = createAdminClient()
-  const { error } = await supabase.from('credit_orders').insert({
-    order_id: args.orderId,
-    user_id: args.userId,
-    product_key: args.productKey,
-    price_idr: args.priceIdr,
-    base_credits: args.calc.baseCredits,
-    bonus_credits: args.calc.bonusCredits,
-    total_credits: args.calc.totalCredits,
-    bonus_kind: args.calc.bonusKind,
-    status: 'created',
-  })
+  const db = getDb()
+  // RLS_AUDIT: credit_orders_own_read
+  const { error } = await result(
+    db
+      .insertInto('credit_orders')
+      .values({
+        order_id: args.orderId,
+        user_id: args.userId,
+        product_key: args.productKey,
+        price_idr: args.priceIdr,
+        base_credits: args.calc.baseCredits,
+        bonus_credits: args.calc.bonusCredits,
+        total_credits: args.calc.totalCredits,
+        bonus_kind: args.calc.bonusKind,
+        status: 'created',
+      })
+      .execute(),
+  )
   if (error) {
     // Bukan fatal: order di PayCore sudah dibuat. Log warning, lanjut.
     console.log('[v0] credit_orders insert gagal (non-fatal):', error.message)

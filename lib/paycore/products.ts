@@ -1,5 +1,5 @@
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, result, single } from '@lakoku/db'
 
 /**
  * Katalog produk kredit — dibaca dari tabel `credit_products` (SUMBER HARGA,
@@ -51,36 +51,55 @@ function mapRow(r: CreditProductRow): CreditProduct {
   }
 }
 
-const SELECT_COLUMNS =
-  'product_key,name,price_idr,credits,normal_bonus_credits,first_topup_bonus_credits,marketing_badge,bonus_active,active,channel,play_sku'
+const PRODUCT_COLUMNS = [
+  'product_key',
+  'name',
+  'price_idr',
+  'credits',
+  'normal_bonus_credits',
+  'first_topup_bonus_credits',
+  'marketing_badge',
+  'bonus_active',
+  'active',
+  'channel',
+  'play_sku',
+] as const
 
 /** Ambil satu produk aktif berdasarkan product_key + channel (default web). */
 export async function getCreditProduct(
   productKey: string,
   channel: 'web' | 'android' = 'web',
 ): Promise<CreditProduct | null> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('credit_products')
-    .select(SELECT_COLUMNS)
-    .eq('product_key', productKey)
-    .eq('channel', channel)
-    .eq('active', true)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: credit_products_read
+  const { data, error } = await single(
+    db
+      .selectFrom('credit_products')
+      .select(PRODUCT_COLUMNS)
+      .where('product_key', '=', productKey)
+      .where('channel', '=', channel)
+      .where('active', '=', true)
+      .limit(1)
+      .execute(),
+  )
   if (error) throw new Error(`getCreditProduct: ${error.message}`)
   return data ? mapRow(data as CreditProductRow) : null
 }
 
 /** Ambil produk android berdasarkan SKU Play Billing (idempotent per SKU). */
 export async function getCreditProductByPlaySku(playSku: string): Promise<CreditProduct | null> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('credit_products')
-    .select(SELECT_COLUMNS)
-    .eq('play_sku', playSku)
-    .eq('channel', 'android')
-    .eq('active', true)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: credit_products_read
+  const { data, error } = await single(
+    db
+      .selectFrom('credit_products')
+      .select(PRODUCT_COLUMNS)
+      .where('play_sku', '=', playSku)
+      .where('channel', '=', 'android')
+      .where('active', '=', true)
+      .limit(1)
+      .execute(),
+  )
   if (error) throw new Error(`getCreditProductByPlaySku: ${error.message}`)
   return data ? mapRow(data as CreditProductRow) : null
 }
@@ -89,13 +108,17 @@ export async function getCreditProductByPlaySku(playSku: string): Promise<Credit
 export async function listCreditProducts(
   channel: 'web' | 'android' = 'web',
 ): Promise<CreditProduct[]> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('credit_products')
-    .select(SELECT_COLUMNS)
-    .eq('channel', channel)
-    .eq('active', true)
-    .order('sort_order', { ascending: true })
+  const db = getDb()
+  // RLS_AUDIT: credit_products_read
+  const { data, error } = await result(
+    db
+      .selectFrom('credit_products')
+      .select(PRODUCT_COLUMNS)
+      .where('channel', '=', channel)
+      .where('active', '=', true)
+      .orderBy('sort_order', 'asc')
+      .execute(),
+  )
   if (error) throw new Error(`listCreditProducts: ${error.message}`)
   return (data as CreditProductRow[] | null)?.map(mapRow) ?? []
 }

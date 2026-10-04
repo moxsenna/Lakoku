@@ -1,6 +1,6 @@
 import 'server-only'
 import { cache } from 'react'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, result, single, rpcOne } from '@lakoku/db'
 import {
   DEFAULT_READING_POLICY,
   unlockRef,
@@ -21,25 +21,33 @@ export const getReadingPolicy = cache(async function getReadingPolicy(): Promise
   let freeChapters = DEFAULT_READING_POLICY.freeChapters
 
   try {
-    const db = createAdminClient()
+    const db = getDb()
 
     // Baca freeChapters dari reading_policy (existing table)
-    const { data: rp } = await db
-      .from('reading_policy')
-      .select('free_chapters,credits_per_chapter')
-      .eq('id', 1)
-      .maybeSingle()
+    // RLS_AUDIT: reading_policy_read
+    const { data: rp } = await single(
+      db
+        .selectFrom('reading_policy')
+        .select(['free_chapters', 'credits_per_chapter'])
+        .where('id', '=', 1)
+        .limit(1)
+        .execute(),
+    )
     if (rp) {
       freeChapters = Number(rp.free_chapters)
     }
 
     // Baca creditsPerChapter dari feature_credit_costs (chapter_unlock)
-    const { data: fc } = await db
-      .from('feature_credit_costs')
-      .select('credits_required')
-      .eq('feature_key', 'chapter_unlock')
-      .eq('is_active', true)
-      .maybeSingle()
+    // RLS_AUDIT: feature_credit_costs_read
+    const { data: fc } = await single(
+      db
+        .selectFrom('feature_credit_costs')
+        .select('credits_required')
+        .where('feature_key', '=', 'chapter_unlock')
+        .where('is_active', '=', true)
+        .limit(1)
+        .execute(),
+    )
     if (fc) {
       creditsPerChapter = Number(fc.credits_required)
     }
@@ -53,10 +61,14 @@ export const getReadingPolicy = cache(async function getReadingPolicy(): Promise
 /** Saldo kredit user (0 bila belum ada / gagal). */
 export async function getCreditBalance(userId: string): Promise<number> {
   try {
-    const db = createAdminClient()
-    const { data, error } = await db.rpc('credit_balance_v1', { p_user_id: userId })
+    const db = getDb()
+    // RLS_AUDIT: credit_ledger_own_read
+    const { data, error } = await single(
+      rpcOne(db, 'credit_balance_v1', { p_user_id: userId }).execute(),
+    )
     if (error) return 0
-    return Number(data ?? 0)
+    const raw = data ? ((data as Record<string, unknown>).fn ?? data) : 0
+    return Number(raw ?? 0)
   } catch {
     return 0
   }
@@ -65,13 +77,17 @@ export async function getCreditBalance(userId: string): Promise<number> {
 /** Nomor bab yang sudah di-unlock user untuk sebuah story. */
 export async function listUnlockedChapters(userId: string, storyId: string): Promise<number[]> {
   try {
-    const db = createAdminClient()
-    const { data } = await db
-      .from('credit_ledger')
-      .select('ref')
-      .eq('user_id', userId)
-      .like('ref', `${unlockRef(storyId, 0).slice(0, -1)}%`) // "unlock:{storyId}:"
+    const db = getDb()
     const prefix = `unlock:${storyId}:`
+    // RLS_AUDIT: credit_ledger_own_read
+    const { data } = await result(
+      db
+        .selectFrom('credit_ledger')
+        .select('ref')
+        .where('user_id', '=', userId)
+        .where('ref', 'like', `${unlockRef(storyId, 0).slice(0, -1)}%`) // "unlock:{storyId}:"
+        .execute(),
+    )
     return (data ?? [])
       .map((r) => Number(String(r.ref).slice(prefix.length)))
       .filter((n) => Number.isInteger(n))
@@ -100,15 +116,18 @@ export async function spendChapterUnlock(
   chapter: number,
   cost: number,
 ): Promise<SpendResult> {
-  const db = createAdminClient()
-  const { data, error } = await db.rpc('spend_credits_v1', {
-    p_user_id: userId,
-    p_ref: unlockRef(storyId, chapter),
-    p_credits: cost,
-    p_reason: 'unlock_chapter',
-  })
+  const db = getDb()
+  // RLS_AUDIT: credit_ledger_own_read
+  const { data, error } = await single(
+    rpcOne(db, 'spend_credits_v1', {
+      p_user_id: userId,
+      p_ref: unlockRef(storyId, chapter),
+      p_credits: cost,
+      p_reason: 'unlock_chapter',
+    }).execute(),
+  )
   if (error) throw new Error(`spendChapterUnlock: ${error.message}`)
-  const status = String(data)
+  const status = String(data ? ((data as Record<string, unknown>).fn ?? data) : '')
   if (status === 'ok' || status === 'duplicate' || status === 'insufficient') return status
   throw new Error(`spendChapterUnlock: unexpected result ${status}`)
 }

@@ -757,6 +757,17 @@ export interface PasswordRecoveryCapabilities {
   user_id: string;
 }
 
+export interface PaymentEvents {
+  action: string;
+  created_at?: Generated<Timestamp>;
+  entitlement_code: string;
+  event_id: string;
+  event_type: string;
+  id?: Generated<string>;
+  signed_at: Timestamp;
+  user_id: string;
+}
+
 export interface PersonalizedChoiceApplications {
   chapter_number: number;
   choice_id: string;
@@ -1241,6 +1252,7 @@ export interface DB {
   neon_schema_migrations: NeonSchemaMigrations;
   outbox: Outbox;
   password_recovery_capabilities: PasswordRecoveryCapabilities;
+  payment_events: PaymentEvents;
   personalized_choice_applications: PersonalizedChoiceApplications;
   personalized_choice_idempotency_keys: PersonalizedChoiceIdempotencyKeys;
   "private.e5_validator_attestation_key": PrivateE5ValidatorAttestationKey;

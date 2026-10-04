@@ -1,5 +1,5 @@
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, rpcOne, single } from '@lakoku/db'
 
 /**
  * Grant kredit Play Billing — server-only wrapper RPC play_billing_grant_v1.
@@ -27,19 +27,21 @@ export type PlayBillingGrantResult =
 export async function playBillingGrantV1(
   input: PlayBillingGrantInput,
 ): Promise<PlayBillingGrantResult> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase.rpc('play_billing_grant_v1', {
-    p_user_id: input.userId,
-    p_product_key: input.productKey,
-    p_credits_base: input.creditsBase,
-    p_credits_bonus: input.creditsBonus,
-    p_credits_total: input.creditsTotal,
-    p_purchase_token: input.purchaseToken,
-    p_product_id: input.productId,
-    p_order_number: input.orderNumber,
-  })
+  const db = getDb()
+  const { data, error } = await single(
+    rpcOne(db, 'play_billing_grant_v1', {
+      p_user_id: input.userId,
+      p_product_key: input.productKey,
+      p_credits_base: input.creditsBase,
+      p_credits_bonus: input.creditsBonus,
+      p_credits_total: input.creditsTotal,
+      p_purchase_token: input.purchaseToken,
+      p_product_id: input.productId,
+      p_order_number: input.orderNumber,
+    }).execute(),
+  )
   if (error) return { ok: false, error: error.message }
-  const row = Array.isArray(data) ? data[0] : data
+  const row = data as { order_id?: string; already_granted?: boolean } | null
   const orderId = row?.order_id ?? null
   if (!orderId) return { ok: false, error: 'grant_no_order_id' }
   return { ok: true, orderId, alreadyGranted: row?.already_granted === true }

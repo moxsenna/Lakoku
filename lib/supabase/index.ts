@@ -13,3 +13,13 @@
 export { createAdminClient } from './admin'
 export { getDb } from './db'
 export type { Database } from './db-types'
+export {
+  countOf,
+  result,
+  rpcOne,
+  rpcRows,
+  single,
+  singleOrThrow,
+} from './compat'
+export type { DbResult } from './compat'
+

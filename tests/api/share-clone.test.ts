@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   adminFactory: vi.fn(),
   cookieFactory: vi.fn(),
   getUserMock: vi.fn(),
+  getDb: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
@@ -16,6 +17,69 @@ vi.mock('@/lib/supabase/server', () => ({
 vi.mock('@/lib/api/user-state', () => ({
   getSessionUser: mocks.getUserMock,
 }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    getDb: mocks.getDb,
+  }
+})
+
+function createKyselyDb(handlers: {
+  selectFrom?: (table: string) => unknown[]
+  insertInto?: (table: string, payload: unknown) => unknown
+  updateTable?: (table: string, setValues: unknown) => void
+}) {
+  return {
+    selectFrom: vi.fn((table: string) => {
+      const b: Record<string, unknown> = {}
+      b.select = vi.fn(() => b)
+      b.selectAll = vi.fn(() => b)
+      b.where = vi.fn(() => b)
+      b.orderBy = vi.fn(() => b)
+      b.limit = vi.fn(() => b)
+      b.execute = vi.fn(async () => {
+        const rows = handlers.selectFrom ? handlers.selectFrom(table) : []
+        return rows ?? []
+      })
+      return b
+    }),
+    insertInto: vi.fn((table: string) => {
+      const b: Record<string, unknown> = {}
+      let valuesPayload: unknown = null
+      b.values = vi.fn((vals: unknown) => {
+        valuesPayload = vals
+        return b
+      })
+      b.returning = vi.fn(() => b)
+      b.execute = vi.fn(async () => {
+        const res = handlers.insertInto ? handlers.insertInto(table, valuesPayload) : null
+        return res ? (Array.isArray(res) ? res : [res]) : []
+      })
+      return b
+    }),
+    updateTable: vi.fn((table: string) => {
+      const b: Record<string, unknown> = {}
+      let setPayload: unknown = null
+      b.set = vi.fn((vals: unknown) => {
+        setPayload = vals
+        return b
+      })
+      b.where = vi.fn(() => b)
+      b.execute = vi.fn(async () => {
+        if (handlers.updateTable) handlers.updateTable(table, setPayload)
+        return []
+      })
+      return b
+    }),
+    deleteFrom: vi.fn(() => {
+      const b: Record<string, unknown> = {}
+      b.where = vi.fn(() => b)
+      b.execute = vi.fn(async () => [])
+      return b
+    }),
+  }
+}
 
 describe('cloneStoryFromShare (T-SHARE-4)', () => {
   beforeEach(() => {
@@ -33,14 +97,10 @@ describe('cloneStoryFromShare (T-SHARE-4)', () => {
 
   it('fails closed when share link is not found', async () => {
     mocks.getUserMock.mockResolvedValue({ id: 'user-recipient-1' })
-    const mockAdmin = {
-      from: vi.fn().mockReturnValue({
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-      }),
-    }
-    mocks.adminFactory.mockReturnValue(mockAdmin)
+    const mockDb = createKyselyDb({
+      selectFrom: () => [],
+    })
+    mocks.getDb.mockReturnValue(mockDb)
 
     const { cloneStoryFromShare } = await import('@/lib/api/share')
     await expect(cloneStoryFromShare('non-existent')).rejects.toThrow(
@@ -72,55 +132,23 @@ describe('cloneStoryFromShare (T-SHARE-4)', () => {
       status: 'BERJALAN',
     }
 
-    const updateMock = vi.fn().mockReturnValue({
-      eq: vi.fn().mockResolvedValue({ error: null }),
+    const updateMock = vi.fn()
+    const mockDb = createKyselyDb({
+      selectFrom: (table) => {
+        if (table === 'shared_story_links') return [linkData]
+        if (table === 'shared_story_starts') return [existingStart]
+        if (table === 'stories') return [existingStory]
+        return []
+      },
+      insertInto: (table) => {
+        if (table === 'shared_story_starts') return startInsertData
+        return null
+      },
+      updateTable: (table, setValues) => {
+        if (table === 'shared_story_starts') updateMock(setValues)
+      },
     })
-
-    const mockAdmin = {
-      from: vi.fn((table: string) => {
-        if (table === 'shared_story_links') {
-          return {
-            select: vi.fn().mockReturnThis(),
-            eq: vi.fn().mockReturnThis(),
-            maybeSingle: vi.fn().mockResolvedValue({ data: linkData, error: null }),
-          }
-        }
-        if (table === 'shared_story_starts') {
-          return {
-            insert: vi.fn().mockReturnValue({
-              select: vi.fn().mockReturnValue({
-                single: vi.fn().mockResolvedValue({ data: startInsertData, error: null }),
-              }),
-            }),
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  not: vi.fn().mockReturnValue({
-                    order: vi.fn().mockReturnValue({
-                      limit: vi.fn().mockResolvedValue({ data: [existingStart], error: null }),
-                    }),
-                  }),
-                }),
-              }),
-            }),
-            update: updateMock,
-          }
-        }
-        if (table === 'stories') {
-          return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  maybeSingle: vi.fn().mockResolvedValue({ data: existingStory, error: null }),
-                }),
-              }),
-            }),
-          }
-        }
-        return {}
-      }),
-    }
-    mocks.adminFactory.mockReturnValue(mockAdmin)
+    mocks.getDb.mockReturnValue(mockDb)
 
     const { cloneStoryFromShare } = await import('@/lib/api/share')
     const result = await cloneStoryFromShare('valid-slug')
@@ -193,118 +221,28 @@ describe('cloneStoryFromShare (T-SHARE-4)', () => {
     ]
 
     const insertedRows: Record<string, unknown[]> = {}
-    const updateMock = vi.fn().mockReturnValue({
-      eq: vi.fn().mockResolvedValue({ error: null }),
+    const updateMock = vi.fn()
+
+    const mockDb = createKyselyDb({
+      selectFrom: (table) => {
+        if (table === 'shared_story_links') return [linkData]
+        if (table === 'shared_story_starts') return []
+        if (table === 'stories') return [sourceStory]
+        if (table === 'characters') return charactersData
+        if (table === 'chapters') return [chapter1Data]
+        if (table === 'choice_outcomes') return outcome1Data
+        return []
+      },
+      insertInto: (table, payload) => {
+        if (table === 'shared_story_starts') return startInsertData
+        insertedRows[table] = Array.isArray(payload) ? (payload as unknown[]) : [payload]
+        return null
+      },
+      updateTable: (table, setValues) => {
+        if (table === 'shared_story_starts') updateMock(setValues)
+      },
     })
-
-    const mockAdmin = {
-      from: vi.fn((table: string) => {
-        if (table === 'shared_story_links') {
-          return {
-            select: vi.fn().mockReturnThis(),
-            eq: vi.fn().mockReturnThis(),
-            maybeSingle: vi.fn().mockResolvedValue({ data: linkData, error: null }),
-          }
-        }
-        if (table === 'shared_story_starts') {
-          return {
-            insert: vi.fn().mockReturnValue({
-              select: vi.fn().mockReturnValue({
-                single: vi.fn().mockResolvedValue({ data: startInsertData, error: null }),
-              }),
-            }),
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  not: vi.fn().mockReturnValue({
-                    order: vi.fn().mockReturnValue({
-                      limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-                    }),
-                  }),
-                }),
-              }),
-            }),
-            update: updateMock,
-          }
-        }
-        if (table === 'stories') {
-          return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                maybeSingle: vi.fn().mockResolvedValue({ data: sourceStory, error: null }),
-              }),
-            }),
-            insert: vi.fn().mockImplementation((payload: unknown) => {
-              insertedRows['stories'] = [payload]
-              return Promise.resolve({ error: null })
-            }),
-            delete: vi.fn().mockReturnValue({
-              eq: vi.fn().mockResolvedValue({ error: null }),
-            }),
-          }
-        }
-        if (table === 'characters') {
-          return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockResolvedValue({ data: charactersData, error: null }),
-            }),
-            insert: vi.fn().mockImplementation((payload: unknown[]) => {
-              insertedRows['characters'] = payload
-              return Promise.resolve({ error: null })
-            }),
-          }
-        }
-        if (table === 'chapters') {
-          return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  maybeSingle: vi.fn().mockResolvedValue({ data: chapter1Data, error: null }),
-                }),
-              }),
-            }),
-            insert: vi.fn().mockImplementation((payload: unknown) => {
-              insertedRows['chapters'] = [payload]
-              return Promise.resolve({ error: null })
-            }),
-          }
-        }
-        if (table === 'choice_outcomes') {
-          return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockResolvedValue({ data: outcome1Data, error: null }),
-              }),
-            }),
-            insert: vi.fn().mockImplementation((payload: unknown[]) => {
-              insertedRows['choice_outcomes'] = payload
-              return Promise.resolve({ error: null })
-            }),
-          }
-        }
-        if (table === 'reader_states') {
-          return {
-            insert: vi.fn().mockImplementation((payload: unknown) => {
-              insertedRows['reader_states'] = [payload]
-              return Promise.resolve({ error: null })
-            }),
-          }
-        }
-
-        // Generic mock for other canon tables
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-              in: vi.fn().mockResolvedValue({ data: [], error: null }),
-            }),
-            in: vi.fn().mockResolvedValue({ data: [], error: null }),
-          }),
-          insert: vi.fn().mockResolvedValue({ error: null }),
-        }
-      }),
-    }
-    mocks.adminFactory.mockReturnValue(mockAdmin)
+    mocks.getDb.mockReturnValue(mockDb)
 
     const { cloneStoryFromShare } = await import('@/lib/api/share')
     const result = await cloneStoryFromShare('valid-slug')
@@ -347,12 +285,12 @@ describe('cloneStoryFromShare (T-SHARE-4)', () => {
     // Verifikasi reader states row
     const insertedReaderState = insertedRows['reader_states']?.[0] as Record<string, unknown>
     expect(insertedReaderState).toBeDefined()
-    expect(insertedReaderState.story_id).toBe(result.storyId)
     expect(insertedReaderState.user_id).toBe('user-recipient-1')
-    expect(insertedReaderState.current_chapter).toBe(1)
+    expect(insertedReaderState.story_id).toBe(result.storyId)
     expect(insertedReaderState.status).toBe('BERJALAN')
+    expect(insertedReaderState.current_chapter).toBe(1)
 
-    // Verifikasi start link updated
+    // Verifikasi update ke shared_story_starts
     expect(updateMock).toHaveBeenCalledWith({ new_story_id: result.storyId })
   })
 })

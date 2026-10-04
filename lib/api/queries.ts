@@ -1,17 +1,11 @@
 /**
- * Query server-side ke Supabase (sumber kebenaran konten published).
+ * Query server-side ke Neon database via Kysely (sumber kebenaran konten published).
  *
  * INTERNAL seam: hanya dipakai oleh route handlers /api/* dan lib/api/client.ts
  * (sisi server). Komponen UI tetap hanya berbicara dengan lib/api/client.ts.
- *
- * Saat migrasi ke Cloudflare Workers, file ini pindah ke Workers dan
- * client.ts cukup menunjuk base URL baru — UI tidak berubah.
  */
 import { cache } from 'react'
-import { createClient as createSupabaseClient } from '@supabase/supabase-js'
-import { requireSupabaseAnonKey, requireSupabaseUrl } from '@/lib/supabase/env'
-import { createAdminClient } from '@/lib/supabase/admin'
-import { createClient as _createCookieClient } from '@/lib/supabase/server'
+import { getDb, result, single } from '@lakoku/db'
 import { resolveStoryCover } from '@/lib/cover/url'
 import type {
   StorySummary,
@@ -26,6 +20,21 @@ export const STORY_READER_COLUMNS = 'id,title,cover,tagline,role,tropes,total_ch
 export const CHAPTER_READER_COLUMNS = 'story_id,number,title,paragraphs,choice_prompt,choices' as const
 export const OUTCOME_READER_COLUMNS = 'story_id,chapter_number,choice_id,consequence,next_chapter_number,is_ending' as const
 export const EXPLORE_STORY_FILTER = 'id.like.demo:%,id.like.premium:%' as const
+
+const STORY_SELECT_COLS = [
+  'id',
+  'title',
+  'cover',
+  'tagline',
+  'role',
+  'tropes',
+  'total_chapters',
+  'synopsis',
+  'status',
+  'current_chapter',
+  'jejak',
+  'ending_name',
+] as const
 
 /**
  * Sampul default + resolver URL publik kini tinggal di modul rakitan URL
@@ -67,17 +76,6 @@ type OutcomeRow = {
   is_ending: boolean
 }
 
-/**
- * Konten published bersifat publik (RLS read-only anon) dan tidak butuh sesi
- * pengguna, jadi kita pakai client anon tanpa cookies. Ini juga membuat query
- * aman dipanggil dari generateStaticParams (build time, tanpa HTTP request).
- * Saat reader-state per-user hadir (auth), query state akan pakai client
- * ber-cookies terpisah.
- */
-function createClient() {
-  return createSupabaseClient(requireSupabaseUrl(), requireSupabaseAnonKey())
-}
-
 function toDetail(r: StoryRow): StoryDetail {
   return {
     id: r.id,
@@ -85,35 +83,43 @@ function toDetail(r: StoryRow): StoryDetail {
     cover: resolveStoryCover(r.cover),
     tagline: r.tagline,
     role: r.role,
-    tropes: r.tropes,
+    tropes: (typeof r.tropes === 'string' ? JSON.parse(r.tropes) : r.tropes) as StorySummary['tropes'],
     totalChapters: r.total_chapters,
     synopsis: r.synopsis,
     status: r.status,
     currentChapter: r.current_chapter,
-    jejak: r.jejak,
+    jejak: (typeof r.jejak === 'string' ? JSON.parse(r.jejak) : r.jejak) as JejakItem[],
     ...(r.ending_name ? { endingName: r.ending_name } : {}),
   }
 }
 
-export const queryStories = cache(async function queryStories(): Promise<StorySummary[]> {
-  const supabase = createClient()
-  const { data, error } = await supabase
-    .from('stories')
-    .select(STORY_READER_COLUMNS)
-    .order('id', { ascending: true })
+export const queryStories = cache(async function queryStories(
+  userId?: string | null,
+): Promise<StorySummary[]> {
+  const db = getDb()
+  let query = db.selectFrom('stories').select(STORY_SELECT_COLS)
+  // RLS_AUDIT: stories_public_read, stories_owner_read
+  if (userId) {
+    query = query.where((eb) =>
+      eb.or([
+        eb('visibility', '=', 'public'),
+        eb('owner_user_id', '=', userId),
+      ]),
+    )
+  } else {
+    query = query.where('visibility', '=', 'public')
+  }
+  const { data, error } = await result(query.orderBy('id', 'asc').execute())
   if (error) throw new Error(`queryStories: ${error.message}`)
-  return (data as StoryRow[]).map(toDetail)
+  return ((data ?? []) as unknown as StoryRow[]).map(toDetail)
 })
 
-export const queryStory = cache(async function queryStory(id: string): Promise<StoryDetail | null> {
-  const supabase = createClient()
-  const { data, error } = await supabase
-    .from('stories')
-    .select(STORY_READER_COLUMNS)
-    .eq('id', id)
-    .maybeSingle()
-  if (error) throw new Error(`queryStory: ${error.message}`)
-  return data ? toDetail(data as StoryRow) : null
+export const queryStory = cache(async function queryStory(
+  id: string,
+  userId: string | null = null,
+): Promise<StoryDetail | null> {
+  // RLS_AUDIT: stories_public_read, stories_owner_read (delegates to queryStoryForUser)
+  return queryStoryForUser(id, userId)
 })
 
 /**
@@ -126,48 +132,72 @@ export async function queryStoriesByIdsForUser(
 ): Promise<StorySummary[]> {
   if (storyIds.length === 0) return []
 
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('stories')
-    .select(STORY_READER_COLUMNS)
-    .in('id', storyIds)
-    .or(`visibility.eq.public,owner_user_id.eq.${userId}`)
-    .order('id', { ascending: true })
+  const db = getDb()
+  // RLS_AUDIT: stories_public_read, stories_owner_read
+  const { data, error } = await result(
+    db
+      .selectFrom('stories')
+      .select(STORY_SELECT_COLS)
+      .where('id', 'in', storyIds)
+      .where((eb) =>
+        eb.or([
+          eb('visibility', '=', 'public'),
+          eb('owner_user_id', '=', userId),
+        ]),
+      )
+      .orderBy('id', 'asc')
+      .execute(),
+  )
   if (error) throw new Error(`queryStoriesByIdsForUser: ${error.message}`)
-  return (data as StoryRow[]).map(toDetail)
+  return ((data ?? []) as unknown as StoryRow[]).map(toDetail)
 }
 
 /** Public detail or exact trusted owner only. */
 export async function queryStoryForUser(
   id: string,
-  userId: string | null,
+  userId: string | null = null,
 ): Promise<StoryDetail | null> {
-  const supabase = createAdminClient()
-  let query = supabase
-    .from('stories')
-    .select(STORY_READER_COLUMNS)
-    .eq('id', id)
+  const db = getDb()
+  let query = db
+    .selectFrom('stories')
+    .select(STORY_SELECT_COLS)
+    .where('id', '=', id)
 
+  // RLS_AUDIT: stories_public_read, stories_owner_read
   query = userId
-    ? query.or(`visibility.eq.public,owner_user_id.eq.${userId}`)
-    : query.eq('visibility', 'public')
+    ? query.where((eb) =>
+        eb.or([
+          eb('visibility', '=', 'public'),
+          eb('owner_user_id', '=', userId),
+        ]),
+      )
+    : query.where('visibility', '=', 'public')
 
-  const { data, error } = await query.maybeSingle()
+  const { data, error } = await single(query.limit(1).execute())
   if (error) throw new Error(`queryStoryForUser: ${error.message}`)
-  return data ? toDetail(data as StoryRow) : null
+  return data ? toDetail(data as unknown as StoryRow) : null
 }
 
 /** Public official demos and premium templates only. */
 export async function queryExploreStories(): Promise<StorySummary[]> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('stories')
-    .select(STORY_READER_COLUMNS)
-    .eq('visibility', 'public')
-    .or(EXPLORE_STORY_FILTER)
-    .order('id', { ascending: true })
+  const db = getDb()
+  // RLS_AUDIT: stories_public_read
+  const { data, error } = await result(
+    db
+      .selectFrom('stories')
+      .select(STORY_SELECT_COLS)
+      .where('visibility', '=', 'public')
+      .where((eb) =>
+        eb.or([
+          eb('id', 'like', 'demo:%'),
+          eb('id', 'like', 'premium:%'),
+        ]),
+      )
+      .orderBy('id', 'asc')
+      .execute(),
+  )
   if (error) throw new Error(`queryExploreStories: ${error.message}`)
-  return (data as StoryRow[]).map(toDetail)
+  return ((data ?? []) as unknown as StoryRow[]).map(toDetail)
 }
 
 /**
@@ -176,18 +206,22 @@ export async function queryExploreStories(): Promise<StorySummary[]> {
  * Memanfaatkan index stories_visibility_idx.
  */
 export async function queryPublicUserStories(limit = 12): Promise<StorySummary[]> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('stories')
-    .select(STORY_READER_COLUMNS)
-    .eq('visibility', 'public')
-    .not('owner_user_id', 'is', null)
-    .not('id', 'like', 'demo:%')
-    .not('id', 'like', 'premium:%')
-    .order('created_at', { ascending: false })
-    .limit(limit)
+  const db = getDb()
+  // RLS_AUDIT: stories_public_read
+  const { data, error } = await result(
+    db
+      .selectFrom('stories')
+      .select(STORY_SELECT_COLS)
+      .where('visibility', '=', 'public')
+      .where('owner_user_id', 'is not', null)
+      .where('id', 'not like', 'demo:%')
+      .where('id', 'not like', 'premium:%')
+      .orderBy('created_at', 'desc')
+      .limit(limit)
+      .execute(),
+  )
   if (error) throw new Error(`queryPublicUserStories: ${error.message}`)
-  return ((data ?? []) as StoryRow[]).map(toDetail)
+  return ((data ?? []) as unknown as StoryRow[]).map(toDetail)
 }
 
 function mapChapterRow(r: ChapterRow): Chapter {
@@ -195,34 +229,41 @@ function mapChapterRow(r: ChapterRow): Chapter {
     storyId: r.story_id,
     number: r.number,
     title: r.title,
-    paragraphs: r.paragraphs,
+    paragraphs: (typeof r.paragraphs === 'string' ? JSON.parse(r.paragraphs) : r.paragraphs) as string[],
     choicePrompt: r.choice_prompt ?? '',
-    choices: r.choices ?? [],
+    choices: (typeof r.choices === 'string' ? JSON.parse(r.choices) : (r.choices ?? [])) as ChoiceOption[],
   }
 }
 
 /**
  * Read one chapter after story authorization.
- *
- * Uses service-role (admin) — same pattern as queryStoryForUser — because private
- * chapters rely on RLS `story_is_owned_by_auth` which fails when the cookie JWT
- * is missing/stale even though the page already authorized the story via admin.
  * Callers MUST authorize parent story first (getStory / queryStoryForUser).
  */
 export const queryChapter = cache(async function queryChapter(
   storyId: string,
   number: number,
 ): Promise<Chapter | null> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('chapters')
-    .select(CHAPTER_READER_COLUMNS)
-    .eq('story_id', storyId)
-    .eq('number', number)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: chapters_owner_read, chapters_public_read (caller authorizes parent story)
+  const { data, error } = await single(
+    db
+      .selectFrom('chapters')
+      .select([
+        'story_id',
+        'number',
+        'title',
+        'paragraphs',
+        'choice_prompt',
+        'choices',
+      ])
+      .where('story_id', '=', storyId)
+      .where('number', '=', number)
+      .limit(1)
+      .execute(),
+  )
   if (error) throw new Error(`queryChapter: ${error.message}`)
   if (!data) return null
-  return mapChapterRow(data as ChapterRow)
+  return mapChapterRow(data as unknown as ChapterRow)
 })
 
 /**
@@ -231,43 +272,54 @@ export const queryChapter = cache(async function queryChapter(
  * (mis. reader-state terlanjur maju melewati konten yang ada), pembaca dijatuhkan
  * ke bab terakhir yang benar-benar bisa dibaca, bukan layar kosong permanen.
  * Mengembalikan null bila tak ada bab <= atMost.
- *
- * Admin client after story authorization (see queryChapter).
  */
 export const queryLatestAvailableChapter = cache(async function queryLatestAvailableChapter(
   storyId: string,
   atMost: number,
 ): Promise<Chapter | null> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('chapters')
-    .select(CHAPTER_READER_COLUMNS)
-    .eq('story_id', storyId)
-    .lte('number', atMost)
-    .order('number', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: chapters_owner_read, chapters_public_read (caller authorizes parent story)
+  const { data, error } = await single(
+    db
+      .selectFrom('chapters')
+      .select([
+        'story_id',
+        'number',
+        'title',
+        'paragraphs',
+        'choice_prompt',
+        'choices',
+      ])
+      .where('story_id', '=', storyId)
+      .where('number', '<=', atMost)
+      .orderBy('number', 'desc')
+      .limit(1)
+      .execute(),
+  )
   if (error) throw new Error(`queryLatestAvailableChapter: ${error.message}`)
   if (!data) return null
-  return mapChapterRow(data as ChapterRow)
+  return mapChapterRow(data as unknown as ChapterRow)
 })
 
 /**
  * Metadata bab (hanya number + title) untuk daftar bab, dibatasi sampai maxNumber.
  * Tidak mengambil paragraphs/choices utk menghindari data boros di list.
- * Admin client after story authorization (see queryChapter).
  */
 export const queryChapterMetadatas = cache(async function queryChapterMetadatas(
   storyId: string,
   maxNumber: number,
 ): Promise<{ number: number; title: string }[]> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('chapters')
-    .select('number,title')
-    .eq('story_id', storyId)
-    .lte('number', maxNumber)
-    .order('number', { ascending: true })
+  const db = getDb()
+  // RLS_AUDIT: chapters_owner_read, chapters_public_read (caller authorizes parent story)
+  const { data, error } = await result(
+    db
+      .selectFrom('chapters')
+      .select(['number', 'title'])
+      .where('story_id', '=', storyId)
+      .where('number', '<=', maxNumber)
+      .orderBy('number', 'asc')
+      .execute(),
+  )
   if (error) throw new Error(`queryChapterMetadatas: ${error.message}`)
   return (data ?? []) as { number: number; title: string }[]
 })
@@ -277,23 +329,33 @@ export async function queryChoiceOutcome(
   chapterNumber: number,
   choiceId: string,
 ): Promise<ChoiceOutcome | null> {
-  // Outcomes for private stories need the same ownership-safe path as chapters.
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('choice_outcomes')
-    .select(OUTCOME_READER_COLUMNS)
-    .eq('story_id', storyId)
-    .eq('chapter_number', chapterNumber)
-    .eq('choice_id', choiceId)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: choice_outcomes_owner_read, choice_outcomes_public_read (caller authorizes parent story)
+  const { data, error } = await single(
+    db
+      .selectFrom('choice_outcomes')
+      .select([
+        'story_id',
+        'chapter_number',
+        'choice_id',
+        'consequence',
+        'next_chapter_number',
+        'is_ending',
+      ])
+      .where('story_id', '=', storyId)
+      .where('chapter_number', '=', chapterNumber)
+      .where('choice_id', '=', choiceId)
+      .limit(1)
+      .execute(),
+  )
   if (error) throw new Error(`queryChoiceOutcome: ${error.message}`)
   if (!data) return null
-  const r = data as OutcomeRow
+  const r = data as unknown as OutcomeRow
   return {
     storyId: r.story_id,
     chapterNumber: r.chapter_number,
     choiceId: r.choice_id,
-    consequence: r.consequence,
+    consequence: (typeof r.consequence === 'string' ? JSON.parse(r.consequence) : r.consequence) as string[],
     nextChapterNumber: r.next_chapter_number,
     isEnding: r.is_ending,
   }

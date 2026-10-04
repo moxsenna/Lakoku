@@ -4,11 +4,11 @@
  */
 import 'server-only'
 import { cache } from 'react'
-import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb, result, single } from '@lakoku/db'
 import { getSessionUser } from '@/lib/api/user-state'
 import { resolveStoryCover } from '@/lib/api/queries'
 import type { JejakItem } from '@/lib/api/types'
+import type { Json } from '@/lib/supabase/db-types'
 
 export type ShareVisibility = 'unlisted' | 'public'
 export type ShareType = 'ending_card' | 'story_seed' | 'challenge'
@@ -46,6 +46,18 @@ export interface SharedStoryLink {
 
 export const SHARE_PUBLIC_COLUMNS =
   'id,share_slug,share_type,visibility,title,teaser_json,expires_at,revoked_at,created_at'
+
+const SHARE_SELECT_COLS = [
+  'id',
+  'share_slug',
+  'share_type',
+  'visibility',
+  'title',
+  'teaser_json',
+  'expires_at',
+  'revoked_at',
+  'created_at',
+] as const
 
 type SharePublicRow = {
   id: string
@@ -153,13 +165,17 @@ export async function createEndingCardShare(input: {
   const user = await getSessionUser()
   if (!user) throw new Error('Harus masuk untuk membagikan ending card.')
 
-  const supabase = await createClient()
-  // Owner must have personal SELESAI state (not global demo status).
-  const { data: state, error: stateErr } = await supabase
-    .from('reader_states')
-    .select('status, ending_name, jejak')
-    .eq('story_id', input.storyId)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: reader_states_owner
+  const { data: state, error: stateErr } = await single(
+    db
+      .selectFrom('reader_states')
+      .select(['status', 'ending_name', 'jejak'])
+      .where('story_id', '=', input.storyId)
+      .where('user_id', '=', user.id)
+      .limit(1)
+      .execute(),
+  )
   if (stateErr) throw new Error(`createEndingCardShare state: ${stateErr.message}`)
   if (!state || state.status !== 'SELESAI') {
     throw new Error('Hanya cerita yang sudah kamu selesaikan yang bisa dibagikan.')
@@ -175,11 +191,21 @@ export async function createEndingCardShare(input: {
   // Ambil sinopsis cerita untuk pengantar pembaca baru
   let synopsis: string | undefined
   try {
-    const { data: storyRow } = await supabase
-      .from('stories')
-      .select('synopsis')
-      .eq('id', input.storyId)
-      .maybeSingle()
+    // RLS_AUDIT: stories_public_read, stories_owner_read
+    const { data: storyRow } = await single(
+      db
+        .selectFrom('stories')
+        .select('synopsis')
+        .where('id', '=', input.storyId)
+        .where((eb) =>
+          eb.or([
+            eb('visibility', '=', 'public'),
+            eb('owner_user_id', '=', user.id),
+          ]),
+        )
+        .limit(1)
+        .execute(),
+    )
     if (typeof storyRow?.synopsis === 'string' && storyRow.synopsis.trim()) {
       synopsis = storyRow.synopsis.trim()
     }
@@ -190,14 +216,16 @@ export async function createEndingCardShare(input: {
   // Ambil maksimal 3 tokoh awal (bab 1–3) tanpa motivasi rahasia
   let cast: ShareTeaserCharacter[] | undefined
   try {
-    const admin = createAdminClient()
-    const { data: charRows } = await admin
-      .from('characters')
-      .select('canonical_name, role, introduced_chapter')
-      .eq('story_id', input.storyId)
-      .lte('introduced_chapter', 3)
-      .order('introduced_chapter', { ascending: true })
-      .limit(3)
+    const { data: charRows } = await result(
+      db
+        .selectFrom('characters')
+        .select(['canonical_name', 'role', 'introduced_chapter'])
+        .where('story_id', '=', input.storyId)
+        .where('introduced_chapter', '<=', 3)
+        .orderBy('introduced_chapter', 'asc')
+        .limit(3)
+        .execute(),
+    )
 
     if (charRows && charRows.length > 0) {
       cast = charRows
@@ -224,33 +252,37 @@ export async function createEndingCardShare(input: {
     cast,
   }
 
-  // Prefer user-scoped client so RLS owner check applies; admin fallback if needed.
+  // RLS_AUDIT: shared_story_links_insert_owner
   let shareSlug = shortSlug()
   for (let attempt = 0; attempt < 5; attempt++) {
-    const { data, error } = await supabase
-      .from('shared_story_links')
-      .insert({
-        owner_user_id: user.id,
-        source_story_id: input.storyId,
-        share_slug: shareSlug,
-        share_type: 'ending_card',
-        visibility: input.visibility ?? 'unlisted',
-        title: input.title,
-        teaser_json: teaser,
-        spoiler_level: 'none',
-      })
-      .select('share_slug')
-      .single()
+    try {
+      const inserted = await db
+        .insertInto('shared_story_links')
+        .values({
+          owner_user_id: user.id,
+          source_story_id: input.storyId,
+          share_slug: shareSlug,
+          share_type: 'ending_card',
+          visibility: input.visibility ?? 'unlisted',
+          title: input.title,
+          teaser_json: JSON.stringify(teaser),
+          spoiler_level: 'none',
+        })
+        .returning('share_slug')
+        .executeTakeFirst()
 
-    if (!error && data) {
-      return { shareSlug: data.share_slug, path: `/s/${data.share_slug}` }
+      if (inserted) {
+        return { shareSlug: inserted.share_slug, path: `/s/${inserted.share_slug}` }
+      }
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code
+      if (code === '23505') {
+        shareSlug = shortSlug()
+        continue
+      }
+      const message = err instanceof Error ? err.message : String(err)
+      throw new Error(`createEndingCardShare: ${message}`)
     }
-    // unique violation → retry slug
-    if (error?.code === '23505') {
-      shareSlug = shortSlug()
-      continue
-    }
-    throw new Error(`createEndingCardShare: ${error?.message ?? 'gagal'}`)
   }
   throw new Error('createEndingCardShare: gagal membuat slug unik')
 }
@@ -258,15 +290,25 @@ export async function createEndingCardShare(input: {
 export const getShareBySlug = cache(async function getShareBySlug(
   slug: string,
 ): Promise<SharedStoryLink | null> {
-  const supabase = await createClient()
-  const { data, error } = await supabase
-    .from('shared_story_links')
-    .select(SHARE_PUBLIC_COLUMNS)
-    .eq('share_slug', slug)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: shared_story_links_select_active
+  const { data, error } = await single(
+    db
+      .selectFrom('shared_story_links')
+      .select(SHARE_SELECT_COLS)
+      .where('share_slug', '=', slug)
+      .limit(1)
+      .execute(),
+  )
   if (error) throw new Error(`getShareBySlug: ${error.message}`)
   if (!data) return null
-  const row = data as SharePublicRow
+  const row = {
+    ...data,
+    teaser_json: (typeof data.teaser_json === 'string' ? JSON.parse(data.teaser_json) : data.teaser_json) as ShareTeaser,
+    created_at: String(data.created_at),
+    expires_at: data.expires_at ? String(data.expires_at) : null,
+    revoked_at: data.revoked_at ? String(data.revoked_at) : null,
+  } as SharePublicRow
   if (row.revoked_at) return null
   if (row.expires_at && new Date(row.expires_at).getTime() <= Date.now()) return null
   // Public payload only — strip source id
@@ -274,16 +316,27 @@ export const getShareBySlug = cache(async function getShareBySlug(
 })
 
 export async function listPublicShareTeasers(limit = 20): Promise<SharedStoryLink[]> {
-  const supabase = await createClient()
-  const { data, error } = await supabase
-    .from('shared_story_links')
-    .select(SHARE_PUBLIC_COLUMNS)
-    .eq('visibility', 'public')
-    .is('revoked_at', null)
-    .order('created_at', { ascending: false })
-    .limit(limit)
+  const db = getDb()
+  // RLS_AUDIT: shared_story_links_select_active
+  const { data, error } = await result(
+    db
+      .selectFrom('shared_story_links')
+      .select(SHARE_SELECT_COLS)
+      .where('visibility', '=', 'public')
+      .where('revoked_at', 'is', null)
+      .orderBy('created_at', 'desc')
+      .limit(limit)
+      .execute(),
+  )
   if (error) throw new Error(`listPublicShareTeasers: ${error.message}`)
-  return ((data ?? []) as SharePublicRow[])
+  return (((data ?? []) as unknown as SharePublicRow[]))
+    .map((r) => ({
+      ...r,
+      teaser_json: (typeof r.teaser_json === 'string' ? JSON.parse(r.teaser_json) : r.teaser_json) as ShareTeaser,
+      created_at: String(r.created_at),
+      expires_at: r.expires_at ? String(r.expires_at) : null,
+      revoked_at: r.revoked_at ? String(r.revoked_at) : null,
+    }))
     .filter((r) => !r.expires_at || new Date(r.expires_at).getTime() > Date.now())
     .map((r) => toPublicLink(r, false))
 }
@@ -299,30 +352,35 @@ export async function recordShareStart(shareSlug: string): Promise<{ startId: st
   const share = await getShareBySlug(shareSlug)
   if (!share) throw new Error('Tautan share tidak ditemukan atau sudah dicabut.')
 
-  // Need link id — fetch once with admin to get id without exposing source to client.
-  const admin = createAdminClient()
-  const { data: row, error } = await admin
-    .from('shared_story_links')
-    .select('id')
-    .eq('share_slug', shareSlug)
-    .is('revoked_at', null)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: shared_story_links_select_active
+  const { data: row, error } = await single(
+    db
+      .selectFrom('shared_story_links')
+      .select('id')
+      .where('share_slug', '=', shareSlug)
+      .where('revoked_at', 'is', null)
+      .limit(1)
+      .execute(),
+  )
   if (error || !row) throw new Error('Tautan share tidak valid.')
 
-  const supabase = await createClient()
-  const { data: start, error: startErr } = await supabase
-    .from('shared_story_starts')
-    .insert({
-      shared_link_id: row.id,
-      new_user_id: user.id,
-      new_story_id: null,
-    })
-    .select('id')
-    .single()
+  // RLS_AUDIT: shared_story_starts_insert_self
+  const { data: start, error: startErr } = await single(
+    db
+      .insertInto('shared_story_starts')
+      .values({
+        shared_link_id: row.id,
+        new_user_id: user.id,
+        new_story_id: null,
+      })
+      .returning('id')
+      .execute(),
+  )
   if (startErr || !start) {
     throw new Error(`recordShareStart: ${startErr?.message ?? 'gagal'}`)
   }
-  return { startId: start.id as string }
+  return { startId: start.id }
 }
 
 /** Ikat story baru ke share start setelah lock. */
@@ -332,12 +390,16 @@ export async function attachStoryToShareStart(
 ): Promise<void> {
   const user = await getSessionUser()
   if (!user) return
-  const supabase = await createClient()
-  const { error } = await supabase
-    .from('shared_story_starts')
-    .update({ new_story_id: newStoryId })
-    .eq('id', startId)
-    .eq('new_user_id', user.id)
+  const db = getDb()
+  // RLS_AUDIT: shared_story_starts_select_self
+  const { error } = await result(
+    db
+      .updateTable('shared_story_starts')
+      .set({ new_story_id: newStoryId })
+      .where('id', '=', startId)
+      .where('new_user_id', '=', user.id)
+      .execute(),
+  )
   if (error) throw new Error(`attachStoryToShareStart: ${error.message}`)
 }
 
@@ -353,22 +415,25 @@ function slugify(input: string): string {
   )
 }
 
-function remapValue(val: unknown, idMap: Map<string, string>): unknown {
-  if (val === null || val === undefined) return val
+function remapValue(val: unknown, idMap: Map<string, string>): Json {
+  if (val === null || val === undefined) return null
   if (typeof val === 'string') {
     return idMap.get(val) ?? val
+  }
+  if (typeof val === 'number' || typeof val === 'boolean') {
+    return val
   }
   if (Array.isArray(val)) {
     return val.map((item) => remapValue(item, idMap))
   }
   if (typeof val === 'object') {
-    const res: Record<string, unknown> = {}
+    const res: Record<string, Json> = {}
     for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
       res[k] = remapValue(v, idMap)
     }
     return res
   }
-  return val
+  return null
 }
 
 /**
@@ -382,12 +447,16 @@ export async function cloneStoryFromShare(
   const user = await getSessionUser()
   if (!user) throw new Error('Harus masuk untuk mencoba jalur sendiri.')
 
-  const admin = createAdminClient()
-  const { data: link, error: linkErr } = await admin
-    .from('shared_story_links')
-    .select('id, source_story_id, title, revoked_at, expires_at')
-    .eq('share_slug', shareSlug)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: shared_story_links_select_active
+  const { data: link, error: linkErr } = await single(
+    db
+      .selectFrom('shared_story_links')
+      .select(['id', 'source_story_id', 'title', 'revoked_at', 'expires_at'])
+      .where('share_slug', '=', shareSlug)
+      .limit(1)
+      .execute(),
+  )
   if (linkErr || !link) throw new Error('Tautan share tidak ditemukan.')
   if (link.revoked_at) throw new Error('Tautan share sudah dicabut.')
   if (link.expires_at && new Date(link.expires_at).getTime() <= Date.now()) {
@@ -396,57 +465,73 @@ export async function cloneStoryFromShare(
   if (!link.source_story_id) throw new Error('Cerita sumber tidak ditemukan.')
 
   // Catat start row
-  const { data: startRow, error: startErr } = await admin
-    .from('shared_story_starts')
-    .insert({
-      shared_link_id: link.id,
-      new_user_id: user.id,
-      new_story_id: null,
-    })
-    .select('id')
-    .single()
+  // RLS_AUDIT: shared_story_starts_insert_self
+  const { data: startRow, error: startErr } = await single(
+    db
+      .insertInto('shared_story_starts')
+      .values({
+        shared_link_id: link.id,
+        new_user_id: user.id,
+        new_story_id: null,
+      })
+      .returning('id')
+      .execute(),
+  )
   if (startErr || !startRow) throw new Error('Gagal mencatat share start.')
 
   // Jika penerima sudah punya kloningan yang belum dimainkan (bab 1, jejak kosong, bukan SELESAI), reuse:
-  const { data: existingStarts } = await admin
-    .from('shared_story_starts')
-    .select('new_story_id')
-    .eq('shared_link_id', link.id)
-    .eq('new_user_id', user.id)
-    .not('new_story_id', 'is', null)
-    .order('started_at', { ascending: false })
-    .limit(5)
+  // RLS_AUDIT: shared_story_starts_select_self
+  const { data: existingStarts } = await result(
+    db
+      .selectFrom('shared_story_starts')
+      .select('new_story_id')
+      .where('shared_link_id', '=', link.id)
+      .where('new_user_id', '=', user.id)
+      .where('new_story_id', 'is not', null)
+      .orderBy('started_at', 'desc')
+      .limit(5)
+      .execute(),
+  )
 
   if (existingStarts && existingStarts.length > 0) {
     for (const st of existingStarts) {
       if (!st.new_story_id) continue
-      const { data: stStory } = await admin
-        .from('stories')
-        .select('id, current_chapter, jejak, status')
-        .eq('id', st.new_story_id)
-        .eq('owner_user_id', user.id)
-        .maybeSingle()
+      // RLS_AUDIT: stories_owner_read
+      const { data: stStory } = await single(
+        db
+          .selectFrom('stories')
+          .select(['id', 'current_chapter', 'jejak', 'status'])
+          .where('id', '=', st.new_story_id)
+          .where('owner_user_id', '=', user.id)
+          .limit(1)
+          .execute(),
+      )
       if (
         stStory &&
         stStory.current_chapter === 1 &&
         (!stStory.jejak || (Array.isArray(stStory.jejak) && stStory.jejak.length === 0)) &&
         stStory.status !== 'SELESAI'
       ) {
-        await admin
-          .from('shared_story_starts')
-          .update({ new_story_id: stStory.id })
-          .eq('id', startRow.id)
+        await db
+          .updateTable('shared_story_starts')
+          .set({ new_story_id: stStory.id })
+          .where('id', '=', startRow.id)
+          .execute()
         return { storyId: stStory.id, startId: startRow.id }
       }
     }
   }
 
   // Ambil data cerita sumber
-  const { data: sourceStory, error: storyErr } = await admin
-    .from('stories')
-    .select('*')
-    .eq('id', link.source_story_id)
-    .maybeSingle()
+  // RLS_AUDIT: stories_owner_read, stories_public_read
+  const { data: sourceStory, error: storyErr } = await single(
+    db
+      .selectFrom('stories')
+      .selectAll()
+      .where('id', '=', link.source_story_id)
+      .limit(1)
+      .execute(),
+  )
   if (storyErr || !sourceStory) throw new Error('Cerita sumber tidak ditemukan.')
 
   const base = slugify(sourceStory.title || link.title || 'cerita')
@@ -470,20 +555,20 @@ export async function cloneStoryFromShare(
     chapter1Res,
     outcomes1Res,
   ] = await Promise.all([
-    admin.from('characters').select('*').eq('story_id', link.source_story_id),
-    admin.from('character_aliases').select('*').eq('story_id', link.source_story_id),
-    admin.from('character_voice_sheets').select('*').eq('story_id', link.source_story_id),
-    admin.from('facts_ledger').select('*').eq('story_id', link.source_story_id),
-    admin.from('knowledge_scopes').select('*').eq('story_id', link.source_story_id),
-    admin.from('secrets_reveals').select('*').eq('story_id', link.source_story_id),
-    admin.from('timeline_events').select('*').eq('story_id', link.source_story_id),
-    admin.from('story_threads').select('*').eq('story_id', link.source_story_id),
-    admin.from('act_rollups').select('*').eq('story_id', link.source_story_id),
-    admin.from('chapter_blueprints').select('*').eq('story_id', link.source_story_id),
-    admin.from('story_generation_contracts').select('*').eq('story_id', link.source_story_id).maybeSingle(),
-    admin.from('story_creative_directions').select('*').eq('story_id', link.source_story_id).maybeSingle(),
-    admin.from('chapters').select('*').eq('story_id', link.source_story_id).eq('number', 1).maybeSingle(),
-    admin.from('choice_outcomes').select('*').eq('story_id', link.source_story_id).eq('chapter_number', 1),
+    result(db.selectFrom('characters').selectAll().where('story_id', '=', link.source_story_id).execute()),
+    result(db.selectFrom('character_aliases').selectAll().where('story_id', '=', link.source_story_id).execute()),
+    result(db.selectFrom('character_voice_sheets').selectAll().where('story_id', '=', link.source_story_id).execute()),
+    result(db.selectFrom('facts_ledger').selectAll().where('story_id', '=', link.source_story_id).execute()),
+    result(db.selectFrom('knowledge_scopes').selectAll().where('story_id', '=', link.source_story_id).execute()),
+    result(db.selectFrom('secrets_reveals').selectAll().where('story_id', '=', link.source_story_id).execute()),
+    result(db.selectFrom('timeline_events').selectAll().where('story_id', '=', link.source_story_id).execute()),
+    result(db.selectFrom('story_threads').selectAll().where('story_id', '=', link.source_story_id).execute()),
+    result(db.selectFrom('act_rollups').selectAll().where('story_id', '=', link.source_story_id).execute()),
+    result(db.selectFrom('chapter_blueprints').selectAll().where('story_id', '=', link.source_story_id).execute()),
+    single(db.selectFrom('story_generation_contracts').selectAll().where('story_id', '=', link.source_story_id).limit(1).execute()),
+    single(db.selectFrom('story_creative_directions').selectAll().where('story_id', '=', link.source_story_id).limit(1).execute()),
+    single(db.selectFrom('chapters').selectAll().where('story_id', '=', link.source_story_id).where('number', '=', 1).limit(1).execute()),
+    result(db.selectFrom('choice_outcomes').selectAll().where('story_id', '=', link.source_story_id).where('chapter_number', '=', 1).execute()),
   ])
 
   // Bangun id maps
@@ -513,7 +598,7 @@ export async function cloneStoryFromShare(
   // Ambil character_states untuk karakter yang ada
   const oldCharIds = Array.from(charIdMap.keys())
   const { data: charStateRows } = oldCharIds.length > 0
-    ? await admin.from('character_states').select('*').in('character_id', oldCharIds)
+    ? await result(db.selectFrom('character_states').selectAll().where('character_id', 'in', oldCharIds).execute())
     : { data: [] }
 
   const storyMode =
@@ -522,34 +607,39 @@ export async function cloneStoryFromShare(
       : (sourceStory.story_mode || 'personalized_ai')
 
   // Buat row story baru
-  const { error: insStoryErr } = await admin.from('stories').insert({
-    id: newStoryId,
-    title: sourceStory.title,
-    cover: sourceStory.cover,
-    tagline: sourceStory.tagline,
-    role: sourceStory.role,
-    tropes: Array.isArray(sourceStory.tropes) ? sourceStory.tropes : [],
-    total_chapters: sourceStory.total_chapters ?? 50,
-    synopsis: sourceStory.synopsis,
-    status: 'BERJALAN',
-    current_chapter: 1,
-    jejak: [],
-    ending_name: null,
-    owner_user_id: user.id,
-    visibility: 'private',
-    source_story_id: link.source_story_id,
-    story_mode: storyMode,
-    generation_status: 'ready',
-    story_contract_version: sourceStory.story_contract_version ?? 1,
-    created_at: now,
-  })
+  const { error: insStoryErr } = await result(
+    db
+      .insertInto('stories')
+      .values({
+        id: newStoryId,
+        title: sourceStory.title,
+        cover: sourceStory.cover,
+        tagline: sourceStory.tagline,
+        role: sourceStory.role,
+        tropes: (Array.isArray(sourceStory.tropes) ? sourceStory.tropes : []) as unknown as string[],
+        total_chapters: sourceStory.total_chapters ?? 50,
+        synopsis: sourceStory.synopsis,
+        status: 'BERJALAN',
+        current_chapter: 1,
+        jejak: [],
+        ending_name: null,
+        owner_user_id: user.id,
+        visibility: 'private',
+        source_story_id: link.source_story_id,
+        story_mode: storyMode,
+        generation_status: 'ready',
+        story_contract_version: sourceStory.story_contract_version ?? 1,
+        created_at: now,
+      })
+      .execute(),
+  )
   if (insStoryErr) throw new Error(`Gagal membuat cerita baru: ${insStoryErr.message}`)
 
   try {
     // 1. characters
     const charRows = charactersRes.data ?? []
     if (charRows.length > 0) {
-      await admin.from('characters').insert(
+      await db.insertInto('characters').values(
         charRows.map((c) => ({
           id: charIdMap.get(c.id)!,
           story_id: newStoryId,
@@ -559,12 +649,12 @@ export async function cloneStoryFromShare(
           introduced_chapter: c.introduced_chapter,
           created_at: now,
         })),
-      )
+      ).execute()
     }
 
     // 2. character_states
     if (charStateRows && charStateRows.length > 0) {
-      await admin.from('character_states').insert(
+      await db.insertInto('character_states').values(
         charStateRows.map((cs) => ({
           character_id: charIdMap.get(cs.character_id)!,
           status: cs.status,
@@ -572,13 +662,13 @@ export async function cloneStoryFromShare(
           attributes: remapValue(cs.attributes, idMap),
           updated_at: now,
         })),
-      )
+      ).execute()
     }
 
     // 3. character_aliases
     const aliasRows = aliasesRes.data ?? []
     if (aliasRows.length > 0) {
-      await admin.from('character_aliases').insert(
+      await db.insertInto('character_aliases').values(
         aliasRows.map((a) => ({
           story_id: newStoryId,
           character_id: charIdMap.get(a.character_id)!,
@@ -586,13 +676,13 @@ export async function cloneStoryFromShare(
           alias_type: a.alias_type,
           created_at: now,
         })),
-      )
+      ).execute()
     }
 
     // 4. character_voice_sheets
     const voiceRows = voiceRes.data ?? []
     if (voiceRows.length > 0) {
-      await admin.from('character_voice_sheets').insert(
+      await db.insertInto('character_voice_sheets').values(
         voiceRows.map((v) => ({
           story_id: newStoryId,
           character_id: charIdMap.get(v.character_id)!,
@@ -602,13 +692,13 @@ export async function cloneStoryFromShare(
           sample_lines: v.sample_lines,
           created_at: now,
         })),
-      )
+      ).execute()
     }
 
     // 5. facts_ledger
     const factRows = factsRes.data ?? []
     if (factRows.length > 0) {
-      await admin.from('facts_ledger').insert(
+      await db.insertInto('facts_ledger').values(
         factRows.map((f) => ({
           id: factIdMap.get(f.id)!,
           story_id: newStoryId,
@@ -620,13 +710,13 @@ export async function cloneStoryFromShare(
           paid_off: f.paid_off,
           created_at: now,
         })),
-      )
+      ).execute()
     }
 
     // 6. knowledge_scopes
     const knowRows = knowledgeRes.data ?? []
     if (knowRows.length > 0) {
-      await admin.from('knowledge_scopes').insert(
+      await db.insertInto('knowledge_scopes').values(
         knowRows.map((k) => ({
           story_id: newStoryId,
           character_id: charIdMap.get(k.character_id)!,
@@ -634,13 +724,13 @@ export async function cloneStoryFromShare(
           known_from_chapter: k.known_from_chapter,
           created_at: now,
         })),
-      )
+      ).execute()
     }
 
     // 7. secrets_reveals
     const secretRows = secretsRes.data ?? []
     if (secretRows.length > 0) {
-      await admin.from('secrets_reveals').insert(
+      await db.insertInto('secrets_reveals').values(
         secretRows.map((s) => ({
           id: secretIdMap.get(s.id)!,
           story_id: newStoryId,
@@ -649,13 +739,13 @@ export async function cloneStoryFromShare(
           revealed: false,
           created_at: now,
         })),
-      )
+      ).execute()
     }
 
     // 8. story_threads
     const threadRows = threadsRes.data ?? []
     if (threadRows.length > 0) {
-      await admin.from('story_threads').insert(
+      await db.insertInto('story_threads').values(
         threadRows.map((t) => ({
           id: threadIdMap.get(t.id)!,
           story_id: newStoryId,
@@ -669,13 +759,13 @@ export async function cloneStoryFromShare(
           stale_since_chapter: null,
           created_at: now,
         })),
-      )
+      ).execute()
     }
 
     // 9. chapter_blueprints
     const blueprintRows = blueprintsRes.data ?? []
     if (blueprintRows.length > 0) {
-      await admin.from('chapter_blueprints').insert(
+      await db.insertInto('chapter_blueprints').values(
         blueprintRows.map((b) => ({
           story_id: newStoryId,
           chapter_number: b.chapter_number,
@@ -690,13 +780,13 @@ export async function cloneStoryFromShare(
           reconciliation_reason: b.reconciliation_reason,
           created_at: now,
         })),
-      )
+      ).execute()
     }
 
     // 10. timeline_events
     const timelineRows = timelineRes.data ?? []
     if (timelineRows.length > 0) {
-      await admin.from('timeline_events').insert(
+      await db.insertInto('timeline_events').values(
         timelineRows.map((t) => ({
           story_id: newStoryId,
           chapter_number: t.chapter_number,
@@ -706,13 +796,13 @@ export async function cloneStoryFromShare(
           occurs_at: t.occurs_at,
           created_at: now,
         })),
-      )
+      ).execute()
     }
 
     // 11. act_rollups
     const rollupRows = rollupsRes.data ?? []
     if (rollupRows.length > 0) {
-      await admin.from('act_rollups').insert(
+      await db.insertInto('act_rollups').values(
         rollupRows.map((r) => ({
           story_id: newStoryId,
           act_number: r.act_number,
@@ -722,14 +812,15 @@ export async function cloneStoryFromShare(
           covers_to_chapter: r.covers_to_chapter,
           created_at: now,
         })),
-      )
+      ).execute()
     }
 
     // 12. story_generation_contracts
     const contractRow = contractRes.data
     if (contractRow) {
-      const remappedContract = (remapValue(contractRow.story_contract_json, idMap) ?? {}) as Record<string, unknown>
-      await admin.from('story_generation_contracts').insert({
+      const rawContract = contractRow.story_contract_json
+      const remappedContract = (remapValue(rawContract, idMap) ?? {}) as Record<string, Json>
+      await db.insertInto('story_generation_contracts').values({
         story_id: newStoryId,
         mode: contractRow.mode,
         total_chapters: contractRow.total_chapters,
@@ -744,27 +835,28 @@ export async function cloneStoryFromShare(
         story_contract_version: contractRow.story_contract_version,
         created_at: now,
         updated_at: now,
-      })
+      }).execute()
     }
 
     // 13. story_creative_directions
     const dirRow = directionRes.data
     if (dirRow) {
-      await admin.from('story_creative_directions').insert({
+      await db.insertInto('story_creative_directions').values({
         story_id: newStoryId,
         owner_user_id: user.id,
-        direction: dirRow.direction,
-        fingerprint: dirRow.fingerprint,
-        storage: dirRow.storage,
+        version: dirRow.version,
+        direction_json: dirRow.direction_json,
+        direction_fingerprint: dirRow.direction_fingerprint,
+        prompt_contract_version: dirRow.prompt_contract_version,
         created_at: now,
         updated_at: now,
-      })
+      }).execute()
     }
 
     // 14. chapters (Chapter 1)
     const chapter1 = chapter1Res.data
     if (chapter1) {
-      await admin.from('chapters').insert({
+      await db.insertInto('chapters').values({
         story_id: newStoryId,
         number: 1,
         title: chapter1.title,
@@ -772,13 +864,13 @@ export async function cloneStoryFromShare(
         choice_prompt: chapter1.choice_prompt,
         choices: remapValue(chapter1.choices, idMap),
         created_at: now,
-      })
+      }).execute()
     }
 
     // 15. choice_outcomes (Chapter 1)
     const outcomes1 = outcomes1Res.data ?? []
     if (outcomes1.length > 0) {
-      await admin.from('choice_outcomes').insert(
+      await db.insertInto('choice_outcomes').values(
         outcomes1.map((o) => ({
           story_id: newStoryId,
           chapter_number: 1,
@@ -790,11 +882,12 @@ export async function cloneStoryFromShare(
           choice_kind: o.choice_kind,
           created_at: now,
         })),
-      )
+      ).execute()
     }
 
     // 16. reader_states
-    await admin.from('reader_states').insert({
+    // RLS_AUDIT: reader_states_owner
+    await db.insertInto('reader_states').values({
       user_id: user.id,
       story_id: newStoryId,
       status: 'BERJALAN',
@@ -815,18 +908,20 @@ export async function cloneStoryFromShare(
       },
       choice_history: [],
       locked_ending_key: null,
-    })
+    }).execute()
 
     // 17. Tautkan new_story_id ke shared_story_starts
-    await admin
-      .from('shared_story_starts')
-      .update({ new_story_id: newStoryId })
-      .eq('id', startRow.id)
+    // RLS_AUDIT: shared_story_starts_select_self
+    await db
+      .updateTable('shared_story_starts')
+      .set({ new_story_id: newStoryId })
+      .where('id', '=', startRow.id)
+      .execute()
 
     return { storyId: newStoryId, startId: startRow.id }
   } catch (err) {
     // Rollback story row on fatal failure
-    await admin.from('stories').delete().eq('id', newStoryId)
+    await db.deleteFrom('stories').where('id', '=', newStoryId).execute()
     throw err
   }
 }

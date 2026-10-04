@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   anonFactory: vi.fn(),
   adminFactory: vi.fn(),
   cookieFactory: vi.fn(),
+  getDb: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
@@ -18,6 +19,13 @@ vi.mock('@/lib/supabase/admin', () => ({
 vi.mock('@/lib/supabase/server', () => ({
   createClient: mocks.cookieFactory,
 }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    getDb: mocks.getDb,
+  }
+})
 
 type Call = { method: string; args: unknown[] }
 
@@ -58,7 +66,82 @@ function createQueryClient(
     }),
   }
 
-  return { client, calls }
+  const ebFn = vi.fn((left: unknown, op?: unknown, right?: unknown) => {
+    if (op === '=' && right !== undefined) return `${left}.eq.${right}`
+    if (op === 'like' && right !== undefined) return `${left}.like.${right}`
+    return `${left}.${op}.${right}`
+  }) as any
+  ebFn.or = vi.fn((items: unknown[]) => items.join(','))
+  ebFn.and = vi.fn((items: unknown[]) => items.join(','))
+
+  const createKyselyBuilder = (table?: string) => {
+    const builder: Record<string, unknown> = {}
+    builder.select = vi.fn((...args: unknown[]) => {
+      const colArg = args[0]
+      if (Array.isArray(colArg)) {
+        calls.push({ method: 'select', args: [colArg.join(',')] })
+      } else {
+        calls.push({ method: 'select', args })
+      }
+      return builder
+    })
+    builder.where = vi.fn((...args: unknown[]) => {
+      if (typeof args[0] === 'function') {
+        const res = args[0](ebFn)
+        calls.push({ method: 'or', args: [res] })
+        calls.push({ method: 'where', args: [res] })
+      } else if (args[1] === '=') {
+        calls.push({ method: 'eq', args: [args[0], args[2]] })
+        calls.push({ method: 'where', args })
+      } else if (args[1] === 'in') {
+        calls.push({ method: 'in', args: [args[0], args[2]] })
+        calls.push({ method: 'where', args })
+      } else if (args[1] === 'is' && args[2] === null) {
+        calls.push({ method: 'is', args: [args[0], null] })
+        calls.push({ method: 'where', args })
+      } else {
+        calls.push({ method: 'where', args })
+      }
+      return builder
+    })
+    builder.orderBy = vi.fn((...args: unknown[]) => {
+      calls.push({ method: 'order', args })
+      return builder
+    })
+    builder.limit = vi.fn((...args: unknown[]) => {
+      calls.push({ method: 'limit', args })
+      return builder
+    })
+    builder.execute = vi.fn(async () => {
+      calls.push({ method: 'execute', args: [] })
+      const res = nextResult()
+      if (res.error) throw new Error(res.error.message)
+      const data = res.data
+      if (Array.isArray(data)) return data
+      if (data === null || data === undefined) return []
+      return [data]
+    })
+    builder.executeTakeFirst = vi.fn(async () => {
+      calls.push({ method: 'executeTakeFirst', args: [] })
+      const res = nextResult()
+      if (res.error) throw new Error(res.error.message)
+      const data = res.data
+      if (Array.isArray(data)) return data[0] ?? null
+      return data ?? null
+    })
+    return builder
+  }
+
+  const kysely = {
+    selectFrom: vi.fn((table: string) => {
+      calls.push({ method: 'from', args: [table] })
+      calls.push({ method: 'selectFrom', args: [table] })
+      return createKyselyBuilder(table)
+    }),
+  }
+  mocks.getDb.mockReturnValue(kysely)
+
+  return { client, kysely, calls }
 }
 
 const storyRow = {
@@ -83,6 +166,7 @@ beforeEach(() => {
   mocks.anonFactory.mockReset()
   mocks.adminFactory.mockReset()
   mocks.cookieFactory.mockReset()
+  mocks.getDb.mockReset()
 })
 
 describe('reader-safe query projections', () => {
@@ -256,7 +340,7 @@ describe('reader-safe query projections', () => {
     expect(db.calls).toContainEqual({ method: 'select', args: [queries.CHAPTER_READER_COLUMNS] })
     expect(db.calls).toContainEqual({ method: 'select', args: [queries.OUTCOME_READER_COLUMNS] })
     expect(db.calls.some((call) => call.method === 'select' && call.args[0] === '*')).toBe(false)
-    expect(mocks.adminFactory).toHaveBeenCalled()
+    expect(mocks.getDb).toHaveBeenCalled()
   })
 })
 

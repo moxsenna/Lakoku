@@ -1,5 +1,5 @@
 import 'server-only'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb, single } from '@lakoku/db'
 
 /**
  * Kontrak topologi (P0):
@@ -13,13 +13,17 @@ import { createAdminClient } from '@/lib/supabase/admin'
  * Lihat docs/CONTINUITY_REGENERATION.md untuk opsi lanjutan (clone→private).
  */
 export async function isStoryOwnedBy(storyId: string, userId: string): Promise<boolean> {
-  const admin = createAdminClient()
-  const { data, error } = await admin
-    .from('stories')
-    .select('id')
-    .eq('id', storyId)
-    .eq('owner_user_id', userId)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: stories_owner_read
+  const { data, error } = await single(
+    db
+      .selectFrom('stories')
+      .select('id')
+      .where('id', '=', storyId)
+      .where('owner_user_id', '=', userId)
+      .limit(1)
+      .execute(),
+  )
   if (error) return false
   return data != null
 }

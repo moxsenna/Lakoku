@@ -361,3 +361,11 @@ Base: f180628
 - Sisa kerja = Task 7 (cutover produksi) menunggu prasyarat PM.
 - Task 7 (cutover produksi): COMPLETE 2026-10-03 — push main ef4c092..9553ed7; VPS: env 5 var + backup lakoku.bak-20261003-082202, build 9553ed7 EXIT=0, assembly OK, cover base ter-inline, restart active, origin/public/app 200, 17/17 asset, .hermes guardrail identik; migrasi riil (1 objek, 1 row), SQL check 0 residue; E2E upload akun test (smoke-cover-r2-murnznrr) 3/3 check PASS + cleanup; smoke:production-reader 9/9 PASS. Backup tersedia utk rollback.
 - MIGRASI R2 SELESAI PENUH — sub-proyek 1 ditutup; sisa roadmap: sub-proyek 2 (Neon) & 3 (Better Auth) belum mulai.
+
+## FULL EXIT PHASE A — Neon + Kysely (2026-10-03)
+Plan: docs/superpowers/plans/2026-10-03-full-exit-phase-a-neon-kysely.md (53a1b98)
+Branch: feat/neon-phase-a (worktree .worktrees/feat-neon-phase-a) | Base: 53a1b98
+- Task 1: complete (53a1b98..a06619f, review clean). Minor: none.
+- Task 2: complete (a06619f..6082921, review clean, 91/91 replay clean + idempotent, grep 0, structural parity 100%). Minor: none.
+- Task 2: complete (a06619f..6082921 + fix f234f60, re-review APPROVED). Replay fresh 91/91 + idempoten; structural parity 75/75 tabel, 166/166 fungsi, 17/17 trigger, 4 views. Implementer sudah menambahkan auth.users compat table + auth.uid() stub di BASELINE_PREAMBLE (handover Task 3). Minor utk final review: 38 dead DROP POLICY IF EXISTS di neon/migrations (no-op Postgres); catatan operasional: runner lacak by-filename — perubahan isi file ter-applied tidak re-apply (documented).
+- Task 3: complete. Audit 11 touchpoint auth.users (5 LIVE, 4 DEAD, 2 TEST/STUB). Tidak ada LIVE INSERT INTO auth.users. Semua pemanggil LIVE (admin_search_users_v1, clone_premium_story_instance, admin_generation_job_detail_v1, admin_generation_cost_breakdown_v1, admin_generation_provider_calls_v2, grant_welcome_credit_v1) dipenuhi via compat table auth.users + stub auth.uid() di neon/bootstrap/001-auth-compat.sql. Verifikasi 11/11 lolos terhadap DB Neon target. ADAPTATION_NOTES §3 diperbarui.

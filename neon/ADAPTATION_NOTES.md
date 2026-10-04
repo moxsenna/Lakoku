@@ -49,23 +49,31 @@ Transformer `scripts/adapt-supabase-migrations.mjs` mentransformasi migrasi Supa
 
 ---
 
-## 3. Inventaris Dependensi `auth.users` di Body Fungsi (Untuk Task 3 Audit)
+## 3. Inventaris Dependensi `auth.users` di Body Fungsi & Decision Table (Task 3 Audit)
 
-Berikut adalah daftar lengkap fungsi SQL dan View yang menyentuh tabel `auth.users` di dalam implementasinya (bukan sekadar kolom FK):
+Audit mendalam terhadap seluruh 11 kemunculan `auth.users` di dalam body fungsi SQL dan view di `neon/migrations/`:
 
-| File Migrasi | Objek | Baris | Jenis Akses | Konteks |
-|---|---|---|---|---|
-| `20260711020000_admin_users_role.sql` | `is_admin_user(uuid)` | 16 | `FROM auth.users` | Pengecekan admin |
-| `20260713050000_clone_premium_story_instance.sql` | `clone_premium_story_instance(...)` | 104 | `FROM auth.users as users` | Salin instance cerita |
-| `20260713070000_harden_premium_story_clone.sql` | `clone_premium_story_instance(...)` | 367 | `FROM auth.users as users` | Hardening kloning |
-| `20260718110000_admin_generation_observability_rpcs.sql` | `admin_generation_provider_calls_v1(...)` | 740 | `LEFT JOIN auth.users as u` | Observabilitas generasi |
-| `20260718110000_admin_generation_observability_rpcs.sql` | `admin_generation_jobs_v1(...)` | 844 | `LEFT JOIN auth.users as u` | Observabilitas generasi |
-| `20260718110000_admin_generation_observability_rpcs.sql` | `admin_generation_user_summary_v1(...)` | 1162 | `LEFT JOIN auth.users as u` | Observabilitas pengguna |
-| `20260728010000_plot_debt_closure_ledger.sql` | `clone_premium_story_instance(...)` | 524 | `FROM auth.users as users` | Resolusi plot debt |
-| `20260802010000_durable_validation_diagnostics.sql` | `admin_generation_provider_calls_v2(...)` | 122 | `LEFT JOIN auth.users u` | Diagnostik validasi |
-| `20260804010000_account_commercial_entitlements.sql` | `ensure_account_commercial_entitlements(...)` | 215 | `SELECT created_at FROM auth.users` | Inisialisasi tier komersial |
-| `20260806010000_commercial_cutover_primitives.sql` | `create_test_auth_user_v1(...)` | 523 | `INSERT INTO auth.users` | Helper pengujian lokal |
-| `20260823100300_e5_blueprint_rls.sql` | `vw_blueprint_recent_resolutions` (VIEW) | 52 | `LEFT JOIN auth.users AS u` | View resolusi blueprint E5 |
+### Decision Table
+
+| No | File Migrasi | Objek SQL | Status | Pemanggil di Aplikasi (File:Baris) | Keputusan & Solusi |
+|---|---|---|---|---|---|
+| 1 | `20260711020000_admin_users_role.sql` | `public.admin_search_users_v1(p_email text)` | **LIVE** | `app/api/admin/users/search/route.ts:37`<br>`lib/admin/users.ts:19` | **Pertahankan Body + Compat Shim**.<br>Mencari pengguna admin via `auth.users`. Tabel compat `auth.users` menyediakan kolom `id` dan `email`. Tidak ada tabel `public.profiles` di skema Lakoku (hanya ada `reader_taste_profiles` untuk preferensi novel). |
+| 2 | `20260713050000_clone_premium_story_instance.sql` | `public.clone_premium_story_instance(...)` | **DEAD** | Tidak ada (ditimpa oleh revisi berikutnya) | **Pertahankan Body**.<br>Versi awal kloning cerita premium. Telah ditimpa oleh migrasi `20260728010000`. |
+| 3 | `20260713070000_harden_premium_story_clone.sql` | `public.clone_premium_story_instance(...)` | **DEAD** | Tidak ada (ditimpa oleh revisi berikutnya) | **Pertahankan Body**.<br>Versi revisi hardening kloning cerita premium. Telah ditimpa oleh migrasi `20260728010000`. |
+| 4 | `20260728010000_plot_debt_closure_ledger.sql` | `public.clone_premium_story_instance(...)` | **LIVE** | `lib/api/premium-clone.server.ts:241` | **Pertahankan Body + Compat Shim**.<br>Memeriksa eksistensi pengguna: `not exists (select 1 from auth.users as users where users.id = p_user_id)`. Terpenuhi oleh compat table `auth.users(id)`. |
+| 5 | `20260718110000_admin_generation_observability_rpcs.sql` | `public.admin_generation_provider_calls_v1(...)` | **DEAD** | Tidak ada (digantikan oleh v2 di `20260802010000`) | **Pertahankan Body**.<br>`LEFT JOIN auth.users as u` untuk observability v1. Valid dengan compat table. |
+| 6 | `20260718110000_admin_generation_observability_rpcs.sql` | `public.admin_generation_job_detail_v1(p_job_id uuid)` | **LIVE** | `lib/admin/generation.ts:150` | **Pertahankan Body + Compat Shim**.<br>`LEFT JOIN auth.users as u` untuk `masked_user_email`. Karena berupa `LEFT JOIN`, jika pengguna belum tercatat di auth, kolom tetap `NULL` aman tanpa kegagalan query. |
+| 7 | `20260718110000_admin_generation_observability_rpcs.sql` | `public.admin_generation_cost_breakdown_v1(...)` | **LIVE** | `lib/admin/generation.ts:186` | **Pertahankan Body + Compat Shim**.<br>`LEFT JOIN auth.users as u` untuk `masked_user_email` breakdown biaya per pengguna. Aman via `LEFT JOIN` dan compat table. |
+| 8 | `20260802010000_durable_validation_diagnostics.sql` | `public.admin_generation_provider_calls_v2(...)` | **LIVE** | `lib/admin/generation.ts:133` | **Pertahankan Body + Compat Shim**.<br>`LEFT JOIN auth.users u` untuk `masked_user_email` pemanggilan provider AI. Aman via `LEFT JOIN` dan compat table. |
+| 9 | `20260804010000_account_commercial_entitlements.sql` | `public.grant_welcome_credit_v1(p_user_id uuid)` | **LIVE** | `lib/api/premium-clone.server.ts:427`<br>`lib/api/personalized-stories.server.ts:310` | **Pertahankan Body + Compat Shim**.<br>Mengecek `v_user_created_at` dari `auth.users`. Compat table menyediakan kolom `created_at` bertipe timestamptz. |
+| 10 | `20260806010000_commercial_cutover_primitives.sql` | `public.create_test_auth_user_v1(p_user_id uuid, p_email text)` | **TEST** | `tests/integration/commercial-cutover.test.ts:40`<br>`tests/integration/monetization-lifecycle.test.ts:42` | **Pertahankan Body + Compat Shim**.<br>Hanya dipanggil dari skrip pengujian integrasi (`tests/integration/`). Tidak ada pemanggil dari kode produksi (`app/`, `lib/`). Menyisipkan record ke `auth.users` tiruan untuk pengujian fixture. |
+| 11 | `20260823100300_e5_blueprint_rls.sql` | `public.vw_blueprint_recent_resolutions` (VIEW) | **DEAD** | Tidak ada pemanggil di `lib/`, `app/`, `scripts/` | **Pertahankan View**.<br>`LEFT JOIN auth.users AS u` untuk `reviewer_email`. Valid dengan compat table. |
+
+### Kebijakan Compat Shim (`neon/bootstrap/001-auth-compat.sql`)
+1. Ditempatkan di direktori bootstrap: `neon/bootstrap/001-auth-compat.sql`.
+2. Dijalankan otomatis oleh `scripts/neon-migrate.mjs` sebelum seluruh file `neon/migrations/*.sql`.
+3. Memastikan skema `auth`, fungsi stub `auth.uid()`, dan tabel `auth.users` dengan 11 kolom (`id`, `instance_id`, `email`, `encrypted_password`, `email_confirmed_at`, `raw_app_meta_data`, `raw_user_meta_data`, `role`, `aud`, `created_at`, `updated_at`) tersedia secara idempoten (`IF NOT EXISTS` / `OR REPLACE`).
+4. Semua fungsi LIVE tidak memerlukan perubahan logika body karena seluruh join bersifat non-intrusif (`LEFT JOIN` atau pengecekan ID) dan kompatibel penuh dengan identitas UUID pengguna. Tidak ditemukan `public.profiles` di repositori Lakoku. Tidak ditemukan fungsi LIVE yang melakukan `INSERT INTO auth.users`.
 
 ---
 

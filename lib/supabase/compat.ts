@@ -26,12 +26,18 @@ import { sql, type Kysely, type SelectQueryBuilder } from 'kysely'
  * Driver Postgres (`pg`) mengembalikan nilai bigint count sebagai string di JavaScript
  * untuk mencegah precision loss. Helper `countOf` mengekstrak `n` dan selalu
  * melakukan koersi eksplisit via `Number(row.n)` sehingga pemanggil menerima tipe `number`.
+ * Query count valid (Transformation Table T3) selalu menghasilkan satu baris
+ * dengan nilai n non-null. Jika n bernilai null atau undefined, helper melempar Error
+ * karena mengindikasikan query malformed.
  *
- * ## GUARD RPC (`rpcOne` / `rpcRows`)
- * Nama fungsi SQL RPC di-guard ketat: hanya menerima identifier SQL aman
+ * ## GUARD & NAMED NOTATION RPC (`rpcOne` / `rpcRows`)
+ * Nama fungsi SQL RPC dan parameter key di-guard ketat: hanya menerima identifier SQL aman
  * (`/^[a-zA-Z_][a-zA-Z0-9_]*$/`) yang berasal dari literal kode.
- * Parameter selalu diurutkan alfabetis berdasarkan nama key demi SQL deterministik,
- * dan seluruh nilai di-bind via parameter Kysely (`sql\`\${v}\``) tanpa interpolasi teks mentah.
+ * Parameter di-bind menggunakan notasi Postgres NAMED ARGUMENTS (`k => $1`).
+ * Rationale: PostgREST rpc memetakan payload JSON ke parameter RPC berdasarkan nama argumen,
+ * bukan posisi. Binding posisional mengacak argumen jika urutan deklarasi fungsi SQL
+ * tidak alfabetis. Pengurutan alfabetis tetap dipertahankan demi determinisme query cache Kysely.
+ * Seluruh nilai di-bind via parameter Kysely (`sql`${v}``) tanpa interpolasi teks mentah.
  */
 
 export type DbResult<T> = {
@@ -87,24 +93,31 @@ export async function singleOrThrow<T>(p: Promise<T[]>): Promise<T> {
 
 /**
  * Mengekstrak agregat count dari baris pertama.
- * Mengkoersi string pg bigint menjadi number via Number(row.n).
+ * Mengkoersi string/bigint pg menjadi number via Number(row.n).
  * Array kosong -> 0.
+ * Nilai nullish (null / undefined) pada row.n -> melempar Error (query count malformed).
  * Rejection -> melempar ulang (propagate).
  */
-export async function countOf(p: Promise<{ n: number }[]>): Promise<number> {
+export async function countOf(
+  p: Promise<Array<{ n: number | string | bigint | null | undefined }>>
+): Promise<number> {
   const rows = await p
   if (rows.length === 0) {
     return 0
   }
-  return Number(rows[0].n ?? 0)
+  const raw = rows[0].n
+  if (raw === null || raw === undefined) {
+    throw new Error('countOf: expected non-null count value in row.n, received nullish')
+  }
+  return Number(raw)
 }
 
 const IDENTIFIER_REGEX = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 
-function assertSafeIdentifier(name: string): void {
+function assertSafeIdentifier(name: string, kind = 'RPC function name'): void {
   if (!IDENTIFIER_REGEX.test(name)) {
     throw new Error(
-      `Invalid RPC function name: "${name}". Function names must be valid SQL identifiers matching /^[a-zA-Z_][a-zA-Z0-9_]*$/ and should only originate from code literals.`
+      `Invalid ${kind}: "${name}". Function names and parameter keys must be valid SQL identifiers matching /^[a-zA-Z_][a-zA-Z0-9_]*$/ and should only originate from code literals.`
     )
   }
 }
@@ -114,25 +127,29 @@ function buildRpcQuery<DB, TB extends keyof DB, Row>(
   name: string,
   params: Record<string, unknown> = {}
 ): SelectQueryBuilder<DB, TB, Row> {
-  assertSafeIdentifier(name)
+  assertSafeIdentifier(name, 'RPC function name')
 
   const sortedKeys = Object.keys(params).sort()
-  const sortedParamValues = sortedKeys.map((k) => params[k])
+  for (const k of sortedKeys) {
+    assertSafeIdentifier(k, 'RPC parameter key')
+  }
 
-  const fnCall =
-    sortedParamValues.length === 0
-      ? sql`public.${sql.raw(name)}()`.as('fn')
+  const fnCall = (
+    sortedKeys.length === 0
+      ? sql`public.${sql.raw(name)}()`
       : sql`public.${sql.raw(name)}(${sql.join(
-          sortedParamValues.map((v) => sql`${v}`),
+          sortedKeys.map((k) => sql`${sql.raw(k)} => ${params[k]}`),
           sql`, `
-        )})`.as('fn')
+        )})`
+  ).as('fn')
 
   return db.selectFrom(fnCall).selectAll() as unknown as SelectQueryBuilder<DB, TB, Row>
 }
 
 /**
  * Membangun SelectQueryBuilder untuk RPC baris jamak.
- * Parameter diurutkan alfabetis demi SQL deterministik dan selalu ter-bound.
+ * Parameter di-bind dengan notasi named arguments Postgres (k => $n)
+ * dan diurutkan alfabetis demi determinisme query cache Kysely.
  */
 export function rpcRows<DB = unknown, TB extends keyof DB = never, Row = Record<string, unknown>>(
   db: Kysely<DB>,
@@ -144,7 +161,8 @@ export function rpcRows<DB = unknown, TB extends keyof DB = never, Row = Record<
 
 /**
  * Membangun SelectQueryBuilder untuk RPC baris tunggal (menambahkan .limit(1)).
- * Parameter diurutkan alfabetis demi SQL deterministik dan selalu ter-bound.
+ * Parameter di-bind dengan notasi named arguments Postgres (k => $n)
+ * dan diurutkan alfabetis demi determinisme query cache Kysely.
  */
 export function rpcOne<DB = unknown, TB extends keyof DB = never, Row = Record<string, unknown>>(
   db: Kysely<DB>,

@@ -132,9 +132,24 @@ describe('compat: countOf', () => {
   })
 
   it('coerces string n to number (pg bigint string return)', async () => {
-    const rows = [{ n: '128' as unknown as number }]
+    const rows = [{ n: '128' }]
     const total = await countOf(Promise.resolve(rows))
     expect(total).toBe(128)
+  })
+
+  it('coerces bigint n to number', async () => {
+    const rows = [{ n: BigInt(128) }]
+    const total = await countOf(Promise.resolve(rows))
+    expect(total).toBe(128)
+  })
+
+  it('throws on nullish n (null or undefined) indicating malformed count query', async () => {
+    await expect(countOf(Promise.resolve([{ n: null }]))).rejects.toThrow(
+      'countOf: expected non-null count value in row.n, received nullish'
+    )
+    await expect(countOf(Promise.resolve([{ n: undefined }]))).rejects.toThrow(
+      'countOf: expected non-null count value in row.n, received nullish'
+    )
   })
 
   it('empty array -> returns 0', async () => {
@@ -160,8 +175,9 @@ describe('compat: rpcOne and rpcRows', () => {
 
     // Alphabetical order: p_story_id ('s1'), then p_user_id ('u1').
     // limit(1) adds 1 as parameter $3 in PostgresDialect.
-    expect(c.sql).toContain('public.reserve_story_cover_v1')
-    expect(c.sql).toMatch(/limit \$\d+/i)
+    expect(c.sql).toBe(
+      'select * from public.reserve_story_cover_v1(p_story_id => $1, p_user_id => $2) as "fn" limit $3'
+    )
     expect(c.parameters).toEqual(['s1', 'u1', 1])
   })
 
@@ -173,9 +189,33 @@ describe('compat: rpcOne and rpcRows', () => {
     })
     const c = q.compile()
 
-    expect(c.sql).toContain('public.get_user_story_progress_v1')
-    expect(c.sql).not.toMatch(/limit/i)
+    expect(c.sql).toBe(
+      'select * from public.get_user_story_progress_v1(p_story_id => $1, p_user_id => $2) as "fn"'
+    )
     expect(c.parameters).toEqual(['story-12', 'user-99'])
+  })
+
+  it('rpcOne / rpcRows order independence: produces identical SQL and parameters aligned to keys', () => {
+    const db = stubDb()
+    const q1 = rpcOne(db, 'fn', { p_user_id: 'u', p_story_id: 's' })
+    const q2 = rpcOne(db, 'fn', { p_story_id: 's', p_user_id: 'u' })
+
+    const c1 = q1.compile()
+    const c2 = q2.compile()
+
+    expect(c1.sql).toBe(
+      'select * from public.fn(p_story_id => $1, p_user_id => $2) as "fn" limit $3'
+    )
+    expect(c2.sql).toBe(c1.sql)
+    expect(c1.parameters).toEqual(['s', 'u', 1])
+    expect(c2.parameters).toEqual(c1.parameters)
+
+    const r1 = rpcRows(db, 'fn', { p_user_id: 'u', p_story_id: 's' }).compile()
+    const r2 = rpcRows(db, 'fn', { p_story_id: 's', p_user_id: 'u' }).compile()
+    expect(r1.sql).toBe('select * from public.fn(p_story_id => $1, p_user_id => $2) as "fn"')
+    expect(r2.sql).toBe(r1.sql)
+    expect(r1.parameters).toEqual(['s', 'u'])
+    expect(r2.parameters).toEqual(['s', 'u'])
   })
 
   it('rpcOne with empty params compiles cleanly with ()', () => {
@@ -183,7 +223,7 @@ describe('compat: rpcOne and rpcRows', () => {
     const q = rpcOne(db, 'ping_v1', {})
     const c = q.compile()
 
-    expect(c.sql).toContain('public.ping_v1()')
+    expect(c.sql).toBe('select * from public.ping_v1() as "fn" limit $1')
     expect(c.parameters).toEqual([1])
   })
 
@@ -192,7 +232,7 @@ describe('compat: rpcOne and rpcRows', () => {
     const q = rpcRows(db, 'get_active_genres_v1', {})
     const c = q.compile()
 
-    expect(c.sql).toContain('public.get_active_genres_v1()')
+    expect(c.sql).toBe('select * from public.get_active_genres_v1() as "fn"')
     expect(c.parameters).toEqual([])
   })
 
@@ -207,6 +247,23 @@ describe('compat: rpcOne and rpcRows', () => {
     const db = stubDb()
     expect(() => rpcRows(db, 'invalid function name!', {})).toThrow(
       'Invalid RPC function name'
+    )
+  })
+
+  it('rpcOne rejects unsafe parameter keys (SQL injection guard on keys)', () => {
+    const db = stubDb()
+    expect(() => rpcOne(db, 'safe_fn', { 'bad;key': 'val' })).toThrow(
+      'Invalid RPC parameter key'
+    )
+    expect(() => rpcOne(db, 'safe_fn', { '123invalid': 'val' })).toThrow(
+      'Invalid RPC parameter key'
+    )
+  })
+
+  it('rpcRows rejects unsafe parameter keys (SQL injection guard on keys)', () => {
+    const db = stubDb()
+    expect(() => rpcRows(db, 'safe_fn', { 'bad-key': 'val' })).toThrow(
+      'Invalid RPC parameter key'
     )
   })
 
@@ -266,5 +323,27 @@ describe.skipIf(!hasDb)('compat live queries (requires DATABASE_URL)', () => {
     )
     expect(typeof totalCount).toBe('number')
     expect(totalCount).toBeGreaterThanOrEqual(0)
+
+    // 5. rpcRows / rpcOne with named argument notation against Neon
+    // get_daily_missions_v1 takes (p_user_id uuid), STABLE read-only RPC
+    const missionRows = await rpcRows(db, 'get_daily_missions_v1', {
+      p_user_id: '00000000-0000-0000-0000-000000000000',
+    }).execute()
+    expect(Array.isArray(missionRows)).toBe(true)
+    expect(missionRows.length).toBe(1)
+    expect(missionRows[0]).toHaveProperty('fn')
+
+    const missionOne = await rpcOne(db, 'get_daily_missions_v1', {
+      p_user_id: '00000000-0000-0000-0000-000000000000',
+    }).execute()
+    expect(missionOne.length).toBe(1)
+    expect(missionOne[0]).toHaveProperty('fn')
+
+    // 6. rpcRows against Neon with unknown param name proves Postgres receives named binding
+    await expect(
+      rpcRows(db, 'get_daily_missions_v1', {
+        wrong_param_name: 'test',
+      }).execute()
+    ).rejects.toThrow(/function public\.get_daily_missions_v1\(wrong_param_name => (text|unknown)\) does not exist/i)
   })
 })

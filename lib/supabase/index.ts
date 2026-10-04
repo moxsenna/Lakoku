@@ -11,3 +11,5 @@
  * konsumsi langsung via `@/lib/supabase/{client,server,proxy}`.
  */
 export { createAdminClient } from './admin'
+export { getDb } from './db'
+export type { Database } from './db-types'

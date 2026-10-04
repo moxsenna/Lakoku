@@ -25,14 +25,14 @@ Total kebijakan RLS live yang diaudit: **44 policies** pada **30 tabel**.
 Query dan rute di bawah ini **TIDAK MEMILIKI** filter kepemilikan/visibilitas di kode TypeScript saat ini karena sebelumnya bergantung pada RLS Supabase. Pada engine Neon (single application role tanpa RLS), query-query ini akan membocorkan data privat lintas pengguna jika tidak ditambahkan klausul `WHERE` eksplisit pada Tasks 8–11.
 
 ### Work Item 1: `queryStories()` — Filter Katalog Publik
-- **File Target:** `lib/api/queries.ts:100` (atau Kysely replacement di Task 8)
-- **Fungsi:** `export const queryStories = cache(async function queryStories()...)`
+- **File Target:** `lib/api/queries.ts:98,100` (atau Kysely replacement di Task 8)
+- **Fungsi:** `export const queryStories = cache(async function queryStories()...)` (saat ini tanpa argumen di `lib/api/queries.ts:98`)
 - **Policy Terdampak:** `#36 stories_owner_read`, `#37 stories_public_read`
 - **Kondisi Eksplisit Baru:**
   ```sql
   WHERE visibility = 'public'
   ```
-  *(Catatan: bila dipanggil dalam konteks pengguna terautentikasi `userId`, kondisi menjadi: `WHERE (visibility = 'public' OR owner_user_id = :userId)`).*
+  *(Catatan: `queryStories` saat ini tidak menerima argumen (`lib/api/queries.ts:98`), sehingga penerapan kondisi `visibility = 'public' OR owner_user_id = :userId` memerlukan penambahan parameter opsional `userId` pada signature fungsinya — task rewrite wajib menambahkan ini).*
 
 ### Work Item 2: `queryStory(id)` — Filter Detail Cerita Tunggal
 - **File Target:** `lib/api/queries.ts:110` (atau Kysely replacement di Task 8)
@@ -44,9 +44,9 @@ Query dan rute di bawah ini **TIDAK MEMILIKI** filter kepemilikan/visibilitas di
   ```
   *(Rekomendasi arsitektur: delegasikan langsung ke `queryStoryForUser(id, userId)` yang sudah memiliki logika guard ini).*
 
-### Work Item 3: `assertStoryReadableByCookieUser` — Otorisasi Pilihan Personal
-- **File Target:** `lib/api/personalized-choice.server.ts:185`
-- **Fungsi:** `assertStoryReadableByCookieUser(storyId: string, userId: string)`
+### Work Item 3: `authorizeParentWithCookieRls` — Otorisasi Pilihan Personal
+- **File Target:** `lib/api/personalized-choice.server.ts:178`
+- **Fungsi:** `authorizeParentWithCookieRls(userId: string, storyId: string)`
 - **Policy Terdampak:** `#36 stories_owner_read`, `#37 stories_public_read`
 - **Kondisi Eksplisit Baru:**
   ```sql

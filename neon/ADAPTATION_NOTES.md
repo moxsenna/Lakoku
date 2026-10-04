@@ -84,6 +84,24 @@ Audit mendalam terhadap seluruh 11 kemunculan `auth.users` di dalam body fungsi 
 - Tanpa populasi ini, clone cerita premium dan welcome credit gagal di produksi.
 - Catatan juga: kolom compat `auth.users` yang wajib terisi minimal: `id`, `email`, `encrypted_password`, `raw_user_meta_data`, `email_confirmed_at`, `created_at` (sekaligus persiapan import user Better Auth di Fase B).
 
+### Implementasi aktual (deviasi dari pg_dump)
+
+1. **Latar Belakang Deviasi:**
+   - Mesin eksekusi tidak memiliki binary `pg_dump` maupun `psql` di `PATH`, dan daemon Docker lokal dalam kondisi down (`docker info` gagal).
+   - Pendekatan pipe shell `pg_dump | psql` dari brief awal digantikan oleh cloner pure-JS berbasis driver `pg` (`scripts/neon-clone-data.mjs`).
+
+2. **Mekanisme Cloner (`scripts/neon-clone-data.mjs`):**
+   - **Koneksi & Tipe Data:** Membaca data langsung dari Supabase via pooling TLS (`rejectUnauthorized: false`), menulis ke Neon via `DATABASE_URL`. Parser JSON/JSONB dinonaktifkan (`setTypeParser` OID 114 & 3802 mengembalikan raw string) untuk menjamin transfer JSON lossless tanpa mutasi format. Kolom `bytea` ditransfer sebagai `Buffer`, array PostgreSQL tetap dipetakan sebagai JS array, dan timestamp/UUID dipertahankan 100%.
+   - **Scope Tabel:** Menangani 76 tabel (semua tabel base `public.*` dan `private.*` plus `auth.users`). Termasuk penanganan otomatis untuk tabel `public.content_reports` dan fungsinya `record_content_report_v1` (artefak live Supabase dari M7c).
+   - **Handling Identity & Triggers:**
+     - 13 tabel memiliki user-triggers (misal immutable history guard E5). Triggers dinonaktifkan sementara (`ALTER TABLE ... DISABLE TRIGGER USER`) sebelum truncate dan clone, kemudian diaktifkan kembali (`ENABLE TRIGGER USER`) pada fase cleanup.
+     - 8 tabel memiliki kolom `GENERATED ALWAYS AS IDENTITY` (`act_rollups`, `chapter_blueprints`, dsb). Cloner menggunakan klausa `OVERRIDING SYSTEM VALUE` dan mereset sequence menggunakan `setval(pg_get_serial_sequence(...), ...)` setelah insert.
+   - **Topological Order & Cycle Resolution:**
+     - Mengurutkan tabel target secara topologis menggunakan algoritma Kahn dari graf FK Neon (`information_schema.table_constraints`).
+     - Siklus saling referensi antara `public.blueprint_resolutions` dan `public.blueprint_validator_proofs` (keduanya memiliki FK berstatus `DEFERRABLE INITIALLY DEFERRED`) dipecah dengan mengabaikan edge deferrable nullable `blueprint_resolutions -> blueprint_validator_proofs` pada tahap pemesanan tabel.
+   - **Idempotensi:** Semua target tabel di-`TRUNCATE ... CASCADE` dalam satu statement sebelum pemindahan data.
+   - **Parity Gate:** Menghitung total row pada kedua database pasca-klon. Seluruh 76 tabel cocok 100% (16.180 baris total, 18 baris `auth.users`, 125 baris `stories`), dan laporan lengkap disimpan di `neon/CLONE_PARITY.txt`.
+
 ---
 
 ## 4. Hasil Verifikasi Gate

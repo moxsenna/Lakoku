@@ -1,0 +1,87 @@
+========================================================================================
+ROW-COUNT PARITY GATE REPORT: Supabase (source) vs Neon (target)
+Generated: 2026-10-04T08:41:11.487Z
+========================================================================================
+Table                                        | Supabase   | Neon       | Status
+---------------------------------------------+------------+------------+----------
+auth.users                                   |         18 |         18 | MATCH
+private.e5_validator_attestation_key         |          1 |          1 | MATCH
+private.generation_incident_access_audit     |          3 |          3 | MATCH
+private.generation_incident_captures         |          0 |          0 | MATCH
+public.account_commercial_states             |          7 |          7 | MATCH
+public.act_rollups                           |        400 |        400 | MATCH
+public.admin_credit_grants                   |          1 |          1 | MATCH
+public.admin_generation_access_audit         |        100 |        100 | MATCH
+public.admin_settings_audit_logs             |         19 |         19 | MATCH
+public.admin_users                           |          1 |          1 | MATCH
+public.admob_ssv_events                      |          0 |          0 | MATCH
+public.ai_model_routes                       |          5 |          5 | MATCH
+public.analytics_events                      |        220 |        220 | MATCH
+public.blueprint_audit_log                   |          0 |          0 | MATCH
+public.blueprint_queue                       |          1 |          1 | MATCH
+public.blueprint_resolutions                 |          0 |          0 | MATCH
+public.blueprint_validator_attestations      |          0 |          0 | MATCH
+public.blueprint_validator_proofs            |          0 |          0 | MATCH
+public.chapter_blueprints                    |       6150 |       6150 | MATCH
+public.chapter_generation_checkpoints        |        112 |        112 | MATCH
+public.chapter_state_commits                 |          0 |          0 | MATCH
+public.chapters                              |        177 |        177 | MATCH
+public.character_aliases                     |        693 |        693 | MATCH
+public.character_states                      |        571 |        571 | MATCH
+public.character_voice_sheets                |        424 |        424 | MATCH
+public.characters                            |        571 |        571 | MATCH
+public.choice_outcomes                       |        366 |        366 | MATCH
+public.commercial_generation_intents         |          0 |          0 | MATCH
+public.content_reports                       |          0 |          0 | MATCH
+public.credit_ledger                         |         54 |         54 | MATCH
+public.credit_orders                         |          1 |          1 | MATCH
+public.credit_orders_v2                      |          0 |          0 | MATCH
+public.credit_products                       |         12 |         12 | MATCH
+public.credit_reservations                   |          7 |          7 | MATCH
+public.facts_ledger                          |        684 |        684 | MATCH
+public.feature_credit_costs                  |          5 |          5 | MATCH
+public.generation_job_attempts               |        223 |        223 | MATCH
+public.generation_jobs                       |         95 |         95 | MATCH
+public.generation_leases                     |        406 |        406 | MATCH
+public.generation_model_pricing_versions     |          3 |          3 | MATCH
+public.generation_policy                     |          1 |          1 | MATCH
+public.generation_provider_call_daily        |          0 |          0 | MATCH
+public.generation_provider_calls             |       1492 |       1492 | MATCH
+public.idempotency_keys                      |        337 |        337 | MATCH
+public.knowledge_scopes                      |        684 |        684 | MATCH
+public.mission_policy                        |          1 |          1 | MATCH
+public.outbox                                |        149 |        149 | MATCH
+public.password_recovery_capabilities        |          2 |          2 | MATCH
+public.personalized_choice_applications      |          4 |          4 | MATCH
+public.personalized_choice_idempotency_keys  |          4 |          4 | MATCH
+public.push_devices                          |          1 |          1 | MATCH
+public.push_log                              |          0 |          0 | MATCH
+public.reader_plot_debt_closures             |          0 |          0 | MATCH
+public.reader_plot_debt_progress             |          0 |          0 | MATCH
+public.reader_states                         |         73 |         73 | MATCH
+public.reader_taste_profiles                 |          5 |          5 | MATCH
+public.reading_policy                        |          1 |          1 | MATCH
+public.referral_attributions                 |          0 |          0 | MATCH
+public.referral_codes                        |          1 |          1 | MATCH
+public.retrieval_logs                        |        420 |        420 | MATCH
+public.reward_ledger                         |          0 |          0 | MATCH
+public.reward_policy                         |          1 |          1 | MATCH
+public.secrets_reveals                       |        485 |        485 | MATCH
+public.shared_story_links                    |          3 |          3 | MATCH
+public.shared_story_starts                   |          4 |          4 | MATCH
+public.stories                               |        125 |        125 | MATCH
+public.story_cover_candidates                |          0 |          0 | MATCH
+public.story_creation_requests               |         17 |         17 | MATCH
+public.story_creative_directions             |         32 |         32 | MATCH
+public.story_events                          |        543 |        543 | MATCH
+public.story_generation_contracts            |         17 |         17 | MATCH
+public.story_threads                         |        446 |        446 | MATCH
+public.timeline_events                       |          0 |          0 | MATCH
+public.tinta_ledger                          |          0 |          0 | MATCH
+public.tinta_policy                          |          1 |          1 | MATCH
+public.user_mission_daily                    |          1 |          1 | MATCH
+---------------------------------------------+------------+------------+----------
+TOTAL                                        |      16180 |      16180 | ALL MATCH
+========================================================================================
+Verdict: PASS - Parity verified across all tables
+========================================================================================

@@ -101,7 +101,11 @@ describe('generation job worker RPC adapters', () => {
     const { claimGenerationJobById, GenerationJobError } = await import('@/lib/runtime/generation-jobs')
 
     await expect(claimGenerationJobById({ jobId: JOB_ID, workerId: 'worker-a' })).rejects.toEqual(
-      new GenerationJobError('PROVENANCE_CONFLICT', 'GENERATION_JOB_TARGET_MISMATCH'),
+      new GenerationJobError(
+        'PROVENANCE_CONFLICT',
+        'GENERATION_JOB_TARGET_MISMATCH',
+        '  GENERATION_JOB_TARGET_MISMATCH: story-a  ',
+      ),
     )
   })
 
@@ -680,7 +684,11 @@ describe('generation job worker RPC adapters', () => {
       closures: [],
     }).catch((caught) => caught)
     expect(error).toBeInstanceOf(GenerationJobError)
-    expect(error).toMatchObject({ code: expectedCode, message: expectedCode, rpcToken: token })
+    expect(error).toMatchObject({
+      code: expectedCode,
+      message: `${expectedCode}: ${token}: database operation failed`,
+      rpcToken: token,
+    })
   })
 
   it.each([
@@ -692,7 +700,11 @@ describe('generation job worker RPC adapters', () => {
 
     const error = await claimGenerationJob({ workerId: 'worker-a' }).catch((caught) => caught)
     expect(error).toBeInstanceOf(GenerationJobError)
-    expect(error).toMatchObject({ code: expectedCode, message: expectedCode, rpcToken: token })
+    expect(error).toMatchObject({
+      code: expectedCode,
+      message: `${expectedCode}: ${token}`,
+      rpcToken: token,
+    })
   })
 
   it('does not map token substrings away from message boundary', async () => {
@@ -711,8 +723,11 @@ describe('generation job worker RPC adapters', () => {
 
     const error = await claimGenerationJob({ workerId: 'worker-a' }).catch((caught) => caught)
     expect(error).toBeInstanceOf(GenerationJobError)
-    expect(error).toMatchObject({ code: 'INTERNAL_ERROR', message: 'INTERNAL_ERROR' })
+    expect(error).toMatchObject({
+      code: 'INTERNAL_ERROR',
+      message: 'INTERNAL_ERROR: secret provider table detail',
+    })
     expect(JSON.stringify(error)).not.toContain('XX999')
-    expect(JSON.stringify(error)).not.toContain('secret provider table detail')
+    expect(JSON.stringify(error)).toContain('secret provider table detail')
   })
 })

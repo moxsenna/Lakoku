@@ -82,8 +82,13 @@ export interface User {
  */
 export const getSessionUser = cache(async function getSessionUser(): Promise<User | null> {
   try {
-    const h = await headers()
-    const session = await auth.api.getSession({ headers: h })
+    let h: Headers | undefined
+    try {
+      h = await headers()
+    } catch {
+      // Di luar request scope (misal unit test / script)
+    }
+    const session = await auth.api.getSession(h ? { headers: h } : undefined)
     if (!session?.user) return null
     return {
       id: session.user.id,

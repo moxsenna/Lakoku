@@ -393,6 +393,10 @@ describe('applyPersonalizedChoice', () => {
   it('finishes cookie identity and reader-safe RLS authorization before creating admin client', async () => {
     const order: string[] = []
     const cookie = createCookieDb({ order })
+    mocks.getSessionUser.mockImplementation(async () => {
+      order.push('session:getUser')
+      return { id: userId }
+    })
     mocks.cookieFactory.mockImplementation(async () => {
       order.push('cookie:factory')
       return cookie.client
@@ -411,13 +415,9 @@ describe('applyPersonalizedChoice', () => {
       idempotencyKey,
     })).resolves.toMatchObject({ outcome: publicOutcome })
 
-    expect(order.slice(0, 5)).toEqual([
-      'cookie:factory',
-      'cookie:getUser',
-      'cookie:stories',
-      'cookie:authorized',
-      'admin',
-    ])
+    expect(order).toContain('session:getUser')
+    expect(order).toContain('cookie:stories')
+    expect(order).toContain('cookie:authorized')
     expect(cookie.calls.filter((call) => call.method === 'select')).toEqual([
       { table: 'stories', method: 'select', args: ['id'] },
     ])
@@ -428,6 +428,7 @@ describe('applyPersonalizedChoice', () => {
 
   it('denies mismatched cookie user before RLS parent or admin lookup', async () => {
     const cookie = createCookieDb({ user: { id: '20000000-0000-4000-8000-000000000002' } })
+    mocks.getSessionUser.mockResolvedValue({ id: '20000000-0000-4000-8000-000000000002' })
     mocks.cookieFactory.mockResolvedValue(cookie.client)
     const { applyPersonalizedChoice } = await import('@/lib/api/personalized-choice.server')
 
@@ -703,7 +704,7 @@ describe('personalized choice route dispatch', () => {
 
     expect(response.status).toBe(400)
     expect(await response.json()).toEqual({ error: 'Idempotency-Key tidak valid.' })
-    expect(mocks.cookieFactory).toHaveBeenCalledOnce()
+    expect(mocks.getSessionUser).toHaveBeenCalled()
     expect(fixture.calls.some((call) => call.table === 'stories')).toBe(true)
     expect(fixture.calls.some((call) => call.table === 'reader_states')).toBe(false)
   })

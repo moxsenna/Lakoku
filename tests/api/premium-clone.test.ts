@@ -12,6 +12,18 @@ let activeAdminDb: ReturnType<typeof db> | null = null
 
 vi.mock('server-only', () => ({}))
 vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.cookieFactory }))
+vi.mock('@/lib/auth', () => ({
+  auth: {
+    api: {
+      getSession: vi.fn().mockImplementation(async () => {
+        const client = await mocks.cookieFactory()
+        if (!client?.auth) return null
+        const { data } = await client.auth.getUser()
+        return data?.user ? { user: { id: data.user.id, email: data.user.email, name: 'Test User' } } : null
+      }),
+    },
+  },
+}))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.adminFactory }))
 vi.mock('@lakoku/db', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>()

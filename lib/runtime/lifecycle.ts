@@ -1,6 +1,6 @@
 import 'server-only'
 import { ChoiceEffectSchema, type ChoiceEffect, type ChoiceBranch } from '@lakoku/ai-gateway'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, rpcOne, single } from '@lakoku/db'
 
 /**
  * Runtime lifecycle (M2/T2.1) — pembungkus tipe-aman untuk RPC atomik.
@@ -59,36 +59,44 @@ export async function acquireGenerationLease(args: {
   ttlSeconds?: number
   idempotencyKey: string
 }): Promise<AcquireLeaseResult> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase.rpc('acquire_generation_lease', {
-    p_story_id: args.storyId,
-    p_chapter_number: args.chapterNumber,
-    p_holder: args.holder,
-    p_ttl_seconds: args.ttlSeconds ?? 120,
-    p_idempotency_key: args.idempotencyKey,
-  })
+  const db = getDb()
+  // RLS_AUDIT(rpc:acquire_generation_lease): SERVICE_ROLE_BYPASS - internal generation leasing engine
+  const { data, error } = await single(
+    rpcOne(db, 'acquire_generation_lease', {
+      p_story_id: args.storyId,
+      p_chapter_number: args.chapterNumber,
+      p_holder: args.holder,
+      p_ttl_seconds: args.ttlSeconds ?? 120,
+      p_idempotency_key: args.idempotencyKey,
+    }).execute()
+  )
   if (error) throw new Error(`acquireGenerationLease: ${error.message}`)
-  return data as AcquireLeaseResult
+  const raw = (data as Record<string, unknown> | null)?.fn ?? data
+  return raw as AcquireLeaseResult
 }
 
 /** Publish satu bab secara atomik & idempoten. */
 export async function publishChapter(
   input: PublishChapterInput,
 ): Promise<PublishResult> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase.rpc('publish_chapter', {
-    p_story_id: input.storyId,
-    p_chapter_number: input.chapterNumber,
-    p_title: input.title,
-    p_paragraphs: input.paragraphs,
-    p_choice_prompt: input.choicePrompt,
-    p_choices: input.choices,
-    p_outcomes: input.outcomes,
-    p_lease_id: input.leaseId,
-    p_idempotency_key: input.idempotencyKey,
-  })
+  const db = getDb()
+  // RLS_AUDIT(rpc:publish_chapter): SERVICE_ROLE_BYPASS - atomic publication transaction
+  const { data, error } = await single(
+    rpcOne(db, 'publish_chapter', {
+      p_story_id: input.storyId,
+      p_chapter_number: input.chapterNumber,
+      p_title: input.title,
+      p_paragraphs: input.paragraphs,
+      p_choice_prompt: input.choicePrompt,
+      p_choices: input.choices,
+      p_outcomes: input.outcomes,
+      p_lease_id: input.leaseId,
+      p_idempotency_key: input.idempotencyKey,
+    }).execute()
+  )
   if (error) throw new Error(`publishChapter: ${error.message}`)
-  return data as PublishResult
+  const raw = (data as Record<string, unknown> | null)?.fn ?? data
+  return raw as PublishResult
 }
 
 /** Publish satu bab personalisasi secara atomik & idempoten. */
@@ -103,20 +111,24 @@ export async function publishChapterV2(
     effect_json: ChoiceEffectSchema.parse(outcome.effect),
     choice_kind: outcome.choiceKind,
   }))
-  const supabase = createAdminClient()
-  const { data, error } = await supabase.rpc('publish_chapter_v2', {
-    p_story_id: input.storyId,
-    p_chapter_number: input.chapterNumber,
-    p_title: input.title,
-    p_paragraphs: input.paragraphs,
-    p_choice_prompt: input.choicePrompt,
-    p_choices: input.choices,
-    p_outcomes: outcomes,
-    p_lease_id: input.leaseId,
-    p_idempotency_key: input.idempotencyKey,
-  })
+  const db = getDb()
+  // RLS_AUDIT(rpc:publish_chapter_v2): SERVICE_ROLE_BYPASS - atomic personalized publication transaction
+  const { data, error } = await single(
+    rpcOne(db, 'publish_chapter_v2', {
+      p_story_id: input.storyId,
+      p_chapter_number: input.chapterNumber,
+      p_title: input.title,
+      p_paragraphs: input.paragraphs,
+      p_choice_prompt: input.choicePrompt,
+      p_choices: input.choices,
+      p_outcomes: outcomes,
+      p_lease_id: input.leaseId,
+      p_idempotency_key: input.idempotencyKey,
+    }).execute()
+  )
   if (error) throw new Error(`publishChapterV2: ${error.message}`)
-  return data as PublishResult
+  const raw = (data as Record<string, unknown> | null)?.fn ?? data
+  return raw as PublishResult
 }
 
 /**
@@ -128,24 +140,28 @@ export async function releaseGenerationLease(args: {
   storyId: string
   leaseId: string
 }): Promise<void> {
-  const supabase = createAdminClient()
-  const { error } = await supabase.rpc('release_generation_lease', {
-    p_story_id: args.storyId,
-    p_lease_id: args.leaseId,
-  })
+  const db = getDb()
+  // RLS_AUDIT(rpc:release_generation_lease): SERVICE_ROLE_BYPASS - lease release on failure
+  const { error } = await single(
+    rpcOne(db, 'release_generation_lease', {
+      p_story_id: args.storyId,
+      p_lease_id: args.leaseId,
+    }).execute()
+  )
   if (error) throw new Error(`releaseGenerationLease: ${error.message}`)
 }
 
 /** Baca event terurut untuk sebuah story (observability/debug). */
 export async function listStoryEvents(storyId: string) {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('story_events')
-    .select('seq, type, payload, created_at')
-    .eq('story_id', storyId)
-    .order('seq', { ascending: true })
-  if (error) throw new Error(`listStoryEvents: ${error.message}`)
-  return data ?? []
+  const db = getDb()
+  // RLS_AUDIT(story_events): SERVICE_ROLE_BYPASS - observability and debug event listing
+  const rows = await db
+    .selectFrom('story_events')
+    .select(['seq', 'type', 'payload', 'created_at'])
+    .where('story_id', '=', storyId)
+    .orderBy('seq', 'asc')
+    .execute()
+  return rows ?? []
 }
 
 /**

@@ -13,7 +13,7 @@
  */
 
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, result } from '@lakoku/db'
 import {
   projectEffectivePlotDebtState,
   type EffectivePlotDebtState,
@@ -32,19 +32,27 @@ export interface LoadEffectivePlotDebtInput {
 export async function loadEffectivePlotDebtState(
   input: LoadEffectivePlotDebtInput,
 ): Promise<EffectivePlotDebtState> {
-  const db = createAdminClient()
+  const db = getDb()
 
+  // RLS_AUDIT(reader_plot_debt_progress): SERVICE_ROLE_BYPASS - read reader plot debt progress ledger
+  // RLS_AUDIT(reader_plot_debt_closures): SERVICE_ROLE_BYPASS - read reader plot debt closures ledger
   const [progressRes, closuresRes] = await Promise.all([
-    db
-      .from('reader_plot_debt_progress')
-      .select('debt_id, milestone_chapter')
-      .eq('user_id', input.userId)
-      .eq('story_id', input.storyId),
-    db
-      .from('reader_plot_debt_closures')
-      .select('debt_id')
-      .eq('user_id', input.userId)
-      .eq('story_id', input.storyId),
+    result(
+      db
+        .selectFrom('reader_plot_debt_progress')
+        .select(['debt_id', 'milestone_chapter'])
+        .where('user_id', '=', input.userId)
+        .where('story_id', '=', input.storyId)
+        .execute()
+    ),
+    result(
+      db
+        .selectFrom('reader_plot_debt_closures')
+        .select('debt_id')
+        .where('user_id', '=', input.userId)
+        .where('story_id', '=', input.storyId)
+        .execute()
+    ),
   ])
 
   if (progressRes.error) {

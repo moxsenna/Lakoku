@@ -5,7 +5,51 @@ import { proseFingerprint } from '@/lib/runtime/chapter-generation-checkpoint.pu
 const mocks = vi.hoisted(() => ({ adminFactory: vi.fn() }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: () => {
+      const client = mocks.adminFactory()
+      return {
+        selectFrom: (table: string) => {
+          const fromTable = client.from(table)
+          const select = fromTable.select()
+          let query = select
+          const builder: any = {
+            selectAll: () => builder,
+            select: () => builder,
+            where: (_k: string, op: string, _v: any) => {
+              if (op === '=' && query.eq) query = query.eq()
+              else if (op === 'in' && query.in) query = query.in()
+              else if (op === '>' && query.gt) query = query.gt()
+              return builder
+            },
+            orderBy: () => {
+              if (query.order) query = query.order()
+              return builder
+            },
+            limit: (n: number) => {
+              if (query.limit) query = query.limit(n)
+              return builder
+            },
+            execute: async () => {
+              const res = await query
+              if (res?.error) {
+                const err = new Error(res.error.message || String(res.error))
+                if (res.error.code) (err as unknown as { code: string }).code = res.error.code
+                throw err
+              }
+              return Array.isArray(res?.data) ? res.data : (res?.data ? [res.data] : [])
+            },
+          }
+          return builder
+        },
+      }
+    },
+  }
+})
 
 const STORY_ID = 'story-test-123'
 const CHAPTER_NUM = 5

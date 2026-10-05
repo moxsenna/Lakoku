@@ -96,18 +96,39 @@ vi.mock('@/lib/authoring/persist-creative-direction', () => ({
 vi.mock('@/lib/feature-flags', () => ({
   isStoryCreativeDirectionV1Enabled: vi.fn(() => false),
 }))
-vi.mock('@lakoku/db', () => ({
-  createAdminClient: () => {
-    const chain = {
-      select: vi.fn(),
-      eq: vi.fn(),
-      maybeSingle: mocks.admissionMaybeSingle,
-    }
-    chain.select.mockReturnValue(chain)
-    chain.eq.mockReturnValue(chain)
-    return { from: vi.fn(() => chain) }
-  },
-}))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: () => {
+      const chain = {
+        select: vi.fn(),
+        eq: vi.fn(),
+        maybeSingle: mocks.admissionMaybeSingle,
+      }
+      chain.select.mockReturnValue(chain)
+      chain.eq.mockReturnValue(chain)
+      return { from: vi.fn(() => chain) }
+    },
+    getDb: () => ({
+      selectFrom: (table: string) => {
+        const builder: any = {
+          select: () => builder,
+          where: () => builder,
+          execute: async () => {
+            if (table === 'stories') {
+              const res = await mocks.admissionMaybeSingle()
+              if (res?.error) throw res.error
+              return res?.data ? [res.data] : []
+            }
+            return []
+          },
+        }
+        return builder
+      },
+    }),
+  }
+})
 vi.mock('@/lib/runtime/content-boundaries', async () => {
   const actual = await import('@/lib/runtime/content-boundaries')
   return {

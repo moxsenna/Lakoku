@@ -11,9 +11,46 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@lakoku/db', () => ({
-  createAdminClient: mocks.adminFactory,
-}))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: () => {
+      const client = mocks.adminFactory()
+      return {
+        updateTable: (table: string) => {
+          let payload: Record<string, unknown> = {}
+          const wheres: Array<[string, unknown]> = []
+          const builder = {
+            set: (p: Record<string, unknown>) => {
+              payload = p
+              return builder
+            },
+            where: (k: string, _op: string, v: unknown) => {
+              wheres.push([k, v])
+              return builder
+            },
+            execute: async () => {
+              const fromTable = client.from(table)
+              let query = fromTable.update(payload)
+              for (const [k, v] of wheres) {
+                query = query.eq(k, v)
+              }
+              const res = await query
+              if (res?.error) {
+                const err = new Error(res.error.message || String(res.error))
+                throw err
+              }
+              return []
+            },
+          }
+          return builder
+        },
+      }
+    },
+  }
+})
 
 /**
  * Admin client stub dengan update chain yang bisa di-await:

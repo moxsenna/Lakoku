@@ -13,7 +13,7 @@
  */
 import 'server-only'
 import { z } from 'zod'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, rpcOne, single } from '@lakoku/db'
 import type { ChapterStateDeltaV1 } from '@lakoku/narrative-core'
 import {
   GenerationJobError,
@@ -258,12 +258,14 @@ async function callCheckpointRpcV3(
   successOutcome: 'CREATED' | 'UPDATED',
   expectedCheckpointAttemptId: string,
 ): Promise<CheckpointMutationResult> {
-  const client = createAdminClient()
-  const { data, error } = await client.rpc(name, payload)
+  const db = getDb()
+  // RLS_AUDIT(rpc): SERVICE_ROLE_BYPASS - schema-3 checkpoint RPC
+  const { data, error } = await single(rpcOne(db, name, payload).execute())
   if (error) {
     return checkpointWriteFailure(error)
   }
-  const raw = RawLivingCheckpointResultSchema.parse(data)
+  const rawData = (data as Record<string, unknown> | null)?.fn ?? data
+  const raw = RawLivingCheckpointResultSchema.parse(rawData)
   return adaptLivingCheckpointResult(raw, successOutcome, expectedCheckpointAttemptId)
 }
 
@@ -435,12 +437,13 @@ function mapRpcError(error: { message?: unknown; code?: unknown }): GenerationJo
 
 /** RPC publisher helper — throw pada error RPC (classification di caller). */
 async function callRpcSchema3(name: string, payload: Record<string, unknown>): Promise<unknown> {
-  const client = createAdminClient()
-  const { data, error } = await client.rpc(name, payload)
+  const db = getDb()
+  // RLS_AUDIT(rpc): SERVICE_ROLE_BYPASS - schema-3 publication RPC
+  const { data, error } = await single(rpcOne(db, name, payload).execute())
   if (error) {
     throw mapRpcError(error)
   }
-  return data
+  return (data as Record<string, unknown> | null)?.fn ?? data
 }
 
 /**

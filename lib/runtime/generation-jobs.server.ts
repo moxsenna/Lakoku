@@ -5,7 +5,7 @@
  */
 import 'server-only'
 import { z } from 'zod'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, rpcOne, single } from '@lakoku/db'
 
 const UuidSchema = z.string().uuid()
 
@@ -25,17 +25,19 @@ export async function listTerminalCommercialFinalizationCandidates(
   }>
   count: number
 }> {
-  const client = createAdminClient()
-  
-  const { data, error } = await client.rpc(
-    'list_terminal_commercial_finalization_candidates_v1',
-    { p_batch_size: batchSize },
+  const db = getDb()
+  // RLS_AUDIT(rpc:list_terminal_commercial_finalization_candidates_v1): SERVICE_ROLE_BYPASS - terminal job discovery
+  const { data, error } = await single(
+    rpcOne(db, 'list_terminal_commercial_finalization_candidates_v1', {
+      p_batch_size: batchSize,
+    }).execute()
   )
   
   if (error) {
     throw new Error(`Discovery RPC failed: ${error.message}`)
   }
   
+  const rawData = (data as Record<string, unknown> | null)?.fn ?? data
   // Validate and parse result
   const parsedResult = z.object({
     candidates: z.array(z.object({
@@ -46,7 +48,7 @@ export async function listTerminalCommercialFinalizationCandidates(
       status: z.string(),
     })),
     count: z.number().int(),
-  }).parse(data)
+  }).parse(rawData)
   
   return parsedResult
 }

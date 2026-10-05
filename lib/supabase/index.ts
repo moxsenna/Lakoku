@@ -12,7 +12,7 @@
  */
 export { createAdminClient } from './admin'
 export { getDb } from './db'
-export type { Database } from './db-types'
+export type { Database, Json } from './db-types'
 export {
   countOf,
   result,

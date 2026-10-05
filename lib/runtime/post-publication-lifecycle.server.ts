@@ -42,7 +42,8 @@
  */
 
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, result, single, type Database, type Json } from '@lakoku/db'
+import type { Kysely } from 'kysely'
 import { loadCanonSnapshot } from '@lakoku/narrative-core/server'
 import {
   ENDING_RULES,
@@ -78,24 +79,39 @@ export interface PostPublicationLifecycleInput {
  * TS mirror of supabase/migrations/20260713010000_publish_chapter_v2.sql.
  */
 export async function insertStoryEvent(
-  admin: ReturnType<typeof createAdminClient>,
+  adminOrDb: unknown,
   storyId: string,
   type: string,
   payload: Record<string, unknown>,
 ): Promise<{ seq: number }> {
+  const db = (adminOrDb && typeof adminOrDb === 'object' && 'selectFrom' in adminOrDb
+    ? adminOrDb
+    : getDb()) as Kysely<Database>
+
   for (let attempt = 1; attempt <= STORY_EVENT_RETRY_LIMIT; attempt++) {
-    const { data: maxRow, error: maxError } = await admin
-      .from('story_events')
-      .select('seq')
-      .eq('story_id', storyId)
-      .order('seq', { ascending: false })
-      .limit(1)
-      .maybeSingle()
+    // RLS_AUDIT(story_events): SERVICE_ROLE_BYPASS - append ordered story event
+    const { data: maxRow, error: maxError } = await single(
+      db
+        .selectFrom('story_events')
+        .select('seq')
+        .where('story_id', '=', storyId)
+        .orderBy('seq', 'desc')
+        .limit(1)
+        .execute()
+    )
     if (maxError) throw new Error(`story_events seq read failed: ${maxError.message}`)
     const seq = (maxRow ? Number(maxRow.seq) : 0) + 1
-    const { error } = await admin
-      .from('story_events')
-      .insert({ story_id: storyId, seq, type, payload })
+    const { error } = await result(
+      db
+        .insertInto('story_events')
+        .values({
+          story_id: storyId,
+          seq,
+          type,
+          payload: JSON.stringify(payload),
+        })
+        .execute()
+    )
     if (!error) return { seq }
     const isUniqueViolation = error.code === '23505' || /unique/i.test(error.message)
     if (!isUniqueViolation || attempt === STORY_EVENT_RETRY_LIMIT) {
@@ -121,19 +137,26 @@ export function isStaleAtChapter(lastTouchedChapter: number, chapterNumber: numb
  * Returns how many rows were marked (evidence for observability/tests).
  */
 export async function markThreadStaleness(
-  admin: ReturnType<typeof createAdminClient>,
+  adminOrDb: unknown,
   storyId: string,
   chapterNumber: number,
 ): Promise<{ marked: number }> {
+  const db = (adminOrDb && typeof adminOrDb === 'object' && 'selectFrom' in adminOrDb
+    ? adminOrDb
+    : getDb()) as Kysely<Database>
   const staleBoundary = chapterNumber - STALE_AFTER_CHAPTERS
-  const { data, error } = await admin
-    .from('story_threads')
-    .update({ stale: true, stale_since_chapter: chapterNumber })
-    .eq('story_id', storyId)
-    .in('status', [...ACTIVE_THREAD_STATUSES])
-    .eq('stale', false)
-    .lte('last_touched_chapter', staleBoundary)
-    .select('id')
+  // RLS_AUDIT(story_threads): SERVICE_ROLE_BYPASS - mark thread staleness post-publication
+  const { data, error } = await result(
+    db
+      .updateTable('story_threads')
+      .set({ stale: true, stale_since_chapter: chapterNumber })
+      .where('story_id', '=', storyId)
+      .where('status', 'in', [...ACTIVE_THREAD_STATUSES])
+      .where('stale', '=', false)
+      .where('last_touched_chapter', '<=', staleBoundary)
+      .returning('id')
+      .execute()
+  )
   if (error) throw new Error(`story_threads staleness mark failed: ${error.message}`)
   return { marked: data?.length ?? 0 }
 }
@@ -498,9 +521,12 @@ export function deriveRequiredClosureSatisfiability(args: {
  * Throws only on persistence failure — the orchestrator catches it.
  */
 export async function runActBoundaryReconciliation(
-  admin: ReturnType<typeof createAdminClient>,
+  adminOrDb: unknown,
   input: PostPublicationLifecycleInput,
 ): Promise<{ triggered: boolean; status?: string }> {
+  const db = (adminOrDb && typeof adminOrDb === 'object' && 'selectFrom' in adminOrDb
+    ? adminOrDb
+    : getDb()) as Kysely<Database>
   const { storyId, chapterNumber, contract } = input
 
   const snapshot = await loadCanonSnapshot(storyId, chapterNumber)
@@ -514,7 +540,7 @@ export async function runActBoundaryReconciliation(
   })
   if (!derived) return { triggered: false }
 
-  const result: ReconcileResult = runReconciliation({
+  const reconcileResult: ReconcileResult = runReconciliation({
     storyId,
     blueprints: derived.blueprints,
     requirements: derived.requirements,
@@ -535,60 +561,70 @@ export async function runActBoundaryReconciliation(
     contract: derived.contract, // C-R3-R2 Blocker #4: pass full contract
   })
 
-  await insertStoryEvent(admin, storyId, 'ACT_RECONCILIATION', {
+  await insertStoryEvent(db, storyId, 'ACT_RECONCILIATION', {
     actNumber: derived.actNumber,
     checkpointChapter: chapterNumber,
     nextAct: derived.nextAct,
-    status: result.status,
-    driftByChapter: result.driftByChapter,
-    reconciledChapters: result.reconciledChapters,
-    findingCodes: result.findings.map((f) => f.code),
+    status: reconcileResult.status,
+    driftByChapter: reconcileResult.driftByChapter,
+    reconciledChapters: reconcileResult.reconciledChapters,
+    findingCodes: reconcileResult.findings.map((f) => f.code),
   })
 
-  await insertStoryEvent(admin, storyId, 'ACT_ENDING_REACHABILITY', { ...reachabilityEvidence })
+  await insertStoryEvent(db, storyId, 'ACT_ENDING_REACHABILITY', { ...reachabilityEvidence })
 
-  if (result.status === 'RECONCILED') {
+  if (reconcileResult.status === 'RECONCILED') {
     // NCS §1.2 point 4: versioned, auditable — new blueprint versions, never
     // overwrite. Existing columns reconciled_from_version/reconciliation_reason.
-    for (const bp of result.blueprints) {
-      if (!result.reconciledChapters.includes(bp.chapterNumber)) continue
+    for (const bp of reconcileResult.blueprints) {
+      if (!reconcileResult.reconciledChapters.includes(bp.chapterNumber)) continue
       const previous = derived.blueprints.find((p) => p.chapterNumber === bp.chapterNumber)
-      const { error } = await admin.from('chapter_blueprints').insert({
-        story_id: storyId,
-        chapter_number: bp.chapterNumber,
-        version: (previous?.version ?? 1) + 1,
-        phase: bp.phase,
-        chapter_goal: bp.chapterGoal,
-        mandatory_beats: bp.mandatoryBeats,
-        forbidden_reveals: bp.forbiddenReveals,
-        allowed_state_delta: bp.allowedStateDelta,
-        introduces_characters: bp.introducesCharacters,
-        reconciled_from_version: previous?.version ?? null,
-        reconciliation_reason: bp.reconciliationReason,
-      })
+      // RLS_AUDIT(chapter_blueprints): SERVICE_ROLE_BYPASS - insert reconciled blueprint
+      const { error } = await result(
+        db
+          .insertInto('chapter_blueprints')
+          .values({
+            story_id: storyId,
+            chapter_number: bp.chapterNumber,
+            version: (previous?.version ?? 1) + 1,
+            phase: bp.phase,
+            chapter_goal: bp.chapterGoal,
+            mandatory_beats: bp.mandatoryBeats,
+            forbidden_reveals: bp.forbiddenReveals,
+            allowed_state_delta: bp.allowedStateDelta as unknown as Json,
+            introduces_characters: bp.introducesCharacters,
+            reconciled_from_version: previous?.version ?? null,
+            reconciliation_reason: bp.reconciliationReason,
+          })
+          .execute()
+      )
       if (error) throw new Error(`blueprint version insert failed: ${error.message}`)
     }
   }
 
-  if (result.status === 'FAILED_REVIEW_REQUIRED') {
+  if (reconcileResult.status === 'FAILED_REVIEW_REQUIRED') {
     // C-R3-R1 (reviewer Entry 10): DURABLE GATE — set generation_status to 'needs_review' and persist
     // as story_event. Future generation calls will check this status and refuse
     // to proceed until review resolves it. This is not just a log; it blocks NEXT chapter
     // admission (see personalized-generation.ts next-chapter check).
     // FIX: use correct column 'id' not 'story_id'; ensure error propagates (do not catch/swallow).
-    const { error } = await admin
-      .from('stories')
-      .update({ generation_status: 'needs_review' })
-      .eq('id', storyId) // FIX: was 'story_id', must be 'id' per database schema
+    // RLS_AUDIT(stories): SERVICE_ROLE_BYPASS - mark generation_status needs_review
+    const { error } = await result(
+      db
+        .updateTable('stories')
+        .set({ generation_status: 'needs_review' })
+        .where('id', '=', storyId) // FIX: was 'story_id', must be 'id' per database schema
+        .execute()
+    )
     if (error) throw new Error(`failed to set generation_status='needs_review': ${error.message}`)
-    await insertStoryEvent(admin, storyId, 'ACT_RECONCILIATION_FAILED_REVIEW_REQUIRED', {
+    await insertStoryEvent(db, storyId, 'ACT_RECONCILIATION_FAILED_REVIEW_REQUIRED', {
       actNumber: derived.actNumber,
-      findingCodes: result.findings.map((f) => f.code),
+      findingCodes: reconcileResult.findings.map((f) => f.code),
       chapterNumber,
     })
   }
 
-  return { triggered: true, status: result.status }
+  return { triggered: true, status: reconcileResult.status }
 }
 
 /**
@@ -601,10 +637,10 @@ export async function runPostPublicationLifecycle(
 ): Promise<void> {
   const { storyId, chapterNumber } = input
   try {
-    const admin = createAdminClient()
+    const db = getDb()
 
     try {
-      const { marked } = await markThreadStaleness(admin, storyId, chapterNumber)
+      const { marked } = await markThreadStaleness(db, storyId, chapterNumber)
       if (marked > 0) {
         console.log('THREAD_STALENESS_MARKED', { storyId, chapterNumber, marked })
       }
@@ -621,7 +657,7 @@ export async function runPostPublicationLifecycle(
     // durable gate write (FAILED_REVIEW_REQUIRED), log errors but do not throw.
     // NEXT chapter admission checks will catch missing gate entries via retries.
     try {
-      await runActBoundaryReconciliation(admin, input)
+      await runActBoundaryReconciliation(db, input)
     } catch (err) {
       console.log('POST_PUBLICATION_LIFECYCLE_FAILED', {
         storyId,

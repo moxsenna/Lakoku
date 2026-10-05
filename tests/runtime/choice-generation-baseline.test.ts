@@ -32,14 +32,31 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@lakoku/db', () => ({
-  createAdminClient: () => ({
-    from: mocks.supabaseChain.mockReturnThis(),
-    select: mocks.supabaseChain.mockReturnThis(),
-    eq: mocks.supabaseChain.mockReturnThis(),
-    maybeSingle: mocks.supabaseChain.mockResolvedValue(null),
-  }),
-}))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: () => ({
+      from: mocks.supabaseChain.mockReturnThis(),
+      select: mocks.supabaseChain.mockReturnThis(),
+      eq: mocks.supabaseChain.mockReturnThis(),
+      maybeSingle: mocks.supabaseChain.mockResolvedValue(null),
+    }),
+    getDb: () => ({
+      selectFrom: () => {
+        const builder: any = {
+          select: () => builder,
+          where: () => builder,
+          execute: async () => {
+            const res = await mocks.supabaseChain()
+            return res?.data ? [res.data] : []
+          },
+        }
+        return builder
+      },
+    }),
+  }
+})
 vi.mock('@lakoku/narrative-core', async () => {
   const actual = await import('@/lib/narrative/index')
   return actual

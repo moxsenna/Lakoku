@@ -8,9 +8,30 @@ const mocks = vi.hoisted(() => ({
   from: vi.fn(),
 }))
 
-vi.mock('@lakoku/db', () => ({
-  createAdminClient: () => ({ from: mocks.from }),
-}))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: () => ({ from: mocks.from }),
+    getDb: () => ({
+      selectFrom: (table: string) => {
+        const fromTable = mocks.from(table)
+        const builder: any = {
+          select: () => builder,
+          where: () => builder,
+          orderBy: () => builder,
+          limit: () => builder,
+          execute: async () => {
+            const res = await fromTable.maybeSingle()
+            if (res?.error) throw res.error
+            return res?.data ? [res.data] : []
+          },
+        }
+        return builder
+      },
+    }),
+  }
+})
 vi.mock('@lakoku/narrative-core/server', () => ({
   loadCanonSnapshot: mocks.loadCanonSnapshot,
   // C-R1 #2: loadContinuationContextForChapter now fire-and-forgets the

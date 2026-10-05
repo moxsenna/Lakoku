@@ -7,7 +7,29 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: () => {
+      const client = mocks.adminFactory()
+      return {
+        selectFrom: () => ({
+          select: () => ({
+            where: () => ({
+              execute: async () => {
+                const res = await client?.from?.()?.select?.()?.eq?.()?.maybeSingle?.()
+                if (res?.error) throw res.error
+                return res?.data ? [res.data] : []
+              },
+            }),
+          }),
+        }),
+      }
+    },
+  }
+})
 vi.mock('@/lib/runtime/story-generation', () => ({
   generateNextChapterReal: mocks.generateNextChapterReal,
 }))

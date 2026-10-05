@@ -3,7 +3,25 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ adminFactory: vi.fn() }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: () => mocks.adminFactory(),
+    rpcOne: (client: any, name: string, args: any) => ({
+      execute: async () => {
+        const res = await client?.rpc?.(name, args)
+        if (res?.error) {
+          const err = new Error(res.error.message || String(res.error))
+          if (res.error.code) (err as unknown as { code: string }).code = res.error.code
+          throw err
+        }
+        return res?.data !== undefined ? [{ fn: res.data }] : []
+      },
+    }),
+  }
+})
 
 const JOB_ID = '11111111-1111-4111-8111-111111111111'
 const USER_ID = '22222222-2222-4222-8222-222222222222'

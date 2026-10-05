@@ -5,8 +5,7 @@
  * Authority: M10-E E5 implementation authority SHA = `a16b5a3b950ead2385a41c4fe12369336fbbc15f`
  * Boundary: Reuse requireAdminUser() owner/admin roles; NO invented role='reviewer'; no novel lifecycle CRUD
  */
-import { createAdminClient } from '@lakoku/db'
-import { createClient } from '@/lib/supabase/server'
+import { getDb, result, rpcOne, rpcRows, single } from '@lakoku/db'
 import type {
   ResolutionContext,
   ValidatorRerunResult,
@@ -33,21 +32,18 @@ function isLosslessPostgresBigint(value: unknown): value is string {
  * Called by API route GET /api/blueprint-review/route.ts
  */
 export async function getPendingItems(): Promise<PendingReviewItem[]> {
-  const db = await createClient()
+  const db = getDb()
   
-  // Use .from() for VIEW (not .rpc()) per E-OPS-1 requirement
-  const { data, error } = await db
-    .from('vw_blueprint_pending_review_items')
-    .select('*')
-    .order('queue_created_at', { ascending: true })
+  // Use .selectFrom() for VIEW (not .rpc()) per E-OPS-1 requirement
+  // RLS_AUDIT(vw_blueprint_pending_review_items): APP_GUARD - pending review view guarded by admin check in API route
+  const rows = await db
+    .selectFrom('vw_blueprint_pending_review_items')
+    .selectAll()
+    .orderBy('queue_created_at', 'asc')
     .limit(100)
+    .execute()
 
-  if (error || !data) {
-    console.error('Error fetching pending items:', error)
-    return []
-  }
-
-  return data as PendingReviewItem[]
+  return (rows ?? []) as unknown as PendingReviewItem[]
 }
 
 /**
@@ -56,24 +52,27 @@ export async function getPendingItems(): Promise<PendingReviewItem[]> {
  * Returns workerId if claimed successfully, null otherwise
  */
 export async function claimQueueItem(storyId: string): Promise<null | string> {
-  const db = await createClient()
+  const db = getDb()
   
   const workerId = `${process.env.NODE_ENV}-worker-${Date.now()}-${Math.random().toString(36).substring(7)}`
   
   // Single atomic UPDATE: only ONE worker can succeed because we filter by status='PENDING'
-  const { data: result, error } = await db
-    .from('blueprint_queue')
-    .update({ 
-      status: 'CLAIMED',
-      claimed_by: workerId,
-      claimed_at: new Date().toISOString()
-    })
-    .eq('story_id', storyId)
-    .eq('status', 'PENDING')
-    .select('claimed_by')
-    .single()
+  // RLS_AUDIT(blueprint_queue): APP_GUARD - atomic worker claim CAS
+  const { data: result } = await single(
+    db
+      .updateTable('blueprint_queue')
+      .set({ 
+        status: 'CLAIMED',
+        claimed_by: workerId,
+        claimed_at: new Date().toISOString()
+      })
+      .where('story_id', '=', storyId)
+      .where('status', '=', 'PENDING')
+      .returning('claimed_by')
+      .execute()
+  )
 
-  if (error || !result) {
+  if (!result) {
     // No rows updated => either already claimed/resolved/blocked or race lost
     return null
   }
@@ -114,7 +113,7 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
   unblockProof?: string
   validationResult?: ValidatorRerunResult
 }> {
-  const db = await createClient()
+  const db = getDb()
 
   try {
     // reviewer_uid from request context is intentionally ignored.
@@ -163,10 +162,9 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
         : null
     let validatorAttestation: Record<string, unknown> | null = null
     if (validatedEvidence) {
-      const adminDb = createAdminClient()
-      const { data: issuedAttestation, error: attestationError } = await adminDb.rpc(
-        'e5_issue_validator_attestation',
-        {
+      // RLS_AUDIT(rpc:e5_issue_validator_attestation): SERVICE_ROLE_BYPASS - issue cryptographic validator attestation
+      const { data: issuedAttestation, error: attestationError } = await single(
+        rpcOne(db, 'e5_issue_validator_attestation', {
           p_story_id: trustedContext.story_id,
           p_source_event_id: trustedContext.source_event_id,
           p_reviewer_uid: trustedContext.reviewer_uid,
@@ -175,13 +173,14 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
           p_spine_reveal_findings: validatedEvidence.spineRevealFindings ?? [],
           p_ending_results: validatedEvidence.endingResults,
           p_expected_chapter_versions: validatedEvidence.validatedChapterVersions,
-        },
+        }).execute()
       )
+      const rawAttestation = (issuedAttestation as Record<string, unknown> | null)?.fn ?? issuedAttestation
       if (
         attestationError ||
-        issuedAttestation === null ||
-        typeof issuedAttestation !== 'object' ||
-        Array.isArray(issuedAttestation)
+        rawAttestation === null ||
+        typeof rawAttestation !== 'object' ||
+        Array.isArray(rawAttestation)
       ) {
         console.error('[E5] Validator evidence issuance failed:', attestationError)
         return {
@@ -190,7 +189,7 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
           validationResult,
         }
       }
-      validatorAttestation = issuedAttestation as Record<string, unknown>
+      validatorAttestation = rawAttestation as Record<string, unknown>
     }
 
     const rpcArgs: E5DispositionRpcArgs = {
@@ -204,9 +203,13 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
         : trustedContext.chapter_numbers,
       p_validator_attestation: validatorAttestation,
     }
-    const { data: result, error: rpcError } = await db.rpc(
-      'e5_record_disposition',
-      rpcArgs,
+    // RLS_AUDIT(rpc:e5_record_disposition): SERVICE_ROLE_BYPASS - record review disposition
+    const { data: dispositionRows, error: rpcError } = await result(
+      rpcRows(
+        db,
+        'e5_record_disposition',
+        rpcArgs as unknown as Record<string, unknown>,
+      ).execute()
     )
 
     if (rpcError) {
@@ -214,12 +217,12 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
       return { success: false, error: 'Gagal mencatat keputusan tinjauan.' }
     }
 
-    if (!Array.isArray(result) || result.length === 0 || !isE5DispositionRpcRow(result[0])) {
+    if (!Array.isArray(dispositionRows) || dispositionRows.length === 0 || !isE5DispositionRpcRow(dispositionRows[0])) {
       console.error('[E5] Disposition authority returned an invalid response')
       return { success: false, error: 'Gagal mencatat keputusan tinjauan.' }
     }
 
-    const dbResult = result[0]
+    const dbResult = dispositionRows[0]
     if (!dbResult.success) {
       console.error('[E5] Disposition authority rejected request:', dbResult.error_message)
       return {
@@ -267,16 +270,19 @@ interface QueueItemDetail {
 }
 
 export async function getQueueItemDetail(_storyId: string): Promise<null | QueueItemDetail> {
-  const db = await createClient()
-  const { data: queueItem, error: queueError } = await db
-    .from('vw_blueprint_review_item_details')
-    .select('*')
-    .eq('story_id', _storyId)
-    .single()
+  const db = getDb()
+  // RLS_AUDIT(vw_blueprint_review_item_details): APP_GUARD - single queue item detail view
+  const { data: queueItem, error: queueError } = await single(
+    db
+      .selectFrom('vw_blueprint_review_item_details')
+      .selectAll()
+      .where('story_id', '=', _storyId)
+      .execute()
+  )
 
   if (queueError || !queueItem) {
     return null
   }
 
-  return queueItem as QueueItemDetail
+  return queueItem as unknown as QueueItemDetail
 }

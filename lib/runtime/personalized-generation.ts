@@ -33,7 +33,7 @@ import {
 } from '@lakoku/ai-gateway'
 import type { Finding } from '@lakoku/narrative-core'
 import { createProviderFromExactRoutes, selectProvider } from '@lakoku/ai-gateway/server'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, result, rpcOne, single } from '@lakoku/db'
 import { recordGenerationAttempt } from '@/lib/observability/server'
 import { boundedLogId, safeErrorInfo } from '@/lib/observability/safe-error'
 import {
@@ -144,10 +144,27 @@ const TOTAL_PERSONALIZED_CHAPTERS = 50
 const ENDING_LOCK_CHAPTER = 45
 export const POST_PUBLICATION_LIFECYCLE_TIMEOUT_MS = 5_000
 
-const CONTRACT_SELECT =
-  'story_id,story_contract_json,plot_debts_json,ending_candidates_json,ending_lock_json,mode,total_chapters' as const
-const READER_STATE_INTERNAL_SELECT =
-  'user_id,story_id,status,current_chapter,jejak,ending_name,route_state,choice_history,locked_ending_key,updated_at' as const
+const CONTRACT_COLUMNS = [
+  'story_id',
+  'story_contract_json',
+  'plot_debts_json',
+  'ending_candidates_json',
+  'ending_lock_json',
+  'mode',
+  'total_chapters',
+] as const
+const READER_STATE_INTERNAL_COLUMNS = [
+  'user_id',
+  'story_id',
+  'status',
+  'current_chapter',
+  'jejak',
+  'ending_name',
+  'route_state',
+  'choice_history',
+  'locked_ending_key',
+  'updated_at',
+] as const
 
 const ReaderStateInternalSchema = z.object({
   user_id: z.string().uuid(),
@@ -422,12 +439,15 @@ function choiceDepsFromPersonalized(deps: PersonalizedGenerationDeps): ChoiceBui
 }
 
 async function defaultLoadStoryGenerationContract(storyId: string): Promise<StoryContract> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('story_generation_contracts')
-    .select(CONTRACT_SELECT)
-    .eq('story_id', storyId)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT(story_generation_contracts): SERVICE_ROLE_BYPASS - internal contract loader for personalized generation
+  const { data, error } = await single(
+    db
+      .selectFrom('story_generation_contracts')
+      .select(CONTRACT_COLUMNS)
+      .where('story_id', '=', storyId)
+      .execute()
+  )
   if (error) throw new Error(`loadStoryGenerationContract: ${error.message}`)
   if (!data) throw new Error(`loadStoryGenerationContract: contract missing for ${storyId}`)
 
@@ -451,13 +471,16 @@ async function defaultLoadReaderStateInternal(
   userId: string,
   storyId: string,
 ): Promise<ReaderStateInternal> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('reader_states')
-    .select(READER_STATE_INTERNAL_SELECT)
-    .eq('user_id', userId)
-    .eq('story_id', storyId)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT(reader_states): SERVICE_ROLE_BYPASS - internal state reader for personalized generation
+  const { data, error } = await single(
+    db
+      .selectFrom('reader_states')
+      .select(READER_STATE_INTERNAL_COLUMNS)
+      .where('user_id', '=', userId)
+      .where('story_id', '=', storyId)
+      .execute()
+  )
   if (error) throw new Error(`loadReaderStateInternal: ${error.message}`)
   if (!data) throw new Error(`loadReaderStateInternal: missing for ${userId}/${storyId}`)
   return ReaderStateInternalSchema.parse({
@@ -471,16 +494,20 @@ async function defaultLoadReaderStateInternal(
  * via SECURITY DEFINER RPC (service-role only).
  */
 export async function defaultPersistEndingLock(input: PersistEndingLockInput): Promise<void> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase.rpc('persist_ending_lock_v1', {
-    p_user_id: input.userId,
-    p_story_id: input.storyId,
-    p_ending_key: input.endingKey,
-    p_ending_name: input.endingName,
-    p_chapter_number: input.chapterNumber,
-  })
+  const db = getDb()
+  // RLS_AUDIT(rpc:persist_ending_lock_v1): SERVICE_ROLE_BYPASS - atomic ending lock write
+  const { data, error } = await single(
+    rpcOne(db, 'persist_ending_lock_v1', {
+      p_user_id: input.userId,
+      p_story_id: input.storyId,
+      p_ending_key: input.endingKey,
+      p_ending_name: input.endingName,
+      p_chapter_number: input.chapterNumber,
+    }).execute()
+  )
   if (error) throw new Error(`persistEndingLock: ${error.message}`)
-  if (!data || (data as { ok?: boolean }).ok !== true) {
+  const raw = (data as Record<string, unknown> | null)?.fn ?? data
+  if (!raw || (raw as { ok?: boolean }).ok !== true) {
     throw new Error('persistEndingLock: unexpected RPC result')
   }
 }
@@ -495,31 +522,33 @@ export const defaultPersistEndingLockForTest = defaultPersistEndingLock
  */
 async function checkAdmissionBeforeGeneration(storyId: string): Promise<{ ok: true } | { ok: false; reason: 'FAILED_REVIEW_REQUIRED' }> {
   try {
-    const admin = createAdminClient()
-    const { data, error } = await admin
-      .from('stories')
-      .select('generation_status')
-      .eq('id', storyId)
-      .maybeSingle()
+    const db = getDb()
+    // RLS_AUDIT(stories): SERVICE_ROLE_BYPASS - admission check before lease acquisition
+    const { data, error } = await single(
+      db
+        .selectFrom('stories')
+        .select('generation_status')
+        .where('id', '=', storyId)
+        .execute()
+    )
     
     if (error) throw error // FAIL-CLOSED: treat read error as failure
     
     // C-R3-R2 Blocker #3: Treat null data (story missing) as failed admission for fail-closed semantics
     if (!data) {
       console.error('ADMISSION_CHECK_FAILED', { storyId, reason: 'STORY_MISSING' })
-      throw new Error(`Story ${storyId} not found in database`)
+      return { ok: false, reason: 'FAILED_REVIEW_REQUIRED' }
     }
     
-    const storyRow = data as { generation_status?: string }
-    
-    if (storyRow.generation_status === 'needs_review') {
-      return { ok: false, reason: 'FAILED_REVIEW_REQUIRED' as const }
+    // Durable check: block if story has been flagged for human review
+    if (data.generation_status === 'needs_review') {
+      return { ok: false, reason: 'FAILED_REVIEW_REQUIRED' }
     }
     
     return { ok: true }
   } catch (err) {
     console.error('ADMISSION_CHECK_FAILED', { storyId, error: String(err) })
-    throw err // Re-throw to fail-closed (caller will return FAILED_REVIEW_REQUIRED)
+    return { ok: false, reason: 'FAILED_REVIEW_REQUIRED' }
   }
 }
 
@@ -616,33 +645,41 @@ export function derivePlotDebtAuditFlags(input: {
 }
 
 async function defaultMarkReaderStateSelesai(input: MarkReaderSelesaiInput): Promise<void> {
-  const supabase = createAdminClient()
-  const { error } = await supabase
-    .from('reader_states')
-    .update({
-      status: 'SELESAI',
-      ending_name: input.endingName,
-      locked_ending_key: input.endingKey,
-      current_chapter: TOTAL_PERSONALIZED_CHAPTERS,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('user_id', input.userId)
-    .eq('story_id', input.storyId)
+  const db = getDb()
+  // RLS_AUDIT(reader_states): SERVICE_ROLE_BYPASS - mark story finished in reader_states
+  const { error } = await result(
+    db
+      .updateTable('reader_states')
+      .set({
+        status: 'SELESAI',
+        ending_name: input.endingName,
+        locked_ending_key: input.endingKey,
+        current_chapter: TOTAL_PERSONALIZED_CHAPTERS,
+        updated_at: new Date().toISOString(),
+      })
+      .where('user_id', '=', input.userId)
+      .where('story_id', '=', input.storyId)
+      .execute()
+  )
   if (error) throw new Error(`markReaderStateSelesai: ${error.message}`)
 
   // Sinkron baris stories (meta turunan). reader_states tetap satu-satunya
   // sumber kebenaran progres; guard owner_user_id mencegah cerita demo bersama
   // ikut terflip bila input.userId bukan pemilik instance. Kegagalan sinkron
   // tidak boleh menggagalkan penyelesaian yang sudah terkomit — catat keras.
-  const { error: storiesError } = await supabase
-    .from('stories')
-    .update({
-      status: 'SELESAI',
-      current_chapter: TOTAL_PERSONALIZED_CHAPTERS,
-      ending_name: input.endingName,
-    })
-    .eq('id', input.storyId)
-    .eq('owner_user_id', input.userId)
+  // RLS_AUDIT(stories): SERVICE_ROLE_BYPASS - sync story completion status
+  const { error: storiesError } = await result(
+    db
+      .updateTable('stories')
+      .set({
+        status: 'SELESAI',
+        current_chapter: TOTAL_PERSONALIZED_CHAPTERS,
+        ending_name: input.endingName,
+      })
+      .where('id', '=', input.storyId)
+      .where('owner_user_id', '=', input.userId)
+      .execute()
+  )
   if (storiesError) {
     console.log('STORIES_COMPLETION_SYNC_FAILED', {
       storyId: input.storyId,
@@ -662,12 +699,15 @@ function isMissingColumn(error: { code?: string } | null | undefined): boolean {
  * v0 karena kolom living baru belum ada.
  */
 async function defaultLoadLivingCanonVersion(storyId: string): Promise<number> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('stories')
-    .select('living_canon_version')
-    .eq('id', storyId)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT(stories): SERVICE_ROLE_BYPASS - load living canon version
+  const { data, error } = await single(
+    db
+      .selectFrom('stories')
+      .select('living_canon_version')
+      .where('id', '=', storyId)
+      .execute()
+  )
   if (error) {
     if (isMissingColumn(error)) return 0
     throw new Error(`loadLivingCanonVersion: ${error.message}`)
@@ -677,12 +717,15 @@ async function defaultLoadLivingCanonVersion(storyId: string): Promise<number> {
 
 /** `stories.canon_state_revision` — base revisi untuk schema-3 checkpoint. */
 async function defaultLoadCanonStateRevision(storyId: string): Promise<number> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('stories')
-    .select('canon_state_revision')
-    .eq('id', storyId)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT(stories): SERVICE_ROLE_BYPASS - load canon state revision
+  const { data, error } = await single(
+    db
+      .selectFrom('stories')
+      .select('canon_state_revision')
+      .where('id', '=', storyId)
+      .execute()
+  )
   if (error) {
     if (isMissingColumn(error)) return 0
     throw error
@@ -1083,12 +1126,15 @@ async function generateNextPersonalizedChapterInner(
 
     // Safety check for worker path (should not trigger on normal flow, but guards against state changes mid-execution)
     try {
-      const admin = createAdminClient()
-      const { data, error } = await admin
-        .from('stories')
-        .select('generation_status')
-        .eq('id', storyId) // FIX: was 'story_id', must be 'id' per database schema
-        .maybeSingle()
+      const db = getDb()
+      // RLS_AUDIT(stories): SERVICE_ROLE_BYPASS - worker path admission gate check
+      const { data, error } = await single(
+        db
+          .selectFrom('stories')
+          .select('generation_status')
+          .where('id', '=', storyId) // FIX: was 'story_id', must be 'id' per database schema
+          .execute()
+      )
       if (error) throw error // FAIL-CLOSED: if read fails, do NOT proceed with generation
       
       const storyRow = data as { generation_status?: string } | null

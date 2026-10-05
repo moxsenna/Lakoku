@@ -70,7 +70,7 @@ import {
   emptyChoiceNarrativeContext,
   choiceNarrativeContextFromReader,
 } from './choice-context'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single } from '@lakoku/db'
 import { resolveGenerationLeaseTtlSeconds } from './generation-lease-ttl'
 import { throwIfAborted } from './abort'
 import {
@@ -98,12 +98,15 @@ export function realGenerationKey(storyId: string, n: number, scope: string) {
 }
 
 async function checkStandardGenerationAdmission(storyId: string): Promise<boolean> {
-  const admin = createAdminClient()
-  const { data, error } = await admin
-    .from('stories')
-    .select('generation_status')
-    .eq('id', storyId)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT(stories): SERVICE_ROLE_BYPASS - internal generation admission check
+  const { data, error } = await single(
+    db
+      .selectFrom('stories')
+      .select('generation_status')
+      .where('id', '=', storyId)
+      .execute()
+  )
   if (error) throw new Error(`GENERATION_ADMISSION_READ_FAILED: ${error.message}`)
   if (!data) throw new Error('GENERATION_ADMISSION_STORY_NOT_FOUND')
   return data.generation_status !== 'needs_review'
@@ -296,18 +299,21 @@ async function loadStandardNarrativeContext(
   storyId: string,
 ): Promise<ChoiceNarrativeContext> {
   try {
-    const supabase = createAdminClient()
-    const { data, error } = await supabase
-      .from('reader_states')
-      .select('route_state, choice_history, locked_ending_key')
-      .eq('user_id', userId)
-      .eq('story_id', storyId)
-      .maybeSingle()
+    const db = getDb()
+    // RLS_AUDIT(reader_states): SERVICE_ROLE_BYPASS - standard story reader narrative context load
+    const { data, error } = await single(
+      db
+        .selectFrom('reader_states')
+        .select(['route_state', 'choice_history', 'locked_ending_key'])
+        .where('user_id', '=', userId)
+        .where('story_id', '=', storyId)
+        .execute()
+    )
     if (error || !data) return emptyChoiceNarrativeContext()
     return choiceNarrativeContextFromReader({
-      route_state: (data as { route_state: unknown }).route_state,
-      choice_history: (data as { choice_history?: ChoiceHistoryEntry[] }).choice_history,
-      locked_ending_key: (data as { locked_ending_key?: string | null }).locked_ending_key,
+      route_state: data.route_state,
+      choice_history: (data.choice_history as unknown as ChoiceHistoryEntry[]) ?? undefined,
+      locked_ending_key: data.locked_ending_key,
     })
   } catch {
     // DB down or table missing leaves fresh standard/onboarding context empty.

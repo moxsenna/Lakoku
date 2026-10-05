@@ -34,7 +34,42 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: () => {
+      const client = mocks.adminFactory()
+      return {
+        ...client,
+        selectFrom: () => {
+          const builder: any = {
+            select: () => builder,
+            where: () => builder,
+            execute: async () => {
+              const res = await client?.from?.()?.maybeSingle?.()
+              if (res?.error) throw res.error
+              return res?.data ? [res.data] : []
+            },
+          }
+          return builder
+        },
+      }
+    },
+    rpcOne: (client: any, name: string, args: any) => ({
+      execute: async () => {
+        const res = await client?.rpc?.(name, args)
+        if (res?.error) {
+          const err = new Error(res.error.message || String(res.error))
+          if (res.error.code) (err as unknown as { code: string }).code = res.error.code
+          throw err
+        }
+        return res?.data !== undefined ? [{ fn: res.data }] : []
+      },
+    }),
+  }
+})
 vi.mock('@lakoku/narrative-core', async () => {
   const actual = await import('@/lib/narrative/index')
   return actual

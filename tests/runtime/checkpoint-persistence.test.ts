@@ -3,7 +3,97 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ adminFactory: vi.fn() }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: () => {
+      const client = mocks.adminFactory()
+      return {
+        ...client,
+        selectFrom: (table: string) => {
+          const fromTable = client.from(table)
+          const builder: any = {
+            selectAll: () => builder,
+            select: () => builder,
+            where: () => builder,
+            orderBy: () => builder,
+            limit: () => builder,
+            execute: async () => {
+              const res = await fromTable
+              if (res?.error) {
+                const err = new Error(res.error.message || String(res.error))
+                if (res.error.code) (err as unknown as { code: string }).code = res.error.code
+                throw err
+              }
+              return Array.isArray(res?.data) ? res.data : (res?.data ? [res.data] : [])
+            },
+          }
+          return builder
+        },
+        updateTable: (table: string) => {
+          const fromTable = client.from(table)
+          let current = fromTable.update({})
+          const builder: any = {
+            set: () => builder,
+            where: () => {
+              if (current.eq) current = current.eq()
+              return builder
+            },
+            returning: () => {
+              if (current.select) current = current.select()
+              return builder
+            },
+            execute: async () => {
+              const res = await (current.maybeSingle ? current.maybeSingle() : current)
+              if (res?.error) {
+                const err = new Error(res.error.message || String(res.error))
+                if (res.error.code) (err as unknown as { code: string }).code = res.error.code
+                throw err
+              }
+              return res?.data ? [res.data] : []
+            },
+          }
+          return builder
+        },
+        insertInto: (table: string) => {
+          const fromTable = client.from(table)
+          let current = fromTable.upsert ? fromTable.upsert({}) : fromTable
+          const builder: any = {
+            values: () => builder,
+            onConflict: () => builder,
+            returning: () => {
+              if (current.select) current = current.select()
+              return builder
+            },
+            execute: async () => {
+              const res = await (current.maybeSingle ? current.maybeSingle() : current)
+              if (res?.error) {
+                const err = new Error(res.error.message || String(res.error))
+                if (res.error.code) (err as unknown as { code: string }).code = res.error.code
+                throw err
+              }
+              return res?.data ? [res.data] : []
+            },
+          }
+          return builder
+        },
+      }
+    },
+    rpcOne: (client: any, name: string, args: any) => ({
+      execute: async () => {
+        const res = await client?.rpc?.(name, args)
+        if (res?.error) {
+          const err = new Error(res.error.message || String(res.error))
+          if (res.error.code) (err as unknown as { code: string }).code = res.error.code
+          throw err
+        }
+        return res?.data !== undefined ? [{ fn: res.data }] : []
+      },
+    }),
+  }
+})
 
 const JOB_ID = '11111111-1111-4111-8111-111111111111'
 const CLAIM_TOKEN = '22222222-2222-4222-8222-222222222222'

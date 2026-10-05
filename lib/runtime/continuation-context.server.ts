@@ -1,5 +1,5 @@
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single } from '@lakoku/db'
 import { compileContext } from '@lakoku/narrative-core'
 import { loadCanonSnapshot, persistRetrievalLog } from '@lakoku/narrative-core/server'
 import { buildContinuationContext, type ContinuationContext } from '@lakoku/narrative-core'
@@ -43,12 +43,15 @@ const CAP_ANCHOR_CHARS = 240
 /** Best-effort: ambil jangkar dari story_generation_contracts bila caller tak kirim. */
 async function loadStoryAnchorsBestEffort(storyId: string): Promise<StoryAnchorsInput | null> {
   try {
-    const db = createAdminClient()
-    const { data, error } = await db
-      .from('story_generation_contracts')
-      .select('story_contract_json')
-      .eq('story_id', storyId)
-      .maybeSingle()
+    const db = getDb()
+    // RLS_AUDIT(story_generation_contracts): SERVICE_ROLE_BYPASS - best effort story anchor loader
+    const { data, error } = await single(
+      db
+        .selectFrom('story_generation_contracts')
+        .select('story_contract_json')
+        .where('story_id', '=', storyId)
+        .execute()
+    )
     if (error) return null
     const contract = (data as { story_contract_json?: Record<string, unknown> } | null)
       ?.story_contract_json
@@ -82,13 +85,16 @@ async function loadReaderRow(
   storyId: string,
 ): Promise<ReaderRow | null | 'TRANSIENT'> {
   try {
-    const db = createAdminClient()
-    const { data, error } = await db
-      .from('reader_states')
-      .select('route_state, choice_history, locked_ending_key')
-      .eq('user_id', userId)
-      .eq('story_id', storyId)
-      .maybeSingle()
+    const db = getDb()
+    // RLS_AUDIT(reader_states): SERVICE_ROLE_BYPASS - load reader state for continuation context
+    const { data, error } = await single(
+      db
+        .selectFrom('reader_states')
+        .select(['route_state', 'choice_history', 'locked_ending_key'])
+        .where('user_id', '=', userId)
+        .where('story_id', '=', storyId)
+        .execute()
+    )
     if (error) return 'TRANSIENT'
     return (data as ReaderRow | null) ?? null
   } catch {
@@ -101,13 +107,16 @@ async function loadPreviousChapterRow(
   chapterNumber: number,
 ): Promise<{ number: number; title: string; paragraphs: string[]; choices: unknown } | null | 'TRANSIENT'> {
   try {
-    const db = createAdminClient()
-    const { data, error } = await db
-      .from('chapters')
-      .select('number, title, paragraphs, choices')
-      .eq('story_id', storyId)
-      .eq('number', chapterNumber)
-      .maybeSingle()
+    const db = getDb()
+    // RLS_AUDIT(chapters): SERVICE_ROLE_BYPASS - load previous chapter for continuation context
+    const { data, error } = await single(
+      db
+        .selectFrom('chapters')
+        .select(['number', 'title', 'paragraphs', 'choices'])
+        .where('story_id', '=', storyId)
+        .where('number', '=', chapterNumber)
+        .execute()
+    )
     if (error) return 'TRANSIENT'
     if (!data) return null
     return data as { number: number; title: string; paragraphs: string[]; choices: unknown }
@@ -122,16 +131,17 @@ async function loadPreviousTitles(
   beforeChapter: number,
 ): Promise<string[]> {
   try {
-    const db = createAdminClient()
-    const { data, error } = await db
-      .from('chapters')
-      .select('number, title')
-      .eq('story_id', storyId)
-      .lt('number', beforeChapter)
-      .order('number', { ascending: false })
+    const db = getDb()
+    // RLS_AUDIT(chapters): SERVICE_ROLE_BYPASS - load prior chapter titles for uniqueness
+    const rows = await db
+      .selectFrom('chapters')
+      .select(['number', 'title'])
+      .where('story_id', '=', storyId)
+      .where('number', '<', beforeChapter)
+      .orderBy('number', 'desc')
       .limit(24)
-    if (error) throw new Error(error.message)
-    return (data ?? [])
+      .execute()
+    return (rows ?? [])
       .map((row: { title: string }) => row.title)
       .reverse()
   } catch (error) {
@@ -151,14 +161,17 @@ async function checkOutcomeDrift(
   previousChoice: ChoiceHistoryEntry,
 ): Promise<void> {
   try {
-    const db = createAdminClient()
-    const { data, error } = await db
-      .from('choice_outcomes')
-      .select('consequence')
-      .eq('story_id', storyId)
-      .eq('chapter_number', prevChapterNumber)
-      .eq('choice_id', previousChoice.choiceId)
-      .maybeSingle()
+    const db = getDb()
+    // RLS_AUDIT(choice_outcomes): SERVICE_ROLE_BYPASS - consistency check for choice outcomes
+    const { data, error } = await single(
+      db
+        .selectFrom('choice_outcomes')
+        .select('consequence')
+        .where('story_id', '=', storyId)
+        .where('chapter_number', '=', prevChapterNumber)
+        .where('choice_id', '=', previousChoice.choiceId)
+        .execute()
+    )
     if (error) return
     const row = data as { consequence: string[] } | null
     if (!row) return
@@ -191,12 +204,15 @@ export async function loadContinuationContextForChapter(input: {
 
   let targetUserId = input.userId
   if (!targetUserId) {
-    const db = createAdminClient()
-    const { data: storyRow, error } = await db
-      .from('stories')
-      .select('owner_user_id')
-      .eq('id', input.storyId)
-      .maybeSingle()
+    const db = getDb()
+    // RLS_AUDIT(stories): SERVICE_ROLE_BYPASS - resolve story owner user ID for continuation
+    const { data: storyRow, error } = await single(
+      db
+        .selectFrom('stories')
+        .select('owner_user_id')
+        .where('id', '=', input.storyId)
+        .execute()
+    )
 
     if (error || !storyRow?.owner_user_id) {
       return { ok: false, kind: 'TRANSIENT', detail: 'STORY_OWNER_NOT_FOUND' }

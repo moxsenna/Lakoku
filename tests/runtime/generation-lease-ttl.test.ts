@@ -44,14 +44,25 @@ const uuid4 = () => crypto.randomUUID()
 describe('worker input path (policy >600 never yields Zod too_big)', () => {
   it('resolver output for policy 900 passes TtlSecondsSchema via acquireGenerationJobLease', async () => {
     vi.resetModules()
-    vi.doMock('@lakoku/db', () => ({
-      createAdminClient: () => ({
-        rpc: vi.fn().mockResolvedValue({
-          data: { ok: true, lease_id: uuid4() },
-          error: null,
+    const rpc = vi.fn().mockResolvedValue({
+      data: { ok: true, lease_id: uuid4() },
+      error: null,
+    })
+    vi.doMock('@lakoku/db', async (importOriginal) => {
+      const actual = await importOriginal<Record<string, unknown>>()
+      return {
+        ...actual,
+        createAdminClient: () => ({ rpc }),
+        getDb: () => ({ rpc }),
+        rpcOne: (client: any, name: string, args: any) => ({
+          execute: async () => {
+            const res = await client?.rpc?.(name, args)
+            if (res?.error) throw res.error
+            return res?.data !== undefined ? [{ fn: res.data }] : []
+          },
         }),
-      }),
-    }))
+      }
+    })
 
     try {
       mocks.getGenerationPolicy.mockResolvedValue(basePolicy(900))
@@ -74,14 +85,25 @@ describe('worker input path (policy >600 never yields Zod too_big)', () => {
 
   it('policy 1800 resolves within worker bounds too', async () => {
     vi.resetModules()
-    vi.doMock('@lakoku/db', () => ({
-      createAdminClient: () => ({
-        rpc: vi.fn().mockResolvedValue({
-          data: { ok: true, lease_id: uuid4() },
-          error: null,
+    const rpc = vi.fn().mockResolvedValue({
+      data: { ok: true, lease_id: uuid4() },
+      error: null,
+    })
+    vi.doMock('@lakoku/db', async (importOriginal) => {
+      const actual = await importOriginal<Record<string, unknown>>()
+      return {
+        ...actual,
+        createAdminClient: () => ({ rpc }),
+        getDb: () => ({ rpc }),
+        rpcOne: (client: any, name: string, args: any) => ({
+          execute: async () => {
+            const res = await client?.rpc?.(name, args)
+            if (res?.error) throw res.error
+            return res?.data !== undefined ? [{ fn: res.data }] : []
+          },
         }),
-      }),
-    }))
+      }
+    })
 
     try {
       mocks.getGenerationPolicy.mockResolvedValue(basePolicy(1800))

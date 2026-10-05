@@ -3,7 +3,7 @@
  * Never silently fall back personalized → standard when contract is invalid.
  */
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single } from '@lakoku/db'
 
 export type StoryGenerationMode = 'standard' | 'personalized_ai'
 
@@ -21,12 +21,15 @@ export type ResolveModeResult =
 export async function resolveStoryGenerationMode(
   storyId: string,
 ): Promise<ResolveModeResult> {
-  const db = createAdminClient()
-  const { data, error } = await db
-    .from('story_generation_contracts')
-    .select('mode, contract_source')
-    .eq('story_id', storyId)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT(story_generation_contracts): SERVICE_ROLE_BYPASS - resolve generation mode from contract
+  const { data, error } = await single(
+    db
+      .selectFrom('story_generation_contracts')
+      .select(['mode', 'contract_source'])
+      .where('story_id', '=', storyId)
+      .execute()
+  )
 
   if (error) {
     return {

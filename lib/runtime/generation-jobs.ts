@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, rpcOne, single } from '@lakoku/db'
 import {
   GenerationJobError,
   extractGenerationJobRpcError,
@@ -307,10 +307,11 @@ function mapRpcError(error: RpcError): GenerationJobError {
 }
 
 async function callRpc(name: string, payload: Record<string, unknown>): Promise<unknown> {
-  const client = createAdminClient()
-  const { data, error } = await client.rpc(name, payload)
+  const db = getDb()
+  // RLS_AUDIT(rpc): SERVICE_ROLE_BYPASS - internal worker generation job RPCs
+  const { data, error } = await single(rpcOne(db, name, payload).execute())
   if (error) throw mapRpcError(error)
-  return data
+  return (data as Record<string, unknown> | null)?.fn ?? data
 }
 
 type RawCheckpointRpcError = { message?: unknown; code?: unknown }
@@ -390,10 +391,12 @@ async function callCheckpointRpc(
   successOutcome: 'CREATED' | 'UPDATED',
   expectedCheckpointAttemptId: string,
 ): Promise<CheckpointMutationResult> {
-  const client = createAdminClient()
-  const { data, error } = await client.rpc(name, payload)
+  const db = getDb()
+  // RLS_AUDIT(rpc): SERVICE_ROLE_BYPASS - internal worker generation checkpoint RPCs
+  const { data, error } = await single(rpcOne(db, name, payload).execute())
   if (error) return checkpointWriteFailure(error)
-  const raw = RawFencedCheckpointResultSchema.parse(data)
+  const rawData = (data as Record<string, unknown> | null)?.fn ?? data
+  const raw = RawFencedCheckpointResultSchema.parse(rawData)
   return adaptFencedCheckpointResult(raw, successOutcome, expectedCheckpointAttemptId)
 }
 

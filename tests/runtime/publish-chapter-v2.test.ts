@@ -8,7 +8,25 @@ vi.mock('@lakoku/ai-gateway', async () => {
   const { ChoiceEffectSchema } = await import('@/lib/ai-gateway/schemas')
   return { ChoiceEffectSchema }
 })
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: () => mocks.adminFactory(),
+    rpcOne: (client: any, name: string, args: any) => ({
+      execute: async () => {
+        const res = await client?.rpc?.(name, args)
+        if (res?.error) {
+          const err = new Error(res.error.message || String(res.error))
+          if (res.error.code) (err as unknown as { code: string }).code = res.error.code
+          throw err
+        }
+        return res?.data !== undefined ? [{ fn: res.data }] : []
+      },
+    }),
+  }
+})
 
 function rpcResult(data: unknown = { ok: true, chapter_number: 12, seq: 7 }) {
   const rpc = vi.fn().mockResolvedValue({ data, error: null })

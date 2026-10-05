@@ -3,7 +3,7 @@
  * Service/worker only — never expose draft prose via Reader API.
  */
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, result, single } from '@lakoku/db'
 import type { GenerationJobExecutionContext } from './generation-job-execution'
 import type { CheckpointMutationResult } from './chapter-generation-checkpoint.pure'
 import {
@@ -108,8 +108,8 @@ export async function loadUsableProseCheckpoint(args: {
 }): Promise<ChapterGenerationCheckpoint | null> {
   if (!isChoiceDurableCheckpointEnabled()) return null
   try {
-    const db = createAdminClient()
-    const nowIso = new Date().toISOString()
+    const db = getDb()
+    const now = new Date()
     const statuses = [
       'PROSE_READY',
       'CHOICES_RETRY_WAIT',
@@ -118,29 +118,30 @@ export async function loadUsableProseCheckpoint(args: {
       ...(args.includePublishedForReplay ? ['PUBLISHED'] : []),
     ]
     let query = db
-      .from('chapter_generation_checkpoints')
-      .select('*')
-      .eq('story_id', args.storyId)
-      .eq('chapter_number', args.chapterNumber)
-      .in('status', statuses)
-      .gt('expires_at', nowIso)
-      .order('updated_at', { ascending: false })
+      .selectFrom('chapter_generation_checkpoints')
+      .selectAll()
+      .where('story_id', '=', args.storyId)
+      .where('chapter_number', '=', args.chapterNumber)
+      .where('status', 'in', statuses)
+      .where('expires_at', '>', now)
+      .orderBy('updated_at', 'desc')
       .limit(MAX_CHECKPOINT_LOOKUP_CANDIDATES)
 
     if (args.attemptId) {
       query = db
-        .from('chapter_generation_checkpoints')
-        .select('*')
-        .eq('story_id', args.storyId)
-        .eq('chapter_number', args.chapterNumber)
-        .eq('attempt_id', args.attemptId)
-        .in('status', statuses)
-        .gt('expires_at', nowIso)
-        .order('updated_at', { ascending: false })
+        .selectFrom('chapter_generation_checkpoints')
+        .selectAll()
+        .where('story_id', '=', args.storyId)
+        .where('chapter_number', '=', args.chapterNumber)
+        .where('attempt_id', '=', args.attemptId)
+        .where('status', 'in', statuses)
+        .where('expires_at', '>', now)
+        .orderBy('updated_at', 'desc')
         .limit(MAX_CHECKPOINT_LOOKUP_CANDIDATES)
     }
 
-    const { data, error } = await query
+    // RLS_AUDIT(chapter_generation_checkpoints): SERVICE_ROLE_BYPASS - internal worker load checkpoint
+    const { data, error } = await result(query.execute())
     if (error) {
       if (args.jobContext) throw new Error('WORKER_CHECKPOINT_LOAD_FAILED', { cause: error })
       if (isMissingRelation(error)) {
@@ -340,12 +341,63 @@ export async function persistProseReadyCheckpoint(args: {
   }
 
   try {
-    const db = createAdminClient()
-    const { data, error } = await db
-      .from('chapter_generation_checkpoints')
-      .upsert(row, { onConflict: 'story_id,chapter_number,attempt_id' })
-      .select('story_id, chapter_number, attempt_id, correlation_id, status')
-      .maybeSingle()
+    const db = getDb()
+    // RLS_AUDIT(chapter_generation_checkpoints): SERVICE_ROLE_BYPASS - upsert prose checkpoint
+    const { data, error } = await single(
+      db
+        .insertInto('chapter_generation_checkpoints')
+        .values({
+          story_id: row.story_id,
+          chapter_number: row.chapter_number,
+          attempt_id: row.attempt_id,
+          correlation_id: row.correlation_id,
+          status: row.status,
+          title: row.title,
+          paragraphs_json: JSON.stringify(row.paragraphs_json),
+          prose_fingerprint: row.prose_fingerprint,
+          audit_signals_json: row.audit_signals_json ? JSON.stringify(row.audit_signals_json) : null,
+          audit_signals_version: row.audit_signals_version,
+          canon_version: row.canon_version,
+          blueprint_version: row.blueprint_version,
+          direction_fingerprint: row.direction_fingerprint,
+          generation_mode: row.generation_mode,
+          generation_policy_version: row.generation_policy_version,
+          prompt_contract_version: row.prompt_contract_version,
+          job_id: row.job_id,
+          job_attempt_number: row.job_attempt_number,
+          checkpoint_schema_version: row.checkpoint_schema_version,
+          prose_attempt_count: row.prose_attempt_count,
+          choice_attempt_count: row.choice_attempt_count,
+          updated_at: row.updated_at,
+          expires_at: row.expires_at,
+        })
+        .onConflict((oc) =>
+          oc.columns(['story_id', 'chapter_number', 'attempt_id']).doUpdateSet({
+            correlation_id: row.correlation_id,
+            status: row.status,
+            title: row.title,
+            paragraphs_json: JSON.stringify(row.paragraphs_json),
+            prose_fingerprint: row.prose_fingerprint,
+            audit_signals_json: row.audit_signals_json ? JSON.stringify(row.audit_signals_json) : null,
+            audit_signals_version: row.audit_signals_version,
+            canon_version: row.canon_version,
+            blueprint_version: row.blueprint_version,
+            direction_fingerprint: row.direction_fingerprint,
+            generation_mode: row.generation_mode,
+            generation_policy_version: row.generation_policy_version,
+            prompt_contract_version: row.prompt_contract_version,
+            job_id: row.job_id,
+            job_attempt_number: row.job_attempt_number,
+            checkpoint_schema_version: row.checkpoint_schema_version,
+            prose_attempt_count: row.prose_attempt_count,
+            choice_attempt_count: row.choice_attempt_count,
+            updated_at: row.updated_at,
+            expires_at: row.expires_at,
+          })
+        )
+        .returning(['story_id', 'chapter_number', 'attempt_id', 'correlation_id', 'status'])
+        .execute()
+    )
     if (error) {
       if (isMissingRelation(error)) {
         console.log('CHECKPOINT_TABLE_UNAVAILABLE', {
@@ -417,7 +469,7 @@ export async function markCheckpointStatus(args: {
     })
   }
   try {
-    const db = createAdminClient()
+    const db = getDb()
     const patch: Record<string, unknown> = {
       status: args.status,
       updated_at: new Date().toISOString(),
@@ -428,14 +480,17 @@ export async function markCheckpointStatus(args: {
     if (args.status === 'PUBLISHED' || args.status === 'EXPIRED') {
       patch.expires_at = new Date(Date.now() + 60 * 60 * 1000).toISOString()
     }
-    const { data, error } = await db
-      .from('chapter_generation_checkpoints')
-      .update(patch)
-      .eq('story_id', args.storyId)
-      .eq('chapter_number', args.chapterNumber)
-      .eq('attempt_id', args.attemptId)
-      .select('attempt_id, status')
-      .maybeSingle()
+    // RLS_AUDIT(chapter_generation_checkpoints): SERVICE_ROLE_BYPASS - update checkpoint status
+    const { data, error } = await single(
+      db
+        .updateTable('chapter_generation_checkpoints')
+        .set(patch)
+        .where('story_id', '=', args.storyId)
+        .where('chapter_number', '=', args.chapterNumber)
+        .where('attempt_id', '=', args.attemptId)
+        .returning(['attempt_id', 'status'])
+        .execute()
+    )
     if (error) {
       console.log('CHECKPOINT_STATUS_UPDATE_FAILED', {
         storyId: args.storyId,

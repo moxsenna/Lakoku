@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { queryChoiceOutcome, queryChapter } from '@/lib/api/queries'
+import { queryChoiceOutcome, queryChapter, queryStoryForUser } from '@/lib/api/queries'
 import { applyChoiceToUserState, getSessionUser } from '@/lib/api/user-state'
 import { SubmitChoiceRequestSchema } from '@/packages/contracts/src/reader'
 import {
@@ -127,6 +127,15 @@ export async function POST(
           throw error
         }
       }
+    }
+
+    // RLS_AUDIT: chapters_owner_read, chapters_public_read, choice_outcomes_owner_read, choice_outcomes_public_read
+    const story = await queryStoryForUser(id, user?.id ?? null)
+    if (!story) {
+      return NextResponse.json(
+        { error: 'Pilihan tidak dikenali.' },
+        { status: 404 },
+      )
     }
 
     const outcome = await queryChoiceOutcome(id, chapterNumber, choiceId)

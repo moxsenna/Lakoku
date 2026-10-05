@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   after: vi.fn(),
   queryChoiceOutcome: vi.fn(),
   queryChapter: vi.fn(),
+  queryStoryForUser: vi.fn(),
   applyChoiceToUserState: vi.fn(),
   getSessionUser: vi.fn(),
   isStoryOwnedBy: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock('@/lib/runtime/story-generation', () => ({
 vi.mock('@/lib/api/queries', () => ({
   queryChoiceOutcome: mocks.queryChoiceOutcome,
   queryChapter: mocks.queryChapter,
+  queryStoryForUser: mocks.queryStoryForUser,
 }))
 vi.mock('@/lib/api/user-state', () => ({
   applyChoiceToUserState: mocks.applyChoiceToUserState,
@@ -82,6 +84,7 @@ beforeEach(() => {
   mocks.generateNextChapterReal.mockResolvedValue(publishedResult())
   mocks.getSessionUser.mockResolvedValue({ id: userId })
   mocks.queryChoiceOutcome.mockResolvedValue(publicOutcome)
+  mocks.queryStoryForUser.mockResolvedValue({ id: standardStoryId, visibility: 'public' })
   mocks.queryChapter.mockResolvedValue({
     storyId: standardStoryId,
     number: 1,
@@ -177,5 +180,20 @@ describe('standard public ownership guard', () => {
 
     const arg = mocks.generateNextChapterReal.mock.calls[0][0]
     expect(arg).toHaveProperty('triggerChoiceId', null)
+  })
+
+  it('Isolation Guard: returns 404 when story is not visible or owned by user', async () => {
+    mocks.queryStoryForUser.mockResolvedValue(null)
+    const { POST } = await import('@/app/api/stories/[id]/choices/route')
+
+    const response = await POST(choiceRequest(), {
+      params: Promise.resolve({ id: 'private-story-not-owned' }),
+    })
+    const body = await response.json()
+
+    expect(response.status).toBe(404)
+    expect(body).toEqual({ error: 'Pilihan tidak dikenali.' })
+    expect(mocks.queryChoiceOutcome).not.toHaveBeenCalled()
+    expect(mocks.queryChapter).not.toHaveBeenCalled()
   })
 })

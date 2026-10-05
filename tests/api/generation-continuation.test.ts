@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   after: vi.fn(),
   queryChoiceOutcome: vi.fn(),
   queryChapter: vi.fn(),
+  queryStoryForUser: vi.fn(),
   applyChoiceToUserState: vi.fn(),
   getSessionUser: vi.fn(),
   cookieFactory: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock('@/lib/runtime/story-generation', () => ({
 vi.mock('@/lib/api/queries', () => ({
   queryChoiceOutcome: mocks.queryChoiceOutcome,
   queryChapter: mocks.queryChapter,
+  queryStoryForUser: mocks.queryStoryForUser,
 }))
 vi.mock('@/lib/api/user-state', () => ({
   applyChoiceToUserState: mocks.applyChoiceToUserState,
@@ -292,6 +294,7 @@ beforeEach(() => {
   mocks.adminFactory.mockReturnValue(personalizedAdmin())
   mocks.getSessionUser.mockResolvedValue({ id: userId })
   mocks.queryChoiceOutcome.mockResolvedValue(publicOutcome)
+  mocks.queryStoryForUser.mockResolvedValue({ id: 'demo:standard', visibility: 'public' })
   mocks.queryChapter.mockResolvedValue({
     storyId: 'demo:standard',
     number: 1,

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/api/user-state'
 import { isStoryOwnedBy } from '@/lib/api/story-ownership.server'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single } from '@lakoku/db'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
 import { getCreditBalance } from '@/lib/credits/server'
 import { generateCoverImage, isCoverProviderConfigured } from '@/lib/cover/provider'
@@ -47,10 +47,12 @@ export async function POST(
     return NextResponse.json({ ok: false, error: 'Silakan masuk terlebih dahulu.' }, { status: 401 })
   }
 
+  const db = getDb()
   const owned = await isStoryOwnedBy(storyId, user.id)
   if (!owned) {
-    const db = createAdminClient()
-    const { data: story } = await db.from('stories').select('id').eq('id', storyId).maybeSingle()
+    const { data: story } = await single(
+      db.selectFrom('stories').select('id').where('id', '=', storyId).limit(1).execute(),
+    )
     if (!story) {
       return NextResponse.json({ ok: false, error: 'Cerita tidak ditemukan.' }, { status: 404 })
     }
@@ -64,12 +66,14 @@ export async function POST(
     )
   }
 
-  const db = createAdminClient()
-  const { data: story, error: storyError } = await db
-    .from('stories')
-    .select('title,tagline,role,tropes')
-    .eq('id', storyId)
-    .maybeSingle()
+  const { data: story, error: storyError } = await single(
+    db
+      .selectFrom('stories')
+      .select(['title', 'tagline', 'role', 'tropes'])
+      .where('id', '=', storyId)
+      .limit(1)
+      .execute(),
+  )
 
   if (storyError || !story) {
     return NextResponse.json({ ok: false, error: 'Cerita tidak ditemukan.' }, { status: 404 })

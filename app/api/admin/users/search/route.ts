@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { guardAdminToken } from '@/lib/auth/admin-guard'
 import { requireAdminUser } from '@/lib/admin/auth'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, rpcRows, result } from '@lakoku/db'
 
 /**
  * GET /api/admin/users/search?email=...
@@ -33,10 +33,12 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   try {
-    const db = createAdminClient()
-    const { data, error } = await db.rpc('admin_search_users_v1', {
-      p_email: email,
-    })
+    const db = getDb()
+    const { data, error } = await result(
+      rpcRows(db, 'admin_search_users_v1', {
+        p_email: email,
+      }).execute(),
+    )
 
     if (error) throw new Error(error.message)
 

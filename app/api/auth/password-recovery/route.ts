@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb, single, rpcOne } from '@lakoku/db'
 import { requireSupabaseAnonKey, requireSupabaseUrl } from '@/lib/supabase/env'
 import { consumeRecoveryCapability, RECOVERY_COOKIE_NAME, recoveryCookieOptions, recoverySessionId, validateNewPassword } from '@/lib/auth/password-recovery'
 
@@ -24,15 +25,22 @@ export async function POST(request: NextRequest) {
   const accessToken = sessionData.session?.access_token
   if (userError || !userData.user || !accessToken) return failure(401)
 
-  const admin = createAdminClient()
+  const db = getDb()
   const consumed = await consumeRecoveryCapability({
     token: request.cookies.get(RECOVERY_COOKIE_NAME)?.value ?? null,
     userId: userData.user.id,
     sessionId: await recoverySessionId(accessToken),
-    consume: (args) => admin.rpc('consume_password_recovery_capability_v1', args) as never,
+    consume: async (args) => {
+      const { data, error } = await single(
+        rpcOne(db, 'consume_password_recovery_capability_v1', args).execute(),
+      )
+      const raw = data ? ((data as Record<string, unknown>).fn ?? data) : null
+      return { data: raw === true, error }
+    },
   })
   if (!consumed.ok) return failure(401)
 
+  const admin = createAdminClient()
   // Fail closed: capability stays consumed if provider update or sign-out fails.
   const { error: updateError } = await admin.auth.admin.updateUserById(userData.user.id, { password: body.password })
   if (updateError) return failure(502)

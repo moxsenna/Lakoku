@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb, result } from '@lakoku/db'
 import { UnsubscribePushSchema } from '@/lib/notifications/index'
 
 /** Cabut token push — hanya bila token memang milik user yang login. */
@@ -18,21 +18,28 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   try {
-    const admin = createAdminClient()
-    const { data: owned } = await admin
-      .from('push_devices')
-      .select('id')
-      .eq('fcm_token', parsed.data.fcmToken)
-      .eq('user_id', auth.user.id)
-      .limit(1)
+    const db = getDb()
+    // RLS_AUDIT: push_devices_own_read
+    const { data: owned } = await result(
+      db
+        .selectFrom('push_devices')
+        .select('id')
+        .where('fcm_token', '=', parsed.data.fcmToken)
+        .where('user_id', '=', auth.user.id)
+        .limit(1)
+        .execute(),
+    )
     if (!owned || owned.length === 0) {
       return NextResponse.json({ ok: true })
     }
-    const { error } = await admin
-      .from('push_devices')
-      .delete()
-      .eq('fcm_token', parsed.data.fcmToken)
-      .eq('user_id', auth.user.id)
+    // RLS_AUDIT: push_devices_own_read
+    const { error } = await result(
+      db
+        .deleteFrom('push_devices')
+        .where('fcm_token', '=', parsed.data.fcmToken)
+        .where('user_id', '=', auth.user.id)
+        .execute(),
+    )
     if (error) throw new Error(error.message)
     return NextResponse.json({ ok: true })
   } catch {

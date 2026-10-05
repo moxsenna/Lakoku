@@ -8,7 +8,7 @@ import { getSessionUser } from '@/lib/api/user-state'
 import { listCreditProducts, calculateTopupCredits } from '@/lib/paycore/products'
 import { getRequestChannel } from '@/lib/android/channel.server'
 import { getCreditBalance, getReadingPolicy } from '@/lib/credits/server'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single, rpcOne } from '@lakoku/db'
 
 const idr = (n: number) => `Rp${new Intl.NumberFormat('id-ID').format(n)}`
 
@@ -23,9 +23,10 @@ export default async function KreditPage() {
   let isFirstTopup = false
   if (user) {
     try {
-      const db = createAdminClient()
-      const { data } = await db.rpc('has_paid_topup_v1', { p_user_id: user.id })
-      isFirstTopup = data !== true
+      const db = getDb()
+      const { data } = await single(rpcOne(db, 'has_paid_topup_v1', { p_user_id: user.id }).execute())
+      const raw = data ? ((data as Record<string, unknown>).fn ?? data) : false
+      isFirstTopup = raw !== true
     } catch {
       // Fallback: jangan over-promise.
     }

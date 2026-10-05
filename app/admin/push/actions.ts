@@ -1,7 +1,7 @@
 'use server'
 
 import { requireAdminUser } from '@/lib/admin/auth'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb, result } from '@lakoku/db'
 import { AdminSendPushSchema } from '@/lib/notifications/index'
 import { dispatchPush } from '@/lib/notifications/server'
 
@@ -51,8 +51,8 @@ export async function getDeviceSummary(): Promise<DeviceSummary> {
   const admin = await requireAdminUser().catch(() => null)
   if (!admin) return { total: 0, web: 0, android: 0 }
   try {
-    const client = createAdminClient()
-    const { data } = await client.from('push_devices').select('platform')
+    const db = getDb()
+    const { data } = await result(db.selectFrom('push_devices').select('platform').execute())
     const rows = (data ?? []) as Array<{ platform: string }>
     return {
       total: rows.length,

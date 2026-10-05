@@ -11,9 +11,10 @@
  * - Non-critical: error tidak dikembalikan sebagai exception.
  */
 import { NextResponse } from 'next/server'
-import { createAdminClient } from '@lakoku/db'
+import { getDb } from '@lakoku/db'
 import { createClient } from '@/lib/supabase/server'
 import { AnalyticsEventSchema } from '@/lib/analytics/events'
+import type { Json } from '@/lib/supabase/db-types'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,13 +39,16 @@ export async function POST(req: Request) {
       .catch(() => ({ data: { user: null } }))
     const payload = { ...parsed.data, is_logged_in: Boolean(auth?.user) }
 
-    const admin = createAdminClient()
-    await admin.from('analytics_events').insert({
-      user_id: auth?.user?.id ?? null,
-      anonymous_id: payload.anonymous_id,
-      event_name: payload.event_name,
-      payload,
-    })
+    const db = getDb()
+    await db
+      .insertInto('analytics_events')
+      .values({
+        user_id: auth?.user?.id ?? null,
+        anonymous_id: payload.anonymous_id,
+        event_name: payload.event_name,
+        payload: payload as unknown as Json,
+      })
+      .execute()
 
     return NextResponse.json({ ok: true })
   } catch {

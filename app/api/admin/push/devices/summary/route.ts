@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { guardAdminToken } from '@/lib/auth/admin-guard'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb, result } from '@lakoku/db'
 
 /** Ringkasan perangkat terdaftar per kanal untuk halaman broadcast. */
 export async function GET(request: Request): Promise<Response> {
@@ -8,8 +8,8 @@ export async function GET(request: Request): Promise<Response> {
   if (denied) return denied
 
   try {
-    const admin = createAdminClient()
-    const { data, error } = await admin.from('push_devices').select('platform')
+    const db = getDb()
+    const { data, error } = await result(db.selectFrom('push_devices').select('platform').execute())
     if (error) throw new Error(error.message)
     const rows = (data ?? []) as Array<{ platform: string }>
     const summary = {

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb, result } from '@lakoku/db'
 import { SubscribePushSchema } from '@/lib/notifications/index'
 
 /** Daftarkan token push milik user yang login (upsert idempoten per token). */
@@ -18,15 +18,26 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   try {
-    const admin = createAdminClient()
-    const { error } = await admin.from('push_devices').upsert(
-      {
-        user_id: auth.user.id,
-        platform: parsed.data.platform,
-        fcm_token: parsed.data.fcmToken,
-        last_seen_at: new Date().toISOString(),
-      },
-      { onConflict: 'fcm_token' },
+    const db = getDb()
+    const now = new Date().toISOString()
+    // RLS_AUDIT: push_devices_own_read
+    const { error } = await result(
+      db
+        .insertInto('push_devices')
+        .values({
+          user_id: auth.user.id,
+          platform: parsed.data.platform,
+          fcm_token: parsed.data.fcmToken,
+          last_seen_at: now,
+        })
+        .onConflict((oc) =>
+          oc.column('fcm_token').doUpdateSet({
+            user_id: auth.user.id,
+            platform: parsed.data.platform,
+            last_seen_at: now,
+          }),
+        )
+        .execute(),
     )
     if (error) throw new Error(error.message)
     return NextResponse.json({ ok: true })

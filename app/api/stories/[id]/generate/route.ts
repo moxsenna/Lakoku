@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { generateNextChapter } from '@lakoku/runtime'
 import { guardAdminToken } from '@/lib/auth/admin-guard'
 import { getSessionUser } from '@/lib/api/user-state'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb, single } from '@lakoku/db'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
 import {
   startOwnedChapterGeneration,
@@ -45,13 +45,17 @@ export async function POST(
 
     const route = await params
     const id = normalizeStoryRouteId(route.id)
-    const admin = createAdminClient()
-    const { data: ownedStory, error: ownerError } = await admin
-      .from('stories')
-      .select('id')
-      .eq('id', id)
-      .eq('owner_user_id', user.id)
-      .maybeSingle()
+    const db = getDb()
+    // RLS_AUDIT: stories_owner_read
+    const { data: ownedStory, error: ownerError } = await single(
+      db
+        .selectFrom('stories')
+        .select('id')
+        .where('id', '=', id)
+        .where('owner_user_id', '=', user.id)
+        .limit(1)
+        .execute(),
+    )
     if (ownerError || !ownedStory) {
       return NextResponse.json({ error: 'Cerita tidak ditemukan.' }, { status: 404 })
     }

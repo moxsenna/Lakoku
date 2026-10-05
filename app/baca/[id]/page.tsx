@@ -60,18 +60,20 @@ export default async function BacaPage({
   // Rekonsiliasi akhir cerita bila mencapai bab penutup.
   if (chapter.number >= (story.totalChapters || 50) && user && story.status !== 'SELESAI') {
     try {
-      const { createAdminClient } = await import('@/lib/supabase/admin')
-      const admin = createAdminClient()
-      await admin
-        .from('reader_states')
-        .update({
+      const { getDb } = await import('@lakoku/db')
+      const db = getDb()
+      // RLS_AUDIT: reader_states_owner
+      await db
+        .updateTable('reader_states')
+        .set({
           status: 'SELESAI',
           ending_name: chapter.title,
           current_chapter: chapter.number,
           updated_at: new Date().toISOString(),
         })
-        .eq('user_id', user.id)
-        .eq('story_id', story.id)
+        .where('user_id', '=', user.id)
+        .where('story_id', '=', story.id)
+        .execute()
       story.status = 'SELESAI'
       story.endingName = chapter.title
     } catch (err) {

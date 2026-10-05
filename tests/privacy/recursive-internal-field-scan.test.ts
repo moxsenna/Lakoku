@@ -19,6 +19,7 @@ const routeMocks = vi.hoisted(() => ({
   createClient: vi.fn(),
   queryChoiceOutcome: vi.fn(),
   queryChapter: vi.fn(),
+  queryStoryForUser: vi.fn(),
   applyChoiceToUserState: vi.fn(),
   getSessionUser: vi.fn(),
   continuePersonalizedGeneration: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock('@lakoku/contracts', async () => import('../../packages/contracts/src/in
 vi.mock('@/lib/api/queries', () => ({
   queryChoiceOutcome: routeMocks.queryChoiceOutcome,
   queryChapter: routeMocks.queryChapter,
+  queryStoryForUser: routeMocks.queryStoryForUser,
 }))
 vi.mock('@/lib/api/user-state', () => ({
   applyChoiceToUserState: routeMocks.applyChoiceToUserState,
@@ -155,10 +157,12 @@ const storySummary = {
   endingName: 'Arsip Dibuka',
 }
 
+const storyDetail = { ...storySummary, synopsis: 'Maya memburu kebenaran.', jejak: [] }
+
 const publicShapes = {
   explore: ListStoriesResponseSchema.parse({ stories: [storySummary] }),
   detail: GetStoryResponseSchema.parse({
-    story: { ...storySummary, synopsis: 'Maya memburu kebenaran.', jejak: [] },
+    story: storyDetail,
   }),
   chapter: GetChapterResponseSchema.parse({
     chapter: {
@@ -222,6 +226,7 @@ beforeEach(() => {
     id: '11111111-1111-4111-8111-111111111111',
   })
   routeMocks.queryChoiceOutcome.mockResolvedValue(publicShapes.choice.outcome)
+  routeMocks.queryStoryForUser.mockResolvedValue(storyDetail)
   routeMocks.queryChapter.mockResolvedValue(publicShapes.chapter.chapter)
   routeMocks.applyChoiceToUserState.mockResolvedValue(undefined)
   routeMocks.getChapterStatusForUser.mockResolvedValue({ status: 'ready', chapterNumber: 3 })

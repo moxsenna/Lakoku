@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { loadPlayBillingConfig, fetchPurchaseState, isGrantablePurchase } from '@/lib/paycore/play-billing.server'
 import { getCreditProductByPlaySku, calculateTopupCredits } from '@/lib/paycore/products'
 import { playBillingGrantV1 } from '@/lib/paycore/play-billing-grant.server'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single, rpcOne } from '@lakoku/db'
 import { notifyTopupResult } from '@lakoku/notifications/server'
 
 /**
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: 'invalid_body' }, { status: 400 })
   }
-  const { productId, purchaseToken, orderId } = parsed.data
+  const { productId, purchaseToken, orderId: _orderId } = parsed.data
 
   // 1) Katalog android per SKU — harga/kredit diatur admin, bukan klien.
   const product = await getCreditProductByPlaySku(productId)
@@ -104,10 +104,11 @@ export async function POST(request: NextRequest) {
 }
 
 async function hasPaidTopup(userId: string): Promise<boolean> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase.rpc('has_paid_topup_v1', { p_user_id: userId })
+  const db = getDb()
+  const { data, error } = await single(rpcOne(db, 'has_paid_topup_v1', { p_user_id: userId }).execute())
   if (error) throw new Error(`hasPaidTopup: ${error.message}`)
-  return data === true
+  const raw = data ? ((data as Record<string, unknown>).fn ?? data) : false
+  return raw === true
 }
 
 export const dynamic = 'force-dynamic'

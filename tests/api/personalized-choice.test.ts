@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   queryChoiceOutcome: vi.fn(),
   queryChapter: vi.fn(),
+  queryStoryForUser: vi.fn(),
   applyChoiceToUserState: vi.fn(),
   getSessionUser: vi.fn(),
   cookieFactory: vi.fn(),
@@ -16,6 +17,7 @@ vi.mock('server-only', () => ({}))
 vi.mock('@/lib/api/queries', () => ({
   queryChoiceOutcome: mocks.queryChoiceOutcome,
   queryChapter: mocks.queryChapter,
+  queryStoryForUser: mocks.queryStoryForUser,
 }))
 vi.mock('@/lib/api/user-state', () => ({
   applyChoiceToUserState: mocks.applyChoiceToUserState,
@@ -300,6 +302,15 @@ beforeEach(() => {
   mocks.adminFactory.mockReturnValue(admin.client)
   mocks.getSessionUser.mockResolvedValue({ id: userId })
   mocks.queryChoiceOutcome.mockResolvedValue(publicOutcome)
+  mocks.queryStoryForUser.mockImplementation(async (id: string, uid: string | null) => {
+    if (id === 'demo:standard' || id === 'demo:unlisted' || id === 'premium:template') {
+      return { id, visibility: 'public' }
+    }
+    if (id === storyId && uid === userId) {
+      return { id, visibility: 'private' }
+    }
+    return null
+  })
   mocks.queryChapter.mockResolvedValue({
     storyId: 'demo:standard',
     number: 1,

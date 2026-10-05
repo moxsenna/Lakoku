@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { listCreditProducts, calculateTopupCredits } from '@/lib/paycore/products'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single, rpcOne } from '@lakoku/db'
 
 /**
  * GET /api/play-billing/products — katalog kredit kanal android untuk UI
@@ -24,9 +24,10 @@ export async function GET(_request: Request): Promise<Response> {
   let firstTopup = false
   if (userId) {
     try {
-      const db = createAdminClient()
-      const { data } = await db.rpc('has_paid_topup_v1', { p_user_id: userId })
-      firstTopup = data !== true
+      const db = getDb()
+      const { data } = await single(rpcOne(db, 'has_paid_topup_v1', { p_user_id: userId }).execute())
+      const raw = data ? ((data as Record<string, unknown>).fn ?? data) : false
+      firstTopup = raw !== true
     } catch {
       // Fallback: anggap bukan first topup (jangan over-promise bonus).
     }

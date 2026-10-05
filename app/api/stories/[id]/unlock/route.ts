@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getReadingPolicy, getCreditBalance, spendChapterUnlock } from '@/lib/credits/server'
+import { getDb, single } from '@lakoku/db'
 
 /**
  * Buka satu bab berbayar dengan kredit (M-PAY reader).
@@ -59,13 +60,15 @@ export async function POST(
   }
 
   // Check commercial story origin
-  const { createAdminClient } = await import('@/lib/supabase/admin')
-  const db = createAdminClient()
-  const { data: story, error: storyError } = await db
-    .from('stories')
-    .select('owner_user_id, commercial_origin, story_mode')
-    .eq('id', storyId)
-    .maybeSingle()
+  const db = getDb()
+  const { data: story, error: storyError } = await single(
+    db
+      .selectFrom('stories')
+      .select(['owner_user_id', 'commercial_origin', 'story_mode'])
+      .where('id', '=', storyId)
+      .limit(1)
+      .execute(),
+  )
 
   if (storyError || !story) {
     return NextResponse.json({ error: 'Gagal memverifikasi status cerita.' }, { status: 500 })
@@ -86,12 +89,15 @@ export async function POST(
 
     if (story?.commercial_origin === 'LEGACY_GRANDFATHERED') {
       if (story.owner_user_id === auth.user.id && chapter >= 4) {
-        const { data: chRow } = await db
-          .from('chapters')
-          .select('number')
-          .eq('story_id', storyId)
-          .eq('number', chapter)
-          .maybeSingle()
+        const { data: chRow } = await single(
+          db
+            .selectFrom('chapters')
+            .select('number')
+            .where('story_id', '=', storyId)
+            .where('number', '=', chapter)
+            .limit(1)
+            .execute(),
+        )
 
         if (!chRow) {
           return NextResponse.json({ error: 'Bab belum dipublikasikan.' }, { status: 400 })

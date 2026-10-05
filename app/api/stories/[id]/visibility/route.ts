@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/api/user-state'
 import { isStoryOwnedBy } from '@/lib/api/story-ownership.server'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single, result } from '@lakoku/db'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
 import { SetStoryVisibilityRequestSchema } from '@lakoku/contracts'
 import { trackServerEvent } from '@/lib/analytics/server'
@@ -21,14 +21,17 @@ export async function PATCH(
     )
   }
 
+  const db = getDb()
   const owned = await isStoryOwnedBy(storyId, user.id)
   if (!owned) {
-    const db = createAdminClient()
-    const { data: story } = await db
-      .from('stories')
-      .select('id')
-      .eq('id', storyId)
-      .maybeSingle()
+    const { data: story } = await single(
+      db
+        .selectFrom('stories')
+        .select('id')
+        .where('id', '=', storyId)
+        .limit(1)
+        .execute(),
+    )
 
     if (!story) {
       return NextResponse.json(
@@ -59,12 +62,15 @@ export async function PATCH(
     )
   }
 
-  const db = createAdminClient()
-  const { error: updateError } = await db
-    .from('stories')
-    .update({ visibility: parsed.data.visibility })
-    .eq('id', storyId)
-    .eq('owner_user_id', user.id)
+  // RLS_AUDIT: stories_owner_read
+  const { error: updateError } = await result(
+    db
+      .updateTable('stories')
+      .set({ visibility: parsed.data.visibility })
+      .where('id', '=', storyId)
+      .where('owner_user_id', '=', user.id)
+      .execute(),
+  )
 
   if (updateError) {
     return NextResponse.json(

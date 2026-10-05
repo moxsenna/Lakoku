@@ -1,4 +1,4 @@
-import { createAdminClient } from '@lakoku/db'
+import { getDb, result, countOf } from '@lakoku/db'
 import { AdminStatCard } from '@/components/admin/admin-stat-card'
 import { AdminSectionCard } from '@/components/admin/admin-section-card'
 import { AdminEmptyState } from '@/components/admin/admin-empty-state'
@@ -9,7 +9,7 @@ import { isoDatetime } from '@/lib/admin/format'
 export const dynamic = 'force-dynamic'
 
 export default async function AdminCreditsPage() {
-  const db = createAdminClient()
+  const db = getDb()
 
   // Aggregate stats (bounded to recent 5000 entries to prevent unbounded table scan)
   let totalCirculating = 0
@@ -19,11 +19,14 @@ export default async function AdminCreditsPage() {
   let grantsToday = 0
 
   try {
-    const { data: ledger } = await db
-      .from('credit_ledger')
-      .select('delta, reason, created_at')
-      .order('created_at', { ascending: false })
-      .limit(5000)
+    const { data: ledger } = await result(
+      db
+        .selectFrom('credit_ledger')
+        .select(['delta', 'reason', 'created_at'])
+        .orderBy('created_at', 'desc')
+        .limit(5000)
+        .execute(),
+    )
     if (ledger) {
       for (const r of ledger as { delta: number; reason: string }[]) {
         totalCirculating += r.delta
@@ -37,11 +40,14 @@ export default async function AdminCreditsPage() {
   // Latest ledger (30 rows)
   let ledgerRows: { createdAt: string; userId: string; delta: number; reason: string; ref: string }[] = []
   try {
-    const { data } = await db
-      .from('credit_ledger')
-      .select('created_at,user_id,delta,reason,ref')
-      .order('created_at', { ascending: false })
-      .limit(30)
+    const { data } = await result(
+      db
+        .selectFrom('credit_ledger')
+        .select(['created_at', 'user_id', 'delta', 'reason', 'ref'])
+        .orderBy('created_at', 'desc')
+        .limit(30)
+        .execute(),
+    )
     if (data) {
       ledgerRows = (data as Record<string, unknown>[]).map((r) => ({
         createdAt: r.created_at as string,
@@ -56,11 +62,14 @@ export default async function AdminCreditsPage() {
   // Latest admin grants (20 rows)
   let grantRows: { createdAt: string; targetUserId: string; adminUserId: string; credits: number; reason: string; ledgerRef: string }[] = []
   try {
-    const { data } = await db
-      .from('admin_credit_grants')
-      .select('created_at,target_user_id,admin_user_id,credits,reason,ledger_ref')
-      .order('created_at', { ascending: false })
-      .limit(20)
+    const { data } = await result(
+      db
+        .selectFrom('admin_credit_grants')
+        .select(['created_at', 'target_user_id', 'admin_user_id', 'credits', 'reason', 'ledger_ref'])
+        .orderBy('created_at', 'desc')
+        .limit(20)
+        .execute(),
+    )
     if (data) {
       grantRows = (data as Record<string, unknown>[]).map((r) => ({
         createdAt: r.created_at as string,
@@ -75,11 +84,13 @@ export default async function AdminCreditsPage() {
 
   const today = new Date().toISOString().slice(0, 10)
   try {
-    const { count } = await db
-      .from('admin_credit_grants')
-      .select('*', { count: 'exact', head: true })
-      .gte('created_at', `${today}T00:00:00`)
-    grantsToday = count ?? 0
+    grantsToday = await countOf(
+      db
+        .selectFrom('admin_credit_grants')
+        .select((eb) => eb.fn.countAll<number>().as('n'))
+        .where('created_at', '>=', new Date(`${today}T00:00:00`))
+        .execute(),
+    )
   } catch {/* No-op */}
 
   return (

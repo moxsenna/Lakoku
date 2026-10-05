@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getQueueItemDetail, recordDisposition as workflowRecordDisposition } from '@lakoku/runtime'
 import { requireAdminUser } from '@/lib/admin/auth'
+import { getDb, single } from '@lakoku/db'
 import type { Disposition, ResolutionContext } from '@/lib/types/blueprint.contract'
 
 export const dynamic = 'force-dynamic'
@@ -71,14 +72,16 @@ export async function POST(
     }
     
     // Fetch source_event_id from queue item (required per E-OPS-1 evidence binding)
-    const { createClient } = await import('@/lib/supabase/server')
-    const db = await createClient()
-    const { data: queueItem, error: fetchError } = await db
-      .from('vw_blueprint_review_authority')
-      .select('source_event_id, chapter_numbers')
-      .eq('story_id', storyId)
-      .single()
-    
+    const db = getDb()
+    const { data: queueItem, error: fetchError } = await single(
+      db
+        .selectFrom('vw_blueprint_review_authority')
+        .select(['source_event_id', 'chapter_numbers'])
+        .where('story_id', '=', storyId)
+        .limit(1)
+        .execute(),
+    )
+
     if (fetchError || !queueItem) {
       return NextResponse.json(
         { error: 'Queue item not found.' },

@@ -1,6 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextRequest, NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb, single, rpcOne } from '@lakoku/db'
 import { requireSupabaseAnonKey, requireSupabaseUrl } from '@/lib/supabase/env'
 import { getPublicOrigin } from '@/lib/auth/public-origin'
 import { buildRecoveryCapability, RECOVERY_COOKIE_NAME, recoveryCookieOptions, recoverySessionId, validateRecoveryProvenance } from '@/lib/auth/password-recovery'
@@ -24,13 +24,15 @@ export async function GET(request: NextRequest) {
 
   const sessionId = await recoverySessionId(session.access_token)
   const capability = await buildRecoveryCapability(user.id, sessionId)
-  const admin = createAdminClient()
-  const { error } = await admin.rpc('create_password_recovery_capability_v1', {
-    p_token_hash: `\\x${capability.tokenHash}`,
-    p_user_id: user.id,
-    p_session_id: sessionId,
-    p_ttl_seconds: recoveryCookieOptions.maxAge,
-  })
+  const db = getDb()
+  const { error } = await single(
+    rpcOne(db, 'create_password_recovery_capability_v1', {
+      p_token_hash: `\\x${capability.tokenHash}`,
+      p_user_id: user.id,
+      p_session_id: sessionId,
+      p_ttl_seconds: recoveryCookieOptions.maxAge,
+    }).execute(),
+  )
   if (error) return authError(origin, 'expired')
   response.cookies.set(RECOVERY_COOKIE_NAME, capability.token, recoveryCookieOptions)
   return response

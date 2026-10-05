@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/client'
+import { authClient } from '@/lib/auth-client'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -18,22 +18,10 @@ function check(name: string, ok: boolean, detail?: unknown) {
 async function main() {
   console.log('Auth config smoke:')
 
-  const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const previousAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-  delete process.env.NEXT_PUBLIC_SUPABASE_URL
-  delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-
   try {
-    const supabase = createClient({
-      url: 'https://example.supabase.co',
-      anonKey: 'public-anon-key',
-    } as never)
-    check('browser Supabase client accepts explicit public config', Boolean(supabase.auth))
+    check('Better Auth client accepts valid configuration', Boolean(authClient.signIn && authClient.signUp))
   } catch (error) {
-    check('browser Supabase client accepts explicit public config', false, error)
-  } finally {
-    if (previousUrl) process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl
-    if (previousAnonKey) process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousAnonKey
+    check('Better Auth client accepts valid configuration', false, error)
   }
 
   const root = join(__dirname, '..')

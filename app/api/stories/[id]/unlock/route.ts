@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/api/user-state'
 import { getReadingPolicy, getCreditBalance, spendChapterUnlock } from '@/lib/credits/server'
 import { getDb, single } from '@lakoku/db'
 
@@ -13,9 +13,8 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  const supabase = await createClient()
-  const { data: auth } = await supabase.auth.getUser()
-  if (!auth?.user) {
+  const user = await getSessionUser()
+  if (!user) {
     return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 401 })
   }
 
@@ -28,9 +27,9 @@ export async function POST(
 
   const policy = await getReadingPolicy()
   const { resolveChapterAccess } = await import('@/lib/credits/access-resolver.server')
-  const decision = await resolveChapterAccess({ userId: auth.user.id, storyId, chapterNumber: chapter, policy })
+  const decision = await resolveChapterAccess({ userId: user.id, storyId, chapterNumber: chapter, policy })
 
-  const balance = await getCreditBalance(auth.user.id)
+  const balance = await getCreditBalance(user.id)
 
   if (decision.readable) {
     return NextResponse.json({ status: decision.reason === 'FREE_STANDARD' ? 'free' : 'ok', balance }, { status: 200 })
@@ -88,7 +87,7 @@ export async function POST(
     }
 
     if (story?.commercial_origin === 'LEGACY_GRANDFATHERED') {
-      if (story.owner_user_id === auth.user.id && chapter >= 4) {
+      if (story.owner_user_id === user.id && chapter >= 4) {
         const { data: chRow } = await single(
           db
             .selectFrom('chapters')
@@ -104,8 +103,8 @@ export async function POST(
         }
 
         try {
-          const result = await spendChapterUnlock(auth.user.id, storyId, chapter, decision.cost)
-          const newBalance = await getCreditBalance(auth.user.id)
+          const result = await spendChapterUnlock(user.id, storyId, chapter, decision.cost)
+          const newBalance = await getCreditBalance(user.id)
           if (result === 'insufficient') {
             return NextResponse.json({
               status: 'WAITING_FOR_CREDITS',
@@ -138,8 +137,8 @@ export async function POST(
 
   // Fallback ONLY for standard/shared public story unlock
   try {
-    const result = await spendChapterUnlock(auth.user.id, storyId, chapter, decision.cost)
-    const newBalance = await getCreditBalance(auth.user.id)
+    const result = await spendChapterUnlock(user.id, storyId, chapter, decision.cost)
+    const newBalance = await getCreditBalance(user.id)
     if (result === 'insufficient') {
       return NextResponse.json({
         status: 'WAITING_FOR_CREDITS',

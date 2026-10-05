@@ -1,16 +1,15 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/api/user-state'
 import { getDailyMissions } from '@/lib/missions/server'
 
 export async function GET(): Promise<Response> {
-  const supabase = await createClient()
-  const { data: auth } = await supabase.auth.getUser()
+  const user = await getSessionUser()
 
-  if (!auth?.user) {
+  if (!user) {
     return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 401 })
   }
 
-  const snapshot = await getDailyMissions(auth.user.id)
+  const snapshot = await getDailyMissions(user.id)
   return NextResponse.json(snapshot)
 }
 

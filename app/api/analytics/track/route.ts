@@ -12,7 +12,7 @@
  */
 import { NextResponse } from 'next/server'
 import { getDb } from '@lakoku/db'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/api/user-state'
 import { AnalyticsEventSchema } from '@/lib/analytics/events'
 import type { Json } from '@/lib/supabase/db-types'
 
@@ -33,17 +33,14 @@ export async function POST(req: Request) {
     }
 
     // Overwrite is_logged_in dari session server.
-    const supabase = await createClient()
-    const { data: auth } = await supabase.auth
-      .getUser()
-      .catch(() => ({ data: { user: null } }))
-    const payload = { ...parsed.data, is_logged_in: Boolean(auth?.user) }
+    const user = await getSessionUser().catch(() => null)
+    const payload = { ...parsed.data, is_logged_in: Boolean(user) }
 
     const db = getDb()
     await db
       .insertInto('analytics_events')
       .values({
-        user_id: auth?.user?.id ?? null,
+        user_id: user?.id ?? null,
         anonymous_id: payload.anonymous_id,
         event_name: payload.event_name,
         payload: payload as unknown as Json,

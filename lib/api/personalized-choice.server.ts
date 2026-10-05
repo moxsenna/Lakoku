@@ -6,7 +6,7 @@ import {
   JejakItemSchema,
   type ChoiceOutcome,
 } from '@/packages/contracts/src/reader'
-import { createClient as createCookieClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/api/user-state'
 import { getDb, result, rpcOne, single } from '@lakoku/db'
 import { sql } from 'kysely'
 import { ChoiceHistoryEntrySchema } from '@/lib/story-engine/chapter-brief'
@@ -196,9 +196,8 @@ function mapRpcError(message: string): PersonalizedChoiceError {
 }
 
 async function authorizeParentStory(userId: string, storyId: string): Promise<void> {
-  const cookieClient = await createCookieClient()
-  const { data: { user }, error: userError } = await cookieClient.auth.getUser()
-  if (userError || user?.id !== userId) {
+  const user = await getSessionUser()
+  if (!user || user.id !== userId) {
     throw new PersonalizedChoiceError('STORY_NOT_FOUND')
   }
 

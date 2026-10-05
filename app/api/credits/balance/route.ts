@@ -1,15 +1,14 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/api/user-state'
 import { getCreditBalance } from '@/lib/credits/server'
 
 export async function GET(): Promise<Response> {
-  const supabase = await createClient()
-  const { data: auth } = await supabase.auth.getUser()
-  if (!auth?.user) {
+  const user = await getSessionUser()
+  if (!user) {
     return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 401 })
   }
 
-  const balance = await getCreditBalance(auth.user.id)
+  const balance = await getCreditBalance(user.id)
   return NextResponse.json({ balance })
 }
 

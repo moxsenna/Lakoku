@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/api/user-state'
 import { createCreditOrder } from '@/lib/paycore/client'
 
 /**
@@ -13,9 +13,8 @@ import { createCreditOrder } from '@/lib/paycore/client'
  * Body: { productKey: string, customer?: { name?, email?, phone? } }
  */
 export async function POST(request: Request): Promise<Response> {
-  const supabase = await createClient()
-  const { data: auth } = await supabase.auth.getUser()
-  if (!auth?.user) {
+  const user = await getSessionUser()
+  if (!user) {
     return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 401 })
   }
 
@@ -28,16 +27,18 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const metaName =
-    typeof auth.user.user_metadata?.full_name === 'string'
-      ? auth.user.user_metadata.full_name
-      : undefined
+    typeof user.user_metadata?.name === 'string'
+      ? (user.user_metadata.name as string)
+      : typeof user.user_metadata?.full_name === 'string'
+        ? (user.user_metadata.full_name as string)
+        : undefined
 
   try {
     const outcome = await createCreditOrder({
-      userId: auth.user.id,
+      userId: user.id,
       productKey: body.productKey,
       customer: {
-        email: body.customer?.email ?? auth.user.email ?? undefined,
+        email: body.customer?.email ?? user.email ?? undefined,
         name: body.customer?.name ?? metaName,
         phone: body.customer?.phone,
       },

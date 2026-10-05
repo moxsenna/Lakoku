@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/api/user-state'
 import { loadPlayBillingConfig, fetchPurchaseState, isGrantablePurchase } from '@/lib/paycore/play-billing.server'
 import { getCreditProductByPlaySku, calculateTopupCredits } from '@/lib/paycore/products'
 import { playBillingGrantV1 } from '@/lib/paycore/play-billing-grant.server'
@@ -11,7 +11,7 @@ import { notifyTopupResult } from '@lakoku/notifications/server'
  * POST /api/play-billing/verify — verifikasi pembelian Google Play (Android)
  * dan grant kredit idempoten ke ledger yang sama dengan web.
  *
- * Auth: cookie sesi Supabase (sama dengan route /api/* lain). Klien Android
+ * Auth: cookie sesi Better Auth (sama dengan route /api/* lain). Klien Android
  * mengirim { productId, purchaseToken, orderId? } setelah purchase sukses.
  * Server yang memanggil Google (klien tidak dipercaya), katalog dibaca dari
  * DB per kanal 'android', bonus dihitung server-side seperti PayCore.
@@ -24,9 +24,8 @@ const BodySchema = z.object({
 })
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient()
-  const { data: auth } = await supabase.auth.getUser()
-  if (!auth?.user) {
+  const user = await getSessionUser()
+  if (!user) {
     return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
   }
 
@@ -63,12 +62,12 @@ export async function POST(request: NextRequest) {
   }
 
   // 3) Bonus seperti web: first-topup / normal, dihitung server-side.
-  const firstTopup = await hasPaidTopup(auth.user.id)
+  const firstTopup = await hasPaidTopup(user.id)
   const calc = calculateTopupCredits(product, firstTopup)
 
   // 4) Grant idempoten (DB-level, replay ditolak oleh ref unik).
   const grant = await playBillingGrantV1({
-    userId: auth.user.id,
+    userId: user.id,
     productKey: product.productKey,
     creditsBase: calc.baseCredits,
     creditsBonus: calc.bonusCredits,
@@ -81,7 +80,7 @@ export async function POST(request: NextRequest) {
     // Kabari kegagalan juga (best-effort, idempoten per ref): uang mungkin
     // sudah keluar di Play tapi kredit belum masuk.
     void notifyTopupResult({
-      userId: auth.user.id,
+      userId: user.id,
       ok: false,
       ref: purchaseToken,
     }).catch(() => undefined)
@@ -90,7 +89,7 @@ export async function POST(request: NextRequest) {
 
   // Kabar baik topup (best-effort, idempoten per ref; replay aman).
   void notifyTopupResult({
-    userId: auth.user.id,
+    userId: user.id,
     ok: true,
     ref: grant.orderId ?? purchaseToken,
   }).catch(() => undefined)

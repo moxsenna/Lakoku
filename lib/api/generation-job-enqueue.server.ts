@@ -5,7 +5,7 @@ import {
   GenerationKindSchema,
   type EnqueueGenerationJobResult,
 } from '@/packages/contracts/src/generation-job'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/api/user-state'
 import { getDb, result, rpcOne } from '@lakoku/db'
 import { sql } from 'kysely'
 
@@ -73,16 +73,15 @@ export async function enqueueGenerationJob(
   input: EnqueueGenerationJobInput,
 ): Promise<EnqueueGenerationJobResult> {
   const parsed = EnqueueGenerationJobInputSchema.parse(input)
-  const client = await createClient()
-  const { data: userData, error: userError } = await client.auth.getUser()
-  if (userError || !userData?.user) {
+  const user = await getSessionUser()
+  if (!user) {
     throw new GenerationJobError('AUTH_REQUIRED')
   }
 
   const db = getDb()
   const { data, error } = await result(
     db.transaction().execute(async (trx) => {
-      await sql`select set_config('request.jwt.claim.sub', ${userData.user.id}, true)`.execute(trx)
+      await sql`select set_config('request.jwt.claim.sub', ${user.id}, true)`.execute(trx)
       const rows = await rpcOne(trx, 'enqueue_generation_job_v1', {
         p_story_id: parsed.storyId,
         p_chapter_number: parsed.chapterNumber,

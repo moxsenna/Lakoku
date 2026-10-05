@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/api/user-state'
 import { getDb, result } from '@lakoku/db'
 import { SubscribePushSchema } from '@/lib/notifications/index'
 
 /** Daftarkan token push milik user yang login (upsert idempoten per token). */
 export async function POST(request: Request): Promise<Response> {
-  const supabase = await createClient()
-  const { data: auth } = await supabase.auth.getUser()
-  if (!auth?.user) {
+  const user = await getSessionUser()
+  if (!user) {
     return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 401 })
   }
 
@@ -25,14 +24,14 @@ export async function POST(request: Request): Promise<Response> {
       db
         .insertInto('push_devices')
         .values({
-          user_id: auth.user.id,
+          user_id: user.id,
           platform: parsed.data.platform,
           fcm_token: parsed.data.fcmToken,
           last_seen_at: now,
         })
         .onConflict((oc) =>
           oc.column('fcm_token').doUpdateSet({
-            user_id: auth.user.id,
+            user_id: user.id,
             platform: parsed.data.platform,
             last_seen_at: now,
           }),

@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/api/user-state'
 import { getDb, result } from '@lakoku/db'
 import { UnsubscribePushSchema } from '@/lib/notifications/index'
 
 /** Cabut token push — hanya bila token memang milik user yang login. */
 export async function POST(request: Request): Promise<Response> {
-  const supabase = await createClient()
-  const { data: auth } = await supabase.auth.getUser()
-  if (!auth?.user) {
+  const user = await getSessionUser()
+  if (!user) {
     return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 401 })
   }
 
@@ -25,7 +24,7 @@ export async function POST(request: Request): Promise<Response> {
         .selectFrom('push_devices')
         .select('id')
         .where('fcm_token', '=', parsed.data.fcmToken)
-        .where('user_id', '=', auth.user.id)
+        .where('user_id', '=', user.id)
         .limit(1)
         .execute(),
     )
@@ -37,7 +36,7 @@ export async function POST(request: Request): Promise<Response> {
       db
         .deleteFrom('push_devices')
         .where('fcm_token', '=', parsed.data.fcmToken)
-        .where('user_id', '=', auth.user.id)
+        .where('user_id', '=', user.id)
         .execute(),
     )
     if (error) throw new Error(error.message)

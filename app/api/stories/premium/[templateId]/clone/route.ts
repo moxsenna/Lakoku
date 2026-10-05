@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/api/user-state'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
 import {
   clonePremiumStoryForUser,
@@ -29,9 +29,8 @@ export async function POST(
   { params }: { params: Promise<{ templateId: string }> },
 ) {
   try {
-    const cookie = await createClient()
-    const { data: auth, error: authError } = await cookie.auth.getUser()
-    if (authError || !auth?.user) {
+    const user = await getSessionUser()
+    if (!user) {
       return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 401 })
     }
 
@@ -51,7 +50,7 @@ export async function POST(
     const route = await params
     const templateStoryId = normalizeStoryRouteId(route.templateId)
     const result = await clonePremiumStoryForUser({
-      userId: auth.user.id,
+      userId: user.id,
       templateStoryId,
       idempotencyKey,
     })

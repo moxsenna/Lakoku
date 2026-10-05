@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { submitContentReport } from '@/lib/api/reports'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/api/user-state'
 import { SubmitReportRequestSchema } from '@lakoku/contracts'
 
 /**
@@ -29,9 +29,8 @@ export async function POST(
     // Reporter opsional: laporan tamu tetap diterima (reporter_id null).
     let reporterId: string | null = null
     try {
-      const supabase = await createClient()
-      const { data } = await supabase.auth.getUser()
-      reporterId = data.user?.id ?? null
+      const user = await getSessionUser()
+      reporterId = user?.id ?? null
     } catch {
       reporterId = null
     }

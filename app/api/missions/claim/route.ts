@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/api/user-state'
 import { isMissionKey, MISSION_LABELS } from '@/lib/missions/policy'
 import { claimMission } from '@/lib/missions/server'
 import { notifyMissionComplete } from '@lakoku/notifications/server'
@@ -10,10 +10,9 @@ const claimSchema = z.object({
 })
 
 export async function POST(request: Request): Promise<Response> {
-  const supabase = await createClient()
-  const { data: auth } = await supabase.auth.getUser()
+  const user = await getSessionUser()
 
-  if (!auth?.user) {
+  if (!user) {
     return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 401 })
   }
 
@@ -34,7 +33,7 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: 'Kunci misi tidak dikenali.' }, { status: 400 })
   }
 
-  const result = await claimMission(auth.user.id, missionKey)
+  const result = await claimMission(user.id, missionKey)
 
   if (!result.ok) {
     const statusMap: Record<string, number> = {
@@ -53,7 +52,7 @@ export async function POST(request: Request): Promise<Response> {
   // Pengingat transaksional (push): best-effort, idempoten per (user, misi, hari).
   // Tidak boleh menggagalkan klaim bila layanan push mati.
   void notifyMissionComplete({
-    userId: auth.user.id,
+    userId: user.id,
     missionName: MISSION_LABELS[missionKey].title,
   }).catch(() => undefined)
 

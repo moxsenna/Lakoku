@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/api/user-state'
 import { listCreditProducts, calculateTopupCredits } from '@/lib/paycore/products'
 import { getDb, single, rpcOne } from '@lakoku/db'
 
@@ -19,9 +19,8 @@ export async function GET(_request: Request): Promise<Response> {
   // Try auth (optional — guest juga bisa lihat produk, tapi tanpa bonus first topup).
   let userId: string | null = null
   try {
-    const supabase = await createClient()
-    const { data: auth } = await supabase.auth.getUser()
-    userId = auth?.user?.id ?? null
+    const user = await getSessionUser()
+    userId = user?.id ?? null
   } catch {
     // Guest — fallback ke normal bonus display.
   }

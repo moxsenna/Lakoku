@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { z } from 'zod'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb, result, single } from '@lakoku/db'
 import {
   M10GSemanticIdentitySchema,
   M10GStructuralContextSchema,
@@ -62,25 +62,62 @@ function hashRawBytes(bytes: Uint8Array): string {
 }
 
 async function loadM10GSemanticCanonicalRows(storyId: string): Promise<M10GSemanticCanonicalRows> {
-  const admin = createAdminClient()
+  const db = getDb()
+  // RLS_AUDIT(chapters): SERVICE_ROLE_BYPASS - judge load canonical chapter rows
+  const chaptersPromise = result(
+    db
+      .selectFrom('chapters')
+      .select(['number', 'title', 'paragraphs'])
+      .where('story_id', '=', storyId)
+      .orderBy('number', 'asc')
+      .execute()
+  )
+  // RLS_AUDIT(story_generation_contracts): SERVICE_ROLE_BYPASS - judge load canonical contract rows
+  const contractPromise = single(
+    db
+      .selectFrom('story_generation_contracts')
+      .select(['story_contract_json', 'plot_debts_json', 'ending_lock_json'])
+      .where('story_id', '=', storyId)
+      .execute()
+  )
+  // RLS_AUDIT(reader_states): SERVICE_ROLE_BYPASS - judge load canonical reader locked ending key
+  const readerPromise = single(
+    db
+      .selectFrom('reader_states')
+      .select(['locked_ending_key'])
+      .where('story_id', '=', storyId)
+      .execute()
+  )
+  // RLS_AUDIT(story_threads): SERVICE_ROLE_BYPASS - judge load canonical threads
+  const threadsPromise = result(
+    db
+      .selectFrom('story_threads')
+      .select(['title', 'status', 'payoff_window'])
+      .where('story_id', '=', storyId)
+      .orderBy('id', 'asc')
+      .execute()
+  )
   const [chapters, contract, reader, threads] = await Promise.all([
-    admin.from('chapters').select('number,title,paragraphs').eq('story_id', storyId).order('number'),
-    admin.from('story_generation_contracts').select('story_contract_json,plot_debts_json,ending_lock_json').eq('story_id', storyId).single(),
-    admin.from('reader_states').select('locked_ending_key').eq('story_id', storyId).single(),
-    admin.from('story_threads').select('title,status,payoff_window').eq('story_id', storyId).order('id'),
+    chaptersPromise,
+    contractPromise,
+    readerPromise,
+    threadsPromise,
   ])
-  for (const [name, result] of [['chapters', chapters], ['contract', contract], ['reader', reader], ['threads', threads]] as const) {
-    if (result.error) throw new Error(`M10-G private semantic surface ${name} read failed: ${result.error.message}`)
+  for (const [name, res] of [['chapters', chapters], ['contract', contract], ['reader', reader], ['threads', threads]] as const) {
+    if (res.error) throw new Error(`M10-G private semantic surface ${name} read failed: ${res.error.message}`)
   }
-  const storyContract = (contract.data!.story_contract_json ?? {}) as Record<string, unknown>
-  const endingLock = (contract.data!.ending_lock_json ?? {}) as Record<string, unknown>
-  const plotDebts = Array.isArray(contract.data!.plot_debts_json) ? contract.data!.plot_debts_json : []
+  if (!contract.data) throw new Error('M10-G private semantic surface contract read failed: row not found')
+  if (!reader.data) throw new Error('M10-G private semantic surface reader read failed: row not found')
+
+  const storyContract = (contract.data.story_contract_json ?? {}) as Record<string, unknown>
+  const endingLock = (contract.data.ending_lock_json ?? {}) as Record<string, unknown>
+  const plotDebts = Array.isArray(contract.data.plot_debts_json) ? (contract.data.plot_debts_json as unknown[]) : []
   const threadRows = threads.data ?? []
   return {
     chapters: (chapters.data ?? []).map((row) => ({
       number: Number(row.number),
       title: String(row.title),
-      paragraphs: Array.isArray(row.paragraphs) ? row.paragraphs.map(String) : [],
+      paragraphs: Array.isArray(row.paragraphs) ? (row.paragraphs as unknown[]).map(String) : [],
     })),
     structuralContext: M10GStructuralContextSchema.parse({
       storyPromise: String(storyContract.corePromise ?? storyContract.storyPromise ?? ''),
@@ -91,7 +128,7 @@ async function loadM10GSemanticCanonicalRows(storyId: string): Promise<M10GSeman
       resolvedThreadSummaries: threadRows.filter((row) => String(row.status) === 'RESOLVED')
         .map((row) => String(row.title)),
       payoffSchedule: plotDebts.map((debt) => stableStringify(debt)),
-      lockedEndingKey: String(reader.data!.locked_ending_key ?? endingLock.endingKey ?? ''),
+      lockedEndingKey: String(reader.data.locked_ending_key ?? endingLock.endingKey ?? ''),
       actPosition: 'Novel lengkap Bab 1-50',
     }),
   }

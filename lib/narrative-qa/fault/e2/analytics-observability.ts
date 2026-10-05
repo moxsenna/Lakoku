@@ -116,20 +116,36 @@ const ELEVATED_ONLY_CLEANUP_TABLES = new Set([
 ])
 
 async function deleteAndVerifyExactTargets(
-  admin: Admin,
+  _admin: Admin,
   targets: readonly ExactCleanupTarget[],
   elevatedCleanup?: () => void,
 ): Promise<void> {
   elevatedCleanup?.()
+  const db = getDb()
   for (const target of targets) {
     if (ELEVATED_ONLY_CLEANUP_TABLES.has(target.table)) continue
-    const { error } = await admin.from(target.table).delete().in(target.column, [...target.values])
+    // RLS_AUDIT(cleanup): SERVICE_ROLE_BYPASS - fault harness delete cleanup target
+    const condition = target.column === 'payload->>story_id'
+      ? sql\`payload->>'story_id' in (\${sql.join(target.values.map((v) => sql\`\${v}\`))})\`
+      : sql\`\${sql.raw(target.column)} in (\${sql.join(target.values.map((v) => sql\`\${v}\`))})\`
+    const { error } = await dbResult(
+      sql\`DELETE FROM \${sql.table(target.table)} WHERE \${condition}\`.execute(db)
+    )
     if (error) throw new FaultScenarioError(\`\${target.table} cleanup failed: \${error.message}\`)
   }
   for (const target of targets) {
-    const { data, error } = await admin.from(target.table).select(target.column).in(target.column, [...target.values])
+    // RLS_AUDIT(cleanup): SERVICE_ROLE_BYPASS - fault harness verify cleanup target
+    const condition = target.column === 'payload->>story_id'
+      ? sql\`payload->>'story_id' in (\${sql.join(target.values.map((v) => sql\`\${v}\`))})\`
+      : sql\`\${sql.raw(target.column)} in (\${sql.join(target.values.map((v) => sql\`\${v}\`))})\`
+    const selectCol = target.column === 'payload->>story_id'
+      ? sql\`payload->>'story_id'\`
+      : sql\`\${sql.raw(target.column)}\`
+    const { data, error } = await dbResult(
+      sql\`SELECT \${selectCol} FROM \${sql.table(target.table)} WHERE \${condition}\`.execute(db)
+    )
     if (error) throw new FaultScenarioError(\`\${target.table} reset verification failed: \${error.message}\`)
-    if ((data ?? []).length > 0) {
+    if ((data?.rows ?? []).length > 0) {
       throw new FaultScenarioError(\`reset verification found mutable story residue: \${target.table}\`)
     }
   }

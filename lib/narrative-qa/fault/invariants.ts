@@ -3,7 +3,7 @@
  *
  * After ANY injected failure (and after its recovery), the isolated story must
  * satisfy the recovery invariants. Every check reads the real local DB through
- * the admin client — nothing is assumed, nothing is mocked. A single failed
+ * Kysely query builders — nothing is assumed, nothing is mocked. A single failed
  * invariant marks the scenario failed; the checker never "fixes" state.
  *
  * Invariants (plan E.5 mapping):
@@ -18,10 +18,8 @@
  *   INV_ENDING_LOCK_AT_50         — ending locked when the horizon completes
  */
 
-import { createAdminClient } from '../../supabase/admin'
+import { getDb, countOf, result, single } from '@lakoku/db'
 import { HARNESS_TOTAL_CHAPTERS } from '../harness/fixture'
-
-type Admin = ReturnType<typeof createAdminClient>
 
 export interface InvariantCheckResultV1 {
   code: string
@@ -47,21 +45,28 @@ export interface InvariantCheckOptionsV1 {
  * be exactly `expectedChapter` published chapters (revision == count).
  */
 export async function checkPostFaultInvariants(
-  admin: Admin,
+  _admin: unknown,
   storyId: string,
   userId: string,
   expectedChapter: number,
   options: InvariantCheckOptionsV1 = {},
 ): Promise<InvariantCheckResultV1[]> {
+  const db = getDb()
   const results: InvariantCheckResultV1[] = []
   const extraChapterRows = options.knownExtraChapterRows ?? 0
 
   // ---- INV_CHAPTERS_COUNT ----
   {
-    const { count, error } = await admin
-      .from('chapters')
-      .select('*', { count: 'exact', head: true })
-      .eq('story_id', storyId)
+    // RLS_AUDIT(chapters): SERVICE_ROLE_BYPASS - invariant check chapters count
+    const { data: count, error } = await result(
+      countOf(
+        db
+          .selectFrom('chapters')
+          .select((eb) => eb.fn.countAll<number>().as('n'))
+          .where('story_id', '=', storyId)
+          .execute()
+      )
+    )
     results.push({
       code: 'INV_CHAPTERS_COUNT',
       passed: !error && (count ?? -1) === expectedChapter + extraChapterRows,
@@ -76,10 +81,16 @@ export async function checkPostFaultInvariants(
 
   // ---- INV_COMMITS_COUNT ----
   {
-    const { count, error } = await admin
-      .from('chapter_state_commits')
-      .select('*', { count: 'exact', head: true })
-      .eq('story_id', storyId)
+    // RLS_AUDIT(chapter_state_commits): SERVICE_ROLE_BYPASS - invariant check commits count
+    const { data: count, error } = await result(
+      countOf(
+        db
+          .selectFrom('chapter_state_commits')
+          .select((eb) => eb.fn.countAll<number>().as('n'))
+          .where('story_id', '=', storyId)
+          .execute()
+      )
+    )
     results.push({
       code: 'INV_COMMITS_COUNT',
       passed: !error && (count ?? -1) === expectedChapter,
@@ -89,12 +100,16 @@ export async function checkPostFaultInvariants(
 
   // ---- INV_ONE_COMMIT_PER_CHAPTER ----
   {
-    const { data, error } = await admin
-      .from('chapter_state_commits')
-      .select('chapter_number')
-      .eq('story_id', storyId)
+    // RLS_AUDIT(chapter_state_commits): SERVICE_ROLE_BYPASS - invariant check commit numbers
+    const { data, error } = await result(
+      db
+        .selectFrom('chapter_state_commits')
+        .select('chapter_number')
+        .where('story_id', '=', storyId)
+        .execute()
+    )
     const numbers = Array.isArray(data)
-      ? (data as Array<{ chapter_number: number }>).map((r) => Number(r.chapter_number))
+      ? data.map((r) => Number(r.chapter_number))
       : []
     const distinct = new Set(numbers)
     const duplicates = numbers.length - distinct.size
@@ -107,12 +122,15 @@ export async function checkPostFaultInvariants(
 
   // ---- INV_CANON_REVISION ----
   {
-    const { data, error } = await admin
-      .from('stories')
-      .select('canon_state_revision')
-      .eq('id', storyId)
-      .maybeSingle()
-    const revision = Number((data as { canon_state_revision?: number } | null)?.canon_state_revision ?? -1)
+    // RLS_AUDIT(stories): SERVICE_ROLE_BYPASS - invariant check canon revision
+    const { data, error } = await single(
+      db
+        .selectFrom('stories')
+        .select('canon_state_revision')
+        .where('id', '=', storyId)
+        .execute()
+    )
+    const revision = Number(data?.canon_state_revision ?? -1)
     results.push({
       code: 'INV_CANON_REVISION',
       passed: !error && revision === expectedChapter,
@@ -124,42 +142,137 @@ export async function checkPostFaultInvariants(
   // Any canon-state row whose chapter stamp is past the published horizon is
   // partial state from an interrupted publication — it must not exist.
   {
-    const probes: Array<{ table: string; column: string; scope: 'story' | 'character' }> = [
-      { table: 'character_states', column: 'as_of_chapter', scope: 'character' },
-      { table: 'facts_ledger', column: 'established_chapter', scope: 'story' },
-      { table: 'timeline_events', column: 'chapter_number', scope: 'story' },
-      { table: 'knowledge_scopes', column: 'known_from_chapter', scope: 'story' },
-      { table: 'choice_outcomes', column: 'chapter_number', scope: 'story' },
-      { table: 'story_threads', column: 'opened_chapter', scope: 'story' },
-      { table: 'story_threads', column: 'last_touched_chapter', scope: 'story' },
+    const probeFns: Array<() => Promise<{ key: string; count: number; error: string | null }>> = [
+      async () => {
+        // RLS_AUDIT(character_states): SERVICE_ROLE_BYPASS - invariant check beyond canon
+        const { data, error } = await result(
+          countOf(
+            db
+              .selectFrom('character_states')
+              .select((eb) => eb.fn.countAll<number>().as('n'))
+              .where('character_id', 'like', `${storyId}:%`)
+              .where('as_of_chapter', '>', expectedChapter)
+              .execute()
+          )
+        )
+        return { key: 'character_states.as_of_chapter', count: data ?? 0, error: error?.message ?? null }
+      },
+      async () => {
+        // RLS_AUDIT(facts_ledger): SERVICE_ROLE_BYPASS - invariant check beyond canon
+        const { data, error } = await result(
+          countOf(
+            db
+              .selectFrom('facts_ledger')
+              .select((eb) => eb.fn.countAll<number>().as('n'))
+              .where('story_id', '=', storyId)
+              .where('established_chapter', '>', expectedChapter)
+              .execute()
+          )
+        )
+        return { key: 'facts_ledger.established_chapter', count: data ?? 0, error: error?.message ?? null }
+      },
+      async () => {
+        // RLS_AUDIT(timeline_events): SERVICE_ROLE_BYPASS - invariant check beyond canon
+        const { data, error } = await result(
+          countOf(
+            db
+              .selectFrom('timeline_events')
+              .select((eb) => eb.fn.countAll<number>().as('n'))
+              .where('story_id', '=', storyId)
+              .where('chapter_number', '>', expectedChapter)
+              .execute()
+          )
+        )
+        return { key: 'timeline_events.chapter_number', count: data ?? 0, error: error?.message ?? null }
+      },
+      async () => {
+        // RLS_AUDIT(knowledge_scopes): SERVICE_ROLE_BYPASS - invariant check beyond canon
+        const { data, error } = await result(
+          countOf(
+            db
+              .selectFrom('knowledge_scopes')
+              .select((eb) => eb.fn.countAll<number>().as('n'))
+              .where('story_id', '=', storyId)
+              .where('known_from_chapter', '>', expectedChapter)
+              .execute()
+          )
+        )
+        return { key: 'knowledge_scopes.known_from_chapter', count: data ?? 0, error: error?.message ?? null }
+      },
+      async () => {
+        // RLS_AUDIT(choice_outcomes): SERVICE_ROLE_BYPASS - invariant check beyond canon
+        const { data, error } = await result(
+          countOf(
+            db
+              .selectFrom('choice_outcomes')
+              .select((eb) => eb.fn.countAll<number>().as('n'))
+              .where('story_id', '=', storyId)
+              .where('chapter_number', '>', expectedChapter)
+              .execute()
+          )
+        )
+        return { key: 'choice_outcomes.chapter_number', count: data ?? 0, error: error?.message ?? null }
+      },
+      async () => {
+        // RLS_AUDIT(story_threads): SERVICE_ROLE_BYPASS - invariant check beyond canon opened_chapter
+        const { data, error } = await result(
+          countOf(
+            db
+              .selectFrom('story_threads')
+              .select((eb) => eb.fn.countAll<number>().as('n'))
+              .where('story_id', '=', storyId)
+              .where('opened_chapter', '>', expectedChapter)
+              .execute()
+          )
+        )
+        return { key: 'story_threads.opened_chapter', count: data ?? 0, error: error?.message ?? null }
+      },
+      async () => {
+        // RLS_AUDIT(story_threads): SERVICE_ROLE_BYPASS - invariant check beyond canon last_touched_chapter
+        const { data, error } = await result(
+          countOf(
+            db
+              .selectFrom('story_threads')
+              .select((eb) => eb.fn.countAll<number>().as('n'))
+              .where('story_id', '=', storyId)
+              .where('last_touched_chapter', '>', expectedChapter)
+              .execute()
+          )
+        )
+        return { key: 'story_threads.last_touched_chapter', count: data ?? 0, error: error?.message ?? null }
+      },
     ]
+
     let violations = 0
     const perTable: Record<string, number> = {}
     let probeError: string | null = null
-    for (const probe of probes) {
-      let query = admin.from(probe.table).select('*', { count: 'exact', head: true })
-      query = probe.scope === 'story'
-        ? query.eq('story_id', storyId)
-        : query.like('character_id', `${storyId}:%`)
-      const { count, error } = await query.gt(probe.column, expectedChapter)
-      if (error) {
-        probeError = `${probe.table}: ${error.message}`
+    for (const probeFn of probeFns) {
+      const res = await probeFn()
+      if (res.error) {
+        probeError = `${res.key}: ${res.error}`
         break
       }
-      const n = count ?? 0
-      perTable[`${probe.table}.${probe.column}`] = n
-      violations += n
+      perTable[res.key] = res.count
+      violations += res.count
     }
+
     // Revealed secrets past their gate chapter count as beyond-canon state too.
     if (!probeError) {
-      const { count, error } = await admin
-        .from('secrets_reveals')
-        .select('*', { count: 'exact', head: true })
-        .eq('story_id', storyId)
-        .eq('revealed', true)
-        .gt('reveal_gate_chapter', expectedChapter)
-      if (error) probeError = `secrets_reveals: ${error.message}`
-      else {
+      // RLS_AUDIT(secrets_reveals): SERVICE_ROLE_BYPASS - invariant check beyond gate
+      const { data: count, error } = await result(
+        countOf(
+          db
+            .selectFrom('secrets_reveals')
+            .select((eb) => eb.fn.countAll<number>().as('n'))
+            .where('story_id', '=', storyId)
+            .where('revealed', '=', true)
+            .where('reveal_gate_chapter', '>', expectedChapter)
+            .execute()
+        )
+      )
+      if (error) {
+        probeError = `secrets_reveals: ${error.message}`
+      } else {
         perTable['secrets_reveals.revealed_beyond_gate'] = count ?? 0
         violations += count ?? 0
       }
@@ -176,12 +289,18 @@ export async function checkPostFaultInvariants(
   // evidence (that is what crash recovery resumes from). A PUBLISHED checkpoint
   // past the canon would mean publication without commit — never allowed.
   {
-    const { count, error } = await admin
-      .from('chapter_generation_checkpoints')
-      .select('*', { count: 'exact', head: true })
-      .eq('story_id', storyId)
-      .eq('status', 'PUBLISHED')
-      .gt('chapter_number', expectedChapter)
+    // RLS_AUDIT(chapter_generation_checkpoints): SERVICE_ROLE_BYPASS - invariant check published cp beyond
+    const { data: count, error } = await result(
+      countOf(
+        db
+          .selectFrom('chapter_generation_checkpoints')
+          .select((eb) => eb.fn.countAll<number>().as('n'))
+          .where('story_id', '=', storyId)
+          .where('status', '=', 'PUBLISHED')
+          .where('chapter_number', '>', expectedChapter)
+          .execute()
+      )
+    )
     results.push({
       code: 'INV_NO_PUBLISHED_CP_BEYOND',
       passed: !error && (count ?? -1) === 0,
@@ -191,12 +310,18 @@ export async function checkPostFaultInvariants(
 
   // ---- INV_NO_SUCCEEDED_JOB_BEYOND ----
   {
-    const { count, error } = await admin
-      .from('generation_jobs')
-      .select('*', { count: 'exact', head: true })
-      .eq('story_id', storyId)
-      .eq('status', 'SUCCEEDED')
-      .gt('chapter_number', expectedChapter)
+    // RLS_AUDIT(generation_jobs): SERVICE_ROLE_BYPASS - invariant check succeeded job beyond
+    const { data: count, error } = await result(
+      countOf(
+        db
+          .selectFrom('generation_jobs')
+          .select((eb) => eb.fn.countAll<number>().as('n'))
+          .where('story_id', '=', storyId)
+          .where('status', '=', 'SUCCEEDED')
+          .where('chapter_number', '>', expectedChapter)
+          .execute()
+      )
+    )
     results.push({
       code: 'INV_NO_SUCCEEDED_JOB_BEYOND',
       passed: !error && (count ?? -1) === 0,
@@ -211,12 +336,15 @@ export async function checkPostFaultInvariants(
   // canon + 1 is therefore only legitimate when the choice for the last
   // published chapter was actually accepted — otherwise it is corruption.
   {
-    const { data, error } = await admin
-      .from('reader_states')
-      .select('current_chapter,status,locked_ending_key,choice_history')
-      .eq('user_id', userId)
-      .eq('story_id', storyId)
-      .maybeSingle()
+    // RLS_AUDIT(reader_states): SERVICE_ROLE_BYPASS - invariant check reader consistent
+    const { data, error } = await single(
+      db
+        .selectFrom('reader_states')
+        .select(['current_chapter', 'status', 'locked_ending_key', 'choice_history'])
+        .where('user_id', '=', userId)
+        .where('story_id', '=', storyId)
+        .execute()
+    )
     const row = data as {
       current_chapter: number
       status: string
@@ -226,7 +354,7 @@ export async function checkPostFaultInvariants(
     const atTerminal = expectedChapter >= HARNESS_TOTAL_CHAPTERS
     const expectedStatus = atTerminal ? 'SELESAI' : 'BERJALAN'
     const history = Array.isArray(row?.choice_history)
-      ? (row?.choice_history as Array<Record<string, unknown>> ?? [])
+      ? (row?.choice_history as Array<Record<string, unknown>>)
       : []
     const choiceAcceptedFor = (chapter: number): boolean => history.some(
       (h) => Number(h.chapter ?? h.chapterNumber) === chapter,
@@ -259,12 +387,15 @@ export async function checkPostFaultInvariants(
         detail: { skipped: true, reason: `horizon ${expectedChapter} < ${HARNESS_TOTAL_CHAPTERS}` },
       })
     } else {
-      const { data, error } = await admin
-        .from('reader_states')
-        .select('locked_ending_key,ending_name')
-        .eq('user_id', userId)
-        .eq('story_id', storyId)
-        .maybeSingle()
+      // RLS_AUDIT(reader_states): SERVICE_ROLE_BYPASS - invariant check ending lock at 50
+      const { data, error } = await single(
+        db
+          .selectFrom('reader_states')
+          .select(['locked_ending_key', 'ending_name'])
+          .where('user_id', '=', userId)
+          .where('story_id', '=', storyId)
+          .execute()
+      )
       const row = data as { locked_ending_key: string | null; ending_name: string | null } | null
       results.push({
         code: 'INV_ENDING_LOCK_AT_50',

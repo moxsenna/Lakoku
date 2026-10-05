@@ -18,7 +18,8 @@
 
 import { randomUUID } from 'node:crypto'
 import { writeSync } from 'node:fs'
-import { createAdminClient } from '../../supabase/admin'
+import { getDb, result as dbResult, single, type Json } from '@lakoku/db'
+import { sql } from 'kysely'
 import { generateNextPersonalizedChapter } from '../../runtime/personalized-generation'
 import type { PersonalizedGenerationDeps } from '../../runtime/personalized-generation'
 import {
@@ -57,7 +58,7 @@ import { cleanupM10E1GovernedDisposableResidue } from './e2/local-db'
 import type { InvariantCheckResultV1 } from './invariants'
 import type { E1Disposition, E1ScenarioId } from './evidence'
 
-type Admin = ReturnType<typeof createAdminClient>
+type Admin = unknown
 type GenerateResult = Awaited<ReturnType<typeof generateNextPersonalizedChapter>>
 
 /**
@@ -209,19 +210,26 @@ async function driveSync(input: DriveInput): Promise<DriveOutput> {
 async function driveWorker(input: DriveInput): Promise<DriveOutput> {
   const jobId = input.jobIdOverride ?? randomUUID()
   if (!input.jobIdOverride) {
-    const { error } = await input.admin.from('generation_jobs').insert({
-      id: jobId,
-      story_id: input.storyId,
-      chapter_number: input.chapterNumber,
-      user_id: input.userId,
-      generation_kind: 'personalized',
-      story_contract_version: 1,
-      trigger_choice_id: input.triggerChoiceId,
-      status: 'QUEUED',
-      max_attempts: 4,
-      deadline_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-      publication_idempotency_key: `generation-job:${jobId}:publish:${input.chapterNumber}`,
-    })
+    const db = getDb()
+    // RLS_AUDIT(generation_jobs): SERVICE_ROLE_BYPASS - fault harness insert job
+    const { error } = await dbResult(
+      db
+        .insertInto('generation_jobs')
+        .values({
+          id: jobId,
+          story_id: input.storyId,
+          chapter_number: input.chapterNumber,
+          user_id: input.userId,
+          generation_kind: 'personalized',
+          story_contract_version: 1,
+          trigger_choice_id: input.triggerChoiceId,
+          status: 'QUEUED',
+          max_attempts: 4,
+          deadline_at: new Date(Date.now() + 10 * 60 * 1000),
+          publication_idempotency_key: `generation-job:${jobId}:publish:${input.chapterNumber}`,
+        })
+        .execute()
+    )
     if (error) throw new FaultScenarioError(`job insert failed: ${error.message}`)
   }
 
@@ -302,17 +310,21 @@ async function drive(
  * retry can reuse the committed prose instead of regenerating it.
  */
 async function requeueFaultedJob(
-  admin: Admin,
+  _admin: Admin,
   storyId: string,
   chapterNumber: number,
 ): Promise<string | null> {
-  const { data, error } = await admin
-    .from('generation_jobs')
-    .select('id,worker_id,claim_token,status')
-    .eq('story_id', storyId)
-    .eq('chapter_number', chapterNumber)
-    .in('status', ['QUEUED', 'RUNNING', 'RETRY_WAIT'])
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT(generation_jobs): SERVICE_ROLE_BYPASS - fault harness requeue job lookup
+  const { data, error } = await single(
+    db
+      .selectFrom('generation_jobs')
+      .select(['id', 'worker_id', 'claim_token', 'status'])
+      .where('story_id', '=', storyId)
+      .where('chapter_number', '=', chapterNumber)
+      .where('status', 'in', ['QUEUED', 'RUNNING', 'RETRY_WAIT'])
+      .execute()
+  )
   if (error) throw new FaultScenarioError(`active job lookup failed: ${error.message}`)
   const row = data as { id: string; worker_id: string | null; claim_token: string | null; status: string } | null
   if (!row) return null
@@ -351,20 +363,24 @@ async function requeueFaultedJob(
 
 /** Reads the choice the reader actually accepted for Bab N (fail-closed trigger). */
 async function acceptedChoiceIdFor(
-  admin: Admin,
+  _admin: Admin,
   storyId: string,
   userId: string,
   chapterNumber: number,
 ): Promise<string | null> {
-  const { data, error } = await admin
-    .from('reader_states')
-    .select('choice_history')
-    .eq('user_id', userId)
-    .eq('story_id', storyId)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT(reader_states): SERVICE_ROLE_BYPASS - fault harness accepted choice lookup
+  const { data, error } = await single(
+    db
+      .selectFrom('reader_states')
+      .select('choice_history')
+      .where('user_id', '=', userId)
+      .where('story_id', '=', storyId)
+      .execute()
+  )
   if (error) throw new FaultScenarioError(`reader_states read failed: ${error.message}`)
-  const history = Array.isArray((data as { choice_history?: unknown[] } | null)?.choice_history)
-    ? ((data as { choice_history: unknown[] }).choice_history as Array<Record<string, unknown>>)
+  const history = Array.isArray(data?.choice_history)
+    ? ((data.choice_history as unknown[]) as Array<Record<string, unknown>>)
     : []
   const entry = [...history].reverse().find((h) => Number(h.chapter ?? h.chapterNumber) === chapterNumber)
   return entry ? String(entry.choiceId ?? entry.choice_id ?? '') || null : null
@@ -466,20 +482,36 @@ const ELEVATED_ONLY_CLEANUP_TABLES = new Set([
 ])
 
 async function deleteAndVerifyExactTargets(
-  admin: Admin,
+  _admin: Admin,
   targets: readonly ExactCleanupTarget[],
   elevatedCleanup?: () => void,
 ): Promise<void> {
   elevatedCleanup?.()
+  const db = getDb()
   for (const target of targets) {
     if (ELEVATED_ONLY_CLEANUP_TABLES.has(target.table)) continue
-    const { error } = await admin.from(target.table).delete().in(target.column, [...target.values])
+    // RLS_AUDIT(cleanup): SERVICE_ROLE_BYPASS - fault harness delete cleanup target
+    const condition = target.column === 'payload->>story_id'
+      ? sql`payload->>'story_id' in (${sql.join(target.values.map((v) => sql`${v}`))})`
+      : sql`${sql.raw(target.column)} in (${sql.join(target.values.map((v) => sql`${v}`))})`
+    const { error } = await dbResult(
+      sql`DELETE FROM ${sql.table(target.table)} WHERE ${condition}`.execute(db)
+    )
     if (error) throw new FaultScenarioError(`${target.table} cleanup failed: ${error.message}`)
   }
   for (const target of targets) {
-    const { data, error } = await admin.from(target.table).select(target.column).in(target.column, [...target.values])
+    // RLS_AUDIT(cleanup): SERVICE_ROLE_BYPASS - fault harness verify cleanup target
+    const condition = target.column === 'payload->>story_id'
+      ? sql`payload->>'story_id' in (${sql.join(target.values.map((v) => sql`${v}`))})`
+      : sql`${sql.raw(target.column)} in (${sql.join(target.values.map((v) => sql`${v}`))})`
+    const selectCol = target.column === 'payload->>story_id'
+      ? sql`payload->>'story_id'`
+      : sql`${sql.raw(target.column)}`
+    const { data, error } = await dbResult(
+      sql`SELECT ${selectCol} FROM ${sql.table(target.table)} WHERE ${condition}`.execute(db)
+    )
     if (error) throw new FaultScenarioError(`${target.table} reset verification failed: ${error.message}`)
-    if ((data ?? []).length > 0) {
+    if ((data?.rows ?? []).length > 0) {
       throw new FaultScenarioError(`reset verification found mutable story residue: ${target.table}`)
     }
   }
@@ -714,7 +746,7 @@ async function runFaultMatrixMutable(input: RunFaultMatrixInput): Promise<FaultR
   assertDeterministicProvider()
   assertIsolatedTarget()
 
-  const admin = input.admin ?? createAdminClient()
+  const admin = input.admin ?? null
   const userId = input.userId ?? HARNESS_USER_ID
   await assertChapterUnlockPricingConfigured(admin)
   await ensureHarnessUser(admin, userId)
@@ -872,14 +904,18 @@ async function runFaultMatrixMutable(input: RunFaultMatrixInput): Promise<FaultR
     recoveryDeps: w1RecoveryDeps,
     checkpointRecoveryProof: {
       readAfterFaultStatus: async () => {
-        const { data, error } = await admin
-          .from('chapter_generation_checkpoints')
-          .select('status')
-          .eq('story_id', WORKER_STORY_ID)
-          .eq('chapter_number', 25)
-          .maybeSingle()
+        const db = getDb()
+        // RLS_AUDIT(chapter_generation_checkpoints): SERVICE_ROLE_BYPASS - fault harness checkpoint status read
+        const { data, error } = await single(
+          db
+            .selectFrom('chapter_generation_checkpoints')
+            .select('status')
+            .where('story_id', '=', WORKER_STORY_ID)
+            .where('chapter_number', '=', 25)
+            .execute()
+        )
         if (error) throw new FaultScenarioError(`W1 checkpoint read failed: ${error.message}`)
-        return (data as { status?: string } | null)?.status ?? null
+        return data?.status ?? null
       },
       getFaultProseGenerationCalls: () => w1FaultProseGenerationCalls,
       getRecoveryProseGenerationCalls: () => w1RecoveryProseGenerationCalls,
@@ -926,8 +962,9 @@ async function runFaultMatrixMutable(input: RunFaultMatrixInput): Promise<FaultR
         // Ownership is destroyed exactly at the publication boundary — the same
         // shape as a lease lost to a reclaimer while the worker was generating.
         w3Probe.reached = true
-        const client = createAdminClient()
-        await client.from('generation_leases').delete().eq('story_id', publishInput.storyId)
+        const db = getDb()
+        // RLS_AUDIT(generation_leases): SERVICE_ROLE_BYPASS - fault harness delete lease
+        await db.deleteFrom('generation_leases').where('story_id', '=', publishInput.storyId).execute()
         const { publishGenerationJobChapterV5, publishChapterStateV3 } =
           await import('../../runtime/checkpoint-schema-v3')
         if (publishInput.jobContext) {
@@ -1011,14 +1048,21 @@ async function runFaultMatrixMutable(input: RunFaultMatrixInput): Promise<FaultR
 
     // Fault setup: manually create a chapter row without matching state commit.
     // This models pre-existing residue only; it does not induce a torn transaction.
-    const { error: insertError } = await admin.from('chapters').insert({
-      story_id: PUBLICATION_STORY_ID,
-      number: chapterNumber,
-      title: 'Residu transaksi robek (fault injection)',
-      paragraphs: ['Baris residu.'],
-      choice_prompt: null,
-      choices: [],
-    })
+    const db = getDb()
+    // RLS_AUDIT(chapters): SERVICE_ROLE_BYPASS - fault harness insert chapter residue
+    const { error: insertError } = await dbResult(
+      db
+        .insertInto('chapters')
+        .values({
+          story_id: PUBLICATION_STORY_ID,
+          number: chapterNumber,
+          title: 'Residu transaksi robek (fault injection)',
+          paragraphs: ['Baris residu.'],
+          choice_prompt: null,
+          choices: [] as unknown as Json,
+        })
+        .execute()
+    )
     if (insertError) throw new FaultScenarioError(`PB2 setup failed: ${insertError.message}`)
 
     const faulted = await drive('sync', {
@@ -1046,11 +1090,14 @@ async function runFaultMatrixMutable(input: RunFaultMatrixInput): Promise<FaultR
     // production path publishes Bab 47. The real trigger for Bab 47 (the Bab 46
     // choice) was preserved in triggerForChapter47 before this advance
     // overwrites pubTrigger with Bab 47's own choice.
-    const { error: deleteError } = await admin
-      .from('chapters')
-      .delete()
-      .eq('story_id', PUBLICATION_STORY_ID)
-      .eq('number', chapterNumber)
+    // RLS_AUDIT(chapters): SERVICE_ROLE_BYPASS - fault harness delete chapter residue
+    const { error: deleteError } = await dbResult(
+      db
+        .deleteFrom('chapters')
+        .where('story_id', '=', PUBLICATION_STORY_ID)
+        .where('number', '=', chapterNumber)
+        .execute()
+    )
     if (deleteError) throw new FaultScenarioError(`PB2 teardown failed: ${deleteError.message}`)
 
     const resumed = await advanceClean('sync', admin, PUBLICATION_STORY_ID, userId, chapterNumber, chapterNumber, pubTrigger)
@@ -1248,7 +1295,7 @@ export async function runFaultMatrixWithCleanup(input: {
 }
 
 export async function runFaultMatrix(input: RunFaultMatrixInput = {}): Promise<FaultRunResultV1> {
-  const admin = input.admin ?? createAdminClient()
+  const admin = input.admin ?? null
   const userId = input.userId ?? HARNESS_USER_ID
   return runFaultMatrixWithCleanup({
     runMutable: () => runFaultMatrixMutable({ ...input, admin, userId }),

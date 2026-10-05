@@ -27,6 +27,22 @@ export type Numeric = ColumnType<string, number | string, number | string>;
 
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
+export interface Account {
+  accessToken: string | null;
+  accessTokenExpiresAt: Timestamp | null;
+  accountId: string;
+  createdAt: Generated<Timestamp>;
+  id: string;
+  idToken: string | null;
+  password: string | null;
+  providerId: string;
+  refreshToken: string | null;
+  refreshTokenExpiresAt: Timestamp | null;
+  scope: string | null;
+  updatedAt: Generated<Timestamp>;
+  userId: string;
+}
+
 export interface AccountCommercialStates {
   created_at: Generated<Timestamp>;
   risk_state: Generated<string>;
@@ -963,6 +979,17 @@ export interface SecretsReveals {
   story_id: string;
 }
 
+export interface Session {
+  createdAt: Generated<Timestamp>;
+  expiresAt: Timestamp;
+  id: string;
+  ipAddress: string | null;
+  token: string;
+  updatedAt: Generated<Timestamp>;
+  userAgent: string | null;
+  userId: string;
+}
+
 export interface SharedStoryLinks {
   created_at: Generated<Timestamp>;
   expires_at: Timestamp | null;
@@ -1141,6 +1168,16 @@ export interface TintaPolicy {
   updated_at: Generated<Timestamp>;
 }
 
+export interface User {
+  createdAt: Generated<Timestamp>;
+  email: string;
+  emailVerified: Generated<boolean>;
+  id: string;
+  image: string | null;
+  name: string;
+  updatedAt: Generated<Timestamp>;
+}
+
 export interface UserMissionDaily {
   claimed_at: Generated<Timestamp>;
   credits_granted: Generated<number>;
@@ -1148,6 +1185,15 @@ export interface UserMissionDaily {
   mission_key: string;
   progress: Generated<number>;
   user_id: string;
+}
+
+export interface Verification {
+  createdAt: Generated<Timestamp>;
+  expiresAt: Timestamp;
+  id: string;
+  identifier: string;
+  updatedAt: Generated<Timestamp>;
+  value: string;
 }
 
 export interface VwBlueprintPendingReviewItems {
@@ -1206,6 +1252,7 @@ export interface VwBlueprintReviewItemDetails {
 }
 
 export interface DB {
+  account: Account;
   account_commercial_states: AccountCommercialStates;
   act_rollups: ActRollups;
   admin_credit_grants: AdminCreditGrants;
@@ -1271,6 +1318,7 @@ export interface DB {
   reward_ledger: RewardLedger;
   reward_policy: RewardPolicy;
   secrets_reveals: SecretsReveals;
+  session: Session;
   shared_story_links: SharedStoryLinks;
   shared_story_starts: SharedStoryStarts;
   stories: Stories;
@@ -1283,7 +1331,9 @@ export interface DB {
   timeline_events: TimelineEvents;
   tinta_ledger: TintaLedger;
   tinta_policy: TintaPolicy;
+  user: User;
   user_mission_daily: UserMissionDaily;
+  verification: Verification;
   vw_blueprint_pending_review_items: VwBlueprintPendingReviewItems;
   vw_blueprint_recent_resolutions: VwBlueprintRecentResolutions;
   vw_blueprint_review_authority: VwBlueprintReviewAuthority;

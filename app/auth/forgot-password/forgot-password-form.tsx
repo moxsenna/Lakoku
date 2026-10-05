@@ -4,13 +4,9 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft } from 'lucide-react'
 import { mapPasswordRecoveryError } from '@/lib/auth/password-recovery'
-import { createClient, type SupabasePublicConfig } from '@/lib/supabase/client'
+import { authClient } from '@/lib/auth-client'
 
-export function ForgotPasswordForm({
-  supabaseConfig,
-}: {
-  supabaseConfig: SupabasePublicConfig
-}) {
+export function ForgotPasswordForm() {
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
@@ -23,12 +19,12 @@ export function ForgotPasswordForm({
     setError(null)
 
     try {
-      const supabase = createClient(supabaseConfig)
-      const { error: recoveryError } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/auth/callback/recovery`,
+      const res = await authClient.forgetPassword({
+        email,
+        redirectTo: `${window.location.origin}/auth/reset-password`,
       })
-      if (recoveryError) {
-        setError(mapPasswordRecoveryError(recoveryError.message))
+      if (res?.error) {
+        setError(mapPasswordRecoveryError(res.error.message || 'unknown'))
         return
       }
       setSent(true)

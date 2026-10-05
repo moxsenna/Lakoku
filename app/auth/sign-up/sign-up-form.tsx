@@ -3,22 +3,17 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { createClient, type SupabasePublicConfig } from '@/lib/supabase/client'
+import { authClient } from '@/lib/auth-client'
 import { sanitizeNextPath } from '@/lib/auth/safe-next'
 import { GoogleSignInButton } from '@/components/auth/google-sign-in-button'
 import { ArrowLeft } from 'lucide-react'
-import { getEmailRedirectTo } from './redirect'
 
 function readSafeNextFromWindow(): string {
   if (typeof window === 'undefined') return '/beranda'
   return sanitizeNextPath(new URLSearchParams(window.location.search).get('next'))
 }
 
-export function SignUpForm({
-  supabaseConfig,
-}: {
-  supabaseConfig: SupabasePublicConfig
-}) {
+export function SignUpForm() {
   const router = useRouter()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -35,27 +30,28 @@ export function SignUpForm({
     setError(null)
 
     try {
-      const supabase = createClient(supabaseConfig)
-      const { error } = await supabase.auth.signUp({
+      const res = await authClient.signUp.email({
         email,
         password,
-        options: {
-          emailRedirectTo: getEmailRedirectTo(window.location.origin),
-          data: { full_name: name.trim() },
-        },
+        name: name.trim() || email.split('@')[0],
       })
-      if (error) {
-        setError(
-          error.message.includes('already registered')
-            ? 'Email ini sudah terdaftar. Coba masuk.'
-            : 'Pendaftaran gagal. Periksa email dan kata sandi (min. 6 karakter).',
-        )
+      if (res.error) {
+        const msg = res.error.message?.toLowerCase() || ''
+        if (
+          msg.includes('exist') ||
+          msg.includes('registered') ||
+          res.error.code === 'USER_ALREADY_EXISTS'
+        ) {
+          setError('Email ini sudah terdaftar. Coba masuk.')
+        } else {
+          setError(res.error.message || 'Pendaftaran gagal. Coba lagi.')
+        }
         setEmailLoading(false)
         return
       }
       router.push('/auth/sign-up-success')
     } catch {
-      setError('Pendaftaran belum siap. Konfigurasi Supabase belum terbaca di browser.')
+      setError('Pendaftaran gagal. Periksa koneksi lalu coba lagi.')
       setEmailLoading(false)
     }
   }
@@ -65,25 +61,17 @@ export function SignUpForm({
     setGoogleLoading(true)
     setError(null)
     try {
-      if (!supabaseConfig?.url || !supabaseConfig?.anonKey) {
-        setError('Login Google belum siap. Konfigurasi Supabase belum terbaca di browser.')
-        setGoogleLoading(false)
-        return
-      }
-      const supabase = createClient(supabaseConfig)
       const next = readSafeNextFromWindow()
-      const { error } = await supabase.auth.signInWithOAuth({
+      const res = await authClient.signIn.social({
         provider: 'google',
-        options: {
-          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
-        },
+        callbackURL: next,
       })
-      if (error) {
+      if (res?.error) {
         setError('Login Google gagal. Coba lagi atau masuk dengan email.')
         setGoogleLoading(false)
       }
     } catch {
-      setError('Login Google belum siap. Konfigurasi Supabase belum terbaca di browser.')
+      setError('Login Google gagal. Coba lagi atau masuk dengan email.')
       setGoogleLoading(false)
     }
   }

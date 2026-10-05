@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation'
-import { getSupabasePublicConfig } from '@/lib/supabase/public-config'
 import { getSessionUser } from '@/lib/api/user-state'
 import { sanitizeNextPath } from '@/lib/auth/safe-next'
 import { LoginForm } from './login-form'
@@ -17,7 +16,6 @@ export default async function LoginPage({
 
   return (
     <LoginForm
-      supabaseConfig={getSupabasePublicConfig()}
       resetSuccess={reset === 'success'}
     />
   )

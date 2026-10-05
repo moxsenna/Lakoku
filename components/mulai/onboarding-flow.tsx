@@ -21,7 +21,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, Check, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Shimmer } from '@/components/ai-elements/shimmer'
-import { createClient, type SupabasePublicConfig } from '@/lib/supabase/client'
+import { authClient } from '@/lib/auth-client'
 import {
   clearOnboardingDraftStash,
   readOnboardingDraftStash,
@@ -153,7 +153,7 @@ function getProgressMeta(
 
 // ─── Komponen utama ───────────────────────────────────────────────
 
-export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePublicConfig }) {
+export function OnboardingFlow() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [pending, startTransition] = useTransition()
@@ -309,10 +309,9 @@ export function OnboardingFlow({ supabaseConfig }: { supabaseConfig: SupabasePub
   }
 
   const hasSession = useCallback(async () => {
-    const supabase = createClient(supabaseConfig)
-    const { data: { user } } = await supabase.auth.getUser()
-    return Boolean(user)
-  }, [supabaseConfig])
+    const { data: session } = await authClient.getSession()
+    return Boolean(session?.user)
+  }, [])
 
   // Rantai onboarding: user tanpa selera lengkap diarahkan ke halaman selera
   // (genre pre-fill dari jawaban kuis) sebelum masuk cerita — sekali saja,

@@ -31,16 +31,12 @@ async function main() {
 
   check('forgot-password server route exists', Boolean(forgotPage))
   check('reset-password server route exists', Boolean(resetPage))
-  check('forgot route passes public Supabase config', forgotPage.includes('getSupabasePublicConfig'))
-  check('reset route passes public Supabase config', resetPage.includes('getSupabasePublicConfig'))
-  check('forgot form calls resetPasswordForEmail', forgotForm.includes('resetPasswordForEmail'))
+  check('forgot form calls forgetPassword', forgotForm.includes('authClient.forgetPassword'))
   check(
-    'forgot form uses fixed recovery callback',
-    forgotForm.includes('`${window.location.origin}/auth/callback/recovery`'),
+    'forgot form uses reset-password redirect',
+    forgotForm.includes('`${window.location.origin}/auth/reset-password`'),
   )
-  check('reset form verifies recovery user', resetForm.includes('supabase.auth.getUser()'))
-  check('reset form uses server password mutation', resetForm.includes("fetch('/api/auth/password-recovery'"))
-  check('server mutation updates password', source(root, 'app/api/auth/password-recovery/route.ts').includes('updateUserById'))
+  check('reset form calls resetPassword', resetForm.includes('authClient.resetPassword'))
   check(
     'reset form hard-navigates to reset success login',
     resetForm.includes("window.location.assign('/auth/login?reset=success')"),

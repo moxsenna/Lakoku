@@ -2,7 +2,7 @@
 
 import { useRef, useState, useSyncExternalStore } from 'react'
 import Link from 'next/link'
-import { createClient, type SupabasePublicConfig } from '@/lib/supabase/client'
+import { authClient } from '@/lib/auth-client'
 import { readGuestTasteProfile, clearGuestTasteProfile } from '@/lib/taste-profile/storage'
 import { actMergeGuestTasteProfile } from '@/app/onboarding/selera/actions'
 import { sanitizeNextPath } from '@/lib/auth/safe-next'
@@ -20,10 +20,8 @@ function readSafeNextFromWindow(): string {
 }
 
 export function LoginForm({
-  supabaseConfig,
   resetSuccess = false,
 }: {
-  supabaseConfig: SupabasePublicConfig
   resetSuccess?: boolean
 }) {
   const [email, setEmail] = useState('')
@@ -51,22 +49,21 @@ export function LoginForm({
     beginPending()
 
     try {
-      if (!supabaseConfig?.url || !supabaseConfig?.anonKey) {
-        setError('Login belum siap. Konfigurasi Supabase belum terbaca di browser.')
-        return
-      }
-      const supabase = createClient(supabaseConfig)
-      // Timeout agar UI tidak stuck di "Membuka pintu..." bila jaringan/Supabase hang.
-      const signIn = supabase.auth.signInWithPassword({ email, password })
+      // Timeout agar UI tidak stuck di "Membuka pintu..." bila jaringan hang.
+      const signInPromise = authClient.signIn.email({ email, password })
       const timeout = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error('LOGIN_TIMEOUT')), 20_000)
       })
-      const { error } = await Promise.race([signIn, timeout])
-      if (error) {
-        if (error.code === 'email_not_confirmed') {
+      const res = await Promise.race([signInPromise, timeout])
+      if (res.error) {
+        if (
+          res.error.code === 'EMAIL_NOT_VERIFIED' ||
+          res.error.message?.toLowerCase().includes('verif') ||
+          res.error.message?.toLowerCase().includes('confirm')
+        ) {
           setError('Emailmu belum dikonfirmasi. Buka tautan konfirmasi di inbox, lalu masuk lagi.')
         } else {
-          setError('Email atau kata sandi salah. Coba lagi.')
+          setError('Email atau kata sandi salah. Silakan periksa kembali.')
         }
         return
       }
@@ -91,7 +88,7 @@ export function LoginForm({
       if (err instanceof Error && err.message === 'LOGIN_TIMEOUT') {
         setError('Login terlalu lama. Periksa koneksi lalu coba lagi.')
       } else {
-        setError('Login belum siap. Konfigurasi Supabase belum terbaca di browser.')
+        setError('Login gagal. Periksa koneksi lalu coba lagi.')
       }
     } finally {
       // Jika hard nav jalan, unmount mengabaikan ini. Jika gagal, tombol bisa dipakai lagi.
@@ -106,26 +103,18 @@ export function LoginForm({
     setGoogleLoading(true)
     setError(null)
     try {
-      if (!supabaseConfig?.url || !supabaseConfig?.anonKey) {
-        setError('Login Google belum siap. Konfigurasi Supabase belum terbaca di browser.')
-        setGoogleLoading(false)
-        return
-      }
-      const supabase = createClient(supabaseConfig)
       const next = readSafeNextFromWindow()
-      const { error } = await supabase.auth.signInWithOAuth({
+      const res = await authClient.signIn.social({
         provider: 'google',
-        options: {
-          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
-        },
+        callbackURL: next,
       })
-      if (error) {
+      if (res?.error) {
         setError('Login Google gagal. Coba lagi atau masuk dengan email.')
         setGoogleLoading(false)
       }
       // On success browser navigates away to Google; keep googleLoading true.
     } catch {
-      setError('Login Google belum siap. Konfigurasi Supabase belum terbaca di browser.')
+      setError('Login Google gagal. Coba lagi atau masuk dengan email.')
       setGoogleLoading(false)
     }
   }

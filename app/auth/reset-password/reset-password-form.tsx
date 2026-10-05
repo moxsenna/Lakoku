@@ -2,19 +2,26 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
+import { authClient } from '@/lib/auth-client'
 import {
   mapPasswordRecoveryError,
   validateNewPassword,
 } from '@/lib/auth/password-recovery'
-import { createClient, type SupabasePublicConfig } from '@/lib/supabase/client'
 
 type RecoveryState = 'checking' | 'ready' | 'expired'
 
 export function ResetPasswordForm({
-  supabaseConfig,
+  initialToken,
+  initialError,
 }: {
-  supabaseConfig: SupabasePublicConfig
-}) {
+  initialToken?: string
+  initialError?: string
+} = {}) {
+  const searchParams = useSearchParams()
+  const token = initialToken ?? searchParams.get('token') ?? ''
+  const errorParam = initialError ?? searchParams.get('error')
+
   const [state, setState] = useState<RecoveryState>('checking')
   const [password, setPassword] = useState('')
   const [confirmation, setConfirmation] = useState('')
@@ -22,18 +29,12 @@ export function ResetPasswordForm({
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    let active = true
-    const supabase = createClient(supabaseConfig)
-    void supabase.auth.getUser().then(({ data, error: authError }) => {
-      if (!active) return
-      setState(authError || !data.user ? 'expired' : 'ready')
-    }).catch(() => {
-      if (active) setState('expired')
-    })
-    return () => {
-      active = false
+    if (errorParam || !token) {
+      setState('expired')
+    } else {
+      setState('ready')
     }
-  }, [supabaseConfig])
+  }, [token, errorParam])
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
@@ -48,16 +49,21 @@ export function ResetPasswordForm({
     setLoading(true)
     setError(null)
     try {
-      const response = await fetch('/api/auth/password-recovery', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ password, confirmation }),
+      const res = await authClient.resetPassword({
+        newPassword: password,
+        token,
       })
-      const result = await response.json().catch(() => null) as { ok?: boolean; message?: string }
-      if (!response.ok || !result?.ok) {
-        const safeMessage = result?.message || 'Permintaan belum dapat diproses. Coba lagi.'
-        if (response.status === 401) setState('expired')
-        else setError(safeMessage)
+      if (res?.error) {
+        const errorMsg = res.error.message || 'unknown'
+        if (
+          errorMsg.toLowerCase().includes('token') ||
+          errorMsg.toLowerCase().includes('expired') ||
+          errorMsg.toLowerCase().includes('invalid')
+        ) {
+          setState('expired')
+        } else {
+          setError(mapPasswordRecoveryError(errorMsg))
+        }
         return
       }
       window.location.assign('/auth/login?reset=success')

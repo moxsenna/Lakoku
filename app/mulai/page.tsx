@@ -1,7 +1,6 @@
 import type { Metadata } from 'next'
 import nextDynamic from 'next/dynamic'
 import { Suspense } from 'react'
-import { getSupabasePublicConfig } from '@/lib/supabase/public-config'
 
 export const metadata: Metadata = {
   title: 'Bentuk Ceritamu — Lakoku',
@@ -9,7 +8,6 @@ export const metadata: Metadata = {
     'Pilih cara memulai: cepat dengan pilihan arah cerita, atau tulis ide ceritamu sendiri. Lakoku menyiapkan 3 premis untuk perjalananmu sebagai tokoh utama.',
 }
 
-// Needs Supabase public config at request time; skip CF build-time prerender.
 export const dynamic = 'force-dynamic'
 
 function MulaiSkeleton() {
@@ -51,7 +49,7 @@ const OnboardingFlow = nextDynamic(
 export default function MulaiPage() {
   return (
     <Suspense fallback={<MulaiSkeleton />}>
-      <OnboardingFlow supabaseConfig={getSupabasePublicConfig()} />
+      <OnboardingFlow />
     </Suspense>
   )
 }

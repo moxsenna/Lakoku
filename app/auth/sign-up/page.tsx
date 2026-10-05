@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation'
-import { getSupabasePublicConfig } from '@/lib/supabase/public-config'
 import { getSessionUser } from '@/lib/api/user-state'
 import { sanitizeNextPath } from '@/lib/auth/safe-next'
 import { SignUpForm } from './sign-up-form'
@@ -15,7 +14,7 @@ export default async function SignUpPage({
     redirect(sanitizeNextPath(next))
   }
 
-  return <SignUpForm supabaseConfig={getSupabasePublicConfig()} />
+  return <SignUpForm />
 }
 
 export const dynamic = 'force-dynamic'

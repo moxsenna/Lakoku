@@ -1,65 +1,203 @@
-### Task 4: Clone data produksi ke Neon
+### Task 4: Migrasi Seam Sesi Server & Middleware
 
 **Files:**
-- Create: `scripts/neon-clone-data.mjs`
+- Modify: `lib/api/user-state.ts`
+- Modify: `middleware.ts`
+- Modify: `components/logout-button.tsx`
+- Delete: `lib/supabase/proxy.ts` (ganti dengan middleware Better Auth)
+- Test: `tests/auth/session-seam.test.ts`
 
 **Interfaces:**
-- Consumes: env `DATABASE_URL` (Neon) + `SUPABASE_DB_URL` (string koneksi
-  Supabase, diperoleh PM dari dashboard → simpan di `.env.local`, jangan commit).
-- Produces: Neon berisi clone data produksi; gate paritas row count.
+- Consumes: `auth.api.getSession` dari `lib/auth.ts`.
+- Produces:
+  - `getSessionUser()`: mengembalikan user aktif (berisi `id` dan `email`), mendukung cookie browser dan bearer token Android/API. Jika tidak login, mengembalikan `null` (dead cookie/guest).
+  - `middleware.ts`: proteksi rute dan auto-redirect `/beranda` untuk pengguna terotentikasi.
+  - `LogoutButton`: memanggil `authClient.signOut()`.
 
-- [ ] **Step 1: Minta PM mengisi `SUPABASE_DB_URL`** di `.env.local`
-  (Supabase Dashboard → Project Settings → Database → Connection string (URI,
-  pooler, password DB). Ini aksi PM — jika terblokir, STOP dan laporkan.)
+- [ ] **Step 1: Tulis test seam sesi**
 
-- [ ] **Step 2: Tulis `scripts/neon-clone-data.mjs`**
+```ts
+// tests/auth/session-seam.test.ts
+import { describe, expect, it, vi } from 'vitest'
 
-```js
-/**
- * Clone data produksi Supabase -> Neon (data-only, schema sudah dibuat migrasi).
- * Usage: node scripts/neon-clone-data.mjs [--tables stories,chapters]
- * Hanya schema public+private. Id UUID dipertahankan (tanpa transformasi).
- */
-import { readFileSync } from 'node:fs'
-import { execSync } from 'node:child_process'
+vi.mock('server-only', () => ({}))
 
-const env = {}
-for (const line of readFileSync('.env.local', 'utf8').split('\n')) {
-  const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/)
-  if (m) env[m[1]] = m[2].replace(/^["']|["']$/g, '')
-}
-const only = process.argv.includes('--tables') ? process.argv[process.argv.indexOf('--tables') + 1] : null
-const tablesArg = only ? `--table=${only.split(',').map((t) => `public.${t.trim()}`).join(' --table=')}` : ''
-const dump = execSync(
-  `pg_dump "${env.SUPABASE_DB_URL}" --data-only --no-owner --no-privileges ` +
-  `--schema=public --schema=private --disable-triggers --column-inserts ${tablesArg}`,
-  { maxBuffer: 512 * 1024 * 1024 },
-)
-console.log('dump bytes:', dump.length)
-// restore via psql
-execSync(`psql "${env.DATABASE_URL}" -v ON_ERROR_STOP=1 -q`, { input: dump, maxBuffer: 512 * 1024 * 1024 })
-console.log('restore OK')
+const getSessionMock = vi.fn()
+vi.mock('@/lib/auth', () => ({
+  auth: {
+    api: {
+      getSession: getSessionMock,
+    },
+  },
+}))
+
+vi.mock('next/headers', () => ({
+  headers: vi.fn().mockResolvedValue(new Headers({ cookie: 'better-auth.session_token=valid-token' })),
+}))
+
+import { getSessionUser } from '@/lib/api/user-state'
+
+describe('getSessionUser with Better Auth', () => {
+  it('mengembalikan objek User saat sesi valid', async () => {
+    getSessionMock.mockResolvedValueOnce({
+      user: { id: 'u123', email: 'test@example.com', name: 'Budi' },
+      session: { id: 's123', token: 'valid-token' },
+    })
+
+    const user = await getSessionUser()
+    expect(user).not.toBeNull()
+    expect(user?.id).toBe('u123')
+    expect(user?.email).toBe('test@example.com')
+  })
+
+  it('mengembalikan null saat sesi tidak ada atau kedaluwarsa (guest safe)', async () => {
+    getSessionMock.mockResolvedValueOnce(null)
+    const user = await getSessionUser()
+    expect(user).toBeNull()
+  })
+
+  it('mengembalikan null jika getSession melempar error (dead cookie defense)', async () => {
+    getSessionMock.mockRejectedValueOnce(new Error('Network error'))
+    const user = await getSessionUser()
+    expect(user).toBeNull()
+  })
+})
 ```
 
-Catatan: `--column-inserts` lambat tapi tahan banting (urutan row aman, mapping
-kolom eksplisit). Ukuran data produksi masih kecil (soft launch). Jika
-`--disable-triggers` butuh superuser, ganti `-v session_replication_role=replica`
-di psql. Windows: `pg_dump`/`psql` dari PATH (uji `pg_dump --version`; bila
-tidak ada, gunakan WSL atau unduh biner — catat di ADAPTATION_NOTES).
+- [ ] **Step 2: Jalankan test dan pastikan gagal**
 
-- [ ] **Step 3: Jalankan + gate paritas**
+Run: `pnpm exec vitest run tests/auth/session-seam.test.ts`
+Expected: FAIL — `getSessionUser` masih memanggil Supabase.
 
-Run: `node scripts/neon-clone-data.mjs`
-Gate: bandingkan row count tiap tabel (Supabase vs Neon) via dua koneksi pg —
-inline script cetak tabel | supabase | neon | match; WAJIB semua match
-(kecuali tabel `neon_schema_migrations`). Simpan output →
-`neon/CLONE_PARITY.txt`, commit.
+- [ ] **Step 3: Ubah `lib/api/user-state.ts`**
 
-- [ ] **Step 4: Commit**
+Ganti blok pembaca sesi Supabase di `lib/api/user-state.ts` (sekitar baris 70–125) dengan integrasi Better Auth:
+
+```ts
+import { headers } from 'next/headers'
+import { auth } from '@/lib/auth'
+
+export interface User {
+  id: string
+  email?: string
+  user_metadata?: Record<string, unknown>
+}
+
+/**
+ * Pintu tunggal pembaca sesi pengguna di server (RSC & API route).
+ * Membaca cookie browser dan Authorization Bearer token secara otomatis via Better Auth.
+ * Pertahanan mati: sesi tidak valid mengembalikan null (guest), tanpa crash RSC.
+ */
+export const getSessionUser = cache(async function getSessionUser(): Promise<User | null> {
+  try {
+    const h = await headers()
+    const session = await auth.api.getSession({ headers: h })
+    if (!session?.user) return null
+    return {
+      id: session.user.id,
+      email: session.user.email,
+      user_metadata: { name: session.user.name },
+    }
+  } catch (error) {
+    console.warn('[user-state] Gagal membaca sesi Better Auth:', error)
+    return null
+  }
+})
+```
+
+- [ ] **Step 4: Ubah `middleware.ts` dan hapus dependensi `lib/supabase/proxy.ts`**
+
+Perbarui `middleware.ts`:
+
+```ts
+import { NextRequest, NextResponse } from 'next/server'
+
+const PROTECTED_PREFIXES = ['/beranda', '/profil', '/kredit', '/payment', '/s/']
+const AUTH_ROUTES = ['/auth/login', '/auth/sign-up']
+
+export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl
+
+  // Cek keberadaan cookie sesi Better Auth
+  const sessionCookie =
+    request.cookies.get('better-auth.session_token')?.value ||
+    request.cookies.get('__Secure-better-auth.session_token')?.value
+
+  const hasSession = !!sessionCookie
+
+  // 1. Auto-redirect root dan auth routes ke /beranda jika sudah login
+  if (hasSession && (pathname === '/' || AUTH_ROUTES.some((r) => pathname.startsWith(r)))) {
+    return NextResponse.redirect(new URL('/beranda', request.url))
+  }
+
+  // 2. Proteksi rute privat jika belum login
+  if (!hasSession && PROTECTED_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
+    const loginUrl = new URL('/auth/login', request.url)
+    loginUrl.searchParams.set('next', pathname)
+    return NextResponse.redirect(loginUrl)
+  }
+
+  return NextResponse.next()
+}
+
+export const config = {
+  matcher: [
+    '/',
+    '/beranda/:path*',
+    '/profil/:path*',
+    '/kredit/:path*',
+    '/payment/:path*',
+    '/s/:path*',
+    '/auth/login',
+    '/auth/sign-up',
+  ],
+}
+```
+
+- [ ] **Step 5: Perbarui `components/logout-button.tsx`**
+
+```tsx
+'use client'
+
+import { useRouter } from 'next/navigation'
+import { authClient } from '@/lib/auth-client'
+import { clearStoredWebPush } from '@/components/push/web-registration'
+import { clearAndroidPush } from '@/lib/android/push-bridge'
+
+export function LogoutButton() {
+  const router = useRouter()
+
+  async function handleLogout() {
+    await clearStoredWebPush()
+    await clearAndroidPush()
+    await authClient.signOut()
+    router.push('/beranda')
+    router.refresh()
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleLogout}
+      className="flex min-h-13 w-full items-center justify-center rounded-2xl border border-border px-6 text-sm font-semibold text-foreground transition-colors hover:bg-card"
+    >
+      Keluar
+    </button>
+  )
+}
+```
+
+- [ ] **Step 6: Jalankan test seam dan pastikan lulus**
+
+Run: `pnpm exec vitest run tests/auth/session-seam.test.ts`
+Expected: PASS (3/3).
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add scripts/neon-clone-data.mjs neon/CLONE_PARITY.txt
-git commit -m "feat(neon): production data clone with row-count parity gate"
+git add lib/api/user-state.ts middleware.ts components/logout-button.tsx tests/auth/session-seam.test.ts
+git rm lib/supabase/proxy.ts
+git commit -m "feat(auth): migrate getSessionUser, middleware, and logout to Better Auth"
 ```
 
 ---

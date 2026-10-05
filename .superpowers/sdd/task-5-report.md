@@ -1,81 +1,41 @@
-# Task 5 Report: Kysely instance + tipe codegen (`lib/supabase/db.ts`)
+# Task 5 Report: Migrasi Antarmuka Pengguna & Formulir Autentikasi (`app/auth/*`)
 
-## Implementation Overview
-- Dibuat script codegen `scripts/neon-codegen.mjs` untuk membaca `DATABASE_URL` dari `.env.local`, menjalankan `kysely-codegen`, dan mengekspor alias `Database = DB`.
-- Dihasilkan `lib/supabase/db-types.ts` dari database target Neon (81 tabel/view terintrospeksi, 82 interfaces + tipe pembantu `Generated`, `Int8`, `Timestamp`, `Json`, `Numeric`).
-- Diterapkan TDD untuk `lib/supabase/db.ts`:
-  - RED: Menulis test `lib/supabase/db.test.ts` sebelum `lib/supabase/db.ts` ada (`Error: Cannot find module '/lib/supabase/db'`).
-  - GREEN: Mengimplementasikan singleton `getDb(): Kysely<Database>` dengan `PostgresDialect` + `pg.Pool` (max 10) dan validasi `DATABASE_URL`.
-- Memperbarui barrel `lib/supabase/index.ts` untuk mengekspor `getDb` dan tipe `Database` (mempertahankan `createAdminClient` fase A).
+## Status: DONE
 
-## Codegen Summary
-- **File:** `lib/supabase/db-types.ts`
-- **Tabel / View terintrospeksi:** 81 tabel & view (public, private, dan auth.users compat).
-- **Interface yang diekspor:** 82 interface (81 interface entitas + 1 root interface `DB`).
-- **Tipe utama yang diekspor:**
-  - `Database = DB` (kompatibel dengan kontrak barrel `@lakoku/db`)
-  - `Stories`, `Chapters`, `ReaderStates`, `AdminUsers`, `AuthUsers` (`"auth.users"`), `ReadingPolicy`, `CreditLedger`, dll.
-  - Tipe pembantu Kysely: `Generated<T>`, `Timestamp`, `Int8`, `Json`, `JsonObject`, `JsonArray`, `JsonPrimitive`, `Numeric`.
+## Implementation Summary
+1. **Login (`app/auth/login/login-form.tsx`, `app/auth/login/page.tsx`)**:
+   - Supabase `signInWithPassword` digantikan `authClient.signIn.email({ email, password })`.
+   - Google OAuth digantikan `authClient.signIn.social({ provider: 'google', callbackURL: next })`.
+   - Prop `supabaseConfig` dihapus dari `LoginForm` dan `LoginPage`.
+   - Redirect query parameter `next` dipertahankan dan divalidasi via `readSafeNextFromWindow()`.
+   - Pesan error reader-safe berbahasa Indonesia dipertahankan (termasuk deteksi unverified email).
 
-## TDD Evidence
+2. **Sign-Up (`app/auth/sign-up/sign-up-form.tsx`, `app/auth/sign-up/page.tsx`)**:
+   - Supabase `signUp` digantikan `authClient.signUp.email({ email, password, name })`.
+   - Google OAuth digantikan `authClient.signIn.social({ provider: 'google', callbackURL: next })`.
+   - Prop `supabaseConfig` dihapus dari `SignUpForm` dan `SignUpPage`.
+   - Redirect ke `/auth/sign-up-success` untuk notifikasi verifikasi email.
 
-### RED Phase
-Perintah:
-```bash
-pnpm exec vitest run lib/supabase/db.test.ts
-```
-Output:
-```
-FAIL unit lib/supabase/db.test.ts [ lib/supabase/db.test.ts ]
-Error: Cannot find module '/lib/supabase/db' imported from D:/Coding/lakoku v2/.worktrees/feat-neon-phase-a/lib/supabase/db.test.ts
-```
+3. **Forgot-Password (`app/auth/forgot-password/forgot-password-form.tsx`, `app/auth/forgot-password/page.tsx`)**:
+   - `supabase.auth.resetPasswordForEmail` digantikan `authClient.forgetPassword({ email, redirectTo })`.
+   - Di `lib/auth-client.ts`, ditambahkan alias `forgetPassword` yang memanggil `rawAuthClient.requestPasswordReset`.
+   - Prop `supabaseConfig` dihapus dari form dan page.
 
-### GREEN Phase
-Perintah:
-```bash
-pnpm exec vitest run lib/supabase/db.test.ts
-```
-Output:
-```
-✓ unit lib/supabase/db.test.ts (2 tests) 331ms
-  ✓ melempar error jika DATABASE_URL belum diset 3ms
-  ✓ menjalankan select sederhana dan singleton per proses 326ms
+4. **Reset-Password (`app/auth/reset-password/reset-password-form.tsx`, `app/auth/reset-password/page.tsx`)**:
+   - Pengambilan token dan error melalui searchParams (`token`, `error`) tanpa session Supabase.
+   - Panggilan `authClient.resetPassword({ newPassword, token })` saat submit.
+   - Redirect ke `/auth/login?reset=success` saat berhasil.
+   - State 'checking', 'ready', dan 'expired' dipertahankan untuk UX yang konsisten.
 
-Test Files  1 passed (1)
-Tests       2 passed (2)
-```
+5. **Pembersihan Dependensi `public-config`**:
+   - `app/auth/callback/recovery/route.ts` dihapus via `git rm`.
+   - `lib/supabase/public-config.ts` dihapus via `git rm`.
+   - `app/mulai/page.tsx` dan `components/mulai/onboarding-flow.tsx` dimigrasikan untuk menghilangkan dependensi ke `getSupabasePublicConfig()` dan `createClient(supabaseConfig)`. `hasSession()` kini membaca sesi lewat `authClient.getSession()`.
+   - `scripts/password-recovery-smoke.ts` diperbarui untuk memvalidasi alur pemulihan Better Auth.
 
-## Verification Gates Output
-
-### Gate 1: Vitest (`lib/supabase/db.test.ts`)
-```bash
-pnpm exec vitest run lib/supabase/db.test.ts
-```
-Status: PASS (2 tests passed in 331ms).
-
-### Gate 2: TypeScript strict check
-```bash
-pnpm typecheck
-```
-Output:
-```
-$ tsc --noEmit --incremental false
-```
-Status: PASS (0 error).
-
-### Gate 3: ESLint
-```bash
-pnpm exec eslint lib/supabase/db.ts lib/supabase/db-types.ts lib/supabase/index.ts lib/supabase/db.test.ts scripts/neon-codegen.mjs
-```
-Status: PASS (0 error, 0 warning).
-
-## Self-Review
-- **Completeness:** Singleton `getDb()` mengembalikan instance Kysely yang sama pada pemanggilan berulang; query `select 1` dan `selectFrom('reading_policy')` round-trip sukses ke Neon; error throw saat missing `DATABASE_URL` terverifikasi.
-- **Constraints adherence:**
-  - `import 'server-only'` di awal `lib/supabase/db.ts`.
-  - Kredensial tidak pernah di-hardcode ke kode/repo.
-  - Barrel `@lakoku/db` mempertahankan `createAdminClient` untuk fase A auth.
-  - Tidak ada `as any`, `@ts-ignore`, atau `@ts-expect-error`.
-
-## Concerns
-- Tidak ada. Instance Kysely dan tipe codegen siap digunakan untuk task rewrite berikutnya (Task 6 compat helpers, Task 8-11 repositories).
+## Verification
+- `pnpm typecheck`: PASS (0 errors).
+- `pnpm smoke:web-release`: PASS (9/9 checks).
+- `pnpm smoke:password-recovery`: PASS (11/11 checks).
+- `pnpm smoke:contracts`: PASS (16/16 checks).
+- `npx vitest run tests/auth`: PASS (17 test files, 116 tests passed).

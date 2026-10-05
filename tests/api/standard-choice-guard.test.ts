@@ -50,6 +50,9 @@ vi.mock('@/lib/api/personalized-choice.server', () => {
     }),
   }
 })
+vi.mock('@/lib/tinta/author-reward.server', () => ({
+  maybeGrantAuthorTinta: vi.fn().mockResolvedValue(undefined),
+}))
 
 const userId = '10000000-0000-4000-8000-000000999999'
 const standardStoryId = 'demo:standard-public'

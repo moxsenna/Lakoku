@@ -22,19 +22,11 @@ export function ResetPasswordForm({
   const token = initialToken ?? searchParams.get('token') ?? ''
   const errorParam = initialError ?? searchParams.get('error')
 
-  const [state, setState] = useState<RecoveryState>('checking')
+  const [state, setState] = useState<RecoveryState>(() => (errorParam || !token ? 'expired' : 'ready'))
   const [password, setPassword] = useState('')
   const [confirmation, setConfirmation] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    if (errorParam || !token) {
-      setState('expired')
-    } else {
-      setState('ready')
-    }
-  }, [token, errorParam])
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()

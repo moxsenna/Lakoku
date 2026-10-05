@@ -1,64 +1,81 @@
-# Task 5 Report: Migration Script `scripts/migrate-covers-to-r2.mjs`
+# Task 5 Report: Kysely instance + tipe codegen (`lib/supabase/db.ts`)
 
 ## Implementation Overview
-- Created `scripts/migrate-covers-to-r2.mjs` implementing one-shot migration script for copying story covers from Supabase Storage (`story-covers`) to Cloudflare R2 bucket and rewriting existing database records (`stories.cover`, `story_cover_candidates.url`) from absolute Supabase public URLs to canonical object keys.
-- Implemented environment parsing following `scripts/cover-rpc-smoke.mjs` pattern.
-- Implemented pseudo-folder tree traversal for Supabase storage objects.
-- Implemented S3 `HeadObject` check for migration idempotency (skips objects already present in R2, rethrows non-404 errors).
-- Implemented `--dry-run` flag support to prevent writes to R2 (`PutObjectCommand`) and updates to DB while reporting planned operations.
+- Dibuat script codegen `scripts/neon-codegen.mjs` untuk membaca `DATABASE_URL` dari `.env.local`, menjalankan `kysely-codegen`, dan mengekspor alias `Database = DB`.
+- Dihasilkan `lib/supabase/db-types.ts` dari database target Neon (81 tabel/view terintrospeksi, 82 interfaces + tipe pembantu `Generated`, `Int8`, `Timestamp`, `Json`, `Numeric`).
+- Diterapkan TDD untuk `lib/supabase/db.ts`:
+  - RED: Menulis test `lib/supabase/db.test.ts` sebelum `lib/supabase/db.ts` ada (`Error: Cannot find module '/lib/supabase/db'`).
+  - GREEN: Mengimplementasikan singleton `getDb(): Kysely<Database>` dengan `PostgresDialect` + `pg.Pool` (max 10) dan validasi `DATABASE_URL`.
+- Memperbarui barrel `lib/supabase/index.ts` untuk mengekspor `getDb` dan tipe `Database` (mempertahankan `createAdminClient` fase A).
 
-## Gate Commands and Output
+## Codegen Summary
+- **File:** `lib/supabase/db-types.ts`
+- **Tabel / View terintrospeksi:** 81 tabel & view (public, private, dan auth.users compat).
+- **Interface yang diekspor:** 82 interface (81 interface entitas + 1 root interface `DB`).
+- **Tipe utama yang diekspor:**
+  - `Database = DB` (kompatibel dengan kontrak barrel `@lakoku/db`)
+  - `Stories`, `Chapters`, `ReaderStates`, `AdminUsers`, `AuthUsers` (`"auth.users"`), `ReadingPolicy`, `CreditLedger`, dll.
+  - Tipe pembantu Kysely: `Generated<T>`, `Timestamp`, `Int8`, `Json`, `JsonObject`, `JsonArray`, `JsonPrimitive`, `Numeric`.
 
-### Gate 1: Syntax check
-Command:
+## TDD Evidence
+
+### RED Phase
+Perintah:
 ```bash
-node --check scripts/migrate-covers-to-r2.mjs
-```
-Output:
-Clean (exit code 0, no output).
-
-### Gate 2: Missing-env exit path
-Command:
-```bash
-node -e "
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { spawnSync } = require('child_process');
-
-const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'r2-test-'));
-fs.writeFileSync(path.join(tempDir, '.env.local'), 'SUPABASE_URL=https://example.supabase.co\nSUPABASE_SERVICE_ROLE_KEY=testkey\n');
-
-const scriptPath = path.resolve('scripts/migrate-covers-to-r2.mjs');
-const nodeModulesPath = path.resolve('node_modules');
-
-const res = spawnSync(process.execPath, [scriptPath], {
-  cwd: tempDir,
-  env: { ...process.env, NODE_PATH: nodeModulesPath },
-  encoding: 'utf8'
-});
-
-console.log('Status:', res.status);
-console.log('Stdout:', res.stdout);
-console.log('Stderr:', res.stderr);
-
-fs.rmSync(tempDir, { recursive: true, force: true });
-"
+pnpm exec vitest run lib/supabase/db.test.ts
 ```
 Output:
 ```
-Status: 1
-Stdout: 
-Stderr: env tidak lengkap: butuh SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, R2_ACCOUNT_ID, R2_BUCKET
+FAIL unit lib/supabase/db.test.ts [ lib/supabase/db.test.ts ]
+Error: Cannot find module '/lib/supabase/db' imported from D:/Coding/lakoku v2/.worktrees/feat-neon-phase-a/lib/supabase/db.test.ts
 ```
 
-## Files Changed
-- `scripts/migrate-covers-to-r2.mjs` (created)
+### GREEN Phase
+Perintah:
+```bash
+pnpm exec vitest run lib/supabase/db.test.ts
+```
+Output:
+```
+✓ unit lib/supabase/db.test.ts (2 tests) 331ms
+  ✓ melempar error jika DATABASE_URL belum diset 3ms
+  ✓ menjalankan select sederhana dan singleton per proses 326ms
 
-## Self-Review Findings
-- **Completeness:** List-walk handles pseudo-folders; `HeadObject` idempotency check correctly passes on 404/NotFound and skips existing objects; DB rewrites handle both `stories.cover` and `story_cover_candidates.url`; `--dry-run` writes nothing to R2 or Supabase DB.
-- **Quality:** Non-404 errors rethrown; errors in S3 / DB / download surfaced properly. Plain Node ESM without extra dependencies.
-- **Discipline:** Only `scripts/migrate-covers-to-r2.mjs` committed. No unnecessary files created or modified.
+Test Files  1 passed (1)
+Tests       2 passed (2)
+```
+
+## Verification Gates Output
+
+### Gate 1: Vitest (`lib/supabase/db.test.ts`)
+```bash
+pnpm exec vitest run lib/supabase/db.test.ts
+```
+Status: PASS (2 tests passed in 331ms).
+
+### Gate 2: TypeScript strict check
+```bash
+pnpm typecheck
+```
+Output:
+```
+$ tsc --noEmit --incremental false
+```
+Status: PASS (0 error).
+
+### Gate 3: ESLint
+```bash
+pnpm exec eslint lib/supabase/db.ts lib/supabase/db-types.ts lib/supabase/index.ts lib/supabase/db.test.ts scripts/neon-codegen.mjs
+```
+Status: PASS (0 error, 0 warning).
+
+## Self-Review
+- **Completeness:** Singleton `getDb()` mengembalikan instance Kysely yang sama pada pemanggilan berulang; query `select 1` dan `selectFrom('reading_policy')` round-trip sukses ke Neon; error throw saat missing `DATABASE_URL` terverifikasi.
+- **Constraints adherence:**
+  - `import 'server-only'` di awal `lib/supabase/db.ts`.
+  - Kredensial tidak pernah di-hardcode ke kode/repo.
+  - Barrel `@lakoku/db` mempertahankan `createAdminClient` untuk fase A auth.
+  - Tidak ada `as any`, `@ts-ignore`, atau `@ts-expect-error`.
 
 ## Concerns
-- None. Real execution will be run under PM control with valid production credentials in Task 7.
+- Tidak ada. Instance Kysely dan tipe codegen siap digunakan untuk task rewrite berikutnya (Task 6 compat helpers, Task 8-11 repositories).

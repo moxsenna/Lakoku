@@ -1,160 +1,99 @@
-### Task 5: Script migrasi `scripts/migrate-covers-to-r2.mjs`
+### Task 5: Kysely instance + tipe codegen (`lib/supabase/db.ts`)
 
 **Files:**
-- Create: `scripts/migrate-covers-to-r2.mjs`
+- Create: `lib/supabase/db.ts`
+- Create: `scripts/neon-codegen.mjs`
+- Create: `lib/supabase/db-types.ts` (HASIL codegen — besar, di-commit)
+- Modify: `lib/supabase/index.ts` (barrel: ekspor `getDb` + tipe)
+- Test: `lib/supabase/db.test.ts`
 
 **Interfaces:**
-- Consumes: env dari `.env.local` (pola parser `scripts/cover-rpc-smoke.mjs`): `SUPABASE_URL`/`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `NEXT_PUBLIC_COVER_BASE`.
-- Produces: CLI `node scripts/migrate-covers-to-r2.mjs [--dry-run]` yang aman diulang (idempoten via HeadObject); laporan jumlah objek disalin/skip dan row DB diubah.
+- Produces (dipakai semua task rewrite):
+  - `getDb(): Kysely<Database>` — singleton per proses, `PostgresDialect` + `pg.Pool` (max 10), env `DATABASE_URL` wajib (throw pesan jelas bila kosong).
+  - `Database` (codegen) di `lib/supabase/db-types.ts`.
+  - Barrel `@lakoku/db` tetap ekspor `createAdminClient` (fase A) + tambah `getDb`, `Database`, `type DbResult`.
 
-- [ ] **Step 1: Tulis script**
+- [ ] **Step 1: Codegen script + jalankan**
 
 ```js
-/**
- * Migrasi sekali-jalan: sampul Supabase Storage -> Cloudflare R2, lalu
- * rewrite stories.cover & story_cover_candidates.url dari URL absolut
- * Supabase menjadi object key relatif.
- *
- * Idempoten: objek yang sudah ada di R2 (HeadObject 200) dilewati; row DB
- * yang sudah berupa key (tidak berprefix Supabase) tidak disentuh.
- *
- * Usage:
- *   node scripts/migrate-covers-to-r2.mjs --dry-run   # laporan saja
- *   node scripts/migrate-covers-to-r2.mjs             # eksekusi riil
- */
+// scripts/neon-codegen.mjs
 import { readFileSync } from 'node:fs'
-import { createClient } from '@supabase/supabase-js'
-import { HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
-
-const dryRun = process.argv.includes('--dry-run')
-const SUPABASE_BUCKET = 'story-covers'
-
-// --- env (pola scripts/cover-rpc-smoke.mjs) ---
-const envText = readFileSync('.env.local', 'utf8')
+import { execSync } from 'node:child_process'
 const env = {}
-for (const line of envText.split('\n')) {
+for (const line of readFileSync('.env.local', 'utf8').split('\n')) {
   const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/)
   if (m) env[m[1]] = m[2].replace(/^["']|["']$/g, '')
 }
-const supabaseUrl = env.SUPABASE_URL ?? env.NEXT_PUBLIC_SUPABASE_URL
-const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY
-const r2AccountId = env.R2_ACCOUNT_ID
-const r2Bucket = env.R2_BUCKET
-if (!supabaseUrl || !serviceKey || !r2AccountId || !r2Bucket) {
-  console.error('env tidak lengkap: butuh SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, R2_ACCOUNT_ID, R2_BUCKET')
-  process.exit(1)
-}
-
-const admin = createClient(supabaseUrl, serviceKey, {
-  auth: { autoRefreshToken: false, persistSession: false },
-})
-const s3 = new S3Client({
-  region: 'auto',
-  endpoint: `https://${r2AccountId}.r2.cloudflarestorage.com`,
-  credentials: {
-    accessKeyId: env.R2_ACCESS_KEY_ID,
-    secretAccessKey: env.R2_SECRET_ACCESS_KEY,
-  },
-})
-
-const SUPABASE_PUBLIC_PREFIX = `${supabaseUrl}/storage/v1/object/public/${SUPABASE_BUCKET}/`
-
-function keyFromSupabaseUrl(url) {
-  return typeof url === 'string' && url.startsWith(SUPABASE_PUBLIC_PREFIX)
-    ? url.slice(SUPABASE_PUBLIC_PREFIX.length)
-    : null
-}
-
-async function objectExists(key) {
-  try {
-    await s3.send(new HeadObjectCommand({ Bucket: r2Bucket, Key: key }))
-    return true
-  } catch (error) {
-    const status = error?.$metadata?.httpStatusCode
-    if (status === 404 || error?.name === 'NotFound') return false
-    throw error
-  }
-}
-
-async function listAllObjects() {
-  const out = []
-  // Layout: <storyId>/<stamp>.webp — list('') mengembalikan pseudo-folder.
-  const { data: roots, error } = await admin.storage.from(SUPABASE_BUCKET).list('', { limit: 1000 })
-  if (error) throw error
-  for (const root of roots) {
-    if (!root.id) {
-      const { data: files, error: ferr } = await admin.storage.from(SUPABASE_BUCKET).list(root.name, { limit: 1000 })
-      if (ferr) throw ferr
-      for (const f of files) if (f.id) out.push(`${root.name}/${f.name}`)
-    } else if (root.name.endsWith('.webp')) {
-      out.push(root.name)
-    }
-  }
-  return out
-}
-
-async function copyObject(key) {
-  if (await objectExists(key)) return 'skip'
-  const { data, error } = await admin.storage.from(SUPABASE_BUCKET).download(key)
-  if (error) throw new Error(`download ${key}: ${error.message}`)
-  const body = Buffer.from(await data.arrayBuffer())
-  if (dryRun) return 'copy'
-  await s3.send(new PutObjectCommand({
-    Bucket: r2Bucket,
-    Key: key,
-    Body: body,
-    ContentType: 'image/webp',
-    CacheControl: '31536000',
-  }))
-  return 'copy'
-}
-
-async function rewriteTable(table, column) {
-  const { data: rows, error } = await admin.from(table).select(`id,${column}`).like(column, `${SUPABASE_PUBLIC_PREFIX}%`)
-  if (error) throw error
-  let changed = 0
-  for (const row of rows) {
-    const key = keyFromSupabaseUrl(row[column])
-    if (!key) continue
-    if (!dryRun) {
-      const { error: uerr } = await admin.from(table).update({ [column]: key }).eq('id', row.id)
-      if (uerr) throw new Error(`update ${table}/${row.id}: ${uerr.message}`)
-    }
-    changed += 1
-  }
-  return { found: rows.length, changed }
-}
-
-console.log(`mode: ${dryRun ? 'DRY-RUN' : 'EKSEKUSI'}`)
-const objects = await listAllObjects()
-console.log(`objek Supabase ditemukan: ${objects.length}`)
-
-let copied = 0
-let skipped = 0
-for (const key of objects) {
-  const result = await copyObject(key)
-  if (result === 'copy') copied += 1
-  else skipped += 1
-}
-console.log(`R2: ${copied} disalin, ${skipped} sudah ada (skip)`)
-
-for (const [table, column] of [['stories', 'cover'], ['story_cover_candidates', 'url']]) {
-  const r = await rewriteTable(table, column)
-  console.log(`${table}.${column}: ${r.found} row berprefix Supabase, ${dryRun ? 'akan diubah' : 'diubah'}: ${r.changed}`)
-}
-console.log('selesai.')
+execSync(
+  `npx kysely-codegen --url "${env.DATABASE_URL}" --out-file lib/supabase/db-types.ts --dialect postgres --print`,
+  { stdio: 'inherit' },
+)
 ```
 
-- [ ] **Step 2: Uji sintaks & jalur env-kurang**
+Run: `node scripts/neon-codegen.mjs`
+Expected: `lib/supabase/db-types.ts` berisi interface per tabel (snake_case).
 
-Run: `node --check scripts/migrate-covers-to-r2.mjs && node scripts/migrate-covers-to-r2.mjs --dry-run` (sementara kosongkan env R2 di shell, mis. `R2_ACCOUNT_ID= node scripts/...` di POSIX — di Windows cukup `--dry-run` dengan env lengkap)
-Expected: `node --check` bersih; tanpa env R2 → keluar dengan pesan `env tidak lengkap`; dengan env lengkap → laporan tanpa menulis.
+- [ ] **Step 2: Tulis test yang gagal** (`lib/supabase/db.test.ts`)
 
-- [ ] **Step 3: Commit**
+```ts
+import { describe, expect, it } from 'vitest'
+import { getDb } from './db'
+
+const hasDb = !!process.env.DATABASE_URL
+
+describe.skipIf(!hasDb)('getDb (butuh DATABASE_URL)', () => {
+  it('menjalankan select sederhana dan singleton per proses', async () => {
+    const db1 = getDb()
+    const db2 = getDb()
+    expect(db1).toBe(db2)
+    const r = await db1.selectFrom((eb) => eb.selectFrom(sql`1`.as('one')).selectAll()).execute()
+    expect(r).toHaveLength(1)
+  })
+})
+```
+
+(Import `sql` dari `kysely` — perbaiki agar valid; test inti: singleton +
+query `select 1` berhasil terhadap Neon.)
+
+- [ ] **Step 3: Implementasi `lib/supabase/db.ts`**
+
+```ts
+import 'server-only'
+import { Kysely, PostgresDialect } from 'kysely'
+import { Pool } from 'pg'
+import type { Database } from './db-types'
+
+/**
+ * Kysely instance untuk Neon (Full Exit Supabase — Fase A).
+ * Singleton per proses; kredensial hanya dari DATABASE_URL (server env).
+ * Pool kecil: endpoint pooled Neon free tier.
+ */
+let instance: Kysely<Database> | null = null
+
+export function getDb(): Kysely<Database> {
+  if (!instance) {
+    const url = process.env.DATABASE_URL
+    if (!url) throw new Error('getDb: DATABASE_URL belum diset.')
+    instance = new Kysely<Database>({
+      dialect: new PostgresDialect({ pool: new Pool({ connectionString: url, max: 10 }) }),
+    })
+  }
+  return instance
+}
+```
+
+Barrel `lib/supabase/index.ts` tambah: `export { getDb } from './db'` +
+`export type { Database } from './db-types'` (keep `createAdminClient` export
+fase A).
+
+- [ ] **Step 4: Test lulus + commit**
+
+Run: `pnpm exec vitest run lib/supabase/db.test.ts` → PASS (1 test)
+Run: `pnpm typecheck` → bersih
 
 ```bash
-git add scripts/migrate-covers-to-r2.mjs
-git commit -m "feat(cover): one-shot Supabase Storage to R2 migration script with dry-run"
+git add lib/supabase/db.ts lib/supabase/db-types.ts lib/supabase/index.ts lib/supabase/db.test.ts scripts/neon-codegen.mjs
+git commit -m "feat(neon): Kysely getDb singleton with codegen Database types"
 ```
 
 ---

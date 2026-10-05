@@ -1,105 +1,65 @@
-### Task 4: Jalur tulis & baca konsumen mengikuti kontrak key
+### Task 4: Clone data produksi ke Neon
 
 **Files:**
-- Modify: `lib/cover/server.ts:93-103` (`setStoryCover`) dan `:136-164` (`getStoryCoverCandidates`)
-- Modify: `app/api/stories/[id]/cover/generate/route.ts:148,168-171,175`
-- Modify: `app/api/stories/[id]/cover/upload/route.ts:85-95`
-- Modify: `app/api/stories/[id]/cover/apply/route.ts:31-46`
+- Create: `scripts/neon-clone-data.mjs`
 
 **Interfaces:**
-- Consumes: `putCover` → `{ ok: true; key }` (Task 3); `resolveStoryCover`, `coverKeyFromPublicUrl` dari `lib/cover/url.ts` (Task 1).
-- Produces: `setStoryCover(storyId, userId, coverPath)` menerima key ATAU URL publik (dinormalisasi ke key); `getStoryCoverCandidates()` mengembalikan `url` yang SUDAH di-resolve (UI tetap memperlakukan sebagai URL final).
+- Consumes: env `DATABASE_URL` (Neon) + `SUPABASE_DB_URL` (string koneksi
+  Supabase, diperoleh PM dari dashboard → simpan di `.env.local`, jangan commit).
+- Produces: Neon berisi clone data produksi; gate paritas row count.
 
-- [ ] **Step 1: Ubah `lib/cover/server.ts`**
+- [ ] **Step 1: Minta PM mengisi `SUPABASE_DB_URL`** di `.env.local`
+  (Supabase Dashboard → Project Settings → Database → Connection string (URI,
+  pooler, password DB). Ini aksi PM — jika terblokir, STOP dan laporkan.)
 
-Di `setStoryCover` (ganti fungsi, baris 92–103):
+- [ ] **Step 2: Tulis `scripts/neon-clone-data.mjs`**
 
-```ts
-import { coverKeyFromPublicUrl, resolveStoryCover } from '@/lib/cover/url'
-```
-
-```ts
+```js
 /**
- * Pasang sampul baru; penjaga pemilik diulang di klausa update.
- * Input bisa object key (dari putCover) atau URL publik (dari kandidat);
- * URL milik base publik kita dinormalisasi kembali menjadi key supaya
- * stories.cover selalu konsisten menyimpan key.
+ * Clone data produksi Supabase -> Neon (data-only, schema sudah dibuat migrasi).
+ * Usage: node scripts/neon-clone-data.mjs [--tables stories,chapters]
+ * Hanya schema public+private. Id UUID dipertahankan (tanpa transformasi).
  */
-export async function setStoryCover(storyId: string, userId: string, coverPath: string): Promise<boolean> {
-  const db = createAdminClient()
-  const cover = coverKeyFromPublicUrl(coverPath) ?? coverPath
-  const { error, count } = await db
-    .from('stories')
-    .update({ cover }, { count: 'exact' })
-    .eq('id', storyId)
-    .eq('owner_user_id', userId)
+import { readFileSync } from 'node:fs'
+import { execSync } from 'node:child_process'
 
-  if (error) throw new Error(`setStoryCover: ${error.message}`)
-  return (count ?? 0) > 0
+const env = {}
+for (const line of readFileSync('.env.local', 'utf8').split('\n')) {
+  const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/)
+  if (m) env[m[1]] = m[2].replace(/^["']|["']$/g, '')
 }
+const only = process.argv.includes('--tables') ? process.argv[process.argv.indexOf('--tables') + 1] : null
+const tablesArg = only ? `--table=${only.split(',').map((t) => `public.${t.trim()}`).join(' --table=')}` : ''
+const dump = execSync(
+  `pg_dump "${env.SUPABASE_DB_URL}" --data-only --no-owner --no-privileges ` +
+  `--schema=public --schema=private --disable-triggers --column-inserts ${tablesArg}`,
+  { maxBuffer: 512 * 1024 * 1024 },
+)
+console.log('dump bytes:', dump.length)
+// restore via psql
+execSync(`psql "${env.DATABASE_URL}" -v ON_ERROR_STOP=1 -q`, { input: dump, maxBuffer: 512 * 1024 * 1024 })
+console.log('restore OK')
 ```
 
-Di `getStoryCoverCandidates` (baris 153–159), ubah mapping agar `url` yang sampai ke UI sudah absolut:
+Catatan: `--column-inserts` lambat tapi tahan banting (urutan row aman, mapping
+kolom eksplisit). Ukuran data produksi masih kecil (soft launch). Jika
+`--disable-triggers` butuh superuser, ganti `-v session_replication_role=replica`
+di psql. Windows: `pg_dump`/`psql` dari PATH (uji `pg_dump --version`; bila
+tidak ada, gunakan WSL atau unduh biner — catat di ADAPTATION_NOTES).
 
-```ts
-    return data.map((r) => ({
-      id: String(r.id),
-      url: resolveStoryCover(String(r.url)),
-      preset: String(r.preset),
-      createdAt: String(r.created_at),
-      expiresAt: String(r.expires_at),
-    }))
-```
+- [ ] **Step 3: Jalankan + gate paritas**
 
-(Di DB, kandidat kini menyimpan key; resolver merakit URL saat baca.)
+Run: `node scripts/neon-clone-data.mjs`
+Gate: bandingkan row count tiap tabel (Supabase vs Neon) via dua koneksi pg —
+inline script cetak tabel | supabase | neon | match; WAJIB semua match
+(kecuali tabel `neon_schema_migrations`). Simpan output →
+`neon/CLONE_PARITY.txt`, commit.
 
-- [ ] **Step 2: Ubah route `cover/generate`**
-
-- Baris 148: `const applied = await setStoryCover(storyId, user.id, stored.key)`
-- Baris 168–171: `await recordStoryCoverCandidate(storyId, user.id, { url: stored.key, preset: options.preset })`
-- Baris 175: `return NextResponse.json({ ok: true, cover: resolveStoryCover(stored.key), balance })`
-- Tambah import: `import { resolveStoryCover } from '@/lib/cover/url'`
-
-- [ ] **Step 3: Ubah route `cover/upload`**
-
-- Baris 85: `const applied = await setStoryCover(storyId, user.id, stored.key)`
-- Baris 90–93: `await recordStoryCoverCandidate(storyId, user.id, { url: stored.key, preset: 'unggah' })`
-- Baris 95: `return NextResponse.json({ ok: true, cover: resolveStoryCover(stored.key) })`
-- Tambah import: `import { resolveStoryCover } from '@/lib/cover/url'`
-
-- [ ] **Step 4: Ubah route `cover/apply`**
-
-Ganti blok validasi–pasang (baris 31–46):
-
-```ts
-  const body = await req.json().catch(() => ({}))
-  const url = typeof body.url === 'string' ? body.url.trim() : ''
-  if (!url) {
-    return NextResponse.json({ ok: false, error: 'URL sampul tidak valid.' }, { status: 400 })
-  }
-
-  const applied = await setStoryCover(storyId, user.id, url)
-  if (!applied) {
-    return NextResponse.json({ ok: false, error: 'Sampul gagal dipasang.' }, { status: 500 })
-  }
-
-  // setStoryCover menormalisasi URL base-publik ke key; respons memakai
-  // resolver supaya UI selalu menerima URL yang bisa dirender.
-  return NextResponse.json({ ok: true, cover: resolveStoryCover(coverKeyFromPublicUrl(url) ?? url) })
-```
-
-Tambah import: `import { coverKeyFromPublicUrl, resolveStoryCover } from '@/lib/cover/url'`
-
-- [ ] **Step 5: Gate statis**
-
-Run: `pnpm typecheck && pnpm lint`
-Expected: bersih. (`grep -rn "stored.url" app/api/stories/` harus kosong.)
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add lib/cover/server.ts app/api/stories/\[id\]/cover/generate/route.ts app/api/stories/\[id\]/cover/upload/route.ts app/api/stories/\[id\]/cover/apply/route.ts
-git commit -m "feat(cover): store object keys across cover write paths, resolve URLs at read"
+git add scripts/neon-clone-data.mjs neon/CLONE_PARITY.txt
+git commit -m "feat(neon): production data clone with row-count parity gate"
 ```
 
 ---

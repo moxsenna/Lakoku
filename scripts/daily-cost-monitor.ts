@@ -19,7 +19,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { createClient } from '@supabase/supabase-js'
+import { getDb, result } from '@lakoku/db'
 
 import {
   buildDailyCostReport,
@@ -40,7 +40,7 @@ const SELECTED_COLUMNS = [
   'cost_amount',
   'cost_currency',
   'cost_source',
-].join(',')
+] as const
 
 /** Loads `.env.local` without overriding anything already in the environment. */
 function loadLocalEnvironment(): void {
@@ -74,24 +74,24 @@ function parsedDays(argv: readonly string[]): number {
 async function main(): Promise<void> {
   const days = parsedDays(process.argv.slice(2))
   loadLocalEnvironment()
-  const url = process.env.SUPABASE_URL?.trim() || requiredEnvironment('NEXT_PUBLIC_SUPABASE_URL')
-  const serviceRoleKey = requiredEnvironment('SUPABASE_SERVICE_ROLE_KEY')
-  const client = createClient(url, serviceRoleKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  })
+  const db = getDb()
 
   const to = new Date()
   const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000)
 
   const rows: ProviderCallCostRow[] = []
   for (let page = 0; page < MAX_PAGES; page++) {
-    const { data, error } = await client
-      .from('generation_provider_calls')
-      .select(SELECTED_COLUMNS)
-      .gte('started_at', from.toISOString())
-      .lt('started_at', to.toISOString())
-      .order('started_at', { ascending: true })
-      .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1)
+    const { data, error } = await result(
+      db
+        .selectFrom('generation_provider_calls')
+        .select(SELECTED_COLUMNS)
+        .where('started_at', '>=', from)
+        .where('started_at', '<', to)
+        .orderBy('started_at', 'asc')
+        .offset(page * PAGE_SIZE)
+        .limit(PAGE_SIZE)
+        .execute(),
+    )
 
     if (error) throw new Error('DAILY_COST_MONITOR_QUERY_FAILED')
     if (!data || data.length === 0) break

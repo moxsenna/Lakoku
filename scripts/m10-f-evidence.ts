@@ -12,7 +12,7 @@
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { createAdminClient } from '../lib/supabase/admin'
+import { getDb, single, result } from '@lakoku/db'
 import { scanForLeaks } from '@lakoku/ai-gateway'
 import type {
   LongHorizonFindingV1,
@@ -72,7 +72,7 @@ const TERMINAL_JOB_STATUSES = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED'])
 const USD_SCALE = 8
 const LATENCY_WATCHPOINT_MS = 120_000
 
-type Admin = ReturnType<typeof createAdminClient>
+type Db = ReturnType<typeof getDb>
 type ManifestWithEvidenceHashes = Omit<M10ArtifactManifestV1, 'schemaVersion' | 'artifactHashes'> & {
   schemaVersion: 2
   pilotIdentity: M10FPilotRunIdentity
@@ -210,18 +210,18 @@ function redactRawProviderText(findings: LongHorizonFindingV1[]): LongHorizonFin
   }))
 }
 
-async function captureAudits(admin: Admin, storyId: string) {
+async function captureAudits(db: Db, storyId: string) {
   const [chaptersResult, readerResult, outcomesResult, eventsResult, leasesResult, checkpointsResult, jobsResult, contractResult, threadsResult] =
     await Promise.all([
-      admin.from('chapters').select('number,title,paragraphs,choice_prompt,choices').eq('story_id', storyId).order('number'),
-      admin.from('reader_states').select('user_id,status,current_chapter,choice_history,locked_ending_key').eq('story_id', storyId),
-      admin.from('choice_outcomes').select('chapter_number').eq('story_id', storyId),
-      admin.from('story_events').select('id,seq,type,payload').eq('story_id', storyId).order('seq'),
-      admin.from('generation_leases').select('status').eq('story_id', storyId),
-      admin.from('chapter_generation_checkpoints').select('chapter_number,status').eq('story_id', storyId),
-      admin.from('generation_jobs').select('chapter_number,status').eq('story_id', storyId),
-      admin.from('story_generation_contracts').select('story_contract_json,plot_debts_json,ending_lock_json').eq('story_id', storyId).single(),
-      admin.from('story_threads').select('id,title,status,payoff_window').eq('story_id', storyId).order('id'),
+      result(db.selectFrom('chapters').select(['number', 'title', 'paragraphs', 'choice_prompt', 'choices']).where('story_id', '=', storyId).orderBy('number', 'asc').execute()),
+      result(db.selectFrom('reader_states').select(['user_id', 'status', 'current_chapter', 'choice_history', 'locked_ending_key']).where('story_id', '=', storyId).execute()),
+      result(db.selectFrom('choice_outcomes').select('chapter_number').where('story_id', '=', storyId).execute()),
+      result(db.selectFrom('story_events').select(['id', 'seq', 'type', 'payload']).where('story_id', '=', storyId).orderBy('seq', 'asc').execute()),
+      result(db.selectFrom('generation_leases').select('status').where('story_id', '=', storyId).execute()),
+      result(db.selectFrom('chapter_generation_checkpoints').select(['chapter_number', 'status']).where('story_id', '=', storyId).execute()),
+      result(db.selectFrom('generation_jobs').select(['chapter_number', 'status']).where('story_id', '=', storyId).execute()),
+      single(db.selectFrom('story_generation_contracts').select(['story_contract_json', 'plot_debts_json', 'ending_lock_json']).where('story_id', '=', storyId).limit(1).execute()),
+      result(db.selectFrom('story_threads').select(['id', 'title', 'status', 'payoff_window']).where('story_id', '=', storyId).orderBy('id', 'asc').execute()),
     ])
 
   for (const [name, result] of [
@@ -326,13 +326,32 @@ async function captureAudits(admin: Admin, storyId: string) {
   }
 }
 
-async function captureTelemetry(admin: Admin, identity: M10FPilotRunIdentity) {
-  const { data, error } = await admin
-    .from('generation_provider_calls')
-    .select('story_id,correlation_id,chapter_number,provider_call_id,attempt_number,fallback_index,elapsed_ms,outcome,input_token_count,output_token_count,total_token_count,cost_amount,cost_currency,cost_source,route_version')
-    .eq('story_id', identity.storyId)
-    .eq('correlation_id', identity.correlationId)
-    .order('started_at', { ascending: true })
+async function captureTelemetry(db: Db, identity: M10FPilotRunIdentity) {
+  const { data, error } = await result(
+    db
+      .selectFrom('generation_provider_calls')
+      .select([
+        'story_id',
+        'correlation_id',
+        'chapter_number',
+        'provider_call_id',
+        'attempt_number',
+        'fallback_index',
+        'elapsed_ms',
+        'outcome',
+        'input_token_count',
+        'output_token_count',
+        'total_token_count',
+        'cost_amount',
+        'cost_currency',
+        'cost_source',
+        'route_version',
+      ])
+      .where('story_id', '=', identity.storyId)
+      .where('correlation_id', '=', identity.correlationId)
+      .orderBy('started_at', 'asc')
+      .execute(),
+  )
   if (error) throw new Error(`generation_provider_calls read failed: ${error.message}`)
   const rows = scopeM10FTelemetryRows((data ?? []) as unknown as ProviderCallRow[], {
     storyId: identity.storyId,
@@ -400,12 +419,12 @@ async function captureTelemetry(admin: Admin, identity: M10FPilotRunIdentity) {
   }
 }
 
-async function captureE5(admin: Admin, storyId: string, generationFailureEventIds: string[]) {
+async function captureE5(db: Db, storyId: string, generationFailureEventIds: string[]) {
   const [queue, resolutions, audits, proofs] = await Promise.all([
-    admin.from('blueprint_queue').select('status,source_event_id').eq('story_id', storyId),
-    admin.from('blueprint_resolutions').select('disposition').eq('story_id', storyId),
-    admin.from('blueprint_audit_log').select('id').eq('story_id', storyId),
-    admin.from('blueprint_validator_proofs').select('id').eq('story_id', storyId),
+    result(db.selectFrom('blueprint_queue').select(['status', 'source_event_id']).where('story_id', '=', storyId).execute()),
+    result(db.selectFrom('blueprint_resolutions').select('disposition').where('story_id', '=', storyId).execute()),
+    result(db.selectFrom('blueprint_audit_log').select('id').where('story_id', '=', storyId).execute()),
+    result(db.selectFrom('blueprint_validator_proofs').select('id').where('story_id', '=', storyId).execute()),
   ])
   for (const [name, result] of [
     ['blueprint_queue', queue],
@@ -452,11 +471,11 @@ async function main(): Promise<void> {
   const pilotIdentity = requirePilotRunIdentity()
   const { storyId } = pilotIdentity
   assertIsolatedTarget()
-  const admin = createAdminClient()
+  const db = getDb()
   const startedAt = new Date().toISOString()
   const { headSha, workingTreeDirty } = headShaOfWorkingTree()
 
-  const auditCapture = await captureAudits(admin, storyId)
+  const auditCapture = await captureAudits(db, storyId)
   const liveCapturePath = requireLiveCapturePath()
   const liveCaptureRecords = liveCapturePath
     ? readLiveCaptures(liveCapturePath, pilotIdentity)
@@ -475,7 +494,7 @@ async function main(): Promise<void> {
     ? []
     : evidenceCaptureChapterNumbers('POST_HORIZON', HARNESS_TOTAL_CHAPTERS)) {
     const captured = await captureChapter({
-      admin,
+      admin: db as never,
       storyId,
       userId: auditCapture.readerUserId,
       chapterNumber,
@@ -499,20 +518,20 @@ async function main(): Promise<void> {
     chapterFindings.push(...captured.findings)
   }
 
-  const repetitionEnvelope = await captureRepetition(admin, storyId, 50)
-  const endingEnvelope = await captureEndingRunway(admin, storyId, auditCapture.readerUserId)
+  const repetitionEnvelope = await captureRepetition(db as never, storyId, 50)
+  const endingEnvelope = await captureEndingRunway(db as never, storyId, auditCapture.readerUserId)
   const repetitionFindings = evaluateRepetition(repetitionEnvelope)
   const endingFindings = evaluateEndingRunway(endingEnvelope)
   const actBoundaries = []
   for (const chapterNumber of ACT_BOUNDARY_CHAPTERS) {
-    actBoundaries.push(await captureActBoundary(admin, storyId, auditCapture.readerUserId, chapterNumber))
+    actBoundaries.push(await captureActBoundary(db as never, storyId, auditCapture.readerUserId, chapterNumber))
   }
   const actBoundaryGate = evaluateActBoundaryGate(actBoundaries)
   const findings = sortFindings(
     redactRawProviderText([...chapterFindings, ...repetitionFindings, ...endingFindings]),
   )
-  const telemetry = await captureTelemetry(admin, pilotIdentity)
-  const e5 = await captureE5(admin, storyId, auditCapture.generationFailureEventIds)
+  const telemetry = await captureTelemetry(db, pilotIdentity)
+  const e5 = await captureE5(db, storyId, auditCapture.generationFailureEventIds)
   const semanticEvidence = await loadSemanticEvidence(pilotIdentity)
   const semanticGate = deriveM10FSemanticGateEvidence(semanticEvidence)
 

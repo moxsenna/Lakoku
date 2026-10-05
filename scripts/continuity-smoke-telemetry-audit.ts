@@ -16,7 +16,7 @@
  *   pnpm exec node scripts/run-smoke.cjs scripts/continuity-smoke-telemetry-audit.ts
  */
 
-import { createAdminClient } from '@lakoku/db'
+import { getDb, result } from '@lakoku/db'
 
 const SMOKE_USER_ID = '00000000-0000-4000-8000-00000000ab01'
 const SMOKE_STORY_IDS = ['story-ab-test-a', 'story-ab-test-b']
@@ -77,15 +77,27 @@ async function main(): Promise<void> {
   console.log('mutasi        : TIDAK ADA. Skrip ini hanya SELECT.')
   console.log('')
 
-  const db = createAdminClient()
+  const db = getDb()
 
-  const { data, error } = await db
-    .from('generation_provider_calls')
-    .select(
-      'provider_call_id, user_id, story_id, chapter_number, workflow_phase, provider_id, model_id, outcome, started_at, created_at',
-    )
-    .eq('workflow_phase', SMOKE_WORKFLOW_PHASE)
-    .order('created_at', { ascending: true })
+  const { data, error } = await result(
+    db
+      .selectFrom('generation_provider_calls')
+      .select([
+        'provider_call_id',
+        'user_id',
+        'story_id',
+        'chapter_number',
+        'workflow_phase',
+        'provider_id',
+        'model_id',
+        'outcome',
+        'started_at',
+        'created_at',
+      ])
+      .where('workflow_phase', '=', SMOKE_WORKFLOW_PHASE)
+      .orderBy('created_at', 'asc')
+      .execute(),
+  )
 
   if (error) {
     console.error(`Query gagal: ${error.message}`)

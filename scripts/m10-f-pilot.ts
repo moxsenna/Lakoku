@@ -16,7 +16,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { createClient } from '@supabase/supabase-js'
+import { getDb, single, result, countOf } from '@lakoku/db'
 import { generateNextPersonalizedChapter } from '@lakoku/runtime'
 import { scanForLeaks } from '@lakoku/ai-gateway'
 import {
@@ -77,10 +77,7 @@ if (process.env.NARRATIVE_PROVIDER === 'gateway') {
 }
 
 function admin() {
-  const url = process.env.SUPABASE_URL
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
-  if (!url || !key) throw new Error('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY tak tersedia.')
-  return createClient(url, key, { auth: { persistSession: false } })
+  return getDb()
 }
 
 async function main() {
@@ -121,11 +118,25 @@ async function main() {
     await seedHarnessStory({ admin: db, storyId: STORY })
     console.log(`[pilot] story ${STORY} di-seed.`)
   } else {
-    const [{ count }, { data: reader }] = await Promise.all([
-      db.from('chapters').select('*', { count: 'exact', head: true }).eq('story_id', STORY),
-      db.from('reader_states').select('current_chapter,choice_history').eq('story_id', STORY).maybeSingle(),
+    const [chapterCount, readerRes] = await Promise.all([
+      countOf(
+        db
+          .selectFrom('chapters')
+          .select((eb) => eb.fn.countAll<number>().as('n'))
+          .where('story_id', '=', STORY)
+          .execute(),
+      ),
+      single(
+        db
+          .selectFrom('reader_states')
+          .select(['current_chapter', 'choice_history'])
+          .where('story_id', '=', STORY)
+          .limit(1)
+          .execute(),
+      ),
     ])
-    alreadyPublished = count ?? 0
+    alreadyPublished = chapterCount
+    const reader = readerRes.data
     const history = Array.isArray(reader?.choice_history)
       ? (reader.choice_history as Array<{ chapterNumber?: unknown; choiceId?: unknown }>)
       : []
@@ -170,12 +181,15 @@ async function main() {
         // Publish sudah durable. Semua kegagalan berikut wajib abort; retry generator
         // dapat menyentuh ulang bab yang sudah terbit.
         try {
-          const { data: ch, error: chapterReadError } = await db
-            .from('chapters')
-            .select('title, paragraphs, choices, choice_prompt')
-            .eq('story_id', STORY)
-            .eq('number', n)
-            .maybeSingle()
+          const { data: ch, error: chapterReadError } = await single(
+            db
+              .selectFrom('chapters')
+              .select(['title', 'paragraphs', 'choices', 'choice_prompt'])
+              .where('story_id', '=', STORY)
+              .where('number', '=', n)
+              .limit(1)
+              .execute(),
+          )
           if (chapterReadError) throw chapterReadError
           if (!ch) throw new Error('PUBLISHED_CHAPTER_NOT_FOUND')
           const paragraphs = (ch.paragraphs as string[] | null) ?? []
@@ -303,30 +317,45 @@ async function main() {
   const published = alreadyPublished + publishedThisInvocation
 
   // --- Audit akhir run ---
-  const { count: chapterCount } = await db
-    .from('chapters')
-    .select('*', { count: 'exact', head: true })
-    .eq('story_id', STORY)
-  const { count: outcomeCount } = await db
-    .from('choice_outcomes')
-    .select('*', { count: 'exact', head: true })
-    .eq('story_id', STORY)
-  const { count: retrievalCount } = await db
-    .from('retrieval_logs')
-    .select('*', { count: 'exact', head: true })
-    .eq('story_id', STORY)
-  const { data: events } = await db
-    .from('story_events')
-    .select('seq, type')
-    .eq('story_id', STORY)
-    .order('seq', { ascending: true })
+  const chapterCount = await countOf(
+    db
+      .selectFrom('chapters')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('story_id', '=', STORY)
+      .execute(),
+  )
+  const outcomeCount = await countOf(
+    db
+      .selectFrom('choice_outcomes')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('story_id', '=', STORY)
+      .execute(),
+  )
+  const retrievalCount = await countOf(
+    db
+      .selectFrom('retrieval_logs')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('story_id', '=', STORY)
+      .execute(),
+  )
+  const { data: events } = await result(
+    db
+      .selectFrom('story_events')
+      .select(['seq', 'type'])
+      .where('story_id', '=', STORY)
+      .orderBy('seq', 'asc')
+      .execute(),
+  )
   const seqs = (events ?? []).map((e) => e.seq as number)
   const monotonic = seqs.every((s, i) => i === 0 || s > seqs[i - 1])
   const publishEvents = (events ?? []).filter((e) => String(e.type).includes('PUBLISH')).length
-  const { data: leases } = await db
-    .from('generation_leases')
-    .select('status')
-    .eq('story_id', STORY)
+  const { data: leases } = await result(
+    db
+      .selectFrom('generation_leases')
+      .select('status')
+      .where('story_id', '=', STORY)
+      .execute(),
+  )
   const activeLeases = (leases ?? []).filter((l) => l.status === 'ACTIVE').length
 
   const wallMs = Date.now() - startedAt

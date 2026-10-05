@@ -13,17 +13,10 @@
  * Jalankan: set -a && source /vercel/share/.env.project && set +a
  *           && npx tsx scripts/m7c-report-smoke.ts
  */
-import { createClient } from '@supabase/supabase-js'
+import { getDb, single, result, countOf, rpcOne } from '@lakoku/db'
 import { buildCanonicalRefs, submitContentReport } from '@/lib/api/reports'
 
 const STORY = 'fixture:warisan-terkubur'
-
-function admin() {
-  const url = process.env.SUPABASE_URL
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
-  if (!url || !key) throw new Error('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY tak tersedia.')
-  return createClient(url, key, { auth: { persistSession: false } })
-}
 
 let pass = 0
 let fail = 0
@@ -38,13 +31,16 @@ function check(name: string, cond: boolean, extra?: unknown) {
 }
 
 async function main() {
-  const db = admin()
+  const db = getDb()
 
   // Prasyarat: canon fixture harus ada. Bila belum, beri pesan jelas.
-  const { count: charCount } = await db
-    .from('characters')
-    .select('id', { count: 'exact', head: true })
-    .eq('story_id', STORY)
+  const charCount = await countOf(
+    db
+      .selectFrom('characters')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('story_id', '=', STORY)
+      .execute(),
+  )
   if (!charCount) {
     throw new Error(
       `Canon untuk ${STORY} belum ada. Jalankan scripts/seed-canon.ts dulu.`,
@@ -85,10 +81,13 @@ async function main() {
   )
 
   // --- 2. submitContentReport menyimpan + menautkan refs + event -----------
-  const { count: seqBefore } = await db
-    .from('story_events')
-    .select('seq', { count: 'exact', head: true })
-    .eq('story_id', STORY)
+  const seqBefore = await countOf(
+    db
+      .selectFrom('story_events')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('story_id', '=', STORY)
+      .execute(),
+  )
 
   const { reportId } = await submitContentReport({
     storyId: STORY,
@@ -98,60 +97,72 @@ async function main() {
   })
   check('submit: mengembalikan reportId', Boolean(reportId))
 
-  const { data: row } = await db
-    .from('content_reports')
-    .select('*')
-    .eq('id', reportId)
-    .single()
+  const { data: row } = await single(
+    db
+      .selectFrom('content_reports')
+      .selectAll()
+      .where('id', '=', reportId)
+      .limit(1)
+      .execute(),
+  )
   check('submit: baris tersimpan', Boolean(row))
   check('submit: status default OPEN', row?.status === 'OPEN')
   check('submit: note di-trim', row?.note === 'Tokoh menyebut kunci yang katanya sudah hilang.')
   check(
     'submit: canonical_refs tertaut (bukan kosong)',
-    Boolean(row?.canonical_refs) && (row?.canonical_refs?.chapterNumber === 3),
+    Boolean(row?.canonical_refs) && ((row?.canonical_refs as Record<string, unknown>)?.chapterNumber === 3),
     row?.canonical_refs,
   )
 
-  const { data: evt } = await db
-    .from('story_events')
-    .select('*')
-    .eq('story_id', STORY)
-    .eq('type', 'REPORT_FILED')
-    .order('seq', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+  const { data: evt } = await single(
+    db
+      .selectFrom('story_events')
+      .selectAll()
+      .where('story_id', '=', STORY)
+      .where('type', '=', 'REPORT_FILED')
+      .orderBy('seq', 'desc')
+      .limit(1)
+      .execute(),
+  )
   check('event: REPORT_FILED tercatat', Boolean(evt))
-  check('event: payload menautkan report_id', evt?.payload?.report_id === reportId)
-  const { count: seqAfter } = await db
-    .from('story_events')
-    .select('seq', { count: 'exact', head: true })
-    .eq('story_id', STORY)
+  check('event: payload menautkan report_id', (evt?.payload as Record<string, unknown>)?.report_id === reportId)
+  const seqAfter = await countOf(
+    db
+      .selectFrom('story_events')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('story_id', '=', STORY)
+      .execute(),
+  )
   check('event: jumlah story_events bertambah 1', (seqAfter ?? 0) === (seqBefore ?? 0) + 1)
 
   // --- 3. RPC menolak argumen tak valid -----------------------------------
-  const badStory = await db.rpc('record_content_report_v1', {
-    p_story_id: 'tidak-ada-cerita-ini',
-    p_chapter_number: 1,
-    p_reporter_id: null,
-    p_category: 'LAINNYA',
-    p_note: null,
-    p_canonical_refs: {},
-  })
+  const badStory = await single(
+    rpcOne(db, 'record_content_report_v1', {
+      p_story_id: 'tidak-ada-cerita-ini',
+      p_chapter_number: 1,
+      p_reporter_id: null,
+      p_category: 'LAINNYA',
+      p_note: null,
+      p_canonical_refs: {},
+    }).execute(),
+  )
   check('rpc: tolak cerita tak dikenal', Boolean(badStory.error), badStory.error?.message)
 
-  const badChapter = await db.rpc('record_content_report_v1', {
-    p_story_id: STORY,
-    p_chapter_number: 0,
-    p_reporter_id: null,
-    p_category: 'LAINNYA',
-    p_note: null,
-    p_canonical_refs: {},
-  })
+  const badChapter = await single(
+    rpcOne(db, 'record_content_report_v1', {
+      p_story_id: STORY,
+      p_chapter_number: 0,
+      p_reporter_id: null,
+      p_category: 'LAINNYA',
+      p_note: null,
+      p_canonical_refs: {},
+    }).execute(),
+  )
   check('rpc: tolak nomor bab < 1', Boolean(badChapter.error), badChapter.error?.message)
 
   // --- 4. Bersihkan artefak uji -------------------------------------------
-  await db.from('story_events').delete().eq('story_id', STORY).eq('type', 'REPORT_FILED')
-  await db.from('content_reports').delete().eq('id', reportId)
+  await db.deleteFrom('story_events').where('story_id', '=', STORY).where('type', '=', 'REPORT_FILED').execute()
+  await db.deleteFrom('content_reports').where('id', '=', reportId).execute()
 
   console.log(`\n${pass} passed, ${fail} failed`)
   if (fail > 0) process.exit(1)

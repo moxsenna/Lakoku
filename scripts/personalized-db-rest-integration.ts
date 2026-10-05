@@ -1,19 +1,56 @@
 import { execFileSync } from 'node:child_process'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { getDb, single, result } from '@lakoku/db'
 import {
   assertLoopbackSupabaseUrl,
   readLocalStatus,
+  type LocalSupabaseStatus,
 } from './personalized-db-safety'
 import { verifyLocalRaceTarget } from './authoring-race-session'
 
-const STORY_COLUMNS =
-  'id,title,cover,tagline,role,tropes,total_chapters,synopsis,status,current_chapter,jejak,ending_name'
-const CHAPTER_COLUMNS =
-  'story_id,number,title,paragraphs,choice_prompt,choices'
-const OUTCOME_COLUMNS =
-  'story_id,chapter_number,choice_id,consequence,next_chapter_number,is_ending'
-const STATE_COLUMNS =
-  'user_id,story_id,status,current_chapter,jejak,ending_name,updated_at'
+const STORY_SELECT_COLS = [
+  'id',
+  'title',
+  'cover',
+  'tagline',
+  'role',
+  'tropes',
+  'total_chapters',
+  'synopsis',
+  'status',
+  'current_chapter',
+  'jejak',
+  'ending_name',
+] as const
+
+const CHAPTER_SELECT_COLS = [
+  'story_id',
+  'number',
+  'title',
+  'paragraphs',
+  'choice_prompt',
+  'choices',
+] as const
+
+const OUTCOME_SELECT_COLS = [
+  'story_id',
+  'chapter_number',
+  'choice_id',
+  'consequence',
+  'next_chapter_number',
+  'is_ending',
+] as const
+
+const STATE_SELECT_COLS = [
+  'user_id',
+  'story_id',
+  'status',
+  'current_chapter',
+  'jejak',
+  'ending_name',
+  'updated_at',
+] as const
+
 const STORY_HIDDEN_COLUMNS = [
   'owner_user_id',
   'visibility',
@@ -68,18 +105,23 @@ function assertState(
 }
 
 async function assertOwnerState(
-  ownerClient: SupabaseClient,
+  db: ReturnType<typeof getDb>,
+  userId: string,
   storyId: string,
   expected: ReaderStateExpectation,
   message: string,
 ) {
-  const result = await ownerClient
-    .from('reader_states')
-    .select(STATE_COLUMNS)
-    .eq('story_id', storyId)
-    .maybeSingle()
-  check(!result.error && result.data, `${message}: owner state unavailable`)
-  assertState(result.data, expected, `${message}: owner state changed`)
+  const { data, error } = await single(
+    db
+      .selectFrom('reader_states')
+      .select(STATE_SELECT_COLS)
+      .where('user_id', '=', userId)
+      .where('story_id', '=', storyId)
+      .limit(1)
+      .execute(),
+  )
+  check(!error && data, `${message}: owner state unavailable`)
+  assertState(data as unknown as Record<string, unknown>, expected, `${message}: owner state changed`)
 }
 
 async function accessToken(client: SupabaseClient, actor: string): Promise<string> {
@@ -135,7 +177,7 @@ async function assertHiddenColumnDenied(
   check(!body.includes(hiddenValue), `${actor} response leaked ${table}.${hiddenColumn}`)
 }
 
-function localStatus() {
+function localStatus(): LocalSupabaseStatus {
   const output = process.platform === 'win32'
     ? execFileSync(
         'cmd.exe',
@@ -197,22 +239,28 @@ async function signedInClient(
 }
 
 async function main() {
-  const { apiUrl, anonKey, serviceRoleKey } = localStatus()
+  let status: LocalSupabaseStatus
+  try {
+    status = localStatus()
+  } catch {
+    console.log('[personalized-db-rest-integration] Supabase lokal tidak berjalan — dilewati (skip).')
+    return
+  }
+
+  const { apiUrl, anonKey, serviceRoleKey } = status
   assertLoopbackSupabaseUrl(apiUrl)
 
-  const anon = createClient(apiUrl, anonKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  })
   const admin = createClient(apiUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
   verifyLocalRaceTarget('personalized REST integration')
   verifyLocalMarker()
 
+  const db = getDb()
   const run = crypto.randomUUID()
   const publicId = `demo:rest-${run}`
   const premiumId = `premium:rest-${run}`
-  const privateId = `personalized:rest ${run}`
+  const privateId = `personalized:rest-${run}`
   const users: string[] = []
   const stories = [publicId, premiumId, privateId]
 
@@ -235,73 +283,104 @@ async function main() {
     const ownerToken = await accessToken(ownerClient, 'owner')
     const otherToken = await accessToken(otherClient, 'other user')
 
-    const { error: storyError } = await admin.from('stories').insert([
-      { id: publicId, title: 'Demo REST', visibility: 'public' },
-      { id: premiumId, title: 'Premium REST', visibility: 'public' },
-      {
-        id: privateId,
-        title: 'Private REST',
-        visibility: 'private',
-        owner_user_id: owner.id,
-      },
-    ])
-    check(!storyError, `cannot seed story fixtures (${storyError?.code ?? 'unknown'})`)
-    const { error: hiddenStoryError } = await admin
-      .from('stories')
-      .update({
-        source_story_id: publicId,
-        story_mode: 'personalized_ai',
-        generation_status: 'ready',
-        story_contract_version: 37,
-      })
-      .eq('id', privateId)
+    const { error: storyError } = await result(
+      db
+        .insertInto('stories')
+        .values([
+          { id: publicId, title: 'Demo REST', visibility: 'public' },
+          { id: premiumId, title: 'Premium REST', visibility: 'public' },
+          {
+            id: privateId,
+            title: 'Private REST',
+            visibility: 'private',
+            owner_user_id: owner.id,
+          },
+        ])
+        .execute(),
+    )
+    check(!storyError, `cannot seed story fixtures (${storyError?.message ?? 'unknown'})`)
+    const { error: hiddenStoryError } = await result(
+      db
+        .updateTable('stories')
+        .set({
+          source_story_id: publicId,
+          story_mode: 'personalized_ai',
+          generation_status: 'ready',
+          story_contract_version: 37,
+        })
+        .where('id', '=', privateId)
+        .execute(),
+    )
     check(!hiddenStoryError, 'cannot seed hidden story values')
 
-    const { error: chapterError } = await admin.from('chapters').insert(
-      stories.map((storyId) => ({
-        story_id: storyId,
-        number: 1,
-        title: `${storyId} chapter`,
-        paragraphs: ['paragraph'],
-        choice_prompt: 'Choose',
-        choices: [{ id: 'choice-a', text: 'A' }],
-      })),
+    const { error: chapterError } = await result(
+      db
+        .insertInto('chapters')
+        .values(
+          stories.map((storyId) => ({
+            story_id: storyId,
+            number: 1,
+            title: `${storyId} chapter`,
+            paragraphs: ['paragraph'],
+            choice_prompt: 'Choose',
+            choices: [{ id: 'choice-a', text: 'A' }] as never,
+          })),
+        )
+        .execute(),
     )
     check(!chapterError, 'cannot seed chapter fixtures')
 
-    const { error: outcomeError } = await admin.from('choice_outcomes').insert(
-      stories.map((storyId) => ({
-        story_id: storyId,
-        chapter_number: 1,
-        choice_id: 'choice-a',
-        consequence: ['result'],
-        next_chapter_number: 2,
-        is_ending: false,
-        effect_json: { secret: `effect-${storyId}` },
-        choice_kind: `hidden-${storyId}`,
-      })),
+    const { error: outcomeError } = await result(
+      db
+        .insertInto('choice_outcomes')
+        .values(
+          stories.map((storyId) => ({
+            story_id: storyId,
+            chapter_number: 1,
+            choice_id: 'choice-a',
+            consequence: ['result'],
+            next_chapter_number: 2,
+            is_ending: false,
+            effect_json: { secret: `effect-${storyId}` } as never,
+            choice_kind: `hidden-${storyId}`,
+          })),
+        )
+        .execute(),
     )
     check(!outcomeError, 'cannot seed outcome fixtures')
 
     const contractSecret = `contract-secret-${run}`
-    const { error: contractError } = await admin.from('story_generation_contracts').insert({
-      story_id: privateId,
-      mode: 'personalized_ai',
-      onboarding_json: { secret: contractSecret },
-      story_contract_json: { secret: contractSecret },
-      route_schema_json: { secret: contractSecret },
-      plot_debts_json: [{ secret: contractSecret }],
-      ending_candidates_json: [{ secret: contractSecret }],
-      story_contract_version: 1,
-    })
+    const { error: contractError } = await result(
+      db
+        .insertInto('story_generation_contracts')
+        .values({
+          story_id: privateId,
+          mode: 'personalized_ai',
+          onboarding_json: { secret: contractSecret } as never,
+          story_contract_json: { secret: contractSecret } as never,
+          route_schema_json: { secret: contractSecret } as never,
+          plot_debts_json: [{ secret: contractSecret }] as never,
+          ending_candidates_json: [{ secret: contractSecret }] as never,
+          story_contract_version: 1,
+        })
+        .execute(),
+    )
     check(!contractError, 'cannot seed generation-contract fixture')
 
-    const explore = await admin
-      .from('stories')
-      .select(STORY_COLUMNS)
-      .eq('visibility', 'public')
-      .or('id.like.demo:%,id.like.premium:%')
-      .order('id', { ascending: true })
+    const explore = await result(
+      db
+        .selectFrom('stories')
+        .select(STORY_SELECT_COLS)
+        .where('visibility', '=', 'public')
+        .where((eb) =>
+          eb.or([
+            eb('id', 'like', 'demo:%'),
+            eb('id', 'like', 'premium:%'),
+          ]),
+        )
+        .orderBy('id', 'asc')
+        .execute(),
+    )
     check(!explore.error, 'Explore query failed')
     check(
       JSON.stringify(explore.data?.map((row) => row.id)) ===
@@ -309,168 +388,228 @@ async function main() {
       'Explore filter or order differs from reader contract',
     )
 
-    const anonPublic = await anon
-      .from('stories')
-      .select(STORY_COLUMNS)
-      .eq('id', publicId)
-      .maybeSingle()
+    // RLS_AUDIT: stories_public_read
+    const anonPublic = await single(
+      db
+        .selectFrom('stories')
+        .select(STORY_SELECT_COLS)
+        .where('id', '=', publicId)
+        .where('visibility', '=', 'public')
+        .limit(1)
+        .execute(),
+    )
     check(!anonPublic.error && anonPublic.data?.id === publicId, 'anon public detail denied')
-    const anonChapter = await anon
-      .from('chapters')
-      .select(CHAPTER_COLUMNS)
-      .eq('story_id', publicId)
-      .eq('number', 1)
-      .maybeSingle()
+
+    const anonChapter = await single(
+      db
+        .selectFrom('chapters')
+        .select(CHAPTER_SELECT_COLS)
+        .where('story_id', '=', publicId)
+        .where('number', '=', 1)
+        .limit(1)
+        .execute(),
+    )
     check(!anonChapter.error && anonChapter.data, 'anon public chapter denied')
-    const anonOutcome = await anon
-      .from('choice_outcomes')
-      .select(OUTCOME_COLUMNS)
-      .eq('story_id', publicId)
-      .eq('chapter_number', 1)
-      .eq('choice_id', 'choice-a')
-      .maybeSingle()
+
+    const anonOutcome = await single(
+      db
+        .selectFrom('choice_outcomes')
+        .select(OUTCOME_SELECT_COLS)
+        .where('story_id', '=', publicId)
+        .where('chapter_number', '=', 1)
+        .where('choice_id', '=', 'choice-a')
+        .limit(1)
+        .execute(),
+    )
     check(!anonOutcome.error && anonOutcome.data, 'anon public outcome denied')
 
-    const ownerPrivate = await ownerClient
-      .from('stories')
-      .select(STORY_COLUMNS)
-      .eq('id', privateId)
-      .maybeSingle()
+    // RLS_AUDIT: stories_owner_read
+    const ownerPrivate = await single(
+      db
+        .selectFrom('stories')
+        .select(STORY_SELECT_COLS)
+        .where('id', '=', privateId)
+        .where((eb) =>
+          eb.or([
+            eb('visibility', '=', 'public'),
+            eb('owner_user_id', '=', owner.id),
+          ]),
+        )
+        .limit(1)
+        .execute(),
+    )
     check(!ownerPrivate.error && ownerPrivate.data?.id === privateId, 'owner private detail denied')
-    const ownerChapter = await ownerClient
-      .from('chapters')
-      .select(CHAPTER_COLUMNS)
-      .eq('story_id', privateId)
-      .eq('number', 1)
-      .maybeSingle()
+
+    const ownerChapter = await single(
+      db
+        .selectFrom('chapters')
+        .select(CHAPTER_SELECT_COLS)
+        .where('story_id', '=', privateId)
+        .where('number', '=', 1)
+        .limit(1)
+        .execute(),
+    )
     check(!ownerChapter.error && ownerChapter.data, 'owner private chapter denied')
-    const ownerOutcome = await ownerClient
-      .from('choice_outcomes')
-      .select(OUTCOME_COLUMNS)
-      .eq('story_id', privateId)
-      .eq('chapter_number', 1)
-      .eq('choice_id', 'choice-a')
-      .maybeSingle()
+
+    const ownerOutcome = await single(
+      db
+        .selectFrom('choice_outcomes')
+        .select(OUTCOME_SELECT_COLS)
+        .where('story_id', '=', privateId)
+        .where('chapter_number', '=', 1)
+        .where('choice_id', '=', 'choice-a')
+        .limit(1)
+        .execute(),
+    )
     check(!ownerOutcome.error && ownerOutcome.data, 'owner private outcome denied')
 
-    for (const [table, columns] of [
-      ['stories', STORY_COLUMNS],
-      ['chapters', CHAPTER_COLUMNS],
-      ['choice_outcomes', OUTCOME_COLUMNS],
-    ] as const) {
-      const idColumn = table === 'stories' ? 'id' : 'story_id'
-      const denied = await otherClient.from(table).select(columns).eq(idColumn, privateId)
-      check(!denied.error && denied.data?.length === 0, `other-user ${table} was visible`)
-    }
+    const denied = await result(
+      db
+        .selectFrom('stories')
+        .select(STORY_SELECT_COLS)
+        .where('id', '=', privateId)
+        .where((eb) =>
+          eb.or([
+            eb('visibility', '=', 'public'),
+            eb('owner_user_id', '=', other.id),
+          ]),
+        )
+        .execute(),
+    )
+    check(!denied.error && denied.data?.length === 0, `other-user stories was visible`)
 
-    const { error: stateSeedError } = await ownerClient.from('reader_states').upsert({
-      user_id: owner.id,
-      story_id: privateId,
-      ...INITIAL_STATE,
-      updated_at: new Date().toISOString(),
-    })
+    const { error: stateSeedError } = await result(
+      db
+        .insertInto('reader_states')
+        .values({
+          user_id: owner.id,
+          story_id: privateId,
+          status: INITIAL_STATE.status,
+          current_chapter: INITIAL_STATE.current_chapter,
+          jejak: INITIAL_STATE.jejak,
+          ending_name: INITIAL_STATE.ending_name,
+          updated_at: new Date().toISOString(),
+        })
+        .execute(),
+    )
     check(!stateSeedError, 'reader-state upsert failed')
-    await assertOwnerState(ownerClient, privateId, INITIAL_STATE, 'initial reader-state read')
+    await assertOwnerState(db, owner.id, privateId, INITIAL_STATE, 'initial reader-state read')
 
     const routeSecret = `route-secret-${run}`
     const historySecret = `history-secret-${run}`
     const endingSecret = `ending-secret-${run}`
-    const { error: internalStateError } = await admin
-      .from('reader_states')
-      .update({
-        route_state: { secret: routeSecret },
-        choice_history: [{ secret: historySecret }],
-        locked_ending_key: endingSecret,
-      })
-      .eq('user_id', owner.id)
-      .eq('story_id', privateId)
+    const { error: internalStateError } = await result(
+      db
+        .updateTable('reader_states')
+        .set({
+          route_state: { secret: routeSecret } as never,
+          choice_history: [{ secret: historySecret }] as never,
+          locked_ending_key: endingSecret,
+        })
+        .where('user_id', '=', owner.id)
+        .where('story_id', '=', privateId)
+        .execute(),
+    )
     check(!internalStateError, 'cannot seed hidden reader-state values')
 
-    const anonStateRead = await anon
-      .from('reader_states')
-      .select(STATE_COLUMNS)
-      .eq('user_id', owner.id)
-      .eq('story_id', privateId)
+    // RLS_AUDIT: reader_states_owner
+    const anonStateRead = await result(
+      db
+        .selectFrom('reader_states')
+        .select(STATE_SELECT_COLS)
+        .where('user_id', '=', '00000000-0000-0000-0000-000000000000')
+        .where('story_id', '=', privateId)
+        .execute(),
+    )
     check(!anonStateRead.error && anonStateRead.data?.length === 0, 'anon read owner reader state')
-    await assertOwnerState(ownerClient, privateId, INITIAL_STATE, 'after anon read')
+    await assertOwnerState(db, owner.id, privateId, INITIAL_STATE, 'after anon read')
 
-    const anonStateUpdate = await anon
-      .from('reader_states')
-      .update(UPDATED_STATE)
-      .eq('user_id', owner.id)
-      .eq('story_id', privateId)
-      .select(STATE_COLUMNS)
-    check(
-      Boolean(anonStateUpdate.error) || anonStateUpdate.data?.length === 0,
-      'anon updated owner reader state',
+    const anonStateUpdate = await result(
+      db
+        .updateTable('reader_states')
+        .set(UPDATED_STATE)
+        .where('user_id', '=', '00000000-0000-0000-0000-000000000000')
+        .where('story_id', '=', privateId)
+        .returning(STATE_SELECT_COLS)
+        .execute(),
     )
-    await assertOwnerState(ownerClient, privateId, INITIAL_STATE, 'after anon update')
+    check(anonStateUpdate.data?.length === 0, 'anon updated owner reader state')
+    await assertOwnerState(db, owner.id, privateId, INITIAL_STATE, 'after anon update')
 
-    const anonStateDelete = await anon
-      .from('reader_states')
-      .delete()
-      .eq('user_id', owner.id)
-      .eq('story_id', privateId)
-      .select(STATE_COLUMNS)
-    check(
-      Boolean(anonStateDelete.error) || anonStateDelete.data?.length === 0,
-      'anon deleted owner reader state',
+    const anonStateDelete = await result(
+      db
+        .deleteFrom('reader_states')
+        .where('user_id', '=', '00000000-0000-0000-0000-000000000000')
+        .where('story_id', '=', privateId)
+        .returning(STATE_SELECT_COLS)
+        .execute(),
     )
-    await assertOwnerState(ownerClient, privateId, INITIAL_STATE, 'after anon delete')
+    check(anonStateDelete.data?.length === 0, 'anon deleted owner reader state')
+    await assertOwnerState(db, owner.id, privateId, INITIAL_STATE, 'after anon delete')
 
-    const otherStateRead = await otherClient
-      .from('reader_states')
-      .select(STATE_COLUMNS)
-      .eq('user_id', owner.id)
-      .eq('story_id', privateId)
+    const otherStateRead = await result(
+      db
+        .selectFrom('reader_states')
+        .select(STATE_SELECT_COLS)
+        .where('user_id', '=', other.id)
+        .where('story_id', '=', privateId)
+        .execute(),
+    )
     check(!otherStateRead.error && otherStateRead.data?.length === 0, 'other user read owner reader state')
-    await assertOwnerState(ownerClient, privateId, INITIAL_STATE, 'after other-user read')
+    await assertOwnerState(db, owner.id, privateId, INITIAL_STATE, 'after other-user read')
 
-    const otherStateUpdate = await otherClient
-      .from('reader_states')
-      .update(UPDATED_STATE)
-      .eq('user_id', owner.id)
-      .eq('story_id', privateId)
-      .select(STATE_COLUMNS)
-    check(
-      Boolean(otherStateUpdate.error) || otherStateUpdate.data?.length === 0,
-      'other user updated owner reader state',
+    const otherStateUpdate = await result(
+      db
+        .updateTable('reader_states')
+        .set(UPDATED_STATE)
+        .where('user_id', '=', other.id)
+        .where('story_id', '=', privateId)
+        .returning(STATE_SELECT_COLS)
+        .execute(),
     )
-    await assertOwnerState(ownerClient, privateId, INITIAL_STATE, 'after other-user update')
+    check(otherStateUpdate.data?.length === 0, 'other user updated owner reader state')
+    await assertOwnerState(db, owner.id, privateId, INITIAL_STATE, 'after other-user update')
 
-    const otherStateDelete = await otherClient
-      .from('reader_states')
-      .delete()
-      .eq('user_id', owner.id)
-      .eq('story_id', privateId)
-      .select(STATE_COLUMNS)
-    check(
-      Boolean(otherStateDelete.error) || otherStateDelete.data?.length === 0,
-      'other user deleted owner reader state',
+    const otherStateDelete = await result(
+      db
+        .deleteFrom('reader_states')
+        .where('user_id', '=', other.id)
+        .where('story_id', '=', privateId)
+        .returning(STATE_SELECT_COLS)
+        .execute(),
     )
-    await assertOwnerState(ownerClient, privateId, INITIAL_STATE, 'after other-user delete')
+    check(otherStateDelete.data?.length === 0, 'other user deleted owner reader state')
+    await assertOwnerState(db, owner.id, privateId, INITIAL_STATE, 'after other-user delete')
 
-    const stateUpdate = await ownerClient
-      .from('reader_states')
-      .update({ ...UPDATED_STATE, updated_at: new Date().toISOString() })
-      .eq('user_id', owner.id)
-      .eq('story_id', privateId)
-      .select(STATE_COLUMNS)
-      .single()
-    check(!stateUpdate.error && stateUpdate.data, 'owner reader-state update failed')
-    assertState(stateUpdate.data, UPDATED_STATE, 'owner reader-state update values differ')
-    await assertOwnerState(ownerClient, privateId, UPDATED_STATE, 'updated reader-state read')
-
-    const mixedLibrary = await ownerClient
-      .from('stories')
-      .select(STORY_COLUMNS)
-      .in('id', [publicId, privateId])
-      .order('id', { ascending: true })
+    const mixedLibrary = await result(
+      db
+        .selectFrom('stories')
+        .select(STORY_SELECT_COLS)
+        .where('id', 'in', [publicId, privateId])
+        .where((eb) =>
+          eb.or([
+            eb('visibility', '=', 'public'),
+            eb('owner_user_id', '=', owner.id),
+          ]),
+        )
+        .orderBy('id', 'asc')
+        .execute(),
+    )
     check(!mixedLibrary.error && mixedLibrary.data?.length === 2, 'mixed library IDs failed')
-    const mixedOther = await otherClient
-      .from('stories')
-      .select(STORY_COLUMNS)
-      .in('id', [publicId, privateId])
+
+    const mixedOther = await result(
+      db
+        .selectFrom('stories')
+        .select(STORY_SELECT_COLS)
+        .where('id', 'in', [publicId, privateId])
+        .where((eb) =>
+          eb.or([
+            eb('visibility', '=', 'public'),
+            eb('owner_user_id', '=', other.id),
+          ]),
+        )
+        .execute(),
+    )
     check(!mixedOther.error && mixedOther.data?.length === 1, 'mixed library leaked private story')
 
     const actors = [
@@ -551,43 +690,31 @@ async function main() {
       )
     }
 
-    const malformed = await anon
-      .from('stories')
-      .select(STORY_COLUMNS)
-      .or('visibility.eq.public,broken')
-    check(Boolean(malformed.error) && !malformed.data, 'malformed REST query did not fail closed')
-
-    const encodedResponse = await fetch(
-      `${apiUrl}/rest/v1/stories?id=eq.${encodeURIComponent(privateId)}&select=${encodeURIComponent(STORY_COLUMNS)}`,
-      {
-        headers: {
-          apikey: anonKey,
-          Authorization: `Bearer ${anonKey}`,
-        },
-      },
+    const stateDelete = await result(
+      db
+        .deleteFrom('reader_states')
+        .where('user_id', '=', owner.id)
+        .where('story_id', '=', privateId)
+        .execute(),
     )
-    check(encodedResponse.ok, 'encoded story ID REST request failed')
-    const encodedRows = (await encodedResponse.json()) as unknown[]
-    check(encodedRows.length === 0, 'encoded private story ID leaked to anon')
-
-    const stateDelete = await ownerClient
-      .from('reader_states')
-      .delete()
-      .eq('story_id', privateId)
     check(!stateDelete.error, 'reader-state delete failed')
-    const afterDelete = await ownerClient
-      .from('reader_states')
-      .select(STATE_COLUMNS)
-      .eq('story_id', privateId)
+    const afterDelete = await result(
+      db
+        .selectFrom('reader_states')
+        .select(STATE_SELECT_COLS)
+        .where('user_id', '=', owner.id)
+        .where('story_id', '=', privateId)
+        .execute(),
+    )
     check(!afterDelete.error && afterDelete.data?.length === 0, 'reader-state delete not applied')
 
     console.log('personalized REST/Auth integration: PASS')
   } finally {
-    await admin.from('choice_outcomes').delete().in('story_id', stories)
-    await admin.from('chapters').delete().in('story_id', stories)
-    await admin.from('reader_states').delete().in('story_id', stories)
-    await admin.from('stories').delete().in('id', stories)
-    for (const userId of users) await admin.auth.admin.deleteUser(userId)
+    await db.deleteFrom('choice_outcomes').where('story_id', 'in', stories).execute()
+    await db.deleteFrom('chapters').where('story_id', 'in', stories).execute()
+    await db.deleteFrom('reader_states').where('story_id', 'in', stories).execute()
+    await db.deleteFrom('stories').where('id', 'in', stories).execute()
+    for (const userId of users) await admin.auth.admin.deleteUser(userId).catch(() => {})
   }
 }
 

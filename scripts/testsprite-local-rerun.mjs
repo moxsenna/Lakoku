@@ -5,6 +5,7 @@
  * blocked assertions / wrong credentials.
  */
 import { createClient } from '@supabase/supabase-js'
+import pg from 'pg'
 import { execFileSync, spawn } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { chromium } from 'playwright'
@@ -107,109 +108,75 @@ async function seed(status) {
   }
   // public story
   const now = new Date().toISOString()
-  const storyUpsert = await admin.from('stories').upsert({
-    id: PUBLIC_STORY_ID,
-    title: 'Demo TestSprite Public',
-    cover: '/cover.webp',
-    tagline: 'Public demo for UI tests',
-    role: 'Hero',
-    tropes: ['mystery'],
-    total_chapters: 3,
-    synopsis: 'Cerita demo publik untuk TestSprite.',
-    status: 'BERJALAN',
-    current_chapter: 1,
-    jejak: [],
-    ending_name: null,
-    owner_user_id: null,
-    visibility: 'public',
-    source_story_id: null,
-    story_mode: 'standard',
-    generation_status: 'ready',
-    story_contract_version: 1,
-    created_at: now,
-  })
-  if (storyUpsert.error) throw storyUpsert.error
-  await admin.from('chapters').upsert({
-    story_id: PUBLIC_STORY_ID,
-    number: 1,
-    title: 'Bab Demo',
-    paragraphs: [
-      'Ini paragraf demo publik untuk TestSprite.',
-      'Pembaca dapat melihat pilihan di bawah.',
-    ],
-    choice_prompt: 'Apa langkahmu?',
-    choices: [
-      { id: 'lanjut', label: 'Lanjut ke lorong' },
-      { id: 'tunggu', label: 'Tunggu sejenak' },
-    ],
-    created_at: now,
-  })
-  await admin.from('chapters').upsert({
-    story_id: PUBLIC_STORY_ID,
-    number: 2,
-    title: 'Bab Dua Demo',
-    paragraphs: ['Bab kedua demo publik.'],
-    choice_prompt: null,
-    choices: null,
-    created_at: now,
-  })
-  await admin.from('choice_outcomes').upsert([
-    {
-      story_id: PUBLIC_STORY_ID,
-      chapter_number: 1,
-      choice_id: 'lanjut',
-      consequence: ['Kamu melangkah ke lorong.'],
-      next_chapter_number: 2,
-      is_ending: false,
-      created_at: now,
-      effect_json: {},
-      choice_kind: 'normal',
-    },
-    {
-      story_id: PUBLIC_STORY_ID,
-      chapter_number: 1,
-      choice_id: 'tunggu',
-      consequence: ['Kamu menunggu.'],
-      next_chapter_number: 2,
-      is_ending: false,
-      created_at: now,
-      effect_json: {},
-      choice_kind: 'normal',
-    },
-  ])
-  // private story for isolation negative path
-  const privateId = `personalized:testsprite-private`
-  await admin.from('stories').upsert({
-    id: privateId,
-    title: 'Private Isolation Story',
-    cover: '/cover.webp',
-    tagline: 'Private only',
-    role: 'Hero',
-    tropes: ['mystery'],
-    total_chapters: 3,
-    synopsis: 'Cerita privat untuk isolation check.',
-    status: 'BERJALAN',
-    current_chapter: 1,
-    jejak: [],
-    ending_name: null,
-    owner_user_id: user.id,
-    visibility: 'private',
-    source_story_id: null,
-    story_mode: 'personalized_ai',
-    generation_status: 'ready',
-    story_contract_version: 1,
-    created_at: now,
-  })
-  await admin.from('chapters').upsert({
-    story_id: privateId,
-    number: 1,
-    title: 'Private Bab',
-    paragraphs: ['Isi privat.'],
-    choice_prompt: null,
-    choices: null,
-    created_at: now,
-  })
-  return { admin, userId: user.id, privateId }
+  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || process.env.SUPABASE_DB_URL })
+  try {
+    await pool.query(`
+      INSERT INTO stories (id, title, cover, tagline, role, tropes, total_chapters, synopsis, status, current_chapter, jejak, ending_name, owner_user_id, visibility, source_story_id, story_mode, generation_status, story_contract_version, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+      ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, status = EXCLUDED.status, current_chapter = EXCLUDED.current_chapter
+    `, [
+      PUBLIC_STORY_ID, 'Demo TestSprite Public', '/cover.webp', 'Public demo for UI tests',
+      'Hero', JSON.stringify(['mystery']), 3, 'Cerita demo publik untuk TestSprite.',
+      'BERJALAN', 1, JSON.stringify([]), null, null, 'public', null, 'standard', 'ready', 1, now,
+    ])
+
+    await pool.query(`
+      INSERT INTO chapters (story_id, number, title, paragraphs, choice_prompt, choices, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      ON CONFLICT (story_id, number) DO UPDATE SET title = EXCLUDED.title, paragraphs = EXCLUDED.paragraphs, choices = EXCLUDED.choices
+    `, [
+      PUBLIC_STORY_ID, 1, 'Bab Demo',
+      JSON.stringify(['Ini paragraf demo publik untuk TestSprite.', 'Pembaca dapat melihat pilihan di bawah.']),
+      'Apa langkahmu?', JSON.stringify([{ id: 'lanjut', label: 'Lanjut ke lorong' }, { id: 'tunggu', label: 'Tunggu sejenak' }]),
+      now,
+    ])
+
+    await pool.query(`
+      INSERT INTO chapters (story_id, number, title, paragraphs, choice_prompt, choices, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      ON CONFLICT (story_id, number) DO UPDATE SET title = EXCLUDED.title, paragraphs = EXCLUDED.paragraphs
+    `, [
+      PUBLIC_STORY_ID, 2, 'Bab Dua Demo', JSON.stringify(['Bab kedua demo publik.']), null, null, now,
+    ])
+
+    await pool.query(`
+      INSERT INTO choice_outcomes (story_id, chapter_number, choice_id, consequence, next_chapter_number, is_ending, created_at, effect_json, choice_kind)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      ON CONFLICT (story_id, chapter_number, choice_id) DO NOTHING
+    `, [
+      PUBLIC_STORY_ID, 1, 'lanjut', JSON.stringify(['Kamu melangkah ke lorong.']), 2, false, now, JSON.stringify({}), 'normal',
+    ])
+    await pool.query(`
+      INSERT INTO choice_outcomes (story_id, chapter_number, choice_id, consequence, next_chapter_number, is_ending, created_at, effect_json, choice_kind)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      ON CONFLICT (story_id, chapter_number, choice_id) DO NOTHING
+    `, [
+      PUBLIC_STORY_ID, 1, 'tunggu', JSON.stringify(['Kamu menunggu.']), 2, false, now, JSON.stringify({}), 'normal',
+    ])
+
+    // private story for isolation negative path
+    const privateId = `personalized:testsprite-private`
+    await pool.query(`
+      INSERT INTO stories (id, title, cover, tagline, role, tropes, total_chapters, synopsis, status, current_chapter, jejak, ending_name, owner_user_id, visibility, source_story_id, story_mode, generation_status, story_contract_version, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+      ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, owner_user_id = EXCLUDED.owner_user_id
+    `, [
+      privateId, 'Private Isolation Story', '/cover.webp', 'Private only',
+      'Hero', JSON.stringify(['mystery']), 3, 'Cerita privat untuk isolation check.',
+      'BERJALAN', 1, JSON.stringify([]), null, user.id, 'private', null, 'personalized_ai', 'ready', 1, now,
+    ])
+
+    await pool.query(`
+      INSERT INTO chapters (story_id, number, title, paragraphs, choice_prompt, choices, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      ON CONFLICT (story_id, number) DO UPDATE SET title = EXCLUDED.title, paragraphs = EXCLUDED.paragraphs
+    `, [
+      privateId, 1, 'Private Bab', JSON.stringify(['Isi privat.']), null, null, now,
+    ])
+    return { admin, userId: user.id, privateId }
+  } finally {
+    await pool.end()
+  }
 }
 
 async function dismissFirstRunGate(page) {

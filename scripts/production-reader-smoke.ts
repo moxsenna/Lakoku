@@ -16,7 +16,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { createClient } from '@supabase/supabase-js'
+import { getDb, result } from '@lakoku/db'
 
 const DEFAULT_ORIGIN = 'https://app.lakoku.biz.id'
 const DEFAULT_PUBLIC_ORIGIN = 'https://lakoku.biz.id'
@@ -91,15 +91,17 @@ async function main(): Promise<void> {
   const supabaseUrl = process.env.SUPABASE_URL?.trim() || process.env.NEXT_PUBLIC_SUPABASE_URL?.trim()
   let storyId: string | null = null
 
-  if (serviceRoleKey && supabaseUrl) {
-    const client = createClient(supabaseUrl, serviceRoleKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    })
-    const { data, error } = await client
-      .from('stories')
-      .select('id,title,status,total_chapters,current_chapter')
-      .eq('visibility', 'public')
-      .order('id', { ascending: true })
+  if (process.env.DATABASE_URL || (serviceRoleKey && supabaseUrl)) {
+    const db = getDb()
+    // RLS_AUDIT: stories_public_read
+    const { data, error } = await result(
+      db
+        .selectFrom('stories')
+        .select(['id', 'title', 'status', 'total_chapters', 'current_chapter'])
+        .where('visibility', '=', 'public')
+        .orderBy('id', 'asc')
+        .execute(),
+    )
 
     if (error) {
       record('catalogue-query', false, 'stories query failed')
@@ -112,11 +114,15 @@ async function main(): Promise<void> {
       storyId = explorable[0]?.id ?? null
 
       if (storyId) {
-        const { data: chapters, error: chapterError } = await client
-          .from('chapters')
-          .select('number,paragraphs,choices')
-          .eq('story_id', storyId)
-          .order('number', { ascending: true })
+        // RLS_AUDIT: chapters_public_read
+        const { data: chapters, error: chapterError } = await result(
+          db
+            .selectFrom('chapters')
+            .select(['number', 'paragraphs', 'choices'])
+            .where('story_id', '=', storyId)
+            .orderBy('number', 'asc')
+            .execute(),
+        )
 
         if (chapterError) {
           record('chapters-readable', false, 'chapters query failed')

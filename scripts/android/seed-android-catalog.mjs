@@ -9,7 +9,7 @@
  * Gagal jujur (exit nonzero) bila migrasi channel belum applied.
  */
 import { readFileSync } from 'node:fs'
-import { createClient } from '@supabase/supabase-js'
+import pg from 'pg'
 
 function loadEnv(path) {
   const env = {}
@@ -21,26 +21,26 @@ function loadEnv(path) {
 }
 
 const env = loadEnv('.env.local')
-const url = env.SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL
-const key = env.SUPABASE_SECRET_KEY || env.SUPABASE_SERVICE_ROLE_KEY
-if (!url || !key) {
-  console.error('android catalog seed FAILED: missing SUPABASE_URL / SERVICE_ROLE in .env.local')
-  process.exit(1)
-}
+const pool = new pg.Pool({ connectionString: env.DATABASE_URL || env.SUPABASE_DB_URL })
 
-const supabase = createClient(url, key)
-
-const { data: web, error: webErr } = await supabase
-  .from('credit_products')
-  .select('product_key,name,price_idr,credits,normal_bonus_credits,first_topup_bonus_credits,marketing_badge,bonus_active,sort_order')
-  .eq('channel', 'web')
-  .order('sort_order', { ascending: true })
-if (webErr) {
+let web = []
+try {
+  const res = await pool.query(`
+    SELECT product_key,name,price_idr,credits,normal_bonus_credits,first_topup_bonus_credits,marketing_badge,bonus_active,sort_order
+    FROM credit_products
+    WHERE channel = 'web'
+    ORDER BY sort_order ASC
+  `)
+  web = res.rows
+} catch (webErr) {
   console.error(`android catalog seed FAILED: read web: ${webErr.message}`)
+  await pool.end()
   process.exit(1)
 }
+
 if (!web || web.length === 0) {
   console.error('android catalog seed FAILED: web catalog empty, nothing to mirror')
+  await pool.end()
   process.exit(1)
 }
 
@@ -59,11 +59,28 @@ const rows = web.map((w) => ({
   play_sku: `lakoku_${w.product_key}`,
 }))
 
-const { error: upErr } = await supabase
-  .from('credit_products')
-  .upsert(rows, { onConflict: 'product_key,channel' })
-if (upErr) {
+try {
+  for (const r of rows) {
+    await pool.query(`
+      INSERT INTO credit_products (product_key, channel, name, price_idr, credits, normal_bonus_credits, first_topup_bonus_credits, marketing_badge, bonus_active, active, sort_order, play_sku)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      ON CONFLICT (product_key, channel) DO UPDATE SET
+        name = EXCLUDED.name,
+        price_idr = EXCLUDED.price_idr,
+        credits = EXCLUDED.credits,
+        normal_bonus_credits = EXCLUDED.normal_bonus_credits,
+        first_topup_bonus_credits = EXCLUDED.first_topup_bonus_credits,
+        marketing_badge = EXCLUDED.marketing_badge,
+        bonus_active = EXCLUDED.bonus_active,
+        active = EXCLUDED.active,
+        sort_order = EXCLUDED.sort_order,
+        play_sku = EXCLUDED.play_sku
+    `, [r.product_key, r.channel, r.name, r.price_idr, r.credits, r.normal_bonus_credits, r.first_topup_bonus_credits, r.marketing_badge, r.bonus_active, r.active, r.sort_order, r.play_sku])
+  }
+} catch (upErr) {
   console.error(`android catalog seed FAILED: upsert: ${upErr.message}`)
+  await pool.end()
   process.exit(1)
 }
+await pool.end()
 console.log(`android catalog seed passed: ${rows.length} rows channel=android active=false`)

@@ -5,7 +5,7 @@
  * membuat verify route mengembalikan unknown_product.
  */
 import { readFileSync } from 'node:fs'
-import { createClient } from '@supabase/supabase-js'
+import pg from 'pg'
 
 function loadEnv(path) {
   const env = {}
@@ -17,15 +17,17 @@ function loadEnv(path) {
 }
 
 const env = loadEnv('.env.local')
-const supabase = createClient(
-  env.SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL,
-  env.SUPABASE_SECRET_KEY || env.SUPABASE_SERVICE_ROLE_KEY,
-)
-const { data, error } = await supabase.from('credit_products').select('play_sku').eq('channel', 'android')
-if (error) {
+const pool = new pg.Pool({ connectionString: env.DATABASE_URL || env.SUPABASE_DB_URL })
+let data = []
+try {
+  const res = await pool.query("SELECT play_sku FROM credit_products WHERE channel = 'android'")
+  data = res.rows
+} catch (error) {
   console.error(`iap catalog consistency FAILED: ${error.message}`)
+  await pool.end()
   process.exit(1)
 }
+await pool.end()
 const dbSkus = new Set((data ?? []).map((r) => r.play_sku))
 const doc = readFileSync('docs/android/PLAY_STORE_RELEASE.md', 'utf8')
 const docSkus = new Set(doc.match(/lakoku_credits_[a-z]+/g) ?? [])

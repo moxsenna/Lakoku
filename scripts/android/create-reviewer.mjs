@@ -7,6 +7,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
+import pg from 'pg'
 
 function loadEnv(path) {
   const env = {}
@@ -57,21 +58,29 @@ if (existing) {
 }
 
 const ref = `reviewer-seed:${userId}`
-const grant = await supabase.from('credit_ledger').upsert(
-  { user_id: userId, delta: CREDITS, reason: 'reviewer_seed', ref },
-  { onConflict: 'ref', ignoreDuplicates: true },
-)
-if (grant.error) {
-  console.error(`reviewer setup FAILED: ${grant.error.message}`)
+const pool = new pg.Pool({ connectionString: env.DATABASE_URL || env.SUPABASE_DB_URL })
+try {
+  await pool.query(
+    'INSERT INTO credit_ledger (user_id, delta, reason, ref) VALUES ($1, $2, $3, $4) ON CONFLICT (ref) DO NOTHING',
+    [userId, CREDITS, 'reviewer_seed', ref],
+  )
+} catch (err) {
+  console.error(`reviewer setup FAILED: ${err.message}`)
+  await pool.end()
   process.exit(1)
 }
 
-const bal = await supabase.rpc('credit_balance_v1', { p_user_id: userId })
-if (bal.error) {
-  console.error(`reviewer setup FAILED: ${bal.error.message}`)
+let balData = 0
+try {
+  const { rows } = await pool.query('SELECT credit_balance_v1($1) as bal', [userId])
+  balData = rows[0]?.bal ?? 0
+} catch (err) {
+  console.error(`reviewer setup FAILED: ${err.message}`)
+  await pool.end()
   process.exit(1)
 }
+await pool.end()
 
 writeFileSync(PASS_FILE, `email: ${EMAIL}\npassword: ${password}\n`, { mode: 0o600 })
-console.log(`  ok   saldo reviewer: ${bal.data} kredit`)
+console.log(`  ok   saldo reviewer: ${balData} kredit`)
 console.log(`reviewer setup passed: ${EMAIL} (password di ${PASS_FILE})`)

@@ -114,7 +114,7 @@ check('API route exists', fs.existsSync(routePath))
 
 if (fs.existsSync(routePath)) {
   const src = fs.readFileSync(routePath, 'utf-8')
-  check('API route uses createAdminClient', src.includes('createAdminClient'))
+  check('API route uses getDb', src.includes('getDb'))
   check('API route overwrites is_logged_in', src.includes('is_logged_in: Boolean('))
   check('API route size guard', src.includes('content-length') && src.includes('413'))
   check('API route force-dynamic', src.includes("force-dynamic"))

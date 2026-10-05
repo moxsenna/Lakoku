@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
+import { getDb, result } from '@lakoku/db'
 import {
   PREMIUM_BILIK_KETUJUH_V2_STORY_ID,
   PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP,
@@ -8,50 +8,38 @@ import {
 type ChoiceGate = (typeof PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP.choiceGates)[keyof typeof PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP.choiceGates]
 type GateChoice = ChoiceGate['choices'][number]
 
-const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL
-const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-
-if (!url || !serviceKey) {
-  console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY')
-  process.exit(1)
-}
-
-const db = createClient(url, serviceKey, {
-  auth: {
-    autoRefreshToken: false,
-    persistSession: false,
-  },
-})
-
 async function main() {
+  const db = getDb()
   const storyId = PREMIUM_BILIK_KETUJUH_V2_STORY_ID
 
   console.log(`Menghapus data lama untuk ${storyId}...`)
-  await db.from('choice_outcomes').delete().eq('story_id', storyId)
-  await db.from('chapters').delete().eq('story_id', storyId)
-  await db.from('stories').delete().eq('id', storyId)
+  await db.deleteFrom('choice_outcomes').where('story_id', '=', storyId).execute()
+  await db.deleteFrom('chapters').where('story_id', '=', storyId).execute()
+  await db.deleteFrom('stories').where('id', '=', storyId).execute()
 
   // Juga hapus id lama agar tidak membingungkan
-  await db.from('choice_outcomes').delete().eq('story_id', 'premium:bilik-ketujuh-50')
-  await db.from('chapters').delete().eq('story_id', 'premium:bilik-ketujuh-50')
-  await db.from('stories').delete().eq('id', 'premium:bilik-ketujuh-50')
+  await db.deleteFrom('choice_outcomes').where('story_id', '=', 'premium:bilik-ketujuh-50').execute()
+  await db.deleteFrom('chapters').where('story_id', '=', 'premium:bilik-ketujuh-50').execute()
+  await db.deleteFrom('stories').where('id', '=', 'premium:bilik-ketujuh-50').execute()
 
   console.log('Menyiapkan story record...')
-  const { error: storyError } = await db.from('stories').insert({
-    id: storyId,
-    title: PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP.title,
-    cover: '/covers/bilik-ketujuh.webp',
-    tagline: PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP.subtitle,
-    role: 'Naya',
-    tropes: PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP.genre,
-    total_chapters: PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP.structure.totalChapters,
-    synopsis: 'Sebuah rahasia besar tersembunyi di balik bilik ketujuh...',
-    status: 'SELESAI',
-    current_chapter: 50,
-    visibility: 'public',
-    ending_name: 'The True End',
-    jejak: [],
-  })
+  const { error: storyError } = await result(
+    db.insertInto('stories').values({
+      id: storyId,
+      title: PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP.title,
+      cover: '/covers/bilik-ketujuh.webp',
+      tagline: PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP.subtitle,
+      role: 'Naya',
+      tropes: [...PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP.genre],
+      total_chapters: PREMIUM_BILIK_KETUJUH_V2_ROUTE_MAP.structure.totalChapters,
+      synopsis: 'Sebuah rahasia besar tersembunyi di balik bilik ketujuh...',
+      status: 'SELESAI',
+      current_chapter: 50,
+      visibility: 'public',
+      ending_name: 'The True End',
+      jejak: [],
+    }).execute(),
+  )
 
   if (storyError) throw storyError
 
@@ -72,14 +60,16 @@ async function main() {
       choice_prompt = 'Terus telusuri ceritanya.'
     }
 
-    const { error: chapterError } = await db.from('chapters').insert({
-      story_id: storyId,
-      number: draft.chapterNumber,
-      title: draft.title || `Bab ${draft.chapterNumber}`,
-      paragraphs: draft.paragraphs,
-      choice_prompt,
-      choices,
-    })
+    const { error: chapterError } = await result(
+      db.insertInto('chapters').values({
+        story_id: storyId,
+        number: draft.chapterNumber,
+        title: draft.title || `Bab ${draft.chapterNumber}`,
+        paragraphs: draft.paragraphs,
+        choice_prompt,
+        choices,
+      }).execute(),
+    )
 
     if (chapterError) throw chapterError
 
@@ -95,14 +85,16 @@ async function main() {
         }
       }
 
-      const { error: outcomeError } = await db.from('choice_outcomes').insert({
-        story_id: storyId,
-        chapter_number: draft.chapterNumber,
-        choice_id: choice.id,
-        next_chapter_number: resulting_chapter,
-        consequence: [consequence],
-        is_ending: draft.chapterNumber === 50,
-      })
+      const { error: outcomeError } = await result(
+        db.insertInto('choice_outcomes').values({
+          story_id: storyId,
+          chapter_number: draft.chapterNumber,
+          choice_id: choice.id,
+          next_chapter_number: resulting_chapter,
+          consequence: [consequence],
+          is_ending: draft.chapterNumber === 50,
+        }).execute(),
+      )
       if (outcomeError) throw outcomeError
     }
   }

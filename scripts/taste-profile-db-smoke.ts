@@ -80,7 +80,7 @@ check('lib/api/taste-profile.ts exists', apiExists)
 
 if (apiExists) {
   const apiSrc = fs.readFileSync(apiPath, 'utf-8')
-  check('upsert onConflict user_id', apiSrc.includes("onConflict: 'user_id'"))
+  check('upsert onConflict user_id', apiSrc.includes("column('user_id')") || apiSrc.includes("onConflict: 'user_id'"))
   check('getTasteProfileForUser exported', apiSrc.includes('export async function getTasteProfileForUser'))
   check('saveTasteProfileForUser exported', apiSrc.includes('export async function saveTasteProfileForUser'))
   check(

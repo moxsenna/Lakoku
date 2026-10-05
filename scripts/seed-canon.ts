@@ -9,29 +9,24 @@
  * Idempotent: hapus canon story lalu insert ulang (delete-then-insert).
  * Memakai service role key — HANYA untuk script/server.
  */
-import { createClient } from '@supabase/supabase-js'
+import { getDb, result } from '@lakoku/db'
 import { buildFixtureSnapshot, FIXTURE_STORY_ID } from '../fixtures/narrative/fixture-50'
 
-const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL
-const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-if (!url || !serviceKey) {
-  console.error('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY tidak ditemukan di env.')
-  process.exit(1)
-}
-const db = createClient(url, serviceKey, {
-  auth: { autoRefreshToken: false, persistSession: false },
-})
-
+const db = getDb()
 const STORY = FIXTURE_STORY_ID
 
-async function del(table: string, column = 'story_id') {
-  const { error } = await db.from(table).delete().eq(column, STORY)
+async function del(table: any, column = 'story_id') {
+  const { error } = await result(
+    db.deleteFrom(table).where(column, '=', STORY).execute(),
+  )
   if (error) throw new Error(`delete ${table}: ${error.message}`)
 }
 
-async function ins(table: string, rows: Record<string, unknown>[]) {
+async function ins(table: any, rows: any[]) {
   if (!rows.length) return
-  const { error } = await db.from(table).insert(rows)
+  const { error } = await result(
+    db.insertInto(table).values(rows).execute(),
+  )
   if (error) throw new Error(`insert ${table}: ${error.message}`)
   console.log(`[seed-canon] ${table}: ${rows.length} baris`)
 }
@@ -40,21 +35,42 @@ async function main() {
   const s = buildFixtureSnapshot()
 
   // 0) Story shell (FK target untuk chapters/canon). Upsert idempoten.
-  const { error: eStory } = await db.from('stories').upsert({
-    id: STORY,
-    title: 'Warisan yang Terkubur',
-    cover: '/placeholder.svg?height=400&width=300',
-    tagline: 'Drama keluarga yang ditenun jalur cerita AI, bab demi bab.',
-    role: 'Rani, sang pewaris',
-    tropes: ['misteri keluarga', 'pengkhianatan', 'penebusan'],
-    total_chapters: 50,
-    synopsis:
-      'Rani pulang untuk memakamkan ayahnya dan menemukan warisan yang menyembunyikan kebenaran berbahaya.',
-    status: 'BARU',
-    current_chapter: 0,
-    jejak: [],
-    ending_name: null,
-  })
+  const { error: eStory } = await result(
+    db
+      .insertInto('stories')
+      .values({
+        id: STORY,
+        title: 'Warisan yang Terkubur',
+        cover: '/placeholder.svg?height=400&width=300',
+        tagline: 'Drama keluarga yang ditenun jalur cerita AI, bab demi bab.',
+        role: 'Rani, sang pewaris',
+        tropes: ['misteri keluarga', 'pengkhianatan', 'penebusan'],
+        total_chapters: 50,
+        synopsis:
+          'Rani pulang untuk memakamkan ayahnya dan menemukan warisan yang menyembunyikan kebenaran berbahaya.',
+        status: 'BARU',
+        current_chapter: 0,
+        jejak: [],
+        ending_name: null,
+      })
+      .onConflict((oc) =>
+        oc.column('id').doUpdateSet({
+          title: 'Warisan yang Terkubur',
+          cover: '/placeholder.svg?height=400&width=300',
+          tagline: 'Drama keluarga yang ditenun jalur cerita AI, bab demi bab.',
+          role: 'Rani, sang pewaris',
+          tropes: ['misteri keluarga', 'pengkhianatan', 'penebusan'],
+          total_chapters: 50,
+          synopsis:
+            'Rani pulang untuk memakamkan ayahnya dan menemukan warisan yang menyembunyikan kebenaran berbahaya.',
+          status: 'BARU',
+          current_chapter: 0,
+          jejak: [],
+          ending_name: null,
+        }),
+      )
+      .execute(),
+  )
   if (eStory) throw new Error(`stories: ${eStory.message}`)
   console.log('[seed-canon] stories: 1 baris (shell)')
 
@@ -70,13 +86,15 @@ async function main() {
     'character_voice_sheets',
     'character_aliases',
     'characters',
-  ]) {
+  ] as const) {
     await del(t)
   }
   // character_states dikunci oleh character_id (tanpa story_id) → hapus per karakter.
   const charIds = s.characters.map((c) => c.id)
   if (charIds.length) {
-    const { error } = await db.from('character_states').delete().in('character_id', charIds)
+    const { error } = await result(
+      db.deleteFrom('character_states').where('character_id', 'in', charIds).execute(),
+    )
     if (error) throw new Error(`delete character_states: ${error.message}`)
   }
 

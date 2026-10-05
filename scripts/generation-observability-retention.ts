@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
+import { getDb, single, rpcOne } from '@lakoku/db'
 
 const MAX_BATCHES = 100
 const BATCH_SIZE = 1000
@@ -48,12 +48,7 @@ function parseRetentionResult(value: unknown): RetentionResult {
 }
 
 async function main(): Promise<void> {
-  const url = process.env.SUPABASE_URL?.trim()
-    || requiredEnvironment('NEXT_PUBLIC_SUPABASE_URL')
-  const serviceRoleKey = requiredEnvironment('SUPABASE_SERVICE_ROLE_KEY')
-  const client = createClient(url, serviceRoleKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  })
+  const db = getDb()
 
   const totals: RetentionResult = {
     rolledUp: 0,
@@ -63,16 +58,18 @@ async function main(): Promise<void> {
   }
 
   for (let batch = 1; batch <= MAX_BATCHES; batch++) {
-    const { data, error } = await client
-      .rpc('rollup_and_purge_generation_provider_calls_v1', {
+    const { data, error } = await single(
+      rpcOne(db, 'rollup_and_purge_generation_provider_calls_v1', {
         p_batch_size: BATCH_SIZE,
-      })
+      }).execute(),
+    )
 
     if (error) {
       throw new Error('GENERATION_OBSERVABILITY_RETENTION_RPC_FAILED')
     }
 
-    const result = parseRetentionResult(data)
+    const payload = data ? ((data as Record<string, unknown>).fn ?? data) : null
+    const result = parseRetentionResult(payload)
     totals.rolledUp += result.rolledUp
     totals.deletedDetails += result.deletedDetails
     totals.deletedAggregates += result.deletedAggregates

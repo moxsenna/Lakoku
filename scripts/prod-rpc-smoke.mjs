@@ -9,6 +9,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { createClient } from '@supabase/supabase-js'
+import pg from 'pg'
 
 const TEST_EMAIL = 'moxsenna+monkeytest1@gmail.com'
 
@@ -50,11 +51,17 @@ const user = list.users.find((u) => (u.email ?? '').toLowerCase() === TEST_EMAIL
 check('akun test ditemukan', Boolean(user))
 if (!user) process.exit(1)
 const uid = user.id
+const pool = new pg.Pool({ connectionString: env.DATABASE_URL || env.SUPABASE_DB_URL })
 
 // 1) Snapshot misi — currency field ada (flag missions_pay_tinta=false → 'lakoin')
-const { data: snap, error: snapErr } = await admin.rpc('get_daily_missions_v1', {
-  p_user_id: uid,
-})
+let snap = null
+let snapErr = null
+try {
+  const res = await pool.query('SELECT get_daily_missions_v1($1) as data', [uid])
+  snap = res.rows[0]?.data
+} catch (e) {
+  snapErr = e
+}
 check('get_daily_missions_v1 dipanggil', !snapErr, snapErr?.message)
 if (snap) {
   const s = typeof snap === 'string' ? JSON.parse(snap) : snap
@@ -63,20 +70,34 @@ if (snap) {
 }
 
 // 2) Klaim misi hadir — real write ke akun test
-const { data: claim, error: claimErr } = await admin.rpc('claim_mission_v1', {
-  p_user_id: uid,
-  p_mission_key: 'daily_checkin',
-})
+let claim = null
+let claimErr = null
+try {
+  const res = await pool.query('SELECT claim_mission_v1($1, $2) as data', [uid, 'daily_checkin'])
+  claim = res.rows[0]?.data
+} catch (e) {
+  claimErr = e
+}
 check('claim_mission_v1 dipanggil', !claimErr, claimErr?.message)
 check("klaim pertama 'ok' atau 'duplicate'", claim === 'ok' || claim === 'duplicate', String(claim))
-const { data: claim2 } = await admin.rpc('claim_mission_v1', {
-  p_user_id: uid,
-  p_mission_key: 'daily_checkin',
-})
+let claim2 = null
+try {
+  const res = await pool.query('SELECT claim_mission_v1($1, $2) as data', [uid, 'daily_checkin'])
+  claim2 = res.rows[0]?.data
+} catch (e) {
+  // ignore
+}
 check("klaim ulang hari sama = 'duplicate'", claim2 === 'duplicate', String(claim2))
 
 // 3) Saldo Tinta — bentuk jsonb {total,available,pending}
-const { data: balance, error: balErr } = await admin.rpc('tinta_balance_v1', { p_user_id: uid })
+let balance = null
+let balErr = null
+try {
+  const res = await pool.query('SELECT tinta_balance_v1($1) as data', [uid])
+  balance = res.rows[0]?.data
+} catch (e) {
+  balErr = e
+}
 check('tinta_balance_v1 dipanggil', !balErr, balErr?.message)
 if (balance) {
   const b = typeof balance === 'string' ? JSON.parse(balance) : balance
@@ -88,20 +109,26 @@ if (balance) {
 }
 
 // 4) Reward penulis — policy default off → 'disabled'
-const { data: author, error: authorErr } = await admin.rpc('grant_author_tinta_v1', {
-  p_reader_id: uid,
-  p_story_id: 'demo:selasa-akhir',
-  p_chapter_number: 2,
-})
+let author = null
+let authorErr = null
+try {
+  const res = await pool.query('SELECT grant_author_tinta_v1($1, $2, $3) as data', [uid, 'demo:selasa-akhir', 2])
+  author = res.rows[0]?.data
+} catch (e) {
+  authorErr = e
+}
 check("grant_author_tinta_v1='disabled' (flag default off)", author === 'disabled', String(authorErr ?? author))
 
 // 5) Tukar tanpa saldo → 'insufficient'
-const { data: spend, error: spendErr } = await admin.rpc('spend_tinta_v1', {
-  p_user_id: uid,
-  p_ref: 'g12m-probe:' + Date.now(),
-  p_amount: 100,
-  p_reason: 'g12m_probe',
-})
+let spend = null
+let spendErr = null
+try {
+  const res = await pool.query('SELECT spend_tinta_v1($1, $2, $3, $4) as data', [uid, 'g12m-probe:' + Date.now(), 100, 'g12m_probe'])
+  spend = res.rows[0]?.data
+} catch (e) {
+  spendErr = e
+}
+await pool.end()
 check("spend_tinta_v1 saldo kosong='insufficient'", spend === 'insufficient', String(spendErr ?? spend))
 
 console.log(`\nprod-rpc-smoke: ${pass} pass, ${fail} fail`)

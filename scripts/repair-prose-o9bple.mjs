@@ -14,7 +14,7 @@
  * Mode: (default) evidence | --apply | --verify (REPAIR-PROSE-VERIFY-PASS).
  * Dipakai: node --env-file=.env.local scripts/repair-prose-o9bple.mjs [--apply|--verify]
  */
-import { createClient } from '@supabase/supabase-js'
+import pg from 'pg'
 
 const STORY_ID = 'pulang-ke-tanah-yang-masih-marah-o9bple'
 const HARD_MIN_WORDS = 800
@@ -36,13 +36,11 @@ function countWords(paragraphs) {
   return paragraphs.join(' ').split(/\s+/).filter(Boolean).length
 }
 
-async function loadAll(supabase) {
-  const { data: chapters, error } = await supabase
-    .from('chapters')
-    .select('number, title, paragraphs')
-    .eq('story_id', STORY_ID)
-    .order('number')
-  if (error) throw new Error(`load chapters: ${error.message}`)
+async function loadAll(pool) {
+  const { rows: chapters } = await pool.query(
+    'SELECT number, title, paragraphs FROM chapters WHERE story_id = $1 ORDER BY number ASC',
+    [STORY_ID],
+  )
   if (!chapters || chapters.length !== 50) throw new Error(`bab tidak lengkap: ${chapters?.length ?? 0}`)
   return chapters
 }
@@ -99,12 +97,10 @@ async function apply(supabase, chapters) {
     if (!chapter || chapter.title !== rename.from) {
       throw new Error(`bab ${rename.chapter} tidak cocok dengan judul harapan: ${chapter?.title}`)
     }
-    const { error } = await supabase
-      .from('chapters')
-      .update({ title: rename.to })
-      .eq('story_id', STORY_ID)
-      .eq('number', rename.chapter)
-    if (error) throw new Error(`rename bab ${rename.chapter}: ${error.message}`)
+    await pool.query(
+      'UPDATE chapters SET title = $1 WHERE story_id = $2 AND number = $3',
+      [rename.to, STORY_ID, rename.chapter],
+    )
     allTitles.delete(rename.from)
     allTitles.add(rename.to)
   }
@@ -119,12 +115,10 @@ async function apply(supabase, chapters) {
       continue
     }
     const current = chapters.find((c) => c.number === echo.chapter)
-    const { error } = await supabase
-      .from('chapters')
-      .update({ paragraphs: current.paragraphs.slice(1) })
-      .eq('story_id', STORY_ID)
-      .eq('number', echo.chapter)
-    if (error) throw new Error(`echo bab ${echo.chapter}: ${error.message}`)
+    await pool.query(
+      'UPDATE chapters SET paragraphs = $1 WHERE story_id = $2 AND number = $3',
+      [JSON.stringify(current.paragraphs.slice(1)), STORY_ID, echo.chapter],
+    )
     current.paragraphs = current.paragraphs.slice(1)
     removed += 1
   }
@@ -132,8 +126,8 @@ async function apply(supabase, chapters) {
   console.log('REPAIR-PROSE-APPLY-DONE')
 }
 
-async function verify(supabase) {
-  const chapters = await loadAll(supabase)
+async function verify(pool) {
+  const chapters = await loadAll(pool)
   const failures = []
 
   const duplicates = findDuplicateTitles(chapters)
@@ -170,23 +164,24 @@ async function verify(supabase) {
 }
 
 async function main() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
-  if (!url || !key) throw new Error('ENV missing: NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY')
-  const supabase = createClient(url, key)
+  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || process.env.SUPABASE_DB_URL })
   const mode = process.argv.includes('--apply') ? 'apply' : process.argv.includes('--verify') ? 'verify' : 'evidence'
 
-  if (mode === 'verify') {
-    await verify(supabase)
-    return
-  }
+  try {
+    if (mode === 'verify') {
+      await verify(pool)
+      return
+    }
 
-  const chapters = await loadAll(supabase)
-  printEvidence(chapters)
-  if (mode === 'apply') {
-    await apply(supabase, chapters)
-  } else {
-    console.log('EVIDENCE-ONLY (tidak ada penulisan)')
+    const chapters = await loadAll(pool)
+    printEvidence(chapters)
+    if (mode === 'apply') {
+      await apply(pool, chapters)
+    } else {
+      console.log('EVIDENCE-ONLY (tidak ada penulisan)')
+    }
+  } finally {
+    await pool.end()
   }
 }
 

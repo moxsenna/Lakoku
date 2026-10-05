@@ -4,7 +4,7 @@
  * Dipakai untuk: inspeksi katalog web sebelum mirror android (O-tasks).
  */
 import { readFileSync } from 'node:fs'
-import { createClient } from '@supabase/supabase-js'
+import pg from 'pg'
 
 function loadEnv(path) {
   const env = {}
@@ -16,25 +16,25 @@ function loadEnv(path) {
 }
 
 const env = loadEnv('.env.local')
-const url = env.SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL
-const key = env.SUPABASE_SECRET_KEY || env.SUPABASE_SERVICE_ROLE_KEY
-if (!url || !key) {
-  console.error('catalog read FAILED: missing SUPABASE_URL / SERVICE_ROLE in .env.local')
-  process.exit(1)
-}
-
-const supabase = createClient(url, key)
+const pool = new pg.Pool({ connectionString: env.DATABASE_URL || env.SUPABASE_DB_URL })
 const channel = process.argv[2] || null
-// Pra-migrasi: kolom channel belum ada → baca semua tanpa filter.
 const columns = channel
   ? 'product_key,channel,name,price_idr,credits,normal_bonus_credits,first_topup_bonus_credits,marketing_badge,bonus_active,active,sort_order'
   : 'product_key,name,price_idr,credits,normal_bonus_credits,first_topup_bonus_credits,marketing_badge,bonus_active,active,sort_order'
-let query = supabase.from('credit_products').select(columns).order('sort_order', { ascending: true })
-if (channel) query = query.eq('channel', channel)
-const { data, error } = await query
-if (error) {
+
+let data = []
+try {
+  const sql = channel
+    ? `SELECT ${columns} FROM credit_products WHERE channel = $1 ORDER BY sort_order ASC`
+    : `SELECT ${columns} FROM credit_products ORDER BY sort_order ASC`
+  const params = channel ? [channel] : []
+  const res = await pool.query(sql, params)
+  data = res.rows
+} catch (error) {
   console.error(`catalog read FAILED: ${error.message}`)
+  await pool.end()
   process.exit(1)
 }
+await pool.end()
 console.log(JSON.stringify(data, null, 1))
 console.log(`catalog read passed: ${data.length} rows channel=${channel}`)

@@ -1,4 +1,4 @@
-import { createAdminClient } from '@lakoku/db'
+import { getDb, result, countOf } from '@lakoku/db'
 
 /**
  * Script read-only untuk mengaudit keberadaan kontinuitas pada cerita yang ada.
@@ -6,21 +6,26 @@ import { createAdminClient } from '@lakoku/db'
  */
 async function auditContinuity() {
   console.log('=== LAKOKU CONTINUITY AUDIT (READ-ONLY) ===')
-  const db = createAdminClient()
+  const db = getDb()
 
-  const { data: stories, error } = await db.from('stories').select('id, title, mode').limit(50)
-  if (error) {
-    console.error('Gagal mengambil daftar story:', error.message)
+  const { data: stories, error } = await result(
+    db.selectFrom('stories').select(['id', 'title', 'story_mode as mode']).limit(50).execute(),
+  )
+  if (error || !stories) {
+    console.error('Gagal mengambil daftar story:', error?.message)
     process.exit(1)
   }
 
   console.log(`Ditemukan ${stories.length} story untuk diaudit.`)
 
   for (const story of stories) {
-    const { count } = await db
-      .from('chapters')
-      .select('number', { count: 'exact', head: true })
-      .eq('story_id', story.id)
+    const count = await countOf(
+      db
+        .selectFrom('chapters')
+        .select((eb) => eb.fn.countAll<number>().as('n'))
+        .where('story_id', '=', story.id)
+        .execute(),
+    )
 
     console.log(`- Story [${story.id}] "${story.title}" (${story.mode}): ${count ?? 0} bab.`)
   }

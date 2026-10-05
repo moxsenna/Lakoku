@@ -4,7 +4,7 @@
  * Gagal jujur (exit nonzero) selama produk IAP belum dibuat / belum diaktifkan.
  */
 import { readFileSync } from 'node:fs'
-import { createClient } from '@supabase/supabase-js'
+import pg from 'pg'
 
 function loadEnv(path) {
   const env = {}
@@ -16,19 +16,17 @@ function loadEnv(path) {
 }
 
 const env = loadEnv('.env.local')
-const supabase = createClient(
-  env.SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL,
-  env.SUPABASE_SECRET_KEY || env.SUPABASE_SERVICE_ROLE_KEY,
-)
-const { data, error } = await supabase
-  .from('credit_products')
-  .select('product_key,play_sku,active')
-  .eq('channel', 'android')
-if (error) {
+const pool = new pg.Pool({ connectionString: env.DATABASE_URL || env.SUPABASE_DB_URL })
+let rows = []
+try {
+  const res = await pool.query("SELECT product_key,play_sku,active FROM credit_products WHERE channel = 'android'")
+  rows = res.rows
+} catch (error) {
   console.error(`android catalog active verification FAILED: ${error.message}`)
+  await pool.end()
   process.exit(1)
 }
-const rows = data ?? []
+await pool.end()
 let failed = false
 if (rows.length !== 6) {
   failed = true

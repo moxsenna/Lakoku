@@ -265,7 +265,7 @@ const generationComponentsRoot = resolve(root, 'components/admin/generation')
 const generationUiSource = [generationPage, ...sourceFiles(generationComponentsRoot).map((file) => readFileSync(file, 'utf8'))].join('\n')
 
 check('generation loader does not read story_events directly', !/story_events/.test(generationLoader))
-check('generation loader uses cookie-scoped client', /createClient/.test(generationLoader) && !/createAdminClient/.test(generationLoader))
+check('generation loader uses getDb', /getDb/.test(generationLoader) && !/createAdminClient/.test(generationLoader))
 for (const rpc of [
   'admin_generation_overview_v1',
   'admin_generation_timeseries_v1',

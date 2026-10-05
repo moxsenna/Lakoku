@@ -10,18 +10,11 @@
  * Jalankan: set -a && source /vercel/share/.env.project && set +a
  *           && npx tsx scripts/e2e-real-generation.ts
  */
-import { createClient } from '@supabase/supabase-js'
+import { getDb, single, result, countOf } from '@lakoku/db'
 import { generateNextChapterReal } from '@lakoku/runtime'
 import { scanForLeaks } from '@lakoku/ai-gateway'
 
 const STORY = 'fixture:warisan-terkubur'
-
-function admin() {
-  const url = process.env.SUPABASE_URL
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
-  if (!url || !key) throw new Error('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY tak tersedia.')
-  return createClient(url, key, { auth: { persistSession: false } })
-}
 
 let pass = 0
 let fail = 0
@@ -36,19 +29,19 @@ function check(name: string, cond: boolean, extra?: unknown) {
 }
 
 async function main() {
-  const db = admin()
+  const db = getDb()
 
   // Bersihkan artefak generasi sebelumnya (idempoten untuk test ulang).
   console.log('[e2e] membersihkan bab & log lama...')
-  await db.from('chapters').delete().eq('story_id', STORY)
-  await db.from('choice_outcomes').delete().eq('story_id', STORY)
-  await db.from('story_events').delete().eq('story_id', STORY)
-  await db.from('retrieval_logs').delete().eq('story_id', STORY)
-  await db.from('generation_leases').delete().eq('story_id', STORY)
+  await db.deleteFrom('chapters').where('story_id', '=', STORY).execute()
+  await db.deleteFrom('choice_outcomes').where('story_id', '=', STORY).execute()
+  await db.deleteFrom('story_events').where('story_id', '=', STORY).execute()
+  await db.deleteFrom('retrieval_logs').where('story_id', '=', STORY).execute()
+  await db.deleteFrom('generation_leases').where('story_id', '=', STORY).execute()
   // Penting: sapu juga ledger idempotensi. Tanpa ini, publish_chapter akan
   // mengembalikan hasil cache (ok=true) TANPA menulis ulang bab, sehingga test
   // ulang tampak "terbit" padahal DB kosong.
-  await db.from('idempotency_keys').delete().eq('story_id', STORY)
+  await db.deleteFrom('idempotency_keys').where('story_id', '=', STORY).execute()
 
   // 1) Generate Bab 1..3 lewat jalur nyata.
   console.log('\n[e2e] generasi nyata Bab 1..3')
@@ -70,17 +63,20 @@ async function main() {
   // 2) Baca via reader query (kolom snake_case → domain).
   console.log('\n[e2e] baca via reader query')
   for (let n = 1; n <= 3; n++) {
-    const { data: ch } = await db
-      .from('chapters')
-      .select('*')
-      .eq('story_id', STORY)
-      .eq('number', n)
-      .maybeSingle()
+    const { data: ch } = await single(
+      db
+        .selectFrom('chapters')
+        .selectAll()
+        .where('story_id', '=', STORY)
+        .where('number', '=', n)
+        .limit(1)
+        .execute(),
+    )
     check(`chapter ${n} tersimpan`, !!ch, ch)
     if (ch) {
       const words = (ch.paragraphs as string[]).join(' ').split(/\s+/).filter(Boolean).length
       check(`chapter ${n} panjang 400-900 kata (${words})`, words >= 400 && words <= 900, words)
-      check(`chapter ${n} punya choice`, Array.isArray(ch.choices) && ch.choices.length >= 2, ch.choices)
+      check(`chapter ${n} punya choice`, Array.isArray(ch.choices) && (ch.choices as unknown[]).length >= 2, ch.choices)
       // Consumer-safe: tidak ada istilah internal bocor.
       const leaks = [ch.title, ...(ch.paragraphs as string[]), ch.choice_prompt ?? '']
         .flatMap((s: string) => scanForLeaks(s))
@@ -89,26 +85,35 @@ async function main() {
   }
 
   // 3) choice_outcomes tertulis untuk tiap bab non-ending.
-  const { count: outcomeCount } = await db
-    .from('choice_outcomes')
-    .select('*', { count: 'exact', head: true })
-    .eq('story_id', STORY)
+  const outcomeCount = await countOf(
+    db
+      .selectFrom('choice_outcomes')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('story_id', '=', STORY)
+      .execute(),
+  )
   check('choice_outcomes tertulis', (outcomeCount ?? 0) >= 6, outcomeCount)
 
   // 4) retrieval_logs tercatat (audit pruning context).
-  const { data: rlogs } = await db
-    .from('retrieval_logs')
-    .select('target_chapter, budget_report')
-    .eq('story_id', STORY)
-    .order('target_chapter', { ascending: true })
+  const { data: rlogs } = await result(
+    db
+      .selectFrom('retrieval_logs')
+      .select(['target_chapter', 'budget_report'])
+      .where('story_id', '=', STORY)
+      .orderBy('target_chapter', 'asc')
+      .execute(),
+  )
   check('retrieval_logs tercatat >=3', (rlogs?.length ?? 0) >= 3, rlogs?.length)
 
   // 5) story_events append-only terurut (CHAPTER_PUBLISHED muncul).
-  const { data: events } = await db
-    .from('story_events')
-    .select('seq, type')
-    .eq('story_id', STORY)
-    .order('seq', { ascending: true })
+  const { data: events } = await result(
+    db
+      .selectFrom('story_events')
+      .select(['seq', 'type'])
+      .where('story_id', '=', STORY)
+      .orderBy('seq', 'asc')
+      .execute(),
+  )
   const seqs = (events ?? []).map((e) => e.seq)
   const monotonic = seqs.every((s, i) => i === 0 || s > seqs[i - 1])
   check('story_events seq monotonic', monotonic, seqs)
@@ -120,27 +125,36 @@ async function main() {
 
   // 6) Idempotensi: panggil ulang Bab 1 tak menduplikasi.
   console.log('\n[e2e] uji idempotensi (panggil ulang Bab 1)')
-  const { count: before } = await db
-    .from('chapters')
-    .select('*', { count: 'exact', head: true })
-    .eq('story_id', STORY)
+  const before = await countOf(
+    db
+      .selectFrom('chapters')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('story_id', '=', STORY)
+      .execute(),
+  )
   const again = await generateNextChapterReal({
     storyId: STORY,
     userId: '00000000-0000-4000-8000-000000000001',
     chapterNumber: 1,
     correlationId: crypto.randomUUID(),
   })
-  const { count: after } = await db
-    .from('chapters')
-    .select('*', { count: 'exact', head: true })
-    .eq('story_id', STORY)
+  const after = await countOf(
+    db
+      .selectFrom('chapters')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('story_id', '=', STORY)
+      .execute(),
+  )
   check('panggil ulang Bab 1 tak menambah bab', before === after, { before, after, again })
 
   // 7) Tidak ada lease ACTIVE tersisa (sukses melepas lease via publish).
-  const { data: leases } = await db
-    .from('generation_leases')
-    .select('status')
-    .eq('story_id', STORY)
+  const { data: leases } = await result(
+    db
+      .selectFrom('generation_leases')
+      .select('status')
+      .where('story_id', '=', STORY)
+      .execute(),
+  )
   const active = (leases ?? []).filter((l) => l.status === 'ACTIVE').length
   check('tak ada lease ACTIVE tersisa', active === 0, leases)
 

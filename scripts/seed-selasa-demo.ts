@@ -7,7 +7,7 @@
  * Idempotent: bersihkan semua row untuk story ID konstan, lalu insert ulang.
  * Memakai service role key. Jangan pernah jalankan dari browser/client.
  */
-import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { getDb, result, countOf } from '@lakoku/db'
 import { buildFixtureSnapshot } from '../fixtures/narrative/fixture-50'
 import {
   DEMO_ENDING_MAJU,
@@ -505,63 +505,60 @@ export function buildSelasaDemoSeedRows(): SelasaDemoSeedRows {
 }
 
 function admin() {
-  const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-
-  if (!url || !serviceKey) {
-    throw new Error('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY tidak ditemukan di env.')
-  }
-
-  return createClient(url, serviceKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  })
+  return getDb()
 }
 
 async function deleteByStoryId(
-  db: SupabaseClient,
-  table: string,
+  _db: unknown,
+  table: any,
   column = 'story_id',
 ) {
-  const { error } = await db.from(table).delete().eq(column, DEMO_STORY_ID)
+  const db = getDb()
+  const { error } = await result(db.deleteFrom(table).where(column, '=', DEMO_STORY_ID).execute())
   if (error) throw new Error(`delete ${table}: ${error.message}`)
 }
 
-async function deleteCharacterStates(db: SupabaseClient) {
+async function deleteCharacterStates(_db: unknown) {
+  const db = getDb()
   const characterIds = buildFixtureSnapshot().characters.map((character) => character.id)
   if (!characterIds.length) return
 
-  const { error } = await db
-    .from('character_states')
-    .delete()
-    .in('character_id', characterIds)
+  const { error } = await result(
+    db
+      .deleteFrom('character_states')
+      .where('character_id', 'in', characterIds)
+      .execute(),
+  )
   if (error) throw new Error(`delete character_states: ${error.message}`)
 }
 
 async function insertRows(
-  db: SupabaseClient,
-  table: string,
-  rows: Record<string, unknown>[],
+  _db: unknown,
+  table: any,
+  rows: any[],
 ) {
   if (!rows.length) return
-
-  const { error } = await db.from(table).insert(rows)
+  const db = getDb()
+  const { error } = await result(db.insertInto(table).values(rows).execute())
   if (error) throw new Error(`insert ${table}: ${error.message}`)
   console.log(`[seed-selasa-demo] ${table}: ${rows.length} baris`)
 }
 
 async function assertCount(
-  db: SupabaseClient,
-  table: string,
+  _db: unknown,
+  table: any,
   expected: number,
   column = 'story_id',
 ) {
-  const { count, error } = await db
-    .from(table)
-    .select('*', { count: 'exact', head: true })
-    .eq(column, DEMO_STORY_ID)
-  if (error) throw new Error(`count ${table}: ${error.message}`)
+  const db = getDb()
+  const rows = (await db
+    .selectFrom(table)
+    .select((eb: any) => eb.fn.countAll().as('n'))
+    .where(column, '=', DEMO_STORY_ID)
+    .execute()) as Array<{ n?: number | string }>
+  const count = Number(rows[0]?.n ?? 0)
   if (count !== expected) {
-    throw new Error(`count ${table}: expected ${expected}, got ${count ?? 'null'}`)
+    throw new Error(`count ${table}: expected ${expected}, got ${count}`)
   }
 }
 

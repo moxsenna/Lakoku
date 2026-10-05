@@ -352,12 +352,12 @@ const lifecycle = source(lifecyclePath)
 check(
   'legacy publishChapter and publish_chapter remain preserved',
   lifecycle.includes('export async function publishChapter(')
-    && lifecycle.includes(".rpc('publish_chapter'"),
+    && (lifecycle.includes("'publish_chapter'") || lifecycle.includes(".rpc('publish_chapter'")),
 )
 check(
   'publishChapterV2 and publish_chapter_v2 remain additive',
   lifecycle.includes('export async function publishChapterV2(')
-    && lifecycle.includes(".rpc('publish_chapter_v2'"),
+    && (lifecycle.includes("'publish_chapter_v2'") || lifecycle.includes(".rpc('publish_chapter_v2'")),
 )
 
 const runtimeIndex = source('lib/runtime/index.ts')

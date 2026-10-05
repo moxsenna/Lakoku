@@ -9,14 +9,8 @@
  *
  * Memakai story uji terisolasi ('rt-selftest') yang dibuat & dihapus sendiri.
  */
-import { createClient } from '@supabase/supabase-js'
+import { getDb, single, result, countOf } from '@lakoku/db'
 import { generateNextChapter, generationKey } from '@lakoku/runtime'
-
-const url = process.env.SUPABASE_URL!
-const key = process.env.SUPABASE_SERVICE_ROLE_KEY!
-const db = createClient(url, key, {
-  auth: { autoRefreshToken: false, persistSession: false },
-})
 
 const STORY = 'rt-selftest'
 let failures = 0
@@ -31,22 +25,24 @@ function check(name: string, cond: boolean, detail?: unknown) {
 }
 
 async function cleanup() {
+  const db = getDb()
   // Hapus jejak uji (urutan menghormati FK).
-  await db.from('story_events').delete().eq('story_id', STORY)
-  await db.from('generation_leases').delete().eq('story_id', STORY)
-  await db.from('idempotency_keys').delete().eq('story_id', STORY)
-  await db.from('choice_outcomes').delete().eq('story_id', STORY)
-  await db.from('chapters').delete().eq('story_id', STORY)
-  await db.from('stories').delete().eq('id', STORY)
+  await db.deleteFrom('story_events').where('story_id', '=', STORY).execute()
+  await db.deleteFrom('generation_leases').where('story_id', '=', STORY).execute()
+  await db.deleteFrom('idempotency_keys').where('story_id', '=', STORY).execute()
+  await db.deleteFrom('choice_outcomes').where('story_id', '=', STORY).execute()
+  await db.deleteFrom('chapters').where('story_id', '=', STORY).execute()
+  await db.deleteFrom('stories').where('id', '=', STORY).execute()
 }
 
 async function main() {
+  const db = getDb()
   await cleanup()
-  await db.from('stories').insert({
+  await db.insertInto('stories').values({
     id: STORY,
     title: 'Runtime Self-Test',
     total_chapters: 50,
-  })
+  }).execute()
 
   // 1) Generate bab 1.
   const r1 = await generateNextChapter(STORY, 1)
@@ -58,48 +54,63 @@ async function main() {
   check('retry bab 1 idempoten (ok true, seq sama)', r2.ok === true && r1.ok === true && r2.seq === r1.seq, { r1, r2 })
 
   // 3) Hanya ada SATU baris chapter untuk bab 1.
-  const { count: chCount } = await db
-    .from('chapters')
-    .select('*', { count: 'exact', head: true })
-    .eq('story_id', STORY)
-    .eq('number', 1)
+  const chCount = await countOf(
+    db
+      .selectFrom('chapters')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('story_id', '=', STORY)
+      .where('number', '=', 1)
+      .execute(),
+  )
   check('tepat 1 baris chapter untuk bab 1', chCount === 1, { chCount })
 
   // 4) Outcomes bab 1 ada (atomicity: ditulis bersama chapter).
-  const { count: ocCount } = await db
-    .from('choice_outcomes')
-    .select('*', { count: 'exact', head: true })
-    .eq('story_id', STORY)
-    .eq('chapter_number', 1)
-  check('outcomes bab 1 tertulis (>=2)', (ocCount ?? 0) >= 2, { ocCount })
+  const ocCount = await countOf(
+    db
+      .selectFrom('choice_outcomes')
+      .select((eb) => eb.fn.countAll<number>().as('n'))
+      .where('story_id', '=', STORY)
+      .where('chapter_number', '=', 1)
+      .execute(),
+  )
+  check('outcomes bab 1 tertulis (>=2)', ocCount >= 2, { ocCount })
 
   // 5) Tepat SATU event CHAPTER_PUBLISHED untuk bab 1 (no double-advance).
-  const { data: events } = await db
-    .from('story_events')
-    .select('seq, type, payload')
-    .eq('story_id', STORY)
-    .order('seq', { ascending: true })
+  const { data: events } = await result(
+    db
+      .selectFrom('story_events')
+      .select(['seq', 'type', 'payload'])
+      .where('story_id', '=', STORY)
+      .orderBy('seq', 'asc')
+      .execute(),
+  )
   const publishEvents = (events ?? []).filter(
-    (e) => e.type === 'CHAPTER_PUBLISHED' && (e.payload as { chapter_number?: number }).chapter_number === 1,
+    (e) => e.type === 'CHAPTER_PUBLISHED' && (e.payload as { chapter_number?: number })?.chapter_number === 1,
   )
   check('tepat 1 event CHAPTER_PUBLISHED bab 1', publishEvents.length === 1, { events })
 
   // 6) Lease bab 1 sudah RELEASED (bukan menggantung ACTIVE).
-  const { data: leases } = await db
-    .from('generation_leases')
-    .select('status, chapter_number')
-    .eq('story_id', STORY)
+  const { data: leases } = await result(
+    db
+      .selectFrom('generation_leases')
+      .select(['status', 'chapter_number'])
+      .where('story_id', '=', STORY)
+      .execute(),
+  )
   const active = (leases ?? []).filter((l) => l.status === 'ACTIVE')
   check('tak ada lease ACTIVE menggantung', active.length === 0, { leases })
 
   // 7) Generate bab 2 → sequence event bertambah monotonic.
   const r3 = await generateNextChapter(STORY, 2)
   check('generate bab 2 sukses', r3.ok === true, r3)
-  const { data: events2 } = await db
-    .from('story_events')
-    .select('seq')
-    .eq('story_id', STORY)
-    .order('seq', { ascending: true })
+  const { data: events2 } = await result(
+    db
+      .selectFrom('story_events')
+      .select('seq')
+      .where('story_id', '=', STORY)
+      .orderBy('seq', 'asc')
+      .execute(),
+  )
   const seqs = (events2 ?? []).map((e) => e.seq)
   const monotonic = seqs.every((s, i) => i === 0 || s > seqs[i - 1])
   check('sequence event monotonic naik', monotonic, { seqs })

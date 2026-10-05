@@ -1,4 +1,4 @@
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb, single, result } from '@lakoku/db'
 import { generateNextChapterReal } from '@lakoku/runtime'
 
 const STORY = 'pulang-ke-tanah-yang-masih-marah-o9bple'
@@ -10,44 +10,52 @@ async function main() {
   if (process.env.NARRATIVE_PROVIDER !== 'gateway') {
     throw new Error('refuse: NARRATIVE_PROVIDER must be gateway')
   }
-  const admin = createAdminClient()
+  const db = getDb()
 
-  const { error: delErr } = await admin
-    .from('chapters')
-    .delete()
-    .eq('story_id', STORY)
-    .eq('number', target)
+  const { error: delErr } = await result(
+    db
+      .deleteFrom('chapters')
+      .where('story_id', '=', STORY)
+      .where('number', '=', target)
+      .execute(),
+  )
   if (delErr) throw delErr
   console.log(`deleted Bab ${target}`)
 
-  await admin
-    .from('chapter_generation_checkpoints')
-    .delete()
-    .eq('story_id', STORY)
-    .eq('chapter_number', target)
-  await admin
-    .from('generation_leases')
-    .delete()
-    .eq('story_id', STORY)
-    .eq('chapter_number', target)
+  await db
+    .deleteFrom('chapter_generation_checkpoints')
+    .where('story_id', '=', STORY)
+    .where('chapter_number', '=', target)
+    .execute()
+  await db
+    .deleteFrom('generation_leases')
+    .where('story_id', '=', STORY)
+    .where('chapter_number', '=', target)
+    .execute()
 
   // Trigger harus id pilihan yang benar-benar diambil pembaca, bukan indeks 0.
-  const { data: rs } = await admin
-    .from('reader_states')
-    .select('choice_history')
-    .eq('story_id', STORY)
-    .eq('user_id', USER)
-    .maybeSingle()
+  const { data: rs } = await single(
+    db
+      .selectFrom('reader_states')
+      .select('choice_history')
+      .where('story_id', '=', STORY)
+      .where('user_id', '=', USER)
+      .limit(1)
+      .execute(),
+  )
   const history: Array<{ choiceId?: string; chapterNumber?: number }> =
-    Array.isArray(rs?.choice_history) ? rs.choice_history : []
+    Array.isArray(rs?.choice_history) ? (rs.choice_history as Array<{ choiceId?: string; chapterNumber?: number }>) : []
   const fromHistory = history.find((e) => e.chapterNumber === target - 1)?.choiceId ?? null
 
-  const { data: prev } = await admin
-    .from('chapters')
-    .select('choices')
-    .eq('story_id', STORY)
-    .eq('number', target - 1)
-    .maybeSingle()
+  const { data: prev } = await single(
+    db
+      .selectFrom('chapters')
+      .select('choices')
+      .where('story_id', '=', STORY)
+      .where('number', '=', target - 1)
+      .limit(1)
+      .execute(),
+  )
   const validIds = Array.isArray(prev?.choices)
     ? ((prev.choices as Array<{ id?: string }>).map((x) => x.id).filter(Boolean) as string[])
     : []
@@ -57,16 +65,16 @@ async function main() {
 
   const maxAttempts = Number(process.env.REGEN_ATTEMPTS ?? 8)
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    await admin
-      .from('generation_leases')
-      .delete()
-      .eq('story_id', STORY)
-      .eq('chapter_number', target)
-    await admin
-      .from('chapter_generation_checkpoints')
-      .delete()
-      .eq('story_id', STORY)
-      .eq('chapter_number', target)
+    await db
+      .deleteFrom('generation_leases')
+      .where('story_id', '=', STORY)
+      .where('chapter_number', '=', target)
+      .execute()
+    await db
+      .deleteFrom('chapter_generation_checkpoints')
+      .where('story_id', '=', STORY)
+      .where('chapter_number', '=', target)
+      .execute()
     try {
       const result = await generateNextChapterReal({
         storyId: STORY,

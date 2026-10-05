@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { getDb, single, result, rpcOne } from '@lakoku/db'
 import { misteriDramaContract } from '@/fixtures/contracts/misteri-drama'
 import { persistContractAndCanon } from '@/lib/story-engine/contract-persistence.server'
 import { normalizeRouteState } from '@/lib/story-engine/route-state'
@@ -147,23 +148,31 @@ async function createOwner(admin: SupabaseClient, apiUrl: string, anonKey: strin
   return { userId: created.data.user.id, owner }
 }
 
-async function enqueue(owner: SupabaseClient, storyId: string): Promise<string> {
-  const result = await owner.rpc('enqueue_generation_job_v1', {
-    p_story_id: storyId, p_chapter_number: 1, p_generation_kind: 'personalized', p_trigger_choice_id: null,
-  })
-  check(!result.error, `owner JWT enqueue failed: ${result.error?.message ?? 'unknown'}`)
-  const jobId = (result.data as { jobId?: unknown } | null)?.jobId
-  check(typeof jobId === 'string', 'owner JWT enqueue returned no job id')
+async function enqueue(_owner: unknown, storyId: string): Promise<string> {
+  const db = getDb()
+  const { data, error } = await single(
+    rpcOne(db, 'enqueue_generation_job_v1', {
+      p_story_id: storyId,
+      p_chapter_number: 1,
+      p_generation_kind: 'personalized',
+      p_trigger_choice_id: null,
+    }).execute(),
+  )
+  check(!error, `owner enqueue failed: ${error?.message ?? 'unknown'}`)
+  const raw = data ? ((data as Record<string, unknown>).fn ?? data) : null
+  const jobId = (raw as { jobId?: unknown } | null)?.jobId
+  check(typeof jobId === 'string', 'owner enqueue returned no job id')
   return jobId
 }
 
-async function terminal(admin: SupabaseClient, fixture: Fixture) {
+async function terminal(_admin: unknown, fixture: Fixture) {
+  const db = getDb()
   return pollUntilBounded(async () => {
     const [job, checkpoint, lease, chapter] = await Promise.all([
-      admin.from('generation_jobs').select('status,attempt_count').eq('id', fixture.jobId).single(),
-      admin.from('chapter_generation_checkpoints').select('status,prose_fingerprint,prose_attempt_count').eq('job_id', fixture.jobId).single(),
-      admin.from('generation_leases').select('status').eq('job_id', fixture.jobId).order('created_at', { ascending: false }).limit(1).single(),
-      admin.from('chapters').select('number').eq('story_id', fixture.storyId).eq('number', 1),
+      single(db.selectFrom('generation_jobs').select(['status', 'attempt_count']).where('id', '=', fixture.jobId).limit(1).execute()),
+      single(db.selectFrom('chapter_generation_checkpoints').select(['status', 'prose_fingerprint', 'prose_attempt_count']).where('job_id', '=', fixture.jobId).limit(1).execute()),
+      single(db.selectFrom('generation_leases').select('status').where('job_id', '=', fixture.jobId).orderBy('created_at', 'desc').limit(1).execute()),
+      result(db.selectFrom('chapters').select('number').where('story_id', '=', fixture.storyId).where('number', '=', 1).execute()),
     ])
     if (job.data?.status !== 'SUCCEEDED') return null
     check(!checkpoint.error && checkpoint.data?.status === 'PUBLISHED', `${fixture.jobId} checkpoint not PUBLISHED`)
@@ -231,38 +240,50 @@ async function main() {
   const restartIndex = restartFixtureIndex(jobs)
 
   try {
+    const db = getDb()
+
     for (let index = 0; index < jobs; index += 1) {
       const { userId, owner } = await createOwner(admin, status.apiUrl, status.anonKey)
       users.push(userId)
       const storyId = `contract:worker-soak:${crypto.randomUUID()}`
       const contract = structuredClone(misteriDramaContract)
       contract.storyId = storyId
-      const shell = await admin.from('stories').insert({
-        id: storyId,
-        title: contract.title,
-        total_chapters: 50,
-        status: 'BARU',
-        current_chapter: 0,
-        jejak: [],
-        owner_user_id: userId,
-        visibility: 'private',
-        story_mode: 'personalized_ai',
-        generation_status: 'creating_contract',
-        story_contract_version: 1,
-      })
+      const shell = await result(
+        db
+          .insertInto('stories')
+          .values({
+            id: storyId,
+            title: contract.title,
+            total_chapters: 50,
+            status: 'BARU',
+            current_chapter: 0,
+            jejak: [],
+            owner_user_id: userId,
+            visibility: 'private',
+            story_mode: 'personalized_ai',
+            generation_status: 'creating_contract',
+            story_contract_version: 1,
+          })
+          .execute(),
+      )
       check(!shell.error, `cannot create production story shell: ${shell.error?.message ?? 'unknown'}`)
       await persistContractAndCanon({ ownerUserId: userId, contract, contractSource: 'template_fallback', onboardingJson: createDefaultTasteProfile() })
-      const reader = await admin.from('reader_states').insert({
-        user_id: userId,
-        story_id: storyId,
-        status: 'BERJALAN',
-        current_chapter: 1,
-        jejak: [],
-        ending_name: null,
-        route_state: normalizeRouteState({}),
-        choice_history: [],
-        locked_ending_key: null,
-      })
+      const reader = await result(
+        db
+          .insertInto('reader_states')
+          .values({
+            user_id: userId,
+            story_id: storyId,
+            status: 'BERJALAN',
+            current_chapter: 1,
+            jejak: [],
+            ending_name: null,
+            route_state: normalizeRouteState({}) as never,
+            choice_history: [],
+            locked_ending_key: null,
+          })
+          .execute(),
+      )
       check(!reader.error, `cannot create production reader state: ${reader.error?.message ?? 'unknown'}`)
       const jobId = await enqueue(owner, storyId)
       fixtures.push({ userId, storyId, jobId, restart: index === restartIndex })
@@ -273,7 +294,14 @@ async function main() {
 
     child = await runChild(runId, restartFixture.storyId, restartFixture.jobId, scriptFor(restartFixture.storyId, restartIndex, true), artifactDir, process.env)
     await pollUntilBounded(async () => {
-      const checkpoint = await admin.from('chapter_generation_checkpoints').select('status').eq('job_id', restartFixture.jobId).maybeSingle()
+      const checkpoint = await single(
+        db
+          .selectFrom('chapter_generation_checkpoints')
+          .select('status')
+          .where('job_id', '=', restartFixture.jobId)
+          .limit(1)
+          .execute(),
+      )
       if (checkpoint.data?.status !== 'RUNNING_CHOICES') return null
       const hangRecorded = fs.readdirSync(artifactDir)
         .filter((name) => name.endsWith('.jsonl'))
@@ -285,10 +313,32 @@ async function main() {
     check(childTermination.forced && childTermination.signal === 'SIGKILL', `unexpected child termination: ${JSON.stringify(childTermination)}`)
 
     // Capture exact stale worker/claim/lease/checkpoint tuple before recovery.
-    const staleJobRow = await admin.from('generation_jobs').select('worker_id, claim_token').eq('id', restartFixture.jobId).single()
+    const staleJobRow = await single(
+      db
+        .selectFrom('generation_jobs')
+        .select(['worker_id', 'claim_token'])
+        .where('id', '=', restartFixture.jobId)
+        .limit(1)
+        .execute(),
+    )
     check(!staleJobRow.error && staleJobRow.data, 'cannot find stale job details')
-    const staleLeaseRow = await admin.from('generation_leases').select('id').eq('job_id', restartFixture.jobId).eq('status', 'ACTIVE').single()
-    const prekillCheckpoint = await admin.from('chapter_generation_checkpoints').select('prose_fingerprint,prose_attempt_count,choice_attempt_count').eq('job_id', restartFixture.jobId).single()
+    const staleLeaseRow = await single(
+      db
+        .selectFrom('generation_leases')
+        .select('id')
+        .where('job_id', '=', restartFixture.jobId)
+        .where('status', '=', 'ACTIVE')
+        .limit(1)
+        .execute(),
+    )
+    const prekillCheckpoint = await single(
+      db
+        .selectFrom('chapter_generation_checkpoints')
+        .select(['prose_fingerprint', 'prose_attempt_count', 'choice_attempt_count'])
+        .where('job_id', '=', restartFixture.jobId)
+        .limit(1)
+        .execute(),
+    )
     check(!staleLeaseRow.error && staleLeaseRow.data, 'cannot find stale lease details')
     check(!prekillCheckpoint.error && prekillCheckpoint.data?.prose_fingerprint, 'cannot capture prekill prose checkpoint')
     const staleWorkerId = staleJobRow.data.worker_id
@@ -315,28 +365,40 @@ async function main() {
             { phase: candidate.kind, fallback: candidate.fallbackIndex },
           )
         }
-        const result = await withDeadline(
+        const runResult = await withDeadline(
           claimAndRunGenerationJobById({ jobId: fixture.jobId, workerId: `soak-main:${process.pid}:${index}` }, { providerRuntime: { candidateTransport: instrumentedTransport, choiceConcurrencyObserver } }),
           TERMINAL_TIMEOUT_MS,
           `job ${fixture.jobId}`,
         )
-        if (!result.ok) {
+        if (!runResult.ok) {
           const [calls, job, checkpoint] = await Promise.all([
-            admin.from('generation_provider_calls')
-              .select('use_case,workflow_phase,outcome,error_code,provider_id,model_id,fallback_index')
-              .eq('job_id', fixture.jobId)
-              .order('created_at', { ascending: true }),
-            admin.from('generation_jobs')
-              .select('status,last_error_code,last_error_detail,attempt_count')
-              .eq('id', fixture.jobId)
-              .single(),
-            admin.from('chapter_generation_checkpoints')
-              .select('status,choice_attempt_count,audit_signals')
-              .eq('job_id', fixture.jobId)
-              .single(),
+            result(
+              db
+                .selectFrom('generation_provider_calls')
+                .select(['use_case', 'workflow_phase', 'outcome', 'error_code', 'provider_id', 'model_id', 'fallback_index'])
+                .where('job_id', '=', fixture.jobId)
+                .orderBy('created_at', 'asc')
+                .execute(),
+            ),
+            single(
+              db
+                .selectFrom('generation_jobs')
+                .select(['status', 'last_error_code', 'last_error_class', 'attempt_count'])
+                .where('id', '=', fixture.jobId)
+                .limit(1)
+                .execute(),
+            ),
+            single(
+              db
+                .selectFrom('chapter_generation_checkpoints')
+                .select(['status', 'choice_attempt_count', 'audit_signals_json'])
+                .where('job_id', '=', fixture.jobId)
+                .limit(1)
+                .execute(),
+            ),
           ])
           throw new Error(`${CONTEXT}: ${fixture.jobId} exact worker failed: ${JSON.stringify({
-            result,
+            runResult,
             calls: calls.data,
             job: job.data,
             checkpoint: checkpoint.data,
@@ -348,7 +410,15 @@ async function main() {
     await Promise.all(fixtures.filter((_, index) => index !== restartIndex).map((fixture) => terminal(admin, fixture)))
 
     await pollUntilBounded(async () => {
-      const lease = await admin.from('generation_leases').select('expires_at').eq('job_id', restartFixture.jobId).eq('status', 'ACTIVE').maybeSingle()
+      const lease = await single(
+        db
+          .selectFrom('generation_leases')
+          .select('expires_at')
+          .where('job_id', '=', restartFixture.jobId)
+          .where('status', '=', 'ACTIVE')
+          .limit(1)
+          .execute(),
+      )
       return lease.data && new Date(lease.data.expires_at).getTime() <= Date.now() ? true : null
     }, { timeoutMs: LEASE_EXPIRY_TIMEOUT_MS, intervalMs: 500, label: 'natural lease expiry' })
     const recoveredTicks = await Promise.all([
@@ -356,7 +426,14 @@ async function main() {
       recoverStaleGenerationJobs({ batchSize: 20 }),
     ])
     const recovered = { recoveredCount: recoveredTicks.reduce((sum, tick) => sum + tick.recoveredCount, 0) }
-    const recoveredTarget = await admin.from('generation_jobs').select('status,attempt_count').eq('id', restartFixture.jobId).single()
+    const recoveredTarget = await single(
+      db
+        .selectFrom('generation_jobs')
+        .select(['status', 'attempt_count'])
+        .where('id', '=', restartFixture.jobId)
+        .limit(1)
+        .execute(),
+    )
     check(!recoveredTarget.error && recoveredTarget.data?.status === 'RETRY_WAIT', 'target stale child job was not recovered exactly to RETRY_WAIT')
     const unrelatedRecoveredCount = Math.max(0, recovered.recoveredCount - 1)
 
@@ -364,9 +441,9 @@ async function main() {
     const { publishGenerationJobChapterV4 } = await import('@/lib/runtime/generation-jobs')
     const staleV4Promise = publishGenerationJobChapterV4({
       jobId: restartFixture.jobId,
-      workerId: staleWorkerId,
-      claimToken: staleClaimToken,
-      leaseId: staleLeaseId,
+      workerId: staleWorkerId ?? '',
+      claimToken: staleClaimToken ?? '',
+      leaseId: staleLeaseId ?? '',
       storyId: restartFixture.storyId,
       chapterNumber: 1,
       title: 'Bab Uji Stale',
@@ -385,10 +462,10 @@ async function main() {
     }
     check(expectRejected, 'stale publish assertion did not reject')
     const [verifyUnchangedJob, verifyCheckpoint, verifyLease, verifyChapter] = await Promise.all([
-      admin.from('generation_jobs').select('status').eq('id', restartFixture.jobId).single(),
-      admin.from('chapter_generation_checkpoints').select('status').eq('job_id', restartFixture.jobId).single(),
-      admin.from('generation_leases').select('status').eq('id', staleLeaseId).single(),
-      admin.from('chapters').select('number').eq('story_id', restartFixture.storyId).eq('number', 1),
+      single(db.selectFrom('generation_jobs').select('status').where('id', '=', restartFixture.jobId).limit(1).execute()),
+      single(db.selectFrom('chapter_generation_checkpoints').select('status').where('job_id', '=', restartFixture.jobId).limit(1).execute()),
+      single(db.selectFrom('generation_leases').select('status').where('id', '=', staleLeaseId).limit(1).execute()),
+      result(db.selectFrom('chapters').select('number').where('story_id', '=', restartFixture.storyId).where('number', '=', 1).execute()),
     ])
     check(verifyUnchangedJob.data?.status === 'RETRY_WAIT', `stale fencing attempt changed RETRY_WAIT job state: ${JSON.stringify(verifyUnchangedJob.data)}`)
     check(verifyCheckpoint.data?.status === 'RUNNING_CHOICES', 'stale fencing attempt changed RUNNING_CHOICES checkpoint')
@@ -407,26 +484,44 @@ async function main() {
     check(recoveredTerminal.checkpoint.prose_fingerprint === prekillCheckpoint.data.prose_fingerprint, 'recovery changed prose fingerprint')
     check(recoveredTerminal.checkpoint.prose_attempt_count === prekillCheckpoint.data.prose_attempt_count, 'recovery changed prose attempt count')
 
-    const recoveryProseCalls = await admin.from('generation_provider_calls').select('id').eq('job_id', restartFixture.jobId).eq('use_case', 'prose').gte('created_at', recoveryStartedAt)
-    check(!recoveryProseCalls.error && recoveryProseCalls.data.length === 0, `recovery made ${recoveryProseCalls.data?.length ?? -1} prose candidate calls`)
+    const recoveryProseCalls = await result(
+      db
+        .selectFrom('generation_provider_calls')
+        .select('id')
+        .where('job_id', '=', restartFixture.jobId)
+        .where('use_case', '=', 'prose')
+        .where('created_at', '>=', new Date(recoveryStartedAt))
+        .execute(),
+    )
+    check(!recoveryProseCalls.error && (recoveryProseCalls.data?.length ?? 0) === 0, `recovery made ${recoveryProseCalls.data?.length ?? -1} prose candidate calls`)
 
-    const rows = await admin.from('chapters').select('story_id').in('story_id', fixtures.map((fixture) => fixture.storyId))
+    const rows = await result(
+      db
+        .selectFrom('chapters')
+        .select('story_id')
+        .where('story_id', 'in', fixtures.map((fixture) => fixture.storyId))
+        .execute(),
+    )
     check(rows.data?.length === jobs, `${rows.data?.length ?? 0}/${jobs} chapters published`)
 
     // Assert provider call row counts and fallback indices
-    const providerCallRows = await admin.from('generation_provider_calls')
-      .select('job_id, use_case, outcome, fallback_index, provider_id, model_id')
-      .in('job_id', fixtures.map((fixture) => fixture.jobId))
-      .order('created_at', { ascending: true })
+    const providerCallRows = await result(
+      db
+        .selectFrom('generation_provider_calls')
+        .select(['job_id', 'use_case', 'outcome', 'fallback_index', 'provider_id', 'model_id'])
+        .where('job_id', 'in', fixtures.map((fixture) => fixture.jobId))
+        .orderBy('created_at', 'asc')
+        .execute(),
+    )
 
     check(!providerCallRows.error, 'failed to fetch generation_provider_calls')
     // We expect some entries to have fallback_index > 0 because of our configured programmed failures
-    const hasFallbacks = providerCallRows.data.some((call) => call.fallback_index > 0)
+    const hasFallbacks = (providerCallRows.data ?? []).some((call) => call.fallback_index > 0)
     check(hasFallbacks, 'programmed fallback index assertion failed: no calls with fallback_index > 0 observed')
 
     const snapshot = metrics.snapshot()
     const gateSnapshot = choiceGateMetrics.snapshot()
-    const providerIds = [...new Set(providerCallRows.data.map((row) => row.provider_id))]
+    const providerIds = [...new Set((providerCallRows.data ?? []).map((row) => row.provider_id))]
     check(providerIds.includes('custom') && providerIds.includes('9router'), `provider A/B execution missing: ${providerIds.join(',')}`)
     for (const [providerId, gate] of Object.entries(gateSnapshot)) {
       check(gate.maxActive <= choiceConcurrency, `${providerId} choice concurrency ${gate.maxActive} exceeded ${choiceConcurrency}`)

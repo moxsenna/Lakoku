@@ -12,6 +12,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { createServerClient } from '@supabase/ssr'
+import { getDb, single, result } from '@lakoku/db'
 import {
   assertLoopbackSupabaseUrl,
   readLocalStatus,
@@ -278,54 +279,108 @@ async function startApp(status: LocalSupabaseStatus, baseUrl: string) {
   }
 }
 
-async function seedPremiumTemplate(admin: SupabaseClient, templateId: string) {
+async function seedPremiumTemplate(_admin: unknown, templateId: string) {
+  const db = getDb()
   const now = new Date().toISOString()
   const heroId = `${templateId}:char:hero`
   const factId = `${templateId}:fact:clue`
   const secretId = `${templateId}:secret:key`
   const threadId = `${templateId}:thread:main`
 
-  const storyInsert = await admin.from('stories').upsert({
-    id: templateId,
-    title: 'E2E Premium Template',
-    cover: '/cover.webp',
-    tagline: 'Local premium template',
-    role: 'Hero',
-    tropes: ['mystery'],
-    total_chapters: 50,
-    synopsis: 'Template used only for local authenticated e2e.',
-    status: 'SELESAI',
-    current_chapter: 50,
-    jejak: [],
-    ending_name: null,
-    owner_user_id: null,
-    visibility: 'public',
-    source_story_id: null,
-    story_mode: 'premium_template',
-    generation_status: 'ready',
-    story_contract_version: 1,
-    created_at: now,
-  })
+  const storyInsert = await result(
+    db
+      .insertInto('stories')
+      .values({
+        id: templateId,
+        title: 'E2E Premium Template',
+        cover: '/cover.webp',
+        tagline: 'Local premium template',
+        role: 'Hero',
+        tropes: ['mystery'],
+        total_chapters: 50,
+        synopsis: 'Template used only for local authenticated e2e.',
+        status: 'SELESAI',
+        current_chapter: 50,
+        jejak: [],
+        ending_name: null,
+        owner_user_id: null,
+        visibility: 'public',
+        source_story_id: null,
+        story_mode: 'premium_template',
+        generation_status: 'ready',
+        story_contract_version: 1,
+        created_at: now,
+      })
+      .onConflict((oc) =>
+        oc.column('id').doUpdateSet({
+          title: 'E2E Premium Template',
+          cover: '/cover.webp',
+          tagline: 'Local premium template',
+          role: 'Hero',
+          tropes: ['mystery'],
+          total_chapters: 50,
+          synopsis: 'Template used only for local authenticated e2e.',
+          status: 'SELESAI',
+          current_chapter: 50,
+          jejak: [],
+          ending_name: null,
+          owner_user_id: null,
+          visibility: 'public',
+          source_story_id: null,
+          story_mode: 'premium_template',
+          generation_status: 'ready',
+          story_contract_version: 1,
+          created_at: now,
+        }),
+      )
+      .execute(),
+  )
   if (storyInsert.error) throw new Error(`seed template story failed: ${storyInsert.error.message}`)
 
-  const contractInsert = await admin.from('story_generation_contracts').upsert({
-    story_id: templateId,
-    mode: 'premium_template',
-    total_chapters: 50,
-    contract_source: 'llm_repaired',
-    onboarding_json: { hero: heroId },
-    story_contract_json: {
-      storyId: templateId,
-      nested: [factId, { secret: secretId, thread: threadId }],
-    },
-    route_schema_json: { focus: heroId },
-    plot_debts_json: [{ fact: factId }],
-    ending_candidates_json: [{ thread: threadId, secret: secretId }],
-    ending_lock_json: { character: heroId },
-    quality_profile: 'lakoku_mobile_drama_v1',
-    created_at: now,
-    updated_at: now,
-  })
+  const contractInsert = await result(
+    db
+      .insertInto('story_generation_contracts')
+      .values({
+        story_id: templateId,
+        mode: 'premium_template',
+        total_chapters: 50,
+        contract_source: 'llm_repaired',
+        onboarding_json: { hero: heroId } as never,
+        story_contract_json: {
+          storyId: templateId,
+          nested: [factId, { secret: secretId, thread: threadId }],
+        } as never,
+        route_schema_json: { focus: heroId } as never,
+        plot_debts_json: [{ fact: factId }] as never,
+        ending_candidates_json: [{ thread: threadId, secret: secretId }] as never,
+        ending_lock_json: { character: heroId } as never,
+        quality_profile: 'lakoku_mobile_drama_v1',
+        story_contract_version: 1,
+        created_at: now,
+        updated_at: now,
+      })
+      .onConflict((oc) =>
+        oc.column('story_id').doUpdateSet({
+          mode: 'premium_template',
+          total_chapters: 50,
+          contract_source: 'llm_repaired',
+          onboarding_json: { hero: heroId } as never,
+          story_contract_json: {
+            storyId: templateId,
+            nested: [factId, { secret: secretId, thread: threadId }],
+          } as never,
+          route_schema_json: { focus: heroId } as never,
+          plot_debts_json: [{ fact: factId }] as never,
+          ending_candidates_json: [{ thread: threadId, secret: secretId }] as never,
+          ending_lock_json: { character: heroId } as never,
+          quality_profile: 'lakoku_mobile_drama_v1',
+          story_contract_version: 1,
+          created_at: now,
+          updated_at: now,
+        }),
+      )
+      .execute(),
+  )
   if (contractInsert.error) throw new Error(`seed template contract failed: ${contractInsert.error.message}`)
 
   const blueprints = Array.from({ length: 50 }, (_, index) => {
@@ -345,74 +400,137 @@ async function seedPremiumTemplate(admin: SupabaseClient, templateId: string) {
       created_at: now,
     }
   })
-  const blueprintInsert = await admin.from('chapter_blueprints').upsert(blueprints)
+  const blueprintInsert = await result(
+    db
+      .insertInto('chapter_blueprints')
+      .values(blueprints)
+      .onConflict((oc) =>
+        oc.columns(['story_id', 'chapter_number', 'version']).doUpdateSet({
+          phase: (eb) => eb.ref('excluded.phase'),
+          chapter_goal: (eb) => eb.ref('excluded.chapter_goal'),
+          mandatory_beats: (eb) => eb.ref('excluded.mandatory_beats'),
+          forbidden_reveals: (eb) => eb.ref('excluded.forbidden_reveals'),
+          allowed_state_delta: (eb) => eb.ref('excluded.allowed_state_delta'),
+          introduces_characters: (eb) => eb.ref('excluded.introduces_characters'),
+          created_at: now,
+        }),
+      )
+      .execute(),
+  )
   if (blueprintInsert.error) throw new Error(`seed template blueprints failed: ${blueprintInsert.error.message}`)
 
-  const characterInsert = await admin.from('characters').upsert([
-    {
-      id: heroId,
-      story_id: templateId,
-      canonical_name: 'Raka',
-      role: 'Hero',
-      motivation: 'Find truth',
-      introduced_chapter: 1,
-      created_at: now,
-    },
-  ])
+  const characterInsert = await result(
+    db
+      .insertInto('characters')
+      .values([
+        {
+          id: heroId,
+          story_id: templateId,
+          canonical_name: 'Raka',
+          role: 'Hero',
+          motivation: 'Find truth',
+          introduced_chapter: 1,
+          created_at: now,
+        },
+      ])
+      .onConflict((oc) =>
+        oc.column('id').doUpdateSet({
+          story_id: templateId,
+          canonical_name: 'Raka',
+          role: 'Hero',
+          motivation: 'Find truth',
+          introduced_chapter: 1,
+          created_at: now,
+        }),
+      )
+      .execute(),
+  )
   if (characterInsert.error) throw new Error(`seed template character failed: ${characterInsert.error.message}`)
 
-  const chapterInsert = await admin.from('chapters').upsert({
-    story_id: templateId,
-    number: 1,
-    title: 'Opening Archive',
-    paragraphs: ['Raka opens the archive door and finds a sealed letter.'],
-    choice_prompt: 'What should Raka do next?',
-    choices: [
-      { id: 'open-door', label: 'Open the archive door' },
-      { id: 'wait', label: 'Guard the hallway quietly' },
-    ],
-    created_at: now,
-  })
+  const chapterInsert = await result(
+    db
+      .insertInto('chapters')
+      .values({
+        story_id: templateId,
+        number: 1,
+        title: 'Opening Archive',
+        paragraphs: ['Raka opens the archive door and finds a sealed letter.'],
+        choice_prompt: 'What should Raka do next?',
+        choices: [
+          { id: 'open-door', label: 'Open the archive door' },
+          { id: 'wait', label: 'Guard the hallway quietly' },
+        ],
+        created_at: now,
+      })
+      .onConflict((oc) =>
+        oc.columns(['story_id', 'number']).doUpdateSet({
+          title: 'Opening Archive',
+          paragraphs: ['Raka opens the archive door and finds a sealed letter.'],
+          choice_prompt: 'What should Raka do next?',
+          choices: [
+            { id: 'open-door', label: 'Open the archive door' },
+            { id: 'wait', label: 'Guard the hallway quietly' },
+          ],
+          created_at: now,
+        }),
+      )
+      .execute(),
+  )
   if (chapterInsert.error) throw new Error(`seed template chapter failed: ${chapterInsert.error.message}`)
 
-  const outcomeInsert = await admin.from('choice_outcomes').upsert([
-    {
-      story_id: templateId,
-      chapter_number: 1,
-      choice_id: 'open-door',
-      consequence: ['The archive opens and a name appears.'],
-      next_chapter_number: 2,
-      is_ending: false,
-      created_at: now,
-      effect_json: {
-        routeDeltas: { truth: 1 },
-        trustDeltas: { [heroId]: 1 },
-        flagsSet: { archiveOpened: true },
-        evidenceAdded: [factId],
-        endingBiasDeltas: { truthEnding: 5 },
-        threadTouches: [threadId],
-      },
-      choice_kind: 'normal',
-    },
-    {
-      story_id: templateId,
-      chapter_number: 1,
-      choice_id: 'wait',
-      consequence: ['The hallway stays quiet.'],
-      next_chapter_number: 2,
-      is_ending: false,
-      created_at: now,
-      effect_json: {
-        routeDeltas: { risk: 1 },
-        trustDeltas: {},
-        flagsSet: {},
-        evidenceAdded: [],
-        endingBiasDeltas: {},
-        threadTouches: [threadId],
-      },
-      choice_kind: 'normal',
-    },
-  ])
+  const outcomeInsert = await result(
+    db
+      .insertInto('choice_outcomes')
+      .values([
+        {
+          story_id: templateId,
+          chapter_number: 1,
+          choice_id: 'open-door',
+          consequence: ['The archive opens and a name appears.'],
+          next_chapter_number: 2,
+          is_ending: false,
+          created_at: now,
+          effect_json: {
+            routeDeltas: { truth: 1 },
+            trustDeltas: { [heroId]: 1 },
+            flagsSet: { archiveOpened: true },
+            evidenceAdded: [factId],
+            endingBiasDeltas: { truthEnding: 5 },
+            threadTouches: [threadId],
+          } as never,
+          choice_kind: 'normal',
+        },
+        {
+          story_id: templateId,
+          chapter_number: 1,
+          choice_id: 'wait',
+          consequence: ['The hallway stays quiet.'],
+          next_chapter_number: 2,
+          is_ending: false,
+          created_at: now,
+          effect_json: {
+            routeDeltas: { risk: 1 },
+            trustDeltas: {},
+            flagsSet: {},
+            evidenceAdded: [],
+            endingBiasDeltas: {},
+            threadTouches: [threadId],
+          } as never,
+          choice_kind: 'normal',
+        },
+      ])
+      .onConflict((oc) =>
+        oc.columns(['story_id', 'chapter_number', 'choice_id']).doUpdateSet({
+          consequence: (eb) => eb.ref('excluded.consequence'),
+          next_chapter_number: 2,
+          is_ending: false,
+          created_at: now,
+          effect_json: (eb) => eb.ref('excluded.effect_json'),
+          choice_kind: 'normal',
+        }),
+      )
+      .execute(),
+  )
   if (outcomeInsert.error) throw new Error(`seed template outcomes failed: ${outcomeInsert.error.message}`)
 }
 
@@ -450,27 +568,28 @@ async function cleanup(
   storyIds: string[],
   templateId: string,
 ) {
+  const db = getDb()
   for (const storyId of storyIds) {
-    await admin.from('choice_outcomes').delete().eq('story_id', storyId)
-    await admin.from('chapters').delete().eq('story_id', storyId)
-    await admin.from('reader_states').delete().eq('story_id', storyId)
-    await admin.from('chapter_blueprints').delete().eq('story_id', storyId)
-    await admin.from('story_generation_contracts').delete().eq('story_id', storyId)
-    await admin.from('characters').delete().eq('story_id', storyId)
-    await admin.from('story_creation_requests').delete().eq('story_id', storyId)
-    await admin.from('stories').delete().eq('id', storyId)
+    await db.deleteFrom('choice_outcomes').where('story_id', '=', storyId).execute()
+    await db.deleteFrom('chapters').where('story_id', '=', storyId).execute()
+    await db.deleteFrom('reader_states').where('story_id', '=', storyId).execute()
+    await db.deleteFrom('chapter_blueprints').where('story_id', '=', storyId).execute()
+    await db.deleteFrom('story_generation_contracts').where('story_id', '=', storyId).execute()
+    await db.deleteFrom('characters').where('story_id', '=', storyId).execute()
+    await db.deleteFrom('story_creation_requests').where('story_id', '=', storyId).execute()
+    await db.deleteFrom('stories').where('id', '=', storyId).execute()
   }
 
-  await admin.from('choice_outcomes').delete().eq('story_id', templateId)
-  await admin.from('chapters').delete().eq('story_id', templateId)
-  await admin.from('chapter_blueprints').delete().eq('story_id', templateId)
-  await admin.from('story_generation_contracts').delete().eq('story_id', templateId)
-  await admin.from('characters').delete().eq('story_id', templateId)
-  await admin.from('stories').delete().eq('id', templateId)
+  await db.deleteFrom('choice_outcomes').where('story_id', '=', templateId).execute()
+  await db.deleteFrom('chapters').where('story_id', '=', templateId).execute()
+  await db.deleteFrom('chapter_blueprints').where('story_id', '=', templateId).execute()
+  await db.deleteFrom('story_generation_contracts').where('story_id', '=', templateId).execute()
+  await db.deleteFrom('characters').where('story_id', '=', templateId).execute()
+  await db.deleteFrom('stories').where('id', '=', templateId).execute()
 
   for (const userId of users) {
-    await admin.from('reader_states').delete().eq('user_id', userId)
-    await admin.from('story_creation_requests').delete().eq('owner_user_id', userId)
+    await db.deleteFrom('reader_states').where('user_id', '=', userId).execute()
+    await db.deleteFrom('story_creation_requests').where('owner_user_id', '=', userId).execute()
     await admin.auth.admin.deleteUser(userId)
   }
 }
@@ -707,11 +826,16 @@ async function main() {
       `${clone2.response.status}:${clone2Body.storyId}`,
     )
 
-    const templateAfter = await admin
-      .from('stories')
-      .select('id,story_mode,visibility,source_story_id')
-      .eq('id', templateId)
-      .maybeSingle()
+    const db = getDb()
+
+    const templateAfter = await single(
+      db
+        .selectFrom('stories')
+        .select(['id', 'story_mode', 'visibility', 'source_story_id'])
+        .where('id', '=', templateId)
+        .limit(1)
+        .execute(),
+    )
     check(
       'premium template remains public premium_template',
       !templateAfter.error
@@ -722,11 +846,14 @@ async function main() {
     )
 
     if (clone1Body.storyId) {
-      const instance = await admin
-        .from('stories')
-        .select('id,story_mode,visibility,source_story_id,owner_user_id')
-        .eq('id', clone1Body.storyId)
-        .maybeSingle()
+      const instance = await single(
+        db
+          .selectFrom('stories')
+          .select(['id', 'story_mode', 'visibility', 'source_story_id', 'owner_user_id'])
+          .where('id', '=', clone1Body.storyId)
+          .limit(1)
+          .execute(),
+      )
       check(
         'premium instance is private owned clone of template',
         !instance.error
@@ -738,15 +865,29 @@ async function main() {
       )
 
       // Chapter 50 no-choice surface for final chapter UI contract.
-      const finalInsert = await admin.from('chapters').upsert({
-        story_id: clone1Body.storyId,
-        number: 50,
-        title: 'Ending Quiet',
-        paragraphs: ['The final page closes without another fork.'],
-        choice_prompt: null,
-        choices: null,
-        created_at: new Date().toISOString(),
-      })
+      const finalInsert = await result(
+        db
+          .insertInto('chapters')
+          .values({
+            story_id: clone1Body.storyId,
+            number: 50,
+            title: 'Ending Quiet',
+            paragraphs: ['The final page closes without another fork.'],
+            choice_prompt: null,
+            choices: null,
+            created_at: new Date().toISOString(),
+          })
+          .onConflict((oc) =>
+            oc.columns(['story_id', 'number']).doUpdateSet({
+              title: 'Ending Quiet',
+              paragraphs: ['The final page closes without another fork.'],
+              choice_prompt: null,
+              choices: null,
+              created_at: new Date().toISOString(),
+            }),
+          )
+          .execute(),
+      )
       check('final chapter fixture inserted', !finalInsert.error, finalInsert.error?.message)
       const finalChapter = await apiFetch(
         baseUrl,

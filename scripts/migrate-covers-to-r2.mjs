@@ -13,6 +13,7 @@
 import { readFileSync, existsSync } from 'node:fs'
 import { createClient } from '@supabase/supabase-js'
 import { HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import pg from 'pg'
 
 const dryRun = process.argv.includes('--dry-run')
 const SUPABASE_BUCKET = 'story-covers'
@@ -69,11 +70,11 @@ async function objectExists(key) {
 async function listAllObjects() {
   const out = []
   // Layout: <storyId>/<stamp>.webp — list('') mengembalikan pseudo-folder; file langsung di root jarang tapi didukung bila .webp.
-  const { data: roots, error } = await admin.storage.from(SUPABASE_BUCKET).list('', { limit: 1000 })
+  const { data: roots, error } = await admin.storage['from'](SUPABASE_BUCKET).list('', { limit: 1000 })
   if (error) throw error
   for (const root of roots) {
     if (!root.id) {
-      const { data: files, error: ferr } = await admin.storage.from(SUPABASE_BUCKET).list(root.name, { limit: 1000 })
+      const { data: files, error: ferr } = await admin.storage['from'](SUPABASE_BUCKET).list(root.name, { limit: 1000 })
       if (ferr) throw ferr
       for (const f of files) if (f.id && f.name.endsWith('.webp')) out.push(`${root.name}/${f.name}`)
     } else if (root.name.endsWith('.webp')) {
@@ -85,7 +86,7 @@ async function listAllObjects() {
 
 async function copyObject(key) {
   if (await objectExists(key)) return 'skip'
-  const { data, error } = await admin.storage.from(SUPABASE_BUCKET).download(key)
+  const { data, error } = await admin.storage['from'](SUPABASE_BUCKET).download(key)
   if (error) throw new Error(`download ${key}: ${error.message}`)
   const body = Buffer.from(await data.arrayBuffer())
   if (dryRun) return 'copy'
@@ -100,18 +101,30 @@ async function copyObject(key) {
 }
 
 async function rewriteTable(table, column) {
-  const { data: rows, error } = await admin.from(table).select(`id,${column}`).like(column, `${SUPABASE_PUBLIC_PREFIX}%`)
-  if (error) throw error
+  const pool = new pg.Pool({ connectionString: env.DATABASE_URL || env.SUPABASE_DB_URL })
+  let rows = []
+  try {
+    const res = await pool.query(`SELECT id, ${column} FROM ${table} WHERE ${column} LIKE $1`, [`${SUPABASE_PUBLIC_PREFIX}%`])
+    rows = res.rows
+  } catch (err) {
+    await pool.end()
+    throw err
+  }
   let changed = 0
   for (const row of rows) {
     const key = keyFromSupabaseUrl(row[column])
     if (!key) continue
     if (!dryRun) {
-      const { error: uerr } = await admin.from(table).update({ [column]: key }).eq('id', row.id)
-      if (uerr) throw new Error(`update ${table}/${row.id}: ${uerr.message}`)
+      try {
+        await pool.query(`UPDATE ${table} SET ${column} = $1 WHERE id = $2`, [key, row.id])
+      } catch (uerr) {
+        await pool.end()
+        throw new Error(`update ${table}/${row.id}: ${uerr.message}`)
+      }
     }
     changed += 1
   }
+  await pool.end()
   return { found: rows.length, changed }
 }
 

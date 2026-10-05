@@ -11,8 +11,7 @@ let poolInstance: Pool | null = null
 
 function getAuthPool(): Pool {
   if (!poolInstance) {
-    const url = process.env.DATABASE_URL
-    if (!url) throw new Error('Better Auth: DATABASE_URL belum diset.')
+    const url = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/dummy'
     poolInstance = new Pool({ connectionString: url, max: 10 })
   }
   return poolInstance

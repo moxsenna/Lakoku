@@ -6,17 +6,29 @@ const mocks = vi.hoisted(() => ({
   getDb: vi.fn(),
   policyData: vi.fn(),
   rpcData: vi.fn(),
+  rpc: vi.fn(),
   existingCode: vi.fn(),
   insertCode: vi.fn(),
   attributionsCount: vi.fn(),
   ledgerRows: vi.fn(),
 }))
 
+const mockRpc = mocks.rpc
+
 vi.mock('@lakoku/db', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@lakoku/db')>()
   return {
     ...actual,
     getDb: mocks.getDb,
+    rpcOne: vi.fn((_db: unknown, name: string, args: Record<string, unknown>) => {
+      mocks.rpc(name, args)
+      return {
+        execute: vi.fn(async () => {
+          const res = await mocks.rpcData(name, args)
+          return [{ fn: res }]
+        }),
+      }
+    }),
   }
 })
 
@@ -140,6 +152,18 @@ describe('lib/rewards/server', () => {
     const result = await redeemRewardCredits('user-123', 5000)
     expect(result.creditsGranted).toBe(20) // 5000 / 250
     expect(result.deductedIdr).toBe(5000)
+    expect(mocks.rpc).toHaveBeenCalledWith('grant_reward_v1', expect.objectContaining({
+      p_user_id: 'user-123',
+      p_delta_idr: -5000,
+      p_reason: 'redeem_credits',
+      p_ref: expect.stringMatching(/^redeem:/),
+    }))
+    expect(mocks.rpc).toHaveBeenCalledWith('grant_credits_v1', expect.objectContaining({
+      p_user_id: 'user-123',
+      p_credits: 20,
+      p_reason: 'reward_redeem',
+      p_ref: expect.stringMatching(/^reward_redeem:/),
+    }))
   })
 
   it('rolls back reward deduction when credit grant fails', async () => {
@@ -166,6 +190,14 @@ describe('lib/rewards/server', () => {
     })
 
     await expect(redeemRewardCredits('user-123', 5000)).rejects.toThrow('credit grant failed')
+
+    // Compensation write check
+    expect(mocks.rpc).toHaveBeenCalledWith('grant_reward_v1', expect.objectContaining({
+      p_user_id: 'user-123',
+      p_delta_idr: 5000,
+      p_reason: 'redeem_rollback',
+      p_ref: expect.stringMatching(/^rollback:/),
+    }))
   })
 
   it('aggregates referral statistics accurately', async () => {

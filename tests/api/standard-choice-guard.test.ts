@@ -193,6 +193,7 @@ describe('standard public ownership guard', () => {
 
     expect(response.status).toBe(404)
     expect(body).toEqual({ error: 'Pilihan tidak dikenali.' })
+    expect(mocks.queryStoryForUser).toHaveBeenCalledWith('private-story-not-owned', userId)
     expect(mocks.queryChoiceOutcome).not.toHaveBeenCalled()
     expect(mocks.queryChapter).not.toHaveBeenCalled()
   })

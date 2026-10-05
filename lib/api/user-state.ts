@@ -10,9 +10,7 @@
 import 'server-only'
 import { cache } from 'react'
 import { headers } from 'next/headers'
-import { createClient as createSupabaseJsClient, type User } from '@supabase/supabase-js'
-import { createClient } from '@/lib/supabase/server'
-import { requireSupabaseAnonKey, requireSupabaseUrl } from '@/lib/supabase/env'
+import { auth } from '@/lib/auth'
 import { getDb, result, single } from '@lakoku/db'
 import type { Json } from '@/lib/supabase/db-types'
 import { ChoiceHistoryEntrySchema, type ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
@@ -71,59 +69,36 @@ function toState(r: ReaderStateRow): ReaderState {
   }
 }
 
-const getSessionContext = cache(async function getSessionContext() {
-  const supabase = await createClient()
-  try {
-    const { data, error } = await supabase.auth.getUser()
-    if (error) throw error
-    return { supabase, user: data.user }
-  } catch {
-    // Refresh token mati (dicabut / diputar di klien lain / sesi dihapus):
-    // perlakukan sebagai tamu, jangan crash RSC. Cookie mati dibersihkan
-    // oleh middleware (penulisan cookie dari RSC tidak diizinkan Next).
-    return { supabase, user: null }
-  }
-})
-
-/**
- * Resolve user from Authorization: Bearer <access_token> (Android / API clients).
- * Cookie session remains primary for web via getSessionContext.
- */
-async function getUserFromBearerAuthorization(): Promise<User | null> {
-  try {
-    const headerStore = await headers()
-    const auth = headerStore.get('authorization') ?? headerStore.get('Authorization')
-    if (!auth || !auth.toLowerCase().startsWith('bearer ')) return null
-    const token = auth.slice(7).trim()
-    if (!token) return null
-    const supabase = createSupabaseJsClient(
-      requireSupabaseUrl(),
-      requireSupabaseAnonKey(),
-      { auth: { persistSession: false, autoRefreshToken: false } },
-    )
-    const {
-      data: { user },
-      error,
-    } = await supabase.auth.getUser(token)
-    if (error || !user) return null
-    return user
-  } catch {
-    return null
-  }
+export interface User {
+  id: string
+  email?: string
+  user_metadata?: Record<string, unknown>
 }
 
 /**
- * User dari sesi cookie (web) atau Bearer JWT (Android/API), atau null untuk tamu.
+ * Pintu tunggal pembaca sesi pengguna di server (RSC & API route).
+ * Membaca cookie browser dan Authorization Bearer token secara otomatis via Better Auth.
+ * Pertahanan mati: sesi tidak valid mengembalikan null (guest), tanpa crash RSC.
  */
 export const getSessionUser = cache(async function getSessionUser(): Promise<User | null> {
-  const { user } = await getSessionContext()
-  if (user) return user
-  return getUserFromBearerAuthorization()
+  try {
+    const h = await headers()
+    const session = await auth.api.getSession({ headers: h })
+    if (!session?.user) return null
+    return {
+      id: session.user.id,
+      email: session.user.email,
+      user_metadata: { name: session.user.name },
+    }
+  } catch (error) {
+    console.warn('[user-state] Gagal membaca sesi Better Auth:', error)
+    return null
+  }
 })
 
 /** Seluruh reader-state milik user saat ini. */
 export const getReaderStates = cache(async function getReaderStates(): Promise<Map<string, ReaderState>> {
-  const { user } = await getSessionContext()
+  const user = await getSessionUser()
   if (!user) return new Map()
 
   const db = getDb()
@@ -145,7 +120,7 @@ export const getReaderStates = cache(async function getReaderStates(): Promise<M
 export const getReaderState = cache(async function getReaderState(
   storyId: string,
 ): Promise<ReaderState | null> {
-  const { user } = await getSessionContext()
+  const user = await getSessionUser()
   if (!user) return null
 
   const db = getDb()
@@ -175,7 +150,7 @@ export const getPreviousChoiceId = cache(async function getPreviousChoiceId(
   storyId: string,
   chapterNumber: number,
 ): Promise<string | null> {
-  const { user } = await getSessionContext()
+  const user = await getSessionUser()
   if (!user) return null
 
   const db = getDb()
@@ -208,7 +183,7 @@ export async function ensureReaderStateStarted(
   chapterNumber = 1,
   statusHint: ReaderState['status'] = 'BERJALAN',
 ): Promise<void> {
-  const { user } = await getSessionContext()
+  const user = await getSessionUser()
   if (!user) return
 
   const existing = await getReaderState(storyId)
@@ -274,7 +249,7 @@ export async function applyChoiceToUserState(
   decision: string,
   outcome: ChoiceOutcome,
 ): Promise<void> {
-  const { user } = await getSessionContext()
+  const user = await getSessionUser()
   if (!user) return
 
   const db = getDb()

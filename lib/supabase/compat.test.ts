@@ -54,19 +54,25 @@ describe('compat: result', () => {
   })
 
   it('rejection with Error -> returns { data: null, error: { message } }, never throws', async () => {
-    const r = await result(Promise.reject(new Error('db connection failed')))
+    const thrownError = new Error('db connection failed')
+    const r = await result(Promise.reject(thrownError))
     expect(r).toEqual({
       data: null,
-      error: { message: 'db connection failed' },
+      error: { message: 'db connection failed', cause: thrownError },
     })
+    expect(r.error?.cause).toBe(thrownError)
+    expect(r.error).not.toHaveProperty('code')
   })
 
   it('rejection with non-Error -> stringifies message, never throws', async () => {
-    const r = await result(Promise.reject('raw failure string'))
+    const rawError = 'raw failure string'
+    const r = await result(Promise.reject(rawError))
     expect(r).toEqual({
       data: null,
-      error: { message: 'raw failure string' },
+      error: { message: rawError, cause: rawError },
     })
+    expect(r.error?.cause).toBe(rawError)
+    expect(r.error).not.toHaveProperty('code')
   })
 })
 
@@ -90,11 +96,14 @@ describe('compat: single (maybeSingle semantics)', () => {
   })
 
   it('rejection -> returns { data: null, error: { message } }, never throws', async () => {
-    const r = await single(Promise.reject(new Error('timeout')))
+    const thrownError = new Error('timeout')
+    const r = await single(Promise.reject(thrownError))
     expect(r).toEqual({
       data: null,
-      error: { message: 'timeout' },
+      error: { message: 'timeout', cause: thrownError },
     })
+    expect(r.error?.cause).toBe(thrownError)
+    expect(r.error).not.toHaveProperty('code')
   })
 })
 

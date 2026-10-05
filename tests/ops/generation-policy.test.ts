@@ -4,10 +4,18 @@ const mocks = vi.hoisted(() => ({
   maybeSingle: vi.fn(),
   from: vi.fn(),
   adminFactory: vi.fn(),
+  getDb: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lakoku/db')>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: mocks.getDb,
+  }
+})
 
 beforeEach(() => {
   vi.resetModules()
@@ -22,6 +30,20 @@ beforeEach(() => {
     }),
   })
   mocks.adminFactory.mockReturnValue({ from: mocks.from })
+  mocks.getDb.mockReturnValue({
+    selectFrom: vi.fn(() => ({
+      select: vi.fn(() => ({
+        where: vi.fn(() => ({
+          limit: vi.fn(() => ({
+            execute: vi.fn(async () => {
+              const res = await mocks.maybeSingle()
+              return res?.data ? [res.data] : []
+            }),
+          })),
+        })),
+      })),
+    })),
+  })
 })
 
 describe('getGenerationPolicy', () => {

@@ -1,5 +1,5 @@
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, result } from '@lakoku/db'
 
 export interface AdminOrderRow {
   id: string
@@ -20,20 +20,21 @@ export async function listAdminOrders(args?: {
   status?: string
   limit?: number
 }): Promise<AdminOrderRow[]> {
-  const db = createAdminClient()
+  const db = getDb()
   const limit = args?.limit ?? 50
 
+  // RLS_AUDIT: credit_orders_own_read
   let query = db
-    .from('credit_orders')
-    .select('*')
-    .order('created_at', { ascending: false })
+    .selectFrom('credit_orders')
+    .selectAll()
+    .orderBy('created_at', 'desc')
     .limit(limit)
 
   if (args?.status && args.status !== 'all') {
-    query = query.eq('status', args.status)
+    query = query.where('status', '=', args.status)
   }
 
-  const { data } = await query
+  const { data } = await result(query.execute())
   if (!data) return []
 
   return (data as Record<string, unknown>[]).map((r) => ({
@@ -47,7 +48,7 @@ export async function listAdminOrders(args?: {
     totalCredits: r.total_credits as number,
     bonusKind: r.bonus_kind as 'none' | 'normal' | 'first_topup',
     status: r.status as AdminOrderRow['status'],
-    createdAt: r.created_at as string,
-    paidAt: (r.paid_at as string) ?? null,
+    createdAt: (r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at)),
+    paidAt: r.paid_at ? (r.paid_at instanceof Date ? r.paid_at.toISOString() : String(r.paid_at)) : null,
   }))
 }

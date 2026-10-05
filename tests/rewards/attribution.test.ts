@@ -1,9 +1,20 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { recordReferralAttribution } from '../../lib/rewards/attribution.server'
 
-vi.mock('@lakoku/db', () => ({
-  createAdminClient: vi.fn(),
+vi.mock('server-only', () => ({}))
+
+const mocks = vi.hoisted(() => ({
+  insert: vi.fn(),
+  selectReferrer: vi.fn(),
+  getDb: vi.fn(),
 }))
+
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lakoku/db')>()
+  return {
+    ...actual,
+    getDb: mocks.getDb,
+  }
+})
 
 vi.mock('../../lib/rewards/server', () => ({
   getRewardPolicy: vi.fn().mockResolvedValue({
@@ -12,85 +23,55 @@ vi.mock('../../lib/rewards/server', () => ({
   }),
 }))
 
-import { createAdminClient } from '@lakoku/db'
+import { recordReferralAttribution } from '../../lib/rewards/attribution.server'
 
 describe('lib/rewards/attribution.server', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    const db = {
+      selectFrom: vi.fn(() => ({
+        select: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(() => ({
+              execute: vi.fn(async () => mocks.selectReferrer()),
+            })),
+          })),
+        })),
+      })),
+      insertInto: vi.fn(() => ({
+        values: vi.fn((val: unknown) => ({
+          execute: vi.fn(async () => mocks.insert(val)),
+        })),
+      })),
+    }
+    mocks.getDb.mockReturnValue(db)
   })
 
   it('records attribution mapping code to referrer', async () => {
-    const mockInsert = vi.fn().mockResolvedValue({ error: null })
-    const mockSelectReferrer = vi.fn().mockReturnValue({
-      eq: vi.fn().mockReturnValue({
-        maybeSingle: vi.fn().mockResolvedValue({
-          data: { user_id: 'user-referrer-1' },
-          error: null,
-        }),
-      }),
-    })
-
-    ;(createAdminClient as any).mockReturnValue({
-      from: vi.fn().mockImplementation((table: string) => {
-        if (table === 'referral_codes') {
-          return { select: mockSelectReferrer }
-        }
-        if (table === 'referral_attributions') {
-          return { insert: mockInsert }
-        }
-        return {}
-      }),
-    })
+    mocks.selectReferrer.mockReturnValue([{ user_id: 'user-referrer-1' }])
+    mocks.insert.mockResolvedValue([])
 
     const success = await recordReferralAttribution('user-new-2', 'ABCD2345', 'referral_code')
     expect(success).toBe(true)
-    expect(mockInsert).toHaveBeenCalledTimes(1)
-    const payload = mockInsert.mock.calls[0][0]
+    expect(mocks.insert).toHaveBeenCalledTimes(1)
+    const payload = mocks.insert.mock.calls[0][0]
     expect(payload.referrer_user_id).toBe('user-referrer-1')
     expect(payload.referred_user_id).toBe('user-new-2')
     expect(payload.source).toBe('referral_code')
   })
 
   it('rejects self-referral cleanly without error', async () => {
-    const mockSelectReferrer = vi.fn().mockReturnValue({
-      eq: vi.fn().mockReturnValue({
-        maybeSingle: vi.fn().mockResolvedValue({
-          data: { user_id: 'user-same' },
-          error: null,
-        }),
-      }),
-    })
-
-    ;(createAdminClient as any).mockReturnValue({
-      from: vi.fn().mockReturnValue({ select: mockSelectReferrer }),
-    })
+    mocks.selectReferrer.mockReturnValue([{ user_id: 'user-same' }])
 
     const success = await recordReferralAttribution('user-same', 'ABCD2345', 'referral_code')
     expect(success).toBe(false)
   })
 
   it('handles unique constraint violation (already attributed) cleanly', async () => {
-    const mockInsert = vi.fn().mockResolvedValue({ error: { code: '23505', message: 'duplicate key' } })
-    const mockSelectReferrer = vi.fn().mockReturnValue({
-      eq: vi.fn().mockReturnValue({
-        maybeSingle: vi.fn().mockResolvedValue({
-          data: { user_id: 'user-referrer-1' },
-          error: null,
-        }),
-      }),
-    })
-
-    ;(createAdminClient as any).mockReturnValue({
-      from: vi.fn().mockImplementation((table: string) => {
-        if (table === 'referral_codes') {
-          return { select: mockSelectReferrer }
-        }
-        if (table === 'referral_attributions') {
-          return { insert: mockInsert }
-        }
-        return {}
-      }),
-    })
+    mocks.selectReferrer.mockReturnValue([{ user_id: 'user-referrer-1' }])
+    const dupErr = new Error('duplicate key') as Error & { code: string }
+    dupErr.code = '23505'
+    mocks.insert.mockRejectedValue(dupErr)
 
     const success = await recordReferralAttribution('user-already-attributed', 'ABCD2345', 'referral_code')
     expect(success).toBe(false)

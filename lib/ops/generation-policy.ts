@@ -1,6 +1,6 @@
 import 'server-only'
 import { cache } from 'react'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single } from '@lakoku/db'
 
 /**
  * Generation policy — target panjang bab, scene count, lease & concurrency caps.
@@ -51,14 +51,24 @@ function numOrDefault(value: unknown, fallback: number): number {
  */
 export const getGenerationPolicy = cache(async (): Promise<GenerationPolicy> => {
   try {
-    const db = createAdminClient()
-    const { data } = await db
-      .from('generation_policy')
-      .select(
-        'target_words_min,target_words_max,target_scenes,lease_ttl_seconds,max_concurrent_generations,max_concurrent_generations_per_user,generation_max_queue',
-      )
-      .eq('id', 1)
-      .maybeSingle()
+    const db = getDb()
+    // RLS_AUDIT: generation_policy_read
+    const { data } = await single(
+      db
+        .selectFrom('generation_policy')
+        .select([
+          'target_words_min',
+          'target_words_max',
+          'target_scenes',
+          'lease_ttl_seconds',
+          'max_concurrent_generations',
+          'max_concurrent_generations_per_user',
+          'generation_max_queue',
+        ])
+        .where('id', '=', 1)
+        .limit(1)
+        .execute(),
+    )
 
     if (data) {
       const d = DEFAULT_GENERATION_POLICY

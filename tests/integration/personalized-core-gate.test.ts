@@ -1,13 +1,31 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ adminFactory: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  adminFactory: vi.fn(),
+  getDb: vi.fn(),
+  rpc: vi.fn(),
+}))
 
 vi.mock('server-only', () => ({}))
 vi.mock('@lakoku/ai-gateway', async () => {
   const { ChoiceEffectSchema } = await import('@/lib/ai-gateway/schemas')
   return { ChoiceEffectSchema }
 })
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lakoku/db')>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: mocks.getDb,
+    rpcOne: vi.fn((_db: unknown, name: string, args: Record<string, unknown>) => ({
+      execute: vi.fn(async () => {
+        const res = await mocks.rpc(name, args)
+        if (res?.error) throw res.error
+        return [{ fn: res?.data }]
+      }),
+    })),
+  }
+})
 
 import { misteriDramaContract } from '@/fixtures/contracts/misteri-drama'
 import { validateChoiceBranch } from '@/lib/ai-gateway/schemas'
@@ -73,15 +91,14 @@ function validChoiceBranch(chapterNumber = 49) {
   }
 }
 
-let rpc: ReturnType<typeof vi.fn>
-
 beforeEach(() => {
   vi.clearAllMocks()
-  rpc = vi.fn().mockResolvedValue({
+  mocks.rpc.mockResolvedValue({
     data: { ok: true, chapter_number: 50, seq: 50 },
     error: null,
   })
-  mocks.adminFactory.mockReturnValue({ rpc })
+  mocks.adminFactory.mockReturnValue({ rpc: mocks.rpc })
+  mocks.getDb.mockReturnValue({})
 })
 
 function assertSnapshotUniform(snap: CanonSnapshot, expectedStoryId: string): void {
@@ -189,9 +206,8 @@ describe('personalized Phase 1-3 core gate', () => {
 
     await publishChapterV2(input)
 
-    expect(mocks.adminFactory).toHaveBeenCalledTimes(1)
-    expect(rpc).toHaveBeenCalledTimes(1)
-    expect(rpc).toHaveBeenCalledWith('publish_chapter_v2', {
+    expect(mocks.rpc).toHaveBeenCalledTimes(1)
+    expect(mocks.rpc).toHaveBeenCalledWith('publish_chapter_v2', {
       p_story_id: input.storyId,
       p_chapter_number: 50,
       p_title: input.title,

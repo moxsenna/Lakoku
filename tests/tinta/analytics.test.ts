@@ -20,9 +20,70 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('server-only', () => ({}))
 
-vi.mock('@lakoku/db', () => ({
-  createAdminClient: mocks.createAdminClient,
-}))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lakoku/db')>()
+  return {
+    ...actual,
+    createAdminClient: mocks.createAdminClient,
+    getDb: () => ({
+      insertInto: vi.fn((table: string) => {
+        mocks.from(table)
+        return {
+          values: vi.fn((val: unknown) => {
+            const p = mocks.insert(val)
+            return {
+              execute: vi.fn(async () => {
+                await p
+                return []
+              }),
+            }
+          }),
+        }
+      }),
+      updateTable: vi.fn(() => {
+        mocks.update()
+        return {
+          set: vi.fn(() => ({
+            where: vi.fn(() => ({
+              where: vi.fn(() => ({
+                execute: vi.fn(async () => []),
+              })),
+              execute: vi.fn(async () => []),
+            })),
+          })),
+        }
+      }),
+      selectFrom: vi.fn(() => {
+        const execRpc = vi.fn(async () => {
+          const rpcResult = await mocks.rpc()
+          return rpcResult?.data !== undefined ? [{ fn: rpcResult.data }] : []
+        })
+        return {
+          selectAll: vi.fn(() => ({
+            limit: vi.fn(() => ({
+              execute: execRpc,
+            })),
+            execute: execRpc,
+          })),
+          select: vi.fn(() => ({
+            where: vi.fn(() => ({
+              where: vi.fn(() => ({
+                limit: vi.fn(() => ({
+                  execute: vi.fn(async () => []),
+                })),
+                execute: vi.fn(async () => []),
+              })),
+              limit: vi.fn(() => ({
+                execute: vi.fn(async () => []),
+              })),
+              execute: vi.fn(async () => []),
+            })),
+          })),
+        }
+      }),
+    }),
+  }
+})
 
 vi.mock('next/cache', () => ({
   revalidatePath: mocks.revalidatePath,

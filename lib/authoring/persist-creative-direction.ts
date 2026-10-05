@@ -3,7 +3,8 @@
  * Writes ONLY to story_creative_directions — never touches generation contracts.
  */
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single, result } from '@lakoku/db'
+import type { Json } from '@/lib/supabase/db-types'
 import {
   StoryCreativeDirectionSchema,
   creativeDirectionFingerprint,
@@ -60,28 +61,42 @@ export async function persistStoryCreativeDirection(args: {
 
   const direction = parsed.data
   const fingerprint = creativeDirectionFingerprint(direction)
-  const db = createAdminClient()
+  const db = getDb()
+  const now = new Date().toISOString()
 
-  const result = await db.from('story_creative_directions').upsert(
-    {
-      story_id: args.storyId,
-      owner_user_id: args.ownerUserId,
-      version: direction.version,
-      direction_json: direction,
-      direction_fingerprint: fingerprint,
-      prompt_contract_version: direction.promptContractVersion,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'story_id' },
+  // RLS_AUDIT: scd_owner_read
+  const res = await result(
+    db
+      .insertInto('story_creative_directions')
+      .values({
+        story_id: args.storyId,
+        owner_user_id: args.ownerUserId,
+        version: direction.version,
+        direction_json: direction as unknown as Json,
+        direction_fingerprint: fingerprint,
+        prompt_contract_version: direction.promptContractVersion,
+        updated_at: now,
+      })
+      .onConflict((oc) =>
+        oc.column('story_id').doUpdateSet({
+          owner_user_id: args.ownerUserId,
+          version: direction.version,
+          direction_json: direction as unknown as Json,
+          direction_fingerprint: fingerprint,
+          prompt_contract_version: direction.promptContractVersion,
+          updated_at: now,
+        }),
+      )
+      .execute(),
   )
 
-  if (result.error) {
-    const errorCode = isMissingRelation(result.error) ? 'TABLE_UNAVAILABLE' : 'WRITE_FAILED'
+  if (res.error) {
+    const errorCode = isMissingRelation(res.error) ? 'TABLE_UNAVAILABLE' : 'WRITE_FAILED'
     logSafeCreativeDirectionFailure({
       storyId: args.storyId,
       fingerprint,
       errorCode,
-      dbCode: result.error.code,
+      dbCode: (res.error as { code?: string }).code,
     })
     return { ok: false, error: errorCode }
   }
@@ -96,13 +111,17 @@ export async function persistStoryCreativeDirection(args: {
 export async function loadStoryCreativeDirection(
   storyId: string,
 ): Promise<StoryCreativeDirection | null> {
-  const db = createAdminClient()
+  const db = getDb()
 
-  const { data: row } = await db
-    .from('story_creative_directions')
-    .select('direction_json')
-    .eq('story_id', storyId)
-    .maybeSingle()
+  // RLS_AUDIT: scd_owner_read
+  const { data: row } = await single(
+    db
+      .selectFrom('story_creative_directions')
+      .select('direction_json')
+      .where('story_id', '=', storyId)
+      .limit(1)
+      .execute(),
+  )
 
   if (row?.direction_json) {
     const parsed = StoryCreativeDirectionSchema.safeParse(row.direction_json)
@@ -111,11 +130,14 @@ export async function loadStoryCreativeDirection(
 
   // Read-only legacy path: older rows may have stored direction in onboarding_json.
   // Never write generation contracts from this module.
-  const { data: contract } = await db
-    .from('story_generation_contracts')
-    .select('onboarding_json')
-    .eq('story_id', storyId)
-    .maybeSingle()
+  const { data: contract } = await single(
+    db
+      .selectFrom('story_generation_contracts')
+      .select('onboarding_json')
+      .where('story_id', '=', storyId)
+      .limit(1)
+      .execute(),
+  )
 
   const onboarding = contract?.onboarding_json as
     | { creative_direction?: unknown }

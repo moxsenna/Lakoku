@@ -2,10 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   adminFactory: vi.fn(),
+  getDb: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lakoku/db')>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: mocks.getDb,
+  }
+})
 
 import type { StoryCreativeDirection } from '@/lib/onboarding/creative-direction'
 
@@ -43,9 +51,26 @@ function validDirection(): StoryCreativeDirection {
   }
 }
 
-function chainableFrom(handler: (table: string) => unknown) {
+function chainableDb(handler: (table: string) => { upsert: (...args: unknown[]) => Promise<{ error?: { code?: string; message?: string } | null }> }) {
   return {
-    from: (table: string) => handler(table),
+    insertInto: vi.fn((table: string) => {
+      const h = handler(table)
+      return {
+        values: vi.fn(() => ({
+          onConflict: vi.fn(() => ({
+            execute: vi.fn(async () => {
+              const res = await h.upsert()
+              if (res?.error) {
+                const err = new Error(res.error.message)
+                Object.assign(err, { code: res.error.code })
+                throw err
+              }
+              return []
+            }),
+          })),
+        })),
+      }
+    }),
   }
 }
 
@@ -57,8 +82,8 @@ describe('persistStoryCreativeDirection safety', () => {
   it('writes only story_creative_directions on success', async () => {
     const upsert = vi.fn().mockResolvedValue({ error: null })
     const touched: string[] = []
-    mocks.adminFactory.mockReturnValue(
-      chainableFrom((table) => {
+    mocks.getDb.mockReturnValue(
+      chainableDb((table) => {
         touched.push(table)
         return { upsert }
       }),
@@ -88,8 +113,8 @@ describe('persistStoryCreativeDirection safety', () => {
       error: { code: '42P01', message: 'relation "story_creative_directions" does not exist' },
     })
     const touched: string[] = []
-    mocks.adminFactory.mockReturnValue(
-      chainableFrom((table) => {
+    mocks.getDb.mockReturnValue(
+      chainableDb((table) => {
         touched.push(table)
         if (table === 'story_creative_directions') {
           return { upsert: dedicatedUpsert }
@@ -120,8 +145,8 @@ describe('persistStoryCreativeDirection safety', () => {
       error: { code: '42501', message: 'permission denied' },
     })
     const contractUpsert = vi.fn()
-    mocks.adminFactory.mockReturnValue(
-      chainableFrom((table) => {
+    mocks.getDb.mockReturnValue(
+      chainableDb((table) => {
         if (table === 'story_creative_directions') return { upsert: dedicatedUpsert }
         if (table === 'story_generation_contracts') return { upsert: contractUpsert }
         throw new Error(`unexpected table ${table}`)
@@ -142,7 +167,7 @@ describe('persistStoryCreativeDirection safety', () => {
   })
 
   it('returns INVALID_DIRECTION for bad payload', async () => {
-    mocks.adminFactory.mockReturnValue(chainableFrom(() => {
+    mocks.getDb.mockReturnValue(chainableDb(() => {
       throw new Error('db should not be called')
     }))
 

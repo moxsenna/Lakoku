@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   runChapterGenerationAttempt: vi.fn(),
   after: vi.fn(),
   adminFactory: vi.fn(),
+  getDb: vi.fn(),
   proposePremises: vi.fn(),
   refinePremise: vi.fn(),
   proposeCast: vi.fn(),
@@ -46,6 +47,14 @@ vi.mock('next/server', () => ({ after: mocks.after }))
 vi.mock('@/lib/supabase/admin', () => ({
   createAdminClient: mocks.adminFactory,
 }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lakoku/db')>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: mocks.getDb,
+  }
+})
 
 import type { StoryBibleDraft } from '@/lib/authoring/schema'
 
@@ -112,14 +121,22 @@ function validDraft(): StoryBibleDraft {
 
 function ownerQuery(owner: boolean) {
   const calls: string[] = []
-  const builder: Record<string, unknown> = {}
+  const builder: Record<string, any> = {}
   let currentTable = 'stories'
   builder.select = vi.fn(() => {
     calls.push('select')
     return builder
   })
-  builder.eq = vi.fn(() => {
+  builder.eq = vi.fn((..._args: unknown[]) => {
     calls.push('eq')
+    return builder
+  })
+  builder.where = vi.fn((col: string, op: string, val: unknown) => {
+    if (val !== undefined) {
+      builder.eq(col, val)
+    } else {
+      builder.eq(col, op)
+    }
     return builder
   })
   builder.gt = vi.fn(() => builder)
@@ -132,13 +149,26 @@ function ownerQuery(owner: boolean) {
     // chapters / generation_leases: missing by default so kickoff can STARTED
     return { data: null, error: null }
   })
+  builder.execute = vi.fn(async () => {
+    calls.push('maybeSingle')
+    if (currentTable === 'stories') {
+      return owner ? [{ id: 'story-a' }] : []
+    }
+    return []
+  })
+  const client = {
+    from: vi.fn((table: string) => {
+      currentTable = table
+      return builder
+    }),
+    selectFrom: vi.fn((table: string) => {
+      client.from(table)
+      return builder
+    }),
+  }
+  mocks.getDb.mockReturnValue(client)
   return {
-    client: {
-      from: vi.fn((table: string) => {
-        currentTable = table
-        return builder
-      }),
-    },
+    client,
     builder,
     calls,
   }

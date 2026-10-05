@@ -26,6 +26,7 @@ function adaptMockDbToKysely(mockDb: any) {
           }
           return builder
         }),
+        limit: vi.fn(() => builder),
         execute: vi.fn(async () => {
           if (!currentQuery) return []
           if (currentQuery.maybeSingle) {

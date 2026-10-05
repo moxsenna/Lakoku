@@ -1,5 +1,6 @@
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, result } from '@lakoku/db'
+import type { Json } from '@/lib/supabase/db-types'
 import type {
   ActRollup,
   CanonSnapshot,
@@ -46,7 +47,7 @@ export async function loadCanonSnapshot(
   storyId: string,
   throughChapter = Number.MAX_SAFE_INTEGER,
 ): Promise<CanonSnapshot> {
-  const db = createAdminClient()
+  const db = getDb()
 
   const [
     charactersRes,
@@ -61,17 +62,17 @@ export async function loadCanonSnapshot(
     rollupsRes,
     blueprintsRes,
   ] = await Promise.all([
-    db.from('characters').select('*').eq('story_id', storyId),
-    db.from('character_states').select('*'),
-    db.from('character_aliases').select('*').eq('story_id', storyId),
-    db.from('character_voice_sheets').select('*').eq('story_id', storyId),
-    db.from('facts_ledger').select('*').eq('story_id', storyId),
-    db.from('knowledge_scopes').select('*').eq('story_id', storyId),
-    db.from('secrets_reveals').select('*').eq('story_id', storyId),
-    db.from('timeline_events').select('*').eq('story_id', storyId),
-    db.from('story_threads').select('*').eq('story_id', storyId),
-    db.from('act_rollups').select('*').eq('story_id', storyId),
-    db.from('chapter_blueprints').select('*').eq('story_id', storyId),
+    result(db.selectFrom('characters').selectAll().where('story_id', '=', storyId).execute()),
+    result(db.selectFrom('character_states').selectAll().execute()),
+    result(db.selectFrom('character_aliases').selectAll().where('story_id', '=', storyId).execute()),
+    result(db.selectFrom('character_voice_sheets').selectAll().where('story_id', '=', storyId).execute()),
+    result(db.selectFrom('facts_ledger').selectAll().where('story_id', '=', storyId).execute()),
+    result(db.selectFrom('knowledge_scopes').selectAll().where('story_id', '=', storyId).execute()),
+    result(db.selectFrom('secrets_reveals').selectAll().where('story_id', '=', storyId).execute()),
+    result(db.selectFrom('timeline_events').selectAll().where('story_id', '=', storyId).execute()),
+    result(db.selectFrom('story_threads').selectAll().where('story_id', '=', storyId).execute()),
+    result(db.selectFrom('act_rollups').selectAll().where('story_id', '=', storyId).execute()),
+    result(db.selectFrom('chapter_blueprints').selectAll().where('story_id', '=', storyId).execute()),
   ])
 
   const firstError = [
@@ -226,14 +227,19 @@ export async function persistRetrievalLog(
     'includedIds' | 'excludedIds' | 'contextBudgetReport'
   >,
 ): Promise<void> {
-  const db = createAdminClient()
-  const { error } = await db.from('retrieval_logs').insert({
-    story_id: storyId,
-    target_chapter: targetChapter,
-    included_ids: packet.includedIds,
-    excluded_ids: packet.excludedIds,
-    budget_report: packet.contextBudgetReport,
-  })
+  const db = getDb()
+  const { error } = await result(
+    db
+      .insertInto('retrieval_logs')
+      .values({
+        story_id: storyId,
+        target_chapter: targetChapter,
+        included_ids: packet.includedIds,
+        excluded_ids: packet.excludedIds,
+        budget_report: packet.contextBudgetReport as unknown as Json,
+      })
+      .execute(),
+  )
   if (error) {
     console.log('[v0] persistRetrievalLog gagal (diabaikan):', error.message)
   }

@@ -1,5 +1,5 @@
 import 'server-only'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getDb, single, result } from '@lakoku/db'
 import { isCommercialStoryMode } from '@/lib/commercial/resolver.server'
 import { isChapterFree, unlockRef, DEFAULT_READING_POLICY, type ReadingPolicy } from './policy'
 
@@ -25,14 +25,17 @@ export async function resolveChapterAccess(input: {
   chapterNumber: number
   policy?: ReadingPolicy
 }): Promise<ChapterAccessDecision> {
-  const db = createAdminClient()
+  const db = getDb()
 
   // 1. Fetch story
-  const { data: story, error: storyErr } = await db
-    .from('stories')
-    .select('id, owner_user_id, story_mode, commercial_origin, visibility')
-    .eq('id', input.storyId)
-    .maybeSingle()
+  const { data: story, error: storyErr } = await single(
+    db
+      .selectFrom('stories')
+      .select(['id', 'owner_user_id', 'story_mode', 'commercial_origin', 'visibility'])
+      .where('id', '=', input.storyId)
+      .limit(1)
+      .execute(),
+  )
 
   if (storyErr || !story) {
     return { readable: false, reason: 'NOT_AUTHORIZED', cost: 0 }
@@ -51,12 +54,16 @@ export async function resolveChapterAccess(input: {
       return { readable: false, reason: 'PAYMENT_REQUIRED', cost: policy.creditsPerChapter }
     }
     // Check ledger proof
-    const { data: ledger } = await db
-      .from('credit_ledger')
-      .select('id')
-      .eq('user_id', input.userId)
-      .eq('ref', unlockRef(input.storyId, input.chapterNumber))
-      .maybeSingle()
+    // RLS_AUDIT: credit_ledger_own_read
+    const { data: ledger } = await single(
+      db
+        .selectFrom('credit_ledger')
+        .select('id')
+        .where('user_id', '=', input.userId)
+        .where('ref', '=', unlockRef(input.storyId, input.chapterNumber))
+        .limit(1)
+        .execute(),
+    )
 
     if (ledger) {
       return { readable: true, reason: 'LEDGER_UNLOCKED', cost: 0 }
@@ -74,10 +81,14 @@ export async function resolveChapterAccess(input: {
   }
 
   // Fetch active feature costs from DB
-  const { data: pricingRows, error: pricingErr } = await db
-    .from('feature_credit_costs')
-    .select('feature_key, credits_required, is_active')
-    .in('feature_key', ['story_start', 'chapter_unlock'])
+  // RLS_AUDIT: feature_credit_costs_read
+  const { data: pricingRows, error: pricingErr } = await result(
+    db
+      .selectFrom('feature_credit_costs')
+      .select(['feature_key', 'credits_required', 'is_active'])
+      .where('feature_key', 'in', ['story_start', 'chapter_unlock'])
+      .execute(),
+  )
 
   if (pricingErr || !pricingRows) {
     return { readable: false, reason: 'CONFIG_ERROR', cost: 0 }
@@ -100,11 +111,14 @@ export async function resolveChapterAccess(input: {
   // Bab 1-3 for STARTER_FREE, PAID_START, LEGACY_GRANDFATHERED
   if (input.chapterNumber >= 1 && input.chapterNumber <= 3) {
     if (origin === 'STARTER_FREE') {
-      const { data: accountState, error: accountErr } = await db
-        .from('account_commercial_states')
-        .select('starter_story_id, starter_claimed_at')
-        .eq('user_id', input.userId)
-        .maybeSingle()
+      const { data: accountState, error: accountErr } = await single(
+        db
+          .selectFrom('account_commercial_states')
+          .select(['starter_story_id', 'starter_claimed_at'])
+          .where('user_id', '=', input.userId)
+          .limit(1)
+          .execute(),
+      )
 
       if (
         accountErr
@@ -126,24 +140,31 @@ export async function resolveChapterAccess(input: {
   }
 
   // Bab 4+: Check ledger proof unlock:{storyId}:{chapter}
-  const { data: ledger } = await db
-    .from('credit_ledger')
-    .select('id')
-    .eq('user_id', input.userId)
-    .eq('ref', unlockRef(input.storyId, input.chapterNumber))
-    .maybeSingle()
+  // RLS_AUDIT: credit_ledger_own_read
+  const { data: ledger } = await single(
+    db
+      .selectFrom('credit_ledger')
+      .select('id')
+      .where('user_id', '=', input.userId)
+      .where('ref', '=', unlockRef(input.storyId, input.chapterNumber))
+      .limit(1)
+      .execute(),
+  )
 
   if (ledger) {
     return { readable: true, reason: 'LEDGER_UNLOCKED', cost: 0 }
   }
 
   // Check if chapter row exists in DB
-  const { data: chRow } = await db
-    .from('chapters')
-    .select('number')
-    .eq('story_id', input.storyId)
-    .eq('number', input.chapterNumber)
-    .maybeSingle()
+  const { data: chRow } = await single(
+    db
+      .selectFrom('chapters')
+      .select('number')
+      .where('story_id', '=', input.storyId)
+      .where('number', '=', input.chapterNumber)
+      .limit(1)
+      .execute(),
+  )
 
   if (chRow) {
     if (origin === 'STARTER_FREE' || origin === 'PAID_START') {

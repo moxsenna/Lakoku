@@ -1,5 +1,5 @@
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single, rpcOne } from '@lakoku/db'
 import { latestBlueprintForChapter } from '@/lib/narrative/blueprint'
 import { loadCanonSnapshot } from '@/lib/narrative/loader'
 import type { ReportCategory } from './types'
@@ -98,16 +98,19 @@ export async function submitContentReport(args: {
   const note = args.note?.trim() ? args.note.trim().slice(0, 2000) : null
   const canonicalRefs = await buildCanonicalRefs(storyId, chapterNumber)
 
-  const db = createAdminClient()
-  const { data, error } = await db.rpc('record_content_report_v1', {
-    p_story_id: storyId,
-    p_chapter_number: chapterNumber,
-    p_reporter_id: args.reporterId ?? null,
-    p_category: category,
-    p_note: note,
-    p_canonical_refs: canonicalRefs,
-  })
+  const db = getDb()
+  const { data, error } = await single(
+    rpcOne(db, 'record_content_report_v1', {
+      p_story_id: storyId,
+      p_chapter_number: chapterNumber,
+      p_reporter_id: args.reporterId ?? null,
+      p_category: category,
+      p_note: note,
+      p_canonical_refs: canonicalRefs,
+    }).execute(),
+  )
   if (error) throw new Error(`submitContentReport: ${error.message}`)
 
-  return { reportId: String(data) }
+  const raw = data ? ((data as Record<string, unknown>).fn ?? data) : ''
+  return { reportId: String(raw) }
 }

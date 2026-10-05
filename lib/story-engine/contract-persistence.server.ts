@@ -1,6 +1,6 @@
 import 'server-only'
 
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single, rpcOne } from '@lakoku/db'
 import { z } from 'zod'
 import type { TasteProfile } from '@/lib/taste-profile/schema'
 import type { ContractSource } from './contract-generation.server'
@@ -373,25 +373,27 @@ export async function persistContractAndCanon(input: {
   const ownerUserId = z.string().uuid().parse(input.ownerUserId)
   const canon = contractToCanonBootstrap(validated)
   const { endingCandidates, plotDebts, ...storyContractJson } = validated
-  const db = createAdminClient()
-  const { error } = await db.rpc('bootstrap_personalized_story_v1', {
-    p_story_id: validated.storyId,
-    p_owner_user_id: ownerUserId,
-    p_contract_source: input.contractSource,
-    p_onboarding_json: input.onboardingJson,
-    p_story_contract_json: storyContractJson,
-    p_route_schema_json: {},
-    p_plot_debts_json: plotDebts,
-    p_ending_candidates_json: endingCandidates,
-    p_characters: canon.characters,
-    p_character_aliases: canon.characterAliases,
-    p_voice_sheets: canon.voiceSheets,
-    p_facts: canon.facts,
-    p_knowledge: canon.knowledge,
-    p_secrets: canon.secrets,
-    p_threads: canon.threads,
-    p_blueprints: canon.blueprints,
-  })
+  const db = getDb()
+  const { error } = await single(
+    rpcOne(db, 'bootstrap_personalized_story_v1', {
+      p_story_id: validated.storyId,
+      p_owner_user_id: ownerUserId,
+      p_contract_source: input.contractSource,
+      p_onboarding_json: input.onboardingJson,
+      p_story_contract_json: storyContractJson,
+      p_route_schema_json: {},
+      p_plot_debts_json: plotDebts,
+      p_ending_candidates_json: endingCandidates,
+      p_characters: canon.characters,
+      p_character_aliases: canon.characterAliases,
+      p_voice_sheets: canon.voiceSheets,
+      p_facts: canon.facts,
+      p_knowledge: canon.knowledge,
+      p_secrets: canon.secrets,
+      p_threads: canon.threads,
+      p_blueprints: canon.blueprints,
+    }).execute(),
+  )
 
   if (error) throw new PersonalizedStoryBootstrapError(error)
 }

@@ -1,4 +1,4 @@
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single, result } from '@lakoku/db'
 import { getRewardPolicy } from './server'
 
 /**
@@ -14,14 +14,18 @@ export async function recordReferralAttribution(
   if (!referredUserId || !code) return false
 
   try {
-    const db = createAdminClient()
+    const db = getDb()
 
     // 1. Cari pemilik kode referral
-    const { data: codeRow, error: codeErr } = await db
-      .from('referral_codes')
-      .select('user_id')
-      .eq('code', code.toUpperCase())
-      .maybeSingle()
+    // RLS_AUDIT: referral_codes_own_read
+    const { data: codeRow, error: codeErr } = await single(
+      db
+        .selectFrom('referral_codes')
+        .select('user_id')
+        .where('code', '=', code.toUpperCase())
+        .limit(1)
+        .execute(),
+    )
 
     if (codeErr || !codeRow?.user_id) return false
     const referrerUserId = codeRow.user_id
@@ -35,14 +39,20 @@ export async function recordReferralAttribution(
     const windowEndsAt = new Date(now.getTime() + policy.windowDays * 24 * 60 * 60 * 1000)
 
     // 4. Tulis atribusi
-    const { error: insertErr } = await db.from('referral_attributions').insert({
-      referrer_user_id: referrerUserId,
-      referred_user_id: referredUserId,
-      source,
-      shared_link_id: sharedLinkId,
-      attributed_at: now.toISOString(),
-      window_ends_at: windowEndsAt.toISOString(),
-    })
+    // RLS_AUDIT: referral_attributions_own_read
+    const { error: insertErr } = await result(
+      db
+        .insertInto('referral_attributions')
+        .values({
+          referrer_user_id: referrerUserId,
+          referred_user_id: referredUserId,
+          source,
+          shared_link_id: sharedLinkId,
+          attributed_at: now.toISOString(),
+          window_ends_at: windowEndsAt.toISOString(),
+        })
+        .execute(),
+    )
 
     if (insertErr) {
       // 23505 = unique_violation (user sudah pernah diatribusikan)

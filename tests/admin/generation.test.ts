@@ -108,7 +108,18 @@ function createRpcClient(results?: Partial<Record<string, { data: unknown; error
 }
 
 function wireMockDb(client: ReturnType<typeof createRpcClient>) {
-  mocks.getDb.mockReturnValue(client)
+  const selectQuery = {
+    select: vi.fn(() => selectQuery),
+    where: vi.fn(() => selectQuery),
+    orderBy: vi.fn(() => selectQuery),
+    limit: vi.fn(() => selectQuery),
+    execute: vi.fn(async () => []),
+  }
+  const db = {
+    ...client,
+    selectFrom: vi.fn(() => selectQuery),
+  }
+  mocks.getDb.mockReturnValue(db)
   mocks.rpcRows.mockImplementation((_client: unknown, name: string, args: Record<string, unknown>) => {
     return {
       execute: vi.fn(async () => client.rpc(name, args)),
@@ -272,6 +283,6 @@ describe('admin generation RPC loaders', () => {
       name: 'AdminGenerationQueryError',
       code: 'QUERY_FAILED',
     })
-    expect(mocks.createAdminClient).toHaveBeenCalledTimes(1)
+    expect(mocks.createAdminClient).not.toHaveBeenCalled()
   })
 })

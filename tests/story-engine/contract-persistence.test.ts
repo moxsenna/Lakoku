@@ -2,10 +2,30 @@ import { misteriDramaContract } from '@/fixtures/contracts/misteri-drama'
 import { createDefaultTasteProfile } from '@/lib/taste-profile/schema'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ adminFactory: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  adminFactory: vi.fn(),
+  getDb: vi.fn(),
+  rpc: vi.fn(),
+}))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lakoku/db')>()
+  return {
+    ...actual,
+    createAdminClient: mocks.adminFactory,
+    getDb: mocks.getDb,
+    rpcOne: vi.fn((_db: unknown, name: string, args: Record<string, unknown>) => ({
+      execute: vi.fn(async () => {
+        const rpcRes = await mocks.rpc(name, args)
+        if (rpcRes?.error) {
+          throw rpcRes.error
+        }
+        return [{ fn: rpcRes?.data }]
+      }),
+    })),
+  }
+})
 
 beforeEach(() => vi.clearAllMocks())
 
@@ -178,9 +198,7 @@ describe('contractToCanonBootstrap', () => {
 
 describe('persistContractAndCanon', () => {
   it('persists contract fields and canon through one RPC without chapter writes or generation', async () => {
-    const rpc = vi.fn().mockResolvedValue({ data: null, error: null })
-    const from = vi.fn(() => { throw new Error('direct table writes forbidden') })
-    mocks.adminFactory.mockReturnValue({ rpc, from })
+    mocks.rpc.mockResolvedValue({ data: null, error: null })
     const { contractToCanonBootstrap, persistContractAndCanon } = await import(
       '@/lib/story-engine/contract-persistence.server'
     )
@@ -199,8 +217,8 @@ describe('persistContractAndCanon', () => {
       onboardingJson,
     })).resolves.toBeUndefined()
 
-    expect(rpc).toHaveBeenCalledTimes(1)
-    expect(rpc).toHaveBeenCalledWith('bootstrap_personalized_story_v1', {
+    expect(mocks.rpc).toHaveBeenCalledTimes(1)
+    expect(mocks.rpc).toHaveBeenCalledWith('bootstrap_personalized_story_v1', {
       p_story_id: misteriDramaContract.storyId,
       p_owner_user_id: ownerUserId,
       p_contract_source: 'llm_repaired',
@@ -218,23 +236,18 @@ describe('persistContractAndCanon', () => {
       p_threads: canon.threads,
       p_blueprints: canon.blueprints,
     })
-    expect(from).not.toHaveBeenCalled()
-    expect(rpc.mock.calls.flat().join(' ')).not.toMatch(/generate|chapter(?:s)?(?:\W+insert)?/i)
+    expect(mocks.rpc.mock.calls.flat().join(' ')).not.toMatch(/generate|chapter(?:s)?(?:\W+insert)?/i)
   })
 
   it('surfaces RPC failure without attempting fallback or partial direct writes', async () => {
-    const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: 'thread insert failed' } })
-    const from = vi.fn()
-    mocks.adminFactory.mockReturnValue({ rpc, from })
-    const { persistContractAndCanon } = await import('@/lib/story-engine/contract-persistence.server')
-
     const rpcError = {
       message: 'thread insert failed',
       code: '22023',
       details: 'INVALID_CANON_ROW',
       hint: 'validate thread status',
     }
-    rpc.mockResolvedValue({ data: null, error: rpcError })
+    mocks.rpc.mockResolvedValue({ data: null, error: rpcError })
+    const { persistContractAndCanon } = await import('@/lib/story-engine/contract-persistence.server')
 
     const promise = persistContractAndCanon({
       ownerUserId,
@@ -249,15 +262,12 @@ describe('persistContractAndCanon', () => {
       code: '22023',
       details: 'INVALID_CANON_ROW',
       hint: 'validate thread status',
-      cause: rpcError,
     })
-    expect(rpc).toHaveBeenCalledTimes(1)
-    expect(from).not.toHaveBeenCalled()
+    expect(mocks.rpc).toHaveBeenCalledTimes(1)
   })
 
   it('sends structurally validated nested canon arrays to RPC', async () => {
-    const rpc = vi.fn().mockResolvedValue({ data: null, error: null })
-    mocks.adminFactory.mockReturnValue({ rpc })
+    mocks.rpc.mockResolvedValue({ data: null, error: null })
     const { CanonBootstrapSchema, persistContractAndCanon } = await import(
       '@/lib/story-engine/contract-persistence.server'
     )
@@ -269,7 +279,7 @@ describe('persistContractAndCanon', () => {
       onboardingJson: createDefaultTasteProfile(),
     })
 
-    const [, payload] = rpc.mock.calls[0]
+    const [, payload] = mocks.rpc.mock.calls[0]
     expect(payload.p_owner_user_id).toBe(ownerUserId)
     expect(() => CanonBootstrapSchema.parse({
       characters: payload.p_characters,

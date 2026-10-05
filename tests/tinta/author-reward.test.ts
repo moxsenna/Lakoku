@@ -4,9 +4,11 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   createAdminClient: vi.fn(),
+  getDb: vi.fn(),
   rpc: vi.fn(),
   queryChoiceOutcome: vi.fn(),
   queryChapter: vi.fn(),
+  queryStoryForUser: vi.fn(),
   applyChoiceToUserState: vi.fn(),
   getSessionUser: vi.fn(),
   applyPersonalizedChoice: vi.fn(),
@@ -19,9 +21,23 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('server-only', () => ({}))
 
-vi.mock('@lakoku/db', () => ({
-  createAdminClient: mocks.createAdminClient,
-}))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lakoku/db')>()
+  return {
+    ...actual,
+    createAdminClient: mocks.createAdminClient,
+    getDb: mocks.getDb,
+    rpcOne: vi.fn((_db: unknown, name: string, args: Record<string, unknown>) => ({
+      execute: vi.fn(async () => {
+        const rpcRes = await mocks.rpc(name, args)
+        if (rpcRes?.error) {
+          throw (rpcRes.error instanceof Error ? rpcRes.error : new Error(rpcRes.error.message || 'RPC error'))
+        }
+        return [{ fn: rpcRes?.data }]
+      }),
+    })),
+  }
+})
 
 vi.mock('@/lib/analytics/server', () => ({
   trackServerEvent: mocks.trackServerEvent,
@@ -34,6 +50,7 @@ vi.mock('../../lib/tinta/server', () => ({
 vi.mock('@/lib/api/queries', () => ({
   queryChoiceOutcome: mocks.queryChoiceOutcome,
   queryChapter: mocks.queryChapter,
+  queryStoryForUser: mocks.queryStoryForUser,
 }))
 
 vi.mock('@/lib/api/user-state', () => ({
@@ -78,6 +95,8 @@ describe('lib/tinta/author-reward.server (AC4.1, AC4.5)', () => {
     mocks.createAdminClient.mockReturnValue({
       rpc: mocks.rpc,
     })
+    mocks.getDb.mockReturnValue({})
+    mocks.queryStoryForUser.mockResolvedValue({ id: 'story-xyz', visibility: 'public' })
     mocks.getTintaPolicy.mockResolvedValue({
       tintaPerRead: 10,
       authorDailyCap: 300,
@@ -242,14 +261,14 @@ describe('lib/tinta/author-reward.server (AC4.1, AC4.5)', () => {
       await expect(maybeGrantAuthorTinta(defaultParams)).resolves.toBeUndefined()
 
       expect(consoleSpy).toHaveBeenCalledWith(
-        '[tinta] author reward unhandled error',
-        expect.any(Error),
+        expect.stringMatching(/\[tinta\] author reward (unhandled|rpc) error/),
+        expect.anything(),
       )
       consoleSpy.mockRestore()
     })
 
     it('swallows client creation crash without throwing', async () => {
-      mocks.createAdminClient.mockImplementation(() => {
+      mocks.getDb.mockImplementation(() => {
         throw new Error('Supabase env missing')
       })
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})

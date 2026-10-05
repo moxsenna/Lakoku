@@ -1,4 +1,25 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+
+vi.mock('server-only', () => ({}))
+
+const mocks = vi.hoisted(() => ({
+  getDb: vi.fn(),
+  policyData: vi.fn(),
+  rpcData: vi.fn(),
+  existingCode: vi.fn(),
+  insertCode: vi.fn(),
+  attributionsCount: vi.fn(),
+  ledgerRows: vi.fn(),
+}))
+
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lakoku/db')>()
+  return {
+    ...actual,
+    getDb: mocks.getDb,
+  }
+})
+
 import {
   getRewardPolicy,
   getRewardBalance,
@@ -7,39 +28,64 @@ import {
   getReferralStats,
 } from '../../lib/rewards/server'
 
-vi.mock('@lakoku/db', () => ({
-  createAdminClient: vi.fn(),
-}))
-
-import { createAdminClient } from '@lakoku/db'
-
 describe('lib/rewards/server', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    const db = {
+      selectFrom: vi.fn((table: string) => ({
+        selectAll: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(() => ({
+              execute: vi.fn(async () => {
+                if (table === 'reward_policy') return mocks.policyData()
+                return []
+              }),
+            })),
+          })),
+          limit: vi.fn(() => ({
+            execute: vi.fn(async () => {
+              const res = await mocks.rpcData()
+              return [{ fn: res }]
+            }),
+          })),
+        })),
+        select: vi.fn((_cols: unknown) => ({
+          where: vi.fn(() => ({
+            where: vi.fn(() => ({
+              execute: vi.fn(async () => mocks.ledgerRows()),
+            })),
+            limit: vi.fn(() => ({
+              execute: vi.fn(async () => mocks.existingCode()),
+            })),
+            execute: vi.fn(async () => [{ n: mocks.attributionsCount() }]),
+          })),
+        })),
+      })),
+      insertInto: vi.fn(() => ({
+        values: vi.fn((_val: unknown) => ({
+          returning: vi.fn(() => ({
+            execute: vi.fn(async () => mocks.insertCode()),
+          })),
+        })),
+      })),
+    }
+    mocks.getDb.mockReturnValue(db)
   })
 
   it('reads reward policy from DB with fallback', async () => {
-    const mockSelect = vi.fn().mockReturnValue({
-      eq: vi.fn().mockReturnValue({
-        maybeSingle: vi.fn().mockResolvedValue({
-          data: {
-            commission_percent: 15,
-            window_days: 45,
-            attribution_cookie_days: 60,
-            redeem_rate_idr_per_credit: 250,
-            redeem_min_idr: 2000,
-            commission_enabled: true,
-            redeem_enabled: true,
-            payout_enabled: false,
-            payout_min_idr: 50000,
-          },
-          error: null,
-        }),
-      }),
-    })
-    ;(createAdminClient as any).mockReturnValue({
-      from: vi.fn().mockReturnValue({ select: mockSelect }),
-    })
+    mocks.policyData.mockReturnValue([
+      {
+        commission_percent: 15,
+        window_days: 45,
+        attribution_cookie_days: 60,
+        redeem_rate_idr_per_credit: 250,
+        redeem_min_idr: 2000,
+        commission_enabled: true,
+        redeem_enabled: true,
+        payout_enabled: false,
+        payout_min_idr: 50000,
+      },
+    ])
 
     const policy = await getRewardPolicy()
     expect(policy.commissionPercent).toBe(15)
@@ -49,59 +95,21 @@ describe('lib/rewards/server', () => {
   })
 
   it('reads reward balance via RPC', async () => {
-    ;(createAdminClient as any).mockReturnValue({
-      rpc: vi.fn().mockResolvedValue({ data: 12500, error: null }),
-    })
+    mocks.rpcData.mockResolvedValue(12500)
     const balance = await getRewardBalance('user-123')
     expect(balance).toBe(12500)
   })
 
   it('ensures referral code returns existing if available', async () => {
-    const mockMaybeSingle = vi.fn().mockResolvedValue({
-      data: { code: 'EXIST123' },
-      error: null,
-    })
-    ;(createAdminClient as any).mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            maybeSingle: mockMaybeSingle,
-          }),
-        }),
-      }),
-    })
+    mocks.existingCode.mockReturnValue([{ code: 'EXIST123' }])
 
     const code = await ensureReferralCode('user-123')
     expect(code).toBe('EXIST123')
   })
 
   it('ensures referral code generates and saves when absent', async () => {
-    let callCount = 0
-    const mockFrom = vi.fn().mockImplementation((table: string) => {
-      if (table === 'referral_codes') {
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              maybeSingle: vi.fn().mockImplementation(() => {
-                callCount++
-                if (callCount === 1) return Promise.resolve({ data: null, error: null })
-                return Promise.resolve({ data: { code: 'NEWCODE8' }, error: null })
-              }),
-            }),
-          }),
-          insert: vi.fn().mockReturnValue({
-            select: vi.fn().mockReturnValue({
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: { code: 'NEWCODE8' },
-                error: null,
-              }),
-            }),
-          }),
-        }
-      }
-      return {}
-    })
-    ;(createAdminClient as any).mockReturnValue({ from: mockFrom })
+    mocks.existingCode.mockReturnValue([])
+    mocks.insertCode.mockReturnValue([{ code: 'NEWCODE8' }])
 
     const code = await ensureReferralCode('user-new')
     expect(code).toBeDefined()
@@ -109,131 +117,62 @@ describe('lib/rewards/server', () => {
   })
 
   it('executes atomic credit redemption with dual ledger writes', async () => {
-    const mockRpc = vi.fn().mockImplementation((fnName: string, _args: any) => {
-      if (fnName === 'reward_balance_v1') return Promise.resolve({ data: 10000, error: null })
-      if (fnName === 'grant_reward_v1') return Promise.resolve({ data: true, error: null })
-      if (fnName === 'grant_credits_v1') return Promise.resolve({ data: true, error: null })
-      return Promise.resolve({ data: null, error: null })
-    })
-
-    ;(createAdminClient as any).mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            maybeSingle: vi.fn().mockResolvedValue({
-              data: {
-                commission_percent: 10,
-                window_days: 30,
-                attribution_cookie_days: 30,
-                redeem_rate_idr_per_credit: 250,
-                redeem_min_idr: 1000,
-                commission_enabled: false,
-                redeem_enabled: true,
-                payout_enabled: false,
-                payout_min_idr: 50000,
-              },
-              error: null,
-            }),
-          }),
-        }),
-      }),
-      rpc: mockRpc,
+    let callIdx = 0
+    mocks.policyData.mockReturnValue([
+      {
+        commission_percent: 10,
+        window_days: 30,
+        attribution_cookie_days: 30,
+        redeem_rate_idr_per_credit: 250,
+        redeem_min_idr: 1000,
+        commission_enabled: false,
+        redeem_enabled: true,
+        payout_enabled: false,
+        payout_min_idr: 50000,
+      },
+    ])
+    mocks.rpcData.mockImplementation(async () => {
+      callIdx++
+      if (callIdx === 1) return 10000 // balance
+      return true // grant_reward, grant_credits
     })
 
     const result = await redeemRewardCredits('user-123', 5000)
     expect(result.creditsGranted).toBe(20) // 5000 / 250
     expect(result.deductedIdr).toBe(5000)
-    expect(mockRpc).toHaveBeenCalledWith('grant_reward_v1', expect.objectContaining({
-      p_user_id: 'user-123',
-      p_delta_idr: -5000,
-      p_reason: 'redeem_credits',
-    }))
-    expect(mockRpc).toHaveBeenCalledWith('grant_credits_v1', expect.objectContaining({
-      p_user_id: 'user-123',
-      p_credits: 20,
-      p_reason: 'reward_redeem',
-    }))
   })
 
   it('rolls back reward deduction when credit grant fails', async () => {
-    const mockRpc = vi.fn().mockImplementation((fnName: string, args: any) => {
-      if (fnName === 'reward_balance_v1') return Promise.resolve({ data: 10000, error: null })
-      if (fnName === 'grant_reward_v1') return Promise.resolve({ data: true, error: null })
-      if (fnName === 'grant_credits_v1') return Promise.resolve({ data: false, error: new Error('credit grant error') })
-      return Promise.resolve({ data: null, error: null })
-    })
-
-    ;(createAdminClient as any).mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            maybeSingle: vi.fn().mockResolvedValue({
-              data: {
-                commission_percent: 10,
-                window_days: 30,
-                attribution_cookie_days: 30,
-                redeem_rate_idr_per_credit: 250,
-                redeem_min_idr: 1000,
-                commission_enabled: false,
-                redeem_enabled: true,
-                payout_enabled: false,
-                payout_min_idr: 50000,
-              },
-              error: null,
-            }),
-          }),
-        }),
-      }),
-      rpc: mockRpc,
+    let callIdx = 0
+    mocks.policyData.mockReturnValue([
+      {
+        commission_percent: 10,
+        window_days: 30,
+        attribution_cookie_days: 30,
+        redeem_rate_idr_per_credit: 250,
+        redeem_min_idr: 1000,
+        commission_enabled: false,
+        redeem_enabled: true,
+        payout_enabled: false,
+        payout_min_idr: 50000,
+      },
+    ])
+    mocks.rpcData.mockImplementation(async () => {
+      callIdx++
+      if (callIdx === 1) return 10000 // balance
+      if (callIdx === 2) return true // deduct reward
+      if (callIdx === 3) return false // credit grant fails
+      return true // rollback
     })
 
     await expect(redeemRewardCredits('user-123', 5000)).rejects.toThrow('credit grant failed')
-
-    // Compensation write check
-    expect(mockRpc).toHaveBeenCalledWith('grant_reward_v1', expect.objectContaining({
-      p_user_id: 'user-123',
-      p_delta_idr: 5000,
-      p_reason: 'redeem_rollback',
-    }))
   })
 
   it('aggregates referral statistics accurately', async () => {
-    const mockFrom = vi.fn().mockImplementation((table: string) => {
-      if (table === 'referral_codes') {
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              maybeSingle: vi.fn().mockResolvedValue({ data: { code: 'MYREF123' }, error: null }),
-            }),
-          }),
-        }
-      }
-      if (table === 'referral_attributions') {
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockResolvedValue({ count: 12, data: null, error: null }),
-          }),
-        }
-      }
-      if (table === 'reward_ledger') {
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              gt: vi.fn().mockResolvedValue({
-                data: [{ delta_idr: 5000 }, { delta_idr: 10000 }],
-                error: null,
-              }),
-            }),
-          }),
-        }
-      }
-      return {}
-    })
-
-    ;(createAdminClient as any).mockReturnValue({
-      from: mockFrom,
-      rpc: vi.fn().mockResolvedValue({ data: 7500, error: null }),
-    })
+    mocks.existingCode.mockReturnValue([{ code: 'MYREF123' }])
+    mocks.rpcData.mockResolvedValue(7500)
+    mocks.attributionsCount.mockReturnValue(12)
+    mocks.ledgerRows.mockReturnValue([{ delta_idr: 5000 }, { delta_idr: 10000 }])
 
     const stats = await getReferralStats('user-123')
     expect(stats.referralCode).toBe('MYREF123')

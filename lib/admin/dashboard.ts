@@ -1,5 +1,5 @@
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, result, countOf } from '@lakoku/db'
 import { loadAdminGenerationOverview } from '@/lib/admin/generation'
 import type { AdminGenerationFilters } from '@/lib/admin/generation-filters'
 import {
@@ -32,24 +32,27 @@ const COST_COLUMNS = [
   'cost_amount',
   'cost_currency',
   'cost_source',
-].join(',')
+] as const
 
 export async function loadAdminDailyCostSummary(
   days = 1,
   now = new Date(),
 ): Promise<AdminDailyCostSummary> {
-  const db = createAdminClient()
+  const db = getDb()
   const from = new Date(now.getTime() - days * 24 * 60 * 60 * 1000)
 
   let rows: ProviderCallCostRow[] = []
   try {
-    const { data } = await db
-      .from('generation_provider_calls')
-      .select(COST_COLUMNS)
-      .gte('started_at', from.toISOString())
-      .lt('started_at', now.toISOString())
-      .order('started_at', { ascending: true })
-      .limit(1000)
+    const { data } = await result(
+      db
+        .selectFrom('generation_provider_calls')
+        .select(COST_COLUMNS)
+        .where('started_at', '>=', from)
+        .where('started_at', '<', now)
+        .orderBy('started_at', 'asc')
+        .limit(1000)
+        .execute(),
+    )
     if (data) {
       rows = data as unknown as ProviderCallCostRow[]
     }
@@ -87,7 +90,7 @@ export interface AdminDashboardMetrics {
 export async function loadAdminDashboardMetrics(
   now = new Date(),
 ): Promise<AdminDashboardMetrics> {
-  const db = createAdminClient()
+  const db = getDb()
   const today = now.toISOString().slice(0, 10) // YYYY-MM-DD
 
   const metrics: AdminDashboardMetrics = {
@@ -104,29 +107,38 @@ export async function loadAdminDashboardMetrics(
 
   // --- Users (auth.users via admin API) ---
   try {
-    const { count: totalUsers } = await db
-      .from('reader_taste_profiles')
-      .select('*', { count: 'exact', head: true })
-    metrics.totalUsers = totalUsers ?? 0
+    const totalUsers = await countOf(
+      db
+        .selectFrom('reader_taste_profiles')
+        .select((eb) => eb.fn.countAll<number>().as('n'))
+        .execute(),
+    )
+    metrics.totalUsers = totalUsers
   } catch { /* No-op */ }
 
   try {
-    const { count: newToday } = await db
-      .from('reader_taste_profiles')
-      .select('*', { count: 'exact', head: true })
-      .gte('created_at', `${today}T00:00:00`)
-    metrics.newUsersToday = newToday ?? 0
+    const newToday = await countOf(
+      db
+        .selectFrom('reader_taste_profiles')
+        .select((eb) => eb.fn.countAll<number>().as('n'))
+        .where('created_at', '>=', new Date(`${today}T00:00:00`))
+        .execute(),
+    )
+    metrics.newUsersToday = newToday
   } catch { /* No-op */ }
 
   // --- Credit totals ---
   // Note: credit_balance_v1 is per-user; circulating total uses ledger sum below.
 
   try {
-    const { data: circ } = await db
-      .from('credit_ledger')
-      .select('delta')
-      .order('created_at', { ascending: false })
-      .limit(5000)
+    const { data: circ } = await result(
+      db
+        .selectFrom('credit_ledger')
+        .select('delta')
+        .orderBy('created_at', 'desc')
+        .limit(5000)
+        .execute(),
+    )
     if (circ) {
       metrics.totalCreditsCirculating = (circ as { delta: number }[]).reduce(
         (s, r) => s + r.delta, 0,
@@ -135,11 +147,14 @@ export async function loadAdminDashboardMetrics(
   } catch { /* No-op */ }
 
   try {
-    const { data: used } = await db
-      .from('credit_ledger')
-      .select('delta')
-      .lt('delta', 0)
-      .gte('created_at', `${today}T00:00:00`)
+    const { data: used } = await result(
+      db
+        .selectFrom('credit_ledger')
+        .select('delta')
+        .where('delta', '<', 0)
+        .where('created_at', '>=', new Date(`${today}T00:00:00`))
+        .execute(),
+    )
     if (used) {
       metrics.creditsUsedToday = (used as { delta: number }[]).reduce(
         (s, r) => s + Math.abs(r.delta), 0,
@@ -149,18 +164,26 @@ export async function loadAdminDashboardMetrics(
 
   // --- Orders ---
   try {
-    const { count: paidToday } = await db
-      .from('credit_orders')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'paid')
-      .gte('paid_at', `${today}T00:00:00`)
-    metrics.paidOrdersToday = paidToday ?? 0
+    // RLS_AUDIT: credit_orders_own_read
+    const paidToday = await countOf(
+      db
+        .selectFrom('credit_orders')
+        .select((eb) => eb.fn.countAll<number>().as('n'))
+        .where('status', '=', 'paid')
+        .where('paid_at', '>=', new Date(`${today}T00:00:00`))
+        .execute(),
+    )
+    metrics.paidOrdersToday = paidToday
 
-    const { data: revenueRows } = await db
-      .from('credit_orders')
-      .select('price_idr')
-      .eq('status', 'paid')
-      .gte('paid_at', `${today}T00:00:00`)
+    // RLS_AUDIT: credit_orders_own_read
+    const { data: revenueRows } = await result(
+      db
+        .selectFrom('credit_orders')
+        .select('price_idr')
+        .where('status', '=', 'paid')
+        .where('paid_at', '>=', new Date(`${today}T00:00:00`))
+        .execute(),
+    )
     if (revenueRows) {
       metrics.revenueTodayIdr = (revenueRows as { price_idr: number }[]).reduce(
         (s, r) => s + r.price_idr, 0,

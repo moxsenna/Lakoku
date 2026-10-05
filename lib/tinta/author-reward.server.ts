@@ -1,5 +1,5 @@
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single, rpcOne } from '@lakoku/db'
 import { type AuthorRewardStatus, tintaAmountBucket } from './policy'
 import { getTintaPolicy } from './server'
 import { trackServerEvent } from '@/lib/analytics/server'
@@ -20,12 +20,14 @@ export async function maybeGrantAuthorTinta(
 ): Promise<void> {
   try {
     const { readerUserId, storyId, chapterNumber } = params
-    const db = createAdminClient()
-    const { data, error } = await db.rpc('grant_author_tinta_v1', {
-      p_reader_id: readerUserId,
-      p_story_id: storyId,
-      p_chapter_number: chapterNumber,
-    })
+    const db = getDb()
+    const { data, error } = await single(
+      rpcOne(db, 'grant_author_tinta_v1', {
+        p_reader_id: readerUserId,
+        p_story_id: storyId,
+        p_chapter_number: chapterNumber,
+      }).execute(),
+    )
 
     if (error) {
       console.log('[tinta] author reward rpc error', {
@@ -36,7 +38,8 @@ export async function maybeGrantAuthorTinta(
       return
     }
 
-    const status = data as AuthorRewardStatus
+    const raw = data ? ((data as Record<string, unknown>).fn ?? data) : null
+    const status = raw as AuthorRewardStatus
 
     if (status === 'ok') {
       console.log('[tinta] author reward granted', {

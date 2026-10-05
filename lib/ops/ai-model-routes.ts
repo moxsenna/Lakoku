@@ -1,6 +1,6 @@
 import 'server-only'
 import { cache } from 'react'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single } from '@lakoku/db'
 
 /**
  * AI model route config — DB-backed agar admin/owner bisa mengganti model
@@ -142,15 +142,25 @@ export const DEFAULT_AI_MODEL_ROUTE: AiModelRoute = {
 export const getAiModelRoute = cache(
   async (useCase: string): Promise<AiModelRoute | null> => {
     try {
-      const db = createAdminClient()
-      const { data } = await db
-        .from('ai_model_routes')
-        .select(
-          'use_case,provider,model_id,fallback_models,temperature,max_output_tokens,reasoning_effort,route_version',
-        )
-        .eq('use_case', useCase)
-        .eq('is_active', true)
-        .maybeSingle()
+      const db = getDb()
+      const { data } = await single(
+        db
+          .selectFrom('ai_model_routes')
+          .select([
+            'use_case',
+            'provider',
+            'model_id',
+            'fallback_models',
+            'temperature',
+            'max_output_tokens',
+            'reasoning_effort',
+            'route_version',
+          ])
+          .where('use_case', '=', useCase)
+          .where('is_active', '=', true)
+          .limit(1)
+          .execute(),
+      )
 
       if (data) return mapRow(data as AiModelRouteRow)
     } catch {

@@ -1,5 +1,6 @@
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb } from '@lakoku/db'
+import type { Json } from '@/lib/supabase/db-types'
 import {
   AnalyticsEventSchema,
   type AnalyticsClientPayload,
@@ -38,14 +39,17 @@ export function trackServerEvent(
       return
     }
 
-    const admin = createAdminClient()
+    const db = getDb()
     void Promise.resolve(
-      admin.from('analytics_events').insert({
-        user_id: options?.userId ?? null,
-        anonymous_id: parsed.data.anonymous_id,
-        event_name: parsed.data.event_name,
-        payload: parsed.data,
-      }),
+      db
+        .insertInto('analytics_events')
+        .values({
+          user_id: options?.userId ?? null,
+          anonymous_id: parsed.data.anonymous_id,
+          event_name: parsed.data.event_name,
+          payload: parsed.data as unknown as Json,
+        })
+        .execute(),
     ).catch(() => {})
   } catch {
     // Non-critical — jangan pernah throw

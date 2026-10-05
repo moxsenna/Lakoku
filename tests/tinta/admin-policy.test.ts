@@ -7,9 +7,71 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('server-only', () => ({}))
 
-vi.mock('@lakoku/db', () => ({
-  createAdminClient: mocks.createAdminClient,
-}))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lakoku/db')>()
+  return {
+    ...actual,
+    createAdminClient: mocks.createAdminClient,
+    getDb: () => {
+      const admin = mocks.createAdminClient()
+      return {
+        selectFrom: vi.fn((table: string) => ({
+          selectAll: vi.fn(() => ({
+            where: vi.fn((col: string, _op: string, val: unknown) => ({
+              limit: vi.fn(() => ({
+                execute: vi.fn(async () => {
+                  const s = admin.from(table).select('*').eq(col, val)
+                  const res = await (s.single ? s.single() : s.maybeSingle ? s.maybeSingle() : s)
+                  return res?.data ? [res.data] : []
+                }),
+              })),
+            })),
+            orderBy: vi.fn(() => ({
+              execute: vi.fn(async () => []),
+              limit: vi.fn(() => ({ execute: vi.fn(async () => []) })),
+            })),
+            execute: vi.fn(async () => []),
+          })),
+          select: vi.fn(() => ({
+            where: vi.fn((col: string, _op: string, val: unknown) => ({
+              limit: vi.fn(() => ({
+                execute: vi.fn(async () => {
+                  const s = admin.from(table).select().eq(col, val)
+                  const res = await (s.single ? s.single() : s.maybeSingle ? s.maybeSingle() : s)
+                  return res?.data ? [res.data] : []
+                }),
+              })),
+              execute: vi.fn(async () => []),
+            })),
+            orderBy: vi.fn(() => ({
+              limit: vi.fn(() => ({ execute: vi.fn(async () => []) })),
+              execute: vi.fn(async () => []),
+            })),
+            execute: vi.fn(async () => []),
+          })),
+        })),
+        updateTable: vi.fn((table: string) => ({
+          set: vi.fn((newVal: unknown) => ({
+            where: vi.fn((col: string, _op: string, val: unknown) => ({
+              execute: vi.fn(async () => {
+                await admin.from(table).update(newVal).eq(col, val)
+                return []
+              }),
+            })),
+          })),
+        })),
+        insertInto: vi.fn((table: string) => ({
+          values: vi.fn((val: unknown) => ({
+            execute: vi.fn(async () => {
+              await admin.from(table).insert(val)
+              return []
+            }),
+          })),
+        })),
+      }
+    },
+  }
+})
 
 vi.mock('@/lib/admin/auth', () => ({
   requireAdminUser: mocks.requireAdminUser,

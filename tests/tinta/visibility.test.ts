@@ -10,9 +10,73 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('server-only', () => ({}))
 
-vi.mock('@lakoku/db', () => ({
-  createAdminClient: mocks.createAdminClient,
-}))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lakoku/db')>()
+  return {
+    ...actual,
+    createAdminClient: mocks.createAdminClient,
+    getDb: () => ({
+      selectFrom: vi.fn((table: string) => {
+        let firstWhere: [string, unknown] | null = null
+        let secondWhere: [string, unknown] | null = null
+        const qb: any = {
+          select: vi.fn(() => qb),
+          where: vi.fn((col: string, _op: string, val: unknown) => {
+            if (!firstWhere) firstWhere = [col, val]
+            else secondWhere = [col, val]
+            return qb
+          }),
+          limit: vi.fn(() => ({
+            execute: vi.fn(async () => {
+              const admin = mocks.createAdminClient()
+              const s = admin.from(table).select('id').eq(firstWhere![0], firstWhere![1])
+              const res = await (s.maybeSingle ? s.maybeSingle() : s)
+              return res?.data ? [res.data] : []
+            }),
+          })),
+          execute: vi.fn(async () => {
+            const admin = mocks.createAdminClient()
+            const s = admin.from(table).select('id, visibility')
+            const eqS = s.eq(firstWhere![0], firstWhere![1])
+            if (secondWhere) {
+              const inS = eqS.in(secondWhere[0], secondWhere[1])
+              const res = await (inS.then ? inS : Promise.resolve(inS))
+              return res?.data ?? []
+            }
+            const res = await (eqS.then ? eqS : Promise.resolve(eqS))
+            return res?.data ?? []
+          }),
+        }
+        return qb
+      }),
+      updateTable: vi.fn((table: string) => ({
+        set: vi.fn((newVal: unknown) => {
+          let where1: [string, unknown] | null = null
+          let where2: [string, unknown] | null = null
+          const uqb: any = {
+            where: vi.fn((col: string, _op: string, val: unknown) => {
+              if (!where1) where1 = [col, val]
+              else where2 = [col, val]
+              return uqb
+            }),
+            execute: vi.fn(async () => {
+              const admin = mocks.createAdminClient()
+              const u = admin.from(table).update(newVal)
+              const eq1 = u.eq(where1![0], where1![1])
+              const eq2 = eq1.eq(where2![0], where2![1])
+              const res = await (eq2.then ? eq2 : Promise.resolve(eq2))
+              if (res?.error) {
+                throw new Error(res.error.message)
+              }
+              return []
+            }),
+          }
+          return uqb
+        }),
+      })),
+    }),
+  }
+})
 
 vi.mock('@/lib/supabase/admin', () => ({
   createAdminClient: mocks.createAdminClient,

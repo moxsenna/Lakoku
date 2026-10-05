@@ -8,12 +8,36 @@ import type {
 const mocks = vi.hoisted(() => ({
   createAdminClient: vi.fn(),
   createClient: vi.fn(),
+  getDb: vi.fn(),
   requireAdminUser: vi.fn(),
   runValidatorRerun: vi.fn(),
+  authRpc: vi.fn(),
+  adminRpc: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.createAdminClient }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lakoku/db')>()
+  return {
+    ...actual,
+    createAdminClient: mocks.createAdminClient,
+    getDb: mocks.getDb,
+    rpcOne: vi.fn((_db: unknown, name: string, args: Record<string, unknown>) => ({
+      execute: vi.fn(async () => {
+        const res = await mocks.adminRpc(name, args)
+        if (res?.error) throw res.error
+        return [{ fn: res?.data }]
+      }),
+    })),
+    rpcRows: vi.fn((_db: unknown, name: string, args: Record<string, unknown>) => ({
+      execute: vi.fn(async () => {
+        const res = await mocks.authRpc(name, args)
+        if (res?.error) throw res.error
+        return res?.data ?? []
+      }),
+    })),
+  }
+})
 vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.createClient }))
 vi.mock('@/lib/admin/auth', () => ({ requireAdminUser: mocks.requireAdminUser }))
 vi.mock('@/lib/utils/validator-rerun.helper', () => ({
@@ -65,12 +89,14 @@ const SIGNED_ATTESTATION = {
 function authenticatedClient(result: { data: unknown; error: unknown }) {
   const rpc = vi.fn(async (_functionName: string, _args: Record<string, unknown>) => result)
   mocks.createClient.mockResolvedValue({ rpc })
+  mocks.authRpc.mockImplementation(rpc)
   return rpc
 }
 
 function adminClient(result: { data: unknown; error: unknown }) {
   const rpc = vi.fn(async (_functionName: string, _args: Record<string, unknown>) => result)
   mocks.createAdminClient.mockReturnValue({ rpc })
+  mocks.adminRpc.mockImplementation(rpc)
   return rpc
 }
 

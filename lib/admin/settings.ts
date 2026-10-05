@@ -1,5 +1,5 @@
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single, result } from '@lakoku/db'
 import { requireAdminUser } from '@/lib/admin/auth'
 import {
   normalizeFallbackModels,
@@ -111,11 +111,14 @@ export interface AdminFeatureCreditCost {
 }
 
 export async function listAdminCreditProducts(): Promise<AdminCreditProduct[]> {
-  const db = createAdminClient()
-  const { data } = await db
-    .from('credit_products')
-    .select('*')
-    .order('sort_order', { ascending: true })
+  const db = getDb()
+  const { data } = await result(
+    db
+      .selectFrom('credit_products')
+      .selectAll()
+      .orderBy('sort_order', 'asc')
+      .execute(),
+  )
   if (!data) return []
   return (data as Record<string, unknown>[]).map((r) => ({
     productKey: r.product_key as string,
@@ -130,14 +133,25 @@ export async function listAdminCreditProducts(): Promise<AdminCreditProduct[]> {
 }
 
 export async function getAdminGenerationPolicy(): Promise<AdminGenerationPolicy | null> {
-  const db = createAdminClient()
-  const { data } = await db
-    .from('generation_policy')
-    .select(
-      'target_words_min,target_words_max,target_scenes,lease_ttl_seconds,max_concurrent_generations,max_concurrent_generations_per_user,generation_max_queue,updated_at',
-    )
-    .eq('id', 1)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: generation_policy_read
+  const { data } = await single(
+    db
+      .selectFrom('generation_policy')
+      .select([
+        'target_words_min',
+        'target_words_max',
+        'target_scenes',
+        'lease_ttl_seconds',
+        'max_concurrent_generations',
+        'max_concurrent_generations_per_user',
+        'generation_max_queue',
+        'updated_at',
+      ])
+      .where('id', '=', 1)
+      .limit(1)
+      .execute(),
+  )
   if (!data) return null
   const d = data as Record<string, unknown>
   return {
@@ -153,16 +167,19 @@ export async function getAdminGenerationPolicy(): Promise<AdminGenerationPolicy 
         : 1,
     generationMaxQueue:
       d.generation_max_queue != null ? Number(d.generation_max_queue) : 40,
-    updatedAt: (d.updated_at as string) ?? null,
+    updatedAt: d.updated_at ? (d.updated_at instanceof Date ? d.updated_at.toISOString() : String(d.updated_at)) : null,
   }
 }
 
 export async function listAdminAiModelRoutes(): Promise<AdminAiModelRoute[]> {
-  const db = createAdminClient()
-  const { data } = await db
-    .from('ai_model_routes')
-    .select('*')
-    .order('use_case', { ascending: true })
+  const db = getDb()
+  const { data } = await result(
+    db
+      .selectFrom('ai_model_routes')
+      .selectAll()
+      .orderBy('use_case', 'asc')
+      .execute(),
+  )
   if (!data) return []
   return (data as Record<string, unknown>[]).map((r) => {
     const provider = r.provider as string
@@ -181,11 +198,15 @@ export async function listAdminAiModelRoutes(): Promise<AdminAiModelRoute[]> {
 }
 
 export async function listAdminFeatureCreditCosts(): Promise<AdminFeatureCreditCost[]> {
-  const db = createAdminClient()
-  const { data } = await db
-    .from('feature_credit_costs')
-    .select('*')
-    .order('feature_key', { ascending: true })
+  const db = getDb()
+  // RLS_AUDIT: feature_credit_costs_read
+  const { data } = await result(
+    db
+      .selectFrom('feature_credit_costs')
+      .selectAll()
+      .orderBy('feature_key', 'asc')
+      .execute(),
+  )
   if (!data) return []
   return (data as Record<string, unknown>[]).map((r) => ({
     featureKey: r.feature_key as string,
@@ -193,7 +214,7 @@ export async function listAdminFeatureCreditCosts(): Promise<AdminFeatureCreditC
     isActive: (r.is_active as boolean) ?? false,
     pricingVersion: r.pricing_version as string,
     metadata: (r.metadata as Record<string, unknown>) ?? {},
-    updatedAt: (r.updated_at as string) ?? null,
+    updatedAt: r.updated_at ? (r.updated_at instanceof Date ? r.updated_at.toISOString() : String(r.updated_at)) : null,
   }))
 }
 
@@ -209,12 +230,15 @@ export interface AdminSettingsAuditLog {
 }
 
 export async function listRecentSettingsAuditLogs(limit = 20): Promise<AdminSettingsAuditLog[]> {
-  const db = createAdminClient()
-  const { data } = await db
-    .from('admin_settings_audit_logs')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(limit)
+  const db = getDb()
+  const { data } = await result(
+    db
+      .selectFrom('admin_settings_audit_logs')
+      .selectAll()
+      .orderBy('created_at', 'desc')
+      .limit(limit)
+      .execute(),
+  )
   if (!data) return []
   return (data as Record<string, unknown>[]).map((r) => ({
     id: r.id as string,
@@ -224,17 +248,21 @@ export async function listRecentSettingsAuditLogs(limit = 20): Promise<AdminSett
     oldValue: r.old_value,
     newValue: r.new_value,
     reason: r.reason as string,
-    createdAt: r.created_at as string,
+    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
   }))
 }
 
 export async function getAdminRewardPolicy(): Promise<AdminRewardPolicy | null> {
-  const db = createAdminClient()
-  const { data } = await db
-    .from('reward_policy')
-    .select('*')
-    .eq('id', true)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: reward_policy_read
+  const { data } = await single(
+    db
+      .selectFrom('reward_policy')
+      .selectAll()
+      .where('id', '=', true)
+      .limit(1)
+      .execute(),
+  )
   if (!data) return null
   const d = data as Record<string, unknown>
   return {
@@ -247,7 +275,7 @@ export async function getAdminRewardPolicy(): Promise<AdminRewardPolicy | null> 
     redeemEnabled: Boolean(d.redeem_enabled),
     payoutEnabled: Boolean(d.payout_enabled),
     payoutMinIdr: Number(d.payout_min_idr ?? 50000),
-    updatedAt: (d.updated_at as string) ?? null,
+    updatedAt: d.updated_at ? (d.updated_at instanceof Date ? d.updated_at.toISOString() : String(d.updated_at)) : null,
   }
 }
 
@@ -263,12 +291,16 @@ export interface AdminSettingsData {
 }
 
 export async function getAdminMissionPolicy(): Promise<AdminMissionPolicy | null> {
-  const db = createAdminClient()
-  const { data } = await db
-    .from('mission_policy')
-    .select('*')
-    .eq('id', true)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: mission_policy_read
+  const { data } = await single(
+    db
+      .selectFrom('mission_policy')
+      .selectAll()
+      .where('id', '=', true)
+      .limit(1)
+      .execute(),
+  )
   if (!data) return null
   const d = data as Record<string, unknown>
   return {
@@ -287,17 +319,21 @@ export async function getAdminMissionPolicy(): Promise<AdminMissionPolicy | null
     adsenseSlotEnding: String(d.adsense_slot_ending ?? ''),
     adsenseSlotBeranda: String(d.adsense_slot_beranda ?? ''),
     adsenseSlotCredit: String(d.adsense_slot_credit ?? ''),
-    updatedAt: (d.updated_at as string) ?? null,
+    updatedAt: d.updated_at ? (d.updated_at instanceof Date ? d.updated_at.toISOString() : String(d.updated_at)) : null,
   }
 }
 
 export async function getAdminTintaPolicy(): Promise<AdminTintaPolicy | null> {
-  const db = createAdminClient()
-  const { data } = await db
-    .from('tinta_policy')
-    .select('*')
-    .eq('id', true)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT: tinta_policy_read
+  const { data } = await single(
+    db
+      .selectFrom('tinta_policy')
+      .selectAll()
+      .where('id', '=', true)
+      .limit(1)
+      .execute(),
+  )
   if (!data) return null
   const d = data as Record<string, unknown>
   return {
@@ -312,7 +348,7 @@ export async function getAdminTintaPolicy(): Promise<AdminTintaPolicy | null> {
     authorRewardsEnabled: Boolean(d.author_rewards_enabled),
     exchangeEnabled: Boolean(d.exchange_enabled),
     missionsPayTinta: Boolean(d.missions_pay_tinta),
-    updatedAt: (d.updated_at as string) ?? null,
+    updatedAt: d.updated_at ? (d.updated_at instanceof Date ? d.updated_at.toISOString() : String(d.updated_at)) : null,
   }
 }
 
@@ -361,16 +397,21 @@ async function auditSettings(args: {
   newValue: unknown
   reason: string
 }): Promise<void> {
-  const db = createAdminClient()
-  const { error } = await db.from('admin_settings_audit_logs').insert({
-    admin_user_id: args.adminUserId,
-    admin_email: args.adminEmail ?? null,
-    setting_area: args.settingArea,
-    setting_key: args.settingKey,
-    old_value: args.oldValue != null ? JSON.parse(JSON.stringify(args.oldValue)) : null,
-    new_value: JSON.parse(JSON.stringify(args.newValue)),
-    reason: args.reason,
-  })
+  const db = getDb()
+  const { error } = await result(
+    db
+      .insertInto('admin_settings_audit_logs')
+      .values({
+        admin_user_id: args.adminUserId,
+        admin_email: args.adminEmail ?? null,
+        setting_area: args.settingArea,
+        setting_key: args.settingKey,
+        old_value: args.oldValue != null ? JSON.parse(JSON.stringify(args.oldValue)) : null,
+        new_value: JSON.parse(JSON.stringify(args.newValue)),
+        reason: args.reason,
+      })
+      .execute(),
+  )
   if (error) throw new Error(`auditSettings: ${error.message}`)
 }
 
@@ -386,14 +427,17 @@ export async function updateCreditProductSettings(
   input: UpdateCreditProductInput,
 ): Promise<AdminCreditProduct> {
   const admin = await requireOwner()
-  const db = createAdminClient()
+  const db = getDb()
 
   // Ambil old value
-  const { data: oldRow } = await db
-    .from('credit_products')
-    .select('*')
-    .eq('product_key', input.productKey)
-    .single()
+  const { data: oldRow } = await single(
+    db
+      .selectFrom('credit_products')
+      .selectAll()
+      .where('product_key', '=', input.productKey)
+      .limit(1)
+      .execute(),
+  )
   if (!oldRow) throw new Error('Product not found')
 
   const oldVal = {
@@ -406,21 +450,23 @@ export async function updateCreditProductSettings(
     active: oldRow.active,
   }
 
-  const { data: updated } = await db
-    .from('credit_products')
-    .update({
-      name: input.name,
-      price_idr: input.priceIdr,
-      credits: input.credits,
-      normal_bonus_credits: input.normalBonusCredits,
-      first_topup_bonus_credits: input.firstTopupBonusCredits,
-      marketing_badge: input.marketingBadge,
-      active: input.isActive,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('product_key', input.productKey)
-    .select('*')
-    .single()
+  const { data: updated } = await single(
+    db
+      .updateTable('credit_products')
+      .set({
+        name: input.name,
+        price_idr: input.priceIdr,
+        credits: input.credits,
+        normal_bonus_credits: input.normalBonusCredits,
+        first_topup_bonus_credits: input.firstTopupBonusCredits,
+        marketing_badge: input.marketingBadge,
+        active: input.isActive,
+        updated_at: new Date().toISOString(),
+      })
+      .where('product_key', '=', input.productKey)
+      .returningAll()
+      .execute(),
+  )
 
   if (!updated) throw new Error('Update failed')
 
@@ -458,13 +504,17 @@ export async function updateFeatureCreditCost(
   input: UpdateFeatureCreditCostInput,
 ): Promise<AdminFeatureCreditCost> {
   const admin = await requireOwner()
-  const db = createAdminClient()
+  const db = getDb()
 
-  const { data: oldRow } = await db
-    .from('feature_credit_costs')
-    .select('credits_required,is_active,pricing_version,metadata')
-    .eq('feature_key', input.featureKey)
-    .single()
+  // RLS_AUDIT: feature_credit_costs_read
+  const { data: oldRow } = await single(
+    db
+      .selectFrom('feature_credit_costs')
+      .select(['credits_required', 'is_active', 'pricing_version', 'metadata'])
+      .where('feature_key', '=', input.featureKey)
+      .limit(1)
+      .execute(),
+  )
   if (!oldRow) throw new Error('Feature cost not found')
 
   const oldVal = {
@@ -474,20 +524,19 @@ export async function updateFeatureCreditCost(
     metadata: oldRow.metadata,
   }
 
-  const updatePayload: Record<string, unknown> = {
-    credits_required: input.creditsRequired,
-    is_active: input.isActive,
-    pricing_version: input.pricingVersion,
-    updated_at: new Date().toISOString(),
-  }
-  if (input.metadata !== undefined) {
-    updatePayload.metadata = input.metadata
-  }
-
-  const { error } = await db
-    .from('feature_credit_costs')
-    .update(updatePayload)
-    .eq('feature_key', input.featureKey)
+  const { error } = await result(
+    db
+      .updateTable('feature_credit_costs')
+      .set({
+        credits_required: input.creditsRequired,
+        is_active: input.isActive,
+        pricing_version: input.pricingVersion,
+        updated_at: new Date().toISOString(),
+        ...(input.metadata !== undefined ? { metadata: input.metadata as never } : {}),
+      })
+      .where('feature_key', '=', input.featureKey)
+      .execute(),
+  )
 
   if (error) throw new Error(`updateFeatureCreditCost: ${error.message}`)
 
@@ -520,13 +569,17 @@ export async function updateGenerationPolicy(
   input: UpdateGenerationPolicyInput,
 ): Promise<AdminGenerationPolicy> {
   const admin = await requireOwner()
-  const db = createAdminClient()
+  const db = getDb()
 
-  const { data: oldRow } = await db
-    .from('generation_policy')
-    .select('*')
-    .eq('id', 1)
-    .single()
+  // RLS_AUDIT: generation_policy_read
+  const { data: oldRow } = await single(
+    db
+      .selectFrom('generation_policy')
+      .selectAll()
+      .where('id', '=', 1)
+      .limit(1)
+      .execute(),
+  )
   if (!oldRow) throw new Error('Generation policy not found')
 
   const oldVal = {
@@ -539,19 +592,22 @@ export async function updateGenerationPolicy(
     generation_max_queue: oldRow.generation_max_queue,
   }
 
-  const { error } = await db
-    .from('generation_policy')
-    .update({
-      target_words_min: input.targetWordsMin,
-      target_words_max: input.targetWordsMax,
-      target_scenes: input.targetScenes,
-      lease_ttl_seconds: input.leaseTtlSeconds,
-      max_concurrent_generations: input.maxConcurrentGenerations,
-      max_concurrent_generations_per_user: input.maxConcurrentGenerationsPerUser,
-      generation_max_queue: input.generationMaxQueue,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', 1)
+  const { error } = await result(
+    db
+      .updateTable('generation_policy')
+      .set({
+        target_words_min: input.targetWordsMin,
+        target_words_max: input.targetWordsMax,
+        target_scenes: input.targetScenes,
+        lease_ttl_seconds: input.leaseTtlSeconds,
+        max_concurrent_generations: input.maxConcurrentGenerations,
+        max_concurrent_generations_per_user: input.maxConcurrentGenerationsPerUser,
+        generation_max_queue: input.generationMaxQueue,
+        updated_at: new Date().toISOString(),
+      })
+      .where('id', '=', 1)
+      .execute(),
+  )
 
   if (error) throw new Error(`updateGenerationPolicy: ${error.message}`)
 
@@ -589,13 +645,16 @@ export async function updateAiModelRoute(
   input: UpdateAiModelRouteInput,
 ): Promise<AdminAiModelRoute> {
   const admin = await requireOwner()
-  const db = createAdminClient()
+  const db = getDb()
 
-  const { data: oldRow } = await db
-    .from('ai_model_routes')
-    .select('*')
-    .eq('use_case', input.useCase)
-    .single()
+  const { data: oldRow } = await single(
+    db
+      .selectFrom('ai_model_routes')
+      .selectAll()
+      .where('use_case', '=', input.useCase)
+      .limit(1)
+      .execute(),
+  )
   if (!oldRow) throw new Error('AI model route not found')
 
   const structuredFallbacks = input.fallbackModels.map((f) => ({
@@ -617,20 +676,23 @@ export async function updateAiModelRoute(
     notes: oldRow.notes,
   }
 
-  const { error } = await db
-    .from('ai_model_routes')
-    .update({
-      provider: input.provider,
-      model_id: input.modelId,
-      fallback_models: structuredFallbacks,
-      temperature: input.temperature,
-      max_output_tokens: input.maxOutputTokens,
-      is_active: input.isActive,
-      route_version: input.routeVersion,
-      notes: input.notes,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('use_case', input.useCase)
+  const { error } = await result(
+    db
+      .updateTable('ai_model_routes')
+      .set({
+        provider: input.provider,
+        model_id: input.modelId,
+        fallback_models: structuredFallbacks as never,
+        temperature: input.temperature,
+        max_output_tokens: input.maxOutputTokens,
+        is_active: input.isActive,
+        route_version: input.routeVersion,
+        notes: input.notes,
+        updated_at: new Date().toISOString(),
+      })
+      .where('use_case', '=', input.useCase)
+      .execute(),
+  )
 
   if (error) throw new Error(`updateAiModelRoute: ${error.message}`)
 
@@ -645,9 +707,9 @@ export async function updateAiModelRoute(
       model_id: input.modelId,
       fallback_models: structuredFallbacks,
       temperature: input.temperature,
-      max_output_tokens: input.maxOutputTokens,
+      maxOutputTokens: input.maxOutputTokens,
       is_active: input.isActive,
-      route_version: input.routeVersion,
+      routeVersion: input.routeVersion,
       notes: input.notes,
     },
     reason: input.reason,
@@ -670,13 +732,17 @@ export async function updateRewardPolicy(
   input: UpdateRewardPolicyInput,
 ): Promise<AdminRewardPolicy> {
   const admin = await requireOwner()
-  const db = createAdminClient()
+  const db = getDb()
 
-  const { data: oldRow } = await db
-    .from('reward_policy')
-    .select('*')
-    .eq('id', true)
-    .single()
+  // RLS_AUDIT: reward_policy_read
+  const { data: oldRow } = await single(
+    db
+      .selectFrom('reward_policy')
+      .selectAll()
+      .where('id', '=', true)
+      .limit(1)
+      .execute(),
+  )
 
   const oldVal = oldRow
     ? {
@@ -705,10 +771,13 @@ export async function updateRewardPolicy(
     updated_at: new Date().toISOString(),
   }
 
-  const { error } = await db
-    .from('reward_policy')
-    .update(newVal)
-    .eq('id', true)
+  const { error } = await result(
+    db
+      .updateTable('reward_policy')
+      .set(newVal)
+      .where('id', '=', true)
+      .execute(),
+  )
 
   if (error) throw new Error(`updateRewardPolicy: ${error.message}`)
 
@@ -740,13 +809,17 @@ export async function updateMissionPolicy(
   input: UpdateMissionPolicyInput,
 ): Promise<AdminMissionPolicy> {
   const admin = await requireOwner()
-  const db = createAdminClient()
+  const db = getDb()
 
-  const { data: oldRow } = await db
-    .from('mission_policy')
-    .select('*')
-    .eq('id', true)
-    .single()
+  // RLS_AUDIT: mission_policy_read
+  const { data: oldRow } = await single(
+    db
+      .selectFrom('mission_policy')
+      .selectAll()
+      .where('id', '=', true)
+      .limit(1)
+      .execute(),
+  )
 
   const oldVal = oldRow
     ? {
@@ -787,10 +860,13 @@ export async function updateMissionPolicy(
     updated_at: new Date().toISOString(),
   }
 
-  const { error } = await db
-    .from('mission_policy')
-    .update(newVal)
-    .eq('id', true)
+  const { error } = await result(
+    db
+      .updateTable('mission_policy')
+      .set(newVal)
+      .where('id', '=', true)
+      .execute(),
+  )
 
   if (error) throw new Error(`updateMissionPolicy: ${error.message}`)
 
@@ -828,13 +904,17 @@ export async function updateTintaPolicy(
   input: UpdateTintaPolicyInput,
 ): Promise<AdminTintaPolicy> {
   const admin = await requireOwner()
-  const db = createAdminClient()
+  const db = getDb()
 
-  const { data: oldRow } = await db
-    .from('tinta_policy')
-    .select('*')
-    .eq('id', true)
-    .single()
+  // RLS_AUDIT: tinta_policy_read
+  const { data: oldRow } = await single(
+    db
+      .selectFrom('tinta_policy')
+      .selectAll()
+      .where('id', '=', true)
+      .limit(1)
+      .execute(),
+  )
 
   const oldVal = oldRow
     ? {
@@ -867,10 +947,13 @@ export async function updateTintaPolicy(
     updated_at: new Date().toISOString(),
   }
 
-  const { error } = await db
-    .from('tinta_policy')
-    .update(newVal)
-    .eq('id', true)
+  const { error } = await result(
+    db
+      .updateTable('tinta_policy')
+      .set(newVal)
+      .where('id', '=', true)
+      .execute(),
+  )
 
   if (error) throw new Error(`updateTintaPolicy: ${error.message}`)
 

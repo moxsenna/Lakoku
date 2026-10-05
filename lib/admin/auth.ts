@@ -1,5 +1,5 @@
 import 'server-only'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single } from '@lakoku/db'
 import { getSessionUser } from '@/lib/api/user-state'
 
 /**
@@ -14,14 +14,17 @@ import { getSessionUser } from '@/lib/api/user-state'
 
 /** Cek apakah userId adalah admin/owner yang terdaftar di DB. */
 export async function isAdminUser(userId: string): Promise<boolean> {
-  const db = createAdminClient()
+  const db = getDb()
 
-  const { data, error } = await db
-    .from('admin_users')
-    .select('role')
-    .eq('user_id', userId)
-    .in('role', ['owner', 'admin'])
-    .maybeSingle()
+  const { data, error } = await single(
+    db
+      .selectFrom('admin_users')
+      .select('role')
+      .where('user_id', '=', userId)
+      .where('role', 'in', ['owner', 'admin'])
+      .limit(1)
+      .execute(),
+  )
 
   if (error) {
     throw new Error(`isAdminUser: ${error.message}`)
@@ -34,13 +37,16 @@ export async function isAdminUser(userId: string): Promise<boolean> {
 export async function getAdminRole(
   userId: string,
 ): Promise<'owner' | 'admin' | null> {
-  const db = createAdminClient()
+  const db = getDb()
 
-  const { data, error } = await db
-    .from('admin_users')
-    .select('role')
-    .eq('user_id', userId)
-    .maybeSingle()
+  const { data, error } = await single(
+    db
+      .selectFrom('admin_users')
+      .select('role')
+      .where('user_id', '=', userId)
+      .limit(1)
+      .execute(),
+  )
 
   if (error) {
     throw new Error(`getAdminRole: ${error.message}`)

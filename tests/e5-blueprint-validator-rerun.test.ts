@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   createAdminClient: vi.fn(),
+  getDb: vi.fn(),
   loadCanonSnapshot: vi.fn(),
   checkSpineIntegrity: vi.fn(),
   checkEndingReachability: vi.fn(),
@@ -11,7 +12,14 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.createAdminClient }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lakoku/db')>()
+  return {
+    ...actual,
+    createAdminClient: mocks.createAdminClient,
+    getDb: mocks.getDb,
+  }
+})
 vi.mock('@/lib/narrative/loader', () => ({ loadCanonSnapshot: mocks.loadCanonSnapshot }))
 vi.mock('@/lib/narrative/reconciliation', () => ({
   checkSpineIntegrity: mocks.checkSpineIntegrity,
@@ -39,6 +47,20 @@ function contractClient() {
   const select = vi.fn(() => ({ eq }))
   const from = vi.fn(() => ({ select }))
   mocks.createAdminClient.mockReturnValue({ from })
+  mocks.getDb.mockReturnValue({
+    selectFrom: vi.fn(() => ({
+      select: vi.fn(() => ({
+        where: vi.fn(() => ({
+          limit: vi.fn(() => ({
+            execute: vi.fn(async () => {
+              const res = await maybeSingle()
+              return res.data ? [res.data] : []
+            }),
+          })),
+        })),
+      })),
+    })),
+  })
   return { from, select, eq, maybeSingle }
 }
 

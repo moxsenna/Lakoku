@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single, result, countOf, rpcOne } from '@lakoku/db'
 import {
   RewardPolicy,
   DEFAULT_REWARD_POLICY,
@@ -22,12 +22,16 @@ export interface RedeemResult {
 
 export async function getRewardPolicy(): Promise<RewardPolicy> {
   try {
-    const db = createAdminClient()
-    const { data, error } = await db
-      .from('reward_policy')
-      .select('*')
-      .eq('id', true)
-      .maybeSingle()
+    const db = getDb()
+    // RLS_AUDIT: reward_policy_read
+    const { data, error } = await single(
+      db
+        .selectFrom('reward_policy')
+        .selectAll()
+        .where('id', '=', true)
+        .limit(1)
+        .execute(),
+    )
 
     if (error || !data) {
       return DEFAULT_REWARD_POLICY
@@ -50,22 +54,28 @@ export async function getRewardPolicy(): Promise<RewardPolicy> {
 }
 
 export async function getRewardBalance(userId: string): Promise<number> {
-  const db = createAdminClient()
-  const { data, error } = await db.rpc('reward_balance_v1', { p_user_id: userId })
+  const db = getDb()
+  // RLS_AUDIT: reward_ledger_own_read
+  const { data, error } = await single(rpcOne(db, 'reward_balance_v1', { p_user_id: userId }).execute())
   if (error) {
     throw new Error(`getRewardBalance: ${error.message}`)
   }
-  return (data as number) ?? 0
+  const raw = data ? ((data as Record<string, unknown>).fn ?? data) : 0
+  return Number(raw ?? 0)
 }
 
 export async function ensureReferralCode(userId: string): Promise<string> {
-  const db = createAdminClient()
+  const db = getDb()
 
-  const { data: existing } = await db
-    .from('referral_codes')
-    .select('code')
-    .eq('user_id', userId)
-    .maybeSingle()
+  // RLS_AUDIT: referral_codes_own_read
+  const { data: existing } = await single(
+    db
+      .selectFrom('referral_codes')
+      .select('code')
+      .where('user_id', '=', userId)
+      .limit(1)
+      .execute(),
+  )
 
   if (existing?.code) {
     return existing.code
@@ -73,21 +83,26 @@ export async function ensureReferralCode(userId: string): Promise<string> {
 
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = generateReferralCode()
-    const { data, error } = await db
-      .from('referral_codes')
-      .insert({ user_id: userId, code })
-      .select('code')
-      .maybeSingle()
+    const { data } = await single(
+      db
+        .insertInto('referral_codes')
+        .values({ user_id: userId, code })
+        .returning('code')
+        .execute(),
+    )
 
-    if (!error && data?.code) {
+    if (data?.code) {
       return data.code
     }
 
-    const { data: checkExisting } = await db
-      .from('referral_codes')
-      .select('code')
-      .eq('user_id', userId)
-      .maybeSingle()
+    const { data: checkExisting } = await single(
+      db
+        .selectFrom('referral_codes')
+        .select('code')
+        .where('user_id', '=', userId)
+        .limit(1)
+        .execute(),
+    )
 
     if (checkExisting?.code) {
       return checkExisting.code
@@ -121,17 +136,20 @@ export async function redeemRewardCredits(
     throw new Error('Jumlah penukaran tidak menghasilkan kredit')
   }
 
-  const db = createAdminClient()
+  const db = getDb()
   const redeemId = randomUUID()
   const rewardRef = `redeem:${redeemId}`
 
   // Step 1: Deduct reward balance
-  const { data: rewardGranted, error: rewardErr } = await db.rpc('grant_reward_v1', {
-    p_user_id: userId,
-    p_delta_idr: -calculation.costIdr,
-    p_reason: 'redeem_credits',
-    p_ref: rewardRef,
-  })
+  const { data: rewardData, error: rewardErr } = await single(
+    rpcOne(db, 'grant_reward_v1', {
+      p_user_id: userId,
+      p_delta_idr: -calculation.costIdr,
+      p_reason: 'redeem_credits',
+      p_ref: rewardRef,
+    }).execute(),
+  )
+  const rewardGranted = rewardData ? ((rewardData as Record<string, unknown>).fn ?? rewardData) : false
 
   if (rewardErr || !rewardGranted) {
     throw new Error(`redeemRewardCredits reward deduct failed: ${rewardErr?.message ?? 'unknown'}`)
@@ -139,21 +157,26 @@ export async function redeemRewardCredits(
 
   // Step 2: Grant reading credits
   const creditRef = `reward_redeem:${redeemId}`
-  const { data: creditGranted, error: creditErr } = await db.rpc('grant_credits_v1', {
-    p_user_id: userId,
-    p_ref: creditRef,
-    p_credits: calculation.creditsToGrant,
-    p_reason: 'reward_redeem',
-  })
+  const { data: creditData, error: creditErr } = await single(
+    rpcOne(db, 'grant_credits_v1', {
+      p_user_id: userId,
+      p_ref: creditRef,
+      p_credits: calculation.creditsToGrant,
+      p_reason: 'reward_redeem',
+    }).execute(),
+  )
+  const creditGranted = creditData ? ((creditData as Record<string, unknown>).fn ?? creditData) : false
 
   if (creditErr || !creditGranted) {
     // Step 3: Compensating rollback if credit grant fails
-    await db.rpc('grant_reward_v1', {
-      p_user_id: userId,
-      p_delta_idr: calculation.costIdr,
-      p_reason: 'redeem_rollback',
-      p_ref: `rollback:${redeemId}`,
-    })
+    await single(
+      rpcOne(db, 'grant_reward_v1', {
+        p_user_id: userId,
+        p_delta_idr: calculation.costIdr,
+        p_reason: 'redeem_rollback',
+        p_ref: `rollback:${redeemId}`,
+      }).execute(),
+    )
     throw new Error(`redeemRewardCredits credit grant failed: ${creditErr?.message ?? 'unknown'}`)
   }
 
@@ -165,20 +188,27 @@ export async function redeemRewardCredits(
 }
 
 export async function getReferralStats(userId: string): Promise<ReferralStats> {
-  const db = createAdminClient()
+  const db = getDb()
 
-  const [referralCode, balance, attributionsRes, earningsRes] = await Promise.all([
+  // RLS_AUDIT: referral_attributions_own_read, reward_ledger_own_read
+  const [referralCode, balance, totalAttributions, earningsRes] = await Promise.all([
     ensureReferralCode(userId),
     getRewardBalance(userId),
-    db
-      .from('referral_attributions')
-      .select('*', { count: 'exact', head: true })
-      .eq('referrer_user_id', userId),
-    db
-      .from('reward_ledger')
-      .select('delta_idr')
-      .eq('user_id', userId)
-      .gt('delta_idr', 0),
+    countOf(
+      db
+        .selectFrom('referral_attributions')
+        .select((eb) => eb.fn.countAll<number>().as('n'))
+        .where('referrer_user_id', '=', userId)
+        .execute(),
+    ),
+    result(
+      db
+        .selectFrom('reward_ledger')
+        .select('delta_idr')
+        .where('user_id', '=', userId)
+        .where('delta_idr', '>', 0)
+        .execute(),
+    ),
   ])
 
   const totalEarnedIdr = (earningsRes.data ?? []).reduce(
@@ -188,7 +218,7 @@ export async function getReferralStats(userId: string): Promise<ReferralStats> {
 
   return {
     referralCode,
-    totalAttributions: attributionsRes.count ?? 0,
+    totalAttributions,
     totalEarnedIdr,
     currentBalanceIdr: balance,
   }

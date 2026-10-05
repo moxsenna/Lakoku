@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   guardAdminToken: vi.fn(),
   getSessionUser: vi.fn(),
-  createAdminClient: vi.fn(),
+  getDb: vi.fn(),
   generateNextChapter: vi.fn(),
   startOwnedChapterGeneration: vi.fn(),
 }))
@@ -11,9 +11,16 @@ const mocks = vi.hoisted(() => ({
 const STORY_NOT_FOUND_ERROR = 'Cerita tidak ditemukan.'
 const AUTHORING_AUTH_REQUIRED_ERROR = 'Masuk untuk membuat cerita.'
 
+vi.mock('server-only', () => ({}))
 vi.mock('@/lib/auth/admin-guard', () => ({ guardAdminToken: mocks.guardAdminToken }))
 vi.mock('@/lib/api/user-state', () => ({ getSessionUser: mocks.getSessionUser }))
-vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.createAdminClient }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lakoku/db')>()
+  return {
+    ...actual,
+    getDb: mocks.getDb,
+  }
+})
 vi.mock('@lakoku/runtime', () => ({
   generateNextChapter: mocks.generateNextChapter,
 }))
@@ -33,16 +40,25 @@ function makeOwnerDb(ownerFound: boolean) {
     calls.push(['select', ...args])
     return builder
   })
-  builder.eq = vi.fn((...args: unknown[]) => {
-    calls.push(['eq', ...args])
+  builder.where = vi.fn((...args: unknown[]) => {
+    calls.push(['where', ...args])
     return builder
   })
-  builder.maybeSingle = vi.fn(async () => {
-    calls.push(['maybeSingle'])
-    return { data: ownerFound ? { id: 'premium:story-a' } : null, error: null }
+  builder.limit = vi.fn((...args: unknown[]) => {
+    calls.push(['limit', ...args])
+    return builder
+  })
+  builder.execute = vi.fn(async () => {
+    calls.push(['execute'])
+    return ownerFound ? [{ id: 'premium:story-a' }] : []
   })
   return {
-    db: { from: vi.fn(() => builder) },
+    db: {
+      selectFrom: vi.fn((...args: unknown[]) => {
+        calls.push(['selectFrom', ...args])
+        return builder
+      }),
+    },
     calls,
   }
 }
@@ -63,7 +79,7 @@ async function loadRoute() {
 function ownerSession() {
   mocks.getSessionUser.mockResolvedValue({ id: 'user-a' })
   const fixture = makeOwnerDb(true)
-  mocks.createAdminClient.mockReturnValue(fixture.db)
+  mocks.getDb.mockReturnValue(fixture.db)
   return fixture
 }
 
@@ -102,24 +118,26 @@ describe('generation route ownership authorization', () => {
     const response = await POST(request(), params())
 
     expect(response.status).toBe(401)
-    expect(mocks.createAdminClient).not.toHaveBeenCalled()
+    expect(mocks.getDb).not.toHaveBeenCalled()
     expect(mocks.startOwnedChapterGeneration).not.toHaveBeenCalled()
   })
 
   it('rejects other owner before generation', async () => {
     mocks.getSessionUser.mockResolvedValue({ id: 'user-b' })
     const fixture = makeOwnerDb(false)
-    mocks.createAdminClient.mockReturnValue(fixture.db)
+    mocks.getDb.mockReturnValue(fixture.db)
     const { POST } = await loadRoute()
 
     const response = await POST(request(), params())
 
     expect(response.status).toBe(404)
     expect(fixture.calls).toEqual([
+      ['selectFrom', 'stories'],
       ['select', 'id'],
-      ['eq', 'id', 'premium:story-a'],
-      ['eq', 'owner_user_id', 'user-b'],
-      ['maybeSingle'],
+      ['where', 'id', '=', 'premium:story-a'],
+      ['where', 'owner_user_id', '=', 'user-b'],
+      ['limit', 1],
+      ['execute'],
     ])
     expect(mocks.startOwnedChapterGeneration).not.toHaveBeenCalled()
   })

@@ -8,9 +8,59 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('server-only', () => ({}))
 
-vi.mock('@lakoku/db', () => ({
-  createAdminClient: mocks.createAdminClient,
-}))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lakoku/db')>()
+  return {
+    ...actual,
+    createAdminClient: mocks.createAdminClient,
+    rpcOne: vi.fn((_db: unknown, name: string, args: Record<string, unknown>) => ({
+      execute: vi.fn(async () => {
+        const admin = mocks.createAdminClient()
+        const rpcRes = await admin.rpc(name, args)
+        if (rpcRes.error) {
+          throw (rpcRes.error instanceof Error ? rpcRes.error : new Error(rpcRes.error.message || 'RPC error'))
+        }
+        return [{ fn: rpcRes.data }]
+      }),
+    })),
+    getDb: () => {
+      const admin = mocks.createAdminClient()
+      return {
+        selectFrom: vi.fn((table: string) => ({
+          selectAll: vi.fn(() => ({
+            where: vi.fn((col: string, _op: string, val: unknown) => ({
+              limit: vi.fn(() => ({
+                execute: vi.fn(async () => {
+                  const res = await admin.from(table).select('*').eq(col, val).maybeSingle()
+                  if (res.error) throw new Error(res.error.message)
+                  return res.data ? [res.data] : []
+                }),
+              })),
+            })),
+          })),
+          select: vi.fn((_cols: unknown) => ({
+            where: vi.fn((col: string, _op: string, val: unknown) => ({
+              orderBy: vi.fn(() => ({
+                limit: vi.fn((lim: number) => ({
+                  execute: vi.fn(async () => {
+                    const res = await admin
+                      .from(table)
+                      .select('id, delta, reason, ref, pending_until, created_at')
+                      .eq(col, val)
+                      .order('created_at', { ascending: false })
+                      .limit(lim)
+                    if (res.error) throw new Error(res.error.message)
+                    return res.data ?? []
+                  }),
+                })),
+              })),
+            })),
+          })),
+        })),
+      }
+    },
+  }
+})
 
 import { DEFAULT_TINTA_POLICY } from '../../lib/tinta/policy'
 import * as serverSeam from '../../lib/tinta/server'

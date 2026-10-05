@@ -42,7 +42,7 @@ import { sql, type Kysely, type SelectQueryBuilder, type Transaction } from 'kys
 
 export type DbResult<T> = {
   data: T
-  error: { message: string; code?: string } | null
+  error: { message: string; code?: string; details?: string; hint?: string; cause?: unknown } | null
 }
 
 /**
@@ -55,11 +55,21 @@ export async function result<T>(p: Promise<T>): Promise<DbResult<T>> {
     const data = await p
     return { data, error: null }
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err)
+    const message = err instanceof Error
+      ? err.message
+      : (err && typeof err === 'object' && 'message' in err && typeof (err as { message: unknown }).message === 'string')
+        ? (err as { message: string }).message
+        : String(err)
     const code = (err && typeof err === 'object' && 'code' in err && typeof (err as { code: unknown }).code === 'string')
       ? (err as { code: string }).code
       : undefined
-    return { data: null as unknown as T, error: { message, ...(code ? { code } : {}) } }
+    const details = (err && typeof err === 'object' && 'details' in err && typeof (err as { details: unknown }).details === 'string')
+      ? (err as { details: string }).details
+      : undefined
+    const hint = (err && typeof err === 'object' && 'hint' in err && typeof (err as { hint: unknown }).hint === 'string')
+      ? (err as { hint: string }).hint
+      : undefined
+    return { data: null as unknown as T, error: { message, ...(code ? { code } : {}), ...(details ? { details } : {}), ...(hint ? { hint } : {}), cause: err } }
   }
 }
 
@@ -75,11 +85,21 @@ export async function single<T>(p: Promise<T[]>): Promise<DbResult<T>> {
     const data = (rows.length > 0 ? rows[0] : null) as unknown as T
     return { data, error: null }
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err)
+    const message = err instanceof Error
+      ? err.message
+      : (err && typeof err === 'object' && 'message' in err && typeof (err as { message: unknown }).message === 'string')
+        ? (err as { message: string }).message
+        : String(err)
     const code = (err && typeof err === 'object' && 'code' in err && typeof (err as { code: unknown }).code === 'string')
       ? (err as { code: string }).code
       : undefined
-    return { data: null as unknown as T, error: { message, ...(code ? { code } : {}) } }
+    const details = (err && typeof err === 'object' && 'details' in err && typeof (err as { details: unknown }).details === 'string')
+      ? (err as { details: string }).details
+      : undefined
+    const hint = (err && typeof err === 'object' && 'hint' in err && typeof (err as { hint: unknown }).hint === 'string')
+      ? (err as { hint: string }).hint
+      : undefined
+    return { data: null as unknown as T, error: { message, ...(code ? { code } : {}), ...(details ? { details } : {}), ...(hint ? { hint } : {}), cause: err } }
   }
 }
 

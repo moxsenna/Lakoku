@@ -1,6 +1,6 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single, result, rpcOne } from '@lakoku/db'
 import {
   DEFAULT_TINTA_POLICY,
   calculateTintaExchange,
@@ -35,12 +35,16 @@ export interface TintaLedgerRow {
  */
 export async function getTintaPolicy(): Promise<TintaPolicy> {
   try {
-    const db = createAdminClient()
-    const { data, error } = await db
-      .from('tinta_policy')
-      .select('*')
-      .eq('id', true)
-      .maybeSingle()
+    const db = getDb()
+    // RLS_AUDIT: tinta_policy_read
+    const { data, error } = await single(
+      db
+        .selectFrom('tinta_policy')
+        .selectAll()
+        .where('id', '=', true)
+        .limit(1)
+        .execute(),
+    )
 
     if (error || !data) {
       return DEFAULT_TINTA_POLICY
@@ -70,17 +74,19 @@ export async function getTintaPolicy(): Promise<TintaPolicy> {
  */
 export async function getTintaBalance(userId: string): Promise<TintaBalance> {
   try {
-    const db = createAdminClient()
-    const { data, error } = await db.rpc('tinta_balance_v1', { p_user_id: userId })
+    const db = getDb()
+    // RLS_AUDIT: tinta_ledger_own_read
+    const { data, error } = await single(rpcOne(db, 'tinta_balance_v1', { p_user_id: userId }).execute())
     if (error || !data) {
       return { total: 0, available: 0, pending: 0 }
     }
 
-    const payload = data as { total?: unknown; available?: unknown; pending?: unknown }
+    const payload = (data as Record<string, unknown>).fn ?? data
+    const p = payload as { total?: unknown; available?: unknown; pending?: unknown }
     return {
-      total: typeof payload.total === 'number' ? payload.total : (Number(payload.total) || 0),
-      available: typeof payload.available === 'number' ? payload.available : (Number(payload.available) || 0),
-      pending: typeof payload.pending === 'number' ? payload.pending : (Number(payload.pending) || 0),
+      total: typeof p.total === 'number' ? p.total : (Number(p.total) || 0),
+      available: typeof p.available === 'number' ? p.available : (Number(p.available) || 0),
+      pending: typeof p.pending === 'number' ? p.pending : (Number(p.pending) || 0),
     }
   } catch {
     return { total: 0, available: 0, pending: 0 }
@@ -104,19 +110,23 @@ export async function exchangeTintaForLakoin(
 
   const exchangeId = randomUUID()
   const spendRef = `exchange:${exchangeId}`
-  const db = createAdminClient()
+  const db = getDb()
 
   // 1. Spend Tinta
-  const { data: spendStatus, error: spendErr } = await db.rpc('spend_tinta_v1', {
-    p_user_id: userId,
-    p_ref: spendRef,
-    p_amount: calculation.tintaSpent,
-    p_reason: 'tinta_exchange',
-  })
+  const { data: spendData, error: spendErr } = await single(
+    rpcOne(db, 'spend_tinta_v1', {
+      p_user_id: userId,
+      p_ref: spendRef,
+      p_amount: calculation.tintaSpent,
+      p_reason: 'tinta_exchange',
+    }).execute(),
+  )
 
   if (spendErr) {
     throw new Error(`spend_tinta_v1 failed: ${spendErr.message}`)
   }
+
+  const spendStatus = spendData ? ((spendData as Record<string, unknown>).fn ?? spendData) : null
 
   if (spendStatus === 'insufficient') {
     throw new Error('Saldo Tinta tidak mencukupi')
@@ -132,23 +142,29 @@ export async function exchangeTintaForLakoin(
 
   // 2. Grant Lakoin (kredit baca)
   const creditRef = `tinta_exchange:${exchangeId}`
-  const { data: creditGranted, error: creditErr } = await db.rpc('grant_credits_v1', {
-    p_user_id: userId,
-    p_ref: creditRef,
-    p_credits: calculation.lakoinOut,
-    p_reason: 'tinta_exchange',
-  })
+  const { data: creditData, error: creditErr } = await single(
+    rpcOne(db, 'grant_credits_v1', {
+      p_user_id: userId,
+      p_ref: creditRef,
+      p_credits: calculation.lakoinOut,
+      p_reason: 'tinta_exchange',
+    }).execute(),
+  )
+
+  const creditGranted = creditData ? ((creditData as Record<string, unknown>).fn ?? creditData) : false
 
   if (creditErr || !creditGranted) {
     // 3. Kompensasi rollback bila grant kredit gagal
     const rollbackRef = `exchange-rollback:${exchangeId}`
-    await db.rpc('grant_tinta_v1', {
-      p_user_id: userId,
-      p_ref: rollbackRef,
-      p_delta: calculation.tintaSpent,
-      p_reason: 'tinta_exchange_rollback',
-      p_pending_hours: 0,
-    })
+    await single(
+      rpcOne(db, 'grant_tinta_v1', {
+        p_user_id: userId,
+        p_ref: rollbackRef,
+        p_delta: calculation.tintaSpent,
+        p_reason: 'tinta_exchange_rollback',
+        p_pending_hours: 0,
+      }).execute(),
+    )
 
     throw new Error(`grant_credits_v1 failed: ${creditErr?.message ?? 'unknown'}`)
   }
@@ -167,13 +183,17 @@ export async function listTintaHistory(
   limit = 30,
 ): Promise<TintaLedgerRow[]> {
   try {
-    const db = createAdminClient()
-    const { data, error } = await db
-      .from('tinta_ledger')
-      .select('id, delta, reason, ref, pending_until, created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(limit)
+    const db = getDb()
+    // RLS_AUDIT: tinta_ledger_own_read
+    const { data, error } = await result(
+      db
+        .selectFrom('tinta_ledger')
+        .select(['id', 'delta', 'reason', 'ref', 'pending_until', 'created_at'])
+        .where('user_id', '=', userId)
+        .orderBy('created_at', 'desc')
+        .limit(limit)
+        .execute(),
+    )
 
     if (error || !data) {
       return []
@@ -184,10 +204,10 @@ export async function listTintaHistory(
       delta: Number(row.delta ?? 0),
       reason: String(row.reason ?? ''),
       ref: String(row.ref ?? ''),
-      pending_until: row.pending_until ? String(row.pending_until) : null,
-      created_at: String(row.created_at ?? ''),
-      pendingUntil: row.pending_until ? String(row.pending_until) : null,
-      createdAt: String(row.created_at ?? ''),
+      pending_until: row.pending_until ? (row.pending_until instanceof Date ? row.pending_until.toISOString() : String(row.pending_until)) : null,
+      created_at: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at ?? ''),
+      pendingUntil: row.pending_until ? (row.pending_until instanceof Date ? row.pending_until.toISOString() : String(row.pending_until)) : null,
+      createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at ?? ''),
     }))
   } catch {
     return []

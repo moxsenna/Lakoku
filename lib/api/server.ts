@@ -258,18 +258,19 @@ export async function getOwnedStoryVisibilityForUser(
   if (!userId) return map
 
   try {
-    const { createAdminClient } = await import('@/lib/supabase/admin')
-    const db = createAdminClient()
+    const { getDb, result } = await import('@lakoku/db')
+    const db = getDb()
+    // RLS_AUDIT: stories_owner_read
     let query = db
-      .from('stories')
-      .select('id, visibility')
-      .eq('owner_user_id', userId)
+      .selectFrom('stories')
+      .select(['id', 'visibility'])
+      .where('owner_user_id', '=', userId)
 
     if (storyIds && storyIds.length > 0) {
-      query = query.in('id', storyIds)
+      query = query.where('id', 'in', storyIds)
     }
 
-    const { data, error } = await query
+    const { data, error } = await result(query.execute())
     if (error || !data) return map
 
     for (const row of data as { id: string; visibility: string | null }[]) {

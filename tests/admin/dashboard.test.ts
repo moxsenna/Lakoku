@@ -2,33 +2,77 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   createAdminClient: vi.fn(),
+  getDb: vi.fn(),
   loadOverview: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@lakoku/db', () => ({ createAdminClient: mocks.createAdminClient }))
+vi.mock('@lakoku/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lakoku/db')>()
+  return {
+    ...actual,
+    createAdminClient: mocks.createAdminClient,
+    getDb: mocks.getDb,
+  }
+})
 vi.mock('@/lib/admin/generation', () => ({
   loadAdminGenerationOverview: mocks.loadOverview,
 }))
 
-function queryBuilder(result: unknown) {
-  const builder: Record<string, unknown> = {}
-  for (const method of ['select', 'gte', 'lt', 'eq', 'order', 'limit']) {
-    builder[method] = vi.fn(() => builder)
-  }
-  builder.then = (resolve: (value: unknown) => unknown) => Promise.resolve(result).then(resolve)
-  return builder
-}
-
 function adminClient(providerCallRows: unknown[] = []) {
+  const qb: Record<string, unknown> = {}
+  for (const method of ['select', 'where', 'orderBy', 'limit']) {
+    qb[method] = vi.fn(() => qb)
+  }
+  qb.execute = vi.fn(async () => providerCallRows)
+
+  const selectFromMock = vi.fn((table: string) => {
+    if (table === 'reader_taste_profiles') {
+      return {
+        select: vi.fn(() => ({
+          where: vi.fn(() => ({
+            execute: vi.fn(async () => [{ n: 0 }]),
+          })),
+          execute: vi.fn(async () => [{ n: 0 }]),
+        })),
+      }
+    }
+    if (table === 'credit_ledger') {
+      return {
+        select: vi.fn(() => ({
+          orderBy: vi.fn(() => ({
+            limit: vi.fn(() => ({
+              execute: vi.fn(async () => []),
+            })),
+          })),
+          where: vi.fn(() => ({
+            where: vi.fn(() => ({
+              execute: vi.fn(async () => []),
+            })),
+          })),
+        })),
+      }
+    }
+    if (table === 'credit_orders') {
+      return {
+        select: vi.fn(() => ({
+          where: vi.fn(() => ({
+            where: vi.fn(() => ({
+              execute: vi.fn(async () => [{ n: 0 }]),
+            })),
+          })),
+        })),
+      }
+    }
+    if (table === 'generation_provider_calls') {
+      return qb
+    }
+    throw new Error(`Unexpected table ${table}`)
+  })
+
   return {
-    from: vi.fn((table: string) => {
-      if (table === 'reader_taste_profiles') return queryBuilder({ count: 0, data: null, error: null })
-      if (table === 'credit_ledger') return queryBuilder({ data: [], error: null })
-      if (table === 'credit_orders') return queryBuilder({ count: 0, data: [], error: null })
-      if (table === 'generation_provider_calls') return queryBuilder({ data: providerCallRows, error: null })
-      throw new Error(`Unexpected table ${table}`)
-    }),
+    selectFrom: selectFromMock,
+    from: selectFromMock,
   }
 }
 
@@ -64,6 +108,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   vi.resetModules()
   mocks.createAdminClient.mockReturnValue(adminClient())
+  mocks.getDb.mockReturnValue(adminClient())
   mocks.loadOverview.mockResolvedValue(overview())
 })
 
@@ -71,6 +116,7 @@ describe('admin dashboard generation summary', () => {
   it('uses shared generation overview loader and no story_events query', async () => {
     const db = adminClient()
     mocks.createAdminClient.mockReturnValue(db)
+    mocks.getDb.mockReturnValue(db)
     const { loadAdminDashboardMetrics } = await import('@/lib/admin/dashboard')
 
     const result = await loadAdminDashboardMetrics(new Date('2026-07-18T12:00:00.000Z'))
@@ -126,6 +172,7 @@ describe('admin dashboard generation summary', () => {
 
     const db = adminClient(sampleRows)
     mocks.createAdminClient.mockReturnValue(db)
+    mocks.getDb.mockReturnValue(db)
     const { loadAdminDailyCostSummary } = await import('@/lib/admin/dashboard')
 
     const summary = await loadAdminDailyCostSummary(1, new Date('2026-07-18T12:00:00.000Z'))

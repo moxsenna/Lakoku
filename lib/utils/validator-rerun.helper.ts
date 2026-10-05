@@ -4,7 +4,7 @@
  * Authority comes from one canon snapshot plus the persisted story generation
  * contract. Missing or malformed authority fails closed.
  */
-import { createAdminClient } from '@lakoku/db'
+import { getDb, single } from '@lakoku/db'
 import { loadCanonSnapshot } from '@/lib/narrative/loader'
 import {
   checkEndingReachability,
@@ -21,8 +21,12 @@ import {
 import type { ValidatorRerunResult } from '@/lib/types/blueprint.contract'
 
 const TOTAL_CHAPTERS = 50
-const CONTRACT_SELECT =
-  'story_id,story_contract_json,plot_debts_json,ending_candidates_json' as const
+const CONTRACT_SELECT = [
+  'story_id',
+  'story_contract_json',
+  'plot_debts_json',
+  'ending_candidates_json',
+] as const
 
 interface StoryGenerationContractRow {
   story_id: string
@@ -84,12 +88,15 @@ function normalizeChapterNumbers(chapterNumbers: number[]):
 }
 
 async function loadEndingDefinitions(storyId: string): Promise<EndingDef[]> {
-  const db = createAdminClient()
-  const { data, error } = await db
-    .from('story_generation_contracts')
-    .select(CONTRACT_SELECT)
-    .eq('story_id', storyId)
-    .maybeSingle()
+  const db = getDb()
+  const { data, error } = await single(
+    db
+      .selectFrom('story_generation_contracts')
+      .select(CONTRACT_SELECT)
+      .where('story_id', '=', storyId)
+      .limit(1)
+      .execute(),
+  )
 
   if (error) throw new Error(`story_generation_contracts fetch failed: ${error.message}`)
   if (!data) throw new Error(`Story generation contract missing for ${storyId}`)

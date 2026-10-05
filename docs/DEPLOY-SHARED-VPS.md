@@ -129,6 +129,7 @@ Pastikan variabel berikut sudah terkonfigurasi pada `/home/ubuntu/mox-apps/lakok
 | `R2_SECRET_ACCESS_KEY` | Secret pasangan token di atas |
 | `R2_BUCKET` | `lakoku-story-covers` |
 | `NEXT_PUBLIC_COVER_BASE` | `https://covers.lakoku.biz.id` — WAJIB diset sebelum build (di-inline Next saat build) |
+| `DATABASE_URL` | Connection string **pooled** Neon (Full Exit Fase A: data plane). Auth masih via Supabase (GoTrue HTTP) sampai Fase B. Jangan dipakai di client. |
 
 ## 5. Restart + health check + guardrail
 

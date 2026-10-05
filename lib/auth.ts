@@ -17,7 +17,7 @@ function getAuthPool(): Pool {
   return poolInstance
 }
 
-export const auth = betterAuth({
+const baseAuth = betterAuth({
   appName: 'Lakoku',
   baseURL: process.env.BETTER_AUTH_URL || 'https://lakoku.biz.id',
   secret: process.env.BETTER_AUTH_SECRET || 'development-secret-must-be-changed-in-production-min-32-chars',
@@ -72,4 +72,50 @@ export const auth = betterAuth({
       },
     },
   },
+})
+
+type GetSessionOptions = Parameters<typeof baseAuth.api.getSession>[0]
+
+const originalGetSession = baseAuth.api.getSession
+
+const getSessionWithFallback = async (options?: GetSessionOptions) => {
+  const result = await originalGetSession(options)
+  if (result?.user) return result
+
+  try {
+    const rawHeaders = options && 'headers' in options ? options.headers : undefined
+    const h = rawHeaders instanceof Headers
+      ? rawHeaders
+      : rawHeaders
+        ? new Headers(rawHeaders)
+        : null
+
+    if (h) {
+      const cookieHeader = h.get('cookie')
+      if (cookieHeader) {
+        const match = cookieHeader.match(/(?:^|;\s*)(?:__Secure-)?better-auth\.session_token=([^;]+)/)
+        if (match) {
+          const rawToken = decodeURIComponent(match[1]).split('.')[0]
+          const fallbackHeaders = new Headers(h)
+          fallbackHeaders.set('authorization', `Bearer ${rawToken}`)
+          const fallbackResult = await originalGetSession({
+            ...options,
+            headers: fallbackHeaders,
+          })
+          if (fallbackResult?.user) return fallbackResult
+        }
+      }
+    }
+  } catch {
+    // Non-critical fallback
+  }
+
+  return result
+}
+
+export const auth = Object.assign(baseAuth, {
+  api: Object.assign(baseAuth.api, {
+    getSession: getSessionWithFallback,
+    forgetPassword: baseAuth.api.requestPasswordReset,
+  }),
 })

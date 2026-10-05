@@ -22,7 +22,6 @@ import {
   type M10GG1ExecutionCapability,
 } from '@/lib/runtime/m10-g-g1-execution-capability.server'
 import { executeM10GG1LiveChapter } from './m10-g-g1-live-executor.server'
-import { createAdminClient } from '@/lib/supabase/admin'
 import { submitHarnessChoice } from './choice'
 
 export interface M10GG1ChapterExecutionInput {
@@ -151,7 +150,6 @@ export async function runM10GG1ProofOrchestrationLive(input: {
       }),
       commitAcceptedChoice: async ({ storyId, userId, chapterNumber }) => {
         const committed = await submitHarnessChoice({
-          admin: createAdminClient(),
           storyId,
           userId,
           chapterNumber,

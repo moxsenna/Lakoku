@@ -29,7 +29,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { createAdminClient } from '../../supabase/admin'
+import { getDb, result, single } from '@lakoku/db'
 import { applyPersonalizedChoiceAuthorized } from '../../api/personalized-choice.server'
 import { generateNextPersonalizedChapter } from '../../runtime/personalized-generation'
 import type { LongHorizonFindingV1 } from '../contracts/evaluator-contract'
@@ -47,8 +47,6 @@ import {
   seedHarnessStory,
 } from './seed'
 import { assertDeterministicProvider } from './run'
-
-type Admin = ReturnType<typeof createAdminClient>
 
 export const FORK_STORY_A_ID = 'm10c-fork-a'
 export const FORK_STORY_B_ID = 'm10c-fork-b'
@@ -88,7 +86,7 @@ export interface ForkEvidenceV1 {
 }
 
 export interface RunForkProbeInput {
-  admin?: Admin
+  admin?: unknown
   /** The chapter whose published choices the two branches diverge on. */
   forkChapter: number
   /**
@@ -106,7 +104,7 @@ export async function runForkProbe(input: RunForkProbeInput): Promise<{
 }> {
   assertDeterministicProvider()
   assertIsolatedTarget()
-  const admin = input.admin ?? createAdminClient()
+  const admin = input.admin
   const storyA = FORK_STORY_A_ID
   const storyB = FORK_STORY_B_ID
   assertHarnessStoryId(storyA)
@@ -344,13 +342,17 @@ interface HistoryEntry {
   label: string
 }
 
-async function readerChoiceHistoryOf(admin: Admin, storyId: string, userId: string): Promise<HistoryEntry[]> {
-  const { data, error } = await admin
-    .from('reader_states')
-    .select('choice_history')
-    .eq('user_id', userId)
-    .eq('story_id', storyId)
-    .maybeSingle()
+async function readerChoiceHistoryOf(_admin: unknown, storyId: string, userId: string): Promise<HistoryEntry[]> {
+  const db = getDb()
+  // RLS_AUDIT(reader_states): SERVICE_ROLE_BYPASS - harness read reader choice history
+  const { data, error } = await single(
+    db
+      .selectFrom('reader_states')
+      .select('choice_history')
+      .where('user_id', '=', userId)
+      .where('story_id', '=', storyId)
+      .execute()
+  )
   if (error) throw new HarnessForkError(`reader_states read failed for ${storyId}: ${error.message}`)
   return (Array.isArray(data?.choice_history) ? data!.choice_history : [])
     .map((entry) => ({
@@ -361,27 +363,36 @@ async function readerChoiceHistoryOf(admin: Admin, storyId: string, userId: stri
     .sort((a, b) => a.chapterNumber - b.chapterNumber)
 }
 
-async function readerStateOf(admin: Admin, storyId: string, userId: string): Promise<{ currentChapter: number }> {
-  const { data, error } = await admin
-    .from('reader_states')
-    .select('current_chapter')
-    .eq('user_id', userId)
-    .eq('story_id', storyId)
-    .maybeSingle()
+async function readerStateOf(_admin: unknown, storyId: string, userId: string): Promise<{ currentChapter: number }> {
+  const db = getDb()
+  // RLS_AUDIT(reader_states): SERVICE_ROLE_BYPASS - harness read reader current chapter
+  const { data, error } = await single(
+    db
+      .selectFrom('reader_states')
+      .select('current_chapter')
+      .where('user_id', '=', userId)
+      .where('story_id', '=', storyId)
+      .execute()
+  )
   if (error) throw new HarnessForkError(`reader_states read failed for ${storyId}: ${error.message}`)
   return { currentChapter: Number(data?.current_chapter ?? 0) }
 }
 
 async function canonSpineOf(
-  admin: Admin,
+  _admin: unknown,
   storyId: string,
   throughChapter: number,
 ): Promise<{ commitsPerChapter: Array<{ chapterNumber: number; commitCount: number }>; singleCanonSpine: boolean }> {
-  const { data, error } = await admin
-    .from('chapter_state_commits')
-    .select('chapter_number')
-    .eq('story_id', storyId)
-    .lte('chapter_number', throughChapter)
+  const db = getDb()
+  // RLS_AUDIT(chapter_state_commits): SERVICE_ROLE_BYPASS - harness read commit spine
+  const { data, error } = await result(
+    db
+      .selectFrom('chapter_state_commits')
+      .select('chapter_number')
+      .where('story_id', '=', storyId)
+      .where('chapter_number', '<=', throughChapter)
+      .execute()
+  )
   if (error) throw new HarnessForkError(`chapter_state_commits read failed for ${storyId}: ${error.message}`)
   const byChapter = new Map<number, number>()
   for (const row of data ?? []) {

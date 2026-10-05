@@ -10,6 +10,7 @@
  * loopback/local host. The harness must never touch production or a linked DB.
  */
 
+import { getDb, single, type Json } from '@lakoku/db'
 import { createAdminClient } from '../../supabase/admin'
 import { debtBackedThreadId } from '@lakoku/narrative-core'
 import { normalizeRouteState } from '../../story-engine/route-state'
@@ -70,37 +71,65 @@ export function assertHarnessStoryId(storyId: string): void {
 export const HARNESS_USER_ID = '99999999-9999-4999-9999-99999999c000'
 export const HARNESS_USER_EMAIL = 'm10c-harness@example.invalid'
 
-export async function cleanupHarnessStory(admin: Admin, storyId: string): Promise<void> {
+export async function cleanupHarnessStory(_admin: unknown, storyId: string): Promise<void> {
   assertHarnessStoryId(storyId)
-  await admin.from('commercial_generation_intents').delete().eq('story_id', storyId)
+  const db = getDb()
+  // RLS_AUDIT(commercial_generation_intents): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('commercial_generation_intents').where('story_id', '=', storyId).execute()
   // Worker-mode fault-setup rows (commercial.ts); per-story so reseeds start clean.
-  await admin.from('credit_reservations').delete().eq('story_id', storyId)
-  await admin.from('chapter_state_commits').delete().eq('story_id', storyId)
-  await admin.from('chapter_generation_checkpoints').delete().eq('story_id', storyId)
-  await admin.from('reader_plot_debt_closures').delete().eq('story_id', storyId)
-  await admin.from('reader_plot_debt_progress').delete().eq('story_id', storyId)
-  await admin.from('choice_outcomes').delete().eq('story_id', storyId)
-  await admin.from('chapters').delete().eq('story_id', storyId)
-  await admin.from('generation_jobs').delete().eq('story_id', storyId)
+  // RLS_AUDIT(credit_reservations): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('credit_reservations').where('story_id', '=', storyId).execute()
+  // RLS_AUDIT(chapter_state_commits): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('chapter_state_commits').where('story_id', '=', storyId).execute()
+  // RLS_AUDIT(chapter_generation_checkpoints): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('chapter_generation_checkpoints').where('story_id', '=', storyId).execute()
+  // RLS_AUDIT(reader_plot_debt_closures): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('reader_plot_debt_closures').where('story_id', '=', storyId).execute()
+  // RLS_AUDIT(reader_plot_debt_progress): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('reader_plot_debt_progress').where('story_id', '=', storyId).execute()
+  // RLS_AUDIT(choice_outcomes): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('choice_outcomes').where('story_id', '=', storyId).execute()
+  // RLS_AUDIT(chapters): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('chapters').where('story_id', '=', storyId).execute()
+  // RLS_AUDIT(generation_jobs): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('generation_jobs').where('story_id', '=', storyId).execute()
   // One ACTIVE lease per story; a failed worker attempt can leave one behind
   // and poison every later run of the same story.
-  await admin.from('generation_leases').delete().eq('story_id', storyId)
-  await admin.from('retrieval_logs').delete().eq('story_id', storyId)
-  await admin.from('act_rollups').delete().eq('story_id', storyId)
-  await admin.from('timeline_events').delete().eq('story_id', storyId)
-  await admin.from('knowledge_scopes').delete().eq('story_id', storyId)
-  await admin.from('facts_ledger').delete().eq('story_id', storyId)
-  await admin.from('secrets_reveals').delete().eq('story_id', storyId)
-  await admin.from('story_threads').delete().eq('story_id', storyId)
-  await admin.from('character_states').delete().in(
-    'character_id',
-    CHARACTERS.map((c) => `${storyId}:${c.id}`),
-  )
-  await admin.from('characters').delete().eq('story_id', storyId)
-  await admin.from('reader_states').delete().eq('story_id', storyId)
-  await admin.from('chapter_blueprints').delete().eq('story_id', storyId)
-  await admin.from('story_generation_contracts').delete().eq('story_id', storyId)
-  await admin.from('stories').delete().eq('id', storyId)
+  // RLS_AUDIT(generation_leases): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('generation_leases').where('story_id', '=', storyId).execute()
+  // RLS_AUDIT(retrieval_logs): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('retrieval_logs').where('story_id', '=', storyId).execute()
+  // RLS_AUDIT(act_rollups): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('act_rollups').where('story_id', '=', storyId).execute()
+  // RLS_AUDIT(timeline_events): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('timeline_events').where('story_id', '=', storyId).execute()
+  // RLS_AUDIT(knowledge_scopes): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('knowledge_scopes').where('story_id', '=', storyId).execute()
+  // RLS_AUDIT(facts_ledger): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('facts_ledger').where('story_id', '=', storyId).execute()
+  // RLS_AUDIT(secrets_reveals): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('secrets_reveals').where('story_id', '=', storyId).execute()
+  // RLS_AUDIT(story_threads): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('story_threads').where('story_id', '=', storyId).execute()
+  // RLS_AUDIT(character_states): SERVICE_ROLE_BYPASS - harness cleanup
+  await db
+    .deleteFrom('character_states')
+    .where(
+      'character_id',
+      'in',
+      CHARACTERS.map((c) => `${storyId}:${c.id}`),
+    )
+    .execute()
+  // RLS_AUDIT(characters): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('characters').where('story_id', '=', storyId).execute()
+  // RLS_AUDIT(reader_states): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('reader_states').where('story_id', '=', storyId).execute()
+  // RLS_AUDIT(chapter_blueprints): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('chapter_blueprints').where('story_id', '=', storyId).execute()
+  // RLS_AUDIT(story_generation_contracts): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('story_generation_contracts').where('story_id', '=', storyId).execute()
+  // RLS_AUDIT(stories): SERVICE_ROLE_BYPASS - harness cleanup
+  await db.deleteFrom('stories').where('id', '=', storyId).execute()
 }
 
 /**
@@ -110,12 +139,16 @@ export async function cleanupHarnessStory(admin: Admin, storyId: string): Promis
  * instead of writing one, so a missing migration surfaces as a blocker rather
  * than being silently papered over.
  */
-export async function assertChapterUnlockPricingConfigured(admin: Admin): Promise<void> {
-  const { data, error } = await admin
-    .from('feature_credit_costs')
-    .select('feature_key,credits_required,is_active,pricing_version')
-    .eq('feature_key', 'chapter_unlock')
-    .maybeSingle()
+export async function assertChapterUnlockPricingConfigured(_admin?: unknown): Promise<void> {
+  const db = getDb()
+  // RLS_AUDIT(feature_credit_costs): SERVICE_ROLE_BYPASS - harness check pricing configured
+  const { data, error } = await single(
+    db
+      .selectFrom('feature_credit_costs')
+      .select(['feature_key', 'credits_required', 'is_active', 'pricing_version'])
+      .where('feature_key', '=', 'chapter_unlock')
+      .execute()
+  )
   if (error) {
     throw new HarnessIsolationError(`feature_credit_costs read failed: ${error.message}`)
   }
@@ -127,69 +160,86 @@ export async function assertChapterUnlockPricingConfigured(admin: Admin): Promis
 }
 
 export interface SeedHarnessStoryInput {
-  admin: Admin
+  admin?: unknown
   storyId: string
   userId?: string
 }
 
 export async function seedHarnessStory(input: SeedHarnessStoryInput): Promise<void> {
-  const { admin, storyId } = input
+  const { storyId } = input
   const userId = input.userId ?? HARNESS_USER_ID
   assertHarnessStoryId(storyId)
+  const db = getDb()
 
   const contract = buildHarnessContract(storyId)
 
-  const { error: storyError } = await admin.from('stories').insert({
-    id: storyId,
-    title: 'Brankas Rahasia 50 Bab',
-    cover: '/cover.webp',
-    tagline: 'Misteri brankas basement',
-    role: 'Protector',
-    tropes: ['misteri'],
-    total_chapters: HARNESS_TOTAL_CHAPTERS,
-    synopsis: 'Synopsis deterministik.',
-    status: 'BERJALAN',
-    current_chapter: 0,
-    owner_user_id: userId,
-    jejak: [],
-    visibility: 'private',
-    story_mode: 'personalized_ai',
-    generation_status: 'ready',
-    story_contract_version: 1,
-    living_canon_version: 1,
-    canon_state_revision: 0,
-    // Commercial origin required by the Phase 2B worker preflight
-    // (lib/commercial/worker-preflight.server.ts) and by
-    // ensure_commercial_generation_intent_v1, which the production
-    // accepted-choice RPC invokes from chapter 4 onward.
-    //
-    // LEGACY_GRANDFATHERED is the deliberate choice for the harness:
-    //  - all four harness stories share ONE harness user, but STARTER_FREE
-    //    needs account_commercial_states.starter_story_id = this story (a
-    //    per-user singleton that can only be true for one of them);
-    //  - the harness reality is "story already exists, reader starts at Bab 1",
-    //    which is exactly the legacy-included shape: Bab 1-3 auto-AUTHORIZED,
-    //    Bab 4+ through the full intent + reservation preflight seam (the
-    //    origin matrix accepts LEGACY_GRANDFATHERED in both places).
-    commercial_origin: 'LEGACY_GRANDFATHERED',
-  })
-  if (storyError) throw new HarnessIsolationError(`seed stories failed: ${storyError.message}`)
+  // RLS_AUDIT(stories): SERVICE_ROLE_BYPASS - harness seed story
+  const storyInsert = await db
+    .insertInto('stories')
+    .values({
+      id: storyId,
+      title: 'Brankas Rahasia 50 Bab',
+      cover: '/cover.webp',
+      tagline: 'Misteri brankas basement',
+      role: 'Protector',
+      tropes: ['misteri'] as unknown as Json,
+      total_chapters: HARNESS_TOTAL_CHAPTERS,
+      synopsis: 'Synopsis deterministik.',
+      status: 'BERJALAN',
+      current_chapter: 0,
+      owner_user_id: userId,
+      jejak: [] as unknown as Json,
+      visibility: 'private',
+      story_mode: 'personalized_ai',
+      generation_status: 'ready',
+      story_contract_version: 1,
+      living_canon_version: 1,
+      canon_state_revision: 0,
+      // Commercial origin required by the Phase 2B worker preflight
+      // (lib/commercial/worker-preflight.server.ts) and by
+      // ensure_commercial_generation_intent_v1, which the production
+      // accepted-choice RPC invokes from chapter 4 onward.
+      //
+      // LEGACY_GRANDFATHERED is the deliberate choice for the harness:
+      //  - all four harness stories share ONE harness user, but STARTER_FREE
+      //    needs account_commercial_states.starter_story_id = this story (a
+      //    per-user singleton that can only be true for one of them);
+      //  - the harness reality is "story already exists, reader starts at Bab 1",
+      //    which is exactly the legacy-included shape: Bab 1-3 auto-AUTHORIZED,
+      //    Bab 4+ through the full intent + reservation preflight seam (the
+      //    origin matrix accepts LEGACY_GRANDFATHERED in both places).
+      commercial_origin: 'LEGACY_GRANDFATHERED',
+    })
+    .execute()
+    .then(
+      () => ({ error: null }),
+      (err: Error) => ({ error: err }),
+    )
+  if (storyInsert.error) throw new HarnessIsolationError(`seed stories failed: ${storyInsert.error.message}`)
 
-  const { error: contractError } = await admin.from('story_generation_contracts').insert({
-    story_id: storyId,
-    mode: 'personalized_ai',
-    total_chapters: HARNESS_TOTAL_CHAPTERS,
-    contract_source: 'llm_repaired',
-    onboarding_json: { hero: 'char:hero' },
-    story_contract_json: contract,
-    route_schema_json: {},
-    plot_debts_json: PLOT_DEBTS,
-    ending_candidates_json: ENDINGS,
-    ending_lock_json: {},
-    quality_profile: 'lakoku_mobile_drama_v1',
-    story_contract_version: 1,
-  })
-  if (contractError) throw new HarnessIsolationError(`seed contract failed: ${contractError.message}`)
+  // RLS_AUDIT(story_generation_contracts): SERVICE_ROLE_BYPASS - harness seed contract
+  const contractInsert = await db
+    .insertInto('story_generation_contracts')
+    .values({
+      story_id: storyId,
+      mode: 'personalized_ai',
+      total_chapters: HARNESS_TOTAL_CHAPTERS,
+      contract_source: 'llm_repaired',
+      onboarding_json: { hero: 'char:hero' } as unknown as Json,
+      story_contract_json: contract as unknown as Json,
+      route_schema_json: {} as unknown as Json,
+      plot_debts_json: PLOT_DEBTS as unknown as Json,
+      ending_candidates_json: ENDINGS as unknown as Json,
+      ending_lock_json: {} as unknown as Json,
+      quality_profile: 'lakoku_mobile_drama_v1',
+      story_contract_version: 1,
+    })
+    .execute()
+    .then(
+      () => ({ error: null }),
+      (err: Error) => ({ error: err }),
+    )
+  if (contractInsert.error) throw new HarnessIsolationError(`seed contract failed: ${contractInsert.error.message}`)
 
   const blueprints = Array.from({ length: HARNESS_TOTAL_CHAPTERS }, (_, i) => {
     const n = i + 1
@@ -199,97 +249,149 @@ export async function seedHarnessStory(input: SeedHarnessStoryInput): Promise<vo
       version: 1,
       phase: n <= 5 ? 'ACT_1' : n <= 12 ? 'ACT_2' : 'ACT_3',
       chapter_goal: `Goal ${n}`,
-      mandatory_beats: ['beat-1'],
-      forbidden_reveals: [],
-      allowed_state_delta: harnessPolicyForChapter(storyId, n),
-      introduces_characters: [],
+      mandatory_beats: ['beat-1'] as unknown as Json,
+      forbidden_reveals: [] as unknown as Json,
+      allowed_state_delta: harnessPolicyForChapter(storyId, n) as unknown as Json,
+      introduces_characters: [] as unknown as Json,
     }
   })
-  const { error: blueprintError } = await admin.from('chapter_blueprints').insert(blueprints)
-  if (blueprintError) throw new HarnessIsolationError(`seed blueprints failed: ${blueprintError.message}`)
+  // RLS_AUDIT(chapter_blueprints): SERVICE_ROLE_BYPASS - harness seed blueprints
+  const blueprintInsert = await db
+    .insertInto('chapter_blueprints')
+    .values(blueprints)
+    .execute()
+    .then(
+      () => ({ error: null }),
+      (err: Error) => ({ error: err }),
+    )
+  if (blueprintInsert.error) throw new HarnessIsolationError(`seed blueprints failed: ${blueprintInsert.error.message}`)
 
-  const { error: charError } = await admin.from('characters').insert(
-    CHARACTERS.map((c) => ({
-      id: `${storyId}:${c.id}`,
-      story_id: storyId,
-      canonical_name: c.name,
-      role: c.role,
-      introduced_chapter: c.introducedChapter,
-    })),
-  )
-  if (charError) throw new HarnessIsolationError(`seed characters failed: ${charError.message}`)
+  // RLS_AUDIT(characters): SERVICE_ROLE_BYPASS - harness seed characters
+  const charInsert = await db
+    .insertInto('characters')
+    .values(
+      CHARACTERS.map((c) => ({
+        id: `${storyId}:${c.id}`,
+        story_id: storyId,
+        canonical_name: c.name,
+        role: c.role,
+        introduced_chapter: c.introducedChapter,
+      })),
+    )
+    .execute()
+    .then(
+      () => ({ error: null }),
+      (err: Error) => ({ error: err }),
+    )
+  if (charInsert.error) throw new HarnessIsolationError(`seed characters failed: ${charInsert.error.message}`)
 
-  const { error: charStateError } = await admin.from('character_states').insert(
-    CHARACTERS.map((c) => ({
-      character_id: `${storyId}:${c.id}`,
-      status: 'ALIVE',
-      as_of_chapter: 0,
-      attributes: {},
-    })),
-  )
-  if (charStateError) throw new HarnessIsolationError(`seed character_states failed: ${charStateError.message}`)
+  // RLS_AUDIT(character_states): SERVICE_ROLE_BYPASS - harness seed character_states
+  const charStateInsert = await db
+    .insertInto('character_states')
+    .values(
+      CHARACTERS.map((c) => ({
+        character_id: `${storyId}:${c.id}`,
+        status: 'ALIVE',
+        as_of_chapter: 0,
+        attributes: {} as unknown as Json,
+      })),
+    )
+    .execute()
+    .then(
+      () => ({ error: null }),
+      (err: Error) => ({ error: err }),
+    )
+  if (charStateInsert.error) throw new HarnessIsolationError(`seed character_states failed: ${charStateInsert.error.message}`)
 
-  const { error: threadError } = await admin.from('story_threads').insert([
-    {
-      id: debtBackedThreadId(storyId, 'main_mystery'),
-      story_id: storyId,
-      title: 'Misteri brankas',
-      status: 'OPEN',
-      opened_chapter: 1,
-      last_touched_chapter: 1,
-      payoff_window: 48,
-      is_main_mystery: true,
-      stale: false,
-      stale_since_chapter: null,
-    },
-    {
-      id: debtBackedThreadId(storyId, 'debt:a'),
-      story_id: storyId,
-      title: 'Surat di brankas',
-      status: 'OPEN',
-      opened_chapter: 1,
-      last_touched_chapter: 1,
-      payoff_window: 8,
-      is_main_mystery: false,
-      stale: false,
-      stale_since_chapter: null,
-    },
-  ])
-  if (threadError) throw new HarnessIsolationError(`seed story_threads failed: ${threadError.message}`)
+  // RLS_AUDIT(story_threads): SERVICE_ROLE_BYPASS - harness seed story_threads
+  const threadInsert = await db
+    .insertInto('story_threads')
+    .values([
+      {
+        id: debtBackedThreadId(storyId, 'main_mystery'),
+        story_id: storyId,
+        title: 'Misteri brankas',
+        status: 'OPEN',
+        opened_chapter: 1,
+        last_touched_chapter: 1,
+        payoff_window: 48,
+        is_main_mystery: true,
+        stale: false,
+        stale_since_chapter: null,
+      },
+      {
+        id: debtBackedThreadId(storyId, 'debt:a'),
+        story_id: storyId,
+        title: 'Surat di brankas',
+        status: 'OPEN',
+        opened_chapter: 1,
+        last_touched_chapter: 1,
+        payoff_window: 8,
+        is_main_mystery: false,
+        stale: false,
+        stale_since_chapter: null,
+      },
+    ])
+    .execute()
+    .then(
+      () => ({ error: null }),
+      (err: Error) => ({ error: err }),
+    )
+  if (threadInsert.error) throw new HarnessIsolationError(`seed story_threads failed: ${threadInsert.error.message}`)
 
-  const { error: secretError } = await admin.from('secrets_reveals').insert(
-    REVEALS.map((r) => ({
-      story_id: storyId,
-      id: `${storyId}:${r.secretId}`,
-      description: `Rahasia ${r.secretId}`,
-      reveal_gate_chapter: r.revealGateChapter,
-      revealed: false,
-    })),
-  )
-  if (secretError) throw new HarnessIsolationError(`seed secrets_reveals failed: ${secretError.message}`)
+  // RLS_AUDIT(secrets_reveals): SERVICE_ROLE_BYPASS - harness seed secrets_reveals
+  const secretInsert = await db
+    .insertInto('secrets_reveals')
+    .values(
+      REVEALS.map((r) => ({
+        story_id: storyId,
+        id: `${storyId}:${r.secretId}`,
+        description: `Rahasia ${r.secretId}`,
+        reveal_gate_chapter: r.revealGateChapter,
+        revealed: false,
+      })),
+    )
+    .execute()
+    .then(
+      () => ({ error: null }),
+      (err: Error) => ({ error: err }),
+    )
+  if (secretInsert.error) throw new HarnessIsolationError(`seed secrets_reveals failed: ${secretInsert.error.message}`)
 
   // `route_state` MUST be the normalized shape, exactly like the production
   // bootstrap in lib/api/personalized-stories.server.ts. `apply_personalized_choice`
   // compares the caller's expected state against the stored row field-by-field;
   // a raw `{}` here is re-hydrated with Zod defaults on read and the RPC then
   // rejects every submission with STALE_READER_STATE.
-  const { error: readerError } = await admin.from('reader_states').insert({
-    user_id: userId,
-    story_id: storyId,
-    status: 'BERJALAN',
-    current_chapter: 1,
-    ending_name: null,
-    route_state: normalizeRouteState({}),
-    choice_history: [],
-    jejak: [],
-    locked_ending_key: null,
-    updated_at: new Date().toISOString(),
-  })
-  if (readerError) throw new HarnessIsolationError(`seed reader_states failed: ${readerError.message}`)
+  // RLS_AUDIT(reader_states): SERVICE_ROLE_BYPASS - harness seed reader_states
+  const readerInsert = await db
+    .insertInto('reader_states')
+    .values({
+      user_id: userId,
+      story_id: storyId,
+      status: 'BERJALAN',
+      current_chapter: 1,
+      ending_name: null,
+      route_state: normalizeRouteState({}) as unknown as Json,
+      choice_history: [] as unknown as Json,
+      jejak: [] as unknown as Json,
+      locked_ending_key: null,
+      updated_at: new Date().toISOString(),
+    })
+    .execute()
+    .then(
+      () => ({ error: null }),
+      (err: Error) => ({ error: err }),
+    )
+  if (readerInsert.error) throw new HarnessIsolationError(`seed reader_states failed: ${readerInsert.error.message}`)
 }
 
-export async function ensureHarnessUser(admin: Admin, userId = HARNESS_USER_ID, email = HARNESS_USER_EMAIL): Promise<void> {
-  await admin.auth.admin
+export async function ensureHarnessUser(admin?: unknown, userId = HARNESS_USER_ID, email = HARNESS_USER_EMAIL): Promise<void> {
+  const adminClient =
+    admin && typeof admin === 'object' && 'auth' in admin
+      ? (admin as Admin)
+      : createAdminClient()
+  await adminClient.auth.admin
     .createUser({
       id: userId,
       email,

@@ -30,9 +30,7 @@
  *     gates every caller upstream).
  */
 
-import { createAdminClient } from '../../supabase/admin'
-
-type Admin = ReturnType<typeof createAdminClient>
+import { getDb, rpcOne, single } from '@lakoku/db'
 
 export class HarnessCommercialError extends Error {
   constructor(
@@ -53,23 +51,35 @@ const harnessGrantRef = (userId: string) => `m10c:harness-grant:${userId}`
  * Idempotent top-up for the harness user. Direct `credit_ledger` row (fault
  * setup — see module header); ref-uniqueness makes replays a no-op.
  */
-export async function ensureHarnessCreditGrant(admin: Admin, userId: string): Promise<void> {
+export async function ensureHarnessCreditGrant(_admin: unknown, userId: string): Promise<void> {
+  const db = getDb()
   const ref = harnessGrantRef(userId)
-  const { data: existing, error: readError } = await admin
-    .from('credit_ledger')
-    .select('id')
-    .eq('ref', ref)
-    .maybeSingle()
+  // RLS_AUDIT(credit_ledger): SERVICE_ROLE_BYPASS - harness credit grant check
+  const { data: existing, error: readError } = await single(
+    db
+      .selectFrom('credit_ledger')
+      .select('id')
+      .where('ref', '=', ref)
+      .execute()
+  )
   if (readError) throw new HarnessCommercialError(`credit_ledger read failed: ${readError.message}`, 0)
   if (existing) return
 
-  const { error } = await admin.from('credit_ledger').insert({
-    user_id: userId,
-    delta: HARNESS_CREDIT_GRANT,
-    reason: HARNESS_GRANT_REASON,
-    ref,
-  })
-  if (error) throw new HarnessCommercialError(`credit grant insert failed: ${error.message}`, 0)
+  // RLS_AUDIT(credit_ledger): SERVICE_ROLE_BYPASS - harness credit grant insert
+  const insertResult = await db
+    .insertInto('credit_ledger')
+    .values({
+      user_id: userId,
+      delta: HARNESS_CREDIT_GRANT,
+      reason: HARNESS_GRANT_REASON,
+      ref,
+    })
+    .execute()
+    .then(
+      () => ({ error: null }),
+      (err: Error) => ({ error: err }),
+    )
+  if (insertResult.error) throw new HarnessCommercialError(`credit grant insert failed: ${insertResult.error.message}`, 0)
 }
 
 export interface PrepareCommercialPreflightInput {
@@ -99,27 +109,35 @@ export interface CommercialPreflightSetup {
  *              top-up → reserve → authorize → queue.
  */
 export async function prepareCommercialChapterPreflight(
-  admin: Admin,
+  _admin: unknown,
   input: PrepareCommercialPreflightInput,
 ): Promise<CommercialPreflightSetup> {
   const { userId, storyId, chapterNumber, jobId } = input
+  const db = getDb()
 
   if (chapterNumber < 4) {
     return { chapterNumber, reservationStatus: 'FREE_INCLUDED', intentStatus: 'NONE', quotedCredits: 0 }
   }
 
   // 1) Production reserve RPC — fail closed on anything but RESERVED.
-  const { data: reserve, error: reserveError } = await admin.rpc('reserve_chapter_unlock_v1', {
-    p_user_id: userId,
-    p_story_id: storyId,
-    p_chapter_number: chapterNumber,
-  })
+  // RLS_AUDIT(rpc): SERVICE_ROLE_BYPASS - harness reserve chapter unlock
+  const { data: rawReserve, error: reserveError } = await single(
+    rpcOne(db, 'reserve_chapter_unlock_v1', {
+      p_user_id: userId,
+      p_story_id: storyId,
+      p_chapter_number: chapterNumber,
+    }).execute()
+  )
   if (reserveError) {
     throw new HarnessCommercialError(
       `reserve_chapter_unlock_v1 failed at Bab ${chapterNumber}: ${reserveError.message}`,
       chapterNumber,
     )
   }
+  const reserve = ((rawReserve as Record<string, unknown> | null)?.fn ?? rawReserve) as {
+    ok?: boolean
+    status?: string
+  } | null
   if (reserve?.ok !== true || reserve.status !== 'RESERVED') {
     throw new HarnessCommercialError(
       `reservation not RESERVED at Bab ${chapterNumber}: ${JSON.stringify(reserve)}`,
@@ -129,13 +147,16 @@ export async function prepareCommercialChapterPreflight(
 
   // 2) The accepted-choice seam created this intent (WAITING_FOR_CREDITS) when
   //    the previous chapter's choice was submitted. Read it; never invent one.
-  const { data: intentRow, error: intentError } = await admin
-    .from('commercial_generation_intents')
-    .select('status,generation_job_id,quoted_credits')
-    .eq('user_id', userId)
-    .eq('story_id', storyId)
-    .eq('chapter_number', chapterNumber)
-    .maybeSingle()
+  // RLS_AUDIT(commercial_generation_intents): SERVICE_ROLE_BYPASS - harness read intent
+  const { data: intentRow, error: intentError } = await single(
+    db
+      .selectFrom('commercial_generation_intents')
+      .select(['status', 'generation_job_id', 'quoted_credits'])
+      .where('user_id', '=', userId)
+      .where('story_id', '=', storyId)
+      .where('chapter_number', '=', chapterNumber)
+      .execute()
+  )
   if (intentError) {
     throw new HarnessCommercialError(`intent read failed at Bab ${chapterNumber}: ${intentError.message}`, chapterNumber)
   }
@@ -149,19 +170,25 @@ export async function prepareCommercialChapterPreflight(
 
   // 3) Production state machine: WAITING_FOR_CREDITS → AUTHORIZED → QUEUED(job).
   const transition = async (targetStatus: string, bindJobId: string | null) => {
-    const { data, error } = await admin.rpc('transition_commercial_generation_intent_v1', {
-      p_user_id: userId,
-      p_story_id: storyId,
-      p_chapter_number: chapterNumber,
-      p_target_status: targetStatus,
-      ...(bindJobId ? { p_generation_job_id: bindJobId } : {}),
-    })
+    // RLS_AUDIT(rpc): SERVICE_ROLE_BYPASS - harness transition intent
+    const { data: rawTransition, error } = await single(
+      rpcOne(db, 'transition_commercial_generation_intent_v1', {
+        p_user_id: userId,
+        p_story_id: storyId,
+        p_chapter_number: chapterNumber,
+        p_target_status: targetStatus,
+        ...(bindJobId ? { p_generation_job_id: bindJobId } : {}),
+      }).execute()
+    )
     if (error) {
       throw new HarnessCommercialError(
         `intent transition to ${targetStatus} failed at Bab ${chapterNumber}: ${error.message}`,
         chapterNumber,
       )
     }
+    const data = ((rawTransition as Record<string, unknown> | null)?.fn ?? rawTransition) as {
+      ok?: boolean
+    } | null
     if (data?.ok !== true) {
       throw new HarnessCommercialError(
         `intent transition to ${targetStatus} rejected at Bab ${chapterNumber}: ${JSON.stringify(data)}`,
@@ -177,13 +204,16 @@ export async function prepareCommercialChapterPreflight(
   }
 
   // 4) Authoritative re-read — the preflight trusts only DB state, so does this.
-  const { data: boundRow, error: boundError } = await admin
-    .from('commercial_generation_intents')
-    .select('status,generation_job_id')
-    .eq('user_id', userId)
-    .eq('story_id', storyId)
-    .eq('chapter_number', chapterNumber)
-    .maybeSingle()
+  // RLS_AUDIT(commercial_generation_intents): SERVICE_ROLE_BYPASS - harness re-read bound intent
+  const { data: boundRow, error: boundError } = await single(
+    db
+      .selectFrom('commercial_generation_intents')
+      .select(['status', 'generation_job_id'])
+      .where('user_id', '=', userId)
+      .where('story_id', '=', storyId)
+      .where('chapter_number', '=', chapterNumber)
+      .execute()
+  )
   if (boundError) {
     throw new HarnessCommercialError(`intent re-read failed at Bab ${chapterNumber}: ${boundError.message}`, chapterNumber)
   }

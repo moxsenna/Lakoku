@@ -11,13 +11,11 @@
  * choices fails loudly instead of proceeding on fabricated input.
  */
 
-import { createAdminClient } from '../../supabase/admin'
+import { getDb, single } from '@lakoku/db'
 import {
   applyPersonalizedChoiceAuthorized,
   type ApplyPersonalizedChoiceResult,
 } from '../../api/personalized-choice.server'
-
-type Admin = ReturnType<typeof createAdminClient>
 
 export class HarnessChoiceError extends Error {
   constructor(message: string) {
@@ -32,19 +30,23 @@ export interface PublishedChoice {
 }
 
 export async function loadPublishedChoices(
-  admin: Admin,
+  _adminOrDb: unknown,
   storyId: string,
   chapterNumber: number,
 ): Promise<PublishedChoice[]> {
-  const { data, error } = await admin
-    .from('chapters')
-    .select('choices')
-    .eq('story_id', storyId)
-    .eq('number', chapterNumber)
-    .maybeSingle()
+  const db = getDb()
+  // RLS_AUDIT(chapters): SERVICE_ROLE_BYPASS - harness load published choices
+  const { data, error } = await single(
+    db
+      .selectFrom('chapters')
+      .select('choices')
+      .where('story_id', '=', storyId)
+      .where('number', '=', chapterNumber)
+      .execute()
+  )
   if (error) throw new HarnessChoiceError(`chapters read failed at Bab ${chapterNumber}: ${error.message}`)
   if (!data) throw new HarnessChoiceError(`chapter ${chapterNumber} was not published`)
-  const raw = Array.isArray(data.choices) ? data.choices : []
+  const raw = Array.isArray(data.choices) ? (data.choices as unknown[]) : []
   const choices = raw
     .filter((c): c is Record<string, unknown> => Boolean(c) && typeof c === 'object')
     .map((c) => ({ id: String(c.id ?? ''), label: String(c.label ?? '') }))
@@ -66,7 +68,7 @@ export function selectDeterministicChoice(choices: PublishedChoice[]): Published
 }
 
 export interface SubmitChoiceInput {
-  admin: Admin
+  admin?: unknown
   userId: string
   storyId: string
   chapterNumber: number

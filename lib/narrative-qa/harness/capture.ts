@@ -11,7 +11,7 @@
  *      visible instead of being papered over with a plausible-looking value.
  */
 
-import { createAdminClient } from '../../supabase/admin'
+import { getDb, result, single } from '@lakoku/db'
 import { debtBackedThreadId } from '@lakoku/narrative-core'
 import type { ThreadStatus } from '../../narrative/types'
 import type {
@@ -39,7 +39,7 @@ import {
 import type { EndingReachabilityCaptureV2 } from './act-boundary-evidence'
 import { ACT_PLAN, CH1_FACT_PAYOFF_CHAPTER, PLOT_DEBTS, harnessFactId } from './fixture'
 
-type Admin = ReturnType<typeof createAdminClient>
+type Admin = unknown
 
 /**
  * A capture input the evaluator contract requires but the production runtime
@@ -180,12 +180,23 @@ interface CommitRow {
   state_delta_json: Record<string, unknown>
 }
 
-async function loadCommits(admin: Admin, storyId: string): Promise<CommitRow[]> {
-  const { data, error } = await admin
-    .from('chapter_state_commits')
-    .select('chapter_number,base_canon_revision,committed_canon_revision,state_delta_hash,state_delta_json')
-    .eq('story_id', storyId)
-    .order('chapter_number', { ascending: true })
+async function loadCommits(_admin: Admin, storyId: string): Promise<CommitRow[]> {
+  const db = getDb()
+  // RLS_AUDIT(chapter_state_commits): SERVICE_ROLE_BYPASS - harness capture load commits
+  const { data, error } = await result(
+    db
+      .selectFrom('chapter_state_commits')
+      .select([
+        'chapter_number',
+        'base_canon_revision',
+        'committed_canon_revision',
+        'state_delta_hash',
+        'state_delta_json',
+      ])
+      .where('story_id', '=', storyId)
+      .orderBy('chapter_number', 'asc')
+      .execute()
+  )
   if (error) throw new Error(`capture: chapter_state_commits read failed: ${error.message}`)
   return (data ?? []) as unknown as CommitRow[]
 }
@@ -245,34 +256,46 @@ export async function captureCanonDrift(
   storyId: string,
   throughChapter: number,
 ): Promise<EvaluatorEnvelopeV1<CanonDriftInputV1>> {
+  const db = getDb()
   const commits = (await loadCommits(admin, storyId)).filter((c) => c.chapter_number <= throughChapter)
 
   // `public.stories` has no `updated_at` column. Selecting one made PostgREST
   // fail the whole row read, and the unchecked `data` then read as revision 0 —
   // which fired CANON_SNAPSHOT_STALE on every single chapter. The read is now
   // error-checked so a schema drift stops the run instead of poisoning findings.
-  const { data: storyRow, error: storyError } = await admin
-    .from('stories')
-    .select('canon_state_revision,created_at')
-    .eq('id', storyId)
-    .single()
+  // RLS_AUDIT(stories): SERVICE_ROLE_BYPASS - harness capture stories
+  const { data: storyRow, error: storyError } = await single(
+    db
+      .selectFrom('stories')
+      .select(['canon_state_revision', 'created_at'])
+      .where('id', '=', storyId)
+      .execute()
+  )
   if (storyError) throw new Error(`capture: stories read failed: ${storyError.message}`)
 
-  const { data: chapterRows, error: chapterError } = await admin
-    .from('chapters')
-    .select('number,created_at')
-    .eq('story_id', storyId)
-    .lte('number', throughChapter)
-    .order('number', { ascending: true })
+  // RLS_AUDIT(chapters): SERVICE_ROLE_BYPASS - harness capture chapters
+  const { data: chapterRows, error: chapterError } = await result(
+    db
+      .selectFrom('chapters')
+      .select(['number', 'created_at'])
+      .where('story_id', '=', storyId)
+      .where('number', '<=', throughChapter)
+      .orderBy('number', 'asc')
+      .execute()
+  )
   if (chapterError) throw new Error(`capture: chapters read failed: ${chapterError.message}`)
   const publishedAtByChapter = new Map(
     (chapterRows ?? []).map((row) => [Number(row.number), String(row.created_at)]),
   )
 
-  const { data: characterRows, error: characterError } = await admin
-    .from('characters')
-    .select('id')
-    .eq('story_id', storyId)
+  // RLS_AUDIT(characters): SERVICE_ROLE_BYPASS - harness capture characters
+  const { data: characterRows, error: characterError } = await result(
+    db
+      .selectFrom('characters')
+      .select('id')
+      .where('story_id', '=', storyId)
+      .execute()
+  )
   if (characterError) throw new Error(`capture: characters read failed: ${characterError.message}`)
   const characterIds = (characterRows ?? []).map((r) => String(r.id))
 
@@ -280,12 +303,16 @@ export async function captureCanonDrift(
   // as_of_chapter). The canonical CURRENT status is the row with the highest
   // as_of_chapter; reading every row made the seeded as_of_chapter 0 row look
   // like a live disagreement with the committed delta sequence.
+  // RLS_AUDIT(character_states): SERVICE_ROLE_BYPASS - harness capture character_states
   const { data: rawStateRows, error: stateError } = characterIds.length
-    ? await admin
-        .from('character_states')
-        .select('character_id,status,as_of_chapter')
-        .in('character_id', characterIds)
-        .lte('as_of_chapter', throughChapter)
+    ? await result(
+        db
+          .selectFrom('character_states')
+          .select(['character_id', 'status', 'as_of_chapter'])
+          .where('character_id', 'in', characterIds)
+          .where('as_of_chapter', '<=', throughChapter)
+          .execute()
+      )
     : { data: [] as Array<{ character_id: string; status: string; as_of_chapter: number }>, error: null }
   if (stateError) throw new Error(`capture: character_states read failed: ${stateError.message}`)
 
@@ -319,10 +346,14 @@ export async function captureCanonDrift(
     }
   }
 
-  const { data: secretRows, error: secretError } = await admin
-    .from('secrets_reveals')
-    .select('id,reveal_gate_chapter,revealed')
-    .eq('story_id', storyId)
+  // RLS_AUDIT(secrets_reveals): SERVICE_ROLE_BYPASS - harness capture secrets_reveals
+  const { data: secretRows, error: secretError } = await result(
+    db
+      .selectFrom('secrets_reveals')
+      .select(['id', 'reveal_gate_chapter', 'revealed'])
+      .where('story_id', '=', storyId)
+      .execute()
+  )
   if (secretError) throw new Error(`capture: secrets_reveals read failed: ${secretError.message}`)
 
   const revealChapterById = new Map<string, number>()
@@ -388,16 +419,21 @@ export async function captureCanonDrift(
 // ── blueprint authority ────────────────────────────────────────────────────
 
 export async function captureBlueprintAuthority(
-  admin: Admin,
+  _admin: Admin,
   storyId: string,
   chapterNumber: number,
 ): Promise<EvaluatorEnvelopeV1<BlueprintAuthorityInputV1>> {
-  const { data, error } = await admin
-    .from('chapter_blueprints')
-    .select('id,chapter_number,version')
-    .eq('story_id', storyId)
-    .eq('chapter_number', chapterNumber)
-    .order('version', { ascending: true })
+  const db = getDb()
+  // RLS_AUDIT(chapter_blueprints): SERVICE_ROLE_BYPASS - harness capture blueprints
+  const { data, error } = await result(
+    db
+      .selectFrom('chapter_blueprints')
+      .select(['id', 'chapter_number', 'version'])
+      .where('story_id', '=', storyId)
+      .where('chapter_number', '=', chapterNumber)
+      .orderBy('version', 'asc')
+      .execute()
+  )
   if (error) throw new Error(`capture: chapter_blueprints read failed: ${error.message}`)
 
   const rows = (data ?? []).map((row) => ({
@@ -438,22 +474,32 @@ export async function captureBlueprintAuthority(
 // ── plot debt lifecycle ────────────────────────────────────────────────────
 
 export async function capturePlotDebtLifecycle(
-  admin: Admin,
+  _admin: Admin,
   storyId: string,
   userId: string,
   throughChapter: number,
 ): Promise<EvaluatorEnvelopeV1<PlotDebtLifecycleInputV1>> {
-  const { data: progressRows, error: progressError } = await admin
-    .from('reader_plot_debt_progress')
-    .select('debt_id,milestone_chapter,progressed_at_chapter')
-    .eq('story_id', storyId)
-    .eq('user_id', userId)
+  const db = getDb()
+  // RLS_AUDIT(reader_plot_debt_progress): SERVICE_ROLE_BYPASS - harness capture debt progress
+  const { data: progressRows, error: progressError } = await result(
+    db
+      .selectFrom('reader_plot_debt_progress')
+      .select(['debt_id', 'milestone_chapter', 'progressed_at_chapter'])
+      .where('story_id', '=', storyId)
+      .where('user_id', '=', userId)
+      .execute()
+  )
   if (progressError) throw new Error(`capture: reader_plot_debt_progress read failed: ${progressError.message}`)
-  const { data: closureRows, error: closureError } = await admin
-    .from('reader_plot_debt_closures')
-    .select('debt_id,closed_at_chapter')
-    .eq('story_id', storyId)
-    .eq('user_id', userId)
+
+  // RLS_AUDIT(reader_plot_debt_closures): SERVICE_ROLE_BYPASS - harness capture debt closures
+  const { data: closureRows, error: closureError } = await result(
+    db
+      .selectFrom('reader_plot_debt_closures')
+      .select(['debt_id', 'closed_at_chapter'])
+      .where('story_id', '=', storyId)
+      .where('user_id', '=', userId)
+      .execute()
+  )
   if (closureError) throw new Error(`capture: reader_plot_debt_closures read failed: ${closureError.message}`)
 
   const ledgerEvents: PlotDebtLifecycleInputV1['ledgerEvents'] = []
@@ -529,11 +575,16 @@ export async function captureThreadLifecycle(
   storyId: string,
   chapterNumber: number,
 ): Promise<EvaluatorEnvelopeV1<ThreadLifecycleInputV1>> {
-  const { data: threadRows, error: threadError } = await admin
-    .from('story_threads')
-    .select('id,status,opened_chapter,last_touched_chapter,is_main_mystery')
-    .eq('story_id', storyId)
-    .order('id', { ascending: true })
+  const db = getDb()
+  // RLS_AUDIT(story_threads): SERVICE_ROLE_BYPASS - harness capture story threads
+  const { data: threadRows, error: threadError } = await result(
+    db
+      .selectFrom('story_threads')
+      .select(['id', 'status', 'opened_chapter', 'last_touched_chapter', 'is_main_mystery'])
+      .where('story_id', '=', storyId)
+      .orderBy('id', 'asc')
+      .execute()
+  )
   if (threadError) throw new Error(`capture: story_threads read failed: ${threadError.message}`)
 
   const commits = (await loadCommits(admin, storyId)).filter((c) => c.chapter_number <= chapterNumber)
@@ -598,17 +649,21 @@ export async function captureThreadLifecycle(
 // ── choice history ─────────────────────────────────────────────────────────
 
 export async function captureChoiceHistory(
-  admin: Admin,
+  _admin: Admin,
   storyId: string,
   userId: string,
   chapterNumber: number,
 ): Promise<EvaluatorEnvelopeV1<ChoiceHistoryInputV1>> {
-  const { data: readerRow, error: readerError } = await admin
-    .from('reader_states')
-    .select('choice_history,route_state')
-    .eq('user_id', userId)
-    .eq('story_id', storyId)
-    .single()
+  const db = getDb()
+  // RLS_AUDIT(reader_states): SERVICE_ROLE_BYPASS - harness capture reader choice history
+  const { data: readerRow, error: readerError } = await single(
+    db
+      .selectFrom('reader_states')
+      .select(['choice_history', 'route_state'])
+      .where('user_id', '=', userId)
+      .where('story_id', '=', storyId)
+      .execute()
+  )
   if (readerError) throw new Error(`capture: reader_states read failed: ${readerError.message}`)
 
   const history = asArray(readerRow?.choice_history)
@@ -652,18 +707,23 @@ export async function captureChoiceHistory(
 // ── repetition ─────────────────────────────────────────────────────────────
 
 export async function captureRepetition(
-  admin: Admin,
+  _admin: Admin,
   storyId: string,
   throughChapter: number,
 ): Promise<EvaluatorEnvelopeV1<RepetitionInputV1>> {
+  const db = getDb()
   // The published prose column is `paragraphs` (jsonb array of strings); there
   // is no `content` column on public.chapters.
-  const { data, error } = await admin
-    .from('chapters')
-    .select('number,paragraphs,choices')
-    .eq('story_id', storyId)
-    .lte('number', throughChapter)
-    .order('number', { ascending: true })
+  // RLS_AUDIT(chapters): SERVICE_ROLE_BYPASS - harness capture repetition chapters
+  const { data, error } = await result(
+    db
+      .selectFrom('chapters')
+      .select(['number', 'paragraphs', 'choices'])
+      .where('story_id', '=', storyId)
+      .where('number', '<=', throughChapter)
+      .orderBy('number', 'asc')
+      .execute()
+  )
   if (error) throw new Error(`capture: chapters read failed: ${error.message}`)
 
   return {
@@ -692,11 +752,15 @@ export async function captureEndingRunway(
   storyId: string,
   userId: string,
 ): Promise<EvaluatorEnvelopeV1<EndingRunwayInputV1>> {
-  const { data: contractRow, error: contractError } = await admin
-    .from('story_generation_contracts')
-    .select('ending_lock_json')
-    .eq('story_id', storyId)
-    .single()
+  const db = getDb()
+  // RLS_AUDIT(story_generation_contracts): SERVICE_ROLE_BYPASS - harness capture ending lock
+  const { data: contractRow, error: contractError } = await single(
+    db
+      .selectFrom('story_generation_contracts')
+      .select('ending_lock_json')
+      .where('story_id', '=', storyId)
+      .execute()
+  )
   if (contractError) throw new Error(`capture: story_generation_contracts read failed: ${contractError.message}`)
   const lockJson = (contractRow?.ending_lock_json ?? {}) as Record<string, unknown>
 
@@ -704,35 +768,50 @@ export async function captureEndingRunway(
   // terminality lives in choice_outcomes, and the ending key the runtime
   // actually committed for the finished story lives in reader_states
   // (written by markReaderStateSelesai at the Bab 50 publication).
-  const { data: chapterRows, error: chapterError } = await admin
-    .from('chapters')
-    .select('number,choice_prompt,choices')
-    .eq('story_id', storyId)
-    .order('number', { ascending: true })
+  // RLS_AUDIT(chapters): SERVICE_ROLE_BYPASS - harness capture runway chapters
+  const { data: chapterRows, error: chapterError } = await result(
+    db
+      .selectFrom('chapters')
+      .select(['number', 'choice_prompt', 'choices'])
+      .where('story_id', '=', storyId)
+      .orderBy('number', 'asc')
+      .execute()
+  )
   if (chapterError) throw new Error(`capture: chapters read failed: ${chapterError.message}`)
 
-  const { data: readerRow, error: readerError } = await admin
-    .from('reader_states')
-    .select('locked_ending_key')
-    .eq('user_id', userId)
-    .eq('story_id', storyId)
-    .maybeSingle()
+  // RLS_AUDIT(reader_states): SERVICE_ROLE_BYPASS - harness capture runway reader state
+  const { data: readerRow, error: readerError } = await single(
+    db
+      .selectFrom('reader_states')
+      .select('locked_ending_key')
+      .where('user_id', '=', userId)
+      .where('story_id', '=', storyId)
+      .execute()
+  )
   if (readerError) throw new Error(`capture: reader_states read failed: ${readerError.message}`)
   const finalEndingKey = readerRow?.locked_ending_key ? String(readerRow.locked_ending_key) : null
 
-  const { data: closureRows, error: closureError } = await admin
-    .from('reader_plot_debt_closures')
-    .select('debt_id')
-    .eq('story_id', storyId)
-    .eq('user_id', userId)
+  // RLS_AUDIT(reader_plot_debt_closures): SERVICE_ROLE_BYPASS - harness capture runway debt closures
+  const { data: closureRows, error: closureError } = await result(
+    db
+      .selectFrom('reader_plot_debt_closures')
+      .select('debt_id')
+      .where('story_id', '=', storyId)
+      .where('user_id', '=', userId)
+      .execute()
+  )
   if (closureError) throw new Error(`capture: reader_plot_debt_closures read failed: ${closureError.message}`)
   const closed = new Set((closureRows ?? []).map((row) => String(row.debt_id)))
 
-  const { data: threadRows, error: threadError } = await admin
-    .from('story_threads')
-    .select('id,status,opened_chapter')
-    .eq('story_id', storyId)
-    .order('id', { ascending: true })
+  // RLS_AUDIT(story_threads): SERVICE_ROLE_BYPASS - harness capture runway threads
+  const { data: threadRows, error: threadError } = await result(
+    db
+      .selectFrom('story_threads')
+      .select(['id', 'status', 'opened_chapter'])
+      .where('story_id', '=', storyId)
+      .orderBy('id', 'asc')
+      .execute()
+  )
   if (threadError) throw new Error(`capture: story_threads read failed: ${threadError.message}`)
 
   // C-R2 (reviewer Entry 6 BLOCKER 2): RAW durability rows for the ending
@@ -857,20 +936,27 @@ export async function captureChapter(
   const commit = commits.find((c) => c.chapter_number === chapterNumber)
   if (!commit) throw new Error(`capture: no committed state for Bab ${chapterNumber}`)
 
-  const { data: chapterRow, error: chapterRowError } = await admin
-    .from('chapters')
-    .select('title,choices')
-    .eq('story_id', storyId)
-    .eq('number', chapterNumber)
-    .single()
+  const db = getDb()
+  // RLS_AUDIT(chapters): SERVICE_ROLE_BYPASS - harness capture chapter
+  const { data: chapterRow, error: chapterRowError } = await single(
+    db
+      .selectFrom('chapters')
+      .select(['title', 'choices'])
+      .where('story_id', '=', storyId)
+      .where('number', '=', chapterNumber)
+      .execute()
+  )
   if (chapterRowError) throw new Error(`capture: chapters read failed: ${chapterRowError.message}`)
 
-  const { data: checkpointRow, error: checkpointError } = await admin
-    .from('chapter_generation_checkpoints')
-    .select('checkpoint_schema_version,status')
-    .eq('story_id', storyId)
-    .eq('chapter_number', chapterNumber)
-    .maybeSingle()
+  // RLS_AUDIT(chapter_generation_checkpoints): SERVICE_ROLE_BYPASS - harness capture checkpoint status
+  const { data: checkpointRow, error: checkpointError } = await single(
+    db
+      .selectFrom('chapter_generation_checkpoints')
+      .select(['checkpoint_schema_version', 'status'])
+      .where('story_id', '=', storyId)
+      .where('chapter_number', '=', chapterNumber)
+      .execute()
+  )
   if (checkpointError) throw new Error(`capture: chapter_generation_checkpoints read failed: ${checkpointError.message}`)
 
   const choiceIds = asArray(chapterRow?.choices)
@@ -890,14 +976,17 @@ export async function captureChapter(
   if (chapterNumber <= 1) {
     contextBudget = 'NO_RETRIEVAL_AT_STORY_START'
   } else {
-    const { data: retrievalRow, error: retrievalError } = await admin
-      .from('retrieval_logs')
-      .select('target_chapter,included_ids,excluded_ids,budget_report')
-      .eq('story_id', storyId)
-      .eq('target_chapter', chapterNumber)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
+    // RLS_AUDIT(retrieval_logs): SERVICE_ROLE_BYPASS - harness capture retrieval log
+    const { data: retrievalRow, error: retrievalError } = await single(
+      db
+        .selectFrom('retrieval_logs')
+        .select(['target_chapter', 'included_ids', 'excluded_ids', 'budget_report'])
+        .where('story_id', '=', storyId)
+        .where('target_chapter', '=', chapterNumber)
+        .orderBy('created_at', 'desc')
+        .limit(1)
+        .execute()
+    )
     if (retrievalError) {
       throw new Error(`capture: retrieval_logs read failed: ${retrievalError.message}`)
     }
@@ -1029,7 +1118,7 @@ export interface ActBoundaryCaptureV1 {
 }
 
 export async function captureActBoundary(
-  admin: Admin,
+  _admin: Admin,
   storyId: string,
   userId: string,
   chapterNumber: number,
@@ -1037,13 +1126,18 @@ export async function captureActBoundary(
   const act = ACT_PLAN.find((a) => a.toChapter === chapterNumber)
   if (!act) throw new Error(`capture: Bab ${chapterNumber} is not an act boundary`)
 
+  const db = getDb()
   // Rollup presence: the applier (apply_validated_chapter_state_v1) INSERTs
   // act_rollups rows for boundary chapters from the committed delta.
-  const { data: rollupRows, error: rollupError } = await admin
-    .from('act_rollups')
-    .select('act_number,summary,covers_from_chapter,covers_to_chapter')
-    .eq('story_id', storyId)
-    .eq('act_number', act.actNumber)
+  // RLS_AUDIT(act_rollups): SERVICE_ROLE_BYPASS - harness capture act rollups
+  const { data: rollupRows, error: rollupError } = await result(
+    db
+      .selectFrom('act_rollups')
+      .select(['act_number', 'summary', 'covers_from_chapter', 'covers_to_chapter'])
+      .where('story_id', '=', storyId)
+      .where('act_number', '=', act.actNumber)
+      .execute()
+  )
   if (rollupError) throw new Error(`capture: act_rollups read failed: ${rollupError.message}`)
   const rollup = rollupRows?.[0] ?? null
 
@@ -1051,30 +1145,41 @@ export async function captureActBoundary(
   const nextAct = ACT_PLAN.find((a) => a.actNumber === act.actNumber + 1)
   let nextActFirstChapterBlueprintVersion: number | null = null
   if (nextAct) {
-    const { data: nextBlueprint, error: nextBlueprintError } = await admin
-      .from('chapter_blueprints')
-      .select('version')
-      .eq('story_id', storyId)
-      .eq('chapter_number', nextAct.fromChapter)
-      .order('version', { ascending: false })
-      .limit(1)
-      .maybeSingle()
+    // RLS_AUDIT(chapter_blueprints): SERVICE_ROLE_BYPASS - harness capture next act blueprint version
+    const { data: nextBlueprint, error: nextBlueprintError } = await single(
+      db
+        .selectFrom('chapter_blueprints')
+        .select('version')
+        .where('story_id', '=', storyId)
+        .where('chapter_number', '=', nextAct.fromChapter)
+        .orderBy('version', 'desc')
+        .limit(1)
+        .execute()
+    )
     if (nextBlueprintError) throw new Error(`capture: chapter_blueprints read failed: ${nextBlueprintError.message}`)
     nextActFirstChapterBlueprintVersion = nextBlueprint ? Number(nextBlueprint.version) : null
   }
 
   // Thread status + open debt ids at the boundary.
-  const { data: threadRows, error: threadError } = await admin
-    .from('story_threads')
-    .select('id,status')
-    .eq('story_id', storyId)
+  // RLS_AUDIT(story_threads): SERVICE_ROLE_BYPASS - harness capture boundary threads
+  const { data: threadRows, error: threadError } = await result(
+    db
+      .selectFrom('story_threads')
+      .select(['id', 'status'])
+      .where('story_id', '=', storyId)
+      .execute()
+  )
   if (threadError) throw new Error(`capture: story_threads read failed: ${threadError.message}`)
 
-  const { data: closureRows, error: closureError } = await admin
-    .from('reader_plot_debt_closures')
-    .select('debt_id')
-    .eq('story_id', storyId)
-    .eq('user_id', userId)
+  // RLS_AUDIT(reader_plot_debt_closures): SERVICE_ROLE_BYPASS - harness capture boundary closures
+  const { data: closureRows, error: closureError } = await result(
+    db
+      .selectFrom('reader_plot_debt_closures')
+      .select('debt_id')
+      .where('story_id', '=', storyId)
+      .where('user_id', '=', userId)
+      .execute()
+  )
   if (closureError) throw new Error(`capture: reader_plot_debt_closures read failed: ${closureError.message}`)
   const closed = new Set((closureRows ?? []).map((row) => String(row.debt_id)))
 
@@ -1087,11 +1192,15 @@ export async function captureActBoundary(
   // pure ./act-boundary-evidence module so a legacy V1 payload can never be
   // mistaken for a V2 proof. A boundary without a next act legitimately has no
   // event at all (runActBoundaryReconciliation returns triggered:false).
-  const { data: eventRows, error: eventError } = await admin
-    .from('story_events')
-    .select('type,payload')
-    .eq('story_id', storyId)
-    .in('type', ['ACT_RECONCILIATION', 'ACT_ENDING_REACHABILITY'])
+  // RLS_AUDIT(story_events): SERVICE_ROLE_BYPASS - harness capture boundary events
+  const { data: eventRows, error: eventError } = await result(
+    db
+      .selectFrom('story_events')
+      .select(['type', 'payload'])
+      .where('story_id', '=', storyId)
+      .where('type', 'in', ['ACT_RECONCILIATION', 'ACT_ENDING_REACHABILITY'])
+      .execute()
+  )
   if (eventError) throw new Error(`capture: story_events read failed: ${eventError.message}`)
   const boundaryEvents = (eventRows ?? []).filter((row) => {
     const payload = (row.payload ?? {}) as Record<string, unknown>

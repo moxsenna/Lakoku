@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { createAdminClient } from '../../supabase/admin'
+import { getDb, single } from '@lakoku/db'
 import { generateNextPersonalizedChapter } from '../../runtime/personalized-generation'
 import {
   acquireGenerationJobLease,
@@ -44,7 +44,7 @@ import { submitHarnessChoice } from './choice'
 import type { M10HarnessRunSpecV1 } from './run-spec'
 import { ACT_PLAN, ACT_BOUNDARY_CHAPTERS, HARNESS_TOTAL_CHAPTERS } from './fixture'
 
-type Admin = ReturnType<typeof createAdminClient>
+type Admin = unknown
 
 export class HarnessRunError extends Error {
   constructor(
@@ -138,20 +138,29 @@ async function runWorkerChapter(
   jobId: string,
   triggerChoiceId: string | null,
 ): Promise<ChapterAttempt> {
-  const { error: jobErr } = await admin.from('generation_jobs').insert({
-    id: jobId,
-    story_id: storyId,
-    chapter_number: chapterNumber,
-    user_id: userId,
-    generation_kind: 'personalized',
-    story_contract_version: 1,
-    trigger_choice_id: triggerChoiceId,
-    status: 'QUEUED',
-    max_attempts: 4,
-    deadline_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-    publication_idempotency_key: `generation-job:${jobId}:publish:${chapterNumber}`,
-  })
-  if (jobErr) throw new HarnessRunError(`generation job insert failed: ${jobErr.message}`, chapterNumber)
+  const db = getDb()
+  // RLS_AUDIT(generation_jobs): SERVICE_ROLE_BYPASS - harness insert worker generation job
+  const insertResult = await db
+    .insertInto('generation_jobs')
+    .values({
+      id: jobId,
+      story_id: storyId,
+      chapter_number: chapterNumber,
+      user_id: userId,
+      generation_kind: 'personalized',
+      story_contract_version: 1,
+      trigger_choice_id: triggerChoiceId,
+      status: 'QUEUED',
+      max_attempts: 4,
+      deadline_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      publication_idempotency_key: `generation-job:${jobId}:publish:${chapterNumber}`,
+    })
+    .execute()
+    .then(
+      () => ({ error: null }),
+      (err: Error) => ({ error: err }),
+    )
+  if (insertResult.error) throw new HarnessRunError(`generation job insert failed: ${insertResult.error.message}`, chapterNumber)
 
   const claim = await claimGenerationJobById({ jobId, workerId: 'm10c-harness-worker' })
   if (!claim.claimed || !('job' in claim) || !claim.job) {
@@ -238,7 +247,7 @@ export async function runHarness(input: RunHarnessInput): Promise<HarnessRunResu
   assertIsolatedTarget()
   assertHarnessStoryId(input.storyId)
 
-  const admin = input.admin ?? createAdminClient()
+  const admin = input.admin
   const userId = input.userId ?? HARNESS_USER_ID
   const { storyId, spec } = input
 
@@ -457,18 +466,25 @@ export async function runHarness(input: RunHarnessInput): Promise<HarnessRunResu
   const repetitionEnvelope = await captureRepetition(admin, storyId, HARNESS_TOTAL_CHAPTERS)
   findings.push(...evaluateRepetition(repetitionEnvelope))
 
-  const { data: storyRow, error: storyError } = await admin
-    .from('stories')
-    .select('canon_state_revision')
-    .eq('id', storyId)
-    .single()
+  const db = getDb()
+  // RLS_AUDIT(stories): SERVICE_ROLE_BYPASS - harness read final canon revision
+  const { data: storyRow, error: storyError } = await single(
+    db
+      .selectFrom('stories')
+      .select('canon_state_revision')
+      .where('id', '=', storyId)
+      .execute()
+  )
   if (storyError) throw new HarnessRunError(`stories read failed: ${storyError.message}`, HARNESS_TOTAL_CHAPTERS)
-  const { data: readerRow, error: readerError } = await admin
-    .from('reader_states')
-    .select('status,current_chapter,locked_ending_key')
-    .eq('user_id', userId)
-    .eq('story_id', storyId)
-    .single()
+  // RLS_AUDIT(reader_states): SERVICE_ROLE_BYPASS - harness read final reader state
+  const { data: readerRow, error: readerError } = await single(
+    db
+      .selectFrom('reader_states')
+      .select(['status', 'current_chapter', 'locked_ending_key'])
+      .where('user_id', '=', userId)
+      .where('story_id', '=', storyId)
+      .execute()
+  )
   if (readerError) throw new HarnessRunError(`reader_states read failed: ${readerError.message}`, HARNESS_TOTAL_CHAPTERS)
 
   return {

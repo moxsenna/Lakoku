@@ -20,8 +20,16 @@ function getAuthPool(): Pool {
 const baseAuth = betterAuth({
   appName: 'Lakoku',
   baseURL: process.env.BETTER_AUTH_URL || 'https://lakoku.biz.id',
-  secret: process.env.BETTER_AUTH_SECRET || 'development-secret-must-be-changed-in-production-min-32-chars',
+  secret: process.env.BETTER_AUTH_SECRET || (() => {
+    if (process.env.NODE_ENV === 'production' && !process.env.BETTER_AUTH_SECRET) {
+      throw new Error('Fatal: BETTER_AUTH_SECRET wajib diset di produksi.')
+    }
+    return 'development-secret-must-be-changed-in-production-min-32-chars'
+  })(),
   database: getAuthPool(),
+  trustedOrigins: process.env.NODE_ENV !== 'production'
+    ? ['http://localhost:3000', 'http://localhost:3100', 'http://localhost:5200']
+    : [],
   emailAndPassword: {
     enabled: true,
     password: {

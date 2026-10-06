@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getSessionRedirectPath } from '@/lib/auth/session-redirect'
 
 // Rute yang memerlukan sesi (pengalaman baca personal, koleksi, alur transaksi).
 // Jelajah (/beranda, /cerita), viral share (/s/), dan /profil (punya CTA tamu) tetap publik.
@@ -28,27 +27,12 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl)
   }
 
-  // 2. Pengalihan cerdas untuk user yang sudah login:
-  // - Akses '/' (root) -> otomatis ke '/beranda' (kecuali ?preview=1).
-  // - Akses '/auth/login' atau '/auth/sign-up' -> otomatis ke next (default '/beranda').
-  const redirectTarget = getSessionRedirectPath({
-    pathname,
-    isAuthenticated: hasSession,
-    preview: request.nextUrl.searchParams.get('preview') === '1',
-    next: request.nextUrl.searchParams.get('next'),
-  })
-
-  if (redirectTarget) {
-    const url = request.nextUrl.clone()
-    if (redirectTarget.includes('?')) {
-      const [pathOnly, searchOnly] = redirectTarget.split('?')
-      url.pathname = pathOnly
-      url.search = searchOnly
-    } else {
-      url.pathname = redirectTarget
-      url.search = ''
-    }
-    return NextResponse.redirect(url)
+  // 2. Pengalihan root untuk user yang membawa sesi (kecuali ?preview=1).
+  // Catatan: rute /auth/login dan /auth/sign-up sengaja TIDAK dialihkan di middleware
+  // berdasarkan keberadaan cookie semata, agar dead-cookie tidak menjebak pengguna dalam
+  // redirect-loop. Pengecekan sesi terverifikasi dilakukan di RSC page masing-masing.
+  if (pathname === '/' && hasSession && request.nextUrl.searchParams.get('preview') !== '1') {
+    return NextResponse.redirect(new URL('/beranda', request.url))
   }
 
   return NextResponse.next()
@@ -62,8 +46,6 @@ export const config = {
     '/kredit/:path*',
     '/payment/:path*',
     '/s/:path*',
-    '/auth/login',
-    '/auth/sign-up',
     '/cerita/:path*',
     '/baca/:path*',
     '/akhir/:path*',

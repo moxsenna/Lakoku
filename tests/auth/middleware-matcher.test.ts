@@ -3,14 +3,17 @@ import { NextResponse, NextRequest } from 'next/server'
 import { config } from '@/middleware'
 
 describe('middleware matcher', () => {
-  it('includes root, auth, and in-app routes', () => {
+  it('includes root and in-app routes, and intentionally excludes auth routes', () => {
     const matcher = config.matcher
     expect(matcher).toContain('/')
-    expect(matcher).toContain('/auth/login')
-    expect(matcher).toContain('/auth/sign-up')
     expect(matcher).toContain('/cerita/:path*')
     expect(matcher).toContain('/beranda/:path*')
     expect(matcher).toContain('/profil/:path*')
+    // Rute auth sengaja TIDAK di-matcher: redirect berbasis cookie mati bisa
+    // menjebak pengguna (redirect-loop). Pengecekan sesi terverifikasi ada di
+    // RSC page login/sign-up masing-masing.
+    expect(matcher).not.toContain('/auth/login')
+    expect(matcher).not.toContain('/auth/sign-up')
   })
 
   it('preserves cookies when redirecting with NextResponse', () => {

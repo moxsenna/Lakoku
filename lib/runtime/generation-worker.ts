@@ -37,6 +37,7 @@ import {
   SEMANTIC_JUDGE_UNAVAILABLE,
 } from '@lakoku/ai-gateway'
 import { retryWindowFitsJobDeadline } from '@/lib/runtime/choice-execution-budget'
+import { notifyChapterGenerated } from '@/lib/notifications/chapter-ready'
 
 // Re-export ClaimedGenerationJob type for callers (recovery route).
 export type { ClaimedGenerationJob }
@@ -337,6 +338,13 @@ export async function executeClaimedJob(
         chapterNumber: normalized.chapterNumber,
         fromCheckpoint: normalized.fromCheckpoint ?? false,
       })
+      // Pemberitahuan transaksional (fire-and-forget): bab yang diminta user
+      // sudah siap. Gagal push tidak pernah mengubah hasil pekerjaan.
+      void notifyChapterGenerated({
+        userId: job.userId,
+        storyId: job.storyId,
+        chapterNumber: normalized.chapterNumber,
+      }).catch(() => undefined)
       return { ok: true, outcome: 'SUCCEEDED', jobId: job.id }
     }
 

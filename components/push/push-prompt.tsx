@@ -9,28 +9,55 @@ import { ensureWebPushSubscription } from './web-registration'
  * Muncul hanya di browser web: di dalam aplikasi Android, izin + pendaftaran
  * perangkat ditangani lapisan native (bridge Capacitor), jadi komponen ini diam.
  * Tidak ada istilah teknis ke pembaca (brand guard).
+ *
+ * Momennya setelah pembaca berkomitmen (pilihan pertama pada sebuah cerita,
+ * ditandai event `lakoku:choice-made`), bukan 1,5 detik setelah buka app —
+ * meminta izin sebelum ada nilai jelas hanya melatih orang menekan "Nanti".
  */
 
 const DISMISS_KEY = 'lakoku-push-dismissed'
 const ANDROID_MARKER = 'LakokuAndroid'
+const CHOICE_MADE_EVENT = 'lakoku:choice-made'
 
 type Phase = 'hidden' | 'ask' | 'busy' | 'failed'
+
+function isEligible(): boolean {
+  if (typeof window === 'undefined') return false
+  if (window.navigator.userAgent.includes(ANDROID_MARKER)) return false
+  if (!('Notification' in window) || !('serviceWorker' in navigator)) return false
+  try {
+    if (window.localStorage.getItem(DISMISS_KEY) === '1') return false
+  } catch {
+    return false
+  }
+  if (Notification.permission === 'granted') {
+    ensureWebPushSubscription().catch(() => undefined)
+    return false
+  }
+  return Notification.permission === 'default'
+}
 
 export function PushPrompt() {
   const [phase, setPhase] = useState<Phase>('hidden')
 
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    if (window.navigator.userAgent.includes(ANDROID_MARKER)) return
-    if (!('Notification' in window) || !('serviceWorker' in navigator)) return
-    if (window.localStorage.getItem(DISMISS_KEY) === '1') return
-    if (Notification.permission === 'granted') {
-      ensureWebPushSubscription().catch(() => undefined)
-      return
+    function ask() {
+      if (isEligible()) setPhase('ask')
     }
-    if (Notification.permission !== 'default') return
-    const timer = window.setTimeout(() => setPhase('ask'), 1500)
-    return () => window.clearTimeout(timer)
+
+    // Sesi ini mungkin sudah punya komitmen sebelumnya (mis. pilihan tadi).
+    // Cek penanda sesi agar prompt tetap datang pada halaman berikutnya.
+    try {
+      if (window.sessionStorage.getItem('lakoku:choice-committed') === '1') {
+        const timer = window.setTimeout(ask, 400)
+        return () => window.clearTimeout(timer)
+      }
+    } catch {
+      // storage ditolak: prompt menunggu event pilihan berikutnya.
+    }
+
+    window.addEventListener(CHOICE_MADE_EVENT, ask, { once: true })
+    return () => window.removeEventListener(CHOICE_MADE_EVENT, ask)
   }, [])
 
   if (phase === 'hidden') return null

@@ -30,6 +30,7 @@ import { ChapterListDialog } from '@/components/chapter-list-dialog'
 import { useReaderFontSize } from '@/components/font-size-provider'
 import dynamic from 'next/dynamic'
 import { trackEvent } from '@/lib/analytics/client'
+import { recordReadingDay } from '@/lib/reading-streak'
 import { ShareStoryButton } from '@/components/share-story-button'
 import type { ChoiceStats } from '@/lib/api/choice-stats.server'
 import {
@@ -279,6 +280,7 @@ export function ReaderView({
     const viewKey = `${story.id}#${chapter.number}`
     if (lastTrackedChapterView !== viewKey) {
       lastTrackedChapterView = viewKey
+      recordReadingDay()
       trackEvent('chapter_viewed', {
         story_id: story.id,
         chapter_number: chapter.number,
@@ -372,6 +374,13 @@ export function ReaderView({
     if (submittingRef.current) return
     submittingRef.current = true
     trackEvent('choice_clicked', { story_id: story.id, chapter_number: chapter.number, placement: 'reader_choice' })
+    // Sinyal komitmen pembaca — dipakai soft-prompt pengingat (satu kali per sesi).
+    try {
+      window.sessionStorage.setItem('lakoku:choice-committed', '1')
+      window.dispatchEvent(new Event('lakoku:choice-made'))
+    } catch {
+      // storage ditolak: prompt hanya menunggu event.
+    }
     setSelectedChoiceId(id)
     const outcomePromise = submitChoiceWithReadiness(story.id, chapter.number, id).then(
       (response) => ({ ok: true as const, response }),

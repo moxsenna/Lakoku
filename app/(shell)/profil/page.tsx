@@ -1,4 +1,5 @@
 import nextDynamic from 'next/dynamic'
+import { ProfileStreak } from '@/components/profile-streak'
 import Link from 'next/link'
 import {
   BookOpenText,
@@ -83,7 +84,7 @@ export default async function ProfilPage() {
           <ThemeToggle />
         </header>
 
-        <section aria-label="Perjalananmu" className="grid grid-cols-3 gap-3">
+        <section aria-label="Perjalananmu" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="flex flex-col items-center gap-1 rounded-2xl bg-card p-4 text-center">
             <BookOpenText className="size-5 text-primary" aria-hidden="true" />
             <span className="font-serif text-2xl text-foreground">{totalBerjalan}</span>
@@ -99,6 +100,7 @@ export default async function ProfilPage() {
             <span className="font-serif text-2xl text-foreground">{totalPilihan}</span>
             <span className="text-[11px] text-muted-foreground">Pilihan Penting</span>
           </div>
+          <ProfileStreak />
         </section>
 
         {user && (

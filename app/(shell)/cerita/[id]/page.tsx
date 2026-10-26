@@ -1,4 +1,6 @@
+import type { Metadata } from 'next'
 import Link from 'next/link'
+import { getPublicStoryPreview } from '@/lib/api/public-preview'
 import { BackButton } from '@/components/back-button'
 import Image from 'next/image'
 import { notFound } from 'next/navigation'
@@ -12,6 +14,27 @@ import { getStoryCoverPolicy, getStoryCoverCandidates } from '@/lib/cover/server
 import { getCreditBalance } from '@/lib/credits/server'
 
 export const dynamic = 'force-dynamic'
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>
+}): Promise<Metadata> {
+  const { id } = await params
+  const story = await getPublicStoryPreview(id)
+  // Cerita pribadi tidak boleh bocor judulnya lewat metadata.
+  if (!story) return { title: 'Lakoku', robots: { index: false } }
+  const title = `${story.title} — Novel Interaktif Lakoku`
+  const description = story.tagline || story.synopsis || 'Kamu tokoh utamanya.'
+  const url = `/cerita/${encodeURIComponent(story.id)}`
+  return {
+    title,
+    description,
+    alternates: { canonical: url },
+    openGraph: { title, description, url, type: 'book' },
+    twitter: { card: 'summary_large_image', title, description },
+  }
+}
 
 export default async function CeritaDetailPage({
   params,

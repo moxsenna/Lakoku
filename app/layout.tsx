@@ -9,6 +9,7 @@ import { GlobalPendingIndicator } from '@/components/loading/global-pending'
 import { PushPrompt } from '@/components/push/push-prompt'
 import { AndroidPushBridge } from '@/components/push/android-bridge'
 import { AdsenseScript } from '@/components/ads/adsense-script'
+import { siteOrigin } from '@/lib/og/site'
 import './globals.css'
 
 const jakarta = Plus_Jakarta_Sans({
@@ -23,11 +24,18 @@ const dmSerif = DM_Serif_Display({
 })
 
 export const metadata: Metadata = {
+  metadataBase: new URL(siteOrigin()),
   title: 'Lakoku — Interactive Fiction / Novel Interaktif',
   description:
     'Lakoku is an interactive fiction web app (novel interaktif). Read branching stories, make choices that change the plot, and save progress with email or Google sign-in.',
   applicationName: 'Lakoku',
   manifest: '/manifest.webmanifest',
+  openGraph: {
+    type: 'website',
+    siteName: 'Lakoku',
+    locale: 'id_ID',
+  },
+  twitter: { card: 'summary_large_image' },
   icons: {
     icon: [
       { url: '/favicon.ico', sizes: 'any' },

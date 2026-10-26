@@ -1,3 +1,4 @@
+import type { Metadata } from 'next'
 import Link from 'next/link'
 import Image from 'next/image'
 import { notFound } from 'next/navigation'
@@ -10,6 +11,31 @@ import { AdsenseBanner } from '@/components/ads/adsense-banner'
 import { resolveAdSlot } from '@/lib/ads/server'
 
 export const dynamic = 'force-dynamic'
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>
+}): Promise<Metadata> {
+  const { slug } = await params
+  const share = await getShareBySlug(slug).catch(() => null)
+  if (!share) return { title: 'Cerita tidak ditemukan — Lakoku', robots: { index: false } }
+  const t = share.teaser
+  const title = t.endingName
+    ? `Temanku mencapai akhir “${t.endingName}” — ${t.title}`
+    : `${t.title} — Lakoku`
+  const description =
+    t.tagline ?? 'Novel interaktif: kamu tokoh utamanya. Akan kamu pilih jalan yang sama?'
+  return {
+    title,
+    description,
+    // Tautan share bersifat unlisted: boleh dipratinjau, jangan diindeks.
+    robots: { index: false, follow: true },
+    alternates: { canonical: `/s/${slug}` },
+    openGraph: { title, description, url: `/s/${slug}`, type: 'article' },
+    twitter: { card: 'summary_large_image', title, description },
+  }
+}
 
 export default async function ShareLandingPage({
   params,

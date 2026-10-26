@@ -5,6 +5,7 @@ import { BookOpen, Footprints, Sparkles, Trophy, Users } from 'lucide-react'
 import { getShareBySlug } from '@/lib/api/share'
 import { getSessionUser } from '@/lib/api/user-state'
 import { StartFromShareButton } from '@/components/start-from-share-button'
+import { TrackOnView } from '@/components/analytics/track-on-view'
 import { AdsenseBanner } from '@/components/ads/adsense-banner'
 import { resolveAdSlot } from '@/lib/ads/server'
 
@@ -26,6 +27,7 @@ export default async function ShareLandingPage({
 
   return (
     <main className="mx-auto flex min-h-svh w-full max-w-md flex-col bg-background">
+      <TrackOnView event="share_link_opened" payload={{ placement: 'share_landing' }} />
       <div className="relative h-[40svh] w-full overflow-hidden">
         <Image
           src={t.cover && t.cover !== '/placeholder.svg' ? t.cover : '/covers/default-cover.webp'}

@@ -36,6 +36,16 @@ export const ANALYTICS_EVENT_NAMES = [
   'author_reward_skipped',
   'tinta_exchanged',
   'story_visibility_changed',
+  // Funnel baca, monetisasi, dan viral loop
+  'landing_cta_clicked',
+  'chapter_viewed',
+  'choice_clicked',
+  'story_finished',
+  'paywall_viewed',
+  'checkout_started',
+  'share_clicked',
+  'share_link_opened',
+  'share_start_clicked',
 ] as const
 
 export type AnalyticsEventName = (typeof ANALYTICS_EVENT_NAMES)[number]
@@ -131,6 +141,24 @@ export const AnalyticsEventSchema = z
     lakoin_out_bucket: z.enum(['1_4', '5_19', '20_99', '100_plus']).optional(),
     exchange_rate: z.number().int().min(10).max(100000).optional(),
     to_visibility: z.enum(['private', 'public']).optional(),
+    chapter_number: z.number().int().min(1).max(50).optional(),
+    is_reread: z.boolean().optional(),
+    // Lokasi UI pemicu — id tetap, bukan teks.
+    placement: z
+      .enum([
+        'landing_hero',
+        'landing_footer',
+        'reader_header',
+        'reader_choice',
+        'ending_page',
+        'locked_chapter',
+        'kredit_page',
+        'share_landing',
+      ])
+      .optional(),
+    share_channel: z.enum(['native', 'copy', 'whatsapp', 'download']).optional(),
+    product_id: z.string().max(64).optional(),
+    payment_channel: z.enum(['web', 'android']).optional(),
   })
   .strict()
 

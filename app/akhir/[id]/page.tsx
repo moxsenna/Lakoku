@@ -6,6 +6,7 @@ import { getStory } from '@/lib/api/server'
 import { pickBigChoices } from '@/lib/api/share'
 import { getSessionUser } from '@/lib/api/user-state'
 import { ShareButton } from '@/components/share-button'
+import { TrackOnView } from '@/components/analytics/track-on-view'
 import { AdsenseBanner } from '@/components/ads/adsense-banner'
 import { resolveAdSlot } from '@/lib/ads/server'
 
@@ -34,6 +35,7 @@ export default async function AkhirCeritaPage({
 
   return (
     <main className="mx-auto flex min-h-svh w-full max-w-md flex-col bg-background">
+      <TrackOnView event="story_finished" payload={{ story_id: story.id, placement: 'ending_page' }} />
       <div className="relative h-[44svh] w-full overflow-hidden">
         <Image
           src={story.cover && story.cover !== '/placeholder.svg' ? story.cover : '/covers/default-cover.webp'}

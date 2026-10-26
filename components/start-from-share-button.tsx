@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { actStartFromShare } from '@/app/share/actions'
+import { trackEvent } from '@/lib/analytics/client'
 
 export function StartFromShareButton({ shareSlug }: { shareSlug: string }) {
   const router = useRouter()
@@ -11,6 +12,7 @@ export function StartFromShareButton({ shareSlug }: { shareSlug: string }) {
 
   function onClick() {
     setError(null)
+    trackEvent('share_start_clicked', { placement: 'share_landing' })
     startTransition(async () => {
       const result = await actStartFromShare(shareSlug)
       if (!result.ok) {

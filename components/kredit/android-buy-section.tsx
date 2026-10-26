@@ -1,5 +1,6 @@
 'use client'
 
+import { trackEvent } from '@/lib/analytics/client'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
@@ -113,6 +114,7 @@ export function AndroidBuySection({ products }: { products: AndroidProduct[] }) 
       return
     }
     setBuyingSku(playSku)
+    trackEvent('checkout_started', { product_id: playSku, payment_channel: 'android', placement: 'kredit_page' })
     setMessage(null)
     try {
       const result = await store.order(playSku)

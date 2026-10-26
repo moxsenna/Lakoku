@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react'
 import { Share2 } from 'lucide-react'
 import { actCreateEndingShare } from '@/app/share/actions'
 import type { JejakItem } from '@/lib/api/types'
+import { trackEvent } from '@/lib/analytics/client'
 
 export function ShareButton({
   storyId,
@@ -73,10 +74,12 @@ export function ShareButton({
 
       try {
         if (navigator.share) {
+          trackEvent('share_clicked', { story_id: storyId, placement: 'ending_page', share_channel: 'native' })
           await navigator.share({ title, text, url })
           setMessage('Dibagikan.')
           return
         }
+        trackEvent('share_clicked', { story_id: storyId, placement: 'ending_page', share_channel: 'copy' })
         await navigator.clipboard.writeText(text)
         setMessage('Teks & tautan share disalin.')
       } catch {

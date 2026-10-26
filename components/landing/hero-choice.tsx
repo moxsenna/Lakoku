@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { ArrowRight, Check } from 'lucide-react'
+import { trackEvent } from '@/lib/analytics/client'
 
 const OPTIONS = [
   { id: 'buka', label: 'Buka pesannya' },
@@ -50,6 +51,7 @@ export function HeroChoice() {
           </div>
           <Link
             href="/mulai"
+            onClick={() => trackEvent('landing_cta_clicked', { placement: 'landing_hero' })}
             className="flex min-h-13 items-center justify-center gap-2 rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
           >
             Mulai Ceritaku

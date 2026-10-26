@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { trackEvent } from '@/lib/analytics/client'
 
 /**
  * Tombol beli paket kredit. Memanggil /api/checkout/create lalu mengarahkan
@@ -15,6 +16,7 @@ export function BuyCreditButton({ productKey }: { productKey: string }) {
     if (loading) return
     setLoading(true)
     setError(null)
+    trackEvent('checkout_started', { product_id: productKey, payment_channel: 'web', placement: 'kredit_page' })
     try {
       const res = await fetch('/api/checkout/create', {
         method: 'POST',

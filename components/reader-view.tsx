@@ -29,6 +29,7 @@ import { ChapterUnavailableBanner } from '@/components/chapter-unavailable-banne
 import { ChapterListDialog } from '@/components/chapter-list-dialog'
 import { useReaderFontSize } from '@/components/font-size-provider'
 import dynamic from 'next/dynamic'
+import { trackEvent } from '@/lib/analytics/client'
 import {
   consumeSuccessfulBudget,
   createPollBudget,
@@ -43,6 +44,9 @@ const PoetryLottie = dynamic(
   () => import('@/components/mulai/poetry-lottie').then((m) => m.PoetryLottie),
   { ssr: false },
 )
+
+// Satu event per bab per kunjungan; efek bisa berjalan dua kali (Strict Mode, remount).
+let lastTrackedChapterView: string | null = null
 
 const READER_THEME_STORAGE_KEY = 'lakoku:reader-theme'
 const READER_THEME_CHANGE_EVENT = 'lakoku:reader-theme-change'
@@ -264,6 +268,15 @@ export function ReaderView({
   // Catat bahwa bab ini telah dibuka (progres lokal, monotonic).
   useEffect(() => {
     recordChapterReached(story.id, chapter.number)
+    const viewKey = `${story.id}#${chapter.number}`
+    if (lastTrackedChapterView !== viewKey) {
+      lastTrackedChapterView = viewKey
+      trackEvent('chapter_viewed', {
+        story_id: story.id,
+        chapter_number: chapter.number,
+        is_reread: Boolean(isReRead),
+      })
+    }
     // Mode baca-ulang tidak boleh memulihkan pilihan tertunda: bab ini sudah final.
     if (isReRead) return
     const pending = getPendingChoice()
@@ -350,6 +363,7 @@ export function ReaderView({
   async function chooseOption(id: string) {
     if (submittingRef.current) return
     submittingRef.current = true
+    trackEvent('choice_clicked', { story_id: story.id, chapter_number: chapter.number, placement: 'reader_choice' })
     setSelectedChoiceId(id)
     const outcomePromise = submitChoiceWithReadiness(story.id, chapter.number, id).then(
       (response) => ({ ok: true as const, response }),

@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { trackEvent } from '@/lib/analytics/client'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, Coins, Lock } from 'lucide-react'
@@ -25,6 +26,14 @@ export function ChapterLocked({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [insufficient, setInsufficient] = useState(balance < cost)
+
+  useEffect(() => {
+    trackEvent('paywall_viewed', {
+      story_id: story.id,
+      chapter_number: chapterNumber,
+      placement: 'locked_chapter',
+    })
+  }, [story.id, chapterNumber])
 
   async function unlock() {
     if (loading) return

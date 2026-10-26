@@ -2,9 +2,9 @@
 
 import {
   createEndingCardShare,
-  recordShareStart,
   type ShareVisibility,
 } from '@/lib/api/share'
+import { recordShareLinkAttribution } from '@/lib/rewards/share-attribution.server'
 import type { JejakItem } from '@/lib/api/types'
 
 export type ShareActionResult<T> =
@@ -39,6 +39,18 @@ export async function actStartFromShare(
     const { cloneStoryFromShare } = await import('@/lib/api/share')
     const { storyId, startId } = await cloneStoryFromShare(shareSlug)
     const next = `/baca/${encodeURIComponent(storyId)}?bab=1`
+
+    // Referral via tautan share: catat pemula sebagai pembawa pemilik tautan.
+    try {
+      const { getSessionUser } = await import('@/lib/api/user-state')
+      const user = await getSessionUser()
+      if (user) {
+        await recordShareLinkAttribution({ newUserId: user.id, shareSlug })
+      }
+    } catch {
+      // Non-fatal.
+    }
+
     return { ok: true, startId, next }
   } catch (e) {
     return {

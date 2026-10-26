@@ -30,6 +30,7 @@ import { ChapterListDialog } from '@/components/chapter-list-dialog'
 import { useReaderFontSize } from '@/components/font-size-provider'
 import dynamic from 'next/dynamic'
 import { trackEvent } from '@/lib/analytics/client'
+import { ShareStoryButton } from '@/components/share-story-button'
 import {
   consumeSuccessfulBudget,
   createPollBudget,
@@ -516,15 +517,18 @@ export function ReaderView({
               Bab {chapter.number} dari {story.totalChapters}
             </span>
           </div>
-          <button
-            type="button"
-            onClick={() => setSettingsOpen((v) => !v)}
-            aria-label="Pengaturan baca"
-            aria-expanded={settingsOpen}
-            className="flex size-11 items-center justify-center rounded-full text-foreground hover:bg-muted"
-          >
-            <Settings2 className="size-5" aria-hidden="true" />
-          </button>
+          <div className="flex items-center">
+            <ShareStoryButton storyId={story.id} title={story.title} />
+            <button
+              type="button"
+              onClick={() => setSettingsOpen((v) => !v)}
+              aria-label="Pengaturan baca"
+              aria-expanded={settingsOpen}
+              className="flex size-11 items-center justify-center rounded-full text-foreground hover:bg-muted"
+            >
+              <Settings2 className="size-5" aria-hidden="true" />
+            </button>
+          </div>
         </header>
 
         <div className="h-0.5 w-full bg-muted" aria-hidden="true">

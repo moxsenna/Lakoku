@@ -737,7 +737,7 @@ export function ReaderView({
               href="/koleksiku"
               className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
             >
-              Kembali ke Library
+              Kembali ke Koleksiku
             </Link>
             <Link
               href="/mulai"

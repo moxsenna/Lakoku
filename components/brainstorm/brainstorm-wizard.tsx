@@ -353,7 +353,7 @@ export function BrainstormWizard() {
           <div className="flex flex-col gap-2">
             <Label>{LABEL.idea} — 1 DARI 6</Label>
             <h1 className="font-serif text-3xl leading-tight text-foreground text-balance">Ceritakan benih idemu.</h1>
-            <p className="text-sm text-muted-foreground">Satu-dua kalimat cukup. Kosongkan bila ingin AI mengusulkan bebas.</p>
+            <p className="text-sm text-muted-foreground">Satu-dua kalimat cukup. Kosongkan bila ingin Lakoku mengusulkan bebas.</p>
           </div>
           <textarea
             value={idea}
@@ -522,7 +522,7 @@ export function BrainstormWizard() {
             <div className="flex flex-col gap-1 rounded-2xl bg-card p-4">
               <dt><Label>SPINE TETAP</Label></dt>
               <dd className="text-sm leading-relaxed text-foreground">
-                Batas act, gerbang rahasia (12/20/32/45), dan aturan akhir dikunci. AI menyesuaikan alur di dalamnya seiring ceritamu berjalan.
+                Batas act, gerbang rahasia (12/20/32/45), dan aturan akhir dikunci. Alur menyesuaikan di dalamnya seiring ceritamu berjalan.
               </dd>
             </div>
           </dl>

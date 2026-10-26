@@ -6,7 +6,7 @@ import Link from 'next/link'
 import {
   Check,
   ChevronRight,
-  KeyRound,
+  FileText,
   Minus,
   Moon,
   Palette,
@@ -14,7 +14,6 @@ import {
   ShieldCheck,
   Sparkles,
   Sun,
-  Ticket,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useReaderFontSize } from '@/components/font-size-provider'
@@ -30,12 +29,18 @@ const activeSettings = [
     desc: 'Genre, gaya bahasa, dan batas cerita',
     href: '/onboarding/selera?next=/profil',
   },
-]
-
-const disabledSettings = [
-  { icon: Ticket, label: 'Akses Cerita', desc: 'Segera hadir' },
-  { icon: ShieldCheck, label: 'Batas Konten', desc: 'Segera hadir' },
-  { icon: KeyRound, label: 'Akun dan Privasi', desc: 'Segera hadir' },
+  {
+    icon: ShieldCheck,
+    label: 'Kebijakan Privasi',
+    desc: 'Data apa yang kami simpan dan cara menghapusnya',
+    href: '/privacy',
+  },
+  {
+    icon: FileText,
+    label: 'Syarat Layanan',
+    desc: 'Aturan pemakaian Lakoku',
+    href: '/terms',
+  },
 ]
 
 export function ProfileSettings() {
@@ -109,7 +114,7 @@ export function ProfileSettings() {
                   type="button"
                   onClick={decreaseFontSize}
                   aria-label="Perkecil teks reader"
-                  className="flex size-9 items-center justify-center rounded-full bg-muted text-foreground"
+                  className="flex size-11 items-center justify-center rounded-full bg-muted text-foreground"
                 >
                   <Minus className="size-4" aria-hidden="true" />
                 </button>
@@ -118,7 +123,7 @@ export function ProfileSettings() {
                   type="button"
                   onClick={increaseFontSize}
                   aria-label="Perbesar teks reader"
-                  className="flex size-9 items-center justify-center rounded-full bg-muted text-foreground"
+                  className="flex size-11 items-center justify-center rounded-full bg-muted text-foreground"
                 >
                   <Plus className="size-4" aria-hidden="true" />
                 </button>
@@ -145,24 +150,6 @@ export function ProfileSettings() {
           </li>
         ))}
 
-        {disabledSettings.map(({ icon: Icon, label, desc }) => (
-          <li key={label} className="border-t border-border">
-            <button
-              type="button"
-              disabled
-              className="flex w-full items-center gap-4 px-5 py-4 text-left opacity-50"
-            >
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary">
-                <Icon className="size-5" aria-hidden="true" />
-              </span>
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="text-sm font-medium text-foreground">{label}</span>
-                <span className="truncate text-xs text-muted-foreground">{desc}</span>
-              </span>
-              <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-            </button>
-          </li>
-        ))}
       </ul>
     </section>
   )

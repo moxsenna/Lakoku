@@ -167,15 +167,13 @@ export default async function AkhirCeritaPage({
             <AdsenseBanner clientId={adSlot.clientId} slotId={adSlot.slotId} />
           )}
 
-          <button
-            type="button"
-            disabled
-            title="Segera hadir"
-            className="flex min-h-13 items-center justify-center gap-2 rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground opacity-50"
+          <Link
+            href="/mulai"
+            className="flex min-h-13 items-center justify-center gap-2 rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
           >
             <RotateCcw className="size-4" aria-hidden="true" />
-            Temukan Akhir Lain
-          </button>
+            Jalani Cerita Baru
+          </Link>
           <p className="text-center text-xs text-muted-foreground">
             Bagikan ending card-mu. Teman bisa coba jalur mereka sendiri — bukan membaca 50 bab versi kamu.
           </p>

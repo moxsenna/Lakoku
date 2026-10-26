@@ -199,7 +199,7 @@ export default async function ProfilPage() {
             </div>
           )}
           <p className="text-center text-[11px] text-muted-foreground">
-            lakoku — Novel Interaktif · Versi 0.2 (Prototype)
+            Lakoku — Novel Interaktif
           </p>
         </section>
     </main>

@@ -3,7 +3,7 @@ import { BrainstormWizard } from '@/components/brainstorm/brainstorm-wizard'
 
 export const metadata: Metadata = {
   title: 'Rancang Cerita Baru — lakoku',
-  description: 'Ber-brainstorm dengan AI untuk merancang story bible 50 bab, lalu kunci ke canon.',
+  description: 'Rancang ceritamu perlahan — premis, tokoh, misteri, dan dunia — lalu jalani 50 babnya.',
 }
 
 export default function BrainstormPage() {

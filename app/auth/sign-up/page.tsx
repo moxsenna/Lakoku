@@ -14,7 +14,7 @@ export default async function SignUpPage({
     redirect(sanitizeNextPath(next))
   }
 
-  return <SignUpForm />
+  return <SignUpForm nextPath={sanitizeNextPath(next)} />
 }
 
 export const dynamic = 'force-dynamic'

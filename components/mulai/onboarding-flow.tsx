@@ -24,8 +24,12 @@ import { Shimmer } from '@/components/ai-elements/shimmer'
 import { authClient } from '@/lib/auth-client'
 import {
   clearOnboardingDraftStash,
+  clearOnboardingQuizStash,
   readOnboardingDraftStash,
+  readOnboardingQuizStash,
   saveOnboardingDraftStash,
+  saveOnboardingQuizStash,
+  type OnboardingQuizPayload,
 } from '@/lib/onboarding-draft'
 import {
   actProposeCast,
@@ -82,6 +86,7 @@ const BUILD_STEPS = [
 type BuildKey = (typeof BUILD_STEPS)[number]['key']
 
 const RESUME_LOGIN_URL = '/auth/login?next=%2Fmulai%3Fresume%3D1'
+const QUIZ_RESUME_LOGIN_URL = '/auth/login?next=%2Fmulai%3Fresume%3Dquiz'
 
 /** Bucket panjang ide custom — jangan pernah kirim teks mentahnya. */
 function customIdeaLengthBucket(length: number): 'short' | 'medium' | 'long' {
@@ -313,20 +318,13 @@ export function OnboardingFlow() {
     return Boolean(session?.user)
   }, [])
 
-  // Rantai onboarding: user tanpa selera lengkap diarahkan ke halaman selera
-  // (genre pre-fill dari jawaban kuis) sebelum masuk cerita — sekali saja,
-  // bisa dilewati. User berselera langsung masuk ke tujuan akhir.
+  // Bab 1 selalu tampil lebih dulu — momen "aha" tidak boleh tertahan
+  // formulir selera. Selera tetap bisa diatur kapan saja dari profil.
   const routeAfterStoryStart = useCallback(
-    (fallback: string) => {
-      if (!hasUsableTasteProfile(tasteProfile)) {
-        const params = new URLSearchParams({ next: fallback })
-        if (genreAnswerRef.current) params.set('genre', genreAnswerRef.current)
-        router.push(`/onboarding/selera?${params.toString()}`)
-        return
-      }
-      router.push(fallback)
+    (destination: string) => {
+      router.push(destination)
     },
-    [router, tasteProfile],
+    [router],
   )
 
   const lockAndStart = useCallback(async (draft: StoryBibleDraft) => {
@@ -516,63 +514,105 @@ export function OnboardingFlow() {
 
   // ── Generate premis dari AI ────────────────────────────────────
 
-  function generateProposals(currentAnswers: Record<string, AutoOrValue>) {
-    setErr(null)
-    setPhase('proposals')
-    startTransition(async () => {
-      try {
-        const res = await actProposeStorySetupPremises({
-          mode: 'quick',
-          answers: currentAnswers,
-          guestTasteProfile: tasteProfile,
-        })
-        if (!res.ok) {
-          setErr(res.error ?? 'Gagal menyiapkan cerita. Coba lagi.')
+  // Premis disusun di server dan butuh akun. Tamu menjawab kuis lebih dulu;
+  // jawabannya disimpan lalu dilanjutkan otomatis setelah masuk/daftar.
+  const requestProposals = useCallback(
+    (payload: OnboardingQuizPayload) => {
+      const mode = payload.mode
+      setErr(null)
+      setPhase('proposals')
+      startTransition(async () => {
+        try {
+          if (!(await hasSession())) {
+            abandonSentRef.current = true
+            saveOnboardingQuizStash(window.localStorage, payload)
+            trackEvent('story_setup_login_required', {
+              stage: mode === 'custom' ? 'custom' : 'quiz',
+              story_setup_mode: mode,
+              duration_ms: elapsedMs(),
+            })
+            router.push(QUIZ_RESUME_LOGIN_URL)
+            return
+          }
+          clearOnboardingQuizStash(window.localStorage)
+          const res = await actProposeStorySetupPremises(
+            payload.mode === 'quick'
+              ? { mode: 'quick', answers: payload.answers, guestTasteProfile: tasteProfile }
+              : { mode: 'custom', customIdea: payload.customIdea, guestTasteProfile: tasteProfile },
+          )
+          if (!res.ok) {
+            setErr(res.error ?? 'Gagal menyiapkan cerita. Coba lagi.')
+            setPhase('error')
+            trackEvent('story_setup_failed', {
+              stage: 'proposal',
+              story_setup_mode: mode,
+              error_code: 'propose_failed',
+              duration_ms: elapsedMs(),
+            })
+            return
+          }
+          setProposals(res.proposals)
+          if (res.direction) setCreativeDirection(res.direction)
+          if (res.publicSummary) setPublicSummary(res.publicSummary)
+          const proposalPayload = {
+            story_setup_mode: mode,
+            stage: 'proposal',
+            has_usable_taste: hasUsableTasteProfile(tasteProfile),
+            direction_fingerprint: res.fingerprint,
+            duration_ms: elapsedMs(),
+          } as const
+          trackEvent('story_premises_generated', proposalPayload)
+          trackEvent('story_setup_proposals_generated', proposalPayload)
+        } catch (err) {
+          if (isActionMismatchError(err)) {
+            window.location.reload()
+            return
+          }
+          setErr('Gagal menyiapkan cerita. Coba lagi.')
           setPhase('error')
           trackEvent('story_setup_failed', {
             stage: 'proposal',
-            story_setup_mode: 'quick',
-            error_code: 'propose_failed',
+            story_setup_mode: mode,
+            error_code: 'unknown',
             duration_ms: elapsedMs(),
           })
-          return
         }
-        setProposals(res.proposals)
-        if (res.direction) setCreativeDirection(res.direction)
-        if (res.publicSummary) setPublicSummary(res.publicSummary)
-        const proposalPayload = {
-          story_setup_mode: 'quick',
-          stage: 'proposal',
-          has_usable_taste: hasUsableTasteProfile(tasteProfile),
-          direction_fingerprint: res.fingerprint,
-          duration_ms: elapsedMs(),
-        } as const
-        trackEvent('story_premises_generated', proposalPayload)
-        trackEvent('story_setup_proposals_generated', proposalPayload)
-      } catch (err) {
-        if (isActionMismatchError(err)) {
-          window.location.reload()
-          return
-        }
-        setErr('Gagal menyiapkan cerita. Coba lagi.')
-        setPhase('error')
-        trackEvent('story_setup_failed', {
-          stage: 'proposal',
-          story_setup_mode: 'quick',
-          error_code: 'unknown',
-          duration_ms: elapsedMs(),
-        })
-      }
-    })
+      })
+    },
+    [elapsedMs, hasSession, router, tasteProfile],
+  )
+
+  function generateProposals(currentAnswers: Record<string, AutoOrValue>) {
+    requestProposals({ mode: 'quick', answers: currentAnswers })
   }
+
+  // Lanjutkan kuis tamu setelah masuk: jawaban dipulihkan lalu premis disusun.
+  useEffect(() => {
+    if (resume !== 'quiz' || resumeAttemptedRef.current) return
+    resumeAttemptedRef.current = true
+    queueMicrotask(() => {
+      const stash = readOnboardingQuizStash(window.localStorage)
+      if (!stash) {
+        setPhase('entry')
+        return
+      }
+      setEntryMode(stash.mode)
+      if (stash.mode === 'quick') {
+        setAnswers(stash.answers)
+        const genre = stash.answers.genre
+        if (genre?.mode === 'selected') genreAnswerRef.current = genre.value
+      } else {
+        setCustomIdea(stash.customIdea)
+      }
+      requestProposals(stash)
+    })
+  }, [requestProposals, resume])
 
   // ── Custom idea → 3 premis ─────────────────────────────────────
 
   function submitCustomIdea() {
     const trimmed = customIdea.trim()
     if (!trimmed) return
-    setErr(null)
-    setPhase('proposals')
     // Hanya bucket panjang — teks ide tidak pernah dikirim ke analytics.
     trackEvent('story_setup_custom_submitted', {
       stage: 'custom',
@@ -581,51 +621,7 @@ export function OnboardingFlow() {
       has_usable_taste: hasUsableTasteProfile(tasteProfile),
       duration_ms: elapsedMs(),
     })
-    startTransition(async () => {
-      try {
-        const res = await actProposeStorySetupPremises({
-          mode: 'custom',
-          customIdea: trimmed,
-          guestTasteProfile: tasteProfile,
-        })
-        if (!res.ok) {
-          setErr(res.error ?? 'Gagal menyiapkan cerita. Coba lagi.')
-          setPhase('error')
-          trackEvent('story_setup_failed', {
-            stage: 'proposal',
-            story_setup_mode: 'custom',
-            error_code: 'propose_failed',
-            duration_ms: elapsedMs(),
-          })
-          return
-        }
-        setProposals(res.proposals)
-        if (res.direction) setCreativeDirection(res.direction)
-        if (res.publicSummary) setPublicSummary(res.publicSummary)
-        const proposalPayload = {
-          story_setup_mode: 'custom',
-          stage: 'proposal',
-          has_usable_taste: hasUsableTasteProfile(tasteProfile),
-          direction_fingerprint: res.fingerprint,
-          duration_ms: elapsedMs(),
-        } as const
-        trackEvent('story_premises_generated', proposalPayload)
-        trackEvent('story_setup_proposals_generated', proposalPayload)
-      } catch (err) {
-        if (isActionMismatchError(err)) {
-          window.location.reload()
-          return
-        }
-        setErr('Gagal menyiapkan cerita. Coba lagi.')
-        setPhase('error')
-        trackEvent('story_setup_failed', {
-          stage: 'proposal',
-          story_setup_mode: 'custom',
-          error_code: 'unknown',
-          duration_ms: elapsedMs(),
-        })
-      }
-    })
+    requestProposals({ mode: 'custom', customIdea: trimmed })
   }
 
   // ── Pipeline otomatis ──────────────────────────────────────────

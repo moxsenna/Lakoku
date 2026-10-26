@@ -4,16 +4,11 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { authClient } from '@/lib/auth-client'
-import { sanitizeNextPath } from '@/lib/auth/safe-next'
 import { GoogleSignInButton } from '@/components/auth/google-sign-in-button'
 import { ArrowLeft } from 'lucide-react'
 
-function readSafeNextFromWindow(): string {
-  if (typeof window === 'undefined') return '/beranda'
-  return sanitizeNextPath(new URLSearchParams(window.location.search).get('next'))
-}
 
-export function SignUpForm() {
+export function SignUpForm({ nextPath = '/beranda' }: { nextPath?: string }) {
   const router = useRouter()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -22,6 +17,8 @@ export function SignUpForm() {
   const [emailLoading, setEmailLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const busy = emailLoading || googleLoading
+  const loginHref =
+    nextPath === '/beranda' ? '/auth/login' : `/auth/login?next=${encodeURIComponent(nextPath)}`
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -49,7 +46,14 @@ export function SignUpForm() {
         setEmailLoading(false)
         return
       }
-      router.push('/auth/sign-up-success')
+      // autoSignIn aktif: sesi sudah terbentuk, langsung ke tujuan asal
+      // (mis. lanjutan kuis /mulai). Tanpa sesi, tampilkan instruksi verifikasi.
+      const next = nextPath
+      if (res.data?.token) {
+        window.location.assign(next)
+        return
+      }
+      router.push(`/auth/sign-up-success?next=${encodeURIComponent(next)}`)
     } catch {
       setError('Pendaftaran gagal. Periksa koneksi lalu coba lagi.')
       setEmailLoading(false)
@@ -61,7 +65,7 @@ export function SignUpForm() {
     setGoogleLoading(true)
     setError(null)
     try {
-      const next = readSafeNextFromWindow()
+      const next = nextPath
       const res = await authClient.signIn.social({
         provider: 'google',
         callbackURL: next,
@@ -163,7 +167,7 @@ export function SignUpForm() {
 
         <p className="mt-6 text-center text-sm text-muted-foreground">
           Sudah punya akun?{' '}
-          <Link href="/auth/login" className="font-semibold text-primary">
+          <Link href={loginHref} className="font-semibold text-primary">
             Masuk
           </Link>
         </p>

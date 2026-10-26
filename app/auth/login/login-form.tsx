@@ -1,28 +1,22 @@
 'use client'
 
-import { useRef, useState, useSyncExternalStore } from 'react'
+import { useRef, useState } from 'react'
 import Link from 'next/link'
 import { authClient } from '@/lib/auth-client'
 import { readGuestTasteProfile, clearGuestTasteProfile } from '@/lib/taste-profile/storage'
 import { actMergeGuestTasteProfile } from '@/app/onboarding/selera/actions'
-import { sanitizeNextPath } from '@/lib/auth/safe-next'
 import { beginPending, endPending } from '@/lib/loading/pending'
 import { GoogleSignInButton } from '@/components/auth/google-sign-in-button'
 import { ArrowLeft, Loader2 } from 'lucide-react'
 
-const subscribeToMounted = () => () => {}
-const getMountedSnapshot = () => true
-const getServerMountedSnapshot = () => false
-
-function readSafeNextFromWindow(): string {
-  if (typeof window === 'undefined') return '/beranda'
-  return sanitizeNextPath(new URLSearchParams(window.location.search).get('next'))
-}
 
 export function LoginForm({
   resetSuccess = false,
+  nextPath = '/beranda',
 }: {
   resetSuccess?: boolean
+  /** Tujuan setelah masuk, sudah disanitasi di server. */
+  nextPath?: string
 }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -33,12 +27,8 @@ export function LoginForm({
   // Guard sinkron: state `busy` belum ter-commit saat klik kedua datang dalam
   // puluhan ms, sehingga disabled={busy} saja bisa kena race double-submit.
   const submitGuardRef = useRef(false)
-  const mounted = useSyncExternalStore(
-    subscribeToMounted,
-    getMountedSnapshot,
-    getServerMountedSnapshot,
-  )
-  const resumeOnboarding = mounted && readSafeNextFromWindow() === '/mulai?resume=1'
+  const resumeOnboarding = nextPath.startsWith('/mulai?resume=')
+  const resumeQuiz = nextPath === '/mulai?resume=quiz'
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -83,7 +73,7 @@ export function LoginForm({
 
       // Hard navigation: soft router.push + refresh sering macet di CF/OpenNext
       // sebelum cookie sesi terbaca server components (loading tetap true).
-      window.location.assign(readSafeNextFromWindow())
+      window.location.assign(nextPath)
     } catch (err) {
       if (err instanceof Error && err.message === 'LOGIN_TIMEOUT') {
         setError('Login terlalu lama. Periksa koneksi lalu coba lagi.')
@@ -103,7 +93,7 @@ export function LoginForm({
     setGoogleLoading(true)
     setError(null)
     try {
-      const next = readSafeNextFromWindow()
+      const next = nextPath
       const res = await authClient.signIn.social({
         provider: 'google',
         callbackURL: next,
@@ -134,7 +124,9 @@ export function LoginForm({
           {resumeOnboarding ? 'Simpan ceritamu' : 'Masuk ke ceritamu'}
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          {resumeOnboarding
+          {resumeQuiz
+            ? 'Jawabanmu sudah tersimpan. Masuk atau daftar gratis, lalu 3 arah ceritamu langsung disusun.'
+            : resumeOnboarding
             ? 'Cerita ini sudah siap. Masuk agar rancanganmu terkunci ke akunmu.'
             : 'Jejak pilihan dan bab yang kamu capai akan tersimpan di akunmu.'}
         </p>
@@ -185,7 +177,13 @@ export function LoginForm({
             className="mt-2 flex min-h-13 items-center justify-center gap-2 rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
           >
             {emailLoading && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
-            {emailLoading ? 'Membuka pintu...' : resumeOnboarding ? 'Simpan Ceritaku' : 'Masuk'}
+            {emailLoading
+              ? 'Membuka pintu...'
+              : resumeQuiz
+                ? 'Lanjutkan Ceritaku'
+                : resumeOnboarding
+                  ? 'Simpan Ceritaku'
+                  : 'Masuk'}
           </button>
         </form>
 
@@ -206,7 +204,11 @@ export function LoginForm({
         <p className="mt-6 text-center text-sm text-muted-foreground">
           Belum punya akun?{' '}
           <Link
-            href={resumeOnboarding ? '/auth/sign-up?next=%2Fmulai%3Fresume%3D1' : '/auth/sign-up'}
+            href={
+              nextPath === '/beranda'
+                ? '/auth/sign-up'
+                : `/auth/sign-up?next=${encodeURIComponent(nextPath)}`
+            }
             className="font-semibold text-primary"
           >
             Daftar

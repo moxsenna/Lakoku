@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 // Rute yang memerlukan sesi (pengalaman baca personal, koleksi, alur transaksi).
-// Jelajah (/beranda, /cerita), viral share (/s/), dan /profil (punya CTA tamu) tetap publik.
-const PROTECTED_PREFIXES = ['/baca', '/akhir', '/koleksiku', '/mulai', '/brainstorm', '/kredit', '/payment']
+// Jelajah (/beranda, /cerita), viral share (/s/), /profil (punya CTA tamu), dan /mulai
+// (tamu boleh menjawab kuis; login diminta tepat sebelum premis disusun) tetap publik.
+const PROTECTED_PREFIXES = ['/baca', '/akhir', '/koleksiku', '/brainstorm', '/kredit', '/payment']
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -50,7 +51,6 @@ export const config = {
     '/baca/:path*',
     '/akhir/:path*',
     '/koleksiku/:path*',
-    '/mulai/:path*',
     '/brainstorm/:path*',
   ],
 }

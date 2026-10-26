@@ -17,6 +17,7 @@ export default async function LoginPage({
   return (
     <LoginForm
       resetSuccess={reset === 'success'}
+      nextPath={sanitizeNextPath(next)}
     />
   )
 }

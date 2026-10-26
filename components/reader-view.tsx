@@ -484,7 +484,7 @@ export function ReaderView({
     >
       <div
         className={cn(
-          'sticky top-0 z-30 w-full transition-colors backdrop-blur',
+          'sticky top-0 z-30 w-full pt-[env(safe-area-inset-top)] transition-colors backdrop-blur',
           isCream ? 'bg-background/95' : 'bg-background/95',
         )}
       >

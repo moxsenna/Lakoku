@@ -9,8 +9,12 @@ export function AppShell({
   withNav?: boolean
 }) {
   return (
-    <div className="mx-auto flex min-h-svh w-full max-w-md flex-col bg-background">
-      <div className={`flex flex-1 flex-col ${withNav ? 'pb-24' : ''}`}>{children}</div>
+    <div className="mx-auto flex min-h-svh w-full max-w-md flex-col bg-background pt-[env(safe-area-inset-top)]">
+      <div
+        className={`flex flex-1 flex-col ${withNav ? 'pb-[calc(6rem+env(safe-area-inset-bottom))]' : ''}`}
+      >
+        {children}
+      </div>
       {withNav && <BottomNav />}
     </div>
   )

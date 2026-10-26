@@ -39,6 +39,9 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: '#191319',
+  // Konten memenuhi layar sampai ke notch/gesture bar; jarak aman diatur
+  // lewat env(safe-area-inset-*) di navigasi bawah dan shell.
+  viewportFit: 'cover',
 }
 
 const themeInlineHelper = 'self.__name=self.__name||function(target){return target}'

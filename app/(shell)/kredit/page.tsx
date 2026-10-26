@@ -9,10 +9,19 @@ import { listCreditProducts, calculateTopupCredits } from '@/lib/paycore/product
 import { getRequestChannel } from '@/lib/android/channel.server'
 import { getCreditBalance, getReadingPolicy } from '@/lib/credits/server'
 import { getDb, single, rpcOne } from '@lakoku/db'
+import { sanitizeNextPath } from '@/lib/auth/safe-next'
+import { RememberReadingReturn } from '@/components/kredit/reading-return'
 
 const idr = (n: number) => `Rp${new Intl.NumberFormat('id-ID').format(n)}`
 
-export default async function KreditPage() {
+export default async function KreditPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ kembali?: string }>
+}) {
+  const { kembali } = (await searchParams) ?? {}
+  // Hanya jalur baca internal yang boleh jadi tujuan kembali.
+  const returnTo = kembali && kembali.startsWith('/baca/') ? sanitizeNextPath(kembali) : null
   const user = await getSessionUser()
   // Kanal android (WebView, UA marker) → katalog Play Billing + sembunyikan
   // PayCore & AdSense (kebijakan Google). Web tidak berubah.
@@ -49,13 +58,14 @@ export default async function KreditPage() {
     <main className="flex flex-col gap-6 px-5 pt-6 pb-8">
         <header className="flex items-center gap-3">
           <Link
-            href="/profil"
-            aria-label="Kembali ke profil"
-            className="flex size-10 items-center justify-center rounded-full text-foreground hover:bg-muted"
+            href={returnTo ?? '/profil'}
+            aria-label={returnTo ? 'Kembali ke bab' : 'Kembali ke profil'}
+            className="flex size-11 items-center justify-center rounded-full text-foreground hover:bg-muted"
           >
             <ArrowLeft className="size-5" aria-hidden="true" />
           </Link>
           <h1 className="font-serif text-2xl text-foreground">Lakoin</h1>
+          {returnTo && <RememberReadingReturn path={returnTo} />}
         </header>
 
         <section className="flex items-center gap-4 rounded-2xl bg-card p-5">

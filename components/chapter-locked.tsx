@@ -58,7 +58,7 @@ export function ChapterLocked({
         <Link
           href={`/cerita/${story.id}`}
           aria-label="Kembali ke detail cerita"
-          className="flex size-10 items-center justify-center rounded-full text-foreground hover:bg-muted"
+          className="flex size-11 items-center justify-center rounded-full text-foreground hover:bg-muted"
         >
           <ArrowLeft className="size-5" aria-hidden="true" />
         </Link>
@@ -92,7 +92,7 @@ export function ChapterLocked({
 
         {insufficient ? (
           <Link
-            href="/kredit"
+            href={`/kredit?kembali=${encodeURIComponent(`/baca/${story.id}?bab=${chapterNumber}`)}`}
             className="flex min-h-13 w-full items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
           >
             Beli Lakoin

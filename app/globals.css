@@ -68,7 +68,7 @@
   --secondary: #f0e2f0;
   --secondary-foreground: #3d1f3d;
   --muted: #f3e8da;
-  --muted-foreground: #7d6f80;
+  --muted-foreground: #6b5d6e;
   --accent: #a87933;
   --accent-foreground: #fff7ee;
   --destructive: #c94949;
@@ -124,7 +124,9 @@
   --card: #fdf1e3;
   --card-foreground: #2b2130;
   --muted: #f3e8da;
-  --muted-foreground: #7d6f80;
+  --muted-foreground: #6b5d6e;
+  --lavender: #6f6274;
+  --gold: #a87933;
   --border: rgba(61, 31, 61, 0.14);
 }
 

@@ -28,7 +28,7 @@ import { ReportDialog } from '@/components/report-dialog'
 import { ChapterUnavailableBanner } from '@/components/chapter-unavailable-banner'
 import { ChapterListDialog } from '@/components/chapter-list-dialog'
 import { useReaderFontSize } from '@/components/font-size-provider'
-import { PoetryLottie } from '@/components/mulai/poetry-lottie'
+import dynamic from 'next/dynamic'
 import {
   consumeSuccessfulBudget,
   createPollBudget,
@@ -37,6 +37,45 @@ import {
 } from '@/lib/reader/chapter-status-poller'
 
 type ReaderTheme = 'ink' | 'cream'
+
+// Animasi (~340KB) hanya dibutuhkan saat bab berikutnya ditulis.
+const PoetryLottie = dynamic(
+  () => import('@/components/mulai/poetry-lottie').then((m) => m.PoetryLottie),
+  { ssr: false },
+)
+
+const READER_THEME_STORAGE_KEY = 'lakoku:reader-theme'
+const READER_THEME_CHANGE_EVENT = 'lakoku:reader-theme-change'
+
+function subscribeReaderTheme(onStoreChange: () => void) {
+  window.addEventListener('storage', onStoreChange)
+  window.addEventListener(READER_THEME_CHANGE_EVENT, onStoreChange)
+  return () => {
+    window.removeEventListener('storage', onStoreChange)
+    window.removeEventListener(READER_THEME_CHANGE_EVENT, onStoreChange)
+  }
+}
+
+function getReaderThemeSnapshot(): ReaderTheme {
+  try {
+    return window.localStorage.getItem(READER_THEME_STORAGE_KEY) === 'cream' ? 'cream' : 'ink'
+  } catch {
+    return 'ink'
+  }
+}
+
+function getServerReaderThemeSnapshot(): ReaderTheme {
+  return 'ink'
+}
+
+function saveReaderTheme(theme: ReaderTheme) {
+  try {
+    window.localStorage.setItem(READER_THEME_STORAGE_KEY, theme)
+  } catch {
+    // Mode privat bisa menolak storage; tema tetap berlaku lewat event di bawah.
+  }
+  window.dispatchEvent(new Event(READER_THEME_CHANGE_EVENT))
+}
 type Phase = 'reading' | 'processing' | 'pending' | 'generation-failed' | 'status-unknown'
 type ChoiceAdvanceAction = 'ending' | 'navigate' | 'poll'
 type PollResult = 'ready' | 'failed' | 'unknown' | 'aborted'
@@ -193,7 +232,12 @@ export function ReaderView({
   initialLocalPreviousChoice?: JejakItem | null
 }) {
   const router = useRouter()
-  const [theme, setTheme] = useState<ReaderTheme>('ink')
+  const theme = useSyncExternalStore(
+    subscribeReaderTheme,
+    getReaderThemeSnapshot,
+    getServerReaderThemeSnapshot,
+  )
+  const setTheme = saveReaderTheme
   const { fontSize, decreaseFontSize, increaseFontSize } = useReaderFontSize()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
@@ -432,6 +476,7 @@ export function ReaderView({
 
   return (
     <main
+      data-testid={`reader-theme-${theme}`}
       className={cn(
         'mx-auto flex min-h-svh w-full max-w-md flex-col transition-colors',
         isCream ? 'reader-cream bg-background' : 'bg-background',
@@ -447,7 +492,7 @@ export function ReaderView({
           <Link
             href={`/cerita/${story.id}`}
             aria-label="Kembali ke detail cerita"
-            className="flex size-10 items-center justify-center rounded-full text-foreground hover:bg-muted"
+            className="flex size-11 items-center justify-center rounded-full text-foreground hover:bg-muted"
           >
             <ArrowLeft className="size-5" aria-hidden="true" />
           </Link>
@@ -462,7 +507,7 @@ export function ReaderView({
             onClick={() => setSettingsOpen((v) => !v)}
             aria-label="Pengaturan baca"
             aria-expanded={settingsOpen}
-            className="flex size-10 items-center justify-center rounded-full text-foreground hover:bg-muted"
+            className="flex size-11 items-center justify-center rounded-full text-foreground hover:bg-muted"
           >
             <Settings2 className="size-5" aria-hidden="true" />
           </button>
@@ -485,7 +530,7 @@ export function ReaderView({
                     type="button"
                     onClick={decreaseFontSize}
                     aria-label="Perkecil teks"
-                    className="flex size-9 items-center justify-center rounded-full bg-muted text-foreground"
+                    className="flex size-11 items-center justify-center rounded-full bg-muted text-foreground"
                   >
                     <Minus className="size-4" aria-hidden="true" />
                   </button>
@@ -494,7 +539,7 @@ export function ReaderView({
                     type="button"
                     onClick={increaseFontSize}
                     aria-label="Perbesar teks"
-                    className="flex size-9 items-center justify-center rounded-full bg-muted text-foreground"
+                    className="flex size-11 items-center justify-center rounded-full bg-muted text-foreground"
                   >
                     <Plus className="size-4" aria-hidden="true" />
                   </button>
@@ -506,7 +551,7 @@ export function ReaderView({
                   onClick={() => setTheme('ink')}
                   aria-pressed={theme === 'ink'}
                   className={cn(
-                    'size-9 rounded-full border-2 bg-ink',
+                    'size-11 rounded-full border-2 bg-ink',
                     theme === 'ink' ? 'border-primary' : 'border-border',
                   )}
                 >
@@ -517,7 +562,7 @@ export function ReaderView({
                   onClick={() => setTheme('cream')}
                   aria-pressed={theme === 'cream'}
                   className={cn(
-                    'size-9 rounded-full border-2 bg-cream',
+                    'size-11 rounded-full border-2 bg-cream',
                     theme === 'cream' ? 'border-primary' : 'border-border',
                   )}
                 >
@@ -531,7 +576,7 @@ export function ReaderView({
                 setSettingsOpen(false)
                 setChapterListOpen(true)
               }}
-              className="mt-3 flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"
+              className="mt-2 flex min-h-11 items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"
             >
               <List className="size-3.5" aria-hidden="true" />
               Daftar Bab
@@ -542,7 +587,7 @@ export function ReaderView({
                 setSettingsOpen(false)
                 setReportOpen(true)
               }}
-              className="mt-3 flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"
+              className="flex min-h-11 items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground"
             >
               <Flag className="size-3.5" aria-hidden="true" />
               Laporkan Masalah Cerita

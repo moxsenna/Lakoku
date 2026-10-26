@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { BackButton } from '@/components/back-button'
 import Image from 'next/image'
 import { notFound } from 'next/navigation'
 import { ArrowLeft, Footprints } from 'lucide-react'
@@ -42,13 +43,13 @@ export default async function CeritaDetailPage({
             className="object-cover"
           />
           <div className="absolute inset-0 bg-gradient-to-b from-ink/40 via-transparent to-background" />
-          <Link
-            href="/beranda"
-            aria-label="Kembali ke Beranda"
-            className="absolute left-4 top-6 flex size-10 items-center justify-center rounded-full bg-ink/50 text-cream backdrop-blur"
+          <BackButton
+            fallbackHref="/beranda"
+            label="Kembali"
+            className="absolute left-4 top-6 flex size-11 items-center justify-center rounded-full bg-ink/50 text-cream backdrop-blur"
           >
             <ArrowLeft className="size-5" aria-hidden="true" />
-          </Link>
+          </BackButton>
         </div>
 
         <section className="lk-fade-up -mt-8 flex flex-col gap-6 px-5 pb-8">

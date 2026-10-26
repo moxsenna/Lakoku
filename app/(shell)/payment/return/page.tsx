@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { CheckCircle2 } from 'lucide-react'
 import { CreditPoller } from '@/components/credit-poller'
+import { ContinueReadingLink } from '@/components/kredit/reading-return'
 import { getSessionUser } from '@/lib/api/user-state'
 import { getCreditBalance } from '@/lib/credits/server'
 
@@ -36,6 +37,7 @@ export default async function PaymentReturnPage({
         </div>
         <CreditPoller initialBalance={initialBalance} />
         <div className="flex w-full max-w-xs flex-col gap-3">
+          <ContinueReadingLink />
           <Link
             href="/kredit"
             className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"

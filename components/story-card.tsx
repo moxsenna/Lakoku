@@ -2,12 +2,19 @@ import Link from 'next/link'
 import Image from 'next/image'
 import type { StorySummary } from '@/lib/api'
 
-export function StoryCard({ story }: { story: StorySummary }) {
+export function StoryCard({
+  story,
+  href,
+}: {
+  story: StorySummary
+  /** Tujuan tautan opsional (mis. landing share); bawaan: detail cerita. */
+  href?: string
+}) {
   const progress = Math.round((story.currentChapter / story.totalChapters) * 100)
 
   return (
     <Link
-      href={`/cerita/${story.id}`}
+      href={href ?? `/cerita/${story.id}`}
       className="group flex gap-4 rounded-2xl bg-card p-3 transition-colors hover:bg-secondary/60"
     >
       <div className="relative aspect-[2/3] w-20 shrink-0 overflow-hidden rounded-xl">

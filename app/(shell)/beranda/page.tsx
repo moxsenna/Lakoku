@@ -85,9 +85,14 @@ export default async function BerandaPage() {
             <h2 id="jelajahi-heading" className="font-serif text-xl text-foreground">
               Jelajahi Cerita
             </h2>
-            <Link href="/koleksiku" className="text-xs font-medium text-primary">
-              Lihat Koleksiku
-            </Link>
+            <div className="flex items-center gap-3">
+              <Link href="/jelajah" className="text-xs font-medium text-primary">
+                Cari &amp; filter
+              </Link>
+              <Link href="/koleksiku" className="text-xs font-medium text-primary">
+                Koleksiku
+              </Link>
+            </div>
           </div>
           {jelajahi.length > 0 || publicShares.length > 0 ? (
             <div className="flex flex-col gap-3">

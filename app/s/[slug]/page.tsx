@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import Image from 'next/image'
 import { notFound } from 'next/navigation'
-import { BookOpen, Footprints, Sparkles, Trophy, Users } from 'lucide-react'
+import { BookOpen, Download, Footprints, Sparkles, Trophy, Users } from 'lucide-react'
 import { getShareBySlug } from '@/lib/api/share'
 import { getSessionUser } from '@/lib/api/user-state'
 import { StartFromShareButton } from '@/components/start-from-share-button'
@@ -189,6 +189,14 @@ export default async function ShareLandingPage({
 
         {/* CTA */}
         <div className="mt-auto flex flex-col gap-3">
+          <a
+            href={`/api/ending-card/${encodeURIComponent(share.shareSlug)}`}
+            download={`lakoku-akhir-${share.shareSlug}.png`}
+            className="flex min-h-13 items-center justify-center gap-2 rounded-2xl border border-border px-4 text-sm font-semibold text-foreground transition-colors hover:bg-card"
+          >
+            <Download className="size-4" aria-hidden="true" />
+            Simpan Kartu Akhir (9:16)
+          </a>
           {user ? (
             <StartFromShareButton shareSlug={share.shareSlug} />
           ) : (

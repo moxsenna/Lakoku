@@ -287,6 +287,43 @@ export async function createEndingCardShare(input: {
   throw new Error('createEndingCardShare: gagal membuat slug unik')
 }
 
+/** Slug share ending milik user untuk satu cerita (buat bila belum ada). */
+export async function getOrCreateEndingShareForOwner(input: {
+  storyId: string
+  title: string
+  tagline?: string
+  tropes: string[]
+  cover?: string
+  endingName?: string
+  jejak: JejakItem[]
+}): Promise<string | null> {
+  const user = await getSessionUser()
+  if (!user) return null
+
+  const db = getDb()
+  // RLS_AUDIT: shared_story_links_select_active
+  const { data: existing } = await single(
+    db
+      .selectFrom('shared_story_links')
+      .select('share_slug')
+      .where('source_story_id', '=', input.storyId)
+      .where('owner_user_id', '=', user.id)
+      .where('share_type', '=', 'ending_card')
+      .where('revoked_at', 'is', null)
+      .orderBy('created_at', 'desc')
+      .limit(1)
+      .execute(),
+  )
+  if (existing?.share_slug) return existing.share_slug
+
+  try {
+    const created = await createEndingCardShare(input)
+    return created.shareSlug
+  } catch {
+    return null
+  }
+}
+
 export const getShareBySlug = cache(async function getShareBySlug(
   slug: string,
 ): Promise<SharedStoryLink | null> {

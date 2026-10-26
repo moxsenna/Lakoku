@@ -5,7 +5,8 @@ import { ArrowLeft, BookOpen, CheckCircle2, Footprints, Lock, RotateCcw, Sparkle
 import { getStory } from '@/lib/api/server'
 import { pickBigChoices } from '@/lib/api/share'
 import { getSessionUser } from '@/lib/api/user-state'
-import { ShareButton } from '@/components/share-button'
+import { EndingCardActions } from '@/components/ending-card-actions'
+import { getOrCreateEndingShareForOwner } from '@/lib/api/share'
 import { TrackOnView } from '@/components/analytics/track-on-view'
 import { AdsenseBanner } from '@/components/ads/adsense-banner'
 import { resolveAdSlot } from '@/lib/ads/server'
@@ -32,6 +33,18 @@ export default async function AkhirCeritaPage({
 
   const bigChoices = pickBigChoices(story.jejak)
   const tropes = story.tropes ?? []
+
+  // Share ending dibuat sekali per pemilik+cerita; kartu 9:16 dan tombol
+  // bagikan memakai slug yang sama.
+  const shareSlug = await getOrCreateEndingShareForOwner({
+    storyId: story.id,
+    title: story.title,
+    tagline: story.tagline,
+    tropes,
+    cover: story.cover,
+    endingName: story.endingName,
+    jejak: story.jejak,
+  })
 
   return (
     <main className="mx-auto flex min-h-svh w-full max-w-md flex-col bg-background">
@@ -179,24 +192,20 @@ export default async function AkhirCeritaPage({
           <p className="text-center text-xs text-muted-foreground">
             Bagikan ending card-mu. Teman bisa coba jalur mereka sendiri — bukan membaca 50 bab versi kamu.
           </p>
-          <div className="flex gap-3">
-            <ShareButton
-              storyId={story.id}
+          {shareSlug && (
+            <EndingCardActions
+              sharePath={`/s/${shareSlug}`}
+              shareSlug={shareSlug}
               title={story.title}
-              tagline={story.tagline}
               endingName={story.endingName}
-              tropes={tropes}
-              cover={story.cover}
-              jejak={story.jejak}
-              bigChoices={bigChoices}
             />
-            <Link
-              href="/koleksiku"
-              className="flex min-h-13 flex-1 items-center justify-center rounded-2xl border border-border px-4 text-sm font-semibold text-foreground transition-colors hover:bg-card"
-            >
-              Ke Koleksiku
-            </Link>
-          </div>
+          )}
+          <Link
+            href="/koleksiku"
+            className="flex min-h-13 items-center justify-center rounded-2xl border border-border px-4 text-sm font-semibold text-foreground transition-colors hover:bg-card"
+          >
+            Ke Koleksiku
+          </Link>
         </div>
       </section>
     </main>

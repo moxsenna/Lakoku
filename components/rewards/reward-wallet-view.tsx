@@ -30,9 +30,10 @@ export function RewardWalletView({ stats, policy }: Props) {
       <div className="flex items-center gap-3">
         <Link
           href="/profil"
-          className="flex size-9 items-center justify-center rounded-xl bg-secondary/60 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+          aria-label="Kembali ke profil"
+          className="flex size-11 items-center justify-center rounded-xl bg-secondary/60 text-muted-foreground transition hover:bg-secondary hover:text-foreground"
         >
-          <ArrowLeft className="size-4" />
+          <ArrowLeft className="size-4" aria-hidden="true" />
         </Link>
         <div>
           <h1 className="font-serif text-xl font-bold text-foreground">Dompet Imbalan</h1>

@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation'
 import { getStory, getChapter, getChapterAvailability } from '@/lib/api/server'
+import { getChoiceStats } from '@/lib/api/choice-stats.server'
 import { getSessionUser, getPreviousChoiceId } from '@/lib/api/user-state'
 import { getReadingPolicy, getCreditBalance } from '@/lib/credits/server'
 import { ReaderView } from '@/components/reader-view'
@@ -95,6 +96,12 @@ export default async function BacaPage({
   // pernah ditulis ulang, sedangkan choiceId stabil per bab.
   const previousChoiceId = isReRead ? await getPreviousChoiceId(story.id, chapter.number) : null
 
+  // Statistik pilihan pembaca lain (agregat anonim) — disembunyikan bila
+  // sampel terlalu kecil agar tidak terasa seperti mengawasi.
+  const choiceStats = chapter.choices && chapter.choices.length > 1 && !isReRead
+    ? await getChoiceStats(story.id, chapter.number)
+    : null
+
   return (
     <ReaderView
       key={chapter.number}
@@ -105,6 +112,7 @@ export default async function BacaPage({
       previousChoice={previousChoice}
       previousChoiceId={previousChoiceId}
       previousChapterJejak={previousChapterJejak}
+      choiceStats={choiceStats}
     />
   )
 }

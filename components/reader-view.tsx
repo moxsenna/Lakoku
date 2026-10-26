@@ -31,6 +31,7 @@ import { useReaderFontSize } from '@/components/font-size-provider'
 import dynamic from 'next/dynamic'
 import { trackEvent } from '@/lib/analytics/client'
 import { ShareStoryButton } from '@/components/share-story-button'
+import type { ChoiceStats } from '@/lib/api/choice-stats.server'
 import {
   consumeSuccessfulBudget,
   createPollBudget,
@@ -225,6 +226,7 @@ export function ReaderView({
   previousChoiceId = null,
   previousChapterJejak = null,
   initialLocalPreviousChoice = null,
+  choiceStats = null,
 }: {
   story: StoryDetail
   chapter: Chapter
@@ -235,6 +237,7 @@ export function ReaderView({
   previousChoiceId?: string | null
   previousChapterJejak?: JejakItem | null
   initialLocalPreviousChoice?: JejakItem | null
+  choiceStats?: ChoiceStats | null
 }) {
   const router = useRouter()
   const theme = useSyncExternalStore(
@@ -265,6 +268,10 @@ export function ReaderView({
   )
 
   const isCream = theme === 'cream'
+
+  // Statistik hanya tampil bila sampelnya layak (≥3 pemilih di bab ini).
+  const statsTotal = choiceStats?.readers ?? 0
+  const showStats = statsTotal >= 3 && !isReRead
 
   // Catat bahwa bab ini telah dibuka (progres lokal, monotonic).
   useEffect(() => {
@@ -699,6 +706,11 @@ export function ReaderView({
                         <Check className="size-4 shrink-0 text-primary" aria-hidden="true" />
                       )}
                     </span>
+                    {showStats && !isReRead && (statsTotal ? (choiceStats!.perChoice[c.id] ?? 0) : 0) > 0 && (
+                      <span className="text-[11px] font-medium text-muted-foreground">
+                        Dipilih {(100 * (choiceStats!.perChoice[c.id] ?? 0)) / statsTotal}% pembaca
+                      </span>
+                    )}
                     {isReRead && wasChosen && (
                       <span className="text-[11px] font-medium text-muted-foreground">
                         Pilihanmu waktu itu

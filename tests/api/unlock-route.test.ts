@@ -268,4 +268,35 @@ describe('POST /api/stories/[id]/unlock', () => {
     expect(json).toEqual({ error: 'Bab belum bisa dibuka. Coba lagi sebentar.' })
     expect(mocks.resolveChapterAccess).toHaveBeenCalledTimes(2)
   })
+
+  it('7. encoded story id "demo%3Aselasa-akhir" -> normalizes to "demo:selasa-akhir" for access check and spend', async () => {
+    const rawId = 'demo%3Aselasa-akhir'
+    const normalizedId = 'demo:selasa-akhir'
+    const dbMock = createDbMock(
+      [{ id: normalizedId, owner_user_id: 'user-author-999', commercial_origin: null, story_mode: 'standard' }],
+      [],
+    )
+    mocks.getDb.mockReturnValue(dbMock)
+    mocks.resolveChapterAccess.mockResolvedValueOnce({
+      readable: false,
+      reason: 'PAYMENT_REQUIRED',
+      cost: 8,
+    })
+    mocks.spendChapterUnlock.mockResolvedValueOnce('ok')
+    mocks.getCreditBalance.mockResolvedValueOnce(100).mockResolvedValueOnce(92)
+
+    const { req, params } = makeRequest(rawId, 4)
+    const res = await POST(req, params)
+    const json = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(json).toEqual({ status: 'ok', balance: 92 })
+    expect(mocks.resolveChapterAccess).toHaveBeenCalledWith({
+      userId,
+      storyId: normalizedId,
+      chapterNumber: 4,
+      policy,
+    })
+    expect(mocks.spendChapterUnlock).toHaveBeenCalledWith(userId, normalizedId, 4, 8, 'reader')
+  })
 })

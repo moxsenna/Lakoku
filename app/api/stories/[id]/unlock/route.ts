@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/api/user-state'
 import { getReadingPolicy, getCreditBalance, spendChapterUnlock } from '@/lib/credits/server'
+import { normalizeStoryRouteId } from '@/lib/story-route-id'
 import { getDb, single } from '@lakoku/db'
 
 /**
@@ -18,7 +19,8 @@ export async function POST(
     return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 401 })
   }
 
-  const { id: storyId } = await params
+  const route = await params
+  const storyId = normalizeStoryRouteId(route.id)
   const body = (await req.json().catch(() => ({}))) as { chapter?: number }
   const chapter = Number(body.chapter)
   if (!Number.isInteger(chapter) || chapter < 1) {

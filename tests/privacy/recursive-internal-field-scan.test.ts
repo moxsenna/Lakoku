@@ -26,9 +26,17 @@ const routeMocks = vi.hoisted(() => ({
   getChapterStatusForUser: vi.fn(),
   createPersonalizedStory: vi.fn(),
   clonePremiumStoryForUser: vi.fn(),
+  getReadingPolicy: vi.fn(),
+  resolveChapterAccess: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
+vi.mock('@/lib/credits/server', () => ({
+  getReadingPolicy: routeMocks.getReadingPolicy,
+}))
+vi.mock('@/lib/credits/access-resolver.server', () => ({
+  resolveChapterAccess: routeMocks.resolveChapterAccess,
+}))
 vi.mock('@/lib/api/server', () => ({
   listExploreStories: routeMocks.listExploreStories,
   getStory: routeMocks.getStory,
@@ -235,6 +243,15 @@ beforeEach(() => {
     replayed: false,
   })
   routeMocks.clonePremiumStoryForUser.mockResolvedValue(publicShapes.premiumCloneFirst)
+  routeMocks.getReadingPolicy.mockResolvedValue({
+    freeTierChapters: 3,
+    creditsPerChapter: 10,
+  })
+  routeMocks.resolveChapterAccess.mockResolvedValue({
+    readable: true,
+    reason: 'FREE_STANDARD',
+    cost: 0,
+  })
 })
 
 describe('reader route response privacy', () => {

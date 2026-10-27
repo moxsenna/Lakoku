@@ -89,7 +89,7 @@ describe('final reader chapter', () => {
     const html = renderReader(value)
 
     expect(html).not.toContain('PILIHANMU')
-    expect(html).toContain('Kembali ke Library')
+    expect(html).toContain('Kembali ke Koleksiku')
     expect(html).toContain('href="/koleksiku"')
     expect(html).toContain('Buat Cerita Baru')
     expect(html).toContain('href="/mulai"')
@@ -105,7 +105,7 @@ describe('final reader chapter', () => {
 
     expect(html).toContain('PILIHANMU')
     expect(html).toContain('Kebenaran mungkin menunggu.')
-    expect(html).not.toContain('Kembali ke Library')
+    expect(html).not.toContain('Kembali ke Koleksiku')
   })
 
   it('renders a local previous choice snapshot without changing server precedence', () => {

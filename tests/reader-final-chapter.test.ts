@@ -222,10 +222,10 @@ describe('chapter status polling', () => {
         signal: new AbortController().signal,
         getStatus,
       })
-      await vi.advanceTimersByTimeAsync(60_000)
+      await vi.advanceTimersByTimeAsync(180_000)
 
       await expect(result).resolves.toBe('unknown')
-      expect(getStatus).toHaveBeenCalledTimes(40)
+      expect(getStatus).toHaveBeenCalledTimes(120)
       expect(vi.getTimerCount()).toBe(0)
     },
   )

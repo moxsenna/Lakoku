@@ -46,12 +46,22 @@ export default async function BacaPage({
   const accessDecision = await resolveChapterAccess({ userId: user?.id ?? null, storyId: story.id, chapterNumber: chapter.number, policy })
   if (!accessDecision.readable) {
     const balance = user ? await getCreditBalance(user.id) : 0
+    let bundleQuote = null
+    if (story.id.startsWith('catalog:')) {
+      try {
+        const { getCatalogBundleQuote } = await import('@/lib/catalog/bundle.server')
+        bundleQuote = await getCatalogBundleQuote(story.id, user?.id ?? null)
+      } catch (err) {
+        console.warn('GET_CATALOG_BUNDLE_QUOTE_FAILED', err)
+      }
+    }
     return (
       <ChapterLocked
         story={story}
         chapterNumber={chapter.number}
         cost={accessDecision.cost}
         balance={balance}
+        bundleQuote={bundleQuote}
       />
     )
   }

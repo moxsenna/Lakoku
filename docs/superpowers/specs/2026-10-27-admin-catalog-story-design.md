@@ -1,7 +1,7 @@
 # Cerita Katalog Admin — Desain
 
 **Tanggal:** 2026-10-27
-**Status:** Draf untuk review PM
+**Status:** Disetujui PM 2026-10-27
 **Prasyarat:** fix paywall cerita bersama di `main` `ce307a9` (ref unlock per-pembaca, gerbang API bab & pilihan). Harus ter-deploy sebelum katalog tayang.
 
 ## 1. Ringkasan
@@ -18,6 +18,9 @@ Fitur generate-dari-nol milik pengguna tidak berubah. Katalog adalah jenis cerit
 | Harga per bab | 5 Lakoin |
 | Paket novel | Ada, sekali bayar membuka semua bab berbayar |
 | Alur admin | Generate otomatis → QC → publish manual |
+| Harga paket default | 150 Lakoin |
+| Varian ending | 3 (2 utama + 1 rahasia) |
+| Rasa pengaruh pilihan | Reaksi pilihan 1–2 paragraf + penanda arah halus (lihat §4.1) |
 
 ## 3. Model data
 
@@ -59,6 +62,12 @@ Tidak ada tabel baru. `reader_states` sudah punya `route_state`, `choice_history
 6. Bab 45–50: pembacaan bab katalog dengan `n >= 45` mengambil varian dari `catalog_ending_chapters` sesuai `locked_ending_key` pembaca. Titik kait: `getChapter` (`lib/api/server.ts`), `queryChapter` (`lib/api/queries.ts`), route status bab, dan `queryChoiceOutcome` di route pilihan.
 7. Statistik pilihan (≥3 pembaca) dan kartu ending yang sudah ada langsung bermakna karena banyak pembaca berbagi `story_id` yang sama.
 
+### 4.1 Rasa pengaruh pilihan
+Badan Bab 1–44 sama untuk semua pembaca, jadi pengaruh pilihan harus terasa lewat dua hal murah yang tidak menambah versi bab:
+
+1. **Reaksi kuat.** `choice_outcomes.consequence` untuk katalog berisi 1–2 paragraf adegan reaksi yang spesifik untuk pilihan itu (bukan satu kalimat). Generator memberi target 60–150 kata per reaksi; validator menolak reaksi < 40 kata. Reader sudah menampilkan `consequence`; komponen perlu menampilkan semua paragraf (sekarang hanya `consequence[0]` di `components/reader-view.tsx:358`).
+2. **Penanda arah.** Field baru opsional `directionHint` di `ChoiceOutcome` (`packages/contracts/src/reader.ts`), satu kalimat halus berbasis cerita, misalnya *"Raka mulai mempercayaimu."* Generator mengisinya hanya untuk pilihan yang menggeser `endingBias` cukup besar (bukan setiap pilihan), disimpan di kolom baru `choice_outcomes.direction_hint` (nullable). Reader menampilkannya di bawah reaksi dengan gaya miring kecil. Tidak boleh menyebut skor, ending, atau istilah teknis (brand guard).
+
 ## 5. Harga dan paket
 
 ### 5.1 Per bab
@@ -71,7 +80,7 @@ Tidak ada tabel baru. `reader_states` sudah punya `route_state`, `choice_history
 - UI: layar bab terkunci menampilkan dua tombol — "Buka bab ini (5 Lakoin)" dan "Buka semua bab (X Lakoin, hemat Y)".
 
 ### 5.3 Hitungan
-47 bab berbayar × 5 = 235 Lakoin eceran. Dengan kurs paket termurah (Rp15.000 = 30 Lakoin, Rp500/Lakoin): eceran ≈ Rp117.500. **Usulan default paket: 150 Lakoin (≈Rp75.000, hemat 36%).** Menunggu konfirmasi PM.
+47 bab berbayar × 5 = 235 Lakoin eceran. Dengan kurs paket termurah (Rp15.000 = 30 Lakoin, Rp500/Lakoin): eceran ≈ Rp117.500. **Default paket: 150 Lakoin (≈Rp75.000, hemat 36%)**, disetujui PM.
 
 ## 6. Alur admin
 
@@ -89,7 +98,8 @@ Tokoh utama punya **nama tetap** (seperti novel biasa). Prosa sudah sudut pandan
 ### 6.3 Penulisan bab dengan pilihan tertunda
 Pipeline sekarang menulis Bab N+1 mengikuti pilihan Bab N (judge Lapis C wajib bila ada `previousChoice`). Untuk spine bersama, Bab N+1 tidak boleh mengasumsikan pilihan tertentu. Generator katalog berjalan dengan mode `choiceMode: 'deferred'`:
 - Brief Bab N+1 tidak memuat `previousChoice`.
-- Outcome tiap pilihan ditulis sebagai reaksi singkat plus `effect_json` (`endingBias`, flag rute) — dampaknya muncul di ending, bukan di badan bab berikutnya.
+- Outcome tiap pilihan ditulis sebagai reaksi kuat (§4.1) plus `effect_json` (`endingBias`, flag rute) dan `directionHint` opsional — dampaknya muncul di reaksi dan ending, bukan di badan bab berikutnya.
+- Kontrak katalog wajib punya tepat 3 `endingCandidates` (2 `main` + 1 `secret`); generator fork di Bab 44 untuk ketiganya.
 - Validator Lapis A/B tetap berjalan; Lapis C memeriksa konsistensi tanpa pilihan.
 
 Ini perubahan paling berisiko di spec ini; QC admin adalah jaring pengaman terakhir.
@@ -114,10 +124,10 @@ Tombol **Terbitkan** aktif hanya bila semua bab disetujui. Terbitkan = `status p
 
 - Unit: resolver katalog (harga per novel, paket, bab gratis, varian), hitung harga paket setelah beli eceran, kunci ending sekali di Bab 44, pembacaan varian sesuai `locked_ending_key`, gerbang admin.
 - Route: `/bundle` (saldo kurang, duplikat, harga 0), pilihan Bab 44 mengunci ending, bab 45+ tanpa kunci ending → tidak bocor varian.
-- Generator: mode `deferred` tanpa `previousChoice`; resume; fork varian. Dijalankan dengan provider deterministik (tanpa biaya) di test.
+- Reader: semua paragraf reaksi tampil; `directionHint` tampil bila ada dan lolos brand guard.
+- Generator: mode `deferred` tanpa `previousChoice`; reaksi ≥ 40 kata; resume; fork 3 varian. Dijalankan dengan provider deterministik (tanpa biaya) di test.
 - Uji nyata satu novel di VPS sebelum terbit pertama, dibaca admin end-to-end.
 
 ## 9. Pertanyaan terbuka
 
-1. Harga paket default: usul 150 Lakoin.
-2. Jumlah varian ending per novel: usul 3 (2 utama + 1 rahasia), mengikuti `endingCandidates` kontrak.
+Tidak ada. Semua keputusan di §2.

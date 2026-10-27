@@ -54,7 +54,7 @@ export async function resolveChapterAccess(input: {
 
     // Determine chapter cost: catalog price or standard policy
     let chapterCost = policy.creditsPerChapter
-    const isCatalog = story.story_mode === 'catalog' || input.storyId.startsWith('catalog:')
+    const isCatalog = story.story_mode === 'catalog'
     if (isCatalog) {
       const { data: catalogRow } = await single(
         db

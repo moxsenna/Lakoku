@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { bundleRef, readerUnlockRef } from '@/lib/credits/policy'
+import { bundleRef, DEFAULT_READING_POLICY, readerUnlockRef } from '@/lib/credits/policy'
 import { isCommercialStoryMode } from '@/lib/commercial/resolver.server'
 
 vi.mock('server-only', () => ({}))
@@ -116,7 +116,7 @@ describe('catalog access resolver & policy', () => {
     })
     mockDbState.catalogStories.push({
       story_id: 'catalog:misteri-desa',
-      chapter_price: 5,
+      chapter_price: 7,
       bundle_price: 150,
       status: 'published',
     })
@@ -126,7 +126,82 @@ describe('catalog access resolver & policy', () => {
       storyId: 'catalog:misteri-desa',
       chapterNumber: 4,
     })
+    expect(decision).toEqual({ readable: false, reason: 'PAYMENT_REQUIRED', cost: 7 })
+  })
+
+  it('catalog story Bab 4 falls back to default 5 credits when catalog_stories row missing', async () => {
+    const { resolveChapterAccess } = await import('@/lib/credits/access-resolver.server')
+    mockDbState.stories.push({
+      id: 'catalog:misteri-desa',
+      owner_user_id: null,
+      story_mode: 'catalog',
+      commercial_origin: null,
+      visibility: 'public',
+    })
+
+    const decision = await resolveChapterAccess({
+      userId: 'u123',
+      storyId: 'catalog:misteri-desa',
+      chapterNumber: 4,
+    })
     expect(decision).toEqual({ readable: false, reason: 'PAYMENT_REQUIRED', cost: 5 })
+  })
+
+  it('guest reader (userId: null) on locked catalog chapter gets PAYMENT_REQUIRED with catalog price', async () => {
+    const { resolveChapterAccess } = await import('@/lib/credits/access-resolver.server')
+    mockDbState.stories.push({
+      id: 'catalog:misteri-desa',
+      owner_user_id: null,
+      story_mode: 'catalog',
+      commercial_origin: null,
+      visibility: 'public',
+    })
+    mockDbState.catalogStories.push({
+      story_id: 'catalog:misteri-desa',
+      chapter_price: 7,
+      bundle_price: 150,
+      status: 'published',
+    })
+
+    const decision = await resolveChapterAccess({
+      userId: null,
+      storyId: 'catalog:misteri-desa',
+      chapterNumber: 4,
+    })
+    expect(decision).toEqual({ readable: false, reason: 'PAYMENT_REQUIRED', cost: 7 })
+  })
+
+  it('story with id catalog:spoof but story_mode: standard uses standard policy price and never unlocks via bundle ref', async () => {
+    const { resolveChapterAccess } = await import('@/lib/credits/access-resolver.server')
+    mockDbState.stories.push({
+      id: 'catalog:spoof',
+      owner_user_id: null,
+      story_mode: 'standard',
+      commercial_origin: null,
+      visibility: 'public',
+    })
+    mockDbState.catalogStories.push({
+      story_id: 'catalog:spoof',
+      chapter_price: 3,
+      bundle_price: 50,
+      status: 'published',
+    })
+    mockDbState.ledger.push({
+      id: 'led-b',
+      user_id: 'u123',
+      ref: bundleRef('catalog:spoof', 'u123'),
+    })
+
+    const decision = await resolveChapterAccess({
+      userId: 'u123',
+      storyId: 'catalog:spoof',
+      chapterNumber: 4,
+    })
+    expect(decision).toEqual({
+      readable: false,
+      reason: 'PAYMENT_REQUIRED',
+      cost: DEFAULT_READING_POLICY.creditsPerChapter,
+    })
   })
 
   it('catalog story Bab 4 unlocked via readerUnlockRef is LEDGER_UNLOCKED', async () => {

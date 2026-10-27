@@ -6,7 +6,7 @@
 
 **Architecture:** Shared-spine interactive fiction novel model (Model A). Bab 1–44 stored in existing `chapters` and `choice_outcomes` tables without reader dimension. Reader route state tracked in `reader_states.route_state`. At Bab 44 choice, `resolveEnding` calculates the winning branch from reader route state + snapshot contract and sets `reader_states.locked_ending_key` once (never overwritten, isolated per reader). Bab 45–50 variant chapters stored in `catalog_ending_chapters` keyed by `(story_id, ending_key, number)`. Reader access for catalog stories uses standard non-commercial path (`isCommercialStoryMode('catalog') === false`), unlocking chapters via reader-scoped ref `unlock:{storyId}:{ch}:{userId}` or bundle ref `bundle:{storyId}:{userId}`.
 
-**Tech Stack:** Next.js 15 App Router, TypeScript (strict mode), Neon Postgres via Kysely (`@lakoku/db`), Better Auth (`getSessionUser`), Zod (`@lakoku/contracts`), Tailwind CSS + Lucide icons, Vitest.
+**Tech Stack:** Next.js 16 App Router, TypeScript (strict mode), Neon Postgres via Kysely (`@lakoku/db`), Better Auth (`getSessionUser`), Zod (`@lakoku/contracts`), Tailwind CSS + Lucide icons, Vitest.
 
 ## Global Constraints
 - `story_mode = 'catalog'` is non-commercial: `isCommercialStoryMode('catalog') === false`.
@@ -87,6 +87,7 @@ tests/
   - Table `catalog_stories` (`story_id`, `status`, `chapter_price`, `bundle_price`, `contract_json`, `generation_progress`, `published_at`, `published_by`)
   - Table `catalog_ending_chapters` (`story_id`, `ending_key`, `number`, `title`, `paragraphs`, `choices`, `choice_prompt`, `outcomes_json`)
   - Column `choice_outcomes.direction_hint text null`
+  - Function `public.catalog_bundle_spent_v1(p_user_id uuid, p_story_id text) returns integer` (single source for spent-on-story)
   - Function `public.spend_bundle_v1(p_user_id uuid, p_story_id text) returns jsonb`
   - Kysely types in `lib/supabase/db-types.ts`: `CatalogStories`, `CatalogEndingChapters`, updated `ChoiceOutcomes`, updated `Database`
 
@@ -143,6 +144,15 @@ describe('catalog schema migration and types', () => {
     expect(sql).toContain('pg_advisory_xact_lock')
     expect(sql).toContain('v_fair_price := greatest(0, v_bundle_price - v_spent)')
     expect(sql).toContain("'unlock_bundle'")
+  })
+
+  it('catalog_bundle_spent_v1 counts only this story chapter refs (no LIKE wildcard / prefix collision)', () => {
+    const sql = fs.readFileSync(migrationPath, 'utf8')
+    expect(sql).toMatch(/create or replace function public\.catalog_bundle_spent_v1/i)
+    expect(sql).not.toMatch(/ref\s+like/i)
+    expect(sql).toContain("reason = 'unlock_chapter'")
+    expect(sql).toContain("~ ('^[0-9]+(:' || p_user_id::text || ')?$')")
+    expect(sql).toContain('v_spent := public.catalog_bundle_spent_v1(p_user_id, p_story_id)')
   })
 
   it('db-types exports CatalogStories and CatalogEndingChapters', async () => {
@@ -212,7 +222,28 @@ create index if not exists catalog_ending_chapters_lookup_idx
 alter table public.choice_outcomes
   add column if not exists direction_hint text null;
 
--- 5. RPC spend_bundle_v1: hitung fair price dan debit ledger atomik
+-- 5a. Total Lakoin yang sudah dibelanjakan pembaca untuk bab satu novel.
+-- Satu sumber kebenaran: dipakai spend_bundle_v1 dan quote paket di server.
+-- Tanpa LIKE: '_' / '%' di slug adalah wildcard, dan prefix 'unlock:{story}:' juga
+-- cocok untuk story lain berawalan sama (catalog:abc vs catalog:abc:2). Sisa ref
+-- setelah prefix harus persis '{bab}' (kanonik) atau '{bab}:{userId}' (per-pembaca).
+create or replace function public.catalog_bundle_spent_v1(
+  p_user_id  uuid,
+  p_story_id text
+) returns integer
+language sql stable security definer set search_path = public
+as $$
+  select coalesce(sum(-delta), 0)::int
+  from public.credit_ledger
+  where user_id = p_user_id
+    and delta < 0
+    and reason = 'unlock_chapter'
+    and left(ref, length('unlock:' || p_story_id || ':')) = 'unlock:' || p_story_id || ':'
+    and substr(ref, length('unlock:' || p_story_id || ':') + 1)
+      ~ ('^[0-9]+(:' || p_user_id::text || ')?$');
+$$;
+
+-- 5b. RPC spend_bundle_v1: hitung fair price dan debit ledger atomik
 create or replace function public.spend_bundle_v1(
   p_user_id  uuid,
   p_story_id text
@@ -250,15 +281,7 @@ begin
     raise exception 'spend_bundle_v1: story is not a catalog story or missing pricing';
   end if;
 
-  -- Hitung total yang sudah dibelanjakan pembaca untuk bab-bab novel ini
-  select coalesce(sum(-delta), 0) into v_spent
-  from public.credit_ledger
-  where user_id = p_user_id
-    and delta < 0
-    and (
-      ref like 'unlock:' || p_story_id || ':%'
-      or ref like 'unlock:' || p_story_id || ':%:' || p_user_id::text
-    );
+  v_spent := public.catalog_bundle_spent_v1(p_user_id, p_story_id);
 
   v_fair_price := greatest(0, v_bundle_price - v_spent);
 
@@ -325,7 +348,7 @@ Add `catalog_stories: CatalogStories;` and `catalog_ending_chapters: CatalogEndi
 
 - [ ] **Step 4: Run test to verify pass**
 Run: `pnpm exec vitest run tests/db/catalog-schema-migration.test.ts`
-Expected: PASS with 7/7 tests passing.
+Expected: PASS with 8/8 tests passing.
 
 - [ ] **Step 5: Commit changes**
 Command:
@@ -680,7 +703,7 @@ git commit -m "feat(credits): catalog pricing, bundleRef, and BUNDLE_UNLOCKED re
 - Test: `tests/catalog/catalog-bundle-route.test.ts`
 
 **Interfaces:**
-- Consumes: `catalog_stories`, `credit_ledger`, `spend_bundle_v1` RPC
+- Consumes: `catalog_stories`, `stories.total_chapters`, `catalog_bundle_spent_v1` + `spend_bundle_v1` RPCs, `getReadingPolicy()`
 - Produces:
   - `getCatalogBundleQuote(storyId: string, userId: string | null): Promise<BundleQuote | null>`
   - `spendCatalogBundle(userId: string, storyId: string): Promise<SpendBundleResult>`
@@ -713,6 +736,7 @@ vi.mock('@/lib/api/user-state', () => ({
 
 vi.mock('@/lib/credits/server', () => ({
   getCreditBalance: mocks.getCreditBalance,
+  getReadingPolicy: async () => ({ freeChapters: 3, creditsPerChapter: 8 }),
 }))
 
 vi.mock('@lakoku/db', () => ({
@@ -812,33 +836,39 @@ describe('POST & GET /api/stories/[id]/bundle', () => {
     expect(json).toEqual({ status: 'ok', pricePaid: 140, balance: 60 })
   })
 
-  it('GET returns bundle quote with fair price and savings', async () => {
+  it('GET returns bundle quote with fair price and savings from the shared SQL spent function', async () => {
     mocks.getSessionUser.mockResolvedValue({ id: 'u1' })
+    const catalogChain = {
+      innerJoin: () => catalogChain,
+      select: () => catalogChain,
+      where: () => catalogChain,
+      limit: () => catalogChain,
+      execute: async () => [{ bundle_price: 150, chapter_price: 5, total_chapters: 50 }],
+    }
+    const storiesChain = {
+      select: () => storiesChain,
+      where: () => storiesChain,
+      limit: () => storiesChain,
+      execute: async () => [{ id: 'catalog:test', story_mode: 'catalog' }],
+    }
     mocks.getDb.mockReturnValue({
-      selectFrom: (table: string) => ({
-        select: () => ({
-          where: () => ({
-            limit: () => ({
-              execute: async () => {
-                if (table === 'stories') return [{ id: 'catalog:test', story_mode: 'catalog', total_chapters: 50 }]
-                if (table === 'catalog_stories') return [{ bundle_price: 150, chapter_price: 5 }]
-                return []
-              },
-            }),
-            where: () => ({
-              execute: async () => [{ spent: '10' }],
-            }),
-          }),
-        }),
-      }),
+      selectFrom: (table: string) => (table === 'catalog_stories' ? catalogChain : storiesChain),
     })
+    mocks.rpcOne.mockReturnValue({ execute: async () => [{ fn: 10 }] })
 
     const req = new Request('http://localhost/api/stories/catalog:test/bundle', { method: 'GET' })
     const res = await GET(req, { params: Promise.resolve({ id: 'catalog:test' }) })
     expect(res.status).toBe(200)
     const json = await res.json()
+    expect(mocks.rpcOne).toHaveBeenCalledWith(expect.anything(), 'catalog_bundle_spent_v1', {
+      p_user_id: 'u1',
+      p_story_id: 'catalog:test',
+    })
     expect(json.bundlePrice).toBe(150)
+    expect(json.alreadySpent).toBe(10)
     expect(json.price).toBe(140)
+    // 47 bab berbayar x 5 = 235 eceran; bayar total 10 + 140 = 150 -> hemat 85
+    expect(json.savings).toBe(85)
   })
 })
 ```
@@ -853,8 +883,7 @@ Create `lib/catalog/bundle.server.ts`:
 ```typescript
 import 'server-only'
 import { getDb, single, rpcOne } from '@lakoku/db'
-import { getCreditBalance } from '@/lib/credits/server'
-import { sql } from 'kysely'
+import { getReadingPolicy } from '@/lib/credits/server'
 
 export interface BundleQuote {
   storyId: string
@@ -882,8 +911,13 @@ export async function getCatalogBundleQuote(
   const { data: catalogRow } = await single(
     db
       .selectFrom('catalog_stories')
-      .select(['bundle_price', 'chapter_price'])
-      .where('story_id', '=', storyId)
+      .innerJoin('stories', 'stories.id', 'catalog_stories.story_id')
+      .select([
+        'catalog_stories.bundle_price',
+        'catalog_stories.chapter_price',
+        'stories.total_chapters',
+      ])
+      .where('catalog_stories.story_id', '=', storyId)
       .limit(1)
       .execute(),
   )
@@ -895,25 +929,21 @@ export async function getCatalogBundleQuote(
 
   let alreadySpent = 0
   if (userId) {
-    const { data: spentRow } = await single(
-      db
-        .selectFrom('credit_ledger')
-        .select(sql<string>`coalesce(sum(-delta), 0)`.as('spent'))
-        .where('user_id', '=', userId)
-        .where('delta', '<', 0)
-        .where((eb) =>
-          eb.or([
-            eb('ref', 'like', `unlock:${storyId}:%`),
-            eb('ref', 'like', `unlock:${storyId}:%:${userId}`),
-          ]),
-        )
-        .execute(),
+    // Sumber kebenaran sama dengan spend_bundle_v1 (tanpa duplikasi aturan ref di TS).
+    const { data: spentRow, error: spentErr } = await single(
+      rpcOne(db, 'catalog_bundle_spent_v1', {
+        p_user_id: userId,
+        p_story_id: storyId,
+      }).execute(),
     )
-    alreadySpent = Number(spentRow?.spent ?? 0)
+    if (spentErr) throw new Error(`getCatalogBundleQuote: ${spentErr.message}`)
+    const raw = spentRow ? ((spentRow as Record<string, unknown>).fn ?? spentRow) : 0
+    alreadySpent = Number(raw ?? 0)
   }
 
+  const { freeChapters } = await getReadingPolicy()
   const fairPrice = Math.max(0, bundlePrice - alreadySpent)
-  const paidChaptersCount = 47 // 50 total - 3 free
+  const paidChaptersCount = Math.max(0, (catalogRow.total_chapters ?? 50) - freeChapters)
   const fullRetailPrice = paidChaptersCount * chapterPrice
   const savings = Math.max(0, fullRetailPrice - (alreadySpent + fairPrice))
 

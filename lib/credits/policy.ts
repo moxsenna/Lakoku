@@ -33,3 +33,9 @@ export function chapterCost(n: number, policy: ReadingPolicy = DEFAULT_READING_P
 export function unlockRef(storyId: string, chapter: number): string {
   return `unlock:${storyId}:${chapter}`
 }
+
+/** Ref ledger unlock per-pembaca untuk cerita bersama (non-komersial). */
+export function readerUnlockRef(storyId: string, chapter: number, userId: string): string {
+  return `${unlockRef(storyId, chapter)}:${userId}`
+}
+

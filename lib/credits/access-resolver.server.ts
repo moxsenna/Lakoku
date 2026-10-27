@@ -1,7 +1,7 @@
 import 'server-only'
 import { getDb, single, result } from '@lakoku/db'
 import { isCommercialStoryMode } from '@/lib/commercial/resolver.server'
-import { isChapterFree, unlockRef, DEFAULT_READING_POLICY, type ReadingPolicy } from './policy'
+import { isChapterFree, unlockRef, readerUnlockRef, DEFAULT_READING_POLICY, type ReadingPolicy } from './policy'
 
 export interface ChapterAccessDecision {
   readable: boolean
@@ -60,7 +60,10 @@ export async function resolveChapterAccess(input: {
         .selectFrom('credit_ledger')
         .select('id')
         .where('user_id', '=', input.userId)
-        .where('ref', '=', unlockRef(input.storyId, input.chapterNumber))
+        .where('ref', 'in', [
+          readerUnlockRef(input.storyId, input.chapterNumber, input.userId),
+          unlockRef(input.storyId, input.chapterNumber),
+        ])
         .limit(1)
         .execute(),
     )

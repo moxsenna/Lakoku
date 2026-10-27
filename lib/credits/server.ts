@@ -1,6 +1,6 @@
 import 'server-only'
 import { cache } from 'react'
-import { getDb, result, single, rpcOne } from '@lakoku/db'
+import { getDb, single, rpcOne } from '@lakoku/db'
 import {
   DEFAULT_READING_POLICY,
   unlockRef,
@@ -11,7 +11,7 @@ import {
  * Sisi server kredit baca (server-only, service-role).
  *  - getReadingPolicy: baca kebijakan harga dari DB (reading_policy + feature_credit_costs), fallback default.
  *  - getCreditBalance: saldo kredit user (RPC credit_balance_v1).
- *  - isChapterUnlocked / listUnlockedChapters: status akses bab.
+ *  - isChapterUnlocked: status akses bab.
  *  - spendChapterUnlock: belanjakan kredit untuk buka bab (RPC spend_credits_v1, idempoten).
  */
 
@@ -71,28 +71,6 @@ export async function getCreditBalance(userId: string): Promise<number> {
     return Number(raw ?? 0)
   } catch {
     return 0
-  }
-}
-
-/** Nomor bab yang sudah di-unlock user untuk sebuah story. */
-export async function listUnlockedChapters(userId: string, storyId: string): Promise<number[]> {
-  try {
-    const db = getDb()
-    const prefix = `unlock:${storyId}:`
-    // RLS_AUDIT: credit_ledger_own_read
-    const { data } = await result(
-      db
-        .selectFrom('credit_ledger')
-        .select('ref')
-        .where('user_id', '=', userId)
-        .where('ref', 'like', `${unlockRef(storyId, 0).slice(0, -1)}%`) // "unlock:{storyId}:"
-        .execute(),
-    )
-    return (data ?? [])
-      .map((r) => Number(String(r.ref).slice(prefix.length)))
-      .filter((n) => Number.isInteger(n))
-  } catch {
-    return []
   }
 }
 

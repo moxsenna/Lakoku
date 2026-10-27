@@ -13,6 +13,7 @@ import {
 import { isStoryOwnedBy } from '@/lib/api/story-ownership.server'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
 import { maybeGrantAuthorTinta } from '@/lib/tinta/author-reward.server'
+import { getReadingPolicy } from '@/lib/credits/server'
 
 /**
  * POST /api/stories/[id]/choices
@@ -136,6 +137,22 @@ export async function POST(
         { error: 'Pilihan tidak dikenali.' },
         { status: 404 },
       )
+    }
+
+    const policy = await getReadingPolicy()
+    const { resolveChapterAccess } = await import('@/lib/credits/access-resolver.server')
+    const accessDecision = await resolveChapterAccess({
+      userId: user?.id ?? null,
+      storyId: id,
+      chapterNumber,
+      policy,
+    })
+
+    if (!accessDecision.readable) {
+      if (accessDecision.reason === 'PAYMENT_REQUIRED') {
+        return NextResponse.json({ error: 'Bab ini perlu dibuka dulu.' }, { status: 402 })
+      }
+      return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 403 })
     }
 
     const outcome = await queryChoiceOutcome(id, chapterNumber, choiceId)

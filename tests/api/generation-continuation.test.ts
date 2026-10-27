@@ -70,6 +70,12 @@ vi.mock('@lakoku/db', async (importOriginal) => {
 vi.mock('@/lib/api/story-ownership.server', () => ({
   isStoryOwnedBy: vi.fn(async () => true),
 }))
+vi.mock('@/lib/credits/server', () => ({
+  getReadingPolicy: vi.fn(async () => ({ freeTierChapters: 3, creditsPerChapter: 10 })),
+}))
+vi.mock('@/lib/credits/access-resolver.server', () => ({
+  resolveChapterAccess: vi.fn(async () => ({ readable: true, reason: 'FREE_STANDARD', cost: 0 })),
+}))
 
 const userId = '10000000-0000-4000-8000-000000000001'
 const correlationId = '20000000-0000-4000-8000-000000000002'

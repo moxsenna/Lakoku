@@ -11,6 +11,9 @@ const mocks = vi.hoisted(() => ({
   applyChoiceToUserState: vi.fn(),
   getSessionUser: vi.fn(),
   isStoryOwnedBy: vi.fn(),
+  maybeGrantAuthorTinta: vi.fn(),
+  getReadingPolicy: vi.fn(),
+  resolveChapterAccess: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
@@ -50,8 +53,14 @@ vi.mock('@/lib/api/personalized-choice.server', () => {
     }),
   }
 })
+vi.mock('@/lib/credits/server', () => ({
+  getReadingPolicy: mocks.getReadingPolicy,
+}))
+vi.mock('@/lib/credits/access-resolver.server', () => ({
+  resolveChapterAccess: mocks.resolveChapterAccess,
+}))
 vi.mock('@/lib/tinta/author-reward.server', () => ({
-  maybeGrantAuthorTinta: vi.fn().mockResolvedValue(undefined),
+  maybeGrantAuthorTinta: mocks.maybeGrantAuthorTinta,
 }))
 
 const userId = '10000000-0000-4000-8000-000000999999'
@@ -97,6 +106,16 @@ beforeEach(() => {
   })
   mocks.applyChoiceToUserState.mockResolvedValue(undefined)
   mocks.isStoryOwnedBy.mockResolvedValue(false)
+  mocks.maybeGrantAuthorTinta.mockResolvedValue(undefined)
+  mocks.getReadingPolicy.mockResolvedValue({
+    freeTierChapters: 3,
+    creditsPerChapter: 10,
+  })
+  mocks.resolveChapterAccess.mockResolvedValue({
+    readable: true,
+    reason: 'FREE_STANDARD',
+    cost: 0,
+  })
 })
 
 describe('standard public ownership guard', () => {
@@ -199,5 +218,111 @@ describe('standard public ownership guard', () => {
     expect(mocks.queryStoryForUser).toHaveBeenCalledWith('private-story-not-owned', userId)
     expect(mocks.queryChoiceOutcome).not.toHaveBeenCalled()
     expect(mocks.queryChapter).not.toHaveBeenCalled()
+  })
+
+  describe('chapter access gate on standard path', () => {
+    it('returns 402 when resolver reports PAYMENT_REQUIRED on chapter 5 of public story', async () => {
+      mocks.resolveChapterAccess.mockResolvedValue({
+        readable: false,
+        reason: 'PAYMENT_REQUIRED',
+        cost: 10,
+      })
+      const { POST } = await import('@/app/api/stories/[id]/choices/route')
+
+      const response = await POST(choiceRequest({ chapterNumber: 5, choiceId }), {
+        params: Promise.resolve({ id: standardStoryId }),
+      })
+      const body = await response.json()
+
+      expect(response.status).toBe(402)
+      expect(body).toEqual({ error: 'Bab ini perlu dibuka dulu.' })
+      expect(mocks.resolveChapterAccess).toHaveBeenCalledWith({
+        userId,
+        storyId: standardStoryId,
+        chapterNumber: 5,
+        policy: expect.objectContaining({ freeTierChapters: 3, creditsPerChapter: 10 }),
+      })
+      expect(mocks.queryChoiceOutcome).not.toHaveBeenCalled()
+      expect(mocks.applyChoiceToUserState).not.toHaveBeenCalled()
+      expect(mocks.maybeGrantAuthorTinta).not.toHaveBeenCalled()
+      expect(mocks.generateNextChapterReal).not.toHaveBeenCalled()
+    })
+
+    it('returns 403 without side effects when resolver reports NOT_AUTHORIZED', async () => {
+      mocks.resolveChapterAccess.mockResolvedValue({
+        readable: false,
+        reason: 'NOT_AUTHORIZED',
+        cost: 0,
+      })
+      const { POST } = await import('@/app/api/stories/[id]/choices/route')
+
+      const response = await POST(choiceRequest({ chapterNumber: 1, choiceId }), {
+        params: Promise.resolve({ id: standardStoryId }),
+      })
+      const body = await response.json()
+
+      expect(response.status).toBe(403)
+      expect(body).toEqual({ error: 'Tidak diizinkan.' })
+      expect(mocks.queryChoiceOutcome).not.toHaveBeenCalled()
+      expect(mocks.applyChoiceToUserState).not.toHaveBeenCalled()
+      expect(mocks.maybeGrantAuthorTinta).not.toHaveBeenCalled()
+      expect(mocks.generateNextChapterReal).not.toHaveBeenCalled()
+    })
+
+    it('returns outcome and applies state when chapter 2 is FREE_STANDARD', async () => {
+      mocks.resolveChapterAccess.mockResolvedValue({
+        readable: true,
+        reason: 'FREE_STANDARD',
+        cost: 0,
+      })
+      const { POST } = await import('@/app/api/stories/[id]/choices/route')
+
+      const response = await POST(choiceRequest({ chapterNumber: 2, choiceId }), {
+        params: Promise.resolve({ id: standardStoryId }),
+      })
+      const body = await response.json()
+
+      expect(response.status).toBe(200)
+      expect(body).toEqual({ outcome: publicOutcome })
+      expect(mocks.resolveChapterAccess).toHaveBeenCalledWith({
+        userId,
+        storyId: standardStoryId,
+        chapterNumber: 2,
+        policy: expect.any(Object),
+      })
+      expect(mocks.queryChoiceOutcome).toHaveBeenCalledWith(standardStoryId, 2, choiceId)
+      expect(mocks.applyChoiceToUserState).toHaveBeenCalledTimes(1)
+      expect(mocks.maybeGrantAuthorTinta).toHaveBeenCalledWith({
+        readerUserId: userId,
+        storyId: standardStoryId,
+        chapterNumber: 2,
+      })
+    })
+
+    it('triggers continueStandardGeneration when owner submits choice on readable chapter', async () => {
+      mocks.isStoryOwnedBy.mockResolvedValue(true)
+      mocks.resolveChapterAccess.mockResolvedValue({
+        readable: true,
+        reason: 'FREE_STANDARD',
+        cost: 0,
+      })
+      const { POST } = await import('@/app/api/stories/[id]/choices/route')
+
+      const response = await POST(choiceRequest({ chapterNumber: 1, choiceId }), {
+        params: Promise.resolve({ id: standardStoryId }),
+      })
+      const body = await response.json()
+
+      expect(response.status).toBe(200)
+      expect(body).toEqual({ outcome: publicOutcome, nextChapterReady: true })
+      expect(mocks.generateNextChapterReal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          storyId: standardStoryId,
+          userId,
+          chapterNumber: 2,
+          triggerChoiceId: choiceId,
+        }),
+      )
+    })
   })
 })

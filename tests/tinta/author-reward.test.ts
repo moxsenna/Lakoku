@@ -85,6 +85,14 @@ vi.mock('@/lib/api/story-ownership.server', () => ({
   isStoryOwnedBy: mocks.isStoryOwnedBy,
 }))
 
+vi.mock('@/lib/credits/server', () => ({
+  getReadingPolicy: vi.fn(async () => ({ freeTierChapters: 3, creditsPerChapter: 10 })),
+}))
+
+vi.mock('@/lib/credits/access-resolver.server', () => ({
+  resolveChapterAccess: vi.fn(async () => ({ readable: true, reason: 'FREE_STANDARD', cost: 0 })),
+}))
+
 import { maybeGrantAuthorTinta } from '../../lib/tinta/author-reward.server'
 import { POST } from '../../app/api/stories/[id]/choices/route'
 import { PersonalizedChoiceError } from '@/lib/api/personalized-choice.server'

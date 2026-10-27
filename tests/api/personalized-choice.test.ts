@@ -68,6 +68,12 @@ vi.mock('@/lib/api/generation-continuation.server', () => ({
   continuePersonalizedGeneration: mocks.continuePersonalizedGeneration,
   continueStandardGeneration: mocks.continueStandardGeneration,
 }))
+vi.mock('@/lib/credits/server', () => ({
+  getReadingPolicy: vi.fn(async () => ({ freeTierChapters: 3, creditsPerChapter: 10 })),
+}))
+vi.mock('@/lib/credits/access-resolver.server', () => ({
+  resolveChapterAccess: vi.fn(async () => ({ readable: true, reason: 'FREE_STANDARD', cost: 0 })),
+}))
 
 type DbResult = { data: unknown; error: { message: string; code?: string } | null }
 type DbCall = { table?: string; method: string; args: unknown[] }

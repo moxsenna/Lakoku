@@ -74,12 +74,8 @@ export async function resolveChapterAccess(input: {
     return { readable: false, reason: 'PAYMENT_REQUIRED', cost: policy.creditsPerChapter }
   }
 
-  // Commercial mode (personalized_ai / premium_instance): STRICT OWNER CHECK & VISIBILITY CHECK
+  // Commercial mode (personalized_ai / premium_instance): STRICT OWNER CHECK
   if (!input.userId || story.owner_user_id !== input.userId) {
-    return { readable: false, reason: 'NOT_AUTHORIZED', cost: 0 }
-  }
-
-  if (story.visibility && story.visibility !== 'private' && story.visibility !== 'unlisted') {
     return { readable: false, reason: 'NOT_AUTHORIZED', cost: 0 }
   }
 

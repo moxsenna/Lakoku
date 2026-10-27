@@ -31,6 +31,13 @@ interface LedgerRow {
   ref: string
 }
 
+interface FeatureCreditCostRow {
+  [key: string]: unknown
+  feature_key: string
+  credits_required: number
+  is_active: boolean
+}
+
 interface MockQueryBuilder<TRow> {
   select: (cols: unknown) => MockQueryBuilder<TRow>
   where: (col: string, op: string, val: unknown) => MockQueryBuilder<TRow>
@@ -61,9 +68,15 @@ function filterRows<T extends Record<string, unknown>>(
   return matched
 }
 
+const defaultFeatureCreditCosts: FeatureCreditCostRow[] = [
+  { feature_key: 'story_start', credits_required: 24, is_active: true },
+  { feature_key: 'chapter_unlock', credits_required: 8, is_active: true },
+]
+
 const mockState = {
   stories: [] as StoryRow[],
   ledger: [] as LedgerRow[],
+  featureCreditCosts: [...defaultFeatureCreditCosts] as FeatureCreditCostRow[],
   executedQueries: [] as ExecutedQuery[],
 }
 
@@ -99,6 +112,9 @@ function createMockDb() {
           }
           if (table === 'credit_ledger') {
             return filterRows(mockState.ledger, wheres, limitCount)
+          }
+          if (table === 'feature_credit_costs') {
+            return filterRows(mockState.featureCreditCosts, wheres, limitCount)
           }
           return []
         },
@@ -231,5 +247,70 @@ describe('Task 1: Shared Story Unlock Ref and Resolver Access', () => {
   it('5. readerUnlockRef format matches unlock:S:C:U and unlockRef remains unlock:S:C', () => {
     expect(readerUnlockRef('S', 4, 'u1')).toBe('unlock:S:4:u1')
     expect(unlockRef('S', 4)).toBe('unlock:S:4')
+  })
+})
+
+describe('Task 5: Commercial story owner keeps access when visibility is public', () => {
+  const storyId = 'story-commercial-public'
+  const ownerId = 'user-owner'
+  const otherUserId = 'user-other'
+  const chapterNumber = 2
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockState.stories = [
+      {
+        id: storyId,
+        owner_user_id: ownerId,
+        story_mode: 'personalized_ai',
+        commercial_origin: 'PAID_START',
+        visibility: 'public',
+      },
+    ]
+    mockState.ledger = []
+    mockState.featureCreditCosts = [...defaultFeatureCreditCosts]
+    mockState.executedQueries = []
+  })
+
+  it('1. personalized_ai origin PAID_START, visibility public, owner, Bab 2 -> readable PAID_START_INCLUDED', async () => {
+    const decision = await resolveChapterAccess({
+      userId: ownerId,
+      storyId,
+      chapterNumber,
+    })
+
+    expect(decision).toEqual({
+      readable: true,
+      reason: 'PAID_START_INCLUDED',
+      cost: 0,
+    })
+  })
+
+  it('2. same story, other user -> NOT_AUTHORIZED', async () => {
+    const decision = await resolveChapterAccess({
+      userId: otherUserId,
+      storyId,
+      chapterNumber,
+    })
+
+    expect(decision).toEqual({
+      readable: false,
+      reason: 'NOT_AUTHORIZED',
+      cost: 0,
+    })
+  })
+
+  it('3. same story, guest (userId: null) -> NOT_AUTHORIZED', async () => {
+    const decision = await resolveChapterAccess({
+      userId: null,
+      storyId,
+      chapterNumber,
+    })
+
+    expect(decision).toEqual({
+      readable: false,
+      reason: 'NOT_AUTHORIZED',
+      cost: 0,
+    })
   })
 })

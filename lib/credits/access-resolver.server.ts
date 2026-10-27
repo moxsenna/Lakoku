@@ -1,7 +1,7 @@
 import 'server-only'
 import { getDb, single, result } from '@lakoku/db'
 import { isCommercialStoryMode } from '@/lib/commercial/resolver.server'
-import { isChapterFree, unlockRef, readerUnlockRef, DEFAULT_READING_POLICY, type ReadingPolicy } from './policy'
+import { isChapterFree, unlockRef, readerUnlockRef, bundleRef, DEFAULT_READING_POLICY, type ReadingPolicy } from './policy'
 
 export interface ChapterAccessDecision {
   readable: boolean
@@ -11,6 +11,7 @@ export interface ChapterAccessDecision {
     | 'PAID_START_INCLUDED'
     | 'LEGACY_INCLUDED'
     | 'LEDGER_UNLOCKED'
+    | 'BUNDLE_UNLOCKED'
     | 'PAYMENT_REQUIRED'
     | 'STORY_PENDING'
     | 'COMMERCIAL_ACCESS_NOT_FINALIZED'
@@ -43,17 +44,50 @@ export async function resolveChapterAccess(input: {
 
   const isCommercial = isCommercialStoryMode(story.story_mode)
 
-  // Standard / shared public stories preserve existing ReadingPolicy behavior
+  // Standard / shared public / catalog stories preserve ReadingPolicy behavior
   if (!isCommercial) {
     const policy = input.policy ?? DEFAULT_READING_POLICY
     const free = isChapterFree(input.chapterNumber, policy)
     if (free) {
       return { readable: true, reason: 'FREE_STANDARD', cost: 0 }
     }
-    if (!input.userId) {
-      return { readable: false, reason: 'PAYMENT_REQUIRED', cost: policy.creditsPerChapter }
+
+    // Determine chapter cost: catalog price or standard policy
+    let chapterCost = policy.creditsPerChapter
+    const isCatalog = story.story_mode === 'catalog' || input.storyId.startsWith('catalog:')
+    if (isCatalog) {
+      const { data: catalogRow } = await single(
+        db
+          .selectFrom('catalog_stories')
+          .select('chapter_price')
+          .where('story_id', '=', input.storyId)
+          .limit(1)
+          .execute(),
+      )
+      chapterCost = catalogRow?.chapter_price ?? 5
     }
-    // Check ledger proof
+
+    if (!input.userId) {
+      return { readable: false, reason: 'PAYMENT_REQUIRED', cost: chapterCost }
+    }
+
+    // Check bundle proof first for catalog
+    if (isCatalog) {
+      const { data: bundleLedger } = await single(
+        db
+          .selectFrom('credit_ledger')
+          .select('id')
+          .where('user_id', '=', input.userId)
+          .where('ref', '=', bundleRef(input.storyId, input.userId))
+          .limit(1)
+          .execute(),
+      )
+      if (bundleLedger) {
+        return { readable: true, reason: 'BUNDLE_UNLOCKED', cost: 0 }
+      }
+    }
+
+    // Check chapter ledger proof
     // RLS_AUDIT: credit_ledger_own_read
     const { data: ledger } = await single(
       db
@@ -71,7 +105,7 @@ export async function resolveChapterAccess(input: {
     if (ledger) {
       return { readable: true, reason: 'LEDGER_UNLOCKED', cost: 0 }
     }
-    return { readable: false, reason: 'PAYMENT_REQUIRED', cost: policy.creditsPerChapter }
+    return { readable: false, reason: 'PAYMENT_REQUIRED', cost: chapterCost }
   }
 
   // Commercial mode (personalized_ai / premium_instance): STRICT OWNER CHECK

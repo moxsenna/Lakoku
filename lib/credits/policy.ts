@@ -39,3 +39,8 @@ export function readerUnlockRef(storyId: string, chapter: number, userId: string
   return `${unlockRef(storyId, chapter)}:${userId}`
 }
 
+/** Ref ledger pembelian paket novel (seluruh bab berbayar). */
+export function bundleRef(storyId: string, userId: string): string {
+  return `bundle:${storyId}:${userId}`
+}
+

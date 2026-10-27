@@ -261,6 +261,31 @@ export interface BlueprintValidatorProofs {
   validator_version: string;
 }
 
+export interface CatalogEndingChapters {
+  choice_prompt: string | null;
+  choices: Json | null;
+  created_at: Generated<Timestamp>;
+  ending_key: string;
+  number: number;
+  outcomes_json: Json | null;
+  paragraphs: Generated<Json>;
+  story_id: string;
+  title: string;
+}
+
+export interface CatalogStories {
+  bundle_price: Generated<number>;
+  chapter_price: Generated<number>;
+  contract_json: Json | null;
+  created_at: Generated<Timestamp>;
+  generation_progress: Generated<number>;
+  published_at: Timestamp | null;
+  published_by: string | null;
+  status: Generated<string>;
+  story_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface ChapterBlueprints {
   allowed_state_delta: Generated<Json>;
   chapter_goal: Generated<string>;
@@ -434,6 +459,7 @@ export interface ChoiceOutcomes {
   choice_kind: Generated<string>;
   consequence: Generated<Json>;
   created_at: Generated<Timestamp>;
+  direction_hint: string | null;
   effect_json: Generated<Json>;
   is_ending: Generated<boolean>;
   next_chapter_number: number | null;
@@ -1268,6 +1294,8 @@ export interface DB {
   blueprint_resolutions: BlueprintResolutions;
   blueprint_validator_attestations: BlueprintValidatorAttestations;
   blueprint_validator_proofs: BlueprintValidatorProofs;
+  catalog_ending_chapters: CatalogEndingChapters;
+  catalog_stories: CatalogStories;
   chapter_blueprints: ChapterBlueprints;
   chapter_generation_checkpoints: ChapterGenerationCheckpoints;
   chapter_state_commits: ChapterStateCommits;

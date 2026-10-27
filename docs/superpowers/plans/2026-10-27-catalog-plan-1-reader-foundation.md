@@ -4,7 +4,7 @@
 
 **Goal:** Establish reader foundation for admin catalog stories: schema migrations on Neon Postgres, non-commercial pricing resolver (5 Lakoin/chapter, 150 Lakoin bundle default with fair-price offset), atomic bundle checkout, locked-chapter UI with bundle purchase, explore listing filters, per-reader ending lock at Bab 44, variant ending reads (Bab 45–50) from `catalog_ending_chapters`, multi-paragraph reaction display with subtle direction hints, and a deterministic local seed fixture.
 
-**Architecture:** Shared-spine interactive fiction novel model (Model A). Bab 1–44 stored in existing `chapters` and `choice_outcomes` tables without reader dimension. Reader route state tracked in `reader_states.route_state`. At Bab 44 choice, `resolveEnding` calculates the winning branch from reader route state + snapshot contract and sets `reader_states.locked_ending_key` once (never overwritten, isolated per reader). Bab 45–50 variant chapters stored in `catalog_ending_chapters` keyed by `(story_id, ending_key, number)`. Reader access for catalog stories uses standard non-commercial path (`isCommercialStoryMode('catalog') === false`), unlocking chapters via reader-scoped ref `unlock:{storyId}:{ch}:{userId}` or bundle ref `bundle:{storyId}:{userId}`.
+**Architecture:** Shared-spine interactive fiction novel model (Model A). Bab 1–44 stored in existing `chapters` and `choice_outcomes` tables without reader dimension. Reader route state tracked in `reader_states.route_state`. At Bab 44 choice, `resolveEndingFromCandidates` calculates the winning branch from post-choice reader route state + snapshot contract and sets `reader_states.locked_ending_key` once (coalesce-guarded, never overwritten, isolated per reader). Bab 45–50 variant chapters stored in `catalog_ending_chapters` keyed by `(story_id, ending_key, number)`. Reader access for catalog stories uses standard non-commercial path (`isCommercialStoryMode('catalog') === false`), unlocking chapters via reader-scoped ref `unlock:{storyId}:{ch}:{userId}` or bundle ref `bundle:{storyId}:{userId}`.
 
 **Tech Stack:** Next.js 16 App Router, TypeScript (strict mode), Neon Postgres via Kysely (`@lakoku/db`), Better Auth (`getSessionUser`), Zod (`@lakoku/contracts`), Tailwind CSS + Lucide icons, Vitest.
 
@@ -41,34 +41,44 @@ lib/credits/
 └── access-resolver.server.ts                  # Catalog chapter pricing & BUNDLE_UNLOCKED reason
 lib/catalog/
 ├── bundle.server.ts                           # Bundle quote computation & atomic spend RPC caller
+├── contract-snapshot.ts                       # Zod schema for catalog contract snapshot & candidate validation
+├── reader-safe-hint.ts                        # Reader-safe brand guard validation for directionHint
 └── variant-reader.server.ts                   # Centralized variant reader helper for Bab 45-50
+lib/story-engine/
+└── ending-resolver.ts                         # Extract resolveEndingFromCandidates & delegate resolveEnding
 app/api/stories/[id]/
-└── bundle/
-    └── route.ts                               # POST buy bundle & GET bundle quote API routes
+├── bundle/
+│   └── route.ts                               # POST buy bundle & GET bundle quote API routes
+└── choices/
+    └── route.ts                               # Drop unsafe directionHint before response
 components/
 ├── chapter-locked.tsx                         # Dual-button UI: single chapter + full novel bundle
 └── reader-view.tsx                            # Multi-paragraph reactions + direction hint rendering
 app/baca/[id]/
 └── page.tsx                                   # Pass bundle quote to ChapterLocked for catalog stories
 lib/api/
-├── queries.ts                                 # Filter explore stories (catalog: published) & variant hooks
-├── user-state.ts                              # Apply Bab 44 choice ending lock to reader_states
+├── queries.ts                                 # Filter explore stories, variant hooks, and reader-safe hint sanitize
+├── user-state.ts                              # Apply Bab 44 ending lock with coalesce & post-merge route_state
 ├── last-choice-summary.ts                     # Support multi-paragraph & directionHint in local cache
 └── chapter-status.server.ts                   # Variant chapter check in getChapterStatusForUser
 packages/contracts/src/
 └── reader.ts                                  # Add directionHint to ChoiceOutcomeSchema & JejakItemSchema
 scripts/
-└── seed-catalog-fixture.ts                    # Deterministic test fixture seed script (guard: LAKOKU_SEED_CATALOG=1)
+├── personalized-db-safety.ts                  # Add assertLoopbackDatabaseUrl host safety check
+└── seed-catalog-fixture.ts                    # Deterministic test fixture seed script (guard: LAKOKU_SEED_CATALOG=1 & loopback DB)
 tests/
 ├── db/catalog-schema-migration.test.ts        # Test migration SQL & db-types
 ├── catalog/catalog-access-resolver.test.ts    # Test catalog chapter pricing & bundle unlock
 ├── catalog/catalog-bundle-route.test.ts       # Test POST & GET /api/stories/[id]/bundle
-├── catalog/chapter-locked-catalog.test.ts     # Test ChapterLocked dual-button UI & action
+├── catalog/chapter-locked-catalog.test.ts     # Test ChapterLocked dual-button UI behavior (renderToStaticMarkup)
 ├── catalog/catalog-explore-queries.test.ts    # Test explore & public story filtering
-├── catalog/catalog-ending-lock.test.ts        # Test Bab 44 choice locks reader ending once
+├── tinta/explore.test.ts                      # Update mock for leftJoin & published catalog filter
+├── api/owned-queries.test.ts                  # Update mock for leftJoin & published catalog filter
+├── story-engine/ending-resolver.test.ts       # Test resolveEndingFromCandidates & regression against fixture contract
+├── catalog/catalog-ending-lock.test.ts        # Test Bab 44 ending lock, coalesce race prevention & snapshot schema
 ├── catalog/catalog-variant-reads.test.ts      # Test Bab 45-50 variant chapter & outcome retrieval
-├── catalog/reader-consequence-direction.test.ts # Test multi-paragraph consequence & directionHint
-└── scripts/seed-catalog-fixture.test.ts       # Test seed catalog fixture execution & safety guard
+├── catalog/reader-consequence-direction.test.ts # Test multi-paragraph consequence, directionHint & isReaderSafeHint
+└── scripts/seed-catalog-fixture.test.ts       # Test assertLoopbackDatabaseUrl safety guard & seed execution
 ```
 
 ---
@@ -1125,42 +1135,106 @@ git commit -m "feat(catalog): bundle quote computation and POST /api/stories/[id
   - When balance >= bundle price, clicking executes `POST /api/stories/${story.id}/bundle` and calls `router.refresh()`
   - `app/baca/[id]/page.tsx`: resolves `bundleQuote` via `getCatalogBundleQuote` if `story.id.startsWith('catalog:')`
 
-- [ ] **Step 1: Write failing test for ChapterLocked dual-button UI**
+- [ ] **Step 1: Write failing test for ChapterLocked dual-button UI behavior**
 
 ```typescript
 // tests/catalog/chapter-locked-catalog.test.ts
-import { describe, expect, it } from 'vitest'
-import fs from 'node:fs'
-import path from 'node:path'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it, vi } from 'vitest'
+import { ChapterLocked } from '@/components/chapter-locked'
+import type { StoryDetail } from '@/lib/api'
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+}))
+
+vi.mock('next/link', () => ({
+  default: ({ href, children, ...props }: { href: string; children: React.ReactNode }) =>
+    createElement('a', { href, ...props }, children),
+}))
+
+vi.mock('@/lib/analytics/client', () => ({
+  trackEvent: vi.fn(),
+}))
+
+const mockStory: StoryDetail = {
+  id: 'catalog:bayang-tak-bertuan',
+  title: 'Bayang Tak Bertuan',
+  cover: '/covers/bayang.webp',
+  tagline: 'Tagline',
+  role: 'Raka',
+  tropes: ['Misteri'],
+  totalChapters: 50,
+  synopsis: 'Sinopsis',
+  status: 'BERJALAN',
+  currentChapter: 4,
+  jejak: [],
+  endingName: null,
+}
 
 describe('ChapterLocked dual-button UI for catalog', () => {
-  const componentPath = path.join(process.cwd(), 'components', 'chapter-locked.tsx')
-  const pagePath = path.join(process.cwd(), 'app', 'baca', '[id]', 'page.tsx')
+  it('renders both single chapter and novel bundle unlock buttons with prices for catalog story', () => {
+    const html = renderToStaticMarkup(
+      createElement(ChapterLocked, {
+        story: mockStory,
+        chapterNumber: 4,
+        cost: 5,
+        balance: 200,
+        bundleQuote: { price: 140, savings: 85 },
+      }),
+    )
 
-  it('ChapterLocked accepts optional bundleQuote prop', () => {
-    const code = fs.readFileSync(componentPath, 'utf8')
-    expect(code).toContain('bundleQuote')
-    expect(code).toMatch(/price:\s*number/)
-    expect(code).toMatch(/savings:\s*number/)
+    // Both single chapter and bundle buttons with prices render
+    expect(html).toContain('Buka bab ini (5 Lakoin)')
+    expect(html).toContain('Buka semua bab (140 Lakoin, hemat 85)')
+    expect(html).toContain('Bayang Tak Bertuan')
+    expect(html).toContain('Bab 4 terkunci')
   })
 
-  it('ChapterLocked renders bundle unlock button when bundleQuote is present', () => {
-    const code = fs.readFileSync(componentPath, 'utf8')
-    expect(code).toContain('/api/stories/${story.id}/bundle')
-    expect(code).toContain('Buka semua bab')
+  it('renders only single chapter unlock button when bundleQuote is omitted (non-catalog story)', () => {
+    const regularStory: StoryDetail = {
+      ...mockStory,
+      id: 'demo:regular',
+      title: 'Cerita Reguler',
+    }
+
+    const html = renderToStaticMarkup(
+      createElement(ChapterLocked, {
+        story: regularStory,
+        chapterNumber: 4,
+        cost: 8,
+        balance: 50,
+        bundleQuote: null,
+      }),
+    )
+
+    // Only single chapter button renders
+    expect(html).toContain('Buka bab ini (8 Lakoin)')
+    expect(html).not.toContain('Buka semua bab')
   })
 
-  it('BacaPage passes bundleQuote to ChapterLocked for catalog stories', () => {
-    const code = fs.readFileSync(pagePath, 'utf8')
-    expect(code).toContain('getCatalogBundleQuote')
-    expect(code).toContain('bundleQuote')
+  it('renders top-up link instead of single chapter button when balance is insufficient', () => {
+    const html = renderToStaticMarkup(
+      createElement(ChapterLocked, {
+        story: mockStory,
+        chapterNumber: 4,
+        cost: 5,
+        balance: 2,
+        bundleQuote: { price: 140, savings: 85 },
+      }),
+    )
+
+    expect(html).toContain('Beli Lakoin')
+    expect(html).not.toContain('Buka bab ini (5 Lakoin)')
+    expect(html).toContain('Buka semua bab')
   })
 })
 ```
 
 - [ ] **Step 2: Run test to verify failure**
 Run: `pnpm exec vitest run tests/catalog/chapter-locked-catalog.test.ts`
-Expected: FAIL with assertions failing on missing `bundleQuote`.
+Expected: FAIL with bundleQuote not supported on ChapterLocked.
 
 - [ ] **Step 3: Implement ChapterLocked dual-button and BacaPage integration**
 
@@ -1383,13 +1457,17 @@ git commit -m "feat(ui): chapter-locked dual-button bundle unlock and baca page 
 
 **Files:**
 - Modify: `lib/api/queries.ts`
+- Modify: `tests/tinta/explore.test.ts`
+- Modify: `tests/api/owned-queries.test.ts`
 - Test: `tests/catalog/catalog-explore-queries.test.ts`
 
 **Interfaces:**
 - Consumes: `queryExploreStories`, `queryPublicUserStories`
 - Produces:
-  - `queryExploreStories`: includes `stories` with `id LIKE 'catalog:%'` if and only if `catalog_stories.status = 'published'`
+  - `queryExploreStories`: includes `stories` with `id LIKE 'catalog:%'` if and only if `catalog_stories.status = 'published'` via `leftJoin('catalog_stories', 'catalog_stories.story_id', 'stories.id')`
   - `queryPublicUserStories`: excludes `id LIKE 'catalog:%'`
+  - `tests/tinta/explore.test.ts`: mock updated with `leftJoin`, assertions updated to verify `catalog:%` exclusion in user rail and published catalog inclusion in explore
+  - `tests/api/owned-queries.test.ts`: mock updated with `leftJoin`, assertions updated for published catalog `or` filter
 
 - [ ] **Step 1: Write failing test for catalog explore & public queries**
 
@@ -1515,7 +1593,7 @@ describe('catalog explore queries', () => {
 Run: `pnpm exec vitest run tests/catalog/catalog-explore-queries.test.ts`
 Expected: FAIL because `queryExploreStories` currently does not join `catalog_stories` or filter published status.
 
-- [ ] **Step 3: Update explore and public user queries in queries.ts**
+- [ ] **Step 3: Update explore & public user queries and keep explore mock tests green**
 
 In `lib/api/queries.ts`:
 Modify `queryExploreStories`:
@@ -1584,14 +1662,103 @@ export async function queryPublicUserStories(limit = 12): Promise<StorySummary[]
 }
 ```
 
+In `tests/tinta/explore.test.ts`:
+1. In `createMockDb`, add `leftJoin` to mock Kysely builder:
+```typescript
+      const kb: Record<string, unknown> = {}
+      kb.leftJoin = vi.fn((...args: unknown[]) => {
+        calls.push({ method: 'leftJoin', args })
+        return kb
+      })
+      kb.select = vi.fn((..._args: unknown[]) => {
+```
+2. In AC9.1 & AC9.5 assertion, add expectation for `not like catalog:%`:
+```typescript
+      const notCalls = calls.filter((c) => c.method === 'not')
+      expect(notCalls).toContainEqual({ method: 'not', args: ['owner_user_id', 'is', null] })
+      expect(notCalls).toContainEqual({ method: 'not', args: ['id', 'like', 'demo:%'] })
+      expect(notCalls).toContainEqual({ method: 'not', args: ['id', 'like', 'premium:%'] })
+      expect(notCalls).toContainEqual({ method: 'not', args: ['id', 'like', 'catalog:%'] })
+```
+3. In AC9.2 assertion, update `listExploreStories` to assert `leftJoin` on `catalog_stories` and updated `or` filter containing published catalog:
+```typescript
+    it('listExploreStories queries official demo/premium and published catalog, excluding draft catalog', async () => {
+      const { client, calls } = createMockDb({
+        data: [
+          {
+            ...SAMPLE_STORY_ROW_1,
+            id: 'demo:nusantara-1',
+          },
+        ],
+        error: null,
+      })
+      mocks.adminFactory.mockReturnValue(client)
+      mocks.getReaderStates.mockResolvedValue(new Map())
+
+      const results = await listExploreStories()
+
+      // listExploreStories joins catalog_stories to filter published status
+      const leftJoinCalls = calls.filter((c) => c.method === 'leftJoin')
+      expect(leftJoinCalls).toContainEqual({
+        method: 'leftJoin',
+        args: ['catalog_stories', 'catalog_stories.story_id', 'stories.id'],
+      })
+
+      // listExploreStories filters demo:%, premium:%, and (catalog:% AND published)
+      const orCalls = calls.filter((c) => c.method === 'or')
+      expect(orCalls.length).toBeGreaterThan(0)
+      expect(orCalls[0].args[0]).toBe(
+        'stories.id.like.demo:%,stories.id.like.premium:%,stories.id.like.catalog:%,catalog_stories.status.eq.published',
+      )
+
+      // Hasil demo yang belum dibaca statusnya BARU
+      expect(results[0].id).toBe('demo:nusantara-1')
+      expect(results[0].status).toBe('BARU')
+      expect(results[0].currentChapter).toBe(1)
+    })
+```
+
+In `tests/api/owned-queries.test.ts`:
+1. In `createKyselyBuilder`, add `leftJoin`:
+```typescript
+    const builder: Record<string, unknown> = {}
+    builder.leftJoin = vi.fn((...args: unknown[]) => {
+      calls.push({ method: 'leftJoin', args })
+      return builder
+    })
+    builder.select = vi.fn((...args: unknown[]) => {
+```
+2. In `fetches explore rows only after public official filters`, assert `leftJoin` on `catalog_stories` and updated `or` filter:
+```typescript
+  it('fetches explore rows only after public official and published catalog filters', async () => {
+    const db = createQueryClient([{ data: [storyRow], error: null }])
+    mocks.adminFactory.mockReturnValue(db.client)
+    const queries = await import('@/lib/api/queries')
+
+    await queries.queryExploreStories()
+
+    expect(db.calls).toContainEqual({
+      method: 'leftJoin',
+      args: ['catalog_stories', 'catalog_stories.story_id', 'stories.id'],
+    })
+    expect(db.calls).toContainEqual({ method: 'select', args: [queries.STORY_READER_COLUMNS] })
+    expect(db.calls).toContainEqual({ method: 'eq', args: ['visibility', 'public'] })
+    expect(db.calls).toContainEqual({
+      method: 'or',
+      args: ['stories.id.like.demo:%,stories.id.like.premium:%,stories.id.like.catalog:%,catalog_stories.status.eq.published'],
+    })
+    expect(db.calls.some((call) => call.args.includes('story_mode'))).toBe(false)
+  })
+```
+
 - [ ] **Step 4: Run test to verify pass**
-Run: `pnpm exec vitest run tests/catalog/catalog-explore-queries.test.ts`
-Expected: PASS with 2/2 tests passing.
+Run: `pnpm exec vitest run tests/catalog/catalog-explore-queries.test.ts tests/tinta/explore.test.ts tests/api/owned-queries.test.ts`
+Expected: PASS with all tests passing across catalog explore, tinta explore, and owned queries.
 
 - [ ] **Step 5: Commit changes**
 Command:
 ```bash
-git add lib/api/queries.ts tests/catalog/catalog-explore-queries.test.ts
+git add lib/api/queries.ts tests/tinta/explore.test.ts tests/api/owned-queries.test.ts tests/catalog/catalog-explore-queries.test.ts
 git commit -m "feat(catalog): explore listing includes published catalog and excludes from public user rail"
 ```
 
@@ -1600,22 +1767,235 @@ git commit -m "feat(catalog): explore listing includes published catalog and exc
 ### Task 6: Reader State Ending Lock at Bab 44
 
 **Files:**
+- Create: `lib/catalog/contract-snapshot.ts`
+- Modify: `lib/story-engine/ending-resolver.ts`
 - Modify: `lib/api/user-state.ts`
+- Modify: `tests/story-engine/ending-resolver.test.ts`
 - Test: `tests/catalog/catalog-ending-lock.test.ts`
 
 **Interfaces:**
 - Consumes: `applyChoiceToUserState(storyId, chapterNumber, decision, outcome)`
 - Produces:
-  - Add `locked_ending_key` to `READER_STATE_COLS` and `ReaderState` interface
-  - On choice at Bab 44 for catalog story (`chapterNumber === 44 && storyId.startsWith('catalog:')`):
-    - Reads snapshot contract from `catalog_stories.contract_json`
-    - Computes `resolveEnding({ routeState: nextRouteState, storyContract, chapterNumber: 45 })`
-    - Stores `locked_ending_key = resolution.key` in `reader_states`
-    - If `locked_ending_key` is already non-null on `reader_states`, never overwrite it
+  - `lib/story-engine/ending-resolver.ts`:
+    - Pure exported function `resolveEndingFromCandidates({ routeState, endingLockChapter, endingCandidates, chapterNumber, lockedEndingKey? })`
+    - `resolveEnding` delegates to `resolveEndingFromCandidates` (keeps identical validation and output for all existing callers)
+  - `lib/catalog/contract-snapshot.ts`:
+    - Zod `CatalogContractSnapshotSchema`: `{ closureRunway: { endingLockChapter: number }, endingCandidates: EndingCandidate[] }` (exactly 3: 2 'main' + 1 'secret') reusing `EndingCandidateSchema`
+  - `lib/api/user-state.ts`:
+    - `READER_STATE_COLS`: retains `'user_id'` and adds `'locked_ending_key'`
+    - `ReaderState` interface: adds `lockedEndingKey?: string | null`
+    - On choice at Bab 44 for catalog story (`chapterNumber === 44 && storyId.startsWith('catalog:')`):
+      - Reads snapshot contract from `catalog_stories.contract_json`
+      - Parses snapshot with `CatalogContractSnapshotSchema.safeParse`
+      - On parse failure: logs with stable code `CATALOG_CONTRACT_SNAPSHOT_INVALID` and leaves `lockedEndingKey = null` so later Bab-44 retry can lock
+      - On success: computes `resolveEndingFromCandidates` using `nextRouteState` (computed AFTER merging Bab-44 choice effect)
+      - Writes `locked_ending_key` into `insertInto` values and in `doUpdateSet` uses `eb.fn.coalesce('reader_states.locked_ending_key', eb.ref('excluded.locked_ending_key'))` so it is set once and never mutated (idempotent, race-safe)
   - Justification for direct guarded write vs `persist_ending_lock_v1`:
     - `persist_ending_lock_v1` mutates global `story_generation_contracts.ending_lock_json`. Catalog stories are shared novels read simultaneously by many users. Mutating `story_generation_contracts` causes race conditions and breaks contract isolation. Catalog ending locks belong exclusively to per-reader state in `reader_states.locked_ending_key`.
 
-- [ ] **Step 1: Write failing test for catalog Bab 44 ending lock**
+- [ ] **Step 1: Write failing test for resolveEndingFromCandidates and resolveEnding delegation**
+
+```typescript
+// tests/story-engine/ending-resolver.test.ts (add to existing tests)
+import { nadiaRakaContract } from '@/fixtures/contracts/nadia-raka'
+import { resolveEnding, resolveEndingFromCandidates } from '@/lib/story-engine/ending-resolver'
+
+describe('resolveEndingFromCandidates & resolveEnding contract regression', () => {
+  it('resolveEnding output is unchanged on existing nadiaRakaContract fixture', () => {
+    const res = resolveEnding({
+      routeState: { endingBias: { 'court-justice': 5, 'own-proof': 2 } },
+      storyContract: nadiaRakaContract,
+      chapterNumber: 45,
+    })
+    expect(res).toEqual({
+      key: 'court-justice',
+      name: 'Keadilan Formal',
+      requiredClosure: [
+        'Pencuri lukisan terungkap di persidangan.',
+        'Nama galeri dipulihkan.',
+        'Nadia menerima akibat pilihannya.',
+      ],
+    })
+  })
+
+  it('resolveEndingFromCandidates resolves directly from ending candidates without full StoryContract', () => {
+    const candidates = [
+      {
+        key: 'c1',
+        name: 'Candidate 1',
+        kind: 'main' as const,
+        condition: 'Syarat 1',
+        requiredClosure: ['Closure 1'],
+        blockingConditions: [],
+      },
+      {
+        key: 'c2',
+        name: 'Candidate 2',
+        kind: 'main' as const,
+        condition: 'Syarat 2',
+        requiredClosure: ['Closure 2'],
+        blockingConditions: [],
+      },
+    ]
+
+    const res = resolveEndingFromCandidates({
+      routeState: { endingBias: { c2: 10 } },
+      endingLockChapter: 45,
+      endingCandidates: candidates,
+      chapterNumber: 45,
+    })
+    expect(res.key).toBe('c2')
+    expect(res.name).toBe('Candidate 2')
+    expect(res.requiredClosure).toEqual(['Closure 2'])
+  })
+})
+```
+
+- [ ] **Step 2: Run test to verify failure**
+Run: `pnpm exec vitest run tests/story-engine/ending-resolver.test.ts`
+Expected: FAIL with `resolveEndingFromCandidates` is not exported from `lib/story-engine/ending-resolver`.
+
+- [ ] **Step 3: Extract resolveEndingFromCandidates in ending-resolver.ts and delegate resolveEnding**
+
+In `lib/story-engine/ending-resolver.ts`:
+```typescript
+import { z } from 'zod'
+import { RouteStateSchema, type RouteState } from './route-state'
+import {
+  StoryContractSchema,
+  EndingCandidateSchema,
+  type EndingCandidate,
+  type StoryContract,
+} from './story-contract'
+
+export interface EndingResolution {
+  key: string
+  name: string
+  requiredClosure: string[]
+}
+
+export interface ResolveEndingInput {
+  routeState: RouteState | unknown
+  storyContract: StoryContract
+  chapterNumber: number
+  lockedEndingKey?: string | null
+}
+
+export interface ResolveEndingFromCandidatesInput {
+  routeState: RouteState | unknown
+  endingLockChapter: number
+  endingCandidates: EndingCandidate[]
+  chapterNumber: number
+  lockedEndingKey?: string | null
+}
+
+const ResolveEndingInputSchema = z.object({
+  routeState: RouteStateSchema,
+  storyContract: StoryContractSchema,
+  chapterNumber: z.number().int().min(1).max(50),
+  lockedEndingKey: z.string().trim().min(1).max(80).nullable().optional(),
+}).strict()
+
+const ResolveEndingFromCandidatesInputSchema = z.object({
+  routeState: RouteStateSchema,
+  endingLockChapter: z.number().int().min(1).max(50),
+  endingCandidates: z.array(EndingCandidateSchema).min(1),
+  chapterNumber: z.number().int().min(1).max(50),
+  lockedEndingKey: z.string().trim().min(1).max(80).nullable().optional(),
+}).strict()
+
+function publicEnding(candidate: EndingCandidate): EndingResolution {
+  return {
+    key: candidate.key,
+    name: candidate.name,
+    requiredClosure: [...candidate.requiredClosure],
+  }
+}
+
+export function resolveEndingFromCandidates(
+  input: ResolveEndingFromCandidatesInput,
+): EndingResolution {
+  const parsed = ResolveEndingFromCandidatesInputSchema.parse(input)
+  const { endingLockChapter, endingCandidates, chapterNumber, lockedEndingKey, routeState } = parsed
+
+  if (chapterNumber < endingLockChapter) {
+    throw new Error(
+      `Ending cannot lock before chapter ${endingLockChapter}.`,
+    )
+  }
+
+  if (lockedEndingKey != null) {
+    const locked = endingCandidates.find(
+      (candidate) => candidate.key === lockedEndingKey,
+    )
+    if (!locked) {
+      throw new Error(`Unknown locked ending key: ${lockedEndingKey}`)
+    }
+    return publicEnding(locked)
+  }
+
+  const ranked = endingCandidates
+    .map((candidate, index) => ({
+      candidate,
+      index,
+      score: routeState.endingBias[candidate.key] ?? 0,
+    }))
+    .sort((left, right) => (
+      right.score - left.score
+      || left.index - right.index
+      || left.candidate.key.localeCompare(right.candidate.key)
+    ))
+
+  const selected = ranked[0]?.candidate
+  if (!selected) {
+    throw new Error('Ending candidate list is empty.')
+  }
+
+  return publicEnding(selected)
+}
+
+export function resolveEnding(input: ResolveEndingInput): EndingResolution {
+  const parsed = ResolveEndingInputSchema.parse(input)
+  return resolveEndingFromCandidates({
+    routeState: parsed.routeState,
+    endingLockChapter: parsed.storyContract.closureRunway.endingLockChapter,
+    endingCandidates: parsed.storyContract.endingCandidates,
+    chapterNumber: parsed.chapterNumber,
+    lockedEndingKey: parsed.lockedEndingKey,
+  })
+}
+```
+
+- [ ] **Step 4: Create CatalogContractSnapshotSchema**
+
+Create `lib/catalog/contract-snapshot.ts`:
+```typescript
+import { z } from 'zod'
+import { EndingCandidateSchema } from '@/lib/story-engine/story-contract'
+
+export const CatalogContractSnapshotSchema = z.object({
+  closureRunway: z.object({
+    endingLockChapter: z.number().int().min(1).max(50),
+  }),
+  endingCandidates: z
+    .array(EndingCandidateSchema)
+    .length(3)
+    .superRefine((candidates, ctx) => {
+      const mainCount = candidates.filter((c) => c.kind === 'main').length
+      const secretCount = candidates.filter((c) => c.kind === 'secret').length
+      if (mainCount !== 2 || secretCount !== 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Catalog contract must have exactly 2 main endings and 1 secret ending',
+        })
+      }
+    }),
+}).passthrough()
+
+export type CatalogContractSnapshot = z.infer<typeof CatalogContractSnapshotSchema>
+```
+
+- [ ] **Step 5: Write failing test for catalog Bab 44 ending lock with coalesce and snapshot schema**
 
 ```typescript
 // tests/catalog/catalog-ending-lock.test.ts
@@ -1625,7 +2005,8 @@ import type { ChoiceOutcome } from '@/packages/contracts/src/reader'
 const mockState = {
   readerState: null as Record<string, unknown> | null,
   catalogContract: null as Record<string, unknown> | null,
-  upsertedState: null as Record<string, unknown> | null,
+  upsertedValues: null as Record<string, unknown> | null,
+  upsertedUpdateSet: null as Record<string, unknown> | null,
 }
 
 vi.mock('server-only', () => ({}))
@@ -1657,16 +2038,33 @@ vi.mock('@lakoku/db', () => ({
       }),
     }),
     insertInto: () => ({
-      values: (vals: Record<string, unknown>) => ({
-        onConflict: () => ({
-          doUpdateSet: (updateVals: Record<string, unknown>) => {
-            mockState.upsertedState = updateVals
-            return {
-              execute: async () => [],
+      values: (vals: Record<string, unknown>) => {
+        mockState.upsertedValues = vals
+        return {
+          onConflict: (ocFn: (oc: unknown) => unknown) => {
+            const fakeEb = {
+              fn: {
+                coalesce: (col: string, fallback: unknown) => ({ type: 'coalesce', col, fallback }),
+              },
+              ref: (refCol: string) => ({ type: 'ref', refCol }),
+              val: (val: unknown) => ({ type: 'val', val }),
             }
+            const ocHelper = {
+              columns: () => ocHelper,
+              doUpdateSet: (setter: unknown) => {
+                const updateSetObj =
+                  typeof setter === 'function'
+                    ? (setter as (eb: unknown) => Record<string, unknown>)(fakeEb)
+                    : (setter as Record<string, unknown>)
+                mockState.upsertedUpdateSet = updateSetObj
+                return { execute: async () => [] }
+              },
+            }
+            ocFn(ocHelper)
+            return ocHelper
           },
-        }),
-      }),
+        }
+      },
     }),
   }),
   single: async (promise: Promise<unknown[]>) => ({ data: (await promise)[0] ?? null, error: null }),
@@ -1675,29 +2073,45 @@ vi.mock('@lakoku/db', () => ({
 
 describe('applyChoiceToUserState ending lock for catalog', () => {
   const contractFixture = {
-    contractVersion: 2,
-    premise: 'Premis uji katalog',
-    characters: [],
     closureRunway: {
       endingLockChapter: 45,
-      endingRunwayChapters: 6,
-      allowedNewThreadChapters: 20,
-      allowedMajorNewConflictChapters: 30,
     },
     endingCandidates: [
-      { key: 'ending_a', name: 'Ending Damai', description: 'desc', requiredClosure: [] },
-      { key: 'ending_b', name: 'Ending Gelap', description: 'desc', requiredClosure: [] },
-      { key: 'ending_secret', name: 'Ending Rahasia', description: 'desc', requiredClosure: [] },
+      {
+        key: 'ending_a',
+        name: 'Ending Damai',
+        kind: 'main' as const,
+        condition: 'Raka memilih jalur damai.',
+        requiredClosure: ['Konflik lereng Lawu terselesaikan dengan damai.'],
+        blockingConditions: [],
+      },
+      {
+        key: 'ending_b',
+        name: 'Ending Gelap',
+        kind: 'main' as const,
+        condition: 'Raka memilih jalur balas dendam.',
+        requiredClosure: ['Raka membalas pengkhianatan Arya.'],
+        blockingConditions: [],
+      },
+      {
+        key: 'ending_secret',
+        name: 'Ending Rahasia',
+        kind: 'secret' as const,
+        condition: 'Raka mengungkap rahasia terdalam.',
+        requiredClosure: ['Misteri kuno terbongkar seutuhnya.'],
+        blockingConditions: [],
+      },
     ],
   }
 
   beforeEach(() => {
     mockState.readerState = null
     mockState.catalogContract = { contract_json: contractFixture }
-    mockState.upsertedState = null
+    mockState.upsertedValues = null
+    mockState.upsertedUpdateSet = null
   })
 
-  it('locks ending at Bab 44 choice when locked_ending_key is null', async () => {
+  it('locks ending at Bab 44 choice using coalesce to prevent overwrite races', async () => {
     const { applyChoiceToUserState } = await import('@/lib/api/user-state')
     const outcome: ChoiceOutcome = {
       storyId: 'catalog:novel-1',
@@ -1710,11 +2124,17 @@ describe('applyChoiceToUserState ending lock for catalog', () => {
 
     await applyChoiceToUserState('catalog:novel-1', 44, 'Pilihan 1', outcome)
 
-    expect(mockState.upsertedState).not.toBeNull()
-    expect(mockState.upsertedState?.locked_ending_key).toBe('ending_a')
+    expect(mockState.upsertedValues).not.toBeNull()
+    expect(mockState.upsertedValues?.locked_ending_key).toBe('ending_a')
+    // Asserts update uses coalesce to preserve existing lock
+    expect(mockState.upsertedUpdateSet?.locked_ending_key).toEqual({
+      type: 'coalesce',
+      col: 'reader_states.locked_ending_key',
+      fallback: { type: 'ref', refCol: 'excluded.locked_ending_key' },
+    })
   })
 
-  it('does not overwrite locked_ending_key if already locked', async () => {
+  it('does not mutate locked_ending_key if already locked', async () => {
     const { applyChoiceToUserState } = await import('@/lib/api/user-state')
     mockState.readerState = {
       status: 'BERJALAN',
@@ -1737,21 +2157,66 @@ describe('applyChoiceToUserState ending lock for catalog', () => {
 
     await applyChoiceToUserState('catalog:novel-1', 44, 'Pilihan Ulang', outcome)
 
-    expect(mockState.upsertedState?.locked_ending_key).toBe('ending_secret')
+    expect(mockState.upsertedValues?.locked_ending_key).toBe('ending_secret')
+  })
+
+  it('computes lock from route_state AFTER merging Bab-44 choice effect', async () => {
+    const { applyChoiceToUserState } = await import('@/lib/api/user-state')
+    mockState.readerState = {
+      status: 'BERJALAN',
+      current_chapter: 44,
+      jejak: [],
+      ending_name: null,
+      route_state: { endingBias: { ending_a: 5, ending_b: 0 } },
+      choice_history: [],
+      locked_ending_key: null,
+    }
+
+    const outcome: ChoiceOutcome = {
+      storyId: 'catalog:novel-1',
+      chapterNumber: 44,
+      choiceId: 'choice-44-b',
+      consequence: ['Pilihan menuju Ending B.'],
+      nextChapterNumber: 45,
+      isEnding: false,
+    }
+
+    await applyChoiceToUserState('catalog:novel-1', 44, 'Pilih B', outcome)
+
+    expect(mockState.upsertedValues?.locked_ending_key).toBe('ending_a')
+  })
+
+  it('logs CATALOG_CONTRACT_SNAPSHOT_INVALID and leaves lock null when snapshot schema fails', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mockState.catalogContract = { contract_json: { invalid: true } }
+    const { applyChoiceToUserState } = await import('@/lib/api/user-state')
+
+    const outcome: ChoiceOutcome = {
+      storyId: 'catalog:novel-1',
+      chapterNumber: 44,
+      choiceId: 'choice-44-1',
+      consequence: ['Keputusan Bab 44.'],
+      nextChapterNumber: 45,
+      isEnding: false,
+    }
+
+    await applyChoiceToUserState('catalog:novel-1', 44, 'Pilihan 1', outcome)
+
+    expect(errorSpy).toHaveBeenCalledWith('CATALOG_CONTRACT_SNAPSHOT_INVALID', expect.anything())
+    // Lock is left null so subsequent retry can succeed
+    expect(mockState.upsertedValues?.locked_ending_key).toBeNull()
+    errorSpy.mockRestore()
   })
 })
 ```
 
-- [ ] **Step 2: Run test to verify failure**
-Run: `pnpm exec vitest run tests/catalog/catalog-ending-lock.test.ts`
-Expected: FAIL because `applyChoiceToUserState` does not yet compute `resolveEnding` or set `locked_ending_key`.
-
-- [ ] **Step 3: Implement ending lock in user-state.ts**
+- [ ] **Step 6: Implement ending lock in user-state.ts with coalesce and snapshot schema**
 
 In `lib/api/user-state.ts`:
-1. Add `'locked_ending_key'` to `READER_STATE_COLS`:
+1. Add `'locked_ending_key'` to `READER_STATE_COLS` while retaining `'user_id'`:
 ```typescript
 export const READER_STATE_COLS = [
+  'user_id',
   'story_id',
   'status',
   'current_chapter',
@@ -1798,7 +2263,7 @@ Fetch `locked_ending_key` in the initial select:
       .execute(),
   )
 ```
-Add ending lock logic:
+Add ending lock logic computed from `nextRouteState` (AFTER merging Bab-44 choice effect):
 ```typescript
   // --- Ending lock untuk cerita katalog pada Bab 44
   let lockedEndingKey = stateData?.locked_ending_key ?? null
@@ -1814,35 +2279,79 @@ Add ending lock logic:
           .execute(),
       )
       if (catalogRow?.contract_json) {
-        const { resolveEnding } = await import('@/lib/story-engine/ending-resolver')
-        const contract = (
+        const { CatalogContractSnapshotSchema } = await import('@/lib/catalog/contract-snapshot')
+        const rawJson =
           typeof catalogRow.contract_json === 'string'
             ? JSON.parse(catalogRow.contract_json)
             : catalogRow.contract_json
-        ) as Parameters<typeof resolveEnding>[0]['storyContract']
-        const resolution = resolveEnding({
-          routeState: nextRouteState,
-          storyContract: contract,
-          chapterNumber: 45,
-        })
-        lockedEndingKey = resolution.key
+        const parsed = CatalogContractSnapshotSchema.safeParse(rawJson)
+        if (!parsed.success) {
+          console.error('CATALOG_CONTRACT_SNAPSHOT_INVALID', parsed.error)
+          // DO NOT swallow silently into a permanent null or fake lock.
+          // Leave lockedEndingKey null so a subsequent Bab-44 retry can lock once contract is corrected.
+        } else {
+          const { resolveEndingFromCandidates } = await import('@/lib/story-engine/ending-resolver')
+          const resolution = resolveEndingFromCandidates({
+            routeState: nextRouteState,
+            endingLockChapter: parsed.data.closureRunway.endingLockChapter,
+            endingCandidates: parsed.data.endingCandidates,
+            chapterNumber: 45,
+          })
+          lockedEndingKey = resolution.key
+        }
       }
     } catch (err) {
       console.error('CATALOG_ENDING_LOCK_COMPUTATION_FAILED', err)
+      // Leave lockedEndingKey null so retry can lock
     }
   }
 ```
-Include `locked_ending_key: lockedEndingKey` in both `insertInto` values and `doUpdateSet` values!
+Include `locked_ending_key: lockedEndingKey` in `insertInto` values and use `coalesce` in `doUpdateSet`:
+```typescript
+  // RLS_AUDIT: reader_states_owner_all
+  const { error } = await result(
+    db
+      .insertInto('reader_states')
+      .values({
+        user_id: user.id,
+        story_id: storyId,
+        status,
+        current_chapter: nextChapter,
+        jejak: jejak as unknown as Json,
+        ending_name: endingName,
+        route_state: nextRouteState as unknown as Json,
+        choice_history: choiceHistory as unknown as Json,
+        locked_ending_key: lockedEndingKey,
+        updated_at: new Date().toISOString(),
+      })
+      .onConflict((oc) =>
+        oc.columns(['user_id', 'story_id']).doUpdateSet((eb) => ({
+          status,
+          current_chapter: nextChapter,
+          jejak: jejak as unknown as Json,
+          ending_name: endingName,
+          route_state: nextRouteState as unknown as Json,
+          choice_history: choiceHistory as unknown as Json,
+          updated_at: new Date().toISOString(),
+          locked_ending_key: eb.fn.coalesce(
+            'reader_states.locked_ending_key',
+            eb.ref('excluded.locked_ending_key'),
+          ),
+        })),
+      )
+      .execute(),
+  )
+```
 
-- [ ] **Step 4: Run test to verify pass**
-Run: `pnpm exec vitest run tests/catalog/catalog-ending-lock.test.ts`
-Expected: PASS with 2/2 tests passing.
+- [ ] **Step 7: Run tests to verify pass**
+Run: `pnpm exec vitest run tests/story-engine/ending-resolver.test.ts tests/catalog/catalog-ending-lock.test.ts`
+Expected: PASS with all tests passing.
 
-- [ ] **Step 5: Commit changes**
+- [ ] **Step 8: Commit changes**
 Command:
 ```bash
-git add lib/api/user-state.ts tests/catalog/catalog-ending-lock.test.ts
-git commit -m "feat(catalog): lock reader ending once at Bab 44 choice using resolveEnding"
+git add lib/story-engine/ending-resolver.ts lib/catalog/contract-snapshot.ts lib/api/user-state.ts tests/story-engine/ending-resolver.test.ts tests/catalog/catalog-ending-lock.test.ts
+git commit -m "feat(catalog): extract resolveEndingFromCandidates, snapshot contract schema, and coalesce race-safe ending lock"
 ```
 
 ---
@@ -2317,7 +2826,10 @@ git commit -m "feat(catalog): variant chapter and outcome reads from catalog_end
 ### Task 8: Reader UI Consequence Display & Direction Hint with Brand Guard
 
 **Files:**
+- Create: `lib/catalog/reader-safe-hint.ts`
 - Modify: `packages/contracts/src/reader.ts`
+- Modify: `lib/api/queries.ts`
+- Modify: `app/api/stories/[id]/choices/route.ts`
 - Modify: `lib/api/last-choice-summary.ts`
 - Modify: `lib/api/user-state.ts`
 - Modify: `components/reader-view.tsx`
@@ -2326,24 +2838,32 @@ git commit -m "feat(catalog): variant chapter and outcome reads from catalog_end
 **Interfaces:**
 - Consumes: `ChoiceOutcome.directionHint`, `ChoiceOutcome.consequence` (1-2 paragraphs)
 - Produces:
-  - `ChoiceOutcomeSchema`: optional `directionHint: z.string().min(1).optional()`
+  - `lib/catalog/reader-safe-hint.ts`:
+    - `isReaderSafeHint(text: string | null | undefined): boolean`: brand guard rejecting forbidden tokens (`ai`, `narraza`, `rag`, `token`, `skor`, `bias`, `ending`) at word boundaries case-insensitively
+    - `sanitizeDirectionHint(text: string | null | undefined): string | undefined`: server-side filter returning hint if safe, or undefined if unsafe
+  - Server-side dropping justification:
+    - Server-side dropping prevents client-side contract parse crashes on legacy or raw DB records while guaranteeing readers never see forbidden internal terms.
+  - Server-side drop integration:
+    - `lib/api/queries.ts`: `queryChoiceOutcome` drops unsafe `direction_hint` via `sanitizeDirectionHint`
+    - `app/api/stories/[id]/choices/route.ts`: drops `directionHint` before client response if `!isReaderSafeHint`
+  - `ChoiceOutcomeSchema`: optional `directionHint: z.string().min(1).optional()` (plain optional string, no client-side refine)
   - `JejakItemSchema`: optional `directionHint: z.string().min(1).optional()`
-  - `recordLastChoiceSummary`: stores all paragraphs `consequence: outcome.consequence.join('\n\n')` and `directionHint: outcome.directionHint`
+  - `recordLastChoiceSummary`: stores all consequence paragraphs joined by `\n\n` and `directionHint: outcome.directionHint`
   - `reader-view.tsx`:
     - Renders all consequence paragraphs (split by `\n\n`)
     - Renders `directionHint` beneath consequence in subtle italic font
-    - Brand guard: verifies no prohibited tokens ("AI", "token", "skor", "bias", "ending") in direction hint
 
-- [ ] **Step 1: Write failing test for reader consequence & direction hint**
+- [ ] **Step 1: Write failing test for reader consequence, direction hint, and brand guard helper**
 
 ```typescript
 // tests/catalog/reader-consequence-direction.test.ts
 import { describe, expect, it } from 'vitest'
 import { ChoiceOutcomeSchema, JejakItemSchema } from '@/packages/contracts/src/reader'
 import { recordLastChoiceSummary, getLastChoiceSummary } from '@/lib/api/last-choice-summary'
+import { isReaderSafeHint, sanitizeDirectionHint } from '@/lib/catalog/reader-safe-hint'
 
-describe('reader consequence & direction hint', () => {
-  it('ChoiceOutcomeSchema validates optional directionHint', () => {
+describe('reader consequence, direction hint & brand guard', () => {
+  it('ChoiceOutcomeSchema validates optional directionHint without crashing on valid strings', () => {
     const valid = ChoiceOutcomeSchema.parse({
       storyId: 'catalog:test',
       chapterNumber: 12,
@@ -2383,21 +2903,70 @@ describe('reader consequence & direction hint', () => {
     expect(summary?.directionHint).toBe('Langkahmu terasa lebih ringan.')
   })
 
-  it('brand guard enforces no forbidden terms in direction hint', () => {
-    const forbiddenPatterns = [/\bai\b/i, /token/i, /skor/i, /bias/i, /ending/i, /rag/i]
-    const sampleHint = 'Raka mulai mempercayaimu.'
-    for (const pat of forbiddenPatterns) {
-      expect(pat.test(sampleHint)).toBe(false)
-    }
+  it('isReaderSafeHint allows reader-safe narrative text and safe substrings', () => {
+    expect(isReaderSafeHint('Raka mulai mempercayaimu.')).toBe(true)
+    // Substring occurrences like "klaim" containing "ai" or "terbaik" are safe due to word boundary
+    expect(isReaderSafeHint('Raka mengklaim hak atas tanah warisan.')).toBe(true)
+    expect(isReaderSafeHint('Keputusan terbaik untuk keluargamu.')).toBe(true)
+  })
+
+  it('isReaderSafeHint rejects forbidden internal/brand terms at word boundaries', () => {
+    expect(isReaderSafeHint('Sistem AI telah menentukan arahmu.')).toBe(false)
+    expect(isReaderSafeHint('Model narraza mengubah takdir.')).toBe(false)
+    expect(isReaderSafeHint('Konstruksi rag diperbarui.')).toBe(false)
+    expect(isReaderSafeHint('Dapatkan token untuk melanjutkan.')).toBe(false)
+    expect(isReaderSafeHint('Skor karakter meningkat pesat.')).toBe(false)
+    expect(isReaderSafeHint('Arah bias cerita bergeser.')).toBe(false)
+    expect(isReaderSafeHint('Menuju ending yang tidak terduga.')).toBe(false)
+    expect(isReaderSafeHint('')).toBe(false)
+    expect(isReaderSafeHint(null)).toBe(false)
+    expect(isReaderSafeHint(undefined)).toBe(false)
+  })
+
+  it('sanitizeDirectionHint drops unsafe hint and preserves safe hint', () => {
+    // Unsafe hint dropped to undefined
+    expect(sanitizeDirectionHint('Skor bias AI meningkat.')).toBeUndefined()
+    expect(sanitizeDirectionHint('Ending rahasia terbuka.')).toBeUndefined()
+    // Safe hint preserved
+    expect(sanitizeDirectionHint('Langkahmu mulai meyakinkan tetua desa.')).toBe(
+      'Langkahmu mulai meyakinkan tetua desa.',
+    )
   })
 })
 ```
 
 - [ ] **Step 2: Run test to verify failure**
 Run: `pnpm exec vitest run tests/catalog/reader-consequence-direction.test.ts`
-Expected: FAIL with Zod validation errors on `directionHint` and missing property on summary.
+Expected: FAIL with missing module `lib/catalog/reader-safe-hint`.
 
-- [ ] **Step 3: Update contracts, last-choice-summary, user-state, and reader-view**
+- [ ] **Step 3: Implement brand guard helper, contracts, queries, and UI**
+
+Create `lib/catalog/reader-safe-hint.ts`:
+```typescript
+const FORBIDDEN_WORDS = /\b(ai|narraza|rag|token|skor|bias|ending)\b/i
+
+/**
+ * Validasi apakah teks petunjuk arah aman untuk dibaca pembaca.
+ * Menolak kata terlarang internal / brand (AI, Narraza, RAG, token, skor, bias, ending)
+ * dengan batas kata (\b) case-insensitive agar kata sah seperti "klaim" atau "terbaik" tidak tertolak.
+ */
+export function isReaderSafeHint(text: string | null | undefined): boolean {
+  if (!text || typeof text !== 'string') return false
+  const trimmed = text.trim()
+  if (trimmed.length === 0) return false
+  return !FORBIDDEN_WORDS.test(trimmed)
+}
+
+/**
+ * Filter server-side: mengembalikan teks petunjuk arah jika aman, atau undefined jika mengandung kata terlarang.
+ * Justifikasi: Server-side dropping mencegah kegagalan parse kontrak pada client untuk data lawas/eksternal
+ * sekaligus memastikan pembaca tidak pernah terpapar istilah internal/teknis.
+ */
+export function sanitizeDirectionHint(text: string | null | undefined): string | undefined {
+  if (!text || !isReaderSafeHint(text)) return undefined
+  return text.trim()
+}
+```
 
 In `packages/contracts/src/reader.ts`:
 Update `ChoiceOutcomeSchema`:
@@ -2420,6 +2989,29 @@ export const JejakItemSchema = z.object({
   consequence: z.string().min(1),
   directionHint: z.string().min(1).optional(),
 })
+```
+
+In `lib/api/queries.ts`:
+In `queryChoiceOutcome`, apply `sanitizeDirectionHint`:
+```typescript
+  const safeHint = sanitizeDirectionHint(r.direction_hint)
+  return {
+    storyId: r.story_id,
+    chapterNumber: r.chapter_number,
+    choiceId: r.choice_id,
+    consequence: (typeof r.consequence === 'string' ? JSON.parse(r.consequence) : r.consequence) as string[],
+    nextChapterNumber: r.next_chapter_number,
+    isEnding: r.is_ending,
+    ...(safeHint ? { directionHint: safeHint } : {}),
+  }
+```
+
+In `app/api/stories/[id]/choices/route.ts`:
+Ensure `outcome.directionHint` is sanitized if leaving the server:
+```typescript
+  if (outcome.directionHint && !isReaderSafeHint(outcome.directionHint)) {
+    delete outcome.directionHint
+  }
 ```
 
 In `lib/api/last-choice-summary.ts`:
@@ -2447,11 +3039,12 @@ Update `getLastChoiceSummary`:
 In `lib/api/user-state.ts`:
 In `applyChoiceToUserState`:
 ```typescript
+  const safeHint = outcome.directionHint && isReaderSafeHint(outcome.directionHint) ? outcome.directionHint : undefined
   byChapter.set(chapterNumber, {
     chapter: chapterNumber,
     decision,
     consequence: outcome.consequence.join('\n\n'),
-    ...(outcome.directionHint ? { directionHint: outcome.directionHint } : {}),
+    ...(safeHint ? { directionHint: safeHint } : {}),
   })
 ```
 
@@ -2496,13 +3089,14 @@ Line 641 in reader render:
 
 - [ ] **Step 4: Run test to verify pass**
 Run: `pnpm exec vitest run tests/catalog/reader-consequence-direction.test.ts`
-Expected: PASS with 4/4 tests passing.
+Expected: PASS with 6/6 tests passing.
 
 - [ ] **Step 5: Commit changes**
 Command:
 ```bash
-git add packages/contracts/src/reader.ts lib/api/last-choice-summary.ts lib/api/user-state.ts components/reader-view.tsx tests/catalog/reader-consequence-direction.test.ts
-git commit -m "feat(reader): multi-paragraph reaction display and brand-guarded direction hint"
+git add lib/catalog/reader-safe-hint.ts packages/contracts/src/reader.ts lib/api/queries.ts app/api/stories/[id]/choices/route.ts lib/api/last-choice-summary.ts lib/api/user-state.ts components/reader-view.tsx tests/catalog/reader-consequence-direction.test.ts
+git commit -m "feat(reader): multi-paragraph reaction display and reader-safe direction hint brand guard"
+```
 ```
 
 ---
@@ -2510,62 +3104,115 @@ git commit -m "feat(reader): multi-paragraph reaction display and brand-guarded 
 ### Task 9: Deterministic Catalog Story Fixture Seed Script
 
 **Files:**
+- Modify: `scripts/personalized-db-safety.ts`
 - Create: `scripts/seed-catalog-fixture.ts`
 - Test: `tests/scripts/seed-catalog-fixture.test.ts`
 
 **Interfaces:**
-- Consumes: `LAKOKU_SEED_CATALOG=1` environment variable
+- Consumes: `LAKOKU_SEED_CATALOG=1`, `DATABASE_URL`, optional `LAKOKU_ALLOW_REMOTE_FIXTURE_SEED=1`
 - Produces:
-  - Seeds `catalog:bayang-tak-bertuan`:
-    - `stories` table: `id: 'catalog:bayang-tak-bertuan'`, `story_mode: 'catalog'`, `owner_user_id: null`, `visibility: 'public'`, `status: 'SELESAI'`, `total_chapters: 50`
-    - `catalog_stories`: `bundle_price: 150`, `chapter_price: 5`, `status: 'published'`, snapshot `contract_json` with 3 endings (`ending_a`, `ending_b`, `ending_secret`)
-    - `chapters`: Bab 1–44 deterministic spine text + choices
-    - `choice_outcomes`: Bab 1–44 choices with 1–2 paragraph consequences and `direction_hint`
-    - `catalog_ending_chapters`: Bab 45–50 for `ending_a`, `ending_b`, `ending_secret` with `outcomes_json`
-  - Refuses to run if `process.env.LAKOKU_SEED_CATALOG !== '1'`
+  - `scripts/personalized-db-safety.ts`:
+    - `assertLoopbackDatabaseUrl(databaseUrl: string | undefined, allowRemote = false): string`: parses hostname from `DATABASE_URL` and strictly refuses unless host is loopback (`127.0.0.1`, `localhost`, `::1`) or `allowRemote` is true.
+  - `scripts/seed-catalog-fixture.ts`:
+    - Guarded by `LAKOKU_SEED_CATALOG=1`
+    - Parses and verifies `DATABASE_URL` host via `assertLoopbackDatabaseUrl(process.env.DATABASE_URL, process.env.LAKOKU_ALLOW_REMOTE_FIXTURE_SEED === '1')`
+    - Prints target host (`[seed-catalog] Target database host: ...`) before executing any write operations
+    - Seeds `catalog:bayang-tak-bertuan`:
+      - `stories` table: `id: 'catalog:bayang-tak-bertuan'`, `story_mode: 'catalog'`, `owner_user_id: null`, `visibility: 'public'`, `status: 'SELESAI'`, `total_chapters: 50`
+      - `catalog_stories`: `bundle_price: 150`, `chapter_price: 5`, `status: 'published'`, snapshot `contract_json` with 3 endings using real candidate fields (`condition`, non-empty `requiredClosure`, `blockingConditions: []`, `kind`: 2 'main' + 1 'secret')
+      - `chapters`: Bab 1–44 deterministic spine text + choices
+      - `choice_outcomes`: Bab 1–44 choices with 1–2 paragraph consequences and safe `direction_hint`
+      - `catalog_ending_chapters`: Bab 45–50 for `ending_a`, `ending_b`, `ending_secret` with `outcomes_json`
 
-- [ ] **Step 1: Write failing test for seed catalog fixture**
+- [ ] **Step 1: Write failing test for database URL safety check and seed script behavior**
 
 ```typescript
 // tests/scripts/seed-catalog-fixture.test.ts
-import { describe, expect, it } from 'vitest'
-import fs from 'node:fs'
-import path from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
+import { assertLoopbackDatabaseUrl } from '@/scripts/personalized-db-safety'
 
-describe('scripts/seed-catalog-fixture.ts', () => {
-  const scriptPath = path.join(process.cwd(), 'scripts', 'seed-catalog-fixture.ts')
-
-  it('script exists', () => {
-    expect(fs.existsSync(scriptPath)).toBe(true)
+describe('scripts/seed-catalog-fixture safety guards & candidate structure', () => {
+  it('assertLoopbackDatabaseUrl refuses execution when DATABASE_URL points to remote neon.tech without override', () => {
+    expect(() =>
+      assertLoopbackDatabaseUrl('postgresql://lakoku_owner:secret@ep-cool-fog-12345.ap-southeast-1.neon.tech/neondb'),
+    ).toThrow('Refusing to seed non-loopback host "ep-cool-fog-12345.ap-southeast-1.neon.tech"')
   })
 
-  it('script has explicit safety guard requiring LAKOKU_SEED_CATALOG=1', () => {
-    const code = fs.readFileSync(scriptPath, 'utf8')
-    expect(code).toContain("process.env.LAKOKU_SEED_CATALOG !== '1'")
-    expect(code).toContain('LAKOKU_SEED_CATALOG=1')
+  it('assertLoopbackDatabaseUrl refuses execution when DATABASE_URL is undefined', () => {
+    expect(() => assertLoopbackDatabaseUrl(undefined)).toThrow('DATABASE_URL is required')
   })
 
-  it('script seeds 44 spine chapters and 3 ending variants for Bab 45-50', () => {
-    const code = fs.readFileSync(scriptPath, 'utf8')
-    expect(code).toContain('catalog:bayang-tak-bertuan')
-    expect(code).toContain('catalog_stories')
-    expect(code).toContain('catalog_ending_chapters')
-    expect(code).toContain('ending_a')
-    expect(code).toContain('ending_b')
-    expect(code).toContain('ending_secret')
+  it('assertLoopbackDatabaseUrl allows remote neon.tech URL when allowRemote flag is explicitly true', () => {
+    const host = assertLoopbackDatabaseUrl(
+      'postgresql://lakoku_owner:secret@ep-cool-fog-12345.ap-southeast-1.neon.tech/neondb',
+      true,
+    )
+    expect(host).toBe('ep-cool-fog-12345.ap-southeast-1.neon.tech')
+  })
+
+  it('assertLoopbackDatabaseUrl allows loopback hosts (127.0.0.1, localhost, ::1) without override flag', () => {
+    expect(assertLoopbackDatabaseUrl('postgresql://postgres:postgres@127.0.0.1:5432/lakoku_local')).toBe('127.0.0.1')
+    expect(assertLoopbackDatabaseUrl('postgresql://postgres:postgres@localhost:5432/lakoku_local')).toBe('localhost')
+    expect(assertLoopbackDatabaseUrl('postgresql://postgres:postgres@[::1]:5432/lakoku_local')).toBe('::1')
+  })
+
+  it('seedCatalogFixture refuses when LAKOKU_SEED_CATALOG is not set to 1', async () => {
+    const origEnv = process.env.LAKOKU_SEED_CATALOG
+    delete process.env.LAKOKU_SEED_CATALOG
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit(1)')
+    }) as unknown as typeof process.exit)
+
+    const { seedCatalogFixture } = await import('@/scripts/seed-catalog-fixture')
+    await expect(seedCatalogFixture()).rejects.toThrow('process.exit(1)')
+    expect(exitSpy).toHaveBeenCalledWith(1)
+
+    exitSpy.mockRestore()
+    if (origEnv !== undefined) {
+      process.env.LAKOKU_SEED_CATALOG = origEnv
+    }
   })
 })
 ```
 
 - [ ] **Step 2: Run test to verify failure**
 Run: `pnpm exec vitest run tests/scripts/seed-catalog-fixture.test.ts`
-Expected: FAIL with `ENOENT: no such file or directory scripts/seed-catalog-fixture.ts`.
+Expected: FAIL with `assertLoopbackDatabaseUrl is not exported from scripts/personalized-db-safety`.
 
-- [ ] **Step 3: Implement seed fixture script**
+- [ ] **Step 3: Implement assertLoopbackDatabaseUrl and seed fixture script**
+
+In `scripts/personalized-db-safety.ts`:
+Add `assertLoopbackDatabaseUrl`:
+```typescript
+export function assertLoopbackDatabaseUrl(
+  databaseUrl: string | undefined,
+  allowRemote = false,
+): string {
+  if (!databaseUrl) {
+    throw new Error('DATABASE_URL is required')
+  }
+  let url: URL
+  try {
+    url = new URL(databaseUrl)
+  } catch {
+    throw new Error('Invalid DATABASE_URL')
+  }
+
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  const isLoopback = ['127.0.0.1', 'localhost', '::1'].includes(host)
+  if (!isLoopback && !allowRemote) {
+    throw new Error(
+      `Refusing to seed non-loopback host "${host}". Set LAKOKU_ALLOW_REMOTE_FIXTURE_SEED=1 to override.`,
+    )
+  }
+  return host
+}
+```
 
 Create `scripts/seed-catalog-fixture.ts`:
 ```typescript
 import { getDb, result } from '@lakoku/db'
+import { assertLoopbackDatabaseUrl } from './personalized-db-safety'
 
 export const FIXTURE_CATALOG_STORY_ID = 'catalog:bayang-tak-bertuan'
 
@@ -2574,6 +3221,10 @@ export async function seedCatalogFixture(): Promise<void> {
     console.error('REFUSED: scripts/seed-catalog-fixture.ts requires LAKOKU_SEED_CATALOG=1 to execute.')
     process.exit(1)
   }
+
+  const allowRemote = process.env.LAKOKU_ALLOW_REMOTE_FIXTURE_SEED === '1'
+  const targetHost = assertLoopbackDatabaseUrl(process.env.DATABASE_URL, allowRemote)
+  console.log(`[seed-catalog] Target database host: ${targetHost}`)
 
   const db = getDb()
   const storyId = FIXTURE_CATALOG_STORY_ID
@@ -2609,22 +3260,34 @@ export async function seedCatalogFixture(): Promise<void> {
   )
 
   const contractJson = {
-    contractVersion: 2,
-    premise: 'Raka mengungkap konspirasi tanah leluhur di Lereng Lawu.',
-    characters: [
-      { name: 'Raka', role: 'protagonist' },
-      { name: 'Arya', role: 'antagonist' },
-    ],
     closureRunway: {
       endingLockChapter: 45,
-      endingRunwayChapters: 6,
-      allowedNewThreadChapters: 20,
-      allowedMajorNewConflictChapters: 30,
     },
     endingCandidates: [
-      { key: 'ending_a', name: 'Warisan Terbuka', description: 'Raka memimpin pemulihan desa.', requiredClosure: [] },
-      { key: 'ending_b', name: 'Kebenaran Pahit', description: 'Raka memilih pergi meninggalkan segalanya.', requiredClosure: [] },
-      { key: 'ending_secret', name: 'Perjanjian Gaib', description: 'Raka menemukan perjanjian rahasia kakeknya.', requiredClosure: [] },
+      {
+        key: 'ending_a',
+        name: 'Warisan Terbuka',
+        kind: 'main' as const,
+        condition: 'Raka memimpin pemulihan tanah leluhur dengan transparansi penuh.',
+        requiredClosure: ['Warisan leluhur diakui warga desa.', 'Raka berdamai dengan keluarganya.'],
+        blockingConditions: [],
+      },
+      {
+        key: 'ending_b',
+        name: 'Kebenaran Pahit',
+        kind: 'main' as const,
+        condition: 'Raka memilih pergi meninggalkan segalanya demi kedamaian batin.',
+        requiredClosure: ['Raka menyerahkan dokumen tanah kepada tetua desa.'],
+        blockingConditions: [],
+      },
+      {
+        key: 'ending_secret',
+        name: 'Perjanjian Gaib',
+        kind: 'secret' as const,
+        condition: 'Raka menemukan perjanjian rahasia kakeknya di lereng Lawu.',
+        requiredClosure: ['Perjanjian kuno terungkap.', 'Misteri lereng Lawu terselesaikan.'],
+        blockingConditions: [],
+      },
     ],
   }
 
@@ -2745,13 +3408,13 @@ if (process.argv[1]?.endsWith('seed-catalog-fixture.ts')) {
 
 - [ ] **Step 4: Run test to verify pass**
 Run: `pnpm exec vitest run tests/scripts/seed-catalog-fixture.test.ts`
-Expected: PASS with 3/3 tests passing.
+Expected: PASS with 5/5 tests passing.
 
 - [ ] **Step 5: Commit changes**
 Command:
 ```bash
-git add scripts/seed-catalog-fixture.ts tests/scripts/seed-catalog-fixture.test.ts
-git commit -m "feat(scripts): deterministic test catalog story fixture seed script"
+git add scripts/personalized-db-safety.ts scripts/seed-catalog-fixture.ts tests/scripts/seed-catalog-fixture.test.ts
+git commit -m "feat(scripts): deterministic test catalog story fixture seed script with loopback safety check"
 ```
 
 ---
@@ -2763,8 +3426,13 @@ Before finishing this plan, verify against the approved spec (`docs/superpowers/
 - [x] Constraints: prices 5 / 150, ID prefix `catalog:`, owner null, 3 endings, free chapters per reading policy.
 - [x] Fair bundle pricing server-side: `max(0, bundle_price − total_spent)`.
 - [x] Atomic RPC `spend_bundle_v1` handles delta = 0 for readers already paid via retail chapters.
-- [x] Bab 44 ending lock: per-reader on `reader_states.locked_ending_key` (justified reason for not using `persist_ending_lock_v1`).
+- [x] Bab 44 ending lock: pure `resolveEndingFromCandidates` extracted; `resolveEnding` output unchanged on `fixtures/contracts/nadia-raka.ts`.
+- [x] Snapshot contract schema (`CatalogContractSnapshotSchema`) requires exactly 2 main + 1 secret endings with real candidate fields; on parse failure logs `CATALOG_CONTRACT_SNAPSHOT_INVALID` and leaves lock null for retry.
+- [x] Lock overwrite race protection: `doUpdateSet` uses `coalesce(reader_states.locked_ending_key, excluded.locked_ending_key)` so lock is set once and never mutated, using post-merge `route_state`.
+- [x] `READER_STATE_COLS` retains `user_id` and adds `locked_ending_key`.
+- [x] Explore & public rail tests updated: `tests/tinta/explore.test.ts` and `tests/api/owned-queries.test.ts` include `leftJoin` mock and published catalog filter.
 - [x] Variant reads for Bab 45–50 from `catalog_ending_chapters` without leak if unlocked.
-- [x] Reader UI renders all consequence paragraphs and brand-guarded `directionHint`.
-- [x] Seed script guarded with `LAKOKU_SEED_CATALOG=1`.
+- [x] Brand guard `isReaderSafeHint`: drops unsafe hints server-side before reader exposure without breaking client contract parsing.
+- [x] Seed script safety: `assertLoopbackDatabaseUrl` verifies loopback host and refuses `neon.tech` unless `LAKOKU_ALLOW_REMOTE_FIXTURE_SEED=1`, printing target host.
+- [x] Behavior-driven tests: `ChapterLocked` tested with `renderToStaticMarkup` and seed safety tested directly without source regex.
 - [x] All tasks follow TDD (failing test -> command -> implement -> passing command -> commit).

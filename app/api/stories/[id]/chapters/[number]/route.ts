@@ -3,14 +3,16 @@ import { getChapter } from '@/lib/api/server'
 import { jsonWithETag } from '@/lib/api/etag'
 import { getSessionUser } from '@/lib/api/user-state'
 import { getReadingPolicy } from '@/lib/credits/server'
+import { normalizeStoryRouteId } from '@/lib/story-route-id'
 
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string; number: string }> },
 ) {
   try {
-    const { id, number } = await params
-    const n = Number.parseInt(number, 10)
+    const route = await params
+    const id = normalizeStoryRouteId(route.id)
+    const n = Number.parseInt(route.number, 10)
     if (!Number.isFinite(n) || n < 1) {
       return NextResponse.json({ error: 'Nomor bab tidak valid.' }, { status: 400 })
     }

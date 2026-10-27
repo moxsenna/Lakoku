@@ -185,4 +185,35 @@ describe('GET /api/stories/[id]/chapters/[number] access gate', () => {
     const body = await res.json()
     expect(body).toEqual({ chapter: paidChapter })
   })
+
+  it('case 6: URL-encoded story id is normalized before getChapter and resolveChapterAccess', async () => {
+    const sampleChapter = {
+      storyId: 'demo:selasa-akhir',
+      number: 1,
+      title: 'Bab Satu',
+      paragraphs: ['Paragraf bab 1'],
+      choices: [],
+    }
+    mocks.getChapter.mockResolvedValue(sampleChapter)
+    mocks.resolveChapterAccess.mockResolvedValue({
+      readable: true,
+      reason: 'FREE_STANDARD',
+      cost: 0,
+    })
+
+    const { GET } = await import('@/app/api/stories/[id]/chapters/[number]/route')
+    const req = new Request('http://localhost/api/stories/demo%3Aselasa-akhir/chapters/1')
+    const res = await GET(req, {
+      params: Promise.resolve({ id: 'demo%3Aselasa-akhir', number: '1' }),
+    })
+
+    expect(res.status).toBe(200)
+    expect(mocks.getChapter).toHaveBeenCalledWith('demo:selasa-akhir', 1)
+    expect(mocks.resolveChapterAccess).toHaveBeenCalledWith({
+      userId: 'user-1',
+      storyId: 'demo:selasa-akhir',
+      chapterNumber: 1,
+      policy: { freeTierChapters: 3, creditsPerChapter: 10 },
+    })
+  })
 })

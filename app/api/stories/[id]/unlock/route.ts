@@ -103,7 +103,7 @@ export async function POST(
         }
 
         try {
-          const result = await spendChapterUnlock(user.id, storyId, chapter, decision.cost)
+          const result = await spendChapterUnlock(user.id, storyId, chapter, decision.cost, 'canonical')
           const newBalance = await getCreditBalance(user.id)
           if (result === 'insufficient') {
             return NextResponse.json({
@@ -112,6 +112,15 @@ export async function POST(
               requiredCredits: decision.cost,
               availableCredits: newBalance,
             }, { status: 402 })
+          }
+          if (result === 'duplicate') {
+            const recheck = await resolveChapterAccess({ userId: user.id, storyId, chapterNumber: chapter, policy })
+            if (!recheck.readable) {
+              return NextResponse.json(
+                { error: 'Bab belum bisa dibuka. Coba lagi sebentar.' },
+                { status: 409 },
+              )
+            }
           }
           return NextResponse.json({ status: 'ok', balance: newBalance }, { status: 200 })
         } catch (err) {
@@ -137,7 +146,7 @@ export async function POST(
 
   // Fallback ONLY for standard/shared public story unlock
   try {
-    const result = await spendChapterUnlock(user.id, storyId, chapter, decision.cost)
+    const result = await spendChapterUnlock(user.id, storyId, chapter, decision.cost, 'reader')
     const newBalance = await getCreditBalance(user.id)
     if (result === 'insufficient') {
       return NextResponse.json({
@@ -146,6 +155,15 @@ export async function POST(
         requiredCredits: decision.cost,
         availableCredits: newBalance,
       }, { status: 402 })
+    }
+    if (result === 'duplicate') {
+      const recheck = await resolveChapterAccess({ userId: user.id, storyId, chapterNumber: chapter, policy })
+      if (!recheck.readable) {
+        return NextResponse.json(
+          { error: 'Bab belum bisa dibuka. Coba lagi sebentar.' },
+          { status: 409 },
+        )
+      }
     }
     return NextResponse.json({ status: 'ok', balance: newBalance }, { status: 200 })
   } catch (err) {

@@ -3,6 +3,7 @@ import { cache } from 'react'
 import { getDb, single, rpcOne } from '@lakoku/db'
 import {
   DEFAULT_READING_POLICY,
+  readerUnlockRef,
   unlockRef,
   type ReadingPolicy,
 } from './policy'
@@ -93,13 +94,18 @@ export async function spendChapterUnlock(
   storyId: string,
   chapter: number,
   cost: number,
+  refScope: 'reader' | 'canonical',
 ): Promise<SpendResult> {
   const db = getDb()
+  const ref =
+    refScope === 'reader'
+      ? readerUnlockRef(storyId, chapter, userId)
+      : unlockRef(storyId, chapter)
   // RLS_AUDIT: credit_ledger_own_read
   const { data, error } = await single(
     rpcOne(db, 'spend_credits_v1', {
       p_user_id: userId,
-      p_ref: unlockRef(storyId, chapter),
+      p_ref: ref,
       p_credits: cost,
       p_reason: 'unlock_chapter',
     }).execute(),

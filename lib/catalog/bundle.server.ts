@@ -25,7 +25,7 @@ export async function getCatalogBundleQuote(
 ): Promise<BundleQuote | null> {
   const db = getDb()
 
-  const { data: catalogRow } = await single(
+  const { data: catalogRow, error: catalogErr } = await single(
     db
       .selectFrom('catalog_stories')
       .innerJoin('stories', 'stories.id', 'catalog_stories.story_id')
@@ -41,9 +41,10 @@ export async function getCatalogBundleQuote(
       .execute(),
   )
 
+  if (catalogErr) throw new Error(`getCatalogBundleQuote: ${catalogErr.message}`)
   if (!catalogRow) return null
-  if (catalogRow.story_mode && catalogRow.story_mode !== 'catalog') return null
-  if (catalogRow.status && catalogRow.status !== 'published') return null
+  if (catalogRow.story_mode !== 'catalog') return null
+  if (catalogRow.status !== 'published') return null
 
   const bundlePrice = catalogRow.bundle_price
   const chapterPrice = catalogRow.chapter_price

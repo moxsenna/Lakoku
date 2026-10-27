@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { GET, POST } from '@/app/api/stories/[id]/bundle/route'
+import { getCatalogBundleQuote } from '@/lib/catalog/bundle.server'
 
 const mocks = vi.hoisted(() => ({
   getSessionUser: vi.fn(),
@@ -22,24 +23,38 @@ vi.mock('@/lib/credits/server', () => ({
 vi.mock('@lakoku/db', () => ({
   getDb: mocks.getDb,
   single: async (promise: Promise<unknown[]>) => {
-    const rows = await promise
-    return { data: rows[0] ?? null, error: null }
+    try {
+      const rows = await promise
+      return { data: rows[0] ?? null, error: null }
+    } catch (err: unknown) {
+      return {
+        data: null,
+        error: { message: (err as Error)?.message ?? 'DB error' },
+      }
+    }
   },
   result: async (promise: Promise<unknown[]>) => {
-    const rows = await promise
-    return { data: rows, error: null }
+    try {
+      const rows = await promise
+      return { data: rows, error: null }
+    } catch (err: unknown) {
+      return {
+        data: null,
+        error: { message: (err as Error)?.message ?? 'DB error' },
+      }
+    }
   },
   rpcOne: mocks.rpcOne,
 }))
 
-function createChain(rows: unknown[]) {
+function createChain(rowsOrExecute: unknown[] | (() => Promise<unknown[]>)) {
   const chain = {
     innerJoin: () => chain,
     leftJoin: () => chain,
     select: () => chain,
     where: () => chain,
     limit: () => chain,
-    execute: async () => rows,
+    execute: typeof rowsOrExecute === 'function' ? rowsOrExecute : async () => rowsOrExecute,
   }
   return chain
 }
@@ -299,5 +314,65 @@ describe('POST & GET /api/stories/[id]/bundle', () => {
     expect(res.status).toBe(200)
     expect(queriedStoryIds).toContain('catalog:test')
     expect(queriedStoryIds).not.toContain('catalog%3Atest')
+  })
+
+  it('getCatalogBundleQuote returns null when status is null', async () => {
+    mocks.getDb.mockReturnValue({
+      selectFrom: () =>
+        createChain([
+          { bundle_price: 150, chapter_price: 5, total_chapters: 50, story_mode: 'catalog', status: null },
+        ]),
+    })
+
+    const quote = await getCatalogBundleQuote('catalog:test', null)
+    expect(quote).toBeNull()
+  })
+
+  it('getCatalogBundleQuote returns null when story_mode is null', async () => {
+    mocks.getDb.mockReturnValue({
+      selectFrom: () =>
+        createChain([
+          { bundle_price: 150, chapter_price: 5, total_chapters: 50, story_mode: null, status: 'published' },
+        ]),
+    })
+
+    const quote = await getCatalogBundleQuote('catalog:test', null)
+    expect(quote).toBeNull()
+  })
+
+  it('POST returns 500 when stories query errors', async () => {
+    mocks.getSessionUser.mockResolvedValue({ id: 'u1' })
+    mocks.getDb.mockReturnValue({
+      selectFrom: () =>
+        createChain(async () => {
+          throw new Error('Database connection failed')
+        }),
+    })
+
+    const req = new Request('http://localhost/api/stories/catalog:test/bundle', { method: 'POST' })
+    const res = await POST(req, { params: Promise.resolve({ id: 'catalog:test' }) })
+    expect(res.status).toBe(500)
+    const json = await res.json()
+    expect(json.error).toBe('Gagal memuat paket cerita.')
+  })
+
+  it('POST returns 500 when catalog_stories query errors', async () => {
+    mocks.getSessionUser.mockResolvedValue({ id: 'u1' })
+    mocks.getDb.mockReturnValue({
+      selectFrom: (table: string) => {
+        if (table === 'stories') {
+          return createChain([{ id: 'catalog:test', story_mode: 'catalog' }])
+        }
+        return createChain(async () => {
+          throw new Error('Catalog DB error')
+        })
+      },
+    })
+
+    const req = new Request('http://localhost/api/stories/catalog:test/bundle', { method: 'POST' })
+    const res = await POST(req, { params: Promise.resolve({ id: 'catalog:test' }) })
+    expect(res.status).toBe(500)
+    const json = await res.json()
+    expect(json.error).toBe('Gagal memuat paket cerita.')
   })
 })

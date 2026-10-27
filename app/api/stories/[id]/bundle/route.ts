@@ -46,7 +46,12 @@ export async function POST(
       .execute(),
   )
 
-  if (storyError || !story) {
+  if (storyError) {
+    console.log('[v0] spend bundle story error:', storyError.message)
+    return NextResponse.json({ error: 'Gagal memuat paket cerita.' }, { status: 500 })
+  }
+
+  if (!story) {
     return NextResponse.json({ error: 'Cerita tidak ditemukan.' }, { status: 404 })
   }
 
@@ -63,7 +68,12 @@ export async function POST(
       .execute(),
   )
 
-  if (catalogError || !catalogStory || catalogStory.status !== 'published') {
+  if (catalogError) {
+    console.log('[v0] spend bundle catalog error:', catalogError.message)
+    return NextResponse.json({ error: 'Gagal memuat paket cerita.' }, { status: 500 })
+  }
+
+  if (!catalogStory || catalogStory.status !== 'published') {
     return NextResponse.json({ error: 'Cerita tidak ditemukan.' }, { status: 404 })
   }
 

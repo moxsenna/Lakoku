@@ -68,6 +68,10 @@ function createMockDb(result: { data: unknown; error: { message: string } | null
     selectFrom: vi.fn((table: string) => {
       calls.push({ method: 'from', args: [table] })
       const kb: Record<string, unknown> = {}
+      kb.leftJoin = vi.fn((...args: unknown[]) => {
+        calls.push({ method: 'leftJoin', args })
+        return kb
+      })
       kb.select = vi.fn((..._args: unknown[]) => {
         calls.push({ method: 'select', args: [STORY_READER_COLUMNS] })
         return kb
@@ -176,6 +180,7 @@ describe('Task P9: Public User Stories Explore & Rail (AC9.1 - AC9.5)', () => {
       expect(notCalls).toContainEqual({ method: 'not', args: ['owner_user_id', 'is', null] })
       expect(notCalls).toContainEqual({ method: 'not', args: ['id', 'like', 'demo:%'] })
       expect(notCalls).toContainEqual({ method: 'not', args: ['id', 'like', 'premium:%'] })
+      expect(notCalls).toContainEqual({ method: 'not', args: ['id', 'like', 'catalog:%'] })
 
       // Verifikasi order terbaru dan limit
       const orderCall = calls.find((c) => c.method === 'order')
@@ -224,7 +229,7 @@ describe('Task P9: Public User Stories Explore & Rail (AC9.1 - AC9.5)', () => {
   })
 
   describe('AC9.2 (Amandemen PM): listExploreStories remains unchanged and separate', () => {
-    it('listExploreStories queries only official demo/premium and does NOT call queryPublicUserStories', async () => {
+    it('listExploreStories queries official demo/premium and published catalog, excluding draft catalog', async () => {
       const { client, calls } = createMockDb({
         data: [
           {
@@ -239,14 +244,19 @@ describe('Task P9: Public User Stories Explore & Rail (AC9.1 - AC9.5)', () => {
 
       const results = await listExploreStories()
 
-      // listExploreStories menggunakan EXPLORE_STORY_FILTER (demo:%, premium:%)
+      // listExploreStories joins catalog_stories to filter published status
+      const leftJoinCalls = calls.filter((c) => c.method === 'leftJoin')
+      expect(leftJoinCalls).toContainEqual({
+        method: 'leftJoin',
+        args: ['catalog_stories', 'catalog_stories.story_id', 'stories.id'],
+      })
+
+      // listExploreStories filters demo:%, premium:%, and (catalog:% AND published)
       const orCalls = calls.filter((c) => c.method === 'or')
       expect(orCalls.length).toBeGreaterThan(0)
-      expect(orCalls[0].args[0]).toBe('id.like.demo:%,id.like.premium:%')
-
-      // Tidak ada filter not like demo:% di listExploreStories
-      const notCalls = calls.filter((c) => c.method === 'not')
-      expect(notCalls).toHaveLength(0)
+      expect(orCalls[0].args[0]).toBe(
+        'stories.id.like.demo:%,stories.id.like.premium:%,stories.id.like.catalog:%,catalog_stories.status.eq.published',
+      )
 
       // Hasil demo yang belum dibaca statusnya BARU
       expect(results[0].id).toBe('demo:nusantara-1')

@@ -178,22 +178,40 @@ export async function queryStoryForUser(
   return data ? toDetail(data as unknown as StoryRow) : null
 }
 
-/** Public official demos and premium templates only. */
+/** Public official demos, premium templates, and published catalog stories. */
 export async function queryExploreStories(): Promise<StorySummary[]> {
   const db = getDb()
   // RLS_AUDIT: stories_public_read
   const { data, error } = await result(
     db
       .selectFrom('stories')
-      .select(STORY_SELECT_COLS)
-      .where('visibility', '=', 'public')
+      .leftJoin('catalog_stories', 'catalog_stories.story_id', 'stories.id')
+      .select([
+        'stories.id',
+        'stories.title',
+        'stories.cover',
+        'stories.tagline',
+        'stories.role',
+        'stories.tropes',
+        'stories.total_chapters',
+        'stories.synopsis',
+        'stories.status',
+        'stories.current_chapter',
+        'stories.jejak',
+        'stories.ending_name',
+      ])
+      .where('stories.visibility', '=', 'public')
       .where((eb) =>
         eb.or([
-          eb('id', 'like', 'demo:%'),
-          eb('id', 'like', 'premium:%'),
+          eb('stories.id', 'like', 'demo:%'),
+          eb('stories.id', 'like', 'premium:%'),
+          eb.and([
+            eb('stories.id', 'like', 'catalog:%'),
+            eb('catalog_stories.status', '=', 'published'),
+          ]),
         ]),
       )
-      .orderBy('id', 'asc')
+      .orderBy('stories.id', 'asc')
       .execute(),
   )
   if (error) throw new Error(`queryExploreStories: ${error.message}`)
@@ -216,6 +234,7 @@ export async function queryPublicUserStories(limit = 12): Promise<StorySummary[]
       .where('owner_user_id', 'is not', null)
       .where('id', 'not like', 'demo:%')
       .where('id', 'not like', 'premium:%')
+      .where('id', 'not like', 'catalog:%')
       .orderBy('created_at', 'desc')
       .limit(limit)
       .execute(),

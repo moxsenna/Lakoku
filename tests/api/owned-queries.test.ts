@@ -82,16 +82,28 @@ function createQueryClient(
     if (op === '=' && right !== undefined) return `${left}.eq.${right}`
     if (op === 'like' && right !== undefined) return `${left}.like.${right}`
     return `${left}.${op}.${right}`
-  }) as any
+  }) as unknown as {
+    (left: unknown, op?: unknown, right?: unknown): string
+    or: (items: unknown[]) => string
+    and: (items: unknown[]) => string
+  }
   ebFn.or = vi.fn((items: unknown[]) => items.join(','))
   ebFn.and = vi.fn((items: unknown[]) => items.join(','))
 
-  const createKyselyBuilder = (table?: string) => {
+  const createKyselyBuilder = (_table?: string) => {
     const builder: Record<string, unknown> = {}
+    builder.leftJoin = vi.fn((...args: unknown[]) => {
+      calls.push({ method: 'leftJoin', args })
+      return builder
+    })
     builder.select = vi.fn((...args: unknown[]) => {
       const colArg = args[0]
       if (Array.isArray(colArg)) {
         calls.push({ method: 'select', args: [colArg.join(',')] })
+        const stripped = colArg.map((c) => String(c).replace(/^stories\./, '')).join(',')
+        if (stripped !== colArg.join(',')) {
+          calls.push({ method: 'select', args: [stripped] })
+        }
       } else {
         calls.push({ method: 'select', args })
       }
@@ -104,6 +116,9 @@ function createQueryClient(
         calls.push({ method: 'where', args: [res] })
       } else if (args[1] === '=') {
         calls.push({ method: 'eq', args: [args[0], args[2]] })
+        if (typeof args[0] === 'string' && args[0].startsWith('stories.')) {
+          calls.push({ method: 'eq', args: [args[0].replace(/^stories\./, ''), args[2]] })
+        }
         calls.push({ method: 'where', args })
       } else if (args[1] === 'in') {
         calls.push({ method: 'in', args: [args[0], args[2]] })
@@ -278,18 +293,22 @@ describe('reader-safe query projections', () => {
     expect(stories[0]).not.toHaveProperty('story_mode')
   })
 
-  it('fetches explore rows only after public official filters', async () => {
+  it('fetches explore rows only after public official and published catalog filters', async () => {
     const db = createQueryClient([{ data: [storyRow], error: null }])
     mocks.adminFactory.mockReturnValue(db.client)
     const queries = await import('@/lib/api/queries')
 
     await queries.queryExploreStories()
 
+    expect(db.calls).toContainEqual({
+      method: 'leftJoin',
+      args: ['catalog_stories', 'catalog_stories.story_id', 'stories.id'],
+    })
     expect(db.calls).toContainEqual({ method: 'select', args: [queries.STORY_READER_COLUMNS] })
     expect(db.calls).toContainEqual({ method: 'eq', args: ['visibility', 'public'] })
     expect(db.calls).toContainEqual({
       method: 'or',
-      args: ['id.like.demo:%,id.like.premium:%'],
+      args: ['stories.id.like.demo:%,stories.id.like.premium:%,stories.id.like.catalog:%,catalog_stories.status.eq.published'],
     })
     expect(db.calls.some((call) => call.args.includes('story_mode'))).toBe(false)
   })

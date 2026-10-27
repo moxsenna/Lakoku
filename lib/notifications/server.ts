@@ -343,3 +343,22 @@ export async function notifyTopupResult(input: {
     dedupeKey: `topup:${input.ref}`,
   })
 }
+
+/** Pemicu re-engagement: pembaca berhenti di tengah cerita (cliffhanger). */
+export async function notifyCliffhangerReminder(input: {
+  userId: string
+  storyTitle: string
+  chapterNumber: number
+  deepLink: string
+}): Promise<DispatchResult> {
+  const dateKey = new Date().toISOString().slice(0, 10)
+  return dispatchPush({
+    audience: `user:${input.userId}` as PushAudience,
+    payload: {
+      title: 'Ceritamu masih menggantung...',
+      body: `Kelanjutan "${input.storyTitle}" bab ${input.chapterNumber} masih menunggumu.`,
+      deepLink: input.deepLink,
+    },
+    dedupeKey: `cliffhanger:${input.userId}:${input.deepLink}:${dateKey}`,
+  })
+}

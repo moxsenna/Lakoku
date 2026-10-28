@@ -235,31 +235,26 @@ function timelineFor(chapters: Array<{ number: number; title: string; chosen?: s
   }))
 }
 
-/**
- * Id "job" sintetis per run untuk telemetri provider call. Diisi ulang setiap
- * kali generate/regenerate dipanggil, sehingga rekaman biaya terkelompok per run.
- */
-let ACTIVE_JOB_ID = randomUUID()
-
 function executionOptions(args: {
   runId: string
   storyId: string
   chapterNumber: number
   attempt: number
   phase: string
-  jobId?: string
 }) {
   return {
     telemetryContext: {
-      correlationId: `${args.runId}-ch${args.chapterNumber}-a${args.attempt}`,
+      // Skema telemetri mewajibkan correlationId UUID. jobId/attemptNumber
+      // sengaja null berdua: trigger identity menuntut baris generation_jobs
+      // asli untuk job_id tak-null, dan generator berjalan di luar lifecycle
+      // job produksi. Tanpa ini rekaman biaya dibuang (CI-6).
+      correlationId: randomUUID(),
       storyId: args.storyId,
       chapterNumber: args.chapterNumber,
       userId: PROOF_USER_ID,
       generationKind: 'personalized' as const,
-      // Skema telemetri mewajibkan jobId & attemptNumber bersama; tanpa jobId
-      // rekaman provider call ditolak dan biaya jadi tak terukur (CI-6).
-      jobId: args.jobId ?? ACTIVE_JOB_ID,
-      attemptNumber: args.attempt,
+      jobId: null,
+      attemptNumber: null,
     },
     workflowPhase: args.phase,
     writerLengthRepairV1: { enabled: true },

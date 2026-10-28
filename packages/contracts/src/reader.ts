@@ -88,6 +88,7 @@ export const JejakItemSchema = z.object({
   chapter: z.number().int().positive(),
   decision: z.string().min(1),
   consequence: z.string().min(1),
+  directionHint: z.string().min(1).optional(),
 })
 export type JejakItem = z.infer<typeof JejakItemSchema>
 

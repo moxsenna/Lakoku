@@ -324,5 +324,36 @@ describe('standard public ownership guard', () => {
         }),
       )
     })
+
+    it('drops unsafe directionHint server-side and preserves safe directionHint before returning to client', async () => {
+      mocks.resolveChapterAccess.mockResolvedValue({
+        readable: true,
+        reason: 'FREE_STANDARD',
+        cost: 0,
+      })
+      const { POST } = await import('@/app/api/stories/[id]/choices/route')
+
+      // Case 1: Safe hint
+      mocks.queryChoiceOutcome.mockResolvedValueOnce({
+        ...publicOutcome,
+        directionHint: 'Raka mulai mempercayaimu.',
+      })
+      const safeResponse = await POST(choiceRequest({ chapterNumber: 1, choiceId }), {
+        params: Promise.resolve({ id: standardStoryId }),
+      })
+      const safeBody = await safeResponse.json()
+      expect(safeBody.outcome.directionHint).toBe('Raka mulai mempercayaimu.')
+
+      // Case 2: Unsafe hint with brand word "AI"
+      mocks.queryChoiceOutcome.mockResolvedValueOnce({
+        ...publicOutcome,
+        directionHint: 'Sistem AI menentukan jalanmu.',
+      })
+      const unsafeResponse = await POST(choiceRequest({ chapterNumber: 1, choiceId }), {
+        params: Promise.resolve({ id: standardStoryId }),
+      })
+      const unsafeBody = await unsafeResponse.json()
+      expect(unsafeBody.outcome.directionHint).toBeUndefined()
+    })
   })
 })

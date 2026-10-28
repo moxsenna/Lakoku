@@ -20,6 +20,7 @@ interface LastChoiceEntry {
   toChapter: number
   decision: string
   consequence: string
+  directionHint?: string
 }
 
 type SummaryMap = Record<string, LastChoiceEntry[]>
@@ -80,5 +81,6 @@ export function getLastChoiceSummary(
     chapter: entry.fromChapter,
     decision: entry.decision,
     consequence: entry.consequence,
+    ...(entry.directionHint ? { directionHint: entry.directionHint } : {}),
   }
 }

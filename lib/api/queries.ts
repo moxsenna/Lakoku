@@ -7,6 +7,7 @@
 import { cache } from 'react'
 import { getDb, result, single } from '@lakoku/db'
 import { resolveStoryCover } from '@/lib/cover/url'
+import { sanitizeDirectionHint } from '@/lib/catalog/reader-safe-hint'
 import type {
   StorySummary,
   StoryDetail,
@@ -74,6 +75,7 @@ type OutcomeRow = {
   consequence: string[]
   next_chapter_number: number | null
   is_ending: boolean
+  direction_hint?: string | null
 }
 
 function toDetail(r: StoryRow): StoryDetail {
@@ -395,6 +397,7 @@ export async function queryChoiceOutcome(
         'next_chapter_number',
         'is_ending',
       ])
+      .select('direction_hint')
       .where('story_id', '=', storyId)
       .where('chapter_number', '=', chapterNumber)
       .where('choice_id', '=', choiceId)
@@ -404,6 +407,7 @@ export async function queryChoiceOutcome(
   if (error) throw new Error(`queryChoiceOutcome: ${error.message}`)
   if (!data) return null
   const r = data as unknown as OutcomeRow
+  const safeHint = sanitizeDirectionHint(r.direction_hint)
   return {
     storyId: r.story_id,
     chapterNumber: r.chapter_number,
@@ -411,5 +415,6 @@ export async function queryChoiceOutcome(
     consequence: (typeof r.consequence === 'string' ? JSON.parse(r.consequence) : r.consequence) as string[],
     nextChapterNumber: r.next_chapter_number,
     isEnding: r.is_ending,
+    ...(safeHint ? { directionHint: safeHint } : {}),
   }
 }

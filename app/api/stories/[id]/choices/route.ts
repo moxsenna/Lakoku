@@ -14,6 +14,7 @@ import { isStoryOwnedBy } from '@/lib/api/story-ownership.server'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
 import { maybeGrantAuthorTinta } from '@/lib/tinta/author-reward.server'
 import { getReadingPolicy } from '@/lib/credits/server'
+import { isReaderSafeHint } from '@/lib/catalog/reader-safe-hint'
 
 /**
  * POST /api/stories/[id]/choices
@@ -48,6 +49,10 @@ export async function POST(
           choiceId,
           idempotencyKey: req.headers.get('Idempotency-Key') ?? '',
         })
+
+        if ('outcome' in result && result.outcome?.directionHint && !isReaderSafeHint(result.outcome.directionHint)) {
+          delete result.outcome.directionHint
+        }
 
         if ('status' in result && result.status === 'WAITING_FOR_CREDITS') {
           return NextResponse.json(
@@ -171,6 +176,10 @@ export async function POST(
         { error: 'Pilihan tidak dikenali.' },
         { status: 404 },
       )
+    }
+
+    if (outcome.directionHint && !isReaderSafeHint(outcome.directionHint)) {
+      delete outcome.directionHint
     }
 
     // Catat ke reader-state per-user (no-op untuk tamu; RLS pemilik-saja).

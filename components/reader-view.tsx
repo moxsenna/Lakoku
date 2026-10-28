@@ -27,6 +27,7 @@ import {
 import { ReportDialog } from '@/components/report-dialog'
 import { ChapterUnavailableBanner } from '@/components/chapter-unavailable-banner'
 import { ChapterListDialog } from '@/components/chapter-list-dialog'
+import { ChoiceOutcomeReaction } from '@/components/choice-outcome-reaction'
 import { useReaderFontSize } from '@/components/font-size-provider'
 import dynamic from 'next/dynamic'
 import { trackEvent } from '@/lib/analytics/client'
@@ -355,7 +356,8 @@ export function ReaderView({
         fromChapter: chapter.number,
         toChapter: nextBab,
         decision: chosenLabel,
-        consequence: outcome.consequence[0] ?? '',
+        consequence: outcome.consequence.join('\n\n'),
+        ...(outcome.directionHint ? { directionHint: outcome.directionHint } : {}),
       })
     }
 
@@ -640,17 +642,7 @@ export function ReaderView({
       <article className="flex flex-col gap-6 px-6 pb-16 pt-8">
         {/* Card ringkasan pilihan sebelumnya (dari server jejak atau localStorage fallback tamu). */}
         {effectivePreviousChoice && !isReRead && (
-          <div className="lk-fade-up rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-lavender">
-              Pilihanmu sebelumnya
-            </p>
-            <p className="mt-2 text-sm font-medium text-foreground">
-              &ldquo;{effectivePreviousChoice.decision}&rdquo;
-            </p>
-            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              {effectivePreviousChoice.consequence}
-            </p>
-          </div>
+          <ChoiceOutcomeReaction item={effectivePreviousChoice} />
         )}
 
         <h1 className="font-serif text-3xl leading-tight text-foreground text-balance">

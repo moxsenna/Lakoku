@@ -15,6 +15,7 @@ import { getDb, result, single, type Database, type Json } from '@lakoku/db'
 import type { Kysely } from 'kysely'
 import { ChoiceHistoryEntrySchema, type ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
 import { mergeChoiceEffect, RouteChoiceEffectSchema } from '@/lib/story-engine/route-state'
+import { isReaderSafeHint } from '@/lib/catalog/reader-safe-hint'
 import type { JejakItem, ChoiceOutcome } from './types'
 
 export const READER_STATE_PUBLIC_COLUMNS = 'user_id,story_id,status,current_chapter,jejak,ending_name,updated_at' as const
@@ -278,10 +279,12 @@ export async function applyChoiceToUserState(
   const existingJejak = Array.isArray(stateData?.jejak) ? (stateData.jejak as JejakItem[]) : []
   const byChapter = new Map<number, JejakItem>()
   for (const j of existingJejak) byChapter.set(j.chapter, j)
+  const safeHint = outcome.directionHint && isReaderSafeHint(outcome.directionHint) ? outcome.directionHint : undefined
   byChapter.set(chapterNumber, {
     chapter: chapterNumber,
     decision,
-    consequence: outcome.consequence[0] ?? '',
+    consequence: outcome.consequence.join('\n\n'),
+    ...(safeHint ? { directionHint: safeHint } : {}),
   })
   const jejak: JejakItem[] = [...byChapter.values()].sort(
     (a, b) => a.chapter - b.chapter,

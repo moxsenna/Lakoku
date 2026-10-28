@@ -87,7 +87,7 @@ describe('applyChoiceToUserState', () => {
         })
         return b
       }),
-      insertInto: vi.fn((table: string) => {
+      insertInto: vi.fn((_table: string) => {
         const b: Record<string, unknown> = {}
         b.values = vi.fn((vals: Record<string, unknown>) => {
           upsertPayload = vals
@@ -227,5 +227,99 @@ describe('applyChoiceToUserState', () => {
     )
 
     expect(upsertCalled).toBe(false)
+  })
+
+  it('records multi-paragraph consequence and safe directionHint in jejak, dropping unsafe hints', async () => {
+    let upsertPayload: Record<string, unknown> | null = null
+
+    mocks.cookieFactory.mockResolvedValue({
+      auth: {
+        getUser: vi.fn(async () => ({
+          data: { user: { id: USER_ID } },
+          error: null,
+        })),
+      },
+    })
+
+    const mockDb = {
+      selectFrom: vi.fn((table: string) => {
+        const b: Record<string, unknown> = {}
+        b.select = vi.fn(() => b)
+        b.where = vi.fn(() => b)
+        b.limit = vi.fn(() => b)
+        b.execute = vi.fn(async () => {
+          if (table === 'reader_states') {
+            return [{
+              status: 'BERJALAN',
+              current_chapter: 1,
+              jejak: [],
+              ending_name: null,
+              route_state: {},
+              choice_history: [],
+            }]
+          }
+          if (table === 'choice_outcomes') {
+            return [{ effect_json: {} }]
+          }
+          return []
+        })
+        return b
+      }),
+      insertInto: vi.fn(() => {
+        const b: Record<string, unknown> = {}
+        b.values = vi.fn((vals: Record<string, unknown>) => {
+          upsertPayload = vals
+          return b
+        })
+        b.onConflict = vi.fn(() => b)
+        b.execute = vi.fn(async () => [])
+        return b
+      }),
+    }
+    mocks.getDb.mockReturnValue(mockDb)
+
+    const { applyChoiceToUserState } = await import('@/lib/api/user-state')
+
+    // 1. Safe hint with 2 consequence paragraphs
+    await applyChoiceToUserState(
+      STORY_ID,
+      1,
+      'Hadapi penagih',
+      {
+        storyId: STORY_ID,
+        chapterNumber: 1,
+        choiceId: 'ch1-safe',
+        consequence: ['Paragraf satu reaksi.', 'Paragraf dua reaksi.'],
+        nextChapterNumber: 2,
+        isEnding: false,
+        directionHint: 'Raka mulai mempercayaimu.',
+      },
+    )
+
+    const jejakSafe = upsertPayload!.jejak as Array<Record<string, unknown>>
+    expect(jejakSafe).toHaveLength(1)
+    expect(jejakSafe[0].consequence).toBe('Paragraf satu reaksi.\n\nParagraf dua reaksi.')
+    expect(jejakSafe[0].directionHint).toBe('Raka mulai mempercayaimu.')
+
+    // 2. Unsafe hint dropped from jejak
+    await applyChoiceToUserState(
+      STORY_ID,
+      2,
+      'Buka gerbang',
+      {
+        storyId: STORY_ID,
+        chapterNumber: 2,
+        choiceId: 'ch2-unsafe',
+        consequence: ['Gerbang terbuka lebar.'],
+        nextChapterNumber: 3,
+        isEnding: false,
+        directionHint: 'Sistem AI menentukan jalanmu.',
+      },
+    )
+
+    const jejakUnsafe = upsertPayload!.jejak as Array<Record<string, unknown>>
+    const ch2Entry = jejakUnsafe.find((j) => j.chapter === 2)
+    expect(ch2Entry).toBeDefined()
+    expect(ch2Entry?.directionHint).toBeUndefined()
   })
 })

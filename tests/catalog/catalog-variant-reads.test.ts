@@ -464,4 +464,67 @@ describe('catalog variant reader Bab 45-50', () => {
     expect(chLocked).not.toBeNull()
     expect(chLocked?.title).toBe('Bab 45 Akhir Damai')
   })
+
+  it('queryChoiceOutcome on spine drops unsafe direction_hint and keeps safe hint', async () => {
+    const { queryChoiceOutcome } = await import('@/lib/api/queries')
+    mockVariantDb.choiceOutcomes.push(
+      {
+        story_id: 'story:spine-safe',
+        chapter_number: 10,
+        choice_id: 'opt-safe',
+        consequence: ['Reaksi aman.'],
+        next_chapter_number: 11,
+        is_ending: false,
+        direction_hint: 'Raka mulai mempercayaimu.',
+      },
+      {
+        story_id: 'story:spine-unsafe',
+        chapter_number: 10,
+        choice_id: 'opt-unsafe',
+        consequence: ['Reaksi dengan istilah terlarang.'],
+        next_chapter_number: 11,
+        is_ending: false,
+        direction_hint: 'Sistem AI menghitung skor bias menuju ending.',
+      },
+    )
+
+    const safeOutcome = await queryChoiceOutcome('story:spine-safe', 10, 'opt-safe')
+    expect(safeOutcome?.directionHint).toBe('Raka mulai mempercayaimu.')
+
+    const unsafeOutcome = await queryChoiceOutcome('story:spine-unsafe', 10, 'opt-unsafe')
+    expect(unsafeOutcome?.directionHint).toBeUndefined()
+  })
+
+  it('getCatalogVariantOutcome drops unsafe directionHint in variant outcome', async () => {
+    const { getCatalogVariantOutcome } = await import('@/lib/catalog/variant-reader.server')
+    mockVariantDb.endingChapters.push({
+      story_id: 'catalog:test-variant-unsafe',
+      ending_key: 'ending_secret',
+      number: 46,
+      title: 'Bab 46 Rahasia',
+      paragraphs: ['...'],
+      choices: [],
+      choice_prompt: '',
+      outcomes_json: [
+        {
+          storyId: 'catalog:test-variant-unsafe',
+          chapterNumber: 46,
+          choiceId: 'choice-unsafe',
+          consequence: ['Konsekuensi varian'],
+          nextChapterNumber: 47,
+          isEnding: false,
+          directionHint: 'Model narraza memperbarui token cerita.',
+        },
+      ],
+    })
+
+    const outcome = await getCatalogVariantOutcome(
+      'catalog:test-variant-unsafe',
+      46,
+      'choice-unsafe',
+      'ending_secret',
+    )
+    expect(outcome).not.toBeNull()
+    expect(outcome?.directionHint).toBeUndefined()
+  })
 })

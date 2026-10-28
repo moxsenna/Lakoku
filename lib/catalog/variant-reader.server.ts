@@ -1,6 +1,7 @@
 import 'server-only'
 import { getDb, single, result } from '@lakoku/db'
 import type { Chapter, ChoiceOutcome, ChoiceOption } from '@/lib/api/types'
+import { sanitizeDirectionHint } from '@/lib/catalog/reader-safe-hint'
 
 export async function isCatalogStory(storyId: string): Promise<boolean> {
   const db = getDb()
@@ -141,10 +142,9 @@ export async function getCatalogVariantOutcome(
         : chapterNumber >= 50
 
   const directionHintRaw = matched.directionHint ?? matched.direction_hint
-  const directionHint =
-    typeof directionHintRaw === 'string' && directionHintRaw.trim().length > 0
-      ? directionHintRaw.trim()
-      : undefined
+  const directionHint = sanitizeDirectionHint(
+    typeof directionHintRaw === 'string' ? directionHintRaw : undefined,
+  )
 
   return {
     storyId,

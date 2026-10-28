@@ -54,21 +54,32 @@ export async function resolveChapterAccess(input: {
 
     // Determine chapter cost: catalog price or standard policy
     let chapterCost = policy.creditsPerChapter
+    let catalogStatus: string | null = null
     const isCatalog = story.story_mode === 'catalog'
     if (isCatalog) {
       const { data: catalogRow } = await single(
         db
           .selectFrom('catalog_stories')
-          .select('chapter_price')
+          .select(['chapter_price', 'status'])
           .where('story_id', '=', input.storyId)
           .limit(1)
           .execute(),
       )
       chapterCost = catalogRow?.chapter_price ?? 5
+      catalogStatus = catalogRow?.status ?? null
+    }
+
+    // Novel katalog yang belum terbit / sudah ditarik tidak bisa dibeli lagi.
+    // Baris katalog yang belum ada dianggap data lama dan tetap memakai harga fallback.
+    const catalogClosed = isCatalog && catalogStatus !== null && catalogStatus !== 'published'
+    const closedDecision: ChapterAccessDecision = {
+      readable: false,
+      reason: 'STORY_PENDING',
+      cost: 0,
     }
 
     if (!input.userId) {
-      return { readable: false, reason: 'PAYMENT_REQUIRED', cost: chapterCost }
+      return catalogClosed ? closedDecision : { readable: false, reason: 'PAYMENT_REQUIRED', cost: chapterCost }
     }
 
     // Check bundle proof first for catalog
@@ -105,7 +116,7 @@ export async function resolveChapterAccess(input: {
     if (ledger) {
       return { readable: true, reason: 'LEDGER_UNLOCKED', cost: 0 }
     }
-    return { readable: false, reason: 'PAYMENT_REQUIRED', cost: chapterCost }
+    return catalogClosed ? closedDecision : { readable: false, reason: 'PAYMENT_REQUIRED', cost: chapterCost }
   }
 
   // Commercial mode (personalized_ai / premium_instance): STRICT OWNER CHECK

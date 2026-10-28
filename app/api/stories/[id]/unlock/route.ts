@@ -46,6 +46,9 @@ export async function POST(
   }
 
   if (decision.reason === 'STORY_PENDING') {
+    if (decision.cost === 0) {
+      return NextResponse.json({ error: 'Novel ini sedang tidak tersedia.' }, { status: 409 })
+    }
     return NextResponse.json({
       status: 'WAITING_FOR_CREDITS',
       storyId,

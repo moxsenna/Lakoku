@@ -261,4 +261,134 @@ describe('catalog access resolver & policy', () => {
     })
     expect(decision).toEqual({ readable: true, reason: 'BUNDLE_UNLOCKED', cost: 0 })
   })
+
+  it('archived catalog story rejects new purchases without charging', async () => {
+    const { resolveChapterAccess } = await import('@/lib/credits/access-resolver.server')
+    mockDbState.stories.push({
+      id: 'catalog:misteri-desa',
+      owner_user_id: null,
+      story_mode: 'catalog',
+      commercial_origin: null,
+      visibility: 'public',
+    })
+    mockDbState.catalogStories.push({
+      story_id: 'catalog:misteri-desa',
+      chapter_price: 5,
+      bundle_price: 150,
+      status: 'archived',
+    })
+
+    const decision = await resolveChapterAccess({
+      userId: 'u123',
+      storyId: 'catalog:misteri-desa',
+      chapterNumber: 10,
+    })
+    expect(decision).toEqual({ readable: false, reason: 'STORY_PENDING', cost: 0 })
+  })
+
+  it('archived catalog story still serves a guest its free chapters', async () => {
+    const { resolveChapterAccess } = await import('@/lib/credits/access-resolver.server')
+    mockDbState.stories.push({
+      id: 'catalog:misteri-desa',
+      owner_user_id: null,
+      story_mode: 'catalog',
+      commercial_origin: null,
+      visibility: 'public',
+    })
+    mockDbState.catalogStories.push({
+      story_id: 'catalog:misteri-desa',
+      chapter_price: 5,
+      bundle_price: 150,
+      status: 'archived',
+    })
+
+    const decision = await resolveChapterAccess({
+      userId: null,
+      storyId: 'catalog:misteri-desa',
+      chapterNumber: 2,
+    })
+    expect(decision).toEqual({ readable: true, reason: 'FREE_STANDARD', cost: 0 })
+  })
+
+  it('archived catalog story keeps already-bought chapters readable', async () => {
+    const { resolveChapterAccess } = await import('@/lib/credits/access-resolver.server')
+    mockDbState.stories.push({
+      id: 'catalog:misteri-desa',
+      owner_user_id: null,
+      story_mode: 'catalog',
+      commercial_origin: null,
+      visibility: 'public',
+    })
+    mockDbState.catalogStories.push({
+      story_id: 'catalog:misteri-desa',
+      chapter_price: 5,
+      bundle_price: 150,
+      status: 'archived',
+    })
+    mockDbState.ledger.push({
+      id: 'led-1',
+      user_id: 'u123',
+      ref: readerUnlockRef('catalog:misteri-desa', 10, 'u123'),
+    })
+
+    const decision = await resolveChapterAccess({
+      userId: 'u123',
+      storyId: 'catalog:misteri-desa',
+      chapterNumber: 10,
+    })
+    expect(decision).toEqual({ readable: true, reason: 'LEDGER_UNLOCKED', cost: 0 })
+  })
+
+  it('archived catalog story keeps bundle buyers readable', async () => {
+    const { resolveChapterAccess } = await import('@/lib/credits/access-resolver.server')
+    mockDbState.stories.push({
+      id: 'catalog:misteri-desa',
+      owner_user_id: null,
+      story_mode: 'catalog',
+      commercial_origin: null,
+      visibility: 'public',
+    })
+    mockDbState.catalogStories.push({
+      story_id: 'catalog:misteri-desa',
+      chapter_price: 5,
+      bundle_price: 150,
+      status: 'archived',
+    })
+    mockDbState.ledger.push({
+      id: 'led-b',
+      user_id: 'u123',
+      ref: bundleRef('catalog:misteri-desa', 'u123'),
+    })
+
+    const decision = await resolveChapterAccess({
+      userId: 'u123',
+      storyId: 'catalog:misteri-desa',
+      chapterNumber: 10,
+    })
+    expect(decision).toEqual({ readable: true, reason: 'BUNDLE_UNLOCKED', cost: 0 })
+  })
+
+  it('catalog story still in review cannot be bought', async () => {
+    const { resolveChapterAccess } = await import('@/lib/credits/access-resolver.server')
+    mockDbState.stories.push({
+      id: 'catalog:misteri-desa',
+      owner_user_id: null,
+      story_mode: 'catalog',
+      commercial_origin: null,
+      visibility: 'private',
+    })
+    mockDbState.catalogStories.push({
+      story_id: 'catalog:misteri-desa',
+      chapter_price: 5,
+      bundle_price: 150,
+      status: 'review',
+    })
+
+    const decision = await resolveChapterAccess({
+      userId: 'u123',
+      storyId: 'catalog:misteri-desa',
+      chapterNumber: 10,
+    })
+    expect(decision).toEqual({ readable: false, reason: 'STORY_PENDING', cost: 0 })
+  })
 })

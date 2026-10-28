@@ -13,6 +13,7 @@ import {
   BarChart3,
   Bell,
   Settings,
+  BookOpen,
 } from 'lucide-react'
 
 const navItems = [
@@ -22,6 +23,7 @@ const navItems = [
   { href: '/admin/payments', label: 'Payments', icon: CreditCard },
   { href: '/admin/push', label: 'Siaran', icon: Bell },
   { href: '/admin/generation', label: 'Generation', icon: Cpu },
+  { href: '/admin/katalog', label: 'Katalog', icon: BookOpen },
   { href: '/admin/blueprint-review', label: 'Blueprint Review', icon: ClipboardCheck },
   { href: '/admin/consistency', label: 'Consistency', icon: BarChart3 },
   { href: '/admin/settings', label: 'Settings', icon: Settings },

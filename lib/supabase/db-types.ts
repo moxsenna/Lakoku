@@ -261,6 +261,17 @@ export interface BlueprintValidatorProofs {
   validator_version: string;
 }
 
+export interface CatalogChapterReviews {
+  chapter_number: number;
+  created_at: Generated<Timestamp>;
+  note: string | null;
+  reviewed_by: string | null;
+  status: Generated<string>;
+  story_id: string;
+  updated_at: Generated<Timestamp>;
+  variant_key: Generated<string>;
+}
+
 export interface CatalogEndingChapters {
   choice_prompt: string | null;
   choices: Json | null;
@@ -1294,6 +1305,7 @@ export interface DB {
   blueprint_resolutions: BlueprintResolutions;
   blueprint_validator_attestations: BlueprintValidatorAttestations;
   blueprint_validator_proofs: BlueprintValidatorProofs;
+  catalog_chapter_reviews: CatalogChapterReviews;
   catalog_ending_chapters: CatalogEndingChapters;
   catalog_stories: CatalogStories;
   chapter_blueprints: ChapterBlueprints;

@@ -19,6 +19,30 @@ export function assertLoopbackSupabaseUrl(value: string): string {
   return value
 }
 
+export function assertLoopbackDatabaseUrl(
+  databaseUrl: string | undefined,
+  allowRemote = false,
+): string {
+  if (!databaseUrl) {
+    throw new Error('DATABASE_URL is required')
+  }
+  let url: URL
+  try {
+    url = new URL(databaseUrl)
+  } catch {
+    throw new Error('Invalid DATABASE_URL')
+  }
+
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  const isLoopback = ['127.0.0.1', 'localhost', '::1'].includes(host)
+  if (!isLoopback && !allowRemote) {
+    throw new Error(
+      `Refusing to seed non-loopback host "${host}". Set LAKOKU_ALLOW_REMOTE_FIXTURE_SEED=1 to override.`,
+    )
+  }
+  return host
+}
+
 export function readLocalStatus(value: Record<string, unknown>): LocalSupabaseStatus {
   const apiUrl = value.API_URL
   const anonKey = value.ANON_KEY

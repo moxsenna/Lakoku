@@ -224,7 +224,8 @@ export async function POST(
     }
 
     return NextResponse.json({ outcome })
-  } catch {
+  } catch (err) {
+    console.log('[v0] submit choice gagal:', (err as Error)?.message)
     return NextResponse.json({ error: 'Gagal memproses pilihan.' }, { status: 500 })
   }
 }

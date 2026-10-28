@@ -416,6 +416,46 @@ describe('applyChoiceToUserState ending lock for catalog', () => {
     expect(compiled.sql).toContain('coalesce("reader_states"."locked_ending_key", "excluded"."locked_ending_key")')
   })
 
+  it('serializes jsonb values as JSON text so pg does not send array literals', async () => {
+    const { Kysely, DummyDriver, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler } = await import('kysely')
+    const { buildReaderStateChoiceUpsert } = await import('@/lib/api/user-state')
+    type Database = import('@lakoku/db').Database
+
+    const compileDb = new Kysely<Database>({
+      dialect: {
+        createAdapter: () => new PostgresAdapter(),
+        createDriver: () => new DummyDriver(),
+        createIntrospector: (db) => new PostgresIntrospector(db),
+        createQueryCompiler: () => new PostgresQueryCompiler(),
+      },
+    })
+
+    const jejak = [{ chapter: 44, decision: 'Pilihan 3', consequence: 'Reaksi Bab 44.' }]
+    const routeState = { endingBias: { ending_secret: 10 }, flags: { secret: true } }
+    const choiceHistory = [{ chapterNumber: 44, choiceId: 'ch44-opt-3' }]
+
+    const query = buildReaderStateChoiceUpsert(compileDb, {
+      userId: 'u-reader-1',
+      storyId: 'catalog:novel-1',
+      status: 'BERJALAN',
+      currentChapter: 45,
+      jejak: jejak as unknown as import('@lakoku/db').Json,
+      endingName: null,
+      routeState: routeState as unknown as import('@lakoku/db').Json,
+      choiceHistory: choiceHistory as unknown as import('@lakoku/db').Json,
+      lockedEndingKey: 'ending_secret',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    })
+
+    const parameters = query.compile().parameters
+    const strings = parameters.filter((value): value is string => typeof value === 'string')
+
+    expect(strings).toContain(JSON.stringify(jejak))
+    expect(strings).toContain(JSON.stringify(routeState))
+    expect(strings).toContain(JSON.stringify(choiceHistory))
+    expect(parameters.some((value) => Array.isArray(value))).toBe(false)
+  })
+
   it('toState maps lockedEndingKey to r.locked_ending_key ?? null', async () => {
     const { toState } = await import('@/lib/api/user-state')
     const baseRow = {

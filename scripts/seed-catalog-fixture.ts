@@ -1,5 +1,14 @@
-import { getDb, result, type Json } from '@lakoku/db'
+import { getDb, result, type DbResult, type Json } from '@lakoku/db'
 import { assertLoopbackDatabaseUrl } from './personalized-db-safety'
+
+/** `pg` mengirim array JS sebagai literal array Postgres, bukan JSON; jsonb wajib berupa teks JSON. */
+function jsonValue(value: unknown): Json {
+  return JSON.stringify(value) as unknown as Json
+}
+
+function assertOk(res: DbResult<unknown>, label: string): void {
+  if (res.error) throw new Error(`[seed-catalog] ${label} gagal: ${res.error.message}`)
+}
 
 export const FIXTURE_CATALOG_STORY_ID = 'catalog:bayang-tak-bertuan'
 
@@ -105,50 +114,56 @@ export async function seedCatalogFixture(env: Record<string, string | undefined>
   }
 
   console.log(`[seed-catalog] Membersihkan data lama untuk ${storyId}...`)
-  await db.deleteFrom('catalog_ending_chapters').where('story_id', '=', storyId).execute()
-  await db.deleteFrom('catalog_stories').where('story_id', '=', storyId).execute()
-  await db.deleteFrom('choice_outcomes').where('story_id', '=', storyId).execute()
-  await db.deleteFrom('chapters').where('story_id', '=', storyId).execute()
-  await db.deleteFrom('stories').where('id', '=', storyId).execute()
+  assertOk(await result(db.deleteFrom('catalog_ending_chapters').where('story_id', '=', storyId).execute()), 'delete catalog_ending_chapters')
+  assertOk(await result(db.deleteFrom('catalog_stories').where('story_id', '=', storyId).execute()), 'delete catalog_stories')
+  assertOk(await result(db.deleteFrom('choice_outcomes').where('story_id', '=', storyId).execute()), 'delete choice_outcomes')
+  assertOk(await result(db.deleteFrom('chapters').where('story_id', '=', storyId).execute()), 'delete chapters')
+  assertOk(await result(db.deleteFrom('stories').where('id', '=', storyId).execute()), 'delete stories')
 
   console.log('[seed-catalog] Memasukkan baris stories...')
-  await result(
-    db
-      .insertInto('stories')
-      .values({
-        id: storyId,
-        title: 'Bayang Tak Bertuan',
-        cover: '/covers/bayang-tak-bertuan.webp',
-        tagline: 'Di balik kabut lereng Lawu, rahasia keluarga memanggilmu pulang.',
-        role: 'Raka',
-        tropes: ['Rahasia Keluarga', 'Kebangkitan Diri'],
-        total_chapters: 50,
-        synopsis: 'Sebuah novel interaktif 50 bab dengan tiga cabang takdir yang ditentukan pilihan hatimu.',
-        status: 'SELESAI',
-        current_chapter: 50,
-        visibility: 'public',
-        story_mode: 'catalog',
-        owner_user_id: null,
-        jejak: [],
-      })
-      .execute(),
+  assertOk(
+    await result(
+      db
+        .insertInto('stories')
+        .values({
+          id: storyId,
+          title: 'Bayang Tak Bertuan',
+          cover: '/covers/bayang-tak-bertuan.webp',
+          tagline: 'Di balik kabut lereng Lawu, rahasia keluarga memanggilmu pulang.',
+          role: 'Raka',
+          tropes: jsonValue(['Rahasia Keluarga', 'Kebangkitan Diri']),
+          total_chapters: 50,
+          synopsis: 'Sebuah novel interaktif 50 bab dengan tiga cabang takdir yang ditentukan pilihan hatimu.',
+          status: 'SELESAI',
+          current_chapter: 50,
+          visibility: 'public',
+          story_mode: 'catalog',
+          owner_user_id: null,
+          jejak: jsonValue([]),
+        })
+        .execute(),
+    ),
+    'insert stories',
   )
 
   console.log('[seed-catalog] Memasukkan catalog_stories...')
-  await result(
-    db
-      .insertInto('catalog_stories')
-      .values({
-        story_id: storyId,
-        status: 'published',
-        chapter_price: 5,
-        bundle_price: 150,
-        contract_json: FIXTURE_CATALOG_CONTRACT as unknown as Json,
-        generation_progress: 50,
-        published_at: new Date().toISOString(),
-        published_by: 'system',
-      })
-      .execute(),
+  assertOk(
+    await result(
+      db
+        .insertInto('catalog_stories')
+        .values({
+          story_id: storyId,
+          status: 'published',
+          chapter_price: 5,
+          bundle_price: 150,
+          contract_json: jsonValue(FIXTURE_CATALOG_CONTRACT),
+          generation_progress: 50,
+          published_at: new Date().toISOString(),
+          published_by: 'system',
+        })
+        .execute(),
+    ),
+    'insert catalog_stories',
   )
 
   console.log('[seed-catalog] Memasukkan Bab 1-44 spine...')
@@ -161,62 +176,71 @@ export async function seedCatalogFixture(env: Record<string, string | undefined>
           { id: `ch${n}-opt-2`, label: `Cari jalan memutar langkah ${n}` },
         ]
 
-    await result(
-      db
-        .insertInto('chapters')
-        .values({
-          story_id: storyId,
-          number: n,
-          title: `Bab ${n}: Titik Temu ${n}`,
-          paragraphs: [
-            `Langkah demi langkah di Bab ${n} membawa Raka semakin dekat ke inti teka-teki.`,
-            `Udara dingin pegunungan menusuk tulang, tetapi tekadnya tak goyah sedikit pun.`,
-          ] as unknown as Json,
-          choice_prompt: `Apa langkahmu berikutnya di Bab ${n}?`,
-          choices: choices as unknown as Json,
-        })
-        .execute(),
+    assertOk(
+      await result(
+        db
+          .insertInto('chapters')
+          .values({
+            story_id: storyId,
+            number: n,
+            title: `Bab ${n}: Titik Temu ${n}`,
+            paragraphs: jsonValue([
+              `Langkah demi langkah di Bab ${n} membawa Raka semakin dekat ke inti teka-teki.`,
+              `Udara dingin pegunungan menusuk tulang, tetapi tekadnya tak goyah sedikit pun.`,
+            ]),
+            choice_prompt: `Apa langkahmu berikutnya di Bab ${n}?`,
+            choices: jsonValue(choices),
+          })
+          .execute(),
+      ),
+      `insert chapters bab ${n}`,
     )
 
     if (isBab44) {
       for (const outcome of FIXTURE_BAB_44_OUTCOMES) {
-        await result(
-          db
-            .insertInto('choice_outcomes')
-            .values({
-              story_id: storyId,
-              chapter_number: 44,
-              choice_id: outcome.choiceId,
-              consequence: outcome.consequence as unknown as Json,
-              next_chapter_number: 45,
-              is_ending: false,
-              direction_hint: outcome.directionHint,
-              effect_json: outcome.effectJson as unknown as Json,
-            })
-            .execute(),
+        assertOk(
+          await result(
+            db
+              .insertInto('choice_outcomes')
+              .values({
+                story_id: storyId,
+                chapter_number: 44,
+                choice_id: outcome.choiceId,
+                consequence: jsonValue(outcome.consequence),
+                next_chapter_number: 45,
+                is_ending: false,
+                direction_hint: outcome.directionHint,
+                effect_json: jsonValue(outcome.effectJson),
+              })
+              .execute(),
+          ),
+          `insert choice_outcomes bab 44 ${outcome.choiceId}`,
         )
       }
     } else {
       for (const c of choices) {
-        await result(
-          db
-            .insertInto('choice_outcomes')
-            .values({
-              story_id: storyId,
-              chapter_number: n,
-              choice_id: c.id,
-              consequence: [
-                `Reaksi mendalam untuk ${c.label}. Keputusan ini membawa dampak nyata bagi suasana di sekitar.`,
-                `Raka menghela napas panjang dan melangkah mantap ke depan.`,
-              ] as unknown as Json,
-              next_chapter_number: n + 1,
-              is_ending: false,
-              direction_hint: c.id.endsWith('1') ? 'Keyakinanmu mulai mempengaruhi orang sekitar.' : null,
-              effect_json: {
-                endingBiasDeltas: {},
-              } as unknown as Json,
-            })
-            .execute(),
+        assertOk(
+          await result(
+            db
+              .insertInto('choice_outcomes')
+              .values({
+                story_id: storyId,
+                chapter_number: n,
+                choice_id: c.id,
+                consequence: jsonValue([
+                  `Reaksi mendalam untuk ${c.label}. Keputusan ini membawa dampak nyata bagi suasana di sekitar.`,
+                  `Raka menghela napas panjang dan melangkah mantap ke depan.`,
+                ]),
+                next_chapter_number: n + 1,
+                is_ending: false,
+                direction_hint: c.id.endsWith('1') ? 'Keyakinanmu mulai mempengaruhi orang sekitar.' : null,
+                effect_json: jsonValue({
+                  endingBiasDeltas: {},
+                }),
+              })
+              .execute(),
+          ),
+          `insert choice_outcomes bab ${n} ${c.id}`,
         )
       }
     }
@@ -246,23 +270,26 @@ export async function seedCatalogFixture(env: Record<string, string | undefined>
             },
           ]
 
-      await result(
-        db
-          .insertInto('catalog_ending_chapters')
-          .values({
-            story_id: storyId,
-            ending_key: endingKey,
-            number: n,
-            title: `Bab ${n} [${tagLabel}]: Babak Penutup`,
-            paragraphs: [
-              `Paragraf khusus cabang ${tagLabel} pada Bab ${n}.`,
-              isFinal ? `Inilah penutup dari takdir ${tagLabel}.` : 'Ketegangan memuncak di ujung perjalanan.',
-            ] as unknown as Json,
-            choice_prompt: isFinal ? null : 'Bagaimana caramu menutup kisah ini?',
-            choices: isFinal ? null : ([{ id: `v-${endingKey}-ch${n}-1`, label: 'Lanjutkan akhir kisah' }] as unknown as Json),
-            outcomes_json: outcomes as unknown as Json,
-          })
-          .execute(),
+      assertOk(
+        await result(
+          db
+            .insertInto('catalog_ending_chapters')
+            .values({
+              story_id: storyId,
+              ending_key: endingKey,
+              number: n,
+              title: `Bab ${n} [${tagLabel}]: Babak Penutup`,
+              paragraphs: jsonValue([
+                `Paragraf khusus cabang ${tagLabel} pada Bab ${n}.`,
+                isFinal ? `Inilah penutup dari takdir ${tagLabel}.` : 'Ketegangan memuncak di ujung perjalanan.',
+              ]),
+              choice_prompt: isFinal ? null : 'Bagaimana caramu menutup kisah ini?',
+              choices: isFinal ? null : jsonValue([{ id: `v-${endingKey}-ch${n}-1`, label: 'Lanjutkan akhir kisah' }]),
+              outcomes_json: jsonValue(outcomes),
+            })
+            .execute(),
+        ),
+        `insert catalog_ending_chapters ${endingKey} bab ${n}`,
       )
     }
   }

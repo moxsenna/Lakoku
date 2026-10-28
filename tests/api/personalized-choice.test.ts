@@ -664,6 +664,36 @@ describe('personalized choice route dispatch', () => {
     })
   })
 
+  it('falls through to old path for catalog story', async () => {
+    const catalogMetadata = {
+      ...metadataRow,
+      id: 'catalog:novel-1',
+      owner_user_id: null,
+      visibility: 'public',
+      story_mode: 'catalog',
+    }
+    const fixture = createAdminDb({ tables: { stories: [{ data: catalogMetadata, error: null }] } })
+    mocks.queryStoryForUser.mockResolvedValue({ id: 'catalog:novel-1' })
+    mocks.queryChoiceOutcome.mockResolvedValue(publicOutcome)
+    mocks.cookieFactory.mockResolvedValue(createCookieDb({
+      story: { data: { id: 'catalog:novel-1' }, error: null },
+    }).client)
+    mocks.adminFactory.mockReturnValue(fixture.client)
+    const { POST } = await import('@/app/api/stories/[id]/choices/route')
+
+    const response = await POST(request({ id: 'catalog:novel-1', body: {
+      chapterNumber: 1,
+      choiceId: 'catalog-choice',
+    } }), { params: Promise.resolve({ id: 'catalog%3Anovel-1' }) })
+
+    expect(response.status).toBe(200)
+    expect(mocks.applyChoiceToUserState).toHaveBeenCalledOnce()
+    expect(fixture.client.rpc).not.toHaveBeenCalledWith(
+      'apply_personalized_choice_v2',
+      expect.anything(),
+    )
+  })
+
   it.each([
     ['premium_instance', true],
     ['premium_template', false],

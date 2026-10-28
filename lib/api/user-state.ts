@@ -438,11 +438,23 @@ export interface ReaderStateChoiceUpsertValues {
   updatedAt?: string
 }
 
+/**
+ * `pg` mengirim array JS sebagai literal array Postgres, sehingga kolom jsonb
+ * menolaknya (`invalid input syntax for type json`). Semua nilai jsonb harus
+ * dikirim sebagai teks JSON.
+ */
+function jsonParam(value: Json): Json {
+  return JSON.stringify(value) as unknown as Json
+}
+
 export function buildReaderStateChoiceUpsert(
   db: Kysely<Database>,
   values: ReaderStateChoiceUpsertValues,
 ) {
   const updatedAt = values.updatedAt ?? new Date().toISOString()
+  const jejak = jsonParam(values.jejak)
+  const routeState = jsonParam(values.routeState)
+  const choiceHistory = jsonParam(values.choiceHistory)
   return db
     .insertInto('reader_states')
     .values({
@@ -450,10 +462,10 @@ export function buildReaderStateChoiceUpsert(
       story_id: values.storyId,
       status: values.status,
       current_chapter: values.currentChapter,
-      jejak: values.jejak,
+      jejak,
       ending_name: values.endingName,
-      route_state: values.routeState,
-      choice_history: values.choiceHistory,
+      route_state: routeState,
+      choice_history: choiceHistory,
       locked_ending_key: values.lockedEndingKey,
       updated_at: updatedAt,
     })
@@ -461,10 +473,10 @@ export function buildReaderStateChoiceUpsert(
       oc.columns(['user_id', 'story_id']).doUpdateSet((eb) => ({
         status: values.status,
         current_chapter: values.currentChapter,
-        jejak: values.jejak,
+        jejak,
         ending_name: values.endingName,
-        route_state: values.routeState,
-        choice_history: values.choiceHistory,
+        route_state: routeState,
+        choice_history: choiceHistory,
         updated_at: updatedAt,
         locked_ending_key: eb.fn.coalesce(
           'reader_states.locked_ending_key',

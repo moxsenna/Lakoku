@@ -43,7 +43,7 @@ const StoryMetadataSchema = z.object({
   id: z.string().min(1),
   owner_user_id: z.string().uuid().nullable(),
   visibility: z.enum(['public', 'unlisted', 'private']),
-  story_mode: z.enum(['standard', 'personalized_ai', 'premium_template', 'premium_instance']),
+  story_mode: z.enum(['standard', 'personalized_ai', 'premium_template', 'premium_instance', 'catalog']),
 }).strict()
 const ReaderStateSchema = z.object({
   user_id: z.string().uuid(),

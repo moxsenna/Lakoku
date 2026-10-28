@@ -26,6 +26,7 @@ export const READER_STATE_COLS = [
   'current_chapter',
   'jejak',
   'ending_name',
+  'locked_ending_key',
   'updated_at',
 ] as const
 
@@ -35,6 +36,7 @@ export interface ReaderState {
   currentChapter: number
   jejak: JejakItem[]
   endingName?: string
+  lockedEndingKey?: string | null
 }
 
 type ReaderStateRow = {
@@ -43,6 +45,7 @@ type ReaderStateRow = {
   current_chapter: number
   jejak: JejakItem[]
   ending_name: string | null
+  locked_ending_key?: string | null
 }
 
 /** Urutan status untuk aturan monotonic: tak boleh mundur. */
@@ -66,6 +69,7 @@ function toState(r: ReaderStateRow): ReaderState {
     currentChapter: r.current_chapter,
     jejak: r.jejak,
     ...(r.ending_name ? { endingName: r.ending_name } : {}),
+    ...(r.locked_ending_key ? { lockedEndingKey: r.locked_ending_key } : {}),
   }
 }
 
@@ -262,7 +266,7 @@ export async function applyChoiceToUserState(
   const { data: stateData, error: stateError } = await single(
     db
       .selectFrom('reader_states')
-      .select(['status', 'current_chapter', 'jejak', 'ending_name', 'route_state', 'choice_history'])
+      .select(['status', 'current_chapter', 'jejak', 'ending_name', 'route_state', 'choice_history', 'locked_ending_key'])
       .where('user_id', '=', user.id)
       .where('story_id', '=', storyId)
       .limit(1)
@@ -351,6 +355,47 @@ export async function applyChoiceToUserState(
           : (stateData?.ending_name ?? null))
       : null
 
+  // --- Ending lock untuk cerita katalog pada Bab 44
+  let lockedEndingKey = stateData?.locked_ending_key ?? null
+  const isCatalog = storyId.startsWith('catalog:')
+  if (isCatalog && chapterNumber === 44 && !lockedEndingKey) {
+    try {
+      const { data: catalogRow } = await single(
+        db
+          .selectFrom('catalog_stories')
+          .select('contract_json')
+          .where('story_id', '=', storyId)
+          .limit(1)
+          .execute(),
+      )
+      if (catalogRow?.contract_json) {
+        const { CatalogContractSnapshotSchema } = await import('@/lib/catalog/contract-snapshot')
+        const rawJson =
+          typeof catalogRow.contract_json === 'string'
+            ? JSON.parse(catalogRow.contract_json)
+            : catalogRow.contract_json
+        const parsed = CatalogContractSnapshotSchema.safeParse(rawJson)
+        if (!parsed.success) {
+          console.error('CATALOG_CONTRACT_SNAPSHOT_INVALID', parsed.error)
+          // DO NOT swallow silently into a permanent null or fake lock.
+          // Leave lockedEndingKey null so a subsequent Bab-44 retry can lock once contract is corrected.
+        } else {
+          const { resolveEndingFromCandidates } = await import('@/lib/story-engine/ending-resolver')
+          const resolution = resolveEndingFromCandidates({
+            routeState: nextRouteState,
+            endingLockChapter: parsed.data.closureRunway.endingLockChapter,
+            endingCandidates: parsed.data.endingCandidates,
+            chapterNumber: 45,
+          })
+          lockedEndingKey = resolution.key
+        }
+      }
+    } catch (err) {
+      console.error('CATALOG_ENDING_LOCK_COMPUTATION_FAILED', err)
+      // Leave lockedEndingKey null so retry can lock
+    }
+  }
+
   // RLS_AUDIT: reader_states_owner_all
   const { error } = await result(
     db
@@ -364,10 +409,11 @@ export async function applyChoiceToUserState(
         ending_name: endingName,
         route_state: nextRouteState as unknown as Json,
         choice_history: choiceHistory as unknown as Json,
+        locked_ending_key: lockedEndingKey,
         updated_at: new Date().toISOString(),
       })
       .onConflict((oc) =>
-        oc.columns(['user_id', 'story_id']).doUpdateSet({
+        oc.columns(['user_id', 'story_id']).doUpdateSet((eb) => ({
           status,
           current_chapter: nextChapter,
           jejak: jejak as unknown as Json,
@@ -375,7 +421,11 @@ export async function applyChoiceToUserState(
           route_state: nextRouteState as unknown as Json,
           choice_history: choiceHistory as unknown as Json,
           updated_at: new Date().toISOString(),
-        }),
+          locked_ending_key: eb.fn.coalesce(
+            'reader_states.locked_ending_key',
+            eb.ref('excluded.locked_ending_key'),
+          ),
+        })),
       )
       .execute(),
   )

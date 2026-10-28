@@ -597,7 +597,7 @@ describe('reader-state grant compatibility', () => {
 
     expect(db.calls).toContainEqual({
       method: 'select',
-      args: [userState.READER_STATE_PUBLIC_COLUMNS],
+      args: [userState.READER_STATE_COLS.join(',')],
     })
     const upsert = db.calls.find((call) => call.method === 'upsert')
     expect(upsert?.args[0]).toEqual(

@@ -16,7 +16,7 @@ import {
   type CatalogGeneratorStoryState,
   type CatalogGeneratorWriter,
 } from '@/lib/catalog/generator.server'
-import { normalizeCatalogEndings } from '@/lib/catalog/catalog-contract'
+import { normalizeCatalogEndings, applyPremiseOverlay } from '@/lib/catalog/catalog-contract'
 
 vi.mock('server-only', () => ({}))
 
@@ -175,6 +175,39 @@ describe('normalizeCatalogEndings', () => {
     expect(() => normalizeCatalogEndings(noSecret as typeof fantasiPetualanganContract)).toThrow(
       /CATALOG_ENDINGS_INVALID/,
     )
+  })
+})
+
+describe('applyPremiseOverlay', () => {
+  it('rewrites premise anchors without touching chapter structure or endings', () => {
+    const base = normalizeCatalogEndings({ ...fantasiPetualanganContract, storyId: STORY_ID })
+    const overlaid = applyPremiseOverlay(base, {
+      title: 'Kamar 304 Tak Pernah Kosong',
+      synopsis: 'Wulan menemukan tamu yang tak pernah check-out menyimpan utang keluarganya.',
+      protagonistName: 'Wulan',
+      tagline: 'Kamar itu tidak pernah kosong.',
+    })
+    expect(overlaid.title).toBe('Kamar 304 Tak Pernah Kosong')
+    expect(overlaid.mainCharacter.name).toBe('Wulan')
+    expect(overlaid.corePromise).toContain('utang keluarganya')
+    expect(overlaid.mainConflict).toContain('utang keluarganya')
+    expect(overlaid.finalQuestion).toBe('Kamar itu tidak pernah kosong.')
+    expect(overlaid.chapterTargets).toHaveLength(50)
+    expect(overlaid.endingCandidates.map((candidate) => candidate.key)).toEqual(
+      base.endingCandidates.map((candidate) => candidate.key),
+    )
+  })
+
+  it('truncates long synopsis to the schema bound and stays schema-valid', () => {
+    const base = normalizeCatalogEndings({ ...fantasiPetualanganContract, storyId: STORY_ID })
+    const overlaid = applyPremiseOverlay(base, {
+      title: 'Judul',
+      synopsis: 'Kalimat. '.repeat(300),
+      protagonistName: 'Aksara',
+      tagline: 'Tagline',
+    })
+    expect(overlaid.corePromise.length).toBeLessThanOrEqual(800)
+    expect(overlaid.mainCharacter.name).toBe('Aksara')
   })
 })
 

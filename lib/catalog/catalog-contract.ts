@@ -43,3 +43,32 @@ export function assertCatalogContract(contract: StoryContract): StoryContract {
 export function parseCatalogContractJson(raw: unknown): StoryContract {
   return StoryContractSchema.parse(raw)
 }
+
+/**
+ * Overlay premis operator ke kontrak template (fallback): judul, nama tokoh,
+ * corePromise/mainConflict dari sinopsis, dan finalQuestion dari tagline.
+ * Struktur bab, reveal runway, dan kandidat ending tidak disentuh. Anchor ini
+ * mengalir ke brief tiap bab via storyAnchors continuation, sehingga prosa
+ * mengikuti premis meski kontrak berasal dari template.
+ */
+export function applyPremiseOverlay(
+  contract: StoryContract,
+  premise: { title: string; synopsis: string; protagonistName: string; tagline: string },
+): StoryContract {
+  const bounded = (value: string, max: number): string => {
+    const trimmed = value.trim()
+    return trimmed.length <= max ? trimmed : trimmed.slice(0, max).trim()
+  }
+  const synopsis = bounded(premise.synopsis, 800)
+  return StoryContractSchema.parse({
+    ...contract,
+    title: bounded(premise.title, 160),
+    mainCharacter: {
+      ...contract.mainCharacter,
+      name: bounded(premise.protagonistName, 100),
+    },
+    corePromise: synopsis,
+    mainConflict: synopsis,
+    finalQuestion: bounded(premise.tagline, 500),
+  })
+}

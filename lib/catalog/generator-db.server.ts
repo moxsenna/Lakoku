@@ -5,7 +5,7 @@ import { contractToCanonBootstrap } from '@/lib/story-engine/contract-persistenc
 import { loadCanonSnapshot } from '@/lib/narrative/loader'
 import type { GenerationProvider } from '@lakoku/ai-gateway'
 import type { StoryContract } from '@/lib/story-engine/story-contract'
-import { assertCatalogStoryId } from '@/lib/catalog/catalog-contract'
+import { assertCatalogStoryId, applyPremiseOverlay } from '@/lib/catalog/catalog-contract'
 import type {
   CatalogChapterRef,
   CatalogGeneratorStoryState,
@@ -68,7 +68,13 @@ export async function createCatalogDraft(input: CreateCatalogDraftInput): Promis
     tasteJson: taste,
     provider: input.provider,
   })
-  const canon = contractToCanonBootstrap(rawContract)
+  const contract = applyPremiseOverlay(rawContract, {
+    title: input.title,
+    synopsis: input.synopsis,
+    protagonistName: input.protagonistName,
+    tagline: input.tagline,
+  })
+  const canon = contractToCanonBootstrap(contract)
 
   assertOk(await result(
     db.insertInto('stories').values({
@@ -94,7 +100,7 @@ export async function createCatalogDraft(input: CreateCatalogDraftInput): Promis
       status: 'draft',
       chapter_price: 5,
       bundle_price: 150,
-      contract_json: jsonValue(rawContract),
+      contract_json: jsonValue(contract),
       generation_progress: 0,
     }).execute(),
   ), 'insert catalog_stories')
@@ -139,7 +145,7 @@ export async function createCatalogDraft(input: CreateCatalogDraftInput): Promis
     ).execute()), 'insert blueprints')
   }
 
-  return { contract: rawContract, contractSource }
+  return { contract, contractSource }
 }
 
 function toChapterRef(paragraphs: unknown, fallbackTitle: string): CatalogChapterRef {

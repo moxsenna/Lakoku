@@ -160,12 +160,17 @@ async function main(): Promise<void> {
   }
 
   // 4. Protected reading routes still gate on auth instead of leaking or erroring.
+  // 4. Protected reading routes still gate on auth instead of leaking or erroring.
+  // /mulai sengaja terbuka untuk tamu (funnel cbfbf42: kuis dijawab tanpa akun,
+  // login diminta tepat sebelum premis disusun), jadi kontraknya 200, bukan 307.
   for (const [name, pathname] of [['baca', storyId ? `/baca/${encodeURIComponent(storyId)}` : '/baca/demo:selasa-akhir'], ['mulai', '/mulai']] as const) {
     const res = await fetchRoute(`${origin}${pathname}`)
     const redirectsToLogin = res.status >= 300 && res.status < 400 && (res.location ?? '').includes('/auth/login')
-    record(`${name}-requires-auth`, redirectsToLogin, `HTTP ${res.status} -> ${res.location ?? '(none)'}`)
+    const ok = name === 'mulai'
+      ? res.status === 200 && res.body.length > 1000
+      : redirectsToLogin
+    record(`${name}-requires-auth`, ok, `HTTP ${res.status} -> ${res.location ?? '(none)'}, ${res.body.length} bytes`)
   }
-
   // 5. The login page a gated reader lands on actually works.
   const login = await fetchRoute(`${origin}/auth/login`)
   record('login-renders', login.status === 200 && login.body.length > 1000, `HTTP ${login.status}, ${login.body.length} bytes`)

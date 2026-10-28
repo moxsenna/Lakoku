@@ -305,14 +305,23 @@ async function run() {
           selectCols = AUTH_USERS_COLUMNS.map((c) => `"${c}"`).join(', ')
           insertCols = [...AUTH_USERS_COLUMNS]
         } else {
-          // Query column list from Neon table
+          // Copy hanya irisan kolom Supabase ∩ Neon: kolom khusus Neon (hasil
+          // migrasi pasca-clone, mis. choice_outcomes.direction_hint) tetap
+          // memakai default-nya dan tidak membuat SELECT Supabase gagal.
           const colsRes = await neonClient.query(`
             SELECT column_name
             FROM information_schema.columns
             WHERE table_schema = $1 AND table_name = $2
             ORDER BY ordinal_position
           `, [schema, table])
-          insertCols = colsRes.rows.map((r) => r.column_name)
+          const supaColsRes = await supaClient.query(`
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = $1 AND table_name = $2
+            ORDER BY ordinal_position
+          `, [schema, table])
+          const supaCols = new Set(supaColsRes.rows.map((r) => r.column_name))
+          insertCols = colsRes.rows.map((r) => r.column_name).filter((c) => supaCols.has(c))
           selectCols = insertCols.map((c) => `"${c}"`).join(', ')
         }
 

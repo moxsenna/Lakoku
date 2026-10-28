@@ -29,7 +29,7 @@ export const DEFAULT_RUNTIME_POLICY: GenerationRuntimePolicy = {
   targetScenes: 3,
 }
 
-const MAX_PROSE_ATTEMPTS = 5
+const MAX_PROSE_ATTEMPTS = 8
 const MAX_CHOICE_ATTEMPTS = 3
 const MAX_REACTION_ATTEMPTS = 3
 const ENDING_LOCK_BIAS_DELTA = 10

@@ -37,12 +37,15 @@ function hasFlag(name: string): boolean {
 }
 
 function loadEnvLocal(): void {
-  const envPath = path.resolve(process.cwd(), '.env.local')
-  if (!fs.existsSync(envPath)) return
-  for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
-    const match = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*['"]?(.*?)['"]?\s*$/)
-    if (match?.[1] && match[2] !== undefined && !process.env[match[1]]) {
-      process.env[match[1]] = match[2]
+  // Urutan: .env.local (lokal) menang, .env (konvensi server) mengisi sisanya.
+  for (const name of ['.env.local', '.env']) {
+    const envPath = path.resolve(process.cwd(), name)
+    if (!fs.existsSync(envPath)) continue
+    for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+      const match = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*['"]?(.*?)['"]?\s*$/)
+      if (match?.[1] && match[2] !== undefined && !process.env[match[1]]) {
+        process.env[match[1]] = match[2]
+      }
     }
   }
 }

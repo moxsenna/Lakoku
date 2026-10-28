@@ -1,0 +1,45 @@
+import { StoryContractSchema, type StoryContract } from '@/lib/story-engine/story-contract'
+
+/** Bab terakhir spine bersama; pilihan di sini mengunci ending per pembaca. */
+export const CATALOG_SPINE_LAST_CHAPTER = 44
+/** Bab pertama varian ending (closureRunway.endingLockChapter literal 45). */
+export const CATALOG_VARIANT_FIRST_CHAPTER = 45
+
+export function assertCatalogStoryId(storyId: string): void {
+  if (!storyId.startsWith('catalog:') || storyId.length <= 'catalog:'.length) {
+    throw new Error(`CATALOG_STORY_ID_INVALID:${storyId}`)
+  }
+}
+
+/**
+ * Kontrak katalog wajib punya tepat 3 kandidat ending (2 main + 1 secret).
+ * Kontrak hasil LLM bisa membawa lebih banyak kandidat; sisakan dua main
+ * pertama dan satu secret pertama, lalu validasi ulang.
+ */
+export function normalizeCatalogEndings(contract: StoryContract): StoryContract {
+  const mains = contract.endingCandidates.filter((candidate) => candidate.kind === 'main')
+  const secrets = contract.endingCandidates.filter((candidate) => candidate.kind === 'secret')
+  if (mains.length < 2 || secrets.length < 1) {
+    throw new Error(
+      `CATALOG_ENDINGS_INVALID: butuh 2 main + 1 secret, dapat ${mains.length} main + ${secrets.length} secret`,
+    )
+  }
+  const kept = [...mains.slice(0, 2), secrets[0]!]
+  if (kept.length === contract.endingCandidates.length) return contract
+  return StoryContractSchema.parse({ ...contract, endingCandidates: kept })
+}
+
+/** Validasi kontrak siap-generate: skema penuh + 3 kandidat ending katalog. */
+export function assertCatalogContract(contract: StoryContract): StoryContract {
+  const normalized = normalizeCatalogEndings(contract)
+  const mains = normalized.endingCandidates.filter((candidate) => candidate.kind === 'main').length
+  const secrets = normalized.endingCandidates.filter((candidate) => candidate.kind === 'secret').length
+  if (normalized.endingCandidates.length !== 3 || mains !== 2 || secrets !== 1) {
+    throw new Error('CATALOG_ENDINGS_INVALID: kontrak katalog wajib tepat 2 main + 1 secret')
+  }
+  return normalized
+}
+
+export function parseCatalogContractJson(raw: unknown): StoryContract {
+  return StoryContractSchema.parse(raw)
+}

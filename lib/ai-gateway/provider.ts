@@ -244,6 +244,19 @@ export type DraftDefect =
 
 import type { SemanticJudgeInput, SemanticJudgeResult } from './semantic-continuation-judge'
 
+/** Input generasi reaksi katalog (Plan 2): reaksi kuat per pilihan + petunjuk arah opsional. */
+export interface CatalogReactionsProviderInput {
+  storyId: string
+  chapterNumber: number
+  chapterTitle: string
+  mainCharacterName: string
+  choices: Array<{ id: string; label: string }>
+  chapterLastParagraphs: string[]
+  endingCandidates: Array<{ key: string; name: string }>
+  lockedEndingKey: string | null
+  isEndingLockChapter: boolean
+}
+
 export interface GenerationProvider {
   /** Nama internal — untuk log/korelasi, tak pernah ke pembaca. */
   readonly name: string
@@ -261,6 +274,11 @@ export interface GenerationProvider {
   generateStoryContract?(
     input: StoryContractInput,
     options?: StoryContractCallOptions,
+  ): Promise<unknown>
+  /** Reaksi kuat katalog per pilihan (JSON mentah; validasi milik engine katalog). */
+  generateCatalogReactions?(
+    input: CatalogReactionsProviderInput,
+    options?: ModelCallExecutionOptions,
   ): Promise<unknown>
   evaluateSemanticContinuity?(
     input: SemanticJudgeInput,
@@ -648,6 +666,35 @@ export function createDeterministicProvider(
         choices,
         outcomes,
       }
+    },
+
+    async generateCatalogReactions(
+      input: CatalogReactionsProviderInput,
+      _options,
+    ): Promise<unknown> {
+      const reactions = input.choices.map((choice) => {
+        const topic = choice.label.replace(/[.!?]+$/, '')
+        const paragraphs = [
+          `${topic} — keputusan itu menghantam ${input.mainCharacterName} lebih keras dari dugaan. `
+            + `Udara di sekitar terasa mengental. ${input.mainCharacterName} menarik napas panjang, `
+            + `memaksa bahu turun perlahan, lalu menatap ke arah suara langkah yang menjauh. `
+            + `Ada hal kecil yang berubah malam itu: cara ${input.mainCharacterName} berdiri, `
+            + `cara tangan mengepal, dan cara mata berhenti mencari persetujuan siapa pun.`,
+          `Sisa waktu berjalan tanpa banyak kata. ${input.mainCharacterName} menyelesaikan satu hal `
+            + `kecil yang tertunda, lalu satu lagi, seolah urutan itu bisa menahan dunia agar tidak `
+            + `berubah terlalu cepat. Ketika malam tiba, satu kalimat tetap tergantung di kepala: `
+            + `pilihan seperti ini selalu menagih harganya, dan ${input.mainCharacterName} sudah `
+            + `memutuskan untuk membayarnya sampai tuntas.`,
+        ]
+        return {
+          choiceId: choice.id,
+          paragraphs,
+          ...(input.isEndingLockChapter || input.lockedEndingKey
+            ? { directionHint: 'Kesimpulan kecil ini perlahan mengubah suasana di sekitarmu.' }
+            : {}),
+        }
+      })
+      return { reactions }
     },
   }
 }

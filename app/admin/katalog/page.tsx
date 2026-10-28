@@ -99,7 +99,7 @@ export default function AdminCatalogPage() {
       {!loading && stories.length === 0 && !error && (
         <AdminEmptyState
           title="Belum ada novel katalog"
-          message="Novel katalog akan muncul di sini setelah proses penulisan selesai."
+          message="Buat draf lewat perintah operator: pnpm catalog:generate --create --story=catalog:<slug> --title=... --synopsis=... --protagonist=..."
         />
       )}
 

@@ -14,6 +14,7 @@ import {
   type PlanInput,
   type WriteInput,
   type ChoiceProviderInput,
+  type CatalogReactionsProviderInput,
   type StoryContractInput,
   type StoryContractCallOptions,
   type ModelCallExecutionOptions,
@@ -1246,6 +1247,107 @@ async function generateChoiceJson(args: {
   throw lastError ?? new Error('gateway-provider: semua kandidat model choices gagal.')
 }
 
+function buildCatalogReactionsPrompt(
+  input: CatalogReactionsProviderInput,
+): { system: string; prompt: string } {
+  const system = [
+    'Kamu penulis reaksi novel interaktif Indonesia (mobile drama, sudut pandang orang pertama "aku").',
+    'Untuk SETIAP pilihan yang diberikan, tulis reaksi 1-2 paragraf (paragraf = 2-4 kalimat) dengan total 60-150 kata.',
+    'Reaksi harus spesifik pada pilihan itu: konsekuensi langsung yang terasa oleh tokoh, bukan rangkuman atau pesan moral.',
+    'DILARANG memakai kata: AI, Narraza, RAG, token, skor, bias, rute, ending, bab, pembaca.',
+    'Jangan menyalin ulang kalimat prosa bab dan jangan menjelaskan mekanisme cerita.',
+    'Untuk konteks yang menandai pilihan penggeser takdir, tambahkan directionHint berupa satu kalimat tenang maksimal 120 karakter tanpa istilah teknis.',
+    'Balas HANYA JSON: {"reactions":[{"choiceId":"...","paragraphs":["..."],"directionHint":"..."}]} dengan paragraphs 1-2 item.',
+  ].join('\n')
+  const prompt = `Konteks reaksi (chapterNumber=${input.chapterNumber}):\n${JSON.stringify(input)}`
+  if (prompt.length > MAX_PROMPT_CHARS) {
+    throw new GatewayError(
+      'Reaksi katalog tidak dapat dihasilkan.',
+      'CHOICE_INPUT_INVALID',
+      [`Prompt length ${prompt.length} exceeds limit ${MAX_PROMPT_CHARS}.`],
+    )
+  }
+  return { system, prompt }
+}
+
+async function generateCatalogReactionsJson(args: {
+  chain: ModelCandidate[]
+  input: CatalogReactionsProviderInput
+  route?: AiModelRoute
+  options: ModelCallExecutionOptions
+}): Promise<unknown> {
+  const { system, prompt } = buildCatalogReactionsPrompt(args.input)
+  let lastError: unknown
+
+  for (const candidate of args.chain) {
+    throwIfAborted(args.options.signal)
+    const { model, label } = candidate
+    try {
+      const { withChoiceGenerationSlot } = await import('@/lib/runtime/choice-concurrency')
+      return await withChoiceGenerationSlot({
+        providerId: candidate.providerId,
+        storyId: args.input.storyId,
+        chapterNumber: args.input.chapterNumber,
+        correlationId: args.options.telemetryContext.correlationId,
+        signal: args.options.signal,
+        observer: args.options.providerRuntime?.choiceConcurrencyObserver,
+      }, () => {
+        throwIfAborted(args.options.signal)
+        const timeoutMs = args.options.choiceDeadlineAtMs === undefined
+          ? LLM_CHOICE_TIMEOUT_MS
+          : candidateTimeoutMs({
+              deadlineAtMs: args.options.choiceDeadlineAtMs,
+              perCandidateTimeoutMs: args.options.choicePerCandidateTimeoutMs ?? LLM_CHOICE_TIMEOUT_MS,
+            }, Date.now())
+        if (timeoutMs === null) throw workflowDeadlineError(args.options)
+        const candidateTimeoutSignal = AbortSignal.timeout(timeoutMs)
+        const requestSignal = args.options.signal
+          ? AbortSignal.any([args.options.signal, candidateTimeoutSignal])
+          : candidateTimeoutSignal
+        return executeObservedModelCall({
+          context: args.options.telemetryContext,
+          candidate: candidateIdentity(candidate),
+          useCase: args.route?.useCase ?? 'choices',
+          workflowPhase: args.options.workflowPhase,
+          classifyFailure: (error) => classifyChoiceAbort({
+            error,
+            parentSignal: args.options.signal,
+            candidateTimeoutSignal,
+          }),
+          // Transport sama dengan choices: streamText satu-satunya jalur yang
+          // andal di 9Router VPS (lihat catatan generateChoiceJson).
+          call: () => streamText({
+            model,
+            system,
+            prompt,
+            temperature: args.route?.temperature ?? 0.1,
+            maxOutputTokens: resolveMaxOutputTokens({
+              label,
+              modelId: candidate.configuredModelId,
+              routeMax: args.route?.maxOutputTokens,
+              fallback: 2048,
+            }),
+            abortSignal: requestSignal,
+            maxRetries: 0,
+          }),
+          consume: async (text) => {
+            throwIfAborted(args.options.signal)
+            const parsed = parseModelJson(text)
+            return args.options.consume ? args.options.consume(parsed) : parsed
+          },
+        })
+      })
+    } catch (error) {
+      if (args.options.signal?.aborted) throw args.options.signal.reason ?? error
+      if (error instanceof GlobalInferenceBudgetError) throw error
+      lastError = error
+      logCandidateFailure(args.options.workflowPhase, candidate, error)
+    }
+  }
+
+  throw lastError ?? new Error('gateway-provider: semua kandidat model reaksi katalog gagal.')
+}
+
 async function generateSemanticJudgeJson(args: {
   chain: ModelCandidate[]
   input: SemanticJudgeInput
@@ -1552,6 +1654,24 @@ export function createGatewayProvider(
         return Promise.reject(new Error('CHOICE_ROUTE_MISSING'))
       }
       return generateChoiceJson({
+        chain: choiceChain,
+        input,
+        route: resolvedChoicesRoute,
+        options,
+      })
+    },
+
+    generateCatalogReactions(
+      input: CatalogReactionsProviderInput,
+      options?: ModelCallExecutionOptions,
+    ): Promise<unknown> {
+      if (!options) {
+        throw new Error('gateway-provider: telemetry execution options are required.')
+      }
+      if (choiceRouteMissing && !Boolean(options.providerRuntime?.candidateTransport)) {
+        return Promise.reject(new Error('CHOICE_ROUTE_MISSING'))
+      }
+      return generateCatalogReactionsJson({
         chain: choiceChain,
         input,
         route: resolvedChoicesRoute,

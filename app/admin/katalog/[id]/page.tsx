@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
-import { ArrowLeft, CheckCircle2, Circle, Pencil, RefreshCw, RotateCcw, Send, Trash2 } from 'lucide-react'
+import { ArrowLeft, Check, CheckCircle2, Circle, Copy, Pencil, RefreshCw, RotateCcw, Send, Trash2 } from 'lucide-react'
 
 type ReviewStatus = 'pending' | 'approved' | 'rewrite_requested'
 
@@ -82,6 +82,24 @@ async function fetchCatalogDetail(
   }
 }
 
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    // Clipboard API butuh dokumen fokus (mis. tab latar belakang); fallback lama masih andal.
+    const area = document.createElement('textarea')
+    area.value = text
+    area.style.position = 'fixed'
+    area.style.opacity = '0'
+    document.body.appendChild(area)
+    area.select()
+    const ok = document.execCommand('copy')
+    area.remove()
+    return ok
+  }
+}
+
 export default function AdminCatalogDetailPage() {
   const params = useParams<{ id: string }>()
   const storyId = useMemo(() => {
@@ -106,6 +124,7 @@ export default function AdminCatalogDetailPage() {
   const [editChoices, setEditChoices] = useState<Array<{ id: string; label: string }>>([])
   const [openKey, setOpenKey] = useState<string | null>(null)
   const [confirmArchive, setConfirmArchive] = useState(false)
+  const [copiedCommand, setCopiedCommand] = useState(false)
 
   const applyDetail = useCallback((story: CatalogDetail) => {
     setDetail(story)
@@ -308,6 +327,26 @@ export default function AdminCatalogDetailPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={async () => {
+              const ok = await copyText(`pnpm catalog:generate --story=${detail.storyId}`)
+              if (ok) {
+                setCopiedCommand(true)
+                window.setTimeout(() => setCopiedCommand(false), 2000)
+              } else {
+                setError('Gagal menyalin perintah.')
+              }
+            }}
+            className="flex min-h-10 items-center gap-2 rounded-lg border border-border px-3 text-sm text-foreground hover:bg-muted"
+          >
+            {copiedCommand ? (
+              <Check className="size-4" aria-hidden="true" />
+            ) : (
+              <Copy className="size-4" aria-hidden="true" />
+            )}
+            {copiedCommand ? 'Tersalin' : 'Salin perintah'}
+          </button>
           <button
             type="button"
             onClick={() => void load()}

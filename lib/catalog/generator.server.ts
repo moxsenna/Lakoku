@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { randomUUID } from 'node:crypto'
 import {
   generateChapter,
   generateChoiceBranch,
@@ -234,12 +235,19 @@ function timelineFor(chapters: Array<{ number: number; title: string; chosen?: s
   }))
 }
 
+/**
+ * Id "job" sintetis per run untuk telemetri provider call. Diisi ulang setiap
+ * kali generate/regenerate dipanggil, sehingga rekaman biaya terkelompok per run.
+ */
+let ACTIVE_JOB_ID = randomUUID()
+
 function executionOptions(args: {
   runId: string
   storyId: string
   chapterNumber: number
   attempt: number
   phase: string
+  jobId?: string
 }) {
   return {
     telemetryContext: {
@@ -248,7 +256,9 @@ function executionOptions(args: {
       chapterNumber: args.chapterNumber,
       userId: PROOF_USER_ID,
       generationKind: 'personalized' as const,
-      jobId: null,
+      // Skema telemetri mewajibkan jobId & attemptNumber bersama; tanpa jobId
+      // rekaman provider call ditolak dan biaya jadi tak terukur (CI-6).
+      jobId: args.jobId ?? ACTIVE_JOB_ID,
       attemptNumber: args.attempt,
     },
     workflowPhase: args.phase,
@@ -613,6 +623,7 @@ export async function generateCatalogNovel(deps: CatalogGeneratorDeps, input: {
   }
   const contract = assertCatalogContract(state.contract)
   const runId = input.runId ?? `catalog-gen-${Date.now()}`
+  ACTIVE_JOB_ID = randomUUID()
   const log = input.log
   const cap = input.maxChapters ?? 50
 
@@ -738,6 +749,7 @@ export async function regenerateCatalogSpineChapter(deps: CatalogGeneratorDeps, 
   }
   await deps.writer.deleteSpineChapter(input.storyId, chapterNumber)
   state.spine.delete(chapterNumber)
+  ACTIVE_JOB_ID = randomUUID()
   const baseCanon = await deps.writer.loadCanon(input.storyId)
   const snapshot: CanonSnapshot = {
     ...baseCanon,

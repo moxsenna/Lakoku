@@ -4,6 +4,11 @@ export interface LocalSupabaseStatus {
   serviceRoleKey: string
 }
 
+function isLoopbackHost(h: string): boolean {
+  const normalized = h.toLowerCase().replace(/^\[|\]$/g, '')
+  return ['127.0.0.1', 'localhost', '::1'].includes(normalized)
+}
+
 export function assertLoopbackSupabaseUrl(value: string): string {
   let url: URL
   try {
@@ -13,7 +18,7 @@ export function assertLoopbackSupabaseUrl(value: string): string {
   }
 
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
-  if (!['127.0.0.1', 'localhost', '::1'].includes(host)) {
+  if (!isLoopbackHost(host)) {
     throw new Error('personalized DB test requires loopback Supabase URL')
   }
   return value
@@ -22,6 +27,7 @@ export function assertLoopbackSupabaseUrl(value: string): string {
 export function assertLoopbackDatabaseUrl(
   databaseUrl: string | undefined,
   allowRemote = false,
+  env: Record<string, string | undefined> = process.env,
 ): string {
   if (!databaseUrl) {
     throw new Error('DATABASE_URL is required')
@@ -34,13 +40,31 @@ export function assertLoopbackDatabaseUrl(
   }
 
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
-  const isLoopback = ['127.0.0.1', 'localhost', '::1'].includes(host)
+  const isLoopback = isLoopbackHost(host)
   if (!isLoopback && !allowRemote) {
     throw new Error(
       `Refusing to seed non-loopback host "${host}". Set LAKOKU_ALLOW_REMOTE_FIXTURE_SEED=1 to override.`,
     )
   }
-  return host
+
+  if (url.searchParams.has('host')) {
+    const queryHost = (url.searchParams.get('host') ?? '').trim()
+    if (!isLoopbackHost(queryHost) && !allowRemote) {
+      throw new Error(
+        `Refusing to seed non-loopback host "${queryHost}". Set LAKOKU_ALLOW_REMOTE_FIXTURE_SEED=1 to override.`,
+      )
+    }
+  }
+
+  const pgHost = env.PGHOST?.trim()
+  if (pgHost && !isLoopbackHost(pgHost) && !allowRemote) {
+    throw new Error(
+      `Refusing to seed non-loopback host "${pgHost}" from PGHOST. Set LAKOKU_ALLOW_REMOTE_FIXTURE_SEED=1 to override.`,
+    )
+  }
+
+  const queryHost = url.searchParams.get('host')?.trim()
+  return queryHost || host
 }
 
 export function readLocalStatus(value: Record<string, unknown>): LocalSupabaseStatus {

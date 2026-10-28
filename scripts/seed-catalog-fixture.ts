@@ -86,13 +86,17 @@ export function assertSeedAllowed(env: Record<string, string | undefined> = proc
   }
 
   const allowRemote = env.LAKOKU_ALLOW_REMOTE_FIXTURE_SEED === '1'
-  const host = assertLoopbackDatabaseUrl(env.DATABASE_URL, allowRemote)
+  const host = assertLoopbackDatabaseUrl(env.DATABASE_URL, allowRemote, env)
   return { host }
 }
 
 export async function seedCatalogFixture(env: Record<string, string | undefined> = process.env): Promise<void> {
   const { host } = assertSeedAllowed(env)
   console.log(`[seed-catalog] Target database host: ${host}`)
+
+  if (env.DATABASE_URL) {
+    process.env.DATABASE_URL = env.DATABASE_URL
+  }
 
   const db = getDb()
   const storyId = FIXTURE_CATALOG_STORY_ID
@@ -218,9 +222,15 @@ export async function seedCatalogFixture(env: Record<string, string | undefined>
     }
   }
 
-  console.log('[seed-catalog] Memasukkan Bab 45-50 varian ending...')
+  console.log('[seed-catalog] Memasukkan Bab 45-50 varian babak akhir...')
   const endingKeys = ['ending_a', 'ending_b', 'ending_secret']
+  const endingTagLabels: Record<string, string> = {
+    ending_a: 'PUNCAK_A',
+    ending_b: 'PUNCAK_B',
+    ending_secret: 'PUNCAK_RAHASIA',
+  }
   for (const endingKey of endingKeys) {
+    const tagLabel = endingTagLabels[endingKey] ?? endingKey.toUpperCase()
     for (let n = 45; n <= 50; n++) {
       const isFinal = n === 50
       const outcomes = isFinal
@@ -230,7 +240,7 @@ export async function seedCatalogFixture(env: Record<string, string | undefined>
               storyId,
               chapterNumber: n,
               choiceId: `v-${endingKey}-ch${n}-1`,
-              consequence: [`Konsekuensi varian ${endingKey} bab ${n}.`],
+              consequence: [`Konsekuensi cabang ${tagLabel} bab ${n}.`],
               nextChapterNumber: n + 1,
               isEnding: false,
             },
@@ -243,10 +253,10 @@ export async function seedCatalogFixture(env: Record<string, string | undefined>
             story_id: storyId,
             ending_key: endingKey,
             number: n,
-            title: `Bab ${n} [${endingKey.toUpperCase()}]: Babak Penutup`,
+            title: `Bab ${n} [${tagLabel}]: Babak Penutup`,
             paragraphs: [
-              `Paragraf khusus varian ${endingKey} pada Bab ${n}.`,
-              isFinal ? `Inilah penutup dari takdir ${endingKey}.` : 'Ketegangan memuncak di ujung perjalanan.',
+              `Paragraf khusus cabang ${tagLabel} pada Bab ${n}.`,
+              isFinal ? `Inilah penutup dari takdir ${tagLabel}.` : 'Ketegangan memuncak di ujung perjalanan.',
             ] as unknown as Json,
             choice_prompt: isFinal ? null : 'Bagaimana caramu menutup kisah ini?',
             choices: isFinal ? null : ([{ id: `v-${endingKey}-ch${n}-1`, label: 'Lanjutkan akhir kisah' }] as unknown as Json),
@@ -257,7 +267,7 @@ export async function seedCatalogFixture(env: Record<string, string | undefined>
     }
   }
 
-  console.log('[seed-catalog] Sukses menyiapkan fixture catalog:bayang-tak-bertuan (50 bab, 3 ending).')
+  console.log('[seed-catalog] Sukses menyiapkan fixture catalog:bayang-tak-bertuan (50 bab, 3 cabang takdir).')
 }
 
 const isDirectExecution =

@@ -39,6 +39,32 @@ describe('scripts/seed-catalog-fixture safety guards & candidate structure', () 
       expect(assertLoopbackDatabaseUrl('postgresql://postgres:postgres@localhost:5432/lakoku_local')).toBe('localhost')
       expect(assertLoopbackDatabaseUrl('postgresql://postgres:postgres@[::1]:5432/lakoku_local')).toBe('::1')
     })
+
+    it('refuses execution when DATABASE_URL carries remote host in searchParams (?host=remote.neon.tech)', () => {
+      expect(() =>
+        assertLoopbackDatabaseUrl('postgresql://127.0.0.1:5432/db?host=remote.neon.tech'),
+      ).toThrow('Refusing to seed non-loopback host "remote.neon.tech"')
+    })
+
+    it('allows remote host in searchParams when allowRemote flag is explicitly true', () => {
+      expect(
+        assertLoopbackDatabaseUrl('postgresql://127.0.0.1:5432/db?host=remote.neon.tech', true),
+      ).toBe('remote.neon.tech')
+    })
+
+    it('refuses execution when PGHOST environment variable points to remote host', () => {
+      expect(() =>
+        assertLoopbackDatabaseUrl('postgresql://127.0.0.1:5432/db', false, {
+          PGHOST: 'remote.neon.tech',
+        }),
+      ).toThrow('Refusing to seed non-loopback host "remote.neon.tech" from PGHOST')
+    })
+
+    it('allows loopback host in searchParams without override flag', () => {
+      expect(
+        assertLoopbackDatabaseUrl('postgresql://127.0.0.1:5432/db?host=localhost'),
+      ).toBe('localhost')
+    })
   })
 
   describe('assertSeedAllowed', () => {
@@ -54,6 +80,15 @@ describe('scripts/seed-catalog-fixture safety guards & candidate structure', () 
           DATABASE_URL: 'postgresql://lakoku_owner:secret@ep-cool-fog-12345.ap-southeast-1.neon.tech/neondb',
         }),
       ).toThrow('Refusing to seed non-loopback host "ep-cool-fog-12345.ap-southeast-1.neon.tech"')
+    })
+
+    it('refuses when DATABASE_URL carries remote host in searchParams without override', () => {
+      expect(() =>
+        assertSeedAllowed({
+          LAKOKU_SEED_CATALOG: '1',
+          DATABASE_URL: 'postgresql://127.0.0.1:5432/db?host=remote.neon.tech',
+        }),
+      ).toThrow('Refusing to seed non-loopback host "remote.neon.tech"')
     })
 
     it('allows loopback DATABASE_URL when LAKOKU_SEED_CATALOG=1', () => {

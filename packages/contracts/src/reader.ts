@@ -118,6 +118,7 @@ export const ChoiceOutcomeSchema = z.object({
   consequence: z.array(z.string().min(1)).min(1),
   nextChapterNumber: z.number().int().positive().nullable(),
   isEnding: z.boolean(),
+  directionHint: z.string().min(1).optional(),
 })
 export type ChoiceOutcome = z.infer<typeof ChoiceOutcomeSchema>
 

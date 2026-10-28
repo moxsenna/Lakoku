@@ -181,8 +181,24 @@ export async function getChapter(
   }
   target = Math.max(1, target)
 
-  const chapter = await queryChapter(storyId, target)
+  const isCatalog = target >= 45 ? await (async () => {
+    const { isCatalogStory } = await import('@/lib/catalog/variant-reader.server')
+    return isCatalogStory(storyId)
+  })() : false
+
+  let endingKey: string | null = null
+  if (isCatalog && target >= 45) {
+    const user = await getSessionUser()
+    const { getReaderLockedEndingKey } = await import('@/lib/catalog/variant-reader.server')
+    endingKey = await getReaderLockedEndingKey(storyId, user?.id ?? null)
+    if (!endingKey) return null
+  }
+
+  const chapter = await queryChapter(storyId, target, endingKey)
   if (chapter) return chapter
+
+  // Catalog variant chapters >= 45 without hit: never fall back to another variant or to queryLatestAvailableChapter
+  if (isCatalog && target >= 45) return null
 
   // Bab yang diminta belum ada isinya. Bila target adalah bab terkini (currentChapter)
   // atau lebih besar, jangan jatuh ke bab lama agar reader menampilkan layar
@@ -215,8 +231,24 @@ export async function getChapterAvailability(
   storyId = normalizeStoryRouteId(storyId)
   const story = await getStory(storyId)
   if (!story) return 'UNAVAILABLE'
-  const chapter = await queryChapter(storyId, chapterNumber)
+
+  const isCatalog = chapterNumber >= 45 ? await (async () => {
+    const { isCatalogStory } = await import('@/lib/catalog/variant-reader.server')
+    return isCatalogStory(storyId)
+  })() : false
+
+  let endingKey: string | null = null
+  if (isCatalog && chapterNumber >= 45) {
+    const user = await getSessionUser()
+    const { getReaderLockedEndingKey } = await import('@/lib/catalog/variant-reader.server')
+    endingKey = await getReaderLockedEndingKey(storyId, user?.id ?? null)
+    if (!endingKey) return 'UNAVAILABLE'
+  }
+
+  const chapter = await queryChapter(storyId, chapterNumber, endingKey)
   if (chapter) return 'PUBLISHED'
+  if (isCatalog && chapterNumber >= 45) return 'UNAVAILABLE'
+
   const preparing = await isChapterPreparing(storyId, chapterNumber)
   return preparing ? 'PREPARING' : 'UNAVAILABLE'
 }
@@ -242,7 +274,19 @@ export async function listChapterMetadatas(storyId: string): Promise<{
       : 0
   const maxReached = Math.max(story.currentChapter, fromJejak, 1)
 
-  const chapters = await queryChapterMetadatas(storyId, maxReached)
+  const isCatalog = maxReached >= 45 ? await (async () => {
+    const { isCatalogStory } = await import('@/lib/catalog/variant-reader.server')
+    return isCatalogStory(storyId)
+  })() : false
+
+  let endingKey: string | null = null
+  if (isCatalog && maxReached >= 45) {
+    const user = await getSessionUser()
+    const { getReaderLockedEndingKey } = await import('@/lib/catalog/variant-reader.server')
+    endingKey = await getReaderLockedEndingKey(storyId, user?.id ?? null)
+  }
+
+  const chapters = await queryChapterMetadatas(storyId, maxReached, endingKey)
   return { chapters, maxReachedChapter: maxReached }
 }
 

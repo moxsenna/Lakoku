@@ -261,7 +261,16 @@ function mapChapterRow(r: ChapterRow): Chapter {
 export const queryChapter = cache(async function queryChapter(
   storyId: string,
   number: number,
+  endingKey?: string | null,
 ): Promise<Chapter | null> {
+  if (number >= 45) {
+    const { isCatalogStory, getCatalogVariantChapter } = await import('@/lib/catalog/variant-reader.server')
+    if (await isCatalogStory(storyId)) {
+      if (!endingKey) return null
+      return getCatalogVariantChapter(storyId, number, endingKey)
+    }
+  }
+
   const db = getDb()
   // RLS_AUDIT: chapters_owner_read, chapters_public_read (caller authorizes parent story)
   const { data, error } = await single(
@@ -327,7 +336,15 @@ export const queryLatestAvailableChapter = cache(async function queryLatestAvail
 export const queryChapterMetadatas = cache(async function queryChapterMetadatas(
   storyId: string,
   maxNumber: number,
+  endingKey?: string | null,
 ): Promise<{ number: number; title: string }[]> {
+  const isCatalog = maxNumber >= 45 ? await (async () => {
+    const { isCatalogStory } = await import('@/lib/catalog/variant-reader.server')
+    return isCatalogStory(storyId)
+  })() : false
+
+  const spineMax = isCatalog && maxNumber >= 45 ? 44 : maxNumber
+
   const db = getDb()
   // RLS_AUDIT: chapters_owner_read, chapters_public_read (caller authorizes parent story)
   const { data, error } = await result(
@@ -335,19 +352,36 @@ export const queryChapterMetadatas = cache(async function queryChapterMetadatas(
       .selectFrom('chapters')
       .select(['number', 'title'])
       .where('story_id', '=', storyId)
-      .where('number', '<=', maxNumber)
+      .where('number', '<=', spineMax)
       .orderBy('number', 'asc')
       .execute(),
   )
   if (error) throw new Error(`queryChapterMetadatas: ${error.message}`)
-  return (data ?? []) as { number: number; title: string }[]
+  const spineRows = (data ?? []) as { number: number; title: string }[]
+
+  if (isCatalog && maxNumber >= 45 && endingKey) {
+    const { getCatalogVariantMetadatas } = await import('@/lib/catalog/variant-reader.server')
+    const variantRows = await getCatalogVariantMetadatas(storyId, 45, maxNumber, endingKey)
+    return [...spineRows, ...variantRows]
+  }
+
+  return spineRows
 })
 
 export async function queryChoiceOutcome(
   storyId: string,
   chapterNumber: number,
   choiceId: string,
+  endingKey?: string | null,
 ): Promise<ChoiceOutcome | null> {
+  if (chapterNumber >= 45) {
+    const { isCatalogStory, getCatalogVariantOutcome } = await import('@/lib/catalog/variant-reader.server')
+    if (await isCatalogStory(storyId)) {
+      if (!endingKey) return null
+      return getCatalogVariantOutcome(storyId, chapterNumber, choiceId, endingKey)
+    }
+  }
+
   const db = getDb()
   // RLS_AUDIT: choice_outcomes_owner_read, choice_outcomes_public_read (caller authorizes parent story)
   const { data, error } = await single(

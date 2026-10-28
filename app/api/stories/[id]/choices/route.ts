@@ -155,7 +155,17 @@ export async function POST(
       return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 403 })
     }
 
-    const outcome = await queryChoiceOutcome(id, chapterNumber, choiceId)
+    let endingKey: string | null = null
+    if (chapterNumber >= 45) {
+      const { isCatalogStory, getReaderLockedEndingKey } = await import('@/lib/catalog/variant-reader.server')
+      if (await isCatalogStory(id)) {
+        endingKey = await getReaderLockedEndingKey(id, user?.id ?? null)
+      }
+    }
+
+    const outcome = endingKey
+      ? await queryChoiceOutcome(id, chapterNumber, choiceId, endingKey)
+      : await queryChoiceOutcome(id, chapterNumber, choiceId)
     if (!outcome) {
       return NextResponse.json(
         { error: 'Pilihan tidak dikenali.' },
@@ -164,7 +174,9 @@ export async function POST(
     }
 
     // Catat ke reader-state per-user (no-op untuk tamu; RLS pemilik-saja).
-    const chapter = await queryChapter(id, chapterNumber)
+    const chapter = endingKey
+      ? await queryChapter(id, chapterNumber, endingKey)
+      : await queryChapter(id, chapterNumber)
     const decision =
       chapter?.choices?.find((c) => c.id === choiceId)?.label ?? choiceId
     await applyChoiceToUserState(id, chapterNumber, decision, outcome)

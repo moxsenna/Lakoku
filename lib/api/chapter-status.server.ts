@@ -89,7 +89,21 @@ function isReviewRequiredOutcome(outcome: unknown): boolean {
   return outcome === 'REVIEW_REQUIRED' || outcome === 'FAILED_REVIEW_REQUIRED'
 }
 
-async function chapterExists(storyId: string, chapterNumber: number): Promise<boolean> {
+async function chapterExists(
+  storyId: string,
+  chapterNumber: number,
+  userId?: string | null,
+): Promise<boolean> {
+  if (chapterNumber >= 45) {
+    const { isCatalogStory, getReaderLockedEndingKey, getCatalogVariantChapter } = await import('@/lib/catalog/variant-reader.server')
+    if (await isCatalogStory(storyId)) {
+      const endingKey = await getReaderLockedEndingKey(storyId, userId ?? null)
+      if (!endingKey) return false
+      const ch = await getCatalogVariantChapter(storyId, chapterNumber, endingKey)
+      return ch != null
+    }
+  }
+
   const db = getDb()
   // RLS_AUDIT: chapters_public_read
   const { data, error } = await single(
@@ -252,7 +266,7 @@ export async function getChapterStatusForUser(input: {
   const story = await queryStoryForUser(storyId, userId)
   if (!story) throw new ChapterStatusError('NOT_FOUND')
 
-  if (await chapterExists(storyId, chapterNumber)) {
+  if (await chapterExists(storyId, chapterNumber, userId)) {
     return { status: 'ready', chapterNumber, ...identityFields }
   }
 

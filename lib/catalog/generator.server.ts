@@ -618,7 +618,6 @@ export async function generateCatalogNovel(deps: CatalogGeneratorDeps, input: {
   }
   const contract = assertCatalogContract(state.contract)
   const runId = input.runId ?? `catalog-gen-${Date.now()}`
-  ACTIVE_JOB_ID = randomUUID()
   const log = input.log
   const cap = input.maxChapters ?? 50
 
@@ -744,7 +743,6 @@ export async function regenerateCatalogSpineChapter(deps: CatalogGeneratorDeps, 
   }
   await deps.writer.deleteSpineChapter(input.storyId, chapterNumber)
   state.spine.delete(chapterNumber)
-  ACTIVE_JOB_ID = randomUUID()
   const baseCanon = await deps.writer.loadCanon(input.storyId)
   const snapshot: CanonSnapshot = {
     ...baseCanon,

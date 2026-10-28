@@ -11,8 +11,8 @@ import 'server-only'
 import { cache } from 'react'
 import { headers } from 'next/headers'
 import { auth } from '@/lib/auth'
-import { getDb, result, single } from '@lakoku/db'
-import type { Json } from '@/lib/supabase/db-types'
+import { getDb, result, single, type Database, type Json } from '@lakoku/db'
+import type { Kysely } from 'kysely'
 import { ChoiceHistoryEntrySchema, type ChoiceHistoryEntry } from '@/lib/story-engine/chapter-brief'
 import { mergeChoiceEffect, RouteChoiceEffectSchema } from '@/lib/story-engine/route-state'
 import type { JejakItem, ChoiceOutcome } from './types'
@@ -62,14 +62,14 @@ function maxStatus(
   return STATUS_RANK[a] >= STATUS_RANK[b] ? a : b
 }
 
-function toState(r: ReaderStateRow): ReaderState {
+export function toState(r: ReaderStateRow): ReaderState {
   return {
     storyId: r.story_id,
     status: r.status,
     currentChapter: r.current_chapter,
     jejak: r.jejak,
     ...(r.ending_name ? { endingName: r.ending_name } : {}),
-    ...(r.locked_ending_key ? { lockedEndingKey: r.locked_ending_key } : {}),
+    lockedEndingKey: r.locked_ending_key ?? null,
   }
 }
 
@@ -357,14 +357,15 @@ export async function applyChoiceToUserState(
 
   // --- Ending lock untuk cerita katalog pada Bab 44
   let lockedEndingKey = stateData?.locked_ending_key ?? null
-  const isCatalog = storyId.startsWith('catalog:')
-  if (isCatalog && chapterNumber === 44 && !lockedEndingKey) {
+  if (chapterNumber === 44 && !lockedEndingKey) {
     try {
       const { data: catalogRow } = await single(
         db
           .selectFrom('catalog_stories')
-          .select('contract_json')
-          .where('story_id', '=', storyId)
+          .innerJoin('stories', 'stories.id', 'catalog_stories.story_id')
+          .select('catalog_stories.contract_json')
+          .where('catalog_stories.story_id', '=', storyId)
+          .where('stories.story_mode', '=', 'catalog')
           .limit(1)
           .execute(),
       )
@@ -380,14 +381,22 @@ export async function applyChoiceToUserState(
           // DO NOT swallow silently into a permanent null or fake lock.
           // Leave lockedEndingKey null so a subsequent Bab-44 retry can lock once contract is corrected.
         } else {
-          const { resolveEndingFromCandidates } = await import('@/lib/story-engine/ending-resolver')
-          const resolution = resolveEndingFromCandidates({
-            routeState: nextRouteState,
-            endingLockChapter: parsed.data.closureRunway.endingLockChapter,
-            endingCandidates: parsed.data.endingCandidates,
-            chapterNumber: 45,
-          })
-          lockedEndingKey = resolution.key
+          const endingLockChapter = parsed.data.closureRunway.endingLockChapter
+          if (chapterNumber !== endingLockChapter - 1) {
+            console.error('CATALOG_ENDING_LOCK_CHAPTER_MISMATCH', {
+              chapterNumber,
+              endingLockChapter,
+            })
+          } else {
+            const { resolveEndingFromCandidates } = await import('@/lib/story-engine/ending-resolver')
+            const resolution = resolveEndingFromCandidates({
+              routeState: nextRouteState,
+              endingLockChapter,
+              endingCandidates: parsed.data.endingCandidates,
+              chapterNumber: endingLockChapter,
+            })
+            lockedEndingKey = resolution.key
+          }
         }
       }
     } catch (err) {
@@ -398,36 +407,66 @@ export async function applyChoiceToUserState(
 
   // RLS_AUDIT: reader_states_owner_all
   const { error } = await result(
-    db
-      .insertInto('reader_states')
-      .values({
-        user_id: user.id,
-        story_id: storyId,
-        status,
-        current_chapter: nextChapter,
-        jejak: jejak as unknown as Json,
-        ending_name: endingName,
-        route_state: nextRouteState as unknown as Json,
-        choice_history: choiceHistory as unknown as Json,
-        locked_ending_key: lockedEndingKey,
-        updated_at: new Date().toISOString(),
-      })
-      .onConflict((oc) =>
-        oc.columns(['user_id', 'story_id']).doUpdateSet((eb) => ({
-          status,
-          current_chapter: nextChapter,
-          jejak: jejak as unknown as Json,
-          ending_name: endingName,
-          route_state: nextRouteState as unknown as Json,
-          choice_history: choiceHistory as unknown as Json,
-          updated_at: new Date().toISOString(),
-          locked_ending_key: eb.fn.coalesce(
-            'reader_states.locked_ending_key',
-            eb.ref('excluded.locked_ending_key'),
-          ),
-        })),
-      )
-      .execute(),
+    buildReaderStateChoiceUpsert(db, {
+      userId: user.id,
+      storyId,
+      status,
+      currentChapter: nextChapter,
+      jejak: jejak as unknown as Json,
+      endingName,
+      routeState: nextRouteState as unknown as Json,
+      choiceHistory: choiceHistory as unknown as Json,
+      lockedEndingKey,
+    }).execute(),
   )
   if (error) throw new Error(`applyChoiceToUserState: ${error.message}`)
+}
+
+export interface ReaderStateChoiceUpsertValues {
+  userId: string
+  storyId: string
+  status: ReaderState['status']
+  currentChapter: number
+  jejak: Json
+  endingName: string | null
+  routeState: Json
+  choiceHistory: Json
+  lockedEndingKey: string | null
+  updatedAt?: string
+}
+
+export function buildReaderStateChoiceUpsert(
+  db: Kysely<Database>,
+  values: ReaderStateChoiceUpsertValues,
+) {
+  const updatedAt = values.updatedAt ?? new Date().toISOString()
+  return db
+    .insertInto('reader_states')
+    .values({
+      user_id: values.userId,
+      story_id: values.storyId,
+      status: values.status,
+      current_chapter: values.currentChapter,
+      jejak: values.jejak,
+      ending_name: values.endingName,
+      route_state: values.routeState,
+      choice_history: values.choiceHistory,
+      locked_ending_key: values.lockedEndingKey,
+      updated_at: updatedAt,
+    })
+    .onConflict((oc) =>
+      oc.columns(['user_id', 'story_id']).doUpdateSet((eb) => ({
+        status: values.status,
+        current_chapter: values.currentChapter,
+        jejak: values.jejak,
+        ending_name: values.endingName,
+        route_state: values.routeState,
+        choice_history: values.choiceHistory,
+        updated_at: updatedAt,
+        locked_ending_key: eb.fn.coalesce(
+          'reader_states.locked_ending_key',
+          eb.ref('excluded.locked_ending_key'),
+        ),
+      })),
+    )
 }

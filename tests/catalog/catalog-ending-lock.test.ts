@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChoiceOutcome } from '@/packages/contracts/src/reader'
 
+type CatalogStoryEntry = {
+  story_mode: 'catalog' | 'standard' | string
+  contract_json: Record<string, unknown>
+}
+
 const mockState = {
   currentUser: { id: 'u-reader-1', email: 'reader1@example.com', name: 'Reader 1' } as { id: string; email?: string; name?: string } | null,
   readerState: null as Record<string, unknown> | null,
-  catalogContract: null as Record<string, unknown> | null,
+  catalogStories: new Map<string, CatalogStoryEntry>(),
   outcomeRows: null as Array<{ effect_json: Record<string, unknown> }> | null,
   upsertedValues: null as Record<string, unknown> | null,
   upsertedUpdateSet: null as Record<string, unknown> | null,
@@ -36,21 +41,41 @@ vi.mock('@/lib/api/user-state', async (importOriginal) => {
 
 vi.mock('@lakoku/db', () => ({
   getDb: () => ({
-    selectFrom: (table: string) => ({
-      select: () => {
-        const query = {
-          where: () => query,
-          limit: () => query,
-          execute: async () => {
-            if (table === 'reader_states') return mockState.readerState ? [mockState.readerState] : []
-            if (table === 'catalog_stories') return mockState.catalogContract ? [mockState.catalogContract] : []
-            if (table === 'choice_outcomes') return mockState.outcomeRows ?? [{ effect_json: { endingBiasDeltas: { ending_a: 5 } } }]
+    selectFrom: (table: string) => {
+      const whereFilters: Array<{ col: string; val: unknown }> = []
+      const queryBuilder = {
+        innerJoin: () => queryBuilder,
+        select: () => queryBuilder,
+        where: (col: string, _op: string, val: unknown) => {
+          whereFilters.push({ col, val })
+          return queryBuilder
+        },
+        limit: () => queryBuilder,
+        execute: async () => {
+          if (table === 'reader_states') {
+            return mockState.readerState ? [mockState.readerState] : []
+          }
+          if (table === 'catalog_stories') {
+            const storyIdFilter = whereFilters.find((f) => f.col === 'catalog_stories.story_id')?.val as string | undefined
+            const modeFilter = whereFilters.find((f) => f.col === 'stories.story_mode')?.val as string | undefined
+            if (storyIdFilter) {
+              const entry = mockState.catalogStories.get(storyIdFilter)
+              if (entry) {
+                if (!modeFilter || entry.story_mode === modeFilter) {
+                  return [{ contract_json: entry.contract_json }]
+                }
+              }
+            }
             return []
-          },
-        }
-        return query
-      },
-    }),
+          }
+          if (table === 'choice_outcomes') {
+            return mockState.outcomeRows ?? [{ effect_json: { endingBiasDeltas: { ending_a: 5 } } }]
+          }
+          return []
+        },
+      }
+      return queryBuilder
+    },
     insertInto: () => ({
       values: (vals: Record<string, unknown>) => {
         mockState.upsertedValues = vals
@@ -122,7 +147,11 @@ describe('applyChoiceToUserState ending lock for catalog', () => {
   beforeEach(() => {
     mockState.currentUser = { id: 'u-reader-1', email: 'reader1@example.com', name: 'Reader 1' }
     mockState.readerState = null
-    mockState.catalogContract = { contract_json: contractFixture }
+    mockState.catalogStories.clear()
+    mockState.catalogStories.set('catalog:novel-1', {
+      story_mode: 'catalog',
+      contract_json: contractFixture,
+    })
     mockState.outcomeRows = null
     mockState.upsertedValues = null
     mockState.upsertedUpdateSet = null
@@ -207,7 +236,10 @@ describe('applyChoiceToUserState ending lock for catalog', () => {
 
   it('logs CATALOG_CONTRACT_SNAPSHOT_INVALID and leaves lock null when snapshot schema fails', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    mockState.catalogContract = { contract_json: { invalid: true } }
+    mockState.catalogStories.set('catalog:novel-1', {
+      story_mode: 'catalog',
+      contract_json: { invalid: true },
+    })
     const { applyChoiceToUserState } = await import('@/lib/api/user-state')
 
     const outcome: ChoiceOutcome = {
@@ -277,5 +309,139 @@ describe('applyChoiceToUserState ending lock for catalog', () => {
 
     expect(mockState.upsertedValues).toBeNull()
     expect(mockState.upsertedUpdateSet).toBeNull()
+  })
+
+  it('does not lock when story id starts with catalog: but story_mode is standard (catalog:spoof)', async () => {
+    mockState.catalogStories.set('catalog:spoof', {
+      story_mode: 'standard',
+      contract_json: contractFixture,
+    })
+    const { applyChoiceToUserState } = await import('@/lib/api/user-state')
+    const outcome: ChoiceOutcome = {
+      storyId: 'catalog:spoof',
+      chapterNumber: 44,
+      choiceId: 'choice-44-spoof',
+      consequence: ['Pilihan cerita spoof.'],
+      nextChapterNumber: 45,
+      isEnding: false,
+    }
+
+    await applyChoiceToUserState('catalog:spoof', 44, 'Pilihan Spoof', outcome)
+
+    expect(mockState.upsertedValues).not.toBeNull()
+    expect(mockState.upsertedValues?.locked_ending_key).toBeNull()
+  })
+
+  it('locks catalog story when id does NOT start with catalog: but has catalog story join row', async () => {
+    const storyId = 'custom-novel-without-prefix-999'
+    mockState.catalogStories.set(storyId, {
+      story_mode: 'catalog',
+      contract_json: contractFixture,
+    })
+    const { applyChoiceToUserState } = await import('@/lib/api/user-state')
+    const outcome: ChoiceOutcome = {
+      storyId,
+      chapterNumber: 44,
+      choiceId: 'choice-44-nonprefix',
+      consequence: ['Pilihan cerita non-prefix.'],
+      nextChapterNumber: 45,
+      isEnding: false,
+    }
+
+    await applyChoiceToUserState(storyId, 44, 'Pilihan Non Prefix', outcome)
+
+    expect(mockState.upsertedValues).not.toBeNull()
+    expect(mockState.upsertedValues?.locked_ending_key).toBe('ending_a')
+  })
+
+  it('logs CATALOG_ENDING_LOCK_CHAPTER_MISMATCH and skips lock when snapshot endingLockChapter is not 45', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mockState.catalogStories.set('catalog:novel-1', {
+      story_mode: 'catalog',
+      contract_json: {
+        ...contractFixture,
+        closureRunway: {
+          endingLockChapter: 46,
+        },
+      },
+    })
+    const { applyChoiceToUserState } = await import('@/lib/api/user-state')
+    const outcome: ChoiceOutcome = {
+      storyId: 'catalog:novel-1',
+      chapterNumber: 44,
+      choiceId: 'choice-44-1',
+      consequence: ['Keputusan Bab 44.'],
+      nextChapterNumber: 45,
+      isEnding: false,
+    }
+
+    await applyChoiceToUserState('catalog:novel-1', 44, 'Pilihan 1', outcome)
+
+    expect(errorSpy).toHaveBeenCalledWith('CATALOG_ENDING_LOCK_CHAPTER_MISMATCH', {
+      chapterNumber: 44,
+      endingLockChapter: 46,
+    })
+    expect(mockState.upsertedValues?.locked_ending_key).toBeNull()
+    errorSpy.mockRestore()
+  })
+
+  it('builds real upsert ON CONFLICT clause containing compiled coalesce sql', async () => {
+    const { Kysely, DummyDriver, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler } = await import('kysely')
+    const { buildReaderStateChoiceUpsert } = await import('@/lib/api/user-state')
+    type Database = import('@lakoku/db').Database
+
+    const compileDb = new Kysely<Database>({
+      dialect: {
+        createAdapter: () => new PostgresAdapter(),
+        createDriver: () => new DummyDriver(),
+        createIntrospector: (db) => new PostgresIntrospector(db),
+        createQueryCompiler: () => new PostgresQueryCompiler(),
+      },
+    })
+
+    const query = buildReaderStateChoiceUpsert(compileDb, {
+      userId: 'u-reader-1',
+      storyId: 'catalog:novel-1',
+      status: 'BERJALAN',
+      currentChapter: 45,
+      jejak: [] as unknown as import('@lakoku/db').Json,
+      endingName: null,
+      routeState: {} as unknown as import('@lakoku/db').Json,
+      choiceHistory: [] as unknown as import('@lakoku/db').Json,
+      lockedEndingKey: 'ending_a',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    })
+
+    const compiled = query.compile()
+    expect(compiled.sql).toContain('coalesce("reader_states"."locked_ending_key", "excluded"."locked_ending_key")')
+  })
+
+  it('toState maps lockedEndingKey to r.locked_ending_key ?? null', async () => {
+    const { toState } = await import('@/lib/api/user-state')
+    const baseRow = {
+      story_id: 's-1',
+      status: 'BERJALAN' as const,
+      current_chapter: 10,
+      jejak: [],
+      ending_name: null,
+    }
+
+    const stateWithoutKey = toState({
+      ...baseRow,
+      locked_ending_key: null,
+    })
+    expect(stateWithoutKey.lockedEndingKey).toBeNull()
+
+    const stateWithUndefined = toState({
+      ...baseRow,
+      locked_ending_key: undefined,
+    })
+    expect(stateWithUndefined.lockedEndingKey).toBeNull()
+
+    const stateWithKey = toState({
+      ...baseRow,
+      locked_ending_key: 'ending_peace',
+    })
+    expect(stateWithKey.lockedEndingKey).toBe('ending_peace')
   })
 })

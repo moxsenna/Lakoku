@@ -185,6 +185,24 @@ describe('reader consequence, direction hint & brand guard', () => {
     expect(html).not.toContain('italic')
   })
 
+  it('ChoiceOutcomeReaction skips empty paragraphs when consequence has extra blank lines', () => {
+    const item: JejakItem = {
+      chapter: 12,
+      decision: 'Lari ke barat',
+      consequence: 'Paragraf satu.\n\n\n\n   \n\nParagraf dua.\n\n',
+    }
+
+    const html = renderToStaticMarkup(createElement(ChoiceOutcomeReaction, { item }))
+
+    expect(html).not.toContain('<p></p>')
+    expect(html).toContain('<p>Paragraf satu.</p>')
+    expect(html).toContain('<p>Paragraf dua.</p>')
+    // Consequence paragraphs have no className, exactly 2 should be rendered
+    expect(html.match(/<p>/g)?.length).toBe(2)
+    // All <p> elements (header, decision, and 2 paragraphs)
+    expect(html.match(/<p\b/g)?.length).toBe(4)
+  })
+
   it('ReaderView renders previous choice multi-paragraph reaction and directionHint', () => {
     const previousChoice: JejakItem = {
       chapter: 11,

@@ -22,7 +22,7 @@ Scope: Script operator `pnpm catalog:generate` membuat draf novel katalog (kontr
 - [x] G4: engine generator teruji: brief tanpa pilihan pembaca, Bab 44 memaksa 3 pilihan ending, reaksi lolos batas kata, fork 3 varian, Bab 50 tanpa pilihan, resume, dan regenerate
   CHECK: node scripts/catalog-plan2-verify.mjs unit
   EXPECT: CATALOG_PLAN2_UNIT_OK
-  EVIDENCE: exit=0; shell=C:\WINDOWS\system32\cmd.exe; cwd=D:\Coding\lakoku v2; path=0c6749f1dbc6/73 entries; EXPECT=matched; output-sha256=d6fb76e6d84c7640788f09431f12266dd2ef61cbfb5e1220c281aca816bd0f7e; output-bytes=525
+  EVIDENCE: exit=0; shell=C:\WINDOWS\system32\cmd.exe; cwd=D:\Coding\lakoku v2; path=0c6749f1dbc6/73 entries; EXPECT=matched; output-sha256=15641def93c2775b07b6a14c26c5df5495ba8695cc65ae90fb5fb08c32035b7d; output-bytes=525
 
 - [x] G5: alur DB nyata dari draf sampai review berjalan end-to-end di Postgres lokal tanpa biaya inferensi
   CHECK: node scripts/catalog-plan2-verify.mjs live

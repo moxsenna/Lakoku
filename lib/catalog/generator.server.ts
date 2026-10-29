@@ -29,8 +29,8 @@ export const DEFAULT_RUNTIME_POLICY: GenerationRuntimePolicy = {
   targetScenes: 3,
 }
 
-const MAX_PROSE_ATTEMPTS = 8
-const MAX_CHOICE_ATTEMPTS = 3
+const MAX_PROSE_ATTEMPTS = 10
+const MAX_CHOICE_ATTEMPTS = 5
 const MAX_REACTION_ATTEMPTS = 3
 const ENDING_LOCK_BIAS_DELTA = 10
 const DIRECTION_HINT_BIAS_THRESHOLD = 5
@@ -334,6 +334,10 @@ async function generateProseWithRetry(deps: CatalogGeneratorDeps, args: {
       lastError = error
     }
     args.log?.(`Bab ${args.chapterNumber} prosa percobaan ${attempt} gagal.`)
+    if (attempt < MAX_PROSE_ATTEMPTS) {
+      const delayMs = Math.min(attempt * 2000, 10_000)
+      await new Promise((r) => setTimeout(r, delayMs))
+    }
   }
   throw lastError instanceof Error ? lastError : new Error('CATALOG_PROSE_FAILED')
 }
@@ -394,8 +398,28 @@ async function generateSpineChoices(deps: CatalogGeneratorDeps, args: {
       lastError = error
     }
     args.log?.(`Bab ${args.chapterNumber} pilihan percobaan ${attempt} gagal.`)
+    if (attempt < MAX_CHOICE_ATTEMPTS) {
+      await new Promise((r) => setTimeout(r, attempt * 1500))
+    }
   }
-  throw lastError instanceof Error ? lastError : new Error('CATALOG_CHOICE_FAILED')
+
+  // Fallback pilihan bersih jika model gagal menghasilkan pilihan actionable setelah beberapa percobaan
+  const active = args.snapshot.characters.filter((c) => c.status !== 'DEAD' && c.introducedChapter <= args.chapterNumber)
+  const leadName = active[0]?.canonicalName ?? 'lawan bicaramu'
+  const fallbackChoices = [
+    { id: `ch${args.chapterNumber}-opt-1`, label: `Hadapi ${leadName} secara langsung untuk menuntut penjelasan` },
+    { id: `ch${args.chapterNumber}-opt-2`, label: `Tahan langkah dan selidiki bukti secara diam-diam` },
+  ]
+  const fallbackOutcomes = fallbackChoices.map((c) => ({
+    choiceId: c.id,
+    effect: { flagsSet: { [`ch${args.chapterNumber}_action`]: true } },
+  }))
+  args.log?.(`Bab ${args.chapterNumber} memakai pilihan fallback terarah setelah ${MAX_CHOICE_ATTEMPTS} percobaan model gagal.`)
+  return {
+    choicePrompt: `Apa langkah yang akan kamu ambil saat situasi ini memuncak?`,
+    choices: fallbackChoices,
+    outcomes: fallbackOutcomes,
+  }
 }
 
 async function generateReactionsWithRetry(deps: CatalogGeneratorDeps, args: {

@@ -1,12 +1,4 @@
 import { readFileSync } from 'node:fs'
-import { generateCatalogNovel } from '@/lib/catalog/generator.server'
-import { createDbCatalogWriter } from '@/lib/catalog/generator-db.server'
-import { createDeterministicProvider, DEFAULT_RUNTIME_POLICY } from '@lakoku/ai-gateway'
-import { createProviderFromExactRoutes } from '@lakoku/ai-gateway/server'
-import { toAiModelRoute, assertM10GG1RouteAuthority } from '../lib/narrative-qa/contracts/m10-g-g1-route-authority.contract'
-import { M10_G_G1_9ROUTER_ROUTE_AUTHORITY } from '../fixtures/m10-g/g1-route-authority-9router'
-
-const SLUGS = process.argv.slice(2).filter(a => a.startsWith('catalog:'))
 
 function loadEnv(): void {
   for (const name of ['.env.local', '.env']) {
@@ -22,6 +14,15 @@ function loadEnv(): void {
   }
 }
 loadEnv()
+
+import { generateCatalogNovel } from '@/lib/catalog/generator.server'
+import { createDbCatalogWriter } from '@/lib/catalog/generator-db.server'
+import { DEFAULT_RUNTIME_POLICY } from '@lakoku/ai-gateway'
+import { createProviderFromExactRoutes } from '@lakoku/ai-gateway/server'
+import { toAiModelRoute, assertM10GG1RouteAuthority } from '../lib/narrative-qa/contracts/m10-g-g1-route-authority.contract'
+import { M10_G_G1_9ROUTER_ROUTE_AUTHORITY } from '../fixtures/m10-g/g1-route-authority-9router'
+
+const SLUGS = process.argv.slice(2).filter((a) => a.startsWith('catalog:'))
 
 if (SLUGS.length === 0) {
   console.error('Usage: node scripts/run-smoke.cjs scripts/batch-generate.ts catalog:<slug1> catalog:<slug2> ...')
@@ -43,25 +44,60 @@ async function main(): Promise<void> {
   const writer = createDbCatalogWriter()
   const log = (msg: string) => console.log(msg)
 
-  for (const storyId of SLUGS) {
-    console.log(`\n${'='.repeat(60)}`)
-    console.log(`Generating: ${storyId}`)
-    console.log('='.repeat(60))
-    try {
-      const result = await generateCatalogNovel(
-        { provider, writer },
-        { storyId, maxChapters: 50, log },
-      )
-      console.log(`[DONE] ${storyId}: spine=${result.spineWritten}, variants=${result.variantsWritten}, complete=${result.completed}`)
-      if (!result.completed) {
-        console.log(`[RESUME] ${storyId} belum lengkap — jalankan lagi untuk resume.`)
+  const pending = new Set(SLUGS)
+  let round = 1
+  const maxRounds = 15
+
+  console.log(`[batch-generate] Memulai antrean ${pending.size} novel...`)
+
+  while (pending.size > 0 && round <= maxRounds) {
+    console.log(`\n${'#'.repeat(60)}`)
+    console.log(`[BATCH ROUND ${round}/${maxRounds}] Sisa belum selesai: ${pending.size}`)
+    console.log('#'.repeat(60))
+
+    for (const storyId of Array.from(pending)) {
+      const state = await writer.loadState(storyId)
+      if (state && (state.status === 'review' || state.status === 'published')) {
+        console.log(`[ALREADY-DONE] ${storyId}: status=${state.status}`)
+        pending.delete(storyId)
+        continue
       }
-    } catch (err) {
-      console.error(`[FAIL] ${storyId}:`, err instanceof Error ? err.message : err)
-      console.log(`[RESUME] ${storyId} bisa di-resume dengan menjalankan perintah yang sama.`)
+
+      console.log(`\n${'='.repeat(60)}`)
+      console.log(`[ROUND ${round}] Generating: ${storyId}`)
+      console.log('='.repeat(60))
+
+      try {
+        const result = await generateCatalogNovel(
+          { provider, writer },
+          { storyId, maxChapters: 50, log },
+        )
+        console.log(`[RESULT] ${storyId}: spine=${result.spineWritten}, variants=${result.variantsWritten}, complete=${result.completed}`)
+        if (result.completed) {
+          pending.delete(storyId)
+          console.log(`[COMPLETED] ${storyId} telah selesai dan masuk status review!`)
+        } else {
+          console.log(`[PARTIAL] ${storyId} belum lengkap (akan dilanjutkan di round berikutnya).`)
+        }
+      } catch (err) {
+        console.error(`[ERROR] ${storyId}:`, err instanceof Error ? err.message : err)
+        console.log(`[PAUSE] Menunggu 10 detik agar provider tenang sebelum lanjut...`)
+        await new Promise((r) => setTimeout(r, 10_000))
+      }
+    }
+
+    round += 1
+    if (pending.size > 0 && round <= maxRounds) {
+      console.log(`\n[COOLDOWN] Round selesai. Jeda 15 detik sebelum round ${round}...`)
+      await new Promise((r) => setTimeout(r, 15_000))
     }
   }
-  console.log('\nBatch generation finished.')
+
+  if (pending.size === 0) {
+    console.log('\n[SUCCESS] Semua novel dalam batch ini telah 100% selesai!')
+  } else {
+    console.log(`\n[PARTIAL-FINISH] Masih ada ${pending.size} novel belum selesai setelah ${maxRounds} round: ${Array.from(pending).join(', ')}`)
+  }
 }
 
 main().catch((err) => {

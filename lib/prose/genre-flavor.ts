@@ -15,6 +15,8 @@ import {
 export interface GenreProseFlavor {
   id: GenreCatalogId
   label: string
+  /** Panduan hook pembuka detik-0 (in medias res) */
+  hookGuidance: string
   /** Atmosfer dan tensi emosional utama */
   atmosphere: string
   /** Fokus sensorik fisik & latar */
@@ -31,91 +33,103 @@ export const GENRE_PROSE_FLAVORS: Record<GenreCatalogId, GenreProseFlavor> = {
   family_drama: {
     id: 'family_drama',
     label: 'Drama Keluarga',
+    hookGuidance:
+      "Buka bab langsung di tengah benturan konflik atau dialog sindiran tajam (in medias res). Contoh: 'Tanda tangani surat ini, atau namamu dicoret dari keluarga.' atau sindiran di meja makan. DILARANG membuka dengan deskripsi cuaca, ruang tamu berdebu, atau lamunan masa lalu.",
     atmosphere:
       'Ketegangan relasi darah yang menekan, luka lama yang belum sembuh, beban ekspektasi keluarga, rasa bersalah, dan harga diri yang dipertaruhkan di balik kesopanan rumah tangga.',
     sensoryFocus:
-      'Keheningan canggung di meja makan, denting piring kaku, jam dinding berdetik lambat, foto keluarga berdebu, pintu kamar yang tertutup rapat, jarak fisik yang saling menghindar.',
+      'Bahasa tubuh kaku, rahang mengeras, dada sesak menahan amarah, tatapan dingin yang saling menghindari, tangan mengepal di bawah meja.',
     dialogueDynamics:
-      'Dialog sarat subteks: kata-kata tampak sopan atau biasa, tetapi menyiratkan sindiran tajam, kepahitan, atau tuntutan terselubung. Banyak jeda menahan getar suara atau napas berat.',
+      'Adu mulut beruntun dengan subteks tajam. Setiap kalimat saling membalas, menekan, atau menelanjangi kepalsuan lawan bicara.',
     lexiconFocus:
-      'Gunakan pilihan kata bernuansa kekerabatan, warisan, silsilah, janji masa kecil, pengorbanan, utang budi, dan rahasia yang disimpan bertahun-tahun.',
+      'Kosakata penindasan, hak waris, utang budi, anak tiri, harga diri terinjak, pengorbanan yang disia-siakan, dan janji yang dikhianati.',
     antiPatterns:
-      'DILARANG melodrama cengeng tanpa dasar aksi; DILARANG eksposisi silsilah bertele-tele. Tunjukkan kepedihan lewat sikap tubuh dan tatapan dingin.',
+      'DILARANG membuka dengan cuaca/pemandangan. DILARANG melodrama cengeng merengek tanpa tindakan. Tokoh utama bersikap stoik, tenang, dan mencatat bukti.',
   },
 
   romance: {
     id: 'romance',
     label: 'Romansa',
+    hookGuidance:
+      'Buka bab di momen kesepakatan dingin, klausul perjanjian, penolakan tegas, atau pertemuan tak terduga yang canggung dan bertegangan tinggi. DILARANG membuka dengan pujian kecantikan fisik atau renungan romantis pasif.',
     atmosphere:
       'Ketegangan tarik-ulur yang intens (slow burn/tension), keengganan mengakui ketertarikan karena gengsi atau trauma masa lalu, keintiman emosional yang terbangun dari momen kecil.',
     sensoryFocus:
-      'Jarak fisik yang menyempit, sentuhan jemari tak sengaja yang membakar, helaan napas hangat di dekat telinga, degup jantung yang memberontak di balik dada, pupil mata yang melebar.',
+      'Jarak fisik yang menyempit mendadak, desau napas hangat, senggolan bahu yang membuat kaku, pupil mata melebar, tangan yang membeku saat menyentuh dokumen atau pintu.',
     dialogueDynamics:
-      'Sahut-menyahut cepat penuh gengsi atau candaan tajam yang menutupi rasa peduli mendalam; jeda hening sebelum menjawab saat kata-kata kejujuran hampir lolos dari bibir.',
+      'Banter tajam, adu gengsi (pride), saling menantang dengan kalimat-kalimat dingin bernada ejekan tapi sarat tarikan emosi.',
     lexiconFocus:
-      'Perkaya kosakata tatapan, kehangatan kulit, desah tertahan, batas kesabaran, getaran samar di ujung jari, dan keheningan yang lebih keras daripada kata-kata.',
+      'Kosakata batas kesabaran, status pernikahan kontrak, harga diri, tatapan menusuk, janji batas waktu, dan keheningan yang menyesakkan.',
     antiPatterns:
-      'DILARANG gombalan murahan atau rayuan klise; DILARANG cinta instan tanpa proses emosional. Bangun ketertarikan lewat perhatian terhadap detail terkecil lawan bicara.',
+      'DILARANG cinta instan (insta-love) tanpa alasan rasional. DILARANG gombalan puitis mendayu-dayu. Tunjukkan ketertarikan lewat tensi permusuhan yang perlahan retak.',
   },
 
   mystery: {
     id: 'mystery',
     label: 'Misteri & Rahasia',
+    hookGuidance:
+      'Buka bab saat kejanggalan gawat baru saja ditemukan, saat hampir tertangkap basah, atau ketika waktu penyelidikan tersisa sedikit. DILARANG membuka dengan duduk merenungi meja berdebu, jendela hujan, atau kopi dingin.',
     atmosphere:
       'Kewaspadaan tinggi dan kecurigaan terukur; rasa tidak nyaman bahwa setiap orang menyembunyikan motif kedua; tekanan waktu dan taruhan kebenaran yang berbahaya.',
     sensoryFocus:
-      'Detail fisik janggal yang luput dari orang lain (noda di ujung lengan kemeja, kunci yang tertinggal, laci sedikit terbuka), bayangan memanjang di lorong sepi, aroma kertas basah atau tanah hujan.',
+      'Telinga waspada mendengar derit langkah di tangga, kunci yang mendadak tidak cocok di lubangnya, aroma benda yang terbakar samar, napas tertahan di balik pintu tertutup.',
     dialogueDynamics:
-      'Percakapan interogatif terselubung: pertanyaan santai yang sebenarnya menguji alibi, tatapan mata yang mencari celah kepanikan, penghentian kalimat mendadak saat rahasia tersenggol.',
+      'Pertanyaan interogatif santai yang menguji alibi, jawaban yang sengaja memancing kepanikan lawan, tatapan mata yang mencari gelagat bohong.',
     lexiconFocus:
-      'Gunakan kosakata kejanggalan, alibi, motif, jejak tersamar, tatapan ragu, kepingan fakta, firasat waspada, dan jeda yang mencurigakan.',
+      'Kosakata alibi, bukti fisik, batas waktu, berkas yang dipalsukan, rekaman yang hilang, saksi yang berbohong, dan jebakan yang mulai menutup.',
     antiPatterns:
-      'DILARANG menyimpulkan bukti dalam narasi monolog ("aku langsung tahu..."); DILARANG membocorkan petunjuk tanpa interaksi adegan nyata. Biarkan fakta berbicara lewat aksi fisik.',
+      'DILARANG monolog batin panjang menyimpulkan teka-teki sendirian. Biarkan bukti dan kejanggalan muncul lewat aksi fisik dan interaksi berisiko.',
   },
 
   fantasy_kingdom: {
     id: 'fantasy_kingdom',
     label: 'Fantasi & Kerajaan',
+    hookGuidance:
+      'Buka bab tepat saat vonis pengasingan dibacakan di aula takhta, saat pedang dicabut, atau saat konspirasi baru terbongkar di depan dewan bangsawan. DILARANG membuka dengan 3 paragraf penjelasan peta benua, sistem sihir, atau sejarah perang kuno (anti info-dumping).',
     atmosphere:
       'Beban kehormatan, intrik takhta yang dingin dan mematikan, hierarki kekuasaan yang kejam, serta konflik tajam antara kesetiaan sumpah darah melawan nurani pribadi.',
     sensoryFocus:
-      'Gemerincing baju besi di aula batu yang dingin, cahaya obor berkedip di balik pilar marmer, aroma lilin lebah dan dupa, segel lilin merah di atas perkamen, angin malam di balkon benteng.',
+      'Denting bilah baja yang ditarik dari sarung, derap sepatu bot di lantai marmer aula, tatapan merendahkan para bangsawan di perjamuan, napas dingin di balik zirah perang.',
     dialogueDynamics:
-      'Protokoler formal dan penghormatan kaku yang di baliknya menyembunyikan ancaman maut; permainan diplomasi bersayap di mana satu kata salah ucap bisa berarti pengkhianatan.',
+      'Percakapan formal bersayap di mana setiap kata salah ucap adalah pengkhianatan; intimidasi terselubung antar fraksi penguasa.',
     lexiconFocus:
-      'Kosakata bernuansa takhta, maklumat, dewan bangsawan, sumpah darah, garis keturunan, bilah baja, intrik istana, mahkota, dan harga sebuah kesetiaan.',
+      'Kosakata sumpah darah, maklumat takhta, darah buangan, hak garis keturunan, bilah baja, intrik istana, dan harga sebuah mahkota.',
     antiPatterns:
-      'DILARANG info-dumping latar dunia/lore sihir secara panjang lebar; DILARANG narasi seperti ensiklopedia. Tetap fokus pada tindakan orang pertama ("aku") dan taruhan hidup-mati di depan mata.',
+      'DILARANG penjelasan sistem sihir seperti ensiklopedia. Masukkan lore sihir hanya saat sedang digunakan dalam aksi fisik atau ancaman langsung.',
   },
 
   slice_of_life: {
     id: 'slice_of_life',
     label: 'Slice of Life',
+    hookGuidance:
+      'Buka bab di tengah insiden kerjaan yang mendesak, tumpahan pesanan pertama di warung, debat gaji/kontrakan, atau momen ceplas-ceplos yang memicu tawa getir. DILARANG membuka dengan pemandangan mentari pagi atau deskripsi damai yang membosankan.',
     atmosphere:
       'Kehangatan membumi dengan sentuhan getir realistis; kejujuran emosi dalam ritme hidup sehari-hari; penerimaan diri di tengah impian, kelelahan, dan harapan kecil.',
     sensoryFocus:
-      'Asap kopi hitam yang mengepul di pagi mendung, deru kendaraan jalanan kota, bahu pegal setelah seharian beraktivitas, cahaya lampu temaram di warung langganan, aroma nasi hangat.',
+      'Aroma bawang goreng dan asap minyak panas, dering telepon tagihan, bahu pegal setelah seharian berdiri, rasa dingin es teh manis di tenggorokan saat lelah.',
     dialogueDynamics:
-      'Percakapan santai, ceplas-ceplos akrab tanpa kepalsuan, humor ringan yang menyelipkan keresahan masa depan, tawa lepas yang menepis lelah sejenak.',
+      'Percakapan ceplas-ceplos khas Indonesia, saling ledek akrab tanpa basa-basi, humor getir yang menutupi kecemasan masa depan.',
     lexiconFocus:
-      'Pilihan kata keseharian yang luwes, detail rutinitas, keresahan gaji/waktu, kebiasaan kecil teman bicara, langkah kaki pulang, dan ketenangan sesaat di tengah bising dunia.',
+      'Kosakata rutinitas nyata, kontrakan, cicilan, omzet hari ini, pelanggan pertama, lelah yang tertunda, dan kemenangan-kemenangan kecil yang memuaskan batin.',
     antiPatterns:
-      'DILARANG menciptakan konflik bombastis atau bencana artifisial; kekuatan cerita ada pada resonansi emosi tulus dan keintiman momen nyata antartokoh.',
+      'DILARANG obrolan hambar tanpa gesekan emosi. Setiap interaksi harus membawa realitas hidup yang membumi dan menyentuh.',
   },
 
   survival_thriller: {
     id: 'survival_thriller',
     label: 'Thriller & Bertahan Hidup',
+    hookGuidance:
+      'Buka bab saat sirine darurat berbunyi, pintu darurat macet, atau suara langkah mengejar di lorong sempit. DILARANG membuka dengan renungan masa lalu atau deskripsi pemandangan saat bahaya sedang aktif.',
     atmosphere:
       'Adrenalin mendesak (urgency tinggi), rasa terancam yang nyata di setiap detik, insting bertahan hidup hewani, dan keputusan cepat antara bertindak atau binasa.',
     sensoryFocus:
-      'Keringat dingin mengalir di pelipis, otot menegang siap melompat atau menghindar, deru napas pendek tertahan, detak nadi berdentum di gendang telinga, kegelapan yang menelan jalan keluar.',
+      'Keringat dingin membasahi telapak tangan pada gagang senjata, detak jantung berdentum keras di telinga, otot betis menegang siap melompat, napas tersengal tertahan di ruang sempit.',
     dialogueDynamics:
-      'Kalimat pendek, bisikan cepat, instruksi mendesak tanpa basa-basi; pemeriksaan cepat kondisi fisik; saling bertukar sinyal tanpa suara agar tidak memicu bahaya.',
+      'Bisikan patah-patah, instruksi singkat tanpa kata sambung, saling lempar isyarat mata di tengah kegelapan.',
     lexiconFocus:
-      'Kosakata bertempo cepat: menyergap, menerobos, membeku, menghitung detik, celah sempit, naluri, ancaman langsung, dan taruhan nyawa.',
+      'Kosakata hitungan detik, celah sempit, sudut buta, sergapan, napas memburu, batas oksigen/amunisi, dan insting bertahan hidup.',
     antiPatterns:
-      'DILARANG memperlambat adegan dengan renungan puitis saat bahaya sedang mengejar; tempo kalimat harus secepat detak jantung tokoh yang sedang diburu waktu.',
+      'DILARANG memperlambat adegan dengan renungan filosofis saat nyawa terancam. Ritme kalimat harus cepat dan mendesak.',
   },
 }
 
@@ -173,6 +187,7 @@ export function buildGenreProseDirective(rawGenre?: string | null): string | nul
 
   return [
     `- KARAKTER & ATMOSFER GENRE (${display.toUpperCase()}):`,
+    `  * Hook Pembuka Detik-0 (In Medias Res): ${flavor.hookGuidance}`,
     `  * Atmosfer Emosional: ${flavor.atmosphere}`,
     `  * Fokus Sensorik Fisik: ${flavor.sensoryFocus}`,
     `  * Dinamika Dialog & Subteks: ${flavor.dialogueDynamics}`,

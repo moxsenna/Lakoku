@@ -37,6 +37,7 @@ describe('GENRE_PROSE_FLAVORS and normalizeGenreId', () => {
       const flavor = GENRE_PROSE_FLAVORS[genreId]
       expect(flavor).toBeDefined()
       expect(flavor.id).toBe(genreId)
+      expect(flavor.hookGuidance.length).toBeGreaterThan(20)
       expect(flavor.atmosphere.length).toBeGreaterThan(20)
       expect(flavor.sensoryFocus.length).toBeGreaterThan(20)
       expect(flavor.dialogueDynamics.length).toBeGreaterThan(20)
@@ -79,6 +80,7 @@ describe('GENRE_PROSE_FLAVORS and normalizeGenreId', () => {
     const directive = buildGenreProseDirective('mystery')
     expect(directive).not.toBeNull()
     expect(directive).toContain('- KARAKTER & ATMOSFER GENRE (MISTERI & RAHASIA):')
+    expect(directive).toContain('* Hook Pembuka Detik-0 (In Medias Res):')
     expect(directive).toContain('* Atmosfer Emosional:')
     expect(directive).toContain('* Fokus Sensorik Fisik:')
     expect(directive).toContain('* Dinamika Dialog & Subteks:')
@@ -112,8 +114,9 @@ describe('Prompt engine genre integration in P4', () => {
 
     expect(promptWithRomance.user).toContain('=== [P4] SUARA TOKOH & KETERBACAAN MOBILE ===')
     expect(promptWithRomance.user).toContain('- KARAKTER & ATMOSFER GENRE (ROMANSA):')
+    expect(promptWithRomance.user).toContain('* Hook Pembuka Detik-0 (In Medias Res):')
     expect(promptWithRomance.user).toContain('Ketegangan tarik-ulur')
-    expect(promptWithRomance.user).toContain('keheningan yang lebih keras daripada kata-kata')
+    expect(promptWithRomance.user).toContain('keheningan yang menyesakkan')
   })
 
   it('supports all 6 genres distinctly in prompt output', () => {

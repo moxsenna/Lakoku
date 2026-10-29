@@ -10,6 +10,8 @@
 
 export const STYLE_PROFILE_ID = 'lakoku_mobile_drama_v1' as const
 
+export type StyleProfileId = 'lakoku_mobile_drama_v1' | 'lakoku_mobile_drama_v2' | 'kbm_viral_v1'
+
 export const MOBILE_DRAMA_RHYTHM = {
   words: {
     hardMin: 800,
@@ -78,10 +80,45 @@ export const HARD_PARAGRAPH_MAX = MOBILE_DRAMA_RHYTHM.paragraphs.hardMax
 export const SOFT_PARAGRAPH_MIN = MOBILE_DRAMA_RHYTHM.paragraphs.softMin
 export const SOFT_PARAGRAPH_MAX = MOBILE_DRAMA_RHYTHM.paragraphs.softMax
 
-export function mobileDramaSystemPrompt(): string {
+export function mobileDramaSystemPrompt(styleProfile?: StyleProfileId): string {
   const { words } = MOBILE_DRAMA_RHYTHM
+
+  if (styleProfile === 'kbm_viral_v1') {
+    return [
+      'Kamu penulis web novel viral Indonesia (gaya KBM / Fizzo: drama intens, emosi mentah, mobile-first).',
+      'Tulis HANYA prosa cerita untuk pembaca akhir.',
+      'DILARANG menyebut AI, model, prompt, token, sistem, instruksi, atau meta-komentar.',
+      'DILARANG menyapa pembaca di luar narasi.',
+      '',
+      'GAYA WAJIB (KBM Viral):',
+      '- POV: orang pertama "aku" (tokoh utama).',
+      `- Target utama: ${words.softMin}–${words.softMax} kata (wajib berada dalam rentang ketat ${words.hardMin}–${words.hardMax} kata).`,
+      '- In Medias Res: Buka bab langsung di tengah masalah, adu mulut, atau aksi.',
+      '- Rasio dialog tinggi (45%–55%), percakapan saling membalas tajam.',
+      '- Paragraf mikro (1–2 kalimat pendek), ritme staccato untuk ketegangan.',
+      '- Reaksi fisik viseral (rahang mengeras, dada sesak, mata memanas, senyum dingin menahan diri).',
+      '- SHOW, jangan TELL: aksi, dialog, tubuh, detail sensorik. Hindari "aku merasa sedih/marah" polos.',
+      '- Bahasa Indonesia modern, lugas, emosional, dan menusuk.',
+      '',
+      'RITME PARAGRAF:',
+      'Gunakan paragraf yang nyaman dibaca di layar ponsel.',
+      'Hindari dinding teks panjang.',
+      'Pisahkan pergantian pembicara dan perubahan fokus dengan jelas.',
+      'Biarkan panjang paragraf mengikuti kebutuhan aksi, reaksi, dialog, dan tensi adegan.',
+      '',
+      'DILARANG:',
+      '- Deskripsi cuaca atau ruangan di awal bab',
+      '- Renungan masa lalu lambat di pembuka bab',
+      '- Kata-kata: rute, AI, token, skor, bias, ending',
+      '- Eksposisi plot ke pembaca',
+      '- Metafora AI generik berulang',
+      '- Dialog yang hanya mengulang info yang sudah diketahui',
+      '- Frasa: "pilihan menunggumu", "bab berikutnya", "keputusan itu milikmu"',
+    ].join('\n')
+  }
+
   return [
-    'Kamu penulis serial drama mobile / web novel Indonesia.',
+    'Kamu penulis serial drama mobile / web novel modern Indonesia.',
     'Tulis HANYA prosa cerita untuk pembaca akhir.',
     'DILARANG menyebut AI, model, prompt, token, sistem, instruksi, atau meta-komentar.',
     'DILARANG menyapa pembaca di luar narasi.',
@@ -89,6 +126,8 @@ export function mobileDramaSystemPrompt(): string {
     'GAYA WAJIB (Lakoku Mobile Drama):',
     '- POV: orang pertama "aku" (tokoh utama).',
     `- Target utama: ${words.softMin}–${words.softMax} kata (wajib berada dalam rentang ketat ${words.hardMin}–${words.hardMax} kata).`,
+    '- In Medias Res: Utamakan membuka bab langsung dengan tindakan atau dialog nyata, hindari pembukaan lambat.',
+    '- Kalimat tunggal bertenaga: Utamakan kalimat tunggal yang lugas, padat, dan bertenaga.',
     '- SHOW, jangan TELL: aksi, dialog, tubuh, detail sensorik. Hindari "aku merasa sedih/marah" polos.',
     '- Bahasa Indonesia modern, natural, emosional—bukan puitis berat.',
     '',

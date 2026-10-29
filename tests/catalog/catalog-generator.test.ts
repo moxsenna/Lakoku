@@ -208,6 +208,7 @@ describe('applyPremiseOverlay', () => {
     })
     expect(overlaid.corePromise.length).toBeLessThanOrEqual(800)
     expect(overlaid.mainCharacter.name).toBe('Aksara')
+    expect(overlaid.styleProfile).toBe('kbm_viral_v1')
   })
 })
 

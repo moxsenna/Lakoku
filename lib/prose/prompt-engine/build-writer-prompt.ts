@@ -2,12 +2,12 @@ import {
   MOBILE_DRAMA_RHYTHM,
   STYLE_PROFILE_ID,
   mobileDramaSystemPrompt,
+  type StyleProfileId,
 } from '@/lib/prose/mobile-drama-style'
 import { buildGenreProseDirective } from '@/lib/prose/genre-flavor'
 import {
   buildCulturalHonorificDirectives,
   type CharacterDescriptor,
-  type SupportedLanguage,
 } from '@/lib/prose/cultural-conventions'
 import type { BuildWriterPromptInput, WriterPromptParts } from './types'
 
@@ -57,6 +57,8 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
   if (!brief) throw new Error('CHAPTER_BRIEF_V2_BRIEF_REQUIRED')
 
   const { words, paragraphs } = MOBILE_DRAMA_RHYTHM
+  const styleProfile: StyleProfileId = input.styleProfile ?? STYLE_PROFILE_ID
+  const isKbm = styleProfile === 'kbm_viral_v1'
   const language = input.language ?? 'id'
   const descriptors: CharacterDescriptor[] = input.characterDescriptors ?? (input.characterNames ?? []).map((name) => ({ name }))
   const beats = input.plannedBeats ?? []
@@ -144,12 +146,16 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
   const p2 = [
     '=== [P2] PENYELESAIAN DRAMATIS ADEGAN & RENCANA BAB ===',
     `- Tujuan Bab: ${safe(brief.chapterGoal)}`,
+    '- AWALI BAB DENGAN TINDAKAN ATAU DIALOG LANGSUNG (In Medias Res). DILARANG membuka bab dengan deskripsi cuaca (hujan/panas/mendung), perabot ruangan (meja berdebu/lampu berkedip), atau renungan masa lalu. Tiga kalimat pertama bab WAJIB memuat benturan masalah, tindakan fisik, atau ucapan dialog tokoh.',
     beats.length > 0 ? '- Beat Wajib yang Harus Dijalani Tokoh:' : '',
     ...lines(beats),
     '- Urai setiap beat secara mendalam menjadi rangkaian interaksi bertahap; jangan meringkas satu beat hanya dalam segelintir paragraf singkat.',
     '- Khusus Bab 45 ke atas atau bab resolusi/klimaks: Urai proses pemulihan, percakapan konfrontasi/penyelesaian mendalam antar tokoh, dan konsekuensi pilihan secara bertahap menjadi 4 adegan berbobot. DILARANG merangkum atau mempercepat adegan menuju akhir sebelum mencapai target panjang kata.',
     '- Tulis 4 adegan berkesinambungan di lokasi fisik nyata yang mengalir tanpa lompatan waktu drastis.',
-    '- Hidupkan adegan dengan percakapan langsung: Sertakan banyak interaksi dialog bolak-balik antar tokoh (minimal 12–16 pertukaran ucapan) agar suasana hidup dan naskah tidak menjadi monolog sepi.',
+    '- Setiap adegan WAJIB memuat: interaksi dialog bolak-balik yang hidup, aksi fisik nyata, dan reaksi tubuh tokoh.',
+    isKbm
+      ? '- Hidupkan adegan dengan percakapan langsung: Sertakan banyak interaksi dialog bolak-balik antar tokoh (minimal 16–20 pertukaran ucapan) agar suasana hidup dan naskah tidak menjadi monolog sepi.'
+      : '- Hidupkan adegan dengan percakapan langsung: Sertakan banyak interaksi dialog bolak-balik antar tokoh (minimal 12–16 pertukaran ucapan) agar suasana hidup dan naskah tidak menjadi monolog sepi.',
     '- Terapkan Show, Don\'t Tell: fokus pada aksi fisik, reaksi emosional tubuh, dan subteks dialog.',
     '- Bangun penutupan dramatis yang tuntas pada akhir bab, mengerucut pada cliffhanger yang tajam dan bermakna.',
   ].filter(Boolean).join('\n')
@@ -167,9 +173,10 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
     '- Adegan 1 ±230 kata, Adegan 2 ±230 kata, Adegan 3 ±230 kata, Adegan 4 ±230 kata. DILARANG berpindah adegan sebelum adegan berjalan mencapai sekitar 230 kata.',
     '- DILARANG menutup bab sebelum keempat adegan selesai ditulis penuh.',
     '- Khusus bab klimaks atau bab-bab akhir: DILARANG menyelesaikan konflik secara terburu-buru. Urai percakapan konfrontasi, pertarungan argumen, dan ketegangan situasi secara bertahap dan mendalam.',
-    '- Setiap adegan WAJIB memuat: pembukaan situasi, detail sensorik lingkungan, minimal 8–10 pertukaran dialog bolak-balik, reaksi fisik tokoh, dan pergolakan batin narator.',
+    isKbm
+      ? '- Tekankan rasio dialog tinggi: minimal 16–20 pertukaran dialog bolak-balik per adegan, eskalasi ketegangan relasi/hinaan moral, dan reaksi fisik mentah.'
+      : '- Tekankan interaksi dialog yang hidup: minimal 12–16 pertukaran dialog bolak-balik per adegan, aksi fisik nyata, dan dinamika tensi adegan.',
     '- Kembangkan interaksi sensorik, dinamika dialog, dan ketegangan adegan secara mendalam.',
-    '- Urai setiap adegan secara bertahap dan detail; perlambat tempo agar cerita tidak selesai terlalu cepat sebelum mencapai minimal 880 kata.',
     '- Sebelum menutup bab, periksa ulang: bila total naskah masih di bawah 880 kata, WAJIB kembangkan adegan yang ada dengan dialog dan detail tambahan sampai melewatinya.',
     '- DILARANG keras menutup bab atau menulis penutup sebelum panjang naskah melewati minimal 880 kata.',
   ].join('\n')
@@ -198,6 +205,14 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
     '- Pemisahan Aksi & Reaksi: Pecah runtutan aksi fisik, reaksi emosi, dan detail sensorik menjadi paragraf-paragraf mandiri yang terpisah satu baris kosong.',
     '- Setiap paragraf tetap WAJIB berupa kalimat utuh yang bermakna (sekitar 10–20 kata). Paragraf pendek berarti ringkas dan bernapas, BUKAN pecahan frasa atau potongan kalimat.',
     '- Target panjang 800–1000 kata dicapai dengan memperkaya isi adegan (dialog, detail sensorik, gejolak batin), BUKAN dengan memecah kalimat menjadi banyak baris.',
+    ...(isKbm ? [
+      '',
+      '=== KHUSUS GAYA KBM VIRAL ===',
+      '- Dialog sentris: jadikan percakapan sebagai penggerak utama cerita.',
+      '- Micro-injustice: angkat hal-hal sepele yang menyengat harga diri dan memicu amarah pembaca.',
+      '- Sikap tokoh utama: tidak merengek/cengeng; bersikap tenang, dingin, atau menyimpan pembalasan terencana.',
+      '- Ujung bab: akhiri dengan cliffhanger tajam yang menggantungkan nasib tokoh atau rahasia yang hampir terbongkar.',
+    ] : []),
   ].join('\n')
 
   // Judul bab sebelumnya sudah tersedia di continuation tetapi tak pernah
@@ -230,9 +245,9 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
   ].filter(Boolean).join('\n')
 
   return {
-    system: mobileDramaSystemPrompt(),
+    system: mobileDramaSystemPrompt(styleProfile),
     user: [p0, p1, context, p2, p3, p4, p5, output].join('\n\n'),
-    styleProfileId: STYLE_PROFILE_ID,
+    styleProfileId: styleProfile ?? STYLE_PROFILE_ID,
     wordTarget: { ...words },
     paragraphTarget: { ...paragraphs },
   }

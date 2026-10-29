@@ -275,7 +275,7 @@ export const StoredStoryContractV2Schema = z.object({
   title: boundedString(160),
   genre: boundedString(80),
   tone: boundedString(160),
-  styleProfile: z.literal('lakoku_mobile_drama_v2'),
+  styleProfile: z.enum(['lakoku_mobile_drama_v1', 'lakoku_mobile_drama_v2', 'kbm_viral_v1']),
   mainCharacter: MainCharacterSchema,
   mainConflict: boundedString(800),
   finalQuestion: boundedString(500),
@@ -436,7 +436,7 @@ export const NormalizedStoryContractSchema = z.object({
   title: boundedString(160),
   genre: boundedString(80),
   tone: boundedString(160),
-  styleProfile: z.enum(['lakoku_mobile_drama_v1', 'lakoku_mobile_drama_v2']),
+  styleProfile: z.enum(['lakoku_mobile_drama_v1', 'lakoku_mobile_drama_v2', 'kbm_viral_v1']),
   mainCharacter: MainCharacterSchema,
   mainConflict: boundedString(800),
   finalQuestion: boundedString(500),
@@ -520,7 +520,7 @@ export const StoryContractSchema = z.object({
   title: boundedString(160),
   genre: boundedString(80),
   tone: boundedString(160),
-  styleProfile: z.enum(['lakoku_mobile_drama_v1', 'lakoku_mobile_drama_v2']),
+  styleProfile: z.enum(['lakoku_mobile_drama_v1', 'lakoku_mobile_drama_v2', 'kbm_viral_v1']),
   mainCharacter: MainCharacterSchema,
   mainConflict: boundedString(800),
   finalQuestion: boundedString(500),
@@ -735,3 +735,7 @@ export type ClosureRunway = z.infer<typeof ClosureRunwaySchema>
 export type StoryContract = z.infer<typeof StoryContractSchema>
 export type StoredStoryContractV1 = z.infer<typeof StoredStoryContractV1Schema>
 export type StoredStoryContractV2 = z.infer<typeof StoredStoryContractV2Schema>
+export const StoryContractV2Schema = StoredStoryContractV2Schema
+export type StoryContractV2 = z.infer<typeof StoryContractV2Schema>
+export const StoryContractV2RuntimeSchema = NormalizedStoryContractSchema
+export type StoryContractV2Runtime = z.infer<typeof StoryContractV2RuntimeSchema>

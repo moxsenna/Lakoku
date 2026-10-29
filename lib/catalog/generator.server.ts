@@ -118,6 +118,7 @@ export function buildCatalogContinuation(input: {
       corePromise: input.contract.corePromise,
       mainConflict: input.contract.mainConflict,
       finalQuestion: input.contract.finalQuestion,
+      styleProfile: input.contract.styleProfile,
     },
     actRollups: [],
     lockedEndingKey: input.lockedEndingKey,
@@ -288,6 +289,7 @@ async function generateProseWithRetry(deps: CatalogGeneratorDeps, args: {
   runId: string
   storyId: string
   snapshot: CanonSnapshot
+  contract: StoryContract
   chapterNumber: number
   continuation: ContinuationContext
   chapterBrief: ReturnType<typeof buildChapterBrief>
@@ -311,6 +313,7 @@ async function generateProseWithRetry(deps: CatalogGeneratorDeps, args: {
         chapterNumber: args.chapterNumber,
         continuation: args.continuation,
         brief: preProseBrief,
+        genre: args.contract.genre,
         executionOptions: executionOptions({
           runId: args.runId,
           storyId: args.storyId,
@@ -493,6 +496,7 @@ async function buildChapterOutput(deps: CatalogGeneratorDeps, args: {
     runId: args.runId,
     storyId: args.storyId,
     snapshot: args.snapshot,
+    contract: args.contract,
     chapterNumber: args.chapterNumber,
     continuation,
     chapterBrief,

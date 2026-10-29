@@ -60,6 +60,7 @@ export interface StoryAnchors {
   corePromise: string
   mainConflict: string
   finalQuestion: string
+  styleProfile?: string
 }
 
 /** Ringkasan babak yang SUDAH selesai (coversToChapter < N), bounded. */

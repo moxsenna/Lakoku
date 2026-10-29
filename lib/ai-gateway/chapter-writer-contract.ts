@@ -2,10 +2,12 @@ import type { CanonSnapshot, ContinuationContext, Finding } from '@lakoku/narrat
 import { buildWriterPrompt } from '@/lib/prose/prompt-engine'
 import { splitParagraphsForMobile } from '@/lib/prose/mobile-paragraph-splitter'
 import { buildCharacterDescriptors } from '@/lib/prose/cultural-conventions'
+import type { StyleProfileId } from '@/lib/prose/mobile-drama-style'
 import type {
   PreProseChapterBrief,
   WriterNarrativeObligation,
 } from '@/lib/story-engine/pre-prose-brief'
+import type { ModelCallExecutionOptions } from './provider'
 import {
   evaluateWriterCompleteness,
   type WriterCompletenessFinding,
@@ -151,6 +153,8 @@ export interface BuildProductionChapterWriterPromptArgs {
   readonly authorityMode: WriterAuthorityMode
   readonly repairFindings?: Finding[]
   readonly genre?: string | null
+  readonly options?: ModelCallExecutionOptions
+  readonly styleProfile?: StyleProfileId | null
 }
 
 export type ChapterWriterPromptProjection = Readonly<{
@@ -318,6 +322,12 @@ export function buildProductionChapterWriterPrompt(
 
   const phase = brief?.phase ?? String(plan.phase ?? '')
   const goal = brief?.chapterGoal ?? String(plan.chapterGoal ?? '')
+  const styleProfile: StyleProfileId | undefined =
+    args.styleProfile ??
+    (args.options?.diagnosticChapterWriterPromptOverride
+      ? undefined
+      : ((plan.styleProfile as StyleProfileId | undefined) ?? (continuation?.storyAnchors as any)?.styleProfile))
+
   const parts = buildWriterPrompt({
     chapterNumber: chapter,
     phase: phase || undefined,
@@ -331,6 +341,7 @@ export function buildProductionChapterWriterPrompt(
     continuation,
     brief,
     genre: args.genre ?? (typeof plan.genre === 'string' ? plan.genre : null),
+    styleProfile,
     repairFindings: args.repairFindings?.map((finding) => ({
       severity: finding.severity,
       message: finding.message,

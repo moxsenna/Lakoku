@@ -1,9 +1,9 @@
 import type { ContinuationContext } from '@lakoku/narrative-core'
-import type { ChapterMode } from '@/lib/prose/mobile-drama-style'
+import type { ChapterMode, StyleProfileId } from '@/lib/prose/mobile-drama-style'
 import type { PreProseChapterBrief } from '@/lib/story-engine/pre-prose-brief'
 import type { CharacterDescriptor, SupportedLanguage } from '../cultural-conventions'
 
-export type { ChapterMode }
+export type { ChapterMode, StyleProfileId }
 
 export interface WriterPromptParts {
   system: string
@@ -49,6 +49,7 @@ export interface BuildWriterPromptInput {
   continuation?: ContinuationContext | null
   brief: PreProseChapterBrief
   genre?: string | null
+  styleProfile?: StyleProfileId | null
 }
 
 export type EvalSeverity = 'pass' | 'warn' | 'fail'

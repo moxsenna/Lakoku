@@ -70,5 +70,6 @@ export function applyPremiseOverlay(
     corePromise: synopsis,
     mainConflict: synopsis,
     finalQuestion: bounded(premise.tagline, 500),
+    styleProfile: 'kbm_viral_v1',
   })
 }

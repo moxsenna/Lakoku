@@ -7,7 +7,16 @@ export const CatalogContractSnapshotSchema = z.object({
   }),
   endingCandidates: z
     .array(EndingCandidateSchema)
-    .length(3)
+    .min(3)
+    .transform((candidates) => {
+      if (candidates.length === 3) return candidates
+      const mains = candidates.filter((c) => c.kind === 'main')
+      const secrets = candidates.filter((c) => c.kind === 'secret')
+      if (mains.length >= 2 && secrets.length >= 1) {
+        return [...mains.slice(0, 2), secrets[0]!]
+      }
+      return candidates
+    })
     .superRefine((candidates, ctx) => {
       const mainCount = candidates.filter((c) => c.kind === 'main').length
       const secretCount = candidates.filter((c) => c.kind === 'secret').length

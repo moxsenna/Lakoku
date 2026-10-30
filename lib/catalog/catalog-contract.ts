@@ -55,16 +55,17 @@ export function applyPremiseOverlay(
   contract: StoryContract,
   premise: { title: string; synopsis: string; protagonistName: string; tagline: string },
 ): StoryContract {
+  const normalizedContract = normalizeCatalogEndings(contract)
   const bounded = (value: string, max: number): string => {
     const trimmed = value.trim()
     return trimmed.length <= max ? trimmed : trimmed.slice(0, max).trim()
   }
   const synopsis = bounded(premise.synopsis, 800)
   return StoryContractSchema.parse({
-    ...contract,
+    ...normalizedContract,
     title: bounded(premise.title, 160),
     mainCharacter: {
-      ...contract.mainCharacter,
+      ...normalizedContract.mainCharacter,
       name: bounded(premise.protagonistName, 100),
     },
     corePromise: synopsis,

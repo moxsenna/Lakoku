@@ -104,10 +104,11 @@ async function restore(): Promise<void> {
     total += rows.length
     console.log(`restore ${table}: ${rows.length} rows`)
   }
-  const check = await pool.query(
-    "select (select count(*) from chapters where story_id = $1 and number <= 44)::int as spine, (select count(*) from catalog_ending_chapters where story_id = $1)::int as variants, (select status from catalog_stories where story_id = $1) as status",
-    [STORY_ID],
-  )
+  const checkQuery = STORY_ID_FILTER
+    ? "select (select count(*) from chapters where story_id = $1 and number <= 44)::int as spine, (select count(*) from catalog_ending_chapters where story_id = $1)::int as variants, (select status from catalog_stories where story_id = $1) as status"
+    : "select (select count(*) from chapters where story_id like 'catalog:%' and number <= 44)::int as spine, (select count(*) from catalog_ending_chapters where story_id like 'catalog:%')::int as variants, (select count(*) from catalog_stories where story_id like 'catalog:%') as total_stories"
+  const checkParams = STORY_ID_FILTER ? [STORY_ID_FILTER] : []
+  const check = await pool.query(checkQuery, checkParams)
   await pool.end()
   console.log('post-restore:', JSON.stringify(check.rows[0]))
   console.log(`RESTORE_OK total=${total}`)

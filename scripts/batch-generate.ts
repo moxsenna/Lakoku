@@ -15,6 +15,14 @@ function loadEnv(): void {
 }
 loadEnv()
 
+process.on('uncaughtException', (err) => {
+  console.error('[batch-generate] uncaughtException caught (preventing crash):', err.message)
+})
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[batch-generate] unhandledRejection caught (preventing crash):', reason)
+})
+
 import { generateCatalogNovel } from '@/lib/catalog/generator.server'
 import { createDbCatalogWriter } from '@/lib/catalog/generator-db.server'
 import { DEFAULT_RUNTIME_POLICY } from '@lakoku/ai-gateway'

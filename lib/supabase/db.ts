@@ -14,8 +14,13 @@ export function getDb(): Kysely<Database> {
   if (!instance) {
     const url = process.env.DATABASE_URL
     if (!url) throw new Error('getDb: DATABASE_URL belum diset.')
+    const pool = new Pool({ connectionString: url, max: 10 })
+    pool.on('error', (err) => {
+      // Cegah crash uncaughtException pada idle client disconnect (mis. Neon pooler drop / ECONNRESET)
+      console.warn('[db-pool] Idle client error caught:', err.message)
+    })
     instance = new Kysely<Database>({
-      dialect: new PostgresDialect({ pool: new Pool({ connectionString: url, max: 10 }) }),
+      dialect: new PostgresDialect({ pool }),
     })
   }
   return instance

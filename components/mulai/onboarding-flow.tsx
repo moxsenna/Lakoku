@@ -472,6 +472,13 @@ export function OnboardingFlow() {
           ([k]) => k !== 'coreConflict' && k !== 'protagonistRole',
         ),
       )
+      // Dev-only verification signal: pertanyaan berikutnya baru saja
+      // menyesuaikan genre cerita ini.
+      if (process.env.NODE_ENV === 'development') {
+        void import('@reticlehq/react').then(({ reticle }) => {
+          reticle.signal('onboarding_genre_selected', { genreId: answer.value })
+        })
+      }
     }
 
     setAnswers(next)

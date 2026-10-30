@@ -10,6 +10,7 @@ import {
 } from '@/lib/taste-profile/catalog'
 import { buildConflictOptionEntries } from '@/lib/taste-profile/onboarding-state'
 import type { GenreId, TasteProfileV2 } from '@/lib/taste-profile/schema'
+import { createEmptyTasteProfile } from '@/lib/taste-profile/schema'
 import { hasUsableTasteProfile } from '@/lib/taste-profile/resolver'
 import {
   AGENCY_OPTIONS,
@@ -54,16 +55,19 @@ export function applySessionOverrides(
   profile: TasteProfileV2 | null,
   overrides?: SessionTasteOverrides | null,
 ): TasteProfileV2 | null {
-  if (!profile) return null
+  // Guest tanpa profil: override dari kuis tetap harus berlaku (genre yang
+  // dipilih menyesuaikan pertanyaan berikutnya), jadi pakai profil kosong
+  // sebagai dasar alih-alih membuang override.
   if (!overrides) return profile
+  const base = profile ?? createEmptyTasteProfile()
   return {
-    ...profile,
-    primaryGenreId: overrides.primaryGenreId ?? profile.primaryGenreId,
-    dramaIntensity: overrides.dramaIntensity ?? profile.dramaIntensity,
-    pacing: overrides.pacing ?? profile.pacing,
-    languageStyle: overrides.languageStyle ?? profile.languageStyle,
-    endingBias: overrides.endingBias ?? profile.endingBias,
-    contentBoundaryIds: overrides.contentBoundaryIds ?? profile.contentBoundaryIds,
+    ...base,
+    primaryGenreId: overrides.primaryGenreId ?? base.primaryGenreId,
+    dramaIntensity: overrides.dramaIntensity ?? base.dramaIntensity,
+    pacing: overrides.pacing ?? base.pacing,
+    languageStyle: overrides.languageStyle ?? base.languageStyle,
+    endingBias: overrides.endingBias ?? base.endingBias,
+    contentBoundaryIds: overrides.contentBoundaryIds ?? base.contentBoundaryIds,
   }
 }
 

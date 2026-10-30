@@ -29,7 +29,7 @@ export function ReticleDev() {
         // No state library detected. If you add one, register it here — see node_modules/@reticlehq/server/docs/usage.md.
         registerCapabilities({
           testids: [], // none found; add data-testid to your key elements
-          signals: [], // names you pass to reticle.signal()
+          signals: ['onboarding_genre_selected'], // names you pass to reticle.signal()
           stores: [], // the keys you registered above
         });
       },

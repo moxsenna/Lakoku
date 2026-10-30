@@ -7,7 +7,7 @@ for (const line of readFileSync('.env.local', 'utf8').split('\n')) {
   if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^"|"$/g, '')
 }
 
-const STORY_ID = 'catalog:kamar-304'
+const STORY_ID_FILTER = process.argv.find((a) => a.startsWith('--story='))?.slice('--story='.length)
 const BACKUP_DIR = '.verify-tmp/catalog-backup'
 
 const STORY_SCOPED_TABLES = [
@@ -27,8 +27,8 @@ const STORY_SCOPED_TABLES = [
 ]
 
 const EXTRA_TABLES = [
-  { table: 'stories', where: 'id = $1', column: 'id' },
-  { table: 'generation_provider_calls', where: 'story_id = $1', column: 'story_id' },
+  { table: 'stories', where: STORY_ID_FILTER ? 'id = $1' : "id like 'catalog:%'", param: STORY_ID_FILTER ? [STORY_ID_FILTER] : [] },
+  { table: 'generation_provider_calls', where: STORY_ID_FILTER ? 'story_id = $1' : "story_id like 'catalog:%'", param: STORY_ID_FILTER ? [STORY_ID_FILTER] : [] },
 ]
 
 const RESTORE_ORDER = [
@@ -58,13 +58,17 @@ async function backup(): Promise<void> {
   mkdirSync(BACKUP_DIR, { recursive: true })
   let total = 0
   for (const table of STORY_SCOPED_TABLES) {
-    const res = await pool.query(`select * from ${table} where story_id = $1`, [STORY_ID])
+    const query = STORY_ID_FILTER
+      ? `select * from ${table} where story_id = $1`
+      : `select * from ${table} where story_id like 'catalog:%'`
+    const params = STORY_ID_FILTER ? [STORY_ID_FILTER] : []
+    const res = await pool.query(query, params)
     writeFileSync(join(BACKUP_DIR, `${table}.json`), JSON.stringify(res.rows))
     total += res.rows.length
     console.log(`backup ${table}: ${res.rows.length} rows`)
   }
   for (const extra of EXTRA_TABLES) {
-    const res = await pool.query(`select * from ${extra.table} where ${extra.where}`, [STORY_ID])
+    const res = await pool.query(`select * from ${extra.table} where ${extra.where}`, extra.param)
     writeFileSync(join(BACKUP_DIR, `${extra.table}.json`), JSON.stringify(res.rows))
     total += res.rows.length
     console.log(`backup ${extra.table}: ${res.rows.length} rows`)

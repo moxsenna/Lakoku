@@ -2,13 +2,14 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, LibraryBig, CirclePlus, User } from 'lucide-react'
+import { Home, Compass, LibraryBig, CirclePlus, User } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const items = [
   { href: '/beranda', label: 'Beranda', icon: Home },
-  { href: '/koleksiku', label: 'Koleksiku', icon: LibraryBig },
+  { href: '/jelajah', label: 'Jelajah', icon: Compass },
   { href: '/mulai', label: 'Mulai Cerita', icon: CirclePlus },
+  { href: '/koleksiku', label: 'Koleksiku', icon: LibraryBig },
   { href: '/profil', label: 'Profil', icon: User },
 ]
 

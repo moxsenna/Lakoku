@@ -1,6 +1,6 @@
 import 'server-only'
 import { getDb, result } from '@lakoku/db'
-import type { Json } from '@/lib/supabase/db-types'
+import type { Json } from '@/lib/db/db-types'
 import type {
   ActRollup,
   CanonSnapshot,

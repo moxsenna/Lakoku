@@ -24,7 +24,7 @@ Stage reports: zoom_out_report.md (S5), comprehension_report.md (S6), critic_rep
 | design-r1-1 | `credit_orders_v2.amount_idr` hardcoded 0 → pendapatan Android Rp0 | Aturan derivasi dibekukan: perbaikan RPC `play_billing_grant_v1` (snapshot harga dari `credit_products`) menjadi pendamping WAJIB Fase 3 + amendemen NFR eksplisit + kaveat baris historis |
 | design-r1-2/z5-1/c6-B2 | Premis matcher middleware salah (`/s/*`, `/baca/*` sudah tercakup) | Koreksi: perluasan hanya `/mulai` + `/auth/:path*`; catat `PROTECTED_PREFIXES` `/baca/*` (tamu di-redirect sebelum render; capture tetap jalan di middleware) |
 | i9-B1 | Enum kanal tidak pernah didaftarkan | Taksonomi + tabel mapping utm_source→kanal dibekukan di dokumen |
-| i9-B2 | Fase 1 pasti gagal typecheck: `db-types.ts` absen dari rencana | `lib/supabase/db-types.ts` (Modify) ditambahkan ke Fase 1 |
+| i9-B2 | Fase 1 pasti gagal typecheck: `db-types.ts` absen dari rencana | `lib/db/db-types.ts` (Modify) ditambahkan ke Fase 1 |
 | style-r1-B1/c6-n6 | Rujukan "file 6" → seharusnya file 7 (pencatat atribusi) | Rujukan silang dikoreksi + renumbering |
 
 ### 🟡 Major — PROPOSE FIX diterapkan (ringkas)

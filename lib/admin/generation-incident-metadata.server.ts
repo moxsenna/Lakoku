@@ -2,7 +2,7 @@ import 'server-only'
 import { z } from 'zod'
 import { getDb, result, rpcRows } from '@lakoku/db'
 import type { Kysely } from 'kysely'
-import type { Database } from '@/lib/supabase/db-types'
+import type { Database } from '@/lib/db/db-types'
 
 const MAX_WINDOW_MS = 60 * 60 * 1000
 

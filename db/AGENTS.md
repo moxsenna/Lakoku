@@ -1,4 +1,4 @@
-# supabase/ — Database Migrations & SQL Tests
+# db/ — Database Migrations & SQL Tests (Neon — produksi via DATABASE_URL)
 
 ## OVERVIEW
 

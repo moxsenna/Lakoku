@@ -71,4 +71,4 @@ describe('FeatureName', () => {
 - Runtime: 20 test files (comprehensive)
 - Narrative: 1 test file (minimal)
 - AI Gateway: 5 test files (moderate)
-- DB tests: `supabase/tests/*.sql`
+- DB tests: `db/tests/*.sql`

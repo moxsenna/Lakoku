@@ -356,7 +356,7 @@ describe('Task P5: Missions Pay Tinta Behind missions_pay_tinta Flag', () => {
   describe('SQL Migration Content Verification (20260919000000_lakoin_tinta_economy.sql)', () => {
     const sqlPath = join(
       process.cwd(),
-      'supabase/migrations/20260919000000_lakoin_tinta_economy.sql',
+      'db/migrations/20260919000000_lakoin_tinta_economy.sql',
     )
     const sql = readFileSync(sqlPath, 'utf-8')
 

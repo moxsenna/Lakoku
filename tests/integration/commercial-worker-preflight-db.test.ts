@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest'
 vi.mock('server-only', () => ({}))
 import { randomUUID } from 'node:crypto'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient } from '@/lib/db/admin'
 import { resolveCommercialWorkerPreflight } from '@/lib/commercial/worker-preflight.server'
 
 const runsLocalDb = process.env.LAKOKU_LOCAL_DB_TEST === '1'

@@ -137,7 +137,7 @@ function verifyPersistentMarker(): void {
         'test',
         'db',
         '--local',
-        'supabase/tests/personalized_local_marker_test.sql',
+        'db/tests/personalized_local_marker_test.sql',
       ],
       MARKER_TIMEOUT_MS,
     )

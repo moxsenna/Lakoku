@@ -12,13 +12,13 @@
  *   - `facts_ledger` columns are exactly:
  *       id, story_id, statement, subject_character_id,
  *       established_chapter, salience, load_bearing, paid_off
- *     (`supabase/migrations/20260707000000_core_runtime_baseline.sql`).
+ *     (`db/migrations/20260707000000_core_runtime_baseline.sql`).
  *     `statement` is free text. There is no claim predicate, no claim value,
  *     no `supersedes`, no `retracted_at`, no conflict edge.
  *
  *   - The existing `STATE_FACT_CONFLICT` error in
  *     `lib/narrative/chapter-state-apply.ts` and
- *     `supabase/migrations/20260805020000_living_canon_publication_primitives.sql`
+ *     `db/migrations/20260805020000_living_canon_publication_primitives.sql`
  *     is an IDENTITY collision guard (duplicate fact id / unknown
  *     `markPaidOff` target). It is NOT a semantic contradiction authority.
  *

@@ -32,10 +32,10 @@
 
 ### Database fencing
 
-- Create `supabase/migrations/20260724121000_generation_checkpoint_fencing.sql` — two atomic checkpoint mutation RPCs.
-- Modify `supabase/tests/claim_generation_job_by_id_test.sql` — explicit client-role ACL assertions.
-- Modify `supabase/tests/checkpoint_versioning_test.sql` — retain nullable legacy provenance and schema marker proofs.
-- Create `supabase/tests/generation_checkpoint_fencing_test.sql` — RPC signatures, ACL, result codes, transitions, and rollback.
+- Create `db/migrations/20260724121000_generation_checkpoint_fencing.sql` — two atomic checkpoint mutation RPCs.
+- Modify `db/tests/claim_generation_job_by_id_test.sql` — explicit client-role ACL assertions.
+- Modify `db/tests/checkpoint_versioning_test.sql` — retain nullable legacy provenance and schema marker proofs.
+- Create `db/tests/generation_checkpoint_fencing_test.sql` — RPC signatures, ACL, result codes, transitions, and rollback.
 - Create `scripts/generation-checkpoint-fencing-race.ts` — ownership race and lock-order proof.
 - Modify `package.json` — include all new DB verification files/scripts.
 
@@ -201,16 +201,16 @@ Expected: both exit `0`. If either fails, fix only observed baseline failures an
 ### Task 2: Add transactional checkpoint-fencing RPCs and DB proofs
 
 **Files:**
-- Create: `supabase/migrations/20260724121000_generation_checkpoint_fencing.sql`
-- Create: `supabase/tests/generation_checkpoint_fencing_test.sql`
+- Create: `db/migrations/20260724121000_generation_checkpoint_fencing.sql`
+- Create: `db/tests/generation_checkpoint_fencing_test.sql`
 - Create: `scripts/generation-checkpoint-fencing-race.ts`
-- Modify: `supabase/tests/claim_generation_job_by_id_test.sql:16-41`
-- Modify: `supabase/tests/checkpoint_versioning_test.sql:16-66`
+- Modify: `db/tests/claim_generation_job_by_id_test.sql:16-41`
+- Modify: `db/tests/checkpoint_versioning_test.sql:16-66`
 - Modify: `package.json:17-22`
 
 - [ ] **Step 1: Write pgTAP contract tests before migration**
 
-Create `supabase/tests/generation_checkpoint_fencing_test.sql` with transaction wrapper, local marker guard, and planned assertions:
+Create `db/tests/generation_checkpoint_fencing_test.sql` with transaction wrapper, local marker guard, and planned assertions:
 
 ```sql
 begin;
@@ -271,7 +271,7 @@ rollback;
 
 - [ ] **Step 2: Make claim-by-ID ACL proof explicit**
 
-Replace combined ACL assertion in `supabase/tests/claim_generation_job_by_id_test.sql` with four named assertions and update `plan(...)` count accordingly:
+Replace combined ACL assertion in `db/tests/claim_generation_job_by_id_test.sql` with four named assertions and update `plan(...)` count accordingly:
 
 ```sql
 select ok(not has_function_privilege('PUBLIC', 'public.claim_generation_job_by_id_v1(uuid,text)', 'EXECUTE'), 'PUBLIC cannot execute claim-by-id');
@@ -282,7 +282,7 @@ select ok(has_function_privilege('service_role', 'public.claim_generation_job_by
 
 - [ ] **Step 3: Complete checkpoint-versioning pgTAP proof**
 
-Modify `supabase/tests/checkpoint_versioning_test.sql`. Keep new-row default/version checks, then add explicit nullability assertions for every legacy-compatible provenance column:
+Modify `db/tests/checkpoint_versioning_test.sql`. Keep new-row default/version checks, then add explicit nullability assertions for every legacy-compatible provenance column:
 
 ```sql
 select col_is_null('public', 'chapter_generation_checkpoints', 'generation_mode', 'generation_mode remains nullable for legacy rows');
@@ -338,7 +338,7 @@ Expected: exit `0`; `20260724121000` unused.
 
 - [ ] **Step 5: Implement `upsert_generation_checkpoint_fenced_v1`**
 
-Create `supabase/migrations/20260724121000_generation_checkpoint_fencing.sql`. Use exact signature from spec. Function structure:
+Create `db/migrations/20260724121000_generation_checkpoint_fencing.sql`. Use exact signature from spec. Function structure:
 
 ```sql
 create or replace function public.upsert_generation_checkpoint_fenced_v1(
@@ -498,7 +498,7 @@ Add equivalent stale transition rejection and verify no partial status/counter u
 Add focused script to `package.json` and extend `test:db:generation-jobs`:
 
 ```json
-"test:db:generation-checkpoints": "node scripts/run-smoke.cjs scripts/runtime-baseline-sentinel.ts && pnpm exec supabase test db --local supabase/tests/claim_generation_job_by_id_test.sql supabase/tests/checkpoint_versioning_test.sql supabase/tests/generation_checkpoint_fencing_test.sql && node scripts/run-smoke.cjs scripts/generation-checkpoint-fencing-race.ts"
+"test:db:generation-checkpoints": "node scripts/run-smoke.cjs scripts/runtime-baseline-sentinel.ts && pnpm exec supabase test db --local db/tests/claim_generation_job_by_id_test.sql db/tests/checkpoint_versioning_test.sql db/tests/generation_checkpoint_fencing_test.sql && node scripts/run-smoke.cjs scripts/generation-checkpoint-fencing-race.ts"
 ```
 
 - [ ] **Step 10: Run local DB red/green gate**

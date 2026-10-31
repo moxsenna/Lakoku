@@ -15,7 +15,7 @@
 - TypeScript strict; dilarang `as any`, `@ts-ignore`, `@ts-expect-error` (AGENT_RULES.md).
 - Komentar campuran Indonesia + Inggris; error message reader-safe (Bahasa Indonesia) di response JSON.
 - Paket `@lakoku/db` = alias tsconfig ke `./lib/supabase/index.ts` — TIDAK dipindah; internals diganti di tempat.
-- Fungsi SQL di `supabase/migrations/` TIDAK diubah logikanya; adaptasi hanya: buang RLS/policy/GRANT-REVOKE/storage.buckets/pg_cron/FK `auth.users`, plus shim sesuai audit Task 3.
+- Fungsi SQL di `db/migrations/` TIDAK diubah logikanya; adaptasi hanya: buang RLS/policy/GRANT-REVOKE/storage.buckets/pg_cron/FK `auth.users`, plus shim sesuai audit Task 3.
 - UUID semua row dan user DIPERTAHANPAN (tidak ada regenerasi id).
 - Kredensial Neon hanya via env `DATABASE_URL` di server; dilarang menulis kredensial ke file yang di-commit.
 - Baseline test: unit suite punya ±76 failure pre-existing (suite DB lokal Supabase) — regression check = bandingkan daftar failing, bukan "semua hijau".
@@ -92,7 +92,7 @@ Expected: terpasang, lockfile berubah.
 # Neon Migration Kit (Full Exit Supabase — Fase A)
 
 Struktur:
-- `migrations/` — salinan adaptif `supabase/migrations/` (tanpa RLS/policy,
+- `migrations/` — salinan adaptif `db/migrations/` (tanpa RLS/policy,
   GRANT/REVOKE roles Supabase, storage.buckets, pg_cron, FK auth.users).
 - `bootstrap/001-roles-and-shims.sql` — dibuat oleh script adaptasi bila perlu.
 - Runner: `node scripts/neon-migrate.mjs` (membaca `DATABASE_URL` dari
@@ -125,21 +125,21 @@ git commit -m "chore(neon): phase A dependencies and migration kit scaffold"
 
 - [ ] **Step 1: Tulis transformer `scripts/adapt-supabase-migrations.mjs`**
 
-Membaca semua `supabase/migrations/*.sql` (urut nama), menulis salinan ke
+Membaca semua `db/migrations/*.sql` (urut nama), menulis salinan ke
 `neon/migrations/` dengan transformasi baris/lampiran berikut (regex di level
 statement, bukan teks mentah — implementer WAJIB mem-verifikasi diff tiap file
 yang berubah dan mencatat keputusan di `neon/ADAPTATION_NOTES.md`):
 
 ```js
 /**
- * Adaptasi satu-jalan supabase/migrations -> neon/migrations.
+ * Adaptasi satu-jalan db/migrations -> neon/migrations.
  * Usage: node scripts/adapt-supabase-migrations.mjs
  * Deterministik; hasil di-commit supaya reviewer bisa membedah.
  */
 import { readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
-const SRC = 'supabase/migrations'
+const SRC = 'db/migrations'
 const DST = 'neon/migrations'
 mkdirSync(DST, { recursive: true })
 
@@ -272,12 +272,12 @@ daftar kolom per tabel — query `information_schema`:
 // gunakan pg langsung: Supabase menyediakan DATABASE pooler string di
 // dashboard (Project Settings > Database > Connection string > URI).
 // Kalau tidak tersedia, fallback: bandingkan dari MIGRASI (bukan live):
-// hitung objek yang dibuat neon/migrations vs supabase/migrations.
+// hitung objek yang dibuat neon/migrations vs db/migrations.
 ```
 
 Default gate (tanpa kredensial live Supabase): hitung dari file migrasi
 kedua sisi — `create table` di neon/migrations harus == jumlah di
-supabase/migrations; `create or replace function` + `create function` sama;
+db/migrations; `create or replace function` + `create function` sama;
 `create trigger` sama. Simpan output ke `neon/STRUCTURAL_DIFF.txt`, commit.
 
 - [ ] **Step 6: Commit**
@@ -594,8 +594,8 @@ git commit -m "feat(neon): supabase-js compat helpers with tested transformation
   yang WAJIB dipatuhi Task 8–11 saat me-rewrite query terkait. TANPA matrix
   ini, rewrite reader queries BOLEH tidak dilanjutkan.
 
-- [ ] **Step 1: Ekstrak semua policy** dari `supabase/migrations/*.sql`
-  (`grep -n "create policy" supabase/migrations/*.sql` + baca konteks
+- [ ] **Step 1: Ekstrak semua policy** dari `db/migrations/*.sql`
+  (`grep -n "create policy" db/migrations/*.sql` + baca konteks
   `to authenticated/anon` dan `using/with check`-nya).
 
 - [ ] **Step 2: Untuk tiap policy** isi matrix dengan salah satu:

@@ -122,7 +122,7 @@ function checkDbIsolation() {
     'SUPABASE_URL',
     'createClient',
     '.from(',
-    'supabase',
+    'db',
   ]
   for (const token of forbidden) {
     if (runner.includes(token)) fail(`runner contains DB-forbidden token: ${token}`)

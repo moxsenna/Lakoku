@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.createClient }))
+vi.mock('@/lib/db/server', () => ({ createClient: mocks.createClient }))
 vi.mock('@lakoku/db', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>()
   return {

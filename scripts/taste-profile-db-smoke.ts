@@ -27,7 +27,7 @@ console.log('taste-profile-db:')
 const migrationPath = path.resolve(
   __dirname,
   '..',
-  'supabase',
+  'db',
   'migrations',
   '20260711000000_reader_taste_profiles.sql',
 )

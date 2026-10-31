@@ -14,7 +14,7 @@ vi.mock('@lakoku/runtime', () => ({
   getQueueItemDetail: mocks.getQueueItemDetail,
   recordDisposition: mocks.recordDisposition,
 }))
-vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.createClient }))
+vi.mock('@/lib/db/server', () => ({ createClient: mocks.createClient }))
 
 import { GET, POST } from '@/app/api/blueprint-review/[id]/route'
 import * as queueRoute from '@/app/api/blueprint-review/route'

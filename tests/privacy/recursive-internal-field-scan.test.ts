@@ -44,7 +44,7 @@ vi.mock('@/lib/api/server', () => ({
   getChapter: routeMocks.getChapter,
 }))
 vi.mock('@/lib/api/reports', () => ({ submitContentReport: routeMocks.submitContentReport }))
-vi.mock('@/lib/supabase/server', () => ({ createClient: routeMocks.createClient }))
+vi.mock('@/lib/db/server', () => ({ createClient: routeMocks.createClient }))
 vi.mock('@lakoku/contracts', async () => import('../../packages/contracts/src/index'))
 vi.mock('@/lib/api/queries', () => ({
   queryChoiceOutcome: routeMocks.queryChoiceOutcome,

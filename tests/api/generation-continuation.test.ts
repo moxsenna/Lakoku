@@ -39,8 +39,8 @@ vi.mock('@/lib/api/user-state', () => ({
   applyChoiceToUserState: mocks.applyChoiceToUserState,
   getSessionUser: mocks.getSessionUser,
 }))
-vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.cookieFactory }))
-vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@/lib/db/server', () => ({ createClient: mocks.cookieFactory }))
+vi.mock('@/lib/db/admin', () => ({ createAdminClient: mocks.adminFactory }))
 vi.mock('@lakoku/db', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>()
   return {

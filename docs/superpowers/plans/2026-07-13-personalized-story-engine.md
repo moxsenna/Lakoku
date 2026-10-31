@@ -27,14 +27,14 @@
 ### Database and test infrastructure
 
 - Modify: `.gitignore` — ignore local linked-schema/RPC dumps and local release evidence.
-- Create: `supabase/tests/personalized_story_rls_test.sql` — pgTAP coverage for public/owner/anon/service-role access.
-- Create: `supabase/tests/personalized_story_schema_test.sql` — additive column, constraint, index, policy, grant, and RPC assertions.
-- Create: `supabase/migrations/20260713000000_personalized_story_engine.sql` — additive story/reader/outcome/contract/idempotency schema, indexes, and defensive RLS.
-- Create: `supabase/migrations/20260713010000_publish_chapter_v2.sql` — introspection-derived atomic publisher; never edit already-applied schema migration to add RPC later.
-- Create: `supabase/migrations/20260713020000_bootstrap_personalized_story.sql` — transactional contract/canon bootstrap derived from linked canon schema.
-- Create: `supabase/migrations/20260713030000_apply_personalized_choice.sql` — atomic authorized choice application and replay/conflict semantics.
-- Create: `supabase/migrations/20260713040000_personalized_generation_outbox.sql` only if Task 20 runtime proof requires durable queue storage.
-- Create: `supabase/migrations/20260713050000_clone_premium_story_instance.sql` — transactional template clone derived from linked schema.
+- Create: `db/tests/personalized_story_rls_test.sql` — pgTAP coverage for public/owner/anon/service-role access.
+- Create: `db/tests/personalized_story_schema_test.sql` — additive column, constraint, index, policy, grant, and RPC assertions.
+- Create: `db/migrations/20260713000000_personalized_story_engine.sql` — additive story/reader/outcome/contract/idempotency schema, indexes, and defensive RLS.
+- Create: `db/migrations/20260713010000_publish_chapter_v2.sql` — introspection-derived atomic publisher; never edit already-applied schema migration to add RPC later.
+- Create: `db/migrations/20260713020000_bootstrap_personalized_story.sql` — transactional contract/canon bootstrap derived from linked canon schema.
+- Create: `db/migrations/20260713030000_apply_personalized_choice.sql` — atomic authorized choice application and replay/conflict semantics.
+- Create: `db/migrations/20260713040000_personalized_generation_outbox.sql` only if Task 20 runtime proof requires durable queue storage.
+- Create: `db/migrations/20260713050000_clone_premium_story_instance.sql` — transactional template clone derived from linked schema.
 
 ### Reader-safe data and contracts
 
@@ -161,8 +161,8 @@ git commit -m "chore: ignore personalized story introspection artifacts"
 ### Task 2: Failing Database Schema and RLS Tests
 
 **Files:**
-- Create: `supabase/tests/personalized_story_schema_test.sql`
-- Create: `supabase/tests/personalized_story_rls_test.sql`
+- Create: `db/tests/personalized_story_schema_test.sql`
+- Create: `db/tests/personalized_story_rls_test.sql`
 
 - [ ] **Step 1: Write failing pgTAP schema assertions**
 
@@ -183,22 +183,22 @@ Create deterministic users A/B, public template, and private personalized rows i
 
 - [ ] **Step 3: Run tests and verify RED**
 
-Run: `pnpm exec supabase test db supabase/tests/personalized_story_schema_test.sql supabase/tests/personalized_story_rls_test.sql`
+Run: `pnpm exec supabase test db db/tests/personalized_story_schema_test.sql db/tests/personalized_story_rls_test.sql`
 Expected: FAIL on missing `story_mode`, `route_state`, `effect_json`, `story_generation_contracts`, indexes, and policies. If local Supabase is stopped, run `pnpm exec supabase start` first; expected local stack starts successfully.
 
 - [ ] **Step 4: Commit failing tests**
 
 ```bash
-git add supabase/tests/personalized_story_schema_test.sql supabase/tests/personalized_story_rls_test.sql
+git add db/tests/personalized_story_schema_test.sql db/tests/personalized_story_rls_test.sql
 git commit -m "test: define personalized story database security contract"
 ```
 
 ### Task 3: Additive Schema, Defensive Policies, and Strong Request Idempotency
 
 **Files:**
-- Create: `supabase/migrations/20260713000000_personalized_story_engine.sql`
-- Modify: `supabase/tests/personalized_story_schema_test.sql`
-- Modify: `supabase/tests/personalized_story_rls_test.sql`
+- Create: `db/migrations/20260713000000_personalized_story_engine.sql`
+- Modify: `db/tests/personalized_story_schema_test.sql`
+- Modify: `db/tests/personalized_story_rls_test.sql`
 
 - [ ] **Step 1: Implement additive schema from approved spec**
 
@@ -243,18 +243,18 @@ Assert allowed modes/statuses, total chapters exactly 50, contract source values
 
 - [ ] **Step 4: Reset local DB and run tests**
 
-Run: `pnpm exec supabase db reset && pnpm exec supabase test db supabase/tests/personalized_story_schema_test.sql supabase/tests/personalized_story_rls_test.sql`
+Run: `pnpm exec supabase db reset && pnpm exec supabase test db db/tests/personalized_story_schema_test.sql db/tests/personalized_story_rls_test.sql`
 Expected: PASS for additive schema/RLS assertions; RPC-specific assertions remain deferred until Task 12 and must be marked with pgTAP `skip()` carrying reason `publish_chapter_v2 added after linked RPC derivation`, then replaced in Task 12.
 
 - [ ] **Step 5: Verify no destructive SQL**
 
-Run: `rg -n -i "\bdrop\s+(table|column|function)|alter\s+column.*type" supabase/migrations/20260713000000_personalized_story_engine.sql`
+Run: `rg -n -i "\bdrop\s+(table|column|function)|alter\s+column.*type" db/migrations/20260713000000_personalized_story_engine.sql`
 Expected: no matches. `DROP POLICY` is also not used because policy checks are defensive.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add supabase/migrations/20260713000000_personalized_story_engine.sql supabase/tests/personalized_story_schema_test.sql supabase/tests/personalized_story_rls_test.sql
+git add db/migrations/20260713000000_personalized_story_engine.sql db/tests/personalized_story_schema_test.sql db/tests/personalized_story_rls_test.sql
 git commit -m "feat: add personalized story schema and row security"
 ```
 
@@ -657,15 +657,15 @@ git commit -m "feat: add publish chapter v2 runtime wrapper"
 ### Task 12: Mechanically Derive `publish_chapter_v2` from Linked Legacy RPC
 
 **Files:**
-- Create: `supabase/migrations/20260713010000_publish_chapter_v2.sql`
-- Modify: `supabase/tests/personalized_story_schema_test.sql`
-- Modify: `supabase/tests/personalized_story_rls_test.sql`
+- Create: `db/migrations/20260713010000_publish_chapter_v2.sql`
+- Modify: `db/tests/personalized_story_schema_test.sql`
+- Modify: `db/tests/personalized_story_rls_test.sql`
 
 - [ ] **Step 1: Replace deferred tests with failing RPC tests**
 
 Assert exact argument types, `SECURITY DEFINER`, fixed `search_path`, service-role execute only, normal atomic insert, effect/choice-kind persistence, Chapter 50 `NULL` choices plus `[]` outcomes, Chapter 50 empty choices, replay result, chapter-exists result, event append, and exact lease release based on introspected columns.
 
-Run: `pnpm exec supabase test db supabase/tests/personalized_story_schema_test.sql supabase/tests/personalized_story_rls_test.sql`
+Run: `pnpm exec supabase test db db/tests/personalized_story_schema_test.sql db/tests/personalized_story_rls_test.sql`
 Expected: FAIL because `publish_chapter_v2` does not exist.
 
 - [ ] **Step 2: Perform mandatory mechanical derivation**
@@ -695,13 +695,13 @@ Expected: differences limited to name, Chapter 50 branch allowance, effect/choic
 
 - [ ] **Step 4: Reset and run DB tests**
 
-Run: `pnpm exec supabase db reset && pnpm exec supabase test db supabase/tests/personalized_story_schema_test.sql supabase/tests/personalized_story_rls_test.sql`
+Run: `pnpm exec supabase db reset && pnpm exec supabase test db db/tests/personalized_story_schema_test.sql db/tests/personalized_story_rls_test.sql`
 Expected: PASS, including rollback assertion proving no partial chapter/outcome/event/lease mutation on invalid effect.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add supabase/migrations/20260713010000_publish_chapter_v2.sql supabase/tests/personalized_story_schema_test.sql supabase/tests/personalized_story_rls_test.sql
+git add db/migrations/20260713010000_publish_chapter_v2.sql db/tests/personalized_story_schema_test.sql db/tests/personalized_story_rls_test.sql
 git commit -m "feat: add atomic personalized chapter publisher"
 ```
 
@@ -830,7 +830,7 @@ export function contractToCanonBootstrap(contract: StoryContract): CanonBootstra
 export async function persistContractAndCanon(input: { contract: StoryContract; contractSource: ContractSource; onboardingJson: TasteProfile }): Promise<void>
 ```
 
-Use introspected exact insert columns. Blueprints map every `chapterTarget` to existing canon shape and contain no prose. Persist contract plus canon through one new transaction-safe DB RPC in `supabase/migrations/20260713020000_bootstrap_personalized_story.sql`, service-role only, with rollback tests. Derive every insert column and FK mapping from Task 1 introspection. Do not edit already-applied migrations. Do not generate a chapter here.
+Use introspected exact insert columns. Blueprints map every `chapterTarget` to existing canon shape and contain no prose. Persist contract plus canon through one new transaction-safe DB RPC in `db/migrations/20260713020000_bootstrap_personalized_story.sql`, service-role only, with rollback tests. Derive every insert column and FK mapping from Task 1 introspection. Do not edit already-applied migrations. Do not generate a chapter here.
 
 - [ ] **Step 3: Run unit and DB tests**
 
@@ -840,7 +840,7 @@ Expected: PASS; DB assertion counts 50 blueprints and 0 chapters after bootstrap
 - [ ] **Step 4: Commit**
 
 ```bash
-git add lib/story-engine/contract-persistence.server.ts tests/story-engine/contract-persistence.test.ts supabase/migrations/20260713020000_bootstrap_personalized_story.sql supabase/tests/personalized_story_schema_test.sql
+git add lib/story-engine/contract-persistence.server.ts tests/story-engine/contract-persistence.test.ts db/migrations/20260713020000_bootstrap_personalized_story.sql db/tests/personalized_story_schema_test.sql
 git commit -m "feat: persist contracts and bootstrap personalized canon"
 ```
 
@@ -929,11 +929,11 @@ git commit -m "feat: create personalized stories idempotently"
 ### Task 19: Ownership-First Atomic Personalized Choice Service
 
 **Files:**
-- Create: `supabase/migrations/20260713030000_apply_personalized_choice.sql`
+- Create: `db/migrations/20260713030000_apply_personalized_choice.sql`
 - Create: `lib/api/personalized-choice.server.ts`
 - Modify: `app/api/stories/[id]/choices/route.ts`
 - Create: `tests/api/personalized-choice.test.ts`
-- Modify: `supabase/tests/personalized_story_rls_test.sql`
+- Modify: `db/tests/personalized_story_rls_test.sql`
 
 - [ ] **Step 1: Write failing authorization/idempotency tests**
 
@@ -960,13 +960,13 @@ First query parent through user-scoped `queryStoryForUser` and require owned mod
 
 Private personalized/premium instance requires auth and `Idempotency-Key`; standard/public path keeps old behavior. Map typed conflict to 409.
 
-Run: `pnpm vitest run tests/api/personalized-choice.test.ts && pnpm exec supabase test db supabase/tests/personalized_story_rls_test.sql`
+Run: `pnpm vitest run tests/api/personalized-choice.test.ts && pnpm exec supabase test db db/tests/personalized_story_rls_test.sql`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add supabase/migrations/20260713030000_apply_personalized_choice.sql lib/api/personalized-choice.server.ts app/api/stories/[id]/choices/route.ts tests/api/personalized-choice.test.ts supabase/tests/personalized_story_rls_test.sql
+git add db/migrations/20260713030000_apply_personalized_choice.sql lib/api/personalized-choice.server.ts app/api/stories/[id]/choices/route.ts tests/api/personalized-choice.test.ts db/tests/personalized_story_rls_test.sql
 git commit -m "feat: apply personalized choices atomically"
 ```
 
@@ -976,7 +976,7 @@ git commit -m "feat: apply personalized choices atomically"
 - Create: `lib/api/generation-continuation.server.ts`
 - Modify: `app/api/stories/[id]/choices/route.ts`
 - Create: `tests/api/generation-continuation.test.ts`
-- Conditionally create: `supabase/migrations/20260713040000_personalized_generation_outbox.sql`
+- Conditionally create: `db/migrations/20260713040000_personalized_generation_outbox.sql`
 
 - [ ] **Step 1: Write failing bounded-wait tests**
 
@@ -1023,7 +1023,7 @@ Expected: PASS.
 
 ```bash
 git add lib/api/generation-continuation.server.ts app/api/stories/[id]/choices/route.ts tests/api/generation-continuation.test.ts
-git add supabase/migrations/20260713040000_personalized_generation_outbox.sql 2>/dev/null || true
+git add db/migrations/20260713040000_personalized_generation_outbox.sql 2>/dev/null || true
 git commit -m "feat: continue personalized generation durably"
 ```
 
@@ -1033,7 +1033,7 @@ git commit -m "feat: continue personalized generation durably"
 - Create: `lib/api/chapter-status.server.ts`
 - Create: `app/api/stories/[id]/chapters/[chapterNumber]/status/route.ts`
 - Create: `tests/api/chapter-status.test.ts`
-- Conditionally modify: `supabase/migrations/20260713040000_personalized_generation_outbox.sql`
+- Conditionally modify: `db/migrations/20260713040000_personalized_generation_outbox.sql`
 
 - [ ] **Step 1: Write failing precedence/authorization tests**
 
@@ -1066,7 +1066,7 @@ Expected: PASS.
 
 ```bash
 git add lib/api/chapter-status.server.ts app/api/stories/[id]/chapters/[chapterNumber]/status/route.ts tests/api/chapter-status.test.ts
-git add supabase/migrations/20260713040000_personalized_generation_outbox.sql 2>/dev/null || true
+git add db/migrations/20260713040000_personalized_generation_outbox.sql 2>/dev/null || true
 git commit -m "feat: expose exact personalized chapter status"
 ```
 
@@ -1124,14 +1124,14 @@ git commit -m "feat: poll personalized chapters and render final actions"
 ### Task 23: Transactional `clone_premium_story_instance` RPC
 
 **Files:**
-- Create: `supabase/migrations/20260713050000_clone_premium_story_instance.sql`
-- Create: `supabase/tests/premium_story_clone_test.sql`
+- Create: `db/migrations/20260713050000_clone_premium_story_instance.sql`
+- Create: `db/tests/premium_story_clone_test.sql`
 
 - [ ] **Step 1: Write failing pgTAP clone tests**
 
 Seed public premium template with contract and rows in every linked canon table. Assert invalid mode/private template returns `INVALID_TEMPLATE`; valid clone creates private `premium_instance`, correct `source_story_id`, owner, contract, all canon/aliases/voice/state/facts/knowledge/secrets/threads/50 blueprints/rollups/reader state, optional curated Chapter 1; injected FK failure rolls back every target row; execute denied to anon/authenticated and granted to service role.
 
-Run: `pnpm exec supabase test db supabase/tests/premium_story_clone_test.sql`
+Run: `pnpm exec supabase test db db/tests/premium_story_clone_test.sql`
 Expected: FAIL because RPC does not exist.
 
 - [ ] **Step 2: Implement linked-schema-derived clone SQL**
@@ -1142,13 +1142,13 @@ Use `SECURITY DEFINER SET search_path = public, pg_temp`, schema-qualified objec
 
 - [ ] **Step 3: Run clone and full DB tests**
 
-Run: `pnpm exec supabase db reset && pnpm exec supabase test db supabase/tests/premium_story_clone_test.sql supabase/tests/personalized_story_schema_test.sql supabase/tests/personalized_story_rls_test.sql`
+Run: `pnpm exec supabase db reset && pnpm exec supabase test db db/tests/premium_story_clone_test.sql db/tests/personalized_story_schema_test.sql db/tests/personalized_story_rls_test.sql`
 Expected: PASS, including rollback count zero after injected failure.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add supabase/migrations/20260713050000_clone_premium_story_instance.sql supabase/tests/premium_story_clone_test.sql
+git add db/migrations/20260713050000_clone_premium_story_instance.sql db/tests/premium_story_clone_test.sql
 git commit -m "feat: clone premium templates transactionally"
 ```
 
@@ -1228,7 +1228,7 @@ git commit -m "test: prove personalized story privacy and isolation"
 
 **Files:**
 - Create: `tests/integration/story-ownership.test.ts`
-- Modify: `supabase/tests/personalized_story_rls_test.sql`
+- Modify: `db/tests/personalized_story_rls_test.sql`
 
 - [ ] **Step 1: Write DB-backed integration matrix**
 
@@ -1245,13 +1245,13 @@ Create users with admin test client, seed rows with service role, authenticate c
 
 - [ ] **Step 4: Run ownership gates**
 
-Run: `pnpm vitest run tests/integration/story-ownership.test.ts && pnpm exec supabase test db supabase/tests/personalized_story_rls_test.sql`
+Run: `pnpm vitest run tests/integration/story-ownership.test.ts && pnpm exec supabase test db db/tests/personalized_story_rls_test.sql`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tests/integration/story-ownership.test.ts supabase/tests/personalized_story_rls_test.sql
+git add tests/integration/story-ownership.test.ts db/tests/personalized_story_rls_test.sql
 git commit -m "test: verify personalized story ownership under RLS"
 ```
 

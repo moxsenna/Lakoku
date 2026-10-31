@@ -244,7 +244,7 @@ Format entri: setiap entri memakai kalimat perintah. Fase masing-masing entri: f
 *   **Type / Scope**: Konfigurasi Better Auth.
 *   **Proposed Changes**: Perluas hook `databaseHooks.user.create.after` yang sudah ada: selain `lakoku_ref`, baca cookie `lakoku_utm` dari header `cookie`, parse via modul file 3, dan teruskan nilainya ke pencatat atribusi (file 7). Cookie hilang/rusak → teruskan `null` (pencatat menulis `direct`).
 
-#### 6. `supabase/migrations/<timestamp>_user_acquisition.sql` (Create)
+#### 6. `db/migrations/<timestamp>_user_acquisition.sql` (Create)
 
 *   **Type / Scope**: Migration Postgres (nama: prefix 14 digit, konvensi repo).
 *   **Proposed Changes**: Buat tabel `user_acquisition`: `id uuid primary key default gen_random_uuid()`, `user_id uuid not null unique references auth.users on delete cascade`, `source text not null check (source in ('direct','whatsapp','instagram','tiktok','x_twitter','email','google','share_link','referral_code','other'))` (konvensi `text+CHECK`, bukan `CREATE TYPE`), `utm_source text null`, `utm_campaign text null`, `referrer_host text null`, `created_at timestamptz not null default now()`. Aktifkan RLS tanpa read policy (mirror `analytics_events`). UNIQUE(user_id) menegakkan "tepat satu baris per user".
@@ -252,9 +252,9 @@ Format entri: setiap entri memakai kalimat perintah. Fase masing-masing entri: f
 #### 7. `lib/acquisition/record.server.ts` (Create)
 
 *   **Type / Scope**: Server module (service-role, best-effort fail-open).
-*   **Proposed Changes**: Buat `recordAcquisition({userId, parsed})`: upsert (`onConflict('user_id')`) satu baris atribusi — `source` dari hasil klasifikasi, default `'direct'` bila parsed null — VIA service-role dengan pola fire-and-forget seperti `trackServerEvent` (`void ... .catch(() => {})`): kegagalan tidak pernah menggagalkan signup. Tabel terdaftar di `lib/supabase/db-types.ts` (file 8).
+*   **Proposed Changes**: Buat `recordAcquisition({userId, parsed})`: upsert (`onConflict('user_id')`) satu baris atribusi — `source` dari hasil klasifikasi, default `'direct'` bila parsed null — VIA service-role dengan pola fire-and-forget seperti `trackServerEvent` (`void ... .catch(() => {})`): kegagalan tidak pernah menggagalkan signup. Tabel terdaftar di `lib/db/db-types.ts` (file 8).
 
-#### 8. `lib/supabase/db-types.ts` (Modify)
+#### 8. `lib/db/db-types.ts` (Modify)
 
 *   **Type / Scope**: Registry tipe database Kysely.
 *   **Proposed Changes**: Tambahkan interface `UserAcquisition` (mengikuti pola `AnalyticsEvents` di file yang sama) dan daftarkan `user_acquisition: UserAcquisition` di interface `Database` — tanpa ini `insertInto('user_acquisition')` (file 7) gagal typecheck.

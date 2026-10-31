@@ -2,7 +2,7 @@ import 'server-only'
 import { randomUUID, createHash } from 'node:crypto'
 import { z } from 'zod'
 import { getDb, result, rpcOne, single } from '@lakoku/db'
-import type { Json } from '@/lib/supabase/db-types'
+import type { Json } from '@/lib/db/db-types'
 import {
   type TasteProfile,
   createDefaultTasteProfile,

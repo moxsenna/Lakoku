@@ -81,12 +81,12 @@ Follow this exact 12-step rollout sequence in production:
 
 1. **Pre-rollout Inspection**: Verify the current production database schema version and ensure no migrations are currently in progress.
 2. **Database Backup**: Perform a full database backup before running any schema migrations.
-3. **Migration 1**: Apply `supabase/migrations/20260724115000_claim_generation_job_by_id.sql`.
-4. **Migration 2**: Apply `supabase/migrations/20260724120000_checkpoint_versioning.sql`.
-5. **Migration 3**: Apply `supabase/migrations/20260724121000_generation_checkpoint_fencing.sql`.
-6. **Migration 4**: Apply `supabase/migrations/20260724122000_generation_job_ending_lock_publication.sql`.
-7. **Migration 5**: Apply `supabase/migrations/20260724123000_generation_publication_lock_order.sql`.
-8. **Migration 6**: Apply `supabase/migrations/20260724124000_generation_checkpoint_audit_signals.sql`.
+3. **Migration 1**: Apply `db/migrations/20260724115000_claim_generation_job_by_id.sql`.
+4. **Migration 2**: Apply `db/migrations/20260724120000_checkpoint_versioning.sql`.
+5. **Migration 3**: Apply `db/migrations/20260724121000_generation_checkpoint_fencing.sql`.
+6. **Migration 4**: Apply `db/migrations/20260724122000_generation_job_ending_lock_publication.sql`.
+7. **Migration 5**: Apply `db/migrations/20260724123000_generation_publication_lock_order.sql`.
+8. **Migration 6**: Apply `db/migrations/20260724124000_generation_checkpoint_audit_signals.sql`.
 9. **Environment Configuration**: Set `LAKOKU_RECOVERY_SECRET` env variable to a strong random token.
 10. **Install Cron / Timer**: Configure and enable the VPS cron job or systemd timer to target `/api/generation/recover`.
 11. **Smoke Test Recovery Endpoint**: Verify `/api/generation/recover` returns `401` with an invalid token, `404` with no secret set, and `202` when called with the correct token.

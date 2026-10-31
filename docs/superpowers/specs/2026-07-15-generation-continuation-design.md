@@ -27,7 +27,7 @@ Modify:
 
 Do not create:
 
-- `supabase/migrations/20260713040000_personalized_generation_outbox.sql`
+- `db/migrations/20260713040000_personalized_generation_outbox.sql`
 
 ## Flow
 

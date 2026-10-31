@@ -10,7 +10,7 @@
  * sebelum dikembalikan. Penyimpanan selalu V2 JSON.
  */
 import { getDb, single, result } from '@lakoku/db'
-import type { Json } from '@/lib/supabase/db-types'
+import type { Json } from '@/lib/db/db-types'
 import {
   normalizeTasteProfile,
   type TasteProfileV2,

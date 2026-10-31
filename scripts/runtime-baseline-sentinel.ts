@@ -8,13 +8,13 @@ import {
 
 const migrationPath = path.join(
   process.cwd(),
-  'supabase',
+  'db',
   'migrations',
   '20260707000000_core_runtime_baseline.sql',
 )
 const hardeningMigrationPath = path.join(
   process.cwd(),
-  'supabase',
+  'db',
   'migrations',
   '20260718060000_harden_legacy_lifecycle_function_acl.sql',
 )

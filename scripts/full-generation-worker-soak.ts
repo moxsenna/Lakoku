@@ -98,7 +98,7 @@ function assert(condition: unknown, message: string): asserts condition {
  *
  * This does NOT exercise generation_jobs, checkpoint/lease RPCs, production worker
  * dispatch, recovery RPC, or V4 publication. Database lifecycle/fencing proof lives
- * in supabase/tests/generation_job_recovery_test.sql and race scripts. Keep output
+ * in db/tests/generation_job_recovery_test.sql and race scripts. Keep output
  * labelled SIMULATION so it cannot be cited as approved production-seam soak.
  */
 async function main(): Promise<void> {

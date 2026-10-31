@@ -583,7 +583,7 @@ Files changed and committed:
 - `lib/story-engine/story-contract.ts`
 - `lib/runtime/post-publication-lifecycle.server.ts`
 - `lib/runtime/personalized-generation.ts`
-- `supabase/migrations/20260728010000_plot_debt_closure_ledger.sql`
+- `db/migrations/20260728010000_plot_debt_closure_ledger.sql`
 - Fixtures and test files with ENDINGS arrays
 
 Report documents: `M10_C_R3_REPORT.md`, `M10_C_R3_PARTIAL_PROGRESS.md`.
@@ -983,7 +983,7 @@ trail (reviewer identity, disposition, reason, timestamp, source event), spine/r
 validator reruns before release, fail-closed admission on failure with explicit unblock proof,
 reader-safe language, and passing negative authorization/idempotency/audit/failure/unblock tests.
 Implementation landed across the E5 batches above the plan base `143a01a`, including migrations
-`20260823100000…20260824101000`, pgTAP suites under `supabase/tests/e5_blueprint_*.sql`, race
+`20260823100000…20260824101000`, pgTAP suites under `db/tests/e5_blueprint_*.sql`, race
 proof harness (`scripts/e5-blueprint-resolution-race.ts` + authority helper), and API/admin
 surfaces. The allowlist auditor `scripts/m10-e-e3a-e4-allowlist.ts` was extended with the
 explicitly enumerated post-E3A/E4 ratified paths and audits the full base..HEAD diff to PASS.

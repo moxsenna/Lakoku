@@ -221,7 +221,7 @@ async function main() {
   // 10. Migration File Integrity
   const migrationPath = join(
     root,
-    'supabase',
+    'db',
     'migrations',
     '20260918000000_gamified_missions_ads.sql',
   )

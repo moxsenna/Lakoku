@@ -12,7 +12,7 @@
  *   - lib/runtime/personalized-generation.ts :: ENDING_LOCK_CHAPTER (= 45) —
  *     the lock is written once at chapter 45 (persist_ending_lock_v1 via
  *     defaultPersistEndingLock), and reused on retries via reader.locked_ending_key.
- *   - supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql
+ *   - db/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql
  *     :: publish_generation_job_chapter_v4 — INVALID_ENDING_LOCK_TARGET unless
  *     generation_kind = 'personalized' AND chapter_number = 45; calls
  *     persist_ending_lock_v1 re-entrantly under advisory locks E1 (120713) + E2
@@ -53,7 +53,7 @@ export const ENDING_AUDIT_EVIDENCE: StructuredEvidence[] = [
       'ENDING_LOCK_CHAPTER = 45; lock is written once at chapter 45 via persist_ending_lock_v1 (defaultPersistEndingLock) only when reader.locked_ending_key is null; retries reuse the persisted lock through lockedEndingKey.',
   },
   {
-    source: 'supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4',
+    source: 'db/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4',
     evidenceClass: 'SOURCE_TRACE',
     observation:
       'Ending lock payload is rejected (INVALID_ENDING_LOCK_TARGET) unless generation_kind = personalized and chapter = 45; persist_ending_lock_v1 is invoked re-entrantly inside the same transaction under advisory locks E1 (120713) and E2 (130600); lock, chapter, and closure ledger commit atomically.',
@@ -175,7 +175,7 @@ function baseFinding(
     sourceOfTruth: ['reader_states.locked_ending_key'],
     producers: ['lib/runtime/personalized-generation.ts :: defaultPersistEndingLock (persist_ending_lock_v1)'],
     consumers: ['lib/story-engine/ending-resolver.ts :: resolveEnding', 'lib/story-engine/chapter-brief.ts :: endingKeyFor'],
-    validators: ['supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4 (INVALID_ENDING_LOCK_TARGET)'],
+    validators: ['db/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4 (INVALID_ENDING_LOCK_TARGET)'],
     evidence: [
       ...ENDING_AUDIT_EVIDENCE,
       {

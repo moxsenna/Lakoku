@@ -6,7 +6,7 @@
 
 ## OVERVIEW
 
-Lakoku is an Indonesian interactive fiction web app (novel interaktif) where readers are the main character. Next.js App Router + Supabase + AI-powered narrative generation. Mobile-first, 50-chapter branching stories.
+Lakoku is an Indonesian interactive fiction web app (novel interaktif) where readers are the main character. Next.js App Router + Neon Postgres (Kysely) + AI-powered narrative generation. Mobile-first, 50-chapter branching stories.
 
 ## STRUCTURE
 
@@ -17,7 +17,7 @@ lakoku v2/
 ├── lib/              # Core business logic (26 domain packages)
 ├── packages/         # Shared contracts (@lakoku/contracts)
 ├── scripts/          # Smoke tests & utilities
-├── supabase/         # DB migrations & SQL tests
+├── db/               # DB migrations & SQL tests (Neon — sumber skema tunggal)
 ├── tests/            # Unit & integration tests (Vitest)
 ├── fixtures/         # Test fixtures (narrative, contracts)
 ├── docs/             # Architecture & implementation docs
@@ -33,11 +33,11 @@ lakoku v2/
 | UI components | `components/` | shadcn/ui, Tailwind, mobile-first |
 | Page routing | `app/` | Next.js App Router conventions |
 | Data access | `lib/api/` | LD-CONTRACT-SEAM: client → fetch → API |
-| Server data | `lib/api/server.ts` | RSC direct Supabase access |
+| Server data | `lib/api/server.ts` | RSC direct DB access (Kysely/Neon) |
 | Narrative logic | `lib/narrative/` | Story spine, threads, aliases |
 | AI generation | `lib/ai-gateway/` | Model selection, safety, observability |
 | Runtime engine | `lib/runtime/` | Generation lifecycle, jobs, concurrency |
-| Database schema | `supabase/migrations/` | SQL migrations |
+| Database schema | `db/migrations/` | SQL migrations (Neon) |
 | API contracts | `packages/contracts/` | Shared type definitions |
 | Deployment | `docs/VPS_DEPLOY.md` | Production VPS setup |
 | Agent rules | `AGENT_RULES.md` | **READ FIRST** before any work |
@@ -134,7 +134,7 @@ pnpm smoke:production-reader   # Production reader-path E2E gate
 pnpm cost:daily             # Daily cost monitor against DB (E0 ceilings)
 
 # Database
-pnpm exec supabase db push --linked  # Push migrations to production
+pnpm db:migrate                     # Terapkan migration ke Neon via DATABASE_URL (JANGAN pakai supabase db push — salah target)
 ```
 
 ## NOTES
@@ -142,7 +142,7 @@ pnpm exec supabase db push --linked  # Push migrations to production
 ### Critical Paths
 
 - `lib/api/client.ts` = browser data seam (only way components talk to backend)
-- `lib/api/server.ts` = RSC data seam (direct Supabase, no HTTP overhead)
+- `lib/api/server.ts` = RSC data seam (direct Kysely/Neon, no HTTP overhead)
 - `packages/contracts/` = shared types between client/server
 
 ### Environment
@@ -155,7 +155,7 @@ pnpm exec supabase db push --linked  # Push migrations to production
 
 - Unit tests: `lib/**/*.test.ts`, `tests/**/*.test.ts`
 - Smoke tests: `scripts/*-smoke.ts` (run via `scripts/run-smoke.cjs`)
-- DB tests: `supabase/tests/*.sql` (run via `supabase test db`)
+- DB tests: `db/tests/*.sql` (ARSIP — runner supabase CLI dipensiunkan; port ke runner Neon menyusul)
 
 ### Gotchas
 

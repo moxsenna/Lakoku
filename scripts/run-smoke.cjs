@@ -27,7 +27,7 @@ const jiti = createJiti(__filename, {
     '@lakoku/ai-gateway/server': path.join(root, 'lib/ai-gateway/server.ts'),
     '@lakoku/ai-gateway': path.join(root, 'lib/ai-gateway/index.ts'),
     '@lakoku/runtime': path.join(root, 'lib/runtime/index.ts'),
-    '@lakoku/db': path.join(root, 'lib/supabase/index.ts'),
+    '@lakoku/db': path.join(root, 'lib/db/index.ts'),
     '@lakoku/authoring/server': path.join(root, 'lib/authoring/server.ts'),
     '@lakoku/authoring': path.join(root, 'lib/authoring/index.ts'),
     '@lakoku/api': path.join(root, 'lib/api/index.ts'),

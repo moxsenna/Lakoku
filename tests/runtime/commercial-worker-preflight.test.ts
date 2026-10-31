@@ -4,7 +4,7 @@ import { runChapterGenerationAttempt } from '@/lib/runtime/generation-mode'
 import { resolveCommercialWorkerPreflight } from '@/lib/commercial/worker-preflight.server'
 
 vi.mock('server-only', () => ({}))
-vi.mock('@/lib/supabase/admin', () => ({
+vi.mock('@/lib/db/admin', () => ({
   createAdminClient: vi.fn(),
 }))
 

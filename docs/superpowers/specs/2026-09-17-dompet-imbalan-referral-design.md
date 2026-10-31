@@ -96,7 +96,7 @@ berjalan untuk atribusi lama.
 
 ### 3.3 `reward_ledger`
 
-Meniru pola `credit_ledger` (`supabase/migrations/20260708000000_paycore_credit_model.sql`).
+Meniru pola `credit_ledger` (`db/migrations/20260708000000_paycore_credit_model.sql`).
 
 | Kolom | Tipe | Catatan |
 |---|---|---|
@@ -285,7 +285,7 @@ paling kuat pada rilis ini.
 inferensi nyata per bab terukur.
 
 Alasannya konkret. Rute prosa produksi sekarang `gweb/gemini-3.1-pro` lewat
-9Router (`supabase/migrations/20260915120000_update_chapter_prose_route_gemini31pro.sql`),
+9Router (`db/migrations/20260915120000_update_chapter_prose_route_gemini31pro.sql`),
 dan 9Router tidak melaporkan biaya per panggilan — seluruh transport tercatat
 tanpa `cost_amount`. `lib/commercial/daily-cost-report.ts` menolak menurunkan
 harga dari token dan melaporkannya sebagai `UNMEASURED`, bukan nol.
@@ -420,7 +420,7 @@ database sekaligus menjamin nilai admin selalu mengalir dari satu tempat.
   dengan umur cadangan bila pembacaan kebijakan gagal
 - Mengubah `window_days` tidak menggeser `window_ends_at` yang sudah tertulis
 
-**Database (`supabase/tests/`):**
+**Database (`db/tests/`):**
 
 - RLS: user tidak bisa membaca `reward_ledger` milik user lain
 - Constraint self-referral dan keunikan `referred_user_id` benar-benar menolak

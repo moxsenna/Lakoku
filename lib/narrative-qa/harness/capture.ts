@@ -87,7 +87,7 @@ export const ENDING_LOCK_TX_BLOCKER: CaptureBlockerV1 = {
   code: 'ENDING_LOCK_PUBLICATION_TX_UNOBSERVABLE',
   evaluatorId: 'ending-runway',
   missingField: 'endingLock.committedInPublicationTxId',
-  productionSource: 'supabase/migrations/20260713060000_persist_ending_lock.sql :: persist_ending_lock_v1 (writes story_generation_contracts.ending_lock_json)',
+  productionSource: 'db/migrations/20260713060000_persist_ending_lock.sql :: persist_ending_lock_v1 (writes story_generation_contracts.ending_lock_json)',
   reason:
     'persist_ending_lock_v1 stores only {key,name,lockedAtChapter}; neither it nor the V3/V5 publishers persist the publication transaction id, so atomic-commit provenance cannot be read back. The lock IS written inside the publication transaction, but the harness cannot prove it from persisted state, so the field stays null and ENDING_LOCK_NOT_DURABLE is reported as a consequence of this missing wire.',
 }

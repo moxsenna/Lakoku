@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient } from '@/lib/db/admin'
 import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
 import { createDefaultTasteProfile } from '@/lib/taste-profile/schema'
 import { misteriDramaContract } from '@/fixtures/contracts/misteri-drama'
@@ -46,7 +46,7 @@ const mocks = vi.hoisted(() => ({
 let userId = ''
 
 vi.mock('server-only', () => ({}))
-vi.mock('@/lib/supabase/server', () => ({
+vi.mock('@/lib/db/server', () => ({
   createClient: vi.fn(async () => {
     const client = createAdminClient()
     client.auth.getUser = vi.fn(async () => ({ data: { user: { id: userId } }, error: null })) as unknown as typeof client.auth.getUser

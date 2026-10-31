@@ -177,7 +177,7 @@ if (existsSync(settingsLibPath)) {
 }
 
 // Migration
-const migPath = join(root, 'supabase/migrations/20260711030000_admin_editable_settings.sql')
+const migPath = join(root, 'db/migrations/20260711030000_admin_editable_settings.sql')
 if (existsSync(migPath)) {
   const c = readFileSync(migPath, 'utf-8')
   check('migration: admin_settings_audit_logs table', c.includes('admin_settings_audit_logs'))

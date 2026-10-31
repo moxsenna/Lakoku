@@ -15,15 +15,15 @@
 **Create**
 
 - `docs/superpowers/specs/2026-07-29-full-generation-fix-completion-design.md` — approved design and constraints.
-- `supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql` — additive V4/helper redefinition.
+- `db/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql` — additive V4/helper redefinition.
 - `scripts/full-generation-worker-soak.ts` — isolated programmable 10/30-job reliability harness.
 - Integration test file only if existing runtime suites cannot express whole worker flow without duplication.
 
 **Modify**
 
 - `docs/plans/lakoku-full-generation-fix-completion.md` — PR1–PR7 evidence and final command results.
-- `supabase/tests/plot_debt_closures_functional_test.sql` — common V4 checkpoint binding and rollback cases.
-- `supabase/tests/generation_job_recovery_test.sql` — stale reclamation through production RPC.
+- `db/tests/plot_debt_closures_functional_test.sql` — common V4 checkpoint binding and rollback cases.
+- `db/tests/generation_job_recovery_test.sql` — stale reclamation through production RPC.
 - `lib/runtime/generation-jobs.ts` — V4 input/parser/wrapper and audit V2 types.
 - `lib/runtime/generation-job-execution.ts`, `generation-worker.ts`, `generation-mode.ts` — preserve `triggerChoiceId`.
 - `lib/runtime/story-generation.ts` — standard worker V4; legacy unchanged; dead fallback removal.
@@ -34,7 +34,7 @@
 - Existing runtime/API/provider tests named in tasks below.
 - `package.json` — explicit local soak scripts.
 
-Historical migration `supabase/migrations/20260728030000_publish_generation_job_chapter_v4.sql` stays untouched.
+Historical migration `db/migrations/20260728030000_publish_generation_job_chapter_v4.sql` stays untouched.
 
 ### Task 1: Freeze completion audit before runtime edits
 
@@ -110,7 +110,7 @@ Do not stage `.commandcode/` or `.omo/`.
 ### Task 2: Write failing common V4 checkpoint DB tests
 
 **Files:**
-- Modify: `supabase/tests/plot_debt_closures_functional_test.sql`
+- Modify: `db/tests/plot_debt_closures_functional_test.sql`
 
 - [ ] **Step 1: Add standard RUNNING_CHOICES success fixture**
 
@@ -144,7 +144,7 @@ Inject failure through existing test trigger/payload constraint after publicatio
 - [ ] **Step 6: Run RED test**
 
 ```bash
-pnpm exec supabase test db --local supabase/tests/plot_debt_closures_functional_test.sql
+pnpm exec supabase test db --local db/tests/plot_debt_closures_functional_test.sql
 ```
 
 Expected: failure because current V4 skips standard checkpoint binding, rejects `RUNNING_CHOICES`, or leaves standard checkpoint nonterminal. Record exact failure.
@@ -152,8 +152,8 @@ Expected: failure because current V4 skips standard checkpoint binding, rejects 
 ### Task 3: Redefine V4 additively and pass DB seam tests
 
 **Files:**
-- Create: `supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql`
-- Test: `supabase/tests/plot_debt_closures_functional_test.sql`
+- Create: `db/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql`
+- Test: `db/tests/plot_debt_closures_functional_test.sql`
 
 - [ ] **Step 1: Copy current function signatures and security contract**
 
@@ -180,11 +180,11 @@ After publication proof: closure ledger where applicable, exact checkpoint `PUBL
 ```bash
 pnpm run check:migration-versions
 pnpm exec supabase db reset
-pnpm exec supabase test db --local supabase/tests/plot_debt_closures_functional_test.sql
+pnpm exec supabase test db --local db/tests/plot_debt_closures_functional_test.sql
 pnpm exec supabase test db --local \
-  supabase/tests/checkpoint_versioning_test.sql \
-  supabase/tests/generation_checkpoint_fencing_test.sql \
-  supabase/tests/checkpoint_audit_signals_test.sql
+  db/tests/checkpoint_versioning_test.sql \
+  db/tests/generation_checkpoint_fencing_test.sql \
+  db/tests/checkpoint_audit_signals_test.sql
 ```
 
 Expected: all pgTAP plans pass; no historical migration modified.
@@ -192,7 +192,7 @@ Expected: all pgTAP plans pass; no historical migration modified.
 - [ ] **Step 7: Commit DB contract**
 
 ```bash
-git add supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql supabase/tests/plot_debt_closures_functional_test.sql
+git add db/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql db/tests/plot_debt_closures_functional_test.sql
 git commit -m "fix(generation): bind worker checkpoints in V4 publication"
 ```
 
@@ -376,7 +376,7 @@ git commit -m "fix(choices): remove production generic fallback surface"
 ### Task 9: Prove stale reclamation and restart recovery
 
 **Files:**
-- Modify: `supabase/tests/generation_job_recovery_test.sql`
+- Modify: `db/tests/generation_job_recovery_test.sql`
 - Modify: `scripts/generation-job-recovery-race.ts`
 - Modify: `tests/runtime/generation-worker.test.ts`
 
@@ -395,7 +395,7 @@ Old token V4 call must fail without side effects. New token resumes same prose f
 - [ ] **Step 4: Run RED/GREEN recovery tests**
 
 ```bash
-pnpm exec supabase test db --local supabase/tests/generation_job_recovery_test.sql
+pnpm exec supabase test db --local db/tests/generation_job_recovery_test.sql
 node scripts/run-smoke.cjs scripts/generation-job-recovery-race.ts
 pnpm exec vitest run tests/runtime/generation-worker.test.ts
 ```
@@ -405,7 +405,7 @@ Expected: one claimant, one publication, old claimant rejected, no deadlock.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add supabase/tests/generation_job_recovery_test.sql scripts/generation-job-recovery-race.ts tests/runtime/generation-worker.test.ts
+git add db/tests/generation_job_recovery_test.sql scripts/generation-job-recovery-race.ts tests/runtime/generation-worker.test.ts
 git commit -m "test(worker): prove stale restart resumes choices"
 ```
 

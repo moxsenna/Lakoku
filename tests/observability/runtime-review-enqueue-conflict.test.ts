@@ -19,7 +19,7 @@ vi.mock('@lakoku/db', async (importOriginal) => {
     }),
   }
 })
-vi.mock('@/lib/supabase/admin', () => ({
+vi.mock('@/lib/db/admin', () => ({
   createAdminClient: () => ({ rpc }),
 }))
 

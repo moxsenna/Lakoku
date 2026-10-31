@@ -8,11 +8,11 @@ Apply choices for owned `personalized_ai` and `premium_instance` stories through
 
 Task 19 changes only:
 
-- `supabase/migrations/20260713030000_apply_personalized_choice.sql`
+- `db/migrations/20260713030000_apply_personalized_choice.sql`
 - `lib/api/personalized-choice.server.ts`
 - `app/api/stories/[id]/choices/route.ts`
 - `tests/api/personalized-choice.test.ts`
-- `supabase/tests/personalized_story_rls_test.sql`
+- `db/tests/personalized_story_rls_test.sql`
 
 This spec file records approved design but is not part of Task 19 integration diff.
 
@@ -73,7 +73,7 @@ Required gates:
 
 ```bash
 pnpm vitest run tests/api/personalized-choice.test.ts
-pnpm exec supabase test db supabase/tests/personalized_story_rls_test.sql
+pnpm exec supabase test db db/tests/personalized_story_rls_test.sql
 pnpm typecheck
 pnpm lint
 git diff --check

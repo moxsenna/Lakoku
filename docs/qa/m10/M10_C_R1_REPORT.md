@@ -206,7 +206,7 @@ SYNC (personalized non-worker path):
 ```
 
 V6 evidence: `public.publish_generation_job_chapter_v6` exists only as the SQL function
-defined by `supabase/migrations/20260805030000_publish_generation_job_chapter_v6.sql`
+defined by `db/migrations/20260805030000_publish_generation_job_chapter_v6.sql`
 ("Commercial Atomic Publisher V6 — wraps canonical narrative publication (V5 or V4)
 with PayCore credit capture"). Repo-wide grep for `publishGenerationJobChapterV6` /
 `publish_generation_job_chapter_v6` across `lib/` and `scripts/` (tests excluded)

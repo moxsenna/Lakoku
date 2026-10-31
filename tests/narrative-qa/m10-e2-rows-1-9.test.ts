@@ -291,8 +291,8 @@ describe('M10-E2 rows 4-9 checkpoint proofs', () => {
     ['CHECKPOINT_STATE_DELTA_HASH_MISMATCH', "  'CONFLICT', 'state_delta_hash mismatch → CONFLICT');"],
   ] as const)('assembles %s authority only from injected Git metadata reader', async (id, exactAssertion) => {
     const sourceCommit = 'cccccccccccccccccccccccccccccccccccccccc'
-    const sourceTestPath = 'supabase/tests/living_canon_publication_primitives_test.sql'
-    const productionPath = 'supabase/migrations/20260805020000_living_canon_publication_primitives.sql'
+    const sourceTestPath = 'db/tests/living_canon_publication_primitives_test.sql'
+    const productionPath = 'db/migrations/20260805020000_living_canon_publication_primitives.sql'
     const sourceTestBlobSha = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
     const productionBlobSha = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
     const metadataReader = {

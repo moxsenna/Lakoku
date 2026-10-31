@@ -131,8 +131,8 @@ Coverage:
 | Next.js build | `pnpm build` | PASS earlier in session |
 | Cloudflare/OpenNext | `pnpm build:cloudflare` | PASS earlier in session |
 | Local marker | `show lakoku.test_target` | `local-cli` |
-| Premium clone pgTAP | `supabase test db --local supabase/tests/premium_story_clone_test.sql` | PASS — 100 tests |
-| Ownership RLS pgTAP | `supabase test db --local supabase/tests/personalized_story_rls_test.sql` | PASS — 114 tests |
+| Premium clone pgTAP | `supabase test db --local db/tests/premium_story_clone_test.sql` | PASS — 100 tests |
+| Ownership RLS pgTAP | `supabase test db --local db/tests/personalized_story_rls_test.sql` | PASS — 114 tests |
 | Ownership real clients | `pnpm test:integration:ownership` | PASS — 1/1 |
 | Full personalized DB gate | `pnpm test:db:personalized` | PASS |
 | Personalized release gate | `pnpm release:personalized` | PASS |
@@ -186,7 +186,7 @@ publish chapter V2 races: 5/5 PASS
 
 #### Premium clone hardening evidence
 
-`supabase/tests/premium_story_clone_test.sql` PASS includes:
+`db/tests/premium_story_clone_test.sql` PASS includes:
 
 - public `premium_template` required
 - private/non-template rejected

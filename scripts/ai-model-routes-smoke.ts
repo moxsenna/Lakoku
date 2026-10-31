@@ -26,7 +26,7 @@ check('DEFAULT_AI_MODEL_ROUTE: version fallback-code', DEFAULT_AI_MODEL_ROUTE.ro
 
 // --- Migration checks ---
 const root = process.cwd()
-const migrationPath = join(root, 'supabase/migrations/20260711010000_ops_credit_config.sql')
+const migrationPath = join(root, 'db/migrations/20260711010000_ops_credit_config.sql')
 if (existsSync(migrationPath)) {
   const content = readFileSync(migrationPath, 'utf-8')
   check('migration: ai_model_routes table', content.includes('ai_model_routes'))
@@ -39,7 +39,7 @@ if (existsSync(migrationPath)) {
   check('migration: seed chapter_prose route', content.includes("'chapter_prose'"))
 }
 
-const authoringMigrationPath = join(root, 'supabase/migrations/20260912220000_add_story_authoring_ai_model_route.sql')
+const authoringMigrationPath = join(root, 'db/migrations/20260912220000_add_story_authoring_ai_model_route.sql')
 if (existsSync(authoringMigrationPath)) {
   const content = readFileSync(authoringMigrationPath, 'utf-8')
   check('migration: seed story_authoring route', content.includes("'story_authoring'"))

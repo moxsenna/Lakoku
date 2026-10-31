@@ -44,7 +44,7 @@ function adaptMockDbToKysely(mockDb: any) {
   }
 }
 
-vi.mock('@/lib/supabase/admin', () => ({
+vi.mock('@/lib/db/admin', () => ({
   createAdminClient: () => mockCreateAdminClient(),
 }))
 
@@ -58,7 +58,7 @@ vi.mock('@lakoku/db', async (importOriginal) => {
 })
 
 import { isCommercialStoryMode, resolveCommercialAuthorization } from '@/lib/commercial/resolver.server'
-import type { createAdminClient } from '@/lib/supabase/admin'
+import type { createAdminClient } from '@/lib/db/admin'
 
 describe('Phase 2B Commercial Worker Preflight & V5 Authorization', () => {
   beforeEach(() => {

@@ -61,7 +61,7 @@ check('zero bonus: bonusKind none', zeroCalc.bonusKind === 'none')
 // --- Static checks: migration attributes ---
 
 const repoRoot = process.cwd()
-const migrationPath = join(repoRoot, 'supabase/migrations/20260711010000_ops_credit_config.sql')
+const migrationPath = join(repoRoot, 'db/migrations/20260711010000_ops_credit_config.sql')
 let migrationContent = ''
 try {
   migrationContent = readFileSync(migrationPath, 'utf-8')

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const FORWARD_ATTESTATION_MIGRATION = readFileSync(
-  `${process.cwd()}/supabase/migrations/20260824101000_e5_stateless_validator_attestation.sql`,
+  `${process.cwd()}/db/migrations/20260824101000_e5_stateless_validator_attestation.sql`,
   'utf8',
 )
 
@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.createClient }))
+vi.mock('@/lib/db/server', () => ({ createClient: mocks.createClient }))
 vi.mock('@/lib/admin/auth', () => ({ requireAdminUser: mocks.requireAdminUser }))
 vi.mock('@/lib/utils/validator-rerun.helper', () => ({
   runValidatorRerun: mocks.runValidatorRerun,

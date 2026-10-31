@@ -2,7 +2,7 @@
 
 **Generated:** 2026-10-04  
 **Worktree:** `D:\Coding\lakoku v2\.worktrees\feat-neon-phase-a`  
-**Autoritas Sumber:** Skema live Supabase (`pg_policies`) direkonsiliasi terhadap `supabase/migrations/*.sql`.  
+**Autoritas Sumber:** Skema live Supabase (`pg_policies`) direkonsiliasi terhadap `db/migrations/*.sql`.  
 **Tujuan Dokumen:** Memetakan seluruh kebijakan Row Level Security (RLS) PostgreSQL yang dipensiunkan di Neon ke penjaga aplikasi eksplisit (`APP_GUARD`), klausa filter baru (`NEW_WHERE`), atau diklasifikasikan sebagai tidak diperlukan (`UNNECESSARY`). Dokumen ini menjadi rujukan wajib bagi Task 8–11 saat menulis ulang query database ke Kysely.
 
 ---

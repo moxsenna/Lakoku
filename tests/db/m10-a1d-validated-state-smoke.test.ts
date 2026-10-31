@@ -46,7 +46,7 @@ const status = getLocalStatus()
 process.env.SUPABASE_URL = status.url
 process.env.SUPABASE_SERVICE_ROLE_KEY = status.key
 
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient } from '@/lib/db/admin'
 import {
   buildBaselinePolicyForChapter,
   debtBackedThreadId,

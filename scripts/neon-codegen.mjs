@@ -8,9 +8,9 @@ for (const line of readFileSync('.env.local', 'utf8').split('\n')) {
 }
 
 execSync(
-  `npx kysely-codegen --url "${env.DATABASE_URL}" --out-file lib/supabase/db-types.ts --dialect postgres`,
+  `npx kysely-codegen --url "${env.DATABASE_URL}" --out-file lib/db/db-types.ts --dialect postgres`,
   { stdio: 'inherit' },
 )
 
-appendFileSync('lib/supabase/db-types.ts', '\nexport type Database = DB\n')
+appendFileSync('lib/db/db-types.ts', '\nexport type Database = DB\n')
 

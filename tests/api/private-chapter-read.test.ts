@@ -18,11 +18,11 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('server-only', () => ({}))
 vi.mock('@supabase/supabase-js', () => ({ createClient: mocks.anonFactory }))
-vi.mock('@/lib/supabase/env', () => ({
+vi.mock('@/lib/db/env', () => ({
   requireSupabaseUrl: () => 'http://local.invalid',
   requireSupabaseAnonKey: () => 'anon-test-key',
 }))
-vi.mock('@/lib/supabase/admin', () => ({
+vi.mock('@/lib/db/admin', () => ({
   createAdminClient: mocks.adminFactory,
 }))
 vi.mock('@lakoku/db', async (importOriginal) => {
@@ -36,7 +36,7 @@ vi.mock('@lakoku/db', async (importOriginal) => {
     }),
   }
 })
-vi.mock('@/lib/supabase/server', () => ({
+vi.mock('@/lib/db/server', () => ({
   createClient: mocks.cookieFactory,
 }))
 

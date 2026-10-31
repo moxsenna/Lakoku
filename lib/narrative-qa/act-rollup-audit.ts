@@ -5,7 +5,7 @@
  * whether the summary reaches the writer after compile.
  *
  * Evidence cited (source strings):
- *   - supabase/migrations/20260707000000_core_runtime_baseline.sql :: act_rollups —
+ *   - db/migrations/20260707000000_core_runtime_baseline.sql :: act_rollups —
  *     table: id, story_id, act_number, summary, state_delta (jsonb), covers_from_chapter,
  *     covers_to_chapter, created_at; UNIQUE (story_id, act_number).
  *   - lib/authoring/compile.ts :: compileStoryBible (seed) — creates exactly ONE
@@ -19,7 +19,7 @@
  *   - lib/narrative/compiler.ts :: compileContext — keeps act rollups whose
  *     coversToChapter < targetChapter, budgets them under rollupsSummaries (0.25),
  *     keeps newest-first and drops oldest into excludedIds over cap.
- *   - supabase/migrations/20260805020000_living_canon_publication_primitives.sql
+ *   - db/migrations/20260805020000_living_canon_publication_primitives.sql
  *     :: apply_validated_chapter_state_v1 — the shared atomic state applier
  *     (publish_chapter_state_v3 sync / publish_generation_job_chapter v5 worker)
  *     upserts the act rollup at act boundaries (M10-A closure) — rollups are no
@@ -60,7 +60,7 @@ export interface ActRollupLifecycleSample {
 
 export const ACT_ROLLUP_AUDIT_EVIDENCE: StructuredEvidence[] = [
   {
-    source: 'supabase/migrations/20260707000000_core_runtime_baseline.sql :: act_rollups',
+    source: 'db/migrations/20260707000000_core_runtime_baseline.sql :: act_rollups',
     evidenceClass: 'SCHEMA_CONTRACT',
     observation:
       'act_rollups columns: id, story_id, act_number, summary, state_delta jsonb, covers_from_chapter, covers_to_chapter, created_at; UNIQUE(story_id, act_number); no updated_at column — mutation means row replacement, which is exactly what the A1d applier does at act boundaries (see apply_validated_chapter_state_v1).',

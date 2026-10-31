@@ -102,11 +102,11 @@ const eslintConfig = [
                 '!@/lib/runtime/abort',
                 '@/lib/api',
                 '@/lib/api/*',
-                '@/lib/supabase',
-                '@/lib/supabase/*',
+                '@/lib/db',
+                '@/lib/db/*',
                 '../runtime/*',
                 '../api/*',
-                '../supabase/*',
+                '../db/*',
                 // paksa barrel untuk narrative-core (bukan deep-import)
                 '@/lib/narrative',
                 '@/lib/narrative/*',
@@ -122,9 +122,9 @@ const eslintConfig = [
     },
   },
 
-  // db (lib/supabase): paket daun. TIDAK boleh mengimpor paket domain lain.
+  // db (lib/db): paket daun. TIDAK boleh mengimpor paket domain lain.
   {
-    files: ['lib/supabase/**/*.{ts,tsx}'],
+    files: ['lib/db/**/*.{ts,tsx}'],
     rules: {
       'no-restricted-imports': [
         'error',

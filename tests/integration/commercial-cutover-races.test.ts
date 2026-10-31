@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest'
 vi.mock('server-only', () => ({}))
 import { randomUUID } from 'node:crypto'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient } from '@/lib/db/admin'
 
 const runsLocalDb = process.env.LAKOKU_LOCAL_DB_TEST === '1'
 const describeLocalDb = runsLocalDb ? describe : describe.skip

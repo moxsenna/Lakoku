@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 describe('20260919000000_lakoin_tinta_economy migration', () => {
   const sqlPath = resolve(
     process.cwd(),
-    'supabase/migrations/20260919000000_lakoin_tinta_economy.sql',
+    'db/migrations/20260919000000_lakoin_tinta_economy.sql',
   )
 
   it('migration file exists', () => {

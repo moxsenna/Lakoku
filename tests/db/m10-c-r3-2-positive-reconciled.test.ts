@@ -43,7 +43,7 @@ function getLocalStatus() {
   }
 }
 
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient } from '@/lib/db/admin'
 import { buildHarnessContract } from '../../lib/narrative-qa/harness/fixture'
 import { parseStoryContractWithNormalization } from '../../lib/story-engine/story-contract'
 import { assertIsolatedTarget, HARNESS_USER_ID } from '../../lib/narrative-qa/harness/seed'

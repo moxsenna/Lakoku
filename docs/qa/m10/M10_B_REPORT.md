@@ -144,8 +144,8 @@ export const G5_NOCONFLICT_DISPOSITION: G5Disposition = 'OPEN_BLOCKED_NO_RUNTIME
 
 Read-only evidence at this baseline:
 
-- `supabase/migrations/20260707000000_core_runtime_baseline.sql` — `facts_ledger` columns are exactly `id, story_id, statement, subject_character_id, established_chapter, salience, load_bearing, paid_off`. There is **no structured claim dimension** (no entity/predicate/value), no `supersedes`, no `conflicts_with`, no `retracted_at`.
-- `lib/narrative/chapter-state-apply.ts:78,86,92` and `supabase/migrations/20260805020000_living_canon_publication_primitives.sql:372,391,398` — the existing `STATE_FACT_CONFLICT` fires only on (a) duplicate fact id, (b) unknown `markPaidOff` target, (c) add + `markPaidOff` in the same delta. That is an **identity/idempotency guard**, not a contradiction gate.
+- `db/migrations/20260707000000_core_runtime_baseline.sql` — `facts_ledger` columns are exactly `id, story_id, statement, subject_character_id, established_chapter, salience, load_bearing, paid_off`. There is **no structured claim dimension** (no entity/predicate/value), no `supersedes`, no `conflicts_with`, no `retracted_at`.
+- `lib/narrative/chapter-state-apply.ts:78,86,92` and `db/migrations/20260805020000_living_canon_publication_primitives.sql:372,391,398` — the existing `STATE_FACT_CONFLICT` fires only on (a) duplicate fact id, (b) unknown `markPaidOff` target, (c) add + `markPaidOff` in the same delta. That is an **identity/idempotency guard**, not a contradiction gate.
 
 Therefore a deterministic `ENTITY_FACT_CONFLICT` cannot be proven. Two shortcuts were explicitly **not** taken, per instruction:
 

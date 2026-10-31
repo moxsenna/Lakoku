@@ -14,7 +14,7 @@
  *   - lib/runtime/lifecycle.ts :: publishChapterV2 — the sync publish path does
  *     not touch reader state; the SELESAI mark is a separate best-effort call
  *     after the fact.
- *   - supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql
+ *   - db/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql
  *     :: publish_generation_job_chapter_v4 — publication is atomic + idempotent
  *     via dual-hash (publication_payload_hash + closure_payload_hash); retries of
  *     the same payload return the cached result, so multiple attempts can report
@@ -60,7 +60,7 @@ export const CHAPTER50_AUDIT_EVIDENCE: StructuredEvidence[] = [
       'Sync publish path (publish_chapter_v2 RPC) publishes the chapter only; the SELESAI reader-state mark is a separate call issued by the caller after the fact — two writes, no shared transaction.',
   },
   {
-    source: 'supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4',
+    source: 'db/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4',
     evidenceClass: 'SOURCE_TRACE',
     observation:
       'Publication is atomic and idempotent: retries with the same payload hashes return the cached publication_result (dual-hash fast path), so the same physical publish can surface as multiple successful attempts.',
@@ -157,7 +157,7 @@ function baseFinding(
     sourceOfTruth: ['chapters', 'reader_states'],
     producers: ['lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter (chapter 50 block)'],
     consumers: ['lib/runtime/lifecycle.ts :: publishChapterV2'],
-    validators: ['supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4 (dual-hash idempotency)'],
+    validators: ['db/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4 (dual-hash idempotency)'],
     evidence: [
       ...CHAPTER50_AUDIT_EVIDENCE,
       {

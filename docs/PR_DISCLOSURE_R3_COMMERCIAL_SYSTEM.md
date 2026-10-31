@@ -73,8 +73,8 @@ SELECT
 
 The following files represent **IMMUTABLE PRODUCTION HISTORY** and MUST NOT be edited in-place:
 
-1. `supabase/migrations/20260818000000_terminal_commercial_finalizer.sql`
-2. `supabase/migrations/20260818000001_terminal_finalization_discovery.sql`
+1. `db/migrations/20260818000000_terminal_commercial_finalizer.sql`
+2. `db/migrations/20260818000001_terminal_finalization_discovery.sql`
 
 **Rationale**: These exact byte-sequences were deployed to production PostgreSQL 17.6.1. Any attempt to rewrite history creates audit trail integrity violations.
 
@@ -83,7 +83,7 @@ The following files represent **IMMUTABLE PRODUCTION HISTORY** and MUST NOT be e
 All corrections become **forward-only migrations** using `CREATE OR REPLACE FUNCTION`:
 
 ```sql
--- NEW FILE: supabase/migrations/20260818000002_terminal_commercial_finalizer_forward_repair.sql
+-- NEW FILE: db/migrations/20260818000002_terminal_commercial_finalizer_forward_repair.sql
 
 -- Replace finalizer with canonical implementation
 create or replace function public.finalize_terminal_commercial_generation_v1(
@@ -262,7 +262,7 @@ When all gates pass:
 
 - `INCIDENT_REPORT_R3_PRODUCTION_MUTATION.md` - Detailed incident analysis
 - `supabase/migration_evidence.md` - Immutable evidence preserving exact production state  
-- `supabase/migrations/20260818000002_terminal_commercial_finalizer_forward_repair.sql` - Forward repair implementation
+- `db/migrations/20260818000002_terminal_commercial_finalizer_forward_repair.sql` - Forward repair implementation
 - `docs/ARCHITECTURE_v1.1.md` - System architecture reference
 - `docs/IMPLEMENTATION_PLAN.md` - R3 Phase 2B implementation roadmap
 

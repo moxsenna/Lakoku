@@ -1,6 +1,6 @@
 import 'server-only'
 import { getDb } from '@lakoku/db'
-import type { Json } from '@/lib/supabase/db-types'
+import type { Json } from '@/lib/db/db-types'
 import {
   AnalyticsEventSchema,
   type AnalyticsClientPayload,

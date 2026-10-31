@@ -134,23 +134,13 @@ describe('personalized database release gate', () => {
     expect(pkg.scripts['test:db:publish-v2-race']).toBe(
       'node scripts/run-smoke.cjs scripts/publish-chapter-v2-race.ts',
     )
-    const personalizedDb = pkg.scripts['test:db:personalized'] ?? ''
+    // Dekomisi Supabase (2026-11-01): runner `supabase test db --local` dan
+    // script `test:db:personalized` dipensiunkan — produksi memakai Neon via
+    // DATABASE_URL; gerbang rilis personalized kini typecheck + unit saja.
+    expect((pkg.scripts as Record<string, string | undefined>)['test:db:personalized']).toBeUndefined()
     expect(pkg.scripts['release:personalized']).toBe(
-      'pnpm run typecheck && pnpm run test:unit && pnpm run test:db:personalized',
+      'pnpm run typecheck && pnpm run test:unit',
     )
-    expect(personalizedDb).toContain('personalized-db-rest-integration.ts')
-    expect(personalizedDb).toContain('--local')
-    expect(personalizedDb).toContain('personalized_story_schema_test.sql')
-    expect(personalizedDb).toContain('personalized_story_rls_test.sql')
-    expect(personalizedDb).toContain('publish_chapter_v2_test.sql')
-    expect(personalizedDb).toContain('authoring_story_claim_test.sql')
-    expect(personalizedDb).toContain('authoring_story_bible_replace_test.sql')
-    expect(personalizedDb).toContain('premium_story_clone_test.sql')
-    expect(personalizedDb).toContain('test:integration:ownership')
-    expect(personalizedDb).toContain('test:db:authoring-race-cleanup')
-    expect(personalizedDb).toContain('authoring-story-claim-race.ts')
-    expect(personalizedDb).toContain('authoring-story-bible-race.ts')
-    expect(personalizedDb).toContain('test:db:publish-v2-race')
     expect(pkg.scripts['test:unit']).not.toContain('test:db:personalized')
   })
 

@@ -16,7 +16,7 @@
 
 | File | Responsibility |
 |---|---|
-| `supabase/migrations/20260722090000_align_choices_and_runtime_policy.sql` | Align choices route + policy columns |
+| `db/migrations/20260722090000_align_choices_and_runtime_policy.sql` | Align choices route + policy columns |
 | `lib/ops/generation-policy.ts` | Read extended policy from DB |
 | `lib/ops/ai-model-routes.ts` | Already has `normalizeFallbackModels` — reuse from admin |
 | `lib/runtime/generation-concurrency.ts` | Caps from env or refreshed policy |
@@ -39,7 +39,7 @@
 ### Task 1: Migration — align choices + policy columns
 
 **Files:**
-- Create: `supabase/migrations/20260722090000_align_choices_and_runtime_policy.sql`
+- Create: `db/migrations/20260722090000_align_choices_and_runtime_policy.sql`
 
 - [ ] **Step 1: Write migration SQL**
 
@@ -121,7 +121,7 @@ Expected: columns exist; `choices.model_id` equals `chapter_prose.model_id`.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add supabase/migrations/20260722090000_align_choices_and_runtime_policy.sql
+git add db/migrations/20260722090000_align_choices_and_runtime_policy.sql
 git commit -m "db: align choices route to prose and add runtime policy columns"
 ```
 

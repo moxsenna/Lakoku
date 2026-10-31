@@ -4,7 +4,7 @@
  */
 import 'server-only'
 import { getDb, single, result } from '@lakoku/db'
-import type { Json } from '@/lib/supabase/db-types'
+import type { Json } from '@/lib/db/db-types'
 import {
   StoryCreativeDirectionSchema,
   creativeDirectionFingerprint,

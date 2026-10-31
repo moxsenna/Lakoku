@@ -44,7 +44,7 @@ export function listMigrationFilenames(migrationsDir: string): string[] {
 
 function main(): void {
   const root = path.resolve(__dirname, '..')
-  const migrationsDir = path.join(root, 'supabase', 'migrations')
+  const migrationsDir = path.join(root, 'db', 'migrations')
   const files = listMigrationFilenames(migrationsDir)
   const duplicates = findDuplicateMigrationVersions(files)
 

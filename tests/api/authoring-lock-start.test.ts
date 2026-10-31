@@ -60,7 +60,7 @@ vi.mock('next/server', () => ({
       }),
   },
 }))
-vi.mock('@/lib/supabase/admin', () => ({
+vi.mock('@/lib/db/admin', () => ({
   createAdminClient: mocks.adminFactory,
 }))
 vi.mock('@lakoku/db', async (importOriginal) => {

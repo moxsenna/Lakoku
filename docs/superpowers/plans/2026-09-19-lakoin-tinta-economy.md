@@ -94,7 +94,7 @@ Aturan keras:
 
 ## 4. Skema DB — Migration Sketch SQL
 
-Satu file migration: `supabase/migrations/20260919000000_lakoin_tinta_economy.sql` (gaya terbaru mengikuti `20260917120000_play_billing_channel_model.sql`: idempotent, RLS wajib, revoke/grant eksplisit, seed `on conflict do nothing`).
+Satu file migration: `db/migrations/20260919000000_lakoin_tinta_economy.sql` (gaya terbaru mengikuti `20260917120000_play_billing_channel_model.sql`: idempotent, RLS wajib, revoke/grant eksplisit, seed `on conflict do nothing`).
 
 ```sql
 -- ============================================================================
@@ -533,7 +533,7 @@ Format tiap task: **Files**, **Acceptance criteria (checklist)**, **DoD + test y
 ### Task P1: Migration SQL (ledger, policy, RPC, RLS)
 
 **Files:**
-- Create: `supabase/migrations/20260919000000_lakoin_tinta_economy.sql`
+- Create: `db/migrations/20260919000000_lakoin_tinta_economy.sql`
 - Create: `tests/tinta/migration.test.ts`
 
 - [x] **AC1.1** Migration memuat `create table if not exists public.tinta_ledger` dengan kolom `delta`, `reason`, `ref text not null unique`, `pending_until timestamptz`, dan index `tinta_ledger_author_day_idx` (partial, `where reason = 'author_read_reward'`).

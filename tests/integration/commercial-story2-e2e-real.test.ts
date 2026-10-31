@@ -24,14 +24,14 @@
  */
 import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient } from '@/lib/db/admin'
 import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
 import { createDeterministicProvider } from '@/lib/ai-gateway/provider'
 
 // Mock server-only and supabase/server BEFORE any other imports
 vi.mock('server-only', () => ({}))
-vi.mock('@/lib/supabase/server', async () => {
-  const actual = await vi.importActual('@/lib/supabase/server')
+vi.mock('@/lib/db/server', async () => {
+  const actual = await vi.importActual('@/lib/db/server')
   return {
     ...actual,
     createClient: vi.fn(async () => {

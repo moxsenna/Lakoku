@@ -101,7 +101,7 @@ async function main() {
   check('admin schema rejects negative commission and short reason', !invalidAdminUpdate.success)
 
   // 7. Supabase Migration Check
-  const migrationPath = join(root, 'supabase/migrations/20260917000000_dompet_imbalan_referral.sql')
+  const migrationPath = join(root, 'db/migrations/20260917000000_dompet_imbalan_referral.sql')
   check('migration file exists', existsSync(migrationPath))
   if (existsSync(migrationPath)) {
     const migrationSql = readFileSync(migrationPath, 'utf8')

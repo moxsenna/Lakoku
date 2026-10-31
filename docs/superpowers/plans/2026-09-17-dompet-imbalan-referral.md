@@ -22,7 +22,7 @@
 ### Task 1: Supabase Migration (Tables, RPC, RLS)
 
 **Files:**
-- Create: `supabase/migrations/20260917000000_dompet_imbalan_referral.sql`
+- Create: `db/migrations/20260917000000_dompet_imbalan_referral.sql`
 - Test: `tests/rewards/migration.test.ts`
 
 **Interfaces:**
@@ -44,7 +44,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 describe('20260917000000_dompet_imbalan_referral migration', () => {
-  const sqlPath = resolve(process.cwd(), 'supabase/migrations/20260917000000_dompet_imbalan_referral.sql')
+  const sqlPath = resolve(process.cwd(), 'db/migrations/20260917000000_dompet_imbalan_referral.sql')
 
   it('contains all 4 required tables and single-row reward_policy constraint', () => {
     const sql = readFileSync(sqlPath, 'utf8')
@@ -72,7 +72,7 @@ Expected: FAIL with `ENOENT: no such file or directory`
 
 - [ ] **Step 3: Write the SQL migration file**
 
-Buat file `supabase/migrations/20260917000000_dompet_imbalan_referral.sql`:
+Buat file `db/migrations/20260917000000_dompet_imbalan_referral.sql`:
 ```sql
 -- ============================================================================
 -- Dompet Imbalan & Komisi Referral (M1 dengan rel M2)
@@ -231,7 +231,7 @@ Expected: PASS
 - [ ] **Step 6: Commit**
 
 ```bash
-git add supabase/migrations/20260917000000_dompet_imbalan_referral.sql tests/rewards/migration.test.ts
+git add db/migrations/20260917000000_dompet_imbalan_referral.sql tests/rewards/migration.test.ts
 git commit -m "feat(rewards): migration for referral codes, attributions, ledger, and policy"
 ```
 

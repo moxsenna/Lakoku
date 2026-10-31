@@ -62,19 +62,19 @@ Repository migrations also do not create pre-history core tables such as `storie
 
 Create:
 
-- `supabase/migrations/20260707000000_core_runtime_baseline.sql` — verified pre-history core/runtime schema required by every checked-in migration, using idempotent DDL and exact linked definitions.
-- `supabase/migrations/20260718010000_generation_jobs_foundation.sql` — queue, attempts, state-machine trigger, indexes, RLS/grants.
-- `supabase/migrations/20260718020000_generation_job_enqueue.sql` — authenticated explicit enqueue.
-- `supabase/migrations/20260718030000_generation_job_worker_rpcs.sql` — claim, bound lease, heartbeat, finish, cancel, recover.
-- `supabase/migrations/20260718040000_generation_job_fencing.sql` — fenced legacy and V2 publication.
-- `supabase/migrations/20260718050000_generation_choice_enqueue.sql` — atomic personalized/standard choice plus enqueue.
-- `supabase/tests/runtime_lifecycle_baseline_test.sql`.
-- `supabase/tests/generation_jobs_schema_test.sql`.
-- `supabase/tests/generation_job_enqueue_test.sql`.
-- `supabase/tests/generation_job_worker_rpc_test.sql`.
-- `supabase/tests/generation_job_recovery_test.sql`.
-- `supabase/tests/generation_job_fencing_test.sql`.
-- `supabase/tests/generation_choice_enqueue_test.sql`.
+- `db/migrations/20260707000000_core_runtime_baseline.sql` — verified pre-history core/runtime schema required by every checked-in migration, using idempotent DDL and exact linked definitions.
+- `db/migrations/20260718010000_generation_jobs_foundation.sql` — queue, attempts, state-machine trigger, indexes, RLS/grants.
+- `db/migrations/20260718020000_generation_job_enqueue.sql` — authenticated explicit enqueue.
+- `db/migrations/20260718030000_generation_job_worker_rpcs.sql` — claim, bound lease, heartbeat, finish, cancel, recover.
+- `db/migrations/20260718040000_generation_job_fencing.sql` — fenced legacy and V2 publication.
+- `db/migrations/20260718050000_generation_choice_enqueue.sql` — atomic personalized/standard choice plus enqueue.
+- `db/tests/runtime_lifecycle_baseline_test.sql`.
+- `db/tests/generation_jobs_schema_test.sql`.
+- `db/tests/generation_job_enqueue_test.sql`.
+- `db/tests/generation_job_worker_rpc_test.sql`.
+- `db/tests/generation_job_recovery_test.sql`.
+- `db/tests/generation_job_fencing_test.sql`.
+- `db/tests/generation_choice_enqueue_test.sql`.
 - `packages/contracts/src/generation-job.ts` — reader-safe Zod schemas.
 - `lib/runtime/generation-jobs.contract.ts` — internal Zod schemas/types.
 - `lib/runtime/generation-jobs.ts` — thin server-only Supabase RPC adapters.
@@ -125,8 +125,8 @@ Never set `lakoku.test_target = 'local-cli'` on linked, staging, or production d
 **Files:**
 - Create: `supabase/config.toml`
 - Create: `scripts/set-local-db-test-marker.ts`
-- Create: `supabase/tests/runtime_lifecycle_baseline_test.sql`
-- Create: `supabase/migrations/20260707000000_core_runtime_baseline.sql`
+- Create: `db/tests/runtime_lifecycle_baseline_test.sql`
+- Create: `db/migrations/20260707000000_core_runtime_baseline.sql`
 - Create temporarily: `.zcode/generation-foundation-linked-schema.sql` (never commit)
 - Create temporarily: `.zcode/generation-foundation-linked-inventory.txt` (never commit)
 
@@ -169,7 +169,7 @@ Never commit these artifacts. Record MD5 hashes from `pg_get_functiondef` for ex
 
 - [ ] **Step 4: Write failing pgTAP baseline test**
 
-Create `supabase/tests/runtime_lifecycle_baseline_test.sql` with local marker guard and assertions for exact objects consumed by current runtime:
+Create `db/tests/runtime_lifecycle_baseline_test.sql` with local marker guard and assertions for exact objects consumed by current runtime:
 
 ```sql
 begin;
@@ -220,14 +220,14 @@ Run:
 pnpm exec supabase start
 pnpm exec supabase db reset
 node scripts/run-smoke.cjs scripts/set-local-db-test-marker.ts
-pnpm exec supabase test db --local supabase/tests/runtime_lifecycle_baseline_test.sql
+pnpm exec supabase test db --local db/tests/runtime_lifecycle_baseline_test.sql
 ```
 
 Expected before migration: reset or focused test fails because core/lifecycle objects are missing from checked-in history. After every reset in later tasks, rerun `node scripts/run-smoke.cjs scripts/set-local-db-test-marker.ts` before guarded pgTAP tests because reset recreates database state.
 
 - [ ] **Step 6: Add exact verified core/runtime baseline migration**
 
-Create `supabase/migrations/20260707000000_core_runtime_baseline.sql` from sanitized linked dump. Include all pre-history public objects needed for a clean migration replay, not only lifecycle objects:
+Create `db/migrations/20260707000000_core_runtime_baseline.sql` from sanitized linked dump. Include all pre-history public objects needed for a clean migration replay, not only lifecycle objects:
 
 - Core reader tables: `stories`, `chapters`, `choice_outcomes`, `reader_states`.
 - Canon tables referenced by authoring/personalized migrations: `characters`, aliases, voice sheets, facts, knowledge, secrets, timeline, threads, rollups, blueprints.
@@ -274,8 +274,8 @@ Run:
 ```powershell
 pnpm exec supabase db reset
 node scripts/run-smoke.cjs scripts/set-local-db-test-marker.ts
-pnpm exec supabase test db --local supabase/tests/runtime_lifecycle_baseline_test.sql
-pnpm exec supabase test db --local supabase/tests/publish_chapter_v2_test.sql
+pnpm exec supabase test db --local db/tests/runtime_lifecycle_baseline_test.sql
+pnpm exec supabase test db --local db/tests/publish_chapter_v2_test.sql
 ```
 
 Expected: all assertions pass; V2 compatibility remains green.
@@ -294,7 +294,7 @@ Expected: schema dump gone; no production schema dump enters git.
 - [ ] **Step 9: Commit baseline**
 
 ```bash
-git add supabase/config.toml scripts/set-local-db-test-marker.ts scripts/authoring-race-session.ts supabase/migrations/20260707000000_core_runtime_baseline.sql supabase/tests/runtime_lifecycle_baseline_test.sql
+git add supabase/config.toml scripts/set-local-db-test-marker.ts scripts/authoring-race-session.ts db/migrations/20260707000000_core_runtime_baseline.sql db/tests/runtime_lifecycle_baseline_test.sql
 git commit -m "test: capture runtime lifecycle baseline"
 ```
 
@@ -476,8 +476,8 @@ git commit -m "feat: define generation job contracts"
 ### Task 3: Create queue schema, telemetry schema, and state machine
 
 **Files:**
-- Create: `supabase/tests/generation_jobs_schema_test.sql`
-- Create: `supabase/migrations/20260718010000_generation_jobs_foundation.sql`
+- Create: `db/tests/generation_jobs_schema_test.sql`
+- Create: `db/migrations/20260718010000_generation_jobs_foundation.sql`
 
 - [ ] **Step 1: Write failing schema/security tests**
 
@@ -515,7 +515,7 @@ Add behavior blocks proving:
 - [ ] **Step 2: Run focused test and prove red**
 
 ```powershell
-pnpm exec supabase test db --local supabase/tests/generation_jobs_schema_test.sql
+pnpm exec supabase test db --local db/tests/generation_jobs_schema_test.sql
 ```
 
 Expected: FAIL because tables do not exist.
@@ -606,7 +606,7 @@ Enable RLS. Revoke all from PUBLIC/anon/authenticated. Grant required DML only t
 ```powershell
 pnpm exec supabase db reset
 node scripts/run-smoke.cjs scripts/set-local-db-test-marker.ts
-pnpm exec supabase test db --local supabase/tests/generation_jobs_schema_test.sql
+pnpm exec supabase test db --local db/tests/generation_jobs_schema_test.sql
 ```
 
 Expected: PASS.
@@ -614,7 +614,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit schema**
 
 ```bash
-git add supabase/migrations/20260718010000_generation_jobs_foundation.sql supabase/tests/generation_jobs_schema_test.sql
+git add db/migrations/20260718010000_generation_jobs_foundation.sql db/tests/generation_jobs_schema_test.sql
 git commit -m "feat: add durable generation job schema"
 ```
 
@@ -623,8 +623,8 @@ git commit -m "feat: add durable generation job schema"
 ### Task 4: Add authenticated idempotent explicit enqueue
 
 **Files:**
-- Create: `supabase/tests/generation_job_enqueue_test.sql`
-- Create: `supabase/migrations/20260718020000_generation_job_enqueue.sql`
+- Create: `db/tests/generation_job_enqueue_test.sql`
+- Create: `db/migrations/20260718020000_generation_job_enqueue.sql`
 - Create: `scripts/generation-job-enqueue-race.ts`
 
 - [ ] **Step 1: Write failing pgTAP enqueue tests**
@@ -654,7 +654,7 @@ Assertions:
 - [ ] **Step 2: Run and prove red**
 
 ```powershell
-pnpm exec supabase test db --local supabase/tests/generation_job_enqueue_test.sql
+pnpm exec supabase test db --local db/tests/generation_job_enqueue_test.sql
 ```
 
 Expected: FAIL missing RPC.
@@ -684,7 +684,7 @@ Inside RPC:
 - [ ] **Step 4: Run pgTAP green**
 
 ```powershell
-pnpm exec supabase test db --local supabase/tests/generation_job_enqueue_test.sql
+pnpm exec supabase test db --local db/tests/generation_job_enqueue_test.sql
 ```
 
 Expected: PASS.
@@ -710,7 +710,7 @@ Expected: PASS and cleanup fixtures.
 - [ ] **Step 7: Commit enqueue**
 
 ```bash
-git add supabase/migrations/20260718020000_generation_job_enqueue.sql supabase/tests/generation_job_enqueue_test.sql scripts/generation-job-enqueue-race.ts
+git add db/migrations/20260718020000_generation_job_enqueue.sql db/tests/generation_job_enqueue_test.sql scripts/generation-job-enqueue-race.ts
 git commit -m "feat: add idempotent generation enqueue"
 ```
 
@@ -719,8 +719,8 @@ git commit -m "feat: add idempotent generation enqueue"
 ### Task 5: Add worker claim and claim-token fencing primitives
 
 **Files:**
-- Create: `supabase/tests/generation_job_worker_rpc_test.sql`
-- Create: `supabase/migrations/20260718030000_generation_job_worker_rpcs.sql`
+- Create: `db/tests/generation_job_worker_rpc_test.sql`
+- Create: `db/migrations/20260718030000_generation_job_worker_rpcs.sql`
 - Create: `scripts/generation-job-claim-race.ts`
 
 - [ ] **Step 1: Write failing worker RPC tests**
@@ -752,7 +752,7 @@ Cover:
 - [ ] **Step 2: Prove tests red**
 
 ```powershell
-pnpm exec supabase test db --local supabase/tests/generation_job_worker_rpc_test.sql
+pnpm exec supabase test db --local db/tests/generation_job_worker_rpc_test.sql
 ```
 
 Expected: FAIL missing worker RPCs/lease columns.
@@ -809,7 +809,7 @@ All ownership mutations lock job row and require exact `(job_id, worker_id, clai
 ```powershell
 pnpm exec supabase db reset
 node scripts/run-smoke.cjs scripts/set-local-db-test-marker.ts
-pnpm exec supabase test db --local supabase/tests/generation_job_worker_rpc_test.sql
+pnpm exec supabase test db --local db/tests/generation_job_worker_rpc_test.sql
 ```
 
 Expected: PASS.
@@ -827,7 +827,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit worker primitives**
 
 ```bash
-git add supabase/migrations/20260718030000_generation_job_worker_rpcs.sql supabase/tests/generation_job_worker_rpc_test.sql scripts/generation-job-claim-race.ts
+git add db/migrations/20260718030000_generation_job_worker_rpcs.sql db/tests/generation_job_worker_rpc_test.sql scripts/generation-job-claim-race.ts
 git commit -m "feat: add generation job claim primitives"
 ```
 
@@ -836,9 +836,9 @@ git commit -m "feat: add generation job claim primitives"
 ### Task 6: Add stale and deadline recovery
 
 **Files:**
-- Create: `supabase/tests/generation_job_recovery_test.sql`
+- Create: `db/tests/generation_job_recovery_test.sql`
 - Create: `scripts/generation-job-recovery-race.ts`
-- Modify: `supabase/migrations/20260718030000_generation_job_worker_rpcs.sql`
+- Modify: `db/migrations/20260718030000_generation_job_worker_rpcs.sql`
 
 - [ ] **Step 1: Write failing recovery tests**
 
@@ -858,7 +858,7 @@ Cover:
 - [ ] **Step 2: Prove recovery red**
 
 ```powershell
-pnpm exec supabase test db --local supabase/tests/generation_job_recovery_test.sql
+pnpm exec supabase test db --local db/tests/generation_job_recovery_test.sql
 ```
 
 Expected: FAIL until recovery body is complete.
@@ -876,7 +876,7 @@ Expire only lease matching old job ID/token. Insert synthetic attempt with no ra
 - [ ] **Step 4: Run pgTAP green**
 
 ```powershell
-pnpm exec supabase test db --local supabase/tests/generation_job_recovery_test.sql
+pnpm exec supabase test db --local db/tests/generation_job_recovery_test.sql
 ```
 
 Expected: PASS.
@@ -894,7 +894,7 @@ Never allow two owners or active lease with stale token.
 
 ```powershell
 node scripts/run-smoke.cjs scripts/generation-job-recovery-race.ts
-git add supabase/migrations/20260718030000_generation_job_worker_rpcs.sql supabase/tests/generation_job_recovery_test.sql scripts/generation-job-recovery-race.ts
+git add db/migrations/20260718030000_generation_job_worker_rpcs.sql db/tests/generation_job_recovery_test.sql scripts/generation-job-recovery-race.ts
 git commit -m "feat: recover stale generation jobs"
 ```
 
@@ -903,8 +903,8 @@ git commit -m "feat: recover stale generation jobs"
 ### Task 7: Add fenced publication and atomic job success
 
 **Files:**
-- Create: `supabase/tests/generation_job_fencing_test.sql`
-- Create: `supabase/migrations/20260718040000_generation_job_fencing.sql`
+- Create: `db/tests/generation_job_fencing_test.sql`
+- Create: `db/migrations/20260718040000_generation_job_fencing.sql`
 
 - [ ] **Step 1: Write failing fenced publication tests**
 
@@ -931,7 +931,7 @@ Test:
 - [ ] **Step 2: Prove tests red**
 
 ```powershell
-pnpm exec supabase test db --local supabase/tests/generation_job_fencing_test.sql
+pnpm exec supabase test db --local db/tests/generation_job_fencing_test.sql
 ```
 
 Expected: FAIL missing wrappers.
@@ -959,8 +959,8 @@ All SQL functions use empty search path, schema-qualified calls, service-role-on
 ```powershell
 pnpm exec supabase db reset
 node scripts/run-smoke.cjs scripts/set-local-db-test-marker.ts
-pnpm exec supabase test db --local supabase/tests/generation_job_fencing_test.sql
-pnpm exec supabase test db --local supabase/tests/publish_chapter_v2_test.sql
+pnpm exec supabase test db --local db/tests/generation_job_fencing_test.sql
+pnpm exec supabase test db --local db/tests/publish_chapter_v2_test.sql
 pnpm run test:db:publish-v2-race
 ```
 
@@ -969,7 +969,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit fencing**
 
 ```bash
-git add supabase/migrations/20260718040000_generation_job_fencing.sql supabase/tests/generation_job_fencing_test.sql
+git add db/migrations/20260718040000_generation_job_fencing.sql db/tests/generation_job_fencing_test.sql
 git commit -m "feat: fence generation job publication"
 ```
 
@@ -978,8 +978,8 @@ git commit -m "feat: fence generation job publication"
 ### Task 8: Add atomic personalized and standard choice enqueue
 
 **Files:**
-- Create: `supabase/tests/generation_choice_enqueue_test.sql`
-- Create: `supabase/migrations/20260718050000_generation_choice_enqueue.sql`
+- Create: `db/tests/generation_choice_enqueue_test.sql`
+- Create: `db/migrations/20260718050000_generation_choice_enqueue.sql`
 
 - [ ] **Step 1: Write failing combined RPC tests**
 
@@ -1014,7 +1014,7 @@ Standard test:
 - [ ] **Step 2: Prove tests red**
 
 ```powershell
-pnpm exec supabase test db --local supabase/tests/generation_choice_enqueue_test.sql
+pnpm exec supabase test db --local db/tests/generation_choice_enqueue_test.sql
 ```
 
 Expected: FAIL missing combined RPCs.
@@ -1052,8 +1052,8 @@ Do not route production calls here yet.
 ```powershell
 pnpm exec supabase db reset
 node scripts/run-smoke.cjs scripts/set-local-db-test-marker.ts
-pnpm exec supabase test db --local supabase/tests/generation_choice_enqueue_test.sql
-pnpm exec supabase test db --local supabase/tests/personalized_story_rls_test.sql
+pnpm exec supabase test db --local db/tests/generation_choice_enqueue_test.sql
+pnpm exec supabase test db --local db/tests/personalized_story_rls_test.sql
 ```
 
 Expected: PASS.
@@ -1061,7 +1061,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit combined RPCs**
 
 ```bash
-git add supabase/migrations/20260718050000_generation_choice_enqueue.sql supabase/tests/generation_choice_enqueue_test.sql
+git add db/migrations/20260718050000_generation_choice_enqueue.sql db/tests/generation_choice_enqueue_test.sql
 git commit -m "feat: enqueue generation with reader choices"
 ```
 
@@ -1250,7 +1250,7 @@ Expected: exit 0.
 Add scripts:
 
 ```json
-"test:db:generation-jobs": "pnpm exec supabase test db --local supabase/tests/runtime_lifecycle_baseline_test.sql supabase/tests/generation_jobs_schema_test.sql supabase/tests/generation_job_enqueue_test.sql supabase/tests/generation_job_worker_rpc_test.sql supabase/tests/generation_job_recovery_test.sql supabase/tests/generation_job_fencing_test.sql supabase/tests/generation_choice_enqueue_test.sql && node scripts/run-smoke.cjs scripts/generation-job-enqueue-race.ts && node scripts/run-smoke.cjs scripts/generation-job-claim-race.ts && node scripts/run-smoke.cjs scripts/generation-job-recovery-race.ts"
+"test:db:generation-jobs": "pnpm exec supabase test db --local db/tests/runtime_lifecycle_baseline_test.sql db/tests/generation_jobs_schema_test.sql db/tests/generation_job_enqueue_test.sql db/tests/generation_job_worker_rpc_test.sql db/tests/generation_job_recovery_test.sql db/tests/generation_job_fencing_test.sql db/tests/generation_choice_enqueue_test.sql && node scripts/run-smoke.cjs scripts/generation-job-enqueue-race.ts && node scripts/run-smoke.cjs scripts/generation-job-claim-race.ts && node scripts/run-smoke.cjs scripts/generation-job-recovery-race.ts"
 ```
 
 - [ ] **Step 7: Run complete foundation verification**

@@ -2,7 +2,7 @@ import 'server-only'
 import type { z } from 'zod'
 import { getDb, result, rpcRows } from '@lakoku/db'
 import type { Kysely } from 'kysely'
-import type { Database } from '@/lib/supabase/db-types'
+import type { Database } from '@/lib/db/db-types'
 import type { AdminGenerationFilters } from '@/lib/admin/generation-filters'
 import {
   AdminGenerationCostBreakdownSchema,

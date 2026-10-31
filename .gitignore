@@ -33,7 +33,7 @@ testsprite_tests/tmp/
 
 # Local linked Supabase introspection, status credentials, and release evidence
 .local/
-supabase/.temp/
+db/.temp/
 
 testsprite_tests\tmp\config.json
 
@@ -47,7 +47,7 @@ fixtures/benchmarks/
 # Local diagnostic artifacts
 output/
 .playwright-cli/
-supabase/.branches/
+db/.branches/
 
 # unlazy local state (machine-specific, never commit)
 .unlazy/

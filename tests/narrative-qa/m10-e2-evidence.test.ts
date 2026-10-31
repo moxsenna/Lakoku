@@ -79,14 +79,14 @@ function provenReference(): ProvenReferenceEvidence {
   return {
     disposition: 'PROVEN_REFERENCE',
     sourceCommit: '1111111111111111111111111111111111111111',
-    sourceTest: 'supabase/tests/checkpoint_versioning_test.sql',
+    sourceTest: 'db/tests/checkpoint_versioning_test.sql',
     sourceTestBlobSha: '3333333333333333333333333333333333333333',
     sourceArtifact: 'artifact/checkpoint-versioning.tap',
     exactProperty: 'mismatched schema is rejected before publication',
     compatibilityProof: buildSourceUnchangedCompatibilityProof({
       method: 'SOURCE_UNCHANGED',
       currentHeadSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      relevantCurrentSource: 'supabase/migrations/20260101000000_publish.sql',
+      relevantCurrentSource: 'db/migrations/20260101000000_publish.sql',
       sourceBlobSha: '2222222222222222222222222222222222222222',
       currentBlobSha: '2222222222222222222222222222222222222222',
     }),
@@ -353,7 +353,7 @@ describe('M10-E2 disposition proof mutations', () => {
     expect(() => buildSourceUnchangedCompatibilityProof({
       method: 'SOURCE_UNCHANGED',
       currentHeadSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      relevantCurrentSource: 'supabase/migrations/current.sql',
+      relevantCurrentSource: 'db/migrations/current.sql',
       sourceBlobSha: 'same-invalid-value',
       currentBlobSha: 'same-invalid-value',
     })).toThrow()

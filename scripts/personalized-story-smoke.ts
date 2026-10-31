@@ -442,13 +442,13 @@ check(
 )
 
 const requiredMigrations = [
-  'supabase/migrations/20260713000000_personalized_story_engine.sql',
-  'supabase/migrations/20260713010000_publish_chapter_v2.sql',
-  'supabase/migrations/20260713020000_bootstrap_personalized_story.sql',
-  'supabase/migrations/20260713030000_apply_personalized_choice.sql',
-  'supabase/migrations/20260713050000_clone_premium_story_instance.sql',
-  'supabase/migrations/20260713060000_persist_ending_lock.sql',
-  'supabase/migrations/20260713070000_harden_premium_story_clone.sql',
+  'db/migrations/20260713000000_personalized_story_engine.sql',
+  'db/migrations/20260713010000_publish_chapter_v2.sql',
+  'db/migrations/20260713020000_bootstrap_personalized_story.sql',
+  'db/migrations/20260713030000_apply_personalized_choice.sql',
+  'db/migrations/20260713050000_clone_premium_story_instance.sql',
+  'db/migrations/20260713060000_persist_ending_lock.sql',
+  'db/migrations/20260713070000_harden_premium_story_clone.sql',
 ] as const
 const missingMigrations = requiredMigrations.filter((relativePath) => !existsSync(join(root, relativePath)))
 check(
@@ -467,7 +467,7 @@ check(
 )
 check(
   'personalized DB command keeps premium clone SQL coverage',
-  scripts['test:db:personalized']?.includes('supabase/tests/premium_story_clone_test.sql') === true,
+  scripts['test:db:personalized']?.includes('db/tests/premium_story_clone_test.sql') === true,
 )
 
 console.log(`\npersonalized-story-smoke: ${passed}/${passed + failed} PASS`)

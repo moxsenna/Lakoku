@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 const root = process.cwd()
-const dir = join(root, 'supabase', 'migrations')
+const dir = join(root, 'db', 'migrations')
 const files = readdirSync(dir).filter((f) => f.includes('push'))
 if (files.length === 0) {
   console.error('FAIL: no push migration found')

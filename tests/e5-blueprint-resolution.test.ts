@@ -38,7 +38,7 @@ vi.mock('@lakoku/db', async (importOriginal) => {
     })),
   }
 })
-vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.createClient }))
+vi.mock('@/lib/db/server', () => ({ createClient: mocks.createClient }))
 vi.mock('@/lib/admin/auth', () => ({ requireAdminUser: mocks.requireAdminUser }))
 vi.mock('@/lib/utils/validator-rerun.helper', () => ({
   runValidatorRerun: mocks.runValidatorRerun,

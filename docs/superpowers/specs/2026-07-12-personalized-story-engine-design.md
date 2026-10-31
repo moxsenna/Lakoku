@@ -56,7 +56,7 @@ route_state          = state pilihan user (in reader_states.route_state)
 
 ## 3. Database Migration
 
-File: `supabase/migrations/20260712000000_personalized_story_engine.sql`
+File: `db/migrations/20260712000000_personalized_story_engine.sql`
 
 All changes are **additive**. No DROP, no destructive ALTER.
 

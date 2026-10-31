@@ -43,7 +43,7 @@ if (existsSync(providerPath)) {
 }
 
 // --- Migration check ---
-const migrationPath = join(root, 'supabase/migrations/20260711010000_ops_credit_config.sql')
+const migrationPath = join(root, 'db/migrations/20260711010000_ops_credit_config.sql')
 if (existsSync(migrationPath)) {
   const content = readFileSync(migrationPath, 'utf-8')
   check('migration: generation_policy table', content.includes('generation_policy'))

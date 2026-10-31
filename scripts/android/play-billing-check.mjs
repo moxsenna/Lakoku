@@ -16,7 +16,7 @@ function check(name, cond, detail = '') {
 const verify = 'app/api/play-billing/verify/route.ts'
 const server = 'lib/paycore/play-billing.server.ts'
 const grant = 'lib/paycore/play-billing-grant.server.ts'
-const migration = 'supabase/migrations/20260917120000_play_billing_channel_model.sql'
+const migration = 'db/migrations/20260917120000_play_billing_channel_model.sql'
 
 check('route verify ada', existsSync(verify))
 check('modul verifikasi ada', existsSync(server))

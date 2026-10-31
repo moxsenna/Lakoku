@@ -22,7 +22,7 @@ vi.mock('@/lib/api/user-state', async (importOriginal) => {
     }),
   }
 })
-vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@/lib/db/admin', () => ({ createAdminClient: mocks.adminFactory }))
 vi.mock('@lakoku/db', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>()
   return {

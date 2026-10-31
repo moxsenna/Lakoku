@@ -63,7 +63,7 @@ From `'lakoku_mobile_drama_v1'` → `'lakoku_mobile_drama_v2'` (future-proofing 
 
 ### Migration Validation Update
 
-**File:** `supabase/migrations/20260728010000_plot_debt_closure_ledger.sql`
+**File:** `db/migrations/20260728010000_plot_debt_closure_ledger.sql`
 
 Extended JSON validation from requiring exactly 4 keys (`['key','name','condition','requiredClosure']`) to allowing ≥4 keys with proper types for new fields:
 
@@ -214,7 +214,7 @@ Files changed in this package:
 - `lib/story-engine/story-contract.ts` (schema + styleProfile bump)
 - `lib/runtime/post-publication-lifecycle.server.ts` (mapping + gate writer path)
 - `lib/runtime/personalized-generation.ts` (gate reader path)
-- `supabase/migrations/20260728010000_plot_debt_closure_ledger.sql` (validation extension)
+- `db/migrations/20260728010000_plot_debt_closure_ledger.sql` (validation extension)
 - `fixtures/contracts/*.ts` (ENDINGS update)
 - `fixtures/long-horizon/story-bible-pressure.ts` (ENDINGS update)
 - `tests/db/m10-a1d-validated-state-smoke.test.ts` (ENDINGS update)

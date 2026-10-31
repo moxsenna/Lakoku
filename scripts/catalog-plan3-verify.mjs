@@ -45,7 +45,7 @@ function staticCheck() {
   assertContains(migration, 'references stories(id) on delete cascade', 'migrasi')
   assertContains(migration, 'catalog_chapter_reviews_status_idx', 'migrasi')
 
-  const dbTypes = read('lib/supabase/db-types.ts')
+  const dbTypes = read('lib/db/db-types.ts')
   assertContains(dbTypes, 'export interface CatalogChapterReviews', 'db-types')
   assertContains(dbTypes, 'catalog_chapter_reviews: CatalogChapterReviews;', 'db-types')
 

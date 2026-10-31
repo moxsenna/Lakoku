@@ -37,7 +37,7 @@
 | Safety | `lib/authoring/persist-creative-direction.ts` | No contract wipe |
 | Safety | `lib/api/authoring-lock.server.ts` | Fail lock when direction required |
 | Safety | `scripts/check-migration-version-uniqueness.ts` | Guard duplicates |
-| Safety | `supabase/migrations/20260722090001_*` + `20260724100000_*` | Unique versions + reconcile |
+| Safety | `db/migrations/20260722090001_*` + `20260724100000_*` | Unique versions + reconcile |
 | Choices V2 | `lib/ai-gateway/choice-draft-v2.ts` | Schema + finalizer + prompt |
 | Choices V2 | `lib/ai-gateway/gateway.ts` | Accept V2 draft shape |
 | Choices V2 | `lib/ai-gateway/gateway-provider.ts` | Valid JSON prompt; generateText; 90s |
@@ -48,7 +48,7 @@
 | Dispatch | `lib/api/start-chapter.server.ts` | Dispatcher + attemptId |
 | Dispatch | `app/api/stories/[id]/generate/route.ts` | Dispatcher |
 | Durability | `lib/runtime/chapter-generation-checkpoint.ts` | Fingerprints + status map |
-| Durability | `supabase/migrations/20260724110000_chapter_generation_checkpoints.sql` | Table |
+| Durability | `db/migrations/20260724110000_chapter_generation_checkpoints.sql` | Table |
 | Ops | `docs/runbooks/generation-diagnosis.md` | Diagnosis |
 | Ops | `scripts/sql/audit-empty-generation-contracts.sql` | Read-only audit |
 

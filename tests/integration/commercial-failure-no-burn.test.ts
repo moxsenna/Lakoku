@@ -8,15 +8,15 @@
  */
 import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient } from '@/lib/db/admin'
 import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
 import { createDeterministicProvider, type GenerationProvider, type PlanInput } from '@/lib/ai-gateway/provider'
 import type { SemanticJudgeInput, SemanticJudgeResult, SemanticJudgeCode } from '@/lib/ai-gateway/semantic-continuation-judge'
 import { claimAndRunAvailableJobs } from '@lakoku/runtime/server'
 
 vi.mock('server-only', () => ({}))
-vi.mock('@/lib/supabase/server', async () => {
-  const actual = await vi.importActual('@/lib/supabase/server')
+vi.mock('@/lib/db/server', async () => {
+  const actual = await vi.importActual('@/lib/db/server')
   return {
     ...actual,
     createClient: vi.fn(async () => createAdminClient()),

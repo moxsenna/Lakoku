@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.cookieFactory }))
+vi.mock('@/lib/db/server', () => ({ createClient: mocks.cookieFactory }))
 vi.mock('@/lib/api/user-state', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>()
   return {

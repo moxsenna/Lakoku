@@ -52,8 +52,8 @@ materialize**. None of those versions exist in production's applied history.
 touched exactly:
 
 ```text
-supabase/migrations/20260805020000_living_canon_publication_primitives.sql        (+52 / -21)
-supabase/migrations/20260805020000_story_creation_request_job_binding.sql
+db/migrations/20260805020000_living_canon_publication_primitives.sql        (+52 / -21)
+db/migrations/20260805020000_story_creation_request_job_binding.sql
   -> renamed 20260805021000_story_creation_request_job_binding.sql                (0 / 0)
 docs/qa/m10/M10_GOVERNANCE_LEDGER.md                                             (+43)
 ```

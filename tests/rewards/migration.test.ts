@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 describe('20260917000000_dompet_imbalan_referral migration', () => {
-  const sqlPath = resolve(process.cwd(), 'supabase/migrations/20260917000000_dompet_imbalan_referral.sql')
+  const sqlPath = resolve(process.cwd(), 'db/migrations/20260917000000_dompet_imbalan_referral.sql')
 
   it('contains all 4 required tables and single-row reward_policy constraint', () => {
     const sql = readFileSync(sqlPath, 'utf8')

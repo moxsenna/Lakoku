@@ -59,7 +59,7 @@ describe('catalog schema migration and types', () => {
   })
 
   it('db-types exports CatalogStories and CatalogEndingChapters', async () => {
-    const dbTypesContent = fs.readFileSync(path.join(process.cwd(), 'lib/supabase/db-types.ts'), 'utf8')
+    const dbTypesContent = fs.readFileSync(path.join(process.cwd(), 'lib/db/db-types.ts'), 'utf8')
     expect(dbTypesContent).toContain('export interface CatalogStories')
     expect(dbTypesContent).toContain('export interface CatalogEndingChapters')
     expect(dbTypesContent).toContain('catalog_stories: CatalogStories')

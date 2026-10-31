@@ -47,12 +47,12 @@ Locked physical-schema decisions:
 
 Create:
 
-- `supabase/migrations/20260718100000_generation_provider_observability.sql` — provider-call, pricing, aggregate, and access-audit tables; constraints; identity trigger; recorder and retention RPCs.
-- `supabase/migrations/20260718110000_admin_generation_observability_rpcs.sql` — role check, email masking, and six admin read RPCs.
-- `supabase/tests/generation_provider_calls_schema_test.sql` — schema, privacy, ACL, append-only, and job-identity tests.
-- `supabase/tests/generation_provider_call_recording_test.sql` — idempotency and cost-source tests.
-- `supabase/tests/generation_provider_retention_test.sql` — rollup, cutoff, batching, and retry tests.
-- `supabase/tests/admin_generation_observability_rpc_test.sql` — authorization, masking, filtering, pagination, aggregates, job timeline, and audit tests.
+- `db/migrations/20260718100000_generation_provider_observability.sql` — provider-call, pricing, aggregate, and access-audit tables; constraints; identity trigger; recorder and retention RPCs.
+- `db/migrations/20260718110000_admin_generation_observability_rpcs.sql` — role check, email masking, and six admin read RPCs.
+- `db/tests/generation_provider_calls_schema_test.sql` — schema, privacy, ACL, append-only, and job-identity tests.
+- `db/tests/generation_provider_call_recording_test.sql` — idempotency and cost-source tests.
+- `db/tests/generation_provider_retention_test.sql` — rollup, cutoff, batching, and retry tests.
+- `db/tests/admin_generation_observability_rpc_test.sql` — authorization, masking, filtering, pagination, aggregates, job timeline, and audit tests.
 - `lib/observability/generation-provider-call.contract.ts` — strict trusted context, candidate, outcome, usage, and write contracts.
 - `lib/observability/generation-provider-call.server.ts` — Supabase recorder adapter and bounded error normalization.
 - `lib/ai-gateway/observed-model-call.server.ts` — one-call lifecycle wrapper around AI SDK `streamText()`.
@@ -290,12 +290,12 @@ git commit -m "feat: define provider call telemetry contracts"
 ### Task 2: Add sanitized append-only provider-call schema
 
 **Files:**
-- Create: `supabase/migrations/20260718100000_generation_provider_observability.sql`
-- Create: `supabase/tests/generation_provider_calls_schema_test.sql`
+- Create: `db/migrations/20260718100000_generation_provider_observability.sql`
+- Create: `db/tests/generation_provider_calls_schema_test.sql`
 
 - [ ] **Step 1: Write failing pgTAP schema and privacy tests**
 
-Use local marker guard from `supabase/tests/generation_jobs_schema_test.sql`. Assert:
+Use local marker guard from `db/tests/generation_jobs_schema_test.sql`. Assert:
 
 ```sql
 select has_table('public', 'generation_provider_calls');
@@ -319,7 +319,7 @@ Add `throws_ok` cases for negative elapsed/tokens/cost, `ended_at < started_at`,
 - [ ] **Step 2: Run pgTAP and verify RED**
 
 ```powershell
-pnpm exec supabase test db --local supabase/tests/generation_provider_calls_schema_test.sql
+pnpm exec supabase test db --local db/tests/generation_provider_calls_schema_test.sql
 ```
 
 Expected: FAIL because table is absent.
@@ -400,7 +400,7 @@ Enable RLS. Revoke all table privileges from `public`, `anon`, `authenticated`, 
 ```powershell
 pnpm exec supabase db reset
 node scripts/run-smoke.cjs scripts/set-local-db-test-marker.ts
-pnpm exec supabase test db --local supabase/tests/generation_provider_calls_schema_test.sql
+pnpm exec supabase test db --local db/tests/generation_provider_calls_schema_test.sql
 ```
 
 Expected: PASS.
@@ -408,7 +408,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add supabase/migrations/20260718100000_generation_provider_observability.sql supabase/tests/generation_provider_calls_schema_test.sql
+git add db/migrations/20260718100000_generation_provider_observability.sql db/tests/generation_provider_calls_schema_test.sql
 git commit -m "feat: add sanitized provider call schema"
 ```
 
@@ -417,8 +417,8 @@ git commit -m "feat: add sanitized provider call schema"
 ### Task 3: Add temporal pricing and idempotent recorder RPC
 
 **Files:**
-- Modify: `supabase/migrations/20260718100000_generation_provider_observability.sql`
-- Create: `supabase/tests/generation_provider_call_recording_test.sql`
+- Modify: `db/migrations/20260718100000_generation_provider_observability.sql`
+- Create: `db/tests/generation_provider_call_recording_test.sql`
 
 - [ ] **Step 1: Write failing pricing and recorder tests**
 
@@ -445,7 +445,7 @@ select is(cost_amount, 0.01400000::numeric);
 - [ ] **Step 2: Run test and verify RED**
 
 ```powershell
-pnpm exec supabase test db --local supabase/tests/generation_provider_call_recording_test.sql
+pnpm exec supabase test db --local db/tests/generation_provider_call_recording_test.sql
 ```
 
 Expected: FAIL because pricing table and recorder RPC are absent.
@@ -521,7 +521,7 @@ Insert with `ON CONFLICT (provider_call_id) DO NOTHING`. On conflict, compare ev
 - [ ] **Step 5: Run DB tests**
 
 ```powershell
-pnpm exec supabase test db --local supabase/tests/generation_provider_calls_schema_test.sql supabase/tests/generation_provider_call_recording_test.sql
+pnpm exec supabase test db --local db/tests/generation_provider_calls_schema_test.sql db/tests/generation_provider_call_recording_test.sql
 ```
 
 Expected: PASS.
@@ -529,7 +529,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add supabase/migrations/20260718100000_generation_provider_observability.sql supabase/tests/generation_provider_call_recording_test.sql
+git add db/migrations/20260718100000_generation_provider_observability.sql db/tests/generation_provider_call_recording_test.sql
 git commit -m "feat: record provider calls with versioned cost"
 ```
 
@@ -1010,8 +1010,8 @@ git commit -m "feat: record every generation provider call"
 ### Task 9: Add retention aggregates and bounded cleanup
 
 **Files:**
-- Modify: `supabase/migrations/20260718100000_generation_provider_observability.sql`
-- Create: `supabase/tests/generation_provider_retention_test.sql`
+- Modify: `db/migrations/20260718100000_generation_provider_observability.sql`
+- Create: `db/tests/generation_provider_retention_test.sql`
 - Create: `scripts/generation-observability-retention.ts`
 
 - [ ] **Step 1: Write failing retention tests**
@@ -1030,7 +1030,7 @@ Prove:
 - [ ] **Step 2: Run test and verify RED**
 
 ```powershell
-pnpm exec supabase test db --local supabase/tests/generation_provider_retention_test.sql
+pnpm exec supabase test db --local db/tests/generation_provider_retention_test.sql
 ```
 
 Expected: FAIL because aggregate table/function are absent.
@@ -1065,7 +1065,7 @@ Create maintenance script that invokes RPC until `hasMore=false` or 100 batches,
 - [ ] **Step 5: Run retention tests**
 
 ```powershell
-pnpm exec supabase test db --local supabase/tests/generation_provider_retention_test.sql
+pnpm exec supabase test db --local db/tests/generation_provider_retention_test.sql
 ```
 
 Expected: PASS.
@@ -1073,7 +1073,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add supabase/migrations/20260718100000_generation_provider_observability.sql supabase/tests/generation_provider_retention_test.sql scripts/generation-observability-retention.ts
+git add db/migrations/20260718100000_generation_provider_observability.sql db/tests/generation_provider_retention_test.sql scripts/generation-observability-retention.ts
 git commit -m "feat: retain provider call aggregates"
 ```
 
@@ -1082,8 +1082,8 @@ git commit -m "feat: retain provider call aggregates"
 ### Task 10: Add admin authorization, masking, and six read RPCs
 
 **Files:**
-- Create: `supabase/migrations/20260718110000_admin_generation_observability_rpcs.sql`
-- Create: `supabase/tests/admin_generation_observability_rpc_test.sql`
+- Create: `db/migrations/20260718110000_admin_generation_observability_rpcs.sql`
+- Create: `db/tests/admin_generation_observability_rpc_test.sql`
 
 - [ ] **Step 1: Write failing admin RPC security tests**
 
@@ -1092,7 +1092,7 @@ Test anonymous/authenticated non-admin denial, `owner` and `admin` success, fixe
 - [ ] **Step 2: Run pgTAP and verify RED**
 
 ```powershell
-pnpm exec supabase test db --local supabase/tests/admin_generation_observability_rpc_test.sql
+pnpm exec supabase test db --local db/tests/admin_generation_observability_rpc_test.sql
 ```
 
 Expected: FAIL because RPCs are absent.
@@ -1132,7 +1132,7 @@ Data quality returns missing usage, unavailable pricing, unresolved actual model
 - [ ] **Step 5: Run DB tests**
 
 ```powershell
-pnpm exec supabase test db --local supabase/tests/generation_provider_calls_schema_test.sql supabase/tests/generation_provider_call_recording_test.sql supabase/tests/generation_provider_retention_test.sql supabase/tests/admin_generation_observability_rpc_test.sql
+pnpm exec supabase test db --local db/tests/generation_provider_calls_schema_test.sql db/tests/generation_provider_call_recording_test.sql db/tests/generation_provider_retention_test.sql db/tests/admin_generation_observability_rpc_test.sql
 ```
 
 Expected: PASS.
@@ -1140,7 +1140,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add supabase/migrations/20260718110000_admin_generation_observability_rpcs.sql supabase/tests/admin_generation_observability_rpc_test.sql
+git add db/migrations/20260718110000_admin_generation_observability_rpcs.sql db/tests/admin_generation_observability_rpc_test.sql
 git commit -m "feat: add admin generation observability queries"
 ```
 
@@ -1327,7 +1327,7 @@ Add:
 ```json
 {
   "test:generation-observability": "pnpm exec vitest run tests/observability tests/ai-gateway/observed-model-call.test.ts tests/runtime/generation-provider-context.test.ts tests/admin",
-  "test:db:generation-observability": "node scripts/run-smoke.cjs scripts/runtime-baseline-sentinel.ts && pnpm exec supabase test db --local supabase/tests/runtime_lifecycle_baseline_test.sql supabase/tests/generation_jobs_schema_test.sql supabase/tests/generation_provider_calls_schema_test.sql supabase/tests/generation_provider_call_recording_test.sql supabase/tests/generation_provider_retention_test.sql supabase/tests/admin_generation_observability_rpc_test.sql",
+  "test:db:generation-observability": "node scripts/run-smoke.cjs scripts/runtime-baseline-sentinel.ts && pnpm exec supabase test db --local db/tests/runtime_lifecycle_baseline_test.sql db/tests/generation_jobs_schema_test.sql db/tests/generation_provider_calls_schema_test.sql db/tests/generation_provider_call_recording_test.sql db/tests/generation_provider_retention_test.sql db/tests/admin_generation_observability_rpc_test.sql",
   "smoke:admin-generation-observability": "node scripts/run-smoke.cjs scripts/admin-generation-observability-smoke.ts"
 }
 ```

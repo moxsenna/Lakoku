@@ -16,7 +16,7 @@ import path from 'node:path'
 const DOCKER_CONTAINER = 'supabase_db_lakoku-v2'
 
 function runCutoverInTransaction(): string {
-  const migrationsDir = path.join(process.cwd(), 'supabase', 'migrations')
+  const migrationsDir = path.join(process.cwd(), 'db', 'migrations')
   const mig01File = '20260804010000_account_commercial_entitlements.sql'
   const mig02File = '20260804020000_credit_reservations.sql'
 

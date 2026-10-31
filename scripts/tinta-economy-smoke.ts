@@ -35,7 +35,7 @@ async function main() {
   // =========================================================================
   const migrationPath = join(
     root,
-    'supabase/migrations/20260919000000_lakoin_tinta_economy.sql',
+    'db/migrations/20260919000000_lakoin_tinta_economy.sql',
   )
   check('migration file exists', existsSync(migrationPath))
 

@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, test, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 
-import { createAdminClient } from '../../lib/supabase/admin'
+import { createAdminClient } from '../../lib/db/admin'
 import {
   cleanupAndVerifyFaultHarnessStories,
   FAULT_STORY_IDS,

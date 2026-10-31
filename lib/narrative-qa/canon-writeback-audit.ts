@@ -13,12 +13,12 @@
  * only as a regression guard when a sample reports no canon writeback on any path.
  *
  * Evidence cited (source strings):
- *   - supabase/migrations/20260805020000_living_canon_publication_primitives.sql
+ *   - db/migrations/20260805020000_living_canon_publication_primitives.sql
  *     :: apply_validated_chapter_state_v1 — the SHARED atomic state applier:
  *     facts_ledger, knowledge_scopes, timeline_events, character_states,
  *     story_threads (incl. thread transitions), act_rollups (upsert at act
  *     boundaries), reader_plot_debt_progress, closures.
- *   - supabase/migrations/20260805020000_living_canon_publication_primitives.sql
+ *   - db/migrations/20260805020000_living_canon_publication_primitives.sql
  *     :: publish_chapter_state_v3 (sync, receives p_ending_key/p_ending_name so the
  *     chapter-45 ending lock is committed atomically) and
  *     publish_generation_job_chapter_v5 / transition_checkpoint_published_atomic_v5
@@ -43,14 +43,14 @@ import type {
 export const CANON_WRITEBACK_EVIDENCE: StructuredEvidence[] = [
   {
     source:
-      'supabase/migrations/20260805020000_living_canon_publication_primitives.sql :: apply_validated_chapter_state_v1',
+      'db/migrations/20260805020000_living_canon_publication_primitives.sql :: apply_validated_chapter_state_v1',
     evidenceClass: 'SOURCE_TRACE',
     observation:
       'M10-A closure (LIVING_CANON_WRITEBACK_MISSING): the shared atomic applier writes facts_ledger, knowledge_scopes, timeline_events, character_states, story_threads (incl. transitions), act_rollups (upsert at act boundary), reader_plot_debt_progress, actor closures — the Story Bible evolves after chapter events on the v1 path.',
   },
   {
     source:
-      'supabase/migrations/20260805020000_living_canon_publication_primitives.sql :: publish_chapter_state_v3 / publish_generation_job_chapter_v5 / transition_checkpoint_published_atomic_v5',
+      'db/migrations/20260805020000_living_canon_publication_primitives.sql :: publish_chapter_state_v3 / publish_generation_job_chapter_v5 / transition_checkpoint_published_atomic_v5',
     evidenceClass: 'SOURCE_TRACE',
     observation:
       'M10-A closure: publish_chapter_state_v3 (sync) receives p_ending_key/p_ending_name so the chapter-45 ending lock is committed atomically with the canon; publish_generation_job_chapter_v5 / transition_checkpoint_published_atomic_v5 (worker) receive the validated schema-3 delta and both invoke apply_validated_chapter_state_v1.',
@@ -104,17 +104,17 @@ export function auditLivingCanonWriteback(
       domain: 'Canon/Persistence',
       status: 'WRITE_PATH_UNPROVEN',
       sourceOfTruth: [
-        'supabase/migrations/20260805020000_living_canon_publication_primitives.sql :: apply_validated_chapter_state_v1',
+        'db/migrations/20260805020000_living_canon_publication_primitives.sql :: apply_validated_chapter_state_v1',
         'lib/runtime/lifecycle.ts :: publishChapterV2',
         'lib/runtime/generation-jobs.ts :: publishGenerationJobChapterV4',
       ],
       producers: [
-        'supabase/migrations/20260805020000_living_canon_publication_primitives.sql :: publish_chapter_state_v3 / publish_generation_job_chapter_v5',
+        'db/migrations/20260805020000_living_canon_publication_primitives.sql :: publish_chapter_state_v3 / publish_generation_job_chapter_v5',
         'lib/runtime/lifecycle.ts :: publishChapterV2',
         'lib/runtime/generation-jobs.ts :: publishGenerationJobChapterV4',
       ],
       consumers: ['lib/narrative/loader.ts :: loadCanonSnapshot', 'lib/story-engine/chapter-brief.ts :: buildChapterBrief'],
-      validators: ['supabase/migrations/20260805020000_living_canon_publication_primitives.sql :: publish_chapter_state_v3 (schema preflight / hash)'],
+      validators: ['db/migrations/20260805020000_living_canon_publication_primitives.sql :: publish_chapter_state_v3 (schema preflight / hash)'],
       evidence: [
         ...CANON_WRITEBACK_EVIDENCE,
         {

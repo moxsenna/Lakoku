@@ -8,7 +8,7 @@ import { getDb, result, single } from '@lakoku/db'
 import { getSessionUser } from '@/lib/api/user-state'
 import { resolveStoryCover } from '@/lib/api/queries'
 import type { JejakItem } from '@/lib/api/types'
-import type { Json } from '@/lib/supabase/db-types'
+import type { Json } from '@/lib/db/db-types'
 
 export type ShareVisibility = 'unlisted' | 'public'
 export type ShareType = 'ending_card' | 'story_seed' | 'challenge'

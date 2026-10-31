@@ -18,10 +18,10 @@ import { test, expect, describe, beforeEach, vi } from 'vitest'
 
 // Mock server-only for vitest environment (required because admin.ts uses the
 // 'server-only' directive). Must be declared before the import graph that pulls
-// in @/lib/supabase/admin.
+// in @/lib/db/admin.
 vi.mock('server-only', () => ({}))
 
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient } from '@/lib/db/admin'
 import { buildHarnessContract } from '../../lib/narrative-qa/harness/fixture'
 import { parseStoryContractWithNormalization } from '../../lib/story-engine/story-contract'
 import { assertIsolatedTarget } from '../../lib/narrative-qa/harness/seed'

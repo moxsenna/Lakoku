@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.cookieFactory }))
+vi.mock('@/lib/db/server', () => ({ createClient: mocks.cookieFactory }))
 vi.mock('@/lib/auth', () => ({
   auth: {
     api: {
@@ -21,7 +21,7 @@ vi.mock('@/lib/auth', () => ({
     },
   },
 }))
-vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.adminFactory }))
+vi.mock('@/lib/db/admin', () => ({ createAdminClient: mocks.adminFactory }))
 vi.mock('@lakoku/db', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>()
   return {
@@ -29,7 +29,7 @@ vi.mock('@lakoku/db', async (importOriginal) => {
     getDb: mocks.getDb,
   }
 })
-vi.mock('@/lib/supabase/env', () => ({
+vi.mock('@/lib/db/env', () => ({
   requireSupabaseAnonKey: () => 'anon-key',
   requireSupabaseUrl: () => 'https://example.supabase.co',
 }))

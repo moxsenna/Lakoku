@@ -6,12 +6,13 @@
  * through the production publication path; nothing here may be reused to patch
  * mid-run state.
  *
- * Safety: `assertIsolatedTarget()` refuses to run unless the Supabase URL is a
- * loopback/local host. The harness must never touch production or a linked DB.
+ * Safety: `assertIsolatedTarget()` refuses to run unless the DATABASE_URL host is
+ * a loopback/local host. The harness must never touch production or a linked DB.
  */
 
+import { randomUUID } from 'node:crypto'
 import { getDb, single, type Json } from '@lakoku/db'
-import { createAdminClient } from '../../supabase/admin'
+import { hashPassword } from '@/lib/auth/password'
 import { debtBackedThreadId } from '@lakoku/narrative-core'
 import { normalizeRouteState } from '../../story-engine/route-state'
 import {
@@ -24,7 +25,8 @@ import {
   harnessPolicyForChapter,
 } from './fixture'
 
-type Admin = ReturnType<typeof createAdminClient>
+/** Opaque legacy param — dulu client supabase-js; kini tidak dipakai (lihat ensureHarnessUser). */
+type Admin = unknown
 
 export class HarnessIsolationError extends Error {
   constructor(message: string) {
@@ -386,17 +388,35 @@ export async function seedHarnessStory(input: SeedHarnessStoryInput): Promise<vo
   if (readerInsert.error) throw new HarnessIsolationError(`seed reader_states failed: ${readerInsert.error.message}`)
 }
 
-export async function ensureHarnessUser(admin?: unknown, userId = HARNESS_USER_ID, email = HARNESS_USER_EMAIL): Promise<void> {
-  const adminClient =
-    admin && typeof admin === 'object' && 'auth' in admin
-      ? (admin as Admin)
-      : createAdminClient()
-  await adminClient.auth.admin
-    .createUser({
+/**
+ * Port dekomisi Supabase → Better Auth: user harness dibuat langsung di tabel
+ * `user` + `account` (credential) via Kysely. Parameter `admin` dipertahankan
+ * agar pemanggil lama (matriks fault M10) tidak berubah — kini diabaikan.
+ */
+export async function ensureHarnessUser(_admin?: unknown, userId = HARNESS_USER_ID, email = HARNESS_USER_EMAIL): Promise<void> {
+  const db = getDb()
+  const now = new Date()
+  await db
+    .insertInto('user')
+    .values({
       id: userId,
       email,
-      password: `m10c-${userId}`,
-      email_confirm: true,
+      name: email.split('@')[0] ?? 'harness',
+      emailVerified: true,
+      createdAt: now,
+      updatedAt: now,
     })
-    .catch(() => null)
+    .onConflict((oc) => oc.column('id').doNothing())
+    .execute()
+  await db
+    .insertInto('account')
+    .values({
+      id: randomUUID(),
+      accountId: userId,
+      providerId: 'credential',
+      userId,
+      password: await hashPassword(`m10c-${userId}`),
+    })
+    .onConflict((oc) => oc.column('id').doNothing())
+    .execute()
 }

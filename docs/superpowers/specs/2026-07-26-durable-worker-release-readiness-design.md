@@ -119,9 +119,9 @@ After reset, run `node scripts/run-smoke.cjs scripts/set-local-db-test-marker.ts
 
 Ensure the project's DB test command includes:
 
-- `supabase/tests/claim_generation_job_by_id_test.sql`
-- `supabase/tests/checkpoint_versioning_test.sql`
-- `supabase/tests/generation_checkpoint_fencing_test.sql`
+- `db/tests/claim_generation_job_by_id_test.sql`
+- `db/tests/checkpoint_versioning_test.sql`
+- `db/tests/generation_checkpoint_fencing_test.sql`
 - the checkpoint ownership race script added for the fenced RPCs
 
 Then run the complete pgTAP suite.
@@ -144,7 +144,7 @@ pgTAP tests must prove:
 Add a separate forward-only migration:
 
 ```text
-supabase/migrations/20260724121000_generation_checkpoint_fencing.sql
+db/migrations/20260724121000_generation_checkpoint_fencing.sql
 ```
 
 Do not modify `20260724120000_checkpoint_versioning.sql`. The new RPCs depend on its provenance columns and schema-version marker, so a third migration keeps ordering, applied-history immutability, ACL review, and rollback scope explicit.

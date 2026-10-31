@@ -3,15 +3,15 @@ import { describe, expect, it } from 'vitest'
 
 const ROOT = process.cwd()
 const FORWARD_ATTESTATION_MIGRATION = readFileSync(
-  `${ROOT}/supabase/migrations/20260824101000_e5_stateless_validator_attestation.sql`,
+  `${ROOT}/db/migrations/20260824101000_e5_stateless_validator_attestation.sql`,
   'utf8',
 )
 const RESOLUTION_LEDGER_MIGRATION = readFileSync(
-  `${ROOT}/supabase/migrations/20260823100100_e5_blueprint_resolutions.sql`,
+  `${ROOT}/db/migrations/20260823100100_e5_blueprint_resolutions.sql`,
   'utf8',
 )
 const AUDIT_MIGRATION = readFileSync(
-  `${ROOT}/supabase/migrations/20260823100200_e5_blueprint_audit.sql`,
+  `${ROOT}/db/migrations/20260823100200_e5_blueprint_audit.sql`,
   'utf8',
 )
 

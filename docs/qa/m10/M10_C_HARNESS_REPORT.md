@@ -199,7 +199,7 @@ Proof summaries (full text in `blockers.json`):
   has — identical for sync, worker, and real-model paths. Both clones drop the identical
   nothing, so parity cannot be invalidated. Fixing requires a call site in a read-only file.
 - **#3** No production table, checkpoint field, or audit signal records an
-  emotional-resolution beat (grep across `lib/runtime`, `lib/prose`, `supabase/migrations`
+  emotional-resolution beat (grep across `lib/runtime`, `lib/prose`, `db/migrations`
   returns zero matches outside `lib/narrative-qa`). `CheckpointAuditSignalsV2` carries only
   opensNewThread / opensMajorMystery / opensNewConflict / closesPlotDebts;
   `chapter_blueprints.mandatory_beats` is pre-generation intent, not committed canon. The
@@ -256,7 +256,7 @@ closed by Bab 50, all threads resolved — the fixture's closure runway is intac
    `supabase db reset` (duplicate object creation) and fails
    `tests/db/migration-version-uniqueness.test.ts`. The local DB for this run was bootstrapped
    with a documented workaround (apply once + bookkeeping rows). **Reviewer decision required:**
-   delete the duplicate file vs convert it to a no-op — either touches `supabase/migrations/`
+   delete the duplicate file vs convert it to a no-op — either touches `db/migrations/`
    and needs approval; blocked by G5-NOCONFLICT / production-DB forbiddance otherwise.
 3. **`factConflict` evaluator remains `0.0.0-blocked`** (M10-B frozen state) — unchanged.
 4. **V5 does not capture/spend `credit_reservations`** (V6 does). Reservations stay `ACTIVE`

@@ -32,7 +32,7 @@ export const EndingCandidateSchema = z.object({
 ```
 
 - `styleProfile` bumped `'lakoku_mobile_drama_v1' → 'lakoku_mobile_drama_v2'`.
-- Migration validation in `supabase/migrations/20260728010000_plot_debt_closure_ledger.sql` updated to accept new keys.
+- Migration validation in `db/migrations/20260728010000_plot_debt_closure_ledger.sql` updated to accept new keys.
 - Fixtures (`fixtures/contracts/*.ts`, `long-horizon/story-bible-pressure.ts`) updated with explicit fields; test contracts extended similarly.
 - Producer/consumer map unchanged except honest mapping update.
 

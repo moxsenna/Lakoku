@@ -20,7 +20,7 @@ console.log('analytics:')
 // ── Migration ──────────────────────────────────────────────────────
 
 const migrationPath = path.resolve(
-  __dirname, '..', 'supabase', 'migrations', '20260711000001_analytics_events.sql',
+  __dirname, '..', 'db', 'migrations', '20260711000001_analytics_events.sql',
 )
 check('Migration file exists', fs.existsSync(migrationPath))
 
@@ -117,7 +117,7 @@ check('Schema: reject overlong share_slug', !AnalyticsEventSchema.safeParse({
 // ── Migration user_acquisition (OQ1=A) ─────────────────────────────
 
 const acquisitionMigrationPath = path.resolve(
-  __dirname, '..', 'supabase', 'migrations', '20261101090000_user_acquisition.sql',
+  __dirname, '..', 'db', 'migrations', '20261101090000_user_acquisition.sql',
 )
 check('Migration user_acquisition exists', fs.existsSync(acquisitionMigrationPath))
 

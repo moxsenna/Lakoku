@@ -45,7 +45,7 @@
         "./lib/runtime/server.ts"
       ],
       "@lakoku/db": [
-        "./lib/supabase/index.ts"
+        "./lib/db/index.ts"
       ],
       "@lakoku/authoring": [
         "./lib/authoring/index.ts"
@@ -75,6 +75,7 @@
     ".next/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "scripts/legacy"
   ]
 }

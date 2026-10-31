@@ -11,7 +11,7 @@ untuk membuka bab). Referensi kontrak: `D:/Coding/paycore/docs/external/`.
 - **Inbound** (`lib/entitlement/paycore.ts`, `app/api/checkout/webhook`): PayCore kirim
   `payment.succeeded` (ditandatangani) → verifikasi HMAC + anti-replay → `grant_credits_v1`
   idempoten (`ref = paycore:{order_id}`). **Satu-satunya** jalur yang menerbitkan kredit.
-- **Model kredit** (`supabase/migrations/20260708000000_paycore_credit_model.sql`):
+- **Model kredit** (`db/migrations/20260708000000_paycore_credit_model.sql`):
   `credit_ledger` append-only + `grant_credits_v1` / `spend_credits_v1` / `credit_balance_v1`.
 
 ## 1. Migrasi DB (sudah applied di produksi)

@@ -24,18 +24,18 @@
 ### Task 2: Failing database tests
 
 **Files:**
-- Modify: `supabase/tests/personalized_story_rls_test.sql`
+- Modify: `db/tests/personalized_story_rls_test.sql`
 
 - [ ] Add deterministic owned personalized fixtures with canonical reader state, stored choice labels, and valid effect payloads.
 - [ ] Add pgTAP assertions for exact RPC signature/security/ACL, ledger isolation, atomic route/history/jejak/progress mutation, stored public replay snapshot, exact replay, key collision, chapter conflict, stale-state rejection, and rollback.
-- [ ] Run `pnpm exec supabase test db supabase/tests/personalized_story_rls_test.sql`.
+- [ ] Run `pnpm exec supabase test db db/tests/personalized_story_rls_test.sql`.
 - [ ] Confirm RED because ledger/RPC do not exist.
 
 ### Task 3: Atomic database RPC
 
 **Files:**
-- Create: `supabase/migrations/20260713030000_apply_personalized_choice.sql`
-- Test: `supabase/tests/personalized_story_rls_test.sql`
+- Create: `db/migrations/20260713030000_apply_personalized_choice.sql`
+- Test: `db/tests/personalized_story_rls_test.sql`
 
 - [ ] Create dedicated `personalized_choice_applications` table keyed by user/idempotency and unique by user/story/chapter; store public outcome snapshot.
 - [ ] Create `public.apply_personalized_choice(uuid,text,integer,text,text,jsonb,jsonb,jsonb,jsonb)` as `VOLATILE SECURITY DEFINER SET search_path = ''`.
@@ -75,7 +75,7 @@
 - Review exact five Task 19 production/test files.
 
 - [ ] Run `pnpm vitest run tests/api/personalized-choice.test.ts tests/api/owned-queries.test.ts tests/story-engine/route-state.test.ts tests/story-engine/choice-branch.test.ts`.
-- [ ] Run `pnpm exec supabase test db supabase/tests/personalized_story_rls_test.sql`.
+- [ ] Run `pnpm exec supabase test db db/tests/personalized_story_rls_test.sql`.
 - [ ] Run `pnpm typecheck` and `pnpm lint`.
 - [ ] Run `git diff --check`.
 - [ ] Verify no wildcard internal select, no internal response fields, no Task 14/23 file conflicts, and no unrequested commit/push.

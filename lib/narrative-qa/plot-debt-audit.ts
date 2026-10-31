@@ -24,7 +24,7 @@
  *   - lib/runtime/personalized-generation.ts :: generateNextPersonalizedChapter
  *     (lines ~887-889) — effectivePlotDebtState is loaded BEFORE buildChapterBrief
  *     so obligations are visible to generation (closure).
- *   - supabase/migrations/20260805020000_living_canon_publication_primitives.sql
+ *   - db/migrations/20260805020000_living_canon_publication_primitives.sql
  *     :: apply_validated_chapter_state_v1 — writes reader_plot_debt_progress and
  *     reader_plot_debt_closures atomically with the canon; validates
  *     DEBT_CLOSURE_DEADLINE_VIOLATION / MAIN_MYSTERY_UNRESOLVED / OPEN_DEBT_AT_END.
@@ -107,7 +107,7 @@ export const PLOT_DEBT_AUDIT_EVIDENCE: StructuredEvidence[] = [
       'Deterministic per-chapter debt audit with CLOSURE_RUNWAY constants (noNewMajorConflictAfter 35, noNewThreadAfter 40, endingLockChapter 45, mainMysteryResolveBy 48, finalEndingChapter 50).',
   },
   {
-    source: 'supabase/migrations/20260805020000_living_canon_publication_primitives.sql :: apply_validated_chapter_state_v1',
+    source: 'db/migrations/20260805020000_living_canon_publication_primitives.sql :: apply_validated_chapter_state_v1',
     evidenceClass: 'SOURCE_TRACE',
     observation:
       'M10-A closure (PLOT_DEBT_PROGRESS_NOT_PERSISTED): the applier inserts reader_plot_debt_progress rows and reader_plot_debt_closures rows (with closed_by_job_id nullable for the sync path) atomically with the canon; validates DEBT_CLOSURE_DEADLINE_VIOLATION / MAIN_MYSTERY_UNRESOLVED / OPEN_DEBT_AT_END.',
@@ -265,7 +265,7 @@ function baseFinding(
       'lib/runtime/personalized-generation.ts :: derivePlotDebtAuditFlags',
     ],
     consumers: ['lib/story-engine/chapter-brief.ts :: buildChapterBrief'],
-    validators: ['supabase/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4'],
+    validators: ['db/migrations/20260728050000_publish_generation_job_chapter_v4_common_checkpoint.sql :: publish_generation_job_chapter_v4'],
     evidence: [
       ...PLOT_DEBT_AUDIT_EVIDENCE,
       {

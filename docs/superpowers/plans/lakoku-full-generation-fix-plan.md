@@ -394,7 +394,7 @@ scripts/check-migration-version-uniqueness.ts
 
 Algoritme:
 
-1. baca `supabase/migrations/*.sql`;
+1. baca `db/migrations/*.sql`;
 2. ambil prefix 14 digit;
 3. group berdasarkan prefix;
 4. fail bila ada duplikat.
@@ -1584,11 +1584,11 @@ Tanpa menyimpan prosa.
 Tambahkan:
 
 ```text
-supabase/tests/story_creative_direction_integrity_test.sql
-supabase/tests/migration_version_reconciliation_test.sql
-supabase/tests/chapter_generation_checkpoint_test.sql
-supabase/tests/generation_choice_retry_test.sql
-supabase/tests/generation_attempt_status_test.sql
+db/tests/story_creative_direction_integrity_test.sql
+db/tests/migration_version_reconciliation_test.sql
+db/tests/chapter_generation_checkpoint_test.sql
+db/tests/generation_choice_retry_test.sql
+db/tests/generation_attempt_status_test.sql
 ```
 
 Skenario:

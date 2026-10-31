@@ -13,7 +13,7 @@ lib/
 ├── ai-gateway/       # @lakoku/ai-gateway: model selection, safety, generation
 ├── runtime/          # @lakoku/runtime: lifecycle, jobs, concurrency
 ├── authoring/        # Story bible compilation, validation, brainstorm
-├── supabase/         # @lakoku/db: database clients, admin, proxy
+├── db/               # @lakoku/db: database client Kysely (Neon), compat helpers
 ├── story-engine/     # Chapter briefs, quality, route state
 ├── taste-profile/    # Reader preference catalog & resolver
 ├── paycore/          # Payment integration (PayCore)
@@ -37,13 +37,13 @@ lib/
 | Task | Location | Notes |
 |------|----------|-------|
 | Data access (client) | `lib/api/client.ts` | Browser → fetch → /api/* |
-| Data access (server) | `lib/api/server.ts` | RSC → Supabase direct |
+| Data access (server) | `lib/api/server.ts` | RSC → DB direct (Kysely/Neon) |
 | Data types | `lib/api/types.ts` | Shared contracts |
 | Story logic | `lib/narrative/` | Pure logic, no DB |
 | AI generation | `lib/ai-gateway/` | Model selection, safety |
 | Generation runtime | `lib/runtime/` | Jobs, concurrency, lifecycle |
 | Story authoring | `lib/authoring/` | Bible compilation, validation |
-| DB access | `lib/supabase/` | Admin, client, server, proxy |
+| DB access | `lib/db/` | Admin, client, server, proxy |
 | Payment | `lib/paycore/` | PayCore integration |
 | Credits | `lib/credits/` | Credit policy |
 | Entitlements | `lib/entitlement/` | Access control |
@@ -79,4 +79,4 @@ export * from './loader'
 
 - Pure logic: `lib/**/*.test.ts` (Vitest)
 - Server logic: tested via smoke tests in `scripts/`
-- DB logic: tested via `supabase/tests/*.sql`
+- DB logic: tested via `db/tests/*.sql`

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { getDb, result, rpcOne, rpcRows, single } from '@lakoku/db'
 import type { Kysely } from 'kysely'
-import type { Database } from '@/lib/supabase/db-types'
+import type { Database } from '@/lib/db/db-types'
 import {
   decryptChoiceLexicalEvidence,
   type EncryptedChoiceLexicalEvidence,

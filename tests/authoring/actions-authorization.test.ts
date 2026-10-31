@@ -44,7 +44,7 @@ vi.mock('@/lib/runtime/generation-mode', () => ({
   runChapterGenerationAttempt: mocks.runChapterGenerationAttempt,
 }))
 vi.mock('next/server', () => ({ after: mocks.after }))
-vi.mock('@/lib/supabase/admin', () => ({
+vi.mock('@/lib/db/admin', () => ({
   createAdminClient: mocks.adminFactory,
 }))
 vi.mock('@lakoku/db', async (importOriginal) => {

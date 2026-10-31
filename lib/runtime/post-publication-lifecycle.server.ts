@@ -76,7 +76,7 @@ export interface PostPublicationLifecycleInput {
 /**
  * Append a story_event with the established seq pattern: seq = max(seq)+1,
  * retry on unique_violation (concurrent writers) up to 5 attempts.
- * TS mirror of supabase/migrations/20260713010000_publish_chapter_v2.sql.
+ * TS mirror of db/migrations/20260713010000_publish_chapter_v2.sql.
  */
 export async function insertStoryEvent(
   adminOrDb: unknown,

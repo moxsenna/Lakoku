@@ -12,7 +12,7 @@ function check(name, cond, detail = '') {
   else { failed = true; console.error(`  FAIL ${name} ${detail}`) }
 }
 
-const migrationPath = 'supabase/migrations/20260917120000_play_billing_channel_model.sql'
+const migrationPath = 'db/migrations/20260917120000_play_billing_channel_model.sql'
 check('migration ada', existsSync(migrationPath))
 const sql = readFileSync(migrationPath, 'utf8')
 

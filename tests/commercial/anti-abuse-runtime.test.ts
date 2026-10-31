@@ -45,7 +45,7 @@ function adaptMockDbToKysely(mockDb: any) {
   }
 }
 
-vi.mock('@/lib/supabase/admin', () => {
+vi.mock('@/lib/db/admin', () => {
   return {
     createAdminClient: () => mockCreateAdminClient(),
   }
@@ -62,7 +62,7 @@ vi.mock('@lakoku/db', async (importOriginal) => {
 
 import { isCommercialStoryMode, resolveCommercialAuthorization } from '@/lib/commercial/resolver.server'
 import { resolveChapterAccess } from '@/lib/credits/access-resolver.server'
-import type { createAdminClient } from '@/lib/supabase/admin'
+import type { createAdminClient } from '@/lib/db/admin'
 
 const mockFeatureCreditCosts = [
   { feature_key: 'story_start', credits_required: 24, is_active: true },

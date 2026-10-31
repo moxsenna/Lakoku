@@ -43,7 +43,7 @@ const status = getLocalStatus()
 process.env.SUPABASE_URL = status.url
 process.env.SUPABASE_SERVICE_ROLE_KEY = status.key
 
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient } from '@/lib/db/admin'
 import { applyPersonalizedChoice } from '@/lib/api/personalized-choice.server'
 import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
 import { clonePremiumStoryForUser, PremiumCloneError } from '@/lib/api/premium-clone.server'
@@ -51,7 +51,7 @@ import * as aiGatewayModule from '@lakoku/ai-gateway/server'
 import * as contractGenModule from '@/lib/story-engine/contract-generation.server'
 import * as personalizedGenModule from '@/lib/runtime/personalized-generation'
 
-vi.mock('@/lib/supabase/server', () => ({
+vi.mock('@/lib/db/server', () => ({
   createClient: vi.fn(async () => {
     const admin = createAdminClient()
     return {

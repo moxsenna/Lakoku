@@ -176,7 +176,7 @@ function localSupabaseProjectId(
   context: string,
   dependencies: LocalRaceVerificationDependencies,
 ): string {
-  const configPath = path.join(dependencies.cwd, 'supabase', 'config.toml')
+  const configPath = path.join(dependencies.cwd, 'db', 'config.toml')
   let config = ''
   try {
     config = dependencies.readConfig(configPath)

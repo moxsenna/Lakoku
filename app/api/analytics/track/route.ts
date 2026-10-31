@@ -14,7 +14,7 @@ import { NextResponse } from 'next/server'
 import { getDb } from '@lakoku/db'
 import { getSessionUser } from '@/lib/api/user-state'
 import { AnalyticsEventSchema } from '@/lib/analytics/events'
-import type { Json } from '@/lib/supabase/db-types'
+import type { Json } from '@/lib/db/db-types'
 
 export const dynamic = 'force-dynamic'
 

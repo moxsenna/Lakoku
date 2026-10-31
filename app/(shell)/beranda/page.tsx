@@ -253,29 +253,41 @@ export default async function BerandaPage() {
 
       {SHOW_DARI_PEMBACA_LAIN && publicUserStories.length > 0 && (
         <section aria-labelledby="pembaca-lain-heading" className="flex flex-col gap-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-baseline justify-between">
             <h2 id="pembaca-lain-heading" className="font-serif text-xl text-foreground">
               Dari Pembaca Lain
             </h2>
+            <Link href="/jelajah" className="text-xs font-medium text-primary">
+              Semua cerita
+            </Link>
           </div>
-          <div className="flex flex-col gap-3">
+          <div className="-mx-5 flex snap-x snap-mandatory gap-3 overflow-x-auto px-5 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {publicUserStories.map((story) => (
-              <div key={story.id} className="relative">
-                <div className="pointer-events-none absolute right-3 top-3 z-10">
-                  <span className="rounded-full bg-gold/15 px-2.5 py-0.5 text-[10px] font-semibold tracking-wide text-gold">
+              <Link
+                key={story.id}
+                href={`/cerita/${story.id}`}
+                className="group w-28 shrink-0 snap-start"
+              >
+                <div className="relative aspect-[2/3] overflow-hidden rounded-xl bg-muted">
+                  <Image
+                    src={
+                      story.cover && story.cover !== '/placeholder.svg'
+                        ? story.cover
+                        : '/covers/default-cover.webp'
+                    }
+                    alt={`Sampul cerita ${story.title}`}
+                    fill
+                    sizes="112px"
+                    className="object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                  />
+                  <span className="absolute right-1.5 top-1.5 rounded-full bg-gold/20 px-2 py-0.5 text-[9px] font-semibold tracking-wide text-gold backdrop-blur">
                     DARI PENULIS
                   </span>
                 </div>
-                <Link
-                  href={`/cerita/${story.id}`}
-                  className="flex flex-col gap-2 rounded-2xl bg-card p-4 transition-colors hover:bg-secondary/40"
-                >
-                  <span className="font-serif text-lg text-foreground">{story.title}</span>
-                  <span className="text-xs leading-relaxed text-muted-foreground line-clamp-2">
-                    {story.tagline}
-                  </span>
-                </Link>
-              </div>
+                <span className="mt-2 block truncate text-xs font-medium text-foreground">
+                  {story.title}
+                </span>
+              </Link>
             ))}
           </div>
         </section>

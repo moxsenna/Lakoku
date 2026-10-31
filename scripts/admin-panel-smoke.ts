@@ -64,11 +64,12 @@ if (existsSync(layoutPath)) {
   check('layout.tsx imports requireAdminUser', c.includes('requireAdminUser'))
 }
 
-// Middleware matcher
-const mwPath = join(root, 'middleware.ts')
-if (existsSync(mwPath)) {
-  const c = readFileSync(mwPath, 'utf-8')
-  check("middleware.ts matcher includes '/admin/:path*'", c.includes('/admin/:path*'))
+// Layout guard melakukan redirect (dekomi middleware-matcher /admin: penjagaan
+// admin kini hidup di layout RSC + guardAdminToken API, bukan middleware).
+if (existsSync(layoutPath)) {
+  const c = readFileSync(layoutPath, 'utf-8')
+  check('layout.tsx redirects Unauthenticated to /auth/login', c.includes("redirect('/auth/login')"))
+  check('layout.tsx redirects non-admin to /', c.includes("redirect('/')"))
 }
 
 // Sidebar has consistency link

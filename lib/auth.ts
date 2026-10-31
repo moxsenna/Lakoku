@@ -6,6 +6,11 @@ import { hashPassword, verifyPassword } from '@/lib/auth/password'
 import { sendMailketingEmail } from '@/lib/email/mailketing'
 import { recordReferralAttribution } from '@/lib/rewards/attribution.server'
 import { REFERRAL_COOKIE_NAME } from '@/lib/rewards/policy'
+import {
+  ACQUISITION_COOKIE_NAME,
+  parseAcquisitionCookie,
+} from '@/lib/acquisition/policy'
+import { recordAcquisition } from '@/lib/acquisition/record.server'
 
 let poolInstance: Pool | null = null
 
@@ -72,6 +77,17 @@ const baseAuth = betterAuth({
             const referralCode = match ? decodeURIComponent(match[1]) : null
             if (referralCode && user?.id) {
               await recordReferralAttribution(user.id, referralCode, 'referral_code')
+            }
+            // Capture akuisisi (OQ1=A): TEPAT SATU baris per signup — cookie
+            // hilang/rusak tetap menulis 'direct', bukan melewatkan baris (G1).
+            if (user?.id) {
+              const acqMatch = cookies.match(
+                new RegExp(`(?:^|; )${ACQUISITION_COOKIE_NAME}=([^;]*)`),
+              )
+              const parsed = acqMatch
+                ? parseAcquisitionCookie(decodeURIComponent(acqMatch[1]))
+                : null
+              await recordAcquisition(user.id, parsed)
             }
           } catch (err) {
             console.error('[auth] Referral attribution error:', err)

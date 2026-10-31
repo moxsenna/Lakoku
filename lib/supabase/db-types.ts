@@ -142,6 +142,16 @@ export interface AnalyticsEvents {
   user_id: string | null;
 }
 
+export interface UserAcquisition {
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  referrer_host: string | null;
+  source: string;
+  user_id: string;
+  utm_campaign: string | null;
+  utm_source: string | null;
+}
+
 export interface AuthUsers {
   aud: string | null;
   created_at: Generated<Timestamp>;
@@ -1372,6 +1382,7 @@ export interface DB {
   tinta_ledger: TintaLedger;
   tinta_policy: TintaPolicy;
   user: User;
+  user_acquisition: UserAcquisition;
   user_mission_daily: UserMissionDaily;
   verification: Verification;
   vw_blueprint_pending_review_items: VwBlueprintPendingReviewItems;

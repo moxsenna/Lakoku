@@ -53,7 +53,10 @@ export default async function ShareLandingPage({
 
   return (
     <main className="mx-auto flex min-h-svh w-full max-w-md flex-col bg-background">
-      <TrackOnView event="share_link_opened" payload={{ placement: 'share_landing' }} />
+      <TrackOnView
+        event="share_link_opened"
+        payload={{ placement: 'share_landing', share_slug: share.shareSlug }}
+      />
       <div className="relative h-[40svh] w-full overflow-hidden">
         <Image
           src={t.cover && t.cover !== '/placeholder.svg' ? t.cover : '/covers/default-cover.webp'}

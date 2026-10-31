@@ -93,6 +93,44 @@ check('Schema: reject invalid stage', !AnalyticsEventSchema.safeParse({
   created_at: new Date().toISOString(),
 }).success)
 
+check('Schema: accept share_slug', AnalyticsEventSchema.safeParse({
+  event_name: 'share_link_opened',
+  share_slug: 'kamar-304',
+  anonymous_id: null,
+  created_at: new Date().toISOString(),
+}).success)
+
+check('Schema: reject free-text share_slug', !AnalyticsEventSchema.safeParse({
+  event_name: 'share_link_opened',
+  share_slug: 'Slug Bebas!!',
+  anonymous_id: null,
+  created_at: new Date().toISOString(),
+}).success)
+
+check('Schema: reject overlong share_slug', !AnalyticsEventSchema.safeParse({
+  event_name: 'share_link_opened',
+  share_slug: 'a'.repeat(33),
+  anonymous_id: null,
+  created_at: new Date().toISOString(),
+}).success)
+
+// ── Migration user_acquisition (OQ1=A) ─────────────────────────────
+
+const acquisitionMigrationPath = path.resolve(
+  __dirname, '..', 'supabase', 'migrations', '20261101090000_user_acquisition.sql',
+)
+check('Migration user_acquisition exists', fs.existsSync(acquisitionMigrationPath))
+
+if (fs.existsSync(acquisitionMigrationPath)) {
+  const acqSql = fs.readFileSync(acquisitionMigrationPath, 'utf-8')
+  check('user_acquisition: create table', acqSql.includes('create table if not exists public.user_acquisition'))
+  check('user_acquisition: source check constraint', acqSql.includes('check (source in'))
+  check('user_acquisition: unique user_id FK', acqSql.includes('unique references auth.users'))
+  check('user_acquisition: pgcrypto', acqSql.includes('pgcrypto'))
+  check('user_acquisition: RLS enabled', acqSql.includes('enable row level security'))
+  check('user_acquisition: no public policy', !acqSql.includes('create policy'))
+}
+
 // ── Client exports ─────────────────────────────────────────────────
 
 const clientPath = path.resolve(__dirname, '..', 'lib', 'analytics', 'client.ts')

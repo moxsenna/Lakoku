@@ -157,6 +157,8 @@ export const AnalyticsEventSchema = z
       ])
       .optional(),
     share_channel: z.enum(['native', 'copy', 'whatsapp', 'download']).optional(),
+    // Slug share /s/<slug> — id stabil, bukan teks bebas (desain pra-launch analytics).
+    share_slug: z.string().regex(/^[a-z0-9_-]{1,32}$/).optional(),
     product_id: z.string().max(64).optional(),
     payment_channel: z.enum(['web', 'android']).optional(),
   })

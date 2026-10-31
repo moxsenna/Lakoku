@@ -13,11 +13,10 @@ import { resolveAdSlot } from '@/lib/ads/server'
 
 export const dynamic = 'force-dynamic'
 
-// Arah "Panggung Tunggal" (2026-10-31): section "Dari Pembaca Lain" disembunyikan
-// dari beranda — kontennya tetap tampil penuh di /jelajah (badge DARI PENULIS).
-// Set true bila PM ingin menampilkannya kembali; tidak ada perubahan lain yang
-// diperlukan.
-const SHOW_DARI_PEMBACA_LAIN = false
+// Keputusan PM (2026-10-31): section "Dari Pembaca Lain" kembali tampil di
+// beranda (disembunyikan sementara saat arah "Panggung Tunggal"). Set false
+// bila ingin disembunyikan lagi; tidak ada perubahan lain yang diperlukan.
+const SHOW_DARI_PEMBACA_LAIN = true
 
 /** Jam WIB (UTC+7) — seluruh pembaca berada di Indonesia. */
 function hourWib(): number {

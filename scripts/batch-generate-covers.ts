@@ -38,11 +38,18 @@ const PRESET_BY_GENRE: Record<string, CoverPresetKey> = {
 
 async function generateAndSaveCover(
   pool: Pool,
-  story: { id: string; title: string; tagline: string; role: string; tropes: any; genre: string }
+  story: { id: string; title: string; tagline: string; role: string; tropes: unknown; genre: string }
 ): Promise<string | null> {
   const storyId = story.id
   const preset = PRESET_BY_GENRE[story.genre] ?? 'sinematik'
-  const tropes = typeof story.tropes === 'string' ? JSON.parse(story.tropes) : (story.tropes || [])
+  // pg mengembalikan jsonb sebagai array siap pakai; kolom legacy teks
+  // masih ditangani lewat JSON.parse.
+  const tropes: string[] =
+    typeof story.tropes === 'string'
+      ? JSON.parse(story.tropes)
+      : Array.isArray(story.tropes)
+        ? story.tropes.map((t) => String(t))
+        : []
 
   console.log(`\nGenerating cover for ${storyId} ("${story.title}")...`)
 
@@ -104,7 +111,7 @@ async function main() {
     title: string
     tagline: string
     role: string
-    tropes: any
+    tropes: unknown
     genre: string
     cover: string
     status: string
@@ -112,10 +119,31 @@ async function main() {
 
   console.log(`Found ${stories.rows.length} total catalog stories.\n`)
 
+  // Mode perbaikan ter-target: `npx tsx scripts/batch-generate-covers.ts <substring-id> ...`
+  // Dengan argumen, hanya cerita yang id-nya memuat salah satu substring yang
+  // diproses DAN cover lama dipaksa di-regenerate — untuk memperbaiki sampul
+  // yang rusak. Tanpa argumen, perilaku lama: semua cerita, yang sudah punya
+  // cover R2 dilewati.
+  const targets = process.argv.slice(2).filter((a) => a.trim() !== '')
+  const force = targets.length > 0
+  const selected = force
+    ? stories.rows.filter((s) => targets.some((t) => s.id.includes(t)))
+    : stories.rows
+  if (force) {
+    console.log(
+      `Repair mode: ${selected.length} story dipilih berdasarkan filter ${JSON.stringify(targets)}. Cover lama DIREGENERATE PAKSA.\n`,
+    )
+    if (selected.length === 0) {
+      console.error('Tidak ada story yang cocok dengan filter — hentikan, tidak ada yang diubah.')
+      await pool.end()
+      return
+    }
+  }
+
   let coverSuccess = 0
-  for (const story of stories.rows) {
+  for (const story of selected) {
     // If cover already uploaded to R2, skip re-generation
-    if (story.cover && story.cover.startsWith('catalog_') && story.cover.endsWith('.webp')) {
+    if (!force && story.cover && story.cover.startsWith('catalog_') && story.cover.endsWith('.webp')) {
       console.log(`[SKIP COVER] ${story.id} already has R2 cover: ${story.cover}`)
       coverSuccess++
     } else {
@@ -126,13 +154,13 @@ async function main() {
     }
   }
 
-  console.log(`\nCover generation summary: ${coverSuccess}/${stories.rows.length} have valid covers.`)
+  console.log(`\nCover generation summary: ${coverSuccess}/${selected.length} have valid covers.`)
 
   // Step 2: Publish all review-ready stories
   console.log('\nPublishing all review-ready stories...')
   let publishedCount = 0
 
-  for (const story of stories.rows) {
+  for (const story of selected) {
     if (story.status === 'published') {
       console.log(`[ALREADY PUBLISHED] ${story.id}`)
       publishedCount++
@@ -152,7 +180,7 @@ async function main() {
   }
 
   console.log(`\n============================================================`)
-  console.log(`FINAL RESULT: ${publishedCount}/${stories.rows.length} stories PUBLISHED and LIVE!`)
+  console.log(`FINAL RESULT: ${publishedCount}/${selected.length} stories PUBLISHED and LIVE!`)
   console.log(`============================================================`)
 
   await pool.end()

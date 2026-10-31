@@ -22,13 +22,45 @@ export type NormalizedCover = { data: Buffer; width: number; height: number; byt
 /**
  * Ubah byte gambar apa pun jadi WebP potret.
  *
+ * ARTWORK TIDAK PERNAH DIPOTONG. Penyedia gambar sering mengabaikan rasio
+ * yang diminta; memaksa 2:3 dengan `fit: 'cover'` terbukti memenggal teks
+ * judul yang digambar di tepi poster (kasus nyata: lima sampul katalog
+ * rusak, 2026-10-31). Strateginya dua lapis:
+ *
+ *   1. Latar 2:3 dari gambar yang sama (cover-fit), dikaburkan dan
+ *      digelapkan — rasio input apa pun menghasilkan kanvas penuh yang
+ *      terasa menyatu, bukan pita kosong.
+ *   2. Artwork utuh di depan dengan `fit: 'contain'` — judul selamat
+ *      apa pun bentuk keluaran penyedia.
+ *
+ * Untuk input yang sudah 2:3, latar tidak pernah terlihat (contain
+ * mengisi penuh) — perilaku identik dengan crop biasa.
+ *
  * Melempar bila input bukan gambar yang bisa dibaca — pemanggil menangkapnya
  * dan menjawab pengguna dengan bahasa manusia.
  */
 export async function normalizeCoverImage(input: Buffer): Promise<NormalizedCover> {
-  const data = await sharp(input, { failOn: 'error' })
-    .rotate() // hormati orientasi EXIF sebelum metadata dibuang
+  const source = sharp(input, { failOn: 'error' }).rotate() // hormati orientasi EXIF sebelum metadata dibuang
+
+  const background = await source
+    .clone()
     .resize(TARGET_WIDTH, TARGET_HEIGHT, { fit: 'cover', position: 'attention' })
+    .blur(40)
+    .modulate({ brightness: 0.8, saturation: 1.05 })
+    .png()
+    .toBuffer()
+
+  const foreground = await source
+    .clone()
+    .resize(TARGET_WIDTH, TARGET_HEIGHT, {
+      fit: 'contain',
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    })
+    .png()
+    .toBuffer()
+
+  const data = await sharp(background)
+    .composite([{ input: foreground }])
     .webp({ quality: WEBP_QUALITY })
     .toBuffer()
 

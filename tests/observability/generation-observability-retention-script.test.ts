@@ -12,7 +12,7 @@ describe('generation observability retention script', () => {
   it('calls only the bounded retention RPC with a safe batch size', () => {
     const text = source()
 
-    expect(text).toContain("rpc('rollup_and_purge_generation_provider_calls_v1'")
+    expect(text).toContain("rpcOne(db, 'rollup_and_purge_generation_provider_calls_v1'")
     expect(text).toMatch(/BATCH_SIZE\s*=\s*1000/)
     expect(text).toMatch(/p_batch_size:\s*BATCH_SIZE/)
     expect(text).toMatch(/MAX_BATCHES\s*=\s*100/)

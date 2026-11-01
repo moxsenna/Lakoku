@@ -97,7 +97,7 @@ describe('authoring race lifecycle harnesses', () => {
   it('derives local DB container only from tracked Supabase config', () => {
     const source = readScript('authoring-race-session.ts')
 
-    expect(source).toContain("path.join(dependencies.cwd, 'supabase', 'config.toml')")
+    expect(source).toContain("path.join(dependencies.cwd, 'db', 'config.toml')")
     expect(source).toContain('`supabase_db_${project}`')
     expect(source).toContain('export function verifyLocalRaceContainer')
     expect(source).not.toContain('path.basename(process.cwd())')

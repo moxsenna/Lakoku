@@ -1,12 +1,12 @@
 /**
- * Adaptasi satu-jalan supabase/migrations -> neon/migrations.
+ * Adaptasi satu-jalan db/migrations -> neon/migrations.
  * Usage: node scripts/adapt-supabase-migrations.mjs
  * Deterministik; hasil di-commit supaya reviewer bisa membedah.
  */
 import { readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
-const SRC = 'supabase/migrations'
+const SRC = 'db/migrations'
 const DST = 'neon/migrations'
 mkdirSync(DST, { recursive: true })
 

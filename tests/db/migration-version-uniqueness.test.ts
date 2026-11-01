@@ -34,7 +34,7 @@ describe('migration version uniqueness', () => {
   })
 
   it('repo migrations have unique version prefixes', () => {
-    const migrationsDir = path.join(process.cwd(), 'supabase', 'migrations')
+    const migrationsDir = path.join(process.cwd(), 'db', 'migrations')
     expect(fs.existsSync(migrationsDir)).toBe(true)
     const files = listMigrationFilenames(migrationsDir)
     expect(files.length).toBeGreaterThan(0)
@@ -45,7 +45,7 @@ describe('migration version uniqueness', () => {
   it('ending lock publication migration exists with unique version', () => {
     const migration = path.join(
       process.cwd(),
-      'supabase',
+      'db',
       'migrations',
       '20260724122000_generation_job_ending_lock_publication.sql',
     )
@@ -58,7 +58,7 @@ describe('migration version uniqueness', () => {
   it('repair migration file exists with unique version', () => {
     const repair = path.join(
       process.cwd(),
-      'supabase',
+      'db',
       'migrations',
       '20260724100000_reconcile_choice_routes_and_creative_direction.sql',
     )

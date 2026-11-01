@@ -21,13 +21,15 @@ const MIGRATIONS_DIR = path.join(__dirname, '..', 'db', 'migrations')
 const VERSION_RE = /^(\d{14})_.+\.sql$/i
 
 function readDatabaseUrl() {
+  // Env menang (dipakai runner test untuk mengarah ke DB uji), file sebagai fallback.
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL
   for (const name of ['.env.local', '.env']) {
     const p = path.join(__dirname, '..', name)
     if (!fs.existsSync(p)) continue
     const line = fs.readFileSync(p, 'utf-8').split('\n').find((l) => l.startsWith('DATABASE_URL='))
     if (line) return line.slice('DATABASE_URL='.length).trim().replace(/^["']|["']$/g, '')
   }
-  console.error('DATABASE_URL tidak ditemukan di .env.local/.env')
+  console.error('DATABASE_URL tidak ditemukan (env atau .env.local/.env)')
   process.exit(1)
 }
 

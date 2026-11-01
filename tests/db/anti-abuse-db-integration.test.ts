@@ -6,7 +6,7 @@ describe('Anti-Abuse DB Migration Integrity', () => {
   it('account_commercial_entitlements migration has strict REVOKE / GRANT ACLs and no unsafe default', () => {
     const filePath = path.join(
       process.cwd(),
-      'supabase',
+      'db',
       'migrations',
       '20260804010000_account_commercial_entitlements.sql',
     )
@@ -22,7 +22,7 @@ describe('Anti-Abuse DB Migration Integrity', () => {
   it('credit_reservations migration has DB-derived prices, reservation-aware spend_credits_v1, DB ownership checks, server-owned TTL, and strict REVOKE / GRANT ACLs', () => {
     const filePath = path.join(
       process.cwd(),
-      'supabase',
+      'db',
       'migrations',
       '20260804020000_credit_reservations.sql',
     )

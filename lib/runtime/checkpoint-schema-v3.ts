@@ -204,6 +204,10 @@ function adaptLivingCheckpointResult(
     const attemptRaw = raw.checkpoint_attempt_id ?? raw.checkpoint?.attempt_id
     const attempt = UuidSchema.safeParse(attemptRaw)
     if (!attempt.success || attempt.data !== expectedCheckpointAttemptId) {
+      console.error(
+          + ' raw=' + JSON.stringify(attemptRaw)
+          + ' rawKeys=' + JSON.stringify(Object.keys(raw)),
+      )
       return {
         ok: false,
         outcome: 'WRITE_FAILED',
@@ -288,9 +292,9 @@ export async function upsertGenerationCheckpointFencedV2(
       p_story_id: parsed.storyId,
       p_chapter_number: parsed.chapterNumber,
       p_title: parsed.title,
-      p_paragraphs: parsed.paragraphs,
+      p_paragraphs: JSON.stringify(parsed.paragraphs),
       p_prose_fingerprint: parsed.proseFingerprint,
-      p_audit_signals: parsed.auditSignals,
+      p_audit_signals: parsed.auditSignals === null ? null : JSON.stringify(parsed.auditSignals),
       p_audit_signals_version: parsed.auditSignalsVersion,
       p_canon_version: parsed.canonVersion,
       p_blueprint_version: parsed.blueprintVersion,
@@ -299,7 +303,7 @@ export async function upsertGenerationCheckpointFencedV2(
       p_generation_policy_version: parsed.generationPolicyVersion,
       p_prompt_contract_version: parsed.promptContractVersion,
       p_prose_attempt_count: parsed.proseAttemptCount,
-      p_state_delta_json: parsed.stateDelta,
+      p_state_delta_json: JSON.stringify(parsed.stateDelta),
       p_state_delta_schema_version: 1,
       p_base_canon_revision: parsed.baseCanonRevision,
     },
@@ -322,16 +326,16 @@ export async function upsertGenerationCheckpointSyncV1(
       p_checkpoint_attempt_id: parsed.checkpointAttemptId,
       p_correlation_id: parsed.correlationId,
       p_title: parsed.title,
-      p_paragraphs: parsed.paragraphs,
+      p_paragraphs: JSON.stringify(parsed.paragraphs),
       p_prose_fingerprint: parsed.proseFingerprint,
-      p_audit_signals: parsed.auditSignals,
+      p_audit_signals: parsed.auditSignals === null ? null : JSON.stringify(parsed.auditSignals),
       p_audit_signals_version: parsed.auditSignalsVersion,
       p_canon_version: parsed.canonVersion,
       p_blueprint_version: parsed.blueprintVersion,
       p_direction_fingerprint: parsed.directionFingerprint,
       p_generation_policy_version: parsed.generationPolicyVersion,
       p_prompt_contract_version: parsed.promptContractVersion,
-      p_state_delta_json: parsed.stateDelta,
+      p_state_delta_json: JSON.stringify(parsed.stateDelta),
       p_base_canon_revision: parsed.baseCanonRevision,
     },
     'UPDATED',
@@ -357,6 +361,8 @@ export interface PublishGenerationJobChapterV5Input {
   leaseId: string
   storyId: string
   chapterNumber: number
+  title: string
+  paragraphs?: string[] | null
   choicePrompt: string | null
   choices: unknown[] | null
   outcomes: PublishOutcomeV2[]
@@ -370,6 +376,8 @@ const V5InputSchema = z.object({
   leaseId: UuidSchema,
   storyId: StoryIdSchema,
   chapterNumber: ChapterNumberSchema,
+  title: z.string().min(1).max(200),
+  paragraphs: z.array(z.string()).nullable().optional().default([]),
   choicePrompt: z.string().nullable(),
   choices: z.array(JsonValueSchema).nullable(),
   outcomes: z.array(OutcomeV2Schema),
@@ -441,7 +449,7 @@ async function callRpcSchema3(name: string, payload: Record<string, unknown>): P
   // RLS_AUDIT(rpc): SERVICE_ROLE_BYPASS - schema-3 publication RPC
   const { data, error } = await single(rpcOne(db, name, payload).execute())
   if (error) {
-    throw mapRpcError(error)
+        throw mapRpcError(error)
   }
   return (data as Record<string, unknown> | null)?.fn ?? data
 }
@@ -466,18 +474,25 @@ export async function publishGenerationJobChapterV5(
   input: PublishGenerationJobChapterV5Input,
 ): Promise<Schema3PublicationResult> {
   const parsed = V5InputSchema.parse(input)
-  const raw = RawPublishV5ResultSchema.parse(await callRpcSchema3('publish_generation_job_chapter_v5', {
+  // Dipromosikan ke v6 (20260805030000): v6 = superset v5 + jalur paid-start
+  // (capture reservasi, commercial_origin PAID_START, promosi request ke READY,
+  // replay proof). v5 tidak menandai request READY sehingga paid story #2
+  // terkunci RESERVED selamanya — dibongkar test komersial Real-DB.
+  const raw = RawPublishV5ResultSchema.parse(await callRpcSchema3('publish_generation_job_chapter_v6', {
     p_job_id: parsed.jobId,
     p_worker_id: parsed.workerId,
     p_claim_token: parsed.claimToken,
     p_lease_id: parsed.leaseId,
     p_story_id: parsed.storyId,
     p_chapter_number: parsed.chapterNumber,
+    p_title: parsed.title,
+    p_paragraphs: JSON.stringify(parsed.paragraphs ?? []),
     p_choice_prompt: parsed.choicePrompt,
-    p_choices: parsed.choices,
-    p_outcomes: wireOutcomes(parsed.outcomes as unknown as PublishOutcomeV2[]),
+    p_choices: JSON.stringify(parsed.choices),
+    p_outcomes: JSON.stringify(wireOutcomes(parsed.outcomes as unknown as PublishOutcomeV2[])),
     p_ending_key: parsed.endingLock?.key ?? null,
     p_ending_name: parsed.endingLock?.name ?? null,
+    p_closures: JSON.stringify([]),
   }))
   return normalizeV3Publication(raw)
 }
@@ -494,8 +509,8 @@ export async function publishChapterStateV3(
     p_lease_id: parsed.leaseId,
     p_checkpoint_attempt_id: parsed.checkpointAttemptId,
     p_choice_prompt: parsed.choicePrompt,
-    p_choices: parsed.choices,
-    p_outcomes: wireOutcomes(parsed.outcomes as unknown as PublishOutcomeV2[]),
+    p_choices: JSON.stringify(parsed.choices),
+    p_outcomes: JSON.stringify(wireOutcomes(parsed.outcomes as unknown as PublishOutcomeV2[])),
     p_ending_key: parsed.endingLock?.key ?? null,
     p_ending_name: parsed.endingLock?.name ?? null,
   }))

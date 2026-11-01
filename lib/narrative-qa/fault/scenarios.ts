@@ -975,6 +975,7 @@ async function runFaultMatrixMutable(input: RunFaultMatrixInput): Promise<FaultR
             leaseId: publishInput.jobContext.leaseId,
             storyId: publishInput.storyId,
             chapterNumber: publishInput.chapterNumber,
+            title: publishInput.title,
             choicePrompt: publishInput.choicePrompt,
             choices: publishInput.choices,
             outcomes: publishInput.outcomes,

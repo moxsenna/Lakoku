@@ -289,6 +289,7 @@ async function mirrorPublishChapterSchema3(
       leaseId: input.jobContext.leaseId,
       storyId: input.storyId,
       chapterNumber: input.chapterNumber,
+      title: input.title,
       choicePrompt: input.choicePrompt,
       choices: input.choices,
       outcomes: input.outcomes,

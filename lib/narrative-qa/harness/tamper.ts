@@ -148,9 +148,9 @@ export async function probePublicationTamper(input: TamperProbeInput): Promise<F
     p_checkpoint_attempt_id: row.attempt_id,
     p_correlation_id: row.correlation_id,
     p_title: row.title,
-    p_paragraphs: row.paragraphs_json,
+    p_paragraphs: JSON.stringify(row.paragraphs_json),
     p_prose_fingerprint: row.prose_fingerprint,
-    p_audit_signals: row.audit_signals_json,
+    p_audit_signals: row.audit_signals_json === null ? null : JSON.stringify(row.audit_signals_json),
     p_audit_signals_version: row.audit_signals_version,
     p_canon_version: row.canon_version,
     p_blueprint_version: row.blueprint_version,
@@ -168,7 +168,7 @@ export async function probePublicationTamper(input: TamperProbeInput): Promise<F
     const { data: rawData, error } = await single(
       rpcOne(db, 'upsert_generation_checkpoint_sync_v1', {
         ...common,
-        p_state_delta_json: tamperedDelta(row),
+        p_state_delta_json: JSON.stringify(tamperedDelta(row)),
       }).execute()
     )
     const data = ((rawData as Record<string, unknown> | null)?.fn ?? rawData) as { ok?: boolean; result?: string | null } | null
@@ -214,9 +214,9 @@ export async function probePublicationTamper(input: TamperProbeInput): Promise<F
         p_story_id: storyId,
         p_chapter_number: chapterNumber,
         p_title: row.title,
-        p_paragraphs: row.paragraphs_json,
+        p_paragraphs: JSON.stringify(row.paragraphs_json),
         p_prose_fingerprint: row.prose_fingerprint,
-        p_audit_signals: row.audit_signals_json,
+        p_audit_signals: row.audit_signals_json === null ? null : JSON.stringify(row.audit_signals_json),
         p_audit_signals_version: row.audit_signals_version,
         p_canon_version: row.canon_version,
         p_blueprint_version: row.blueprint_version,

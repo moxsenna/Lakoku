@@ -170,9 +170,9 @@ export async function recordDisposition(context: ResolutionContext): Promise<{
           p_reviewer_uid: trustedContext.reviewer_uid,
           p_chapter_numbers: validatedEvidence.validatedChapterVersions.map(({ chapter }) => chapter),
           p_validator_version: E5_CANONICAL_VALIDATOR_VERSION,
-          p_spine_reveal_findings: validatedEvidence.spineRevealFindings ?? [],
-          p_ending_results: validatedEvidence.endingResults,
-          p_expected_chapter_versions: validatedEvidence.validatedChapterVersions,
+          p_spine_reveal_findings: JSON.stringify(validatedEvidence.spineRevealFindings ?? []),
+          p_ending_results: JSON.stringify(validatedEvidence.endingResults),
+          p_expected_chapter_versions: JSON.stringify(validatedEvidence.validatedChapterVersions),
         }).execute()
       )
       const rawAttestation = (issuedAttestation as Record<string, unknown> | null)?.fn ?? issuedAttestation

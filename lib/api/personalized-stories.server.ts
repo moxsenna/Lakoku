@@ -516,6 +516,7 @@ export async function runContractAndGeneration(input: {
         tagline: meta.tagline,
         synopsis: meta.synopsis,
         tropes: JSON.stringify(meta.tropes) as unknown as Json,
+        living_canon_version: 1,
         generation_status: 'creating_contract',
       })
       .where('id', '=', input.storyId)
@@ -685,6 +686,7 @@ export async function createPersonalizedStory(
         owner_user_id: userId,
         visibility: 'private',
         story_mode: 'personalized_ai',
+        living_canon_version: 1,
         generation_status: 'creating_contract',
         story_contract_version: 1,
       })

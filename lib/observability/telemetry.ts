@@ -129,10 +129,10 @@ export async function recordGenerationAttempt(input: {
         p_story_id: input.storyId,
         p_chapter_number: input.chapter,
         p_repair_attempts: input.repairAttempts,
-        p_findings: input.findings.slice(0, 12).map((finding) => ({
+        p_findings: JSON.stringify(input.findings.slice(0, 12).map((finding) => ({
           code: finding.code,
           severity: finding.severity,
-        })),
+        }))),
         p_idempotency_key: input.idempotencyKey,
         p_correlation_id: input.correlationId ?? null,
         p_provider_call_id: input.providerCallId ?? null,

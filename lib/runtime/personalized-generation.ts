@@ -6,6 +6,7 @@ import {
   buildBlueprints,
   materializeChapterStateCandidateV1,
   resolvePolicyAuthorityFromBlueprint,
+  buildBaselinePolicyForChapter,
   buildValidatedChapterStateDelta,
   type CanonSnapshot,
   type ChapterBlueprint,
@@ -378,6 +379,8 @@ export interface PublishSchema3ChapterInput {
   userId: string
   leaseId: string
   checkpointAttemptId: string
+  title: string
+  paragraphs?: string[] | null
   choicePrompt: string | null
   choices: unknown[] | null
   outcomes: PublishOutcomeV2[]
@@ -804,6 +807,8 @@ async function defaultPublishChapterSchema3(
       leaseId: input.jobContext.leaseId,
       storyId: input.storyId,
       chapterNumber: input.chapterNumber,
+      title: input.title,
+      paragraphs: input.paragraphs,
       choicePrompt: input.choicePrompt,
       choices: input.choices,
       outcomes: input.outcomes,
@@ -1348,7 +1353,19 @@ async function generateNextPersonalizedChapterInner(
         effectivePlotDebtState: effectivePlotDebtState as EffectivePlotDebtState,
         proposal,
       })
-      const policy = resolvePolicyAuthorityFromBlueprint({ snapshot, chapterNumber, storyId })
+      // Otoritas kebijakan v1: blueprint hasil bootstrap membawa
+      // allowed_state_delta kosong (kontrak bootstrap), jadi baseline
+      // deterministik dibangun dari Story Contract terkunci (plan §13) —
+      // gate resolvePolicyAuthorityFromBlueprint menuntut ampul penuh dan
+      // akan fail closed tanpa pengisian ini (bug laten: tidak pernah
+      // terhubung karena nol pembaca sebelum test Real-DB).
+      const latestBlueprintForPolicy = [...snapshot.blueprints]
+        .filter((bp) => bp.chapterNumber === chapterNumber)
+        .sort((a, b) => b.version - a.version)[0]
+      const policy =
+        latestBlueprintForPolicy && Object.keys(latestBlueprintForPolicy.allowedStateDelta ?? {}).length === 0
+          ? buildBaselinePolicyForChapter({ storyContract: contract, chapterNumber })
+          : resolvePolicyAuthorityFromBlueprint({ snapshot, chapterNumber, storyId })
       validatedStateDelta = buildValidatedChapterStateDelta({
         storyId,
         chapterNumber,
@@ -1834,6 +1851,8 @@ async function generateNextPersonalizedChapterInner(
           userId,
           leaseId,
           checkpointAttemptId,
+          title: draft.title,
+          paragraphs: draft.paragraphs,
           choicePrompt,
           choices,
           outcomes,

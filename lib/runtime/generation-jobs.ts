@@ -394,9 +394,12 @@ async function callCheckpointRpc(
   const db = getDb()
   // RLS_AUDIT(rpc): SERVICE_ROLE_BYPASS - internal worker generation checkpoint RPCs
   const { data, error } = await single(rpcOne(db, name, payload).execute())
-  if (error) return checkpointWriteFailure(error)
+  if (error) {
+    return checkpointWriteFailure(error)
+  }
   const rawData = (data as Record<string, unknown> | null)?.fn ?? data
   const raw = RawFencedCheckpointResultSchema.parse(rawData)
+
   return adaptFencedCheckpointResult(raw, successOutcome, expectedCheckpointAttemptId)
 }
 
@@ -663,9 +666,9 @@ export async function upsertGenerationCheckpointFenced(
       p_story_id: parsed.storyId,
       p_chapter_number: parsed.chapterNumber,
       p_title: parsed.title,
-      p_paragraphs: parsed.paragraphs,
+      p_paragraphs: JSON.stringify(parsed.paragraphs),
       p_prose_fingerprint: parsed.proseFingerprint,
-      p_audit_signals: parsed.auditSignals,
+      p_audit_signals: parsed.auditSignals === null ? null : JSON.stringify(parsed.auditSignals),
       p_audit_signals_version: parsed.auditSignalsVersion,
       p_canon_version: parsed.canonVersion,
       p_blueprint_version: parsed.blueprintVersion,

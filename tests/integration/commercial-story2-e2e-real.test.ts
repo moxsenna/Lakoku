@@ -1,15 +1,15 @@
 /**
  * REAL DB E2E for Story #2 Insufficient Credit → Top-up → Resume Flow
- * 
+ *
  * STRICT SUCCESS CONTRACT: This proves the ENTIRE real-world paid story creation path
  * MUST end in SUCCEEDED state. No fallbacks to RETRY_WAIT, FAILED, or other terminal states.
- * 
+ *
  * Pre-first-attempt: zero requests, zero jobs, zero debits, balance = 20
  * First attempt: INSUFFICIENT_CREDITS error, creates durable request status=WAITING_FOR_CREDITS
  * Top-up +4 credits: 20→24
  * Resume via production seam: createPersonalizedStory(SAME_KEY)
  * Poll until generation_jobs.status = SUCCEEDED (MANDATORY)
- * 
+ *
  * Final state assertions (unconditional):
  * - request READY
  * - same composite request identity
@@ -21,25 +21,18 @@
  * - story generation_status = ready
  * - replay same key = same story, replayed true
  * - zero duplicate request/story/job/reservation/debit
+ *
+ * Dekomisi Supabase (2026-11-01): seeding & asersi memakai Kysely (getDb) ke
+ * DATABASE_URL uji; user uji dibuat langsung di user+account Better Auth.
  */
 import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import { createAdminClient } from '@/lib/db/admin'
+import { getDb, single, rpcOne } from '@lakoku/db'
+import { hashPassword } from '@/lib/auth/password'
 import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
 import { createDeterministicProvider } from '@/lib/ai-gateway/provider'
 
-// Mock server-only and supabase/server BEFORE any other imports
 vi.mock('server-only', () => ({}))
-vi.mock('@/lib/db/server', async () => {
-  const actual = await vi.importActual('@/lib/db/server')
-  return {
-    ...actual,
-    createClient: vi.fn(async () => {
-      const adminClient = createAdminClient()
-      return adminClient as unknown as ReturnType<typeof createAdminClient>
-    }),
-  }
-})
 
 const mocks = vi.hoisted(() => ({
   selectProvider: vi.fn(),
@@ -47,7 +40,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@lakoku/ai-gateway/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/ai-gateway/server')>()
-  
+
   return {
     ...actual,
     selectProvider: mocks.selectProvider,
@@ -59,24 +52,31 @@ const validStory2Provider = createDeterministicProvider()
 describe('Commercial Story #2 Success E2E (Real DB)', () => {
   const idempotencyKey = '00000000-0000-4000-8000-e2e000000002'
   let userId = ''
-  let admin: ReturnType<typeof createAdminClient>
 
   beforeAll(async () => {
-    process.env.NEXT_PUBLIC_SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'http://127.0.0.1:55321'
-    process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU'
-    
     mocks.selectProvider.mockResolvedValue(validStory2Provider)
-    
-    admin = createAdminClient()
-    try { await admin.rpc('reload_schema_cache_v1') } catch {}
 
+    const db = getDb()
     userId = randomUUID()
-    const { error: userErr } = await admin.rpc('create_test_auth_user_v1', {
-      p_user_id: userId,
-      p_email: `story2-${userId}@example.com`,
-    })
-    if (userErr) throw new Error(`create_test_auth_user_v1 failed: ${JSON.stringify(userErr)}`)
-    
+    const email = `story2-${userId}@example.com`
+    const now = new Date()
+    await db
+      .insertInto('user')
+      .values({ id: userId, email, name: email.split('@')[0] ?? 'test', emailVerified: true, createdAt: now, updatedAt: now })
+      .onConflict((oc) => oc.column('id').doNothing())
+      .execute()
+    await db
+      .insertInto('account')
+      .values({
+        id: randomUUID(),
+        accountId: userId,
+        providerId: 'credential',
+        userId,
+        password: await hashPassword(`test-${userId}`),
+      })
+      .onConflict((oc) => oc.column('id').doNothing())
+      .execute()
+
     console.log(`[setup] Created test user: ${userId}`)
   })
 
@@ -93,66 +93,90 @@ describe('Commercial Story #2 Success E2E (Real DB)', () => {
     throw new Error(`Timeout waiting for: ${message}`)
   }
 
+  async function availableBalance(): Promise<number> {
+    const row = await rpcOne(getDb(), 'available_credit_balance_v1', { p_user_id: userId }).executeTakeFirst()
+    return Number((row as Record<string, unknown> | undefined)?.fn ?? 0)
+  }
+
+  async function requestCount(): Promise<number> {
+    const rows = await getDb()
+      .selectFrom('story_creation_requests')
+      .select((eb) => eb.fn.countAll().as('n'))
+      .where('owner_user_id', '=', userId)
+      .where('request_kind', '=', 'personalized')
+      .execute()
+    return Number(rows[0]?.n ?? 0)
+  }
+
   it('proves strict SUCCEEDED success contract with authorization gating, durable binding, atomic execution', async () => {
     // === SETUP: Seed user commercial state with prior starter story claimed ===
-    const { error: starterStoryError } = await admin.from('stories').insert({
-      id: 'story-starter-prev-e2e',
-      owner_user_id: userId,
-      title: 'Starter Story Prev',
-      tagline: 'Tagline',
-      synopsis: 'Synopsis',
-      tropes: [],
-      story_mode: 'personalized_ai',
-      visibility: 'private',
-      status: 'BARU',
-      commercial_origin: 'STARTER_FREE',
-    })
-    expect(starterStoryError).toBeNull()
+    await getDb()
+      .insertInto('stories')
+      .values({
+        id: 'story-starter-prev-e2e',
+        owner_user_id: userId,
+        title: 'Starter Story Prev',
+        tagline: 'Tagline',
+        synopsis: 'Synopsis',
+        tropes: [],
+        story_mode: 'personalized_ai',
+        visibility: 'private',
+        status: 'BARU',
+        commercial_origin: 'STARTER_FREE',
+      })
+      .execute()
 
-    const { error: accountStateError } = await admin.from('account_commercial_states').upsert({
-      user_id: userId,
-      starter_story_id: 'story-starter-prev-e2e',
-      starter_claimed_at: new Date().toISOString(),
-      welcome_credit_granted_at: new Date().toISOString(),
-    })
-    expect(accountStateError).toBeNull()
+    const setupNow = new Date()
+    await getDb()
+      .insertInto('account_commercial_states')
+      .values({
+        user_id: userId,
+        starter_story_id: 'story-starter-prev-e2e',
+        starter_claimed_at: setupNow,
+        welcome_credit_granted_at: setupNow,
+      })
+      .onConflict((oc) => oc.column('user_id').doUpdateSet({
+        starter_story_id: 'story-starter-prev-e2e',
+        starter_claimed_at: setupNow,
+        welcome_credit_granted_at: setupNow,
+      }))
+      .execute()
 
-    const { data: starterStories } = await admin
-      .from('stories')
-      .select('id, commercial_origin')
-      .eq('owner_user_id', userId)
+    const starterStories = await getDb()
+      .selectFrom('stories')
+      .select(['id', 'commercial_origin'])
+      .where('owner_user_id', '=', userId)
+      .execute()
     expect(starterStories).toEqual([{
       id: 'story-starter-prev-e2e',
       commercial_origin: 'STARTER_FREE',
     }])
 
-    const { data: accountState } = await admin
-      .from('account_commercial_states')
-      .select('starter_story_id')
-      .eq('user_id', userId)
-      .single()
+    const { data: accountState } = await single(
+      getDb()
+        .selectFrom('account_commercial_states')
+        .select('starter_story_id')
+        .where('user_id', '=', userId)
+        .limit(1)
+        .execute(),
+    )
     expect(accountState?.starter_story_id).toBe('story-starter-prev-e2e')
 
     // === PHASE 1: Pre-first-attempt state verification ===
-    
+
     // Seed 20 credits (STORY_START price = 24, insufficient by 4)
-    await admin.rpc('grant_credits_v1', {
+    await rpcOne(getDb(), 'grant_credits_v1', {
       p_user_id: userId,
       p_ref: `seed-balance-e2e-${Date.now()}`,
       p_credits: 20,
       p_reason: 'TEST_GRANT',
-    })
+    }).execute()
 
     // Assert ZERO provider calls pre-first-attempt
     expect(mocks.selectProvider).not.toHaveBeenCalled()
 
     // Assert ZERO requests pre-first-attempt
-    const { count: preFirstRequestCount } = await admin
-      .from('story_creation_requests')
-      .select('*', { count: 'exact', head: true })
-      .eq('owner_user_id', userId)
-      .eq('request_kind', 'personalized')
-    expect(preFirstRequestCount ?? 0).toBe(0)
+    expect(await requestCount()).toBe(0)
 
     // INITIAL: First attempt with insufficient balance
     const firstAttemptError = await createPersonalizedStory({
@@ -170,78 +194,76 @@ describe('Commercial Story #2 Success E2E (Real DB)', () => {
     expect(mocks.selectProvider).not.toHaveBeenCalled()
 
     // Verify 0 generation jobs created
-    const { data: earlyJobs } = await admin
-      .from('generation_jobs')
+    const earlyJobs = await getDb()
+      .selectFrom('generation_jobs')
       .select('id')
-      .eq('user_id', userId)
-    expect(earlyJobs?.length ?? 0).toBe(0)
+      .where('user_id', '=', userId)
+      .execute()
+    expect(earlyJobs.length).toBe(0)
 
     // Verify NO capture: zero reservations and zero debits; balance untouched at 20
-    const { data: earlyReservations } = await admin
-      .from('credit_reservations')
+    const earlyReservations = await getDb()
+      .selectFrom('credit_reservations')
       .select('id')
-      .eq('user_id', userId)
-    expect(earlyReservations?.length ?? 0).toBe(0)
+      .where('user_id', '=', userId)
+      .execute()
+    expect(earlyReservations.length).toBe(0)
 
-    const { data: earlyDebits } = await admin
-      .from('credit_ledger')
+    const earlyDebits = await getDb()
+      .selectFrom('credit_ledger')
       .select('delta')
-      .eq('user_id', userId)
-      .eq('reason', 'story_start')
-    expect(earlyDebits?.length ?? 0).toBe(0)
+      .where('user_id', '=', userId)
+      .where('reason', '=', 'story_start')
+      .execute()
+    expect(earlyDebits.length).toBe(0)
 
-    const { data: balanceAfterReject } = await admin
-      .rpc('available_credit_balance_v1', { p_user_id: userId })
-    expect(balanceAfterReject).toBe(20)
+    expect(await availableBalance()).toBe(20)
 
     // Query durable request after first attempt (COMPOSITE PK query)
-    const { data: postFirstRequestResult } = await admin
-      .from('story_creation_requests')
-      .select('*')
-      .eq('owner_user_id', userId)
-      .eq('request_kind', 'personalized')
-      .maybeSingle()
-    
-    expect(postFirstRequestResult).not.toBeNull()
-    const postFirstRequest = postFirstRequestResult as unknown as { [key: string]: unknown } | null
+    const postFirstRequest = await getDb()
+      .selectFrom('story_creation_requests')
+      .selectAll()
+      .where('owner_user_id', '=', userId)
+      .where('request_kind', '=', 'personalized')
+      .executeTakeFirst()
+
+    expect(postFirstRequest).not.toBeNull()
     if (!postFirstRequest) throw new Error('Post-first-attempt request not found')
-    
-    expect(postFirstRequest.idempotency_key).toBe(idempotencyKey)
-    expect(postFirstRequest.status).toBe('WAITING_FOR_CREDITS') // STRICT: ONLY this status
-    
+    const postFirst = postFirstRequest as unknown as { [key: string]: unknown }
+
+    expect(postFirst.idempotency_key).toBe(idempotencyKey)
+    expect(postFirst.status).toBe('WAITING_FOR_CREDITS') // STRICT: ONLY this status
+
     // COMPOSITE PK components: (owner_user_id, request_kind, idempotency_key) - NO standalone id!
-    const initialStoryIdOnWait = postFirstRequest.story_id
+    const initialStoryIdOnWait = postFirst.story_id
     expect(initialStoryIdOnWait).toBeDefined()
 
     // === PHASE 2: Top-up + exact resume ===
-    
+
     // Grant +4 credits (20 → 24, exactly the STORY_START quote)
-    await admin.rpc('grant_credits_v1', {
+    await rpcOne(getDb(), 'grant_credits_v1', {
       p_user_id: userId,
       p_ref: `topup-e2e-1-${Date.now()}`,
       p_credits: 4,
       p_reason: 'TEST_GRANT',
-    })
+    }).execute()
 
     // Verify balance increased to exactly 24
-    const { data: balanceAfterTopUp } = await admin
-      .rpc('available_credit_balance_v1', { p_user_id: userId })
-    expect(balanceAfterTopUp).toBe(24)
+    expect(await availableBalance()).toBe(24)
 
     // Verify single durable request persisted (same story_id, WAITING_FOR_CREDITS)
-    const { data: idCheck1 } = await admin
-      .from('story_creation_requests')
-      .select('*')
-      .eq('owner_user_id', userId)
-      .eq('request_kind', 'personalized')
-      .eq('idempotency_key', idempotencyKey)
-    
+    const idCheck1 = await getDb()
+      .selectFrom('story_creation_requests')
+      .selectAll()
+      .where('owner_user_id', '=', userId)
+      .where('request_kind', '=', 'personalized')
+      .where('idempotency_key', '=', idempotencyKey)
+      .execute()
+
     expect(idCheck1).toBeDefined()
-    expect(Array.isArray(idCheck1)).toBe(true)
-    const checkResults = idCheck1 as Array<{ [key: string]: unknown }>
-    expect(checkResults.length).toBe(1)
-    
-    const foundRecord = checkResults[0]
+    expect(idCheck1.length).toBe(1)
+
+    const foundRecord = idCheck1[0] as unknown as { [key: string]: unknown }
     expect(foundRecord.idempotency_key).toBe(idempotencyKey)
     expect(foundRecord.status).toBe('WAITING_FOR_CREDITS')
     expect(foundRecord.story_id).toBe(initialStoryIdOnWait)
@@ -257,34 +279,43 @@ describe('Commercial Story #2 Success E2E (Real DB)', () => {
     expect(storyId).toBe(initialStoryIdOnWait) // SAME story ID!
 
     // Get generation job reference for polling
-    const { data: reqData } = await admin
-      .from('story_creation_requests')
-      .select('generation_job_id')
-      .eq('owner_user_id', userId)
-      .eq('story_id', storyId)
-      .maybeSingle()
+    const { data: reqData } = await single(
+      getDb()
+        .selectFrom('story_creation_requests')
+        .select('generation_job_id')
+        .where('owner_user_id', '=', userId)
+        .where('story_id', '=', storyId)
+        .limit(1)
+        .execute(),
+    )
 
     expect(reqData).not.toBeNull()
     expect(reqData!.generation_job_id).toBeDefined()
-    
-    const { data: generationJobRow } = await admin
-      .from('generation_jobs')
-      .select('id, status, publication_idempotency_key')
-      .eq('id', reqData!.generation_job_id!)
-      .single()
+
+    const { data: generationJobRow } = await single(
+      getDb()
+        .selectFrom('generation_jobs')
+        .select(['id', 'status', 'publication_idempotency_key'])
+        .where('id', '=', reqData!.generation_job_id!)
+        .limit(1)
+        .execute(),
+    )
 
     expect(generationJobRow).not.toBeNull()
 
     // === PHASE 3: MANDATORY SUCCEEDED POLLING (NO FALLBACKS) ===
-    
+
     await waitForCondition(
       async () => {
-        const { data: updatedJob } = await admin
-          .from('generation_jobs')
-          .select('status')
-          .eq('id', generationJobRow!.id)
-          .single()
-        
+        const { data: updatedJob } = await single(
+          getDb()
+            .selectFrom('generation_jobs')
+            .select('status')
+            .where('id', '=', generationJobRow!.id)
+            .limit(1)
+            .execute(),
+        )
+
         // STRICT REQUIREMENT: ONLY SUCCEEDED is acceptable
         // RETRY_WAIT, FAILED, or any other state = TEST FAILS
         return updatedJob?.status === 'SUCCEEDED'
@@ -293,11 +324,14 @@ describe('Commercial Story #2 Success E2E (Real DB)', () => {
       180_000
     )
 
-    const { data: finalizedJob } = await admin
-      .from('generation_jobs')
-      .select('status, publication_idempotency_key')
-      .eq('id', generationJobRow!.id)
-      .single()
+    const { data: finalizedJob } = await single(
+      getDb()
+        .selectFrom('generation_jobs')
+        .select(['status', 'publication_idempotency_key'])
+        .where('id', '=', generationJobRow!.id)
+        .limit(1)
+        .execute(),
+    )
 
     expect(finalizedJob).not.toBeNull()
     expect(finalizedJob!.status).toBe('SUCCEEDED') // MANDATORY
@@ -306,13 +340,13 @@ describe('Commercial Story #2 Success E2E (Real DB)', () => {
     // Wait for creation request to reach READY state after SUCCEEDED job
     await waitForCondition(
       async () => {
-        const { data: finalReq } = await admin
-          .from('story_creation_requests')
+        const finalReq = await getDb()
+          .selectFrom('story_creation_requests')
           .select('status')
-          .eq('owner_user_id', userId)
-          .eq('request_kind', 'personalized')
-          .eq('idempotency_key', idempotencyKey)
-          .maybeSingle()
+          .where('owner_user_id', '=', userId)
+          .where('request_kind', '=', 'personalized')
+          .where('idempotency_key', '=', idempotencyKey)
+          .executeTakeFirst()
         return finalReq?.status === 'READY'
       },
       'Creation request became READY after SUCCEEDED job',
@@ -320,104 +354,105 @@ describe('Commercial Story #2 Success E2E (Real DB)', () => {
     )
 
     // === PHASE 4: UNCONDITIONAL POST-CONDITION ASSERTIONS ===
-    
+
     // 1. Chapter 1 exists/readable
-    const { data: chap1 } = await admin
-      .from('chapters')
-      .select('number, title')
-      .eq('story_id', storyId)
-      .eq('number', 1)
-      .single()
+    const chap1 = await getDb()
+      .selectFrom('chapters')
+      .select(['number', 'title'])
+      .where('story_id', '=', storyId)
+      .where('number', '=', 1)
+      .executeTakeFirst()
     expect(chap1).not.toBeNull()
 
     // 2. Exactly 1 STORY_START reservation CAPTURED amount 24
-    const { data: startRes } = await admin
-      .from('credit_reservations')
-      .select('ref, status, amount')
-      .eq('ref', `story-start:${userId}:${storyId}`)
-      .single()
+    const { data: startRes } = await single(
+      getDb()
+        .selectFrom('credit_reservations')
+        .select(['ref', 'status', 'amount'])
+        .where('ref', '=', `story-start:${userId}:${storyId}`)
+        .limit(1)
+        .execute(),
+    )
     expect(startRes).not.toBeNull()
     expect(startRes!.ref).toBe(`story-start:${userId}:${storyId}`)
     expect(startRes!.status).toBe('CAPTURED')
-    expect(startRes!.amount).toBe(24)
+    expect(Number(startRes!.amount)).toBe(24)
 
     // 3. Exactly one -24 debit with reason story_start
-    const { data: ledgerEntries } = await admin
-      .from('credit_ledger')
-      .select('delta, reason')
-      .eq('user_id', userId)
-      .eq('reason', 'story_start')
+    const ledgerEntries = await getDb()
+      .selectFrom('credit_ledger')
+      .select(['delta', 'reason'])
+      .where('user_id', '=', userId)
+      .where('reason', '=', 'story_start')
+      .execute()
     expect(ledgerEntries).toHaveLength(1)
-    expect(ledgerEntries![0].delta).toBe(-24)
+    expect(Number(ledgerEntries[0].delta)).toBe(-24)
 
     // 4. Story commercial_origin = PAID_START & generation_status = ready
-    const { data: storyData } = await admin
-      .from('stories')
-      .select('generation_status, commercial_origin')
-      .eq('id', storyId)
-      .single()
-    
+    const { data: storyData } = await single(
+      getDb()
+        .selectFrom('stories')
+        .select(['generation_status', 'commercial_origin'])
+        .where('id', '=', storyId)
+        .limit(1)
+        .execute(),
+    )
+
     expect(storyData).not.toBeNull()
     expect(storyData!.commercial_origin).toBe('PAID_START')
     expect(storyData!.generation_status).toBe('ready')
 
     // 5. Final balance = 0 (20 + 4 - 24 = 0)
-    const { data: finalBalance } = await admin
-      .rpc('available_credit_balance_v1', { p_user_id: userId })
-    expect(finalBalance).toBe(0)
+    expect(await availableBalance()).toBe(0)
 
     // 6. Request is READY
-    const { data: updatedReq } = await admin
-      .from('story_creation_requests')
+    const updatedReq = await getDb()
+      .selectFrom('story_creation_requests')
       .select('status')
-      .eq('owner_user_id', userId)
-      .eq('request_kind', 'personalized')
-      .eq('idempotency_key', idempotencyKey)
-      .maybeSingle()
+      .where('owner_user_id', '=', userId)
+      .where('request_kind', '=', 'personalized')
+      .where('idempotency_key', '=', idempotencyKey)
+      .executeTakeFirst()
     expect(updatedReq?.status).toBe('READY')
 
     // === PHASE 5: IDEMPOTENCY REPLAY PROOF ===
-    
+
     // Replay same key: must return same story without duplicates
     const replayRes = await createPersonalizedStory({
       userId,
       idempotencyKey,
     })
-    
+
     expect(replayRes.storyId).toBe(storyId)
     expect(replayRes.replayed).toBe(true)
-    
+
     // Zero duplicates across all domains
-    const { data: finalJobs } = await admin
-      .from('generation_jobs')
+    const finalJobs = await getDb()
+      .selectFrom('generation_jobs')
       .select('id')
-      .eq('user_id', userId)
-      .eq('story_id', storyId)
-    expect(finalJobs?.length).toBe(1) // Exactly one job
-    
-    const { data: finalLedger } = await admin
-      .from('credit_ledger')
+      .where('user_id', '=', userId)
+      .where('story_id', '=', storyId)
+      .execute()
+    expect(finalJobs.length).toBe(1) // Exactly one job
+
+    const finalLedger = await getDb()
+      .selectFrom('credit_ledger')
       .select('id')
-      .eq('user_id', userId)
-      .eq('reason', 'story_start')
-    expect(finalLedger?.length).toBe(1) // Exactly one debit
-    
-    const { data: ownedStories } = await admin
-      .from('stories')
+      .where('user_id', '=', userId)
+      .where('reason', '=', 'story_start')
+      .execute()
+    expect(finalLedger.length).toBe(1) // Exactly one debit
+
+    const ownedStories = await getDb()
+      .selectFrom('stories')
       .select('id')
-      .eq('owner_user_id', userId)
-    expect(ownedStories?.length).toBe(2) // Starter prev + this paid story
-    
-    const { count: finalRequestsCount } = await admin
-      .from('story_creation_requests')
-      .select('*', { count: 'exact', head: true })
-      .eq('owner_user_id', userId)
-      .eq('request_kind', 'personalized')
-    expect(finalRequestsCount).toBe(1) // Exactly one request
-    
-    const { data: finalBal } = await admin
-      .rpc('available_credit_balance_v1', { p_user_id: userId })
-    expect(finalBal).toBe(0) // Balance still 0 (replay did no side effects)
+      .where('owner_user_id', '=', userId)
+      .execute()
+    expect(ownedStories.length).toBe(2) // Starter prev + this paid story
+
+    expect(await requestCount()).toBe(1) // Exactly one request
+
+    expect(await availableBalance()).toBe(0) // Balance still 0 (replay did no side effects)
 
     console.log(`[proof] ✅ STRICT SUCCESS E2E PASSED: Authorization gating (zero calls pre-top-up), durable request binding (${idempotencyKey} → ${initialStoryIdOnWait}), atomic job fence, chapter 1 published, reservation CAPTURED 24, debit -24, balance 0, replay protection verified`)
   }, 240_000) // 4 minutes for full runtime execution path

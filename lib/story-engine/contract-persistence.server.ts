@@ -374,24 +374,28 @@ export async function persistContractAndCanon(input: {
   const canon = contractToCanonBootstrap(validated)
   const { endingCandidates, plotDebts, ...storyContractJson } = validated
   const db = getDb()
+  // Param jsonb HARUS dikirim sebagai teks JSON: driver pg mengirim JS array
+  // sebagai literal array Postgres (mis. `{"{...}"}`) yang ditolak jsonb_in.
+  // Jalur PostgREST lama men-encode sebagai JSON body sehingga bug ini laten
+  // sampai transisi Kysely — dibongkar oleh test komersial Real-DB.
   const { error } = await single(
     rpcOne(db, 'bootstrap_personalized_story_v1', {
       p_story_id: validated.storyId,
       p_owner_user_id: ownerUserId,
       p_contract_source: input.contractSource,
-      p_onboarding_json: input.onboardingJson,
-      p_story_contract_json: storyContractJson,
-      p_route_schema_json: {},
-      p_plot_debts_json: plotDebts,
-      p_ending_candidates_json: endingCandidates,
-      p_characters: canon.characters,
-      p_character_aliases: canon.characterAliases,
-      p_voice_sheets: canon.voiceSheets,
-      p_facts: canon.facts,
-      p_knowledge: canon.knowledge,
-      p_secrets: canon.secrets,
-      p_threads: canon.threads,
-      p_blueprints: canon.blueprints,
+      p_onboarding_json: JSON.stringify(input.onboardingJson),
+      p_story_contract_json: JSON.stringify(storyContractJson),
+      p_route_schema_json: JSON.stringify({}),
+      p_plot_debts_json: JSON.stringify(plotDebts),
+      p_ending_candidates_json: JSON.stringify(endingCandidates),
+      p_characters: JSON.stringify(canon.characters),
+      p_character_aliases: JSON.stringify(canon.characterAliases),
+      p_voice_sheets: JSON.stringify(canon.voiceSheets),
+      p_facts: JSON.stringify(canon.facts),
+      p_knowledge: JSON.stringify(canon.knowledge),
+      p_secrets: JSON.stringify(canon.secrets),
+      p_threads: JSON.stringify(canon.threads),
+      p_blueprints: JSON.stringify(canon.blueprints),
     }).execute(),
   )
 

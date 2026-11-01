@@ -55,6 +55,8 @@ const DB_TEST_FILES = [
   'tests/db/anti-abuse-db-integration.test.ts',
   'tests/narrative-qa/m10-e2-reset-cleanup.test.ts',
   'tests/tinta/explore.test.ts',
+  'tests/integration/commercial-failure-no-burn.test.ts',
+  'tests/integration/commercial-story2-e2e-real.test.ts',
 ]
 
 async function resetSchema() {
@@ -79,10 +81,13 @@ async function resetSchema() {
 }
 
 function runVitest() {
+  const extra = process.argv.slice(2).filter((a) => !a.startsWith('--'))
+  // Argumen file MENGGANTI daftar bawaan; tanpa argumen = seluruh daftar DB test.
+  const targets = extra.length > 0 ? extra : DB_TEST_FILES
   const vitestEntry = path.join(__dirname, '..', 'node_modules', 'vitest', 'vitest.mjs')
   const result = spawnSync(
     process.execPath,
-    [vitestEntry, 'run', '--project', 'unit', ...DB_TEST_FILES, ...process.argv.slice(2).filter((a) => !a.startsWith('--'))],
+    [vitestEntry, 'run', '--project', 'unit', ...targets],
     {
       stdio: 'inherit',
       env: { ...process.env, DATABASE_URL: testUrl, LAKOKU_LOCAL_DB_TEST: '1' },

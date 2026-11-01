@@ -483,8 +483,13 @@ async function defaultLoadReaderStateInternal(
   )
   if (error) throw new Error(`loadReaderStateInternal: ${error.message}`)
   if (!data) throw new Error(`loadReaderStateInternal: missing for ${userId}/${storyId}`)
+  // Kysely/pg mengirim timestamptz sebagai objek Date; skema era PostgREST
+  // menuntut string ISO. Normalisasi Date → toISOString di seam baca.
+  const normalized = Object.fromEntries(
+    Object.entries(data).map(([key, value]) => [key, value instanceof Date ? value.toISOString() : value]),
+  )
   return ReaderStateInternalSchema.parse({
-    ...data,
+    ...normalized,
     route_state: normalizeRouteState((data as { route_state: unknown }).route_state),
   })
 }

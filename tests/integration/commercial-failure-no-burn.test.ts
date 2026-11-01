@@ -293,46 +293,50 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
     // BUT NEVER shows negative value from debit
     expect(balAtRetry).toBeGreaterThanOrEqual(0)
 
-    // === PHASE 3: Drive production recovery ticks until max attempts exhaust ===
+    // === PHASE 3: Drive production recovery tick → admission gate ===
+    //
+    // Kontrak runtime kini: kegagalan pilihan memasukkan story ke needs_review
+    // (antrean review editorial), sehingga recovery tick berikutnya DIBLOKIR
+    // oleh admission gate → job terminal FAILED dengan FAILED_REVIEW_REQUIRED.
+    // Invarian no-burn (nol debit, reservasi dilepas, saldo pulih) tidak berubah.
 
-    const remainingAttempts = retryJob!.max_attempts - retryJob!.attempt_count
-    for (let tickIndex = 0; tickIndex < remainingAttempts; tickIndex++) {
-      const { data: currentJob } = await single(
-        getDb()
-          .selectFrom('generation_jobs')
-          .select(['status', 'attempt_count', 'max_attempts', 'available_at'])
-          .where('id', '=', jobRow!.id)
-          .limit(1)
-          .execute(),
-      )
+    // Tunggu available_at job sebelum tick pemulihan.
+    const { data: currentJob } = await single(
+      getDb()
+        .selectFrom('generation_jobs')
+        .select(['status', 'attempt_count', 'max_attempts', 'available_at'])
+        .where('id', '=', jobRow!.id)
+        .limit(1)
+        .execute(),
+    )
+    if (!currentJob) throw new Error('Failed to query generation job before recovery tick')
+    expect(currentJob.status).toBe('RETRY_WAIT')
 
-      if (!currentJob) {
-        throw new Error('Failed to query generation job before recovery tick')
-      }
-      if (currentJob.status === 'FAILED') break
+    const waitMs = Math.max(0, Date.parse(String(currentJob.available_at)) - Date.now())
+    if (waitMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, Math.min(waitMs + 100, 5_000)))
+    }
 
-      expect(currentJob.status).toBe('RETRY_WAIT')
-      expect(currentJob.attempt_count).toBeLessThan(currentJob.max_attempts)
-
-      const eligibleAt = Date.parse(String(currentJob.available_at))
-      const waitMs = Math.max(0, eligibleAt - Date.now())
-      if (waitMs > 0) {
-        await new Promise(resolve => setTimeout(resolve, waitMs + 100))
-      }
-
-      const tick = await claimAndRunAvailableJobs({
+    // Poll: skew jam DB (Neon) vs mesin lokal bisa membuat available_at efektif
+    // sedikit lebih lambat dari perhitungan lokal — tick ulang sampai job ter-claim.
+    let tick: Awaited<ReturnType<typeof claimAndRunAvailableJobs>> | undefined
+    const claimDeadline = Date.now() + 20_000
+    while (Date.now() < claimDeadline) {
+      const t = await claimAndRunAvailableJobs({
         maxJobs: 1,
         workerIdPrefix: 'test-commercial-no-burn',
       })
-
-      expect(tick.ran).toBe(1)
-      expect(tick.results[0]?.jobId).toBe(jobRow!.id)
-      expect(tick.results[0]?.outcome).toBe(
-        currentJob.attempt_count + 1 >= currentJob.max_attempts
-          ? 'FAILED'
-          : 'RETRY_WAIT',
-      )
+      if (t.ran >= 1) {
+        tick = t
+        break
+      }
+      await new Promise(resolve => setTimeout(resolve, 500))
     }
+
+    expect(tick).toBeDefined()
+    expect(tick!.ran).toBe(1)
+    expect(tick!.results[0]?.jobId).toBe(jobRow!.id)
+    expect(tick!.results[0]?.outcome).toBe('FAILED') // Admission gate: needs_review → terminal
 
     await waitForCondition(
       async () => {
@@ -347,7 +351,7 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
 
         return finalJob?.status === 'FAILED'
       },
-      'Generation job reached terminal FAILED state after max retries',
+      'Generation job reached terminal FAILED state via review admission gate',
       5_000,
     )
 
@@ -362,7 +366,7 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
 
     expect(terminalJob).not.toBeNull()
     expect(terminalJob!.status).toBe('FAILED')
-    expect(terminalJob!.last_error_code).toBe('GENERATION_RETRY_EXHAUSTED')
+    expect(terminalJob!.last_error_code).toBe('FAILED_REVIEW_REQUIRED')
     expect(terminalJob!.last_error_class).toBe('TERMINAL')
 
     // === PHASE 4: Terminal failure post-conditions ===
@@ -445,9 +449,11 @@ describe('Commercial Failure / No-Burn Test (Real DB)', () => {
     )
 
     expect(storyAfterFail).not.toBeNull()
-    expect(storyAfterFail!.generation_status).toBe('creating_contract')
+    // Rute review editorial: shell cerita diparkir di needs_review menunggu
+    // keputusan review (dulu creating_contract pada narasi auto-retry lama).
+    expect(storyAfterFail!.generation_status).toBe('needs_review')
     expect(storyAfterFail!.commercial_origin).toBe('PENDING_PAID_START')
 
-    console.log(`[proof] ✅ FAILURE NO-BURN VERIFIED: RETRY_WAIT had zero debits, terminal FAILED released reservation, balance restored to ${initialBalance}, retryable shell preserved, zero duplicates across all domains`)
+    console.log(`[proof] ✅ FAILURE NO-BURN VERIFIED: RETRY_WAIT had zero debits, terminal FAILED released reservation, balance restored to ${initialBalance}, shell preserved in needs_review, zero duplicates across all domains`)
   }, 300_000)
 })

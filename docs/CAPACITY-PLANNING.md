@@ -109,6 +109,12 @@ pekerja generation bila perlu. Tidak perlu Redis/memcached sebelum tahap ini.
 - **Disk**: app + node_modules + `.next` + standalone ±1,5–2 GB; logs + backup lokal
   + headroom → 20 GB cukup untuk S1–S2, 40–80 GB untuk S3–S4. **Backup resmi simpan
   off-box** (aturan handoff: jangan tumpuk tarball besar di VPS).
+  Terukur 2026-11-01 (produksi `822c00d`): app dir **2,0 GB** (node_modules 1,1 G +
+  `.next` 844 M), node runtime 0,26 GB, pnpm store 1,1 GB, backup/box 126 MB,
+  log 9 KB → total box baru ber-OS + swapfile 4 GB ≈ **10–12 GB steady-state**
+  → disk 20 GB cukup sampai S3 awal, asalkan disiplin: backup di box maks 2–3
+  terakhir, `logrotate` aktif, tarball incoming dibersihkan tiap deploy,
+  `pnpm store prune` sesekali (box lama 84% penuh = pelajaran tumpukan backup).
 - **Region**: audiens Indonesia + Cloudflare Tunnel → pilih region **Jakarta /
   Singapore**. Origin di EU/US menambah ±150–250 ms RTT edge→origin pada SETIAP
   halaman dynamic — lebih terasa daripada selisih CPU. (Box sekarang = Tencent,

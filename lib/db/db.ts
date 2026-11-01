@@ -1,36 +1,22 @@
 import 'server-only'
 import { Kysely, PostgresDialect } from 'kysely'
-import pg, { Pool } from 'pg'
+import { Pool } from 'pg'
 import type { Database } from './db-types'
-
-/**
- * Serialisasi jsonb yang benar untuk param array.
- *
- * Driver pg mengirim JS array sebagai literal array Postgres (`{a,b}` /
- * `{"{\"x\":1}"}`), yang untuk kolom/param jsonb berarti: array kosong
- * tersimpan KORUP sebagai `{}` (object) secara senyap, dan array berisi
- * objek gagal keras `invalid input syntax for type json`. Jalur PostgREST
- * lama men-encode array sebagai JSON body sehingga korupsi ini baru tampak
- * setelah transisi Kysely — dibongkar oleh test komersial Real-DB.
- *
- * Patch: array JS dikirim sebagai teks JSON (valid untuk jsonb). Tidak ada
- * pemakaian param array Postgres yang sah di runtime lib (kolom `text[]`/
- * `uuid[]` tidak ada di skema; `.in()` Kysely mengekspansi jadi multi-param).
- * Script luar (mis. neon-clone) yang memakai pg langsung tidak lewat sini.
- */
-const pgUtils = (pg as unknown as {
-  utils: { prepareValue: (value: unknown) => unknown }
-}).utils
-const originalPrepareValue = pgUtils.prepareValue
-pgUtils.prepareValue = (value: unknown) => {
-  if (Array.isArray(value)) return JSON.stringify(value)
-  return originalPrepareValue(value)
-}
 
 /**
  * Kysely instance untuk Neon (Full Exit Supabase — Fase A).
  * Singleton per proses; kredensial hanya dari DATABASE_URL (server env).
  * Pool kecil: endpoint pooled Neon free tier.
+ *
+ * PENTING (jsonb vs array Postgres): driver pg mengirim JS array sebagai
+ * literal array Postgres — array kosong tersimpan KORUP `{}` (object) di
+ * kolom jsonb, dan array berisi objek gagal `invalid input syntax for type
+ * json`. Setiap insert/update kolom jsonb yang membawa array WAJIB di-
+ * `JSON.stringify` di titik tulis (lihat jejak/choice_history/tropes), dan
+ * param array RPC jsonb juga dikirim sebagai teks JSON. Jangan gunakan patch
+ * global prepareValue — kolom array Postgres yang sah (blueprint_queue.
+ * chapter_numbers int4[], generation_provider_calls.validation_codes text[])
+ * justru rusak olehnya.
  */
 let instance: Kysely<Database> | null = null
 

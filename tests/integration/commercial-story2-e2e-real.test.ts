@@ -27,7 +27,7 @@
  */
 import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import { getDb, single, rpcOne } from '@lakoku/db'
+import { getDb, single, rpcOne, type Json } from '@lakoku/db'
 import { hashPassword } from '@/lib/auth/password'
 import { createPersonalizedStory } from '@/lib/api/personalized-stories.server'
 import { createDeterministicProvider } from '@/lib/ai-gateway/provider'
@@ -118,7 +118,7 @@ describe('Commercial Story #2 Success E2E (Real DB)', () => {
         title: 'Starter Story Prev',
         tagline: 'Tagline',
         synopsis: 'Synopsis',
-        tropes: [],
+        tropes: JSON.stringify([]) as unknown as Json,
         story_mode: 'personalized_ai',
         visibility: 'private',
         status: 'BARU',

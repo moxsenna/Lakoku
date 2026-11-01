@@ -210,7 +210,7 @@ export async function ensureReaderStateStarted(
         story_id: storyId,
         status,
         current_chapter: currentChapter,
-        jejak: (existing?.jejak ?? []) as unknown as Json,
+        jejak: jsonParam(existing?.jejak ?? []),
         ending_name: existing?.endingName ?? null,
         updated_at: new Date().toISOString(),
       })
@@ -218,7 +218,7 @@ export async function ensureReaderStateStarted(
         oc.columns(['user_id', 'story_id']).doUpdateSet({
           status,
           current_chapter: currentChapter,
-          jejak: (existing?.jejak ?? []) as unknown as Json,
+          jejak: jsonParam(existing?.jejak ?? []),
           ending_name: existing?.endingName ?? null,
           updated_at: new Date().toISOString(),
         }),
@@ -443,7 +443,7 @@ export interface ReaderStateChoiceUpsertValues {
  * menolaknya (`invalid input syntax for type json`). Semua nilai jsonb harus
  * dikirim sebagai teks JSON.
  */
-function jsonParam(value: Json): Json {
+export function jsonParam(value: Json): Json {
   return JSON.stringify(value) as unknown as Json
 }
 

@@ -929,7 +929,7 @@ export async function cloneStoryFromShare(
       story_id: newStoryId,
       status: 'BERJALAN',
       current_chapter: 1,
-      jejak: [],
+      jejak: JSON.stringify([]) as unknown as Json,
       ending_name: null,
       updated_at: now,
       created_at: now,

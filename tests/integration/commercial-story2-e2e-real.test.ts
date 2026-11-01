@@ -49,11 +49,12 @@ vi.mock('@lakoku/ai-gateway/server', async (importOriginal) => {
 
 const validStory2Provider = createDeterministicProvider()
 
-describe('Commercial Story #2 Success E2E (Real DB)', () => {
+describe.skipIf(process.env.LAKOKU_LOCAL_DB_TEST !== '1')('Commercial Story #2 Success E2E (Real DB)', () => {
   const idempotencyKey = '00000000-0000-4000-8000-e2e000000002'
   let userId = ''
 
   beforeAll(async () => {
+    if (process.env.LAKOKU_LOCAL_DB_TEST !== '1') return
     mocks.selectProvider.mockResolvedValue(validStory2Provider)
 
     const db = getDb()

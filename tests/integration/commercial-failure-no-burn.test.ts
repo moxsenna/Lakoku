@@ -95,11 +95,12 @@ const faultyProvider: GenerationProvider = {
   },
 }
 
-describe('Commercial Failure / No-Burn Test (Real DB)', () => {
+describe.skipIf(process.env.LAKOKU_LOCAL_DB_TEST !== '1')('Commercial Failure / No-Burn Test (Real DB)', () => {
   const idempotencyKey = '00000000-0000-4000-8000-fail-e2e'
   let userId = ''
 
   beforeAll(async () => {
+    if (process.env.LAKOKU_LOCAL_DB_TEST !== '1') return
     // WIRING FIX: Use faulty provider directly
     mocks.selectProvider.mockResolvedValue(faultyProvider)
 

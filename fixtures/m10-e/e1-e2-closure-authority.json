@@ -2,7 +2,7 @@
   "authorityVersion": "M10_E_E1_E2_CLOSURE_AUTHORITY_V1",
   "approvedSpecSha": "af28b45dcd62544f12415476aa62bd3a09fd8f7e",
   "e2ClosureSha": "914cf30f42d4e7f293df79e0d66c014331a696ba",
-  "manifestBaseSha": "d1e36a8234caa82b3b2625e908eab5a5f40cd00a",
+  "manifestBaseSha": "b11375f94d6dd2793bfb4d38b3926682a7b6ca88",
   "e2Rows": [
     {
       "id": "MALFORMED_CHOICES_OUTPUT",
@@ -208,7 +208,7 @@
     },
     {
       "path": "tests/narrative-qa/m10-e2-telemetry-reference.test.ts",
-      "blobSha": "8a93d6de3087c32f8045d9d15ed48438916b2a1d"
+      "blobSha": "84baa3a74f9957eb5f1eac6cd196531744d2e32c"
     },
     {
       "path": "tests/db/m10-e1-disposable-cleanup-auth-regression.test.ts",

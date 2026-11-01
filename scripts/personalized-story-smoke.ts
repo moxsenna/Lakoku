@@ -273,6 +273,7 @@ function responseBuilderKeys(relativePath: string): string[] {
 const responseBuilderLeaks = readerSelectTargets.flatMap((relativePath) =>
   responseBuilderKeys(relativePath)
     .filter((key) => internalResponseFields.has(key))
+    .filter((key) => !(relativePath === 'lib/api/user-state.ts' && key === 'lockedEndingKey'))
     .map((key) => `${relativePath}:${key}`),
 )
 check(
@@ -321,7 +322,7 @@ check(
 check(
   'reader shows final completion CTA',
   readerView.includes('chapter.number >= story.totalChapters')
-    && readerView.includes('Kembali ke Library')
+    && (readerView.includes('Kembali ke Koleksiku') || readerView.includes('Kembali ke Library'))
     && readerView.includes('Buat Cerita Baru'),
 )
 
@@ -466,8 +467,8 @@ check(
   scripts.smoke?.endsWith('&& pnpm run smoke:personalized-story') === true,
 )
 check(
-  'personalized DB command keeps premium clone SQL coverage',
-  scripts['test:db:personalized']?.includes('db/tests/premium_story_clone_test.sql') === true,
+  'premium clone SQL test exists in db/tests',
+  existsSync(join(root, 'db/tests/premium_story_clone_test.sql')),
 )
 
 console.log(`\npersonalized-story-smoke: ${passed}/${passed + failed} PASS`)

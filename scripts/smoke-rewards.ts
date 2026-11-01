@@ -124,9 +124,11 @@ async function main() {
   check('route /r/[code] exists', existsSync(rRoutePath))
   check('profil imbalan page exists', existsSync(profilImbalanPath))
 
-  if (existsSync(authCallbackPath)) {
-    const authSrc = readFileSync(authCallbackPath, 'utf8')
-    check('auth callback invokes recordReferralAttribution', authSrc.includes('recordReferralAttribution'))
+  // Di Better Auth, atribusi dipanggil via databaseHooks.user.create.after di lib/auth.ts
+  const authConfigPath = join(root, 'lib/auth.ts')
+  if (existsSync(authConfigPath)) {
+    const authSrc = readFileSync(authConfigPath, 'utf8')
+    check('auth config invokes recordReferralAttribution on user create', authSrc.includes('recordReferralAttribution'))
   }
 
   if (existsSync(paycorePath)) {

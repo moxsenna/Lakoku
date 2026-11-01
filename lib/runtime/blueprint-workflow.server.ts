@@ -32,18 +32,23 @@ function isLosslessPostgresBigint(value: unknown): value is string {
  * Called by API route GET /api/blueprint-review/route.ts
  */
 export async function getPendingItems(): Promise<PendingReviewItem[]> {
-  const db = getDb()
-  
-  // Use .selectFrom() for VIEW (not .rpc()) per E-OPS-1 requirement
-  // RLS_AUDIT(vw_blueprint_pending_review_items): APP_GUARD - pending review view guarded by admin check in API route
-  const rows = await db
-    .selectFrom('vw_blueprint_pending_review_items')
-    .selectAll()
-    .orderBy('queue_created_at', 'asc')
-    .limit(100)
-    .execute()
+  try {
+    const db = getDb()
+    
+    // Use .selectFrom() for VIEW (not .rpc()) per E-OPS-1 requirement
+    // RLS_AUDIT(vw_blueprint_pending_review_items): APP_GUARD - pending review view guarded by admin check in API route
+    const rows = await db
+      .selectFrom('vw_blueprint_pending_review_items')
+      .selectAll()
+      .orderBy('queue_created_at', 'asc')
+      .limit(100)
+      .execute()
 
-  return (rows ?? []) as unknown as PendingReviewItem[]
+    return (rows ?? []) as unknown as PendingReviewItem[]
+  } catch (err) {
+    console.error('Error fetching pending items:', err)
+    return []
+  }
 }
 
 /**

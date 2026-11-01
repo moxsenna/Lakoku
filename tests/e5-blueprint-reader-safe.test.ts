@@ -5,7 +5,8 @@ const mocks = vi.hoisted(() => ({
   requireAdminUser: vi.fn(),
   getQueueItemDetail: vi.fn(),
   recordDisposition: vi.fn(),
-  createClient: vi.fn(),
+  selectFrom: vi.fn(),
+  single: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
@@ -14,7 +15,10 @@ vi.mock('@lakoku/runtime', () => ({
   getQueueItemDetail: mocks.getQueueItemDetail,
   recordDisposition: mocks.recordDisposition,
 }))
-vi.mock('@/lib/db/server', () => ({ createClient: mocks.createClient }))
+vi.mock('@lakoku/db', () => ({
+  getDb: () => ({ selectFrom: mocks.selectFrom }),
+  single: mocks.single,
+}))
 
 import { GET, POST } from '@/app/api/blueprint-review/[id]/route'
 import * as queueRoute from '@/app/api/blueprint-review/route'
@@ -57,7 +61,9 @@ describe('E5 reader-safe boundary', () => {
   })
 
   it('returns generic Indonesian copy for unexpected POST failure without raw technical detail', async () => {
-    mocks.createClient.mockRejectedValue(new Error('canonical provider timeout'))
+    mocks.selectFrom.mockImplementation(() => {
+      throw new Error('canonical provider timeout')
+    })
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
     const response = await POST(
@@ -91,14 +97,16 @@ describe('E5 reader-safe boundary', () => {
   })
 
   it('does not trust client reviewer, source evidence, or validator attestation', async () => {
-    const single = vi.fn(async () => ({
-      data: { source_event_id: '9223372036854775807', chapter_numbers: [4] },
-      error: null,
-    }))
-    const eq = vi.fn(() => ({ single }))
-    const select = vi.fn(() => ({ eq }))
-    const from = vi.fn(() => ({ select }))
-    mocks.createClient.mockResolvedValue({ from })
+    const queueItem = { source_event_id: '9223372036854775807', chapter_numbers: [4] }
+    const execute = vi.fn(async () => [queueItem])
+    const limit = vi.fn(() => ({ execute }))
+    const where = vi.fn(() => ({ limit }))
+    const select = vi.fn(() => ({ where }))
+    mocks.selectFrom.mockReturnValue({ select })
+    mocks.single.mockImplementation(async (promise) => {
+      const rows = await promise
+      return { data: rows[0] ?? null, error: null }
+    })
     mocks.recordDisposition.mockResolvedValue({ success: true })
 
     const response = await POST(postRequest({

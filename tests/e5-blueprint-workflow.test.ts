@@ -7,37 +7,27 @@ const FORWARD_ATTESTATION_MIGRATION = readFileSync(
 )
 
 const mocks = vi.hoisted(() => ({
-  createClient: vi.fn(),
+  selectFrom: vi.fn(),
+  updateTable: vi.fn(),
+  single: vi.fn(),
   requireAdminUser: vi.fn(),
   runValidatorRerun: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
-vi.mock('@/lib/db/server', () => ({ createClient: mocks.createClient }))
+vi.mock('@lakoku/db', () => ({
+  getDb: () => ({
+    selectFrom: mocks.selectFrom,
+    updateTable: mocks.updateTable,
+  }),
+  single: mocks.single,
+}))
 vi.mock('@/lib/admin/auth', () => ({ requireAdminUser: mocks.requireAdminUser }))
 vi.mock('@/lib/utils/validator-rerun.helper', () => ({
   runValidatorRerun: mocks.runValidatorRerun,
 }))
 
 import { claimQueueItem, getPendingItems } from '@/lib/runtime/blueprint-workflow.server'
-
-function pendingQuery(result: { data: unknown; error: unknown }) {
-  const limit = vi.fn(async () => result)
-  const order = vi.fn(() => ({ limit }))
-  const select = vi.fn(() => ({ order }))
-  const from = vi.fn(() => ({ select }))
-  return { from, select, order, limit }
-}
-
-function claimQuery(result: { data: unknown; error: unknown }) {
-  const single = vi.fn(async () => result)
-  const select = vi.fn(() => ({ single }))
-  const secondEq = vi.fn(() => ({ select }))
-  const firstEq = vi.fn(() => ({ eq: secondEq }))
-  const update = vi.fn(() => ({ eq: firstEq }))
-  const from = vi.fn(() => ({ update }))
-  return { from, update, firstEq, secondEq, select, single }
-}
 
 describe('E5 blueprint workflow queue', () => {
   beforeEach(() => {
@@ -58,22 +48,30 @@ describe('E5 blueprint workflow queue', () => {
       total_chapters: 50,
       story_status: 'needs_review',
     }
-    const query = pendingQuery({ data: [row], error: null })
-    mocks.createClient.mockResolvedValue({ from: query.from })
+    const execute = vi.fn(async () => [row])
+    const limit = vi.fn(() => ({ execute }))
+    const orderBy = vi.fn(() => ({ limit }))
+    const selectAll = vi.fn(() => ({ orderBy }))
+    mocks.selectFrom.mockReturnValue({ selectAll })
 
     const items = await getPendingItems()
 
     expect(items).toEqual([row])
-    expect(query.from).toHaveBeenCalledWith('vw_blueprint_pending_review_items')
-    expect(query.select).toHaveBeenCalledWith('*')
-    expect(query.order).toHaveBeenCalledWith('queue_created_at', { ascending: true })
-    expect(query.limit).toHaveBeenCalledWith(100)
+    expect(mocks.selectFrom).toHaveBeenCalledWith('vw_blueprint_pending_review_items')
+    expect(selectAll).toHaveBeenCalled()
+    expect(orderBy).toHaveBeenCalledWith('queue_created_at', 'asc')
+    expect(limit).toHaveBeenCalledWith(100)
     expect(items[0].source_event_id).toBe('9223372036854775807')
   })
 
   it('fails closed to empty list when pending view is unavailable', async () => {
-    const query = pendingQuery({ data: null, error: { message: 'view unavailable' } })
-    mocks.createClient.mockResolvedValue({ from: query.from })
+    const execute = vi.fn(async () => {
+      throw new Error('view unavailable')
+    })
+    const limit = vi.fn(() => ({ execute }))
+    const orderBy = vi.fn(() => ({ limit }))
+    const selectAll = vi.fn(() => ({ orderBy }))
+    mocks.selectFrom.mockReturnValue({ selectAll })
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
     await expect(getPendingItems()).resolves.toEqual([])
@@ -83,26 +81,37 @@ describe('E5 blueprint workflow queue', () => {
   it('claims through one conditional PENDING update and returns winning worker identity', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1_777_000_000_000)
     vi.spyOn(Math, 'random').mockReturnValue(0.123456789)
-    const query = claimQuery({
-      data: { claimed_by: 'test-worker-1777000000000-xjylrx' },
-      error: null,
+
+    const execute = vi.fn(async () => [{ claimed_by: 'test-worker-1777000000000-xjylrx' }])
+    const returning = vi.fn(() => ({ execute }))
+    const secondWhere = vi.fn(() => ({ returning }))
+    const firstWhere = vi.fn(() => ({ where: secondWhere }))
+    const set = vi.fn(() => ({ where: firstWhere }))
+    mocks.updateTable.mockReturnValue({ set })
+    mocks.single.mockImplementation(async (promise) => {
+      const rows = await promise
+      return { data: rows[0] ?? null, error: null }
     })
-    mocks.createClient.mockResolvedValue({ from: query.from })
 
     await expect(claimQueueItem('story-123')).resolves.toBe('test-worker-1777000000000-xjylrx')
-    expect(query.from).toHaveBeenCalledWith('blueprint_queue')
-    expect(query.update).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mocks.updateTable).toHaveBeenCalledWith('blueprint_queue')
+    expect(set).toHaveBeenCalledWith(expect.objectContaining({
       status: 'CLAIMED',
       claimed_by: 'test-worker-1777000000000-xjylrx',
     }))
-    expect(query.firstEq).toHaveBeenCalledWith('story_id', 'story-123')
-    expect(query.secondEq).toHaveBeenCalledWith('status', 'PENDING')
-    expect(query.select).toHaveBeenCalledWith('claimed_by')
+    expect(firstWhere).toHaveBeenCalledWith('story_id', '=', 'story-123')
+    expect(secondWhere).toHaveBeenCalledWith('status', '=', 'PENDING')
+    expect(returning).toHaveBeenCalledWith('claimed_by')
   })
 
   it('returns null when conditional claim loses race', async () => {
-    const query = claimQuery({ data: null, error: { message: 'no rows' } })
-    mocks.createClient.mockResolvedValue({ from: query.from })
+    const execute = vi.fn(async () => [])
+    const returning = vi.fn(() => ({ execute }))
+    const secondWhere = vi.fn(() => ({ returning }))
+    const firstWhere = vi.fn(() => ({ where: secondWhere }))
+    const set = vi.fn(() => ({ where: firstWhere }))
+    mocks.updateTable.mockReturnValue({ set })
+    mocks.single.mockResolvedValue({ data: null, error: null })
 
     await expect(claimQueueItem('story-123')).resolves.toBeNull()
   })

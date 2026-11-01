@@ -2,7 +2,7 @@
   "authorityVersion": "M10_E_E1_E2_CLOSURE_AUTHORITY_V1",
   "approvedSpecSha": "af28b45dcd62544f12415476aa62bd3a09fd8f7e",
   "e2ClosureSha": "914cf30f42d4e7f293df79e0d66c014331a696ba",
-  "manifestBaseSha": "b103f2b2a289943b6f7738b0cf6aa314248f0a00",
+  "manifestBaseSha": "d1e36a8234caa82b3b2625e908eab5a5f40cd00a",
   "e2Rows": [
     {
       "id": "MALFORMED_CHOICES_OUTPUT",
@@ -84,7 +84,7 @@
   "protectedPaths": [
     {
       "path": "lib/narrative-qa/fault/deps.ts",
-      "blobSha": "c3fb473dbded52b3fbc33daa11ac998fc22440ea"
+      "blobSha": "99f3762763e153e2231f320971e42739ffce504a"
     },
     {
       "path": "lib/narrative-qa/fault/e2-bindings.ts",
@@ -108,7 +108,7 @@
     },
     {
       "path": "lib/narrative-qa/fault/scenarios.ts",
-      "blobSha": "cf171486d3271bd682ab4257f78ba33ab7ea566d"
+      "blobSha": "ac0aecdf3a64d2d0d506afc83ede3f085551bf18"
     },
     {
       "path": "lib/narrative-qa/fault/e2/analytics-observability.ts",

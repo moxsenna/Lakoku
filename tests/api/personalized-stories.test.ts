@@ -420,8 +420,8 @@ describe('createPersonalizedStory', () => {
       story_id: reservedStoryId,
       status: 'BERJALAN',
       current_chapter: 1,
-      jejak: [],
-      choice_history: [],
+      jejak: '[]',
+      choice_history: '[]',
       locked_ending_key: null,
     })
     expect(readerInsert?.args[0]).toHaveProperty('route_state')

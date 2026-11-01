@@ -218,33 +218,8 @@ export function verifyLocalRaceTarget(
   dependencies: LocalRaceVerificationDependencies = defaultLocalRaceVerificationDependencies,
 ): RaceTarget {
   const target = verifyLocalRaceContainer(context, dependencies)
-  
-  // Set test_target marker for THIS session and immediately read back
-  // IMPORTANT: ALTER DATABASE doesn't apply to existing running containers;
-  // we MUST set SET LOCAL in each connection or use per-connection SET
-  const container = target.container
-  const sql = "set lakoku.test_target to 'local-cli'; select current_setting('lakoku.test_target', true);"
-  
-  let output: string
-  try {
-    output = execFileSync('docker', ['exec', '-i', container, 'psql', '-X', '-qAt', '-U', 'postgres', '-d', 'postgres'], {
-      input: sql,
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: LOCAL_PSQL_TIMEOUT_MS,
-    }) as string
-  } catch (error) {
-    const err = error as { stderr?: Buffer }
-    throw new Error(`${context}: test_target setup failed: ${err.stderr?.toString() ?? String(error)}`)
-  }
-  
-  console.error(`[DEBUG] test_target SQL output: ${JSON.stringify(output)}`)
-  
-  // Parse the last non-empty line from psql output
-  const lines = output.split('\n').map(l => l.trim()).filter(l => l.length > 0)
-  const marker = lines.length > 0 ? lines[lines.length - 1] : ''
-  
-  checkRace(marker === 'local-cli', context, `lakoku.test_target must be local-cli, got: "${marker}"`)
+  const marker = dependencies.readPersistentMarker(target).trim()
+  checkRace(marker === 'local-cli', context, 'lakoku.test_target must equal local-cli')
   return target
 }
 

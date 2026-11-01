@@ -170,7 +170,7 @@ describe('worker checkpoint persistence', () => {
       p_story_id: 'story-a',
       p_chapter_number: 3,
       p_title: 'Bab Tiga',
-      p_paragraphs: ['Paragraf.'],
+      p_paragraphs: JSON.stringify(['Paragraf.']),
       p_prose_fingerprint: expect.stringMatching(/^[a-f0-9]{32}$/),
       p_audit_signals: null,
       p_audit_signals_version: null,
@@ -222,7 +222,7 @@ describe('worker checkpoint persistence', () => {
     })
 
     expect(rpc).toHaveBeenCalledWith('upsert_generation_checkpoint_fenced_v1', expect.objectContaining({
-      p_audit_signals: auditSignals,
+      p_audit_signals: JSON.stringify(auditSignals),
       p_audit_signals_version: 2,
       p_generation_mode: 'personalized',
     }))

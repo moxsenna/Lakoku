@@ -168,7 +168,9 @@ describe('applyChoiceToUserState', () => {
     expect(upsertPayload!.status).toBe('BERJALAN')
 
     // Verify choice_history is populated
-    const history = upsertPayload!.choice_history as Array<Record<string, unknown>>
+    const history = (typeof upsertPayload!.choice_history === 'string'
+      ? JSON.parse(upsertPayload!.choice_history as string)
+      : upsertPayload!.choice_history) as Array<Record<string, unknown>>
     expect(history).toHaveLength(1)
     expect(history[0].chapterNumber).toBe(1)
     expect(history[0].choiceId).toBe('chapter-1-choice-1')
@@ -182,7 +184,9 @@ describe('applyChoiceToUserState', () => {
     })
 
     // Verify route_state is updated
-    const route = upsertPayload!.route_state as Record<string, unknown>
+    const route = (typeof upsertPayload!.route_state === 'string'
+      ? JSON.parse(upsertPayload!.route_state as string)
+      : upsertPayload!.route_state) as Record<string, unknown>
     expect(route.risk).toBe(5)
     expect(route.truth).toBe(2)
   })
@@ -296,7 +300,9 @@ describe('applyChoiceToUserState', () => {
       },
     )
 
-    const jejakSafe = upsertPayload!.jejak as Array<Record<string, unknown>>
+    const jejakSafe = (typeof upsertPayload!.jejak === 'string'
+      ? JSON.parse(upsertPayload!.jejak as string)
+      : upsertPayload!.jejak) as Array<Record<string, unknown>>
     expect(jejakSafe).toHaveLength(1)
     expect(jejakSafe[0].consequence).toBe('Paragraf satu reaksi.\n\nParagraf dua reaksi.')
     expect(jejakSafe[0].directionHint).toBe('Raka mulai mempercayaimu.')
@@ -317,7 +323,9 @@ describe('applyChoiceToUserState', () => {
       },
     )
 
-    const jejakUnsafe = upsertPayload!.jejak as Array<Record<string, unknown>>
+    const jejakUnsafe = (typeof upsertPayload!.jejak === 'string'
+      ? JSON.parse(upsertPayload!.jejak as string)
+      : upsertPayload!.jejak) as Array<Record<string, unknown>>
     const ch2Entry = jejakUnsafe.find((j) => j.chapter === 2)
     expect(ch2Entry).toBeDefined()
     expect(ch2Entry?.directionHint).toBeUndefined()

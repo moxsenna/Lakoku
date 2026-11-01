@@ -48,6 +48,7 @@ export default async function BerandaPage() {
   const berjalan = library.find((s) => s.status === 'BERJALAN')
   const featured = explore.find((s) => s.id !== berjalan?.id) ?? explore[0]
   const rail = explore.filter((s) => s.id !== berjalan?.id).slice(0, 8)
+  const pembacaLain = publicUserStories.filter((s) => s.id !== berjalan?.id)
   const shares = publicShares.slice(0, 3)
 
   const metadataName =
@@ -251,7 +252,7 @@ export default async function BerandaPage() {
         </section>
       )}
 
-      {SHOW_DARI_PEMBACA_LAIN && publicUserStories.length > 0 && (
+      {SHOW_DARI_PEMBACA_LAIN && pembacaLain.length > 0 && (
         <section aria-labelledby="pembaca-lain-heading" className="flex flex-col gap-4">
           <div className="flex items-baseline justify-between">
             <h2 id="pembaca-lain-heading" className="font-serif text-xl text-foreground">
@@ -262,7 +263,7 @@ export default async function BerandaPage() {
             </Link>
           </div>
           <div className="-mx-5 flex snap-x snap-mandatory gap-3 overflow-x-auto px-5 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {publicUserStories.map((story) => (
+            {pembacaLain.map((story) => (
               <Link
                 key={story.id}
                 href={`/cerita/${story.id}`}

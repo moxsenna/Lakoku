@@ -482,11 +482,27 @@ const ELEVATED_ONLY_CLEANUP_TABLES = new Set([
 ])
 
 async function deleteAndVerifyExactTargets(
-  _admin: Admin,
+  admin: Admin,
   targets: readonly ExactCleanupTarget[],
   elevatedCleanup?: () => void,
 ): Promise<void> {
   elevatedCleanup?.()
+  const legacyAdmin = admin && typeof (admin as any).from === 'function' ? (admin as any) : null
+  if (legacyAdmin) {
+    for (const target of targets) {
+      if (ELEVATED_ONLY_CLEANUP_TABLES.has(target.table)) continue
+      const { error } = await legacyAdmin.from(target.table).delete().in(target.column, [...target.values])
+      if (error) throw new FaultScenarioError(`${target.table} cleanup failed: ${error.message}`)
+    }
+    for (const target of targets) {
+      const { data, error } = await legacyAdmin.from(target.table).select(target.column).in(target.column, [...target.values])
+      if (error) throw new FaultScenarioError(`${target.table} reset verification failed: ${error.message}`)
+      if ((data ?? []).length > 0) {
+        throw new FaultScenarioError(`reset verification found mutable story residue: ${target.table}`)
+      }
+    }
+    return
+  }
   const db = getDb()
   for (const target of targets) {
     if (ELEVATED_ONLY_CLEANUP_TABLES.has(target.table)) continue

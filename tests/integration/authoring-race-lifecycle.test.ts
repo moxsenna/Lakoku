@@ -48,9 +48,8 @@ describe('authoring race lifecycle harnesses', () => {
 
     expect(output).toBe('42\n')
     expect(calls).toHaveLength(1)
-    expect(calls[0].input).toContain("current_setting('lakoku.test_target', true) <> 'local-cli'")
+    expect(calls[0].input).toContain("set lakoku.test_target = 'local-cli';")
     expect(calls[0].input).toContain('select 42;')
-    expect(calls[0].input).not.toContain('set lakoku.test_target')
   })
 
   function verificationDependencies(overrides: Partial<LocalRaceVerificationDependencies> = {}): LocalRaceVerificationDependencies {

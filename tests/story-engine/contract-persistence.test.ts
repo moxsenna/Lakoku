@@ -222,19 +222,19 @@ describe('persistContractAndCanon', () => {
       p_story_id: misteriDramaContract.storyId,
       p_owner_user_id: ownerUserId,
       p_contract_source: 'llm_repaired',
-      p_onboarding_json: onboardingJson,
-      p_story_contract_json: storyContractJson,
-      p_route_schema_json: {},
-      p_plot_debts_json: misteriDramaContract.plotDebts,
-      p_ending_candidates_json: misteriDramaContract.endingCandidates,
-      p_characters: canon.characters,
-      p_character_aliases: canon.characterAliases,
-      p_voice_sheets: canon.voiceSheets,
-      p_facts: canon.facts,
-      p_knowledge: canon.knowledge,
-      p_secrets: canon.secrets,
-      p_threads: canon.threads,
-      p_blueprints: canon.blueprints,
+      p_onboarding_json: JSON.stringify(onboardingJson),
+      p_story_contract_json: JSON.stringify(storyContractJson),
+      p_route_schema_json: JSON.stringify({}),
+      p_plot_debts_json: JSON.stringify(misteriDramaContract.plotDebts),
+      p_ending_candidates_json: JSON.stringify(misteriDramaContract.endingCandidates),
+      p_characters: JSON.stringify(canon.characters),
+      p_character_aliases: JSON.stringify(canon.characterAliases),
+      p_voice_sheets: JSON.stringify(canon.voiceSheets),
+      p_facts: JSON.stringify(canon.facts),
+      p_knowledge: JSON.stringify(canon.knowledge),
+      p_secrets: JSON.stringify(canon.secrets),
+      p_threads: JSON.stringify(canon.threads),
+      p_blueprints: JSON.stringify(canon.blueprints),
     })
     expect(mocks.rpc.mock.calls.flat().join(' ')).not.toMatch(/generate|chapter(?:s)?(?:\W+insert)?/i)
   })
@@ -281,18 +281,19 @@ describe('persistContractAndCanon', () => {
 
     const [, payload] = mocks.rpc.mock.calls[0]
     expect(payload.p_owner_user_id).toBe(ownerUserId)
+    const blueprints = JSON.parse(payload.p_blueprints)
     expect(() => CanonBootstrapSchema.parse({
-      characters: payload.p_characters,
-      characterAliases: payload.p_character_aliases,
-      voiceSheets: payload.p_voice_sheets,
-      facts: payload.p_facts,
-      knowledge: payload.p_knowledge,
-      secrets: payload.p_secrets,
-      threads: payload.p_threads,
-      blueprints: payload.p_blueprints,
+      characters: JSON.parse(payload.p_characters),
+      characterAliases: JSON.parse(payload.p_character_aliases),
+      voiceSheets: JSON.parse(payload.p_voice_sheets),
+      facts: JSON.parse(payload.p_facts),
+      knowledge: JSON.parse(payload.p_knowledge),
+      secrets: JSON.parse(payload.p_secrets),
+      threads: JSON.parse(payload.p_threads),
+      blueprints,
     })).not.toThrow()
-    expect(payload.p_blueprints).toHaveLength(50)
-    expect(payload.p_characters[0]).toMatchObject({
+    expect(blueprints).toHaveLength(50)
+    expect(JSON.parse(payload.p_characters)[0]).toMatchObject({
       story_id: misteriDramaContract.storyId,
       canonical_name: 'Maya Pradipta',
     })

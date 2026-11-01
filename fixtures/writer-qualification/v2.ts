@@ -719,27 +719,27 @@ const TRUSTED_SEMANTIC_ARTIFACT_AUTHORITIES: Readonly<Record<QualificationFixtur
 }>>> = Object.freeze({
   EARLY: {
     plan: { stageOutputHash: '8cdd5d5a3075257cdf5da90a7922db4fa438dd250b1f3afb8f07bdf155344fed', safeArtifactHash: 'f32ac35385feb50b4600f41e461d863e66e866359745c92106c9fab31987cf09' },
-    writer: { stageOutputHash: 'cf3633f69898d327c6f19058852ddd78f5e080b115f3efbb90d18fa050c51f7c', safeArtifactHash: 'cd874b6f7d6a54bb0758efa4a40ed0505116df69612d05cb8fb3f015787d278f' },
+    writer: { stageOutputHash: 'a4b681150e14b34d497167e24da888a8132c11535eeceb982a61a1684b24edde', safeArtifactHash: 'e171f460c783d85856d93d539ac4e5a306aebc035e80c5f862fa6206a84bb051' },
     continuation: { stageOutputHash: null, safeArtifactHash: '543441d372671e13ffa1f02e7110fa7abf179bf26ce83fa5b8fa7b510dec1e4f' },
   },
   DIALOGUE: {
     plan: { stageOutputHash: 'd16b02d5e759ba2f883919d6f77338dc0a5a253f30ae097fb43ed4d7651b7ef0', safeArtifactHash: '53158300dba50f53ca5bb705c73714e795ad47217cb8031946c0648e1b9e7578' },
-    writer: { stageOutputHash: '93b26d591cbc24d05a18d211b98ce6b340081051cee79fdc73e53f8e5dc149cd', safeArtifactHash: '33cd4b66ea9ac4417a0c156a8199416e8415e2b40c1697c4764b0e0dba54eafa' },
+    writer: { stageOutputHash: 'cddd3932663aede7550c09040ac85e12bedbd94b944eb673ea56a4ff2336c95c', safeArtifactHash: '34ed9d5114a450911e5adbc3720dea25cffe6891a3206aef3796fc168b8d0d06' },
     continuation: { stageOutputHash: '83a0021bbd406cde84c4715a455814a24bf29b000c534caa5ec527a5433c06ba', safeArtifactHash: '42929d9fd8bff5431435609efba2efb8196a2a9f6a4710ae32a2f576bda2850c' },
   },
   MYSTERY: {
     plan: { stageOutputHash: '2dfb194ea7152ebcc383226c31c55f1994af6aec76483c83ea0223099fe6912d', safeArtifactHash: 'dab86b305a004d54f98d4ca7f9d9267cb47c04b3b2e5ddbdc61d5e3d21e6022d' },
-    writer: { stageOutputHash: 'bbc4f3527ba8836cea7ee5b5884eda51a5307e15701b42a5a9a70ec3ef6e278d', safeArtifactHash: '68a2844961b8b8298bdbf3d5e8487d875e30e28f24995c0768786f0cf02c21d1' },
+    writer: { stageOutputHash: '00d141359e190991fd62c161debbf825c01ebccfde42aa67049d360092c75224', safeArtifactHash: '697cdce55862eff7b7f06767e6874cbbefbe0e45a5484ee3f169cb72a375cddb' },
     continuation: { stageOutputHash: '767faef75e353d7445af8e34b6d2a0b1ccc540efc65d41837b010c965c007771', safeArtifactHash: 'bd5e8a55af2d6bc89e1911478c9ffcf8382f5964396ea2e5187fcc1fe94d404c' },
   },
   EMOTIONAL: {
     plan: { stageOutputHash: 'a7a5e14ed985abe3c3def29156dc798c801e180c0c0e6c09f01c859fec576848', safeArtifactHash: 'e30ffbd499757ca89f36b368918bbde2f0d2b93b7820bc0e63740faec8929cbf' },
-    writer: { stageOutputHash: '7fb4122020cf8ca815acd3fbed761461eeee80ae1e7b4b93b129fdb15da41761', safeArtifactHash: '7b1f291fbf0d9f44e6a9d2efc19b36a8c61c5e12f6b021328e55770c30c0e24c' },
+    writer: { stageOutputHash: '6531d8b7a77553d37d52cb18639008389621b146468a12309af50fc5eefeaab8', safeArtifactHash: 'c56b69aa88e0e84d4a07ba6c12edaf51107786fd7bba8c2cf2dbd65865ef9e75' },
     continuation: { stageOutputHash: '636d8ba5331ee820fad77ccd58ef0c0c9e81c9fdf75e86771cd97d4a587357c6', safeArtifactHash: 'bc90bcfb8e2b14c34828935614e8152eceb21043db3ec1659796b7df8f39bd8e' },
   },
   LATER_ACT: {
     plan: { stageOutputHash: 'f63634943e7f43ee4611a96e39b294976a72c1d00e31cc625c3a366d1dd10895', safeArtifactHash: '4cdabb90937884c2fe27d58fbd4e5fb7559e3d506a263540915d2b88f1ed32ae' },
-    writer: { stageOutputHash: '20bba3f008a250f421a1c859d54d5525e168ee197c974bc16613ff6e774521c7', safeArtifactHash: '00806dd92bf1a6eac786b5ba3df6867e405f941767572ed1b7189303a42462cc' },
+    writer: { stageOutputHash: '855128f9314d7782778c07c0a551992885376c9170568c1fc6e7419733a80868', safeArtifactHash: '3e4cdd033d755edef59ee8ae462c92e239d23f1f839d64915e256815b76052df' },
     continuation: { stageOutputHash: 'a84866a669ae84cb2c190ec6d20e0c6afe6f78402931611c912614b74f0c3072', safeArtifactHash: 'f14e11a56b1650ecbcbe97046e213d17a3342b4def79f321d1963d38b6ec1d62' },
   },
 })
@@ -1300,9 +1300,9 @@ export const WRITER_QUALIFICATION_FIXTURE_V2 = Object.freeze({
     LATER_ACT: 'ed639042424181802a7f6df7b1bb8dcbbd0ef1137754f41a4c9a7bb3f0bbb6f9',
   }),
   provisionalCorpusManifestHash: '712d46e7b9a06394b98593ee537fab43c376cea4aebcc951d48b654d51ca6a2a',
-  projectionValidationHash: '74832ff9f69248f7153670174414aeafa0880782bf5889c27648d823df7be116',
-  privacyValidationHash: '097aa6b36eaa1204addd8e2346525fa8d55a5aa94cb67c1fbcd789df1e8f7c1d',
-  readyAuthorityManifestHash: '008739493e9603bc4b14fc6ba0d7bbeb02edbe38e03c3db71f03f789809064df',
+  projectionValidationHash: '894354a34c33f67e89cbe6c2c8ca4644b5eceaa714b154233bf717b81ba38635',
+  privacyValidationHash: '4d3db4a3599e224ad881a744b312dbdbec6d064a159b93be1c791ec412a477b3',
+  readyAuthorityManifestHash: 'c5ccb544c55e5130aaa342c719429c1ca152f30f78dcbdfb020997524877defe',
 })
 
 export type WriterQualificationFixtureV2RuntimeCapture = Readonly<{

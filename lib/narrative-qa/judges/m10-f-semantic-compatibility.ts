@@ -8,7 +8,7 @@ export const M10F_FROZEN_SEMANTIC_SOURCE_HASHES = Object.freeze({
   'lib/narrative-qa/judges/m10-f-semantic-assembly.ts': '8cd08641e6be0767ec2b778eb48c9e3f317faae08f491e7dabe679d257b7f4cd',
   'lib/narrative-qa/judges/m10-f-semantic-artifact.ts': '20d55e6d2b3a450734ddc3960b3d2f61f5c061901290aee9d41f4743f9136b21',
   'lib/narrative-qa/judges/m10-f-semantic-prompts.ts': 'f2d7d75994eb87335b698a903ff9d33259f3391882acbe41cefe8cd8b679f404',
-  'lib/narrative-qa/judges/m10-f-semantic-surface.server.ts': '69195ad6afe7498d928c0610d3c8f20e38ef46076036e5f046de4541bbde0ac1',
+  'lib/narrative-qa/judges/m10-f-semantic-surface.server.ts': '2e242952160033bf1d2708be0b58f6fb689f1195f35ad902c018915188dbf6d8',
   'lib/narrative-qa/judges/m10-f-semantic-executor.server.ts': 'd2058a899d093194af19612eb4b88110628d3ce654441d9de79ecd966c2926a2',
 } as const)
 

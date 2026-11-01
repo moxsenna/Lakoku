@@ -606,7 +606,7 @@ describe('reader-state grant compatibility', () => {
         story_id: 'private:a',
         status: 'BERJALAN',
         current_chapter: 3,
-        jejak: [],
+        jejak: '[]',
         ending_name: null,
         updated_at: expect.any(String),
       }),

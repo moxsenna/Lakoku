@@ -161,9 +161,9 @@ describe('E5 blueprint resolution authority', () => {
       p_reviewer_uid: 'trusted-owner',
       p_chapter_numbers: [2, 9],
       p_validator_version: 'E5_CANONICAL_VALIDATOR_V1',
-      p_spine_reveal_findings: PASSED_VALIDATION.spineRevealFindings,
-      p_ending_results: PASSED_VALIDATION.endingResults,
-      p_expected_chapter_versions: PASSED_VALIDATION.validatedChapterVersions,
+      p_spine_reveal_findings: JSON.stringify(PASSED_VALIDATION.spineRevealFindings),
+      p_ending_results: JSON.stringify(PASSED_VALIDATION.endingResults),
+      p_expected_chapter_versions: JSON.stringify(PASSED_VALIDATION.validatedChapterVersions),
     })
     expect(resolutionRpc).toHaveBeenCalledWith('e5_record_disposition', {
       p_story_id: 'story-123',

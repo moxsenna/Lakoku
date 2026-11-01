@@ -567,7 +567,7 @@ describe('generation job worker RPC adapters', () => {
 
     expect(rpc).toHaveBeenCalledWith('upsert_generation_checkpoint_fenced_v1', expect.objectContaining({
       p_generation_mode: generationMode,
-      p_audit_signals: auditSignals,
+      p_audit_signals: auditSignals ? JSON.stringify(auditSignals) : null,
       p_audit_signals_version: auditSignalsVersion,
     }))
   })

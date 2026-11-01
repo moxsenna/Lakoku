@@ -80,7 +80,7 @@ function buildChapterBriefV2Prompt(input: BuildWriterPromptInput): WriterPromptP
   )
 
   const characterDisplayList = descriptors.map((d) => {
-    const parts = [safe(d.name)]
+    const parts = [d.name]
     if (d.role) parts.push(`Peran: ${safe(d.role)}`)
     if (d.honorifics && d.honorifics.length > 0) parts.push(`sapaan sah: ${d.honorifics.map(safe).join(' / ')}`)
     return parts.length > 1 ? `${parts[0]} (${parts.slice(1).join(', ')})` : parts[0]

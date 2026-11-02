@@ -65,6 +65,13 @@ const baseAuth = betterAuth({
       })
     },
   },
+  user: {
+    // Ubah email: email baru baru aktif setelah tautan verifikasi diklik.
+    // Email verifikasi terkirim lewat callback di atas (template branding).
+    changeEmail: {
+      enabled: true,
+    },
+  },
   socialProviders: {
     google: {
       clientId: process.env.GOOGLE_CLIENT_ID || '',

@@ -15,6 +15,7 @@ import { listMyLibraryStories } from '@/lib/api/server'
 import { getReaderStates, getSessionUser } from '@/lib/api/user-state'
 import { getCreditBalance, getReadingPolicy } from '@/lib/credits/server'
 import { getTintaBalance } from '@/lib/tinta/server'
+import { AccountSettings } from '@/components/profile/account-settings'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,7 +31,9 @@ const LogoutButton = nextDynamic(
 
 export default async function ProfilPage() {
   const user = await getSessionUser()
-  const displayName = user?.email ? user.email.split('@')[0] : 'Tamu'
+  const authName =
+    typeof user?.user_metadata?.name === 'string' ? user.user_metadata.name.trim() : ''
+  const displayName = authName || (user?.email ? user.email.split('@')[0] : 'Tamu')
   const initial = displayName.charAt(0).toUpperCase()
   // Personal library only (AMENDMENTS v0.5). Guest → [].
   const [stories, readerStates] = await Promise.all([
@@ -175,6 +178,8 @@ export default async function ProfilPage() {
             <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
           </Link>
         )}
+
+        {user && <AccountSettings />}
 
         <ProfileSettings />
 

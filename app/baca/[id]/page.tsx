@@ -62,6 +62,7 @@ export default async function BacaPage({
         cost={accessDecision.cost}
         balance={balance}
         bundleQuote={bundleQuote}
+        isGuest={!user}
       />
     )
   }

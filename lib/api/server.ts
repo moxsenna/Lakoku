@@ -147,20 +147,16 @@ export async function getStory(id: string): Promise<StoryDetail | null> {
   if (!story) return null
   const state = user ? await getReaderState(storyId) : null
   if (state) return overlay(story, state)
-  // Login tanpa personal state: jangan pakai demo global status sebagai milik user.
+  // Pembaca tanpa personal reader_state (user baru ATAU tamu):
+  // Jangan pakai status/jejak global (misal novel katalog yang sudah tamat) sebagai milik pembaca.
   // currentChapter = 1 (bukan 0): reader butuh bab valid; 0 memicu "Bab 0 dirapikan".
-  if (user) {
-    return {
-      ...story,
-      status: 'BARU',
-      currentChapter: 1,
-      jejak: [],
-      endingName: undefined,
-    }
+  return {
+    ...story,
+    status: 'BARU',
+    currentChapter: 1,
+    jejak: [],
+    endingName: undefined,
   }
-  // Tamu / demo shell: pastikan posisi baca minimal bab 1.
-  const chapter = Math.max(1, story.currentChapter || 1)
-  return { ...story, currentChapter: chapter }
 }
 
 /**

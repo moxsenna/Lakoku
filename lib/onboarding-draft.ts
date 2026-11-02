@@ -10,9 +10,9 @@ export const ONBOARDING_DRAFT_TTL_MS = 30 * 60 * 1000
 
 export interface OnboardingDraftPayload {
   premise: PremiseDraft
-  cast: CastDraft
-  mystery: MysteryDraft
-  world: WorldDraft
+  cast?: CastDraft
+  mystery?: MysteryDraft
+  world?: WorldDraft
   answers?: Record<string, string>
   /** Optional creative direction snapshot for resume (opaque JSON). */
   creativeDirection?: unknown
@@ -31,12 +31,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function isPayload(value: unknown): value is OnboardingDraftPayload {
   if (!isObject(value)) return false
-  return (
-    isObject(value.premise) &&
-    isObject(value.cast) &&
-    isObject(value.mystery) &&
-    isObject(value.world)
-  )
+  return isObject(value.premise)
 }
 
 export function createOnboardingDraftStashRecord(

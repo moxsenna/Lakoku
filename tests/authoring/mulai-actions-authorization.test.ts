@@ -20,13 +20,46 @@ vi.mock('@/lib/authoring/server', () => ({
 beforeEach(() => vi.clearAllMocks())
 
 describe('mulai action authorization', () => {
-  it('rejects anonymous story setup before parsing or provider call', async () => {
+  it('allows anonymous guests to generate premise proposals with valid setup', async () => {
     mocks.getSessionUser.mockResolvedValue(null)
+    mocks.proposePremises.mockResolvedValue({
+      proposals: [
+        {
+          title: 'Uji Cerita',
+          tagline: 'Tagline uji',
+          role: 'Tokoh utama',
+          synopsis: 'Sinopsis uji.',
+          tropes: ['Drama'],
+        },
+      ],
+      usedModel: 'test-model',
+    })
     const { actProposeStorySetupPremises } = await import('@/app/mulai/actions')
 
-    const result = await actProposeStorySetupPremises(null)
+    const result = await actProposeStorySetupPremises({
+      mode: 'quick',
+      answers: { genre: { mode: 'selected', value: 'family_drama' } },
+    })
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.proposals).toHaveLength(1)
+    }
+    expect(mocks.proposePremises).toHaveBeenCalled()
+  })
+
+  it('rejects anonymous guests when attempting to assemble and lock story bible', async () => {
+    mocks.getSessionUser.mockResolvedValue(null)
+    const { actAssembleAndLockStory } = await import('@/app/mulai/actions')
+
+    const result = await actAssembleAndLockStory({
+      title: 'Uji Cerita',
+      tagline: 'Tagline uji',
+      role: 'Tokoh utama',
+      synopsis: 'Sinopsis uji.',
+      tropes: ['Drama'],
+    })
 
     expect(result).toEqual({ ok: false, error: 'Masuk untuk membuat cerita.' })
-    expect(mocks.proposePremises).not.toHaveBeenCalled()
   })
 })

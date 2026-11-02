@@ -18,6 +18,7 @@ export function ChapterLocked({
   cost,
   balance,
   bundleQuote,
+  isGuest = false,
 }: {
   story: StoryDetail
   chapterNumber: number
@@ -27,6 +28,7 @@ export function ChapterLocked({
     price: number
     savings: number
   } | null
+  isGuest?: boolean
 }) {
   const router = useRouter()
   const [loadingChapter, setLoadingChapter] = useState(false)
@@ -116,19 +118,23 @@ export function ChapterLocked({
 
         <div className="flex flex-col gap-2">
           <h1 className="font-serif text-2xl leading-snug text-foreground text-balance">
-            Bab {chapterNumber} terkunci
+            {isGuest ? 'Lanjutkan Ceritamu' : `Bab ${chapterNumber} terkunci`}
           </h1>
           <p className="text-sm leading-relaxed text-muted-foreground text-pretty">
-            {bundleQuote
-              ? `Buka bab ini dengan ${cost} Lakoin atau miliki seluruh bab novel ini sekali bayar.`
-              : `Buka bab ini dengan ${cost} Lakoin untuk melanjutkan kisahmu.`}
+            {isGuest
+              ? `Kamu telah menyelesaikan 3 bab gratis pertamamu! Masuk atau buat akun untuk menyimpan jejak pilihanmu dan melanjutkan ke Bab ${chapterNumber}.`
+              : bundleQuote
+                ? `Buka bab ini dengan ${cost} Lakoin atau miliki seluruh bab novel ini sekali bayar.`
+                : `Buka bab ini dengan ${cost} Lakoin untuk melanjutkan kisahmu.`}
           </p>
         </div>
 
-        <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
-          <Coins className="size-4 text-gold" aria-hidden="true" />
-          Saldo Lakoinmu: <strong className="text-foreground">{balance}</strong>
-        </span>
+        {!isGuest && (
+          <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <Coins className="size-4 text-gold" aria-hidden="true" />
+            Saldo Lakoinmu: <strong className="text-foreground">{balance}</strong>
+          </span>
+        )}
 
         {error && (
           <p role="alert" className="text-sm text-destructive">
@@ -137,40 +143,51 @@ export function ChapterLocked({
         )}
 
         <div className="flex w-full flex-col gap-3">
-          {bundleQuote && (
-            <button
-              type="button"
-              onClick={unlockBundle}
-              disabled={loadingChapter || loadingBundle}
-              className="flex min-h-13 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-primary to-amber-600 px-6 text-sm font-semibold text-primary-foreground shadow-md transition-opacity hover:opacity-90 disabled:opacity-60"
-            >
-              <Sparkles className="size-4" aria-hidden="true" />
-              {loadingBundle
-                ? 'Membeli paket…'
-                : `Buka semua bab (${bundleQuote.price} Lakoin${bundleQuote.savings > 0 ? `, hemat ${bundleQuote.savings}` : ''})`}
-            </button>
-          )}
-
-          {insufficient ? (
+          {isGuest ? (
             <Link
-              href={`/kredit?kembali=${encodeURIComponent(`/baca/${story.id}?bab=${chapterNumber}`)}`}
-              className="flex min-h-13 w-full items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+              href={`/auth/login?next=${encodeURIComponent(`/baca/${story.id}?bab=${chapterNumber}`)}`}
+              className="flex min-h-13 w-full items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground shadow-md transition-opacity hover:opacity-90"
             >
-              Beli Lakoin
+              Masuk / Buat Akun
             </Link>
           ) : (
-            <button
-              type="button"
-              onClick={unlockChapter}
-              disabled={loadingChapter || loadingBundle}
-              className={
-                bundleQuote
-                  ? 'flex min-h-13 w-full items-center justify-center rounded-2xl border border-primary bg-primary/10 px-6 text-sm font-semibold text-primary transition-opacity hover:opacity-90 disabled:opacity-60'
-                  : 'flex min-h-13 w-full items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60'
-              }
-            >
-              {loadingChapter ? 'Membuka…' : `Buka bab ini (${cost} Lakoin)`}
-            </button>
+            <>
+              {bundleQuote && (
+                <button
+                  type="button"
+                  onClick={unlockBundle}
+                  disabled={loadingChapter || loadingBundle}
+                  className="flex min-h-13 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-primary to-amber-600 px-6 text-sm font-semibold text-primary-foreground shadow-md transition-opacity hover:opacity-90 disabled:opacity-60"
+                >
+                  <Sparkles className="size-4" aria-hidden="true" />
+                  {loadingBundle
+                    ? 'Membeli paket…'
+                    : `Buka semua bab (${bundleQuote.price} Lakoin${bundleQuote.savings > 0 ? `, hemat ${bundleQuote.savings}` : ''})`}
+                </button>
+              )}
+
+              {insufficient ? (
+                <Link
+                  href={`/kredit?kembali=${encodeURIComponent(`/baca/${story.id}?bab=${chapterNumber}`)}`}
+                  className="flex min-h-13 w-full items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+                >
+                  Beli Lakoin
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  onClick={unlockChapter}
+                  disabled={loadingChapter || loadingBundle}
+                  className={
+                    bundleQuote
+                      ? 'flex min-h-13 w-full items-center justify-center rounded-2xl border border-primary bg-primary/10 px-6 text-sm font-semibold text-primary transition-opacity hover:opacity-90 disabled:opacity-60'
+                      : 'flex min-h-13 w-full items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60'
+                  }
+                >
+                  {loadingChapter ? 'Membuka…' : `Buka bab ini (${cost} Lakoin)`}
+                </button>
+              )}
+            </>
           )}
         </div>
 

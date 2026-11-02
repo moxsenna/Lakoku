@@ -7,10 +7,9 @@ import {
   serializeAcquisitionCookie,
 } from '@/lib/acquisition/policy'
 
-// Rute yang memerlukan sesi (pengalaman baca personal, koleksi, alur transaksi).
-// Jelajah (/beranda, /cerita), viral share (/s/), /profil (punya CTA tamu), dan /mulai
-// (tamu boleh menjawab kuis; login diminta tepat sebelum premis disusun) tetap publik.
-const PROTECTED_PREFIXES = ['/baca', '/akhir', '/koleksiku', '/brainstorm', '/kredit', '/payment']
+// Rute yang memerlukan sesi (koleksi, alur transaksi).
+// Baca bab 1–3, jelajah (/beranda, /cerita), viral share (/s/), /profil (punya CTA tamu), dan /mulai tetap publik.
+const PROTECTED_PREFIXES = ['/akhir', '/koleksiku', '/brainstorm', '/kredit', '/payment']
 
 /**
  * Capture akuisisi first-touch (desain pra-launch analytics, OQ1=A).

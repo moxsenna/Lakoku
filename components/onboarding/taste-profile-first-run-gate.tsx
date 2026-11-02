@@ -58,14 +58,17 @@ export function TasteProfileFirstRunGate({ next = '/beranda' }: { next?: string 
         const result = await actGetTasteProfile()
         if (result.ok && result.profile) {
           if (result.profile.completedAt || result.profile.skippedAt) return
+        } else {
+          // Tamu tanpa akun: jangan alihkan paksa, biarkan bebas menikmati beranda & katalog cerita.
+          return
         }
       } catch {
         // Gagal cek server → jangan block user, diam saja.
         return
       }
 
-      // Belum pernah complete/skip → mulai dari /mulai (genre = langkah pertama).
-      router.push(`/mulai?next=${encodeURIComponent(next)}`)
+      // Pengguna login tanpa profil: jangan paksa mental ke /mulai dari beranda.
+      // Profil selera tetap dapat diatur lewat halaman profil atau saat memulai cerita baru.
     })
   }, [next, pathname, router, startTransition])
 

@@ -9,6 +9,7 @@ import {
   AUTHORING_AUTH_REQUIRED_ERROR,
   requireAuthoringSessionUser,
 } from '@/lib/authoring/action-auth'
+import { getSessionUser } from '@/lib/api/user-state'
 import { getTasteProfileForUser } from '@/lib/api/taste-profile'
 // getTasteProfileForUser is mocked in unit tests
 import {
@@ -95,17 +96,20 @@ function coerceAnswers(
 }
 
 async function loadEffectiveProfile(
-  userId: string,
+  userId: string | null | undefined,
   guestRaw: unknown,
 ): Promise<TasteProfileV2> {
-  const server = await getTasteProfileForUser(userId)
-  if (server && (server.completedAt || server.primaryGenreId)) {
-    return server
-  }
   if (guestRaw) {
     return normalizeTasteProfile(guestRaw)
   }
-  return server ?? normalizeTasteProfile({})
+  if (userId) {
+    const server = await getTasteProfileForUser(userId)
+    if (server && (server.completedAt || server.primaryGenreId)) {
+      return server
+    }
+    return server ?? normalizeTasteProfile({})
+  }
+  return normalizeTasteProfile({})
 }
 
 export async function actProposeStorySetupPremises(
@@ -119,7 +123,7 @@ export async function actProposeStorySetupPremises(
   }>
 > {
   try {
-    const user = await requireAuthoringSessionUser()
+    const user = await getSessionUser()
     const parsed = StorySetupV2InputSchema.safeParse(rawInput)
 
     // Backward compat: old schema from story-setup.ts
@@ -139,7 +143,7 @@ export async function actProposeStorySetupPremises(
     }
 
     const input = parsed.data
-    const profile = await loadEffectiveProfile(user.id, input.guestTasteProfile)
+    const profile = await loadEffectiveProfile(user?.id, input.guestTasteProfile)
 
     let answers: Partial<Record<string, AutoOrValue>> = {}
     let source: StoryCreativeDirection['source'] = 'taste_quick'
@@ -207,3 +211,41 @@ export async function actProposeStorySetupPremises(
     }
   }
 }
+
+/**
+ * Merakit story bible di server dan menguncinya ke database dalam 1 pemanggilan terpadu.
+ * Memangkas latensi dari 4 round-trip HTTP terpisah.
+ */
+export async function actAssembleAndLockStory(
+  premise: PremiseDraft,
+  creativeDirection?: StoryCreativeDirection | null,
+): Promise<ActionResult<{ storyId: string }>> {
+  try {
+    const user = await requireAuthoringSessionUser()
+    const { assembleAndLockStoryBible } = await import('@/lib/authoring/assemble-bible.server')
+    const result = await assembleAndLockStoryBible({
+      premise,
+      creativeDirection,
+      userId: user.id,
+    })
+    if (!result.ok) {
+      return {
+        ok: false,
+        error: result.error ?? 'Gagal menyusun bible cerita.',
+      }
+    }
+    return {
+      ok: true,
+      storyId: result.storyId!,
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error && error.message === AUTHORING_AUTH_REQUIRED_ERROR
+          ? AUTHORING_AUTH_REQUIRED_ERROR
+          : publicAuthoringErrorMessage(error),
+    }
+  }
+}
+

@@ -152,7 +152,7 @@ export default async function BerandaPage() {
               Pilihan Lakoku
             </h2>
             <Link
-              href={`/cerita/${featured.id}`}
+              href={`/baca/${featured.id}?bab=1`}
               className="group relative block overflow-hidden rounded-3xl"
             >
               <div className="relative aspect-[4/5] w-full">
@@ -190,13 +190,26 @@ export default async function BerandaPage() {
                 <p className="text-sm leading-relaxed text-cream/80">{featured.tagline}</p>
                 <span className="mt-1 flex min-h-12 w-fit items-center gap-2 rounded-2xl bg-primary px-5 text-sm font-semibold text-primary-foreground">
                   <Play className="size-4" aria-hidden="true" />
-                  Jalani Cerita Ini
+                  Mulai Baca Bab 1 (Gratis)
                 </span>
               </div>
             </Link>
           </section>
         )
       )}
+
+      <div className="flex items-center justify-between rounded-2xl border border-border bg-card/60 p-4 transition-colors hover:bg-card">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-xs font-semibold text-foreground">Mau buat cerita sendiri?</span>
+          <span className="text-[11px] text-muted-foreground">Tentukan peran, rahasia, dan alur tokoh utamamu.</span>
+        </div>
+        <Link
+          href="/mulai"
+          className="flex min-h-9 items-center justify-center rounded-xl bg-secondary px-3.5 text-xs font-semibold text-foreground transition-colors hover:bg-secondary/80"
+        >
+          Mulai Cerita Baru
+        </Link>
+      </div>
 
       {adSlot.shouldRender && <AdsenseBanner clientId={adSlot.clientId} slotId={adSlot.slotId} />}
 

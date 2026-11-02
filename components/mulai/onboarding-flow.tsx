@@ -31,13 +31,8 @@ import {
   saveOnboardingQuizStash,
   type OnboardingQuizPayload,
 } from '@/lib/onboarding-draft'
-import {
-  actProposeCast,
-  actProposeMystery,
-  actProposeWorld,
-} from '@/app/brainstorm/actions'
 import { lockStoryBible, startChapter } from '@/lib/api/client'
-import { actProposeStorySetupPremises } from '@/app/mulai/actions'
+import { actAssembleAndLockStory, actProposeStorySetupPremises } from '@/app/mulai/actions'
 import { actGetTasteProfile } from '@/app/onboarding/selera/actions'
 import { readGuestTasteProfile } from '@/lib/taste-profile/storage'
 import {
@@ -392,6 +387,60 @@ export function OnboardingFlow() {
     }
   }, [elapsedMs, enterBuildStage, failBuild, routeAfterStoryStart])
 
+  const executeAssembleAndStart = useCallback(
+    async (premise: PremiseDraft, direction?: StoryCreativeDirection | null) => {
+      try {
+        enterBuildStage('cast')
+        const t1 = setTimeout(() => enterBuildStage('mystery'), 3000)
+        const t2 = setTimeout(() => enterBuildStage('world'), 6000)
+        const t3 = setTimeout(() => enterBuildStage('lock'), 9000)
+
+        const assembleRes = await actAssembleAndLockStory(premise, direction)
+        clearTimeout(t1)
+        clearTimeout(t2)
+        clearTimeout(t3)
+
+        if (!assembleRes.ok) {
+          return failBuild(assembleRes.error, 'lock_failed')
+        }
+
+        clearOnboardingDraftStash(window.localStorage)
+
+        enterBuildStage('chapter')
+        const gen = await startChapter(assembleRes.storyId, 1)
+
+        abandonSentRef.current = true
+        const startedPayload = {
+          stage: 'start',
+          story_setup_mode: funnelSnapshotRef.current.entryMode ?? undefined,
+          story_id: assembleRes.storyId,
+          duration_ms: elapsedMs(),
+        } as const
+        trackEvent('story_setup_story_started', startedPayload)
+        trackEvent('story_creation_completed', startedPayload)
+
+        if (!gen.ok) {
+          trackEvent('story_setup_failed', {
+            stage: 'build',
+            build_stage: 'chapter',
+            story_id: assembleRes.storyId,
+            error_code: 'chapter_failed',
+          })
+          routeAfterStoryStart(`/cerita/${assembleRes.storyId}`)
+          return
+        }
+        routeAfterStoryStart(`/baca/${assembleRes.storyId}?bab=1`)
+      } catch (err) {
+        if (isActionMismatchError(err)) {
+          window.location.reload()
+          return
+        }
+        failBuild('Terjadi kendala saat menyusun karakter dan dunia cerita. Coba lagi.', 'unknown')
+      }
+    },
+    [elapsedMs, enterBuildStage, failBuild, routeAfterStoryStart],
+  )
+
   // ── Resume flow ─────────────────────────────────────────────────
 
   useEffect(() => {
@@ -439,7 +488,14 @@ export function OnboardingFlow() {
             router.push(RESUME_LOGIN_URL)
             return
           }
-          await lockAndStart(draft)
+          if (draft.cast && draft.mystery && draft.world) {
+            await lockAndStart(draft as StoryBibleDraft)
+          } else {
+            await executeAssembleAndStart(
+              draft.premise,
+              draft.creativeDirection as StoryCreativeDirection | undefined,
+            )
+          }
         } catch (err) {
           if (isActionMismatchError(err)) {
             window.location.reload()
@@ -449,7 +505,7 @@ export function OnboardingFlow() {
         }
       })
     })
-  }, [failBuild, hasSession, lockAndStart, resume, router])
+  }, [executeAssembleAndStart, failBuild, hasSession, lockAndStart, resume, router])
 
   // ── Kuis ────────────────────────────────────────────────────────
 
@@ -521,8 +577,8 @@ export function OnboardingFlow() {
 
   // ── Generate premis dari AI ────────────────────────────────────
 
-  // Premis disusun di server dan butuh akun. Tamu menjawab kuis lebih dulu;
-  // jawabannya disimpan lalu dilanjutkan otomatis setelah masuk/daftar.
+  // Tunda login: tamu boleh melihat 3 premis hasil AI terlebih dahulu.
+  // Login diminta tepat saat pengguna memilih 1 premis dan menekan "Mulai Petualangan Ini".
   const requestProposals = useCallback(
     (payload: OnboardingQuizPayload) => {
       const mode = payload.mode
@@ -530,17 +586,6 @@ export function OnboardingFlow() {
       setPhase('proposals')
       startTransition(async () => {
         try {
-          if (!(await hasSession())) {
-            abandonSentRef.current = true
-            saveOnboardingQuizStash(window.localStorage, payload)
-            trackEvent('story_setup_login_required', {
-              stage: mode === 'custom' ? 'custom' : 'quiz',
-              story_setup_mode: mode,
-              duration_ms: elapsedMs(),
-            })
-            router.push(QUIZ_RESUME_LOGIN_URL)
-            return
-          }
           clearOnboardingQuizStash(window.localStorage)
           const res = await actProposeStorySetupPremises(
             payload.mode === 'quick'
@@ -663,42 +708,8 @@ export function OnboardingFlow() {
     })
     startTransition(async () => {
       try {
-        enterBuildStage('cast')
-        const castRes = await actProposeCast(premise, undefined, undefined, creativeDirection)
-        if (!castRes.ok) return failBuild(castRes.error, 'cast_failed')
-
-        enterBuildStage('mystery')
-        const mysteryRes = await actProposeMystery(
-          premise,
-          castRes.cast,
-          undefined,
-          undefined,
-          creativeDirection,
-        )
-        if (!mysteryRes.ok) return failBuild(mysteryRes.error, 'mystery_failed')
-
-        enterBuildStage('world')
-        const worldRes = await actProposeWorld(
-          premise,
-          castRes.cast,
-          mysteryRes.mystery,
-          undefined,
-          undefined,
-          creativeDirection,
-        )
-        if (!worldRes.ok) return failBuild(worldRes.error, 'world_failed')
-
-        const draft = {
-          premise,
-          cast: castRes.cast,
-          mystery: mysteryRes.mystery,
-          world: worldRes.world,
-          creativeDirection: creativeDirection ?? undefined,
-        }
-
-        enterBuildStage('lock')
         if (!(await hasSession())) {
-          // Bukan drop-off: user dialihkan ke login lalu resume.
+          // Bukan drop-off: user dialihkan ke login lalu resume setelah memilih premis.
           abandonSentRef.current = true
           trackEvent('story_setup_login_required', {
             stage: 'build',
@@ -706,7 +717,8 @@ export function OnboardingFlow() {
             duration_ms: elapsedMs(),
           })
           saveOnboardingDraftStash(window.localStorage, {
-            ...draft,
+            premise,
+            creativeDirection: creativeDirection ?? undefined,
             answers: Object.fromEntries(
               Object.entries(answers).map(([k, v]) => [
                 k,
@@ -718,7 +730,7 @@ export function OnboardingFlow() {
           return
         }
 
-        await lockAndStart(draft)
+        await executeAssembleAndStart(premise, creativeDirection)
       } catch (err) {
         if (isActionMismatchError(err)) {
           window.location.reload()

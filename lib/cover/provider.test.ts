@@ -4,9 +4,9 @@ import { buildCoverPrompt, isCoverProviderConfigured } from './provider'
 vi.mock('server-only', () => ({}))
 
 describe('buildCoverPrompt', () => {
-  it('meminta orientasi potret 2:3 karena parameter size diabaikan penyedia', () => {
+  it('meminta orientasi potret 9:16 karena parameter size diabaikan penyedia', () => {
     const prompt = buildCoverPrompt({ title: 'T', tagline: '', role: '', tropes: [] })
-    expect(prompt).toMatch(/2:3/)
+    expect(prompt).toMatch(/9:16/)
     expect(prompt).toMatch(/potret/i)
   })
 

@@ -92,7 +92,7 @@ export function buildCoverPrompt(input: CoverGenerationInput): string {
     : ''
 
   const baseHeader = input.basePromptOverride?.trim() ||
-    'Sampul novel romansa Indonesia, orientasi potret vertikal rasio 2:3 (lebih tinggi daripada lebar).'
+    'Sampul novel romansa Indonesia, orientasi potret vertikal rasio 9:16 (lebih tinggi daripada lebar).'
 
   const textInstruction = input.includeTitle
     ? `Tampilkan teks judul cerita "${title}" secara jelas, artistik, dan terbaca rapi di dalam gambar.`

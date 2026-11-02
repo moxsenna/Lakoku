@@ -28,7 +28,7 @@ export function StoryCard({
       </div>
       <div className="flex min-w-0 flex-1 flex-col justify-between py-1">
         <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             {story.status === 'SELESAI' ? (
               <span className="rounded-full bg-gold/15 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-gold">
                 AKHIR CERITA
@@ -42,6 +42,14 @@ export function StoryCard({
                 CERITA BERJALAN
               </span>
             )}
+            {story.tropes && story.tropes.slice(0, 2).map((trope) => (
+              <span
+                key={trope}
+                className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-secondary-foreground"
+              >
+                {trope}
+              </span>
+            ))}
           </div>
           <h3 className="font-serif text-lg leading-snug text-foreground text-pretty">{story.title}</h3>
           <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">{story.tagline}</p>

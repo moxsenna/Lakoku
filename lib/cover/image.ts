@@ -2,7 +2,7 @@ import 'server-only'
 import sharp from 'sharp'
 
 /**
- * Normalisasi sampul: potret 2:3, WebP terkompresi.
+ * Normalisasi sampul: potret 9:16, WebP terkompresi.
  *
  * Dua alasan langkah ini wajib, bukan hiasan:
  *   1. next.config.mjs memakai `images.unoptimized: true`, jadi Next TIDAK
@@ -12,9 +12,9 @@ import sharp from 'sharp'
  *      pada foto dari ponsel yang diunggah pengguna.
  */
 
-/** Lebar akhir; 2:3 pada 832x1248 cukup tajam untuk layar mobile 448px. */
-const TARGET_WIDTH = 832
-const TARGET_HEIGHT = 1248
+/** Lebar akhir; potret 9:16 pada 720x1280 cukup tajam untuk layar mobile 448px. */
+const TARGET_WIDTH = 720
+const TARGET_HEIGHT = 1280
 const WEBP_QUALITY = 82
 
 export type NormalizedCover = { data: Buffer; width: number; height: number; bytes: number }
@@ -23,17 +23,17 @@ export type NormalizedCover = { data: Buffer; width: number; height: number; byt
  * Ubah byte gambar apa pun jadi WebP potret.
  *
  * ARTWORK TIDAK PERNAH DIPOTONG. Penyedia gambar sering mengabaikan rasio
- * yang diminta; memaksa 2:3 dengan `fit: 'cover'` terbukti memenggal teks
+ * yang diminta; memaksa 9:16 dengan `fit: 'cover'` terbukti memenggal teks
  * judul yang digambar di tepi poster (kasus nyata: lima sampul katalog
  * rusak, 2026-10-31). Strateginya dua lapis:
  *
- *   1. Latar 2:3 dari gambar yang sama (cover-fit), dikaburkan dan
+ *   1. Latar 9:16 dari gambar yang sama (cover-fit), dikaburkan dan
  *      digelapkan — rasio input apa pun menghasilkan kanvas penuh yang
  *      terasa menyatu, bukan pita kosong.
  *   2. Artwork utuh di depan dengan `fit: 'contain'` — judul selamat
  *      apa pun bentuk keluaran penyedia.
  *
- * Untuk input yang sudah 2:3, latar tidak pernah terlihat (contain
+ * Untuk input yang sudah 9:16, latar tidak pernah terlihat (contain
  * mengisi penuh) — perilaku identik dengan crop biasa.
  *
  * Melempar bila input bukan gambar yang bisa dibaca — pemanggil menangkapnya

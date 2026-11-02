@@ -119,11 +119,21 @@ export default async function BerandaPage() {
               <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/30 to-transparent" />
             </div>
             <div className="absolute inset-x-0 bottom-0 flex flex-col gap-3 p-6">
-              <span className="w-fit rounded-full bg-primary/20 px-3 py-1 text-[11px] font-semibold tracking-wide text-primary backdrop-blur">
-                CERITA BERJALAN — BAB{' '}
-                <ResumeChapter storyId={berjalan.id} fallback={berjalan.currentChapter} /> DARI{' '}
-                {berjalan.totalChapters}
-              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="w-fit rounded-full bg-primary/20 px-3 py-1 text-[11px] font-semibold tracking-wide text-primary backdrop-blur">
+                  CERITA BERJALAN — BAB{' '}
+                  <ResumeChapter storyId={berjalan.id} fallback={berjalan.currentChapter} /> DARI{' '}
+                  {berjalan.totalChapters}
+                </span>
+                {berjalan.tropes && berjalan.tropes.slice(0, 2).map((t) => (
+                  <span
+                    key={t}
+                    className="w-fit rounded-full bg-cream/15 px-2.5 py-1 text-[11px] font-medium text-cream backdrop-blur"
+                  >
+                    {t}
+                  </span>
+                ))}
+              </div>
               <h3 className="font-serif text-3xl leading-tight text-cream text-balance">
                 {berjalan.title}
               </h3>
@@ -161,9 +171,19 @@ export default async function BerandaPage() {
                 <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/30 to-transparent" />
               </div>
               <div className="absolute inset-x-0 bottom-0 flex flex-col gap-3 p-6">
-                <span className="w-fit rounded-full bg-gold/20 px-3 py-1 text-[11px] font-semibold tracking-wide text-gold backdrop-blur">
-                  PILIHAN LAKOKU
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="w-fit rounded-full bg-gold/20 px-3 py-1 text-[11px] font-semibold tracking-wide text-gold backdrop-blur">
+                    PILIHAN LAKOKU
+                  </span>
+                  {featured.tropes && featured.tropes.slice(0, 2).map((t) => (
+                    <span
+                      key={t}
+                      className="w-fit rounded-full bg-cream/15 px-2.5 py-1 text-[11px] font-medium text-cream backdrop-blur"
+                    >
+                      {t}
+                    </span>
+                  ))}
+                </div>
                 <h3 className="font-serif text-3xl leading-tight text-cream text-balance">
                   {featured.title}
                 </h3>
@@ -213,6 +233,11 @@ export default async function BerandaPage() {
                 <span className="mt-2 block truncate text-xs font-medium text-foreground">
                   {story.title}
                 </span>
+                {story.tropes && story.tropes.length > 0 && (
+                  <span className="block truncate text-[10px] text-muted-foreground">
+                    {story.tropes.slice(0, 2).join(' · ')}
+                  </span>
+                )}
               </Link>
             ))}
           </div>
@@ -288,6 +313,11 @@ export default async function BerandaPage() {
                 <span className="mt-2 block truncate text-xs font-medium text-foreground">
                   {story.title}
                 </span>
+                {story.tropes && story.tropes.length > 0 && (
+                  <span className="block truncate text-[10px] text-muted-foreground">
+                    {story.tropes.slice(0, 2).join(' · ')}
+                  </span>
+                )}
               </Link>
             ))}
           </div>

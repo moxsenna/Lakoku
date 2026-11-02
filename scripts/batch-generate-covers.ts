@@ -12,10 +12,13 @@ for (const name of ['.env.local', '.env']) {
   } catch {}
 }
 
-// Ensure 9router image generation endpoint is used
-process.env.COVER_IMAGE_BASE_URL = 'https://9router.appvibe.web.id/v1'
-process.env.COVER_IMAGE_API_KEY = process.env.NINEROUTER_API_KEY
-process.env.COVER_IMAGE_MODEL_ID = 'ag/gemini-3.1-flash-image'
+// Gunakan konfigurasi COVER_IMAGE_* dari .env/.env.local (fallback 9router bila kosong)
+process.env.COVER_IMAGE_BASE_URL =
+  process.env.COVER_IMAGE_BASE_URL || 'https://9router.appvibe.web.id/v1'
+process.env.COVER_IMAGE_API_KEY =
+  process.env.COVER_IMAGE_API_KEY || process.env.NINEROUTER_API_KEY
+process.env.COVER_IMAGE_MODEL_ID =
+  process.env.COVER_IMAGE_MODEL_ID || 'ag/gemini-3.1-flash-image'
 
 import { Pool } from 'pg'
 import { generateCoverImage, isCoverProviderConfigured } from '@/lib/cover/provider'
@@ -120,18 +123,19 @@ async function main() {
   console.log(`Found ${stories.rows.length} total catalog stories.\n`)
 
   // Mode perbaikan ter-target: `npx tsx scripts/batch-generate-covers.ts <substring-id> ...`
+  // Flag `--all` atau `--force`: proses semua cerita resmi katalog dan paksa generate ulang.
   // Dengan argumen, hanya cerita yang id-nya memuat salah satu substring yang
-  // diproses DAN cover lama dipaksa di-regenerate — untuk memperbaiki sampul
-  // yang rusak. Tanpa argumen, perilaku lama: semua cerita, yang sudah punya
-  // cover R2 dilewati.
-  const targets = process.argv.slice(2).filter((a) => a.trim() !== '')
-  const force = targets.length > 0
-  const selected = force
+  // diproses DAN cover lama dipaksa di-regenerate.
+  const rawArgs = process.argv.slice(2).map((a) => a.trim()).filter(Boolean)
+  const isAll = rawArgs.includes('--all') || rawArgs.includes('--force')
+  const targets = rawArgs.filter((a) => a !== '--all' && a !== '--force')
+  const force = isAll || targets.length > 0
+  const selected = targets.length > 0
     ? stories.rows.filter((s) => targets.some((t) => s.id.includes(t)))
     : stories.rows
   if (force) {
     console.log(
-      `Repair mode: ${selected.length} story dipilih berdasarkan filter ${JSON.stringify(targets)}. Cover lama DIREGENERATE PAKSA.\n`,
+      `Force mode: ${selected.length} story dipilih${targets.length ? ` (filter: ${JSON.stringify(targets)})` : ' (SEMUA)'}. Cover lama DIREGENERATE PAKSA 9:16.\n`,
     )
     if (selected.length === 0) {
       console.error('Tidak ada story yang cocok dengan filter — hentikan, tidak ada yang diubah.')

@@ -70,19 +70,19 @@ describe('normalizeCoverImage', () => {
     return { r: data[offset], g: data[offset + 1], b: data[offset + 2] }
   }
 
-  it('selalu menghasilkan kanvas 2:3 apa pun rasio input', async () => {
+  it('selalu menghasilkan kanvas 9:16 apa pun rasio input', async () => {
     const result = await normalizeCoverImage(await wideTestImage())
-    expect(result.width).toBe(832)
-    expect(result.height).toBe(1248)
+    expect(result.width).toBe(720)
+    expect(result.height).toBe(1280)
   })
 
   it('tidak memotong artwork: kedua sisi gambar lebar tetap terlihat', async () => {
     const result = await normalizeCoverImage(await wideTestImage())
-    // Artwork 2:1 di-contain ke 832x416, menempel di tengah vertikal
-    // (y sekitar 416-832). Baris tengah harus memuat merah DAN biru —
+    // Artwork 2:1 di-contain ke 720x360, menempel di tengah vertikal
+    // (y sekitar 460-820). Baris tengah harus memuat merah DAN biru —
     // kalau ada yang ter-crop, salah satu warna hilang.
-    const left = await pixelOf(result.data, 10, 624)
-    const right = await pixelOf(result.data, 820, 624)
+    const left = await pixelOf(result.data, 10, 640)
+    const right = await pixelOf(result.data, 710, 640)
     expect(left.r).toBeGreaterThan(150)
     expect(left.b).toBeLessThan(100)
     expect(right.b).toBeGreaterThan(150)

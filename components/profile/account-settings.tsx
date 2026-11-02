@@ -62,10 +62,12 @@ export function AccountSettings() {
     let cancelled = false
     authClient
       .listAccounts()
-      .then((accounts) => {
+      .then((res) => {
         if (cancelled) return
+        // Client better-auth bisa membungkus respons dalam { data, error }.
+        const list = Array.isArray(res) ? res : res?.data
         setHasCredential(
-          Array.isArray(accounts) && accounts.some((a) => a?.providerId === 'credential'),
+          Array.isArray(list) && list.some((a) => a?.providerId === 'credential'),
         )
       })
       .catch(() => {

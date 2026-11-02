@@ -11,10 +11,13 @@ import { ArrowLeft } from 'lucide-react'
 export function SignUpForm({
   nextPath = '/beranda',
   googleEnabled = false,
+  oauthError = null,
 }: {
   nextPath?: string
   /** Tombol Google hanya dirender bila kredensial OAuth terpasang. */
   googleEnabled?: boolean
+  /** Pesan dari kegagalan OAuth callback (mis. akun belum terhubung). */
+  oauthError?: string | null
 }) {
   const router = useRouter()
   const [name, setName] = useState('')
@@ -76,6 +79,8 @@ export function SignUpForm({
       const res = await authClient.signIn.social({
         provider: 'google',
         callbackURL: next,
+        // Kegagalan OAuth kembali ke halaman daftar dengan ?error=...
+        errorCallbackURL: `/auth/sign-up?next=${encodeURIComponent(next)}`,
       })
       if (res?.error) {
         setError('Login Google gagal. Coba lagi atau masuk dengan email.')
@@ -104,6 +109,12 @@ export function SignUpForm({
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
           Buat akun agar setiap pilihanmu tersimpan - di mana pun kamu membaca.
         </p>
+
+        {oauthError && (
+          <p role="alert" className="mt-6 rounded-2xl border border-destructive/30 bg-destructive/10 p-4 text-sm leading-relaxed text-destructive">
+            {oauthError}
+          </p>
+        )}
 
         <form onSubmit={handleSubmit} className="mt-8 flex flex-col gap-4">
           <label className="flex flex-col gap-1.5">

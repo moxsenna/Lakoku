@@ -14,12 +14,15 @@ export function LoginForm({
   resetSuccess = false,
   nextPath = '/beranda',
   googleEnabled = false,
+  oauthError = null,
 }: {
   resetSuccess?: boolean
   /** Tujuan setelah masuk, sudah disanitasi di server. */
   nextPath?: string
   /** Tombol Google hanya dirender bila kredensial OAuth terpasang. */
   googleEnabled?: boolean
+  /** Pesan dari kegagalan OAuth callback (mis. akun belum terhubung). */
+  oauthError?: string | null
 }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -100,6 +103,9 @@ export function LoginForm({
       const res = await authClient.signIn.social({
         provider: 'google',
         callbackURL: next,
+        // Kegagalan OAuth (mis. account_not_linked) kembali ke halaman ini
+        // dengan ?error=... — bukan ke /api/auth/error default (404).
+        errorCallbackURL: `/auth/login?next=${encodeURIComponent(next)}`,
       })
       if (res?.error) {
         setError('Login Google gagal. Coba lagi atau masuk dengan email.')
@@ -137,6 +143,12 @@ export function LoginForm({
         {resetSuccess && (
           <p role="status" className="mt-6 rounded-2xl border border-primary/30 bg-primary/10 p-4 text-sm text-foreground">
             Kata sandi berhasil diubah. Silakan masuk dengan kata sandi baru.
+          </p>
+        )}
+
+        {oauthError && (
+          <p role="alert" className="mt-6 rounded-2xl border border-destructive/30 bg-destructive/10 p-4 text-sm leading-relaxed text-destructive">
+            {oauthError}
           </p>
         )}
 

@@ -124,27 +124,6 @@ export default async function ProfilPage() {
 
         {user && (
           <Link
-            href="/profil/tinta"
-            className="flex items-center gap-4 rounded-2xl bg-card p-4 transition-colors hover:bg-secondary/50"
-          >
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary">
-              <Feather className="size-5" aria-hidden="true" />
-            </span>
-            <span className="flex min-w-0 flex-1 flex-col">
-              <span className="text-sm font-medium text-foreground">Tinta</span>
-              <span className="text-xs text-muted-foreground">
-                Saldo {tintaBalance.available} tersedia{tintaBalance.pending > 0 ? ` · ${tintaBalance.pending} sedang diproses` : ''}
-              </span>
-              <span className="text-xs text-muted-foreground">
-                Kumpulkan dari misi & karya · tukar ke Lakoin
-              </span>
-            </span>
-            <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-          </Link>
-        )}
-
-        {user && (
-          <Link
             href="/misi"
             className="flex items-center gap-4 rounded-2xl bg-card p-4 transition-colors hover:bg-secondary/50"
           >
@@ -154,7 +133,25 @@ export default async function ProfilPage() {
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="text-sm font-medium text-foreground">Misi Harian</span>
               <span className="text-xs text-muted-foreground">
-                Kumpulkan Lakoin gratis setiap hari
+                Klaim Lakoin gratis setiap hari untuk buka bab
+              </span>
+            </span>
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          </Link>
+        )}
+
+        {user && tintaBalance.available > 0 && (
+          <Link
+            href="/profil/tinta"
+            className="flex items-center gap-4 rounded-2xl border border-primary/30 bg-primary/5 p-4 transition-colors hover:bg-primary/10"
+          >
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary">
+              <Feather className="size-5" aria-hidden="true" />
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="text-sm font-medium text-foreground">Sisa Saldo Tinta</span>
+              <span className="text-xs text-muted-foreground">
+                Tersedia {tintaBalance.available} Tinta · Ketuk untuk tukar ke Lakoin
               </span>
             </span>
             <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -170,9 +167,9 @@ export default async function ProfilPage() {
               <Wallet className="size-5" aria-hidden="true" />
             </span>
             <span className="flex min-w-0 flex-1 flex-col">
-              <span className="text-sm font-medium text-foreground">Dompet Imbalan</span>
+              <span className="text-sm font-medium text-foreground">Komisi Referral (Rp)</span>
               <span className="text-xs text-muted-foreground">
-                Ajak teman membaca · Dapatkan komisi 10%
+                Ajak teman membaca · Dapatkan komisi uang tunai 10%
               </span>
             </span>
             <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />

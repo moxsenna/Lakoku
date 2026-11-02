@@ -1,13 +1,12 @@
 import Link from 'next/link'
 import Image from 'next/image'
-import { Coins, Feather, Play } from 'lucide-react'
+import { Coins, Play } from 'lucide-react'
 import { ResumeChapter } from '@/components/resume-chapter'
 import { TasteProfileFirstRunGate } from '@/components/onboarding/taste-profile-first-run-gate'
 import { listExploreStories, listMyLibraryStories, listPublicUserStories } from '@/lib/api/server'
 import { listPublicShareTeasers } from '@/lib/api/share'
 import { getSessionUser } from '@/lib/api/user-state'
 import { getCreditBalance } from '@/lib/credits/server'
-import { getTintaBalance } from '@/lib/tinta/server'
 import { AdsenseBanner } from '@/components/ads/adsense-banner'
 import { resolveAdSlot } from '@/lib/ads/server'
 
@@ -32,16 +31,13 @@ function greetingByHour(hour: number): string {
 
 export default async function BerandaPage() {
   const user = await getSessionUser()
-  const [library, explore, publicShares, publicUserStories, creditBalance, tintaBalance] =
+  const [library, explore, publicShares, publicUserStories, creditBalance] =
     await Promise.all([
       listMyLibraryStories(),
       listExploreStories(),
       listPublicShareTeasers(6).catch(() => []),
       SHOW_DARI_PEMBACA_LAIN ? listPublicUserStories(12).catch(() => []) : Promise.resolve([]),
       user ? getCreditBalance(user.id) : Promise.resolve(0),
-      user
-        ? getTintaBalance(user.id)
-        : Promise.resolve({ total: 0, available: 0, pending: 0 }),
     ])
   const adSlot = await resolveAdSlot({ slotKey: 'beranda', userId: user?.id })
 
@@ -74,15 +70,6 @@ export default async function BerandaPage() {
             >
               <Coins className="size-3.5 text-gold" aria-hidden="true" />
               {creditBalance}
-            </Link>
-            <Link
-              href="/profil/tinta"
-              title="Saldo Tinta"
-              aria-label={`Saldo Tinta: ${tintaBalance.available}`}
-              className="flex min-h-8 items-center gap-1.5 rounded-full bg-card px-3 text-xs font-semibold tabular-nums text-foreground transition-colors hover:bg-secondary/60"
-            >
-              <Feather className="size-3.5 text-primary" aria-hidden="true" />
-              {tintaBalance.available}
             </Link>
           </div>
         </div>

@@ -5,6 +5,10 @@ import { bearer } from 'better-auth/plugins'
 import { Pool } from 'pg'
 import { hashPassword, verifyPassword } from '@/lib/auth/password'
 import { sendMailketingEmail } from '@/lib/email/mailketing'
+import {
+  renderPasswordResetEmailHtml,
+  renderVerificationEmailHtml,
+} from '@/lib/email/templates'
 import { recordReferralAttribution } from '@/lib/rewards/attribution.server'
 import { REFERRAL_COOKIE_NAME } from '@/lib/rewards/policy'
 import {
@@ -46,8 +50,8 @@ const baseAuth = betterAuth({
     sendResetPassword: async ({ user, url }) => {
       await sendMailketingEmail({
         to: user.email,
-        subject: 'Reset Kata Sandi Akun Lakoku',
-        html: `<p>Halo ${user.name || 'Pembaca'},</p><p>Kami menerima permintaan untuk mereset kata sandi akun Lakoku Anda. Klik tautan di bawah ini untuk mengatur kata sandi baru:</p><p><a href="${url}">${url}</a></p><p>Abaikan email ini jika Anda tidak meminta reset kata sandi.</p>`,
+        subject: 'Atur Ulang Kata Sandi Akun Lakoku',
+        html: renderPasswordResetEmailHtml(user.name ?? undefined, url),
       })
     },
   },
@@ -57,7 +61,7 @@ const baseAuth = betterAuth({
       await sendMailketingEmail({
         to: user.email,
         subject: 'Verifikasi Email Akun Lakoku',
-        html: `<p>Halo ${user.name || 'Pembaca'},</p><p>Terima kasih telah bergabung di Lakoku. Klik tautan berikut untuk memverifikasi alamat email Anda:</p><p><a href="${url}">${url}</a></p>`,
+        html: renderVerificationEmailHtml(user.name ?? undefined, url),
       })
     },
   },

@@ -1,4 +1,5 @@
 import 'server-only'
+import { randomUUID } from 'node:crypto'
 import { betterAuth } from 'better-auth'
 import { bearer } from 'better-auth/plugins'
 import { Pool } from 'pg'
@@ -65,6 +66,16 @@ const baseAuth = betterAuth({
       clientId: process.env.GOOGLE_CLIENT_ID || '',
       clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
       enabled: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+    },
+  },
+  advanced: {
+    database: {
+      // Seluruh skema domain (reader_states, ledger, referral, dsb.) memakai
+      // user_id uuid — ID default Better Auth (32 char) ditolak Postgres.
+      // Fungsi kustom: UUID dibuat di sisi JS. ("uuid" literal tidak dipakai
+      // karena adapter Postgres lalu menyerahkan generate ke default kolom,
+      // yang tidak ada di tabel auth bertipe text.)
+      generateId: () => randomUUID(),
     },
   },
   plugins: [bearer()],

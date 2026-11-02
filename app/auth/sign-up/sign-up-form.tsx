@@ -8,7 +8,14 @@ import { GoogleSignInButton } from '@/components/auth/google-sign-in-button'
 import { ArrowLeft } from 'lucide-react'
 
 
-export function SignUpForm({ nextPath = '/beranda' }: { nextPath?: string }) {
+export function SignUpForm({
+  nextPath = '/beranda',
+  googleEnabled = false,
+}: {
+  nextPath?: string
+  /** Tombol Google hanya dirender bila kredensial OAuth terpasang. */
+  googleEnabled?: boolean
+}) {
   const router = useRouter()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -151,19 +158,23 @@ export function SignUpForm({ nextPath = '/beranda' }: { nextPath?: string }) {
           </button>
         </form>
 
-        <div className="mt-6 flex items-center gap-3">
-          <div className="h-px flex-1 bg-border" />
-          <span className="text-xs font-medium text-muted-foreground">atau</span>
-          <div className="h-px flex-1 bg-border" />
-        </div>
+        {googleEnabled && (
+          <>
+            <div className="mt-6 flex items-center gap-3">
+              <div className="h-px flex-1 bg-border" />
+              <span className="text-xs font-medium text-muted-foreground">atau</span>
+              <div className="h-px flex-1 bg-border" />
+            </div>
 
-        <div className="mt-6">
-          <GoogleSignInButton
-            loading={googleLoading}
-            disabled={busy}
-            onClick={() => void handleGoogle()}
-          />
-        </div>
+            <div className="mt-6">
+              <GoogleSignInButton
+                loading={googleLoading}
+                disabled={busy}
+                onClick={() => void handleGoogle()}
+              />
+            </div>
+          </>
+        )}
 
         <p className="mt-6 text-center text-sm text-muted-foreground">
           Sudah punya akun?{' '}

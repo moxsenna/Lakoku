@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { getSessionUser } from '@/lib/api/user-state'
 import { sanitizeNextPath } from '@/lib/auth/safe-next'
+import { isGoogleAuthEnabled } from '@/lib/auth/google-availability'
 import { LoginForm } from './login-form'
 
 export default async function LoginPage({
@@ -18,6 +19,7 @@ export default async function LoginPage({
     <LoginForm
       resetSuccess={reset === 'success'}
       nextPath={sanitizeNextPath(next)}
+      googleEnabled={isGoogleAuthEnabled()}
     />
   )
 }

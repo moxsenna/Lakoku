@@ -32,9 +32,10 @@ const baseAuth = betterAuth({
     return 'development-secret-must-be-changed-in-production-min-32-chars'
   })(),
   database: getAuthPool(),
-  trustedOrigins: process.env.NODE_ENV !== 'production'
-    ? ['http://localhost:3000', 'http://localhost:3100', 'http://localhost:5200']
-    : [],
+  trustedOrigins:
+    process.env.NODE_ENV !== 'production'
+      ? ['http://localhost:3000', 'http://localhost:3100', 'http://localhost:5200']
+      : ['https://lakoku.biz.id', 'https://app.lakoku.biz.id'],
   emailAndPassword: {
     enabled: true,
     password: {

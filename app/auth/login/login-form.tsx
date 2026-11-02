@@ -13,10 +13,13 @@ import { ArrowLeft, Loader2 } from 'lucide-react'
 export function LoginForm({
   resetSuccess = false,
   nextPath = '/beranda',
+  googleEnabled = false,
 }: {
   resetSuccess?: boolean
   /** Tujuan setelah masuk, sudah disanitasi di server. */
   nextPath?: string
+  /** Tombol Google hanya dirender bila kredensial OAuth terpasang. */
+  googleEnabled?: boolean
 }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -187,19 +190,23 @@ export function LoginForm({
           </button>
         </form>
 
-        <div className="mt-6 flex items-center gap-3">
-          <div className="h-px flex-1 bg-border" />
-          <span className="text-xs font-medium text-muted-foreground">atau</span>
-          <div className="h-px flex-1 bg-border" />
-        </div>
+        {googleEnabled && (
+          <>
+            <div className="mt-6 flex items-center gap-3">
+              <div className="h-px flex-1 bg-border" />
+              <span className="text-xs font-medium text-muted-foreground">atau</span>
+              <div className="h-px flex-1 bg-border" />
+            </div>
 
-        <div className="mt-6">
-          <GoogleSignInButton
-            loading={googleLoading}
-            disabled={busy}
-            onClick={() => void handleGoogle()}
-          />
-        </div>
+            <div className="mt-6">
+              <GoogleSignInButton
+                loading={googleLoading}
+                disabled={busy}
+                onClick={() => void handleGoogle()}
+              />
+            </div>
+          </>
+        )}
 
         <p className="mt-6 text-center text-sm text-muted-foreground">
           Belum punya akun?{' '}

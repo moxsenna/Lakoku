@@ -23,6 +23,12 @@ function getAuthPool(): Pool {
   if (!poolInstance) {
     const url = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/dummy'
     poolInstance = new Pool({ connectionString: url, max: 10 })
+    // Neon pooler rutin memutus koneksi idle. Tanpa handler ini event 'error'
+    // pada idle client menjadi uncaughtException dan mematikan proses web —
+    // mitigasi yang sama sudah dipasang di lib/db/db.ts.
+    poolInstance.on('error', (err) => {
+      console.warn('[auth-pool] Idle client error caught:', err.message)
+    })
   }
   return poolInstance
 }

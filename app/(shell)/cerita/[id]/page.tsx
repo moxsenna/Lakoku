@@ -4,9 +4,10 @@ import { getPublicStoryPreview } from '@/lib/api/public-preview'
 import { BackButton } from '@/components/back-button'
 import Image from 'next/image'
 import { notFound } from 'next/navigation'
-import { ArrowLeft, Footprints } from 'lucide-react'
+import { ArrowLeft } from 'lucide-react'
 import { ResumeChapter } from '@/components/resume-chapter'
 import { StoryCoverActions } from '@/components/story-cover-actions'
+import { JejakTrail } from '@/components/story/jejak-trail'
 import { getStory } from '@/lib/api/server'
 import { getSessionUser } from '@/lib/api/user-state'
 import { isStoryOwnedBy } from '@/lib/api/story-ownership.server'
@@ -76,19 +77,6 @@ export default async function CeritaDetailPage({
         </div>
 
         <section className="lk-fade-up -mt-8 flex flex-col gap-6 px-5 pb-8">
-          {isOwner && (
-            <div className="flex flex-col gap-2 rounded-2xl bg-card p-4">
-              <span className="text-[11px] font-semibold tracking-wide text-lavender">SAMPUL CERITAMU</span>
-              <StoryCoverActions
-                storyId={story.id}
-                cost={coverPolicy.cost}
-                generateEnabled={coverPolicy.enabled}
-                userBalance={userBalance}
-                candidates={coverCandidates}
-                currentCover={story.cover}
-              />
-            </div>
-          )}
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap gap-2">
               {story.tropes.map((t) => (
@@ -108,29 +96,8 @@ export default async function CeritaDetailPage({
             </p>
           </div>
 
-          <div className="flex flex-col gap-2 rounded-2xl bg-card p-4">
-            <span className="text-[11px] font-semibold tracking-wide text-lavender">PERANMU</span>
-            <p className="text-sm leading-relaxed text-foreground">{story.role}</p>
-          </div>
-
-          {story.jejak.length > 0 && (
-            <div className="flex flex-col gap-4 rounded-2xl bg-card p-4">
-              <div className="flex items-center gap-2">
-                <Footprints className="size-4 text-primary" aria-hidden="true" />
-                <h2 className="text-sm font-semibold text-foreground">Jejak Pilihan</h2>
-              </div>
-              <ol className="flex flex-col gap-4">
-                {story.jejak.map((j) => (
-                  <li key={j.chapter} className="flex flex-col gap-1 border-l-2 border-primary/40 pl-4">
-                    <span className="text-[11px] font-medium text-lavender">Bab {j.chapter}</span>
-                    <p className="text-sm font-medium text-foreground">{j.decision}</p>
-                    <p className="text-xs leading-relaxed text-muted-foreground">{j.consequence}</p>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          )}
-
+          {/* Aksi baca sengaja di atas jejak: jejak bisa puluhan entri dan
+              dulu mendorong tombol ini ke dasar halaman. */}
           {story.status === 'SELESAI' ? (
             <div className="flex flex-col gap-3">
               <Link
@@ -161,8 +128,28 @@ export default async function CeritaDetailPage({
               )}
             </Link>
           )}
+
+          <div className="flex flex-col gap-2 rounded-2xl bg-card p-4">
+            <span className="text-[11px] font-semibold tracking-wide text-lavender">PERANMU</span>
+            <p className="text-sm leading-relaxed text-foreground">{story.role}</p>
+          </div>
+
+          <JejakTrail items={story.jejak} />
+
+          {isOwner && (
+            <div className="flex flex-col gap-2 rounded-2xl bg-card p-4">
+              <span className="text-[11px] font-semibold tracking-wide text-lavender">SAMPUL CERITAMU</span>
+              <StoryCoverActions
+                storyId={story.id}
+                cost={coverPolicy.cost}
+                generateEnabled={coverPolicy.enabled}
+                userBalance={userBalance}
+                candidates={coverCandidates}
+                currentCover={story.cover}
+              />
+            </div>
+          )}
         </section>
     </main>
   )
 }
-

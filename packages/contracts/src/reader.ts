@@ -103,6 +103,8 @@ export const StorySummarySchema = z.object({
   currentChapter: z.number().int().positive(),
   status: StoryStatusSchema,
   endingName: z.string().min(1).optional(),
+  /** ISO timestamp kapan pembaca terakhir menyentuh cerita ini. */
+  lastReadAt: z.string().min(1).optional(),
 })
 export type StorySummary = z.infer<typeof StorySummarySchema>
 

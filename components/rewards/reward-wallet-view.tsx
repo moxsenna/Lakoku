@@ -11,9 +11,10 @@ import type { RewardPolicy } from '@/lib/rewards/policy'
 interface Props {
   stats: ReferralStats
   policy: RewardPolicy
+  origin: string
 }
 
-export function RewardWalletView({ stats, policy }: Props) {
+export function RewardWalletView({ stats, policy, origin }: Props) {
   const [showRedeemDialog, setShowRedeemDialog] = useState(false)
   const [successToast, setSuccessToast] = useState<string | null>(null)
 
@@ -97,7 +98,7 @@ export function RewardWalletView({ stats, policy }: Props) {
       </div>
 
       {/* Copy Referral Link Card */}
-      <CopyReferralLink code={stats.referralCode} />
+      <CopyReferralLink code={stats.referralCode} origin={origin} />
 
       {/* Program Summary Stats */}
       <div className="grid grid-cols-2 gap-3">

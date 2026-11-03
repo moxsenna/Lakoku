@@ -1,11 +1,12 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import { notFound } from 'next/navigation'
-import { ArrowLeft, BookOpen, CheckCircle2, Footprints, Lock, RotateCcw, Sparkles } from 'lucide-react'
+import { ArrowLeft, BookOpen, CheckCircle2, Lock, RotateCcw, Sparkles } from 'lucide-react'
 import { getStory } from '@/lib/api/server'
 import { pickBigChoices } from '@/lib/api/share'
 import { getSessionUser } from '@/lib/api/user-state'
 import { EndingCardActions } from '@/components/ending-card-actions'
+import { JejakTrail } from '@/components/story/jejak-trail'
 import { getOrCreateEndingShareForOwner } from '@/lib/api/share'
 import { TrackOnView } from '@/components/analytics/track-on-view'
 import { AdsenseBanner } from '@/components/ads/adsense-banner'
@@ -94,6 +95,32 @@ export default async function AkhirCeritaPage({
           )}
         </div>
 
+        {/* Aksi utama tepat setelah judul ending, supaya tidak tenggelam di
+            bawah jejak puluhan bab. */}
+        <div className="flex flex-col gap-3">
+          <Link
+            href={`/baca/${story.id}?bab=1`}
+            className="flex min-h-13 items-center justify-center gap-2 rounded-2xl bg-gold px-6 text-sm font-semibold text-ink transition-opacity hover:opacity-90"
+          >
+            <BookOpen className="size-4" aria-hidden="true" />
+            Baca Ulang dari Bab 1
+          </Link>
+          <p className="text-center text-xs text-muted-foreground">
+            Baca ulang tidak mengubah apa pun — semua pilihanmu tetap terkunci.
+          </p>
+          <p className="text-center text-xs text-muted-foreground">
+            Bagikan ending card-mu. Teman bisa coba jalur mereka sendiri — bukan membaca 50 bab versi kamu.
+          </p>
+          {shareSlug && (
+            <EndingCardActions
+              sharePath={`/s/${shareSlug}`}
+              shareSlug={shareSlug}
+              title={story.title}
+              endingName={story.endingName}
+            />
+          )}
+        </div>
+
         {bigChoices.length > 0 && (
           <div className="flex flex-col gap-3 rounded-2xl bg-card p-5">
             <div className="flex items-center gap-2">
@@ -118,21 +145,7 @@ export default async function AkhirCeritaPage({
           </div>
         )}
 
-        <div className="flex flex-col gap-4 rounded-2xl bg-card p-5">
-          <div className="flex items-center gap-2">
-            <Footprints className="size-4 text-primary" aria-hidden="true" />
-            <h2 className="text-sm font-semibold text-foreground">Jejak Pilihan yang Membentukmu</h2>
-          </div>
-          <ol className="flex flex-col gap-4">
-            {story.jejak.map((j) => (
-              <li key={j.chapter} className="flex flex-col gap-1 border-l-2 border-gold/50 pl-4">
-                <span className="text-[11px] font-medium text-lavender">Bab {j.chapter}</span>
-                <p className="text-sm font-medium text-foreground">{j.decision}</p>
-                <p className="text-xs leading-relaxed text-muted-foreground">{j.consequence}</p>
-              </li>
-            ))}
-          </ol>
-        </div>
+        <JejakTrail items={story.jejak} title="Jejak Pilihan yang Membentukmu" accent="gold" />
 
         <div className="flex items-center gap-3 rounded-2xl border border-border p-4">
           <Lock className="size-4 shrink-0 text-lavender" aria-hidden="true" />
@@ -166,22 +179,11 @@ export default async function AkhirCeritaPage({
           </ul>
         </section>
 
-        <div className="mt-auto flex flex-col gap-3">
-          <Link
-            href={`/baca/${story.id}?bab=1`}
-            className="flex min-h-13 items-center justify-center gap-2 rounded-2xl bg-gold px-6 text-sm font-semibold text-ink transition-opacity hover:opacity-90"
-          >
-            <BookOpen className="size-4" aria-hidden="true" />
-            Baca Ulang dari Bab 1
-          </Link>
-          <p className="text-center text-xs text-muted-foreground">
-            Baca ulang tidak mengubah apa pun — semua pilihanmu tetap terkunci.
-          </p>
+        {adSlot.shouldRender && (
+          <AdsenseBanner clientId={adSlot.clientId} slotId={adSlot.slotId} />
+        )}
 
-          {adSlot.shouldRender && (
-            <AdsenseBanner clientId={adSlot.clientId} slotId={adSlot.slotId} />
-          )}
-
+        <div className="flex flex-col gap-3">
           <Link
             href="/mulai"
             className="flex min-h-13 items-center justify-center gap-2 rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
@@ -189,17 +191,6 @@ export default async function AkhirCeritaPage({
             <RotateCcw className="size-4" aria-hidden="true" />
             Jalani Cerita Baru
           </Link>
-          <p className="text-center text-xs text-muted-foreground">
-            Bagikan ending card-mu. Teman bisa coba jalur mereka sendiri — bukan membaca 50 bab versi kamu.
-          </p>
-          {shareSlug && (
-            <EndingCardActions
-              sharePath={`/s/${shareSlug}`}
-              shareSlug={shareSlug}
-              title={story.title}
-              endingName={story.endingName}
-            />
-          )}
           <Link
             href="/koleksiku"
             className="flex min-h-13 items-center justify-center rounded-2xl border border-border px-4 text-sm font-semibold text-foreground transition-colors hover:bg-card"

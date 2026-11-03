@@ -38,6 +38,8 @@ export interface ReaderState {
   jejak: JejakItem[]
   endingName?: string
   lockedEndingKey?: string | null
+  /** Waktu state terakhir berubah. Dipakai untuk urutan "terakhir dibaca". */
+  updatedAt?: string
 }
 
 type ReaderStateRow = {
@@ -47,6 +49,14 @@ type ReaderStateRow = {
   jejak: JejakItem[]
   ending_name: string | null
   locked_ending_key?: string | null
+  updated_at?: string | Date | null
+}
+
+/** `pg` bisa mengembalikan Date atau string; kontrak butuh ISO string. */
+function toIsoString(value: string | Date | null | undefined): string | undefined {
+  if (!value) return undefined
+  const date = value instanceof Date ? value : new Date(value)
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString()
 }
 
 /** Urutan status untuk aturan monotonic: tak boleh mundur. */
@@ -64,6 +74,7 @@ function maxStatus(
 }
 
 export function toState(r: ReaderStateRow): ReaderState {
+  const updatedAt = toIsoString(r.updated_at)
   return {
     storyId: r.story_id,
     status: r.status,
@@ -71,6 +82,7 @@ export function toState(r: ReaderStateRow): ReaderState {
     jejak: r.jejak,
     ...(r.ending_name ? { endingName: r.ending_name } : {}),
     lockedEndingKey: r.locked_ending_key ?? null,
+    ...(updatedAt ? { updatedAt } : {}),
   }
 }
 

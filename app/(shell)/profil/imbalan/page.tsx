@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { getSessionUser } from '@/lib/api/user-state'
 import { getReferralStats, getRewardPolicy } from '@/lib/rewards/server'
 import { RewardWalletView } from '@/components/rewards/reward-wallet-view'
+import { siteOrigin } from '@/lib/og/site'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,7 +19,7 @@ export default async function ImbalanPage() {
 
   return (
     <main className="flex flex-col gap-6 px-5 pt-8 pb-12">
-      <RewardWalletView stats={stats} policy={policy} />
+      <RewardWalletView stats={stats} policy={policy} origin={siteOrigin()} />
     </main>
   )
 }

@@ -46,7 +46,18 @@ function overlay<T extends StorySummary>(story: T, state?: ReaderState | null): 
     currentChapter: state.currentChapter,
     jejak: state.jejak,
     ...(state.endingName ? { endingName: state.endingName } : {}),
+    ...(state.updatedAt ? { lastReadAt: state.updatedAt } : {}),
   }
+}
+
+/** Urutan library: terakhir dibaca di atas, judul sebagai tie-breaker. */
+function compareLibraryByLastRead(a: StorySummary, b: StorySummary): number {
+  const at = a.lastReadAt ? Date.parse(a.lastReadAt) : 0
+  const bt = b.lastReadAt ? Date.parse(b.lastReadAt) : 0
+  const safeAt = Number.isNaN(at) ? 0 : at
+  const safeBt = Number.isNaN(bt) ? 0 : bt
+  if (safeBt !== safeAt) return safeBt - safeAt
+  return a.title.localeCompare(b.title, 'id', { sensitivity: 'base' }) || a.id.localeCompare(b.id)
 }
 
 /**
@@ -88,7 +99,8 @@ export async function listMyLibraryStories(): Promise<StorySummary[]> {
     if (!base) continue
     mine.push(overlay(base, state))
   }
-  return mine
+  // Urutan Map reader_states tidak dijamin, jadi urutkan eksplisit di sini.
+  return mine.sort(compareLibraryByLastRead)
 }
 
 /**

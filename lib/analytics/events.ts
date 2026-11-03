@@ -44,6 +44,7 @@ export const ANALYTICS_EVENT_NAMES = [
   'paywall_viewed',
   'checkout_started',
   'share_clicked',
+  'share_completed',
   'share_link_opened',
   'share_start_clicked',
 ] as const
@@ -153,10 +154,13 @@ export const AnalyticsEventSchema = z
         'ending_page',
         'locked_chapter',
         'kredit_page',
+        'rewards_page',
         'share_landing',
       ])
       .optional(),
     share_channel: z.enum(['native', 'copy', 'whatsapp', 'download']).optional(),
+    // Hasil share, bukan niatnya: batal != gagal != fallback.
+    share_result: z.enum(['completed', 'cancelled', 'failed', 'fallback']).optional(),
     // Slug share /s/<slug> — id stabil, bukan teks bebas (desain pra-launch analytics).
     share_slug: z.string().regex(/^[a-z0-9_-]{1,32}$/).optional(),
     product_id: z.string().max(64).optional(),

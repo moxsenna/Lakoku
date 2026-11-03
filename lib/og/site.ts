@@ -20,11 +20,11 @@ export function clampText(text: string, max: number): string {
   return `${(lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`
 }
 
-/** Gambar sampul yang bisa dirender ImageResponse (PNG/JPEG absolut). */
+/** Gambar sampul yang bisa diambil untuk kartu OG (PNG/JPEG/WebP absolut). */
 export function ogCoverUrl(cover: string | undefined | null): string | null {
   if (!cover || cover === '/placeholder.svg') return null
   const path = cover.split('?')[0].toLowerCase()
-  if (!/\.(png|jpe?g)$/.test(path)) return null
+  if (!/\.(png|jpe?g|webp)$/.test(path)) return null
   try {
     return new URL(cover, siteOrigin()).toString()
   } catch {

@@ -28,12 +28,21 @@ export async function generateMetadata({
   const title = `${story.title} — Novel Interaktif Lakoku`
   const description = story.tagline || story.synopsis || 'Kamu tokoh utamanya.'
   const url = `/cerita/${encodeURIComponent(story.id)}`
+  // Kartu OG dilayani route handler /cerita/[id]/opengraph-image (bukan file
+  // convention — tidak terdaftar di dalam route group, lihat route.tsx).
+  const ogImage = `${url}/opengraph-image`
   return {
     title,
     description,
     alternates: { canonical: url },
-    openGraph: { title, description, url, type: 'book' },
-    twitter: { card: 'summary_large_image', title, description },
+    openGraph: {
+      title,
+      description,
+      url,
+      type: 'book',
+      images: [{ url: ogImage, width: 1200, height: 630 }],
+    },
+    twitter: { card: 'summary_large_image', title, description, images: [ogImage] },
   }
 }
 

@@ -6,6 +6,11 @@ export const OG_SIZE = { width: 1200, height: 630 }
 /**
  * Sampul diambil lebih dulu dengan batas waktu agar kartu tetap terbit
  * walau host gambar lambat atau formatnya tidak didukung renderer.
+ * Renderer satori tidak andal untuk WebP — sampul R2 (WebP) dikonversi
+ * ke JPEG sebelum disematkan. sharp sengaja diimpor lazy di cabang WebP:
+ * impor statis di graph modul mengubah pemilihan rasterizer next/og dan
+ * merusak prerender OG pada sebagian lingkungan build (terbukti gagal di
+ * Windows lokal, lolos saat impor dihapus).
  */
 async function loadCover(cover: string | null | undefined): Promise<string | null> {
   const url = ogCoverUrl(cover)
@@ -13,10 +18,23 @@ async function loadCover(cover: string | null | undefined): Promise<string | nul
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(2500) })
     const type = res.headers.get('content-type') ?? ''
-    if (!res.ok || !/image\/(png|jpe?g)/.test(type)) return null
+    if (!res.ok) return null
     const bytes = Buffer.from(await res.arrayBuffer())
-    if (bytes.byteLength > 4_000_000) return null
-    return `data:${type};base64,${bytes.toString('base64')}`
+    if (bytes.byteLength > 8_000_000) return null
+    if (/image\/(png|jpe?g)/.test(type)) {
+      return `data:${type};base64,${bytes.toString('base64')}`
+    }
+    if (type === 'image/webp') {
+      const { default: sharp } = await import('sharp')
+      const jpeg = await sharp(bytes)
+        // Ratakan di warna latar kartu bila sumber punya kanal alfa.
+        .flatten({ background: { r: 0x19, g: 0x13, b: 0x19 } })
+        .resize({ width: 840 })
+        .jpeg({ quality: 90 })
+        .toBuffer()
+      return `data:image/jpeg;base64,${jpeg.toString('base64')}`
+    }
+    return null
   } catch {
     return null
   }
@@ -101,7 +119,7 @@ export async function renderStoryCard(input: {
             alt=""
             width={420}
             height={630}
-            style={{ width: 420, height: 630, objectFit: 'cover' }}
+            style={{ width: 420, height: 630, objectFit: 'contain' }}
           />
         ) : null}
       </div>

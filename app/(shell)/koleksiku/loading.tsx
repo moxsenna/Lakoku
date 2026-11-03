@@ -3,7 +3,7 @@ function CollectionSkeleton() {
     <div className="flex flex-col gap-2">
       {Array.from({ length: 4 }).map((_, index) => (
         <div key={index} className="flex items-center gap-3 rounded-2xl bg-card p-2.5">
-          <div className="h-14 w-14 shrink-0 animate-pulse rounded-lg bg-muted" />
+          <div className="relative aspect-[9/16] w-16 shrink-0 animate-pulse rounded-lg bg-muted" />
           <div className="flex flex-1 flex-col gap-2">
             <div className="h-3.5 w-3/4 animate-pulse rounded bg-muted" />
             <div className="h-1 w-full animate-pulse rounded bg-muted" />

@@ -1,7 +1,7 @@
 function StoryCardSkeleton() {
   return (
     <div className="flex gap-4 rounded-2xl bg-card p-3">
-      <div className="h-[120px] w-20 shrink-0 animate-pulse rounded-xl bg-muted" />
+      <div className="relative aspect-[9/16] w-20 shrink-0 animate-pulse rounded-xl bg-muted" />
       <div className="flex min-w-0 flex-1 flex-col justify-between py-1">
         <div className="flex flex-col gap-2">
           <div className="h-5 w-24 animate-pulse rounded-full bg-muted" />
@@ -31,7 +31,7 @@ export default function Loading() {
           </header>
 
           <section className="flex flex-col gap-4">
-            <div className="aspect-[4/5] w-full animate-pulse rounded-3xl bg-muted" />
+            <div className="h-[260px] w-full animate-pulse rounded-3xl bg-muted" />
           </section>
 
           <section className="flex flex-col gap-4">

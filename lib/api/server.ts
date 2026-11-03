@@ -38,6 +38,8 @@ import {
 import { isChapterPreparing } from './leases'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
 
+export { DEFAULT_STORY_COVER, resolveStoryCover } from '@/lib/cover/url'
+
 function overlay<T extends StorySummary>(story: T, state?: ReaderState | null): T {
   if (!state) return story
   return {

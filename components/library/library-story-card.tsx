@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import Image from 'next/image'
+import { resolveStoryCover } from '@/lib/api'
 import { libraryChapterLabel, libraryProgressPercent } from '@/lib/library/order'
 import type { LibraryStoryItem } from '@/lib/library/types'
 
@@ -17,12 +18,12 @@ export function LibraryStoryCard({ story }: { story: LibraryStoryItem }) {
       href={`/cerita/${story.id}`}
       className="group flex items-center gap-3 rounded-2xl bg-card p-2.5 transition-colors hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <div className="relative aspect-[2/3] w-14 shrink-0 overflow-hidden rounded-lg">
+      <div className="relative aspect-[9/16] w-16 shrink-0 overflow-hidden rounded-lg bg-muted">
         <Image
-          src={story.cover && story.cover !== '/placeholder.svg' ? story.cover : '/covers/default-cover.webp'}
+          src={resolveStoryCover(story.cover)}
           alt={`Sampul cerita ${story.title}`}
           fill
-          sizes="56px"
+          sizes="64px"
           className="object-cover"
         />
       </div>

@@ -2,7 +2,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { notFound } from 'next/navigation'
 import { ArrowLeft, BookOpen, CheckCircle2, Lock, RotateCcw, Sparkles } from 'lucide-react'
-import { getStory } from '@/lib/api/server'
+import { getStory, resolveStoryCover } from '@/lib/api/server'
 import { pickBigChoices } from '@/lib/api/share'
 import { getSessionUser } from '@/lib/api/user-state'
 import { EndingCardActions } from '@/components/ending-card-actions'
@@ -50,16 +50,31 @@ export default async function AkhirCeritaPage({
   return (
     <main className="mx-auto flex min-h-svh w-full max-w-md flex-col bg-background">
       <TrackOnView event="story_finished" payload={{ story_id: story.id, placement: 'ending_page' }} />
-      <div className="relative h-[44svh] w-full overflow-hidden">
+      <div className="relative h-[42svh] min-h-[320px] w-full overflow-hidden">
         <Image
-          src={story.cover && story.cover !== '/placeholder.svg' ? story.cover : '/covers/default-cover.webp'}
-          alt={`Sampul cerita ${story.title}`}
+          src={resolveStoryCover(story.cover)}
+          alt=""
           fill
           priority
           sizes="448px"
-          className="object-cover"
+          aria-hidden="true"
+          className="scale-110 object-cover blur-2xl"
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-ink/50 via-ink/20 to-background" />
+        <div className="absolute inset-0 bg-ink/60" />
+        <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-ink/60 to-transparent" />
+        <div className="absolute inset-0 flex items-center justify-center px-6 pb-2 pt-12">
+          <div className="relative aspect-[9/16] h-full w-auto overflow-hidden rounded-2xl shadow-2xl ring-1 ring-cream/15">
+            <Image
+              src={resolveStoryCover(story.cover)}
+              alt={`Sampul cerita ${story.title}`}
+              fill
+              priority
+              sizes="240px"
+              className="object-cover"
+            />
+          </div>
+        </div>
+        <div className="absolute inset-x-0 bottom-0 h-14 bg-gradient-to-b from-transparent to-background" />
         <Link
           href={`/cerita/${story.id}`}
           aria-label="Kembali ke detail cerita"

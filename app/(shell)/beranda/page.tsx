@@ -3,7 +3,12 @@ import Image from 'next/image'
 import { Coins, Play } from 'lucide-react'
 import { ResumeChapter } from '@/components/resume-chapter'
 import { TasteProfileFirstRunGate } from '@/components/onboarding/taste-profile-first-run-gate'
-import { listExploreStories, listMyLibraryStories, listPublicUserStories } from '@/lib/api/server'
+import {
+  listExploreStories,
+  listMyLibraryStories,
+  listPublicUserStories,
+  resolveStoryCover,
+} from '@/lib/api/server'
 import { listPublicShareTeasers } from '@/lib/api/share'
 import { getSessionUser } from '@/lib/api/user-state'
 import { getCreditBalance } from '@/lib/credits/server'
@@ -90,45 +95,54 @@ export default async function BerandaPage() {
             href={`/baca/${berjalan.id}`}
             className="group relative block overflow-hidden rounded-3xl"
           >
-            <div className="relative aspect-[4/5] w-full">
+            <div className="absolute inset-0" aria-hidden="true">
               <Image
-                src={
-                  berjalan.cover && berjalan.cover !== '/placeholder.svg'
-                    ? berjalan.cover
-                    : '/covers/default-cover.webp'
-                }
-                alt={`Sampul cerita ${berjalan.title}`}
+                src={resolveStoryCover(berjalan.cover)}
+                alt=""
                 fill
-                priority
                 sizes="448px"
-                className="object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                className="scale-110 object-cover blur-2xl"
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/30 to-transparent" />
+              <div className="absolute inset-0 bg-ink/65" />
             </div>
-            <div className="absolute inset-x-0 bottom-0 flex flex-col gap-3 p-6">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="w-fit rounded-full bg-primary/20 px-3 py-1 text-[11px] font-semibold tracking-wide text-primary backdrop-blur">
-                  CERITA BERJALAN — BAB{' '}
-                  <ResumeChapter storyId={berjalan.id} fallback={berjalan.currentChapter} /> DARI{' '}
-                  {berjalan.totalChapters}
-                </span>
-                {berjalan.tropes && berjalan.tropes.slice(0, 2).map((t) => (
-                  <span
-                    key={t}
-                    className="w-fit rounded-full bg-cream/15 px-2.5 py-1 text-[11px] font-medium text-cream backdrop-blur"
-                  >
-                    {t}
-                  </span>
-                ))}
+            <div className="relative flex items-center gap-4 p-4">
+              <div className="relative aspect-[9/16] w-32 shrink-0 overflow-hidden rounded-xl shadow-xl ring-1 ring-cream/15">
+                <Image
+                  src={resolveStoryCover(berjalan.cover)}
+                  alt={`Sampul cerita ${berjalan.title}`}
+                  fill
+                  priority
+                  sizes="128px"
+                  className="object-cover"
+                />
               </div>
-              <h3 className="font-serif text-3xl leading-tight text-cream text-balance">
-                {berjalan.title}
-              </h3>
-              <p className="text-sm leading-relaxed text-cream/80">{berjalan.tagline}</p>
-              <span className="mt-1 flex min-h-12 w-fit items-center gap-2 rounded-2xl bg-primary px-5 text-sm font-semibold text-primary-foreground">
-                <Play className="size-4" aria-hidden="true" />
-                Lanjutkan Cerita
-              </span>
+              <div className="flex min-w-0 flex-1 flex-col items-start gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="w-fit rounded-full bg-primary/20 px-3 py-1 text-[11px] font-semibold tracking-wide text-primary backdrop-blur">
+                    CERITA BERJALAN — BAB{' '}
+                    <ResumeChapter storyId={berjalan.id} fallback={berjalan.currentChapter} /> DARI{' '}
+                    {berjalan.totalChapters}
+                  </span>
+                  {berjalan.tropes && berjalan.tropes.slice(0, 2).map((t) => (
+                    <span
+                      key={t}
+                      className="w-fit rounded-full bg-cream/15 px-2.5 py-1 text-[11px] font-medium text-cream backdrop-blur"
+                    >
+                      {t}
+                    </span>
+                  ))}
+                </div>
+                <h3 className="font-serif text-2xl leading-tight text-cream text-balance">
+                  {berjalan.title}
+                </h3>
+                <p className="line-clamp-3 text-xs leading-relaxed text-cream/80">
+                  {berjalan.tagline}
+                </p>
+                <span className="mt-1 flex min-h-12 w-fit items-center gap-2 rounded-2xl bg-primary px-5 text-sm font-semibold text-primary-foreground">
+                  <Play className="size-4" aria-hidden="true" />
+                  Lanjutkan Cerita
+                </span>
+              </div>
             </div>
           </Link>
         </section>
@@ -142,43 +156,52 @@ export default async function BerandaPage() {
               href={`/baca/${featured.id}?bab=1`}
               className="group relative block overflow-hidden rounded-3xl"
             >
-              <div className="relative aspect-[4/5] w-full">
+              <div className="absolute inset-0" aria-hidden="true">
                 <Image
-                  src={
-                    featured.cover && featured.cover !== '/placeholder.svg'
-                      ? featured.cover
-                      : '/covers/default-cover.webp'
-                  }
-                  alt={`Sampul cerita ${featured.title}`}
+                  src={resolveStoryCover(featured.cover)}
+                  alt=""
                   fill
-                  priority
                   sizes="448px"
-                  className="object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                  className="scale-110 object-cover blur-2xl"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/30 to-transparent" />
+                <div className="absolute inset-0 bg-ink/65" />
               </div>
-              <div className="absolute inset-x-0 bottom-0 flex flex-col gap-3 p-6">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="w-fit rounded-full bg-gold/20 px-3 py-1 text-[11px] font-semibold tracking-wide text-gold backdrop-blur">
-                    PILIHAN LAKOKU
-                  </span>
-                  {featured.tropes && featured.tropes.slice(0, 2).map((t) => (
-                    <span
-                      key={t}
-                      className="w-fit rounded-full bg-cream/15 px-2.5 py-1 text-[11px] font-medium text-cream backdrop-blur"
-                    >
-                      {t}
-                    </span>
-                  ))}
+              <div className="relative flex items-center gap-4 p-4">
+                <div className="relative aspect-[9/16] w-32 shrink-0 overflow-hidden rounded-xl shadow-xl ring-1 ring-cream/15">
+                  <Image
+                    src={resolveStoryCover(featured.cover)}
+                    alt={`Sampul cerita ${featured.title}`}
+                    fill
+                    priority
+                    sizes="128px"
+                    className="object-cover"
+                  />
                 </div>
-                <h3 className="font-serif text-3xl leading-tight text-cream text-balance">
-                  {featured.title}
-                </h3>
-                <p className="text-sm leading-relaxed text-cream/80">{featured.tagline}</p>
-                <span className="mt-1 flex min-h-12 w-fit items-center gap-2 rounded-2xl bg-primary px-5 text-sm font-semibold text-primary-foreground">
-                  <Play className="size-4" aria-hidden="true" />
-                  Mulai Baca Bab 1 (Gratis)
-                </span>
+                <div className="flex min-w-0 flex-1 flex-col items-start gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="w-fit rounded-full bg-gold/20 px-3 py-1 text-[11px] font-semibold tracking-wide text-gold backdrop-blur">
+                      PILIHAN LAKOKU
+                    </span>
+                    {featured.tropes && featured.tropes.slice(0, 2).map((t) => (
+                      <span
+                        key={t}
+                        className="w-fit rounded-full bg-cream/15 px-2.5 py-1 text-[11px] font-medium text-cream backdrop-blur"
+                      >
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                  <h3 className="font-serif text-2xl leading-tight text-cream text-balance">
+                    {featured.title}
+                  </h3>
+                  <p className="line-clamp-3 text-xs leading-relaxed text-cream/80">
+                    {featured.tagline}
+                  </p>
+                  <span className="mt-1 flex min-h-12 w-fit items-center gap-2 rounded-2xl bg-primary px-5 text-sm font-semibold text-primary-foreground">
+                    <Play className="size-4" aria-hidden="true" />
+                    Mulai Baca Bab 1 (Gratis)
+                  </span>
+                </div>
               </div>
             </Link>
           </section>
@@ -217,13 +240,9 @@ export default async function BerandaPage() {
                 href={`/cerita/${story.id}`}
                 className="group w-28 shrink-0 snap-start"
               >
-                <div className="relative aspect-[2/3] overflow-hidden rounded-xl bg-muted">
+                <div className="relative aspect-[9/16] overflow-hidden rounded-xl bg-muted">
                   <Image
-                    src={
-                      story.cover && story.cover !== '/placeholder.svg'
-                        ? story.cover
-                        : '/covers/default-cover.webp'
-                    }
+                    src={resolveStoryCover(story.cover)}
                     alt={`Sampul cerita ${story.title}`}
                     fill
                     sizes="112px"
@@ -294,13 +313,9 @@ export default async function BerandaPage() {
                 href={`/cerita/${story.id}`}
                 className="group w-28 shrink-0 snap-start"
               >
-                <div className="relative aspect-[2/3] overflow-hidden rounded-xl bg-muted">
+                <div className="relative aspect-[9/16] overflow-hidden rounded-xl bg-muted">
                   <Image
-                    src={
-                      story.cover && story.cover !== '/placeholder.svg'
-                        ? story.cover
-                        : '/covers/default-cover.webp'
-                    }
+                    src={resolveStoryCover(story.cover)}
                     alt={`Sampul cerita ${story.title}`}
                     fill
                     sizes="112px"

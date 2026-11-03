@@ -198,7 +198,7 @@ export function StoryCoverActions({
                       : 'border-border bg-card'
                   }`}
                 >
-                  <div className="relative aspect-[2/3] w-full overflow-hidden bg-muted">
+                  <div className="relative aspect-[9/16] w-full overflow-hidden bg-muted">
                     <Image
                       src={cand.url}
                       alt="Pratinjau sampul"

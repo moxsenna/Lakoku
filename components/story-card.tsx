@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import Image from 'next/image'
+import { resolveStoryCover } from '@/lib/api'
 import type { StorySummary } from '@/lib/api'
 
 export function StoryCard({
@@ -17,9 +18,9 @@ export function StoryCard({
       href={href ?? `/cerita/${story.id}`}
       className="group flex gap-4 rounded-2xl bg-card p-3 transition-colors hover:bg-secondary/60"
     >
-      <div className="relative aspect-[2/3] w-20 shrink-0 overflow-hidden rounded-xl">
+      <div className="relative aspect-[9/16] w-20 shrink-0 overflow-hidden rounded-xl bg-muted">
         <Image
-          src={story.cover && story.cover !== '/placeholder.svg' ? story.cover : '/covers/default-cover.webp'}
+          src={resolveStoryCover(story.cover)}
           alt={`Sampul cerita ${story.title}`}
           fill
           sizes="80px"

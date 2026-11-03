@@ -8,7 +8,7 @@ import { ArrowLeft } from 'lucide-react'
 import { ResumeChapter } from '@/components/resume-chapter'
 import { StoryCoverActions } from '@/components/story-cover-actions'
 import { JejakTrail } from '@/components/story/jejak-trail'
-import { getStory } from '@/lib/api/server'
+import { getStory, resolveStoryCover } from '@/lib/api/server'
 import { getSessionUser } from '@/lib/api/user-state'
 import { isStoryOwnedBy } from '@/lib/api/story-ownership.server'
 import { getStoryCoverPolicy, getStoryCoverCandidates } from '@/lib/cover/server'
@@ -58,15 +58,29 @@ export default async function CeritaDetailPage({
 
   return (
     <main className="flex flex-col">
-        <div className="relative h-[52svh] w-full overflow-hidden">
+        <div className="relative h-[46svh] min-h-[340px] w-full overflow-hidden">
           <Image
-            src={story.cover && story.cover !== '/placeholder.svg' ? story.cover : '/covers/default-cover.webp'}
-            alt={`Sampul cerita ${story.title}`}
+            src={resolveStoryCover(story.cover)}
+            alt=""
             fill
             sizes="448px"
-            className="object-cover"
+            aria-hidden="true"
+            className="scale-110 object-cover blur-2xl"
           />
-          <div className="absolute inset-0 bg-gradient-to-b from-ink/40 via-transparent to-background" />
+          <div className="absolute inset-0 bg-ink/60" />
+          <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-ink/60 to-transparent" />
+          <div className="absolute inset-0 flex items-center justify-center px-6 pb-2 pt-12">
+            <div className="relative aspect-[9/16] h-full w-auto overflow-hidden rounded-2xl shadow-2xl ring-1 ring-cream/15">
+              <Image
+                src={resolveStoryCover(story.cover)}
+                alt={`Sampul cerita ${story.title}`}
+                fill
+                sizes="240px"
+                className="object-cover"
+              />
+            </div>
+          </div>
+          <div className="absolute inset-x-0 bottom-0 h-14 bg-gradient-to-b from-transparent to-background" />
           <BackButton
             fallbackHref="/beranda"
             label="Kembali"

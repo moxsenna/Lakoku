@@ -39,3 +39,4 @@ export type {
   SubmitChoiceWithReadinessFn,
 } from './pending-choice'
 export { recordLastChoiceSummary, getLastChoiceSummary } from './last-choice-summary'
+export { DEFAULT_STORY_COVER, resolveStoryCover } from '@/lib/cover/url'

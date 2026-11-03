@@ -4,6 +4,7 @@ import Image from 'next/image'
 import { notFound } from 'next/navigation'
 import { BookOpen, Download, Footprints, Sparkles, Trophy, Users } from 'lucide-react'
 import { getShareBySlug } from '@/lib/api/share'
+import { resolveStoryCover } from '@/lib/api/server'
 import { getSessionUser } from '@/lib/api/user-state'
 import { StartFromShareButton } from '@/components/start-from-share-button'
 import { TrackOnView } from '@/components/analytics/track-on-view'
@@ -57,16 +58,30 @@ export default async function ShareLandingPage({
         event="share_link_opened"
         payload={{ placement: 'share_landing', share_slug: share.shareSlug }}
       />
-      <div className="relative h-[40svh] w-full overflow-hidden">
+      <div className="relative h-[42svh] min-h-[320px] w-full overflow-hidden">
         <Image
-          src={t.cover && t.cover !== '/placeholder.svg' ? t.cover : '/covers/default-cover.webp'}
-          alt={`Sampul ${t.title}`}
+          src={resolveStoryCover(t.cover)}
+          alt=""
           fill
           priority
           sizes="448px"
-          className="object-cover"
+          aria-hidden="true"
+          className="scale-110 object-cover blur-2xl"
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-ink/40 via-ink/20 to-background" />
+        <div className="absolute inset-0 bg-ink/60" />
+        <div className="absolute inset-0 flex items-center justify-center px-6 pb-2 pt-12">
+          <div className="relative aspect-[9/16] h-full w-auto overflow-hidden rounded-2xl shadow-2xl ring-1 ring-cream/15">
+            <Image
+              src={resolveStoryCover(t.cover)}
+              alt={`Sampul ${t.title}`}
+              fill
+              priority
+              sizes="240px"
+              className="object-cover"
+            />
+          </div>
+        </div>
+        <div className="absolute inset-x-0 bottom-0 h-14 bg-gradient-to-b from-transparent to-background" />
       </div>
 
       <section className="lk-fade-up -mt-10 flex flex-1 flex-col gap-6 px-5 pb-10">

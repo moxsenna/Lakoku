@@ -8,7 +8,8 @@ import { adminGrantCredits } from '@/lib/admin/credits'
  *
  * Dua jalur autentikasi:
  *  1) x-runtime-token (header) — untuk automasi internal / backward compat.
- *     adminUserId = sentinel (bila tidak ada sesi user).
+ *     adminUserId = user sistem RUNTIME_ADMIN_ACTOR_ID (teraudit sebagai
+ *     aktor non-manusia; sentinel UUID nol dulu melanggar FK dan selalu 500).
  *  2) Session user login + role admin/owner di `admin_users` DB.
  *     adminUserId = user.id (teraudit).
  *
@@ -25,10 +26,14 @@ import { adminGrantCredits } from '@/lib/admin/credits'
  */
 export const dynamic = 'force-dynamic'
 
+// User sistem untuk aktor otomasi (dibuat oleh migrasi
+// 20261104170000_runtime_admin_system_actor.sql). Bukan akun login.
+const RUNTIME_ADMIN_ACTOR_ID = '00000000-0000-0000-0000-0000000000ff'
+
 export async function POST(request: Request): Promise<Response> {
   // ---- Auth: session admin diutamakan, token guard sebagai fallback ----
 
-  let adminUserId = '00000000-0000-0000-0000-000000000000' // sentinel fallback
+  let adminUserId = RUNTIME_ADMIN_ACTOR_ID
 
   try {
     const admin = await requireAdminUser()

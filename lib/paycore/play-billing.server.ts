@@ -86,6 +86,47 @@ export async function fetchPurchaseState(
   }
 }
 
+export type AcknowledgeOutcome =
+  | { ok: true }
+  | { ok: false; status: number; detail: string }
+
+/**
+ * Panggil purchases.products:acknowledge (Google Play Developer API v3).
+ * Wajib dipanggil setelah grant: purchase yang tidak di-acknowledge dalam
+ * 72 jam dibatalkan Google secara otomatis (refund ke pembeli) sementara
+ * kredit sudah masuk. Juga syarat agar SKU sama bisa dibeli lagi.
+ */
+export async function acknowledgePurchase(
+  config: PlayBillingConfig,
+  productId: string,
+  purchaseToken: string,
+): Promise<AcknowledgeOutcome> {
+  const assertion = await createGoogleJwtAssertion(
+    config,
+    'https://www.googleapis.com/auth/androidpublisher',
+  )
+  const url =
+    'https://androidpublisher.googleapis.com/androidpublisher/v3/applications/' +
+    `${encodeURIComponent(config.packageName)}/purchases/products/` +
+    `${encodeURIComponent(productId)}/tokens/${encodeURIComponent(purchaseToken)}:acknowledge`
+
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${assertion}`, 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+  } catch (err) {
+    return { ok: false, status: 0, detail: (err as Error).message }
+  }
+  if (!res.ok) {
+    const text = await res.text()
+    return { ok: false, status: res.status, detail: text.slice(0, 300) }
+  }
+  return { ok: true }
+}
+
 /** Keputusan pembelian boleh di-grant (fail-closed). */
 export function isGrantablePurchase(p: PlayPurchaseState): boolean {
   return p.purchaseState === 0 && p.consumptionState === 0 && p.kind === 1

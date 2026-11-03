@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { getSessionUser } from '@/lib/api/user-state'
-import { loadPlayBillingConfig, fetchPurchaseState, isGrantablePurchase } from '@/lib/paycore/play-billing.server'
+import { loadPlayBillingConfig, fetchPurchaseState, isGrantablePurchase, acknowledgePurchase } from '@/lib/paycore/play-billing.server'
 import { getCreditProductByPlaySku, calculateTopupCredits } from '@/lib/paycore/products'
 import { playBillingGrantV1 } from '@/lib/paycore/play-billing-grant.server'
 import { getDb, single, rpcOne } from '@lakoku/db'
@@ -87,6 +87,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: 'grant_failed' }, { status: 500 })
   }
 
+  // 5) Acknowledge ke Google setelah grant sukses. Bila ini gagal, jangan
+  //    gagalkan request (kredit sudah masuk): verifikasi ulang token yang
+  //    sama akan memanggil acknowledge lagi karena jalur grant idempoten.
+  const ack = await acknowledgePurchase(config, productId, purchaseToken)
+  if (!ack.ok) {
+    console.error(`[play-billing] acknowledge gagal (${ack.status}): ${ack.detail}`)
+  }
+
   // Kabar baik topup (best-effort, idempoten per ref; replay aman).
   void notifyTopupResult({
     userId: user.id,
@@ -99,6 +107,7 @@ export async function POST(request: NextRequest) {
     orderId: grant.orderId,
     alreadyGranted: grant.alreadyGranted,
     totalCredits: calc.totalCredits,
+    acknowledged: ack.ok,
   })
 }
 

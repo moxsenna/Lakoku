@@ -94,12 +94,12 @@ export async function getTintaBalance(userId: string): Promise<TintaBalance> {
 }
 
 /**
- * Menukar saldo Tinta menjadi Lakoin secara atomik berpasangan.
+ * Menukar saldo Tinta menjadi Lakoin secara atomik.
  * Alur:
  * 1. Validasi kebijakan & hitung kurs (lempar error bila disabled/di bawah minimum).
- * 2. Spend Tinta via spend_tinta_v1 (ref exchange:{uuid}).
- * 3. Grant Lakoin via grant_credits_v1 (ref tinta_exchange:{uuid}).
- * 4. Bila grant Lakoin gagal, rollback Tinta via grant_tinta_v1 (ref exchange-rollback:{uuid}) lalu throw.
+ * 2. exchange_tinta_to_lakoin_v1 memotong Tinta + grant Lakoin dalam SATU
+ *    transaksi DB ber-lock per user (audit B4). Tanpa ini, server mati di
+ *    tengah jalan bisa menghanguskan Tinta atau menduplikasi Lakoin.
  */
 export async function exchangeTintaForLakoin(
   userId: string,
@@ -109,64 +109,36 @@ export async function exchangeTintaForLakoin(
   const calculation = calculateTintaExchange(amountTinta, policy)
 
   const exchangeId = randomUUID()
-  const spendRef = `exchange:${exchangeId}`
   const db = getDb()
 
-  // 1. Spend Tinta
-  const { data: spendData, error: spendErr } = await single(
-    rpcOne(db, 'spend_tinta_v1', {
+  // Atomik (audit B4): potong Tinta + grant Lakoin dalam SATU transaksi DB
+  // (exchange_tinta_to_lakoin_v1, advisory lock per-user). Tanpa ini server
+  // mati di tengah jalan bisa menghanguskan Tinta atau menduplikasi Lakoin.
+  const { data: statusData, error: exchangeErr } = await single(
+    rpcOne(db, 'exchange_tinta_to_lakoin_v1', {
       p_user_id: userId,
-      p_ref: spendRef,
-      p_amount: calculation.tintaSpent,
-      p_reason: 'tinta_exchange',
+      p_exchange_id: exchangeId,
+      p_amount_tinta: calculation.tintaSpent,
+      p_lakoin_out: calculation.lakoinOut,
     }).execute(),
   )
 
-  if (spendErr) {
-    throw new Error(`spend_tinta_v1 failed: ${spendErr.message}`)
+  if (exchangeErr) {
+    throw new Error(`exchange_tinta_to_lakoin_v1 failed: ${exchangeErr.message}`)
   }
 
-  const spendStatus = spendData ? ((spendData as Record<string, unknown>).fn ?? spendData) : null
+  const status = statusData ? ((statusData as Record<string, unknown>).fn ?? statusData) : null
 
-  if (spendStatus === 'insufficient') {
+  if (status === 'insufficient') {
     throw new Error('Saldo Tinta tidak mencukupi')
   }
 
-  if (spendStatus === 'duplicate') {
+  if (status === 'duplicate') {
     throw new Error('Transaksi penukaran sedang diproses')
   }
 
-  if (spendStatus !== 'ok') {
-    throw new Error(`spend_tinta_v1 failed: ${spendStatus}`)
-  }
-
-  // 2. Grant Lakoin (kredit baca)
-  const creditRef = `tinta_exchange:${exchangeId}`
-  const { data: creditData, error: creditErr } = await single(
-    rpcOne(db, 'grant_credits_v1', {
-      p_user_id: userId,
-      p_ref: creditRef,
-      p_credits: calculation.lakoinOut,
-      p_reason: 'tinta_exchange',
-    }).execute(),
-  )
-
-  const creditGranted = creditData ? ((creditData as Record<string, unknown>).fn ?? creditData) : false
-
-  if (creditErr || !creditGranted) {
-    // 3. Kompensasi rollback bila grant kredit gagal
-    const rollbackRef = `exchange-rollback:${exchangeId}`
-    await single(
-      rpcOne(db, 'grant_tinta_v1', {
-        p_user_id: userId,
-        p_ref: rollbackRef,
-        p_delta: calculation.tintaSpent,
-        p_reason: 'tinta_exchange_rollback',
-        p_pending_hours: 0,
-      }).execute(),
-    )
-
-    throw new Error(`grant_credits_v1 failed: ${creditErr?.message ?? 'unknown'}`)
+  if (status !== 'ok') {
+    throw new Error(`exchange_tinta_to_lakoin_v1 failed: ${String(status)}`)
   }
 
   return {

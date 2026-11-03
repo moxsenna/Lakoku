@@ -309,10 +309,10 @@ describe('lib/tinta/server (AC3.1 - AC3.6)', () => {
       ).rejects.toThrow('Penukaran minimal 2 Lakoin.')
     })
 
-    it('throws reader-safe error when spend_tinta_v1 returns insufficient', async () => {
+    it('throws reader-safe error when exchange_tinta_to_lakoin_v1 returns insufficient', async () => {
       const mockSelect = setupPolicyMock()
       const mockRpc = vi.fn().mockImplementation((fnName: string) => {
-        if (fnName === 'spend_tinta_v1') {
+        if (fnName === 'exchange_tinta_to_lakoin_v1') {
           return Promise.resolve({ data: 'insufficient', error: null })
         }
         return Promise.resolve({ data: null, error: null })
@@ -328,22 +328,23 @@ describe('lib/tinta/server (AC3.1 - AC3.6)', () => {
       ).rejects.toThrow('Saldo Tinta tidak mencukupi')
 
       expect(mockRpc).toHaveBeenCalledWith(
-        'spend_tinta_v1',
+        'exchange_tinta_to_lakoin_v1',
         expect.objectContaining({
           p_user_id: 'user-1',
-          p_amount: 200,
-          p_reason: 'tinta_exchange',
-          p_ref: expect.stringMatching(/^exchange:[0-9a-f-]+$/),
+          p_amount_tinta: 200,
+          p_lakoin_out: 2,
+          p_exchange_id: expect.stringMatching(/^[0-9a-f-]+$/),
         }),
       )
-      // Grant credits must not be called
+      // Alur lama (spend/grant terpisah) tidak boleh dipanggil lagi
       expect(mockRpc).not.toHaveBeenCalledWith('grant_credits_v1', expect.anything())
+      expect(mockRpc).not.toHaveBeenCalledWith('spend_tinta_v1', expect.anything())
     })
 
-    it('throws error when spend_tinta_v1 returns duplicate or error', async () => {
+    it('throws error when exchange_tinta_to_lakoin_v1 returns duplicate', async () => {
       const mockSelect = setupPolicyMock()
       const mockRpc = vi.fn().mockImplementation((fnName: string) => {
-        if (fnName === 'spend_tinta_v1') {
+        if (fnName === 'exchange_tinta_to_lakoin_v1') {
           return Promise.resolve({ data: 'duplicate', error: null })
         }
         return Promise.resolve({ data: null, error: null })
@@ -359,14 +360,11 @@ describe('lib/tinta/server (AC3.1 - AC3.6)', () => {
       ).rejects.toThrow('Transaksi penukaran sedang diproses')
     })
 
-    it('happy-path: spends Tinta, grants Lakoin, returns lakoinOut and tintaSpent', async () => {
+    it('happy-path: single atomic RPC exchanges Tinta into Lakoin', async () => {
       const mockSelect = setupPolicyMock({ tintaPerLakoin: 100 })
-      const mockRpc = vi.fn().mockImplementation((fnName: string, _args: Record<string, unknown>) => {
-        if (fnName === 'spend_tinta_v1') {
+      const mockRpc = vi.fn().mockImplementation((fnName: string) => {
+        if (fnName === 'exchange_tinta_to_lakoin_v1') {
           return Promise.resolve({ data: 'ok', error: null })
-        }
-        if (fnName === 'grant_credits_v1') {
-          return Promise.resolve({ data: true, error: null })
         }
         return Promise.resolve({ data: null, error: null })
       })
@@ -383,40 +381,24 @@ describe('lib/tinta/server (AC3.1 - AC3.6)', () => {
         tintaSpent: 200,
       })
 
-      // Check spend_tinta_v1 call
-      expect(mockRpc).toHaveBeenCalledWith('spend_tinta_v1', {
+      // SATU panggilan RPC atomik — alur lama dua/tiga RPC tidak boleh ada
+      expect(mockRpc).toHaveBeenCalledTimes(1)
+      expect(mockRpc).toHaveBeenCalledWith('exchange_tinta_to_lakoin_v1', {
         p_user_id: 'user-1',
-        p_amount: 200,
-        p_reason: 'tinta_exchange',
-        p_ref: expect.stringMatching(/^exchange:[0-9a-f-]+$/),
+        p_exchange_id: expect.stringMatching(/^[0-9a-f-]+$/),
+        p_amount_tinta: 200,
+        p_lakoin_out: 2,
       })
-
-      // Check grant_credits_v1 call
-      expect(mockRpc).toHaveBeenCalledWith('grant_credits_v1', {
-        p_user_id: 'user-1',
-        p_credits: 2,
-        p_reason: 'tinta_exchange',
-        p_ref: expect.stringMatching(/^tinta_exchange:[0-9a-f-]+$/),
-      })
-
-      // Rollback must NOT be called on success
       expect(mockRpc).not.toHaveBeenCalledWith('grant_tinta_v1', expect.anything())
+      expect(mockRpc).not.toHaveBeenCalledWith('grant_credits_v1', expect.anything())
     })
 
-    it('rollback-path: when grant_credits_v1 fails with error, executes compensating grant_tinta_v1 and throws', async () => {
+    it('throws reader-safe error when atomic RPC fails with error', async () => {
       const mockSelect = setupPolicyMock({ tintaPerLakoin: 100 })
-      let capturedExchangeId = ''
 
-      const mockRpc = vi.fn().mockImplementation((fnName: string, args: Record<string, unknown>) => {
-        if (fnName === 'spend_tinta_v1') {
-          capturedExchangeId = String(args.p_ref).replace('exchange:', '')
-          return Promise.resolve({ data: 'ok', error: null })
-        }
-        if (fnName === 'grant_credits_v1') {
+      const mockRpc = vi.fn().mockImplementation((fnName: string) => {
+        if (fnName === 'exchange_tinta_to_lakoin_v1') {
           return Promise.resolve({ data: null, error: new Error('grant error') })
-        }
-        if (fnName === 'grant_tinta_v1') {
-          return Promise.resolve({ data: true, error: null })
         }
         return Promise.resolve({ data: null, error: null })
       })
@@ -428,32 +410,15 @@ describe('lib/tinta/server (AC3.1 - AC3.6)', () => {
 
       await expect(
         serverSeam.exchangeTintaForLakoin('user-1', 250),
-      ).rejects.toThrow('grant_credits_v1 failed: grant error')
-
-      // Rollback MUST be called with compensating grant_tinta_v1
-      expect(mockRpc).toHaveBeenCalledWith('grant_tinta_v1', {
-        p_user_id: 'user-1',
-        p_ref: `exchange-rollback:${capturedExchangeId}`,
-        p_delta: 200,
-        p_reason: 'tinta_exchange_rollback',
-        p_pending_hours: 0,
-      })
+      ).rejects.toThrow('exchange_tinta_to_lakoin_v1 failed: grant error')
     })
 
-    it('rollback-path: when grant_credits_v1 returns false, executes compensating grant_tinta_v1 and throws', async () => {
+    it('throws when atomic RPC returns unexpected status', async () => {
       const mockSelect = setupPolicyMock({ tintaPerLakoin: 100 })
-      let capturedExchangeId = ''
 
-      const mockRpc = vi.fn().mockImplementation((fnName: string, args: Record<string, unknown>) => {
-        if (fnName === 'spend_tinta_v1') {
-          capturedExchangeId = String(args.p_ref).replace('exchange:', '')
-          return Promise.resolve({ data: 'ok', error: null })
-        }
-        if (fnName === 'grant_credits_v1') {
-          return Promise.resolve({ data: false, error: null })
-        }
-        if (fnName === 'grant_tinta_v1') {
-          return Promise.resolve({ data: true, error: null })
+      const mockRpc = vi.fn().mockImplementation((fnName: string) => {
+        if (fnName === 'exchange_tinta_to_lakoin_v1') {
+          return Promise.resolve({ data: 'weird-status', error: null })
         }
         return Promise.resolve({ data: null, error: null })
       })
@@ -465,15 +430,7 @@ describe('lib/tinta/server (AC3.1 - AC3.6)', () => {
 
       await expect(
         serverSeam.exchangeTintaForLakoin('user-1', 300),
-      ).rejects.toThrow('grant_credits_v1 failed: unknown')
-
-      expect(mockRpc).toHaveBeenCalledWith('grant_tinta_v1', {
-        p_user_id: 'user-1',
-        p_ref: `exchange-rollback:${capturedExchangeId}`,
-        p_delta: 300,
-        p_reason: 'tinta_exchange_rollback',
-        p_pending_hours: 0,
-      })
+      ).rejects.toThrow('exchange_tinta_to_lakoin_v1 failed: weird-status')
     })
   })
 

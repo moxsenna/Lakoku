@@ -128,7 +128,7 @@ describe('lib/rewards/server', () => {
     expect(code.length).toBe(8)
   })
 
-  it('executes atomic credit redemption with dual ledger writes', async () => {
+  it('executes atomic redemption via single RPC redeem_reward_credits_v1', async () => {
     let callIdx = 0
     mocks.policyData.mockReturnValue([
       {
@@ -146,27 +146,48 @@ describe('lib/rewards/server', () => {
     mocks.rpcData.mockImplementation(async () => {
       callIdx++
       if (callIdx === 1) return 10000 // balance
-      return true // grant_reward, grant_credits
+      return 'ok' // redeem_reward_credits_v1
     })
 
     const result = await redeemRewardCredits('user-123', 5000)
     expect(result.creditsGranted).toBe(20) // 5000 / 250
     expect(result.deductedIdr).toBe(5000)
-    expect(mocks.rpc).toHaveBeenCalledWith('grant_reward_v1', expect.objectContaining({
+    // SATU panggilan RPC atomik — cek saldo + kedua ledger ada di dalam RPC
+    expect(mocks.rpc).toHaveBeenCalledWith('redeem_reward_credits_v1', expect.objectContaining({
       p_user_id: 'user-123',
-      p_delta_idr: -5000,
-      p_reason: 'redeem_credits',
-      p_ref: expect.stringMatching(/^redeem:/),
-    }))
-    expect(mocks.rpc).toHaveBeenCalledWith('grant_credits_v1', expect.objectContaining({
-      p_user_id: 'user-123',
+      p_redeem_id: expect.stringMatching(/^[0-9a-f-]+$/),
+      p_amount_idr: 5000,
       p_credits: 20,
-      p_reason: 'reward_redeem',
-      p_ref: expect.stringMatching(/^reward_redeem:/),
     }))
+    expect(mocks.rpc).not.toHaveBeenCalledWith('grant_reward_v1', expect.anything())
+    expect(mocks.rpc).not.toHaveBeenCalledWith('grant_credits_v1', expect.anything())
   })
 
-  it('rolls back reward deduction when credit grant fails', async () => {
+  it('surfaces insufficient status as reader-safe error', async () => {
+    let callIdx = 0
+    mocks.policyData.mockReturnValue([
+      {
+        commission_percent: 10,
+        window_days: 30,
+        attribution_cookie_days: 30,
+        redeem_rate_idr_per_credit: 250,
+        redeem_min_idr: 1000,
+        commission_enabled: false,
+        redeem_enabled: true,
+        payout_enabled: false,
+        payout_min_idr: 50000,
+      },
+    ])
+    mocks.rpcData.mockImplementation(async () => {
+      callIdx++
+      if (callIdx === 1) return 10000 // balance (pre-check node lolos)
+      return 'insufficient' // keputusan otoritatif di dalam RPC (lock)
+    })
+
+    await expect(redeemRewardCredits('user-123', 5000)).rejects.toThrow('Saldo imbalan tidak mencukupi')
+  })
+
+  it('surfaces duplicate status as processing error', async () => {
     let callIdx = 0
     mocks.policyData.mockReturnValue([
       {
@@ -184,20 +205,10 @@ describe('lib/rewards/server', () => {
     mocks.rpcData.mockImplementation(async () => {
       callIdx++
       if (callIdx === 1) return 10000 // balance
-      if (callIdx === 2) return true // deduct reward
-      if (callIdx === 3) return false // credit grant fails
-      return true // rollback
+      return 'duplicate'
     })
 
-    await expect(redeemRewardCredits('user-123', 5000)).rejects.toThrow('credit grant failed')
-
-    // Compensation write check
-    expect(mocks.rpc).toHaveBeenCalledWith('grant_reward_v1', expect.objectContaining({
-      p_user_id: 'user-123',
-      p_delta_idr: 5000,
-      p_reason: 'redeem_rollback',
-      p_ref: expect.stringMatching(/^rollback:/),
-    }))
+    await expect(redeemRewardCredits('user-123', 5000)).rejects.toThrow('Transaksi penukaran sedang diproses')
   })
 
   it('aggregates referral statistics accurately', async () => {

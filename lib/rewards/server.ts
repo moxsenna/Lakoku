@@ -138,46 +138,32 @@ export async function redeemRewardCredits(
 
   const db = getDb()
   const redeemId = randomUUID()
-  const rewardRef = `redeem:${redeemId}`
 
-  // Step 1: Deduct reward balance
-  const { data: rewardData, error: rewardErr } = await single(
-    rpcOne(db, 'grant_reward_v1', {
+  // Atomik (audit B3): cek saldo pindah ke DALAM redeem_reward_credits_v1
+  // (advisory lock per-user + kedua ledger dalam satu transaksi DB). Race
+  // request paralel tidak bisa lagi membuat saldo minus; retry dengan id
+  // sama bersifat idempoten.
+  const { data: statusData, error: redeemErr } = await single(
+    rpcOne(db, 'redeem_reward_credits_v1', {
       p_user_id: userId,
-      p_delta_idr: -calculation.costIdr,
-      p_reason: 'redeem_credits',
-      p_ref: rewardRef,
-    }).execute(),
-  )
-  const rewardGranted = rewardData ? ((rewardData as Record<string, unknown>).fn ?? rewardData) : false
-
-  if (rewardErr || !rewardGranted) {
-    throw new Error(`redeemRewardCredits reward deduct failed: ${rewardErr?.message ?? 'unknown'}`)
-  }
-
-  // Step 2: Grant reading credits
-  const creditRef = `reward_redeem:${redeemId}`
-  const { data: creditData, error: creditErr } = await single(
-    rpcOne(db, 'grant_credits_v1', {
-      p_user_id: userId,
-      p_ref: creditRef,
+      p_redeem_id: redeemId,
+      p_amount_idr: calculation.costIdr,
       p_credits: calculation.creditsToGrant,
-      p_reason: 'reward_redeem',
     }).execute(),
   )
-  const creditGranted = creditData ? ((creditData as Record<string, unknown>).fn ?? creditData) : false
+  if (redeemErr) {
+    throw new Error(`redeemRewardCredits failed: ${redeemErr.message}`)
+  }
+  const status = statusData ? ((statusData as Record<string, unknown>).fn ?? statusData) : null
 
-  if (creditErr || !creditGranted) {
-    // Step 3: Compensating rollback if credit grant fails
-    await single(
-      rpcOne(db, 'grant_reward_v1', {
-        p_user_id: userId,
-        p_delta_idr: calculation.costIdr,
-        p_reason: 'redeem_rollback',
-        p_ref: `rollback:${redeemId}`,
-      }).execute(),
-    )
-    throw new Error(`redeemRewardCredits credit grant failed: ${creditErr?.message ?? 'unknown'}`)
+  if (status === 'insufficient') {
+    throw new Error('Saldo imbalan tidak mencukupi')
+  }
+  if (status === 'duplicate') {
+    throw new Error('Transaksi penukaran sedang diproses')
+  }
+  if (status !== 'ok') {
+    throw new Error(`redeem_reward_credits_v1 failed: ${String(status)}`)
   }
 
   return {

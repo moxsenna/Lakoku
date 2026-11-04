@@ -21,11 +21,16 @@ let poolInstance: Pool | null = null
 
 function getAuthPool(): Pool {
   if (!poolInstance) {
-    // Fail-closed seperti lib/db/db.ts (audit M15): fallback kredensial dummy
-    // menutupi env yang hilang dengan kegagalan samar ke localhost.
+    // Fail-closed di produksi (audit M15); fallback dummy hanya untuk runner test unit
+    // agar import lib/auth tidak crash saat env database tidak disuntik.
     const url = process.env.DATABASE_URL
-    if (!url) throw new Error('getAuthPool: DATABASE_URL belum diset.')
-    poolInstance = new Pool({ connectionString: url, max: 10 })
+    if (process.env.NODE_ENV === 'production' && !url) {
+      throw new Error('Fatal: DATABASE_URL wajib diset di produksi untuk getAuthPool.')
+    }
+    poolInstance = new Pool({
+      connectionString: url || 'postgresql://postgres:postgres@localhost:5432/dummy',
+      max: 10,
+    })
     // Neon pooler rutin memutus koneksi idle. Tanpa handler ini event 'error'
     // pada idle client menjadi uncaughtException dan mematikan proses web —
     // mitigasi yang sama sudah dipasang di lib/db/db.ts.

@@ -82,18 +82,18 @@ describe.skipIf(!hasDb)('Phase B E2E Verification against Neon', () => {
     const { auth } = await import('@/lib/auth')
     expect(sessionToken).toBeTruthy()
 
-    // Test with raw cookie name format as specified: better-auth.session_token=${token}
-    const sessionPlain = await auth.api.getSession({
+    // Verifikasi via header Authorization: Bearer (plugin bearer aktif, audit M1)
+    const sessionBearer = await auth.api.getSession({
       headers: new Headers({
-        cookie: `better-auth.session_token=${sessionToken}`,
+        authorization: `Bearer ${sessionToken}`,
       }),
     })
 
-    expect(sessionPlain).not.toBeNull()
-    expect(sessionPlain?.user).toBeDefined()
-    expect(sessionPlain?.user.email).toBe(existingUserEmail)
+    expect(sessionBearer).not.toBeNull()
+    expect(sessionBearer?.user).toBeDefined()
+    expect(sessionBearer?.user.email).toBe(existingUserEmail)
 
-    // Also verify with full cookie header from signInEmail response
+    // Verifikasi via header cookie bertanda tangan HMAC dari respons signInEmail
     if (sessionCookie) {
       const sessionFromHeader = await auth.api.getSession({
         headers: new Headers({

@@ -14,15 +14,27 @@ import { NextResponse } from 'next/server'
 import { getDb } from '@lakoku/db'
 import { getSessionUser } from '@/lib/api/user-state'
 import { AnalyticsEventSchema } from '@/lib/analytics/events'
+import { rateLimit, clientIpFrom } from '@/lib/security/rate-limit'
 import type { Json } from '@/lib/db/db-types'
 
 export const dynamic = 'force-dynamic'
+
+// Endpoint publik tanpa auth (audit M10): 30 event / menit / IP — cukup untuk
+// sesi baca sungguhan, membatasi flood baris analytics (data funnel pra-launch
+// = dasar keputusan go/no-go; jangan sampai tercemar bot).
+const TRACK_RATE_LIMIT = 30
+const TRACK_RATE_WINDOW_MS = 60_000
 
 export async function POST(req: Request) {
   // Size guard — tolak payload mencurigakan.
   const contentLength = Number(req.headers.get('content-length') ?? 0)
   if (contentLength > 10_000) {
     return NextResponse.json({ ok: false }, { status: 413 })
+  }
+
+  const rl = rateLimit(`track:${clientIpFrom(req)}`, TRACK_RATE_LIMIT, TRACK_RATE_WINDOW_MS)
+  if (!rl.ok) {
+    return NextResponse.json({ ok: false }, { status: 429, headers: { 'retry-after': String(rl.retryAfterSec) } })
   }
 
   try {

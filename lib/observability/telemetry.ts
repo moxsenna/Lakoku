@@ -226,21 +226,35 @@ interface ThreadRow {
 /**
  * Muat input ternormalisasi untuk dashboard. Bila `storyId` diberikan, hanya
  * story tersebut; jika tidak, seluruh story (tampilan ops global).
+ *
+ * Tanpa filter waktu/limit, query ini memindai seluruh story_events (payload
+ * JSON) ke memori proses — endpoint /api/admin/metrics yang memanggilnya bisa
+ * OOM oleh request berulang (audit M5). Window 7 hari + limit menjaga
+ * semantik dashboard tetap "kejadian terkini".
  */
+const CONSISTENCY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+const CONSISTENCY_EVENT_LIMIT = 5000
+const CONSISTENCY_THREAD_LIMIT = 2000
+
 export async function loadConsistencyInputs(storyId?: string): Promise<ConsistencyInputs> {
   const db = getDb()
+  const windowStart = new Date(Date.now() - CONSISTENCY_WINDOW_MS)
 
   // RLS_AUDIT: story_events_service_only
   let eventsQuery = db
     .selectFrom('story_events')
     .select(['story_id', 'type', 'payload', 'created_at'])
     .where('type', 'in', [GENERATION_ATTEMPT_EVENT, 'REPORT_FILED', 'CHAPTER_PUBLISHED'])
+    .where('created_at', '>', windowStart)
+    .orderBy('created_at', 'desc')
+    .limit(CONSISTENCY_EVENT_LIMIT)
   if (storyId) eventsQuery = eventsQuery.where('story_id', '=', storyId)
 
   // RLS_AUDIT: story_threads dibaca untuk konsistensi naratif
   let threadsQuery = db
     .selectFrom('story_threads')
     .select(['story_id', 'id', 'title', 'status', 'stale', 'stale_since_chapter', 'is_main_mystery'])
+    .limit(CONSISTENCY_THREAD_LIMIT)
   if (storyId) threadsQuery = threadsQuery.where('story_id', '=', storyId)
 
   const [{ data: eventRows, error: eEvents }, { data: threadRows, error: eThreads }] =

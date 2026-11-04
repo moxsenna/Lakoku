@@ -134,9 +134,15 @@ function createAuthoringFetch(): typeof globalThis.fetch {
     )
 
     const contentType = res.headers.get('content-type') ?? ''
-    if (res.ok && contentType.includes('application/json')) {
+    // Upstream (mis. 9router/gweb via tunnel) terkadang mengembalikan text/event-stream
+    // atau menyertakan trailing data: [DONE] walau stream=false.
+    if (res.ok && (contentType.includes('application/json') || contentType.includes('text/event-stream'))) {
       try {
-        const text = await res.text()
+        let text = await res.text()
+        text = text.replace(/data:\s*\[DONE\][\s\S]*$/i, '').trim()
+        if (text.startsWith('data:')) {
+          text = text.replace(/^data:\s*/, '').trim()
+        }
         const data = JSON.parse(text) as Record<string, unknown>
         if (Array.isArray(data.choices) && data.choices[0] && typeof data.choices[0] === 'object') {
           const choice = data.choices[0] as { message?: { content?: unknown } }
@@ -152,6 +158,7 @@ function createAuthoringFetch(): typeof globalThis.fetch {
               choice.message.content = candidate
             }
             const newHeaders = new Headers(res.headers)
+            newHeaders.set('content-type', 'application/json; charset=utf-8')
             newHeaders.delete('content-length')
             newHeaders.delete('content-encoding')
             return new Response(JSON.stringify(data), {
@@ -162,9 +169,10 @@ function createAuthoringFetch(): typeof globalThis.fetch {
           }
         }
         const newHeaders = new Headers(res.headers)
+        newHeaders.set('content-type', 'application/json; charset=utf-8')
         newHeaders.delete('content-length')
         newHeaders.delete('content-encoding')
-        return new Response(text, {
+        return new Response(JSON.stringify(data), {
           status: res.status,
           statusText: res.statusText,
           headers: newHeaders,

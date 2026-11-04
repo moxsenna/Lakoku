@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/api/user-state'
 import { isStoryOwnedBy } from '@/lib/api/story-ownership.server'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
-import { coverKeyFromPublicUrl, resolveStoryCover } from '@/lib/cover/url'
+import { coverKeyFromPublicUrl, isSafeStoryCoverInput, resolveStoryCover } from '@/lib/cover/url'
 import { setStoryCover } from '@/lib/cover/server'
 
 /**
@@ -27,7 +27,9 @@ export async function POST(
 
   const body = await req.json().catch(() => ({}))
   const url = typeof body.url === 'string' ? body.url.trim() : ''
-  if (!url) {
+  if (!url || !isSafeStoryCoverInput(url)) {
+    // Audit M8: tolak URL eksternal bebas — cerita publik tidak boleh
+    // mengarahkan gambar ke domain arbitrer (tracking / konten ilegal).
     return NextResponse.json({ ok: false, error: 'URL sampul tidak valid.' }, { status: 400 })
   }
 

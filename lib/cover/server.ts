@@ -1,6 +1,6 @@
 import 'server-only'
 import { getDb, rpcOne, single } from '@lakoku/db'
-import { coverKeyFromPublicUrl, resolveStoryCover } from '@/lib/cover/url'
+import { coverKeyFromPublicUrl, isSafeStoryCoverInput, resolveStoryCover } from '@/lib/cover/url'
 
 /**
  * Seam uang untuk sampul cerita.
@@ -108,6 +108,9 @@ export async function releaseStoryCover(ref: string): Promise<void> {
 export async function setStoryCover(storyId: string, userId: string, coverPath: string): Promise<boolean> {
   const db = getDb()
   const cover = coverKeyFromPublicUrl(coverPath) ?? coverPath
+  // Guard M8 (defense-in-depth; route sudah memvalidasi): tolak URL eksternal
+  // bebas agar cerita publik tidak mengarahkan gambar ke domain arbitrer.
+  if (!isSafeStoryCoverInput(coverPath)) return false
   // RLS_AUDIT: stories diupdate oleh pemilik cerita (owner_user_id = userId)
   const result = await db
     .updateTable('stories')

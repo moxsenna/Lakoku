@@ -29,6 +29,30 @@ export function coverKeyFromPublicUrl(url: string): string | null {
   return url.slice(base.length + 1)
 }
 
+/** Key wajib polos: tanpa scheme, query, traversal, atau karakter aneh. */
+const SAFE_COVER_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9/_\-.]*$/
+
+/**
+ * Guard input sampul (audit M8): cerita publik tidak boleh memaksa browser
+ * pembaca lain memuat gambar dari domain arbitrer. Diterima:
+ *  - URL dengan base publik kita (dinormalisasi jadi key) dgn key polos;
+ *  - object key polos dari putCover;
+ *  - path lokal aset publik `/...` (legacy, dirender dari domain sendiri).
+ * Ditola: URL absolut eksternal, protocol-relative `//`, traversal `..`,
+ * scheme menyamar (javascript: dsb.).
+ */
+export function isSafeStoryCoverInput(input: string): boolean {
+  if (!input) return false
+  if (input.startsWith('//')) return false
+  if (/^[a-z][a-z0-9+.-]*:/i.test(input)) {
+    // Ada scheme — hanya izinkan bila URL-nya milik base publik kita.
+    return coverKeyFromPublicUrl(input) !== null
+  }
+  if (input.startsWith('/')) return true // path lokal publik (legacy)
+  if (input.includes('..')) return false
+  return SAFE_COVER_KEY_RE.test(input)
+}
+
 /**
  * 4 cabang: kosong/placeholder → default; URL absolut (sisa legacy) atau
  * path lokal aset publik (diawali /) → apa adanya; selain itu dianggap key

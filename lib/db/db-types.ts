@@ -295,6 +295,7 @@ export interface CatalogEndingChapters {
 }
 
 export interface CatalogStories {
+  archived_by: string | null;
   bundle_price: Generated<number>;
   chapter_price: Generated<number>;
   contract_json: Json | null;
@@ -1123,6 +1124,29 @@ export interface StoryCreationRequests {
   updated_at: Generated<Timestamp>;
 }
 
+/**
+ * Job latar belakang perakitan story bible (cast → mystery → world → lock).
+ * Hasil per tahap dipersist agar retry melanjutkan dari tahap yang gagal.
+ */
+export interface StorySetupJobs {
+  id: Generated<string>;
+  user_id: string;
+  status: string;
+  stage: string;
+  error_code: string | null;
+  error_message: string | null;
+  premise: Json;
+  creative_direction: Json | null;
+  cast_result: Json | null;
+  mystery_result: Json | null;
+  world_result: Json | null;
+  story_id: string | null;
+  started_at: Timestamp | null;
+  finished_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface StoryCreativeDirections {
   created_at: Generated<Timestamp>;
   direction_fingerprint: string;
@@ -1373,6 +1397,7 @@ export interface DB {
   shared_story_starts: SharedStoryStarts;
   stories: Stories;
   story_cover_candidates: StoryCoverCandidates;
+  story_setup_jobs: StorySetupJobs;
   story_creation_requests: StoryCreationRequests;
   story_creative_directions: StoryCreativeDirections;
   story_events: StoryEvents;

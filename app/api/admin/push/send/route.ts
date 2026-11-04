@@ -25,6 +25,10 @@ export async function POST(request: Request): Promise<Response> {
         body: parsed.data.body,
         deepLink: parsed.data.deepLink,
       },
+      // Audit N2: jalur API tidak punya sesi admin — catat aktor eksplisit
+      // agar push_log tidak menyimpan sent_by NULL (Server Action versi web
+      // mengisi admin.id; di sini aktornya pemegang runtime token).
+      sentBy: 'token:runtime_admin',
     })
     return NextResponse.json({ ok: true, ...result })
   } catch {

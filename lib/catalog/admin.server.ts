@@ -605,7 +605,7 @@ export async function archiveCatalogStory(input: {
   const { error } = await result(
     db
       .updateTable('catalog_stories')
-      .set({ status: 'archived', updated_at: now })
+      .set({ status: 'archived', updated_at: now, archived_by: input.adminUserId })
       .where('story_id', '=', input.storyId)
       .execute(),
   )

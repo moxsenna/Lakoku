@@ -31,6 +31,11 @@ export interface OrderSnapshotResult {
   status: string
 }
 
+export interface LedgerGrantLookupResult {
+  userId: string
+  delta: number
+}
+
 export interface EntitlementStore {
   /** Catat event provider secara idempoten berdasarkan `eventId`. */
   recordPaymentEvent(event: CheckoutEvent): Promise<RecordEventResult>
@@ -59,6 +64,21 @@ export interface EntitlementStore {
    * Tandai order sebagai `paid` (status + paid_at). Idempoten.
    */
   markOrderPaid(orderId: string): Promise<void>
+  /**
+   * Cari grant ledger berdasarkan ref (mis. `paycore:{order_id}`) — sumber
+   * otoritatif user & jumlah kredit untuk clawback refund. Return `null`
+   * bila ref tidak dikenal.
+   */
+  resolveLedgerGrantByRef(ref: string): Promise<LedgerGrantLookupResult | null>
+  /**
+   * Tarik kredit (ledger delta negatif) secara idempoten via `ref` unik
+   * (mis. `paycore-refund:{order_id}`). Saldo boleh minus.
+   */
+  revokeCredits(userId: string, ref: string, credits: number, reason: string): Promise<GrantCreditsResult>
+  /**
+   * Tandai order sebagai `refunded`. Idempoten.
+   */
+  markOrderRefunded(orderId: string): Promise<void>
 }
 
 /** Snapshot entitlement aktif (untuk assert di fixture). */
@@ -72,6 +92,8 @@ export class InMemoryEntitlementStore implements EntitlementStore {
   private readonly balances = new Map<string, number>()
   private readonly orderSnapshots = new Map<string, OrderSnapshotResult>()
   private readonly paidOrders = new Set<string>()
+  /** Ref ledger → (userId, delta) untuk lookup clawback refund. */
+  private readonly ledgerGrants = new Map<string, LedgerGrantLookupResult>()
   /** Jumlah panggilan applyEntitlement (untuk assert "tak ada grant ganda"). */
   public applyCount = 0
   /** Jumlah panggilan grantCredits yang benar-benar menulis (untuk assert idempoten). */
@@ -104,6 +126,7 @@ export class InMemoryEntitlementStore implements EntitlementStore {
     this.seenRefs.add(ref)
     this.grantCreditsCount += 1
     this.balances.set(userId, (this.balances.get(userId) ?? 0) + credits)
+    this.ledgerGrants.set(ref, { userId, delta: credits })
     return { granted: true }
   }
 
@@ -115,6 +138,23 @@ export class InMemoryEntitlementStore implements EntitlementStore {
     this.paidOrders.add(orderId)
     const snap = this.orderSnapshots.get(orderId)
     if (snap) this.orderSnapshots.set(orderId, { ...snap, status: 'paid' })
+  }
+
+  async resolveLedgerGrantByRef(ref: string): Promise<LedgerGrantLookupResult | null> {
+    const entry = this.ledgerGrants.get(ref)
+    return entry ? { userId: entry.userId, delta: entry.delta } : null
+  }
+
+  async revokeCredits(userId: string, ref: string, credits: number, _reason: string): Promise<GrantCreditsResult> {
+    if (this.seenRefs.has(ref)) return { granted: false }
+    this.seenRefs.add(ref)
+    this.balances.set(userId, (this.balances.get(userId) ?? 0) - credits)
+    return { granted: true }
+  }
+
+  async markOrderRefunded(orderId: string): Promise<void> {
+    const snap = this.orderSnapshots.get(orderId)
+    if (snap) this.orderSnapshots.set(orderId, { ...snap, status: 'refunded' })
   }
 
   /** Helper uji: injeksi snapshot order untuk simulasi. */

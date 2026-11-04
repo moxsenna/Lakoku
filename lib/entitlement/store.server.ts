@@ -17,7 +17,7 @@
 import 'server-only'
 import { getDb, result, rpcOne, single } from '@lakoku/db'
 import type { EntitlementAction, CheckoutEvent } from './webhook'
-import type { EntitlementStore, RecordEventResult, GrantCreditsResult, OrderSnapshotResult } from './store'
+import type { EntitlementStore, RecordEventResult, GrantCreditsResult, OrderSnapshotResult, LedgerGrantLookupResult } from './store'
 
 const UNIQUE_VIOLATION = '23505'
 
@@ -113,5 +113,51 @@ export class SupabaseEntitlementStore implements EntitlementStore {
         .execute(),
     )
     if (error) throw new Error(`markOrderPaid: ${error.message}`)
+  }
+
+  async resolveLedgerGrantByRef(ref: string): Promise<LedgerGrantLookupResult | null> {
+    const db = getDb()
+    // RLS_AUDIT: credit_ledger_service_only
+    const { data, error } = await single(
+      db
+        .selectFrom('credit_ledger')
+        .select(['user_id', 'delta'])
+        .where('ref', '=', ref)
+        .where('delta', '>', 0)
+        .limit(1)
+        .execute(),
+    )
+    if (error) throw new Error(`resolveLedgerGrantByRef: ${error.message}`)
+    if (!data) return null
+    return { userId: data.user_id, delta: data.delta }
+  }
+
+  async revokeCredits(userId: string, ref: string, credits: number, reason: string): Promise<GrantCreditsResult> {
+    const db = getDb()
+    const { data, error } = await single(
+      rpcOne(db, 'revoke_credits_v1', {
+        p_user_id: userId,
+        p_ref: ref,
+        p_credits: credits,
+        p_reason: reason,
+      }).execute(),
+    )
+    if (error) throw new Error(`revokeCredits: ${error.message}`)
+    const status = String((data ? ((data as Record<string, unknown>).fn ?? data) : ''))
+    return { granted: status === 'ok' }
+  }
+
+  async markOrderRefunded(orderId: string): Promise<void> {
+    const db = getDb()
+    // RLS_AUDIT: credit_orders_own_read
+    const { error } = await result(
+      db
+        .updateTable('credit_orders')
+        .set({ status: 'refunded' })
+        .where('order_id', '=', orderId)
+        .where('status', 'in', ['paid', 'created'])
+        .execute(),
+    )
+    if (error) throw new Error(`markOrderRefunded: ${error.message}`)
   }
 }

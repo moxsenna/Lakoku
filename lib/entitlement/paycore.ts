@@ -17,6 +17,7 @@ import { hmacSha256Hex, parseSha256Header, timingSafeEqualHex } from '../paycore
 import type { EntitlementStore } from './store'
 
 const PAYMENT_SUCCEEDED = 'payment.succeeded'
+const PAYMENT_REFUNDED = 'payment.refunded'
 const DEFAULT_TOLERANCE_MS = 5 * 60_000
 
 export interface PayCoreEvent {
@@ -79,14 +80,39 @@ function parsePayload(rawBody: string): PayCoreEvent | { badType: true } | null 
   const eventType = p.event_type
   if (typeof eventId !== 'string' || eventId.trim() === '') return null
   if (typeof eventType !== 'string' || eventType.trim() === '') return null
-  if (eventType !== PAYMENT_SUCCEEDED) return { badType: true }
+  if (eventType !== PAYMENT_SUCCEEDED && eventType !== PAYMENT_REFUNDED) return { badType: true }
 
   const data = asRecord(p.data)
   if (!data) return null
-  const fulfillment = asRecord(data.fulfillment_data)
-  if (!fulfillment) return null
 
   const orderId = data.order_id
+  if (typeof orderId !== 'string' || orderId.trim() === '') return null
+
+  const productKey = typeof data.product_key === 'string' ? data.product_key : null
+  const externalOrderId = typeof data.external_order_id === 'string' ? data.external_order_id : null
+
+  // Event refund TIDAK membawa fulfillment wajib: user & jumlah kredit
+  // di-resolve dari ledger grant asli (`paycore:{order_id}`) sebagai sumber
+  // otoritatif, bukan dari echo provider.
+  const fulfillment = asRecord(data.fulfillment_data)
+  if (eventType === PAYMENT_REFUNDED) {
+    return {
+      eventId,
+      eventType,
+      orderId,
+      externalOrderId,
+      userId: fulfillment && typeof fulfillment.user_id === 'string' ? fulfillment.user_id : '',
+      credits: 0,
+      baseCredits: null,
+      bonusCredits: null,
+      bonusKind: null,
+      productKey,
+      timestamp: '', // diisi pemanggil dgn header terverifikasi
+    }
+  }
+
+  if (!fulfillment) return null
+
   const userId = fulfillment.user_id
   const credits = fulfillment.credits
   const baseCredits = typeof fulfillment.base_credits === 'number' ? fulfillment.base_credits : null
@@ -96,10 +122,7 @@ function parsePayload(rawBody: string): PayCoreEvent | { badType: true } | null 
     bonusKindRaw === 'first_topup' || bonusKindRaw === 'normal' || bonusKindRaw === 'none'
       ? bonusKindRaw
       : null
-  const productKey = typeof data.product_key === 'string' ? data.product_key : null
-  const externalOrderId = typeof data.external_order_id === 'string' ? data.external_order_id : null
 
-  if (typeof orderId !== 'string' || orderId.trim() === '') return null
   if (typeof userId !== 'string' || userId.trim() === '') return null
   if (typeof credits !== 'number' || !Number.isInteger(credits) || credits <= 0) return null
 
@@ -154,6 +177,8 @@ export async function verifyPayCoreEvent(
 export type PayCoreProcessOutcome =
   | { status: 'applied'; eventId: string; orderId: string; credits: number }
   | { status: 'duplicate'; eventId: string }
+  | { status: 'refunded'; eventId: string; orderId: string; credits: number }
+  | { status: 'ignored'; eventId: string; reason: 'unknown_order' | 'unknown_grant' }
   | { status: 'rejected'; reason: PayCoreRejectReason }
 
 export interface PayCoreProcessDeps {
@@ -169,11 +194,19 @@ export interface PayCoreProcessDeps {
  *  - rejected  → tanda tangan/payload tak valid: JANGAN pernah grant.
  *  - duplicate → order sudah pernah di-grant (ledger `ref` unik): no-op.
  *  - applied   → order baru terverifikasi: kredit di-grant sekali.
+ *  - refunded  → `payment.refunded` terverifikasi: kredit hasil order tsb
+ *                DITARIK (clawback, ref `paycore-refund:{order_id}`, idempoten).
+ *  - ignored   → refund untuk order/grant yang tidak dikenal: diterima tanda
+ *                tangannya, tidak ada yang bisa dicabut (200 agar provider
+ *                tidak retry selamanya; dicatat di log).
  *
  * Snapshot cross-check: bila `credit_orders` punya snapshot untuk `order_id`,
  * gunakan `total_credits` dari DB (lebih aman daripada fulfillment echo).
  * Bila tak ada snapshot, fallback ke `fulfillment_data.credits` ( masih aman
  * karena fulfillment dibuat server-side). Tetap idempoten via ledger `ref`.
+ *
+ * Catatan clawback: komisi referral yang terlanjur dibayar untuk order
+ * di-refund BELUM ditarik di tahap ini (follow-up terpisah).
  */
 export async function processPayCoreWebhook(
   rawBody: string,
@@ -188,6 +221,28 @@ export async function processPayCoreWebhook(
   if (!verified.ok) return { status: 'rejected', reason: verified.reason }
 
   const { event } = verified
+
+  // Jalur refund: tarik kredit grant asli berdasarkan ledger `paycore:{order_id}`.
+  if (event.eventType === PAYMENT_REFUNDED) {
+    const grant = await deps.store.resolveLedgerGrantByRef(`paycore:${event.orderId}`)
+    if (!grant) {
+      console.log(`[v0] paycore webhook: refund untuk grant tidak dikenal (order ${event.orderId}) — ignored`)
+      return { status: 'ignored', eventId: event.eventId, reason: 'unknown_grant' }
+    }
+    // Cross-check bila provider menyertakan user_id: mismatch = payload tidak
+    // konsisten → tolak (fail-closed, JANGAN cabut kredit user yang salah).
+    if (event.userId && event.userId !== grant.userId) {
+      return { status: 'rejected', reason: 'MALFORMED_PAYLOAD' }
+    }
+    const revoke = await deps.store.revokeCredits(grant.userId, `paycore-refund:${event.orderId}`, grant.delta, 'refund:paycore')
+    if (!revoke.granted) return { status: 'duplicate', eventId: event.eventId }
+    try {
+      await deps.store.markOrderRefunded(event.orderId)
+    } catch (err) {
+      console.log('[v0] paycore webhook: markOrderRefunded gagal (non-fatal):', (err as Error)?.message)
+    }
+    return { status: 'refunded', eventId: event.eventId, orderId: event.orderId, credits: grant.delta }
+  }
 
   // Resolve snapshot dari credit_orders (lebih aman). Fallback ke fulfillment.
   let grantCredits = event.credits

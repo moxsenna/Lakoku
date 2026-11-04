@@ -11,6 +11,13 @@ untuk membuka bab). Referensi kontrak: `D:/Coding/paycore/docs/external/`.
 - **Inbound** (`lib/entitlement/paycore.ts`, `app/api/checkout/webhook`): PayCore kirim
   `payment.succeeded` (ditandatangani) → verifikasi HMAC + anti-replay → `grant_credits_v1`
   idempoten (`ref = paycore:{order_id}`). **Satu-satunya** jalur yang menerbitkan kredit.
+- **Refund** (inbound, sejak 2026-11-04): PayCore kirim `payment.refunded`
+  (amplop HMAC sama) → user & jumlah kredit di-resolve dari ledger grant asli
+  `paycore:{order_id}` (bukan echo provider) → `revoke_credits_v1` idempoten
+  (`ref = paycore-refund:{order_id}`, saldo boleh minus) → order ditandai
+  `refunded`. Refund untuk order tak dikenal dijawab 200 `ignored` agar provider
+  tidak retry selamanya. Catatan: komisi referral yang terlanjur dibayar untuk
+  order di-refund belum ditarik (follow-up).
 - **Model kredit** (`db/migrations/20260708000000_paycore_credit_model.sql`):
   `credit_ledger` append-only + `grant_credits_v1` / `spend_credits_v1` / `credit_balance_v1`.
 

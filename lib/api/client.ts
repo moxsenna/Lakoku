@@ -26,12 +26,16 @@ import {
   SetStoryVisibilityResponseSchema,
   StartChapterSuccessResponseSchema,
   StoryCoverResponseSchema,
+  StorySetupJobPollResponseSchema,
+  StorySetupJobStartResponseSchema,
   SubmitChoiceResponseSchema,
   type ChapterStatusResponse,
   type GenerationAttemptIdentity,
   type SetStoryVisibilityResponse,
   type StartChapterSuccessResponse,
   type StoryCoverResponse,
+  type StorySetupJobPollResponse,
+  type StorySetupJobStartResponse,
   type SubmitChoiceResponse,
   type GenerateStoryCoverRequest,
 } from '@lakoku/contracts'
@@ -241,6 +245,60 @@ export async function lockStoryBible(
     return { ok: false, error: 'Gagal mengunci cerita.' }
   } catch {
     return { ok: false, error: 'Gagal mengunci cerita.' }
+  }
+}
+
+/**
+ * Mulai perakitan story bible sebagai job latar belakang (202 seketika).
+ * `resumeJobId` menyemai hasil tahap job gagal sebelumnya agar retry tidak
+ * mengulang dari nol. Pantau statusnya via getStorySetupJob.
+ */
+export async function startStorySetupJob(input: {
+  premise: unknown
+  creativeDirection?: unknown
+  resumeJobId?: string
+}): Promise<StorySetupJobStartResponse | { ok: false; error: string }> {
+  try {
+    const res = await seamFetch(`${API_BASE}/stories/setup-jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+      credentials: 'same-origin',
+    })
+    const raw = await res.json().catch(() => null)
+    if (res.status === 401) {
+      return { ok: false, error: 'Masuk untuk membuat cerita.' }
+    }
+    const parsed = StorySetupJobStartResponseSchema.safeParse(raw)
+    if (parsed.success) return parsed.data
+    if (raw && typeof raw === 'object' && typeof (raw as { error?: unknown }).error === 'string') {
+      return { ok: false, error: (raw as { error: string }).error }
+    }
+    return { ok: false, error: 'Gagal memulai penyusunan cerita. Coba lagi.' }
+  } catch {
+    return { ok: false, error: 'Gagal memulai penyusunan cerita. Coba lagi.' }
+  }
+}
+
+/**
+ * Poll status job setup cerita. Mengembalikan null bila job tidak tersedia
+ * (bukan milik user / sudah lewat) — pemanggil memutuskan tindak lanjutnya.
+ */
+export async function getStorySetupJob(
+  jobId: string,
+): Promise<StorySetupJobPollResponse['job'] | null> {
+  try {
+    const res = await seamFetch(
+      `${API_BASE}/stories/setup-jobs/${encodeURIComponent(jobId)}`,
+      { credentials: 'same-origin' },
+    )
+    if (!res.ok) return null
+    const raw = await res.json().catch(() => null)
+    const parsed = StorySetupJobPollResponseSchema.safeParse(raw)
+    if (!parsed.success) return null
+    return parsed.data.job
+  } catch {
+    return null
   }
 }
 

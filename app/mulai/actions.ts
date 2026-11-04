@@ -5,10 +5,7 @@
  */
 import { proposePremises, publicAuthoringErrorMessage } from '@/lib/authoring/server'
 import type { PremiseDraft } from '@/lib/authoring/schema'
-import {
-  AUTHORING_AUTH_REQUIRED_ERROR,
-  requireAuthoringSessionUser,
-} from '@/lib/authoring/action-auth'
+import { AUTHORING_AUTH_REQUIRED_ERROR } from '@/lib/authoring/action-auth'
 import { getSessionUser } from '@/lib/api/user-state'
 import { getTasteProfileForUser } from '@/lib/api/taste-profile'
 // getTasteProfileForUser is mocked in unit tests
@@ -200,43 +197,6 @@ export async function actProposeStorySetupPremises(
       direction,
       publicSummary,
       fingerprint,
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      error:
-        error instanceof Error && error.message === AUTHORING_AUTH_REQUIRED_ERROR
-          ? AUTHORING_AUTH_REQUIRED_ERROR
-          : publicAuthoringErrorMessage(error),
-    }
-  }
-}
-
-/**
- * Merakit story bible di server dan menguncinya ke database dalam 1 pemanggilan terpadu.
- * Memangkas latensi dari 4 round-trip HTTP terpisah.
- */
-export async function actAssembleAndLockStory(
-  premise: PremiseDraft,
-  creativeDirection?: StoryCreativeDirection | null,
-): Promise<ActionResult<{ storyId: string }>> {
-  try {
-    const user = await requireAuthoringSessionUser()
-    const { assembleAndLockStoryBible } = await import('@/lib/authoring/assemble-bible.server')
-    const result = await assembleAndLockStoryBible({
-      premise,
-      creativeDirection,
-      userId: user.id,
-    })
-    if (!result.ok) {
-      return {
-        ok: false,
-        error: result.error ?? 'Gagal menyusun bible cerita.',
-      }
-    }
-    return {
-      ok: true,
-      storyId: result.storyId!,
     }
   } catch (error) {
     return {

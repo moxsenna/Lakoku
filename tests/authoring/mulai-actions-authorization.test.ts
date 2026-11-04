@@ -48,18 +48,42 @@ describe('mulai action authorization', () => {
     expect(mocks.proposePremises).toHaveBeenCalled()
   })
 
-  it('rejects anonymous guests when attempting to assemble and lock story bible', async () => {
+  it('rejects anonymous guests when starting a story setup job', async () => {
     mocks.getSessionUser.mockResolvedValue(null)
-    const { actAssembleAndLockStory } = await import('@/app/mulai/actions')
+    const { POST } = await import('@/app/api/stories/setup-jobs/route')
 
-    const result = await actAssembleAndLockStory({
-      title: 'Uji Cerita',
-      tagline: 'Tagline uji',
-      role: 'Tokoh utama',
-      synopsis: 'Sinopsis uji.',
-      tropes: ['Drama'],
-    })
+    const res = await POST(
+      new Request('http://localhost/api/stories/setup-jobs', {
+        method: 'POST',
+        body: JSON.stringify({
+          premise: {
+            title: 'Uji Cerita',
+            tagline: 'Tagline uji',
+            role: 'Tokoh utama',
+            synopsis: 'Sinopsis uji.',
+            tropes: ['Drama'],
+          },
+        }),
+      }),
+      { params: Promise.resolve({}) },
+    )
 
-    expect(result).toEqual({ ok: false, error: 'Masuk untuk membuat cerita.' })
+    expect(res.status).toBe(401)
+    const body = (await res.json()) as { ok: boolean; error: string }
+    expect(body).toEqual({ ok: false, error: 'Masuk untuk membuat cerita.' })
+  })
+
+  it('rejects malformed setup job body before auth', async () => {
+    const { POST } = await import('@/app/api/stories/setup-jobs/route')
+
+    const res = await POST(
+      new Request('http://localhost/api/stories/setup-jobs', {
+        method: 'POST',
+        body: JSON.stringify({ unrelated: true }),
+      }),
+      { params: Promise.resolve({}) },
+    )
+
+    expect(res.status).toBe(400)
   })
 })

@@ -62,6 +62,21 @@ export async function lockStoryBibleForSession(
 ): Promise<AuthoringLockResult> {
   try {
     const user = await requireAuthoringSessionUser()
+    return await lockStoryBibleForUser(rawDraft, user.id)
+  } catch (e) {
+    return fail(e)
+  }
+}
+
+/**
+ * Inti lock berparameter userId — dipakai oleh jalur session DAN runner job
+ * latar belakang (story_setup_jobs) yang berjalan tanpa konteks request.
+ */
+export async function lockStoryBibleForUser(
+  rawDraft: unknown,
+  userId: string,
+): Promise<AuthoringLockResult> {
+  try {
     const draft = StoryBibleDraftSchema.parse(rawDraft)
 
     const aiRepair: AiRepairFn = async (d, findings) => {
@@ -94,7 +109,7 @@ export async function lockStoryBibleForSession(
       )
     }
 
-    const { storyId } = await persistStoryBible(opening.compiled, user.id)
+    const { storyId } = await persistStoryBible(opening.compiled, userId)
 
     // Creative direction: when feature flag on, failed persist fails the lock.
     // Never fall back to wiping story_generation_contracts.
@@ -116,7 +131,7 @@ export async function lockStoryBibleForSession(
         }
         const saved = await persistStoryCreativeDirection({
           storyId,
-          ownerUserId: user.id,
+          ownerUserId: userId,
           direction: parsed.data,
         })
         if (!saved.ok) {

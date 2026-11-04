@@ -90,6 +90,8 @@ export const AnalyticsEventSchema = z
         'needs_author',
         'chapter_failed',
         'resume_expired',
+        'busy',
+        'setup_job_start_failed',
       ])
       .optional(),
     anonymous_id: z.string().uuid().nullable(),

@@ -13,6 +13,7 @@ import { generateObject, type LanguageModel } from 'ai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import type { z } from 'zod'
 import type { AiModelRoute } from '@/lib/ops/ai-model-routes'
+import { AuthoringCircuitBreaker } from '@/lib/authoring/circuit-breaker'
 
 const AUTHORING_PRIMARY_JSON = 'openai/gpt-4.1-mini'
 const AUTHORING_FALLBACK_JSON = 'deepseek/deepseek-v3.2'
@@ -23,6 +24,27 @@ const GATEWAY_FALLBACK = AUTHORING_PRIMARY_JSON
 const PUBLIC_AUTHORING_ERROR =
   'Usulan cerita belum berhasil dibentuk. Coba ulang sebentar lagi.'
 const PUBLIC_UNEXPECTED_ERROR = 'Terjadi kesalahan tak terduga.'
+
+/**
+ * Batas waktu per panggilan model authoring (T-setup-fix).
+ * Tanpa ini, satu koneksi hang ke provider membuat request menunggu tanpa
+ * batas — di produksi pernah berujung Cloudflare 524 di depan pembaca.
+ */
+const AUTHORING_CALL_TIMEOUT_MS = 60_000
+/** Total anggaran satu tahap authoring (semua kandidat). */
+const AUTHORING_STAGE_BUDGET_MS = 90_000
+
+/** Pesan ramah pembaca saat circuit breaker upstream terbuka. */
+const PUBLIC_AUTHORING_BUSY_ERROR =
+  'Layanan cerita sedang sibuk. Coba lagi beberapa menit — jawabanmu tetap tersimpan.'
+
+/** Singleton breaker rantai authoring (per proses server). */
+const authoringBreaker = new AuthoringCircuitBreaker()
+
+/** Ekspos untuk telemetri/kesehatan tanpa membuka mutasi internal. */
+export function getAuthoringBreakerState(): { state: string; msUntilRetry: number } {
+  return { state: authoringBreaker.state, msUntilRetry: authoringBreaker.msUntilRetry }
+}
 
 export interface AuthoringModel {
   model: LanguageModel
@@ -39,6 +61,8 @@ export interface AuthorObjectGenerateArgs<T> extends AuthorObjectArgs<T> {
   model: LanguageModel
   schemaName: string
   schemaDescription: string
+  /** Gabungan timeout per panggilan + anggaran tahap (dipasang di rantai kandidat). */
+  signal?: AbortSignal
 }
 
 export type AuthorObjectGenerate = <T>(
@@ -49,6 +73,14 @@ export class PublicAuthoringError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'PublicAuthoringError'
+  }
+}
+
+/** Upstream authoring dibuka breaker — fail fast dengan pesan ramah pembaca. */
+export class AuthoringBusyError extends PublicAuthoringError {
+  constructor() {
+    super(PUBLIC_AUTHORING_BUSY_ERROR)
+    this.name = 'AuthoringBusyError'
   }
 }
 
@@ -315,20 +347,37 @@ export function publicAuthoringErrorMessage(error: unknown): string {
   return PUBLIC_UNEXPECTED_ERROR
 }
 
+export interface AuthorObjectChainOptions {
+  /** Batas waktu satu panggilan model. Default AUTHORING_CALL_TIMEOUT_MS. */
+  callTimeoutMs?: number
+  /** Total anggaran satu tahap (semua kandidat). Default AUTHORING_STAGE_BUDGET_MS. */
+  stageBudgetMs?: number
+}
+
 /**
  * Hasilkan objek terstruktur tervalidasi Zod dari model authoring.
  * Provider-level fallback tidak cukup untuk schema-invalid response, karena
  * request HTTP tetap sukses. Karena itu retry dilakukan di sini.
+ *
+ * T-setup-fix: setiap kandidat dibatasi timeout per panggilan dan seluruh
+ * tahap dibatasi anggaran total (AbortSignal), plus telemetri per kandidat
+ * agar kegagalan provider terlihat di log server.
  */
 export async function authorObjectFromCandidates<T>(
   args: AuthorObjectArgs<T>,
   candidates: AuthoringModel[],
   generate: AuthorObjectGenerate = generateObject as AuthorObjectGenerate,
+  options: AuthorObjectChainOptions = {},
 ): Promise<{ object: T; usedModel: string }> {
+  const callTimeoutMs = options.callTimeoutMs ?? AUTHORING_CALL_TIMEOUT_MS
+  const stageBudgetMs = options.stageBudgetMs ?? AUTHORING_STAGE_BUDGET_MS
+  const stageSignal = AbortSignal.timeout(stageBudgetMs)
   let lastError: unknown = null
   const failures: string[] = []
 
   for (const candidate of candidates) {
+    const startedAt = Date.now()
+    const signal = AbortSignal.any([stageSignal, AbortSignal.timeout(callTimeoutMs)])
     try {
       const { object } = await generate({
         model: candidate.model,
@@ -338,7 +387,11 @@ export async function authorObjectFromCandidates<T>(
           'Objek JSON valid untuk tahap authoring story bible Lakoku. Patuhi semua field, batas panjang, dan jumlah item pada schema.',
         system: args.system,
         prompt: args.prompt,
+        signal,
       })
+      console.log(
+        `[authoring] candidate ok model=${candidate.label} ms=${Date.now() - startedAt}`,
+      )
       if (failures.length > 0) {
         console.log('[v0] authoring model recovered:', {
           usedModel: candidate.label,
@@ -350,6 +403,9 @@ export async function authorObjectFromCandidates<T>(
       lastError = error
       const failure = `${candidate.label}: ${describeError(error)}`
       failures.push(failure)
+      console.log(
+        `[authoring] candidate fail model=${candidate.label} ms=${Date.now() - startedAt} error=${failure}`,
+      )
       console.log('[v0] authoring model failed:', failure)
     }
   }
@@ -357,9 +413,20 @@ export async function authorObjectFromCandidates<T>(
   throw new AuthoringGenerationError(lastError, failures)
 }
 
+/**
+ * Entry point rantai authoring dengan circuit breaker upstream.
+ * Rantai gagal penuh beruntun ≥ threshold → OPEN: pemanggil berikutnya
+ * langsung menerima AuthoringBusyError (fail fast) tanpa menyentuh provider.
+ */
 export async function authorObject<T>(
   args: AuthorObjectArgs<T>,
 ): Promise<{ object: T; usedModel: string }> {
+  if (!authoringBreaker.tryAcquire()) {
+    console.log(
+      `[authoring] breaker open, fail fast msUntilRetry=${authoringBreaker.msUntilRetry}`,
+    )
+    throw new AuthoringBusyError()
+  }
   let dbRoute: AiModelRoute | null = null
   try {
     const { getAiModelRoute } = await import('@/lib/ops/ai-model-routes')
@@ -367,5 +434,15 @@ export async function authorObject<T>(
   } catch {
     // DB tidak tersedia (misal di runner offline/harness), fallback ke env
   }
-  return authorObjectFromCandidates(args, resolveAuthoringModels(dbRoute))
+  try {
+    const result = await authorObjectFromCandidates(args, resolveAuthoringModels(dbRoute))
+    authoringBreaker.recordSuccess()
+    return result
+  } catch (error) {
+    authoringBreaker.recordFailure()
+    console.log(
+      `[authoring] breaker recordFailure state=${authoringBreaker.state} msUntilRetry=${authoringBreaker.msUntilRetry}`,
+    )
+    throw error
+  }
 }

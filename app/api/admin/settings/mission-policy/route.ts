@@ -19,6 +19,11 @@ export async function PATCH(request: Request): Promise<Response> {
     return NextResponse.json({ ok: true, data: result })
   } catch (err) {
     const msg = (err as Error)?.message
+    if (msg?.startsWith('Unauthenticated')) {
+      // Audit N1: sesi tidak ada = 401, bukan 500 — jangan memicu alert
+      // false-positive di monitoring saat bot/ sesi kadaluarsa menyentuh endpoint.
+      return NextResponse.json({ error: 'Silakan masuk sebagai admin.' }, { status: 401 })
+    }
     if (msg?.startsWith('Forbidden')) {
       return NextResponse.json({ error: 'Owner role required' }, { status: 403 })
     }

@@ -35,6 +35,10 @@ export async function GET(
 
     return NextResponse.json({ item })
   } catch (err) {
+    if (err instanceof Error && err.message === 'Unauthenticated') {
+      // Audit N1: sesi tidak ada = 401, bukan 500.
+      return NextResponse.json({ error: 'Silakan masuk sebagai admin.' }, { status: 401 })
+    }
     console.error('Error fetching blueprint review item:', err)
     return NextResponse.json(
       { error: 'Terjadi kesalahan sistem.' },
@@ -127,6 +131,10 @@ export async function POST(
       validationResult: result.validationResult
     })
   } catch (err) {
+    if (err instanceof Error && err.message === 'Unauthenticated') {
+      // Audit N1: sesi tidak ada = 401, bukan 500.
+      return NextResponse.json({ error: 'Silakan masuk sebagai admin.' }, { status: 401 })
+    }
     console.error('Unexpected error recording resolution:', err)
     return NextResponse.json(
       { error: 'Terjadi kesalahan sistem.' },

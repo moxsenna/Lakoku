@@ -22,6 +22,10 @@ export async function GET(_request: Request) {
     
     return NextResponse.json({ items: pendingItems })
   } catch (err) {
+    if (err instanceof Error && err.message === 'Unauthenticated') {
+      // Audit N1: sesi tidak ada = 401, bukan 500.
+      return NextResponse.json({ error: 'Silakan masuk sebagai admin.' }, { status: 401 })
+    }
     if (err instanceof Error && err.message === 'Forbidden') {
       return NextResponse.json(
         { error: 'Forbidden - requires owner/admin role' },

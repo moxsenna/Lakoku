@@ -49,26 +49,38 @@ const baseAuth = betterAuth({
       : ['https://lakoku.biz.id', 'https://app.lakoku.biz.id'],
   emailAndPassword: {
     enabled: true,
+    // Wajib verifikasi email sebelum bisa masuk (audit M2): signup mengirim
+    // tautan verifikasi; sign-in akun belum verifikasi ditolak dengan kode
+    // EMAIL_NOT_VERIFIED (ditangani LoginForm). Efek samping baik: respons
+    // email-duplikat saat signup menjadi generik (anti user-enumeration).
+    requireEmailVerification: true,
     password: {
       hash: hashPassword,
       verify: verifyPassword,
     },
     sendResetPassword: async ({ user, url }) => {
-      await sendMailketingEmail({
+      // Gagal kirim harus terasa (audit M11): respons sukses-butuh-email-hilang
+      // membuat pemulihan akun menyesatkan. Lempar agar Better Auth balas error.
+      const res = await sendMailketingEmail({
         to: user.email,
         subject: 'Atur Ulang Kata Sandi Akun Lakoku',
         html: renderPasswordResetEmailHtml(user.name ?? undefined, url),
       })
+      if (!res.success) throw new Error(`sendResetPassword: ${res.message}`)
     },
   },
   emailVerification: {
     sendOnSignUp: true,
+    // Coba masuk dengan email belum verifikasi = kirim ulang tautan verifikasi,
+    // jadi pengguna yang kehilangan email tidak menunggu selamanya.
+    sendOnSignIn: true,
     sendVerificationEmail: async ({ user, url }) => {
-      await sendMailketingEmail({
+      const res = await sendMailketingEmail({
         to: user.email,
         subject: 'Verifikasi Email Akun Lakoku',
         html: renderVerificationEmailHtml(user.name ?? undefined, url),
       })
+      if (!res.success) throw new Error(`sendVerificationEmail: ${res.message}`)
     },
   },
   user: {
@@ -127,48 +139,12 @@ const baseAuth = betterAuth({
   },
 })
 
-type GetSessionOptions = Parameters<typeof baseAuth.api.getSession>[0]
-
-const originalGetSession = baseAuth.api.getSession
-
-const getSessionWithFallback = async (options?: GetSessionOptions) => {
-  const result = await originalGetSession(options)
-  if (result?.user) return result
-
-  try {
-    const rawHeaders = options && 'headers' in options ? options.headers : undefined
-    const h = rawHeaders instanceof Headers
-      ? rawHeaders
-      : rawHeaders
-        ? new Headers(rawHeaders)
-        : null
-
-    if (h) {
-      const cookieHeader = h.get('cookie')
-      if (cookieHeader) {
-        const match = cookieHeader.match(/(?:^|;\s*)(?:__Secure-)?better-auth\.session_token=([^;]+)/)
-        if (match) {
-          const rawToken = decodeURIComponent(match[1]).split('.')[0]
-          const fallbackHeaders = new Headers(h)
-          fallbackHeaders.set('authorization', `Bearer ${rawToken}`)
-          const fallbackResult = await originalGetSession({
-            ...options,
-            headers: fallbackHeaders,
-          })
-          if (fallbackResult?.user) return fallbackResult
-        }
-      }
-    }
-  } catch {
-    // Non-critical fallback
-  }
-
-  return result
-}
-
+// Tidak ada fallback sesi (dihapus, audit M1): fallback lama memotong
+// signature HMAC cookie dan memakai token mentah sebagai Bearer, membuat
+// integritas signature jadi tidak berarti. Klien non-browser yang butuh
+// bearer harus mengirim header Authorization eksplisit.
 export const auth = Object.assign(baseAuth, {
   api: Object.assign(baseAuth.api, {
-    getSession: getSessionWithFallback,
     forgetPassword: baseAuth.api.requestPasswordReset,
   }),
 })

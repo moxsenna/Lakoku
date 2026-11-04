@@ -682,7 +682,9 @@ export async function updateAiModelRoute(
       .set({
         provider: input.provider,
         model_id: input.modelId,
-        fallback_models: structuredFallbacks as never,
+        // pg mengirim JS array sebagai literal array Postgres — jsonb menolaknya
+        // ("invalid input syntax for type json"). WAJIB stringify di titik tulis.
+        fallback_models: JSON.stringify(structuredFallbacks) as never,
         temperature: input.temperature,
         max_output_tokens: input.maxOutputTokens,
         is_active: input.isActive,

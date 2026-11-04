@@ -37,7 +37,8 @@ export function resolveProductionChapterWriterRuntime(args: Readonly<{
     identity.includes('ag/') ||
     identity.includes('antigravity') ||
     identity.includes('gweb/') ||
-    identity.includes('gw/')
+    identity.includes('gw/') ||
+    identity.includes('gcustom/')
 
   return {
     timeoutMs: PRODUCTION_CHAPTER_WRITER_TIMEOUT_MS,
@@ -327,7 +328,7 @@ export function buildProductionChapterWriterPrompt(
     args.styleProfile ??
     (args.options?.diagnosticChapterWriterPromptOverride
       ? undefined
-      : ((plan.styleProfile as StyleProfileId | undefined) ?? (continuation?.storyAnchors as any)?.styleProfile))
+      : ((plan.styleProfile as StyleProfileId | undefined) ?? (continuation?.storyAnchors as Record<string, unknown> | undefined)?.styleProfile as StyleProfileId | undefined))
 
   const parts = buildWriterPrompt({
     chapterNumber: chapter,

@@ -107,7 +107,8 @@ function isAntigravityModelLabel(label: string, modelId?: string): boolean {
     identity.includes('ag/') ||
     identity.includes('antigravity') ||
     identity.includes('gweb/') ||
-    identity.includes('gw/')
+    identity.includes('gw/') ||
+    identity.includes('gcustom/')
   )
 }
 

@@ -103,7 +103,12 @@ const DEFAULT_PROSE_MAX_OUTPUT_TOKENS = 2048
 
 function isAntigravityModelLabel(label: string, modelId?: string): boolean {
   const identity = `${label} ${modelId ?? ''}`.toLowerCase()
-  return identity.includes('ag/') || identity.includes('antigravity') || identity.includes('gweb/')
+  return (
+    identity.includes('ag/') ||
+    identity.includes('antigravity') ||
+    identity.includes('gweb/') ||
+    identity.includes('gw/')
+  )
 }
 
 function resolveMaxOutputTokens(args: {

@@ -36,7 +36,8 @@ export function resolveProductionChapterWriterRuntime(args: Readonly<{
   const usesAntigravity =
     identity.includes('ag/') ||
     identity.includes('antigravity') ||
-    identity.includes('gweb/')
+    identity.includes('gweb/') ||
+    identity.includes('gw/')
 
   return {
     timeoutMs: PRODUCTION_CHAPTER_WRITER_TIMEOUT_MS,

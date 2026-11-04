@@ -5,8 +5,8 @@ import { libraryChapterLabel, libraryProgressPercent } from '@/lib/library/order
 import type { LibraryStoryItem } from '@/lib/library/types'
 
 /**
- * Kartu padat Koleksiku: sampul, judul, bar progres, label bab.
- * Tanpa badge, tagline, atau trope — sengaja, supaya daftar panjang tetap
+ * Kartu grid Koleksiku: sampul 9:16 jadi hero, judul, bar progres, label bab.
+ * Tanpa badge, tagline, atau trope — sengaja, supaya rak pribadi tetap
  * bisa dipindai cepat.
  */
 export function LibraryStoryCard({ story }: { story: LibraryStoryItem }) {
@@ -16,30 +16,28 @@ export function LibraryStoryCard({ story }: { story: LibraryStoryItem }) {
   return (
     <Link
       href={`/cerita/${story.id}`}
-      className="group flex items-center gap-3 rounded-2xl bg-card p-2.5 transition-colors hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="group flex flex-col gap-1.5 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <div className="relative aspect-[9/16] w-16 shrink-0 overflow-hidden rounded-lg bg-muted">
+      <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl bg-muted shadow-md">
         <Image
           src={resolveStoryCover(story.cover)}
           alt={`Sampul cerita ${story.title}`}
           fill
-          sizes="64px"
-          className="object-cover"
+          sizes="(max-width: 448px) 30vw, 128px"
+          className="object-cover transition-transform duration-300 ease-out group-hover:scale-[1.03]"
         />
       </div>
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5 py-0.5">
-        <h3 className="line-clamp-2 font-serif text-sm leading-snug text-foreground">
-          {story.title}
-        </h3>
-        <div className="flex items-center gap-2">
-          <div className="h-1 w-16 shrink-0 overflow-hidden rounded-full bg-secondary">
-            <div
-              className={done ? 'h-full bg-gold' : 'h-full bg-primary'}
-              style={{ width: `${percent}%` }}
-            />
-          </div>
-          <span className="text-[11px] text-muted-foreground">{libraryChapterLabel(story)}</span>
+      <h3 className="line-clamp-2 font-serif text-xs leading-snug text-foreground">
+        {story.title}
+      </h3>
+      <div className="flex flex-col gap-1">
+        <div className="h-1 w-full overflow-hidden rounded-full bg-secondary">
+          <div
+            className={done ? 'h-full bg-gold' : 'h-full bg-primary'}
+            style={{ width: `${percent}%` }}
+          />
         </div>
+        <span className="text-[11px] text-muted-foreground">{libraryChapterLabel(story)}</span>
       </div>
     </Link>
   )

@@ -139,13 +139,12 @@ export function LibraryView({ stories }: { stories: LibraryStoryItem[] }) {
       )}
 
       {visible.length > 0 ? (
-        <div className="flex flex-col gap-2">
+        <div className="grid grid-cols-3 gap-x-3 gap-y-4">
           {visible.map((story) => (
-            <div key={story.id} className="flex flex-col gap-1">
+            <div key={story.id} className="flex flex-col gap-1.5">
               <LibraryStoryCard story={story} />
               {story.isOwned && (
-                <div className="flex items-center justify-between px-2 py-0.5">
-                  <span className="text-[11px] text-muted-foreground">Visibilitas cerita</span>
+                <div className="flex justify-center">
                   <StoryVisibilityToggle
                     storyId={story.id}
                     initialVisibility={story.visibility ?? 'private'}

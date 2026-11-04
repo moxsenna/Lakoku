@@ -3,70 +3,45 @@ import Image from 'next/image'
 import { resolveStoryCover } from '@/lib/api'
 import type { StorySummary } from '@/lib/api'
 
+/**
+ * Kartu grid Jelajah: sampul 9:16 jadi hero, judul di bawahnya.
+ * Badge kurasi (RESMI/DARI PENULIS/AKHIR) jadi overlay di sudut sampul —
+ * rak tetap padat tanpa kehilangan sinyal. Tagline & trope hidup di halaman
+ * detail dan filter trope, bukan di kartu.
+ */
 export function StoryCard({
   story,
   href,
+  badge,
 }: {
   story: StorySummary
   /** Tujuan tautan opsional (mis. landing share); bawaan: detail cerita. */
   href?: string
+  /** Badge kurasi yang menempel di sudut sampul; null/undefined = tanpa badge. */
+  badge?: string | null
 }) {
-  const progress = Math.round((story.currentChapter / story.totalChapters) * 100)
-
   return (
     <Link
       href={href ?? `/cerita/${story.id}`}
-      className="group flex gap-4 rounded-2xl bg-card p-3 transition-colors hover:bg-secondary/60"
+      className="group flex flex-col gap-1.5 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <div className="relative aspect-[9/16] w-20 shrink-0 overflow-hidden rounded-xl bg-muted">
+      <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl bg-muted shadow-md">
         <Image
           src={resolveStoryCover(story.cover)}
           alt={`Sampul cerita ${story.title}`}
           fill
-          sizes="80px"
-          className="object-cover"
+          sizes="(max-width: 448px) 30vw, 128px"
+          className="object-cover transition-transform duration-300 ease-out group-hover:scale-[1.03]"
         />
-      </div>
-      <div className="flex min-w-0 flex-1 flex-col justify-between py-1">
-        <div className="flex flex-col gap-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            {story.status === 'SELESAI' ? (
-              <span className="rounded-full bg-gold/15 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-gold">
-                AKHIR CERITA
-              </span>
-            ) : story.status === 'BARU' ? (
-              <span className="rounded-full bg-mauve/15 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-mauve">
-                CERITA BARU
-              </span>
-            ) : (
-              <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-primary">
-                CERITA BERJALAN
-              </span>
-            )}
-            {story.tropes && story.tropes.slice(0, 2).map((trope) => (
-              <span
-                key={trope}
-                className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-secondary-foreground"
-              >
-                {trope}
-              </span>
-            ))}
-          </div>
-          <h3 className="font-serif text-lg leading-snug text-foreground text-pretty">{story.title}</h3>
-          <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">{story.tagline}</p>
-        </div>
-        <div className="mt-2 flex items-center gap-2">
-          <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
-            <div
-              className={story.status === 'SELESAI' ? 'h-full bg-gold' : 'h-full bg-primary'}
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-          <span className="text-[11px] text-muted-foreground">
-            {progress}% - Bab {story.currentChapter}/{story.totalChapters}
+        {badge && (
+          <span className="absolute right-1.5 top-1.5 max-w-[calc(100%-0.75rem)] truncate rounded-full bg-ink/75 px-1.5 py-0.5 text-[9px] font-semibold tracking-wide text-cream">
+            {badge}
           </span>
-        </div>
+        )}
       </div>
+      <h3 className="line-clamp-2 font-serif text-xs leading-snug text-foreground">
+        {story.title}
+      </h3>
     </Link>
   )
 }

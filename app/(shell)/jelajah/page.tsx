@@ -159,18 +159,9 @@ export default async function JelajahPage({
             {filtered.length} cerita{query ? ` untuk “${query}”` : ''}
             {activeTrope ? ` · trope ${activeTrope}` : ''}
           </p>
-          <div className="flex flex-col gap-3">
+          <div className="grid grid-cols-3 gap-x-3 gap-y-4">
             {filtered.map((item) => (
-              <div key={item.key} className="relative">
-                {item.badge && (
-                  <div className="pointer-events-none absolute right-3 top-3 z-10">
-                    <span className="rounded-full bg-gold/15 px-2.5 py-0.5 text-[10px] font-semibold tracking-wide text-gold">
-                      {item.badge}
-                    </span>
-                  </div>
-                )}
-                <StoryCard story={item.story} href={item.href} />
-              </div>
+              <StoryCard key={item.key} story={item.story} href={item.href} badge={item.badge} />
             ))}
           </div>
         </section>

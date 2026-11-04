@@ -92,10 +92,10 @@ export function buildCoverPrompt(input: CoverGenerationInput): string {
     : ''
 
   const baseHeader = input.basePromptOverride?.trim() ||
-    'Sampul novel romansa Indonesia, orientasi potret vertikal rasio 9:16 (lebih tinggi daripada lebar).'
+    'Sampul novel romansa Indonesia, orientasi potret vertikal rasio 9:16 (lebih tinggi daripada lebar). Artwork wajib memenuhi seluruh kanvas dari tepi ke tepi (full-bleed) — tanpa bingkai, tanpa pita kosong, tanpa area blur di tepi. Komposisi tokoh dan elemen penting diletakkan di area tengah kanvas.'
 
   const textInstruction = input.includeTitle
-    ? `Tampilkan teks judul cerita "${title}" secara jelas, artistik, dan terbaca rapi di dalam gambar.`
+    ? `Tampilkan teks judul cerita "${title}" secara jelas, artistik, dan terbaca rapi di dalam gambar, ditempatkan di zona tengah aman yang jauh dari tepi kanvas.`
     : 'JANGAN menuliskan teks, huruf, judul, atau tanda air apa pun di dalam gambar.'
 
   const lines = [

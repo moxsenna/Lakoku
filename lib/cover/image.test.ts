@@ -41,19 +41,19 @@ describe('sniffImageFormat', () => {
 
 describe('normalizeCoverImage', () => {
   /**
-   * Gambar uji lebar 2:1 dengan penanda di TEPI: pita merah di kiri dan
-   * biru di kanan (masing-masing 10% lebar), tengah putih. Kalau ada
-   * pemotongan, salah satu pita tepi pasti hilang.
+   * Gambar uji 1:1 dengan penanda di TEPI: kolom merah di kiri dan biru di
+   * kanan (masing-masing 10% lebar), tengah putih. Crop tengah 9:16 memangkas
+   * kedua kolom tepi; komposit contain lama justru mempertahankannya.
    */
-  async function wideTestImage(): Promise<Buffer> {
+  async function squareTestImage(): Promise<Buffer> {
     const stripe = async (color: { r: number; g: number; b: number }) =>
       sharp({
-        create: { width: 60, height: 300, channels: 3, background: color },
+        create: { width: 60, height: 600, channels: 3, background: color },
       })
         .png()
         .toBuffer()
     return sharp({
-      create: { width: 600, height: 300, channels: 3, background: { r: 240, g: 240, b: 240 } },
+      create: { width: 600, height: 600, channels: 3, background: { r: 240, g: 240, b: 240 } },
     })
       .composite([
         { input: await stripe({ r: 200, g: 30, b: 30 }), left: 0, top: 0 },
@@ -71,26 +71,27 @@ describe('normalizeCoverImage', () => {
   }
 
   it('selalu menghasilkan kanvas 9:16 apa pun rasio input', async () => {
-    const result = await normalizeCoverImage(await wideTestImage())
+    const result = await normalizeCoverImage(await squareTestImage())
     expect(result.width).toBe(720)
     expect(result.height).toBe(1280)
   })
 
-  it('tidak memotong artwork: kedua sisi gambar lebar tetap terlihat', async () => {
-    const result = await normalizeCoverImage(await wideTestImage())
-    // Artwork 2:1 di-contain ke 720x360, menempel di tengah vertikal
-    // (y sekitar 460-820). Baris tengah harus memuat merah DAN biru —
-    // kalau ada yang ter-crop, salah satu warna hilang.
+  it('full-bleed crop tengah: tepi sumber terpangkas, isi tengah tajam memenuhi kanvas', async () => {
+    const result = await normalizeCoverImage(await squareTestImage())
+    // Sumber 1:1 → crop 9:16 menyisakan jendela tengah (x sumber ±131-468).
+    // Tepi kiri/kanan kanvas hasil memuat ISI TENGAH (putih), bukan kolom
+    // merah/biru — bukti crop; dan tajam, bukan komposit blur lama.
     const left = await pixelOf(result.data, 10, 640)
     const right = await pixelOf(result.data, 710, 640)
-    expect(left.r).toBeGreaterThan(150)
-    expect(left.b).toBeLessThan(100)
-    expect(right.b).toBeGreaterThan(150)
-    expect(right.r).toBeLessThan(100)
+    for (const edge of [left, right]) {
+      expect(edge.r).toBeGreaterThan(150)
+      expect(edge.g).toBeGreaterThan(150)
+      expect(edge.b).toBeGreaterThan(150)
+    }
   })
 
   it('hasilnya WebP yang bisa dikenali sniffImageFormat', async () => {
-    const result = await normalizeCoverImage(await wideTestImage())
+    const result = await normalizeCoverImage(await squareTestImage())
     expect(sniffImageFormat(result.data)).toBe('webp')
     expect(result.bytes).toBeGreaterThan(0)
   })

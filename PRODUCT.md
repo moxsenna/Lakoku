@@ -6,6 +6,10 @@
 
 web
 
+> Android (`android/`, appId `biz.lakoku.app`) hanyalah wrapper Capacitor —
+> WebView ke server web produksi, bukan codebase native. Semua keputusan
+> desain tetap mengikuti web mobile-first.
+
 ## Users
 
 Pembaca fiksi interaktif berbahasa Indonesia, mengakses dari ponsel (mobile-only), sesi pendek yang sering terjadi malam hari. Dua keadaan: tamu yang mencoba demo resmi, dan pembaca terdaftar yang menjalankan instans ceritanya sendiri (melanjutkan bab, membagikan akhir cerita).

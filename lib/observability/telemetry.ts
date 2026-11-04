@@ -76,29 +76,40 @@ async function appendStoryEvent(
   payload: Record<string, unknown>,
 ): Promise<void> {
   // RLS_AUDIT: story_events_service_only
-  const { data, error: eRead } = await single(
-    db
-      .selectFrom('story_events')
-      .select('seq')
-      .where('story_id', '=', storyId)
-      .orderBy('seq', 'desc')
-      .limit(1)
-      .execute(),
-  )
-  if (eRead) throw new Error(eRead.message)
-  const nextSeq = ((data?.seq as number | undefined) ?? 0) + 1
-  const { error } = await result(
-    db
-      .insertInto('story_events')
-      .values({
-        story_id: storyId,
-        seq: nextSeq,
-        type,
-        payload: JSON.stringify(payload),
-      })
-      .execute(),
-  )
-  if (error) throw new Error(error.message)
+  // Audit M12: seq = baca MAX lalu tulis — dua event berdekatan bisa membaca
+  // seq sama dan unik (story_id, seq) menolak yang kedua tanpa jejak. Retry
+  // dengan baca ulang seq (pola yang sama dipakai post-publication-lifecycle)
+  // membuat event tidak lagi dibuang.
+  let lastError: Error | null = null
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { data, error: eRead } = await single(
+      db
+        .selectFrom('story_events')
+        .select('seq')
+        .where('story_id', '=', storyId)
+        .orderBy('seq', 'desc')
+        .limit(1)
+        .execute(),
+    )
+    if (eRead) throw new Error(eRead.message)
+    const nextSeq = ((data?.seq as number | undefined) ?? 0) + 1
+    const { error } = await result(
+      db
+        .insertInto('story_events')
+        .values({
+          story_id: storyId,
+          seq: nextSeq,
+          type,
+          payload: JSON.stringify(payload),
+        })
+        .execute(),
+    )
+    if (!error) return
+    if (error.code !== '23505') throw new Error(error.message)
+    lastError = new Error(error.message)
+    await new Promise((r) => setTimeout(r, 25 * (attempt + 1)))
+  }
+  throw lastError ?? new Error('appendStoryEvent: gagal setelah 5 percobaan')
 }
 
 /**

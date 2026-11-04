@@ -1,20 +1,22 @@
 'use client';
 import { useEffect } from 'react';
 
+interface ReticleDevProps {
+  /** Disuntik dari server component (audit M14) — tidak pernah masuk bundle produksi. */
+  token?: string;
+  root?: string;
+  url?: string;
+}
+
 /** Dev-only: connect Reticle + install the React adapter, after hydration. */
-export function ReticleDev() {
+export function ReticleDev({ token, root, url }: ReticleDevProps) {
   useEffect(() => {
     if (process.env.NODE_ENV !== 'development') return;
     void import('@reticlehq/react').then(
       ({ reticle, install, registerCapabilities }) => {
         install();
-        // Both provided by withReticle() in next.config. The bridge rejects a connect with no token;
-        // the root makes source paths repo-relative instead of absolute.
-        const token = process.env.NEXT_PUBLIC_RETICLE_TOKEN;
-        const root = process.env.NEXT_PUBLIC_RETICLE_ROOT;
         // withReticle() finds the daemon serving this project on every dev-server start. It wins over
         // any port written into this file at install time, so moving the daemon needs no edit here.
-        const url = process.env.NEXT_PUBLIC_RETICLE_URL;
         reticle.connect({
           projectId: 'my-project-8b92cfea', ...(url ? { url } : {}),
           ...(token ? { token } : {}),

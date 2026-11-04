@@ -14,6 +14,15 @@
 > - **B5+M4, B6, B7 (diperbaiki)**: acknowledge Play Billing, bonus top-up lintas kanal, handler `error` pool auth, aktor sistem untuk grant via runtime token.
 > - **B2 (diperbaiki)**: 5 migrasi disalin ke `db/migrations/` + shell `auth`/`extensions`/role untuk rebuild fresh. Rantai fresh-migrate 108 file diuji di DB scratch (docker postgres 16): hijau, dengan 2 pengecualian lingkungan (pg_cron & storage.buckets tersedia di Neon, tidak di docker vanilla).
 > - **Koreksi temuan agen**: klaim "migrasi user_acquisition hilang" = keliru; T3 "lubang snapshot spend_credits_v1" = salah diagnosis (kontaminasi test); `spend_credits_v1` terbukti aman.
+>
+> ### STATUS P1 (update 2026-11-04, sesi kedua)
+>
+> - **M1+M2+M11**: fallback sesi dihapus; `requireEmailVerification` + `sendOnSignIn` aktif (20/20 user existing sudah verified — nol lockout; bonus anti-enumeration dari better-auth); email reset/verifikasi gagal kini melempar error.
+> - **M3**: webhook menerima `payment.refunded` (kontrak diperluas & didokumentasikan) — clawback via `revoke_credits_v1` (idempoten, saldo boleh minus); refund order tak dikenal = 200 `ignored`; mismatch user_id = ditolak. Migrasi applied ke produksi; probe rollback-tx: clawback neto 0, replay `duplicate`. Sisa: komisi referral yang terlanjur dibayar belum ikut ditarik (follow-up).
+> - **M5+M9+M10**: rate limiter per-IP baru (8/mnt report, 30/mnt analytics); `loadConsistencyInputs` ber-window 7 hari + limit 5000/2000 (anti-OOM /api/admin/metrics).
+> - **M6+M8**: guardAdminToken timing-safe (SHA-256 digest); URL sampul di-whitelist (base sendiri / key polos / path lokal) di route + defense-in-depth di `setStoryCover`.
+>
+> Catatan verifikasi: typecheck & lint bersih untuk seluruh file yang diubah (4 error `tsc` dan 1 test gagal berasal dari `tests/authoring/circuit-breaker.test.ts` — file untracked puing pekerjaan lain di working tree, bukan bagian perubahan ini).
 
 Setiap temuan di bawah sudah diverifikasi dengan membaca kode yang dirujuk (bukan dugaan). Klaim blocker diverifikasi ulang manual dan sebagian dikonfirmasi dengan query data produksi (read-only).
 

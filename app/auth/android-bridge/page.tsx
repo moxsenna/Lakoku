@@ -3,11 +3,14 @@
 import { useEffect, useState } from 'react'
 
 /**
- * Jembatan OAuth: browser sistem menemani Google login, lalu Supabase
+ * Jembatan OAuth: browser sistem menemani Google login, lalu penyedia OAuth
  * mengembalikan `code` ke halaman ini (redirectTo /auth/android-bridge).
  * Halaman meneruskan kode ke app via deep link lakoku://auth/callback?code=...
- * Klien Android menukar kode itu menjadi sesi (POST /api/auth/android).
  * WebView tidak boleh dipakai untuk Google OAuth (diblokir Google).
+ *
+ * Catatan (audit N3): POST /api/auth/android adalah stub no-op sisa migrasi
+ * GoTrue→Better Auth — pertukaran kode menjadi sesi kini terjadi di sisi app
+ * Android melalui endpoint Better Auth standar, bukan di endpoint itu.
  */
 export default function AndroidAuthBridgePage() {
   useEffect(() => {

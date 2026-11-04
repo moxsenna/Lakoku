@@ -72,7 +72,16 @@ export default function RootLayout({
           suppressHydrationWarning
         />
       </head>
-      <body className="font-sans antialiased">{process.env.NODE_ENV === 'development' ? <ReticleDev /> : null}
+      <body className="font-sans antialiased">{process.env.NODE_ENV === 'development' ? (
+        // Audit M14: kredensial dev Reticle disuntik via props dari server
+        // (env non-publik, fallback NEXT_PUBLIC_ untuk .env.local lama) —
+        // tidak lagi ter-inline di bundle produksi.
+        <ReticleDev
+          token={process.env.RETICLE_TOKEN || process.env.NEXT_PUBLIC_RETICLE_TOKEN}
+          root={process.env.RETICLE_ROOT || process.env.NEXT_PUBLIC_RETICLE_ROOT}
+          url={process.env.RETICLE_URL || process.env.NEXT_PUBLIC_RETICLE_URL}
+        />
+      ) : null}
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
           <FontSizeProvider>{children}</FontSizeProvider>
           <GlobalPendingIndicator />

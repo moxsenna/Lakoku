@@ -228,12 +228,17 @@ export async function queryExploreStories(): Promise<StorySummary[]> {
 export async function queryPublicUserStories(limit = 12): Promise<StorySummary[]> {
   const db = getDb()
   // RLS_AUDIT: stories_public_read
+  // Audit N8: rail "Dari Pembaca Lain" hanya menampilkan cerita yang benar-
+  // benar bisa dibaca — cerita baru berstatus BARU (belum ada bab) atau yang
+  // generasinya gagal (0 bab) membuat pembaca mendarat di halaman kosong.
   const { data, error } = await result(
     db
       .selectFrom('stories')
       .select(STORY_SELECT_COLS)
       .where('visibility', '=', 'public')
       .where('owner_user_id', 'is not', null)
+      .where('status', '<>', 'BARU')
+      .where('current_chapter', '>', 0)
       .where('id', 'not like', 'demo:%')
       .where('id', 'not like', 'premium:%')
       .where('id', 'not like', 'catalog:%')

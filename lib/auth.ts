@@ -21,7 +21,10 @@ let poolInstance: Pool | null = null
 
 function getAuthPool(): Pool {
   if (!poolInstance) {
-    const url = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/dummy'
+    // Fail-closed seperti lib/db/db.ts (audit M15): fallback kredensial dummy
+    // menutupi env yang hilang dengan kegagalan samar ke localhost.
+    const url = process.env.DATABASE_URL
+    if (!url) throw new Error('getAuthPool: DATABASE_URL belum diset.')
     poolInstance = new Pool({ connectionString: url, max: 10 })
     // Neon pooler rutin memutus koneksi idle. Tanpa handler ini event 'error'
     // pada idle client menjadi uncaughtException dan mematikan proses web —

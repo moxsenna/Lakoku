@@ -31,8 +31,8 @@ import {
   saveOnboardingQuizStash,
   type OnboardingQuizPayload,
 } from '@/lib/onboarding-draft'
-import { lockStoryBible, startChapter } from '@/lib/api/client'
-import { actAssembleAndLockStory, actProposeStorySetupPremises } from '@/app/mulai/actions'
+import { getStorySetupJob, lockStoryBible, startChapter, startStorySetupJob } from '@/lib/api/client'
+import { actProposeStorySetupPremises } from '@/app/mulai/actions'
 import { actGetTasteProfile } from '@/app/onboarding/selera/actions'
 import { readGuestTasteProfile } from '@/lib/taste-profile/storage'
 import {
@@ -177,6 +177,19 @@ export function OnboardingFlow() {
 
   const [buildStage, setBuildStage] = useState<BuildKey>('cast')
   const [err, setErr] = useState<string | null>(null)
+  const lastSetupJobIdRef = useRef<string | null>(null)
+  const [buildSeconds, setBuildSeconds] = useState(0)
+
+  useEffect(() => {
+    if (phase !== 'building') return
+    const timer = setInterval(() => {
+      setBuildSeconds((s) => s + 1)
+    }, 1000)
+    return () => {
+      clearInterval(timer)
+      setBuildSeconds(0)
+    }
+  }, [phase])
 
   // Refs analytics — funnel timing + snapshot fase terakhir untuk event abandoned.
   const entryViewedRef = useRef(false)
@@ -388,32 +401,75 @@ export function OnboardingFlow() {
   }, [elapsedMs, enterBuildStage, failBuild, routeAfterStoryStart])
 
   const executeAssembleAndStart = useCallback(
-    async (premise: PremiseDraft, direction?: StoryCreativeDirection | null) => {
+    async (
+      premise: PremiseDraft,
+      direction?: StoryCreativeDirection | null,
+      resumeJobId?: string | null,
+    ) => {
       try {
         enterBuildStage('cast')
-        const t1 = setTimeout(() => enterBuildStage('mystery'), 3000)
-        const t2 = setTimeout(() => enterBuildStage('world'), 6000)
-        const t3 = setTimeout(() => enterBuildStage('lock'), 9000)
 
-        const assembleRes = await actAssembleAndLockStory(premise, direction)
-        clearTimeout(t1)
-        clearTimeout(t2)
-        clearTimeout(t3)
+        // Panggil endpoint setup background job (202 seketika)
+        const startRes = await startStorySetupJob({
+          premise,
+          creativeDirection: direction ?? undefined,
+          resumeJobId: resumeJobId ?? lastSetupJobIdRef.current ?? undefined,
+        })
 
-        if (!assembleRes.ok) {
-          return failBuild(assembleRes.error, 'lock_failed')
+        if (!startRes.ok) {
+          return failBuild(startRes.error, 'setup_job_start_failed')
+        }
+
+        const jobId = startRes.jobId
+        lastSetupJobIdRef.current = jobId
+
+        // Polling status background job hingga selesai atau gagal
+        let completed = false
+        let storyId: string | null = null
+        const pollIntervalMs = 1500
+        const maxPolls = 120 // ~180 detik
+
+        for (let i = 0; i < maxPolls; i++) {
+          await new Promise((r) => setTimeout(r, pollIntervalMs))
+          const pollRes = await getStorySetupJob(jobId)
+          if (!pollRes) continue
+
+          if (pollRes.stage) {
+            enterBuildStage(pollRes.stage)
+          }
+
+          if (pollRes.status === 'succeeded' && pollRes.storyId) {
+            storyId = pollRes.storyId
+            completed = true
+            break
+          }
+
+          if (pollRes.status === 'failed') {
+            const errMessage =
+              pollRes.errorMessage ??
+              'Terjadi kendala saat menyusun karakter dan dunia cerita. Coba lagi.'
+            const errCode = (pollRes.errorCode as AnalyticsClientPayload['error_code']) ?? 'unknown'
+            return failBuild(errMessage, errCode)
+          }
+        }
+
+        if (!completed || !storyId) {
+          return failBuild(
+            'Penyusunan cerita memakan waktu lebih lama dari biasanya. Coba lagi untuk melanjutkan.',
+            'unknown',
+          )
         }
 
         clearOnboardingDraftStash(window.localStorage)
 
         enterBuildStage('chapter')
-        const gen = await startChapter(assembleRes.storyId, 1)
+        const gen = await startChapter(storyId, 1)
 
         abandonSentRef.current = true
         const startedPayload = {
           stage: 'start',
           story_setup_mode: funnelSnapshotRef.current.entryMode ?? undefined,
-          story_id: assembleRes.storyId,
+          story_id: storyId,
           duration_ms: elapsedMs(),
         } as const
         trackEvent('story_setup_story_started', startedPayload)
@@ -423,13 +479,13 @@ export function OnboardingFlow() {
           trackEvent('story_setup_failed', {
             stage: 'build',
             build_stage: 'chapter',
-            story_id: assembleRes.storyId,
+            story_id: storyId,
             error_code: 'chapter_failed',
           })
-          routeAfterStoryStart(`/cerita/${assembleRes.storyId}`)
+          routeAfterStoryStart(`/cerita/${storyId}`)
           return
         }
-        routeAfterStoryStart(`/baca/${assembleRes.storyId}?bab=1`)
+        routeAfterStoryStart(`/baca/${storyId}?bab=1`)
       } catch (err) {
         if (isActionMismatchError(err)) {
           window.location.reload()
@@ -815,7 +871,11 @@ export function OnboardingFlow() {
           <h1 className="font-serif text-2xl leading-snug text-foreground text-balance">
             {buildStage === 'lock' ? 'Cerita ini siap dikunci ke akunmu.' : 'Peranmu sedang disiapkan.'}
           </h1>
-          <p className="text-xs text-muted-foreground">Biasanya 30-60 detik.</p>
+          <p className="text-xs text-muted-foreground transition-all duration-300">
+            {buildSeconds >= 25
+              ? 'Menyusun cerita yang utuh butuh 1–2 menit. Pilihanmu aman, jangan tutup halaman ini.'
+              : 'Biasanya 30-60 detik.'}
+          </p>
         </div>
 
         <ol className="flex w-full flex-col gap-3 text-left" aria-live="polite">
@@ -889,7 +949,28 @@ export function OnboardingFlow() {
           </p>
         </div>
         <div className="flex w-full flex-col gap-3">
-          {/* Coba lagi — kembali ke mode terakhir */}
+          {/* Coba lagi langsung melanjutkan perakitan tanpa mengulang kuis */}
+          {selected && (
+            <button
+              type="button"
+              onClick={() => {
+                setErr(null)
+                setPhase('building')
+                startTransition(() => {
+                  void executeAssembleAndStart(
+                    selected,
+                    creativeDirection,
+                    lastSetupJobIdRef.current,
+                  )
+                })
+              }}
+              className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+            >
+              Coba lagi (lanjutkan perakitan)
+            </button>
+          )}
+
+          {/* Opsi sekunder: kembali ke pertanyaan */}
           {entryMode === 'quick' && (
             <button
               type="button"
@@ -897,9 +978,14 @@ export function OnboardingFlow() {
                 setErr(null)
                 setPhase('quiz')
               }}
-              className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+              className={cn(
+                'flex min-h-13 items-center justify-center rounded-2xl px-6 text-sm font-semibold transition-opacity hover:opacity-90',
+                selected
+                  ? 'border border-border text-foreground hover:bg-card'
+                  : 'bg-primary text-primary-foreground',
+              )}
             >
-              Coba lagi dari pertanyaan
+              Ubah jawaban pertanyaan
             </button>
           )}
           {entryMode === 'custom' && (
@@ -909,12 +995,17 @@ export function OnboardingFlow() {
                 setErr(null)
                 setPhase('customIdea')
               }}
-              className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+              className={cn(
+                'flex min-h-13 items-center justify-center rounded-2xl px-6 text-sm font-semibold transition-opacity hover:opacity-90',
+                selected
+                  ? 'border border-border text-foreground hover:bg-card'
+                  : 'bg-primary text-primary-foreground',
+              )}
             >
-              Coba lagi dari ide cerita
+              Ubah ide cerita
             </button>
           )}
-          {proposals.length > 0 && !entryMode && (
+          {proposals.length > 0 && (
             <button
               type="button"
               onClick={() => {
@@ -922,9 +1013,9 @@ export function OnboardingFlow() {
                 clearSelectedPremise()
                 setPhase('proposals')
               }}
-              className="flex min-h-13 items-center justify-center rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+              className="flex min-h-13 items-center justify-center rounded-2xl border border-border px-6 text-sm font-semibold text-foreground transition-colors hover:bg-card"
             >
-              Pilih cerita lain
+              Pilih rancangan cerita lain
             </button>
           )}
           <button

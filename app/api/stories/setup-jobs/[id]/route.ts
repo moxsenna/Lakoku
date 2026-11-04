@@ -5,9 +5,6 @@ import {
   StorySetupJobErrorCodeSchema,
   StorySetupJobStageSchema,
   StorySetupJobStatusSchema,
-  type StorySetupJobErrorCode,
-  type StorySetupJobStage,
-  type StorySetupJobStatus,
 } from '@lakoku/contracts'
 
 /**
@@ -16,12 +13,6 @@ import {
  * Poll status job setup milik sendiri. Hanya owner yang boleh melihat —
  * job user lain direspons 404 (tanpa membocorkan keberadaan).
  */
-
-function parseEnum<T>(schema: { safeParse: (v: unknown) => { success: boolean; data: T } }, value: unknown): T | undefined {
-  const parsed = schema.safeParse(value)
-  return parsed.success ? parsed.data : undefined
-}
-
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -47,16 +38,20 @@ export async function GET(
     )
   }
 
-  const status = parseEnum<StorySetupJobStatus>(StorySetupJobStatusSchema, job.status)
-  const stage = parseEnum<StorySetupJobStage>(StorySetupJobStageSchema, job.stage)
-  const errorCode = parseEnum<StorySetupJobErrorCode>(StorySetupJobErrorCodeSchema, job.errorCode)
+  const statusParsed = StorySetupJobStatusSchema.safeParse(job.status)
+  const stageParsed = StorySetupJobStageSchema.safeParse(job.stage)
+  const errorCodeParsed = StorySetupJobErrorCodeSchema.safeParse(job.errorCode)
+
+  const status = statusParsed.success ? statusParsed.data : 'failed'
+  const stage = stageParsed.success ? stageParsed.data : 'cast'
+  const errorCode = errorCodeParsed.success ? errorCodeParsed.data : undefined
 
   return NextResponse.json({
     ok: true,
     job: {
       id: job.id,
-      status: status ?? 'failed',
-      stage: stage ?? 'cast',
+      status,
+      stage,
       ...(errorCode ? { errorCode } : {}),
       ...(job.errorMessage ? { errorMessage: job.errorMessage } : {}),
       ...(job.storyId ? { storyId: job.storyId } : {}),

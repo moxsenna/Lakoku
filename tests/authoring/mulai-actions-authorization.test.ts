@@ -65,7 +65,6 @@ describe('mulai action authorization', () => {
           },
         }),
       }),
-      { params: Promise.resolve({}) },
     )
 
     expect(res.status).toBe(401)
@@ -81,7 +80,6 @@ describe('mulai action authorization', () => {
         method: 'POST',
         body: JSON.stringify({ unrelated: true }),
       }),
-      { params: Promise.resolve({}) },
     )
 
     expect(res.status).toBe(400)

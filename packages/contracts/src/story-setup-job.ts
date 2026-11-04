@@ -37,12 +37,16 @@ export const StorySetupJobStartResponseSchema = z
   })
   .strict()
 
+export type StorySetupJobStartResponse = z.infer<typeof StorySetupJobStartResponseSchema>
+
 export const StorySetupJobStartFailureSchema = z
   .object({
     ok: z.literal(false),
     error: z.string(),
   })
   .strict()
+
+export type StorySetupJobStartFailure = z.infer<typeof StorySetupJobStartFailureSchema>
 
 export const StorySetupJobStartResultSchema = z.discriminatedUnion('ok', [
   StorySetupJobStartResponseSchema,
@@ -66,9 +70,13 @@ export const StorySetupJobPollResponseSchema = z
   })
   .strict()
 
+export type StorySetupJobPollResponse = z.infer<typeof StorySetupJobPollResponseSchema>
+
 export const StorySetupJobPollFailureSchema = z
   .object({
     ok: z.literal(false),
     error: z.string(),
   })
   .strict()
+
+export type StorySetupJobPollFailure = z.infer<typeof StorySetupJobPollFailureSchema>

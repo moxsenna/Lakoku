@@ -31,7 +31,6 @@ const WORLD = { setting: 'kota uji' } as unknown as WorldDraft
 /** Repo in-memory — permukaan minimal yang dipakai runner/start. */
 function makeMemoryRepo() {
   const jobs = new Map<string, StorySetupJobRecord>()
-  let seq = 0
   const repo: StorySetupJobRepo & { jobs: Map<string, StorySetupJobRecord> } = {
     jobs,
     async supersedeActiveJobs(userId, exceptJobId) {
@@ -46,7 +45,6 @@ function makeMemoryRepo() {
       return n
     },
     async insertJob(input) {
-      seq += 1
       jobs.set(input.id, {
         id: input.id,
         userId: input.userId,

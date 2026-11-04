@@ -124,15 +124,14 @@ describe('authorObjectFromCandidates — timeout & fallback', () => {
 
   it('meneruskan signal ke generate dan fallback ke kandidat berikutnya', async () => {
     const calls: AbortSignal[] = []
-    const generate: AuthorObjectGenerate = async (rawArgs) => {
-      const a = rawArgs as AuthorObjectGenerateArgs<Record<string, never>>
-      if (!a.signal) throw new Error('signal wajib ada')
-      calls.push(a.signal)
+    const generate: AuthorObjectGenerate = async <T>(rawArgs: AuthorObjectGenerateArgs<T>) => {
+      if (!rawArgs.signal) throw new Error('signal wajib ada')
+      calls.push(rawArgs.signal)
       if (calls.length === 1) {
         // Kandidat pertama gagal cepat (bukan hang) → lanjut kandidat kedua.
         throw new Error('boom')
       }
-      return { object: {} }
+      return { object: {} as T }
     }
     const result = await authorObjectFromCandidates(args, [fakeModel, fakeModel], generate, {
       callTimeoutMs: 1_000,
@@ -144,16 +143,16 @@ describe('authorObjectFromCandidates — timeout & fallback', () => {
 
   it('anggaran tahap membatalkan seluruh rantai walau masih ada kandidat', async () => {
     const started: number[] = []
-    const generate: AuthorObjectGenerate = async (rawArgs) => {
-      const a = rawArgs as AuthorObjectGenerateArgs<Record<string, never>>
-      if (!a.signal) throw new Error('signal wajib ada')
+    const generate: AuthorObjectGenerate = async <T>(rawArgs: AuthorObjectGenerateArgs<T>) => {
+      const signal = rawArgs.signal
+      if (!signal) throw new Error('signal wajib ada')
       started.push(Date.now())
       return new Promise<never>((_, reject) => {
-        if (a.signal.aborted) {
+        if (signal.aborted) {
           reject(new Error('already-aborted'))
           return
         }
-        a.signal.addEventListener('abort', () => reject(new Error('stage-abort')))
+        signal.addEventListener('abort', () => reject(new Error('stage-abort')))
       })
     }
     await expect(

@@ -159,10 +159,10 @@ export function createKyselyStorySetupJobRepo() {
         .updateTable('story_setup_jobs')
         .set({
           status: 'failed',
-          errorCode: 'superseded',
-          errorMessage: 'Digantikan percobaan baru.',
-          finishedAt: new Date(),
-          updatedAt: new Date(),
+          error_code: 'superseded',
+          error_message: 'Digantikan percobaan baru.',
+          finished_at: new Date(),
+          updated_at: new Date(),
         })
         .where('user_id', '=', userId)
         .where('status', 'in', ['queued', 'running'])
@@ -187,14 +187,14 @@ export function createKyselyStorySetupJobRepo() {
         .insertInto('story_setup_jobs')
         .values({
           id: input.id,
-          userId: input.userId,
+          user_id: input.userId,
           status: 'queued',
           stage: input.stage,
           premise: input.premise as never,
-          creativeDirection: (input.creativeDirection ?? null) as never,
-          castResult: (input.castResult ?? null) as never,
-          mysteryResult: (input.mysteryResult ?? null) as never,
-          worldResult: (input.worldResult ?? null) as never,
+          creative_direction: (input.creativeDirection ?? null) as never,
+          cast_result: (input.castResult ?? null) as never,
+          mystery_result: (input.mysteryResult ?? null) as never,
+          world_result: (input.worldResult ?? null) as never,
         })
         .execute()
     },
@@ -220,25 +220,25 @@ export function createKyselyStorySetupJobRepo() {
         .set({
           ...(patch.status !== undefined ? { status: patch.status } : {}),
           ...(patch.stage !== undefined ? { stage: patch.stage } : {}),
-          ...(patch.errorCode !== undefined ? { errorCode: patch.errorCode } : {}),
-          ...(patch.errorMessage !== undefined ? { errorMessage: patch.errorMessage } : {}),
+          ...(patch.errorCode !== undefined ? { error_code: patch.errorCode } : {}),
+          ...(patch.errorMessage !== undefined ? { error_message: patch.errorMessage } : {}),
           ...(patch.premise !== undefined ? { premise: patch.premise as never } : {}),
           ...(patch.creativeDirection !== undefined
-            ? { creativeDirection: (patch.creativeDirection ?? null) as never }
+            ? { creative_direction: (patch.creativeDirection ?? null) as never }
             : {}),
           ...(patch.castResult !== undefined
-            ? { castResult: (patch.castResult ?? null) as never }
+            ? { cast_result: (patch.castResult ?? null) as never }
             : {}),
           ...(patch.mysteryResult !== undefined
-            ? { mysteryResult: (patch.mysteryResult ?? null) as never }
+            ? { mystery_result: (patch.mysteryResult ?? null) as never }
             : {}),
           ...(patch.worldResult !== undefined
-            ? { worldResult: (patch.worldResult ?? null) as never }
+            ? { world_result: (patch.worldResult ?? null) as never }
             : {}),
-          ...(patch.storyId !== undefined ? { storyId: patch.storyId } : {}),
-          ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt } : {}),
-          ...(patch.finishedAt !== undefined ? { finishedAt: patch.finishedAt } : {}),
-          updatedAt: new Date(),
+          ...(patch.storyId !== undefined ? { story_id: patch.storyId } : {}),
+          ...(patch.startedAt !== undefined ? { started_at: patch.startedAt } : {}),
+          ...(patch.finishedAt !== undefined ? { finished_at: patch.finishedAt } : {}),
+          updated_at: new Date(),
         })
         .where('id', '=', id)
         .execute()
@@ -404,12 +404,14 @@ export async function runStorySetupJob(
     )
     if (!result.ok) {
       const needsAuthor = 'needsAuthor' in result && result.needsAuthor
+      const errorMessage =
+        'error' in result && typeof result.error === 'string'
+          ? result.error
+          : 'Gagal mengunci cerita. Coba lagi — tahap yang sudah jadi tidak diulang.'
       await repo.updateJob(jobId, {
         status: 'failed',
         errorCode: needsAuthor ? 'needs_author' : 'lock_failed',
-        errorMessage:
-          result.error ??
-          'Gagal mengunci cerita. Coba lagi — tahap yang sudah jadi tidak diulang.',
+        errorMessage,
         finishedAt: new Date(),
       })
       console.log(
@@ -461,7 +463,7 @@ export interface StartStorySetupJobInput {
   resumeJobId?: string
 }
 
-export interface StartStorySetupJobOptions extends RunStorySetupJobOptions {}
+export type StartStorySetupJobOptions = RunStorySetupJobOptions
 
 export type StartStorySetupJobResult =
   | { ok: true; jobId: string; stage: StorySetupJobStage }

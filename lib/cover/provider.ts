@@ -108,6 +108,10 @@ export function buildCoverPrompt(input: CoverGenerationInput): string {
     customNotes ? `Catatan visual tambahan: "${customNotes}".` : '',
     'Latar dan busana khas Indonesia kontemporer.',
     textInstruction,
+    // Data katalog tidak punya nama penulis — model pernah menghalusinasi
+    // kredit seperti "Karya: [Author Name]" atau memakai nama tokoh sebagai
+    // penulis, jadi kredit penulis dilarang keras muncul di sampul.
+    'JANGAN menuliskan nama penulis, kredit "Karya" atau "Oleh", tanda air, atau placeholder seperti [Author Name] — satu-satunya teks yang boleh muncul di gambar adalah judul cerita dan tagline.',
   ]
   return lines.filter(Boolean).join('\n')
 }

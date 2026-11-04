@@ -28,6 +28,18 @@ describe('buildCoverPrompt', () => {
     expect(prompt).toMatch(/JANGAN/i)
   })
 
+  it('melarang kredit penulis karena katalog tidak punya data penulis', () => {
+    const prompt = buildCoverPrompt({
+      title: 'T',
+      tagline: '',
+      role: '',
+      tropes: [],
+      includeTitle: true,
+    })
+    expect(prompt).toMatch(/Karya|Oleh|Author Name/i)
+    expect(prompt).toMatch(/JANGAN/i)
+  })
+
   it('memotong input panjang supaya kolom metadata tidak jadi jalur injeksi', () => {
     const long = 'A'.repeat(500)
     const prompt = buildCoverPrompt({ title: long, tagline: long, role: '', tropes: [] })

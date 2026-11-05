@@ -32,14 +32,15 @@ export function PwaInstallBanner() {
       <div
         role="dialog"
         aria-live="polite"
-        className="fixed inset-x-4 bottom-20 z-40 mx-auto max-w-md rounded-2xl border border-primary/20 bg-card/95 p-4 shadow-2xl backdrop-blur"
+        aria-labelledby="pwa-install-title"
+        className="fixed inset-x-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-40 mx-auto max-w-md rounded-2xl border border-primary/20 bg-card/95 p-4 shadow-2xl backdrop-blur"
       >
         <div className="flex items-start justify-between gap-3">
           <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
             <Sparkles className="size-5" aria-hidden="true" />
           </div>
           <div className="flex-1">
-            <p className="text-sm font-semibold text-foreground">
+            <p id="pwa-install-title" className="text-sm font-semibold text-foreground">
               Pasang Lakoku di Layar Utama
             </p>
             <p className="mt-1 text-xs text-muted-foreground">

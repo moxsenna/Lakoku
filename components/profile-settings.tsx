@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useReaderFontSize } from '@/components/font-size-provider'
+import { PwaInstallRow } from '@/components/pwa/pwa-install-row'
 
 const subscribeToMounted = () => () => {}
 const getMountedSnapshot = () => true
@@ -59,6 +60,7 @@ export function ProfileSettings() {
       <h2 id="pengaturan-heading" className="text-sm font-semibold tracking-wide text-lavender">
         PENGATURAN
       </h2>
+      <PwaInstallRow />
       <ul className="flex flex-col overflow-hidden rounded-2xl bg-card">
         <li>
           <div className="flex flex-col gap-4 px-5 py-4">

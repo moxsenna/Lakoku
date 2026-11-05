@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { BottomNav } from '@/components/bottom-nav'
+import { PwaInstallBanner } from '@/components/pwa/pwa-install-banner'
 
 export function AppShell({
   children,
@@ -15,7 +16,12 @@ export function AppShell({
       >
         {children}
       </div>
-      {withNav && <BottomNav />}
+      {withNav && (
+        <>
+          <BottomNav />
+          <PwaInstallBanner />
+        </>
+      )}
     </div>
   )
 }

@@ -14,8 +14,13 @@ export interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
 }
 
+// Module-level cache: event beforeinstallprompt hanya fire 1x per page load
+let globalDeferredPrompt: BeforeInstallPromptEvent | null = null
+
 export function usePwaInstall() {
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null)
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(
+    () => globalDeferredPrompt,
+  )
   const [isStandalone, setIsStandalone] = useState(false)
   const [isAndroidApp, setIsAndroidApp] = useState(false)
   const [isIos, setIsIos] = useState(false)
@@ -38,10 +43,13 @@ export function usePwaInstall() {
 
     function handleBeforeInstallPrompt(e: Event) {
       e.preventDefault()
-      setDeferredPrompt(e as BeforeInstallPromptEvent)
+      const promptEvent = e as BeforeInstallPromptEvent
+      globalDeferredPrompt = promptEvent
+      setDeferredPrompt(promptEvent)
     }
 
     function handleAppInstalled() {
+      globalDeferredPrompt = null
       setDeferredPrompt(null)
       setIsStandalone(true)
     }
@@ -68,12 +76,14 @@ export function usePwaInstall() {
       await deferredPrompt.prompt()
       const choice = await deferredPrompt.userChoice
       if (choice.outcome === 'accepted') {
-        setDeferredPrompt(null)
         setIsStandalone(true)
       }
       return choice.outcome
     } catch {
       return 'unavailable'
+    } finally {
+      setDeferredPrompt(null)
+      globalDeferredPrompt = null
     }
   }, [deferredPrompt, isIos, isStandalone])
 
@@ -94,6 +104,7 @@ export function usePwaInstall() {
     mounted,
     canInstall,
     isStandalone,
+    isAndroidApp,
     isIos,
     isDismissed,
     hasPrompt: deferredPrompt !== null,

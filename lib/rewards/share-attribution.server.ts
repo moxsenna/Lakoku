@@ -1,6 +1,7 @@
 import 'server-only'
 import { getDb, single } from '@lakoku/db'
 import { recordReferralAttribution } from './attribution.server'
+import { ensureReferralCode } from './server'
 
 export const SHARE_ATTRIBUTION_COOKIE_NAME = 'lakoku_share'
 
@@ -29,19 +30,19 @@ export async function recordShareLinkAttribution(input: {
     )
     if (!link || link.revoked_at || !link.owner_user_id) return false
 
-    const { data: ownerCode } = await single(
-      db
-        .selectFrom('referral_codes')
-        .select('code')
-        .where('user_id', '=', link.owner_user_id)
-        .limit(1)
-        .execute(),
-    )
-    if (!ownerCode?.code) return false
+    // Audit M-A7: kode referral pemilik dibuat on-demand — jangan gugur
+    // diam-diam hanya karena pemilik belum pernah membuka tab Imbalan.
+    let ownerCode: string
+    try {
+      ownerCode = await ensureReferralCode(link.owner_user_id)
+    } catch {
+      return false
+    }
+    if (!ownerCode) return false
 
     return await recordReferralAttribution(
       input.newUserId,
-      ownerCode.code,
+      ownerCode,
       'share_link',
       link.id,
     )

@@ -21,7 +21,7 @@ export default function NotFound() {
           <Home className="h-4 w-4" />
           Kembali ke Beranda
         </Link>
-        <Link href="/" className={cn(buttonVariants({ variant: 'outline' }), 'w-full gap-2')}>
+        <Link href="/jelajah" className={cn(buttonVariants({ variant: 'outline' }), 'w-full gap-2')}>
           <Compass className="h-4 w-4" />
           Jelajahi Cerita
         </Link>

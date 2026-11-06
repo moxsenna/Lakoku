@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { Capacitor } from '@capacitor/core'
 
 interface Props {
@@ -15,6 +15,11 @@ declare global {
   }
 }
 
+// Mounted flag bebas hydration mismatch (pola profile-settings).
+const subscribeToMounted = () => () => {}
+const getMountedSnapshot = () => true
+const getMountedServerSnapshot = () => false
+
 /**
  * Slot banner AdSense manual (hanya untuk browser web, bukan WebView Android).
  *
@@ -25,7 +30,11 @@ declare global {
  */
 export function AdsenseBanner({ clientId, slotId, className }: Props) {
   const pushedRef = useRef(false)
-  const isNative = typeof window !== 'undefined' && Capacitor.isNativePlatform()
+  // Audit M-A9: deteksi native SETELAH mount (mounted flag via
+  // useSyncExternalStore) agar SSR dan hydration selalu konsisten — WebView
+  // native merender null setelah mount tanpa hydration mismatch.
+  const mounted = useSyncExternalStore(subscribeToMounted, getMountedSnapshot, getMountedServerSnapshot)
+  const isNative = mounted && Capacitor.isNativePlatform()
 
   useEffect(() => {
     if (isNative) return

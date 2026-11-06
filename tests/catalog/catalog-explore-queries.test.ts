@@ -62,8 +62,11 @@ function evaluateFilter(node: FilterNode, row: Record<string, unknown>): boolean
     if (op === '=') {
       return actual === val
     }
-    if (op === '!=') {
+    if (op === '!=' || op === '<>') {
       return actual !== val
+    }
+    if (op === '>') {
+      return Number(actual) > Number(val)
     }
     if (op === 'is') {
       return actual === val
@@ -238,8 +241,8 @@ describe('catalog explore queries', () => {
 
   it('queryPublicUserStories records id not like catalog:% and excludes catalog stories', async () => {
     mockStories.push(
-      { id: 'user:cerita-saya', title: 'User Story', visibility: 'public', owner_user_id: 'u1' },
-      { id: 'catalog:published-novel', title: 'Novel Tayang', visibility: 'public', owner_user_id: null },
+      { id: 'user:cerita-saya', title: 'User Story', visibility: 'public', owner_user_id: 'u1', status: 'SELESAI', current_chapter: 5 },
+      { id: 'catalog:published-novel', title: 'Novel Tayang', visibility: 'public', owner_user_id: null, status: 'published', current_chapter: 5 },
     )
 
     const { queryPublicUserStories } = await import('@/lib/api/queries')

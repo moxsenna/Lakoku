@@ -44,7 +44,9 @@ export default async function JelajahPage({
     listPublicShareTeasers(30).catch(() => []),
   ])
 
-  const items: ExploreItem[] = [
+  // Audit BL-3 2026-11-06: pisahkan baseItems sebelum memfilter publicShares
+  // untuk mencegah TDZ ReferenceError saat items mereferensikan dirinya sendiri.
+  const baseItems: ExploreItem[] = [
     ...explore.map((story) => ({
       key: story.id,
       title: story.title,
@@ -65,28 +67,31 @@ export default async function JelajahPage({
         badge: 'DARI PENULIS' as const,
         story,
       })),
-    ...publicShares
-      .filter((share) => !items.some((i) => i.title === share.teaser.title))
-      .map((share) => ({
-        key: `share:${share.shareSlug}`,
-        title: share.teaser.title,
-        tagline: share.teaser.tagline ?? share.title,
-        tropes: share.teaser.tropes as TropeTag[],
-        href: `/s/${share.shareSlug}`,
-        badge: share.teaser.endingName ? `AKHIR: ${share.teaser.endingName}` : 'ENDING CARD',
-        story: {
-          id: share.id,
-          title: share.teaser.title,
-          cover: share.teaser.cover ?? '',
-          tagline: share.teaser.tagline ?? share.title,
-          role: 'pembaca',
-          tropes: share.teaser.tropes as TropeTag[],
-          totalChapters: 50,
-          currentChapter: 50,
-          status: 'SELESAI' as const,
-        },
-      })),
   ]
+
+  const shareItems: ExploreItem[] = publicShares
+    .filter((share) => !baseItems.some((i) => i.title === share.teaser.title))
+    .map((share) => ({
+      key: `share:${share.shareSlug}`,
+      title: share.teaser.title,
+      tagline: share.teaser.tagline ?? share.title,
+      tropes: share.teaser.tropes as TropeTag[],
+      href: `/s/${share.shareSlug}`,
+      badge: share.teaser.endingName ? `AKHIR: ${share.teaser.endingName}` : 'ENDING CARD',
+      story: {
+        id: share.id,
+        title: share.teaser.title,
+        cover: share.teaser.cover ?? '',
+        tagline: share.teaser.tagline ?? share.title,
+        role: 'pembaca',
+        tropes: share.teaser.tropes as TropeTag[],
+        totalChapters: 50,
+        currentChapter: 50,
+        status: 'SELESAI' as const,
+      },
+    }))
+
+  const items: ExploreItem[] = [...baseItems, ...shareItems]
 
   const filtered = items.filter((item) => {
     if (activeTrope && !item.tropes.includes(activeTrope)) return false

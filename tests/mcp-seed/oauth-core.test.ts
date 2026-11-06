@@ -20,6 +20,10 @@ describe('verifyPkce', () => {
   it('menolak method plain', () => {
     expect(verifyPkce('abc', 'abc')).toBe(false)
   })
+  it('menolak method plain pada verifier panjang valid (challenge identik verifier)', () => {
+    const plain = 'a'.repeat(43)
+    expect(verifyPkce(plain, plain)).toBe(false)
+  })
 })
 
 describe('access token HMAC', () => {

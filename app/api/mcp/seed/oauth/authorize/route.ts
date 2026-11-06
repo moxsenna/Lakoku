@@ -15,7 +15,7 @@ function siteOrigin(req: Request): string {
 
 function loginRedirect(req: Request): Response {
   const next = encodeURIComponent(new URL(req.url).pathname + '?' + new URL(req.url).searchParams.toString())
-  return NextResponse.redirect(`${siteOrigin(req)}/login?next=${next}`)
+  return NextResponse.redirect(`${siteOrigin(req)}/login?next=${next}`, 302)
 }
 
 function paramsOf(req: Request): URLSearchParams {
@@ -35,6 +35,12 @@ async function sessionAdmin(_req: Request): Promise<{ id: string; email: string 
 export async function GET(req: Request): Promise<Response> {
   const limiter = rateLimit(`mcp-oauth:${clientIpFrom(req)}`, 20, 60_000)
   if (!limiter.ok) return NextResponse.json({ error: 'Terlalu sering.' }, { status: 429 })
+
+  const configuredClientId = process.env.MCP_SEED_OAUTH_CLIENT_ID
+  if (!configuredClientId) {
+    return NextResponse.json({ error: 'server_error' }, { status: 500 })
+  }
+
   const admin = await sessionAdmin(req)
   if (!admin) return loginRedirect(req)
   const params = paramsOf(req)
@@ -43,7 +49,7 @@ export async function GET(req: Request): Promise<Response> {
   const state = params.get('state') ?? ''
   const scope = params.get('scope') ?? 'seed'
   const codeChallenge = params.get('code_challenge') ?? ''
-  if (clientId !== (process.env.MCP_SEED_OAUTH_CLIENT_ID ?? '')) {
+  if (clientId !== configuredClientId) {
     return NextResponse.json({ error: 'client_id tidak dikenal.' }, { status: 400 })
   }
   if (!redirectUri.startsWith('https://')) {
@@ -58,6 +64,14 @@ export async function GET(req: Request): Promise<Response> {
 }
 
 export async function POST(req: Request): Promise<Response> {
+  const limiter = rateLimit(`mcp-oauth-post:${clientIpFrom(req)}`, 20, 60_000)
+  if (!limiter.ok) return NextResponse.json({ error: 'Terlalu sering.' }, { status: 429 })
+
+  const configuredClientId = process.env.MCP_SEED_OAUTH_CLIENT_ID
+  if (!configuredClientId) {
+    return NextResponse.json({ error: 'server_error' }, { status: 500 })
+  }
+
   const admin = await sessionAdmin(req)
   if (!admin) return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 401 })
   const form = await req.formData()
@@ -66,7 +80,7 @@ export async function POST(req: Request): Promise<Response> {
   const state = String(form.get('state') ?? '')
   const scope = String(form.get('scope') ?? 'seed')
   const codeChallenge = String(form.get('code_challenge') ?? '')
-  if (clientId !== (process.env.MCP_SEED_OAUTH_CLIENT_ID ?? '') || !redirectUri.startsWith('https://') || !codeChallenge) {
+  if (clientId !== configuredClientId || !redirectUri.startsWith('https://') || !codeChallenge) {
     return NextResponse.json({ error: 'Permintaan tidak valid.' }, { status: 400 })
   }
   const code = randomToken(32)
@@ -82,5 +96,5 @@ export async function POST(req: Request): Promise<Response> {
   const target = new URL(redirectUri)
   target.searchParams.set('code', code)
   if (state) target.searchParams.set('state', state)
-  return NextResponse.redirect(target.toString())
+  return NextResponse.redirect(target.toString(), 302)
 }

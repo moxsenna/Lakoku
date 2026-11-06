@@ -25,7 +25,6 @@ import {
   createAgentProseProvider,
   createAgentProseStore,
   unitKeyOf,
-  type AgentProseResult,
   type AgentProseStore,
 } from '@/lib/mcp-seed/agent-provider.server'
 
@@ -33,32 +32,6 @@ export interface MappedUnit {
   index: number
   number: number
   endingKey: string | null
-}
-
-function padProseToTarget(prose: AgentProseResult, targetWordsMin: number): AgentProseResult {
-  const currentCount = prose.paragraphs.join(' ').split(/\s+/).filter(Boolean).length
-  if (currentCount >= targetWordsMin) return prose
-
-  const fillerSentences = [
-    'Langkah demi langkah kuambil perlahan, memastikan tidak ada hal penting yang terlewat dalam keheningan yang menyelimuti.',
-    'Pikiran di kepalaku berputar liar mencari jawaban atas pertanyaan yang belum sempat terucapkan oleh siapa pun.',
-    'Aku berhenti sejenak, menarik napas dalam-dalam untuk menenangkan degup jantung yang kian berpacu cepat.',
-    'Malam semakin larut dan bayang-bayang di dinding tampak memanjang seolah ikut mengawasi gerak-gerikku.',
-    'Tidak ada pilihan lain selain terus melangkah menyusuri lorong panjang ini dengan penuh kehati-hatian.',
-    'Setiap sudut ruangan menyimpan rahasia masa lalu yang menunggu untuk terungkap pada waktu yang tepat.',
-    'Aku berusaha mengingat kembali setiap petunjuk yang pernah kuterima sebelum situasi berkembang menjadi seperti sekarang.',
-  ]
-
-  const paragraphs = [...prose.paragraphs]
-  let count = currentCount
-  let idx = 0
-  while (count < targetWordsMin + 40) {
-    const filler = fillerSentences[idx % fillerSentences.length]!
-    paragraphs.push(filler)
-    count += filler.split(/\s+/).filter(Boolean).length
-    idx++
-  }
-  return { ...prose, paragraphs }
 }
 
 export function mapUnits(contract: StoryContract): MappedUnit[] {
@@ -122,14 +95,7 @@ export function createMcpSeedPump(deps: {
   const policy = deps.policy ?? DEFAULT_RUNTIME_POLICY
   const proseTimeoutMs = deps.proseTimeoutMs ?? 1_800_000
 
-  const rawStore: AgentProseStore = deps.store ?? createAgentProseStore({ timeoutMs: proseTimeoutMs })
-  const store: AgentProseStore = {
-    ...rawStore,
-    async park(key, instruction) {
-      const prose = await rawStore.park(key, instruction)
-      return padProseToTarget(prose, instruction.targetWordsMin)
-    },
-  }
+  const store: AgentProseStore = deps.store ?? createAgentProseStore({ timeoutMs: proseTimeoutMs })
 
   const commitKeys = new Map<string, Set<string>>()
   const commitWaiters = new Map<string, Array<{ key: string; resolve: (ok: boolean) => void }>>()

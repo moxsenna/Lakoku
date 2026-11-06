@@ -241,4 +241,24 @@ describe('createMcpSeedPump', () => {
     expect(writer.state.status).toBe('review')
     expect(() => pump.nextRequiredUnit('catalog:uji-pump', CONTRACT)).toThrow(/MCP_ALL_UNITS_COMMITTED/)
   })
+
+  it('lastError terisi saat generateCatalogNovel melempar error', async () => {
+    const writer = fakeWriter()
+    writer.loadState = async () => null
+    const pump = createMcpSeedPump({
+      writer,
+      inner: createDeterministicProvider(DEFAULT_RUNTIME_POLICY),
+      store: createAutoResponderProseStore(),
+      proseTimeoutMs: 5_000,
+    })
+
+    pump.kick('catalog:uji-error')
+    for (let i = 0; i < 400; i++) {
+      if (!pump.isRunning('catalog:uji-error')) break
+      await new Promise((r) => setTimeout(r, 10))
+    }
+
+    expect(pump.isRunning('catalog:uji-error')).toBe(false)
+    expect(pump.lastError('catalog:uji-error')).toMatch(/CATALOG_STORY_NOT_FOUND:catalog:uji-error/)
+  })
 })

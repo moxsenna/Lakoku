@@ -346,6 +346,19 @@ export function createAgentProseProvider(deps: {
   }
 }
 
+const AUTO_RESPONDER_PARAGRAPH_POOL: readonly string[] = [
+  'Langkah demi langkah kuambil perlahan, memastikan tidak ada hal penting yang terlewat dalam keheningan yang menyelimuti.',
+  'Pikiran di kepalaku berputar liar mencari jawaban atas pertanyaan yang belum sempat terucapkan oleh siapa pun.',
+  'Aku berhenti sejenak, menarik napas dalam-dalam untuk menenangkan degup jantung yang kian berpacu cepat.',
+  'Malam semakin larut dan bayang-bayang di dinding tampak memanjang seolah ikut mengawasi gerak-gerikku.',
+  'Tidak ada pilihan lain selain terus melangkah menyusuri lorong panjang ini dengan penuh kehati-hatian.',
+  'Setiap sudut ruangan menyimpan rahasia masa lalu yang menunggu untuk terungkap pada waktu yang tepat.',
+  'Aku berusaha mengingat kembali setiap petunjuk yang pernah kuterima sebelum situasi berkembang menjadi seperti sekarang.',
+  '"Kamu yakin dengan langkah ini?" tanya suara di sebelahku. Aku tidak menjawab segera.',
+  'Ketika lampu koridor meredup, satu kalimat tetap tergantung di kepala: keputusan seperti ini selalu menagih harganya.',
+  'Sisa malam berjalan tanpa banyak kata. Aku menyelesaikan satu hal kecil, lalu satu lagi, seolah urutan itu bisa menahan dunia agar tidak berubah terlalu cepat.',
+]
+
 /** Store smoke: langsung menjawab prosa template dari instruction (tanpa agent). */
 export function createAutoResponderProseStore(): AgentProseStore {
   const inner = createAgentProseStore({ timeoutMs: 60_000 })
@@ -364,6 +377,15 @@ export function createAutoResponderProseStore(): AgentProseStore {
         `"Kamu yakin dengan langkah ini?" tanya suara di sebelahku. Aku tidak menjawab segera.`,
         `Ketika lampu koridor meredup, satu kalimat tetap tergantung di kepala: keputusan seperti ini selalu menagih harganya.`,
       ]
+      const targetWords = instruction.targetWordsMin > 0 ? Math.max(instruction.targetWordsMin, 850) : 850
+      let words = countWords(body)
+      let idx = 0
+      while (words < targetWords) {
+        const paragraph = AUTO_RESPONDER_PARAGRAPH_POOL[idx % AUTO_RESPONDER_PARAGRAPH_POOL.length]!
+        body.push(paragraph)
+        words += countWords([paragraph])
+        idx++
+      }
       void pending.catch(() => undefined)
       inner.resolve(key, { title: `Bab ${instruction.chapterNumber}`, paragraphs: body })
       return pending

@@ -81,7 +81,8 @@ async function uniqueStoryId(judul: string): Promise<string> {
     const existing = await single(
       db.selectFrom('stories').select('id').where('id', '=', candidate).limit(1).execute(),
     )
-    if (!existing.error && !existing.data) return candidate
+    if (existing.error) throw new Error(`[mcp-seed] cek slug gagal: ${existing.error.message}`)
+    if (!existing.data) return candidate
   }
   throw new Error('MCP_SLUG_EXHAUSTED: judul terlalu generik, ubah judul lalu coba lagi')
 }
@@ -115,6 +116,17 @@ async function waitInstruction(storyId: string, key: string, maxMs = 15_000): Pr
   return null
 }
 
+function isUnitStored(
+  state: { spine: Map<number, unknown>; variants: Map<string, Map<number, unknown>> } | null,
+  unit: { number: number; endingKey: string | null },
+): boolean {
+  if (!state) return false
+  if (unit.endingKey === null) {
+    return state.spine.has(unit.number)
+  }
+  return state.variants.get(unit.endingKey)?.has(unit.number) ?? false
+}
+
 interface UnitProgress {
   unit_index: number
   number: number
@@ -129,23 +141,24 @@ async function progressOf(contract: StoryContract, storyId: string): Promise<{
 }> {
   const pump = getPump()
   const db = getDb()
+  const state = await pump.loadState(storyId)
   const approvedRows = await db.selectFrom('catalog_chapter_reviews')
-    .select(['chapter_number', 'status'])
+    .select(['chapter_number', 'variant_key', 'status'])
     .where('story_id', '=', storyId)
     .execute()
   const approved = new Set(
     approvedRows
       .filter((row) => String(row.status) === 'approved')
-      .map((row) => Number(row.chapter_number)),
+      .map((row) => `${String(row.variant_key)}#${Number(row.chapter_number)}`),
   )
   const units: UnitProgress[] = mapUnits(contract).map((unit: MappedUnit) => {
-    const committed = pump.commits.committed(storyId, keyOf(unit))
-    const isApproved = approved.has(unit.number)
+    const isApproved = approved.has(unitKeyOf(unit.endingKey, unit.number))
+    const stored = isUnitStored(state, unit)
     return {
       unit_index: unit.index,
       number: unit.number,
       ending_key: unit.endingKey,
-      state: (isApproved ? 'approved' : committed ? 'stored' : 'missing') as UnitProgress['state'],
+      state: (isApproved ? 'approved' : stored ? 'stored' : 'missing') as UnitProgress['state'],
     }
   })
   return {
@@ -196,9 +209,18 @@ export function buildSeedToolHandlers(): SeedToolHandlers {
       assertCatalogStoryId(input.novel_id)
       const pump = getPump()
       const contract = await pump.loadContract(input.novel_id)
-      const target = input.unit_index === undefined
-        ? pump.nextRequiredUnit(input.novel_id, contract)
-        : unitIndexToTarget(contract, input.unit_index)
+      let target: { number: number; endingKey: string | null }
+      if (input.unit_index !== undefined) {
+        target = unitIndexToTarget(contract, input.unit_index)
+      } else {
+        const state = await pump.loadState(input.novel_id)
+        const allUnits = mapUnits(contract)
+        const nextUnit = allUnits.find((u) => !isUnitStored(state, u))
+        if (!nextUnit) {
+          throw new Error('MCP_ALL_UNITS_COMMITTED: semua unit tersimpan — panggil seed_finalize_novel')
+        }
+        target = { number: nextUnit.number, endingKey: nextUnit.endingKey }
+      }
       const key = keyOf(target)
       pump.kick(input.novel_id)
       const instruction = await waitInstruction(input.novel_id, key)
@@ -237,8 +259,13 @@ export function buildSeedToolHandlers(): SeedToolHandlers {
         }
       }
       const pumpError = pump.lastError(input.novel_id)
-      if (pumpError) throw new Error(`MCP_UNIT_REJECTED:${pumpError} — panggil seed_get_unit_spec untuk percobaan perbaikan`)
-      throw new Error('MCP_UNIT_REJECTED: validasi bab gagal — ambil ulang seed_get_unit_spec untuk instruksi perbaikan (repairFindings)')
+      if (pumpError) {
+        throw new Error(`MCP_UNIT_REJECTED:${pumpError} — panggil seed_get_unit_spec untuk percobaan perbaikan`)
+      }
+      if (pump.isRunning(input.novel_id)) {
+        throw new Error('MCP_UNIT_REJECTED: validasi bab gagal — ambil ulang seed_get_unit_spec untuk instruksi perbaikan (repairFindings)')
+      }
+      throw new Error('MCP_UNIT_TIMEOUT: generasi bab tidak selesai dalam 180 detik — cek seed_get_novel_status')
     },
     async getNovelStatus(raw, sub) {
       guard(sub)

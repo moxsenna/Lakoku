@@ -155,12 +155,45 @@ export async function recordStoryCoverCandidate(
   }
 }
 
+/**
+ * Audit M-A4: `cover/apply` hanya boleh memasang URL yang benar-benar
+ * kandidat milik (storyId, userId) dan belum kedaluwarsa — bukan path
+ * sembarang milik cerita/user lain.
+ */
+export async function isKnownCoverCandidate(
+  storyId: string,
+  userId: string,
+  url: string,
+): Promise<boolean> {
+  try {
+    // Normalisasi sama dengan setStoryCover: URL base-publik → key, sehingga
+    // kandidat yang tersimpan sebagai URL publik tetap cocok dengan input key.
+    const normalized = coverKeyFromPublicUrl(url) ?? url
+    const db = getDb()
+    // RLS_AUDIT: story_cover_candidates difilter per story_id dan user_id
+    const { data: row } = await single(
+      db
+        .selectFrom('story_cover_candidates')
+        .select('id')
+        .where('story_id', '=', storyId)
+        .where('user_id', '=', userId)
+        .where('url', 'in', [url, normalized])
+        .where('expires_at', '>', new Date())
+        .limit(1)
+        .execute(),
+    )
+    return row != null
+  } catch (error) {
+    console.error('isKnownCoverCandidate gagal', { storyId, error })
+    return false
+  }
+}
+
 /** Ambil hingga 3 kandidat sampul yang belum kedaluwarsa. */
 export async function getStoryCoverCandidates(
   storyId: string,
   userId: string,
-): Promise<StoryCoverCandidate[]> {
-  try {
+): Promise<StoryCoverCandidate[]> {  try {
     // RLS_AUDIT: story_cover_candidates difilter per story_id dan user_id
     const db = getDb()
     const rows = await db

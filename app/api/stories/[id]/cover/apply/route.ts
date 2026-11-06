@@ -3,7 +3,7 @@ import { getSessionUser } from '@/lib/api/user-state'
 import { isStoryOwnedBy } from '@/lib/api/story-ownership.server'
 import { normalizeStoryRouteId } from '@/lib/story-route-id'
 import { coverKeyFromPublicUrl, isSafeStoryCoverInput, resolveStoryCover } from '@/lib/cover/url'
-import { setStoryCover } from '@/lib/cover/server'
+import { isKnownCoverCandidate, setStoryCover } from '@/lib/cover/server'
 
 /**
  * Pasang salah satu sampul dari riwayat kandidat (GRATIS, tanpa tagihan ulang).
@@ -31,6 +31,16 @@ export async function POST(
     // Audit M8: tolak URL eksternal bebas — cerita publik tidak boleh
     // mengarahkan gambar ke domain arbitrer (tracking / konten ilegal).
     return NextResponse.json({ ok: false, error: 'URL sampul tidak valid.' }, { status: 400 })
+  }
+
+  // Audit M-A4: URL wajib kandidat milik cerita & user ini — mencegah
+  // memasang key sampul cerita/user lain (kebocoran sampul privat).
+  const known = await isKnownCoverCandidate(storyId, user.id, url)
+  if (!known) {
+    return NextResponse.json(
+      { ok: false, error: 'Sampul tidak dikenali. Pilih dari daftar kandidat atau unggah sendiri.' },
+      { status: 400 },
+    )
   }
 
   const applied = await setStoryCover(storyId, user.id, url)

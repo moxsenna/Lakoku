@@ -48,8 +48,10 @@ export function isSafeStoryCoverInput(input: string): boolean {
     // Ada scheme — hanya izinkan bila URL-nya milik base publik kita.
     return coverKeyFromPublicUrl(input) !== null
   }
-  if (input.startsWith('/')) return true // path lokal publik (legacy)
+  // Audit M-A3: traversal dicek SEBELUM branch path lokal — dulu `/../x`
+  // lolos karena `startsWith('/')` mengembalikan true lebih dulu.
   if (input.includes('..')) return false
+  if (input.startsWith('/')) return true // path lokal publik (legacy)
   return SAFE_COVER_KEY_RE.test(input)
 }
 

@@ -34,6 +34,7 @@ import {
   isE0CostGuardError,
   isGlobalInferenceBudgetError,
   isSemanticJudgeUnavailableError,
+  runWithinE0ChapterScope,
   SEMANTIC_JUDGE_UNAVAILABLE,
 } from '@lakoku/ai-gateway'
 import { retryWindowFitsJobDeadline } from '@/lib/runtime/choice-execution-budget'
@@ -284,22 +285,26 @@ export async function executeClaimedJob(
     }
 
     let dispatchResult: Awaited<ReturnType<typeof runChapterGenerationAttempt>>
-    // One E0 chapter-cost scope per attempt; only the process guard keeps
-    // accounting when a stale scope blocks opening a new one.
-    const e0Guard = getE0CostGuard()
-    const e0ScopeId = `${job.id}#${job.attemptCount}`
-    const e0ScopeOpen = e0Guard?.tryBeginChapterScope(e0ScopeId) ?? false
+    // Audit M-A1/M-A14: scope E0 per-BAB (kumulatif lintas attempt) via
+    // AsyncLocalStorage — biaya transport tercatat ke bab ini sendiri meski
+    // job lain berjalan paralel dalam proses yang sama.
+    const e0ChapterKey = getE0CostGuard()
+      ? `c:${job.storyId}:${job.chapterNumber}`
+      : null
+    const runAttempt = () => runChapterGenerationAttempt({
+      storyId: job.storyId,
+      userId: job.userId,
+      chapterNumber: job.chapterNumber,
+      correlationId: job.correlationId,
+      attemptId: job.id,
+      triggerChoiceId: job.triggerChoiceId,
+      jobContext,
+      ...(options === undefined ? {} : { options }),
+    })
     try {
-      dispatchResult = await runChapterGenerationAttempt({
-        storyId: job.storyId,
-        userId: job.userId,
-        chapterNumber: job.chapterNumber,
-        correlationId: job.correlationId,
-        attemptId: job.id,
-        triggerChoiceId: job.triggerChoiceId,
-        jobContext,
-        ...(options === undefined ? {} : { options }),
-      })
+      dispatchResult = e0ChapterKey
+        ? await runWithinE0ChapterScope(e0ChapterKey, runAttempt)
+        : await runAttempt()
     } catch (err) {
       if (ownershipLost || controller.signal.aborted) {
         return { ok: false, outcome: 'OWNERSHIP_LOST', jobId: job.id }
@@ -322,8 +327,6 @@ export async function executeClaimedJob(
               ? SEMANTIC_JUDGE_UNAVAILABLE
               : 'GENERATOR_EXCEPTION',
       }
-    } finally {
-      if (e0ScopeOpen) e0Guard?.endChapterScope(e0ScopeId)
     }
 
     // 6) Normalize before checking ownership. normalized.ok is the generator

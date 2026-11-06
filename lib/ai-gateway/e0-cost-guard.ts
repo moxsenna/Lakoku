@@ -18,12 +18,20 @@
  *
  * G-1 `hardInferenceLimit` remains null; this is an operational measured-cost
  * trip-wire, not the unbound topology/economics authority.
+ *
+ * Audit M-A1/M-A14 (2026-11-06): scope bab kini MULTI (satu bucket per bab,
+ * key `c:{storyId}:{chapterNumber}`) dan atribusinya lewat AsyncLocalStorage,
+ * bukan singleton satu-scope. Dua job paralel dalam satu proses tidak lagi
+ * saling mencemari akumulasi biaya, dan retry attempt TIDAK mengreset plafon —
+ * ceiling $2.10 berlaku kumulatif lintas attempt untuk bab yang sama.
  */
+
+import { AsyncLocalStorage } from 'node:async_hooks'
 
 export const E0_COST_GUARD_DECISION_REFERENCE = 'LAKOKU-M10E-E0-R1-INTERIM-BINDING-2026-09-12'
 
 export type E0CostGuardCeilings = Readonly<{
-  /** Maximum cumulative provider-reported cost for one chapter attempt. */
+  /** Maximum cumulative provider-reported cost for one chapter (all attempts). */
   readonly maxCostPerChapterUsd: string
   /** Maximum cumulative provider-reported cost for the process lifetime. */
   readonly maxProcessCostUsd: string
@@ -68,12 +76,19 @@ export type MeasuredCostProvenance = Readonly<{
   workflowPhase: string
 }>
 
+/** Atribusi scope bab aktif untuk async continuation (multi-job paralel). */
+const chapterScopeStorage = new AsyncLocalStorage<string>()
+
+interface ChapterBucket {
+  consumedCents: bigint
+  lastUsedAt: number
+}
+
 export class E0CostGuard {
   private readonly chapterCeilingCents: bigint
   private readonly processCeilingCents: bigint
-  private chapterConsumedCents = BigInt(0)
   private processConsumedCents = BigInt(0)
-  private chapterScopeId: string | null = null
+  private readonly chapterScopes = new Map<string, ChapterBucket>()
   private unmeasuredTransports = 0
   private unmeasuredWarned = false
 
@@ -83,26 +98,18 @@ export class E0CostGuard {
   }
 
   /**
-   * Opens one chapter-attempt scope. Returns false (never throws) when a
-   * previous scope is still open — the caller proceeds without a chapter
-   * scope and only the process guard keeps accounting.
+   * Menjalankan fn dengan atribusi biaya ke bab `chapterKey`. Aman dipakai
+   * paralel: tiap panggilan punya konteks ALS sendiri, dan bucket bab yang
+   * sama (retry attempt berikutnya) MENERUSKAN akumulasi sebelumnya.
    */
-  tryBeginChapterScope(scopeId: string): boolean {
-    if (this.chapterScopeId !== null) return false
-    this.chapterScopeId = scopeId
-    this.chapterConsumedCents = BigInt(0)
-    return true
+  runWithinChapterScope<T>(chapterKey: string, fn: () => Promise<T>): Promise<T> {
+    return chapterScopeStorage.run(chapterKey, fn)
   }
 
-  hasOpenChapterScope(): boolean {
-    return this.chapterScopeId !== null
-  }
-
-  endChapterScope(scopeId: string): void {
-    if (this.chapterScopeId !== scopeId) {
-      throw new E0CostGuardError('E0_CHAPTER_COST_CEILING_EXCEEDED', `chapter scope mismatch: ${scopeId} vs ${String(this.chapterScopeId)}`)
-    }
-    this.chapterScopeId = null
+  /** Total tercatat untuk satu bab (observability/test). */
+  getChapterConsumedUsd(chapterKey: string): string {
+    const bucket = this.chapterScopes.get(chapterKey)
+    return this.formatCents(bucket?.consumedCents ?? BigInt(0))
   }
 
   get consumedProcessCostUsd(): string {
@@ -149,14 +156,20 @@ export class E0CostGuard {
     }
     this.processConsumedCents = nextProcess
 
-    if (this.chapterScopeId !== null) {
-      this.chapterConsumedCents += cost
-      if (this.chapterConsumedCents > this.chapterCeilingCents) {
+    const scopeKey = chapterScopeStorage.getStore()
+    if (scopeKey !== undefined) {
+      const now = Date.now()
+      const bucket = this.chapterScopes.get(scopeKey) ?? { consumedCents: BigInt(0), lastUsedAt: now }
+      bucket.consumedCents += cost
+      bucket.lastUsedAt = now
+      this.chapterScopes.set(scopeKey, bucket)
+      if (bucket.consumedCents > this.chapterCeilingCents) {
         throw new E0CostGuardError(
           'E0_CHAPTER_COST_CEILING_EXCEEDED',
-          `chapter ${this.chapterScopeId} measured cost ${this.formatCents(this.chapterConsumedCents)} exceeds E0 chapter ceiling ${this.formatCents(this.chapterCeilingCents)} USD`,
+          `chapter ${scopeKey} measured cost ${this.formatCents(bucket.consumedCents)} exceeds E0 chapter ceiling ${this.formatCents(this.chapterCeilingCents)} USD`,
         )
       }
+      this.pruneChapters(now)
     }
   }
 
@@ -172,6 +185,23 @@ export class E0CostGuard {
         workflowPhase: provenance.workflowPhase,
       })
     }
+  }
+
+  /**
+   * Pengaman memori: bucket bab berumur panjang (progress kumulatif lintas
+   * attempt) dibuang ketika jumlah bucket melewati batas — evict paling
+   * jarang dipakai. Proses ceiling tetap menjadi jaring pengaman global.
+   */
+  private pruneChapters(now: number): void {
+    const MAX_TRACKED_CHAPTERS = 256
+    if (this.chapterScopes.size <= MAX_TRACKED_CHAPTERS) return
+    const entries = [...this.chapterScopes.entries()].sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt)
+    const excess = this.chapterScopes.size - MAX_TRACKED_CHAPTERS
+    for (let i = 0; i < excess; i += 1) {
+      const key = entries[i]?.[0]
+      if (key !== undefined) this.chapterScopes.delete(key)
+    }
+    void now
   }
 }
 
@@ -192,6 +222,17 @@ export function configureE0CostGuard(ceilings: E0CostGuardCeilings): E0CostGuard
 
 export function getE0CostGuard(): E0CostGuard | null {
   return singleton
+}
+
+/**
+ * Module-level helper untuk worker: membungkus eksekusi attempt dengan
+ * atribusi scope bab. Bila guard tidak dikonfigurasi, fn tetap jalan
+ * (fail-open, semantik sama dengan guard disabled).
+ */
+export function runWithinE0ChapterScope<T>(chapterKey: string, fn: () => Promise<T>): Promise<T> {
+  const guard = getE0CostGuard()
+  if (!guard) return fn()
+  return guard.runWithinChapterScope(chapterKey, fn)
 }
 
 export function recordProviderReportedCost(

@@ -10,6 +10,7 @@ import {
   getE0CostGuard,
   isE0CostGuardError,
   resetE0CostGuardForTests,
+  runWithinE0ChapterScope,
 } from '@/lib/ai-gateway/e0-cost-guard'
 import {
   executeObservedModelCall,
@@ -72,23 +73,22 @@ describe('E0 measured-cost seam reaches the production guard', () => {
 
   it('feeds provider-reported billed cost into the configured guard', async () => {
     const guard = configureE0CostGuard({ maxCostPerChapterUsd: '2.10000000', maxProcessCostUsd: '200.00000000' })
-    guard.tryBeginChapterScope('job-1#1')
-
-    await executeObservedModelCall(input({ openrouter: { cost: 0.25, currency: 'USD' } }), deps)
+    await runWithinE0ChapterScope('c:story-1:2', () => executeObservedModelCall(input({ openrouter: { cost: 0.25, currency: 'USD' } }), deps))
 
     expect(guard.consumedProcessCostUsd).toBe('0.25000000')
+    expect(guard.getChapterConsumedUsd('c:story-1:2')).toBe('0.25000000')
     expect(guard.unmeasuredCount).toBe(0)
   })
 
   it('accumulates across transports so a chapter ceiling breach is terminal', async () => {
     const guard = configureE0CostGuard({ maxCostPerChapterUsd: '2.10000000', maxProcessCostUsd: '200.00000000' })
-    guard.tryBeginChapterScope('job-1#1')
-
-    await executeObservedModelCall(input({ openrouter: { cost: 2.0, currency: 'USD' } }), deps)
+    // Dua scope run ber-key sama = retry attempt untuk bab yang sama:
+    // akumulasi MENERUS, tidak direset (audit M-A14).
+    await runWithinE0ChapterScope('c:story-1:2', () => executeObservedModelCall(input({ openrouter: { cost: 2.0, currency: 'USD' } }), deps))
 
     let thrown: unknown
     try {
-      await executeObservedModelCall(input({ openrouter: { cost: 0.2, currency: 'USD' } }), deps)
+      await runWithinE0ChapterScope('c:story-1:2', () => executeObservedModelCall(input({ openrouter: { cost: 0.2, currency: 'USD' } }), deps))
     } catch (error) {
       thrown = error
     }
@@ -119,7 +119,6 @@ describe('E0 measured-cost seam reaches the production guard', () => {
 
   it('still records the failed transport cost when the model call throws', async () => {
     const guard = configureE0CostGuard({ maxCostPerChapterUsd: '2.10000000', maxProcessCostUsd: '200.00000000' })
-    guard.tryBeginChapterScope('job-1#1')
     const failing: ObservedModelCallInput<string> = {
       ...input({ openrouter: { cost: 0.4, currency: 'USD' } }),
       consume: () => {
@@ -127,7 +126,9 @@ describe('E0 measured-cost seam reaches the production guard', () => {
       },
     }
 
-    await expect(executeObservedModelCall(failing, deps)).rejects.toThrow('parser rejected output')
+    await expect(
+      runWithinE0ChapterScope('c:story-1:2', () => executeObservedModelCall(failing, deps)),
+    ).rejects.toThrow('parser rejected output')
     expect(guard.consumedProcessCostUsd).toBe('0.40000000')
   })
 })

@@ -15,6 +15,7 @@ import { buildChapterBrief } from '@/lib/story-engine/chapter-brief'
 import { buildPreProseChapterBrief } from '@/lib/story-engine/pre-prose-brief'
 import { normalizeRouteState } from '@/lib/story-engine/route-state'
 import { sanitizeDirectionHint } from '@/lib/catalog/reader-safe-hint'
+import { assertCatalogChapterConsumerSafe } from '@/lib/catalog/reader-safe-guard'
 import {
   assertCatalogContract,
   assertCatalogStoryId,
@@ -27,6 +28,17 @@ export const DEFAULT_RUNTIME_POLICY: GenerationRuntimePolicy = {
   targetWordsMin: 800,
   targetWordsMax: 1000,
   targetScenes: 3,
+}
+
+/** Brand guard (audit M-A2): scan seluruh teks reader-facing sebelum bab ditulis. */
+function guardCatalogChapter(chapter: CatalogGeneratedChapter): void {
+  assertCatalogChapterConsumerSafe({
+    title: chapter.title,
+    paragraphs: chapter.paragraphs,
+    choicePrompt: chapter.choicePrompt,
+    choiceLabels: chapter.choices.map((choice) => choice.label),
+    consequences: chapter.outcomes.flatMap((outcome) => outcome.consequence),
+  })
 }
 
 const MAX_PROSE_ATTEMPTS = 10
@@ -535,7 +547,7 @@ async function buildChapterOutput(deps: CatalogGeneratorDeps, args: {
 
   if (args.chapterNumber >= CATALOG_VARIANT_FIRST_CHAPTER && args.nextChapterNumber === null) {
     // Bab 50: penutup tanpa pilihan.
-    return {
+    const closingChapter: CatalogGeneratedChapter = {
       chapterNumber: args.chapterNumber,
       title: prose.title,
       paragraphs: prose.paragraphs,
@@ -543,6 +555,8 @@ async function buildChapterOutput(deps: CatalogGeneratorDeps, args: {
       choices: [],
       outcomes: [],
     }
+    guardCatalogChapter(closingChapter)
+    return closingChapter
   }
 
   if (isEndingLock) {
@@ -605,7 +619,7 @@ async function buildChapterOutput(deps: CatalogGeneratorDeps, args: {
     }
   })
 
-  return {
+  const chapter: CatalogGeneratedChapter = {
     chapterNumber: args.chapterNumber,
     title: prose.title,
     paragraphs: prose.paragraphs,
@@ -613,6 +627,8 @@ async function buildChapterOutput(deps: CatalogGeneratorDeps, args: {
     choices,
     outcomes,
   }
+  guardCatalogChapter(chapter)
+  return chapter
 }
 
 function maxKey(map: Map<number, unknown>): number {

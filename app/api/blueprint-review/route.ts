@@ -41,19 +41,3 @@ export async function GET(_request: Request) {
   }
 }
 
-// POST endpoint for claiming queue items (worker processes only)
-export async function POST(_request: Request) {
-  try {
-    // Claim is handled via separate worker process, not API call
-    return NextResponse.json({ 
-      success: false,
-      message: 'Use direct database claim for workers'
-    })
-  } catch (err) {
-    console.error('Claim queue item failed:', err)
-    return NextResponse.json(
-      { error: 'Gagal mengklaim antrian.' },
-      { status: 500 }
-    )
-  }
-}

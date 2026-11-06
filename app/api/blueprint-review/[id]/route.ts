@@ -39,6 +39,10 @@ export async function GET(
       // Audit N1: sesi tidak ada = 401, bukan 500.
       return NextResponse.json({ error: 'Silakan masuk sebagai admin.' }, { status: 401 })
     }
+    if (err instanceof Error && err.message === 'Forbidden') {
+      // Audit NIT: non-admin = 403, bukan 500 (false-positive monitoring).
+      return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 403 })
+    }
     console.error('Error fetching blueprint review item:', err)
     return NextResponse.json(
       { error: 'Terjadi kesalahan sistem.' },
@@ -56,7 +60,11 @@ export async function POST(
     const adminRole = await requireAdminUser() // owner/admin roles only
     
     const storyId = (await params).id
-    const body = await request.json()
+    const body = await request.json().catch(() => null)
+    if (body == null) {
+      // Audit NIT: body bukan JSON valid = 400, bukan 500.
+      return NextResponse.json({ error: 'Payload JSON tidak valid.' }, { status: 400 })
+    }
     const { disposition, reason_text } = body
     
     // Validate disposition value
@@ -134,6 +142,10 @@ export async function POST(
     if (err instanceof Error && err.message === 'Unauthenticated') {
       // Audit N1: sesi tidak ada = 401, bukan 500.
       return NextResponse.json({ error: 'Silakan masuk sebagai admin.' }, { status: 401 })
+    }
+    if (err instanceof Error && err.message === 'Forbidden') {
+      // Audit NIT: non-admin = 403, bukan 500 (false-positive monitoring).
+      return NextResponse.json({ error: 'Tidak diizinkan.' }, { status: 403 })
     }
     console.error('Unexpected error recording resolution:', err)
     return NextResponse.json(

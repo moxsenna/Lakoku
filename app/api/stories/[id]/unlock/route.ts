@@ -74,8 +74,12 @@ export async function POST(
       .execute(),
   )
 
-  if (storyError || !story) {
+  if (storyError) {
     return NextResponse.json({ error: 'Gagal memverifikasi status cerita.' }, { status: 500 })
+  }
+  if (!story) {
+    // Audit NIT: cerita tidak ada = 404, bukan 500.
+    return NextResponse.json({ error: 'Cerita tidak ditemukan.' }, { status: 404 })
   }
 
   const isCommercialMode = story.story_mode === 'personalized_ai' || story.story_mode === 'premium_instance'

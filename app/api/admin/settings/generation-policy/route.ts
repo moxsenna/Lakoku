@@ -6,7 +6,11 @@ export const dynamic = 'force-dynamic'
 
 export async function PATCH(request: Request): Promise<Response> {
   try {
-    const body = await request.json()
+    const body = await request.json().catch(() => null)
+    if (body == null) {
+      // Audit NIT: body bukan JSON valid = 400, bukan 500.
+      return NextResponse.json({ error: 'Payload JSON tidak valid.' }, { status: 400 })
+    }
     const parsed = updateGenerationPolicySchema.safeParse(body)
     if (!parsed.success) {
       return NextResponse.json(

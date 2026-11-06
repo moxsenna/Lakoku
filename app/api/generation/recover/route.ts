@@ -18,7 +18,7 @@
  */
 import { after } from 'next/server'
 import { NextResponse, type NextRequest } from 'next/server'
-import { timingSafeEqual } from 'node:crypto'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import {
   recoverStaleGenerationJobs,
   claimAndRunAvailableJobs,
@@ -40,9 +40,10 @@ function bearerFrom(req: NextRequest): string | null {
 }
 
 function constantTimeEquals(a: string, b: string): boolean {
-  const ab = Buffer.from(a, 'utf8')
-  const bb = Buffer.from(b, 'utf8')
-  if (ab.length !== bb.length) return false
+  // Audit NIT: hash kedua sisi dulu (pola admin-guard) agar panjang rahasia
+  // tidak bocor lewat early-return perbandingan panjang.
+  const ab = createHash('sha256').update(a, 'utf8').digest()
+  const bb = createHash('sha256').update(b, 'utf8').digest()
   try {
     return timingSafeEqual(ab, bb)
   } catch {

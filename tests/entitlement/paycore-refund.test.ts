@@ -99,6 +99,52 @@ describe('PayCore refund event (audit M3)', () => {
     expect(store.creditBalance('user-1')).toBe(50) // tidak tercabut
   })
 
+  it('process: refund mencabut komisi referral yang terlanjur dibayar (audit M-A5)', async () => {
+    const store = new InMemoryEntitlementStore()
+    // Pembeli user-2 top-up 1.000.000 via ord-10; referrer user-1 komisi 100.000.
+    await store.grantCredits('user-2', 'paycore:ord-10', 500, 'topup:x:normal')
+    store.seedRewardCommission('ord-10', 'user-1', 100000)
+
+    const body = signedBody({ event_id: 'e7', event_type: 'payment.refunded', data: { order_id: 'ord-10' } })
+    const sig = await sign(body, tsIso)
+
+    const outcome = await processPayCoreWebhook(
+      body,
+      { timestamp: tsIso, signature: sig },
+      { store, secret: SECRET, nowMs: NOW },
+    )
+    expect(outcome.status).toBe('refunded')
+    // Net reward referrer = komisi (+100rb) + clawback (-100rb) = 0.
+    // Kalau clawback gagal, saldo masih +100.000 → assertion gagal.
+    expect(store.rewardBalance('user-1')).toBe(0)
+    expect(store.creditBalance('user-2')).toBe(0) // kredit pembeli dicabut
+
+    // Replay → duplicate: komisi TIDAK ditarik dua kali (tetap net 0, bukan -100rb).
+    const replay = await processPayCoreWebhook(
+      body,
+      { timestamp: tsIso, signature: sig },
+      { store, secret: SECRET, nowMs: NOW },
+    )
+    expect(replay.status).toBe('duplicate')
+    expect(store.rewardBalance('user-1')).toBe(0)
+  })
+
+  it('process: refund tanpa komisi referral → tetap refunded, tidak error', async () => {
+    const store = new InMemoryEntitlementStore()
+    await store.grantCredits('user-3', 'paycore:ord-11', 60, 'topup:x:normal')
+
+    const body = signedBody({ event_id: 'e8', event_type: 'payment.refunded', data: { order_id: 'ord-11' } })
+    const sig = await sign(body, tsIso)
+
+    const outcome = await processPayCoreWebhook(
+      body,
+      { timestamp: tsIso, signature: sig },
+      { store, secret: SECRET, nowMs: NOW },
+    )
+    expect(outcome.status).toBe('refunded')
+    expect(store.creditBalance('user-3')).toBe(0)
+  })
+
   it('process: alur succeeded lama tidak berubah', async () => {
     const store = new InMemoryEntitlementStore()
     store.setOrderSnapshot('ord-2', { totalCredits: 80, bonusKind: 'none', productKey: 'pk-60', status: 'created' })

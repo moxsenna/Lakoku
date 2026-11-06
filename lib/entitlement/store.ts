@@ -79,6 +79,13 @@ export interface EntitlementStore {
    * Tandai order sebagai `refunded`. Idempoten.
    */
   markOrderRefunded(orderId: string): Promise<void>
+  /**
+   * Tarik komisi referral yang terlanjur dibayar untuk order (audit M-A5).
+   * Mencari baris `reward_ledger` ber-ref `commission:{orderId}`, lalu menulis
+   * delta negatif ber-ref `commission-refund:{orderId}` (idempoten).
+   * Return `'not_found'` bila order tidak pernah menghasilkan komisi.
+   */
+  revokeRewardCommissionByOrder(orderId: string): Promise<'ok' | 'duplicate' | 'not_found'>
 }
 
 /** Snapshot entitlement aktif (untuk assert di fixture). */
@@ -94,6 +101,8 @@ export class InMemoryEntitlementStore implements EntitlementStore {
   private readonly paidOrders = new Set<string>()
   /** Ref ledger → (userId, delta) untuk lookup clawback refund. */
   private readonly ledgerGrants = new Map<string, LedgerGrantLookupResult>()
+  /** Ref reward (komisi referral) → (userId, deltaIdr) untuk clawback komisi. */
+  private readonly rewardLedger = new Map<string, LedgerGrantLookupResult>()
   /** Jumlah panggilan applyEntitlement (untuk assert "tak ada grant ganda"). */
   public applyCount = 0
   /** Jumlah panggilan grantCredits yang benar-benar menulis (untuk assert idempoten). */
@@ -155,6 +164,30 @@ export class InMemoryEntitlementStore implements EntitlementStore {
   async markOrderRefunded(orderId: string): Promise<void> {
     const snap = this.orderSnapshots.get(orderId)
     if (snap) this.orderSnapshots.set(orderId, { ...snap, status: 'refunded' })
+  }
+
+  async revokeRewardCommissionByOrder(orderId: string): Promise<'ok' | 'duplicate' | 'not_found'> {
+    const refundRef = `commission-refund:${orderId}`
+    const grant = this.rewardLedger.get(`commission:${orderId}`)
+    if (!grant) return 'not_found'
+    if (this.seenRefs.has(refundRef)) return 'duplicate'
+    this.seenRefs.add(refundRef)
+    this.rewardLedger.set(refundRef, { userId: grant.userId, delta: -grant.delta })
+    return 'ok'
+  }
+
+  /** Helper uji: injeksi komisi referral yang sudah dibayar untuk order. */
+  seedRewardCommission(orderId: string, referrerUserId: string, commissionIdr: number): void {
+    this.rewardLedger.set(`commission:${orderId}`, { userId: referrerUserId, delta: commissionIdr })
+  }
+
+  /** Helper uji: total reward IDR referrer (untuk assert clawback). */
+  rewardBalance(referrerUserId: string): number {
+    let total = 0
+    for (const entry of this.rewardLedger.values()) {
+      if (entry.userId === referrerUserId) total += entry.delta
+    }
+    return total
   }
 
   /** Helper uji: injeksi snapshot order untuk simulasi. */

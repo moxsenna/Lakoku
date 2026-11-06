@@ -160,4 +160,13 @@ export class SupabaseEntitlementStore implements EntitlementStore {
     )
     if (error) throw new Error(`markOrderRefunded: ${error.message}`)
   }
+
+  async revokeRewardCommissionByOrder(orderId: string): Promise<'ok' | 'duplicate' | 'not_found'> {
+    const db = getDb()
+    const { data, error } = await single(
+      rpcOne(db, 'revoke_reward_commission_v1', { p_order_id: orderId }).execute(),
+    )
+    if (error) throw new Error(`revokeRewardCommissionByOrder: ${error.message}`)
+    return String((data ? ((data as Record<string, unknown>).fn ?? data) : '')) as 'ok' | 'duplicate' | 'not_found'
+  }
 }

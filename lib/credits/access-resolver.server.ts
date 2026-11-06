@@ -1,7 +1,23 @@
 import 'server-only'
-import { getDb, single, result } from '@lakoku/db'
+import { getDb, single, result, rpcOne } from '@lakoku/db'
 import { isCommercialStoryMode } from '@/lib/commercial/resolver.server'
 import { isChapterFree, unlockRef, readerUnlockRef, bundleRef, DEFAULT_READING_POLICY, type ReadingPolicy } from './policy'
+
+/** Audit M-A6: bila query saldo gagal, jangan blokir pembaca (fail-open). */
+async function getCreditBalanceFailOpen(userId: string): Promise<number> {
+  try {
+    const db = getDb()
+    // RLS_AUDIT: credit_ledger_own_read
+    const { data, error } = await single(
+      rpcOne(db, 'credit_balance_v1', { p_user_id: userId }).execute(),
+    )
+    if (error) return 0
+    const raw = data ? ((data as Record<string, unknown>).fn ?? data) : 0
+    return Number(raw ?? 0)
+  } catch {
+    return 0
+  }
+}
 
 export interface ChapterAccessDecision {
   readable: boolean
@@ -79,6 +95,14 @@ export async function resolveChapterAccess(input: {
     }
 
     if (!input.userId) {
+      return catalogClosed ? closedDecision : { readable: false, reason: 'PAYMENT_REQUIRED', cost: chapterCost }
+    }
+
+    // Audit M-A6: pembaca dengan saldo minus (pasca-clawback refund) harus
+    // melunasi dulu — bukti ledger lama tidak lagi membuka bab berbayar.
+    // Bab gratis tetap terbaca (cek `isChapterFree` sudah lewat di atas).
+    const balance = await getCreditBalanceFailOpen(input.userId)
+    if (balance < 0) {
       return catalogClosed ? closedDecision : { readable: false, reason: 'PAYMENT_REQUIRED', cost: chapterCost }
     }
 
@@ -185,6 +209,13 @@ export async function resolveChapterAccess(input: {
 
   // Bab 4+: Check ledger proof unlock:{storyId}:{chapter}
   // RLS_AUDIT: credit_ledger_own_read
+  // Audit M-A6: saldo minus memblokir unlock berbayar (bab included 1-3 di
+  // atas tetap terbaca).
+  const debtBalance = await getCreditBalanceFailOpen(input.userId)
+  if (debtBalance < 0) {
+    return { readable: false, reason: 'PAYMENT_REQUIRED', cost: chapterUnlockCost }
+  }
+
   const { data: ledger } = await single(
     db
       .selectFrom('credit_ledger')

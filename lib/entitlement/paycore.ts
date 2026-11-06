@@ -195,7 +195,9 @@ export interface PayCoreProcessDeps {
  *  - duplicate → order sudah pernah di-grant (ledger `ref` unik): no-op.
  *  - applied   → order baru terverifikasi: kredit di-grant sekali.
  *  - refunded  → `payment.refunded` terverifikasi: kredit hasil order tsb
- *                DITARIK (clawback, ref `paycore-refund:{order_id}`, idempoten).
+ *                DITARIK (clawback, ref `paycore-refund:{order_id}`, idempoten),
+ *                lalu komisi referral yang terlanjur dibayar untuk order tsb
+ *                JUGA ditarik (audit M-A5, ref `commission-refund:{order_id}`).
  *  - ignored   → refund untuk order/grant yang tidak dikenal: diterima tanda
  *                tangannya, tidak ada yang bisa dicabut (200 agar provider
  *                tidak retry selamanya; dicatat di log).
@@ -204,9 +206,6 @@ export interface PayCoreProcessDeps {
  * gunakan `total_credits` dari DB (lebih aman daripada fulfillment echo).
  * Bila tak ada snapshot, fallback ke `fulfillment_data.credits` ( masih aman
  * karena fulfillment dibuat server-side). Tetap idempoten via ledger `ref`.
- *
- * Catatan clawback: komisi referral yang terlanjur dibayar untuk order
- * di-refund BELUM ditarik di tahap ini (follow-up terpisah).
  */
 export async function processPayCoreWebhook(
   rawBody: string,
@@ -240,6 +239,17 @@ export async function processPayCoreWebhook(
       await deps.store.markOrderRefunded(event.orderId)
     } catch (err) {
       console.log('[v0] paycore webhook: markOrderRefunded gagal (non-fatal):', (err as Error)?.message)
+    }
+    // Clawback komisi referral (audit M-A5): komisi yang terlanjur dibayar
+    // untuk order ini ikut ditarik. not_found/duplicate = tidak ada komisi
+    // yang perlu ditarik / sudah ditarik — keduanya bukan kegagalan.
+    try {
+      const commissionRevoke = await deps.store.revokeRewardCommissionByOrder(event.orderId)
+      if (commissionRevoke !== 'ok') {
+        console.log(`[v0] paycore webhook: clawback komisi ${commissionRevoke} untuk order ${event.orderId}`)
+      }
+    } catch (err) {
+      console.log('[v0] paycore webhook: revokeRewardCommissionByOrder gagal (non-fatal):', (err as Error)?.message)
     }
     return { status: 'refunded', eventId: event.eventId, orderId: event.orderId, credits: grant.delta }
   }

@@ -34,7 +34,7 @@ lib/catalog/generator.server.ts  ← ekstraksi: buildUnitSpec() + validateAndSto
 ```
 
 - Endpoint tinggal di app produksi Next.js yang sudah live di VPS; Caddy tidak berubah (path baru di origin sama).
-- `generator.server.ts` direfaktor: langkah "panggil model writer" jadi pluggable. Jalur CLI tetap berperilaku identik (smoke katalog yang ada wajib tetap hijau).
+- **Tidak ada refactor `generator.server.ts`.** Penulisan plan menemukan seam yang lebih bersih: `CatalogGeneratorDeps.provider` sudah pluggable — jalur MCP memakai **dekorator `GenerationProvider`** (`mcp-gemini-agent-v1`) yang hanya menggantikan `writeChapter` (prosa di-park sebagai unit spec yang diambil agent), sementara `generatePlan`/choices/reactions/kontrak/judge tetap delegasi ke provider 9Router terkualifikasi. Jalur CLI tak tersentuh (smoke lama otomatis tetap hijau). Detail implementasi: `docs/superpowers/plans/2026-11-07-gemini-mcp-seed.md`.
 - Prosa = agent Gemini (kuota PM). Choices, fork 3 ending, continuity check = server-side dengan mesin yang ada (flash via 9Router, diikat E0CostGuard).
 
 ## 4. Tool surface (kontrak)
@@ -131,7 +131,7 @@ Semua tool menerima & mengembalikan JSON. Nomor unit `0-61`.
 ## 12. Tahapan implementasi
 
 1. **Spike auth:** OAuth 2.1 (Better Auth provider / fallback) + hello-world MCP tool tersambung dari Developer Mode.
-2. **Ekstraksi mesin:** `buildUnitSpec()` + `validateAndStoreUnit()` keluar dari `generator.server.ts`; smoke katalog yang ada wajib tetap hijau.
+2. **Dekorator provider agent:** `lib/mcp-seed/agent-provider.server.ts` + pump per novel — `generator.server.ts` tidak diubah; smoke katalog yang ada wajib tetap hijau.
 3. **Endpoint + 5 tool:** route MCP, gate env, rate limit, migrasi `source`.
 4. **Smoke + unit test** hijau penuh (deterministic, nol kuota).
 5. **Deploy VPS** + hubungkan connector nyata + 1 unit Argon sukses.

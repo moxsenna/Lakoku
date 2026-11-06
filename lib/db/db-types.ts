@@ -799,6 +799,19 @@ export interface MissionPolicy {
   updated_at: Generated<Timestamp>;
 }
 
+export interface McpSeedOauth {
+  client_id: string;
+  code_challenge: string | null;
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+  id: Generated<string>;
+  kind: string;
+  redirect_uri: string | null;
+  scope: Generated<string>;
+  token_hash: string;
+  user_id: string;
+}
+
 export interface NeonSchemaMigrations {
   applied_at: Generated<Timestamp>;
   version: string;
@@ -1370,6 +1383,7 @@ export interface DB {
   generation_provider_calls: GenerationProviderCalls;
   idempotency_keys: IdempotencyKeys;
   knowledge_scopes: KnowledgeScopes;
+  mcp_seed_oauth: McpSeedOauth;
   mission_policy: MissionPolicy;
   neon_schema_migrations: NeonSchemaMigrations;
   outbox: Outbox;

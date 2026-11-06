@@ -62,8 +62,10 @@ export async function POST(request: NextRequest) {
   }
 
   // 3) Bonus seperti web: first-topup / normal, dihitung server-side.
-  const firstTopup = await hasPaidTopup(user.id)
-  const calc = calculateTopupCredits(product, firstTopup)
+  // Audit BL-1 2026-11-06: hasPaidTopup bernilai true bila SUDAH pernah topup.
+  const alreadyPaid = await hasPaidTopup(user.id)
+  const isFirstTopup = !alreadyPaid
+  const calc = calculateTopupCredits(product, isFirstTopup)
 
   // 4) Grant idempoten (DB-level, replay ditolak oleh ref unik).
   const grant = await playBillingGrantV1({

@@ -58,4 +58,24 @@ describe('calculateTopupCredits', () => {
     expect(firstCalc.bonusCredits).toBe(50)
     expect(normalCalc.bonusCredits).toBe(5)
   })
+
+  it('Audit BL-1: hasPaidTopup=false berarti user baru dan harus dapat bonus first_topup', () => {
+    const p = makeProduct({ normalBonusCredits: 5, firstTopupBonusCredits: 25 })
+    const alreadyPaid = false
+    const isFirstTopup = !alreadyPaid
+    const calc = calculateTopupCredits(p, isFirstTopup)
+    expect(calc.bonusKind).toBe('first_topup')
+    expect(calc.bonusCredits).toBe(25)
+    expect(calc.totalCredits).toBe(95)
+  })
+
+  it('Audit BL-1: hasPaidTopup=true berarti user lama dan harus dapat normal bonus', () => {
+    const p = makeProduct({ normalBonusCredits: 5, firstTopupBonusCredits: 25 })
+    const alreadyPaid = true
+    const isFirstTopup = !alreadyPaid
+    const calc = calculateTopupCredits(p, isFirstTopup)
+    expect(calc.bonusKind).toBe('normal')
+    expect(calc.bonusCredits).toBe(5)
+    expect(calc.totalCredits).toBe(75)
+  })
 })

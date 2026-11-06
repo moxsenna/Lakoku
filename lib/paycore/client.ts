@@ -98,8 +98,10 @@ export async function createCreditOrder(
   const phone = input.customer?.phone?.trim()
 
   // Hitung bonus server-side: first topup atau normal.
-  const firstTopup = await hasPaidTopup(input.userId)
-  const calc = calculateTopupCredits(product, firstTopup)
+  // Audit BL-1 2026-11-06: hasPaidTopup bernilai true bila SUDAH pernah topup.
+  const alreadyPaid = await hasPaidTopup(input.userId)
+  const isFirstTopup = !alreadyPaid
+  const calc = calculateTopupCredits(product, isFirstTopup)
 
   const externalOrderId = input.externalOrderId ?? `lakoku-${crypto.randomUUID()}`
   // merchant_profile_id sengaja TAK dikirim: PayCore memakai default app

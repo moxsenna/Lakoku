@@ -36,7 +36,8 @@ function postRequest(body: Record<string, unknown>): NextRequest {
 
 describe('E5 reader-safe boundary', () => {
   it('exports only supported Next route fields from the queue route', () => {
-    expect(Object.keys(queueRoute).sort()).toEqual(['GET', 'POST', 'dynamic', 'revalidate'])
+    // Audit NIT: POST mati dihapus dari queue route — Next membalas 405 otomatis.
+    expect(Object.keys(queueRoute).sort()).toEqual(['GET', 'dynamic', 'revalidate'])
   })
 
   beforeEach(() => {

@@ -62,6 +62,9 @@ async function main(): Promise<void> {
     if (!pump.isRunning(storyId)) break
     await new Promise((r) => setTimeout(r, 1_000))
   }
+  if (pump.isRunning(storyId)) {
+    throw new Error('MCP_SMOKE_TIMEOUT: pump masih berjalan setelah 10 menit')
+  }
   const error = pump.lastError(storyId)
   if (error) throw new Error(`PUMP_ERROR:${error}`)
   const contract = await (async () => {
@@ -75,6 +78,7 @@ async function main(): Promise<void> {
   })()
   const allUnits = mapUnits(contract)
   const totalUnits = allUnits.length
+  if (totalUnits !== 62) throw new Error(`UNIT_COUNT_UNEXPECTED:${totalUnits}`)
   const committed = allUnits.filter((unit) =>
     pump.commits.committed(storyId, unitKeyOf(unit.endingKey, unit.number)),
   ).length
@@ -87,18 +91,24 @@ async function main(): Promise<void> {
   // markReview() sudah mengubah stories.status menjadi 'SELESAI'.
   // catalog_stories.status diubah ke 'archived'.
   const db = getDb()
-  await result(
+  const archiveCatalogResult = await result(
     db.updateTable('catalog_stories')
       .set({ status: 'archived', updated_at: new Date().toISOString() })
       .where('story_id', '=', storyId)
       .execute(),
   )
-  await result(
+  if (archiveCatalogResult.error) {
+    throw new Error(`[smoke-mcp] arsip gagal: ${archiveCatalogResult.error.message}`)
+  }
+  const archiveStoriesResult = await result(
     db.updateTable('stories')
       .set({ status: 'SELESAI' })
       .where('id', '=', storyId)
       .execute(),
   )
+  if (archiveStoriesResult.error) {
+    throw new Error(`[smoke-mcp] arsip gagal: ${archiveStoriesResult.error.message}`)
+  }
   console.log(`[smoke-mcp] PASS: ${storyId} (diarsipkan)`)
 }
 

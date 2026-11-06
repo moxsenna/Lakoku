@@ -6,6 +6,7 @@ import { getReadingPolicy, getCreditBalance } from '@/lib/credits/server'
 import { ReaderView } from '@/components/reader-view'
 import { ChapterUnavailable } from '@/components/chapter-unavailable'
 import { ChapterLocked } from '@/components/chapter-locked'
+import { markReaderCompletedStandard } from '@/lib/library/completion.server'
 import { resolveReaderFallbackNotice } from '@/lib/reader-fallback'
 
 export default async function BacaPage({
@@ -72,20 +73,13 @@ export default async function BacaPage({
   // Rekonsiliasi akhir cerita bila mencapai bab penutup.
   if (chapter.number >= (story.totalChapters || 50) && user && story.status !== 'SELESAI') {
     try {
-      const { getDb } = await import('@lakoku/db')
-      const db = getDb()
-      // RLS_AUDIT: reader_states_owner
-      await db
-        .updateTable('reader_states')
-        .set({
-          status: 'SELESAI',
-          ending_name: chapter.title,
-          current_chapter: chapter.number,
-          updated_at: new Date().toISOString(),
-        })
-        .where('user_id', '=', user.id)
-        .where('story_id', '=', story.id)
-        .execute()
+      // Audit NIT seam: akses data lewat lib/library, bukan @lakoku/db langsung.
+      await markReaderCompletedStandard({
+        userId: user.id,
+        storyId: story.id,
+        endingName: chapter.title,
+        chapterNumber: chapter.number,
+      })
       story.status = 'SELESAI'
       story.endingName = chapter.title
     } catch (err) {

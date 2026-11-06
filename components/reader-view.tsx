@@ -688,7 +688,7 @@ export function ReaderView({
                     key={c.id}
                     type="button"
                     onClick={() => chooseOption(c.id)}
-                    disabled={isReRead}
+                    disabled={isReRead || selected}
                     className={cn(
                       'flex min-h-14 flex-col gap-1 rounded-2xl border px-5 py-4 text-left transition-colors',
                       isReRead

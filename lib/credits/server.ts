@@ -75,6 +75,21 @@ export async function getCreditBalance(userId: string): Promise<number> {
   }
 }
 
+/** Audit NIT seam: `true` bila user sudah pernah topup berbayar; `null` bila RPC gagal. */
+export async function hasPaidTopupV1(userId: string): Promise<boolean | null> {
+  try {
+    const db = getDb()
+    const { data, error } = await single(
+      rpcOne(db, 'has_paid_topup_v1', { p_user_id: userId }).execute(),
+    )
+    if (error) return null
+    const raw = data ? ((data as Record<string, unknown>).fn ?? data) : false
+    return raw === true
+  } catch {
+    return null
+  }
+}
+
 export async function isChapterUnlocked(
   userId: string | null,
   storyId: string,

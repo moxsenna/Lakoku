@@ -108,13 +108,6 @@ export async function POST(
     )
   }
 
-  if (reservation.replayed) {
-    return NextResponse.json(
-      { ok: false, error: 'Pembuatan sampul sebelumnya sedang berlangsung. Tunggu sebentar.' },
-      { status: 409 },
-    )
-  }
-
   const policy = await getStoryCoverPolicy()
 
   try {

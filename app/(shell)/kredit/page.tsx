@@ -7,8 +7,7 @@ import { resolveAdSlot, type ResolvedAdSlot } from '@/lib/ads/server'
 import { getSessionUser } from '@/lib/api/user-state'
 import { listCreditProducts, calculateTopupCredits } from '@/lib/paycore/products'
 import { getRequestChannel } from '@/lib/android/channel.server'
-import { getCreditBalance, getReadingPolicy } from '@/lib/credits/server'
-import { getDb, single, rpcOne } from '@lakoku/db'
+import { getCreditBalance, getReadingPolicy, hasPaidTopupV1 } from '@/lib/credits/server'
 import { sanitizeNextPath } from '@/lib/auth/safe-next'
 import { RememberReadingReturn } from '@/components/kredit/reading-return'
 
@@ -31,14 +30,10 @@ export default async function KreditPage({
   // Cek apakah user baru (belum pernah topup) — untuk bonus first topup.
   let isFirstTopup = false
   if (user) {
-    try {
-      const db = getDb()
-      const { data } = await single(rpcOne(db, 'has_paid_topup_v1', { p_user_id: user.id }).execute())
-      const raw = data ? ((data as Record<string, unknown>).fn ?? data) : false
-      isFirstTopup = raw !== true
-    } catch {
-      // Fallback: jangan over-promise.
-    }
+    // Audit NIT seam: akses data lewat lib/credits, bukan @lakoku/db langsung.
+    // null (RPC gagal) = anggap bukan first topup — jangan over-promise bonus.
+    const paid = await hasPaidTopupV1(user.id)
+    isFirstTopup = paid === null ? false : !paid
   }
 
   const androidNoAds: ResolvedAdSlot = { shouldRender: false, clientId: '', slotId: '' }

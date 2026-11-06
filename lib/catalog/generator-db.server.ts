@@ -6,11 +6,14 @@ import { loadCanonSnapshot } from '@/lib/narrative/loader'
 import type { GenerationProvider } from '@lakoku/ai-gateway'
 import type { StoryContract } from '@/lib/story-engine/story-contract'
 import { assertCatalogStoryId, applyPremiseOverlay } from '@/lib/catalog/catalog-contract'
+import { resolveCatalogSource, type CatalogSource } from '@/lib/catalog/catalog-source'
 import type {
   CatalogChapterRef,
   CatalogGeneratorStoryState,
   CatalogGeneratorWriter,
 } from '@/lib/catalog/generator.server'
+
+export { resolveCatalogSource, type CatalogSource } from '@/lib/catalog/catalog-source'
 
 /** `pg` mengirim array JS sebagai literal array Postgres, bukan JSON; jsonb wajib teks JSON. */
 function jsonValue(value: unknown): Json {
@@ -30,6 +33,7 @@ export interface CreateCatalogDraftInput {
   tropes: string[]
   genreId: string | null
   provider: GenerationProvider
+  source?: CatalogSource
 }
 
 export interface CreateCatalogDraftResult {
@@ -102,6 +106,7 @@ export async function createCatalogDraft(input: CreateCatalogDraftInput): Promis
       bundle_price: 150,
       contract_json: jsonValue(contract),
       generation_progress: 0,
+      source: resolveCatalogSource(input.source),
     }).execute(),
   ), 'insert catalog_stories')
 

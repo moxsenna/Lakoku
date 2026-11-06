@@ -303,6 +303,7 @@ export interface CatalogStories {
   generation_progress: Generated<number>;
   published_at: Timestamp | null;
   published_by: string | null;
+  source: Generated<string>;
   status: Generated<string>;
   story_id: string;
   updated_at: Generated<Timestamp>;

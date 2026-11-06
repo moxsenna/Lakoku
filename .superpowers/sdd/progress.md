@@ -1,18 +1,7 @@
-# FULL EXIT PHASE B — Better Auth + User Import (2026-10-05)
-Plan: docs/superpowers/plans/2026-10-05-full-exit-phase-b-better-auth.md (3fab5e0)
-Branch: feat/better-auth-phase-b (worktree .worktrees/feat-better-auth-phase-b) | Base: 3fab5e0
-- Task 1: complete (3fab5e0..0115325, review APPROVED). Better-auth, bcryptjs installed; skema user, session, account, verification terpasang di Neon via 20261005000000_better_auth_schema.sql; schema test PASS; db-types diupdate; typecheck 0 error.
-- Task 2: complete (0115325..3bb3e56, review APPROVED). Mailketing API v2 client + bcrypt verify/hash + Better Auth configuration dengan bearer plugin dan referral hook terpasang; tests pass; typecheck clean.
-- Task 3: complete (3bb3e56..338393f). Script impor neon-import-users.mjs memproses 18 pengguna (14 credential, 4 Google OAuth) ke public."user" dan public."account"; password fidelity bcrypt test PASS; typecheck clean.
-- Task 3: complete (3bb3e56..338393f, review APPROVED). Script neon-import-users.mjs memetakan 18 pengguna auth.users ke Better Auth user & account; UUID dan hash bcrypt dipertahankan; test fidelity PASS (lakoku-uji-123 valid).
-- Task 4: complete (338393f..5195e90 + fix 9984631, review APPROVED). getSessionUser beralih ke Better Auth dengan dead-cookie guest defense; middleware beralih ke session cookie Better Auth dengan getSessionRedirectPath presisi; logout-button memanggil authClient.signOut(); lib/supabase/proxy.ts dihapus; tests pass (42/42).
-- Task 5: complete. Formulir login, sign-up, forgot-password, reset-password beralih ke Better Auth client; public-config.ts dan recovery route dihapus; app/mulai onboarding-flow terbebas dari Supabase public config; typecheck dan smoke tests PASS.
-- Task 5: complete (9984631..a4e7d47 + fix bdd9e25, review APPROVED). Form login, sign-up, forgot-password, reset-password beralih ke Better Auth client; recovery callback & public-config dihapus; smoke web-release & password-recovery pass.
-- Task 6: complete. Pembersihan sisa panggilan supabase.auth di seluruh API routes dan lib/api/; lib/supabase/server.ts dan client.ts dihapus; zero call sites tersisa; typecheck dan smoke contracts PASS.
-- Task 6: complete (bdd9e25..f44fb43 + fixes 21226b0, 14ffcb5, review APPROVED). Seluruh 18 call site supabase.auth & lib/supabase/{server,client} dihapus repo-wide (grep = 0); digantikan getSessionUser(); test mocks di tests/api/ diadaptasi bersih (244/244 pass); dummy connection string fallback pada getAuthPool() untuk module import saat testing.
-- Task 7: complete. Verifikasi E2E otomatis Fase B terhadap live Neon (tests/auth/auth-e2e-verification.test.ts); 5 alur autentikasi (login eksisting, bearer token, cookie session, registrasi user baru, lupa kata sandi) PASS; typecheck, smoke contracts, smoke web-release, smoke production-reader PASS.
-
-- Task 7: complete (14ffcb5..ef3b63e, review APPROVED). E2E auth live vs Neon 5/5 (login user terimpor + bcrypt, bearer, cookie, signup baru + cleanup, forgetPassword); smokes: contracts 16/16, web-release 9/9, production-reader 9/9.
-- FINAL REVIEW PHASE B: READY TO MERGE setelah fix 4f597ac — (1) dead-cookie redirect trap di /auth/login & /auth/sign-up dihapus dari middleware (matcher auth routes dihapus; sesi terverifikasi dicek di RSC page); (2) BETTER_AUTH_SECRET wajib di produksi (throw); (3) trustedOrigins lokal; (4) useEffect basa dihapus. Minor DEFER: android bridge endpoint stub (dokumentasi menyusul), afterAll cleanup edge case.
-- Verifikasi ulang: tests/auth 47/47, E2E auth 5/5, typecheck 0 err, smokes pass, lint 0 error baru di file branch (2 error pre-existing main).
-- PHASE B COMPLETE — head 4f597ac, 13 commit di atas 3fab5e0. Menunggu merge PM.
+# Pull-to-Refresh — SDD Progress
+Plan: docs/superpowers/plans/2026-11-06-pull-to-refresh.md (b01f267)
+Branch: feat/pull-to-refresh | Base: b01f267
+- Task 1: complete (b01f267..5a4a0a4, review clean). Helpers kalkulasi fisika (0.4 damping, max 80, threshold 60, timeout 2500ms); vitest 4/4 passed.
+- Task 2: complete (5a4a0a4..9bf0742, review clean). Hook usePullToRefresh; touchstart/move/end, window.scrollY guard, timeout fallback 2500ms; typecheck 0 err.
+- Task 3: complete (9bf0742..630138c, review clean). Komponen visual PullToRefresh + floating pill (tokens bg-card/90, border-border, text-primary, shadow-md, backdrop-blur); typecheck 0 err.
+- Task 4: complete (630138c..67f7fbd, review clean). Wiring PullToRefresh di AppShell (withNav conditional); typecheck 0 err, vitest 4/4 passed.

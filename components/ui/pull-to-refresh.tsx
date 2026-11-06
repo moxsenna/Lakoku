@@ -25,7 +25,6 @@ export function PullToRefresh({
     disabled,
   })
 
-  const isVisible = pullOffset > 0 || isRefreshing
   const rotation = calculateRotationDegrees(pullOffset)
 
   return (

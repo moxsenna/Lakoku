@@ -1,26 +1,48 @@
-# Task 4 Report: Migrasi Seam Sesi Server & Middleware
+# Task 4 Report: Wire into `AppShell`
 
-**Status:** DONE
-**Commit:** 5195e90 feat(auth): migrate getSessionUser, middleware, and logout to Better Auth
+**Status:** DONE  
+**Commit:** `67f7fbdeb4eaae78a68a721424eb2cdd87a936a4`  
+**Branch:** `feat/pull-to-refresh`
 
-## Changes
-1. `tests/auth/session-seam.test.ts`:
-   - Unit tests for `getSessionUser()` covering valid session, null/expired session, and dead-cookie exception defense.
-2. `lib/api/user-state.ts`:
-   - Replaced Supabase GoTrue session logic with Better Auth `auth.api.getSession({ headers: await headers() })`.
-   - Maintained compatible `User` interface (`id`, `email`, `user_metadata`).
-   - Retained Kysely data access functions (`getReaderStates`, `getReaderState`, `getPreviousChoiceId`, `ensureReaderStateStarted`, `applyChoiceToUserState`).
-   - Dead cookie defense: exceptions caught and returns `null` safely without crashing RSC.
-3. `middleware.ts`:
-   - Checks `better-auth.session_token` and `__Secure-better-auth.session_token`.
-   - Protects `/beranda`, `/profil`, `/kredit`, `/payment`, `/s/`, redirecting to `/auth/login?next=...`.
-   - Auto-redirects logged-in users on `/`, `/auth/login`, `/auth/sign-up` to `/beranda`.
-4. `lib/supabase/proxy.ts`:
-   - Deleted obsolete Supabase proxy file via `git rm`.
-5. `components/logout-button.tsx`:
-   - Updated to call `authClient.signOut()` from `@/lib/auth-client`.
+---
 
-## Verification
-- `pnpm exec vitest run tests/auth/session-seam.test.ts`: PASS (3/3)
-- `pnpm exec vitest run tests/auth/`: PASS (8 files, 42 tests)
-- `pnpm typecheck`: PASS (0 errors)
+## 1. Scope & Implementation
+
+- Modified `components/app-shell.tsx` matching `task-4-brief.md` specification.
+- Imported:
+  - `{ PullToRefresh } from '@/components/ui/pull-to-refresh'`
+- Logic:
+  - Extracted content block into `const content = <div className={...}>{children}</div>`.
+  - Wrapped content with `<PullToRefresh>{content}</PullToRefresh>` conditionally when `withNav === true`.
+  - When `withNav === false`, renders `content` directly without pull-to-refresh wrapper.
+- Preserved existing layout, safe-area padding, bottom nav, and PWA install banner behaviors.
+
+## 2. Verification Commands & Outputs
+
+- **TypeScript Typecheck:**
+  - Command: `pnpm typecheck`
+  - Output:
+    ```
+    $ tsc --noEmit --incremental false
+    ```
+  - Result: PASS with 0 errors across workspace.
+
+- **ESLint:**
+  - Command: `pnpm exec eslint components/app-shell.tsx`
+  - Result: PASS with 0 errors/warnings.
+
+- **Unit Tests:**
+  - Command: `pnpm exec vitest run tests/ui/pull-to-refresh-state.test.ts`
+  - Output:
+    ```
+    ✓ unit tests/ui/pull-to-refresh-state.test.ts (4 tests) 3ms
+    Test Files  1 passed (1)
+    Tests  4 passed (4)
+    ```
+  - Result: PASS with 4/4 passing tests.
+
+## 3. Self-Review Findings
+
+- **Zero forbidden directives:** No `as any`, `@ts-ignore`, or `@ts-expect-error`.
+- **Zero regressions:** Existing `AppShell` layout semantics retained. Reader / fullscreen views where `withNav === false` remain untouched and unhampered by gesture listeners.
+- **Commit Isolation:** Staged and committed only `components/app-shell.tsx`.

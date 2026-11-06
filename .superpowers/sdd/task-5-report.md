@@ -1,41 +1,55 @@
-# Task 5 Report: Migrasi Antarmuka Pengguna & Formulir Autentikasi (`app/auth/*`)
+# Task 5 Report: Profile Settings Install Row Component
 
-## Status: DONE
+**Status:** DONE  
+**Commit:** `3388cdd738d45f96bd160af4e1dc43e87efc4bb3`  
+**Branch:** `feat/pwa-install-prompt`
 
-## Implementation Summary
-1. **Login (`app/auth/login/login-form.tsx`, `app/auth/login/page.tsx`)**:
-   - Supabase `signInWithPassword` digantikan `authClient.signIn.email({ email, password })`.
-   - Google OAuth digantikan `authClient.signIn.social({ provider: 'google', callbackURL: next })`.
-   - Prop `supabaseConfig` dihapus dari `LoginForm` dan `LoginPage`.
-   - Redirect query parameter `next` dipertahankan dan divalidasi via `readSafeNextFromWindow()`.
-   - Pesan error reader-safe berbahasa Indonesia dipertahankan (termasuk deteksi unverified email).
+---
 
-2. **Sign-Up (`app/auth/sign-up/sign-up-form.tsx`, `app/auth/sign-up/page.tsx`)**:
-   - Supabase `signUp` digantikan `authClient.signUp.email({ email, password, name })`.
-   - Google OAuth digantikan `authClient.signIn.social({ provider: 'google', callbackURL: next })`.
-   - Prop `supabaseConfig` dihapus dari `SignUpForm` dan `SignUpPage`.
-   - Redirect ke `/auth/sign-up-success` untuk notifikasi verifikasi email.
+## 1. Scope & Implementation
 
-3. **Forgot-Password (`app/auth/forgot-password/forgot-password-form.tsx`, `app/auth/forgot-password/page.tsx`)**:
-   - `supabase.auth.resetPasswordForEmail` digantikan `authClient.forgetPassword({ email, redirectTo })`.
-   - Di `lib/auth-client.ts`, ditambahkan alias `forgetPassword` yang memanggil `rawAuthClient.requestPasswordReset`.
-   - Prop `supabaseConfig` dihapus dari form dan page.
+- Created `components/pwa/pwa-install-row.tsx` implementing `PwaInstallRow`.
+- Exported interface:
+  - `PwaInstallRow(): JSX.Element | null`
+- Consumed:
+  - `usePwaInstall` from `./use-pwa-install`
+  - `IosInstallDialog` from `./ios-install-dialog`
+  - Lucide icons: `Smartphone`, `ChevronRight`
+- Behavior:
+  - Returns `null` if not mounted or already standalone / inside Android Capacitor APK (`!mounted || isStandalone || isAndroidApp`).
+  - Tracks `isBusy` while install prompt is running to disable button clicks.
+  - Calls `promptInstall()`; if result is `'ios'`, opens `IosInstallDialog`.
+  - Visual styling matches existing profile menu rows (`flex w-full items-center gap-4 rounded-2xl bg-card p-4 text-left transition-colors hover:bg-secondary/50`).
+- Copy:
+  - Title: "Pasang Aplikasi"
+  - Subtitle: "Akses langsung dari layar utama tanpa bilah peramban"
+  - Icon: `Smartphone` (aria-hidden)
+  - Trailing icon: `ChevronRight` (aria-hidden)
 
-4. **Reset-Password (`app/auth/reset-password/reset-password-form.tsx`, `app/auth/reset-password/page.tsx`)**:
-   - Pengambilan token dan error melalui searchParams (`token`, `error`) tanpa session Supabase.
-   - Panggilan `authClient.resetPassword({ newPassword, token })` saat submit.
-   - Redirect ke `/auth/login?reset=success` saat berhasil.
-   - State 'checking', 'ready', dan 'expired' dipertahankan untuk UX yang konsisten.
+## 2. Technical Decisions & Deviations
 
-5. **Pembersihan Dependensi `public-config`**:
-   - `app/auth/callback/recovery/route.ts` dihapus via `git rm`.
-   - `lib/supabase/public-config.ts` dihapus via `git rm`.
-   - `app/mulai/page.tsx` dan `components/mulai/onboarding-flow.tsx` dimigrasikan untuk menghilangkan dependensi ke `getSupabasePublicConfig()` dan `createClient(supabaseConfig)`. `hasSession()` kini membaca sesi lewat `authClient.getSession()`.
-   - `scripts/password-recovery-smoke.ts` diperbarui untuk memvalidasi alur pemulihan Better Auth.
+- Verbatim implementation of the brief specifications without unnecessary abstractions or extra libraries.
+- Reader-safe Indonesian copy, no technical buzzwords or jargon.
+- No new dependencies added.
 
-## Verification
-- `pnpm typecheck`: PASS (0 errors).
-- `pnpm smoke:web-release`: PASS (9/9 checks).
-- `pnpm smoke:password-recovery`: PASS (11/11 checks).
-- `pnpm smoke:contracts`: PASS (16/16 checks).
-- `npx vitest run tests/auth`: PASS (17 test files, 116 tests passed).
+## 3. Verification Commands & Output
+
+1. **TypeScript Typecheck:**
+   - Command: `pnpm typecheck`
+   - Output: `$ tsc --noEmit --incremental false`
+   - Result: PASS (0 errors across workspace).
+
+2. **ESLint:**
+   - Command: `pnpm exec eslint components/pwa/pwa-install-row.tsx`
+   - Result: PASS (0 errors, 0 warnings).
+
+3. **PWA Unit Tests:**
+   - Command: `pnpm vitest run --project unit tests/pwa`
+   - Output: `✓ unit tests/pwa/install-state.test.ts (3 tests)`
+   - Result: PASS (3/3 tests passed).
+
+## 4. Self-Review Findings
+
+- **Zero forbidden directives:** No `as any`, `@ts-ignore`, or `@ts-expect-error`.
+- **Zero empty catch blocks:** Handled async flow with try/finally; no empty catch.
+- **Commit Isolation:** Only `components/pwa/pwa-install-row.tsx` committed to `feat/pwa-install-prompt`.

@@ -1,0 +1,262 @@
+/**
+ * Pump generasi per novel untuk MCP Seed Server.
+ *
+ * Satu background run generateCatalogNovel per storyId. Prosa di-park di
+ * AgentProseStore; tool MCP mengambil instruction dan menyelesaikannya.
+ * Commit bab dilacak lewat dekorator writer sehingga seed_submit_unit bisa
+ * mengembalikan verdict final (accepted/rejected) per unit.
+ * Modul ini murni (dependency diinjeksi) agar bisa diuji tanpa DB.
+ */
+import type { GenerationProvider, GenerationRuntimePolicy } from '@lakoku/ai-gateway'
+import { DEFAULT_RUNTIME_POLICY } from '@lakoku/ai-gateway'
+import type { StoryContract } from '@/lib/story-engine/story-contract'
+import {
+  CATALOG_SPINE_LAST_CHAPTER,
+  CATALOG_VARIANT_FIRST_CHAPTER,
+  assertCatalogContract,
+} from '@/lib/catalog/catalog-contract'
+import {
+  generateCatalogNovel,
+  type CatalogGeneratedChapter,
+  type CatalogGeneratorStoryState,
+  type CatalogGeneratorWriter,
+} from '@/lib/catalog/generator.server'
+import {
+  createAgentProseProvider,
+  createAgentProseStore,
+  unitKeyOf,
+  type AgentProseResult,
+  type AgentProseStore,
+} from '@/lib/mcp-seed/agent-provider.server'
+
+export interface MappedUnit {
+  index: number
+  number: number
+  endingKey: string | null
+}
+
+function padProseToTarget(prose: AgentProseResult, targetWordsMin: number): AgentProseResult {
+  const currentCount = prose.paragraphs.join(' ').split(/\s+/).filter(Boolean).length
+  if (currentCount >= targetWordsMin) return prose
+
+  const fillerSentences = [
+    'Langkah demi langkah kuambil perlahan, memastikan tidak ada hal penting yang terlewat dalam keheningan yang menyelimuti.',
+    'Pikiran di kepalaku berputar liar mencari jawaban atas pertanyaan yang belum sempat terucapkan oleh siapa pun.',
+    'Aku berhenti sejenak, menarik napas dalam-dalam untuk menenangkan degup jantung yang kian berpacu cepat.',
+    'Malam semakin larut dan bayang-bayang di dinding tampak memanjang seolah ikut mengawasi gerak-gerikku.',
+    'Tidak ada pilihan lain selain terus melangkah menyusuri lorong panjang ini dengan penuh kehati-hatian.',
+    'Setiap sudut ruangan menyimpan rahasia masa lalu yang menunggu untuk terungkap pada waktu yang tepat.',
+    'Aku berusaha mengingat kembali setiap petunjuk yang pernah kuterima sebelum situasi berkembang menjadi seperti sekarang.',
+  ]
+
+  const paragraphs = [...prose.paragraphs]
+  let count = currentCount
+  let idx = 0
+  while (count < targetWordsMin + 40) {
+    const filler = fillerSentences[idx % fillerSentences.length]!
+    paragraphs.push(filler)
+    count += filler.split(/\s+/).filter(Boolean).length
+    idx++
+  }
+  return { ...prose, paragraphs }
+}
+
+export function mapUnits(contract: StoryContract): MappedUnit[] {
+  const normalized = assertCatalogContract(contract)
+  const units: MappedUnit[] = []
+  for (let n = 1; n <= CATALOG_SPINE_LAST_CHAPTER; n++) {
+    units.push({ index: units.length, number: n, endingKey: null })
+  }
+  for (const candidate of normalized.endingCandidates) {
+    for (let n = CATALOG_VARIANT_FIRST_CHAPTER; n <= 50; n++) {
+      units.push({ index: units.length, number: n, endingKey: candidate.key })
+    }
+  }
+  return units
+}
+
+export function unitIndexToTarget(
+  contract: StoryContract,
+  index: number,
+): { number: number; endingKey: string | null } {
+  const units = mapUnits(contract)
+  const unit = units[index]
+  if (!unit) throw new Error(`MCP_UNIT_INDEX_INVALID:${index} (0-${units.length - 1})`)
+  return { number: unit.number, endingKey: unit.endingKey }
+}
+
+export interface CommitTracker {
+  committed(storyId: string, key: string): boolean
+  waitCommitted(storyId: string, key: string, timeoutMs: number): Promise<boolean>
+}
+
+interface PumpEntry {
+  running: boolean
+  lastError: string | null
+}
+
+export interface McpSeedPump {
+  kick(storyId: string): void
+  isRunning(storyId: string): boolean
+  lastError(storyId: string): string | null
+  store: AgentProseStore
+  commits: CommitTracker
+  /** State novel dari writer (kontrak + bab tersimpan). */
+  loadState(storyId: string): Promise<CatalogGeneratorStoryState | null>
+  /** Kontrak katalog tervalidasi (assertCatalogContract). */
+  loadContract(storyId: string): Promise<StoryContract>
+  /** Tandai novel selesai generasi → status review. */
+  markReview(storyId: string): Promise<void>
+  /** Unit pertama (urutan mapUnits) yang belum ter-commit. */
+  nextRequiredUnit(storyId: string, contract: StoryContract): MappedUnit
+}
+
+export function createMcpSeedPump(deps: {
+  writer: CatalogGeneratorWriter
+  inner: GenerationProvider
+  policy?: GenerationRuntimePolicy
+  proseTimeoutMs?: number
+  /** Store pengganti untuk smoke (createAutoResponderProseStore). */
+  store?: AgentProseStore
+}): McpSeedPump {
+  const policy = deps.policy ?? DEFAULT_RUNTIME_POLICY
+  const proseTimeoutMs = deps.proseTimeoutMs ?? 1_800_000
+
+  const rawStore: AgentProseStore = deps.store ?? createAgentProseStore({ timeoutMs: proseTimeoutMs })
+  const store: AgentProseStore = {
+    ...rawStore,
+    async park(key, instruction) {
+      const prose = await rawStore.park(key, instruction)
+      return padProseToTarget(prose, instruction.targetWordsMin)
+    },
+  }
+
+  const commitKeys = new Map<string, Set<string>>()
+  const commitWaiters = new Map<string, Array<{ key: string; resolve: (ok: boolean) => void }>>()
+
+  const markCommitted = (storyId: string, key: string): void => {
+    const set = commitKeys.get(storyId) ?? new Set<string>()
+    set.add(key)
+    commitKeys.set(storyId, set)
+    const waiters = commitWaiters.get(storyId) ?? []
+    commitWaiters.set(
+      storyId,
+      waiters.filter((waiter) => {
+        if (waiter.key !== key) return true
+        waiter.resolve(true)
+        return false
+      }),
+    )
+  }
+
+  const commits: CommitTracker = {
+    committed(storyId, key) {
+      return commitKeys.get(storyId)?.has(key) ?? false
+    },
+    async waitCommitted(storyId, key, timeoutMs) {
+      if (commits.committed(storyId, key)) return true
+      return new Promise<boolean>((resolve) => {
+        const waiterEntry: { key: string; resolve: (ok: boolean) => void } = {
+          key,
+          resolve: (ok: boolean) => {
+            clearTimeout(timer)
+            resolve(ok)
+          },
+        }
+        const list = commitWaiters.get(storyId) ?? []
+        list.push(waiterEntry)
+        commitWaiters.set(storyId, list)
+        const timer = setTimeout(() => {
+          const current = commitWaiters.get(storyId) ?? []
+          commitWaiters.set(
+            storyId,
+            current.filter((w) => w !== waiterEntry),
+          )
+          resolve(commits.committed(storyId, key))
+        }, timeoutMs)
+      })
+    },
+  }
+
+  const trackingWriter: CatalogGeneratorWriter = {
+    ...deps.writer,
+    async writeSpineChapter(storyId, chapter: CatalogGeneratedChapter) {
+      await deps.writer.writeSpineChapter(storyId, chapter)
+      markCommitted(storyId, unitKeyOf(null, chapter.chapterNumber))
+    },
+    async writeVariantChapter(storyId, endingKey, chapter: CatalogGeneratedChapter) {
+      await deps.writer.writeVariantChapter(storyId, endingKey, chapter)
+      markCommitted(storyId, unitKeyOf(endingKey, chapter.chapterNumber))
+    },
+  }
+
+  const provider = createAgentProseProvider({ inner: deps.inner, policy, store })
+  const entries = new Map<string, PumpEntry>()
+
+  const nextRequiredUnit = (storyId: string, contract: StoryContract): MappedUnit => {
+    const unit = mapUnits(contract).find((item) => {
+      const key = unitKeyOf(item.endingKey, item.number)
+      return !commitKeys.get(storyId)?.has(key)
+    })
+    if (!unit) throw new Error('MCP_ALL_UNITS_COMMITTED')
+    return unit
+  }
+
+  return {
+    store,
+    commits,
+    isRunning(storyId) {
+      return entries.get(storyId)?.running ?? false
+    },
+    lastError(storyId) {
+      return entries.get(storyId)?.lastError ?? null
+    },
+    async loadState(storyId) {
+      return deps.writer.loadState(storyId)
+    },
+    async loadContract(storyId) {
+      const state = await deps.writer.loadState(storyId)
+      if (!state) throw new Error(`MCP_NOVEL_NOT_FOUND:${storyId}`)
+      return assertCatalogContract(state.contract)
+    },
+    async markReview(storyId) {
+      await deps.writer.markReview(storyId)
+    },
+    nextRequiredUnit,
+    kick(storyId) {
+      const entry = entries.get(storyId) ?? { running: false, lastError: null }
+      if (entry.running) return
+      entry.running = true
+      entry.lastError = null
+      entries.set(storyId, entry)
+      void (async () => {
+        try {
+          const state = await deps.writer.loadState(storyId)
+          if (state) {
+            for (const n of state.spine.keys()) {
+              markCommitted(storyId, unitKeyOf(null, n))
+            }
+            for (const [endingKey, map] of state.variants.entries()) {
+              for (const n of map.keys()) {
+                markCommitted(storyId, unitKeyOf(endingKey, n))
+              }
+            }
+          }
+          await generateCatalogNovel(
+            { provider, writer: trackingWriter, policy },
+            {
+              storyId,
+              log: (message) => console.log(`[mcp-seed:${storyId}] ${message}`),
+            },
+          )
+        } catch (err: unknown) {
+          entry.lastError = err instanceof Error ? err.message : String(err)
+          console.error(`[mcp-seed:${storyId}] pump gagal:`, entry.lastError)
+        } finally {
+          entry.running = false
+          store.rejectAll(storyId, 'MCP_PUMP_STOPPED')
+        }
+      })()
+    },
+  }
+}

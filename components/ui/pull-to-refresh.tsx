@@ -29,16 +29,16 @@ export function PullToRefresh({
   const rotation = calculateRotationDegrees(pullOffset)
 
   return (
-    <div {...containerProps} className="relative flex flex-1 flex-col">
+    <div {...containerProps} className="relative flex flex-1 flex-col overscroll-y-contain">
       {/* Floating Indicator Pill */}
       <div
         aria-hidden="true"
         style={{
           transform: `translateY(${pullOffset}px)`,
-          opacity: isVisible ? Math.min(1, pullOffset / 30) : 0,
+          opacity: isRefreshing ? 1 : Math.min(1, pullOffset / 30),
         }}
         className={`pointer-events-none fixed inset-x-0 top-3 z-30 mx-auto flex size-10 items-center justify-center rounded-full border border-border bg-card/90 shadow-md backdrop-blur transition-transform ${
-          !pullOffset ? 'duration-300' : 'duration-75'
+          isRefreshing || !pullOffset ? 'duration-300' : 'duration-0'
         }`}
       >
         <RotateCw

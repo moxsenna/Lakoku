@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useRef, useState, useTransition } from 'react'
+import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
 import {
   calculatePullOffset,
   isPullThresholdMet,
@@ -22,11 +22,34 @@ export function usePullToRefresh({
 
   const startYRef = useRef<number | null>(null)
   const isPullingRef = useRef(false)
+  const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const wasPendingRef = useRef(false)
+
+  const finish = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+    setIsRefreshing(false)
+    setPullOffset(0)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (wasPendingRef.current && !isPending && isRefreshing) {
+      finish()
+    }
+    wasPendingRef.current = isPending
+  }, [isPending, isRefreshing, finish])
 
   const handleTouchStart = useCallback(
     (e: React.TouchEvent) => {
       if (disabled || isRefreshing || isPending) return
-      // Hanya aktif jika posisi scroll berada di pucuk atas layar
       if (typeof window !== 'undefined' && window.scrollY > 0) return
 
       if (e.touches.length === 1) {
@@ -42,7 +65,6 @@ export function usePullToRefresh({
       if (!isPullingRef.current || startYRef.current === null) return
       if (disabled || isRefreshing || isPending) return
 
-      // Jika user scroll ke bawah sebelum menarik, batalkan
       if (typeof window !== 'undefined' && window.scrollY > 0) {
         isPullingRef.current = false
         setPullOffset(0)
@@ -53,8 +75,7 @@ export function usePullToRefresh({
       const diffY = currentY - startYRef.current
 
       if (diffY > 0) {
-        const offset = calculatePullOffset(diffY)
-        setPullOffset(offset)
+        setPullOffset(calculatePullOffset(diffY))
       } else {
         setPullOffset(0)
       }
@@ -64,36 +85,21 @@ export function usePullToRefresh({
 
   const executeRefresh = useCallback(() => {
     setIsRefreshing(true)
-    setPullOffset(50) // Kunci indikator di posisi aktif saat berputar
+    setPullOffset(50)
 
-    let completed = false
-    const finish = () => {
-      if (!completed) {
-        completed = true
-        setIsRefreshing(false)
-        setPullOffset(0)
-      }
-    }
-
-    // Timeout pengaman agar indikator tidak macet jika jaringan lambat
-    const timer = setTimeout(finish, REFRESH_TIMEOUT_MS)
+    timerRef.current = setTimeout(finish, REFRESH_TIMEOUT_MS)
 
     try {
-      startTransition(async () => {
-        try {
-          if (onRefresh) {
-            await onRefresh()
-          }
-        } finally {
-          clearTimeout(timer)
-          finish()
+      startTransition(() => {
+        const result = onRefresh?.()
+        if (result && typeof (result as Promise<void>).then === 'function') {
+          void (result as Promise<void>).finally(finish)
         }
       })
     } catch {
-      clearTimeout(timer)
       finish()
     }
-  }, [onRefresh])
+  }, [onRefresh, finish])
 
   const handleTouchEnd = useCallback(() => {
     if (!isPullingRef.current) return

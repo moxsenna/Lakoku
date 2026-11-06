@@ -14,9 +14,23 @@ export function isAndroidCapacitorApp(ua?: string): boolean {
   return targetUa.includes('LakokuAndroid')
 }
 
-export function isIosDevice(ua?: string): boolean {
+export function isIosDevice(ua?: string, nav?: Navigator): boolean {
   const targetUa = ua ?? (typeof window !== 'undefined' ? window.navigator.userAgent : '')
-  return /iPad|iPhone|iPod/.test(targetUa)
+  const navigatorObj = nav ?? (typeof window !== 'undefined' ? window.navigator : undefined)
+  // iPad modern (iPadOS 13+) mengirim UA desktop MacIntel, tetapi memiliki multi-touch
+  const isTouchMac =
+    navigatorObj !== undefined &&
+    navigatorObj.platform === 'MacIntel' &&
+    (navigatorObj.maxTouchPoints ?? 0) > 1
+  return /iPad|iPhone|iPod/.test(targetUa) || isTouchMac
+}
+
+export function getSafeStorage(): Storage | null {
+  try {
+    return typeof window !== 'undefined' ? window.localStorage : null
+  } catch {
+    return null
+  }
 }
 
 export function isInstallDismissed(

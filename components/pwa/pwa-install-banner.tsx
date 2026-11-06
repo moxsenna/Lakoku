@@ -30,9 +30,9 @@ export function PwaInstallBanner() {
   return (
     <>
       <div
-        role="dialog"
+        role="region"
         aria-live="polite"
-        aria-labelledby="pwa-install-title"
+        aria-label="Saran pemasangan aplikasi"
         className="fixed inset-x-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-40 mx-auto max-w-md rounded-2xl border border-primary/20 bg-card/95 p-4 shadow-2xl backdrop-blur"
       >
         <div className="flex items-start justify-between gap-3">

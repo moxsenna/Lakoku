@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { Smartphone, ChevronRight } from 'lucide-react'
+import { toast } from 'sonner'
 import { usePwaInstall } from './use-pwa-install'
 import { IosInstallDialog } from './ios-install-dialog'
 
@@ -21,6 +22,8 @@ export function PwaInstallRow() {
       const outcome = await promptInstall()
       if (outcome === 'ios') {
         setShowIosGuide(true)
+      } else if (outcome === 'unavailable') {
+        toast.info('Gunakan menu peramban untuk "Tambahkan ke Layar Utama"')
       }
     } finally {
       setIsBusy(false)

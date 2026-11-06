@@ -53,6 +53,9 @@ export const viewport: Viewport = {
 }
 
 const themeInlineHelper = 'self.__name=self.__name||function(target){return target}'
+// Audit BL-4 2026-11-06: tangkap event beforeinstallprompt seawal mungkin di <head>
+// sebelum hidrasi React agar deferred prompt tidak terlewat di Chrome mobile.
+const pwaEarlyPromptHelper = "window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();window.__pwaPrompt=e;});"
 const enableVercelAnalytics = process.env.VERCEL === '1'
 
 export default function RootLayout({
@@ -69,6 +72,10 @@ export default function RootLayout({
       <head>
         <script
           dangerouslySetInnerHTML={{ __html: themeInlineHelper }}
+          suppressHydrationWarning
+        />
+        <script
+          dangerouslySetInnerHTML={{ __html: pwaEarlyPromptHelper }}
           suppressHydrationWarning
         />
       </head>

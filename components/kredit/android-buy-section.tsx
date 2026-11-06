@@ -58,6 +58,10 @@ export function AndroidBuySection({ products }: { products: AndroidProduct[] }) 
   useEffect(() => {
     const store = getBillingStore()
     if (!store) {
+      // Sinkronisasi sistem eksternal (bridge native Capacitor) saat mount:
+      // setState di sini sekali saja untuk menandai store tidak tersedia,
+      // bukan loop render — benign menurut review audit M-A16.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setStoreMissing(true)
       return
     }

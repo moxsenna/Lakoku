@@ -9,20 +9,21 @@
  * Idempotent: hapus canon story lalu insert ulang (delete-then-insert).
  * Memakai service role key — HANYA untuk script/server.
  */
-import { getDb, result } from '@lakoku/db'
+import { getDb, result, type Database } from '@lakoku/db'
+import { sql } from 'kysely'
 import { buildFixtureSnapshot, FIXTURE_STORY_ID } from '../fixtures/narrative/fixture-50'
 
 const db = getDb()
 const STORY = FIXTURE_STORY_ID
 
-async function del(table: any, column = 'story_id') {
+async function del(table: keyof Database & string, column: string = 'story_id') {
   const { error } = await result(
-    db.deleteFrom(table).where(column, '=', STORY).execute(),
+    db.deleteFrom(table).where(sql.ref(column), '=', STORY).execute(),
   )
   if (error) throw new Error(`delete ${table}: ${error.message}`)
 }
 
-async function ins(table: any, rows: any[]) {
+async function ins(table: keyof Database & string, rows: Array<Record<string, unknown>>) {
   if (!rows.length) return
   const { error } = await result(
     db.insertInto(table).values(rows).execute(),

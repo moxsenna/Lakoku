@@ -161,7 +161,7 @@ function db(input: DbInput = {}) {
   const client: Record<string, unknown> = {
     selectFrom: vi.fn((table: string) => {
       calls.push({ table, method: 'from', args: [] })
-      let operation = 'select'
+      const operation = 'select'
       let payload: unknown
       const filters: Array<{ method: string; args: unknown[] }> = []
       const builder: Record<string, unknown> = {}

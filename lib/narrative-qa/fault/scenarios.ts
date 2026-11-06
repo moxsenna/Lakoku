@@ -18,7 +18,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { writeSync } from 'node:fs'
-import { getDb, result as dbResult, single, type Json } from '@lakoku/db'
+import { getDb, result as dbResult, single, type Json, type Database } from '@lakoku/db'
 import { sql } from 'kysely'
 import { generateNextPersonalizedChapter } from '../../runtime/personalized-generation'
 import type { PersonalizedGenerationDeps } from '../../runtime/personalized-generation'
@@ -481,13 +481,30 @@ const ELEVATED_ONLY_CLEANUP_TABLES = new Set([
   'credit_ledger',
 ])
 
+/** Klien lama gaya Supabase (bila caller masih mengirimnya) — shape minimal untuk cleanup. */
+interface LegacyAdminFilter {
+  in: (
+    column: string,
+    values: readonly unknown[],
+  ) => PromiseLike<{ data?: unknown[] | null; error?: { message: string } | null }>
+}
+interface LegacyAdminLike {
+  from: (table: string) => {
+    delete: () => LegacyAdminFilter
+    select: (column: string) => LegacyAdminFilter
+  }
+}
+
 async function deleteAndVerifyExactTargets(
   admin: Admin,
   targets: readonly ExactCleanupTarget[],
   elevatedCleanup?: () => void,
 ): Promise<void> {
   elevatedCleanup?.()
-  const legacyAdmin = admin && typeof (admin as any).from === 'function' ? (admin as any) : null
+  const legacyAdmin =
+    admin && typeof (admin as { from?: unknown }).from === 'function'
+      ? (admin as unknown as LegacyAdminLike)
+      : null
   if (legacyAdmin) {
     for (const target of targets) {
       if (ELEVATED_ONLY_CLEANUP_TABLES.has(target.table)) continue

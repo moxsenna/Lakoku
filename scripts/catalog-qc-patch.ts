@@ -82,7 +82,7 @@ async function main(): Promise<void> {
   const contractUpdate = await result(
     db
       .updateTable('catalog_stories')
-      .set({ contract_json: JSON.stringify(contract) as any })
+      .set({ contract_json: JSON.stringify(contract) })
       .where('story_id', '=', storyId)
       .execute(),
   )
@@ -111,7 +111,7 @@ async function main(): Promise<void> {
     const up = await result(
       db
         .updateTable('chapters')
-        .set({ paragraphs: JSON.stringify(pars) as any })
+        .set({ paragraphs: JSON.stringify(pars) })
         .where('story_id', '=', storyId)
         .where('number', '=', chNum)
         .execute(),
@@ -150,7 +150,7 @@ async function main(): Promise<void> {
   const ch44Update = await result(
     db
       .updateTable('chapters')
-      .set({ choices: JSON.stringify(choices44) as any })
+      .set({ choices: JSON.stringify(choices44) })
       .where('story_id', '=', storyId)
       .where('number', '=', 44)
       .execute(),
@@ -162,7 +162,7 @@ async function main(): Promise<void> {
     const outRes = await result(
       db
         .updateTable('choice_outcomes')
-        .set({ consequence: JSON.stringify(consequence) as any })
+        .set({ consequence: JSON.stringify(consequence) })
         .where('story_id', '=', storyId)
         .where('chapter_number', '=', 44)
         .where('choice_id', '=', choiceId)
@@ -210,7 +210,7 @@ async function main(): Promise<void> {
     const up = await result(
       db
         .updateTable('catalog_ending_chapters')
-        .set({ paragraphs: JSON.stringify(pars) as any })
+        .set({ paragraphs: JSON.stringify(pars) })
         .where('story_id', '=', storyId)
         .where('ending_key', '=', endingKey)
         .where('number', '=', chNum)

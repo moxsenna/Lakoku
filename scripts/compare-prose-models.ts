@@ -5,8 +5,8 @@ import { streamText } from 'ai'
 import {
   buildProductionChapterWriterPrompt,
   parseChapterWriterProse,
-} from '@/lib/ai-gateway/chapter-writer-contract'
-import { evaluateWriterCompleteness } from '@/lib/ai-gateway/writer-completeness'
+  evaluateWriterCompleteness,
+} from '@lakoku/ai-gateway'
 import { countParagraphWords } from '@/lib/prose/clamp-chapter-prose'
 import {
   NADIA_RAKA_BLUEPRINT,
@@ -170,7 +170,7 @@ async function main() {
   for (const t of targets) {
     console.log(`------------------------------------------------------------`)
     console.log(`Menjalankan uji model: ${t.label}...`)
-    let res = await runModel(nine, t.id, promptData.system, promptData.prompt)
+    const res = await runModel(nine, t.id, promptData.system, promptData.prompt)
 
     if (res.status === 'ERROR' && t.fallbackId) {
       console.log(`[!] Panggilan awal ${t.id} gagal: ${res.error?.slice(0, 120)}`)

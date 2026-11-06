@@ -7,7 +7,8 @@
  * Idempotent: bersihkan semua row untuk story ID konstan, lalu insert ulang.
  * Memakai service role key. Jangan pernah jalankan dari browser/client.
  */
-import { getDb, result, countOf } from '@lakoku/db'
+import { getDb, result, countOf, type Database } from '@lakoku/db'
+import { sql } from 'kysely'
 import { buildFixtureSnapshot } from '../fixtures/narrative/fixture-50'
 import {
   DEMO_ENDING_MAJU,
@@ -510,11 +511,11 @@ function admin() {
 
 async function deleteByStoryId(
   _db: unknown,
-  table: any,
-  column = 'story_id',
+  table: keyof Database & string,
+  column: string = 'story_id',
 ) {
   const db = getDb()
-  const { error } = await result(db.deleteFrom(table).where(column, '=', DEMO_STORY_ID).execute())
+  const { error } = await result(db.deleteFrom(table).where(sql.ref(column), '=', DEMO_STORY_ID).execute())
   if (error) throw new Error(`delete ${table}: ${error.message}`)
 }
 
@@ -534,8 +535,8 @@ async function deleteCharacterStates(_db: unknown) {
 
 async function insertRows(
   _db: unknown,
-  table: any,
-  rows: any[],
+  table: keyof Database & string,
+  rows: Array<Record<string, unknown>>,
 ) {
   if (!rows.length) return
   const db = getDb()
@@ -546,16 +547,23 @@ async function insertRows(
 
 async function assertCount(
   _db: unknown,
-  table: any,
+  table: keyof Database & string,
   expected: number,
-  column = 'story_id',
+  column: string = 'story_id',
 ) {
   const db = getDb()
-  const rows = (await db
-    .selectFrom(table)
-    .select((eb: any) => eb.fn.countAll().as('n'))
-    .where(column, '=', DEMO_STORY_ID)
-    .execute()) as Array<{ n?: number | string }>
+  // Tabel dinamis (script seed ops): builder di-cast lokal agar chain tetap
+  // typecheck tanpa menyentuh tipe DB global.
+  const rows = await (
+    db.selectFrom(table) as {
+      select: (expr: unknown) => {
+        where: (...args: unknown[]) => { execute: () => Promise<Array<{ n?: number | string }>> }
+      }
+    }
+  )
+    .select(sql<number>`count(*)`.as('n'))
+    .where(sql.ref(column), '=', DEMO_STORY_ID)
+    .execute()
   const count = Number(rows[0]?.n ?? 0)
   if (count !== expected) {
     throw new Error(`count ${table}: expected ${expected}, got ${count}`)
@@ -586,7 +594,7 @@ export async function seedSelasaDemo() {
     'character_aliases',
     'characters',
   ]) {
-    await deleteByStoryId(db, table)
+    await deleteByStoryId(db, table as keyof Database & string)
   }
   await deleteCharacterStates(db)
   await deleteByStoryId(db, 'stories', 'id')

@@ -19,6 +19,11 @@ const eslintConfig = [
       '.zcode/**',
       '.omo/**',
       '.commandcode/**',
+      // Artefak build & tooling lokal (audit M-A16): bukan kode sumber app.
+      'android/**',
+      '.unlazy/**',
+      '.playwright-cli/**',
+      'chrome-headless-shell-linux64/**',
       'node_modules/**',
       'next-env.d.ts',
       'tsconfig.tsbuildinfo',
@@ -217,6 +222,29 @@ const eslintConfig = [
           ],
         },
       ],
+    },
+  },
+
+  // ---- Pengecualian yang harus datang SETELAH aturan boundary di atas ----
+  // (flat config: blok berikutnya menimpa blok sebelumnya)
+
+  // Arsip diagnostik beku (M10-G): deep-import disengaja untuk menjaga
+  // snapshot bukti apa adanya — tidak dijalankan lagi di produksi.
+  {
+    files: ['scripts/legacy/**'],
+    rules: {
+      'no-restricted-imports': 'off',
+      '@typescript-eslint/no-explicit-any': 'off',
+    },
+  },
+
+  // Test: mock Kysely/bridge banyak memakai `as any` pada builder mock.
+  // Turunkan ke warning agar tetap terlihat tanpa memblok gate (audit M-A16);
+  // kode produksi tetap error.
+  {
+    files: ['tests/**/*.{ts,tsx}'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'warn',
     },
   },
 ]

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { Sparkles, X, Coins, Check, AlertCircle } from 'lucide-react'
@@ -10,6 +10,12 @@ import {
   COVER_PRESET_KEYS,
   type CoverPresetKey,
 } from '@lakoku/contracts'
+
+// Mounted flag via useSyncExternalStore (pola profile-settings): hindari
+// setState sinkron dalam effect + bebas hydration mismatch untuk portal.
+const subscribeToMounted = () => () => {}
+const getMountedSnapshot = () => true
+const getMountedServerSnapshot = () => false
 
 interface StoryCoverDialogProps {
   open: boolean
@@ -36,16 +42,12 @@ export function StoryCoverDialog({
   generating,
   error,
 }: StoryCoverDialogProps) {
-  const [mounted, setMounted] = useState(false)
+  const mounted = useSyncExternalStore(subscribeToMounted, getMountedSnapshot, getMountedServerSnapshot)
   const [selectedPreset, setSelectedPreset] = useState<CoverPresetKey>('sinematik')
   const [customNotes, setCustomNotes] = useState('')
   const [includeTitle, setIncludeTitle] = useState(false)
 
   const isInsufficient = userBalance < cost
-
-  useEffect(() => {
-    setMounted(true)
-  }, [])
 
   useEffect(() => {
     if (!open) return

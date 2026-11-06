@@ -112,6 +112,9 @@ export default function GlobalError({
             >
               {isServerActionMismatch ? 'Muat Ulang Halaman' : 'Coba Lagi'}
             </button>
+            {/* global-error menggantikan root layout: router SPA tidak stabil —
+                <a> sengaja agar full reload bersih dari server (review M-A16). */}
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a
               href="/"
               style={{

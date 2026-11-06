@@ -44,12 +44,24 @@ export function rateLimit(
   return { ok: true, retryAfterSec: 0 }
 }
 
-/** IP klien dari header standar di balik reverse proxy (Caddy). */
+/**
+ * IP klien dari header standar di balik reverse proxy (audit M-A8).
+ *
+ * Urutan kepercayaan: `cf-connecting-ip` (di-set Cloudflare, tidak bisa
+ * di-spoof pembaca saat trafik lewat CF) → `x-real-ip` (di-set proxy kita) →
+ * entri TERAKHIR `x-forwarded-for` (hop terdekat dengan aplikasi; entri
+ * pertama dikontrol klien dan bisa dipalsukan) → 'unknown'.
+ */
 export function clientIpFrom(req: Request): string {
+  const cf = req.headers.get('cf-connecting-ip')?.trim()
+  if (cf) return cf
+  const real = req.headers.get('x-real-ip')?.trim()
+  if (real) return real
   const fwd = req.headers.get('x-forwarded-for')
   if (fwd) {
-    const first = fwd.split(',')[0]?.trim()
-    if (first) return first
+    const parts = fwd.split(',').map((p) => p.trim()).filter(Boolean)
+    const last = parts[parts.length - 1]
+    if (last) return last
   }
-  return req.headers.get('x-real-ip')?.trim() || 'unknown'
+  return 'unknown'
 }

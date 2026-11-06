@@ -11,6 +11,11 @@ export type RedeemActionResult =
 export async function actRedeemCredits(amountIdr: number): Promise<RedeemActionResult> {
   const user = await getSessionUser()
   if (!user) return { ok: false, error: 'Silakan masuk terlebih dahulu' }
+  // Audit NIT: validasi dulu agar float/NaN menghasilkan pesan pembaca,
+  // bukan error konversi tipe mentah dari RPC.
+  if (typeof amountIdr !== 'number' || !Number.isInteger(amountIdr) || amountIdr <= 0) {
+    return { ok: false, error: 'Jumlah penukaran tidak valid' }
+  }
 
   try {
     const result = await redeemRewardCredits(user.id, amountIdr)

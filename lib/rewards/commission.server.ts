@@ -38,12 +38,11 @@ export async function applyReferralCommission(
     return { applied: false, reason: 'no_attribution' }
   }
 
-  // 2. Cek apakah masih dalam jendela waktu
-  const nowIso = new Date().toISOString()
-  const windowEndsAt = attribution.window_ends_at instanceof Date
-    ? attribution.window_ends_at.toISOString()
-    : String(attribution.window_ends_at)
-  if (windowEndsAt < nowIso) {
+  // 2. Cek apakah masih dalam jendela waktu (audit NIT: bandingkan epoch,
+  // bukan string ISO — format 'YYYY-MM-DD HH:mm:ss+00' dari driver bisa
+  // salah urut saat dibandingkan sebagai string).
+  const windowEndsMs = new Date(attribution.window_ends_at).getTime()
+  if (!Number.isFinite(windowEndsMs) || windowEndsMs < Date.now()) {
     return { applied: false, reason: 'window_expired' }
   }
 

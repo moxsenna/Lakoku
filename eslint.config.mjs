@@ -247,6 +247,16 @@ const eslintConfig = [
       '@typescript-eslint/no-explicit-any': 'warn',
     },
   },
+
+  // Blok beku M10-E (bukti E1/E2): scenarios.ts di-pin byte-per-byte oleh
+  // manifest closure — perubahan sekecil apa pun mematahkan regresi
+  // `m10-e-e1-e2-closure-regression`. `as any` legacy dibiarkan apa adanya.
+  {
+    files: ['lib/narrative-qa/fault/scenarios.ts'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
+    },
+  },
 ]
 
 export default eslintConfig

@@ -115,4 +115,25 @@ describe('app/api/mcp/seed/route', () => {
     const json = await res.json() as { result: { sub: string | null } }
     expect(json.result.sub).toBeNull()
   })
+
+  it('POST mengembalikan 429 saat melebihi batas IP rate limit 120req/menit', async () => {
+    const { POST } = await import('@/app/api/mcp/seed/route')
+    const ip = '192.168.1.100'
+    for (let i = 0; i < 120; i++) {
+      const req = new Request('https://lakoku.test/api/mcp/seed', {
+        method: 'POST',
+        body: JSON.stringify({ jsonrpc: '2.0', id: i, method: 'tools/list' }),
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': ip },
+      })
+      const res = await POST(req)
+      expect(res.status).toBe(200)
+    }
+    const blockedReq = new Request('https://lakoku.test/api/mcp/seed', {
+      method: 'POST',
+      body: JSON.stringify({ jsonrpc: '2.0', id: 121, method: 'tools/list' }),
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': ip },
+    })
+    const blockedRes = await POST(blockedReq)
+    expect(blockedRes.status).toBe(429)
+  })
 })

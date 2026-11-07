@@ -90,6 +90,7 @@ async function uniqueStoryId(judul: string): Promise<string> {
 /** Allowlist + rate limit untuk SETIAP tool call (sub dari token OAuth). */
 function guard(sub: string): void {
   const env = seedEnv()
+  if (!env.enabled) throw new Error('MCP_SEED_DISABLED: fitur belum diaktifkan di server')
   assertToolUser(sub, env.allowedUserIds)
   const limiter = toolRateLimit(sub)
   if (!limiter.ok) throw new Error(`MCP_RATE_LIMITED: coba lagi dalam ${limiter.retryAfterSec} detik`)
@@ -168,7 +169,7 @@ async function progressOf(contract: StoryContract, storyId: string): Promise<{
   }
 }
 
-export function buildSeedToolHandlers(): SeedToolHandlers {
+export function buildSeedToolHandlers(opts?: { submitPollMs?: number; submitTimeoutMs?: number }): SeedToolHandlers {
   return {
     async assignNovel(raw, sub) {
       guard(sub)
@@ -243,12 +244,39 @@ export function buildSeedToolHandlers(): SeedToolHandlers {
       } catch (err) {
         throw new Error(`${(err as Error).message} | kirim ulang dengan format: baris pertama "# Judul", paragraf dipisah baris kosong`)
       }
+      const parkedInstruction = pump.store.instruction(key)
+      if (!parkedInstruction) {
+        throw new Error('MCP_UNIT_NOT_PENDING: tidak ada generasi menunggu untuk unit ini (mungkin kadaluarsa) — ambil ulang seed_get_unit_spec')
+      }
+      const submittedAttempt = parkedInstruction.attempt
       const resolved = pump.store.resolve(key, prose)
       if (!resolved) {
         throw new Error('MCP_UNIT_NOT_PENDING: tidak ada generasi menunggu untuk unit ini (mungkin kadaluarsa) — ambil ulang seed_get_unit_spec')
       }
-      const committed = await pump.commits.waitCommitted(input.novel_id, key, 180_000)
-      if (committed) {
+      const deadline = Date.now() + (opts?.submitTimeoutMs ?? 90_000)
+      const pollIntervalMs = opts?.submitPollMs ?? 500
+      while (Date.now() < deadline) {
+        if (pump.commits.committed(input.novel_id, key)) {
+          return {
+            status: 'accepted',
+            unit_index: input.unit_index,
+            progress: await progressOf(contract, input.novel_id),
+            next: pump.isRunning(input.novel_id)
+              ? 'Unit berikutnya siap diambil via seed_get_unit_spec.'
+              : 'Semua unit tersimpan — panggil seed_finalize_novel.',
+          }
+        }
+        const pumpError = pump.lastError(input.novel_id)
+        if (pumpError) {
+          throw new Error(`MCP_UNIT_REJECTED:${pumpError} — panggil seed_get_unit_spec untuk percobaan perbaikan`)
+        }
+        const nextInstruction = pump.store.instruction(key)
+        if (nextInstruction && nextInstruction.attempt > submittedAttempt) {
+          throw new Error(`MCP_UNIT_REJECTED: attempt ${submittedAttempt} ditolak validator — ambil ulang seed_get_unit_spec untuk instruksi perbaikan (repairFindings)`)
+        }
+        await new Promise((r) => setTimeout(r, pollIntervalMs))
+      }
+      if (pump.commits.committed(input.novel_id, key)) {
         return {
           status: 'accepted',
           unit_index: input.unit_index,
@@ -262,10 +290,11 @@ export function buildSeedToolHandlers(): SeedToolHandlers {
       if (pumpError) {
         throw new Error(`MCP_UNIT_REJECTED:${pumpError} — panggil seed_get_unit_spec untuk percobaan perbaikan`)
       }
-      if (pump.isRunning(input.novel_id)) {
-        throw new Error('MCP_UNIT_REJECTED: validasi bab gagal — ambil ulang seed_get_unit_spec untuk instruksi perbaikan (repairFindings)')
+      const nextInstruction = pump.store.instruction(key)
+      if (nextInstruction && nextInstruction.attempt > submittedAttempt) {
+        throw new Error(`MCP_UNIT_REJECTED: attempt ${submittedAttempt} ditolak validator — ambil ulang seed_get_unit_spec untuk instruksi perbaikan (repairFindings)`)
       }
-      throw new Error('MCP_UNIT_TIMEOUT: generasi bab tidak selesai dalam 180 detik — cek seed_get_novel_status')
+      throw new Error('MCP_UNIT_TIMEOUT: generasi bab tidak selesai dalam 90 detik — cek seed_get_novel_status')
     },
     async getNovelStatus(raw, sub) {
       guard(sub)

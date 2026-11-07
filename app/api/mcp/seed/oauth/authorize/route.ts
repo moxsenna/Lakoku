@@ -28,8 +28,23 @@ async function sessionAdmin(_req: Request): Promise<{ id: string; email: string 
   const role = await getAdminRole(user.id)
   if (!role) return null
   const env = seedEnv()
-  if (env.allowedUserIds.length > 0 && !env.allowedUserIds.includes(user.id)) return null
+  if (!env.allowedUserIds.includes(user.id)) return null
   return { id: user.id, email: user.email }
+}
+
+/**
+ * Validasi redirect_uri. Bila env MCP_SEED_OAUTH_REDIRECT_URIS diisi (koma),
+ * wajib cocok persis dengan salah satu entri. Bila kosong, hanya validasi https://.
+ * Catatan: default longgar karena redirect URI Gemini belum diketahui saat spike;
+ * diperketat dengan env setelah diketahui.
+ */
+function isValidRedirectUri(uri: string): boolean {
+  if (!uri.startsWith('https://')) return false
+  const rawList = process.env.MCP_SEED_OAUTH_REDIRECT_URIS
+  if (!rawList) return true
+  const allowed = rawList.split(',').map((u) => u.trim()).filter(Boolean)
+  if (allowed.length === 0) return true
+  return allowed.includes(uri)
 }
 
 export async function GET(req: Request): Promise<Response> {
@@ -52,8 +67,8 @@ export async function GET(req: Request): Promise<Response> {
   if (clientId !== configuredClientId) {
     return NextResponse.json({ error: 'client_id tidak dikenal.' }, { status: 400 })
   }
-  if (!redirectUri.startsWith('https://')) {
-    return NextResponse.json({ error: 'redirect_uri wajib https.' }, { status: 400 })
+  if (!isValidRedirectUri(redirectUri)) {
+    return NextResponse.json({ error: 'redirect_uri tidak diizinkan.' }, { status: 400 })
   }
   if (!codeChallenge) {
     return NextResponse.json({ error: 'code_challenge (PKCE S256) wajib.' }, { status: 400 })
@@ -80,7 +95,7 @@ export async function POST(req: Request): Promise<Response> {
   const state = String(form.get('state') ?? '')
   const scope = String(form.get('scope') ?? 'seed')
   const codeChallenge = String(form.get('code_challenge') ?? '')
-  if (clientId !== configuredClientId || !redirectUri.startsWith('https://') || !codeChallenge) {
+  if (clientId !== configuredClientId || !isValidRedirectUri(redirectUri) || !codeChallenge) {
     return NextResponse.json({ error: 'Permintaan tidak valid.' }, { status: 400 })
   }
   const code = randomToken(32)

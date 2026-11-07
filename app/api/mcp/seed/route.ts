@@ -1,3 +1,4 @@
+import { clientIpFrom, rateLimit } from '@/lib/security/rate-limit'
 import { verifyAccessToken } from '@/lib/mcp-seed/oauth-core'
 import { handleMcpRpc } from '@/lib/mcp-seed/dispatch.server'
 import { buildSeedToolHandlers } from '@/lib/mcp-seed/wiring.server'
@@ -11,6 +12,9 @@ function siteOrigin(req: Request): string {
 }
 
 export async function POST(req: Request): Promise<Response> {
+  const limiter = rateLimit('mcp-rpc:' + clientIpFrom(req), 120, 60_000)
+  if (!limiter.ok) return new Response(null, { status: 429 })
+
   const origin = siteOrigin(req)
   const auth = req.headers.get('authorization')
   const token = auth?.startsWith('Bearer ') ? auth.slice(7) : null

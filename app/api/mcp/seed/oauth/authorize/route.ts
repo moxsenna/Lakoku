@@ -15,7 +15,7 @@ function siteOrigin(req: Request): string {
 
 function loginRedirect(req: Request): Response {
   const next = encodeURIComponent(new URL(req.url).pathname + '?' + new URL(req.url).searchParams.toString())
-  return NextResponse.redirect(`${siteOrigin(req)}/login?next=${next}`, 302)
+  return NextResponse.redirect(`${siteOrigin(req)}/auth/login?next=${next}`, 302)
 }
 
 function paramsOf(req: Request): URLSearchParams {

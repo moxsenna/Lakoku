@@ -49,7 +49,7 @@ describe('app/api/mcp/seed/oauth/authorize/route (F2 & F4)', () => {
     })
     const res = await GET(req)
     expect(res.status).toBe(302)
-    expect(res.headers.get('location')).toContain('/login?next=')
+    expect(res.headers.get('location')).toContain('/auth/login?next=')
   })
 
   it('F2: user tidak ada di allowlist fail-closed (redirect login)', async () => {
@@ -60,7 +60,7 @@ describe('app/api/mcp/seed/oauth/authorize/route (F2 & F4)', () => {
     })
     const res = await GET(req)
     expect(res.status).toBe(302)
-    expect(res.headers.get('location')).toContain('/login?next=')
+    expect(res.headers.get('location')).toContain('/auth/login?next=')
   })
 
   it('F2: POST menolak 401 bila user tidak ada di allowlist', async () => {

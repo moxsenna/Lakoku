@@ -2,8 +2,7 @@ import 'server-only'
 import { getDb, single } from '@lakoku/db'
 import { createProviderFromExactRoutes } from '@lakoku/ai-gateway/server'
 import { DEFAULT_RUNTIME_POLICY, type GenerationProvider } from '@lakoku/ai-gateway'
-import { toAiModelRoute, assertM10GG1RouteAuthority } from '@/lib/narrative-qa/contracts/m10-g-g1-route-authority.contract'
-import { M10_G_G1_9ROUTER_ROUTE_AUTHORITY } from '../../fixtures/m10-g/g1-route-authority-9router'
+import type { AiModelRoute } from '@/lib/ops/ai-model-routes'
 import { createCatalogDraft, createDbCatalogWriter, resolveCatalogSource } from '@/lib/catalog/generator-db.server'
 import { assertCatalogStoryId } from '@/lib/catalog/catalog-contract'
 import { resolveGenreId, GENRE_BY_LABEL } from '@/lib/taste-profile/catalog'
@@ -13,16 +12,65 @@ import { assertAssignAllowed, assertToolUser, seedEnv, toolRateLimit, type SeedV
 import type { SeedToolHandlers } from '@/lib/mcp-seed/dispatch.server'
 import type { StoryContract } from '@/lib/story-engine/story-contract'
 
-/** Provider 9Router terkualifikasi (kontrak/reaksi/pilihan). FROZEN M10-G. */
+/**
+ * Route server-side MCP: nilai field meniru otoritas beku M10-G, tapi modelId
+ * dapat dioverride env (MCP_SEED_INNER_*_ROUTE) tanpa menyentuh fixture beku.
+ * Konteks Nov 2026: 9Router menghapus provider `gemini-web` setelah migrasi
+ * skema, jadi produksi memakai `ag/*` (antigravity) yang hidup.
+ */
+function envRoute(args: {
+  useCase: AiModelRoute['useCase']
+  envName: string
+  defaultModelId: string
+  temperature: number | null
+  maxOutputTokens: number | null
+  reasoningEffort?: 'none'
+  routeVersion: string
+}): AiModelRoute {
+  const modelId = process.env[args.envName]?.trim() || args.defaultModelId
+  return {
+    useCase: args.useCase,
+    provider: '9router',
+    modelId,
+    fallbackModels: [],
+    temperature: args.temperature,
+    maxOutputTokens: args.maxOutputTokens,
+    ...(args.reasoningEffort ? { reasoningEffort: args.reasoningEffort } : {}),
+    routeVersion: args.routeVersion,
+  }
+}
+
+/** Provider 9Router untuk kontrak/pilihan/reaksi (prosa tetap dari agent Gemini). */
 function innerProvider(): GenerationProvider {
   const baseUrl = process.env.NINEROUTER_BASE_URL
   const apiKey = process.env.NINEROUTER_API_KEY
   if (!baseUrl || !apiKey) throw new Error('MISSING_NINEROUTER_CREDENTIALS')
-  const authority = assertM10GG1RouteAuthority(M10_G_G1_9ROUTER_ROUTE_AUTHORITY)
   return createProviderFromExactRoutes({
-    writerRoute: toAiModelRoute(authority, 'writer'),
-    choicesRoute: toAiModelRoute(authority, 'choice'),
-    judgeRoute: toAiModelRoute(authority, 'continuity'),
+    writerRoute: envRoute({
+      useCase: 'chapter_prose',
+      envName: 'MCP_SEED_INNER_WRITER_ROUTE',
+      defaultModelId: 'gweb/gemini-3.1-pro',
+      temperature: null,
+      maxOutputTokens: 4096,
+      reasoningEffort: 'none',
+      routeVersion: 'mcp-seed-env-writer-v1',
+    }),
+    choicesRoute: envRoute({
+      useCase: 'choices',
+      envName: 'MCP_SEED_INNER_CHOICES_ROUTE',
+      defaultModelId: 'gweb/gemini-3.8-flash',
+      temperature: 0.1,
+      maxOutputTokens: 1024,
+      routeVersion: 'mcp-seed-env-choices-v1',
+    }),
+    judgeRoute: envRoute({
+      useCase: 'continuity_judge',
+      envName: 'MCP_SEED_INNER_JUDGE_ROUTE',
+      defaultModelId: 'gweb/gemini-3.8-flash',
+      temperature: 0,
+      maxOutputTokens: 512,
+      routeVersion: 'mcp-seed-env-judge-v1',
+    }),
     generationPolicy: DEFAULT_RUNTIME_POLICY,
   })
 }

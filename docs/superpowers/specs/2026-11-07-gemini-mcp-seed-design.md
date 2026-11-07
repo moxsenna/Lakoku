@@ -35,7 +35,7 @@ lib/catalog/generator.server.ts  ← ekstraksi: buildUnitSpec() + validateAndSto
 
 - Endpoint tinggal di app produksi Next.js yang sudah live di VPS; Caddy tidak berubah (path baru di origin sama).
 - **Tidak ada refactor `generator.server.ts`.** Penulisan plan menemukan seam yang lebih bersih: `CatalogGeneratorDeps.provider` sudah pluggable — jalur MCP memakai **dekorator `GenerationProvider`** (`mcp-gemini-agent-v1`) yang hanya menggantikan `writeChapter` (prosa di-park sebagai unit spec yang diambil agent), sementara `generatePlan`/choices/reactions/kontrak/judge tetap delegasi ke provider 9Router terkualifikasi. Jalur CLI tak tersentuh (smoke lama otomatis tetap hijau). Detail implementasi: `docs/superpowers/plans/2026-11-07-gemini-mcp-seed.md`.
-- Prosa = agent Gemini (kuota PM). Choices, fork 3 ending, continuity check = server-side dengan mesin yang ada (flash via 9Router, diikat E0CostGuard).
+- Prosa = agent Gemini (kuota PM). **Full-Gemini (revisi 2026-11-07 sore, keputusan PM):** choices + reaksi JUGA ditulis agent dalam `seed_submit_unit` (`choices_directive` per unit: `agent` / `ending_lock` / `none`); effects + id + bias ending bab 44 dihitung server-side deterministik via hook `choiceSupplier` di generator (non-breaking untuk CLI); contract memakai jalur template resilient + overlay premis (nol model); continuity judge flash dihapus dari jalur MCP. **Jalur MCP nol panggilan 9Router** — konteks: provider `gemini-web` hilang dari 9Router (migrasi skema 4 Nov). Semua teks reader-facing tetap lolos guard yang sama (`assertCatalogChapterConsumerSafe` + `validateCatalogReactions`).
 
 ## 4. Tool surface (kontrak)
 

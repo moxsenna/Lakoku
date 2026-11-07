@@ -90,10 +90,37 @@ export interface CatalogGeneratorWriter {
   markReview(storyId: string): Promise<void>
 }
 
+/** Pilihan + reaksi dari sumber luar (full-Gemini MCP): teks sudah tervalidasi pemanggil. */
+export interface CatalogAgentChoice {
+  label: string
+  consequence: string[]
+}
+
+export interface CatalogAgentChoices {
+  choicePrompt: string
+  choices: CatalogAgentChoice[]
+}
+
+export interface CatalogChoiceSupplierArgs {
+  storyId: string
+  chapterNumber: number
+  endingKey: string | null
+  forceEndingChoices: boolean
+}
+
+export type CatalogChoiceSupplier = (
+  args: CatalogChoiceSupplierArgs,
+) => Promise<CatalogAgentChoices | null>
+
 export interface CatalogGeneratorDeps {
   provider: GenerationProvider
   writer: CatalogGeneratorWriter
   policy?: GenerationRuntimePolicy
+  /**
+   * Full-Gemini MCP: sumber pilihan+reaksi per bab tanpa panggilan model
+   * server. Null/absen → jalur model legacy (CLI generator tak tersentuh).
+   */
+  choiceSupplier?: CatalogChoiceSupplier
 }
 
 /**
@@ -282,7 +309,7 @@ function truncateAtWord(text: string, max: number): string {
   return (lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trim()
 }
 
-function endingLockChoiceLabel(candidateName: string, condition: string): string {
+export function endingLockChoiceLabel(candidateName: string, condition: string): string {
   const fromCondition = truncateAtWord(condition, 90)
   if (fromCondition.length >= 8 && isReaderSafeParagraph(fromCondition)) return fromCondition
   const fromName = truncateAtWord(candidateName, 90)
@@ -544,6 +571,7 @@ async function buildChapterOutput(deps: CatalogGeneratorDeps, args: {
   let choicePrompt: string | null = null
   let choices: Array<{ id: string; label: string }> = []
   let effectByChoice = new Map<string, Record<string, unknown>>()
+  let suppliedReactions: CatalogReaction[] | null = null
 
   if (args.chapterNumber >= CATALOG_VARIANT_FIRST_CHAPTER && args.nextChapterNumber === null) {
     // Bab 50: penutup tanpa pilihan.
@@ -559,7 +587,39 @@ async function buildChapterOutput(deps: CatalogGeneratorDeps, args: {
     return closingChapter
   }
 
-  if (isEndingLock) {
+  const supplierChoices = deps.choiceSupplier
+    ? await deps.choiceSupplier({
+        storyId: args.storyId,
+        chapterNumber: args.chapterNumber,
+        endingKey: args.lockedEndingKey,
+        forceEndingChoices: isEndingLock,
+      })
+    : null
+
+  if (supplierChoices) {
+    // Full-Gemini: label + reaksi dari agent (sudah tervalidasi wiring),
+    // effects deterministik server-side. Bab 44: bias ending tetap dipasang
+    // per kandidat supaya matriks fork 3 ending tak berubah.
+    choices = supplierChoices.choices.map((choice, index) => ({
+      id: `ch${args.chapterNumber}-opt-${index + 1}`,
+      label: choice.label,
+    }))
+    choicePrompt = supplierChoices.choicePrompt
+    effectByChoice = new Map(choices.map((choice, index) => {
+      const effect: Record<string, unknown> = {
+        flagsSet: { [`ch${args.chapterNumber}_opt_${index + 1}`]: true },
+      }
+      if (isEndingLock) {
+        const candidates = assertCatalogContract(args.contract).endingCandidates
+        effect.endingBiasDeltas = { [candidates[index]!.key]: ENDING_LOCK_BIAS_DELTA }
+      }
+      return [choice.id, effect]
+    }))
+    suppliedReactions = supplierChoices.choices.map((choice, index) => ({
+      choiceId: choices[index]!.id,
+      paragraphs: choice.consequence,
+    }))
+  } else if (isEndingLock) {
     const candidates = assertCatalogContract(args.contract).endingCandidates
     choices = candidates.map((candidate, index) => ({
       id: `ch44-opt-${index + 1}`,
@@ -586,7 +646,7 @@ async function buildChapterOutput(deps: CatalogGeneratorDeps, args: {
     effectByChoice = new Map(branch.outcomes.map((outcome) => [outcome.choiceId, outcome.effect]))
   }
 
-  const reactions = await generateReactionsWithRetry(deps, {
+  const reactions = suppliedReactions ?? await generateReactionsWithRetry(deps, {
     runId: args.runId,
     storyId: args.storyId,
     chapterNumber: args.chapterNumber,

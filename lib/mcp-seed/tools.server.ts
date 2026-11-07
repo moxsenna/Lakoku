@@ -25,6 +25,11 @@ const submitUnitSchema = z.object({
   novel_id: z.string().trim().min(1).max(120),
   unit_index: z.number().int().min(0).max(61),
   prose_markdown: z.string().min(200).max(40_000),
+  choice_prompt: z.string().trim().min(8).max(200).optional(),
+  choices: z.array(z.object({
+    label: z.string().trim().min(4).max(120),
+    reaction: z.array(z.string().trim().min(20).max(800)).min(1).max(2),
+  })).min(2).max(3).optional(),
 })
 
 const novelRefSchema = z.object({
@@ -73,7 +78,7 @@ export const SEED_TOOLS: ReadonlyArray<{
   },
   {
     name: 'seed_get_unit_spec',
-    description: 'Ambil spesifikasi unit berikutnya yang harus ditulis (prompt lengkap + aturan format). Balas dengan seed_submit_unit.',
+    description: 'Ambil spesifikasi unit berikutnya (prompt lengkap + choices_directive: agent = sertakan 2-3 choices; ending_lock = tulis reaksi untuk ending_lock_labels; none = tanpa choices). Balas dengan seed_submit_unit.',
     annotations: { readOnlyHint: true },
     inputSchema: schemaOf({
       novel_id: { type: 'string' },
@@ -82,12 +87,25 @@ export const SEED_TOOLS: ReadonlyArray<{
   },
   {
     name: 'seed_submit_unit',
-    description: 'Kirim prosa unit (judul baris pertama dengan "# ", paragraf dipisah baris kosong). Server memvalidasi; bila ditolak perbaiki lalu kirim ulang.',
+    description: 'Kirim prosa unit (judul baris pertama "# ", paragraf dipisah baris kosong) + choices sesuai choices_directive: choice_prompt, lalu 2-3 choices berisi label + reaction (1-2 paragraf per pilihan; total 40-220 kata). Untuk ending_lock, label dikunci server — cukup kirim reaksi berurutan tanpa label.',
     annotations: { readOnlyHint: false },
     inputSchema: schemaOf({
       novel_id: { type: 'string' },
       unit_index: { type: 'integer', minimum: 0, maximum: 61 },
       prose_markdown: { type: 'string' },
+      choice_prompt: { type: 'string', description: 'Pertanyaan pilihan ke pembaca (wajib bila choices_directive = agent)' },
+      choices: {
+        type: 'array',
+        description: 'Wajib bila choices_directive = agent atau ending_lock. Untuk ending_lock kirim tepat 3 reaksi berurutan (label diabaikan).',
+        items: {
+          type: 'object',
+          properties: {
+            label: { type: 'string', description: 'Label pilihan (8-120 karakter)' },
+            reaction: { type: 'array', items: { type: 'string' }, description: '1-2 paragraf reaksi, total 40-220 kata' },
+          },
+          required: ['label', 'reaction'],
+        },
+      },
     }, ['novel_id', 'unit_index', 'prose_markdown']),
   },
   {

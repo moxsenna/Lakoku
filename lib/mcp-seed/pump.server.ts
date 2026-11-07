@@ -17,6 +17,8 @@ import {
 } from '@/lib/catalog/catalog-contract'
 import {
   generateCatalogNovel,
+  type CatalogAgentChoices,
+  type CatalogChoiceSupplier,
   type CatalogGeneratedChapter,
   type CatalogGeneratorStoryState,
   type CatalogGeneratorWriter,
@@ -95,7 +97,24 @@ export function createMcpSeedPump(deps: {
   const policy = deps.policy ?? DEFAULT_RUNTIME_POLICY
   const proseTimeoutMs = deps.proseTimeoutMs ?? 1_800_000
 
-  const store: AgentProseStore = deps.store ?? createAgentProseStore({ timeoutMs: proseTimeoutMs })
+  const baseStore: AgentProseStore = deps.store ?? createAgentProseStore({ timeoutMs: proseTimeoutMs })
+  // Full-Gemini: payload choices+reaksi per (storyId|unitKey), diisi saat
+  // wiring men-resolve pending unit, dikonsumsi choiceSupplier di generator.
+  const payloads = new Map<string, CatalogAgentChoices>()
+  const store: AgentProseStore = {
+    ...baseStore,
+    resolve(key, prose) {
+      const ok = baseStore.resolve(key, prose)
+      if (ok && prose.storyId && prose.chapterChoices) {
+        payloads.set(`${prose.storyId}|${key}`, prose.chapterChoices)
+      }
+      return ok
+    },
+  }
+  const choiceSupplier: CatalogChoiceSupplier = async (args) => {
+    const key = unitKeyOf(args.endingKey, args.chapterNumber)
+    return payloads.get(`${args.storyId}|${key}`) ?? null
+  }
 
   const commitKeys = new Map<string, Set<string>>()
   const commitWaiters = new Map<string, Array<{ key: string; resolve: (ok: boolean) => void }>>()
@@ -209,7 +228,7 @@ export function createMcpSeedPump(deps: {
             }
           }
           await generateCatalogNovel(
-            { provider, writer: trackingWriter, policy },
+            { provider, writer: trackingWriter, policy, choiceSupplier },
             {
               storyId,
               log: (message) => console.log(`[mcp-seed:${storyId}] ${message}`),
@@ -221,6 +240,9 @@ export function createMcpSeedPump(deps: {
         } finally {
           entry.running = false
           store.rejectAll(storyId, 'MCP_PUMP_STOPPED')
+          for (const key of [...payloads.keys()]) {
+            if (key.startsWith(`${storyId}|`)) payloads.delete(key)
+          }
         }
       })()
     },

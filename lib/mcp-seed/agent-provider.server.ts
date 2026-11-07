@@ -66,6 +66,10 @@ export const AGENT_FORMAT_RULES: readonly string[] = [
 export interface AgentProseResult {
   title: string
   paragraphs: string[]
+  /** Full-Gemini: identitas novel (untuk keying payload choices di pump). */
+  storyId?: string
+  /** Full-Gemini: choices+reaksi agent (sudah tervalidasi wiring). */
+  chapterChoices?: import('@/lib/catalog/generator.server').CatalogAgentChoices
 }
 
 export function parseAgentProse(markdown: string): AgentProseResult {
@@ -387,7 +391,28 @@ export function createAutoResponderProseStore(): AgentProseStore {
         idx++
       }
       void pending.catch(() => undefined)
-      inner.resolve(key, { title: `Bab ${instruction.chapterNumber}`, paragraphs: body })
+      // Full-Gemini smoke: auto-responder ikut memasok choices+reaksi agar
+      // jalur choiceSupplier tereksekusi tanpa model server.
+      const reactionA = [
+        `Keputusan itu menghantam pikiranku lebih keras dari dugaan semalam, dan udara di ruangan ini terasa mengental setiap kali aku mencoba menarik napas dengan tenang lagi.`,
+        `Aku menyelesaikan satu hal kecil yang tertunda, lalu satu lagi, seolah urutan kecil itu bisa menahan dunia agar tidak berubah terlalu cepat di malam seperti ini.`,
+      ]
+      const reactionB = [
+        `Langkah kaki di lorong meredup, dan untuk pertama kalinya sejak pagi aku berani mengaku bahwa rasa penasaranku lebih besar daripada rasa takutku akan jawabannya sendiri.`,
+        `Aku mencatat satu nama, satu jam, dan satu alamat di balik halaman buku, lalu menutupnya perlahan sambil berjanji membukanya lagi saat jam dinding menunjukkan pukul dua pagi.`,
+      ]
+      inner.resolve(key, {
+        title: `Bab ${instruction.chapterNumber}`,
+        paragraphs: body,
+        storyId: instruction.storyId,
+        chapterChoices: {
+          choicePrompt: 'Apa langkah yang akan kamu ambil?',
+          choices: [
+            { label: `Ikuti jejak yang baru saja kau temukan malam ini`, consequence: reactionA },
+            { label: `Tahan langkah dan amankan bukti lebih dulu`, consequence: reactionB },
+          ],
+        },
+      })
       return pending
     },
     instruction: (key) => inner.instruction(key),

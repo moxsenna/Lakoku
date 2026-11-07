@@ -104,6 +104,23 @@ describe('wiring.server (F1 & F3)', () => {
   const origNineKey = process.env.NINEROUTER_API_KEY
   const sampleProse = '# Bab 1\n\n' + 'Ini adalah isi cerita uji validasi yang memuat cukup karakter untuk memenuhi syarat panjang minimal.'.repeat(3)
 
+  // Full-Gemini: payload choices agent untuk submitUnit (unit spine → directive agent).
+  const reactionParagraph = (seed: string): string =>
+    `${seed} Aku menarik napas perlahan sambil memperhatikan sudut ruangan yang mulai meredup, membiarkan pikiranku mengatur ulang langkah demi langkah yang harus diambil sebelum waktu menentukan jawabannya, dan akhirnya memutuskan untuk bergerak tanpa menoleh ke belakang lagi.`
+  const agentChoices = {
+    choice_prompt: 'Apa langkah yang akan kamu ambil?',
+    choices: [
+      {
+        label: 'Ikuti jejak yang baru saja kau temukan',
+        reaction: [reactionParagraph('Jejak itu menuntunku ke lorong belakang sekolah tua.')],
+      },
+      {
+        label: 'Tahan langkah dan amankan bukti dulu',
+        reaction: [reactionParagraph('Kuputuskan menunggu di balik pintu sampai langkah itu benar-benar menjauh.')],
+      },
+    ],
+  }
+
   beforeEach(() => {
     process.env.MCP_SEED_ENABLED = '1'
     process.env.MCP_SEED_ALLOWED_USER_IDS = 'user-valid'
@@ -172,6 +189,7 @@ describe('wiring.server (F1 & F3)', () => {
         novel_id: 'catalog:uji-wiring',
         unit_index: 0,
         prose_markdown: sampleProse,
+        ...agentChoices,
       }, 'user-valid')
 
       expect(res.status).toBe('accepted')
@@ -187,6 +205,7 @@ describe('wiring.server (F1 & F3)', () => {
         novel_id: 'catalog:uji-wiring',
         unit_index: 0,
         prose_markdown: sampleProse,
+        ...agentChoices,
       }, 'user-valid')).rejects.toThrow(/MCP_UNIT_REJECTED:DATABASE_DEADLOCK/)
     })
 
@@ -207,6 +226,7 @@ describe('wiring.server (F1 & F3)', () => {
         novel_id: 'catalog:uji-wiring',
         unit_index: 0,
         prose_markdown: sampleProse,
+        ...agentChoices,
       }, 'user-valid')).rejects.toThrow(/MCP_UNIT_REJECTED: attempt 1 ditolak validator — ambil ulang seed_get_unit_spec untuk instruksi perbaikan \(repairFindings\)/)
     })
 
@@ -229,6 +249,7 @@ describe('wiring.server (F1 & F3)', () => {
         novel_id: 'catalog:uji-wiring',
         unit_index: 0,
         prose_markdown: sampleProse,
+        ...agentChoices,
       }, 'user-valid')).rejects.toThrow(/MCP_UNIT_TIMEOUT: generasi bab tidak selesai dalam 90 detik — cek seed_get_novel_status/)
     })
   })

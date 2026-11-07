@@ -1,79 +1,34 @@
 import 'server-only'
 import { getDb, single } from '@lakoku/db'
-import { createProviderFromExactRoutes } from '@lakoku/ai-gateway/server'
-import { DEFAULT_RUNTIME_POLICY, type GenerationProvider } from '@lakoku/ai-gateway'
-import type { AiModelRoute } from '@/lib/ops/ai-model-routes'
+import { createDeterministicProvider, DEFAULT_RUNTIME_POLICY, type GenerationProvider } from '@lakoku/ai-gateway'
 import { createCatalogDraft, createDbCatalogWriter, resolveCatalogSource } from '@/lib/catalog/generator-db.server'
 import { assertCatalogStoryId } from '@/lib/catalog/catalog-contract'
 import { resolveGenreId, GENRE_BY_LABEL } from '@/lib/taste-profile/catalog'
 import { createMcpSeedPump, mapUnits, unitIndexToTarget, type MappedUnit } from '@/lib/mcp-seed/pump.server'
 import { parseAgentProse, unitKeyOf, type AgentWriteInstruction } from '@/lib/mcp-seed/agent-provider.server'
+import { choicesDirectiveFor, parseAgentChoices, endingLockLabels } from '@/lib/mcp-seed/agent-choices'
 import { assertAssignAllowed, assertToolUser, seedEnv, toolRateLimit, type SeedVolumeLoaders } from '@/lib/mcp-seed/gates.server'
 import type { SeedToolHandlers } from '@/lib/mcp-seed/dispatch.server'
 import type { StoryContract } from '@/lib/story-engine/story-contract'
 
 /**
- * Route server-side MCP: nilai field meniru otoritas beku M10-G, tapi modelId
- * dapat dioverride env (MCP_SEED_INNER_*_ROUTE) tanpa menyentuh fixture beku.
- * Konteks Nov 2026: 9Router menghapus provider `gemini-web` setelah migrasi
- * skema, jadi produksi memakai `ag/*` (antigravity) yang hidup.
+ * Full-Gemini: seluruh teks reader-facing (prosa + choices + reaksi) ditulis
+ * agent Gemini via MCP; server hanya validasi guard + effects deterministik.
+ * Jalur MCP TIDAK memanggil 9Router sama sekali — stub provider ini hanya
+ * pemenuh tipe; contract memakai jalur template resilient (nol model).
  */
-function envRoute(args: {
-  useCase: AiModelRoute['useCase']
-  envName: string
-  defaultModelId: string
-  temperature: number | null
-  maxOutputTokens: number | null
-  reasoningEffort?: 'none'
-  routeVersion: string
-}): AiModelRoute {
-  const modelId = process.env[args.envName]?.trim() || args.defaultModelId
-  return {
-    useCase: args.useCase,
-    provider: '9router',
-    modelId,
-    fallbackModels: [],
-    temperature: args.temperature,
-    maxOutputTokens: args.maxOutputTokens,
-    ...(args.reasoningEffort ? { reasoningEffort: args.reasoningEffort } : {}),
-    routeVersion: args.routeVersion,
-  }
+const templateContractProvider: GenerationProvider = {
+  name: 'mcp-seed-template-contract',
+  async generatePlan(): Promise<never> {
+    throw new Error('MCP_TEMPLATE_CONTRACT_STUB')
+  },
+  async writeChapter(): Promise<never> {
+    throw new Error('MCP_TEMPLATE_CONTRACT_STUB')
+  },
 }
 
-/** Provider 9Router untuk kontrak/pilihan/reaksi (prosa tetap dari agent Gemini). */
-function innerProvider(): GenerationProvider {
-  const baseUrl = process.env.NINEROUTER_BASE_URL
-  const apiKey = process.env.NINEROUTER_API_KEY
-  if (!baseUrl || !apiKey) throw new Error('MISSING_NINEROUTER_CREDENTIALS')
-  return createProviderFromExactRoutes({
-    writerRoute: envRoute({
-      useCase: 'chapter_prose',
-      envName: 'MCP_SEED_INNER_WRITER_ROUTE',
-      defaultModelId: 'gweb/gemini-3.1-pro',
-      temperature: null,
-      maxOutputTokens: 4096,
-      reasoningEffort: 'none',
-      routeVersion: 'mcp-seed-env-writer-v1',
-    }),
-    choicesRoute: envRoute({
-      useCase: 'choices',
-      envName: 'MCP_SEED_INNER_CHOICES_ROUTE',
-      defaultModelId: 'gweb/gemini-3.8-flash',
-      temperature: 0.1,
-      maxOutputTokens: 1024,
-      routeVersion: 'mcp-seed-env-choices-v1',
-    }),
-    judgeRoute: envRoute({
-      useCase: 'continuity_judge',
-      envName: 'MCP_SEED_INNER_JUDGE_ROUTE',
-      defaultModelId: 'gweb/gemini-3.8-flash',
-      temperature: 0,
-      maxOutputTokens: 512,
-      routeVersion: 'mcp-seed-env-judge-v1',
-    }),
-    generationPolicy: DEFAULT_RUNTIME_POLICY,
-  })
-}
+/** Pump inner: tak pernah dipanggil di jalur full-Gemini; deterministic cukup. */
+const inertInnerProvider: GenerationProvider = createDeterministicProvider(DEFAULT_RUNTIME_POLICY)
 
 const proseTimeoutMs = (() => {
   const raw = Number.parseInt(process.env.MCP_SEED_PROSE_TIMEOUT_MS ?? '', 10)
@@ -85,7 +40,7 @@ function getPump(): ReturnType<typeof createMcpSeedPump> {
   if (!_pumpInstance) {
     _pumpInstance = createMcpSeedPump({
       writer: createDbCatalogWriter(),
-      inner: innerProvider(),
+      inner: inertInnerProvider,
       proseTimeoutMs,
     })
   }
@@ -241,7 +196,7 @@ export function buildSeedToolHandlers(opts?: { submitPollMs?: number; submitTime
         protagonistName: input.protagonis,
         tropes: input.tropes ?? [],
         genreId,
-        provider: innerProvider(),
+        provider: templateContractProvider,
         source: resolveCatalogSource('gemini-agent'),
       })
       const pump = getPump()
@@ -279,11 +234,31 @@ export function buildSeedToolHandlers(opts?: { submitPollMs?: number; submitTime
       if (!instruction) {
         throw new Error('MCP_UNIT_NOT_PENDING: unit ini tidak sedang menunggu prosa — cek seed_get_novel_status (mungkin unit lain sedang diproses)')
       }
-      return { unit_index: indexForTarget(contract, target), ...instruction }
+      // Full-Gemini: arahan choices per unit (spine 44 label dikunci server,
+      // bab 50 tanpa pilihan, lainnya agent usulkan 2-3 pilihan + reaksi).
+      const directive = choicesDirectiveFor({
+        chapterNumber: target.number,
+        endingKey: target.endingKey,
+        contract,
+      })
+      return {
+        unit_index: indexForTarget(contract, target),
+        ...instruction,
+        choices_directive: directive,
+        ...(directive === 'ending_lock'
+          ? { ending_lock_labels: endingLockLabels(contract) }
+          : {}),
+      }
     },
     async submitUnit(raw, sub) {
       guard(sub)
-      const input = raw as { novel_id: string; unit_index: number; prose_markdown: string }
+      const input = raw as {
+        novel_id: string
+        unit_index: number
+        prose_markdown: string
+        choice_prompt?: string
+        choices?: Array<{ label: string; reaction: string[] }>
+      }
       assertCatalogStoryId(input.novel_id)
       const pump = getPump()
       const contract = await pump.loadContract(input.novel_id)
@@ -295,12 +270,28 @@ export function buildSeedToolHandlers(opts?: { submitPollMs?: number; submitTime
       } catch (err) {
         throw new Error(`${(err as Error).message} | kirim ulang dengan format: baris pertama "# Judul", paragraf dipisah baris kosong`)
       }
+      // Full-Gemini: validasi choices+reaksi agent SEBELUM resolve — guard dan
+      // batas kata sama dengan jalur model server. Gagal → error berkode agar
+      // agent memperbaiki dan submit ulang unit yang sama.
+      const directive = choicesDirectiveFor({
+        chapterNumber: target.number,
+        endingKey: target.endingKey,
+        contract,
+      })
+      const agentChoices = parseAgentChoices(
+        { choice_prompt: input.choice_prompt, choices: input.choices },
+        { directive, contract, proseTitle: prose.title },
+      )
       const parkedInstruction = pump.store.instruction(key)
       if (!parkedInstruction) {
         throw new Error('MCP_UNIT_NOT_PENDING: tidak ada generasi menunggu untuk unit ini (mungkin kadaluarsa) — ambil ulang seed_get_unit_spec')
       }
       const submittedAttempt = parkedInstruction.attempt
-      const resolved = pump.store.resolve(key, prose)
+      const resolved = pump.store.resolve(key, {
+        ...prose,
+        storyId: input.novel_id,
+        ...(agentChoices ? { chapterChoices: agentChoices } : {}),
+      })
       if (!resolved) {
         throw new Error('MCP_UNIT_NOT_PENDING: tidak ada generasi menunggu untuk unit ini (mungkin kadaluarsa) — ambil ulang seed_get_unit_spec')
       }

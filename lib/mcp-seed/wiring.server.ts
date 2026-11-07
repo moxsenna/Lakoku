@@ -47,10 +47,13 @@ function getPump(): ReturnType<typeof createMcpSeedPump> {
 const loaders: SeedVolumeLoaders = {
   async novelsThisMonth(source, monthStart) {
     const db = getDb()
+    // Arsip (hasil smoke/uji) tidak dihitung ke kuota bulanan — smoke selalu
+    // mengarsipkan novelnya, jadi gate tak boleh menghitungnya lagi.
     const rows = await db.selectFrom('catalog_stories')
       .select((eb) => eb.fn.countAll<number>().as('count'))
       .where('source', '=', source)
       .where('created_at', '>=', monthStart)
+      .where('status', '!=', 'archived')
       .execute()
     return Number(rows[0]?.count ?? 0)
   },

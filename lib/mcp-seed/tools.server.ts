@@ -4,6 +4,8 @@ export type ToolName =
   | 'seed_assign_novel'
   | 'seed_get_unit_spec'
   | 'seed_submit_unit'
+  | 'seed_get_batch_spec'
+  | 'seed_submit_units'
   | 'seed_get_novel_status'
   | 'seed_finalize_novel'
 
@@ -32,6 +34,26 @@ const submitUnitSchema = z.object({
   })).min(2).max(3).optional(),
 })
 
+const getBatchSpecSchema = z.object({
+  novel_id: z.string().trim().min(1).max(120),
+  count: z.number().int().min(1).max(12).optional(),
+})
+
+const batchUnitSchema = z.object({
+  unit_index: z.number().int().min(0).max(61),
+  prose_markdown: z.string().min(200).max(40_000),
+  choice_prompt: z.string().trim().min(8).max(200).optional(),
+  choices: z.array(z.object({
+    label: z.string().trim().min(4).max(120),
+    reaction: z.array(z.string().trim().min(20).max(800)).min(1).max(2),
+  })).min(2).max(3).optional(),
+})
+
+const submitUnitsSchema = z.object({
+  novel_id: z.string().trim().min(1).max(120),
+  units: z.array(batchUnitSchema).min(1).max(12),
+})
+
 const novelRefSchema = z.object({
   novel_id: z.string().trim().min(1).max(120),
 })
@@ -40,6 +62,8 @@ const SCHEMAS = {
   seed_assign_novel: assignSchema,
   seed_get_unit_spec: getUnitSpecSchema,
   seed_submit_unit: submitUnitSchema,
+  seed_get_batch_spec: getBatchSpecSchema,
+  seed_submit_units: submitUnitsSchema,
   seed_get_novel_status: novelRefSchema,
   seed_finalize_novel: novelRefSchema,
 } as const
@@ -107,6 +131,46 @@ export const SEED_TOOLS: ReadonlyArray<{
         },
       },
     }, ['novel_id', 'unit_index', 'prose_markdown']),
+  },
+  {
+    name: 'seed_get_batch_spec',
+    description: 'MODE CEPAT: ambil spesifikasi beberapa unit sekaligus (default 8, maks 12) tanpa menunggu per unit. Tulis semua unit di konteksmu lalu kirim sekalian via seed_submit_units.',
+    annotations: { readOnlyHint: true },
+    inputSchema: schemaOf({
+      novel_id: { type: 'string' },
+      count: { type: 'integer', minimum: 1, maximum: 12, description: 'Jumlah unit dalam batch (default 8)' },
+    }, ['novel_id']),
+  },
+  {
+    name: 'seed_submit_units',
+    description: 'MODE CEPAT: kirim beberapa unit sekaligus (maks 12, urut unit_index naik). Tiap unit: prose_markdown + choices sesuai choices_directive spec-nya. Unit yang sudah accepted tidak perlu dikirim ulang.',
+    annotations: { readOnlyHint: false },
+    inputSchema: schemaOf({
+      novel_id: { type: 'string' },
+      units: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            unit_index: { type: 'integer', minimum: 0, maximum: 61 },
+            prose_markdown: { type: 'string' },
+            choice_prompt: { type: 'string' },
+            choices: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  label: { type: 'string' },
+                  reaction: { type: 'array', items: { type: 'string' } },
+                },
+                required: ['label', 'reaction'],
+              },
+            },
+          },
+          required: ['unit_index', 'prose_markdown'],
+        },
+      },
+    }, ['novel_id', 'units']),
   },
   {
     name: 'seed_get_novel_status',

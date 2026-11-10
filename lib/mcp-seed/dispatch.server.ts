@@ -10,6 +10,8 @@ export interface SeedToolHandlers {
   assignNovel(input: unknown, sub: string): Promise<Record<string, unknown>>
   getUnitSpec(input: unknown, sub: string): Promise<Record<string, unknown>>
   submitUnit(input: unknown, sub: string): Promise<Record<string, unknown>>
+  getBatchSpec(input: unknown, sub: string): Promise<Record<string, unknown>>
+  submitUnits(input: unknown, sub: string): Promise<Record<string, unknown>>
   getNovelStatus(input: unknown, sub: string): Promise<Record<string, unknown>>
   finalizeNovel(input: unknown, sub: string): Promise<Record<string, unknown>>
 }
@@ -18,6 +20,8 @@ const HANDLER_BY_TOOL: Record<ToolName, keyof SeedToolHandlers> = {
   seed_assign_novel: 'assignNovel',
   seed_get_unit_spec: 'getUnitSpec',
   seed_submit_unit: 'submitUnit',
+  seed_get_batch_spec: 'getBatchSpec',
+  seed_submit_units: 'submitUnits',
   seed_get_novel_status: 'getNovelStatus',
   seed_finalize_novel: 'finalizeNovel',
 }

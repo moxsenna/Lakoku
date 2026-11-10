@@ -235,13 +235,13 @@ export function validateCatalogReactions(input: {
   return [...byId.values()]
 }
 
-function blueprintForChapter(snapshot: CanonSnapshot, n: number): ChapterBlueprint {
+export function blueprintForChapter(snapshot: CanonSnapshot, n: number): ChapterBlueprint {
   const blueprint = snapshot.blueprints.find((item) => item.chapterNumber === n)
   if (!blueprint) throw new Error(`CATALOG_BLUEPRINT_MISSING:${n}`)
   return blueprint
 }
 
-function snapshotWithContract(canon: CanonSnapshot, contract: StoryContract): CanonSnapshot {
+export function snapshotWithContract(canon: CanonSnapshot, contract: StoryContract): CanonSnapshot {
   return {
     ...canon,
     blueprints: contract.chapterTargets.map((target) => ({
@@ -265,7 +265,7 @@ function snapshotWithContract(canon: CanonSnapshot, contract: StoryContract): Ca
   }
 }
 
-function timelineFor(chapters: Array<{ number: number; title: string; chosen?: string }>): CanonSnapshot['timeline'] {
+export function timelineFor(chapters: Array<{ number: number; title: string; chosen?: string }>): CanonSnapshot['timeline'] {
   return chapters.map((chapter) => ({
     chapterNumber: chapter.number,
     ordinal: 1,
@@ -873,4 +873,161 @@ export async function regenerateCatalogSpineChapter(deps: CatalogGeneratorDeps, 
     log: input.log,
   })
   await deps.writer.writeSpineChapter(input.storyId, chapter)
+}
+
+/**
+ * Full-Gemini batch (MCP): simpan SATU unit dari payload prosa+choices yang
+ * sudah tervalidasi pemanggil — tanpa panggilan model, tanpa park. Effects
+ * deterministik (bab 44: bias ending per kandidat; lainnya flagsSet), lalu
+ * guard consumer-safe sebelum tulis. Idempoten: unit yang sudah ada
+ * dilaporkan `alreadyStored` tanpa menulis ulang.
+ */
+export interface CatalogUnitStoreInput {
+  storyId: string
+  chapterNumber: number
+  endingKey: string | null
+  title: string
+  paragraphs: string[]
+  choices: CatalogAgentChoices | null
+}
+
+export interface CatalogUnitStoreResult {
+  chapterNumber: number
+  endingKey: string | null
+  alreadyStored: boolean
+  progress: number
+  reviewMarked: boolean
+}
+
+function maxStoredChapter(map: Map<number, CatalogChapterRef>): number {
+  let max = 0
+  for (const key of map.keys()) max = Math.max(max, key)
+  return max
+}
+
+export async function storeCatalogUnit(
+  deps: CatalogGeneratorDeps,
+  input: CatalogUnitStoreInput,
+): Promise<CatalogUnitStoreResult> {
+  assertCatalogStoryId(input.storyId)
+  const { chapterNumber, endingKey } = input
+  const isSpine = endingKey === null
+  if (!Number.isInteger(chapterNumber) || chapterNumber < 1 || chapterNumber > 50) {
+    throw new Error(`MCP_UNIT_NUMBER_INVALID:${chapterNumber}`)
+  }
+  if (isSpine && chapterNumber > CATALOG_SPINE_LAST_CHAPTER) {
+    throw new Error(`MCP_UNIT_NUMBER_INVALID:spine ${chapterNumber} > ${CATALOG_SPINE_LAST_CHAPTER}`)
+  }
+  if (!isSpine && chapterNumber < CATALOG_VARIANT_FIRST_CHAPTER) {
+    throw new Error(`MCP_UNIT_NUMBER_INVALID:varian ${chapterNumber} < ${CATALOG_VARIANT_FIRST_CHAPTER}`)
+  }
+
+  const state = await deps.writer.loadState(input.storyId)
+  if (!state) throw new Error(`CATALOG_STORY_NOT_FOUND:${input.storyId}`)
+  if (state.status === 'published' || state.status === 'archived') {
+    throw new Error(`CATALOG_STORY_CLOSED:${state.status}`)
+  }
+  const contract = assertCatalogContract(state.contract)
+
+  const alreadyStored = isSpine
+    ? state.spine.has(chapterNumber)
+    : (state.variants.get(endingKey!)?.has(chapterNumber) ?? false)
+
+  const isClosing = !isSpine && chapterNumber >= 50
+  const isEndingLock = isSpine && chapterNumber === CATALOG_SPINE_LAST_CHAPTER
+
+  let chapter: CatalogGeneratedChapter
+  if (alreadyStored) {
+    return {
+      chapterNumber,
+      endingKey,
+      alreadyStored: true,
+      progress: Math.max(maxStoredChapter(state.spine), 0),
+      reviewMarked: state.status === 'review',
+    }
+  }
+  if (isClosing) {
+    chapter = {
+      chapterNumber,
+      title: input.title,
+      paragraphs: input.paragraphs,
+      choicePrompt: null,
+      choices: [],
+      outcomes: [],
+    }
+  } else {
+    if (!input.choices || input.choices.choices.length < 2 || input.choices.choices.length > 3) {
+      throw new Error('MCP_UNIT_CHOICES_REQUIRED: unit ini wajib membawa 2-3 choices tervalidasi')
+    }
+    const labels = isEndingLock
+      ? contract.endingCandidates.map((candidate) =>
+          endingLockChoiceLabel(candidate.name, candidate.condition),
+        )
+      : input.choices.choices.map((choice) => choice.label)
+    if (labels.length !== input.choices.choices.length) {
+      throw new Error(
+        `MCP_UNIT_CHOICES_COUNT:${input.choices.choices.length} ≠ ${labels.length} (ending lock wajib ${labels.length} reaksi)`,
+      )
+    }
+    const choices = labels.map((label, index) => ({
+      id: `ch${chapterNumber}-opt-${index + 1}`,
+      label,
+    }))
+    const outcomes: CatalogOutcomeRow[] = choices.map((choice, index) => {
+      const reaction = input.choices!.choices[index]!
+      const effect: Record<string, unknown> = {
+        flagsSet: { [`ch${chapterNumber}_opt_${index + 1}`]: true },
+      }
+      if (isEndingLock) {
+        effect.endingBiasDeltas = {
+          [contract.endingCandidates[index]!.key]: ENDING_LOCK_BIAS_DELTA,
+        }
+      }
+      return {
+        choiceId: choice.id,
+        label: choice.label,
+        consequence: [...reaction.consequence],
+        nextChapterNumber: chapterNumber >= 50 ? null : chapterNumber + 1,
+        isEnding: false,
+        effect,
+      }
+    })
+    chapter = {
+      chapterNumber,
+      title: input.title,
+      paragraphs: input.paragraphs,
+      choicePrompt: input.choices.choicePrompt,
+      choices: choices.map((choice) => ({ id: choice.id, label: choice.label })),
+      outcomes,
+    }
+  }
+
+  guardCatalogChapter(chapter)
+
+  if (isSpine) {
+    await deps.writer.writeSpineChapter(input.storyId, chapter)
+    state.spine.set(chapterNumber, { title: chapter.title, paragraphs: chapter.paragraphs })
+  } else {
+    await deps.writer.writeVariantChapter(input.storyId, endingKey!, chapter)
+    const map = state.variants.get(endingKey!) ?? new Map<number, CatalogChapterRef>()
+    map.set(chapterNumber, { title: chapter.title, paragraphs: chapter.paragraphs })
+    state.variants.set(endingKey!, map)
+  }
+
+  const spineMax = maxStoredChapter(state.spine)
+  const progress = isSpine ? chapterNumber : Math.max(CATALOG_SPINE_LAST_CHAPTER, spineMax)
+  await deps.writer.setProgress(input.storyId, progress)
+
+  const allVariantsComplete = contract.endingCandidates.every((candidate) => {
+    const map = state.variants.get(candidate.key)
+    return map !== undefined && maxStoredChapter(map) >= 50
+  })
+  let reviewMarked = false
+  if (!isSpine && spineMax >= CATALOG_SPINE_LAST_CHAPTER && allVariantsComplete && state.status !== 'review') {
+    await deps.writer.setProgress(input.storyId, 50)
+    await deps.writer.markReview(input.storyId)
+    reviewMarked = true
+  }
+
+  return { chapterNumber, endingKey, alreadyStored: false, progress, reviewMarked }
 }

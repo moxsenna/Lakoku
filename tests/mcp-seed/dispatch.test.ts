@@ -6,6 +6,8 @@ const handlers = {
   async assignNovel(input: unknown, _sub: string) { return { echo: input } },
   async getUnitSpec(_input: unknown, _sub: string) { return { prompt: 'x' } },
   async submitUnit(_input: unknown, _sub: string) { return { status: 'accepted' } },
+  async getBatchSpec(_input: unknown, _sub: string) { return { units: [] } },
+  async submitUnits(_input: unknown, _sub: string) { return { results: [] } },
   async getNovelStatus(_input: unknown, _sub: string) { return { status: 'drafting' } },
   async finalizeNovel(_input: unknown, _sub: string) { return { status: 'review' } },
 }
@@ -34,6 +36,8 @@ describe('handleMcpRpc', () => {
       'seed_assign_novel',
       'seed_get_unit_spec',
       'seed_submit_unit',
+      'seed_get_batch_spec',
+      'seed_submit_units',
       'seed_get_novel_status',
       'seed_finalize_novel',
     ])

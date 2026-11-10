@@ -1,11 +1,26 @@
 import 'server-only'
 import { getDb, single } from '@lakoku/db'
 import { createDeterministicProvider, DEFAULT_RUNTIME_POLICY, type GenerationProvider } from '@lakoku/ai-gateway'
+import type { CanonSnapshot } from '@lakoku/narrative-core'
 import { createCatalogDraft, createDbCatalogWriter, resolveCatalogSource } from '@/lib/catalog/generator-db.server'
-import { assertCatalogStoryId } from '@/lib/catalog/catalog-contract'
+import {
+  assertCatalogStoryId,
+  CATALOG_SPINE_LAST_CHAPTER,
+  CATALOG_VARIANT_FIRST_CHAPTER,
+} from '@/lib/catalog/catalog-contract'
+import {
+  blueprintForChapter,
+  buildCatalogContinuation,
+  snapshotWithContract,
+  storeCatalogUnit,
+  timelineFor,
+} from '@/lib/catalog/generator.server'
+import { buildChapterBrief } from '@/lib/story-engine/chapter-brief'
+import { buildPreProseChapterBrief } from '@/lib/story-engine/pre-prose-brief'
+import { normalizeRouteState } from '@/lib/story-engine/route-state'
 import { resolveGenreId, GENRE_BY_LABEL } from '@/lib/taste-profile/catalog'
 import { createMcpSeedPump, mapUnits, unitIndexToTarget, type MappedUnit } from '@/lib/mcp-seed/pump.server'
-import { parseAgentProse, unitKeyOf, type AgentWriteInstruction } from '@/lib/mcp-seed/agent-provider.server'
+import { parseAgentProse, buildAgentInstruction, unitKeyOf, type AgentWriteInstruction } from '@/lib/mcp-seed/agent-provider.server'
 import { choicesDirectiveFor, parseAgentChoices, endingLockLabels } from '@/lib/mcp-seed/agent-choices'
 import { assertAssignAllowed, assertToolUser, seedEnv, toolRateLimit, type SeedVolumeLoaders } from '@/lib/mcp-seed/gates.server'
 import type { SeedToolHandlers } from '@/lib/mcp-seed/dispatch.server'
@@ -132,6 +147,121 @@ function isUnitStored(
     return state.spine.has(unit.number)
   }
   return state.variants.get(unit.endingKey)?.has(unit.number) ?? false
+}
+
+// ─── Batch mode (full-Gemini) ────────────────────────────────────────────────
+
+const batchWriter = createDbCatalogWriter()
+const batchPlanProvider = createDeterministicProvider(DEFAULT_RUNTIME_POLICY)
+
+/** Batas aman unit per panggilan batch. */
+const MAX_BATCH_UNITS = 12
+
+/**
+ * Susun konteks penulisan (instruction + directive) untuk satu unit — tanpa
+ * park, murni dari state DB + kontrak. Dipakai seed_get_batch_spec.
+ */
+async function buildBatchUnitSpec(args: {
+  storyId: string
+  contract: StoryContract
+  target: { number: number; endingKey: string | null }
+  unitIndex: number
+}): Promise<Record<string, unknown>> {
+  const { contract, target } = args
+  const n = target.number
+  const state = await batchWriter.loadState(args.storyId)
+  if (!state) throw new Error(`MCP_NOVEL_NOT_FOUND:${args.storyId}`)
+  const baseCanon = await batchWriter.loadCanon(args.storyId)
+  const contractCanon = snapshotWithContract(baseCanon, contract)
+
+  const spineTitles = [...state.spine.entries()].sort((a, b) => a[0] - b[0]).map(([number, ref]) => ({
+    number,
+    title: ref.title,
+  }))
+  const variantTitles = target.endingKey === null
+    ? []
+    : [...(state.variants.get(target.endingKey)?.entries() ?? [])]
+        .sort((a, b) => a[0] - b[0])
+        .map(([number, ref]) => ({ number, title: ref.title }))
+
+  const previousChapter = target.endingKey === null
+    ? (n > 1 ? state.spine.get(n - 1) ?? null : null)
+    : (n === CATALOG_VARIANT_FIRST_CHAPTER
+        ? state.spine.get(CATALOG_SPINE_LAST_CHAPTER) ?? null
+        : state.variants.get(target.endingKey)?.get(n - 1) ?? null)
+  const previousChapterNumber = previousChapter === null
+    ? null
+    : (target.endingKey === null ? n - 1 : (n === CATALOG_VARIANT_FIRST_CHAPTER ? CATALOG_SPINE_LAST_CHAPTER : n - 1))
+
+  const snapshot: CanonSnapshot = {
+    ...baseCanon,
+    blueprints: contractCanon.blueprints,
+    secrets: contractCanon.secrets,
+    timeline: timelineFor([...spineTitles, ...variantTitles]),
+  }
+  const blueprint = blueprintForChapter(snapshot, n)
+  const chapterBrief = buildChapterBrief({
+    storyContract: contract,
+    snapshot,
+    readerState: {
+      routeState: normalizeRouteState({}),
+      choiceHistory: [],
+      lockedEndingKey: target.endingKey,
+    },
+    chapterNumber: n,
+    previousChoice: null,
+  })
+  const continuation = buildCatalogContinuation({
+    storyId: args.storyId,
+    contract,
+    targetChapterNumber: n,
+    previousChapter,
+    previousChapterNumber,
+    lockedEndingKey: target.endingKey,
+    previousTitles: snapshot.timeline.slice(-24).map((event) => event.description),
+  })
+  const preProseBrief = buildPreProseChapterBrief({
+    storyId: args.storyId,
+    chapterNumber: n,
+    snapshot,
+    blueprint,
+    continuation,
+    chapterBrief,
+  })
+  const plan = await batchPlanProvider.generatePlan({
+    snapshot,
+    blueprint,
+    chapterNumber: n,
+    continuation,
+    brief: preProseBrief,
+  })
+  const instruction = buildAgentInstruction({
+    input: {
+      snapshot,
+      plan,
+      continuation,
+      brief: preProseBrief,
+      genre: contract.genre,
+    },
+    policy: DEFAULT_RUNTIME_POLICY,
+    novelTitle: contract.title,
+    previousChapter,
+    previousChapterNumber,
+    corePromise: contract.corePromise,
+    mainConflict: contract.mainConflict,
+    finalQuestion: contract.finalQuestion,
+  })
+  const directive = choicesDirectiveFor({
+    chapterNumber: n,
+    endingKey: target.endingKey,
+    contract,
+  })
+  return {
+    unit_index: args.unitIndex,
+    ...instruction,
+    choices_directive: directive,
+    ...(directive === 'ending_lock' ? { ending_lock_labels: endingLockLabels(contract) } : {}),
+  }
 }
 
 interface UnitProgress {
@@ -352,6 +482,113 @@ export function buildSeedToolHandlers(opts?: { submitPollMs?: number; submitTime
         running: pump.isRunning(input.novel_id),
         last_error: pump.lastError(input.novel_id),
         progress: await progressOf(contract, input.novel_id),
+      }
+    },
+    async getBatchSpec(raw, sub) {
+      guard(sub)
+      const input = raw as { novel_id: string; count?: number }
+      assertCatalogStoryId(input.novel_id)
+      const pump = getPump()
+      if (pump.isRunning(input.novel_id)) {
+        throw new Error('MCP_PUMP_ACTIVE: generasi jalur tunggal masih berjalan untuk novel ini — selesaikan lewat seed_get_unit_spec/seed_submit_unit atau tunggu sampai berhenti')
+      }
+      const contract = await pump.loadContract(input.novel_id)
+      const state = await pump.loadState(input.novel_id)
+      const count = Math.min(Math.max(input.count ?? 8, 1), MAX_BATCH_UNITS)
+      const pending = mapUnits(contract).filter((unit) => !isUnitStored(state, unit))
+      if (pending.length === 0) {
+        throw new Error('MCP_ALL_UNITS_COMMITTED: semua unit tersimpan — panggil seed_finalize_novel')
+      }
+      const batch = pending.slice(0, count)
+      const units: Array<Record<string, unknown>> = []
+      for (const unit of batch) {
+        units.push(await buildBatchUnitSpec({
+          storyId: input.novel_id,
+          contract,
+          target: { number: unit.number, endingKey: unit.endingKey },
+          unitIndex: unit.index,
+        }))
+      }
+      return {
+        novel_id: input.novel_id,
+        pending_total: pending.length,
+        batch_size: units.length,
+        units,
+        next: 'Tulis SEMUA unit pada array ini di konteksmu, lalu kirim berurutan (unit_index naik) dalam SATU panggilan seed_submit_units.',
+      }
+    },
+    async submitUnits(raw, sub) {
+      guard(sub)
+      const input = raw as {
+        novel_id: string
+        units: Array<{ unit_index: number; prose_markdown: string; choice_prompt?: string; choices?: Array<{ label: string; reaction: string[] }> }>
+      }
+      assertCatalogStoryId(input.novel_id)
+      const pump = getPump()
+      if (pump.isRunning(input.novel_id)) {
+        throw new Error('MCP_PUMP_ACTIVE: generasi jalur tunggal masih berjalan untuk novel ini — gunakan jalur batch konsisten')
+      }
+      const contract = await pump.loadContract(input.novel_id)
+      if (!input.units?.length) throw new Error('MCP_BATCH_EMPTY: units wajib 1-12 item')
+      if (input.units.length > MAX_BATCH_UNITS) {
+        throw new Error(`MCP_BATCH_TOO_LARGE:${input.units.length} (maks ${MAX_BATCH_UNITS})`)
+      }
+      const results: Array<Record<string, unknown>> = []
+      for (const [offset, unit] of input.units.entries()) {
+        const target = unitIndexToTarget(contract, unit.unit_index)
+        let prose
+        try {
+          prose = parseAgentProse(unit.prose_markdown)
+        } catch (err) {
+          throw new Error(`MCP_BATCH_UNIT_FAILED:${offset}:${(err as Error).message} | perbaiki unit offset ${offset} lalu kirim ulang SISA unit (yang sudah accepted tidak perlu dikirim ulang)`)
+        }
+        const directive = choicesDirectiveFor({
+          chapterNumber: target.number,
+          endingKey: target.endingKey,
+          contract,
+        })
+        let agentChoices
+        try {
+          agentChoices = parseAgentChoices(
+            { choice_prompt: unit.choice_prompt, choices: unit.choices },
+            { directive, contract, proseTitle: prose.title },
+          )
+        } catch (err) {
+          throw new Error(`MCP_BATCH_UNIT_FAILED:${offset}:${(err as Error).message}`)
+        }
+        try {
+          const stored = await storeCatalogUnit(
+            { provider: inertInnerProvider, writer: batchWriter, policy: DEFAULT_RUNTIME_POLICY },
+            {
+              storyId: input.novel_id,
+              chapterNumber: target.number,
+              endingKey: target.endingKey,
+              title: prose.title,
+              paragraphs: prose.paragraphs,
+              choices: agentChoices,
+            },
+          )
+          results.push({
+            unit_index: unit.unit_index,
+            status: stored.alreadyStored ? 'already_stored' : 'accepted',
+            chapter_number: stored.chapterNumber,
+            ending_key: stored.endingKey,
+            review_marked: stored.reviewMarked,
+          })
+        } catch (err) {
+          throw new Error(`MCP_BATCH_UNIT_FAILED:${offset}:${(err as Error).message}`)
+        }
+      }
+      const progress = await progressOf(contract, input.novel_id)
+      const anyReview = results.some((result) => result.review_marked === true)
+      return {
+        novel_id: input.novel_id,
+        results,
+        progress,
+        ...(anyReview ? { status: 'review' } : {}),
+        next: progress.stored >= progress.total
+          ? 'Semua unit tersimpan — panggil seed_finalize_novel lalu laporkan bahwa novel menunggu QC admin.'
+          : 'Lanjutkan unit berikutnya via seed_get_batch_spec.',
       }
     },
     async finalizeNovel(raw, sub) {
